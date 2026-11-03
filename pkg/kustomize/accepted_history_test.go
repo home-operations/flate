@@ -5,12 +5,13 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
-	"github.com/home-operations/flate/internal/testutil"
 	"iter"
 	"maps"
 	"runtime"
 	"testing"
 	"time"
+
+	"github.com/home-operations/flate/internal/testutil"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -18,7 +19,12 @@ import (
 
 func TestRenderReceipt_Domains(t *testing.T) {
 	t.Parallel()
-	owner := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "team", Name: "emitter"}
+	owner := manifest.NamedResource{
+		Group:     manifest.FluxKustomizeDomain,
+		Kind:      manifest.KindKustomization,
+		Namespace: "team",
+		Name:      "emitter",
+	}
 	source := manifest.BootstrapSourceID
 	child := owner
 	child.Name = "child"
@@ -28,7 +34,13 @@ func TestRenderReceipt_Domains(t *testing.T) {
 	assert.NoError(t, err)
 	frame, err := decodeFrame(receipt)
 	assert.NoError(t, err)
-	records := map[manifest.NamedResource]manifest.DiscoveryRecord{child: {Refs: []manifest.NamedResource{source, source}, ContentRoots: map[manifest.NamedResource][]string{source: {"apps/red", ".", "apps/red"}}, Productions: []manifest.Production{{Owner: owner, Source: source}, {Owner: owner, Source: source}}}}
+	records := map[manifest.NamedResource]manifest.DiscoveryRecord{
+		child: {
+			Refs:         []manifest.NamedResource{source, source},
+			ContentRoots: map[manifest.NamedResource][]string{source: {"apps/red", ".", "apps/red"}},
+			Productions:  []manifest.Production{{Owner: owner, Source: source}, {Owner: owner, Source: source}},
+		},
+	}
 	accepted, err := encodeAccepted(owner, frame, maps.All(records))
 	assert.NoError(t, err)
 	again, err := encodeAccepted(owner, frame, maps.All(records))
@@ -113,7 +125,11 @@ func TestRenderReceipt_Domains(t *testing.T) {
 	}
 }
 
-func encodeAccepted(owner manifest.NamedResource, frame renderFrame, records iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]) ([]byte, error) {
+func encodeAccepted(
+	owner manifest.NamedResource,
+	frame renderFrame,
+	records iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord],
+) ([]byte, error) {
 	accepted, err := prepareAccepted(owner, frame, manifest.Fingerprint(acceptedInput), records)
 	if err != nil {
 		return nil, err
@@ -128,9 +144,17 @@ func TestAcceptedRender_ExactValue(t *testing.T) {
 		Version: 2, Final: manifest.Fingerprint(acceptedInput), Complete: true, Owner: id, Raw: "raw",
 		Records: []acceptedRecord{{
 			ID: id, Record: manifest.DiscoveryRecord{
-				Authored: id, Path: "path", File: "file", Parent: id, Refs: []manifest.NamedResource{id},
-				Productions: []manifest.Production{{Owner: id, Declaration: id, Authored: id, Source: id, Path: "path", File: "file"}},
-				Builder:     "builder", Inputs: []string{"input"}, Pinned: true,
+				Authored: id,
+				Path:     "path",
+				File:     "file",
+				Parent:   id,
+				Refs:     []manifest.NamedResource{id},
+				Productions: []manifest.Production{
+					{Owner: id, Declaration: id, Authored: id, Source: id, Path: "path", File: "file"},
+				},
+				Builder: "builder",
+				Inputs:  []string{"input"},
+				Pinned:  true,
 			}, Roots: []acceptedRoot{{Source: id, Paths: []string{"path"}}},
 		}},
 	}
@@ -266,7 +290,11 @@ func TestAcceptedRender_OneShotCanonicalInventory(t *testing.T) {
 	a := manifest.NamedResource{Kind: "kind", Name: "a"}
 	b := a
 	b.Name = "b"
-	record := manifest.DiscoveryRecord{Refs: []manifest.NamedResource{b, a, b}, Productions: []manifest.Production{{Owner: b}, {Owner: a}, {Owner: b}}, ContentRoots: map[manifest.NamedResource][]string{b: {"z", "a", "z"}, a: nil}}
+	record := manifest.DiscoveryRecord{
+		Refs:         []manifest.NamedResource{b, a, b},
+		Productions:  []manifest.Production{{Owner: b}, {Owner: a}, {Owner: b}},
+		ContentRoots: map[manifest.NamedResource][]string{b: {"z", "a", "z"}, a: nil},
+	}
 	calls := 0
 	oneShot := func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
 		calls++
@@ -478,11 +506,16 @@ func TestRenderReceipt_AcceptedLifetime(t *testing.T) {
 	}
 	renderer := newTestTreeCache(t, t.TempDir())
 	released := func() <-chan struct{} {
-		payload, err := testutil.EncodeRender([]map[string]any{{"value": string(bytes.Repeat([]byte{'x'}, frameHeaderLimit+1))}})
+		payload, err := testutil.EncodeRender(
+			[]map[string]any{{"value": string(bytes.Repeat([]byte{'x'}, frameHeaderLimit+1))}},
+		)
 		assert.NoError(t, err)
 		done := make(chan struct{})
 		runtime.AddCleanup(&payload[0], func(done chan struct{}) { close(done) }, done)
-		receipt := manifest.NewRenderReceipt(renderFrame{header: renderHeader{Key: "large-accepted-lifetime"}, output: payload}, equalRenderFrame)
+		receipt := manifest.NewRenderReceipt(
+			renderFrame{header: renderHeader{Key: "large-accepted-lifetime"}, output: payload},
+			equalRenderFrame,
+		)
 		owner := manifest.NamedResource{Kind: "owner", Name: "renderer"}
 		assert.NoError(
 			t,

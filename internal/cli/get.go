@@ -134,7 +134,10 @@ func newGetImagesCmd() *cobra.Command {
 			}, func(inv *selectedInvocation) selectedPayload {
 				groups := make([]output.ImageGroup, len(inv.groups))
 				for i, group := range inv.groups {
-					groups[i] = output.ImageGroup{Cluster: group.cluster, Images: slices.Sorted(maps.Keys(imageutil.Collect(group.sides[0].Manifests)))}
+					groups[i] = output.ImageGroup{
+						Cluster: group.cluster,
+						Images:  slices.Sorted(maps.Keys(imageutil.Collect(group.sides[0].Manifests))),
+					}
 				}
 				table := output.Table{Columns: []output.Column{{Header: "IMAGE", Key: "image"}}}
 				for _, group := range groups {
@@ -200,8 +203,10 @@ type listSection struct {
 }
 
 func collectSelected[T manifest.BaseManifest](inv *selectedInvocation, view listView[T]) listSection {
-	section := listSection{kind: view.kind, table: output.Table{Columns: view.cols},
-		documents: make([]output.DocumentGroup, len(inv.groups))}
+	section := listSection{
+		kind: view.kind, table: output.Table{Columns: view.cols},
+		documents: make([]output.DocumentGroup, len(inv.groups)),
+	}
 	for i, group := range inv.groups {
 		res := group.sides[0]
 		section.documents[i] = output.DocumentGroup{Cluster: group.cluster, Documents: []map[string]any{}}
@@ -217,7 +222,12 @@ func collectSelected[T manifest.BaseManifest](inv *selectedInvocation, view list
 	return section
 }
 
-func resourcePayload(inv *selectedInvocation, sections []listSection, encoder output.Encoder, combined bool) selectedPayload {
+func resourcePayload(
+	inv *selectedInvocation,
+	sections []listSection,
+	encoder output.Encoder,
+	combined bool,
+) selectedPayload {
 	var tables []output.Table
 	documents := make([]output.DocumentGroup, len(inv.groups))
 	for i, group := range inv.groups {
@@ -267,7 +277,10 @@ func prepareGetTables(inv *selectedInvocation, tables []output.Table) ([]output.
 	prepared := slices.Clone(tables)
 	for i := range prepared {
 		if multi {
-			prepared[i].Columns = slices.Concat([]output.Column{{Header: "CLUSTER", Key: "cluster"}}, prepared[i].Columns)
+			prepared[i].Columns = slices.Concat(
+				[]output.Column{{Header: "CLUSTER", Key: "cluster"}},
+				prepared[i].Columns,
+			)
 		}
 	}
 	return prepared, multi

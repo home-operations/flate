@@ -132,7 +132,12 @@ func BenchmarkBlob_PutParallel(b *testing.B) {
 			joined.Go(func() {
 				ready.Done()
 				<-start
-				_, _, _, err := c.Blob(b.Context(), keys[i], Policy{MaxAge: 0}, producer(payloads[i], ocispec.Descriptor{}))
+				_, _, _, err := c.Blob(
+					b.Context(),
+					keys[i],
+					Policy{MaxAge: 0},
+					producer(payloads[i], ocispec.Descriptor{}),
+				)
 				if err != nil {
 					b.Error(err)
 					return

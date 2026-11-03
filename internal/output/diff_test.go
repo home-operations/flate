@@ -42,7 +42,10 @@ func TestEncoderDiffGroups_ReturnsErrors(t *testing.T) {
 		t.Fatalf("DiffGroups = %v, want %v", err, want)
 	}
 	var b bytes.Buffer
-	if err := (Encoder{Writer: &b, Format: FormatJSON}).DiffGroups([]DiffGroup{{Cluster: "a", Body: []byte("invalid")}, {Cluster: "b"}}); err == nil || b.Len() != 0 {
+	if err := (Encoder{Writer: &b, Format: FormatJSON}).DiffGroups(
+		[]DiffGroup{{Cluster: "a", Body: []byte("invalid")}, {Cluster: "b"}},
+	); err == nil ||
+		b.Len() != 0 {
 		t.Fatalf("invalid JSON body = %q, %v", b.String(), err)
 	}
 }
@@ -85,8 +88,12 @@ func TestEncoderNative_ReturnsWriterError(t *testing.T) {
 
 func TestPrepareLines_NormalizeOnce(t *testing.T) {
 	t.Parallel()
-	left := []diffprep.Doc{{Manifest: map[string]any{"kind": "ConfigMap", "metadata": map[string]any{"name": "x"}, "data": "old"}}}
-	right := []diffprep.Doc{{Manifest: map[string]any{"kind": "ConfigMap", "metadata": map[string]any{"name": "x"}, "data": "new"}}}
+	left := []diffprep.Doc{
+		{Manifest: map[string]any{"kind": "ConfigMap", "metadata": map[string]any{"name": "x"}, "data": "old"}},
+	}
+	right := []diffprep.Doc{
+		{Manifest: map[string]any{"kind": "ConfigMap", "metadata": map[string]any{"name": "x"}, "data": "new"}},
+	}
 	before := []map[string]any{manifest.DeepCopyMap(left[0].Manifest), manifest.DeepCopyMap(right[0].Manifest)}
 	calls := 0
 	prepared := diffprep.Prepare(left, right, diffprep.Options{Normalize: func(m map[string]any) {

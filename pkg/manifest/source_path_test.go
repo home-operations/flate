@@ -19,15 +19,19 @@ func TestSourcePath_Facts(t *testing.T) {
 	}{
 		{
 			name: "effective namespace",
-			obj: (&Kustomization{Namespace: "authored", Path: "././apps/a",
-				SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: KindGitRepository, Name: "source"}}).WithNamespace("effective"),
+			obj: (&Kustomization{
+				Namespace: "authored", Path: "././apps/a",
+				SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: KindGitRepository, Name: "source"},
+			}).WithNamespace("effective"),
 			source: NamedResource{Group: SourceDomain, Kind: KindGitRepository, Namespace: "effective", Name: "source"},
 			path:   "././apps/a", present: true,
 		},
 		{
 			name: "explicit namespace and api group",
-			obj: &Kustomization{Namespace: "apps", Path: "../authored",
-				SourceRef: kustomizev1.CrossNamespaceSourceReference{APIVersion: "custom.example/v1", Kind: KindOCIRepository, Namespace: "sources", Name: "source"}},
+			obj: &Kustomization{
+				Namespace: "apps", Path: "../authored",
+				SourceRef: kustomizev1.CrossNamespaceSourceReference{APIVersion: "custom.example/v1", Kind: KindOCIRepository, Namespace: "sources", Name: "source"},
+			},
 			source: NamedResource{Group: "custom.example", Kind: KindOCIRepository, Namespace: "sources", Name: "source"},
 			path:   "../authored", present: true,
 		},
@@ -61,8 +65,10 @@ func TestSourcePath_Facts(t *testing.T) {
 		{name: "raw object", obj: &RawObject{}},
 		{
 			name: "raw kustomization lookalike",
-			obj: &RawObject{APIVersion: FluxKustomizeDomain + "/v1", Kind: KindKustomization,
-				Spec: map[string]any{"path": "./apps/a", "sourceRef": map[string]any{"kind": KindGitRepository, "name": "source"}}},
+			obj: &RawObject{
+				APIVersion: FluxKustomizeDomain + "/v1", Kind: KindKustomization,
+				Spec: map[string]any{"path": "./apps/a", "sourceRef": map[string]any{"kind": KindGitRepository, "name": "source"}},
+			},
 		},
 		{name: "foreign kustomization lookalike", obj: &RawObject{APIVersion: "custom.example/v1", Kind: KindKustomization}},
 	} {

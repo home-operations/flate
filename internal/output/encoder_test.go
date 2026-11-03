@@ -8,8 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/home-operations/flate/internal/assert"
 	"sigs.k8s.io/yaml"
+
+	"github.com/home-operations/flate/internal/assert"
 )
 
 func TestEncoder_Documents_Bytes(t *testing.T) {
@@ -20,7 +21,11 @@ func TestEncoder_Documents_Bytes(t *testing.T) {
 		docs   []map[string]any
 		want   string
 	}{
-		{name: "yaml_order_empty_document", docs: []map[string]any{{"kind": "B"}, {"kind": "A"}, {}}, want: "---\nkind: B\n---\nkind: A\n---\n{}\n"},
+		{
+			name: "yaml_order_empty_document",
+			docs: []map[string]any{{"kind": "B"}, {"kind": "A"}, {}},
+			want: "---\nkind: B\n---\nkind: A\n---\n{}\n",
+		},
 		{name: "yaml_empty_stream", format: FormatYAML},
 		{name: "json_nil", format: FormatJSON, want: "null\n"},
 		{name: "json_empty", format: FormatJSON, docs: []map[string]any{}, want: "[]\n"},
@@ -34,7 +39,9 @@ func TestEncoder_Documents_Bytes(t *testing.T) {
 			}
 			assert.Diff(t, b.String(), tc.want)
 			b.Reset()
-			if err := (Encoder{Writer: &b, Format: tc.format}).DocumentGroups([]DocumentGroup{{Cluster: "entry", Documents: tc.docs}}); err != nil {
+			if err := (Encoder{Writer: &b, Format: tc.format}).DocumentGroups(
+				[]DocumentGroup{{Cluster: "entry", Documents: tc.docs}},
+			); err != nil {
 				t.Fatal(err)
 			}
 			assert.Diff(t, b.String(), tc.want)
@@ -45,7 +52,12 @@ func TestEncoder_Documents_Bytes(t *testing.T) {
 func TestEncoder_Images_Bytes(t *testing.T) {
 	t.Parallel()
 	wantErr := errors.New("name write failed")
-	if err := (Encoder{Writer: errorWriter{wantErr}, Format: FormatName}).Images([]string{"image:v1"}); !errors.Is(err, wantErr) {
+	if err := (Encoder{Writer: errorWriter{wantErr}, Format: FormatName}).Images(
+		[]string{"image:v1"},
+	); !errors.Is(
+		err,
+		wantErr,
+	) {
 		t.Fatalf("image writer error: %v", err)
 	}
 	var empty bytes.Buffer
@@ -74,7 +86,9 @@ func TestEncoder_Images_Bytes(t *testing.T) {
 			}
 			assert.Diff(t, b.String(), tc.want)
 			b.Reset()
-			if err := (Encoder{Writer: &b, Format: tc.format}).ImageGroups([]ImageGroup{{Cluster: "entry", Images: images, Names: images}}); err != nil {
+			if err := (Encoder{Writer: &b, Format: tc.format}).ImageGroups(
+				[]ImageGroup{{Cluster: "entry", Images: images, Names: images}},
+			); err != nil {
 				t.Fatal(err)
 			}
 			assert.Diff(t, b.String(), tc.want)
@@ -92,7 +106,11 @@ func TestEncoder_Tables_Bytes(t *testing.T) {
 	}
 	assert.Diff(t, b.String(), "NAME      PATH\néclair    ./é\n雪         ./雪\n          ./missing\n")
 	assert.Diff(t, cols, []Column{{Header: "NAME", Key: "name"}, {Header: "PATH", Key: "path"}})
-	assert.Diff(t, rows, []map[string]string{{"name": "éclair", "path": "./é"}, {"name": "雪", "path": "./雪"}, {"path": "./missing"}})
+	assert.Diff(
+		t,
+		rows,
+		[]map[string]string{{"name": "éclair", "path": "./é"}, {"name": "雪", "path": "./雪"}, {"path": "./missing"}},
+	)
 	b.Reset()
 	if err := (Encoder{Writer: &b}).Tables([]Table{{Columns: cols}}); err != nil {
 		t.Fatal(err)
@@ -165,7 +183,10 @@ func TestEncoder_Names_Bytes(t *testing.T) {
 
 func TestEncoder_Documents_GroupBytes(t *testing.T) {
 	t.Parallel()
-	groups := []DocumentGroup{{Cluster: "a", Documents: []map[string]any{{"kind": "B"}, {"kind": "A"}}}, {Cluster: "b", Documents: []map[string]any{}}}
+	groups := []DocumentGroup{
+		{Cluster: "a", Documents: []map[string]any{{"kind": "B"}, {"kind": "A"}}},
+		{Cluster: "b", Documents: []map[string]any{}},
+	}
 	for _, tc := range []struct {
 		name   string
 		format Format
@@ -187,7 +208,10 @@ func TestEncoder_Documents_GroupBytes(t *testing.T) {
 
 func TestEncoder_Images_GroupBytes(t *testing.T) {
 	t.Parallel()
-	groups := []ImageGroup{{Cluster: "a", Images: []string{"z:v1", "a:v1"}, Names: []string{"a: z:v1", "a: a:v1"}}, {Cluster: "b", Images: []string{"z:v1"}, Names: []string{"b: z:v1"}}}
+	groups := []ImageGroup{
+		{Cluster: "a", Images: []string{"z:v1", "a:v1"}, Names: []string{"a: z:v1", "a: a:v1"}},
+		{Cluster: "b", Images: []string{"z:v1"}, Names: []string{"b: z:v1"}},
+	}
 	for _, tc := range []struct {
 		name   string
 		format Format
@@ -231,7 +255,12 @@ func TestEncoder_Images_GroupPresenceBytes(t *testing.T) {
 		})
 	}
 	want := errors.New("write failed")
-	if err := (Encoder{Writer: errorWriter{want}}).ImageGroups([]ImageGroup{{Cluster: "a", Added: true, Images: []string{"x"}, Names: []string{"x"}}}); !errors.Is(err, want) {
+	if err := (Encoder{Writer: errorWriter{want}}).ImageGroups(
+		[]ImageGroup{{Cluster: "a", Added: true, Images: []string{"x"}, Names: []string{"x"}}},
+	); !errors.Is(
+		err,
+		want,
+	) {
 		t.Fatalf("image name write error = %v, want %v", err, want)
 	}
 }

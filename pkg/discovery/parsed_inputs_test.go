@@ -21,13 +21,26 @@ func TestPlan_ParsedInputHandoff(t *testing.T) {
 	reads := map[string]*atomic.Int64{}
 	for _, side := range []string{"left", "right"} {
 		files[side+"/kustomization.yaml"] = &fstest.MapFile{Data: []byte("resources: [owner.yaml]\n")}
-		files[side+"/owner.yaml"] = &fstest.MapFile{Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: owner, namespace: apps}\nspec:\n  path: ./" + side + "/leaf\n  sourceRef: {kind: GitRepository, name: cluster}\n")}
+		files[side+"/owner.yaml"] = &fstest.MapFile{
+			Data: []byte(
+				"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: owner, namespace: apps}\nspec:\n  path: ./" + side + "/leaf\n  sourceRef: {kind: GitRepository, name: cluster}\n",
+			),
+		}
 		files[side+"/leaf/kustomization.yaml"] = &fstest.MapFile{Data: []byte("resources: [cm.yaml]\n")}
-		files[side+"/leaf/cm.yaml"] = &fstest.MapFile{Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload, namespace: apps}\ndata: {side: " + side + "}\n")}
+		files[side+"/leaf/cm.yaml"] = &fstest.MapFile{
+			Data: []byte(
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload, namespace: apps}\ndata: {side: " + side + "}\n",
+			),
+		}
 		reads[side+"/owner.yaml"] = &atomic.Int64{}
 		reads[side+"/leaf/cm.yaml"] = &atomic.Int64{}
 	}
-	view, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: entryReadFS{FS: files, reads: reads}})
+	view, _, err := gittree.New(
+		t.Context(),
+		nil,
+		plumbing.ZeroHash,
+		gittree.ViewOptions{Mode: gittree.Direct, Current: entryReadFS{FS: files, reads: reads}},
+	)
 	assert.NoError(t, err)
 	input := &store.SourceArtifact{LocalPath: root, FS: view}
 	entries, err := Plan(t.Context(), Config{Input: input, Path: root, WipeSecrets: true})
@@ -50,7 +63,9 @@ func TestPlan_ParsedInputHandoff(t *testing.T) {
 		t.Parallel()
 		changed := *input
 		changed.Content = "next-generation"
-		d := newDiscoverer(Config{Input: &changed, Entry: &entries[0], Path: entries[0].Path, Store: store.New(), WipeSecrets: true})
+		d := newDiscoverer(
+			Config{Input: &changed, Entry: &entries[0], Path: entries[0].Path, Store: store.New(), WipeSecrets: true},
+		)
 		assert.Equal(t, d.loader.Options.ParsedInputs == nil, true)
 	})
 	t.Run("native admissions", func(t *testing.T) {
@@ -68,7 +83,9 @@ func TestPlan_ParsedInputHandoff(t *testing.T) {
 				assert.NoError(t, d.loadManifests(t.Context(), root, false))
 				assert.Equal(t, entry.Path, root)
 				for _, side := range []string{"left", "right"} {
-					if _, ok := d.loader.Index.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "payload"}); !ok {
+					if _, ok := d.loader.Index.Lookup(
+						manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "payload"},
+					); !ok {
 						t.Fatalf("%s leaf evidence missing", side)
 					}
 				}
@@ -89,10 +106,23 @@ func TestRun_PreparedInputAdmission(t *testing.T) {
 	root := t.TempDir()
 	files := fstest.MapFS{
 		"kustomization.yaml": {Data: []byte("resources: [owner.yaml, secret.yaml]\n")},
-		"owner.yaml":         {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: planned, namespace: apps}\nspec: {path: ./leaf}\n")},
-		"secret.yaml":        {Data: []byte("apiVersion: v1\nkind: Secret\nmetadata: {name: secret, namespace: apps}\nstringData: {KEY: 'ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]'}\nsops: {mac: encrypted}\n")},
+		"owner.yaml": {
+			Data: []byte(
+				"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: planned, namespace: apps}\nspec: {path: ./leaf}\n",
+			),
+		},
+		"secret.yaml": {
+			Data: []byte(
+				"apiVersion: v1\nkind: Secret\nmetadata: {name: secret, namespace: apps}\nstringData: {KEY: 'ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]'}\nsops: {mac: encrypted}\n",
+			),
+		},
 	}
-	view, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: files})
+	view, _, err := gittree.New(
+		t.Context(),
+		nil,
+		plumbing.ZeroHash,
+		gittree.ViewOptions{Mode: gittree.Direct, Current: files},
+	)
 	assert.NoError(t, err)
 	input := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: view}
 	entries, err := Plan(t.Context(), Config{Input: input, WipeSecrets: true})
@@ -110,18 +140,38 @@ func TestRun_PreparedInputAdmission(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if tc.input == nil {
-				other, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: fstest.MapFS{
-					"kustomization.yaml": {Data: []byte("resources: [owner.yaml]\n")},
-					"owner.yaml":         {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: authoritative, namespace: apps}\nspec: {path: ./other}\n")},
-				}})
+				other, _, err := gittree.New(
+					t.Context(),
+					nil,
+					plumbing.ZeroHash,
+					gittree.ViewOptions{Mode: gittree.Direct, Current: fstest.MapFS{
+						"kustomization.yaml": {Data: []byte("resources: [owner.yaml]\n")},
+						"owner.yaml": {
+							Data: []byte(
+								"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: authoritative, namespace: apps}\nspec: {path: ./other}\n",
+							),
+						},
+					}},
+				)
 				assert.NoError(t, err)
 				tc.input = &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: other}
 			}
 			st := store.New()
-			result, err := Run(t.Context(), Config{Input: tc.input, Entry: &entries[0], Store: st, Trees: testTrees(t), WipeSecrets: tc.wipe})
+			result, err := Run(
+				t.Context(),
+				Config{Input: tc.input, Entry: &entries[0], Store: st, Trees: testTrees(t), WipeSecrets: tc.wipe},
+			)
 			assert.NoError(t, err)
-			id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: tc.wantName}
-			if record, ok := result.Index.Lookup(id); !ok || record.Parent != result.Binding.Producer || st.GetObject(id) != nil {
+			id := manifest.NamedResource{
+				Group:     manifest.FluxKustomizeDomain,
+				Kind:      manifest.KindKustomization,
+				Namespace: "apps",
+				Name:      tc.wantName,
+			}
+			if record, ok := result.Index.Lookup(
+				id,
+			); !ok || record.Parent != result.Binding.Producer ||
+				st.GetObject(id) != nil {
 				t.Fatalf("authoritative input ownership lost: %+v", result.Index.Records)
 			}
 			if tc.name != "different source" {

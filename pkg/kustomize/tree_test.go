@@ -105,7 +105,11 @@ func TestTreeCache_CloseAdmissionRace(t *testing.T) {
 		defer cancel()
 		done := make(chan error, 1)
 		go func() {
-			snap := readSetSnapshot{Remotes: []remoteEntry{{Input: remoteInput{Operation: remoteHTTP, URL: "https://example.invalid/queued"}}}}
+			snap := readSetSnapshot{
+				Remotes: []remoteEntry{
+					{Input: remoteInput{Operation: remoteHTTP, URL: "https://example.invalid/queued"}},
+				},
+			}
 			_, err := snap.stillValid(ctx, c, &treeFS{}, true)
 			done <- err
 		}()
@@ -137,7 +141,9 @@ func TestTreeCache_Close(t *testing.T) {
 	c.Close()
 	c.Close()
 	c.sourceRoots.Range(func(_, _ any) bool { t.Error("source-root memo retained after Close"); return false })
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "borrowed") }))
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "borrowed") }),
+	)
 	defer server.Close()
 	input, err := c.remoteInputs.Acquire(t.Context(), server.URL, cache.RetryConfig{}, nil)
 	if err != nil {

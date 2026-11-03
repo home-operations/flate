@@ -52,13 +52,23 @@ func (r *RawObject) EntryApplication() (EntryApplication, bool) {
 	var declaration BaseManifest
 	switch sync.Kind {
 	case KindGitRepository:
-		declaration = NewGitRepository(sourcev1.GitRepository{Name: name, Namespace: r.Namespace, Spec: sourcev1.GitRepositorySpec{
-			URL: sync.URL, Reference: &sourcev1.GitRepositoryRef{Name: sync.Ref}, SecretRef: secret, Provider: sync.Provider,
-		}})
+		declaration = NewGitRepository(
+			sourcev1.GitRepository{Name: name, Namespace: r.Namespace, Spec: sourcev1.GitRepositorySpec{
+				URL:       sync.URL,
+				Reference: &sourcev1.GitRepositoryRef{Name: sync.Ref},
+				SecretRef: secret,
+				Provider:  sync.Provider,
+			}},
+		)
 	case KindOCIRepository:
-		declaration = NewOCIRepository(sourcev1.OCIRepository{Name: name, Namespace: r.Namespace, Spec: sourcev1.OCIRepositorySpec{
-			URL: sync.URL, Reference: &sourcev1.OCIRepositoryRef{Tag: sync.Ref}, SecretRef: secret, Provider: sync.Provider,
-		}})
+		declaration = NewOCIRepository(
+			sourcev1.OCIRepository{Name: name, Namespace: r.Namespace, Spec: sourcev1.OCIRepositorySpec{
+				URL:       sync.URL,
+				Reference: &sourcev1.OCIRepositoryRef{Tag: sync.Ref},
+				SecretRef: secret,
+				Provider:  sync.Provider,
+			}},
+		)
 	case KindBucket:
 		declaration = NewBucket(sourcev1.Bucket{Name: name, Namespace: r.Namespace, Spec: sourcev1.BucketSpec{
 			Endpoint: sync.URL, BucketName: sync.Ref, SecretRef: secret, Provider: sync.Provider,

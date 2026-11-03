@@ -42,7 +42,8 @@ func TestFetcher_ProviderAnonymous(t *testing.T) {
 				}
 				if r.Header.Get("Authorization") == "" {
 					challenges.Add(1)
-					w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer realm="https://%s/token",service="fixture",scope="repository:fixture:pull"`, r.Host))
+					w.Header().
+						Set("WWW-Authenticate", fmt.Sprintf(`Bearer realm="https://%s/token",service="fixture",scope="repository:fixture:pull"`, r.Host))
 					w.WriteHeader(http.StatusUnauthorized)
 					return
 				}
@@ -54,14 +55,26 @@ func TestFetcher_ProviderAnonymous(t *testing.T) {
 			t.Cleanup(srv.Close)
 			config := filepath.Join(t.TempDir(), "config.json")
 			testutil.WriteFileAt(t, config, "{}")
-			repo := &manifest.OCIRepository{Name: "public", Namespace: "apps", URL: "oci://" + mustURL(t, srv.URL).Host + "/fixture", Provider: "aws", Insecure: true}
+			repo := &manifest.OCIRepository{
+				Name:      "public",
+				Namespace: "apps",
+				URL:       "oci://" + mustURL(t, srv.URL).Host + "/fixture",
+				Provider:  "aws",
+				Insecure:  true,
+			}
 			f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, "", cache.New), RegistryConfig: config}
-			got, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), cache.Policy{Retry: cache.RetryConfig{Attempts: 3}})
+			got, err := f.Fetch(
+				t.Context(),
+				repo,
+				(testInputs{}).readSet(repo),
+				cache.Policy{Retry: cache.RetryConfig{Attempts: 3}},
+			)
 			if challenges.Load() != 1 || tokens.Load() != 1 {
 				t.Fatalf("challenge sequences=%d token exchanges=%d: %v", challenges.Load(), tokens.Load(), err)
 			}
 			if private {
-				if got != nil || !errors.Is(err, manifest.ErrMissingSecret) || manifests.Load() != 0 || !strings.Contains(err.Error(), "machine credential acquisition failed") {
+				if got != nil || !errors.Is(err, manifest.ErrMissingSecret) || manifests.Load() != 0 ||
+					!strings.Contains(err.Error(), "machine credential acquisition failed") {
 					t.Fatalf("private acquisition=%v: %v", got, err)
 				}
 				return

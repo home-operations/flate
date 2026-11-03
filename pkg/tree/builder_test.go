@@ -72,14 +72,22 @@ func TestBuilder_FileDirConflictErrors(t *testing.T) {
 		first  func(*tree.Builder) error
 		second func(*tree.Builder) error
 	}{
-		{name: "file-then-child", first: func(b *tree.Builder) error { return b.AddFile("a", nil, 0o600) },
-			second: func(b *tree.Builder) error { return b.AddFile("a/b", nil, 0o600) }},
-		{name: "child-then-file", first: func(b *tree.Builder) error { return b.AddFile("a/b", nil, 0o600) },
-			second: func(b *tree.Builder) error { return b.AddFile("a", nil, 0o600) }},
-		{name: "link-then-child", first: func(b *tree.Builder) error { return b.AddSymlink("a", ".") },
-			second: func(b *tree.Builder) error { return b.AddFile("a/b", nil, 0o600) }},
-		{name: "dir-then-link", first: func(b *tree.Builder) error { return b.AddFile("a/b", nil, 0o600) },
-			second: func(b *tree.Builder) error { return b.AddSymlink("a", ".") }},
+		{
+			name: "file-then-child", first: func(b *tree.Builder) error { return b.AddFile("a", nil, 0o600) },
+			second: func(b *tree.Builder) error { return b.AddFile("a/b", nil, 0o600) },
+		},
+		{
+			name: "child-then-file", first: func(b *tree.Builder) error { return b.AddFile("a/b", nil, 0o600) },
+			second: func(b *tree.Builder) error { return b.AddFile("a", nil, 0o600) },
+		},
+		{
+			name: "link-then-child", first: func(b *tree.Builder) error { return b.AddSymlink("a", ".") },
+			second: func(b *tree.Builder) error { return b.AddFile("a/b", nil, 0o600) },
+		},
+		{
+			name: "dir-then-link", first: func(b *tree.Builder) error { return b.AddFile("a/b", nil, 0o600) },
+			second: func(b *tree.Builder) error { return b.AddSymlink("a", ".") },
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -354,7 +362,10 @@ func TestBuilder_Metadata(t *testing.T) {
 	check(t, lower)
 	o := tree.NewBuilder(lower)
 	must(t, o.Mount("empty", fstest.MapFS{".": {Mode: fs.ModeDir | 0o700}}))
-	must(t, o.Mount("implicit", fstest.MapFS{".": {Mode: fs.ModeDir | 0o710}, "file": {Data: []byte("x"), Mode: 0o600}}))
+	must(
+		t,
+		o.Mount("implicit", fstest.MapFS{".": {Mode: fs.ModeDir | 0o710}, "file": {Data: []byte("x"), Mode: 0o600}}),
+	)
 	over := build(t, o)
 	info, err := over.Stat("empty")
 	must(t, err)

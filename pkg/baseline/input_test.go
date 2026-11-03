@@ -62,7 +62,10 @@ func TestAdmitLocation_Cancellation(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			wrapped := fmt.Errorf("admission: %w", tc.cause)
-			_, err := admitLocation(admissionErrorContext{wrapped}, &gitrepo.Location{ContentRoot: root, ScanPath: root})
+			_, err := admitLocation(
+				admissionErrorContext{wrapped},
+				&gitrepo.Location{ContentRoot: root, ScanPath: root},
+			)
 			assert.Equal(t, errors.Is(err, wrapped), true)
 			assert.Equal(t, errors.Is(err, tc.cause), true)
 			assert.Equal(t, errors.Is(err, manifest.ErrInput), false)

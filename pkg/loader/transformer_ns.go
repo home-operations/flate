@@ -28,7 +28,12 @@ import (
 // running away even though visited already breaks true cycles.
 const transformerScanMaxDepth = 6
 
-func (l *Loader) predictNamespaces(ks *manifest.Kustomization, repoRoot string, record manifest.DiscoveryRecord, cache map[string]nsResolution) (*manifest.Kustomization, string) {
+func (l *Loader) predictNamespaces(
+	ks *manifest.Kustomization,
+	repoRoot string,
+	record manifest.DiscoveryRecord,
+	cache map[string]nsResolution,
+) (*manifest.Kustomization, string) {
 	file := record.File
 	for root := filepath.Dir(record.Path); record.Path != "" && root != filepath.Dir(root); root = filepath.Dir(root) {
 		if l.documents.views[root] != nil {
@@ -65,7 +70,10 @@ type nsResolution struct {
 // targetNamespace-injecting `replacements:` rule. Deepest enclosing overlay
 // wins (first hit walking up), matching kustomize's "closest overlay"
 // semantics.
-func (reader documentReader) resolveOverlayInjectedNamespace(repoRoot, file string, cache map[string]nsResolution) nsResolution {
+func (reader documentReader) resolveOverlayInjectedNamespace(
+	repoRoot, file string,
+	cache map[string]nsResolution,
+) nsResolution {
 	for dir := path.Dir(filepath.ToSlash(file)); dir != "." && dir != "/" && dir != ""; dir = path.Dir(dir) {
 		key := filepath.Join(repoRoot, filepath.FromSlash(dir))
 		if reader.cache[key].body == nil {
@@ -202,7 +210,11 @@ func (d namespaceTransformerDoc) injectsKustomizationTargetNamespace() bool {
 	})
 }
 
-func replacementInjectsTargetNamespace(r types.ReplacementField, reader documentReader, repoRoot, overlayDir string) bool {
+func replacementInjectsTargetNamespace(
+	r types.ReplacementField,
+	reader documentReader,
+	repoRoot, overlayDir string,
+) bool {
 	if r.Path == "" {
 		return copiesNamespaceNameToTargetNamespace(r.Replacement)
 	}

@@ -76,7 +76,11 @@ func TestFetchRemoteBase_References(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			f := newRemoteBaseFetcher(t)
-			art, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: tc.url, Ref: tc.ref, Timeout: 27 * time.Second, Submodules: true}, sourcecache.Policy{MaxAge: time.Hour})
+			art, err := f.FetchRemoteBase(
+				t.Context(),
+				RemoteBaseRequest{URL: tc.url, Ref: tc.ref, Timeout: 27 * time.Second, Submodules: true},
+				sourcecache.Policy{MaxAge: time.Hour},
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -135,13 +139,23 @@ func TestFetchRemoteBase_Freshness(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Logf("initial: advertisements=%d upload_pack=%d accepted_connections=%d", advertisements.Load(), uploads.Load(), connections.Load())
+			t.Logf(
+				"initial: advertisements=%d upload_pack=%d accepted_connections=%d",
+				advertisements.Load(),
+				uploads.Load(),
+				connections.Load(),
+			)
 			wantAdvertisements := int32(2)
 			if tc.hash {
 				wantAdvertisements = 1
 			}
 			if advertisements.Load() != wantAdvertisements || uploads.Load() != 1 {
-				t.Errorf("initial: advertisements=%d upload_pack=%d, want %d and 1", advertisements.Load(), uploads.Load(), wantAdvertisements)
+				t.Errorf(
+					"initial: advertisements=%d upload_pack=%d, want %d and 1",
+					advertisements.Load(),
+					uploads.Load(),
+					wantAdvertisements,
+				)
 			}
 			beforeAdvertisements, beforeUploads, beforeConnections := advertisements.Load(), uploads.Load(), connections.Load()
 			wantContent, wantRevision := "x", first.Revision
@@ -163,13 +177,25 @@ func TestFetchRemoteBase_Freshness(t *testing.T) {
 				t.Fatalf("cache identity/revision changed: %+v / %+v", first, second)
 			}
 			assertWorktree(t, second.FS, "kustomization.yaml", wantContent)
-			t.Logf("reopened: advertisements=%d upload_pack=%d new_connections=%d", advertisements.Load()-beforeAdvertisements, uploads.Load()-beforeUploads, connections.Load()-beforeConnections)
+			t.Logf(
+				"reopened: advertisements=%d upload_pack=%d new_connections=%d",
+				advertisements.Load()-beforeAdvertisements,
+				uploads.Load()-beforeUploads,
+				connections.Load()-beforeConnections,
+			)
 			wantRequests := int32(0)
 			if tc.age == 0 {
 				wantRequests = 1
 			}
-			if advertisements.Load()-beforeAdvertisements != 2*wantRequests || uploads.Load()-beforeUploads != wantRequests {
-				t.Errorf("reopened: advertisements=%d upload_pack=%d, want %d and %d", advertisements.Load()-beforeAdvertisements, uploads.Load()-beforeUploads, 2*wantRequests, wantRequests)
+			if advertisements.Load()-beforeAdvertisements != 2*wantRequests ||
+				uploads.Load()-beforeUploads != wantRequests {
+				t.Errorf(
+					"reopened: advertisements=%d upload_pack=%d, want %d and %d",
+					advertisements.Load()-beforeAdvertisements,
+					uploads.Load()-beforeUploads,
+					2*wantRequests,
+					wantRequests,
+				)
 			}
 			if wantRequests == 0 && connections.Load() != beforeConnections {
 				t.Error("fresh remote base opened a connection")
@@ -181,7 +207,11 @@ func TestFetchRemoteBase_Freshness(t *testing.T) {
 func TestFetchRemoteBase_RequiresCache(t *testing.T) {
 	t.Parallel()
 	f := &Fetcher{}
-	_, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: "file:///nope", Ref: "v1", Timeout: 27 * time.Second, Submodules: true}, sourcecache.Policy{MaxAge: time.Hour})
+	_, err := f.FetchRemoteBase(
+		t.Context(),
+		RemoteBaseRequest{URL: "file:///nope", Ref: "v1", Timeout: 27 * time.Second, Submodules: true},
+		sourcecache.Policy{MaxAge: time.Hour},
+	)
 	if !errors.Is(err, manifest.ErrInput) {
 		t.Fatalf("want ErrInput without cache, got %v", err)
 	}
@@ -194,7 +224,11 @@ func TestFetchRemoteBase_RejectsBeforeAcquisition(t *testing.T) {
 			t.Parallel()
 			// The uninitialized cache panics if acquisition precedes validation.
 			f := &Fetcher{Cache: new(sourcecache.Cache), RestrictSchemes: true}
-			_, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: url, Ref: "v1", Timeout: 27 * time.Second, Submodules: true}, sourcecache.Policy{MaxAge: time.Hour})
+			_, err := f.FetchRemoteBase(
+				t.Context(),
+				RemoteBaseRequest{URL: url, Ref: "v1", Timeout: 27 * time.Second, Submodules: true},
+				sourcecache.Policy{MaxAge: time.Hour},
+			)
 			if !errors.Is(err, manifest.ErrInput) {
 				t.Fatalf("want ErrInput before acquisition, got %v", err)
 			}
@@ -219,7 +253,14 @@ func TestFetchRemoteBase_TransientRecovery(t *testing.T) {
 	}))
 	defer srv.Close()
 	f := newRemoteBaseFetcher(t)
-	art, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: srv.URL, Timeout: 27 * time.Second, Submodules: true}, sourcecache.Policy{MaxAge: time.Hour, Retry: sourcecache.RetryConfig{Attempts: 2, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}})
+	art, err := f.FetchRemoteBase(
+		t.Context(),
+		RemoteBaseRequest{URL: srv.URL, Timeout: 27 * time.Second, Submodules: true},
+		sourcecache.Policy{
+			MaxAge: time.Hour,
+			Retry:  sourcecache.RetryConfig{Attempts: 2, MinWait: time.Nanosecond, MaxWait: time.Nanosecond},
+		},
+	)
 	if err != nil {
 		t.Fatalf("original caller: %v; requests=%d", err, hits.Load())
 	}
@@ -243,7 +284,10 @@ func TestFetchRemoteBase_GenerationAdmission(t *testing.T) {
 			request := RemoteBaseRequest{URL: "file://" + src, Timeout: 27 * time.Second, Submodules: false}
 			policy := sourcecache.Policy{MaxAge: time.Hour}
 			artifact, err := f.FetchRemoteBase(t.Context(), request, policy)
-			if !errors.Is(err, manifest.ErrInput) || artifact == nil || artifact.FS != nil || len(artifact.Warnings) != 1 || artifact.Warnings[0].Category != manifest.WarnSkippedSubmodule || artifact.Warnings[0].Resource != (manifest.NamedResource{}) {
+			if !errors.Is(err, manifest.ErrInput) || artifact == nil || artifact.FS != nil ||
+				len(artifact.Warnings) != 1 ||
+				artifact.Warnings[0].Category != manifest.WarnSkippedSubmodule ||
+				artifact.Warnings[0].Resource != (manifest.NamedResource{}) {
 				t.Fatalf("cold invalid view = %v, %v", artifact, err)
 			}
 			if err := os.RemoveAll(src); err != nil {
@@ -261,9 +305,18 @@ func TestFetchRemoteBase_GenerationAdmission(t *testing.T) {
 			assertWorktree(t, artifact.FS, "hello.txt", "hi")
 			t.Run("waiter and hit", func(t *testing.T) {
 				t.Parallel()
-				testGenerationWaiter(t, disk, func(ctx context.Context, f *Fetcher, url string) (*store.SourceArtifact, error) {
-					return f.FetchRemoteBase(ctx, RemoteBaseRequest{URL: url, Timeout: 27 * time.Second, Submodules: false}, policy)
-				}, []string{".sourceignore", "apps/drop.tmp", "apps/keep.yaml", "other/keep.yaml"})
+				testGenerationWaiter(
+					t,
+					disk,
+					func(ctx context.Context, f *Fetcher, url string) (*store.SourceArtifact, error) {
+						return f.FetchRemoteBase(
+							ctx,
+							RemoteBaseRequest{URL: url, Timeout: 27 * time.Second, Submodules: false},
+							policy,
+						)
+					},
+					[]string{".sourceignore", "apps/drop.tmp", "apps/keep.yaml", "other/keep.yaml"},
+				)
 			})
 		})
 	}
@@ -299,7 +352,10 @@ func TestFetchRemoteBase_DefaultSubmodules(t *testing.T) {
 		if err := repo.Storer.SetIndex(idx); err != nil {
 			t.Fatal(err)
 		}
-		hash, err := wt.Commit("module revision", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+		hash, err := wt.Commit(
+			"module revision",
+			&git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}},
+		)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -311,7 +367,16 @@ func TestFetchRemoteBase_DefaultSubmodules(t *testing.T) {
 		t.Parallel()
 		f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
 		for _, recurse := range []bool{false, true} {
-			artifact, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: "file://" + parent, Ref: pin.String(), Timeout: 27 * time.Second, Submodules: recurse}, sourcecache.Policy{MaxAge: time.Hour})
+			artifact, err := f.FetchRemoteBase(
+				t.Context(),
+				RemoteBaseRequest{
+					URL:        "file://" + parent,
+					Ref:        pin.String(),
+					Timeout:    27 * time.Second,
+					Submodules: recurse,
+				},
+				sourcecache.Policy{MaxAge: time.Hour},
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -331,10 +396,28 @@ func TestFetchRemoteBase_DefaultSubmodules(t *testing.T) {
 				var artifact *store.SourceArtifact
 				var err error
 				if remote {
-					artifact, err = f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: "file://" + parent, Ref: pin.String(), Timeout: 27 * time.Second, Submodules: true}, sourcecache.Policy{MaxAge: time.Hour})
+					artifact, err = f.FetchRemoteBase(
+						t.Context(),
+						RemoteBaseRequest{
+							URL:        "file://" + parent,
+							Ref:        pin.String(),
+							Timeout:    27 * time.Second,
+							Submodules: true,
+						},
+						sourcecache.Policy{MaxAge: time.Hour},
+					)
 				} else {
-					r := &manifest.GitRepository{URL: "file://" + parent, Reference: &sourcev1.GitRepositoryRef{Commit: pin.String()}, RecurseSubmodules: true}
-					artifact, err = f.Fetch(t.Context(), r, (testInputs{}).readSet(r), sourcecache.Policy{MaxAge: time.Hour})
+					r := &manifest.GitRepository{
+						URL:               "file://" + parent,
+						Reference:         &sourcev1.GitRepositoryRef{Commit: pin.String()},
+						RecurseSubmodules: true,
+					}
+					artifact, err = f.Fetch(
+						t.Context(),
+						r,
+						(testInputs{}).readSet(r),
+						sourcecache.Policy{MaxAge: time.Hour},
+					)
 				}
 				if err != nil {
 					t.Fatalf("%s fetch: %v", wave, err)
@@ -361,7 +444,10 @@ type commandSession struct {
 	before func(context.Context) error
 }
 
-func (tr commandTransport) NewUploadPackSession(endpoint *transport.Endpoint, auth transport.AuthMethod) (transport.UploadPackSession, error) {
+func (tr commandTransport) NewUploadPackSession(
+	endpoint *transport.Endpoint,
+	auth transport.AuthMethod,
+) (transport.UploadPackSession, error) {
 	local := *endpoint
 	local.Protocol = "file"
 	local.Path = filepath.Join(local.Path, ".git")
@@ -406,7 +492,11 @@ func TestFetchRemoteBase_CommandBudgets(t *testing.T) {
 		f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
 		start := time.Now()
 		aggregate := time.Second
-		artifact, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: "commands://" + src, Timeout: 5 * time.Second}, sourcecache.Policy{Timeout: &aggregate})
+		artifact, err := f.FetchRemoteBase(
+			t.Context(),
+			RemoteBaseRequest{URL: "commands://" + src, Timeout: 5 * time.Second},
+			sourcecache.Policy{Timeout: &aggregate},
+		)
 		if err != nil || artifact == nil || calls < 2 || time.Since(start) < 6*time.Second {
 			t.Fatalf("independent commands: calls=%d elapsed=%v error=%v", calls, time.Since(start), err)
 		}

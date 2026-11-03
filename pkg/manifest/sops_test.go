@@ -119,7 +119,9 @@ func TestWipeValue_Ciphertext(t *testing.T) {
 }
 
 func TestWipeValue_ClearEncodedAllocationFree(t *testing.T) {
-	value := base64.StdEncoding.EncodeToString([]byte("a readable clear scalar that fits in the decoding scratch buffer"))
+	value := base64.StdEncoding.EncodeToString(
+		[]byte("a readable clear scalar that fits in the decoding scratch buffer"),
+	)
 	var got string
 	allocs := testing.AllocsPerRun(100, func() {
 		got = WipeValue("key", value, base64.StdEncoding, true)

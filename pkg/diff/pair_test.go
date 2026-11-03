@@ -60,7 +60,8 @@ func TestPair_DistinguishesByParent(t *testing.T) {
 						group = ""
 					}
 				}
-				if c.Parent.ID != want.Parent.NamedResource || c.Resource.ID != (manifest.NamedResource{Group: group, Kind: "Deployment", Namespace: "ns", Name: "x"}) {
+				if c.Parent.ID != want.Parent.NamedResource ||
+					c.Resource.ID != (manifest.NamedResource{Group: group, Kind: "Deployment", Namespace: "ns", Name: "x"}) {
 					t.Errorf("line change dropped identity: %+v", c)
 				}
 			}
@@ -69,7 +70,8 @@ func TestPair_DistinguishesByParent(t *testing.T) {
 			}
 			native := renderDiff(t, l, r, Options{Format: FormatGitHub})
 			if tt.pairs == 2 {
-				if strings.Count(native, "one document removed:") != 1 || strings.Count(native, "one document added:") != 1 {
+				if strings.Count(native, "one document removed:") != 1 ||
+					strings.Count(native, "one document added:") != 1 {
 					t.Errorf("native lost parent/resource identity:\n%s", native)
 				}
 			} else if strings.Contains(native, "one document") || !strings.Contains(native, "@@ apiVersion @@") {
@@ -174,8 +176,14 @@ func TestRenderDocs_DuplicateWarningOrder(t *testing.T) {
 func TestRenderDocs_NormalizedDuplicatesOnce(t *testing.T) {
 	t.Parallel()
 	parent := Parent{NamedResource: testutil.KustomizationID("flux-system", "apps"), Path: "apps"}
-	left := []Doc{cmDoc(parent, manifest.NamedResource{Name: "shadow-orig"}, "shadowed", ""), cmDoc(parent, manifest.NamedResource{Name: "last-orig"}, "old", "")}
-	right := []Doc{cmDoc(parent, manifest.NamedResource{Name: "shadow-current"}, "shadowed", ""), cmDoc(parent, manifest.NamedResource{Name: "last-current"}, "new", "")}
+	left := []Doc{
+		cmDoc(parent, manifest.NamedResource{Name: "shadow-orig"}, "shadowed", ""),
+		cmDoc(parent, manifest.NamedResource{Name: "last-orig"}, "old", ""),
+	}
+	right := []Doc{
+		cmDoc(parent, manifest.NamedResource{Name: "shadow-current"}, "shadowed", ""),
+		cmDoc(parent, manifest.NamedResource{Name: "last-current"}, "new", ""),
+	}
 	for _, format := range []Format{FormatHuman, FormatGitHub, FormatBrief, FormatGitLab, FormatGitea, FormatDiff, FormatHTML, FormatJSON, ""} {
 		t.Run(string(format), func(t *testing.T) {
 			t.Parallel()
@@ -183,13 +191,21 @@ func TestRenderDocs_NormalizedDuplicatesOnce(t *testing.T) {
 			var firstWarnings []manifest.Warning
 			for run := range 2 {
 				calls := make(map[string]int)
-				out, warnings, err := RenderDocs(left, right, Options{Format: format, Normalize: func(m map[string]any) {
-					meta := m["metadata"].(map[string]any)
-					calls[meta["name"].(string)]++
-					meta["name"] = "normalized"
-				}})
+				out, warnings, err := RenderDocs(
+					left,
+					right,
+					Options{Format: format, Normalize: func(m map[string]any) {
+						meta := m["metadata"].(map[string]any)
+						calls[meta["name"].(string)]++
+						meta["name"] = "normalized"
+					}},
+				)
 				assert.NoError(t, err)
-				assert.Diff(t, calls, map[string]int{"shadow-orig": 1, "last-orig": 1, "shadow-current": 1, "last-current": 1})
+				assert.Diff(
+					t,
+					calls,
+					map[string]int{"shadow-orig": 1, "last-orig": 1, "shadow-current": 1, "last-current": 1},
+				)
 				if len(warnings) != 2 {
 					t.Fatalf("want two snapshot warnings, got %+v", warnings)
 				}
@@ -197,11 +213,16 @@ func TestRenderDocs_NormalizedDuplicatesOnce(t *testing.T) {
 				for _, warning := range warnings {
 					assert.Equal(t, warning.Category, manifest.WarnDuplicateDocument)
 					assert.Equal(t, warning.Resource, manifest.NamedResource{Kind: "ConfigMap", Name: "normalized"})
-					assert.Diff(t, warning.Detail[1:], []string{"parent: " + parent.String(), "parent path: apps", "apiVersion: v1"})
+					assert.Diff(
+						t,
+						warning.Detail[1:],
+						[]string{"parent: " + parent.String(), "parent path: apps", "apiVersion: v1"},
+					)
 					sides[warning.Detail[0]] = true
 				}
 				assert.Diff(t, sides, map[string]bool{"side: orig": true, "side: current": true})
-				if len(out) == 0 || strings.Contains(string(out), "shadowed") || strings.Contains(string(out), "shadows an earlier") {
+				if len(out) == 0 || strings.Contains(string(out), "shadowed") ||
+					strings.Contains(string(out), "shadows an earlier") {
 					t.Fatalf("unexpected winning product: %s", out)
 				}
 				if run == 0 {

@@ -41,7 +41,12 @@ func (c *dnsConn) Write(p []byte) (int, error) {
 	}
 	response := dnsmessage.Message{ID: query.ID, Response: true, RecursionAvailable: true, Questions: query.Questions}
 	if q := query.Questions[0]; q.Type == dnsmessage.TypeA {
-		response.Answers = []dnsmessage.Resource{{Header: dnsmessage.ResourceHeader{Name: q.Name, Type: q.Type, Class: q.Class}, Body: &dnsmessage.AResource{A: [4]byte{127, 0, 0, 1}}}}
+		response.Answers = []dnsmessage.Resource{
+			{
+				Header: dnsmessage.ResourceHeader{Name: q.Name, Type: q.Type, Class: q.Class},
+				Body:   &dnsmessage.AResource{A: [4]byte{127, 0, 0, 1}},
+			},
+		}
 	}
 	data, err := response.Pack()
 	if err != nil {

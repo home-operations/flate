@@ -13,10 +13,11 @@ import (
 	"testing/iotest"
 	"time"
 
-	"github.com/home-operations/flate/internal/testutil/cachetest"
-	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+
+	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 func TestAcquire_GeneratedIdentity(t *testing.T) {
@@ -42,12 +43,25 @@ func TestAcquire_GeneratedIdentity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			c := cachetest.New(t, "", New)
-			key := ArchiveKey{Policy: "fixed", Content: map[string]any{"namespace": "output/v1", "input": map[string]string{"key": "family", "digest": "generation"}, "operation": []string{"copy", "merge"}}}
+			key := ArchiveKey{
+				Policy: "fixed",
+				Content: map[string]any{
+					"namespace": "output/v1",
+					"input":     map[string]string{"key": "family", "digest": "generation"},
+					"operation": []string{"copy", "merge"},
+				},
+			}
 			data := orderedArchive(t, "file", "bytes")
 			calls := 0
 			fill := func(ctx context.Context, target ProducerInput) (ProducerResult, error) {
 				calls++
-				return producer(data, ocispec.Descriptor{Annotations: map[string]string{"upstream": "retained"}})(ctx, target)
+				return producer(
+					data,
+					ocispec.Descriptor{Annotations: map[string]string{"upstream": "retained"}},
+				)(
+					ctx,
+					target,
+				)
 			}
 			first, descriptor, id, err := c.Acquire(t.Context(), key, Policy{MaxAge: Forever}, fill)
 			if err != nil {
@@ -59,7 +73,8 @@ func TestAcquire_GeneratedIdentity(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if (id == nextID) != tc.same || id == "" || nextID == "" || calls != map[bool]int{true: 1, false: 2}[tc.same] {
+			if (id == nextID) != tc.same || id == "" || nextID == "" ||
+				calls != map[bool]int{true: 1, false: 2}[tc.same] {
 				t.Fatalf("identities %q/%q; calls=%d same=%v", id, nextID, calls, tc.same)
 			}
 			if descriptor.Annotations["upstream"] != "retained" {
@@ -76,10 +91,15 @@ func TestAcquire_GeneratedIdentity(t *testing.T) {
 		t.Parallel()
 		c := cachetest.New(t, "", New)
 		called := false
-		input, _, id, err := c.Acquire(t.Context(), ArchiveKey{Content: "invalid", Policy: "unknown"}, Policy{}, func(context.Context, ProducerInput) (ProducerResult, error) {
-			called = true
-			return ProducerResult{}, nil
-		})
+		input, _, id, err := c.Acquire(
+			t.Context(),
+			ArchiveKey{Content: "invalid", Policy: "unknown"},
+			Policy{},
+			func(context.Context, ProducerInput) (ProducerResult, error) {
+				called = true
+				return ProducerResult{}, nil
+			},
+		)
 		if input != nil || id != "" || !errors.Is(err, manifest.ErrInput) || called {
 			t.Fatalf("unknown policy = %v, %q, %v; called=%v", input, id, err, called)
 		}
@@ -89,10 +109,15 @@ func TestAcquire_GeneratedIdentity(t *testing.T) {
 		c := cachetest.New(t, "", New)
 		called := false
 		for range 2 {
-			input, _, id, err := c.Acquire(t.Context(), ArchiveKey{Policy: "fixed", Content: make(chan int)}, Policy{MaxAge: Forever}, func(context.Context, ProducerInput) (ProducerResult, error) {
-				called = true
-				return ProducerResult{}, nil
-			})
+			input, _, id, err := c.Acquire(
+				t.Context(),
+				ArchiveKey{Policy: "fixed", Content: make(chan int)},
+				Policy{MaxAge: Forever},
+				func(context.Context, ProducerInput) (ProducerResult, error) {
+					called = true
+					return ProducerResult{}, nil
+				},
+			)
 			if input != nil || id != "" || !errors.Is(err, manifest.ErrInput) || called {
 				t.Fatalf("marshal failure = %v, %q, %v; produced=%v", input, id, err, called)
 			}
@@ -103,7 +128,12 @@ func TestAcquire_GeneratedIdentity(t *testing.T) {
 		c := cachetest.New(t, "", New)
 		data := orderedArchive(t, "file", "bytes")
 		key := ArchiveKey{Content: "versioned-output", Policy: "fixed"}
-		_, _, seedID, err := c.Acquire(t.Context(), ArchiveKey{Content: "seed", Policy: "fixed"}, Policy{MaxAge: Forever}, producer(data, ocispec.Descriptor{}))
+		_, _, seedID, err := c.Acquire(
+			t.Context(),
+			ArchiveKey{Content: "seed", Policy: "fixed"},
+			Policy{MaxAge: Forever},
+			producer(data, ocispec.Descriptor{}),
+		)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -115,10 +145,15 @@ func TestAcquire_GeneratedIdentity(t *testing.T) {
 		}{key.Content, key.Ignore, key.Policy, 0}})
 		c.entries.Store(otherVersion, seed)
 		calls := 0
-		input, _, id, err := c.Acquire(t.Context(), key, Policy{MaxAge: Forever}, func(ctx context.Context, target ProducerInput) (ProducerResult, error) {
-			calls++
-			return producer(data, ocispec.Descriptor{})(ctx, target)
-		})
+		input, _, id, err := c.Acquire(
+			t.Context(),
+			key,
+			Policy{MaxAge: Forever},
+			func(ctx context.Context, target ProducerInput) (ProducerResult, error) {
+				calls++
+				return producer(data, ocispec.Descriptor{})(ctx, target)
+			},
+		)
 		if err != nil || id == otherVersion || calls != 1 {
 			t.Fatalf("versioned acquisition = %q, %v; productions=%d", id, err, calls)
 		}
@@ -139,7 +174,14 @@ func TestAcquire_GeneratedTreeContent(t *testing.T) {
 		var data bytes.Buffer
 		w := tar.NewWriter(&data)
 		for _, name := range order {
-			header := &tar.Header{Name: name, Mode: mode, Size: int64(len(value)), Uid: 42, Gid: 43, ModTime: time.Unix(100, 0)}
+			header := &tar.Header{
+				Name:    name,
+				Mode:    mode,
+				Size:    int64(len(value)),
+				Uid:     42,
+				Gid:     43,
+				ModTime: time.Unix(100, 0),
+			}
 			if execute {
 				header.Mode |= 0o111
 			}
@@ -162,7 +204,12 @@ func TestAcquire_GeneratedTreeContent(t *testing.T) {
 	}
 	base := archive([]string{"a", "b"}, false, false, 0o644, "bytes")
 	baseline := cachetest.New(t, "", New)
-	_, descriptor, _, err := baseline.Acquire(t.Context(), ArchiveKey{Policy: "fixed", Content: "base"}, Policy{MaxAge: Forever}, producer(base, ocispec.Descriptor{}))
+	_, descriptor, _, err := baseline.Acquire(
+		t.Context(),
+		ArchiveKey{Policy: "fixed", Content: "base"},
+		Policy{MaxAge: Forever},
+		producer(base, ocispec.Descriptor{}),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +298,8 @@ func TestAcquire_GeneratedReadFailure(t *testing.T) {
 			}
 			for range 2 {
 				input, _, failedID, err := c.Acquire(t.Context(), key, Policy{MaxAge: Forever}, fill)
-				if input != nil || failedID != "" || !errors.Is(err, fs.ErrNotExist) || !errors.Is(err, manifest.ErrFlux) {
+				if input != nil || failedID != "" || !errors.Is(err, fs.ErrNotExist) ||
+					!errors.Is(err, manifest.ErrFlux) {
 					t.Fatalf("missing generated backing = %v, %q, %v", input, failedID, err)
 				}
 			}
@@ -311,7 +359,13 @@ func TestAcquire_ExtractModesAndTrailing(t *testing.T) {
 				t.Fatalf("warm extract productions = %d", calls)
 			}
 			key.Policy = ""
-			if input, _, id, err := c.Acquire(t.Context(), key, Policy{MaxAge: Forever}, fill); err == nil || input != nil || id != "" {
+			if input, _, id, err := c.Acquire(
+				t.Context(),
+				key,
+				Policy{MaxAge: Forever},
+				fill,
+			); err == nil || input != nil ||
+				id != "" {
 				t.Fatalf("normal trailing limit = %v, %q, %v", input, id, err)
 			}
 		})
@@ -350,13 +404,15 @@ func TestReadArchive_ExtractDeclaredSize(t *testing.T) {
 			var readers []io.Reader
 			if tc.first != 0 {
 				var header bytes.Buffer
-				if err := tar.NewWriter(&header).WriteHeader(&tar.Header{Name: "same", Size: tc.first, Mode: 0o644}); err != nil {
+				if err := tar.NewWriter(&header).
+					WriteHeader(&tar.Header{Name: "same", Size: tc.first, Mode: 0o644}); err != nil {
 					t.Fatal(err)
 				}
 				readers = append(readers, bytes.NewReader(header.Bytes()), io.LimitReader(zeroReader{}, tc.first))
 			}
 			var header bytes.Buffer
-			if err := tar.NewWriter(&header).WriteHeader(&tar.Header{Name: "same", Size: tc.second, Mode: 0o644}); err != nil {
+			if err := tar.NewWriter(&header).
+				WriteHeader(&tar.Header{Name: "same", Size: tc.second, Mode: 0o644}); err != nil {
 				t.Fatal(err)
 			}
 			readers = append(readers, bytes.NewReader(header.Bytes()))
@@ -400,10 +456,15 @@ func TestReadArchive_LargeDeclaredSize(t *testing.T) {
 								index.root = root
 							}
 							var header bytes.Buffer
-							if err := tar.NewWriter(&header).WriteHeader(&tar.Header{Name: "large", Size: 1 << 33, Mode: 0o644}); err != nil {
+							if err := tar.NewWriter(&header).
+								WriteHeader(&tar.Header{Name: "large", Size: 1 << 33, Mode: 0o644}); err != nil {
 								t.Fatal(err)
 							}
-							_, err := readArchive(io.MultiReader(bytes.NewReader(header.Bytes()), iotest.ErrReader(tc.cause)), ArchiveKey{Policy: policy}, index)
+							_, err := readArchive(
+								io.MultiReader(bytes.NewReader(header.Bytes()), iotest.ErrReader(tc.cause)),
+								ArchiveKey{Policy: policy},
+								index,
+							)
 							if !errors.Is(err, tc.want) {
 								t.Fatalf("large declared body: %v, want %v", err, tc.want)
 							}
@@ -432,7 +493,8 @@ func TestReadArchive_AcceptsLargeSource(t *testing.T) {
 			}
 			defer file.Close()
 			var header bytes.Buffer
-			if err := tar.NewWriter(&header).WriteHeader(&tar.Header{Name: "large", Size: size, Mode: 0o644, Format: tar.FormatUSTAR}); err != nil {
+			if err := tar.NewWriter(&header).
+				WriteHeader(&tar.Header{Name: "large", Size: size, Mode: 0o644, Format: tar.FormatUSTAR}); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := file.Write(header.Bytes()); err != nil {

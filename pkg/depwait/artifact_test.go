@@ -59,7 +59,11 @@ func TestClassify_ArtifactRequirement(t *testing.T) {
 				source = &manifest.OCIRepository{Name: "source", Namespace: "apps"}
 			}
 			if tc.descriptor {
-				source = &manifest.HelmChartSource{Name: "source", Namespace: "apps", SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: manifest.KindGitRepository, Name: "git"}}
+				source = &manifest.HelmChartSource{
+					Name:      "source",
+					Namespace: "apps",
+					SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: manifest.KindGitRepository, Name: "git"},
+				}
 			}
 			if tc.registry {
 				source = &manifest.HelmRepository{Name: "source", Namespace: "apps", URL: "https://example.test/charts"}
@@ -96,7 +100,11 @@ func TestClassify_ArtifactRequirement(t *testing.T) {
 			} else if !tc.absent {
 				publish()
 			}
-			got := w.Classify(t.Context(), manifest.DependencyRef{NamedResource: source.Named(), ReadyExpr: new(tc.expr), Artifact: true}, tc.level)
+			got := w.Classify(
+				t.Context(),
+				manifest.DependencyRef{NamedResource: source.Named(), ReadyExpr: new(tc.expr), Artifact: true},
+				tc.level,
+			)
 			wantErr := tc.wantErr
 			if tc.skipped {
 				wantErr = manifest.ErrSourceSkipped
@@ -121,7 +129,11 @@ func TestClassify_BootstrapArtifactRequirement(t *testing.T) {
 			s := store.New()
 			s.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{FS: fstest.MapFS{}})
 			w := Waiter{Store: s}
-			got := w.Classify(t.Context(), manifest.DependencyRef{NamedResource: manifest.BootstrapSourceID, Artifact: artifact}, manifest.DrainCascade)
+			got := w.Classify(
+				t.Context(),
+				manifest.DependencyRef{NamedResource: manifest.BootstrapSourceID, Artifact: artifact},
+				manifest.DrainCascade,
+			)
 			want := schedule.DependencyFailed
 			if artifact {
 				want = schedule.Terminal
@@ -149,7 +161,11 @@ func TestClassify_SyntheticArtifactContext(t *testing.T) {
 			}
 			st.UpdateStatus(repo.Named(), status)
 			waiter := Waiter{Store: st}
-			result := waiter.Classify(t.Context(), manifest.DependencyRef{NamedResource: repo.Named(), Artifact: true, ArtifactOnly: mode == "unreadable"}, manifest.DrainCascade)
+			result := waiter.Classify(
+				t.Context(),
+				manifest.DependencyRef{NamedResource: repo.Named(), Artifact: true, ArtifactOnly: mode == "unreadable"},
+				manifest.DrainCascade,
+			)
 			sentinel := manifest.ErrObjectNotFound
 			if mode == "unreadable" {
 				sentinel = manifest.ErrInput
@@ -157,7 +173,8 @@ func TestClassify_SyntheticArtifactContext(t *testing.T) {
 			if mode == "skipped" {
 				sentinel = manifest.ErrSourceSkipped
 			}
-			if !errors.Is(result.Err, sentinel) || !strings.Contains(result.Err.Error(), chart.Named().String()) || strings.Contains(result.Err.Error(), repo.Named().String()) {
+			if !errors.Is(result.Err, sentinel) || !strings.Contains(result.Err.Error(), chart.Named().String()) ||
+				strings.Contains(result.Err.Error(), repo.Named().String()) {
 				t.Fatalf("artifact context or sentinel lost: %+v", result)
 			}
 		})

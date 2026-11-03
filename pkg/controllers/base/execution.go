@@ -56,7 +56,8 @@ func (e *Execution) Valid() bool {
 	if e.Outcome() == schedule.Blocked || !e.Reads.Admitted() {
 		return true
 	}
-	if output, ok := e.Store.GetArtifact(e.Reads.ID(), store.ArtifactContent).(*store.SourceArtifact); ok && !output.Reads.Valid() {
+	if output, ok := e.Store.GetArtifact(e.Reads.ID(), store.ArtifactContent).(*store.SourceArtifact); ok &&
+		!output.Reads.Valid() {
 		return false
 	}
 	_, _, inventory := e.Store.GetEmission(e.Reads.ID())
@@ -70,7 +71,12 @@ func (e *Execution) Retire() {
 }
 
 // Emit publishes the candidate inventory with its consumed provenance.
-func (e *Execution) Emit(ctx context.Context, id manifest.NamedResource, next *store.Emission, payloads map[manifest.NamedResource]*store.SourceArtifact) error {
+func (e *Execution) Emit(
+	ctx context.Context,
+	id manifest.NamedResource,
+	next *store.Emission,
+	payloads map[manifest.NamedResource]*store.SourceArtifact,
+) error {
 	if err := e.Checkpoint(); err != nil {
 		return err
 	}
@@ -94,7 +100,12 @@ func (e *Execution) acceptEmission(next *store.Emission) {
 	}
 }
 
-func (e *Execution) publish(ctx context.Context, id manifest.NamedResource, next *store.Emission, payloads map[manifest.NamedResource]*store.SourceArtifact) error {
+func (e *Execution) publish(
+	ctx context.Context,
+	id manifest.NamedResource,
+	next *store.Emission,
+	payloads map[manifest.NamedResource]*store.SourceArtifact,
+) error {
 	e.bindEmission(next)
 	if err := e.emit(ctx, id, next, payloads); err != nil {
 		return err
@@ -119,7 +130,12 @@ func (e *Execution) Require(ctx context.Context, deps []manifest.DependencyRef, 
 }
 
 func (e *Execution) classify(ctx context.Context, level manifest.DrainLevel) error {
-	w := depwait.Waiter{Store: &e.Reads, Parent: e.Reads.ID(), Existence: e.existence, AllowMissingCRDs: e.allowMissingCRDs}
+	w := depwait.Waiter{
+		Store:            &e.Reads,
+		Parent:           e.Reads.ID(),
+		Existence:        e.existence,
+		AllowMissingCRDs: e.allowMissingCRDs,
+	}
 	var blocked []manifest.NamedResource
 	var failed *manifest.DependencyFailedError
 	var cause error
@@ -136,7 +152,11 @@ func (e *Execution) classify(ctx context.Context, level manifest.DrainLevel) err
 		switch cl.Kind {
 		case schedule.DependencyFailed:
 			if failed == nil {
-				failed = &manifest.DependencyFailedError{Parent: e.Reads.ID(), Subject: manifest.DiagnosticFor(e.Reads.ID(), e.Reads.GetObject(e.Reads.ID())), Reasons: make(map[manifest.NamedResource]manifest.DiagnosticReason)}
+				failed = &manifest.DependencyFailedError{
+					Parent:  e.Reads.ID(),
+					Subject: manifest.DiagnosticFor(e.Reads.ID(), e.Reads.GetObject(e.Reads.ID())),
+					Reasons: make(map[manifest.NamedResource]manifest.DiagnosticReason),
+				}
 			}
 			failed.Failed = append(failed.Failed, dep.NamedResource)
 			reason := cl.DiagnosticReason(dep.NamedResource)
@@ -206,7 +226,8 @@ func (e *Execution) finish(ctx context.Context, err error) {
 		if _, failed := errors.AsType[*manifest.DependencyFailedError](err); failed {
 			e.kind = schedule.DependencyFailed
 		}
-		if artifact, ok := e.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact); ok && !artifact.Reads.Valid() {
+		if artifact, ok := e.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact); ok &&
+			!artifact.Reads.Valid() {
 			e.Store.SetArtifact(id, nil)
 		}
 		_, _, next := e.Reads.GetEmission(id)
@@ -218,30 +239,55 @@ func (e *Execution) finish(ctx context.Context, err error) {
 		}
 		next.Finish()
 		if slog.Default().Enabled(ctx, slog.LevelDebug) {
-			slog.DebugContext(ctx, "base: resource failed", "id", manifest.DiagnosticFor(id, e.Reads.GetObject(id)).String(), "err", manifest.ErrorDetails(err))
+			slog.DebugContext(
+				ctx,
+				"base: resource failed",
+				"id",
+				manifest.DiagnosticFor(id, e.Reads.GetObject(id)).String(),
+				"err",
+				manifest.ErrorDetails(err),
+			)
 		}
 		if errors.Is(err, manifest.ErrSourceSkipped) {
-			e.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: strings.TrimSpace(err.Error())})
+			e.Store.UpdateStatus(
+				id,
+				store.StatusInfo{
+					Status:  store.StatusReady,
+					Reason:  store.ReasonSkipped,
+					Message: strings.TrimSpace(err.Error()),
+				},
+			)
 		} else {
 			e.Store.UpdateFailure(id, err)
 		}
 		return
 	}
-	if prior, ok := e.Store.GetStatus(id); ok && (prior.Status == store.StatusFailed && (!e.recovering || prior != e.initial) || prior.Status == store.StatusReady && (prior.Message != "" || prior.Outcome() != store.OutcomePassed)) {
+	if prior, ok := e.Store.GetStatus(
+		id,
+	); ok &&
+		(prior.Status == store.StatusFailed && (!e.recovering || prior != e.initial) || prior.Status == store.StatusReady && (prior.Message != "" || prior.Outcome() != store.OutcomePassed)) {
 		return
 	}
 	e.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 }
 
 // Dispatch runs a captured declaration through the common acceptance path.
-func (e *Execution) Dispatch[T manifest.BaseManifest, S any](ctx context.Context, level manifest.DrainLevel, state S, reconcile func(S, context.Context, T, manifest.DrainLevel) error) {
+func (e *Execution) Dispatch[T manifest.BaseManifest, S any](
+	ctx context.Context,
+	level manifest.DrainLevel,
+	state S,
+	reconcile func(S, context.Context, T, manifest.DrainLevel) error,
+) {
 	id := e.Reads.ID()
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			subject := manifest.DiagnosticFor(id, e.Reads.GetObject(id))
 			e.Reads.Retire()
 			slog.Error("base: panic during reconcile", "id", subject.String(), "panic", recovered)
-			e.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusFailed, Message: fmt.Sprintf("panic: %v", recovered)})
+			e.Store.UpdateStatus(
+				id,
+				store.StatusInfo{Status: store.StatusFailed, Message: fmt.Sprintf("panic: %v", recovered)},
+			)
 			panic(recovered)
 		}
 	}()
@@ -271,7 +317,10 @@ func (e *Execution) Dispatch[T manifest.BaseManifest, S any](ctx context.Context
 				e.Reads.GetObject(dep)
 			}
 		}
-		e.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged, Message: "unchanged"})
+		e.Store.UpdateStatus(
+			id,
+			store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged, Message: "unchanged"},
+		)
 		if err := e.withdrawInvalid(ctx); err != nil {
 			e.finish(ctx, err)
 			return
@@ -290,7 +339,14 @@ func (e *Execution) Dispatch[T manifest.BaseManifest, S any](ctx context.Context
 				return
 			}
 			if info, exists := e.Store.GetStatus(id); exists && info.Status != store.StatusReady {
-				e.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: "object not in store at reconcile time"})
+				e.Store.UpdateStatus(
+					id,
+					store.StatusInfo{
+						Status:  store.StatusReady,
+						Reason:  store.ReasonSkipped,
+						Message: "object not in store at reconcile time",
+					},
+				)
 			}
 			e.Reads.Accept()
 		}
@@ -298,7 +354,8 @@ func (e *Execution) Dispatch[T manifest.BaseManifest, S any](ctx context.Context
 	}
 
 	e.initial, _ = e.Store.GetStatus(id)
-	e.recovering = e.initial.IsDependencyFailure() || e.initial.Status == store.StatusFailed && e.Reads.ReplacesInvalid()
+	e.recovering = e.initial.IsDependencyFailure() ||
+		e.initial.Status == store.StatusFailed && e.Reads.ReplacesInvalid()
 	err := e.reconcile(ctx, obj, level, func(ctx context.Context, obj T, level manifest.DrainLevel) error {
 		return reconcile(state, ctx, obj, level)
 	})
@@ -312,7 +369,12 @@ func (e *Execution) Dispatch[T manifest.BaseManifest, S any](ctx context.Context
 	e.finish(ctx, err)
 }
 
-func (e *Execution) reconcile[T manifest.BaseManifest](ctx context.Context, obj T, level manifest.DrainLevel, reconcile func(context.Context, T, manifest.DrainLevel) error) error {
+func (e *Execution) reconcile[T manifest.BaseManifest](
+	ctx context.Context,
+	obj T,
+	level manifest.DrainLevel,
+	reconcile func(context.Context, T, manifest.DrainLevel) error,
+) error {
 	if !e.Reads.Valid() {
 		return nil
 	}
@@ -349,7 +411,8 @@ func (e *Execution) generatedChildren(children []store.Child) []store.Child {
 	if len(children) == 0 {
 		return e.generated
 	}
-	if len(e.generated) == 0 && !slices.ContainsFunc(children, func(child store.Child) bool { return child.Generated }) {
+	if len(e.generated) == 0 &&
+		!slices.ContainsFunc(children, func(child store.Child) bool { return child.Generated }) {
 		return children
 	}
 	current := make([]store.Child, 0, len(children)+len(e.generated))
@@ -390,24 +453,37 @@ func (e *Execution) requireDeclaration(ctx context.Context, level manifest.Drain
 		return err
 	}
 	if !ok {
-		failed = &manifest.DependencyFailedError{Parent: id, Subject: manifest.DiagnosticFor(id, e.Reads.GetObject(id)), Reasons: make(map[manifest.NamedResource]manifest.DiagnosticReason)}
+		failed = &manifest.DependencyFailedError{
+			Parent:  id,
+			Subject: manifest.DiagnosticFor(id, e.Reads.GetObject(id)),
+			Reasons: make(map[manifest.NamedResource]manifest.DiagnosticReason),
+		}
 	}
 	failed.Failed = owners
 	for _, owner := range owners {
 		if _, exists := failed.Reasons[owner]; !exists {
-			failed.Reasons[owner] = manifest.DiagnosticReason{Subject: manifest.DiagnosticFor(owner, e.Reads.GetObject(owner)), Message: "declaration not emitted"}
+			failed.Reasons[owner] = manifest.DiagnosticReason{
+				Subject: manifest.DiagnosticFor(owner, e.Reads.GetObject(owner)),
+				Message: "declaration not emitted",
+			}
 		}
 	}
 	return failed
 }
 
 func (e *Execution) keepOrderingDep(id manifest.NamedResource) bool {
-	return !e.filterActive() || e.filter.ShouldReconcile(id) || (e.existence == nil || !e.existence.IsFileIndexed(id)) && e.Reads.GetObject(id) == nil
+	return !e.filterActive() || e.filter.ShouldReconcile(id) ||
+		(e.existence == nil || !e.existence.IsFileIndexed(id)) && e.Reads.GetObject(id) == nil
 }
 
 // FingerprintDedup derives the replay key from content and reuses accepted children.
 // Nil or unmarshalable content MUST bypass replay; preflight failures still win.
-func (e *Execution) FingerprintDedup(ctx context.Context, id manifest.NamedResource, content any, attempt *store.Emission) (string, bool, error) {
+func (e *Execution) FingerprintDedup(
+	ctx context.Context,
+	id manifest.NamedResource,
+	content any,
+	attempt *store.Emission,
+) (string, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return "", true, err
 	}
@@ -418,7 +494,10 @@ func (e *Execution) FingerprintDedup(ctx context.Context, id manifest.NamedResou
 		_, selected, dirty, _ := e.filter.Membership(id)
 		if selected && !dirty {
 			e.Reused = true
-			e.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged, Message: "unchanged"})
+			e.Store.UpdateStatus(
+				id,
+				store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged, Message: "unchanged"},
+			)
 			return "", true, nil
 		}
 	}
@@ -447,7 +526,8 @@ func (e *Execution) FingerprintDedup(ctx context.Context, id manifest.NamedResou
 	if slices.Equal(output.Unreadable, e.Unreadable) {
 		e.Reads.CarryWarnings(output)
 	}
-	if attempt.Render == nil && output.Render != nil && attempt.OutputReads != nil && attempt.OutputReads.Valid() && e.Reads.Matches(attempt.OutputReads) {
+	if attempt.Render == nil && output.Render != nil && attempt.OutputReads != nil && attempt.OutputReads.Valid() &&
+		e.Reads.Matches(attempt.OutputReads) {
 		attempt.Render = output.Render
 	}
 	attempt.Children = output.Children
@@ -455,7 +535,8 @@ func (e *Execution) FingerprintDedup(ctx context.Context, id manifest.NamedResou
 	attempt.Fingerprint = output.Fingerprint
 	attempt.Unreadable = e.Unreadable
 	attempt.Complete = true
-	if attempt.OutputReads.Valid() && e.Reads.Matches(attempt.OutputReads) && slices.Equal(output.Unreadable, e.Unreadable) {
+	if attempt.OutputReads.Valid() && e.Reads.Matches(attempt.OutputReads) &&
+		slices.Equal(output.Unreadable, e.Unreadable) {
 		attempt.Reads = attempt.OutputReads
 	}
 	return fp, true, e.Emit(ctx, id, attempt, nil)
@@ -525,7 +606,12 @@ func (p *pendingData) Settle(ctx context.Context, level manifest.DrainLevel) err
 	e := p.execution
 	gateErr := e.classify(ctx, level)
 
-	w := depwait.Waiter{Store: &e.Reads, Parent: e.Reads.ID(), Existence: e.existence, AllowMissingCRDs: e.allowMissingCRDs}
+	w := depwait.Waiter{
+		Store:            &e.Reads,
+		Parent:           e.Reads.ID(),
+		Existence:        e.existence,
+		AllowMissingCRDs: e.allowMissingCRDs,
+	}
 	var omitted []manifest.NamedResource
 	failed, _ := errors.AsType[*manifest.DependencyFailedError](gateErr)
 	p.blocked = p.blocked[:0]
@@ -545,7 +631,11 @@ func (p *pendingData) Settle(ctx context.Context, level manifest.DrainLevel) err
 			p.blocked = append(p.blocked, result.Blocked...)
 		case schedule.DependencyFailed:
 			if failed == nil {
-				failed = &manifest.DependencyFailedError{Parent: e.Reads.ID(), Subject: manifest.DiagnosticFor(e.Reads.ID(), e.Reads.GetObject(e.Reads.ID())), Reasons: make(map[manifest.NamedResource]manifest.DiagnosticReason)}
+				failed = &manifest.DependencyFailedError{
+					Parent:  e.Reads.ID(),
+					Subject: manifest.DiagnosticFor(e.Reads.ID(), e.Reads.GetObject(e.Reads.ID())),
+					Reasons: make(map[manifest.NamedResource]manifest.DiagnosticReason),
+				}
 			}
 			causes := result.Failed
 			if len(causes) == 0 {
@@ -573,7 +663,15 @@ func (p *pendingData) Settle(ctx context.Context, level manifest.DrainLevel) err
 		return gateErr
 	}
 	for _, ref := range e.unresolved {
-		e.Reads.AddWarning(manifest.Warning{Category: manifest.WarnUnresolvedSubstitution, Message: fmt.Sprintf("substituteFrom Secret %q could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values", ref.Name)})
+		e.Reads.AddWarning(
+			manifest.Warning{
+				Category: manifest.WarnUnresolvedSubstitution,
+				Message: fmt.Sprintf(
+					"substituteFrom Secret %q could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values",
+					ref.Name,
+				),
+			},
+		)
 	}
 	return p.wait.Resume(ctx, level, compactDataIDs(omitted))
 }

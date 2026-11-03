@@ -89,7 +89,11 @@ func TestCacheGC_WarningWriteError(t *testing.T) {
 	var wantOut, wantErr string
 	for run := range 2 {
 		stdout, stderr, code := runCLI(t, args...)
-		if code != 0 || strings.Count(stderr, "[CacheMaintenance]") != 1 || !strings.Contains(stderr, "save swept index") || strings.Contains(stdout, "save swept index") || !strings.Contains(stdout, "0 entries") || !strings.Contains(stdout, "1 errors") {
+		if code != 0 || strings.Count(stderr, "[CacheMaintenance]") != 1 ||
+			!strings.Contains(stderr, "save swept index") ||
+			strings.Contains(stdout, "save swept index") ||
+			!strings.Contains(stdout, "0 entries") ||
+			!strings.Contains(stdout, "1 errors") {
 			t.Fatalf("cache advisory: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 		}
 		if run == 0 {

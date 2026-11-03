@@ -14,17 +14,28 @@ func TestOutputEqual_FieldPolicy(t *testing.T) {
 		kind, field string
 		equal       bool
 	}{
-		{KindKustomization, "interval", true}, {KindKustomization, "timeout", true},
-		{KindKustomization, "retryInterval", true}, {KindKustomization, "prune", true},
-		{KindKustomization, "decryption.provider", false}, {KindKustomization, "suspend", false},
-		{KindKustomization, "futureOutputOption", false}, {KindKustomization, "postBuild.substitute.IMAGE", false},
-		{KindKustomization, "healthChecks.name", true}, {KindKustomization, "healthChecks.future", false},
-		{KindHelmRelease, "interval", true}, {KindHelmRelease, "install.remediation.retries", true},
-		{KindHelmRelease, "install.remediation.future", false}, {KindHelmRelease, "install.replace", false},
-		{KindHelmRelease, "install.disableHooks", false}, {KindHelmRelease, "install.skipCRDs", false},
-		{KindHelmRelease, "install.disableSchemaValidation", false}, {KindHelmRelease, "suspend", false},
-		{KindHelmRelease, "values.image", false}, {KindHelmRelease, "chart.spec.version", false},
-		{KindHelmRelease, "upgrade.remediation.strategy", true}, {KindHelmRelease, "rollback.force", true},
+		{KindKustomization, "interval", true},
+		{KindKustomization, "timeout", true},
+		{KindKustomization, "retryInterval", true},
+		{KindKustomization, "prune", true},
+		{KindKustomization, "decryption.provider", false},
+		{KindKustomization, "suspend", false},
+		{KindKustomization, "futureOutputOption", false},
+		{KindKustomization, "postBuild.substitute.IMAGE", false},
+		{KindKustomization, "healthChecks.name", true},
+		{KindKustomization, "healthChecks.future", false},
+		{KindHelmRelease, "interval", true},
+		{KindHelmRelease, "install.remediation.retries", true},
+		{KindHelmRelease, "install.remediation.future", false},
+		{KindHelmRelease, "install.replace", false},
+		{KindHelmRelease, "install.disableHooks", false},
+		{KindHelmRelease, "install.skipCRDs", false},
+		{KindHelmRelease, "install.disableSchemaValidation", false},
+		{KindHelmRelease, "suspend", false},
+		{KindHelmRelease, "values.image", false},
+		{KindHelmRelease, "chart.spec.version", false},
+		{KindHelmRelease, "upgrade.remediation.strategy", true},
+		{KindHelmRelease, "rollback.force", true},
 	} {
 		t.Run(tc.kind+"/"+tc.field, func(t *testing.T) {
 			t.Parallel()
@@ -56,7 +67,11 @@ func TestOutputEqual_FieldPolicy(t *testing.T) {
 
 func TestReference_CloneAndContentInput(t *testing.T) {
 	t.Parallel()
-	owner := &HelmRelease{Name: "app", Namespace: "apps", ValuesFrom: []ValuesReference{{Kind: KindConfigMap, Name: "values", ValuesKey: "chosen"}}}
+	owner := &HelmRelease{
+		Name:       "app",
+		Namespace:  "apps",
+		ValuesFrom: []ValuesReference{{Kind: KindConfigMap, Name: "values", ValuesKey: "chosen"}},
+	}
 	refs := []Reference{}
 	for ref := range References(owner, ReferenceRelations) {
 		refs = append(refs, ref.Clone())
@@ -75,7 +90,14 @@ func TestOutputEqual_OwnershipLabels(t *testing.T) {
 			object := &OCIRepository{Name: "chart", Namespace: "apps"}
 			docs := [2]map[string]any{}
 			for side := range docs {
-				docs[side] = map[string]any{"metadata": map[string]any{"name": "chart", "namespace": "apps", "labels": map[string]any{FluxKustomizeDomain + "/name": fmt.Sprint(side), "app": "same"}}, "spec": map[string]any{"url": "oci://fixture.invalid/chart"}}
+				docs[side] = map[string]any{
+					"metadata": map[string]any{
+						"name":      "chart",
+						"namespace": "apps",
+						"labels":    map[string]any{FluxKustomizeDomain + "/name": fmt.Sprint(side), "app": "same"},
+					},
+					"spec": map[string]any{"url": "oci://fixture.invalid/chart"},
+				}
 			}
 			if changed {
 				docs[1]["spec"].(map[string]any)["futureInput"] = "changed"

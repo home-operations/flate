@@ -40,7 +40,8 @@ func TestRenderDocs_ParentQualifiedMatching(t *testing.T) {
 					t.Fatalf("want two changes, got %q", out)
 				}
 			case FormatHTML:
-				cells := regexp.MustCompile(`(?s)<td class="diff-code diff-(del|add)">(.*?)</td>`).FindAllStringSubmatch(out, -1)
+				cells := regexp.MustCompile(`(?s)<td class="diff-code diff-(del|add)">(.*?)</td>`).
+					FindAllStringSubmatch(out, -1)
 				bodies := map[string]string{}
 				tags := regexp.MustCompile(`<[^>]*>`)
 				for _, cell := range cells {
@@ -76,7 +77,8 @@ func TestRenderDocs_ParentQualifiedMatching(t *testing.T) {
 		old, current := ncm("hello", "greeting", "old"), ncm("hello", "greeting", "new")
 		old.Parent, current.Parent = left.Parent, left.Parent
 		out := renderDiff(t, []Doc{old, right}, []Doc{current, right}, Options{Format: FormatGitHub})
-		if strings.Count(out, "@@ data.greeting @@") != 1 || !strings.Contains(out, "- old") || !strings.Contains(out, "+ new") {
+		if strings.Count(out, "@@ data.greeting @@") != 1 || !strings.Contains(out, "- old") ||
+			!strings.Contains(out, "+ new") {
 			t.Fatalf("want only a's change, got:\n%s", out)
 		}
 	})
@@ -84,8 +86,18 @@ func TestRenderDocs_ParentQualifiedMatching(t *testing.T) {
 
 func TestRenderDocs_NativePresentation(t *testing.T) {
 	t.Parallel()
-	left := []Doc{ncm("b-removed", "greeting", "gone"), ncm("z-modified", "greeting", "old"), ncm("middle-unchanged", "greeting", "same"), ncm("a-modified", "greeting", "before")}
-	right := []Doc{ncm("y-added", "greeting", "born"), ncm("a-modified", "greeting", "after"), left[2], ncm("z-modified", "greeting", "new")}
+	left := []Doc{
+		ncm("b-removed", "greeting", "gone"),
+		ncm("z-modified", "greeting", "old"),
+		ncm("middle-unchanged", "greeting", "same"),
+		ncm("a-modified", "greeting", "before"),
+	}
+	right := []Doc{
+		ncm("y-added", "greeting", "born"),
+		ncm("a-modified", "greeting", "after"),
+		left[2],
+		ncm("z-modified", "greeting", "new"),
+	}
 	const github = `
 @@ data.greeting @@
 # v1/ConfigMap/apps/z-modified
@@ -122,7 +134,12 @@ func TestRenderDocs_NativePresentation(t *testing.T) {
 +   greeting: born
 
 `
-	note := Suppression{Parent: Parent{NamedResource: testutil.HelmReleaseID("apps", "owner")}, Side: SideCurrent, Count: 1, Reason: "not ready"}
+	note := Suppression{
+		Parent: Parent{NamedResource: testutil.HelmReleaseID("apps", "owner")},
+		Side:   SideCurrent,
+		Count:  1,
+		Reason: "not ready",
+	}
 	for _, tc := range []struct {
 		format Format
 		want   string
@@ -138,7 +155,6 @@ func TestRenderDocs_NativePresentation(t *testing.T) {
 			assert.Equal(t, renderDiff(t, left, right, opts), first)
 		})
 	}
-
 }
 
 func TestRenderDocs_NativeCanonicalEdges(t *testing.T) {
@@ -163,7 +179,8 @@ func TestRenderDocs_NativeCanonicalEdges(t *testing.T) {
 						md["namespace"] = ""
 					}
 				}
-				report, err := diffprep.Prepare(prepareDocs([]Doc{left}), prepareDocs([]Doc{right}), prepareOptions(Options{})).Native()
+				report, err := diffprep.Prepare(prepareDocs([]Doc{left}), prepareDocs([]Doc{right}), prepareOptions(Options{})).
+					Native()
 				assert.NoError(t, err)
 				assert.Diff(t, report.From.Names, []string{tc.want})
 				assert.Diff(t, report.To.Names, []string{tc.want})
@@ -197,7 +214,8 @@ func TestRenderDocs_NativeCanonicalEdges(t *testing.T) {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				opts := Options{Format: FormatGitHub, Normalize: func(m map[string]any) { delete(m, "apiVersion") }}
-				report, err := diffprep.Prepare(prepareDocs(tc.left), prepareDocs(tc.right), prepareOptions(opts)).Native()
+				report, err := diffprep.Prepare(prepareDocs(tc.left), prepareDocs(tc.right), prepareOptions(opts)).
+					Native()
 				assert.NoError(t, err)
 				if len(report.Diffs) != len(tc.wantKinds) {
 					t.Fatalf("wrong canonical operations: %+v", report.Diffs)
@@ -231,7 +249,14 @@ func TestRenderDocs_NativeCanonicalEdges(t *testing.T) {
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
-				out, _, err := RenderDocs(tc.left, tc.right, Options{Format: FormatGitHub, Suppressed: []Suppression{{Parent: hrParent, Side: SideCurrent, Reason: "not ready"}}})
+				out, _, err := RenderDocs(
+					tc.left,
+					tc.right,
+					Options{
+						Format:     FormatGitHub,
+						Suppressed: []Suppression{{Parent: hrParent, Side: SideCurrent, Reason: "not ready"}},
+					},
+				)
 				if out != nil || err == nil || !strings.HasPrefix(err.Error(), tc.prefix) {
 					t.Fatalf("RenderDocs = %q, %v; want nil and %s", out, err, tc.prefix)
 				}
@@ -255,7 +280,19 @@ func TestRenderDocs_NativeDuplicateEdges(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
 
-				shadow, old, current := ncm("hello", "greeting", "shadowed"), ncm("hello", "greeting", "retained"), ncm("hello", "greeting", "counterpart")
+				shadow, old, current := ncm(
+					"hello",
+					"greeting",
+					"shadowed",
+				), ncm(
+					"hello",
+					"greeting",
+					"retained",
+				), ncm(
+					"hello",
+					"greeting",
+					"counterpart",
+				)
 				opts := Options{Format: FormatGitHub}
 				if collision {
 					shadow.Manifest["metadata"].(map[string]any)["name"] = "shadow"
@@ -266,7 +303,9 @@ func TestRenderDocs_NativeDuplicateEdges(t *testing.T) {
 					left, right = right, left
 				}
 				out := renderDiff(t, left, right, opts)
-				if strings.Count(out, "@@ data.greeting @@") != 1 || strings.Contains(out, "shadowed") || !strings.Contains(out, "retained") || !strings.Contains(out, "counterpart") {
+				if strings.Count(out, "@@ data.greeting @@") != 1 || strings.Contains(out, "shadowed") ||
+					!strings.Contains(out, "retained") ||
+					!strings.Contains(out, "counterpart") {
 					t.Fatalf("wrong winning content:\n%s", out)
 				}
 				_, warnings, err := RenderDocs(left, right, opts)
@@ -282,5 +321,4 @@ func TestRenderDocs_NativeDuplicateEdges(t *testing.T) {
 			})
 		}
 	}
-
 }

@@ -28,7 +28,9 @@ func TestFinalizeIndex_RemoteInputs(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			var requests atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1); http.NotFound(w, r) }))
+			server := httptest.NewServer(
+				http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1); http.NotFound(w, r) }),
+			)
 			defer server.Close()
 			root := t.TempDir()
 			input := fmt.Sprintf("envs: [%s]", server.URL)
@@ -134,7 +136,12 @@ func TestFinalizeIndex_RemoteCancellation(t *testing.T) {
 	}))
 	defer server.Close()
 	root := t.TempDir()
-	testutil.WriteFile(t, root, "kustomization.yaml", fmt.Sprintf("configMapGenerator:\n- name: remote\n  envs: [%s]\n", server.URL))
+	testutil.WriteFile(
+		t,
+		root,
+		"kustomization.yaml",
+		fmt.Sprintf("configMapGenerator:\n- name: remote\n  envs: [%s]\n", server.URL),
+	)
 	st := store.New()
 	l := loaderFixture(st, nil)
 	l.documents = readerForTest(root)

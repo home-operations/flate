@@ -52,7 +52,11 @@ func Promote(ctx context.Context, st *store.Store, id manifest.NamedResource, op
 		mountSource(mounted, sources.GetArtifact(source, store.ArtifactContent))
 		reader.setSources(mounted)
 		var err error
-		objs, err = reader.parseFile(ctx, path, manifest.ParseDocOptions{WipeSecrets: opts.WipeSecrets, DefaultNamespace: ""})
+		objs, err = reader.parseFile(
+			ctx,
+			path,
+			manifest.ParseDocOptions{WipeSecrets: opts.WipeSecrets, DefaultNamespace: ""},
+		)
 		if err != nil {
 			if ctx.Err() != nil {
 				return false, ctx.Err()
@@ -157,7 +161,13 @@ func (l *Loader) RegisterBuilt(input BuiltInput, docs []store.Child) {
 	for i, child := range docs {
 		obj := child.Obj
 		id := obj.Named()
-		record := manifest.DiscoveryRecord{Declaration: obj, File: builder, Builder: builder, BuilderOwner: input.Owner, Inputs: inputs}
+		record := manifest.DiscoveryRecord{
+			Declaration:  obj,
+			File:         builder,
+			Builder:      builder,
+			BuilderOwner: input.Owner,
+			Inputs:       inputs,
+		}
 		if raw, ok := l.Index.Lookup(id); ok {
 			original := l.IndexedObject(id, raw)
 			if raw.Authored != (manifest.NamedResource{}) && original.Obj != nil {
@@ -174,7 +184,11 @@ func (l *Loader) RegisterBuilt(input BuiltInput, docs []store.Child) {
 			if !same && l.documents.compact && l.Options.Changes != nil && raw.Path != "" {
 				evidence := admissionClosure{loader: l, objects: l.Store}
 				delta, _, _ := evidence.delta(input.Source)
-				same = delta != nil && !evidence.fileChanged(input.Source, raw.File) && !slices.ContainsFunc(shared, func(file string) bool { return evidence.fileChanged(input.Source, file) })
+				same = delta != nil && !evidence.fileChanged(input.Source, raw.File) &&
+					!slices.ContainsFunc(
+						shared,
+						func(file string) bool { return evidence.fileChanged(input.Source, file) },
+					)
 			}
 			if !same && original.Doc != nil {
 				if producer, ok := l.Store.GetObject(input.Owner).(interface {
@@ -182,7 +196,10 @@ func (l *Loader) RegisterBuilt(input BuiltInput, docs []store.Child) {
 				}); ok {
 					doc := manifest.DeepCopyMap(original.Doc)
 					producer.EmissionPolicy().Stamp([]manifest.DocOccurrence{{Document: doc}})
-					projected, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets})
+					projected, _, _, err := manifest.ParseDoc(
+						doc,
+						manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets},
+					)
 					same = err == nil && manifest.Equal(obj, projected)
 				}
 			}
@@ -216,7 +233,10 @@ func (l *Loader) RegisterBuilt(input BuiltInput, docs []store.Child) {
 		if record.Path == "" || !selected[record.Path] {
 			continue
 		}
-		if existing := l.Store.GetObject(id); existing != nil && l.Store.GetArtifact(id, store.ArtifactContent) == nil && (existing == l.admitted[id] || existing == l.IndexedObject(id, record).Obj) {
+		if existing := l.Store.GetObject(
+			id,
+		); existing != nil && l.Store.GetArtifact(id, store.ArtifactContent) == nil &&
+			(existing == l.admitted[id] || existing == l.IndexedObject(id, record).Obj) {
 			l.Store.DeleteObject(id)
 		}
 		delete(l.Index.Records, id)
@@ -238,7 +258,10 @@ func (l *Loader) RegisterBuilt(input BuiltInput, docs []store.Child) {
 		if id == input.Owner {
 			continue
 		}
-		if existing := l.Store.GetObject(id); existing != nil && l.Store.GetArtifact(id, store.ArtifactContent) == nil && (existing == l.candidates[id].Obj || existing == l.admitted[id]) {
+		if existing := l.Store.GetObject(
+			id,
+		); existing != nil && l.Store.GetArtifact(id, store.ArtifactContent) == nil &&
+			(existing == l.candidates[id].Obj || existing == l.admitted[id]) {
 			l.Store.DeleteObject(id)
 		}
 		delete(l.admitted, id)

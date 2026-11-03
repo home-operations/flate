@@ -31,7 +31,14 @@ func AdmitDirectory(ctx context.Context, location *gitrepo.Location) (*store.Sou
 	}
 	input := newLocal(root, false, &localPolicy{})
 	input.location = location
-	return &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: "file://" + root, LocalPath: root, LocalRoot: root, FS: input, ContentFingerprint: ContentFingerprint}, nil
+	return &store.SourceArtifact{
+		Kind:               manifest.KindGitRepository,
+		URL:                "file://" + root,
+		LocalPath:          root,
+		LocalRoot:          root,
+		FS:                 input,
+		ContentFingerprint: ContentFingerprint,
+	}, nil
 }
 
 type localView struct {
@@ -135,7 +142,10 @@ func (g *localView) readDir(abs string) ([]fs.DirEntry, error) {
 	return slices.DeleteFunc(entries, func(entry fs.DirEntry) bool {
 		if g.operation && entry.Type()&fs.ModeSymlink != 0 && entry.Name() != ".git" {
 			name := filepath.Join(abs, entry.Name())
-			g.observations.LoadOrStore(name, &localObservation{err: &fs.PathError{Op: "stat", Path: name, Err: fs.ErrPermission}})
+			g.observations.LoadOrStore(
+				name,
+				&localObservation{err: &fs.PathError{Op: "stat", Path: name, Err: fs.ErrPermission}},
+			)
 		}
 		return entry.Name() == ".git" || !entry.Type().IsRegular() && !entry.IsDir()
 	}), err

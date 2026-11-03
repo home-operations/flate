@@ -18,7 +18,16 @@ import (
 // status, no fetch, and still present in the parent's output.
 func TestOrchestrator_ForeignBucketKindNotFetched(t *testing.T) {
 	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "ks.yaml", testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n    namespace: flux-system\n"))
+	testutil.WriteFile(
+		t,
+		dir,
+		"ks.yaml",
+		testutil.KustomizationYAML(
+			"apps",
+			"flux-system",
+			"  path: ./apps\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n    namespace: flux-system\n",
+		),
+	)
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- bucket.yaml\n")
 	testutil.WriteFile(t, dir, "apps/bucket.yaml", `apiVersion: seaweed.seaweedfs.com/v1
 kind: Bucket
@@ -33,7 +42,11 @@ spec:
     namespace: seaweedfs
 `)
 
-	renderedSingleton1, err := RenderTrees(context.Background(), []Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true})
+	renderedSingleton1, err := RenderTrees(
+		context.Background(),
+		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
+		Config{WipeSecrets: true},
+	)
 	if len(renderedSingleton1) != 1 {
 		t.Fatalf("missing render: %v", err)
 	}
@@ -46,7 +59,12 @@ spec:
 		t.Errorf("foreign Bucket CRD must not fail the run; failed=%+v", res.Failed)
 	}
 
-	id := manifest.NamedResource{Group: "seaweed.seaweedfs.com", Kind: manifest.KindBucket, Namespace: "observability", Name: "greptimedb"}
+	id := manifest.NamedResource{
+		Group:     "seaweed.seaweedfs.com",
+		Kind:      manifest.KindBucket,
+		Namespace: "observability",
+		Name:      "greptimedb",
+	}
 	if info, ok := o.Store().GetStatus(id); ok {
 		t.Errorf("foreign Bucket CRD is not a source node, so it must carry no status; got %+v", info)
 	}
@@ -76,15 +94,26 @@ spec:
 	}
 	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease, manifest.KindResourceSet} {
 		t.Run(kind, func(t *testing.T) {
-			foreign := &manifest.RawObject{APIVersion: "example.test/v1", Kind: kind, Name: "apps", Namespace: "flux-system"}
+			foreign := &manifest.RawObject{
+				APIVersion: "example.test/v1",
+				Kind:       kind,
+				Name:       "apps",
+				Namespace:  "flux-system",
+			}
 			o.store.AddObject(foreign)
 			result := (dagDispatcher{o}).Dispatch(t.Context(), foreign.Named(), manifest.DrainNone)
 			if _, hasStatus := o.store.GetStatus(foreign.Named()); hasStatus || result.Assessment != nil {
 				t.Fatalf("foreign %s entered a Flux controller", kind)
 			}
-			o.store.UpdateStatus(foreign.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "foreign status"})
+			o.store.UpdateStatus(
+				foreign.Named(),
+				store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "foreign status"},
+			)
 			(dagDispatcher{o}).Dispatch(t.Context(), foreign.Named(), manifest.DrainNone)
-			if info, _ := o.store.GetStatus(foreign.Named()); info.Status != store.StatusPending || info.Message != "foreign status" {
+			if info, _ := o.store.GetStatus(
+				foreign.Named(),
+			); info.Status != store.StatusPending ||
+				info.Message != "foreign status" {
 				t.Fatalf("foreign %s status was rewritten by a Flux controller: %+v", kind, info)
 			}
 		})
@@ -117,7 +146,12 @@ spec:
 	if _, err := o.render(context.Background()); err == nil {
 		t.Fatal("expected the unreachable Flux Bucket's fetch to fail")
 	}
-	id := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindBucket, Namespace: "flux-system", Name: "minio"}
+	id := manifest.NamedResource{
+		Group:     "source.toolkit.fluxcd.io",
+		Kind:      manifest.KindBucket,
+		Namespace: "flux-system",
+		Name:      "minio",
+	}
 	info, ok := o.Store().GetStatus(id)
 	if !ok || info.Status != store.StatusFailed {
 		t.Fatalf("Flux Bucket status = %+v (present=%v), want Failed from the fetch attempt", info, ok)

@@ -35,7 +35,11 @@ func (f filterFixture) index() *manifest.DiscoveryIndex {
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
 	index.Claims = map[string][]manifest.NamedResource{}
 	index.Readers = map[string][]manifest.FileReader{}
-	claims := Claims(st, f.root, st.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization))
+	claims := Claims(
+		st,
+		f.root,
+		st.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization),
+	)
 	for _, c := range claims {
 		index.Claims[c.Prefix] = append(index.Claims[c.Prefix], c.ID)
 	}

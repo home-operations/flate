@@ -1,56 +1,126 @@
+# Based on the golden config for golangci-lint v2.15.0, with flate rules on top.
+# https://github.com/maratori/golangci-lint-config
+# Copyright (c) 2021-2025 Marat Reimers. MIT license: https://opensource.org/license/mit
 version: "2"
-
 run:
   timeout: 5m
-
 linters:
-  default: standard
   enable:
+    - asasalint
+    - asciicheck
+    - bidichk
+    - bodyclose
+    - canonicalheader
+    - clickhouselint
     - containedctx
+    - copyloopvar
+    - cyclop
     - depguard
+    - dupl
+    - durationcheck
+    - embeddedstructfieldcheck
+    - errcheck
+    - errchkjson
+    - errname
     - errorlint
+    - exhaustive
+    - exptostd
+    - fatcontext
     - forbidigo
+    - funcorder
+    - funlen
+    - gocheckcompilerdirectives
+    - gochecknoglobals
+    - gochecknoinits
+    - gochecksumtype
+    - gocognit
+    - goconst
     - gocritic
+    - gocyclo
+    - godoclint
+    - godot
     - godox
+    - gomoddirectives
+    - goprintffuncname
     - gosec
-    - ireturn
+    - govet
+    - iface
+    - ineffassign
     - intrange
+    - iotamixing
+    - ireturn
+    - loggercheck
+    - makezero
+    - mirror
     - misspell
+    - mnd
     - modernize
+    - musttag
     - nakedret
+    - nestif
+    - nilerr
+    - nilnesserr
+    - nilnil
+    - noctx
     - nolintlint
+    - nonamedreturns
+    - nosprintfhostport
+    - paralleltest
+    - perfsprint
+    - prealloc
+    - predeclared
+    - promlinter
+    - protogetter
+    - reassign
+    - recvcheck
     - revive
+    - rowserrcheck
     - sloglint
+    - spancheck
+    - sqlclosecheck
+    - staticcheck
+    - testableexamples
+    - testifylint
+    - testpackage
     - thelper
     - tparallel
     - unconvert
     - unparam
+    - unqueryvet
+    - unused
     - usestdlibvars
     - usetesting
+    - wastedassign
+    - whitespace
+    - wrapcheck
   settings:
-    gocritic:
-      disable-all: true
-      enabled-checks:
-        - commentedOutCode
-    godox:
-      keywords: [TODO, FIXME, legacy]
-    ireturn:
-      allow:
-        - error
-        - '^github\.com/home-operations/flate/pkg/schedule\.Dispatcher$'
-        - '^github\.com/home-operations/flate/pkg/values\.Provider$'
-    nakedret:
-      max-func-lines: 0
-    sloglint:
-      static-msg: true
-      kv-only: true
-    errorlint:
-      errorf: true
-      asserts: true
-      comparison: true
-    # The dependency flow from AGENTS.md "Layout": a package may import only the layers below it.
+    cyclop:
+      max-complexity: 30
+      package-average: 10.0
     depguard:
       rules:
+        deprecated:
+          files:
+            - $all
+          deny:
+            - pkg: github.com/golang/protobuf
+              desc: Use google.golang.org/protobuf instead, see https://developers.google.com/protocol-buffers/docs/reference/go/faq#modules
+            - pkg: github.com/satori/go.uuid
+              desc: Use github.com/google/uuid instead, satori's package is not maintained
+            - pkg: github.com/gofrs/uuid$
+              desc: Use github.com/gofrs/uuid/v5 or later, it was not a go module before v5
+        non-test files:
+          files:
+            - "!$test"
+          deny:
+            - pkg: math/rand$
+              desc: Use math/rand/v2 instead, see https://go.dev/blog/randv2
+        non-main files:
+          files:
+            - "!**/main.go"
+          deny:
+            - pkg: log$
+              desc: Use log/slog instead, see https://go.dev/blog/slog
         stdlib-tests:
           files: ["$all"]
           deny:
@@ -212,6 +282,115 @@ linters:
           deny:
             - pkg: github.com/home-operations/flate/internal/cli
               desc: pkg/ never imports internal/cli
+    embeddedstructfieldcheck:
+      forbid-mutex: true
+    errcheck:
+      check-type-assertions: true
+    exhaustive:
+      check:
+        - switch
+        - mapliteral
+    exhaustruct_v5:
+      ignore-patterns:
+        - ^net/http.Client$
+        - ^net/http.Cookie$
+        - ^net/http.Request$
+        - ^net/http.Response$
+        - ^net/http.Server$
+        - ^net/http.Transport$
+        - ^net/url.URL$
+        - ^os/exec.Cmd$
+        - ^reflect.StructField$
+        - ^github.com/Shopify/sarama.Config$
+        - ^github.com/Shopify/sarama.ProducerMessage$
+        - ^github.com/mitchellh/mapstructure.DecoderConfig$
+        - ^github.com/prometheus/client_golang/.+Opts$
+        - ^github.com/spf13/cobra.Command$
+        - ^github.com/spf13/cobra.CompletionOptions$
+        - ^github.com/stretchr/testify/mock.Mock$
+        - ^github.com/testcontainers/testcontainers-go.+Request$
+        - ^github.com/testcontainers/testcontainers-go.FromDockerfile$
+        - ^golang.org/x/tools/go/analysis.Analyzer$
+        - ^google.golang.org/protobuf/.+Options$
+        - ^gopkg.in/yaml.v3.Node$
+      allow-empty-returns: true
+      allow-empty-blank-assignments: true
+    funcorder:
+      struct-method: false
+    funlen:
+      lines: 100
+      statements: 50
+    gochecksumtype:
+      default-signifies-exhaustive: false
+    gocognit:
+      min-complexity: 20
+    gocritic:
+      settings:
+        captLocal:
+          paramsOnly: false
+        underef:
+          skipRecvDeref: false
+      enabled-checks:
+        - commentedOutCode
+        - hugeParam
+        - rangeValCopy
+    godoclint:
+      enable:
+        - no-unused-link
+        - require-stdlib-doclink
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+      settings:
+        shadow:
+          strict: true
+    inamedparam:
+      skip-single-param: true
+    mnd:
+      ignored-functions:
+        - args.Error
+        - flag.Arg
+        - flag.Duration.*
+        - flag.Float.*
+        - flag.Int.*
+        - flag.Uint.*
+        - os.Chmod
+        - os.Mkdir.*
+        - os.OpenFile
+        - os.WriteFile
+        - prometheus.ExponentialBuckets.*
+        - prometheus.LinearBuckets
+    nakedret:
+      max-func-lines: 0
+    nolintlint:
+      allow-no-explanation:
+        - funlen
+        - gocognit
+        - golines
+      require-explanation: true
+      require-specific: true
+      allow-unused: false
+    perfsprint:
+      strconcat: false
+      error-format: false
+    reassign:
+      patterns:
+        - .*
+    rowserrcheck:
+      packages:
+        - github.com/jmoiron/sqlx
+    sloglint:
+      static-msg: true
+      kv-only: true
+    staticcheck:
+      checks:
+        - all
+        - -ST1000
+        - -ST1016
+        - -QF1008
+    usetesting:
+      os-temp-dir: true
     forbidigo:
       analyze-types: true
       forbid:
@@ -223,21 +402,37 @@ linters:
           msg: output goes through the CLI writer, logs through slog
         - pattern: ^log\.(Print|Fatal|Panic)
           msg: logging is log/slog only
+    godox:
+      keywords:
+        - TODO
+        - FIXME
+        - legacy
+    ireturn:
+      allow:
+        - anon
+        - error
+        - empty
+        - stdlib
+        - ^github\.com/home-operations/flate/pkg/schedule\.Dispatcher$
+        - ^github\.com/home-operations/flate/pkg/values\.Provider$
+    errorlint:
+      errorf: true
+      asserts: true
+      comparison: true
     revive:
       rules:
-        - name: line-length-limit
-          arguments: [140]
-        - name: function-length
-          arguments: [60, 100]
         - name: max-control-nesting
-          arguments: [4]
-        - name: cognitive-complexity
-          arguments: [30]
+          arguments:
+            - 4
         - name: file-length-limit
-          arguments: [{ max: 800, skipComments: true, skipBlankLines: true }]
+          arguments:
+            - max: 800
+              skipComments: true
+              skipBlankLines: true
         - name: use-any
         - name: argument-limit
-          arguments: [4]
+          arguments:
+            - 4
         - name: blank-imports
         - name: context-as-argument
         - name: context-keys-type
@@ -253,7 +448,8 @@ linters:
         - name: package-comments
         - name: range
         - name: receiver-naming
-          arguments: [{ maxLength: 2 }]
+          arguments:
+            - maxLength: 2
         - name: redefines-builtin-id
         - name: superfluous-else
         - name: time-naming
@@ -262,22 +458,51 @@ linters:
         - name: unused-parameter
         - name: var-declaration
         - name: var-naming
-    nolintlint:
-      require-explanation: true
-      require-specific: true
-      allow-unused: false
+    goconst:
+      ignore-tests: true
+    wrapcheck:
+      ignore-package-globs:
+        - github.com/home-operations/flate/*
   exclusions:
+    warn-unused: true
+    presets:
+      - std-error-handling
+      - common-false-positives
     rules:
-      # usetesting governs contexts in tests.
+      - source: TODO
+        linters:
+          - godot
+      - text: should have a package comment
+        linters:
+          - revive
+      - text: exported \S+ \S+ should have comment( \(or a comment on this block\))? or be unexported
+        linters:
+          - revive
+      - text: package comment should be of the form ".+"
+        source: // ?(nolint|TODO)
+        linters:
+          - revive
+      - text: comment on exported \S+ \S+ should be of the form ".+"
+        source: // ?(nolint|TODO)
+        linters:
+          - revive
+          - staticcheck
+      - path: _test\.go
+        linters:
+          - bodyclose
+          - dupl
+          - errcheck
+          - funlen
+          - goconst
+          - gosec
+          - noctx
+          - wrapcheck
       - path: _test\.go
         linters:
           - forbidigo
-      # internal/cli owns context.Background and the process's stdout.
       - path: ^(internal/cli|cmd)/
         linters:
           - forbidigo
-      # Documented shared work that outlives one caller's cancellation (AGENTS.md "Context"): the remote
-      # fetch workers and the cache-lifetime source-root admission.
       - path: pkg/(source/httpinput|kustomize/flux)\.go
         text: context.Background
         linters:
@@ -288,19 +513,20 @@ linters:
           - unparam
       - path: (_test\.go|^test/e2e/internal/harness/)
         linters:
-          # gosec's production-security heuristics (G101 hardcoded credentials,
-          # …) misfire on test fixtures, which legitimately carry credential-
-          # shaped literals — e.g. a Secret/ExternalSecret table keyed on
-          # PASSWORD/TOKEN. Test code isn't shipped, so suppress it here.
           - gosec
-      # SA5011 trips on `if x == nil { t.Fatal(...) }` followed by
-      # `x.Field`. testing.T.Fatal* calls runtime.Goexit, so the
-      # deref is unreachable — but the staticcheck build bundled in
-      # some golangci-lint platform binaries doesn't recognize it as
-      # terminating. Suppress for test files where this idiom is
-      # canonical.
       - path: _test\.go
-        text: "SA5011"
-
+        text: SA5011
+  default: standard
+formatters:
+  enable:
+    - goimports
+    - golines
+    - gofumpt
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/home-operations/flate
+    golines:
+      max-len: 120
 issues:
-  new-from-rev: a99ff8b5072d67b45e4959817dd00fbf7b5c3873
+  max-same-issues: 50

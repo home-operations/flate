@@ -43,7 +43,12 @@ type stubOCI struct {
 	err    error
 }
 
-func (s *stubOCI) FetchChart(_ context.Context, r *manifest.OCIRepository, reads *store.ReadSet, policy cache.Policy) (*store.SourceArtifact, error) {
+func (s *stubOCI) FetchChart(
+	_ context.Context,
+	r *manifest.OCIRepository,
+	reads *store.ReadSet,
+	policy cache.Policy,
+) (*store.SourceArtifact, error) {
 	s.got = r
 	s.reads = reads
 	s.policy = policy
@@ -54,7 +59,13 @@ func TestFetch_OCIBranch(t *testing.T) {
 	t.Parallel()
 	repo := ociRepo("oci://oci.trueforge.org/truecharts")
 	repo.Interval = metav1.Duration{Duration: time.Hour}
-	stub := &stubOCI{art: &store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: "/slot", Content: "acquired-generation"}}
+	stub := &stubOCI{
+		art: &store.SourceArtifact{
+			Kind:      manifest.KindOCIRepository,
+			LocalPath: "/slot",
+			Content:   "acquired-generation",
+		},
+	}
 	fInputs := testInputs{repos: func(_, _ string) *manifest.HelmRepository { return repo }}
 	f := &Fetcher{network: newTestNetwork(t), oci: stub}
 
@@ -65,7 +76,8 @@ func TestFetch_OCIBranch(t *testing.T) {
 	if stub.reads != reads {
 		t.Fatal("nested OCI fetch did not receive execution inputs")
 	}
-	if stub.policy.MaxAge != time.Hour || stub.policy.Retry != retry || stub.policy.Timeout != nil || stub.policy.Admit != nil {
+	if stub.policy.MaxAge != time.Hour || stub.policy.Retry != retry || stub.policy.Timeout != nil ||
+		stub.policy.Admit != nil {
 		t.Fatalf("nested policy=%+v, want %+v", stub.policy, retry)
 	}
 	if err != nil {
@@ -99,8 +111,10 @@ func TestFetch_TransientOCIDiagnostic(t *testing.T) {
 	synthetic := hc.OCIRepository(repo)
 	ordinary := manifest.NewOCIRepository(sourcev1.OCIRepository{
 		Name: synthetic.Name, Namespace: synthetic.Namespace,
-		Spec: sourcev1.OCIRepositorySpec{URL: "oci://registry.example/ordinary", Suspend: true,
-			Reference: &sourcev1.OCIRepositoryRef{Tag: "1.0.0"}, Interval: &metav1.Duration{Duration: time.Minute}},
+		Spec: sourcev1.OCIRepositorySpec{
+			URL: "oci://registry.example/ordinary", Suspend: true,
+			Reference: &sourcev1.OCIRepositoryRef{Tag: "1.0.0"}, Interval: &metav1.Duration{Duration: time.Minute},
+		},
 	})
 	s.AddObject(ordinary)
 	reads := new(store.ReadSet)
@@ -137,14 +151,31 @@ func TestFetch_OCIAmbientContinuation(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			repo := ociRepo("oci://fixture/charts")
-			release := &manifest.HelmRelease{Name: "release", Namespace: "apps", HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: "chart", SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: manifest.KindHelmRepository, Namespace: repo.Namespace, Name: repo.Name}}}}}
+			release := &manifest.HelmRelease{
+				Name:      "release",
+				Namespace: "apps",
+				HelmReleaseSpec: helmv2.HelmReleaseSpec{
+					Chart: &helmv2.HelmChartTemplate{
+						Spec: helmv2.HelmChartTemplateSpec{
+							Chart: "chart",
+							SourceRef: &helmv2.CrossNamespaceObjectReference{
+								Kind:      manifest.KindHelmRepository,
+								Namespace: repo.Namespace,
+								Name:      repo.Name,
+							},
+						},
+					},
+				},
+			}
 			children, generateErr := release.GeneratedObjects()
 			if generateErr != nil {
 				t.Fatal(generateErr)
 			}
 			hc := children[0].(*manifest.HelmChartSource)
 			synthetic := hc.OCIRepository(repo)
-			missing, _ := errors.AsType[*source.MissingSecretError](source.MissingSecretErr(manifest.DiagnosticFor(synthetic.Named(), synthetic), "auth", "not found"))
+			missing, _ := errors.AsType[*source.MissingSecretError](
+				source.MissingSecretErr(manifest.DiagnosticFor(synthetic.Named(), synthetic), "auth", "not found"),
+			)
 			calls := 0
 			missing.RetryAmbient = func(context.Context) (*store.SourceArtifact, error) {
 				calls++
@@ -161,14 +192,17 @@ func TestFetch_OCIAmbientContinuation(t *testing.T) {
 			if !ok || wrapped.RetryAmbient == nil || calls != 0 {
 				t.Fatalf("prepare = %v; calls=%d", err, calls)
 			}
-			if wrapped.Owner != synthetic.Named() || wrapped.Subject.Resource != release.Named() || !errors.Is(err, manifest.ErrMissingSecret) {
+			if wrapped.Owner != synthetic.Named() || wrapped.Subject.Resource != release.Named() ||
+				!errors.Is(err, manifest.ErrMissingSecret) {
 				t.Fatalf("retry wrapper lost captured identity: %+v", wrapped)
 			}
 			artifact, err := wrapped.RetryAmbient(t.Context())
 			if !errors.Is(err, failure) || calls != 1 {
 				t.Fatalf("ambient continuation = %v; calls=%d", err, calls)
 			}
-			if failure != nil && artifact != nil || failure == nil && (artifact == nil || artifact.Kind != manifest.KindHelmChart || artifact.Content != "chart") {
+			if failure != nil && artifact != nil ||
+				failure == nil &&
+					(artifact == nil || artifact.Kind != manifest.KindHelmChart || artifact.Content != "chart") {
 				t.Fatalf("ambient chart artifact = %+v", artifact)
 			}
 		})
@@ -179,7 +213,12 @@ func TestFetch_RepoNotFound(t *testing.T) {
 	t.Parallel()
 	fInputs := testInputs{repos: func(_, _ string) *manifest.HelmRepository { return nil }}
 	f := &Fetcher{network: newTestNetwork(t)}
-	_, err := f.Fetch(context.Background(), helmChart("missing", "kromgo", "3.0.0"), fInputs.readSet(helmChart("missing", "kromgo", "3.0.0")), cache.Policy{})
+	_, err := f.Fetch(
+		context.Background(),
+		helmChart("missing", "kromgo", "3.0.0"),
+		fInputs.readSet(helmChart("missing", "kromgo", "3.0.0")),
+		cache.Policy{},
+	)
 	if !errors.Is(err, manifest.ErrObjectNotFound) {
 		t.Fatalf("err = %v, want ErrObjectNotFound", err)
 	}
@@ -191,7 +230,12 @@ func TestFetch_OCIExactVersionForever(t *testing.T) {
 	stub := &stubOCI{art: &store.SourceArtifact{Kind: manifest.KindOCIRepository}}
 	fInputs := testInputs{repos: func(_, _ string) *manifest.HelmRepository { return repo }}
 	f := &Fetcher{network: newTestNetwork(t), oci: stub, disableChartDigestTracking: true}
-	if _, err := f.Fetch(t.Context(), helmChart(repo.Name, "chart", "1.0.0"), fInputs.readSet(helmChart(repo.Name, "chart", "1.0.0")), cache.Policy{}); err != nil {
+	if _, err := f.Fetch(
+		t.Context(),
+		helmChart(repo.Name, "chart", "1.0.0"),
+		fInputs.readSet(helmChart(repo.Name, "chart", "1.0.0")),
+		cache.Policy{},
+	); err != nil {
 		t.Fatal(err)
 	}
 	if stub.policy.MaxAge != cache.Forever || stub.got.Interval == nil || *stub.got.Interval != repo.Interval {

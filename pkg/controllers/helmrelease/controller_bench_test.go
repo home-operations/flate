@@ -30,7 +30,12 @@ func BenchmarkHelmReleaseFingerprint_SourceIdentity(b *testing.B) {
 
 			b.ReportAllocs()
 			for b.Loop() {
-				if fp, _, _ := c.FingerprintDedup(b.Context(), hr.Named(), hr.Content(identity, nil), &store.Emission{}); fp == "" {
+				if fp, _, _ := c.FingerprintDedup(
+					b.Context(),
+					hr.Named(),
+					hr.Content(identity, nil),
+					&store.Emission{},
+				); fp == "" {
 					b.Fatal("empty fingerprint")
 				}
 			}
@@ -39,11 +44,30 @@ func BenchmarkHelmReleaseFingerprint_SourceIdentity(b *testing.B) {
 }
 
 func BenchmarkHelmReleaseFingerprint_SourceLookup(b *testing.B) {
-	hr := &manifest.HelmRelease{Name: "podinfo", Namespace: "apps", Values: map[string]any{"replicas": 2},
-		Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}}}
+	hr := &manifest.HelmRelease{
+		Name:      "podinfo",
+		Namespace: "apps",
+		Values:    map[string]any{"replicas": 2},
+		Chart: manifest.HelmChart{
+			Source: manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindOCIRepository,
+				Namespace: "apps",
+				Name:      "podinfo",
+			},
+		},
+	}
 	const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
 	st := store.New()
-	st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Digest: digest, Revision: "6.15.0@" + digest})
+	st.SetArtifact(
+		manifest.NamedResource{
+			Group:     manifest.SourceDomain,
+			Kind:      manifest.KindOCIRepository,
+			Namespace: "apps",
+			Name:      "podinfo",
+		},
+		&store.SourceArtifact{Digest: digest, Revision: "6.15.0@" + digest},
+	)
 	resolver := helm.NewSources(st)
 	c := controllertest.NewExecution(base.New(st, nil), hr.Named())
 
@@ -51,7 +75,12 @@ func BenchmarkHelmReleaseFingerprint_SourceLookup(b *testing.B) {
 	for b.Loop() {
 		source := resolver.LocalSourceArtifact(hr.ChartSource(), store.ArtifactContent)
 		identity := struct{ Digest, Revision string }{source.Digest, source.Revision}
-		if fp, _, _ := c.FingerprintDedup(b.Context(), hr.Named(), hr.Content(identity, nil), &store.Emission{}); fp == "" {
+		if fp, _, _ := c.FingerprintDedup(
+			b.Context(),
+			hr.Named(),
+			hr.Content(identity, nil),
+			&store.Emission{},
+		); fp == "" {
 			b.Fatal("empty fingerprint")
 		}
 	}
@@ -75,7 +104,12 @@ func BenchmarkHelmReleaseEmission_Children(b *testing.B) {
 			docs := testutil.DocumentOccurrences([]map[string]any{tc.doc})
 			b.ReportAllocs()
 			for b.Loop() {
-				publishDocuments(c, parent, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets, DefaultNamespace: ""})
+				publishDocuments(
+					c,
+					parent,
+					docs,
+					manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets, DefaultNamespace: ""},
+				)
 			}
 		})
 	}

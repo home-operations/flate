@@ -261,7 +261,10 @@ func (a rootAdmission) admits(l *Loader, id manifest.NamedResource, record manif
 	var peers [][]manifest.NamedResource
 	if id.KindInfo().Structural {
 		for _, group := range a.peers {
-			if slices.ContainsFunc(group, func(peer manifest.NamedResource) bool { return l.selfClaim(peer, record.Authored) }) {
+			if slices.ContainsFunc(
+				group,
+				func(peer manifest.NamedResource) bool { return l.selfClaim(peer, record.Authored) },
+			) {
 				peers = append(peers, group)
 			}
 		}
@@ -274,7 +277,10 @@ func (a rootAdmission) admits(l *Loader, id manifest.NamedResource, record manif
 		if l.documents.cache[record.Path].bootstrap && peer.Path != record.Path {
 			return false
 		}
-		if !slices.ContainsFunc(peers, func(group []manifest.NamedResource) bool { return slices.Contains(group, owner) }) {
+		if !slices.ContainsFunc(
+			peers,
+			func(group []manifest.NamedResource) bool { return slices.Contains(group, owner) },
+		) {
 			return false
 		}
 	}
@@ -323,7 +329,8 @@ func (l *Loader) eachKustomization(objects []manifest.BaseManifest, yield func(s
 		yield(store.Child{Obj: obj, Doc: doc})
 	}
 	for id, r := range l.Index.Files() {
-		if id.Group != manifest.FluxKustomizeDomain || id.Kind != manifest.KindKustomization || l.Store.GetObject(id) != nil {
+		if id.Group != manifest.FluxKustomizeDomain || id.Kind != manifest.KindKustomization ||
+			l.Store.GetObject(id) != nil {
 			continue
 		}
 		child := l.IndexedObject(id, r)
@@ -584,7 +591,10 @@ func (l *Loader) recordDataFile(ctx context.Context, absPath string) error {
 		}
 		return nil
 	}
-	objs, err := l.documents.fileObjects(absPath, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets, DefaultNamespace: ""})
+	objs, err := l.documents.fileObjects(
+		absPath,
+		manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets, DefaultNamespace: ""},
+	)
 	if err != nil {
 		return err
 	}
@@ -619,7 +629,12 @@ func (l *Loader) recordOccurrence(path string, o *Occurrence) {
 		l.locations = map[manifest.NamedResource]Occurrence{}
 	}
 	l.locations[o.Identity] = *o
-	r := manifest.DiscoveryRecord{Authored: o.Authored, Declared: o.facts.declared, Path: path, File: l.fileCoordinate(path)}
+	r := manifest.DiscoveryRecord{
+		Authored: o.Authored,
+		Declared: o.facts.declared,
+		Path:     path,
+		File:     l.fileCoordinate(path),
+	}
 	for _, ref := range o.facts.refs {
 		if discoveryReference(ref) {
 			r.Refs = append(r.Refs, ref.NamedResource)
@@ -655,7 +670,8 @@ func discoveryReferences(refs []manifest.NamedResource, obj manifest.BaseManifes
 }
 
 func discoveryReference(ref manifest.Reference) bool {
-	return ref.Use == "valuesFrom" || ref.Use == "substituteFrom" && ref.Group == "" && ref.Kind == manifest.KindConfigMap ||
+	return ref.Use == "valuesFrom" ||
+		ref.Use == "substituteFrom" && ref.Group == "" && ref.Kind == manifest.KindConfigMap ||
 		(ref.Use == "source" || ref.Use == "chart" || ref.Use == "artifact") && ref.Kind != "" && ref.Name != ""
 }
 
@@ -707,7 +723,13 @@ func (l *Loader) replayFile(ctx context.Context, file fileAdmission) (int, error
 		if file.kind == admissionPackage {
 			message = "kustomization file failed to parse"
 		}
-		l.Store.AddWarning(manifest.Warning{Category: manifest.WarnInputParseFailed, Message: message, Detail: []string{file.file, err.Error()}})
+		l.Store.AddWarning(
+			manifest.Warning{
+				Category: manifest.WarnInputParseFailed,
+				Message:  message,
+				Detail:   []string{file.file, err.Error()},
+			},
+		)
 		return n, nil
 	}
 	if err != nil {

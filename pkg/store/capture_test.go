@@ -35,7 +35,11 @@ func TestCapture_ProducerRecordLifetime(t *testing.T) {
 			defer reads.Retire()
 			assert.Equal(t, reads.GetObject(child.Obj.Named()), child.Obj)
 			if payload {
-				assert.Equal(t, reads.GetArtifact(child.Obj.Named(), ArtifactContent), Artifact(firstPayload[child.Obj.Named()]))
+				assert.Equal(
+					t,
+					reads.GetArtifact(child.Obj.Named(), ArtifactContent),
+					Artifact(firstPayload[child.Obj.Named()]),
+				)
 				if !reads.Valid() {
 					t.Fatal("current payload reader was invalid before supersession")
 				}
@@ -44,7 +48,11 @@ func TestCapture_ProducerRecordLifetime(t *testing.T) {
 			if payload {
 				nextPayload = map[manifest.NamedResource]*SourceArtifact{child.Obj.Named(): {Key: "next"}}
 			}
-			s.RecordEmitted(producer.Named(), &Emission{Children: []Child{emissionChild("input", "new")}, Complete: true}, nextPayload)
+			s.RecordEmitted(
+				producer.Named(),
+				&Emission{Children: []Child{emissionChild("input", "new")}, Complete: true},
+				nextPayload,
+			)
 			runtime.GC()
 			if previous.Value() != nil {
 				t.Fatal("captured child retained the superseded producer's execution history")
@@ -62,7 +70,11 @@ func TestReadRegistration_CollectionLabelReplacement(t *testing.T) {
 	s := New()
 	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
 	s.AddObject(producer)
-	provider := &manifest.ResourceSetInputProvider{Name: "provider", Namespace: "apps", Labels: map[string]string{"selected": "false"}}
+	provider := &manifest.ResourceSetInputProvider{
+		Name:      "provider",
+		Namespace: "apps",
+		Labels:    map[string]string{"selected": "false"},
+	}
 	publish := func(obj *manifest.ResourceSetInputProvider) {
 		s.RecordEmitted(producer.Named(), &Emission{Children: []Child{{Obj: obj}}, Complete: true}, nil)
 	}
@@ -115,9 +127,19 @@ func TestReadRegistration_RawLabelDocuments(t *testing.T) {
 			t.Parallel()
 			s := New()
 			producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
-			raw := &manifest.RawObject{Kind: "Widget", APIVersion: "example.test/v1", Name: "app", Namespace: "apps", Spec: labelDoc("same")}
+			raw := &manifest.RawObject{
+				Kind:       "Widget",
+				APIVersion: "example.test/v1",
+				Name:       "app",
+				Namespace:  "apps",
+				Spec:       labelDoc("same"),
+			}
 			s.AddObject(producer)
-			s.RecordEmitted(producer.Named(), &Emission{Children: []Child{{Obj: raw, Doc: tc.before}}, Complete: true}, nil)
+			s.RecordEmitted(
+				producer.Named(),
+				&Emission{Children: []Child{{Obj: raw, Doc: tc.before}}, Complete: true},
+				nil,
+			)
 			id := raw.Named()
 			var reads ReadSet
 			reads.Init(s, ownerID("reader"), nil)
@@ -127,7 +149,11 @@ func TestReadRegistration_RawLabelDocuments(t *testing.T) {
 			sh.mu.RLock()
 			before := sh.byName[kindID{id.Group, id.Kind}].generation
 			sh.mu.RUnlock()
-			s.RecordEmitted(producer.Named(), &Emission{Children: []Child{{Obj: raw, Doc: tc.next}}, Complete: true}, nil)
+			s.RecordEmitted(
+				producer.Named(),
+				&Emission{Children: []Child{{Obj: raw, Doc: tc.next}}, Complete: true},
+				nil,
+			)
 			sh.mu.RLock()
 			after := sh.byName[kindID{id.Group, id.Kind}].generation
 			sh.mu.RUnlock()
@@ -187,7 +213,11 @@ func TestReadRegistration_CrossShardLostWakeup(t *testing.T) {
 					if payload {
 						nextPayload = map[manifest.NamedResource]*SourceArtifact{old.Obj.Named(): {Key: "next"}}
 					}
-					s.RecordEmitted(producer.Named(), &Emission{Children: []Child{emissionChild("input", "new")}, Complete: true}, nextPayload)
+					s.RecordEmitted(
+						producer.Named(),
+						&Emission{Children: []Child{emissionChild("input", "new")}, Complete: true},
+						nextPayload,
+					)
 					close(published)
 				}()
 				<-published
@@ -214,7 +244,12 @@ func TestDerivedCapture_UnselectedContributorStableCommit(t *testing.T) {
 	t.Parallel()
 	s := New()
 	a, z := ownerID("a"), ownerID("z")
-	s.AddObjects([]manifest.BaseManifest{&manifest.Kustomization{Name: a.Name, Namespace: a.Namespace}, &manifest.Kustomization{Name: z.Name, Namespace: z.Namespace}})
+	s.AddObjects(
+		[]manifest.BaseManifest{
+			&manifest.Kustomization{Name: a.Name, Namespace: a.Namespace},
+			&manifest.Kustomization{Name: z.Name, Namespace: z.Namespace},
+		},
+	)
 	child := emissionChild("shared", "first")
 	s.RecordEmitted(a, &Emission{Children: []Child{child}, Complete: true}, nil)
 	s.RecordEmitted(z, &Emission{Children: []Child{child}, Complete: true}, nil)
@@ -238,42 +273,59 @@ func TestDerivedCapture_UnselectedContributorStableCommit(t *testing.T) {
 func TestDerivedCapture_UnselectedContributorReplacement(t *testing.T) {
 	t.Parallel()
 	for _, invalidated := range []bool{false, true} {
-		t.Run(map[bool]string{false: "valid_predecessor", true: "invalid_predecessor"}[invalidated], func(t *testing.T) {
-			t.Parallel()
-			s := New()
-			a, z := ownerID("a"), ownerID("z")
-			input := emissionChild("input", "old")
-			s.AddObjects([]manifest.BaseManifest{&manifest.Kustomization{Name: a.Name, Namespace: a.Namespace}, &manifest.Kustomization{Name: z.Name, Namespace: z.Namespace}, input.Obj})
-			var previous, content, contributors ReadSet
-			previous.Init(s, a, nil)
-			previous.GetObject(input.Obj.Named())
-			content.Init(s, ownerID("content"), nil)
-			contributors.Init(s, ownerID("contributors"), nil)
-			defer func() {
-				previous.Retire()
-				content.Retire()
-				contributors.Retire()
-				for range s.Sweep() {
+		t.Run(
+			map[bool]string{false: "valid_predecessor", true: "invalid_predecessor"}[invalidated],
+			func(t *testing.T) {
+				t.Parallel()
+				s := New()
+				a, z := ownerID("a"), ownerID("z")
+				input := emissionChild("input", "old")
+				s.AddObjects(
+					[]manifest.BaseManifest{
+						&manifest.Kustomization{Name: a.Name, Namespace: a.Namespace},
+						&manifest.Kustomization{Name: z.Name, Namespace: z.Namespace},
+						input.Obj,
+					},
+				)
+				var previous, content, contributors ReadSet
+				previous.Init(s, a, nil)
+				previous.GetObject(input.Obj.Named())
+				content.Init(s, ownerID("content"), nil)
+				contributors.Init(s, ownerID("contributors"), nil)
+				defer func() {
+					previous.Retire()
+					content.Retire()
+					contributors.Retire()
+					for range s.Sweep() {
+					}
+				}()
+				child := emissionChild("shared", "first")
+				_, _, initial := previous.GetEmission(a)
+				initial.Children, initial.Complete = []Child{child}, true
+				s.RecordEmitted(a, &initial, nil)
+				initial.Finish()
+				s.RecordEmitted(z, &Emission{Children: []Child{child}, Complete: true}, nil)
+				assert.Equal(t, content.GetObject(child.Obj.Named()), child.Obj)
+				assert.Diff(
+					t,
+					contributors.Productions(child.Obj.Named(), nil),
+					[]manifest.Production{{Owner: a}, {Owner: z}},
+				)
+				before := headsForTest(s, child.Obj.Named())
+				if invalidated {
+					s.AddObject(emissionChild("input", "new").Obj)
 				}
-			}()
-			child := emissionChild("shared", "first")
-			_, _, initial := previous.GetEmission(a)
-			initial.Children, initial.Complete = []Child{child}, true
-			s.RecordEmitted(a, &initial, nil)
-			initial.Finish()
-			s.RecordEmitted(z, &Emission{Children: []Child{child}, Complete: true}, nil)
-			assert.Equal(t, content.GetObject(child.Obj.Named()), child.Obj)
-			assert.Diff(t, contributors.Productions(child.Obj.Named(), nil), []manifest.Production{{Owner: a}, {Owner: z}})
-			before := headsForTest(s, child.Obj.Named())
-			if invalidated {
-				s.AddObject(emissionChild("input", "new").Obj)
-			}
-			s.RecordEmitted(a, &Emission{Children: []Child{child, emissionChild("other", "new")}, Complete: true}, nil)
-			assert.Equal(t, headsForTest(s, child.Obj.Named()).object, before.object)
-			assert.Equal(t, s.GetObject(child.Obj.Named()), child.Obj)
-			assert.Equal(t, content.Valid(), true)
-			assert.Equal(t, contributors.Valid(), false)
-		})
+				s.RecordEmitted(
+					a,
+					&Emission{Children: []Child{child, emissionChild("other", "new")}, Complete: true},
+					nil,
+				)
+				assert.Equal(t, headsForTest(s, child.Obj.Named()).object, before.object)
+				assert.Equal(t, s.GetObject(child.Obj.Named()), child.Obj)
+				assert.Equal(t, content.Valid(), true)
+				assert.Equal(t, contributors.Valid(), false)
+			},
+		)
 	}
 }
 
@@ -295,7 +347,8 @@ func TestCapture_StableSegmentLifetime(t *testing.T) {
 		captured := reads.input(target)
 		objectCell := captured.cell(objectFacet)
 		objects := reads.ListObjects(target.Group, target.Kind)
-		if len(objects) != 64 || reads.GetObject(target) != first || reads.input(target) != captured || captured.cell(objectFacet) != objectCell {
+		if len(objects) != 64 || reads.GetObject(target) != first || reads.input(target) != captured ||
+			captured.cell(objectFacet) != objectCell {
 			t.Fatal("collection replaced the named capture or its registration")
 		}
 		_, observed := reads.Snapshot(target, true)
@@ -317,7 +370,8 @@ func TestCapture_StableSegmentLifetime(t *testing.T) {
 				occurrences++
 			}
 		}
-		if occurrences != 1 || reads.input(target) != captured || captured.cell(conditionFacet) != conditionCell || !reads.Valid() {
+		if occurrences != 1 || reads.input(target) != captured || captured.cell(conditionFacet) != conditionCell ||
+			!reads.Valid() {
 			t.Fatal("growth duplicated or moved the captured identity or sparse facet")
 		}
 		if reads.input(bulkID) != bulk || bulk.cell(conditionFacet) != bulkCell {
@@ -373,7 +427,8 @@ func TestCapture_StableSegmentLifetime(t *testing.T) {
 			t.Error("retired absence remains reachable from the shard")
 		}
 		for _, cell := range sh.cells {
-			if cell.links != nil && (cell.links.first.Load() != nil || cell.links.detached.Load() || cell.links.pending.Load()) {
+			if cell.links != nil &&
+				(cell.links.first.Load() != nil || cell.links.detached.Load() || cell.links.pending.Load()) {
 				t.Error("retired segment remains reachable from an authority")
 			}
 		}
@@ -598,7 +653,8 @@ func TestReadRegistration_ReclamationOnlyAndCutoff(t *testing.T) {
 	sh.mu.RLock()
 	head := sh.cells[id].authority
 	sh.mu.RUnlock()
-	if head.links != nil && (head.links.first.Load() != nil || head.links.pending.Load() || head.links.detached.Load()) {
+	if head.links != nil &&
+		(head.links.first.Load() != nil || head.links.pending.Load() || head.links.detached.Load()) {
 		t.Fatal("reclamation left a live or pending registration")
 	}
 }
@@ -696,7 +752,13 @@ func TestReadRegistration_AbsentDetachedAdmission(t *testing.T) {
 				if mask == 0 {
 					s.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
 				} else {
-					s.SetArtifact(id, &SourceArtifact{Revision: "present", Metadata: map[string]string{"org.opencontainers.image.revision": ""}})
+					s.SetArtifact(
+						id,
+						&SourceArtifact{
+							Revision: "present",
+							Metadata: map[string]string{"org.opencontainers.image.revision": ""},
+						},
+					)
 				}
 			}
 			var first, later, retired, fresh ReadSet
@@ -781,9 +843,18 @@ func TestReadRegistration_AbsenceExhaustionIsAtomic(t *testing.T) {
 				case "revision":
 					s.SetArtifact(obj.Named(), &SourceArtifact{Revision: "next"})
 				case "origin":
-					s.SetArtifact(obj.Named(), &SourceArtifact{Metadata: map[string]string{"org.opencontainers.image.revision": ""}})
+					s.SetArtifact(
+						obj.Named(),
+						&SourceArtifact{Metadata: map[string]string{"org.opencontainers.image.revision": ""}},
+					)
 				case "union":
-					s.SetArtifact(obj.Named(), &SourceArtifact{Revision: "next", Metadata: map[string]string{"org.opencontainers.image.revision": ""}})
+					s.SetArtifact(
+						obj.Named(),
+						&SourceArtifact{
+							Revision: "next",
+							Metadata: map[string]string{"org.opencontainers.image.revision": ""},
+						},
+					)
 				case "emission":
 					s.RecordEmitted(producer.Named(), &Emission{Children: []Child{{Obj: obj}}, Complete: true}, nil)
 				}
@@ -820,7 +891,13 @@ func TestProductions_ProjectedRawFamily(t *testing.T) {
 			target.Namespace = "apps"
 			first := testutil.KustomizationID("apps", "first")
 			second := testutil.KustomizationID("other", "second")
-			p := manifest.Production{Owner: first, Source: manifest.BootstrapSourceID, Authored: raw, File: "settings.yaml", Path: "/settings.yaml"}
+			p := manifest.Production{
+				Owner:    first,
+				Source:   manifest.BootstrapSourceID,
+				Authored: raw,
+				File:     "settings.yaml",
+				Path:     "/settings.yaml",
+			}
 			other := p
 			other.Owner = second
 			selected := p
@@ -828,10 +905,17 @@ func TestProductions_ProjectedRawFamily(t *testing.T) {
 				selected.File, selected.Path = "another.yaml", "/another.yaml"
 			}
 			if tc.separateSource {
-				selected.Source = manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "foreign"}
+				selected.Source = manifest.NamedResource{
+					Group: manifest.SourceDomain,
+					Kind:  manifest.KindGitRepository,
+					Name:  "foreign",
+				}
 			}
 			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-				raw: {Productions: []manifest.Production{p, other}}, target: {Productions: []manifest.Production{selected}},
+				raw: {
+					Productions: []manifest.Production{p, other},
+				},
+				target: {Productions: []manifest.Production{selected}},
 			}}
 			st.SetDiscoveryIndex(index)
 			var reads ReadSet
@@ -856,7 +940,11 @@ func TestCapture_RawSupportExcludesReadiness(t *testing.T) {
 	st.AddObject(&manifest.Kustomization{Name: owner.Name, Namespace: owner.Namespace})
 	st.SetArtifact(source, &SourceArtifact{Key: "content"})
 	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-		id: {Productions: []manifest.Production{{Owner: owner, Source: source, Authored: id, File: "settings.yaml", Path: "/settings.yaml"}}},
+		id: {
+			Productions: []manifest.Production{
+				{Owner: owner, Source: source, Authored: id, File: "settings.yaml", Path: "/settings.yaml"},
+			},
+		},
 	}})
 	st.UpdateStatus(owner, StatusInfo{Status: StatusPending, Reason: "", Message: "pending"})
 	var reads ReadSet
@@ -864,7 +952,11 @@ func TestCapture_RawSupportExcludesReadiness(t *testing.T) {
 	for range reads.Promotions(id, nil) {
 	}
 	reads.GetStatus(owner)
-	reads.Admit(&manifest.ConfigMap{Name: id.Name, Namespace: id.Namespace, Data: map[string]any{"VALUE": "raw"}}, source, owner)
+	reads.Admit(
+		&manifest.ConfigMap{Name: id.Name, Namespace: id.Namespace, Data: map[string]any{"VALUE": "raw"}},
+		source,
+		owner,
+	)
 	st.UpdateStatus(owner, StatusInfo{Status: StatusFailed, Reason: "", Message: "render failed"})
 	if reads.Valid() || st.GetObject(id) == nil {
 		t.Fatal("readiness transition must invalidate its reader without withdrawing source bytes")
@@ -913,7 +1005,12 @@ func TestReadSet_MatchesRawCollection(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			first := &manifest.RawObject{Kind: "Widget", APIVersion: "example.test/v1", Name: "app", Spec: map[string]any{"items": []any{map[string]any{"value": "same"}}}}
+			first := &manifest.RawObject{
+				Kind:       "Widget",
+				APIVersion: "example.test/v1",
+				Name:       "app",
+				Spec:       map[string]any{"items": []any{map[string]any{"value": "same"}}},
+			}
 			second := first.Clone()
 			second.Spec["items"].([]any)[0].(map[string]any)["value"] = tc.value
 			beforeStore, currentStore := New(), New()
@@ -972,7 +1069,9 @@ func TestReadSet_UnsettledProducerSnapshot(t *testing.T) {
 func TestRequire_RetainsPredicates(t *testing.T) {
 	t.Parallel()
 	for _, expressions := range [][]string{
-		{"false", ""}, {"", "false"}, {"true", "false"},
+		{"false", ""},
+		{"", "false"},
+		{"true", "false"},
 		{"false", "true", "false", "", "true", "1 == 2", "1 == 2", ""},
 	} {
 		t.Run(strings.Join(expressions, "/"), func(t *testing.T) {
@@ -987,7 +1086,10 @@ func TestRequire_RetainsPredicates(t *testing.T) {
 			for _, expr := range expressions {
 				ref := manifest.DependencyRef{NamedResource: obj.Named(), ReadyExpr: new(expr)}
 				reads.Require(ref)
-				if !slices.ContainsFunc(want, func(prior Gate) bool { return sameReadinessGate(prior.DependencyRef, ref) }) {
+				if !slices.ContainsFunc(
+					want,
+					func(prior Gate) bool { return sameReadinessGate(prior.DependencyRef, ref) },
+				) {
 					want = append(want, Gate{DependencyRef: ref})
 				}
 			}
@@ -1059,7 +1161,6 @@ func TestRequire_RetainsPredicates(t *testing.T) {
 			}
 		})
 	}
-
 }
 
 func TestRequire_ReleasesPredicates(t *testing.T) {
@@ -1097,7 +1198,13 @@ func TestRequire_CapturedIdentityDuringAdmission(t *testing.T) {
 	reads.Init(s, ownerID("reader"), nil)
 	defer reads.Retire()
 	assert.Equal(t, reads.GetObject(obj.Named()), manifest.BaseManifest(nil))
-	ref := manifest.DependencyRef{NamedResource: obj.Named(), ReadyExpr: new("true"), Artifact: true, ChartSource: true, ArtifactOnly: true}
+	ref := manifest.DependencyRef{
+		NamedResource: obj.Named(),
+		ReadyExpr:     new("true"),
+		Artifact:      true,
+		ChartSource:   true,
+		ArtifactOnly:  true,
+	}
 	start := make(chan struct{})
 	var workers sync.WaitGroup
 	workers.Go(func() {
@@ -1122,7 +1229,13 @@ func TestReadSet_DeclarationAuthority(t *testing.T) {
 	supplier := &manifest.Kustomization{Name: "supplier", Namespace: "apps"}
 	raw := &manifest.OCIRepository{Name: "covered", Namespace: "apps", URL: "oci://same.example"}
 	s.AddObjects([]manifest.BaseManifest{owner, supplier, raw})
-	s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{raw.Named(): {Productions: []manifest.Production{{Owner: owner.Named()}}}}})
+	s.SetDiscoveryIndex(
+		&manifest.DiscoveryIndex{
+			Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				raw.Named(): {Productions: []manifest.Production{{Owner: owner.Named()}}},
+			},
+		},
+	)
 	var pending ReadSet
 	pending.Init(s, ownerID("waiting"), nil)
 	defer pending.Retire()
@@ -1174,12 +1287,21 @@ func TestCapture_PayloadAuthority(t *testing.T) {
 			t.Parallel()
 			s := New()
 			a, z := ownerID("a"), ownerID("z")
-			s.AddObjects([]manifest.BaseManifest{&manifest.Kustomization{Name: a.Name, Namespace: a.Namespace}, &manifest.Kustomization{Name: z.Name, Namespace: z.Namespace}})
+			s.AddObjects(
+				[]manifest.BaseManifest{
+					&manifest.Kustomization{Name: a.Name, Namespace: a.Namespace},
+					&manifest.Kustomization{Name: z.Name, Namespace: z.Namespace},
+				},
+			)
 			child := emissionChild("input", "a")
 			declaration := emissionChild("input", "z")
 			target := child.Obj.Named()
 			payload := &SourceArtifact{Key: "first", Digest: "first", FS: fstest.MapFS{"file": {Data: []byte("first")}}}
-			s.RecordEmitted(a, &Emission{Children: []Child{child}, Complete: false}, map[manifest.NamedResource]*SourceArtifact{target: payload})
+			s.RecordEmitted(
+				a,
+				&Emission{Children: []Child{child}, Complete: false},
+				map[manifest.NamedResource]*SourceArtifact{target: payload},
+			)
 			s.RecordEmitted(z, &Emission{Children: []Child{declaration}, Complete: true}, nil)
 			if static {
 				s.AddObject(declaration.Obj)
@@ -1193,7 +1315,11 @@ func TestCapture_PayloadAuthority(t *testing.T) {
 				t.Fatal("capturing independent declaration and payload invalidated a current reader")
 			}
 			next := &SourceArtifact{Key: "next", Digest: "next", FS: fstest.MapFS{"file": {Data: []byte("next")}}}
-			s.RecordEmitted(a, &Emission{Children: []Child{child}, Complete: true}, map[manifest.NamedResource]*SourceArtifact{target: next})
+			s.RecordEmitted(
+				a,
+				&Emission{Children: []Child{child}, Complete: true},
+				map[manifest.NamedResource]*SourceArtifact{target: next},
+			)
 			assert.Diff(t, slices.Collect(s.Sweep()), []manifest.NamedResource{first.ID()})
 			if first.Valid() {
 				t.Fatal("payload-only replacement did not invalidate the registered reader")
@@ -1232,8 +1358,13 @@ func TestRecordEmitted_StalePayloadRejected(t *testing.T) {
 	next.Children, next.Complete = []Child{child}, true
 	reads.Bind(&next)
 	s.SetArtifact(input, &SourceArtifact{Key: "changed"})
-	s.RecordEmitted(producer.Named(), &next, map[manifest.NamedResource]*SourceArtifact{child.Obj.Named(): {Key: "stale"}})
-	if s.GetObject(child.Obj.Named()) != nil || s.GetArtifact(child.Obj.Named(), ArtifactContent) != nil || s.HasInventory(producer.Named()) {
+	s.RecordEmitted(
+		producer.Named(),
+		&next,
+		map[manifest.NamedResource]*SourceArtifact{child.Obj.Named(): {Key: "stale"}},
+	)
+	if s.GetObject(child.Obj.Named()) != nil || s.GetArtifact(child.Obj.Named(), ArtifactContent) != nil ||
+		s.HasInventory(producer.Named()) {
 		t.Fatal("invalid captured inputs published stale declaration or bytes")
 	}
 }
@@ -1261,7 +1392,12 @@ func TestProductions_SelfPublication(t *testing.T) {
 	next.Children, next.Complete = []Child{child}, true
 	s.RecordEmitted(producer.Named(), &next, nil)
 	if !self.Valid() || observer.Valid() || s.GetObject(child.Obj.Named()) == nil {
-		t.Fatalf("publication validity: self=%t observer=%t child=%v", self.Valid(), observer.Valid(), s.GetObject(child.Obj.Named()))
+		t.Fatalf(
+			"publication validity: self=%t observer=%t child=%v",
+			self.Valid(),
+			observer.Valid(),
+			s.GetObject(child.Obj.Named()),
+		)
 	}
 	changed := producer.Clone()
 	changed.Path = "changed"
@@ -1291,7 +1427,13 @@ func TestReadSet_BoundDeclarationAuthority(t *testing.T) {
 				proofs = append(proofs, manifest.Production{Owner: raw.Obj.Named()})
 			}
 			if support != "unindexed" {
-				st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{raw.Obj.Named(): {Productions: proofs}}})
+				st.SetDiscoveryIndex(
+					&manifest.DiscoveryIndex{
+						Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+							raw.Obj.Named(): {Productions: proofs},
+						},
+					},
+				)
 			}
 			var reads ReadSet
 			reads.Init(st, owner.Named(), nil)
@@ -1325,7 +1467,13 @@ func TestReadSet_RawOwnedSourceMaterializer(t *testing.T) {
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 	source := &manifest.HelmRepository{Name: "chart", Namespace: "apps", URL: "https://charts.example"}
 	st.AddObjects([]manifest.BaseManifest{parent, source})
-	p := manifest.Production{Owner: parent.Named(), Source: manifest.BootstrapSourceID, Authored: source.Named(), Path: "/input/source.yaml", File: "source.yaml"}
+	p := manifest.Production{
+		Owner:    parent.Named(),
+		Source:   manifest.BootstrapSourceID,
+		Authored: source.Named(),
+		Path:     "/input/source.yaml",
+		File:     "source.yaml",
+	}
 	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		source.Named(): {Path: p.Path, File: p.File, Authored: p.Authored, Productions: []manifest.Production{p}},
 	}})
@@ -1410,7 +1558,13 @@ func TestReadSet_DeclarationFreeze(t *testing.T) {
 	defer before.Retire()
 	defer after.Retire()
 	assert.Equal(t, before.GetDeclaration(raw.Named()), manifest.BaseManifest(raw))
-	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{raw.Named(): {Productions: []manifest.Production{{Owner: ownerID("owner")}}}}})
+	st.SetDiscoveryIndex(
+		&manifest.DiscoveryIndex{
+			Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				raw.Named(): {Productions: []manifest.Production{{Owner: ownerID("owner")}}},
+			},
+		},
+	)
 	if after.Matches(&before) {
 		t.Fatal("matching reclassified the immutable pre-index declaration")
 	}
@@ -1461,12 +1615,21 @@ func TestReadRegistration_SelectedArtifact(t *testing.T) {
 				s.AddObject(&manifest.Kustomization{Name: producer.Name, Namespace: producer.Namespace})
 				publish := func(a *SourceArtifact) {
 					if emitted {
-						s.RecordEmitted(producer, &Emission{Children: []Child{child}, Complete: true}, map[manifest.NamedResource]*SourceArtifact{child.Obj.Named(): a})
+						s.RecordEmitted(
+							producer,
+							&Emission{Children: []Child{child}, Complete: true},
+							map[manifest.NamedResource]*SourceArtifact{child.Obj.Named(): a},
+						)
 					} else {
 						s.SetArtifact(child.Obj.Named(), a)
 					}
 				}
-				first := &SourceArtifact{Key: "family", Content: "generation", Revision: "first", FS: fstest.MapFS{"file": {Data: []byte("same")}}}
+				first := &SourceArtifact{
+					Key:      "family",
+					Content:  "generation",
+					Revision: "first",
+					FS:       fstest.MapFS{"file": {Data: []byte("same")}},
+				}
 				publish(first)
 				var reads ReadSet
 				reads.Init(s, ownerID("reader"), nil)
@@ -1527,14 +1690,22 @@ func TestReadRegistration_SelectedDeclaration(t *testing.T) {
 		key           string
 		invalid       bool
 	}{
-		{"uid", "first", "next", "uid", true}, {"non-string-uid", nil, 3, "uid", false},
-		{"disable", nil, "disabled", "annotation", true}, {"normalized-disable", "disabled", "DiSaBlEd", "annotation", false},
-		{"enable", "disabled", nil, "annotation", true}, {"ignored", nil, "next", "ignored", false},
+		{"uid", "first", "next", "uid", true},
+		{"non-string-uid", nil, 3, "uid", false},
+		{"disable", nil, "disabled", "annotation", true},
+		{"normalized-disable", "disabled", "DiSaBlEd", "annotation", false},
+		{"enable", "disabled", nil, "annotation", true},
+		{"ignored", nil, "next", "ignored", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			st := New()
-			object := &manifest.RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Name: "generator", Namespace: "apps"}
+			object := &manifest.RawObject{
+				APIVersion: "source.extensions.fluxcd.io/v1beta1",
+				Kind:       "ArtifactGenerator",
+				Name:       "generator",
+				Namespace:  "apps",
+			}
 			document := func(value any) map[string]any {
 				metadata := map[string]any{}
 				if tc.key == "annotation" {
@@ -1566,10 +1737,19 @@ func TestCapture_SupplierQueryIsolation(t *testing.T) {
 			t.Parallel()
 			st := New()
 			sourceOwner, queryOwner := ownerID("source-owner"), ownerID("query-owner")
-			st.AddObjects([]manifest.BaseManifest{&manifest.Kustomization{Name: sourceOwner.Name, Namespace: sourceOwner.Namespace}, &manifest.Kustomization{Name: queryOwner.Name, Namespace: queryOwner.Namespace}})
+			st.AddObjects(
+				[]manifest.BaseManifest{
+					&manifest.Kustomization{Name: sourceOwner.Name, Namespace: sourceOwner.Namespace},
+					&manifest.Kustomization{Name: queryOwner.Name, Namespace: queryOwner.Namespace},
+				},
+			)
 			source, query := emissionChild("source", "same"), emissionChild("query", "same")
 			payload := &SourceArtifact{Key: "family", Content: "generation", FS: fstest.MapFS{}}
-			st.RecordEmitted(sourceOwner, &Emission{Children: []Child{source}, Complete: complete}, map[manifest.NamedResource]*SourceArtifact{source.Obj.Named(): payload})
+			st.RecordEmitted(
+				sourceOwner,
+				&Emission{Children: []Child{source}, Complete: complete},
+				map[manifest.NamedResource]*SourceArtifact{source.Obj.Named(): payload},
+			)
 			st.RecordEmitted(queryOwner, &Emission{Children: []Child{query}, Complete: complete}, nil)
 			var reads ReadSet
 			reads.Init(st, ownerID("reader"), nil)
@@ -1579,10 +1759,22 @@ func TestCapture_SupplierQueryIsolation(t *testing.T) {
 			reads.Productions(query.Obj.Named(), nil)
 			next := *payload
 			next.Metadata = map[string]string{"ignored": "next"}
-			st.RecordEmitted(sourceOwner, &Emission{Children: []Child{source, emissionChild("unrelated", "new")}, Complete: complete}, map[manifest.NamedResource]*SourceArtifact{source.Obj.Named(): &next})
+			st.RecordEmitted(
+				sourceOwner,
+				&Emission{Children: []Child{source, emissionChild("unrelated", "new")}, Complete: complete},
+				map[manifest.NamedResource]*SourceArtifact{source.Obj.Named(): &next},
+			)
 			assert.Equal(t, reads.Valid(), true)
 			assert.Equal(t, len(slices.Collect(st.Sweep())), 0)
-			st.RecordEmitted(queryOwner, &Emission{Children: []Child{query, emissionChild("query-sibling", "new")}, Complete: complete, Fingerprint: "query-publication"}, nil)
+			st.RecordEmitted(
+				queryOwner,
+				&Emission{
+					Children:    []Child{query, emissionChild("query-sibling", "new")},
+					Complete:    complete,
+					Fingerprint: "query-publication",
+				},
+				nil,
+			)
 			assert.Diff(t, slices.Collect(st.Sweep()), []manifest.NamedResource{reads.ID()})
 			assert.Equal(t, reads.Valid(), false)
 		})
@@ -1609,7 +1801,11 @@ func TestCapture_PartialSupplierInputStamp(t *testing.T) {
 	assert.Equal(t, reads.Valid(), true)
 	assert.Equal(t, captured.input, manifest.BaseManifest(child))
 	assert.Equal(t, captured.inputHead, current.inputHead)
-	st.RecordEmitted(producer, &Emission{Children: []Child{sibling, {Obj: child}, emissionChild("unrelated", "new")}}, nil)
+	st.RecordEmitted(
+		producer,
+		&Emission{Children: []Child{sibling, {Obj: child}, emissionChild("unrelated", "new")}},
+		nil,
+	)
 	_, _, repeated := reads.GetEmission(child.Named())
 	defer repeated.Finish()
 	assert.Equal(t, reads.Valid(), true)
@@ -1694,7 +1890,13 @@ func TestReadSet_ProducedArtifact(t *testing.T) {
 			if got := reads.GetArtifact(id, ArtifactContent|ArtifactRevision|ArtifactOrigin); got != previous {
 				t.Fatalf("prospective output lost the complete descriptor: %v", got)
 			}
-			s.RecordEmitted(parent.Named(), &next, map[manifest.NamedResource]*SourceArtifact{id: {Content: "second", Revision: "second", FS: fstest.MapFS{}}})
+			s.RecordEmitted(
+				parent.Named(),
+				&next,
+				map[manifest.NamedResource]*SourceArtifact{
+					id: {Content: "second", Revision: "second", FS: fstest.MapFS{}},
+				},
+			)
 			if reads.Valid() == consumed {
 				t.Fatalf("self-publication validity=%v with prior consumption=%v", reads.Valid(), consumed)
 			}

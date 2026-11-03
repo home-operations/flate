@@ -62,13 +62,31 @@ func TestFinalizeIndex_GeneratorData(t *testing.T) {
 			} else {
 				input += "\n  literals: [CLEAR=readable]"
 			}
-			testutil.WriteFile(t, root, "apps/a/kustomization.yaml", tc.namespace+tc.kind+"Generator:\n- name: input\n  namespace: inner\n  "+input+"\n- name: sibling\n  namespace: inner\n  literals: [VALUE=sibling]\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"apps/a/kustomization.yaml",
+				tc.namespace+tc.kind+"Generator:\n- name: input\n  namespace: inner\n  "+input+"\n- name: sibling\n  namespace: inner\n  literals: [VALUE=sibling]\n",
+			)
 			if tc.escape {
-				testutil.WriteFile(t, parent, "outside/kustomization.yaml", tc.kind+"Generator:\n- name: input\n  namespace: inner\n  "+tc.input+"\n")
-				testutil.WriteFile(t, root, "apps/a/kustomization.yaml", "resources: [../../../outside]\n"+tc.kind+"Generator:\n- name: sibling\n  namespace: inner\n  literals: [VALUE=sibling]\n")
+				testutil.WriteFile(
+					t,
+					parent,
+					"outside/kustomization.yaml",
+					tc.kind+"Generator:\n- name: input\n  namespace: inner\n  "+tc.input+"\n",
+				)
+				testutil.WriteFile(
+					t,
+					root,
+					"apps/a/kustomization.yaml",
+					"resources: [../../../outside]\n"+tc.kind+"Generator:\n- name: sibling\n  namespace: inner\n  literals: [VALUE=sibling]\n",
+				)
 			}
 			if tc.symlink {
-				if err := os.Symlink(filepath.Join(parent, "outside.txt"), filepath.Join(root, "apps/a/escape.txt")); err != nil {
+				if err := os.Symlink(
+					filepath.Join(parent, "outside.txt"),
+					filepath.Join(root, "apps/a/escape.txt"),
+				); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -92,7 +110,9 @@ func TestFinalizeIndex_GeneratorData(t *testing.T) {
 			}
 			id := manifest.NamedResource{Kind: kind, Namespace: ns, Name: "input"}
 			if tc.existing {
-				st.AddObject(&manifest.ConfigMap{Name: id.Name, Namespace: id.Namespace, Data: map[string]any{"VALUE": "real"}})
+				st.AddObject(
+					&manifest.ConfigMap{Name: id.Name, Namespace: id.Namespace, Data: map[string]any{"VALUE": "real"}},
+				)
 			}
 			l := loaderFixture(st, nil)
 			l.Options.WipeSecrets = tc.wipe
@@ -100,8 +120,18 @@ func TestFinalizeIndex_GeneratorData(t *testing.T) {
 			admitForTest(st, root)
 			l.mountSources()
 			if tc.probe {
-				testutil.WriteFile(t, root, "apps/a/release.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: excluded}\nspec: {suspend: true}\n")
-				testutil.WriteFile(t, root, "apps/a/kustomization.yaml", "resources: [release.yaml]\nconfigMapGenerator:\n- name: input\n  namespace: inner\n  literals: [VALUE=fixture]\n")
+				testutil.WriteFile(
+					t,
+					root,
+					"apps/a/release.yaml",
+					"apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: excluded}\nspec: {suspend: true}\n",
+				)
+				testutil.WriteFile(
+					t,
+					root,
+					"apps/a/kustomization.yaml",
+					"resources: [release.yaml]\nconfigMapGenerator:\n- name: input\n  namespace: inner\n  literals: [VALUE=fixture]\n",
+				)
 				l.documents.read(filepath.Join(root, "apps/a"))
 			} else if _, err := l.Load(t.Context(), filepath.Join(root, "apps/a")); err != nil {
 				t.Fatal(err)

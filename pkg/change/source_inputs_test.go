@@ -10,7 +10,12 @@ import (
 
 func TestSet_SourceInputsIgnoreUnqualifiedCollision(t *testing.T) {
 	t.Parallel()
-	supplier := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "infra", Name: "supplier"}
+	supplier := manifest.NamedResource{
+		Group:     manifest.SourceDomain,
+		Kind:      manifest.KindGitRepository,
+		Namespace: "infra",
+		Name:      "supplier",
+	}
 	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"}
 	changes := &Set{
 		inputs: map[manifest.NamedResource]InputChange{input: {File: "inputs/optional.yaml", Unbound: true}},

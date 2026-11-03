@@ -17,7 +17,17 @@ func recordForTest(tb testing.TB, s *Store, id manifest.NamedResource, children 
 		if child.Group != "" {
 			version = child.Group + "/v1"
 		}
-		next.Children = append(next.Children, Child{Obj: &manifest.RawObject{APIVersion: version, Kind: child.Kind, Namespace: child.Namespace, Name: child.Name}})
+		next.Children = append(
+			next.Children,
+			Child{
+				Obj: &manifest.RawObject{
+					APIVersion: version,
+					Kind:       child.Kind,
+					Namespace:  child.Namespace,
+					Name:       child.Name,
+				},
+			},
+		)
 	}
 	s.RecordEmitted(id, next, nil)
 }

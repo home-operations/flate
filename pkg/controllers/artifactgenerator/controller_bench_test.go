@@ -48,14 +48,27 @@ func generatedWorkload(tb testing.TB, count int) (*manifest.RawObject, map[strin
 	tb.Helper()
 	artifacts := make([]any, count)
 	for i := range artifacts {
-		artifacts[i] = map[string]any{"name": fmt.Sprintf("output-%04d", i), "copy": []any{map[string]any{"from": "@repo/input", "to": "@artifact/input"}}}
+		artifacts[i] = map[string]any{
+			"name": fmt.Sprintf("output-%04d", i),
+			"copy": []any{map[string]any{"from": "@repo/input", "to": "@artifact/input"}},
+		}
 	}
-	doc := map[string]any{"apiVersion": "source.extensions.fluxcd.io/v1beta1", "kind": "ArtifactGenerator", "metadata": map[string]any{"name": "workload", "namespace": "apps"}, "spec": map[string]any{"sources": []any{map[string]any{"alias": "repo", "kind": "GitRepository", "name": "repo"}}, "artifacts": artifacts}}
+	doc := map[string]any{
+		"apiVersion": "source.extensions.fluxcd.io/v1beta1",
+		"kind":       "ArtifactGenerator",
+		"metadata":   map[string]any{"name": "workload", "namespace": "apps"},
+		"spec": map[string]any{
+			"sources":   []any{map[string]any{"alias": "repo", "kind": "GitRepository", "name": "repo"}},
+			"artifacts": artifacts,
+		},
+	}
 	obj, doc, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
 	if err != nil {
 		tb.Fatal(err)
 	}
-	input := &workloadFS{FS: fstest.MapFS{"input": {Data: []byte("selected\n")}, "unselected": {Data: make([]byte, 1<<20)}}}
+	input := &workloadFS{
+		FS: fstest.MapFS{"input": {Data: []byte("selected\n")}, "unselected": {Data: make([]byte, 1<<20)}},
+	}
 	return obj.(*manifest.RawObject), doc, input
 }
 
@@ -63,8 +76,16 @@ func reconcileWorkload(tb testing.TB, owner *cache.Cache, child store.Child, inp
 	tb.Helper()
 	st := store.New()
 	st.AddObject(child.Obj, child.Doc)
-	repo := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "repo"}
-	st.SetArtifact(repo, &store.SourceArtifact{Kind: repo.Kind, FS: input, Key: "input", Content: "input", Digest: "sha256:input"})
+	repo := manifest.NamedResource{
+		Group:     manifest.SourceDomain,
+		Kind:      manifest.KindGitRepository,
+		Namespace: "apps",
+		Name:      "repo",
+	}
+	st.SetArtifact(
+		repo,
+		&store.SourceArtifact{Kind: repo.Kind, FS: input, Key: "input", Content: "input", Digest: "sha256:input"},
+	)
 	c := New(st, task.NewBounded(2), owner)
 	run := &execution{Controller: c}
 	run.run.Init(c.Controller, child.Obj.Named())

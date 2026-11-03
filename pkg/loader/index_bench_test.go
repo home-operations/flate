@@ -50,7 +50,11 @@ func BenchmarkFinalizeIndex_LocalChart(b *testing.B) {
 	st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: input})
 	files := make(map[manifest.NamedResource]string, 100)
 	for i := range 100 {
-		hr := &manifest.HelmRelease{Name: fmt.Sprintf("release-%d", i), Namespace: "apps", Chart: manifest.HelmChart{Name: "./charts/demo", Source: source.Named()}}
+		hr := &manifest.HelmRelease{
+			Name:      fmt.Sprintf("release-%d", i),
+			Namespace: "apps",
+			Chart:     manifest.HelmChart{Name: "./charts/demo", Source: source.Named()},
+		}
 		st.AddObject(hr)
 		files[hr.Named()] = hr.Name + ".yaml"
 	}

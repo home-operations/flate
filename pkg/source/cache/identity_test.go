@@ -10,11 +10,12 @@ import (
 	"runtime/debug"
 	"testing"
 
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"oras.land/oras-go/v2/errdef"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"oras.land/oras-go/v2/errdef"
 )
 
 func TestBuildIdentity_Stable(t *testing.T) {
@@ -90,7 +91,12 @@ func TestBlob_RenderBuildIdentity(t *testing.T) {
 	assert.Equal(t, c.CanPersistRenders(), true)
 	processIdentity = identityA
 	key := BlobKey{Content: "render-input", Render: RenderAccepted}
-	_, _, _, err := c.Blob(t.Context(), BlobKey{Content: key.Content}, Policy{MaxAge: 0}, producer([]byte("ordinary"), ocispec.Descriptor{}))
+	_, _, _, err := c.Blob(
+		t.Context(),
+		BlobKey{Content: key.Content},
+		Policy{MaxAge: 0},
+		producer([]byte("ordinary"), ocispec.Descriptor{}),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +108,13 @@ func TestBlob_RenderBuildIdentity(t *testing.T) {
 		processIdentity = identity
 		c = cachetest.New(t, root, New)
 		assert.Equal(t, c.CanPersistRenders(), true)
-		if r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil); r != nil || !errors.Is(err, errdef.ErrNotFound) {
+		if r, _, _, err := c.Blob(
+			t.Context(),
+			key,
+			Policy{MaxAge: Forever},
+			nil,
+		); r != nil ||
+			!errors.Is(err, errdef.ErrNotFound) {
 			t.Fatalf("foreign or ordinary identity hit: %v", err)
 		}
 		_, _, id, err := c.Blob(t.Context(), key, Policy{MaxAge: 0}, producer([]byte(identity), ocispec.Descriptor{}))
@@ -164,7 +176,13 @@ func TestBlob_RenderBuildIdentity(t *testing.T) {
 	}
 	assert.NoError(t, c.Close())
 	c = cachetest.New(t, root, New)
-	if r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil); r != nil || !errors.Is(err, errdef.ErrNotFound) {
+	if r, _, _, err := c.Blob(
+		t.Context(),
+		key,
+		Policy{MaxAge: Forever},
+		nil,
+	); r != nil ||
+		!errors.Is(err, errdef.ErrNotFound) {
 		t.Fatalf("unidentified render survived reopen: %v", err)
 	}
 

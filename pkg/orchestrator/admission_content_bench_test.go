@@ -15,7 +15,16 @@ func BenchmarkRender_Namespace(b *testing.B) {
 	for _, peers := range []int{2, 64} {
 		b.Run(fmt.Sprintf("peers=%d", peers), func(b *testing.B) {
 			tree, artifact := namespaceChildrenFixture(b, peers)
-			cfg := Config{Concurrency: 2, Selection: manifest.Selection{Roots: []manifest.NamedResource{testutil.KustomizationID("apps", ""), testutil.HelmReleaseID("apps", ""), {Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "apps"}}}}
+			cfg := Config{
+				Concurrency: 2,
+				Selection: manifest.Selection{
+					Roots: []manifest.NamedResource{
+						testutil.KustomizationID("apps", ""),
+						testutil.HelmReleaseID("apps", ""),
+						{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "apps"},
+					},
+				},
+			}
 			prepared, err := newTestOrchestrator(b, tree, cfg)
 			if err != nil {
 				b.Fatal(err)

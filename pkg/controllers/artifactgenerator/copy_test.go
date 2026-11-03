@@ -11,11 +11,12 @@ import (
 	"testing/fstest"
 
 	"github.com/google/go-cmp/cmp"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/tree"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 func compressedForTest(t *testing.T, files fstest.MapFS) []byte {
@@ -37,7 +38,10 @@ func compressedForTest(t *testing.T, files fstest.MapFS) []byte {
 
 func TestEvaluate(t *testing.T) {
 	t.Parallel()
-	archive := compressedForTest(t, fstest.MapFS{"member.yaml": {Data: []byte("inside"), Mode: 0o755}, "empty": {Mode: fs.ModeDir | 0o755}})
+	archive := compressedForTest(
+		t,
+		fstest.MapFS{"member.yaml": {Data: []byte("inside"), Mode: 0o755}, "empty": {Mode: fs.ModeDir | 0o755}},
+	)
 	for _, tc := range []struct {
 		name       string
 		operations []operation
@@ -82,13 +86,35 @@ func TestEvaluate(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			owner := cachetest.New(t, "", cache.New)
-			e := evaluation{owner: owner, maxAge: cache.Forever, inputs: map[string]*store.SourceArtifact{"repo": {FS: fstest.MapFS{
-				"app/file": {Data: []byte("file")}, "app/deep/nested": {Data: []byte("nested")}, "empty": {Mode: fs.ModeDir | 0o755}, "plain": {Data: []byte("plain"), Mode: 0o600},
-				"base.yaml":    {Data: []byte("array: [old]\nmap: {key: value}\nnullable: present\nretained: yes\n"), Mode: 0o755},
-				"overlay.yaml": {Data: []byte("array: [discarded]\nfolded: kept\n---\narray: [new]\nmap: scalar\nnullable: null\n")},
-				"invalid.yaml": {Data: []byte("[invalid")}, "merge/invalid.yaml": {Data: []byte("[invalid")},
-				"archive.TGZ": {Data: archive}, "archive.tar.gz": {Data: archive}, "archive.txt": {Data: archive}, "deep/archive.TGZ": {Data: archive},
-			}}}}
+			e := evaluation{
+				owner:  owner,
+				maxAge: cache.Forever,
+				inputs: map[string]*store.SourceArtifact{"repo": {FS: fstest.MapFS{
+					"app/file": {
+						Data: []byte("file"),
+					},
+					"app/deep/nested": {Data: []byte("nested")},
+					"empty":           {Mode: fs.ModeDir | 0o755},
+					"plain":           {Data: []byte("plain"), Mode: 0o600},
+					"base.yaml": {
+						Data: []byte("array: [old]\nmap: {key: value}\nnullable: present\nretained: yes\n"),
+						Mode: 0o755,
+					},
+					"overlay.yaml": {
+						Data: []byte(
+							"array: [discarded]\nfolded: kept\n---\narray: [new]\nmap: scalar\nnullable: null\n",
+						),
+					},
+					"invalid.yaml":       {Data: []byte("[invalid")},
+					"merge/invalid.yaml": {Data: []byte("[invalid")},
+					"archive.TGZ": {
+						Data: archive,
+					},
+					"archive.tar.gz":   {Data: archive},
+					"archive.txt":      {Data: archive},
+					"deep/archive.TGZ": {Data: archive},
+				}}},
+			}
 			if tc.name == "copy_rejects_link" {
 				e.inputs["repo"].FS.(fstest.MapFS)["link"] = &fstest.MapFile{Mode: fs.ModeSymlink}
 			}
@@ -136,8 +162,17 @@ func TestEvaluate_Canceled(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	e := evaluation{inputs: map[string]*store.SourceArtifact{"repo": {FS: fstest.MapFS{"file": {Data: []byte("file")}}}}}
-	if err := e.apply(ctx, tree.NewBuilder(nil), operation{From: "@repo/file", To: "@artifact/file"}); !errors.Is(err, context.Canceled) {
+	e := evaluation{
+		inputs: map[string]*store.SourceArtifact{"repo": {FS: fstest.MapFS{"file": {Data: []byte("file")}}}},
+	}
+	if err := e.apply(
+		ctx,
+		tree.NewBuilder(nil),
+		operation{From: "@repo/file", To: "@artifact/file"},
+	); !errors.Is(
+		err,
+		context.Canceled,
+	) {
 		t.Fatalf("evaluate() = %v", err)
 	}
 }
@@ -151,7 +186,15 @@ func TestCopyFile_Canceled(t *testing.T) {
 	if err := builder.AddFile("existing", []byte("a: 0\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := copyFile(ctx, input, builder, operation{From: "file", To: "existing", Strategy: "Merge"}); !errors.Is(err, context.Canceled) {
+	if err := copyFile(
+		ctx,
+		input,
+		builder,
+		operation{From: "file", To: "existing", Strategy: "Merge"},
+	); !errors.Is(
+		err,
+		context.Canceled,
+	) {
 		t.Fatalf("copyFile() = %v", err)
 	}
 	if input.opens.Load() != 0 {
@@ -168,8 +211,21 @@ func TestCopyFile_Canceled(t *testing.T) {
 func TestEvaluate_ExtractIdentity(t *testing.T) {
 	t.Parallel()
 	owner := cachetest.New(t, "", cache.New)
-	identities := []inputIdentity{{Alias: "repo", Input: store.ArtifactInput{Key: "family", Content: "generation", Digest: "generation"}}}
-	e := evaluation{owner: owner, maxAge: cache.Forever, identity: identities, inputs: map[string]*store.SourceArtifact{"repo": {FS: fstest.MapFS{"archive.tgz": {Data: compressedForTest(t, fstest.MapFS{"file": {Data: []byte("bytes")}})}}}}}
+	identities := []inputIdentity{
+		{Alias: "repo", Input: store.ArtifactInput{Key: "family", Content: "generation", Digest: "generation"}},
+	}
+	e := evaluation{
+		owner:    owner,
+		maxAge:   cache.Forever,
+		identity: identities,
+		inputs: map[string]*store.SourceArtifact{
+			"repo": {
+				FS: fstest.MapFS{
+					"archive.tgz": {Data: compressedForTest(t, fstest.MapFS{"file": {Data: []byte("bytes")}})},
+				},
+			},
+		},
+	}
 	selection := archiveSelection{Alias: "repo", Path: "archive.tgz", Destination: "out"}
 	if err := e.extract(t.Context(), tree.NewBuilder(nil), selection); err != nil {
 		t.Fatal(err)
@@ -180,10 +236,15 @@ func TestEvaluate_ExtractIdentity(t *testing.T) {
 		Selection archiveSelection
 	}{"artifactgenerator/extract/v1", identities, selection}}
 	called := false
-	input, _, id, err := owner.Acquire(t.Context(), key, cache.Policy{MaxAge: cache.Forever}, func(context.Context, cache.ProducerInput) (cache.ProducerResult, error) {
-		called = true
-		return cache.ProducerResult{Descriptor: ocispec.Descriptor{}}, errors.New("unexpected extraction")
-	})
+	input, _, id, err := owner.Acquire(
+		t.Context(),
+		key,
+		cache.Policy{MaxAge: cache.Forever},
+		func(context.Context, cache.ProducerInput) (cache.ProducerResult, error) {
+			called = true
+			return cache.ProducerResult{Descriptor: ocispec.Descriptor{}}, errors.New("unexpected extraction")
+		},
+	)
 	if err != nil || input == nil || id == "" || called {
 		t.Fatalf("nested extraction identity = %v, %q, %v; produced=%v", input, id, err, called)
 	}

@@ -28,9 +28,19 @@ func writeNamedScopeFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	testutil.GitInit(t, root)
-	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [cluster/ks.yaml, cluster/hr.yaml, cluster/unrelated.yaml, outside.yaml]\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"kustomization.yaml",
+		"resources: [cluster/ks.yaml, cluster/hr.yaml, cluster/unrelated.yaml, outside.yaml]\n",
+	)
 	testutil.WriteFile(t, root, "charts/app/Chart.yaml", "apiVersion: v2\nname: app\nversion: 0.1.0\n")
-	testutil.WriteFile(t, root, "charts/app/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected-rendered, namespace: apps}\ndata: {greeting: hello}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"charts/app/templates/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected-rendered, namespace: apps}\ndata: {greeting: hello}\n",
+	)
 	testutil.WriteFile(t, root, "cluster/hr.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata: {name: selected, namespace: apps}
@@ -55,7 +65,12 @@ spec:
   sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
 %s`, tc.name, tc.name, tc.extra))
 		testutil.WriteFile(t, root, tc.name+"/kustomization.yaml", "resources: [cm.yaml]\n")
-		testutil.WriteFile(t, root, tc.name+"/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+tc.name+", namespace: apps}\ndata: {greeting: hello}\n")
+		testutil.WriteFile(
+			t,
+			root,
+			tc.name+"/cm.yaml",
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+tc.name+", namespace: apps}\ndata: {greeting: hello}\n",
+		)
 	}
 	return root
 }
@@ -80,7 +95,17 @@ func TestRun_NamedScope_UnrelatedFailure(t *testing.T) {
 					t.Fatalf("excluded producer diagnostics leaked: %s", errOut)
 				}
 			}
-			_, stderr, code := runCLI(t, "build", "all", "--path", filepath.Join(root, "cluster"), "--cache-dir", cache, "--concurrency", "2")
+			_, stderr, code := runCLI(
+				t,
+				"build",
+				"all",
+				"--path",
+				filepath.Join(root, "cluster"),
+				"--cache-dir",
+				cache,
+				"--concurrency",
+				"2",
+			)
 			if code != 1 || !strings.Contains(stderr, "outside") || !strings.Contains(stderr, "unrelated") {
 				t.Fatalf("full render diagnostics missing: exit=%d %s", code, stderr)
 			}
@@ -110,9 +135,24 @@ func TestRun_NamedScope_CommandsAndNamespace(t *testing.T) {
 			root := writeNamedScopeFixture(t)
 			orig := writeNamedScopeFixture(t)
 			cache := t.TempDir()
-			args := []string{tc.verb, tc.kind, "selected", "--path", filepath.Join(root, "cluster"), "--cache-dir", cache, "--concurrency", "2"}
+			args := []string{
+				tc.verb,
+				tc.kind,
+				"selected",
+				"--path",
+				filepath.Join(root, "cluster"),
+				"--cache-dir",
+				cache,
+				"--concurrency",
+				"2",
+			}
 			if tc.verb == "diff" {
-				testutil.WriteFile(t, root, "charts/app/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected-rendered, namespace: apps}\ndata: {greeting: changed}\n")
+				testutil.WriteFile(
+					t,
+					root,
+					"charts/app/templates/cm.yaml",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected-rendered, namespace: apps}\ndata: {greeting: changed}\n",
+				)
 				appendScopeSpec(t, root, "cluster/ks.yaml", "  postBuild: {substitute: {GREETING: changed}}\n")
 				args = append(args, "--path-orig", filepath.Join(orig, "cluster"), "-o", "diff")
 			}
@@ -136,16 +176,31 @@ func TestRun_NamedScope_CommandsAndNamespace(t *testing.T) {
 func TestRun_NamedScope_UnnamedAndNoMatch(t *testing.T) {
 	root := writeNamedScopeFixture(t)
 	for _, args := range [][]string{
-		{"build", "all"}, {"build", "ks"}, {"build", "hr", "absent"},
-		{"build", "ks", "absent"}, {"get", "ks", "absent"},
-		{"test", "ks", "absent"}, {"test", "hr", "absent"},
-		{"diff", "ks", "absent"}, {"diff", "hr", "absent"},
+		{"build", "all"},
+		{"build", "ks"},
+		{"build", "hr", "absent"},
+		{"build", "ks", "absent"},
+		{"get", "ks", "absent"},
+		{"test", "ks", "absent"},
+		{"test", "hr", "absent"},
+		{"diff", "ks", "absent"},
+		{"diff", "hr", "absent"},
 	} {
 		t.Run(strings.Join(args, "/"), func(t *testing.T) {
 			if args[0] == "diff" {
 				args = append(args, "--path-orig", filepath.Join(writeNamedScopeFixture(t), "cluster"))
 			}
-			_, stderr, code := runCLI(t, append(args, "--path", filepath.Join(root, "cluster"), "--cache-dir", t.TempDir(), "--concurrency", "2")...)
+			_, stderr, code := runCLI(
+				t,
+				append(
+					args,
+					"--path",
+					filepath.Join(root, "cluster"),
+					"--cache-dir",
+					t.TempDir(),
+					"--concurrency",
+					"2",
+				)...)
 			if code != 1 || stderr == "" {
 				t.Fatalf("expected failure: %d %s", code, stderr)
 			}
@@ -172,11 +227,34 @@ func TestRun_NamedScope_FailedDataOwner(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := writeNamedScopeFixture(t)
-			appendScopeSpec(t, root, "cluster/hr.yaml", fmt.Sprintf("  valuesFrom: [{kind: %s, name: values, optional: %t}]\n", tc.kind, tc.optional))
-			testutil.WriteFile(t, root, "cluster/producer.yaml", testutil.KustomizationYAML("producer", "flux-system", "  interval: 10m\n  path: ./values\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
+			appendScopeSpec(
+				t,
+				root,
+				"cluster/hr.yaml",
+				fmt.Sprintf("  valuesFrom: [{kind: %s, name: values, optional: %t}]\n", tc.kind, tc.optional),
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				"cluster/producer.yaml",
+				testutil.KustomizationYAML(
+					"producer",
+					"flux-system",
+					"  interval: 10m\n  path: ./values\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+				),
+			)
 			if tc.chain {
 				appendScopeSpec(t, root, "cluster/producer.yaml", "  dependsOn: [{name: producer-chain}]\n")
-				testutil.WriteFile(t, root, "cluster/producer-chain.yaml", testutil.KustomizationYAML("producer-chain", "flux-system", "  path: ./values\n  dependsOn: [{name: missing-producer-root, namespace: other}]\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
+				testutil.WriteFile(
+					t,
+					root,
+					"cluster/producer-chain.yaml",
+					testutil.KustomizationYAML(
+						"producer-chain",
+						"flux-system",
+						"  path: ./values\n  dependsOn: [{name: missing-producer-root, namespace: other}]\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+					),
+				)
 			}
 			inputFile := "values/input.yaml"
 			resources := "resources: [input.yaml"
@@ -194,7 +272,17 @@ func TestRun_NamedScope_FailedDataOwner(t *testing.T) {
 				allowed = []string{manifest.KindSecret, manifest.KindConfigMap}
 			}
 			cfg := orchestrator.Config{CacheDir: t.TempDir(), Concurrency: 2, AllowMissingKinds: allowed}
-			runs, err := orchestrator.RenderTrees(t.Context(), []orchestrator.Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: filepath.Join(root, "cluster"), RepoRoot: root}}, cfg)
+			runs, err := orchestrator.RenderTrees(
+				t.Context(),
+				[]orchestrator.Tree{
+					{
+						ID:       manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
+						Path:     filepath.Join(root, "cluster"),
+						RepoRoot: root,
+					},
+				},
+				cfg,
+			)
 			if len(runs) != 1 {
 				t.Fatalf("missing run: %v", err)
 			}
@@ -208,13 +296,24 @@ func TestRun_NamedScope_FailedDataOwner(t *testing.T) {
 			wantFailure := tc.broken && !tc.optional
 			requiredFailure := tc.broken && !tc.optional && !tc.absent
 			_, readerFailed := res.Failed[hr]
-			if (len(outputByParent(res.Manifests)[hr]) == 0) != requiredFailure || readerFailed != requiredFailure || (len(res.Blocked[hr]) != 0) != requiredFailure {
+			if (len(outputByParent(res.Manifests)[hr]) == 0) != requiredFailure || readerFailed != requiredFailure ||
+				(len(res.Blocked[hr]) != 0) != requiredFailure {
 				t.Fatalf("consumer did not render independently: failed=%v blocked=%v", res.Failed, res.Blocked)
 			}
 			if _, failed := res.Failed[producer]; failed != tc.broken {
 				t.Fatalf("producer failure=%t, want %t: %v", failed, tc.broken, res.Failed)
 			}
-			args := []string{"build", "hr", "selected", "--path", filepath.Join(root, "cluster"), "--cache-dir", t.TempDir(), "--concurrency", "2"}
+			args := []string{
+				"build",
+				"hr",
+				"selected",
+				"--path",
+				filepath.Join(root, "cluster"),
+				"--cache-dir",
+				t.TempDir(),
+				"--concurrency",
+				"2",
+			}
 			if tc.extra != "" {
 				args = append(args, tc.extra)
 			}
@@ -224,8 +323,14 @@ func TestRun_NamedScope_FailedDataOwner(t *testing.T) {
 			if len(selection) != 1 {
 				t.Fatalf("selection failed: %v", selectedErr)
 			}
-			if _, failed := selection[0].Failed[producer]; failed != wantFailure || (selectedErr != nil) != wantFailure {
-				t.Fatalf("required owner failure projection violated: failed=%v unrelated=%v error=%v", selection[0].Failed, selection[0].Unrelated, selectedErr)
+			if _, failed := selection[0].Failed[producer]; failed != wantFailure ||
+				(selectedErr != nil) != wantFailure {
+				t.Fatalf(
+					"required owner failure projection violated: failed=%v unrelated=%v error=%v",
+					selection[0].Failed,
+					selection[0].Unrelated,
+					selectedErr,
+				)
 			}
 			for _, warning := range selection[0].Unrelated {
 				if wantFailure && warning.Resource == producer {
@@ -245,7 +350,8 @@ func TestRun_NamedScope_FailedDataOwner(t *testing.T) {
 			if requiredFailure && !strings.Contains(stderr, "values") {
 				t.Fatalf("required input failure missing: %s", stderr)
 			}
-			if tc.chain && (!strings.Contains(stderr, "producer-chain") || !strings.Contains(stderr, "missing-producer-root")) {
+			if tc.chain &&
+				(!strings.Contains(stderr, "producer-chain") || !strings.Contains(stderr, "missing-producer-root")) {
 				t.Fatalf("producer's transitive root missing: %s", stderr)
 			}
 			if tc.broken && !strings.Contains(stderr, "producer") {
@@ -273,9 +379,27 @@ func TestRun_NamedScope_SubstituteOwners(t *testing.T) {
 			if tc.secret {
 				kind = "Secret"
 			}
-			appendScopeSpec(t, root, "cluster/ks.yaml", fmt.Sprintf("  postBuild:\n    substituteFrom: [{kind: %s, name: scope-input, optional: %t}]\n", kind, !tc.self && !tc.required))
+			appendScopeSpec(
+				t,
+				root,
+				"cluster/ks.yaml",
+				fmt.Sprintf(
+					"  postBuild:\n    substituteFrom: [{kind: %s, name: scope-input, optional: %t}]\n",
+					kind,
+					!tc.self && !tc.required,
+				),
+			)
 			if !tc.absent {
-				testutil.WriteFile(t, root, "cluster/producer.yaml", testutil.KustomizationYAML("producer", "flux-system", "  path: ./values\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
+				testutil.WriteFile(
+					t,
+					root,
+					"cluster/producer.yaml",
+					testutil.KustomizationYAML(
+						"producer",
+						"flux-system",
+						"  path: ./values\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+					),
+				)
 				resources := "resources: [input.yaml"
 				if tc.broken {
 					resources += ", missing.yaml"
@@ -300,10 +424,22 @@ func TestRun_NamedScope_SubstituteOwners(t *testing.T) {
 			res := run.Result
 			id := testutil.KustomizationID("flux-system", "selected")
 			requiredFailure := tc.broken && tc.required
-			if res == nil || (len(outputByParent(res.Manifests)[id]) == 0) != requiredFailure || (len(res.Blocked[id]) != 0) != requiredFailure {
+			if res == nil || (len(outputByParent(res.Manifests)[id]) == 0) != requiredFailure ||
+				(len(res.Blocked[id]) != 0) != requiredFailure {
 				t.Fatalf("consumer did not render independently: %+v", res)
 			}
-			out, stderr, code := runCLI(t, "build", "ks", "selected", "--path", flags.path, "--cache-dir", t.TempDir(), "--concurrency", "2")
+			out, stderr, code := runCLI(
+				t,
+				"build",
+				"ks",
+				"selected",
+				"--path",
+				flags.path,
+				"--cache-dir",
+				t.TempDir(),
+				"--concurrency",
+				"2",
+			)
 			if (code == 1) != requiredFailure || strings.Contains(out, "name: selected") == requiredFailure {
 				t.Fatalf("substitution owner policy: code=%d output=%s diagnostics=%s", code, out, stderr)
 			}
@@ -320,9 +456,24 @@ func TestRun_NamedScope_AllMatchingNamespaces(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	testutil.WriteFile(t, root, "cluster/other.yaml", strings.Replace(string(body), "namespace: apps", "namespace: other", 1)+"  dependsOn: [{name: missing}]\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"cluster/other.yaml",
+		strings.Replace(string(body), "namespace: apps", "namespace: other", 1)+"  dependsOn: [{name: missing}]\n",
+	)
 	for _, verb := range []string{"build", "test"} {
-		args := []string{verb, "hr", "selected", "--path", filepath.Join(root, "cluster"), "--cache-dir", t.TempDir(), "--concurrency", "2"}
+		args := []string{
+			verb,
+			"hr",
+			"selected",
+			"--path",
+			filepath.Join(root, "cluster"),
+			"--cache-dir",
+			t.TempDir(),
+			"--concurrency",
+			"2",
+		}
 		_, stderr, code := runCLI(t, append(args, "-n", "apps")...)
 		if code != 0 {
 			t.Fatalf("healthy namespace failed: %d %s", code, stderr)
@@ -336,7 +487,12 @@ func TestRun_NamedScope_AllMatchingNamespaces(t *testing.T) {
 
 func TestRun_NamedScope_ParentChain(t *testing.T) {
 	root := writeNamedScopeFixture(t)
-	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [cluster/ks.yaml, cluster/unrelated.yaml, cluster/parent.yaml, outside.yaml]\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"kustomization.yaml",
+		"resources: [cluster/ks.yaml, cluster/unrelated.yaml, cluster/parent.yaml, outside.yaml]\n",
+	)
 	body, err := os.ReadFile(filepath.Join(root, "cluster/hr.yaml"))
 	if err != nil {
 		t.Fatal(err)
@@ -346,10 +502,41 @@ func TestRun_NamedScope_ParentChain(t *testing.T) {
 	}
 	testutil.WriteFile(t, root, "child/hr.yaml", string(body))
 	testutil.WriteFile(t, root, "child/kustomization.yaml", "resources: [hr.yaml]\n")
-	testutil.WriteFile(t, root, "parent/child.yaml", testutil.KustomizationYAML("child", "apps", "  path: ./child\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
+	testutil.WriteFile(
+		t,
+		root,
+		"parent/child.yaml",
+		testutil.KustomizationYAML(
+			"child",
+			"apps",
+			"  path: ./child\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+		),
+	)
 	testutil.WriteFile(t, root, "parent/kustomization.yaml", "resources: [child.yaml, missing.yaml]\n")
-	testutil.WriteFile(t, root, "cluster/parent.yaml", testutil.KustomizationYAML("parent", "flux-system", "  path: ./parent\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
-	_, stderr, code := runCLI(t, "build", "ks", "child", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2", "-n", "apps")
+	testutil.WriteFile(
+		t,
+		root,
+		"cluster/parent.yaml",
+		testutil.KustomizationYAML(
+			"parent",
+			"flux-system",
+			"  path: ./parent\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+		),
+	)
+	_, stderr, code := runCLI(
+		t,
+		"build",
+		"ks",
+		"child",
+		"--path",
+		root,
+		"--cache-dir",
+		t.TempDir(),
+		"--concurrency",
+		"2",
+		"-n",
+		"apps",
+	)
 	if code != 1 || !strings.Contains(stderr, "parent") || !strings.Contains(stderr, "missing.yaml") {
 		t.Fatalf("cross-namespace grandparent failure hidden: %d %s", code, stderr)
 	}
@@ -363,25 +550,46 @@ func TestScopedFailures_WarningsPreserveFatalErrors(t *testing.T) {
 	selected := &manifest.Kustomization{Name: "selected", Namespace: "apps"}
 	o.Store().AddObject(selected)
 	other := testutil.KustomizationID("apps", "other")
-	res := &orchestrator.Result{Manifests: []manifest.DocumentBatch{{Parent: selected, Documents: []map[string]any{{"kind": "ConfigMap", "metadata": map[string]any{"name": "partial"}}}}}, Failed: map[manifest.NamedResource]store.StatusInfo{other: {Status: store.StatusFailed, Message: "unrelated failure"}}}
+	res := &orchestrator.Result{
+		Manifests: []manifest.DocumentBatch{
+			{
+				Parent:    selected,
+				Documents: []map[string]any{{"kind": "ConfigMap", "metadata": map[string]any{"name": "partial"}}},
+			},
+		},
+		Failed: map[manifest.NamedResource]store.StatusInfo{
+			other: {Status: store.StatusFailed, Message: "unrelated failure"},
+		},
+	}
 	cleanupErr := errors.New("backing close failed")
 	for _, fatal := range []error{context.Canceled, errors.New("unattributed panic"), errors.New("output write failed"), cleanupErr, errors.Join(context.Canceled, cleanupErr)} {
 		t.Run(fatal.Error(), func(t *testing.T) {
 			runErr := errors.Join(&orchestrator.FailuresError{Message: "raw reconcile failures"}, fatal)
-			selection, selectedErr, remainder := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res}}, runErr,
-				[]manifest.NamedResource{testutil.KustomizationID("", selected.Name)}, nil)
+			selection, selectedErr, remainder := orchestrator.Select(
+				[]orchestrator.Rendered{{Orchestrator: o, Result: res}},
+				runErr,
+				[]manifest.NamedResource{testutil.KustomizationID("", selected.Name)},
+				nil,
+			)
 			if len(selection) != 1 || len(outputByParent(selection[0].Manifests)[selected.Named()]) != 1 {
 				t.Fatalf("selection failed: %v", selectedErr)
 			}
 			var out bytes.Buffer
-			got := finishSelected(selectedRequest{roots: []manifest.NamedResource{{Name: "selected"}}, stderr: &out}, &selectedInvocation{groups: []selectedGroup{{cluster: ".", sides: selection, err: selectedErr, remainder: remainder}}}, selectedPayload{})
-			if !errors.Is(got, fatal) || !strings.Contains(out.String(), fatal.Error()) || !strings.Contains(out.String(), "unrelated failure") {
+			got := finishSelected(
+				selectedRequest{roots: []manifest.NamedResource{{Name: "selected"}}, stderr: &out},
+				&selectedInvocation{
+					groups: []selectedGroup{{cluster: ".", sides: selection, err: selectedErr, remainder: remainder}},
+				},
+				selectedPayload{},
+			)
+			if !errors.Is(got, fatal) || !strings.Contains(out.String(), fatal.Error()) ||
+				!strings.Contains(out.String(), "unrelated failure") {
 				t.Fatalf("warning-only footer hid fatal cause: %v %s", got, out.String())
 			}
-			if errors.Is(fatal, cleanupErr) && (!errors.Is(got, cleanupErr) || strings.Count(out.String(), cleanupErr.Error()) != 1) {
+			if errors.Is(fatal, cleanupErr) &&
+				(!errors.Is(got, cleanupErr) || strings.Count(out.String(), cleanupErr.Error()) != 1) {
 				t.Fatalf("cleanup failure lost or duplicated: %v %s", got, out.String())
 			}
-
 		})
 	}
 }
@@ -391,10 +599,25 @@ func TestRun_NamedScope_WarningWriteErrors(t *testing.T) {
 		t.Run(verb, func(t *testing.T) {
 			root := writeNamedScopeFixture(t)
 			appendScopeSpec(t, root, "cluster/hr.yaml", "  values: {unused: selected}\n")
-			args := []string{verb, "hr", "selected", "--path", filepath.Join(root, "cluster"), "--cache-dir", t.TempDir(), "--concurrency", "2"}
+			args := []string{
+				verb,
+				"hr",
+				"selected",
+				"--path",
+				filepath.Join(root, "cluster"),
+				"--cache-dir",
+				t.TempDir(),
+				"--concurrency",
+				"2",
+			}
 			if verb == "diff" {
 				orig := writeNamedScopeFixture(t)
-				testutil.WriteFile(t, root, "charts/app/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected-rendered, namespace: apps}\ndata: {greeting: changed}\n")
+				testutil.WriteFile(
+					t,
+					root,
+					"charts/app/templates/cm.yaml",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected-rendered, namespace: apps}\ndata: {greeting: changed}\n",
+				)
 				appendScopeSpec(t, root, "cluster/ks.yaml", "  postBuild: {substitute: {GREETING: changed}}\n")
 
 				args = append(args, "--path-orig", filepath.Join(orig, "cluster"))
@@ -432,14 +655,34 @@ spec:
 			case "nested":
 				testutil.WriteFile(t, root, "nested/kustomization.yaml", "resources: [child.yaml]\n")
 				testutil.WriteFile(t, root, "nested/child.yaml", child)
-				child = testutil.KustomizationYAML("nested-child", "other", "  interval: 10m\n  path: ./nested\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n")
+				child = testutil.KustomizationYAML(
+					"nested-child",
+					"other",
+					"  interval: 10m\n  path: ./nested\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+				)
 			case "resourceset":
-				child = "apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: child-set, namespace: other}\nspec:\n  resources:\n  - " + strings.ReplaceAll(strings.TrimSuffix(child, "\n"), "\n", "\n    ") + "\n"
+				child = "apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: child-set, namespace: other}\nspec:\n  resources:\n  - " + strings.ReplaceAll(
+					strings.TrimSuffix(child, "\n"),
+					"\n",
+					"\n    ",
+				) + "\n"
 			}
 			testutil.WriteFile(t, root, "selected/kustomization.yaml", "resources: [cm.yaml, child.yaml]\n")
 			testutil.WriteFile(t, root, "selected/child.yaml", child)
 			for _, verb := range []string{"build", "test", "diff"} {
-				args := []string{verb, "ks", "selected", "--path", root, "-n", "flux-system", "--cache-dir", t.TempDir(), "--concurrency", "2"}
+				args := []string{
+					verb,
+					"ks",
+					"selected",
+					"--path",
+					root,
+					"-n",
+					"flux-system",
+					"--cache-dir",
+					t.TempDir(),
+					"--concurrency",
+					"2",
+				}
 				if verb == "diff" {
 					args = append(args, "--path-orig", orig)
 				}
@@ -448,14 +691,18 @@ spec:
 					t.Fatalf("%s hid owned descendant failure: code=%d %s", verb, code, stderr)
 				}
 			}
-
 		})
 	}
 }
 
 func TestRun_NamedScope_PrerequisiteSiblings(t *testing.T) {
 	root := writeNamedScopeFixture(t)
-	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [cluster/hr.yaml, cluster/unrelated.yaml, cluster/parent.yaml, outside.yaml]\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"kustomization.yaml",
+		"resources: [cluster/hr.yaml, cluster/unrelated.yaml, cluster/parent.yaml, outside.yaml]\n",
+	)
 	body, err := os.ReadFile(filepath.Join(root, "cluster/ks.yaml"))
 	if err != nil {
 		t.Fatal(err)
@@ -463,9 +710,24 @@ func TestRun_NamedScope_PrerequisiteSiblings(t *testing.T) {
 	if err := os.Remove(filepath.Join(root, "cluster/ks.yaml")); err != nil {
 		t.Fatal(err)
 	}
-	testutil.WriteFile(t, root, "siblings/selected.yaml", string(body)+"  postBuild: {substituteFrom: [{kind: ConfigMap, name: values}]}\n")
-	testutil.WriteFile(t, root, "siblings/values.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: values, namespace: flux-system}\ndata: {GREETING: hello}\n")
-	testutil.WriteFile(t, root, "siblings/kustomization.yaml", "resources: [selected.yaml, sibling.yaml, values.yaml]\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"siblings/selected.yaml",
+		string(body)+"  postBuild: {substituteFrom: [{kind: ConfigMap, name: values}]}\n",
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"siblings/values.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: values, namespace: flux-system}\ndata: {GREETING: hello}\n",
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"siblings/kustomization.yaml",
+		"resources: [selected.yaml, sibling.yaml, values.yaml]\n",
+	)
 	testutil.WriteFile(t, root, "siblings/sibling.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata: {name: sibling, namespace: apps}
@@ -477,9 +739,29 @@ spec:
       chart: ./charts/app
       sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
 `)
-	testutil.WriteFile(t, root, "cluster/parent.yaml", testutil.KustomizationYAML("parent", "flux-system", "  interval: 10m\n  path: ./siblings\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
+	testutil.WriteFile(
+		t,
+		root,
+		"cluster/parent.yaml",
+		testutil.KustomizationYAML(
+			"parent",
+			"flux-system",
+			"  interval: 10m\n  path: ./siblings\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+		),
+	)
 	for _, verb := range []string{"build", "test"} {
-		_, stderr, code := runCLI(t, verb, "ks", "selected", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2")
+		_, stderr, code := runCLI(
+			t,
+			verb,
+			"ks",
+			"selected",
+			"--path",
+			root,
+			"--cache-dir",
+			t.TempDir(),
+			"--concurrency",
+			"2",
+		)
 		if code != 0 || strings.Contains(stderr, "missing-sibling-dependency") {
 			t.Fatalf("%s included prerequisite parent's sibling: code=%d %s", verb, code, stderr)
 		}
@@ -516,13 +798,25 @@ func TestReportFailures_FatalCycleWithWarnings(t *testing.T) {
 		},
 		Blocked: map[manifest.NamedResource][]manifest.NamedResource{a: {b}, b: {a}},
 	}
-	selection, selectedErr, remainder := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res}},
-		&orchestrator.FailuresError{Message: "raw reconcile failures"}, []manifest.NamedResource{{Group: a.Group, Kind: a.Kind, Name: a.Name}}, nil)
+	selection, selectedErr, remainder := orchestrator.Select(
+		[]orchestrator.Rendered{{Orchestrator: o, Result: res}},
+		&orchestrator.FailuresError{
+			Message: "raw reconcile failures",
+		},
+		[]manifest.NamedResource{{Group: a.Group, Kind: a.Kind, Name: a.Name}},
+		nil,
+	)
 	if len(selection) != 1 {
 		t.Fatalf("selection failed: %v", selectedErr)
 	}
 	var out bytes.Buffer
-	if got := finishSelected(selectedRequest{roots: []manifest.NamedResource{{Name: "selected"}}, stderr: &out}, &selectedInvocation{groups: []selectedGroup{{cluster: ".", sides: selection, err: selectedErr, remainder: remainder}}}, selectedPayload{}); got == nil {
+	if got := finishSelected(
+		selectedRequest{roots: []manifest.NamedResource{{Name: "selected"}}, stderr: &out},
+		&selectedInvocation{
+			groups: []selectedGroup{{cluster: ".", sides: selection, err: selectedErr, remainder: remainder}},
+		},
+		selectedPayload{},
+	); got == nil {
 		t.Fatal("fatal cycle became successful")
 	}
 	for _, want := range []string{"blocked by " + b.String(), "blocked by " + a.String(), "unrelated failure", "2 failed"} {
@@ -567,8 +861,14 @@ func TestScopedFailures_CanonicalReplacementWithStaleArtifact(t *testing.T) {
 		current: {Status: store.StatusFailed, Message: "current input failure"},
 		old:     {Status: store.StatusFailed, Message: "old input failure"},
 	}}
-	selection, selectedErr, _ := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res}},
-		&orchestrator.FailuresError{Message: "raw reconcile failures"}, []manifest.NamedResource{{Group: id.Group, Kind: id.Kind, Name: id.Name}}, nil)
+	selection, selectedErr, _ := orchestrator.Select(
+		[]orchestrator.Rendered{{Orchestrator: o, Result: res}},
+		&orchestrator.FailuresError{
+			Message: "raw reconcile failures",
+		},
+		[]manifest.NamedResource{{Group: id.Group, Kind: id.Kind, Name: id.Name}},
+		nil,
+	)
 	if len(selection) != 1 || selectedErr == nil {
 		t.Fatalf("selection failed: %v", selectedErr)
 	}
@@ -576,7 +876,9 @@ func TestScopedFailures_CanonicalReplacementWithStaleArtifact(t *testing.T) {
 		t.Fatal("stale artifact weakened selected failure")
 	}
 	if len(selection[0].Failed) != 2 || selection[0].Failed[current].String() != "current input failure" ||
-		len(selection[0].Unrelated) != 1 || selection[0].Unrelated[0].Resource != old || o.Store().GetArtifact(id, store.ArtifactContent) != nil {
+		len(
+			selection[0].Unrelated,
+		) != 1 || selection[0].Unrelated[0].Resource != old || o.Store().GetArtifact(id, store.ArtifactContent) != nil {
 		t.Fatalf("projection did not follow current canonical refs: %+v", selection[0])
 	}
 	_, _, accepted := o.Store().GetEmission(id)
@@ -595,7 +897,16 @@ func TestRun_UnnamedScope_ErrorBytes(t *testing.T) {
 			if verb == "test" {
 				kind = "all"
 			}
-			args := []string{verb, kind, "--path", filepath.Join(root, "cluster"), "--cache-dir", t.TempDir(), "--concurrency", "2"}
+			args := []string{
+				verb,
+				kind,
+				"--path",
+				filepath.Join(root, "cluster"),
+				"--cache-dir",
+				t.TempDir(),
+				"--concurrency",
+				"2",
+			}
 			_, stderr, code := runCLI(t, args...)
 			assert.Equal(t, code, 1)
 			expected := "\n  ✗  Kustomization  flux-system/outside  not found\n         required by flux-system/unrelated\n" + persistenceNotice + "\n  ✗ 1 failed · 1 blocked\n"
@@ -629,8 +940,26 @@ func TestRun_NamedScope_UnrelatedNamespaceWarnings(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			testutil.WriteFile(t, root, "cluster/unrelated.yaml", strings.Replace(string(body), "namespace: flux-system", "namespace: other", 1))
-			out, stderr, code := runCLI(t, verb, "hr", "selected", "--path", filepath.Join(root, "cluster"), "-n", "apps", "--cache-dir", t.TempDir(), "--concurrency", "2")
+			testutil.WriteFile(
+				t,
+				root,
+				"cluster/unrelated.yaml",
+				strings.Replace(string(body), "namespace: flux-system", "namespace: other", 1),
+			)
+			out, stderr, code := runCLI(
+				t,
+				verb,
+				"hr",
+				"selected",
+				"--path",
+				filepath.Join(root, "cluster"),
+				"-n",
+				"apps",
+				"--cache-dir",
+				t.TempDir(),
+				"--concurrency",
+				"2",
+			)
 			assert.Equal(t, code, 0)
 			if strings.Contains(out+stderr, "unrelated") || strings.Contains(out+stderr, "outside") {
 				t.Fatalf("excluded namespace diagnostics leaked: %s%s", out, stderr)
@@ -653,7 +982,12 @@ func TestRun_NamedScope_TestWarningDestinations(t *testing.T) {
 			out, stderr, code := runCLI(t, "test", "hr", "selected", "--path", filepath.Join(root, "cluster"),
 				"--cache-dir", t.TempDir(), "--concurrency", "2")
 			assert.Equal(t, code, wantCode)
-			assert.Equal(t, strings.Contains(out, "warnings") || strings.Contains(out, "unrelated") || strings.Contains(out, "outside"), false)
+			assert.Equal(
+				t,
+				strings.Contains(out, "warnings") || strings.Contains(out, "unrelated") ||
+					strings.Contains(out, "outside"),
+				false,
+			)
 			assert.Equal(t, strings.Count(stderr, "warnings (1)"), 1)
 			assert.Equal(t, strings.Count(stderr, "Kustomization.kustomize.toolkit.fluxcd.io/flux-system/unrelated"), 0)
 			assert.Equal(t, strings.Contains(stderr, "outside"), false)
@@ -671,9 +1005,26 @@ func TestRun_NamedScope_TestWarningDestinations(t *testing.T) {
 
 func TestRun_NamedScope_DiffBothSnapshots(t *testing.T) {
 	root, orig := writeNamedScopeFixture(t), writeNamedScopeFixture(t)
-	testutil.WriteFile(t, root, "charts/app/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected-rendered, namespace: apps}\ndata: {greeting: changed}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"charts/app/templates/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected-rendered, namespace: apps}\ndata: {greeting: changed}\n",
+	)
 	appendScopeSpec(t, root, "cluster/hr.yaml", "  values: {greeting: changed}\n")
-	args := []string{"diff", "hr", "selected", "--path", filepath.Join(root, "cluster"), "--path-orig", filepath.Join(orig, "cluster"), "--cache-dir", t.TempDir(), "--concurrency", "2"}
+	args := []string{
+		"diff",
+		"hr",
+		"selected",
+		"--path",
+		filepath.Join(root, "cluster"),
+		"--path-orig",
+		filepath.Join(orig, "cluster"),
+		"--cache-dir",
+		t.TempDir(),
+		"--concurrency",
+		"2",
+	}
 	want, _, code := runCLI(t, args...)
 	assert.Equal(t, code, 0)
 	if want == "" {
@@ -683,7 +1034,8 @@ func TestRun_NamedScope_DiffBothSnapshots(t *testing.T) {
 	got, stderr, code := runCLI(t, args...)
 	assert.Equal(t, code, 0)
 	assert.Equal(t, got, want)
-	if strings.Contains(stderr, "outside") || strings.Contains(stderr, "unrelated") || !strings.Contains(stderr, "[StaleValues] current snapshot: HelmRelease apps/selected") {
+	if strings.Contains(stderr, "outside") || strings.Contains(stderr, "unrelated") ||
+		!strings.Contains(stderr, "[StaleValues] current snapshot: HelmRelease apps/selected") {
 		t.Fatalf("selected warning scope differs: %s", stderr)
 	}
 }
@@ -694,7 +1046,21 @@ func TestRun_NamedScope_DiffFatalWriteError(t *testing.T) {
 	want := errors.New("fatal diagnostic write failed")
 	cmd := New("test")
 	cmd.SetContext(t.Context())
-	cmd.SetArgs([]string{"diff", "hr", "selected", "--path", filepath.Join(root, "cluster"), "--path-orig", filepath.Join(orig, "cluster"), "--cache-dir", t.TempDir(), "--concurrency", "2"})
+	cmd.SetArgs(
+		[]string{
+			"diff",
+			"hr",
+			"selected",
+			"--path",
+			filepath.Join(root, "cluster"),
+			"--path-orig",
+			filepath.Join(orig, "cluster"),
+			"--cache-dir",
+			t.TempDir(),
+			"--concurrency",
+			"2",
+		},
+	)
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(failingWriter{err: want})
 	if got := cmd.Execute(); !errors.Is(got, want) {
@@ -723,7 +1089,12 @@ func TestRun_NamedScope_DiffOwningKustomizationFails(t *testing.T) {
 			for _, dir := range []string{root, orig} {
 				testutil.GitInit(t, dir)
 				testutil.WriteFile(t, dir, "charts/app/Chart.yaml", "apiVersion: v2\nname: app\nversion: 0.1.0\n")
-				testutil.WriteFile(t, dir, "charts/app/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected-rendered, namespace: apps}\ndata: {greeting: hello}\n")
+				testutil.WriteFile(
+					t,
+					dir,
+					"charts/app/templates/cm.yaml",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected-rendered, namespace: apps}\ndata: {greeting: hello}\n",
+				)
 				testutil.WriteFile(t, dir, "apps/kustomization.yaml", resources)
 				testutil.WriteFile(t, dir, releasePath, `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
@@ -736,34 +1107,82 @@ spec:
       sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
 `)
 				for _, name := range []string{"apps", "other"} {
-					testutil.WriteFile(t, dir, "flux/"+name+".yaml", testutil.KustomizationYAML(name, "flux-system", "  interval: 10m\n  path: ./"+name+"\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
+					testutil.WriteFile(
+						t,
+						dir,
+						"flux/"+name+".yaml",
+						testutil.KustomizationYAML(
+							name,
+							"flux-system",
+							"  interval: 10m\n  path: ./"+name+"\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+						),
+					)
 				}
 				testutil.WriteFile(t, dir, "other/kustomization.yaml", "resources: [cm.yaml]\n")
-				testutil.WriteFile(t, dir, "other/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: other, namespace: apps}\n")
+				testutil.WriteFile(
+					t,
+					dir,
+					"other/cm.yaml",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: other, namespace: apps}\n",
+				)
 			}
 			if tc.layout == "plain" {
 				appendScopeSpec(t, root, releasePath, "  values: {greeting: changed}\n")
 			}
 			if tc.layout == "moved" {
-				if err := os.Rename(filepath.Join(root, releasePath), filepath.Join(root, "other/hr.yaml")); err != nil {
+				if err := os.Rename(
+					filepath.Join(root, releasePath),
+					filepath.Join(root, "other/hr.yaml"),
+				); err != nil {
 					t.Fatal(err)
 				}
 				testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
-				testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: apps, namespace: apps}\n")
+				testutil.WriteFile(
+					t,
+					root,
+					"apps/cm.yaml",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: apps, namespace: apps}\n",
+				)
 				testutil.WriteFile(t, root, "other/kustomization.yaml", "resources: [cm.yaml, hr.yaml]\n")
 			}
 			failing := root
 			if tc.failingSide == "orig" {
 				failing = orig
 			}
-			appendScopeSpec(t, failing, "flux/apps.yaml", "  postBuild: {substituteFrom: [{kind: ConfigMap, name: nope}]}\n")
-			flags := []string{"--path", filepath.Join(root, "flux"), "--path-orig", filepath.Join(orig, "flux"), "--cache-dir", t.TempDir(), "--concurrency", "2"}
+			appendScopeSpec(
+				t,
+				failing,
+				"flux/apps.yaml",
+				"  postBuild: {substituteFrom: [{kind: ConfigMap, name: nope}]}\n",
+			)
+			flags := []string{
+				"--path",
+				filepath.Join(root, "flux"),
+				"--path-orig",
+				filepath.Join(orig, "flux"),
+				"--cache-dir",
+				t.TempDir(),
+				"--concurrency",
+				"2",
+			}
 			_, stderr, code := runCLI(t, append([]string{"diff", "hr", "selected"}, flags...)...)
 			if tc.layout == "moved" && tc.failingSide == "current" {
-				if code != 0 || strings.Contains(stderr, "flux-system/nope") || strings.Contains(stderr, "reconcile completed") {
+				if code != 0 || strings.Contains(stderr, "flux-system/nope") ||
+					strings.Contains(stderr, "reconcile completed") {
 					t.Fatalf("former owning Kustomization became fatal: %d %s", code, stderr)
 				}
-				_, stderr, code = runCLI(t, "build", "hr", "selected", "--path", filepath.Join(root, "flux"), "--cache-dir", t.TempDir(), "--concurrency", "2")
+				_, stderr, code = runCLI(
+					t,
+					"build",
+					"hr",
+					"selected",
+					"--path",
+					filepath.Join(root, "flux"),
+					"--cache-dir",
+					t.TempDir(),
+					"--concurrency",
+					"2",
+				)
 				if code != 0 {
 					t.Fatalf("former owning Kustomization became fatal in build: %d %s", code, stderr)
 				}
@@ -779,7 +1198,20 @@ spec:
 				if failing == orig {
 					baseline = root
 				}
-				_, stderr, code = runCLI(t, "build", "hr", "selected", "--path", filepath.Join(failing, "flux"), "--path-orig", filepath.Join(baseline, "flux"), "--cache-dir", t.TempDir(), "--concurrency", "2")
+				_, stderr, code = runCLI(
+					t,
+					"build",
+					"hr",
+					"selected",
+					"--path",
+					filepath.Join(failing, "flux"),
+					"--path-orig",
+					filepath.Join(baseline, "flux"),
+					"--cache-dir",
+					t.TempDir(),
+					"--concurrency",
+					"2",
+				)
 				if code != 1 || !strings.Contains(stderr, "1 failed") || !strings.Contains(stderr, "flux-system/nope") {
 					t.Fatalf("changed-only owning Kustomization failure hidden: %d %s", code, stderr)
 				}
@@ -807,8 +1239,22 @@ spec:
 	for _, dir := range []string{root, orig} {
 		testutil.GitInit(t, dir)
 		testutil.WriteFile(t, dir, "charts/app/Chart.yaml", "apiVersion: v2\nname: app\nversion: 0.1.0\n")
-		testutil.WriteFile(t, dir, "charts/app/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '{{ .Release.Name }}-rendered', namespace: apps}\ndata: {greeting: hello}\n")
-		testutil.WriteFile(t, dir, "flux/apps.yaml", testutil.KustomizationYAML("apps", "flux-system", "  interval: 10m\n  path: ./apps\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
+		testutil.WriteFile(
+			t,
+			dir,
+			"charts/app/templates/cm.yaml",
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '{{ .Release.Name }}-rendered', namespace: apps}\ndata: {greeting: hello}\n",
+		)
+		testutil.WriteFile(
+			t,
+			dir,
+			"flux/apps.yaml",
+			testutil.KustomizationYAML(
+				"apps",
+				"flux-system",
+				"  interval: 10m\n  path: ./apps\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+			),
+		)
 		testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: [selected.yaml, sibling.yaml]\n")
 		testutil.WriteFile(t, dir, "apps/selected.yaml", release("selected", "./charts/app"))
 		testutil.WriteFile(t, dir, "apps/sibling.yaml", release("sibling", "./charts/app"))
@@ -818,7 +1264,16 @@ spec:
 	}
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [sibling.yaml]\n")
 	testutil.WriteFile(t, root, "apps/sibling.yaml", release("sibling", "./charts/missing"))
-	flags := []string{"--path", filepath.Join(root, "flux"), "--path-orig", filepath.Join(orig, "flux"), "--cache-dir", t.TempDir(), "--concurrency", "2"}
+	flags := []string{
+		"--path",
+		filepath.Join(root, "flux"),
+		"--path-orig",
+		filepath.Join(orig, "flux"),
+		"--cache-dir",
+		t.TempDir(),
+		"--concurrency",
+		"2",
+	}
 	for _, tc := range []struct {
 		name string
 		code int
@@ -832,7 +1287,9 @@ spec:
 				t.Fatalf("diff hr %s: exit %d, want %d; stderr: %s", tc.name, code, tc.code, stderr)
 			}
 			if tc.code == 0 {
-				if !strings.Contains(stderr, "warnings (2)") || strings.Contains(stderr, "reconcile completed") || !strings.Contains(out, "selected-rendered") || strings.Contains(out, "sibling") {
+				if !strings.Contains(stderr, "warnings (2)") || strings.Contains(stderr, "reconcile completed") ||
+					!strings.Contains(out, "selected-rendered") ||
+					strings.Contains(out, "sibling") {
 					t.Fatalf("deleted release diff includes unrelated failure: stdout: %s; stderr: %s", out, stderr)
 				}
 			} else if !strings.Contains(stderr, "✗ 1 failed") || !strings.Contains(stderr, "HelmRelease  apps/sibling") {
@@ -850,7 +1307,16 @@ func TestRun_NamedScope_DiffCounterpartSelection(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			root, orig := writeNamedScopeFixture(t), writeNamedScopeFixture(t)
 			for _, dir := range []string{root, orig} {
-				testutil.WriteFile(t, dir, "cluster/bad.yaml", testutil.KustomizationYAML("bad", tc.namespace, "  interval: 10m\n  path: ./bad\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
+				testutil.WriteFile(
+					t,
+					dir,
+					"cluster/bad.yaml",
+					testutil.KustomizationYAML(
+						"bad",
+						tc.namespace,
+						"  interval: 10m\n  path: ./bad\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+					),
+				)
 				testutil.WriteFile(t, dir, "bad/kustomization.yaml", "resources: [../shared/hr.yaml]\n")
 				testutil.WriteFile(t, dir, "shared/hr.yaml", fmt.Sprintf(`apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
@@ -864,8 +1330,22 @@ spec:
 `, tc.releaseName, tc.namespace))
 			}
 			appendScopeSpec(t, root, "cluster/hr.yaml", "  values: {greeting: changed}\n")
-			appendScopeSpec(t, root, "cluster/bad.yaml", "  postBuild: {substituteFrom: [{kind: ConfigMap, name: nope}]}\n")
-			flags := []string{"--path", filepath.Join(root, "cluster"), "--path-orig", filepath.Join(orig, "cluster"), "--cache-dir", t.TempDir(), "--concurrency", "2"}
+			appendScopeSpec(
+				t,
+				root,
+				"cluster/bad.yaml",
+				"  postBuild: {substituteFrom: [{kind: ConfigMap, name: nope}]}\n",
+			)
+			flags := []string{
+				"--path",
+				filepath.Join(root, "cluster"),
+				"--path-orig",
+				filepath.Join(orig, "cluster"),
+				"--cache-dir",
+				t.TempDir(),
+				"--concurrency",
+				"2",
+			}
 			if tc.name == "namespace" {
 				flags = append(flags, "-n", "apps")
 			}
@@ -873,7 +1353,8 @@ spec:
 			if code != 0 || strings.Contains(stderr, "reconcile completed") {
 				t.Fatalf("unselected counterpart owner became fatal: %d %s", code, stderr)
 			}
-			if strings.Contains(out, "other-release") || (tc.name == "namespace" && strings.Contains(out+stderr, "team")) {
+			if strings.Contains(out, "other-release") ||
+				(tc.name == "namespace" && strings.Contains(out+stderr, "team")) {
 				t.Fatalf("unselected counterpart leaked into diff: %s%s", out, stderr)
 			}
 		})
@@ -889,19 +1370,40 @@ func TestReportFailures_NamedReportingPolicy(t *testing.T) {
 			}
 			id := testutil.KustomizationID("apps", "failed")
 			o.Store().AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
-			res := &orchestrator.Result{Failed: map[manifest.NamedResource]store.StatusInfo{id: {Status: store.StatusFailed, Message: "render failed"}}}
+			res := &orchestrator.Result{
+				Failed: map[manifest.NamedResource]store.StatusInfo{
+					id: {Status: store.StatusFailed, Message: "render failed"},
+				},
+			}
 			query := manifest.NamedResource{Group: id.Group, Kind: id.Kind}
 			if named {
 				query.Name = id.Name
 			}
-			selection, selectedErr, remainder := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res}},
-				&orchestrator.FailuresError{Message: "raw reconcile failures"}, []manifest.NamedResource{query}, nil)
+			selection, selectedErr, remainder := orchestrator.Select(
+				[]orchestrator.Rendered{{Orchestrator: o, Result: res}},
+				&orchestrator.FailuresError{Message: "raw reconcile failures"},
+				[]manifest.NamedResource{query},
+				nil,
+			)
 			if len(selection) != 1 || selectedErr == nil {
 				t.Fatalf("selection failed: %v", selectedErr)
 			}
 			var out bytes.Buffer
 			extra := fmt.Errorf("reconcile: %w", context.Canceled)
-			got := finishSelected(selectedRequest{roots: []manifest.NamedResource{query}, stderr: &out}, &selectedInvocation{groups: []selectedGroup{{cluster: ".", sides: selection, err: errors.Join(selectedErr, extra), remainder: errors.Join(remainder, extra)}}}, selectedPayload{})
+			got := finishSelected(
+				selectedRequest{roots: []manifest.NamedResource{query}, stderr: &out},
+				&selectedInvocation{
+					groups: []selectedGroup{
+						{
+							cluster:   ".",
+							sides:     selection,
+							err:       errors.Join(selectedErr, extra),
+							remainder: errors.Join(remainder, extra),
+						},
+					},
+				},
+				selectedPayload{},
+			)
 			if !errors.Is(got, context.Canceled) {
 				t.Fatalf("lost non-resource error: %v", got)
 			}
@@ -909,7 +1411,13 @@ func TestReportFailures_NamedReportingPolicy(t *testing.T) {
 				t.Errorf("non-resource error missing from report: %s", &out)
 			}
 			writeErr := errors.New("report write failed")
-			got = finishSelected(selectedRequest{roots: []manifest.NamedResource{query}, stderr: failingWriter{err: writeErr}}, &selectedInvocation{groups: []selectedGroup{{cluster: ".", sides: selection, err: selectedErr, remainder: remainder}}}, selectedPayload{})
+			got = finishSelected(
+				selectedRequest{roots: []manifest.NamedResource{query}, stderr: failingWriter{err: writeErr}},
+				&selectedInvocation{
+					groups: []selectedGroup{{cluster: ".", sides: selection, err: selectedErr, remainder: remainder}},
+				},
+				selectedPayload{},
+			)
 			assert.Equal(t, errors.Is(got, writeErr), true)
 		})
 	}
@@ -938,11 +1446,29 @@ func TestRun_GetNamed_UnrelatedFailureAndLabels(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			body = []byte(strings.Replace(string(body), "namespace: ", "labels: {area: selected, empty: ''}, namespace: ", 1))
+			body = []byte(
+				strings.Replace(string(body), "namespace: ", "labels: {area: selected, empty: ''}, namespace: ", 1),
+			)
 			testutil.WriteFile(t, root, file, string(body))
-			args := []string{"get", tc.kind, "selected", "--path", filepath.Join(root, "cluster"), "--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "name", "-l", tc.label}
+			args := []string{
+				"get",
+				tc.kind,
+				"selected",
+				"--path",
+				filepath.Join(root, "cluster"),
+				"--cache-dir",
+				t.TempDir(),
+				"--concurrency",
+				"2",
+				"-o",
+				"name",
+				"-l",
+				tc.label,
+			}
 			stdout, stderr, code := runCLI(t, args...)
-			if code != 0 || (stdout != "") != tc.visible || !strings.Contains(stderr, persistenceMessage) || strings.Contains(stderr, "unrelated") || strings.Contains(stderr, "outside") {
+			if code != 0 || (stdout != "") != tc.visible || !strings.Contains(stderr, persistenceMessage) ||
+				strings.Contains(stderr, "unrelated") ||
+				strings.Contains(stderr, "outside") {
 				t.Fatalf("healthy named get: exit=%d stdout=%q stderr=%s", code, stdout, stderr)
 			}
 			appendScopeSpec(t, root, file, "  dependsOn: [{name: missing, namespace: other}]\n")
@@ -1036,9 +1562,16 @@ func TestFailureModel(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				selected, err, _ := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: tc.raw}},
-					&orchestrator.FailuresError{Message: "raw failures"}, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
-				if len(selected) != 1 || err == nil || !strings.Contains(err.Error(), fmt.Sprintf("(+%d blocked", tc.want.Blocked)) {
+				selected, err, _ := orchestrator.Select(
+					[]orchestrator.Rendered{{Orchestrator: o, Result: tc.raw}},
+					&orchestrator.FailuresError{
+						Message: "raw failures",
+					},
+					[]manifest.NamedResource{testutil.KustomizationID("", "")},
+					nil,
+				)
+				if len(selected) != 1 || err == nil ||
+					!strings.Contains(err.Error(), fmt.Sprintf("(+%d blocked", tc.want.Blocked)) {
 					t.Fatalf("selected error and report counts disagree: %v", err)
 				}
 				result = selected[0]

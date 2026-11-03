@@ -38,7 +38,11 @@ func TestReconcile_SelfMetadataConverges(t *testing.T) {
 			s.AddObject(ks)
 			var firstFingerprint string
 			if rerender {
-				info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode})
+				info := controllertest.DispatchToFixpoint(
+					t.Context(),
+					t,
+					controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode},
+				)
 				if info.Status != store.StatusReady {
 					t.Fatalf("setup: %+v", info)
 				}
@@ -47,7 +51,9 @@ func TestReconcile_SelfMetadataConverges(t *testing.T) {
 				ks.TargetNamespace = "elsewhere"
 			}
 			ks = ks.Clone()
-			ks.DependsOn = []kustomizev1.DependencyReference{{Name: dep.Name, ReadyExpr: `self.metadata.labels['tier'] == 'data'`}}
+			ks.DependsOn = []kustomizev1.DependencyReference{
+				{Name: dep.Name, ReadyExpr: `self.metadata.labels['tier'] == 'data'`},
+			}
 			s.AddObject(ks)
 			var attempts atomic.Int32
 			var rendering, applying atomic.Bool
@@ -64,7 +70,9 @@ func TestReconcile_SelfMetadataConverges(t *testing.T) {
 				}
 			}, false)
 			info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{
-				Tasks: c.Tasks, Store: s, ID: ks.Named(),
+				Tasks: c.Tasks,
+				Store: s,
+				ID:    ks.Named(),
 				ReconcileNode: func(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
 					attempts.Add(1)
 					return c.ReconcileNode(ctx, id, level)
@@ -80,7 +88,8 @@ func TestReconcile_SelfMetadataConverges(t *testing.T) {
 			if !rendering.Load() || !applying.Load() {
 				t.Fatalf("missing transient statuses: rendering=%v applying=%v", rendering.Load(), applying.Load())
 			}
-			if rerender && (emission.Fingerprint == firstFingerprint || emission.Children[0].Obj.Named().Namespace != "elsewhere") {
+			if rerender &&
+				(emission.Fingerprint == firstFingerprint || emission.Children[0].Obj.Named().Namespace != "elsewhere") {
 				t.Fatalf("genuine rerender did not replace output: %+v", emission)
 			}
 			t.Logf("ready with ConfigMap output in %d dispatches; rendering and applying observed", attempts.Load())

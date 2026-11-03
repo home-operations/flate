@@ -62,7 +62,16 @@ func missingCRDRepo(t *testing.T, rs string) string {
 	t.Helper()
 	dir := t.TempDir()
 	testutil.GitInit(t, dir)
-	testutil.WriteFile(t, dir, "flux/ks.yaml", testutil.KustomizationYAML("apps", "flux-system", " path: ./apps\n sourceRef: {kind: GitRepository, name: flux-system}\n"))
+	testutil.WriteFile(
+		t,
+		dir,
+		"flux/ks.yaml",
+		testutil.KustomizationYAML(
+			"apps",
+			"flux-system",
+			" path: ./apps\n sourceRef: {kind: GitRepository, name: flux-system}\n",
+		),
+	)
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- rs.yaml\n")
 	testutil.WriteFile(t, dir, "apps/rs.yaml", rs)
 	return dir
@@ -70,18 +79,45 @@ func missingCRDRepo(t *testing.T, rs string) string {
 
 func TestE2E_MissingCRDs_StrictIssue(t *testing.T) {
 	dir := missingCRDRepo(t, issueResourceSet)
-	out, errOut, code := harness.RunCLIBuffers("test", "all", "--path", dir, "--cache-dir", t.TempDir(), "--concurrency", "2")
-	if code != 1 || !strings.Contains(out+errOut, "helmreleases.helm.toolkit.fluxcd.io") || !strings.Contains(out+errOut, "not found") {
+	out, errOut, code := harness.RunCLIBuffers(
+		"test",
+		"all",
+		"--path",
+		dir,
+		"--cache-dir",
+		t.TempDir(),
+		"--concurrency",
+		"2",
+	)
+	if code != 1 || !strings.Contains(out+errOut, "helmreleases.helm.toolkit.fluxcd.io") ||
+		!strings.Contains(out+errOut, "not found") {
 		t.Fatalf("strict issue: exit=%d stdout=%s stderr=%s", code, out, errOut)
 	}
 	t.Logf("strict issue: exit=%d stdout=%s stderr=%s", code, out, errOut)
 }
 
 func TestE2E_ResourceSet_RuntimeClassDependency(t *testing.T) {
-	dir := missingCRDRepo(t, "apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: rs, namespace: flux-system}\nspec:\n  dependsOn: [{apiVersion: node.k8s.io/v1, kind: RuntimeClass, name: nvidia}]\n  resources: [{apiVersion: v1, kind: ConfigMap, metadata: {name: result}}]\n")
+	dir := missingCRDRepo(
+		t,
+		"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: rs, namespace: flux-system}\nspec:\n  dependsOn: [{apiVersion: node.k8s.io/v1, kind: RuntimeClass, name: nvidia}]\n  resources: [{apiVersion: v1, kind: ConfigMap, metadata: {name: result}}]\n",
+	)
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: [rs.yaml, runtime.yaml]\n")
-	testutil.WriteFile(t, dir, "apps/runtime.yaml", "apiVersion: node.k8s.io/v1\nkind: RuntimeClass\nmetadata: {name: nvidia}\nhandler: nvidia\n")
-	out, errOut, code := harness.RunCLIBuffers("test", "all", "--path", dir, "--cache-dir", t.TempDir(), "--concurrency", "2")
+	testutil.WriteFile(
+		t,
+		dir,
+		"apps/runtime.yaml",
+		"apiVersion: node.k8s.io/v1\nkind: RuntimeClass\nmetadata: {name: nvidia}\nhandler: nvidia\n",
+	)
+	out, errOut, code := harness.RunCLIBuffers(
+		"test",
+		"all",
+		"--path",
+		dir,
+		"--cache-dir",
+		t.TempDir(),
+		"--concurrency",
+		"2",
+	)
 	if code != 0 {
 		t.Fatalf("RuntimeClass dependency: exit=%d stdout=%s stderr=%s", code, out, errOut)
 	}
@@ -105,7 +141,11 @@ spec:
 `
 
 func suspendedIssueResourceSet() string {
-	return strings.ReplaceAll(issueResourceSet, "        interval: 1h\n", "        suspend: true\n        interval: 1h\n")
+	return strings.ReplaceAll(
+		issueResourceSet,
+		"        interval: 1h\n",
+		"        suspend: true\n        interval: 1h\n",
+	)
 }
 
 func TestE2E_MissingCRDs_Policy(t *testing.T) {
@@ -130,7 +170,12 @@ func TestE2E_MissingCRDs_Policy(t *testing.T) {
 				rs = strings.Replace(rs, "apiVersion: apiextensions.k8s.io/v1", "apiVersion: v1", 1)
 			}
 			if tc.namespace != "" {
-				rs = strings.Replace(rs, "      kind: "+tc.kind+"\n", "      kind: "+tc.kind+"\n      namespace: "+tc.namespace+"\n", 1)
+				rs = strings.Replace(
+					rs,
+					"      kind: "+tc.kind+"\n",
+					"      kind: "+tc.kind+"\n      namespace: "+tc.namespace+"\n",
+					1,
+				)
 			}
 			dir := missingCRDRepo(t, rs)
 			if tc.supplied != "" {
@@ -158,7 +203,11 @@ func TestE2E_MissingCRDs_Policy(t *testing.T) {
 				t.Fatalf("warning count=%d want %d: %s", got, wantWarning, diagnostics)
 			}
 			if wantWarning == 1 {
-				crd := manifest.NamedResource{Group: "apiextensions.k8s.io", Kind: manifest.KindCustomResourceDefinition, Name: "helmreleases.helm.toolkit.fluxcd.io"}
+				crd := manifest.NamedResource{
+					Group: "apiextensions.k8s.io",
+					Kind:  manifest.KindCustomResourceDefinition,
+					Name:  "helmreleases.helm.toolkit.fluxcd.io",
+				}
 				want := "CRD " + crd.String() + " absent from offline inputs; accepted for ResourceSet.fluxcd.controlplane.io/flux-system/flux-operator"
 				if !strings.Contains(diagnostics, want) {
 					t.Fatalf("canonical warning absent: %s", diagnostics)
@@ -176,7 +225,8 @@ func TestE2E_MissingCRDs_Policy(t *testing.T) {
 					t.Fatalf("missing child spec %q: %s", part, child)
 				}
 			}
-			if strings.Contains(child, "absent from offline inputs") || strings.Count(childErr, "absent from offline inputs; accepted for") != wantWarning {
+			if strings.Contains(child, "absent from offline inputs") ||
+				strings.Count(childErr, "absent from offline inputs; accepted for") != wantWarning {
 				t.Fatalf("get warning destination/count: stdout=%s stderr=%s", child, childErr)
 			}
 			for _, skip := range []bool{true, false} {
@@ -184,8 +234,11 @@ func TestE2E_MissingCRDs_Policy(t *testing.T) {
 				if skip {
 					skipKinds += ",CustomResourceDefinition"
 				}
-				built, builtErr := harness.RequireCLIOK(t, append(append([]string{"build", "all"}, args...), "--skip-kinds="+skipKinds)...)
-				if strings.Contains(built, "absent from offline inputs") || strings.Count(builtErr, "absent from offline inputs; accepted for") != wantWarning {
+				built, builtErr := harness.RequireCLIOK(
+					t,
+					append(append([]string{"build", "all"}, args...), "--skip-kinds="+skipKinds)...)
+				if strings.Contains(built, "absent from offline inputs") ||
+					strings.Count(builtErr, "absent from offline inputs; accepted for") != wantWarning {
 					t.Fatalf("build warning destination/count: stdout=%s stderr=%s", built, builtErr)
 				}
 				if tc.kind == manifest.KindCustomResourceDefinition && tc.supplied != "" {
@@ -227,10 +280,26 @@ func TestE2E_MissingCRDs_DeterministicWarnings(t *testing.T) {
 	for _, workers := range []int{2, 4} {
 		rs := suspendedIssueResourceSet()
 		ref := "    - apiVersion: apiextensions.k8s.io/v1\n      kind: CustomResourceDefinition\n      name: helmreleases.helm.toolkit.fluxcd.io\n"
-		rs = strings.Replace(rs, ref, ref+ref+strings.Replace(ref, "helmreleases.helm.toolkit.fluxcd.io", "widgets.example.com", 1), 1)
+		rs = strings.Replace(
+			rs,
+			ref,
+			ref+ref+strings.Replace(ref, "helmreleases.helm.toolkit.fluxcd.io", "widgets.example.com", 1),
+			1,
+		)
 		rs += "---\n" + strings.Replace(rs, "  name: flux-operator\n", "  name: z-dependent\n", 1)
 		dir := missingCRDRepo(t, rs)
-		out, errOut := harness.RequireCLIOK(t, "test", "all", "--path", dir, "--cache-dir", t.TempDir(), "--concurrency", fmt.Sprint(workers), "--allow-missing-kinds=CustomResourceDefinition")
+		out, errOut := harness.RequireCLIOK(
+			t,
+			"test",
+			"all",
+			"--path",
+			dir,
+			"--cache-dir",
+			t.TempDir(),
+			"--concurrency",
+			fmt.Sprint(workers),
+			"--allow-missing-kinds=CustomResourceDefinition",
+		)
 		lines := []string{}
 		for line := range strings.SplitSeq(out+errOut, "\n") {
 			if strings.Contains(line, "absent from offline inputs; accepted for") {
@@ -241,15 +310,41 @@ func TestE2E_MissingCRDs_DeterministicWarnings(t *testing.T) {
 			t.Fatalf("warnings=%v", lines)
 		}
 		for _, line := range lines {
-			if strings.Count(line, "ResourceSet.fluxcd.controlplane.io/flux-system/flux-operator") != 1 || strings.Count(line, "ResourceSet.fluxcd.controlplane.io/flux-system/z-dependent") != 1 {
+			if strings.Count(line, "ResourceSet.fluxcd.controlplane.io/flux-system/flux-operator") != 1 ||
+				strings.Count(line, "ResourceSet.fluxcd.controlplane.io/flux-system/z-dependent") != 1 {
 				t.Fatalf("distinct sorted dependents missing: %s", line)
 			}
 		}
-		if !strings.Contains(lines[0], "helmreleases.helm.toolkit.fluxcd.io") || !strings.Contains(lines[1], "widgets.example.com") {
+		if !strings.Contains(lines[0], "helmreleases.helm.toolkit.fluxcd.io") ||
+			!strings.Contains(lines[1], "widgets.example.com") {
 			t.Fatalf("warnings out of order: %v", lines)
 		}
-		built, _ := harness.RequireCLIOK(t, "build", "all", "--path", dir, "--cache-dir", t.TempDir(), "--concurrency", fmt.Sprint(workers), "--allow-missing-kinds=CustomResourceDefinition")
-		hr, _ := harness.RequireCLIOK(t, "get", "hr", "-o", "yaml", "--path", dir, "--cache-dir", t.TempDir(), "--concurrency", fmt.Sprint(workers), "--allow-missing-kinds=CustomResourceDefinition")
+		built, _ := harness.RequireCLIOK(
+			t,
+			"build",
+			"all",
+			"--path",
+			dir,
+			"--cache-dir",
+			t.TempDir(),
+			"--concurrency",
+			fmt.Sprint(workers),
+			"--allow-missing-kinds=CustomResourceDefinition",
+		)
+		hr, _ := harness.RequireCLIOK(
+			t,
+			"get",
+			"hr",
+			"-o",
+			"yaml",
+			"--path",
+			dir,
+			"--cache-dir",
+			t.TempDir(),
+			"--concurrency",
+			fmt.Sprint(workers),
+			"--allow-missing-kinds=CustomResourceDefinition",
+		)
 		if firstBuild == "" {
 			firstBuild = built
 			firstHR = hr
@@ -270,16 +365,35 @@ func TestE2E_MissingCRDs_DiffSides(t *testing.T) {
 		t.Run(fmt.Sprint(workers), func(t *testing.T) {
 			before := missingCRDRepo(t, suspendedIssueResourceSet())
 			after := missingCRDRepo(t, strings.Replace(suspendedIssueResourceSet(), "interval: 5m", "interval: 10m", 1))
-			args := []string{"diff", "all", "--path", after, "--path-orig", before, "--cache-dir", t.TempDir(), "--concurrency", fmt.Sprint(workers)}
+			args := []string{
+				"diff",
+				"all",
+				"--path",
+				after,
+				"--path-orig",
+				before,
+				"--cache-dir",
+				t.TempDir(),
+				"--concurrency",
+				fmt.Sprint(workers),
+			}
 			out, errOut, code := harness.RunCLIBuffers(args...)
-			if code != 1 || strings.Count(errOut, "CustomResourceDefinition  helmreleases.helm.toolkit.fluxcd.io  not found") != 2 || !strings.Contains(errOut, "2 failed · 2 blocked") {
+			if code != 1 ||
+				strings.Count(
+					errOut,
+					"CustomResourceDefinition  helmreleases.helm.toolkit.fluxcd.io  not found",
+				) != 2 ||
+				!strings.Contains(errOut, "2 failed · 2 blocked") {
 				t.Fatalf("strict diff exit=%d stdout=%s stderr=%s", code, out, errOut)
 			}
 			out, errOut, code = harness.RunCLIBuffers(append(args, "--allow-missing-kinds=CustomResourceDefinition")...)
 			if code != 0 || !strings.Contains(out+errOut, "10m") || !strings.Contains(out+errOut, "5m") {
 				t.Fatalf("opt-in diff exit=%d stdout=%s stderr=%s", code, out, errOut)
 			}
-			if strings.Contains(out, "absent from offline inputs; accepted for") || strings.Count(errOut, "absent from offline inputs; accepted for") != 2 || strings.Count(errOut, "orig snapshot:") != 1 || strings.Count(errOut, "current snapshot:") != 1 {
+			if strings.Contains(out, "absent from offline inputs; accepted for") ||
+				strings.Count(errOut, "absent from offline inputs; accepted for") != 2 ||
+				strings.Count(errOut, "orig snapshot:") != 1 ||
+				strings.Count(errOut, "current snapshot:") != 1 {
 				t.Fatalf("diff warning destination/count/sides: stdout=%s stderr=%s", out, errOut)
 			}
 		})

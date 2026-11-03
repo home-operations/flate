@@ -1,9 +1,10 @@
 package orchestrator
 
 import (
-	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"path/filepath"
 	"testing"
+
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
@@ -35,7 +36,11 @@ spec:
       chart: charts/demo
       sourceRef: {kind: GitRepository, name: source, namespace: apps}
 `+"---\n"+
-		testutil.KustomizationYAML("raw-ks", "apps", "  {path: ./apps, sourceRef: {kind: GitRepository, name: source}}\n")+"---\n"+
+		testutil.KustomizationYAML(
+			"raw-ks",
+			"apps",
+			"  {path: ./apps, sourceRef: {kind: GitRepository, name: source}}\n",
+		)+"---\n"+
 		`apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSet
 metadata: {name: raw-rs, namespace: apps}
@@ -48,7 +53,11 @@ spec: {}
 `)
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "selected"}
 	idx := loader.New(store.New())
-	idx.Index.Records[id] = manifest.DiscoveryRecord{Authored: id, Path: filepath.Join(dir, "bundle.yaml"), Productions: []manifest.Production{{Authored: id, Path: filepath.Join(dir, "bundle.yaml")}}}
+	idx.Index.Records[id] = manifest.DiscoveryRecord{
+		Authored:    id,
+		Path:        filepath.Join(dir, "bundle.yaml"),
+		Productions: []manifest.Production{{Authored: id, Path: filepath.Join(dir, "bundle.yaml")}},
+	}
 	st := store.New()
 	idx.Store = st
 	input, _, err := baseline.AdmitDirectory(t.Context(), dir, dir)
@@ -97,14 +106,63 @@ metadata: {name: excluded-source, namespace: apps}
 spec: {url: https://example.test/excluded.git}
 `)
 	st := store.New()
-	hr := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "chart"}}, HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: "chart", Version: "", SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: manifest.KindGitRepository, Name: "chart", Namespace: "apps", APIVersion: manifest.SourceDomain + "/v1"}}}, ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindConfigMap, Name: "selected"}}}}
+	hr := &manifest.HelmRelease{
+		Name:      "consumer",
+		Namespace: "apps",
+		Chart: manifest.HelmChart{
+			Source: manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindGitRepository,
+				Namespace: "apps",
+				Name:      "chart",
+			},
+		},
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{
+			Chart: &helmv2.HelmChartTemplate{
+				Spec: helmv2.HelmChartTemplateSpec{
+					Chart:   "chart",
+					Version: "",
+					SourceRef: &helmv2.CrossNamespaceObjectReference{
+						Kind:       manifest.KindGitRepository,
+						Name:       "chart",
+						Namespace:  "apps",
+						APIVersion: manifest.SourceDomain + "/v1",
+					},
+				},
+			},
+			ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindConfigMap, Name: "selected"}},
+		},
+	}
 	st.AddObject(hr)
 	selected := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "selected"}
 	excluded := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "excluded"}
-	chart := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "apps", Name: "chart"}
-	excludedSource := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "apps", Name: "excluded-source"}
-	files := map[manifest.NamedResource]string{hr.Named(): "consumer.yaml", selected: "bundle.yaml", excluded: "bundle.yaml", chart: "bundle.yaml", excludedSource: "bundle.yaml"}
-	filter := admissiontest.Filter(t, admissiontest.Config{Changes: change.NewSet([]string{"consumer.yaml"}), Index: indexForTest(files), Inventory: st})
+	chart := manifest.NamedResource{
+		Group:     "source.toolkit.fluxcd.io",
+		Kind:      manifest.KindGitRepository,
+		Namespace: "apps",
+		Name:      "chart",
+	}
+	excludedSource := manifest.NamedResource{
+		Group:     "source.toolkit.fluxcd.io",
+		Kind:      manifest.KindGitRepository,
+		Namespace: "apps",
+		Name:      "excluded-source",
+	}
+	files := map[manifest.NamedResource]string{
+		hr.Named():     "consumer.yaml",
+		selected:       "bundle.yaml",
+		excluded:       "bundle.yaml",
+		chart:          "bundle.yaml",
+		excludedSource: "bundle.yaml",
+	}
+	filter := admissiontest.Filter(
+		t,
+		admissiontest.Config{
+			Changes:   change.NewSet([]string{"consumer.yaml"}),
+			Index:     indexForTest(files),
+			Inventory: st,
+		},
+	)
 	input, _, err := baseline.AdmitDirectory(t.Context(), dir, dir)
 	assert.NoError(t, err)
 	st.SetArtifact(manifest.BootstrapSourceID, input)
@@ -119,8 +177,12 @@ spec: {url: https://example.test/excluded.git}
 	controller := base.New(st, nil)
 	controller.Configure(base.Options{Filter: filter, Index: idx.Index, Loader: idx})
 	e := &orchestratorExistence{DiscoveryIndex: idx.Index, o: &Orchestrator{
-		store: idx.Store, index: idx.Index, loader: idx, cfg: treeConfig{Config: Config{WipeSecrets: true}}, filter: filter,
-		ksc: &kustomization.Controller{Controller: controller},
+		store:  idx.Store,
+		index:  idx.Index,
+		loader: idx,
+		cfg:    treeConfig{Config: Config{WipeSecrets: true}},
+		filter: filter,
+		ksc:    &kustomization.Controller{Controller: controller},
 	}}
 	size := len(filter.KeepNames())
 	reads := &store.ReadSet{}
@@ -128,14 +190,24 @@ spec: {url: https://example.test/excluded.git}
 	defer reads.Retire()
 	reads.RequireData(chart)
 	reads.RequireData(selected)
-	if promoted, err := e.Promote(t.Context(), reads, selected); err != nil || !promoted || st.GetObject(selected) == nil || st.GetObject(chart) == nil {
+	if promoted, err := e.Promote(
+		t.Context(),
+		reads,
+		selected,
+	); err != nil || !promoted || st.GetObject(selected) == nil ||
+		st.GetObject(chart) == nil {
 		t.Fatal("selected values and required chart source must be admitted")
 	}
 	if got := st.GetObject(selected).(*manifest.ConfigMap).Data["values.yaml"]; got != "greeting: selected" {
 		t.Errorf("selected values = %v", got)
 	}
 	for _, id := range []manifest.NamedResource{excluded, excludedSource} {
-		if promoted, err := e.Promote(t.Context(), nil, id); err != nil || promoted || st.GetObject(id) != nil || filter.ShouldReconcile(id) {
+		if promoted, err := e.Promote(
+			t.Context(),
+			nil,
+			id,
+		); err != nil || promoted || st.GetObject(id) != nil ||
+			filter.ShouldReconcile(id) {
 			t.Errorf("excluded sibling %s must remain absent", id)
 		}
 	}
@@ -152,7 +224,12 @@ func TestOrchestratorExistence_ExistingDataUsesNewSourceEvidence(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	file := "settings.yaml"
-	testutil.WriteFile(t, dir, file, "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {value: selected}\n")
+	testutil.WriteFile(
+		t,
+		dir,
+		file,
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {value: selected}\n",
+	)
 	st := store.New()
 	source := &manifest.GitRepository{Name: "source", Namespace: "apps"}
 	data := &manifest.ConfigMap{Name: "settings", Namespace: "apps", Data: map[string]any{"value": "selected"}}
@@ -164,7 +241,10 @@ func TestOrchestratorExistence_ExistingDataUsesNewSourceEvidence(t *testing.T) {
 	record.Path = filepath.Join(dir, file)
 	record.Productions = []manifest.Production{{Authored: id, Source: source.Named(), Path: record.Path, File: file}}
 	index.Records[id] = record
-	filterLoader := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{file}), Index: index, Inventory: st, Root: dir})
+	filterLoader := admissiontest.New(
+		t,
+		admissiontest.Config{Changes: change.NewSet([]string{file}), Index: index, Inventory: st, Root: dir},
+	)
 	admissiontest.Commit(t, filterLoader, nil)
 	filter := filterLoader.Options.Filter
 	if filter.ShouldReconcile(id) {
@@ -257,9 +337,19 @@ func TestOrchestratorExistence_MissingBootstrapSources(t *testing.T) {
 			}
 			controller := base.New(st, nil)
 			controller.Configure(base.Options{})
-			o := &Orchestrator{store: st, index: result.Index, admission: result.Admission, ksc: &kustomization.Controller{Controller: controller}}
+			o := &Orchestrator{
+				store:     st,
+				index:     result.Index,
+				admission: result.Admission,
+				ksc:       &kustomization.Controller{Controller: controller},
+			}
 			e := &orchestratorExistence{DiscoveryIndex: result.Index, o: o}
-			id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: tc.kind, Namespace: "sources", Name: "missing"}
+			id := manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      tc.kind,
+				Namespace: "sources",
+				Name:      "missing",
+			}
 			promoted, err := e.Promote(t.Context(), &reads, id)
 			assert.NoError(t, err)
 			assert.Equal(t, promoted, tc.want)

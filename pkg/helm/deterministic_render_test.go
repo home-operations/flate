@@ -57,9 +57,23 @@ data:
 			`{{ now | durationRound }}|{{ now | dateModify "-2h" | durationRound }}|` +
 			`{{ values (dict "z" "first" "a" "last" "m" "middle") | join "," }}`,
 	}
-	first, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, values, RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
+	first, _, err := testutil.RenderMaps(
+		cli.Template(
+			t.Context(),
+			hr,
+			values,
+			RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)},
+		),
+	)
 	assert.NoError(t, err)
-	second, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, values, RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
+	second, _, err := testutil.RenderMaps(
+		cli.Template(
+			t.Context(),
+			hr,
+			values,
+			RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)},
+		),
+	)
 	assert.NoError(t, err)
 	assert.Diff(t, second, first)
 	for _, docs := range [][]map[string]any{first, second} {
@@ -91,7 +105,14 @@ data:
 `)
 	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 
-	out, _, err := testutil.RenderMaps(cli.Template(t.Context(), newHR(), nil, RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
+	out, _, err := testutil.RenderMaps(
+		cli.Template(
+			t.Context(),
+			newHR(),
+			nil,
+			RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)},
+		),
+	)
 	if err == nil {
 		t.Error("invalid mustToDate rendered successfully")
 	}
@@ -102,14 +123,25 @@ func TestTemplate_EncryptAESDecryptRoundTrip(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
-	testutil.WriteFile(t, dir, "mychart/templates/cm.yaml",
-		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cm\ndata:\n  cleartext: {{ encryptAES \"key\" .Values.plaintext | decryptAES \"key\" | quote }}\n")
+	testutil.WriteFile(
+		t,
+		dir,
+		"mychart/templates/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cm\ndata:\n  cleartext: {{ encryptAES \"key\" .Values.plaintext | decryptAES \"key\" | quote }}\n",
+	)
 	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 
 	for _, plaintext := range []string{"", "hello", strings.Repeat("a", 16), "Unicode: βé"} {
 		t.Run(plaintext, func(t *testing.T) {
 			t.Parallel()
-			out, _, err := testutil.RenderMaps(cli.Template(t.Context(), newHR(), map[string]any{"plaintext": plaintext}, RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
+			out, _, err := testutil.RenderMaps(
+				cli.Template(
+					t.Context(),
+					newHR(),
+					map[string]any{"plaintext": plaintext},
+					RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)},
+				),
+			)
 			if err != nil {
 				t.Fatal(err)
 			}

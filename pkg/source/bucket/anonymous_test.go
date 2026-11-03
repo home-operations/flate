@@ -84,7 +84,10 @@ func TestFetcher_MachineIAMCancellation(t *testing.T) {
 					return
 				case <-release:
 				}
-				_, _ = io.WriteString(w, `{"Code":"Success","AccessKeyId":"iam-canary","SecretAccessKey":"secret","Expiration":"2099-01-01T00:00:00Z"}`)
+				_, _ = io.WriteString(
+					w,
+					`{"Code":"Success","AccessKeyId":"iam-canary","SecretAccessKey":"secret","Expiration":"2099-01-01T00:00:00Z"}`,
+				)
 			}))
 			t.Cleanup(metadata.Close)
 			t.Cleanup(releaseProbe)
@@ -125,7 +128,12 @@ func TestFetcher_MachineIAMCancellation(t *testing.T) {
 			releaseProbe()
 			artifact, err := f.Fetch(t.Context(), b, reads, cache.Policy{})
 			if err != nil || artifact == nil || probes.Load() != 1 || acquisitions.Load() != 1 {
-				t.Fatalf("cancelled caller poisoned shared discovery: %v probes=%d acquisitions=%d", err, probes.Load(), acquisitions.Load())
+				t.Fatalf(
+					"cancelled caller poisoned shared discovery: %v probes=%d acquisitions=%d",
+					err,
+					probes.Load(),
+					acquisitions.Load(),
+				)
 			}
 		})
 	}
@@ -136,7 +144,10 @@ func TestFetcher_SharedIAMTransport(t *testing.T) {
 	var probes, leaked, acquisitions atomic.Int32
 	metadata := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		probes.Add(1)
-		_, _ = io.WriteString(w, `{"Code":"Success","AccessKeyId":"iam-canary","SecretAccessKey":"secret","Expiration":"2099-01-01T00:00:00Z"}`)
+		_, _ = io.WriteString(
+			w,
+			`{"Code":"Success","AccessKeyId":"iam-canary","SecretAccessKey":"secret","Expiration":"2099-01-01T00:00:00Z"}`,
+		)
 	}))
 	t.Cleanup(metadata.Close)
 	previous := http.DefaultTransport
@@ -152,7 +163,10 @@ func TestFetcher_SharedIAMTransport(t *testing.T) {
 		proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Host != "bucket.invalid" {
 				leaked.Add(1)
-				_, _ = io.WriteString(w, `{"Code":"Success","AccessKeyId":"proxy-canary","SecretAccessKey":"secret","Expiration":"2099-01-01T00:00:00Z"}`)
+				_, _ = io.WriteString(
+					w,
+					`{"Code":"Success","AccessKeyId":"proxy-canary","SecretAccessKey":"secret","Expiration":"2099-01-01T00:00:00Z"}`,
+				)
 				return
 			}
 			acquisitions.Add(1)
@@ -185,7 +199,12 @@ func TestFetcher_SharedIAMTransport(t *testing.T) {
 	close(start)
 	workers.Wait()
 	if probes.Load() != 1 || leaked.Load() != 0 || acquisitions.Load() != 2 {
-		t.Fatalf("IAM probes=%d through source proxy=%d Bucket acquisitions=%d", probes.Load(), leaked.Load(), acquisitions.Load())
+		t.Fatalf(
+			"IAM probes=%d through source proxy=%d Bucket acquisitions=%d",
+			probes.Load(),
+			leaked.Load(),
+			acquisitions.Load(),
+		)
 	}
 	t.Run("restricted metadata dial", func(t *testing.T) {
 		ssrfguard.Restrict(true)
@@ -197,11 +216,11 @@ func TestFetcher_SharedIAMTransport(t *testing.T) {
 		f := &Fetcher{Cache: cachetest.New(t, "", cache.New), Network: newTestNetwork(t)}
 		artifact, err := f.Fetch(t.Context(), b, reads, cache.Policy{})
 		dial, ok := errors.AsType[*net.OpError](err)
-		if artifact != nil || !ok || dial.Op != "dial" || probes.Load() != 1 || acquisitions.Load() != 2 || leaked.Load() != 0 {
+		if artifact != nil || !ok || dial.Op != "dial" || probes.Load() != 1 || acquisitions.Load() != 2 ||
+			leaked.Load() != 0 {
 			t.Fatalf("metadata guard: probes=%d acquisitions=%d error=%v", probes.Load(), acquisitions.Load(), err)
 		}
 	})
-
 }
 
 func TestFetcher_MachineWebIdentityTransport(t *testing.T) {
@@ -217,19 +236,26 @@ func TestFetcher_MachineWebIdentityTransport(t *testing.T) {
 		if err := r.ParseForm(); err != nil {
 			t.Error(err)
 		}
-		if r.Form.Get("WebIdentityToken") != "identity-token-canary" || r.Form.Get("RoleArn") != os.Getenv("AWS_ROLE_ARN") {
+		if r.Form.Get("WebIdentityToken") != "identity-token-canary" ||
+			r.Form.Get("RoleArn") != os.Getenv("AWS_ROLE_ARN") {
 			t.Error("STS lost its identity token or role")
 		}
-		return bucketReply(r, http.StatusOK, `<AssumeRoleWithWebIdentityResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><AssumeRoleWithWebIdentityResult><Credentials><AccessKeyId>sts-canary</AccessKeyId><SecretAccessKey>sts-secret</SecretAccessKey><SessionToken>sts-session</SessionToken><Expiration>2099-01-01T00:00:00Z</Expiration></Credentials></AssumeRoleWithWebIdentityResult></AssumeRoleWithWebIdentityResponse>`)
+		return bucketReply(
+			r,
+			http.StatusOK,
+			`<AssumeRoleWithWebIdentityResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><AssumeRoleWithWebIdentityResult><Credentials><AccessKeyId>sts-canary</AccessKeyId><SecretAccessKey>sts-secret</SecretAccessKey><SessionToken>sts-session</SessionToken><Expiration>2099-01-01T00:00:00Z</Expiration></Credentials></AssumeRoleWithWebIdentityResult></AssumeRoleWithWebIdentityResponse>`,
+		)
 	})
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodConnect || r.URL.Host != "bucket.invalid" || strings.Contains(fmt.Sprint(r.URL, r.Header), "identity-token-canary") {
+		if r.Method == http.MethodConnect || r.URL.Host != "bucket.invalid" ||
+			strings.Contains(fmt.Sprint(r.URL, r.Header), "identity-token-canary") {
 			leaked.Add(1)
 			http.Error(w, "unexpected proxy destination", http.StatusBadGateway)
 			return
 		}
 		acquisitions.Add(1)
-		if !strings.Contains(r.Header.Get("Authorization"), "Credential=sts-canary/") || r.Header.Get("X-Amz-Security-Token") != "sts-session" {
+		if !strings.Contains(r.Header.Get("Authorization"), "Credential=sts-canary/") ||
+			r.Header.Get("X-Amz-Security-Token") != "sts-session" {
 			t.Error("S3 lost the STS signing credentials")
 		}
 		_, _ = io.WriteString(w, `<ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>`)
@@ -248,6 +274,12 @@ func TestFetcher_MachineWebIdentityTransport(t *testing.T) {
 	f := &Fetcher{Cache: cachetest.New(t, "", cache.New), Network: newTestNetwork(t)}
 	artifact, err := f.Fetch(t.Context(), b, reads, cache.Policy{})
 	if err != nil || artifact == nil || probes.Load() != 1 || acquisitions.Load() != 1 || leaked.Load() != 0 {
-		t.Fatalf("web identity: STS=%d S3=%d proxy leaks=%d error=%v", probes.Load(), acquisitions.Load(), leaked.Load(), err)
+		t.Fatalf(
+			"web identity: STS=%d S3=%d proxy leaks=%d error=%v",
+			probes.Load(),
+			acquisitions.Load(),
+			leaked.Load(),
+			err,
+		)
 	}
 }

@@ -16,13 +16,14 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/home-operations/flate/internal/fetcherr"
-	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/minio/minio-go/v7"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
+
+	"github.com/home-operations/flate/internal/fetcherr"
+	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/safepath"
 )
 
 const (
@@ -38,7 +39,12 @@ type bucketChunk struct {
 	done        chan struct{}
 }
 
-func walkBucket(ctx context.Context, client *minio.Client, b *manifest.Bucket, w io.Writer) (ocispec.Descriptor, error) {
+func walkBucket(
+	ctx context.Context,
+	client *minio.Client,
+	b *manifest.Bucket,
+	w io.Writer,
+) (ocispec.Descriptor, error) {
 	var entries []minio.ObjectInfo
 	for obj := range client.ListObjects(ctx, b.BucketName, minio.ListObjectsOptions{Prefix: b.Prefix, Recursive: true}) {
 		if obj.Err != nil {
@@ -56,7 +62,12 @@ func walkBucket(ctx context.Context, client *minio.Client, b *manifest.Bucket, w
 		}
 		rel, matched := strings.CutPrefix(e.Key, b.Prefix)
 		if !matched {
-			return ocispec.Descriptor{}, fmt.Errorf("bucket key %q does not match prefix %q: %w", e.Key, b.Prefix, fs.ErrInvalid)
+			return ocispec.Descriptor{}, fmt.Errorf(
+				"bucket key %q does not match prefix %q: %w",
+				e.Key,
+				b.Prefix,
+				fs.ErrInvalid,
+			)
 		}
 		if b.Prefix != "" && !strings.HasSuffix(b.Prefix, "/") {
 			rel, _ = strings.CutPrefix(rel, "/")
@@ -152,7 +163,11 @@ func walkBucket(ctx context.Context, client *minio.Client, b *manifest.Bucket, w
 
 func (c *bucketChunk) weight() int64 { return min(c.size, chunkBytes) }
 
-func (c *bucketChunk) get(ctx context.Context, client *minio.Client, bucket string) (io.ReadCloser, http.Header, error) {
+func (c *bucketChunk) get(
+	ctx context.Context,
+	client *minio.Client,
+	bucket string,
+) (io.ReadCloser, http.Header, error) {
 	opts := minio.GetObjectOptions{}
 	if err := opts.SetMatchETag(c.object.ETag); err != nil {
 		return nil, nil, err
@@ -182,9 +197,20 @@ func (c *bucketChunk) fetch(ctx context.Context, client *minio.Client, bucket st
 	if err != nil {
 		return err
 	}
-	if want := fmt.Sprintf("bytes %d-%d/%d", c.start, c.start+c.size-1, c.object.Size); c.size < c.object.Size && header.Get("Content-Range") != want {
+	if want := fmt.Sprintf(
+		"bytes %d-%d/%d",
+		c.start,
+		c.start+c.size-1,
+		c.object.Size,
+	); c.size < c.object.Size &&
+		header.Get("Content-Range") != want {
 		_ = body.Close()
-		return fmt.Errorf("bucket object %q has Content-Range %q, want %q", c.object.Key, header.Get("Content-Range"), want)
+		return fmt.Errorf(
+			"bucket object %q has Content-Range %q, want %q",
+			c.object.Key,
+			header.Get("Content-Range"),
+			want,
+		)
 	}
 	defer func() { _ = body.Close() }()
 	if c.done != nil {

@@ -73,7 +73,10 @@ func craftedCommit(t *testing.T, repo *git.Repository, entry object.TreeEntry) p
 	assert.NoError(t, tree.Encode(encoded))
 	treeHash, err := repo.Storer.SetEncodedObject(encoded)
 	assert.NoError(t, err)
-	commit := &object.Commit{TreeHash: treeHash, Author: object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}}
+	commit := &object.Commit{
+		TreeHash: treeHash,
+		Author:   object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)},
+	}
 	encoded = repo.Storer.NewEncodedObject()
 	assert.NoError(t, commit.Encode(encoded))
 	hash, err := repo.Storer.SetEncodedObject(encoded)
@@ -128,7 +131,12 @@ func TestNew_EntryPolicy(t *testing.T) {
 		t.Parallel()
 		repo := testutil.GitInit(t, t.TempDir())
 		commit := craftedCommit(t, repo, object.TreeEntry{Name: "module", Mode: filemode.Submodule})
-		input, _, err := New(t.Context(), repo.Storer.(*filesystem.Storage).Filesystem(), commit, ViewOptions{Content: "pinned", Mode: Direct})
+		input, _, err := New(
+			t.Context(),
+			repo.Storer.(*filesystem.Storage).Filesystem(),
+			commit,
+			ViewOptions{Content: "pinned", Mode: Direct},
+		)
 		assert.NoError(t, err)
 		if len(input.Warnings) != 1 {
 			t.Fatalf("traversal evidence = %+v", input.Warnings)
@@ -184,7 +192,8 @@ func TestNew_EntryPolicy(t *testing.T) {
 			t.Run(reader.name, func(t *testing.T) {
 				t.Parallel()
 				entries, err := fs.ReadDir(reader.fs, ".")
-				if err != nil || len(entries) != 2 || entries[0].Name() != "nested" || entries[1].Name() != "regular.txt" {
+				if err != nil || len(entries) != 2 || entries[0].Name() != "nested" ||
+					entries[1].Name() != "regular.txt" {
 					t.Fatalf("admitted entries = %v, %v", entries, err)
 				}
 				for _, name := range []string{"regular.txt", "file-link", "dir-link/regular.txt", "dangling", "escape", "escape/child", "broken-escape", "broken-escape/child", "socket", "absent"} {
@@ -391,7 +400,6 @@ func TestNew_EntryPolicy(t *testing.T) {
 				t.Fatalf("fresh lookup through directory link: %s: %v", name, err)
 			}
 		}
-
 	})
 	t.Run("caller_owned_listing", func(t *testing.T) {
 		t.Parallel()
@@ -546,13 +554,16 @@ func TestNew_EntryPolicy(t *testing.T) {
 							_, err = fs.ReadDir(reader, name)
 							assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
 						}
-						assert.NoError(t, fs.WalkDir(reader, ".", func(name string, entry fs.DirEntry, err error) error {
-							assert.NoError(t, err)
-							if entry.Name() == ".git" {
-								t.Errorf("metadata survived traversal: %s", name)
-							}
-							return nil
-						}))
+						assert.NoError(
+							t,
+							fs.WalkDir(reader, ".", func(name string, entry fs.DirEntry, err error) error {
+								assert.NoError(t, err)
+								if entry.Name() == ".git" {
+									t.Errorf("metadata survived traversal: %s", name)
+								}
+								return nil
+							}),
+						)
 					}
 				}
 				assert.NoError(t, os.RemoveAll(filepath.Join(root, ".git")))
@@ -588,7 +599,12 @@ func TestNew_EntryPolicy(t *testing.T) {
 			Data []byte
 		}{{".sourceignore", []byte("discard\n")}, {"nested/.sourceignore", []byte("hidden\n")}}
 		testutil.WriteFile(t, root, ".sourceignore", "kept\n")
-		shaped, pin, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Source, Current: input, Ignore: "kept\n"})
+		shaped, pin, err := New(
+			t.Context(),
+			nil,
+			plumbing.ZeroHash,
+			ViewOptions{Mode: Source, Current: input, Ignore: "kept\n"},
+		)
 		assert.NoError(t, err)
 		assert.Equal(t, pin, "")
 		assert.Diff(t, shaped.PolicyEvidence(), any(content))
@@ -599,7 +615,12 @@ func TestNew_EntryPolicy(t *testing.T) {
 			assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
 		}
 		testutil.WriteFile(t, root, ".sourceignore", "image.png\n")
-		second, pin, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Source, Current: input, Ignore: "image.png\n"})
+		second, pin, err := New(
+			t.Context(),
+			nil,
+			plumbing.ZeroHash,
+			ViewOptions{Mode: Source, Current: input, Ignore: "image.png\n"},
+		)
 		assert.NoError(t, err)
 		assert.Equal(t, pin, "")
 		assert.Diff(t, second.PolicyEvidence(), any(content))
@@ -694,7 +715,13 @@ func TestNew_EntryPolicy(t *testing.T) {
 		backing := repo.Storer.(*filesystem.Storage).Filesystem()
 		current := fstest.MapFS{"file": {Data: []byte("dirty")}}
 		location := &gitrepo.Location{ContentRoot: "root", Repository: repo}
-		opts := ViewOptions{Content: struct{ Root string }{"root"}, Location: location, Mode: Direct, Current: current, Changes: []string{"file"}}
+		opts := ViewOptions{
+			Content:  struct{ Root string }{"root"},
+			Location: location,
+			Mode:     Direct,
+			Current:  current,
+			Changes:  []string{"file"},
+		}
 		input, identity, err := New(t.Context(), backing, commit, opts)
 		assert.NoError(t, err)
 		if identity == "" {
@@ -742,7 +769,12 @@ func TestNew_EntryPolicy(t *testing.T) {
 			t.Fatal("commit change reused an admission identity")
 		}
 		for _, mode := range []ViewMode{Direct, Source} {
-			pinned, pin, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: mode, Current: current, CurrentContent: "acquired"})
+			pinned, pin, err := New(
+				t.Context(),
+				nil,
+				plumbing.ZeroHash,
+				ViewOptions{Mode: mode, Current: current, CurrentContent: "acquired"},
+			)
 			assert.NoError(t, err)
 			if pin == "" {
 				t.Fatalf("mode %d lost the wrapped acquisition identity", mode)
@@ -750,7 +782,12 @@ func TestNew_EntryPolicy(t *testing.T) {
 			_, retained, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Direct, Current: pinned})
 			assert.NoError(t, err)
 			assert.Equal(t, retained, pin)
-			_, next, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: mode, Current: current, CurrentContent: "replacement"})
+			_, next, err := New(
+				t.Context(),
+				nil,
+				plumbing.ZeroHash,
+				ViewOptions{Mode: mode, Current: current, CurrentContent: "replacement"},
+			)
 			assert.NoError(t, err)
 			if next == pin {
 				t.Fatal("wrapped generation change reused its identity")
@@ -780,7 +817,12 @@ func TestNew_EntryPolicy(t *testing.T) {
 			t.Parallel()
 			repo := testutil.GitInit(t, t.TempDir())
 			commit := craftedCommit(t, repo, object.TreeEntry{Name: tc.name, Mode: tc.mode})
-			input, identity, err := New(t.Context(), repo.Storer.(*filesystem.Storage).Filesystem(), commit, ViewOptions{})
+			input, identity, err := New(
+				t.Context(),
+				repo.Storer.(*filesystem.Storage).Filesystem(),
+				commit,
+				ViewOptions{},
+			)
 			if tc.invalid {
 				if err == nil || identity != "" {
 					t.Fatal("malformed entry accepted or assigned an identity")
@@ -849,7 +891,12 @@ func TestNew_EntryPolicy(t *testing.T) {
 		current, _, err := New(t.Context(), backing, currentCommit, ViewOptions{})
 		assert.NoError(t, err)
 		target := craftedCommit(t, repo, object.TreeEntry{Name: "target", Mode: filemode.Regular})
-		view, _, err := New(t.Context(), backing, target, ViewOptions{Mode: Direct, Current: current, Changes: []string{"target"}})
+		view, _, err := New(
+			t.Context(),
+			backing,
+			target,
+			ViewOptions{Mode: Direct, Current: current, Changes: []string{"target"}},
+		)
 		assert.NoError(t, err)
 		data, err := fs.ReadFile(view, "target")
 		assert.NoError(t, err)
@@ -862,7 +909,12 @@ func TestNew_EntryPolicy(t *testing.T) {
 		repo := testutil.GitInit(t, t.TempDir())
 		commit := craftedCommit(t, repo, object.TreeEntry{Name: "file", Mode: filemode.Regular})
 		identity := "source-git-acquired@" + commit.String()
-		input, pin, err := New(t.Context(), repo.Storer.(*filesystem.Storage).Filesystem(), commit, ViewOptions{Mode: Direct, Content: identity})
+		input, pin, err := New(
+			t.Context(),
+			repo.Storer.(*filesystem.Storage).Filesystem(),
+			commit,
+			ViewOptions{Mode: Direct, Content: identity},
+		)
 		assert.NoError(t, err)
 		assert.Equal(t, pin == "", false)
 		originalPin := pin
@@ -870,7 +922,12 @@ func TestNew_EntryPolicy(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, pin, originalPin)
 		assert.Equal(t, held == input, true)
-		_, pin, err = New(t.Context(), repo.Storer.(*filesystem.Storage).Filesystem(), commit, ViewOptions{Mode: Direct})
+		_, pin, err = New(
+			t.Context(),
+			repo.Storer.(*filesystem.Storage).Filesystem(),
+			commit,
+			ViewOptions{Mode: Direct},
+		)
 		assert.NoError(t, err)
 		assert.Equal(t, pin == "", false)
 	})
@@ -878,7 +935,12 @@ func TestNew_EntryPolicy(t *testing.T) {
 		t.Parallel()
 		repo := testutil.GitInit(t, t.TempDir())
 		commit := craftedCommit(t, repo, object.TreeEntry{Name: "file", Mode: filemode.Regular})
-		input, pin, err := New(t.Context(), repo.Storer.(*filesystem.Storage).Filesystem(), commit, ViewOptions{Mode: Source})
+		input, pin, err := New(
+			t.Context(),
+			repo.Storer.(*filesystem.Storage).Filesystem(),
+			commit,
+			ViewOptions{Mode: Source},
+		)
 		assert.NoError(t, err)
 		for _, tc := range []struct {
 			name   string
@@ -892,7 +954,12 @@ func TestNew_EntryPolicy(t *testing.T) {
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
-				got, key, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Source, Current: input, Ignore: tc.ignore, Sparse: tc.sparse})
+				got, key, err := New(
+					t.Context(),
+					nil,
+					plumbing.ZeroHash,
+					ViewOptions{Mode: Source, Current: input, Ignore: tc.ignore, Sparse: tc.sparse},
+				)
 				assert.NoError(t, err)
 				assert.Equal(t, got == input, tc.reuse)
 				assert.Equal(t, key == pin, tc.reuse)
@@ -904,8 +971,17 @@ func TestNew_EntryPolicy(t *testing.T) {
 	})
 	t.Run("direct arbitrary and wrapper reuse", func(t *testing.T) {
 		t.Parallel()
-		current := fstest.MapFS{"file": {Data: []byte("current")}, ".git": {Data: []byte("gitfile")}, "nested/.git/config": {Data: []byte("config")}}
-		input, key, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Direct, Current: current, Ignore: "file", Sparse: []string{"other"}})
+		current := fstest.MapFS{
+			"file":               {Data: []byte("current")},
+			".git":               {Data: []byte("gitfile")},
+			"nested/.git/config": {Data: []byte("config")},
+		}
+		input, key, err := New(
+			t.Context(),
+			nil,
+			plumbing.ZeroHash,
+			ViewOptions{Mode: Direct, Current: current, Ignore: "file", Sparse: []string{"other"}},
+		)
 		assert.NoError(t, err)
 		assert.Equal(t, key, "")
 		current["new"] = &fstest.MapFile{Data: []byte("new")}
@@ -923,7 +999,12 @@ func TestNew_EntryPolicy(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()
 		testutil.WriteFile(t, root, "file", "local")
-		input, key, err := New(t.Context(), nil, plumbing.NewHash(strings.Repeat("a", 40)), ViewOptions{Mode: Direct, Worktree: osfs.New(root, osfs.WithBoundOS())})
+		input, key, err := New(
+			t.Context(),
+			nil,
+			plumbing.NewHash(strings.Repeat("a", 40)),
+			ViewOptions{Mode: Direct, Worktree: osfs.New(root, osfs.WithBoundOS())},
+		)
 		assert.NoError(t, err)
 		assert.Equal(t, key, "")
 		data, err := fs.ReadFile(input, "file")
@@ -948,7 +1029,12 @@ func TestNew_EntryPolicy(t *testing.T) {
 		current, _, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Source, Current: local.FS})
 		assert.NoError(t, err)
 		testutil.WriteFile(t, root, "new", "current")
-		input, key, err := New(t.Context(), repo.Storer.(*filesystem.Storage).Filesystem(), commit, ViewOptions{Mode: Direct, Current: current})
+		input, key, err := New(
+			t.Context(),
+			repo.Storer.(*filesystem.Storage).Filesystem(),
+			commit,
+			ViewOptions{Mode: Direct, Current: current},
+		)
 		assert.NoError(t, err)
 		assert.Equal(t, key != "", true)
 		data, err := fs.ReadFile(input, "new")
@@ -959,7 +1045,12 @@ func TestNew_EntryPolicy(t *testing.T) {
 		t.Parallel()
 		repo := testutil.GitInit(t, t.TempDir())
 		commit := craftedCommit(t, repo, object.TreeEntry{Name: "file", Mode: filemode.Regular})
-		opts := ViewOptions{Mode: Source, Current: fstest.MapFS{"file": {Data: []byte("dirty")}}, Sparse: []string{"file"}, Changes: []string{"file"}}
+		opts := ViewOptions{
+			Mode:    Source,
+			Current: fstest.MapFS{"file": {Data: []byte("dirty")}},
+			Sparse:  []string{"file"},
+			Changes: []string{"file"},
+		}
 		input, key, err := New(t.Context(), repo.Storer.(*filesystem.Storage).Filesystem(), commit, opts)
 		assert.NoError(t, err)
 		opts.Sparse[0], opts.Changes[0] = "other", "other"
@@ -982,7 +1073,12 @@ func TestNew_EntryPolicy(t *testing.T) {
 		} {
 			assert.NoError(t, os.Symlink(target, filepath.Join(root, name)))
 		}
-		commit := testutil.GitCommitAll(t, repo, "fixture", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}})
+		commit := testutil.GitCommitAll(
+			t,
+			repo,
+			"fixture",
+			&git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}},
+		)
 		for _, tc := range []struct {
 			name  string
 			opts  ViewOptions
@@ -1044,7 +1140,17 @@ func TestNew_EntryPolicy(t *testing.T) {
 		for name, data := range files {
 			testutil.WriteFile(t, root, name, data)
 		}
-		all := []string{".dot", ".sourceignore", "apps-extra/c.yaml", "apps-old/b.yaml", "apps/a.yaml", "apps/b.yaml", "infra/c/manifest.yaml", "target", "target-old"}
+		all := []string{
+			".dot",
+			".sourceignore",
+			"apps-extra/c.yaml",
+			"apps-old/b.yaml",
+			"apps/a.yaml",
+			"apps/b.yaml",
+			"infra/c/manifest.yaml",
+			"target",
+			"target-old",
+		}
 		apps := []string{"apps-extra/c.yaml", "apps-old/b.yaml", "apps/a.yaml", "apps/b.yaml"}
 		for _, tc := range []struct {
 			name   string
@@ -1071,7 +1177,12 @@ func TestNew_EntryPolicy(t *testing.T) {
 				admitted, err := admitLocal(t, root)
 				assert.NoError(t, err)
 				before := slices.Clone(tc.sparse)
-				input, _, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Source, Current: admitted.FS, Sparse: tc.sparse, Ignore: tc.ignore})
+				input, _, err := New(
+					t.Context(),
+					nil,
+					plumbing.ZeroHash,
+					ViewOptions{Mode: Source, Current: admitted.FS, Sparse: tc.sparse, Ignore: tc.ignore},
+				)
 				assert.NoError(t, err)
 				want := make(map[string]string, len(tc.want))
 				for _, name := range tc.want {
@@ -1111,7 +1222,12 @@ func TestNew_EntryPolicy(t *testing.T) {
 		testutil.WriteFile(t, root, "ignored", "ignored")
 		testutil.WriteFile(t, root, ".sourceignore", "ignored\n")
 		assert.NoError(t, os.Symlink("../absent", filepath.Join(root, "link")))
-		commit := testutil.GitCommitAll(t, repo, "fixture", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}})
+		commit := testutil.GitCommitAll(
+			t,
+			repo,
+			"fixture",
+			&git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}},
+		)
 		backing := repo.Storer.(*filesystem.Storage).Filesystem()
 		local, err := admitLocal(t, root)
 		assert.NoError(t, err)
@@ -1120,7 +1236,12 @@ func TestNew_EntryPolicy(t *testing.T) {
 				t.Parallel()
 				committed, _, err := New(t.Context(), backing, commit, ViewOptions{Mode: mode})
 				assert.NoError(t, err)
-				mutable, _, err := New(t.Context(), backing, plumbing.ZeroHash, ViewOptions{Mode: mode, Worktree: osfs.New(root)})
+				mutable, _, err := New(
+					t.Context(),
+					backing,
+					plumbing.ZeroHash,
+					ViewOptions{Mode: mode, Worktree: osfs.New(root)},
+				)
 				assert.NoError(t, err)
 				mounted, _, err := operation(t, local.FS, mode)
 				assert.NoError(t, err)
@@ -1244,13 +1365,23 @@ func TestNew_EntryPolicy(t *testing.T) {
 	t.Run("error classification", func(t *testing.T) {
 		t.Parallel()
 		for _, want := range []error{fs.ErrPermission, fs.ErrInvalid} {
-			_, _, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Source, Current: admissionErrorFS{err: want}})
+			_, _, err := New(
+				t.Context(),
+				nil,
+				plumbing.ZeroHash,
+				ViewOptions{Mode: Source, Current: admissionErrorFS{err: want}},
+			)
 			assert.Equal(t, errors.Is(err, want), true)
 			assert.Equal(t, strings.HasPrefix(err.Error(), "sourceignore load: "), errors.Is(want, fs.ErrPermission))
 		}
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
-		_, _, err := New(ctx, nil, plumbing.ZeroHash, ViewOptions{Mode: Source, Current: admissionErrorFS{err: fs.ErrPermission}})
+		_, _, err := New(
+			ctx,
+			nil,
+			plumbing.ZeroHash,
+			ViewOptions{Mode: Source, Current: admissionErrorFS{err: fs.ErrPermission}},
+		)
 		assert.Equal(t, err, context.Canceled)
 	})
 	t.Run("local permission diagnostic", func(t *testing.T) {
@@ -1280,7 +1411,6 @@ func TestNew_EntryPolicy(t *testing.T) {
 			t.Fatalf("permission diagnostic = %v; want %s", err, ignore)
 		}
 	})
-
 }
 
 func TestNew_WarningsSurviveFailure(t *testing.T) {
@@ -1289,9 +1419,18 @@ func TestNew_WarningsSurviveFailure(t *testing.T) {
 		t.Run(failure, func(t *testing.T) {
 			t.Parallel()
 			repo := testutil.GitInit(t, t.TempDir())
-			entries := []object.TreeEntry{{Name: "module", Mode: filemode.Submodule, Hash: plumbing.NewHash(strings.Repeat("a", 40))}}
+			entries := []object.TreeEntry{
+				{Name: "module", Mode: filemode.Submodule, Hash: plumbing.NewHash(strings.Repeat("a", 40))},
+			}
 			if failure == "traversal" {
-				entries = append(entries, object.TreeEntry{Name: "zmissing", Mode: filemode.Dir, Hash: plumbing.NewHash(strings.Repeat("b", 40))})
+				entries = append(
+					entries,
+					object.TreeEntry{
+						Name: "zmissing",
+						Mode: filemode.Dir,
+						Hash: plumbing.NewHash(strings.Repeat("b", 40)),
+					},
+				)
 			} else {
 				encoded := repo.Storer.NewEncodedObject()
 				assert.NoError(t, (&object.Tree{}).Encode(encoded))
@@ -1325,15 +1464,33 @@ func TestNew_WarningsSurviveFailure(t *testing.T) {
 				for _, entry := range entries {
 					if entry.Name == "zsubtree" {
 						oid := entry.Hash.String()
-						assert.NoError(t, os.Remove(filepath.Join(repo.Storer.(*filesystem.Storage).Filesystem().Root(), "objects", oid[:2], oid[2:])))
+						assert.NoError(
+							t,
+							os.Remove(
+								filepath.Join(
+									repo.Storer.(*filesystem.Storage).Filesystem().Root(),
+									"objects",
+									oid[:2],
+									oid[2:],
+								),
+							),
+						)
 					}
 				}
-				input, identity, err = New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Direct, Current: input})
+				input, identity, err = New(
+					t.Context(),
+					nil,
+					plumbing.ZeroHash,
+					ViewOptions{Mode: Direct, Current: input},
+				)
 			}
-			if err == nil || identity != "" || input == nil || input.view != nil || len(input.Warnings) != 1 || input.Warnings[0].Category != manifest.WarnSkippedSubmodule || input.Warnings[0].Detail[0] != "module" {
+			if err == nil || identity != "" || input == nil || input.view != nil || len(input.Warnings) != 1 ||
+				input.Warnings[0].Category != manifest.WarnSkippedSubmodule ||
+				input.Warnings[0].Detail[0] != "module" {
 				t.Fatalf("failed admission = %+v, %q, %v", input, identity, err)
 			}
-			if failure == "identity" && (!errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || err.Error() != "git view content cannot be fingerprinted") {
+			if failure == "identity" &&
+				(!errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || err.Error() != "git view content cannot be fingerprinted") {
 				t.Fatalf("identity diagnostic lost its cause or classification: %v", err)
 			}
 			if failure == "traversal" && !errors.Is(err, plumbing.ErrObjectNotFound) {
@@ -1418,7 +1575,11 @@ func TestFS_ContentFingerprint(t *testing.T) {
 			t.Parallel()
 			var keys [2]string
 			for i := range keys {
-				files := fstest.MapFS{"file": {Data: []byte("selected")}, ".sourceignore": {Data: []byte("ignored\n")}, "ignored": {Data: []byte("ignored")}}
+				files := fstest.MapFS{
+					"file":          {Data: []byte("selected")},
+					".sourceignore": {Data: []byte("ignored\n")},
+					"ignored":       {Data: []byte("ignored")},
+				}
 				if i == 1 {
 					switch mode {
 					case "payload":
@@ -1499,7 +1660,11 @@ func TestFS_ContentFingerprint(t *testing.T) {
 				}
 				for name, file := range files {
 					if name != "ignored" {
-						assert.Equal(t, input.FileDigests()[name], manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, file.Data)))
+						assert.Equal(
+							t,
+							input.FileDigests()[name],
+							manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, file.Data)),
+						)
 					}
 				}
 				_, ignored := input.FileDigests()["ignored"]
@@ -1536,7 +1701,11 @@ func TestFS_ContentFingerprint(t *testing.T) {
 		assert.Equal(t, key != "", true)
 		assert.Equal(t, len(input.FileDigests()), 3)
 		for _, name := range []string{".sourceignore", "file", "nested/other"} {
-			assert.Equal(t, input.FileDigests()[name], manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, files[name].Data)))
+			assert.Equal(
+				t,
+				input.FileDigests()[name],
+				manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, files[name].Data)),
+			)
 		}
 	})
 
@@ -1563,7 +1732,11 @@ func TestFS_ContentFingerprint(t *testing.T) {
 		assert.Equal(t, first.Key, "")
 		assert.Equal(t, second.Key, "")
 		assert.Equal(t, before != after, true)
-		assert.Equal(t, second.FS.(*FS).FileDigests()["file"], manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, []byte("after"))))
+		assert.Equal(
+			t,
+			second.FS.(*FS).FileDigests()["file"],
+			manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, []byte("after"))),
+		)
 		retained, err := first.ContentFingerprint(t.Context(), first.FS)
 		assert.NoError(t, err)
 		assert.Equal(t, retained, before)
@@ -1615,7 +1788,11 @@ func TestFS_ContentFingerprint(t *testing.T) {
 		assert.Equal(t, keys[0], keys[1])
 		assert.Equal(t, reader.reads.Load(), failedReads+1)
 		for name, data := range map[string]string{"file": "first", "later": "later"} {
-			assert.Equal(t, input.FileDigests()[name], manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, []byte(data))))
+			assert.Equal(
+				t,
+				input.FileDigests()[name],
+				manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, []byte(data))),
+			)
 		}
 		reads := reader.reads.Load()
 		key, err := ContentFingerprint(t.Context(), input)
@@ -1702,7 +1879,11 @@ func TestFS_ContentFingerprint(t *testing.T) {
 			assert.Equal(t, result.key != "", true)
 			assert.Equal(t, len(input.FileDigests()), 2)
 			for name, data := range map[string]string{"file": "first", "later": "later"} {
-				assert.Equal(t, input.FileDigests()[name], manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, []byte(data))))
+				assert.Equal(
+					t,
+					input.FileDigests()[name],
+					manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, []byte(data))),
+				)
 			}
 			assert.Equal(t, reader.reads.Load(), int64(2))
 			key, err := ContentFingerprint(t.Context(), input)
@@ -1738,7 +1919,12 @@ func TestFS_GitContentEvidence(t *testing.T) {
 			testutil.WriteFile(t, root, ".sourceignore", "dir/ignored\n")
 			old := time.Unix(946684800, 0)
 			assert.NoError(t, os.Chtimes(filepath.Join(root, "dir/file"), old, old))
-			commit := testutil.GitCommitAll(t, repo, "fixture", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: old}})
+			commit := testutil.GitCommitAll(
+				t,
+				repo,
+				"fixture",
+				&git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: old}},
+			)
 			want := "alpha"
 			if mode == "dirty" || mode == "staged" || mode == "racy" || mode == "routed" {
 				want = "bravo"
@@ -1780,7 +1966,16 @@ func TestFS_GitContentEvidence(t *testing.T) {
 			}
 			if mode == "sdk" {
 				want = "sdkdata"
-				input.FS, _, err = New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Direct, Location: location, Current: fstest.MapFS{"dir/file": {Data: []byte(want)}}})
+				input.FS, _, err = New(
+					t.Context(),
+					nil,
+					plumbing.ZeroHash,
+					ViewOptions{
+						Mode:     Direct,
+						Location: location,
+						Current:  fstest.MapFS{"dir/file": {Data: []byte(want)}},
+					},
+				)
 				assert.NoError(t, err)
 			}
 			if mode == "scoped_local" || mode == "scoped_immutable" {
@@ -1807,7 +2002,8 @@ func TestFS_GitContentEvidence(t *testing.T) {
 			_, err = selected.SourcePolicy(t.Context())
 			assert.NoError(t, err)
 			objects.reads.Store(0)
-			if mode == "unreadable_clean" || mode == "source_unreadable" || mode == "subtree" || mode == "scoped_local" {
+			if mode == "unreadable_clean" || mode == "source_unreadable" || mode == "subtree" ||
+				mode == "scoped_local" {
 				file := filepath.Join(root, "dir/file")
 				assert.NoError(t, os.Chmod(file, 0))
 				t.Cleanup(func() { assert.NoError(t, os.Chmod(file, 0o644)) })
@@ -1818,9 +2014,17 @@ func TestFS_GitContentEvidence(t *testing.T) {
 			assert.Equal(t, selected.FileDigests() == nil, true)
 			_, err = ContentFingerprint(t.Context(), selected)
 			assert.NoError(t, err)
-			assert.Equal(t, selected.FileDigests()[name], manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, []byte(want))))
+			assert.Equal(
+				t,
+				selected.FileDigests()[name],
+				manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, []byte(want))),
+			)
 			if mode == "untracked" {
-				assert.Equal(t, selected.FileDigests()["dir/new"], manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, []byte("untracked"))))
+				assert.Equal(
+					t,
+					selected.FileDigests()["dir/new"],
+					manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, []byte("untracked"))),
+				)
 			}
 			if mode != "subtree" {
 				_, ignored := selected.FileDigests()["dir/ignored"]
@@ -1847,11 +2051,17 @@ func TestGitView_SparseBodyReads(t *testing.T) {
 		t.Run(size.name, func(t *testing.T) {
 			t.Parallel()
 			if size.name == "exact" && os.Getenv("FLATE_E8_SLOW") != "1" {
-				t.Skip("MEM-SPARSE not-run: env FLATE_E8_SLOW=1 go test ./pkg/source/gittree -run '^TestGitView_SparseBodyReads/exact$' -count=1 -v")
+				t.Skip(
+					"MEM-SPARSE not-run: env FLATE_E8_SLOW=1 go test ./pkg/source/gittree -run '^TestGitView_SparseBodyReads/exact$' -count=1 -v",
+				)
 			}
 			fixture := testutil.NewSparseGit(t, size.files, size.bytes)
 			reads := &testutil.GitReads{LargeHash: fixture.Large}
-			g := &gitView{commit: fixture.Base, mode: Source, nodes: map[string]*gitNode{".": {name: ".", mode: fs.ModeDir | 0o755}}}
+			g := &gitView{
+				commit: fixture.Base,
+				mode:   Source,
+				nodes:  map[string]*gitNode{".": {name: ".", mode: fs.ModeDir | 0o755}},
+			}
 			g.storers.New = func() any { return &testutil.CountingStorer{Storer: fixture.Repo.Storer, Reads: reads} }
 			input := &FS{view: g, snapshot: &localPolicy{}}
 			commit, err := fixture.Repo.CommitObject(fixture.Base)
@@ -1874,7 +2084,12 @@ func TestGitView_SparseBodyReads(t *testing.T) {
 			if reads.Metadata.Load() == 0 || reads.Bodies.Load() != 0 {
 				t.Fatal("walk opened a blob Reader")
 			}
-			t.Logf("walk metadata=%d bodies=%d large=%d", reads.Metadata.Load(), reads.Bodies.Load(), reads.Large.Load())
+			t.Logf(
+				"walk metadata=%d bodies=%d large=%d",
+				reads.Metadata.Load(),
+				reads.Bodies.Load(),
+				reads.Large.Load(),
+			)
 			reads.Reset()
 			assert.NoError(t, g.shape(t.Context(), ViewOptions{Mode: Source}, input))
 			count := 0
@@ -1889,7 +2104,12 @@ func TestGitView_SparseBodyReads(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Equal(t, info.Size(), size.bytes)
 			assert.Equal(t, reads.Bodies.Load(), int64(0))
-			t.Logf("shape/list/stat metadata=%d bodies=%d large=%d", reads.Metadata.Load(), reads.Bodies.Load(), reads.Large.Load())
+			t.Logf(
+				"shape/list/stat metadata=%d bodies=%d large=%d",
+				reads.Metadata.Load(),
+				reads.Bodies.Load(),
+				reads.Large.Load(),
+			)
 			reads.Reset()
 			data, err = fs.ReadFile(input, "app/input.yaml")
 			assert.NoError(t, err)
@@ -1898,7 +2118,12 @@ func TestGitView_SparseBodyReads(t *testing.T) {
 			}
 			assert.Equal(t, reads.Bodies.Load(), int64(1))
 			assert.Equal(t, reads.Large.Load(), int64(0))
-			t.Logf("consumed read metadata=%d bodies=%d large=%d", reads.Metadata.Load(), reads.Bodies.Load(), reads.Large.Load())
+			t.Logf(
+				"consumed read metadata=%d bodies=%d large=%d",
+				reads.Metadata.Load(),
+				reads.Bodies.Load(),
+				reads.Large.Load(),
+			)
 		})
 	}
 }

@@ -242,11 +242,27 @@ func (r conditionRecord) statusInfo() (StatusInfo, bool) {
 		}
 		switch c.Status {
 		case metav1.ConditionTrue:
-			return StatusInfo{Status: StatusReady, Reason: StatusReason(c.Reason), Message: c.Message, applyingObjects: r.applyingObjects}, true
+			return StatusInfo{
+				Status:          StatusReady,
+				Reason:          StatusReason(c.Reason),
+				Message:         c.Message,
+				applyingObjects: r.applyingObjects,
+			}, true
 		case metav1.ConditionFalse:
-			return StatusInfo{Status: StatusFailed, Reason: StatusReason(c.Reason), Message: c.Message, applyingObjects: r.applyingObjects, failure: r.failure}, true
+			return StatusInfo{
+				Status:          StatusFailed,
+				Reason:          StatusReason(c.Reason),
+				Message:         c.Message,
+				applyingObjects: r.applyingObjects,
+				failure:         r.failure,
+			}, true
 		default:
-			return StatusInfo{Status: StatusPending, Reason: StatusReason(c.Reason), Message: c.Message, applyingObjects: r.applyingObjects}, true
+			return StatusInfo{
+				Status:          StatusPending,
+				Reason:          StatusReason(c.Reason),
+				Message:         c.Message,
+				applyingObjects: r.applyingObjects,
+			}, true
 		}
 	}
 	return StatusInfo{}, false
@@ -296,7 +312,12 @@ func (s *Store) SetCondition(id manifest.NamedResource, cond Condition) {
 	s.setCondition(id, cond, 0, nil)
 }
 
-func (s *Store) setCondition(id manifest.NamedResource, cond Condition, applyingObjects int, failure *dependencyFailure) {
+func (s *Store) setCondition(
+	id manifest.NamedResource,
+	cond Condition,
+	applyingObjects int,
+	failure *dependencyFailure,
+) {
 	sh := s.shardFor(id)
 	sh.mu.Lock()
 	updated, changed := sh.setConditionLocked(id, cond, applyingObjects, failure)
@@ -321,7 +342,12 @@ func (s *Store) setCondition(id manifest.NamedResource, cond Condition, applying
 // record aliases the live condition slice. Failure IDs remain immutable.
 // Existing conditions with unchanged provenance MUST be overwritten in place
 // without reassigning the map entry, preserving the allocation-free hot path.
-func (sh *shard) setConditionLocked(id manifest.NamedResource, cond Condition, applyingObjects int, failure *dependencyFailure) (conditionRecord, bool) {
+func (sh *shard) setConditionLocked(
+	id manifest.NamedResource,
+	cond Condition,
+	applyingObjects int,
+	failure *dependencyFailure,
+) (conditionRecord, bool) {
 	record := sh.conditions[id]
 	ready := cond.Type == ConditionReady
 	objects := record.applyingObjects
@@ -339,9 +365,11 @@ func (sh *shard) setConditionLocked(id manifest.NamedResource, cond Condition, a
 		if ready {
 			messageChanged = !sameMessage(previous.Message, objects, cond.Message, applyingObjects)
 		}
-		changed := messageChanged || previous.Status != cond.Status || previous.Reason != cond.Reason || previous.ObservedGeneration != cond.ObservedGeneration
+		changed := messageChanged || previous.Status != cond.Status || previous.Reason != cond.Reason ||
+			previous.ObservedGeneration != cond.ObservedGeneration
 		// An unchanged blocker set MUST retain its first diagnostic to bound cyclic propagation.
-		if failure != nil && !failureChanged && record.conditions[i].Status == cond.Status && record.conditions[i].Reason == cond.Reason {
+		if failure != nil && !failureChanged && record.conditions[i].Status == cond.Status &&
+			record.conditions[i].Reason == cond.Reason {
 			return record, false
 		}
 		if changed || failureChanged {

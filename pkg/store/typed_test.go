@@ -81,8 +81,20 @@ func TestListAs_TypedSlice(t *testing.T) {
 	// Add a HelmRelease to confirm kind filtering excludes other kinds.
 	s.AddObject(&manifest.HelmRelease{Name: "noisy", Namespace: "flux-system"})
 
-	s.AddObject(&manifest.RawObject{APIVersion: "example.test/v1", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "a"})
-	foreign := manifest.NamedResource{Group: "example.test", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "a"}
+	s.AddObject(
+		&manifest.RawObject{
+			APIVersion: "example.test/v1",
+			Kind:       manifest.KindKustomization,
+			Namespace:  "flux-system",
+			Name:       "a",
+		},
+	)
+	foreign := manifest.NamedResource{
+		Group:     "example.test",
+		Kind:      manifest.KindKustomization,
+		Namespace: "flux-system",
+		Name:      "a",
+	}
 	if got := s.ListAs[manifest.BaseManifest](foreign.Group, foreign.Kind); len(got) != 1 || got[0].Named() != foreign {
 		t.Fatalf("foreign collection = %v", got)
 	}
@@ -118,7 +130,10 @@ func TestListAs_TypedSlice(t *testing.T) {
 // TestListAs_NilStoreReturnsNil mirrors Get's nil-store guard.
 func TestListAs_NilStoreReturnsNil(t *testing.T) {
 	t.Parallel()
-	if got := (*store.Store)(nil).ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization); got != nil {
+	if got := (*store.Store)(nil).ListAs[*manifest.Kustomization](
+		manifest.FluxKustomizeDomain,
+		manifest.KindKustomization,
+	); got != nil {
 		t.Errorf("nil store: want nil slice; got %v", got)
 	}
 }

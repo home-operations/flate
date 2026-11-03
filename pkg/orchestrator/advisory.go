@@ -26,15 +26,22 @@ func clusterAdvisories(results []Rendered, stores []*store.Store) {
 			evidence := stores[k].AdvisoryEvidence()
 			for _, override := range evidence.Overrides {
 				for _, key := range override.Keys {
-					overrides = append(overrides, fmt.Sprintf("%s: %s (%s)", override.Resource, key, override.SupplyPath))
+					overrides = append(
+						overrides,
+						fmt.Sprintf("%s: %s (%s)", override.Resource, key, override.SupplyPath),
+					)
 				}
 			}
 		}
 		var warnings []manifest.Warning
 		if len(overrides) > 0 {
 			slices.Sort(overrides)
-			warnings = append(warnings, manifest.Warning{Category: manifest.WarnSuppliedPrecedence,
-				Message: "repository data takes precedence over supplied data", Detail: slices.Compact(overrides), Count: 1})
+			warnings = append(warnings, manifest.Warning{
+				Category: manifest.WarnSuppliedPrecedence,
+				Message:  "repository data takes precedence over supplied data",
+				Detail:   slices.Compact(overrides),
+				Count:    1,
+			})
 		}
 		if carrier != nil && len(warnings) > 0 {
 			if carrier.Result == nil {

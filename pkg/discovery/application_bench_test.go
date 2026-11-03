@@ -25,7 +25,9 @@ func BenchmarkBindEntry_Evidence(b *testing.B) {
 			if name == "equal_publication" {
 				evidence = owner.Clone()
 			}
-			record := manifest.DiscoveryRecord{Application: `{"apiVersion":"kustomize.toolkit.fluxcd.io/v1","kind":"Kustomization","metadata":{"name":"applier","namespace":"apps"},"spec":{"path":"./entry"}}`}
+			record := manifest.DiscoveryRecord{
+				Application: `{"apiVersion":"kustomize.toolkit.fluxcd.io/v1","kind":"Kustomization","metadata":{"name":"applier","namespace":"apps"},"spec":{"path":"./entry"}}`,
+			}
 			b.ReportAllocs()
 			for b.Loop() {
 				a := &Admission{input: input, path: filepath.Join(repo, "entry")}

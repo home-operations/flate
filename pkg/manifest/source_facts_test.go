@@ -48,7 +48,13 @@ func TestOCIRepository_LayerDefaults(t *testing.T) {
 			t.Parallel()
 			repo := &OCIRepository{LayerSelector: tc.selector}
 			if repo.LayerMediaType() != tc.mediaType || repo.LayerOperation() != tc.operation {
-				t.Fatalf("layer = %q/%q, want %q/%q", repo.LayerMediaType(), repo.LayerOperation(), tc.mediaType, tc.operation)
+				t.Fatalf(
+					"layer = %q/%q, want %q/%q",
+					repo.LayerMediaType(),
+					repo.LayerOperation(),
+					tc.mediaType,
+					tc.operation,
+				)
 			}
 		})
 	}
@@ -57,7 +63,8 @@ func TestOCIRepository_LayerDefaults(t *testing.T) {
 func TestOCIRepository_RegistryAccess(t *testing.T) {
 	t.Parallel()
 	owner := NamedResource{Group: FluxOperatorDomain, Kind: KindResourceSet, Namespace: "author", Name: "set"}
-	repo := &OCIRepository{diagnosticOwner: owner, diagnosticPath: "app/chart", hasDiagnostic: true,
+	repo := &OCIRepository{
+		diagnosticOwner: owner, diagnosticPath: "app/chart", hasDiagnostic: true,
 		Name: "chart", Namespace: "effective", URL: "oci://registry.test/chart", Insecure: true,
 		SecretRef: &LocalObjectReference{Name: "auth"}, CertSecretRef: &LocalObjectReference{Name: "cert"},
 		ProxySecretRef: &LocalObjectReference{Name: "proxy"}, Timeout: &metav1.Duration{Duration: 2 * time.Minute},
@@ -76,7 +83,8 @@ func TestOCIRepositoryRef_Pinned(t *testing.T) {
 		ref  *OCIRepositoryRef
 		want bool
 	}{
-		{"nil", nil, false}, {"empty", &OCIRepositoryRef{}, false},
+		{"nil", nil, false},
+		{"empty", &OCIRepositoryRef{}, false},
 		{"tag", &OCIRepositoryRef{Tag: "v1"}, false},
 		{"semver", &OCIRepositoryRef{SemVer: "1.x"}, false},
 		{"digest", &OCIRepositoryRef{Digest: "sha256:abc"}, true},
@@ -115,7 +123,13 @@ func TestSource_Declaration(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if tc.obj.ExistenceOnly() != tc.existenceOnly || tc.obj.SourceInterval() != tc.interval {
-				t.Fatalf("declaration = %t/%s, want %t/%s", tc.obj.ExistenceOnly(), tc.obj.SourceInterval(), tc.existenceOnly, tc.interval)
+				t.Fatalf(
+					"declaration = %t/%s, want %t/%s",
+					tc.obj.ExistenceOnly(),
+					tc.obj.SourceInterval(),
+					tc.existenceOnly,
+					tc.interval,
+				)
 			}
 		})
 	}

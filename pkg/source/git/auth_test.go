@@ -14,11 +14,12 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
+	"golang.org/x/crypto/ssh"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"golang.org/x/crypto/ssh"
 )
 
 func TestFetcher_SecretReferences(t *testing.T) {
@@ -45,33 +46,177 @@ func TestFetcher_SecretReferences(t *testing.T) {
 		{name: "incomplete basic", data: map[string]any{"username": "alice"}, wantMissing: true},
 		{name: "unwired getter", unwired: true, wantError: "SecretGetter"},
 		{name: "empty bearer uses basic", data: map[string]any{"bearerToken": "", "username": "u", "password": "p"}},
-		{name: "empty optional SSH", ssh: true, data: map[string]any{"identity": identity, "password": "", "known_hosts": ""}},
-		{name: "valid known hosts", ssh: true, data: map[string]any{"identity": identity, "known_hosts": "host " + string(ssh.MarshalAuthorizedKey(hostKey))}},
-		{name: "invalid identity", ssh: true, data: map[string]any{"identity": "invalid-private-fixture"}, wantInput: true, wantKey: "identity"},
-		{name: "invalid known hosts", ssh: true, data: map[string]any{"identity": identity, "known_hosts": "invalid-known-hosts-fixture"}, wantInput: true, wantKey: "known_hosts"},
-		{name: "wiped identity malformed password", ssh: true, data: map[string]any{"identity": "..PLACEHOLDER_identity.."}, encodedData: map[string]any{"password": "%%%fixture"}, wantInput: true, wantKey: "password"},
-		{name: "missing identity malformed known hosts", ssh: true, encodedData: map[string]any{"known_hosts": "%%%fixture"}, wantInput: true, wantKey: "known_hosts"},
-		{name: "wiped password malformed known hosts", ssh: true, data: map[string]any{"identity": identity, "password": "..PLACEHOLDER_password.."}, encodedData: map[string]any{"known_hosts": "%%%fixture"}, wantInput: true, wantKey: "known_hosts"},
-		{name: "malformed identity wiped password", ssh: true, data: map[string]any{"password": "..PLACEHOLDER_password.."}, encodedData: map[string]any{"identity": "%%%fixture"}, wantInput: true, wantKey: "identity"},
-		{name: "identity PEM label sanitized", ssh: true, data: map[string]any{"identity": badPEM, "known_hosts": "..PLACEHOLDER_known_hosts.."}, wantInput: true, wantKey: "identity"},
-		{name: "host marker sanitized", ssh: true, data: map[string]any{"identity": "..PLACEHOLDER_identity..", "known_hosts": "@credential-fixture host ignored"}, wantInput: true, wantKey: "known_hosts"},
-		{name: "invalid identity wiped hosts", ssh: true, data: map[string]any{"identity": "invalid-private-fixture", "known_hosts": "..PLACEHOLDER_known_hosts.."}, wantInput: true, wantKey: "identity"},
-		{name: "invalid identity wiped password", ssh: true, data: map[string]any{"identity": "invalid-private-fixture", "password": "..PLACEHOLDER_password.."}, wantInput: true, wantKey: "identity"},
-		{name: "encrypted identity wiped password", ssh: true, data: map[string]any{"identity": encryptedIdentity, "password": "..PLACEHOLDER_password.."}, wantMissing: true},
-		{name: "encrypted identity correct password", ssh: true, data: map[string]any{"identity": encryptedIdentity, "password": "fixture-password"}},
-		{name: "encrypted identity wrong password", ssh: true, data: map[string]any{"identity": encryptedIdentity, "password": "wrong-password"}, wantInput: true, wantKey: "identity"},
-		{name: "absent identity invalid hosts", ssh: true, data: map[string]any{"known_hosts": "invalid-known-hosts-fixture"}, wantInput: true, wantKey: "known_hosts"},
-		{name: "wiped identity invalid hosts", ssh: true, data: map[string]any{"identity": "..PLACEHOLDER_identity..", "known_hosts": "invalid-known-hosts-fixture"}, wantInput: true, wantKey: "known_hosts"},
-		{name: "encrypted identity wiped password invalid hosts", ssh: true, data: map[string]any{"identity": encryptedIdentity, "password": "..PLACEHOLDER_password..", "known_hosts": "invalid-known-hosts-fixture"}, wantInput: true, wantKey: "known_hosts"},
-		{name: "plain identity wiped password invalid hosts", ssh: true, data: map[string]any{"identity": identity, "password": "..PLACEHOLDER_password..", "known_hosts": "invalid-known-hosts-fixture"}, wantInput: true, wantKey: "known_hosts"},
-		{name: "raw data placeholder is malformed", encodedData: map[string]any{"bearerToken": "..PLACEHOLDER_bearerToken.."}, wantInput: true, wantKey: "bearerToken"},
+		{
+			name: "empty optional SSH",
+			ssh:  true,
+			data: map[string]any{"identity": identity, "password": "", "known_hosts": ""},
+		},
+		{
+			name: "valid known hosts",
+			ssh:  true,
+			data: map[string]any{
+				"identity":    identity,
+				"known_hosts": "host " + string(ssh.MarshalAuthorizedKey(hostKey)),
+			},
+		},
+		{
+			name:      "invalid identity",
+			ssh:       true,
+			data:      map[string]any{"identity": "invalid-private-fixture"},
+			wantInput: true,
+			wantKey:   "identity",
+		},
+		{
+			name:      "invalid known hosts",
+			ssh:       true,
+			data:      map[string]any{"identity": identity, "known_hosts": "invalid-known-hosts-fixture"},
+			wantInput: true,
+			wantKey:   "known_hosts",
+		},
+		{
+			name:        "wiped identity malformed password",
+			ssh:         true,
+			data:        map[string]any{"identity": "..PLACEHOLDER_identity.."},
+			encodedData: map[string]any{"password": "%%%fixture"},
+			wantInput:   true,
+			wantKey:     "password",
+		},
+		{
+			name:        "missing identity malformed known hosts",
+			ssh:         true,
+			encodedData: map[string]any{"known_hosts": "%%%fixture"},
+			wantInput:   true,
+			wantKey:     "known_hosts",
+		},
+		{
+			name:        "wiped password malformed known hosts",
+			ssh:         true,
+			data:        map[string]any{"identity": identity, "password": "..PLACEHOLDER_password.."},
+			encodedData: map[string]any{"known_hosts": "%%%fixture"},
+			wantInput:   true,
+			wantKey:     "known_hosts",
+		},
+		{
+			name:        "malformed identity wiped password",
+			ssh:         true,
+			data:        map[string]any{"password": "..PLACEHOLDER_password.."},
+			encodedData: map[string]any{"identity": "%%%fixture"},
+			wantInput:   true,
+			wantKey:     "identity",
+		},
+		{
+			name:      "identity PEM label sanitized",
+			ssh:       true,
+			data:      map[string]any{"identity": badPEM, "known_hosts": "..PLACEHOLDER_known_hosts.."},
+			wantInput: true,
+			wantKey:   "identity",
+		},
+		{
+			name: "host marker sanitized",
+			ssh:  true,
+			data: map[string]any{
+				"identity":    "..PLACEHOLDER_identity..",
+				"known_hosts": "@credential-fixture host ignored",
+			},
+			wantInput: true,
+			wantKey:   "known_hosts",
+		},
+		{
+			name: "invalid identity wiped hosts",
+			ssh:  true,
+			data: map[string]any{
+				"identity":    "invalid-private-fixture",
+				"known_hosts": "..PLACEHOLDER_known_hosts..",
+			},
+			wantInput: true,
+			wantKey:   "identity",
+		},
+		{
+			name:      "invalid identity wiped password",
+			ssh:       true,
+			data:      map[string]any{"identity": "invalid-private-fixture", "password": "..PLACEHOLDER_password.."},
+			wantInput: true,
+			wantKey:   "identity",
+		},
+		{
+			name:        "encrypted identity wiped password",
+			ssh:         true,
+			data:        map[string]any{"identity": encryptedIdentity, "password": "..PLACEHOLDER_password.."},
+			wantMissing: true,
+		},
+		{
+			name: "encrypted identity correct password",
+			ssh:  true,
+			data: map[string]any{"identity": encryptedIdentity, "password": "fixture-password"},
+		},
+		{
+			name:      "encrypted identity wrong password",
+			ssh:       true,
+			data:      map[string]any{"identity": encryptedIdentity, "password": "wrong-password"},
+			wantInput: true,
+			wantKey:   "identity",
+		},
+		{
+			name:      "absent identity invalid hosts",
+			ssh:       true,
+			data:      map[string]any{"known_hosts": "invalid-known-hosts-fixture"},
+			wantInput: true,
+			wantKey:   "known_hosts",
+		},
+		{
+			name: "wiped identity invalid hosts",
+			ssh:  true,
+			data: map[string]any{
+				"identity":    "..PLACEHOLDER_identity..",
+				"known_hosts": "invalid-known-hosts-fixture",
+			},
+			wantInput: true,
+			wantKey:   "known_hosts",
+		},
+		{
+			name: "encrypted identity wiped password invalid hosts",
+			ssh:  true,
+			data: map[string]any{
+				"identity":    encryptedIdentity,
+				"password":    "..PLACEHOLDER_password..",
+				"known_hosts": "invalid-known-hosts-fixture",
+			},
+			wantInput: true,
+			wantKey:   "known_hosts",
+		},
+		{
+			name: "plain identity wiped password invalid hosts",
+			ssh:  true,
+			data: map[string]any{
+				"identity":    identity,
+				"password":    "..PLACEHOLDER_password..",
+				"known_hosts": "invalid-known-hosts-fixture",
+			},
+			wantInput: true,
+			wantKey:   "known_hosts",
+		},
+		{
+			name:        "raw data placeholder is malformed",
+			encodedData: map[string]any{"bearerToken": "..PLACEHOLDER_bearerToken.."},
+			wantInput:   true,
+			wantKey:     "bearerToken",
+		},
 	}
 	for _, field := range []string{"tls.crt", "identity", "known_hosts", "password", "bearerToken"} {
 		isSSH := field == "identity" || field == "known_hosts" || field == "password"
 		for _, encoded := range []bool{false, true} {
 			cases = append(cases, secretCase{
-				name: fmt.Sprintf("%s/encoded=%t", field, encoded), field: field, encoded: encoded, ssh: isSSH,
-				data: map[string]any{"identity": identity, "username": "u", "password": "p", field: "..PLACEHOLDER_" + field + ".."}, wantMissing: true,
+				name:    fmt.Sprintf("%s/encoded=%t", field, encoded),
+				field:   field,
+				encoded: encoded,
+				ssh:     isSSH,
+				data: map[string]any{
+					"identity": identity,
+					"username": "u",
+					"password": "p",
+					field:      "..PLACEHOLDER_" + field + "..",
+				},
+				wantMissing: true,
 			})
 		}
 		if field == "tls.crt" {
@@ -85,7 +230,17 @@ func TestFetcher_SecretReferences(t *testing.T) {
 		} {
 			data := map[string]any{"identity": identity, "username": "u", "password": "p"}
 			delete(data, field)
-			cases = append(cases, secretCase{name: field + "/" + malformed.name, ssh: isSSH, data: data, encodedData: map[string]any{field: malformed.value}, wantInput: true, wantKey: field})
+			cases = append(
+				cases,
+				secretCase{
+					name:        field + "/" + malformed.name,
+					ssh:         isSSH,
+					data:        data,
+					encodedData: map[string]any{field: malformed.value},
+					wantInput:   true,
+					wantKey:     field,
+				},
+			)
 		}
 	}
 	for _, tc := range cases {
@@ -93,7 +248,12 @@ func TestFetcher_SecretReferences(t *testing.T) {
 			t.Parallel()
 			var sec *manifest.Secret
 			if tc.data != nil || tc.encodedData != nil {
-				sec = &manifest.Secret{Name: "different", Namespace: "elsewhere", StringData: tc.data, Data: tc.encodedData}
+				sec = &manifest.Secret{
+					Name:       "different",
+					Namespace:  "elsewhere",
+					StringData: tc.data,
+					Data:       tc.encodedData,
+				}
 				if tc.encoded {
 					sec.StringData, sec.Data = nil, map[string]any{}
 					for k, v := range tc.data {
@@ -116,12 +276,22 @@ func TestFetcher_SecretReferences(t *testing.T) {
 			if tc.proxy {
 				repo.Name, repo.SecretRef = "repo", nil
 				repo.ProxySecretRef = &manifest.LocalObjectReference{Name: "missing"}
-				_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveTransport(repo, sourcecache.Policy{})
+				_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveTransport(
+					repo,
+					sourcecache.Policy{},
+				)
 				owner.Name, secretName = "repo", "missing"
 			} else if tc.field == "tls.crt" {
-				_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveTransport(repo, sourcecache.Policy{})
+				_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveTransport(
+					repo,
+					sourcecache.Policy{},
+				)
 			} else {
-				auth, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveAuth(repo, sec, testEndpoint(t, repo.URL))
+				auth, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveAuth(
+					repo,
+					sec,
+					testEndpoint(t, repo.URL),
+				)
 			}
 			if err != nil {
 				assert.Equal(t, auth == nil, true)
@@ -130,7 +300,9 @@ func TestFetcher_SecretReferences(t *testing.T) {
 				assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 				assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 				assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), false)
-				if err == nil || !strings.Contains(err.Error(), tc.wantKey) || !strings.Contains(err.Error(), "secret ns/creds") || strings.Contains(err.Error(), manifest.DiagnosticFor(repo.Named(), repo).Label()) {
+				if err == nil || !strings.Contains(err.Error(), tc.wantKey) ||
+					!strings.Contains(err.Error(), "secret ns/creds") ||
+					strings.Contains(err.Error(), manifest.DiagnosticFor(repo.Named(), repo).Label()) {
 					t.Fatalf("missing input key/source context: %v", err)
 				}
 				for _, payload := range []string{"%%%fixture", "credential-fixture", "invalid-private-fixture", "invalid-known-hosts-fixture"} {
@@ -145,7 +317,11 @@ func TestFetcher_SecretReferences(t *testing.T) {
 				}
 				assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), true)
 				assert.Equal(t, missing.Owner, owner)
-				assert.Equal(t, missing.Secret, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: secretName})
+				assert.Equal(
+					t,
+					missing.Secret,
+					manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: secretName},
+				)
 			} else if tc.wantError != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
 					t.Fatalf("expected %q error; got %v", tc.wantError, err)
@@ -168,7 +344,12 @@ func TestFetcher_ProviderUnavailable(t *testing.T) {
 		URL:      "https://github.com/x/y.git",
 		Provider: sourcev1.GitProviderGitHub,
 	}
-	_, err := f.Fetch(context.Background(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
+	_, err := f.Fetch(
+		context.Background(),
+		repo,
+		(testInputs{}).readSet(repo),
+		sourcecache.Policy{MaxAge: repo.SourceInterval()},
+	)
 	if err == nil {
 		t.Fatalf("expected error for unimplemented provider")
 	}
@@ -195,7 +376,11 @@ func TestFetcher_HTTPSBasicAuth(t *testing.T) {
 	} {
 		t.Run(url, func(t *testing.T) {
 			t.Parallel()
-			auth, err := (&operation{Fetcher: f, secrets: fInputs.lookup(gitRepoWithSecret("g", url, "creds"))}).resolveAuth(gitRepoWithSecret("g", url, "creds"), fInputs.secrets("ns", "creds"), testEndpoint(t, url))
+			auth, err := (&operation{Fetcher: f, secrets: fInputs.lookup(gitRepoWithSecret("g", url, "creds"))}).resolveAuth(
+				gitRepoWithSecret("g", url, "creds"),
+				fInputs.secrets("ns", "creds"),
+				testEndpoint(t, url),
+			)
 			if err != nil {
 				t.Fatalf("resolveAuth: %v", err)
 			}
@@ -227,7 +412,11 @@ func TestFetcher_HTTPSBearerWinsOverBasic(t *testing.T) {
 		URL:       "https://github.com/x/y.git",
 		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 	}
-	auth, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveAuth(repo, fInputs.secrets(repo.Namespace, repo.SecretRef.Name), testEndpoint(t, repo.URL))
+	auth, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveAuth(
+		repo,
+		fInputs.secrets(repo.Namespace, repo.SecretRef.Name),
+		testEndpoint(t, repo.URL),
+	)
 	if err != nil {
 		t.Fatalf("resolveAuth: %v", err)
 	}
@@ -277,7 +466,11 @@ func TestFetcher_SSHAuthEndpointUser(t *testing.T) {
 	} {
 		t.Run(tc.url, func(t *testing.T) {
 			t.Parallel()
-			auth, err := (&operation{Fetcher: f, secrets: fInputs.lookup(gitRepoWithSecret("g", tc.url, "creds"))}).resolveAuth(gitRepoWithSecret("g", tc.url, "creds"), fInputs.secrets("ns", "creds"), testEndpoint(t, tc.url))
+			auth, err := (&operation{Fetcher: f, secrets: fInputs.lookup(gitRepoWithSecret("g", tc.url, "creds"))}).resolveAuth(
+				gitRepoWithSecret("g", tc.url, "creds"),
+				fInputs.secrets("ns", "creds"),
+				testEndpoint(t, tc.url),
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -302,7 +495,12 @@ func TestFetcher_ProviderMissingSecret(t *testing.T) {
 		Provider:  sourcev1.GitProviderGitHub,
 		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 	}
-	_, err := f.Fetch(context.Background(), repo, fInputs.readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
+	_, err := f.Fetch(
+		context.Background(),
+		repo,
+		fInputs.readSet(repo),
+		sourcecache.Policy{MaxAge: repo.SourceInterval()},
+	)
 	if err == nil {
 		t.Fatalf("expected missing-secret error")
 	}

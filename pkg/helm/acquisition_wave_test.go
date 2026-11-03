@@ -26,7 +26,12 @@ func TestTemplate_ConcurrentUncacheableRender(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
 	testutil.WriteFile(t, dir, "mychart/crds/bad.yaml", "apiVersion: [\n")
-	testutil.WriteFile(t, dir, "mychart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '{{ .Values.gate }}'}\n")
+	testutil.WriteFile(
+		t,
+		dir,
+		"mychart/templates/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '{{ .Values.gate }}'}\n",
+	)
 	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 	hr := newHR()
 	hr.Install = &helmv2.Install{DisableSchemaValidation: true}
@@ -40,12 +45,20 @@ func TestTemplate_ConcurrentUncacheableRender(t *testing.T) {
 			once.Do(func() { close(entered); <-release })
 			return "rendered"
 		})
-		if prepared, err := cli.prepareTemplate(t.Context(), hr, map[string]any{"gate": gate}, RenderOptions{Sources: sources}); err != nil || prepared.key == "" {
+		if prepared, err := cli.prepareTemplate(
+			t.Context(),
+			hr,
+			map[string]any{"gate": gate},
+			RenderOptions{Sources: sources},
+		); err != nil ||
+			prepared.key == "" {
 			t.Fatalf("render gate has no cache identity: %v", err)
 		}
 		done := make(chan error, 2)
 		render := func() {
-			_, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, map[string]any{"gate": gate}, RenderOptions{Sources: sources}))
+			_, _, err := testutil.RenderMaps(
+				cli.Template(t.Context(), hr, map[string]any{"gate": gate}, RenderOptions{Sources: sources}),
+			)
 			done <- err
 		}
 		go render()

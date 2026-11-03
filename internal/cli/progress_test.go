@@ -15,6 +15,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -142,6 +143,7 @@ func (o *progressOutput) Write(p []byte) (int, error) {
 	defer o.mu.Unlock()
 	return o.data.Write(p)
 }
+
 func (o *progressOutput) String() string           { o.mu.Lock(); defer o.mu.Unlock(); return o.data.String() }
 func (o *progressOutput) Read([]byte) (int, error) { return 0, io.EOF }
 func (o *progressOutput) Close() error             { return nil }
@@ -209,7 +211,13 @@ func TestBarWriter_ProgressLifecycle(t *testing.T) {
 	t.Run("started-cleanup", func(t *testing.T) {
 		t.Parallel()
 		synctest.Test(t, func(t *testing.T) {
-			out := &progressOutput{probe: make(chan struct{}), release: make(chan struct{}), blocked: make(chan struct{}), allowWrite: make(chan struct{}), painted: make(chan struct{})}
+			out := &progressOutput{
+				probe:      make(chan struct{}),
+				release:    make(chan struct{}),
+				blocked:    make(chan struct{}),
+				allowWrite: make(chan struct{}),
+				painted:    make(chan struct{}),
+			}
 			w := &barWriter{out: out}
 			m := newBarModel(false)
 			a, b := testutil.KustomizationID("ns", "a"), testutil.KustomizationID("ns", "b")
@@ -303,11 +311,19 @@ func TestBarWriter_CaptureTail(t *testing.T) {
 	tail := make(chan bool, 1)
 	oldLogger, original := slog.Default(), os.Stderr
 	defer slog.SetDefault(oldLogger)
-	slog.SetDefault(slog.New(slog.NewTextHandler(progressLogWriter{bar: w, tail: tail}, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	slog.SetDefault(
+		slog.New(
+			slog.NewTextHandler(progressLogWriter{bar: w, tail: tail}, &slog.HandlerOptions{Level: slog.LevelDebug}),
+		),
+	)
 	st := store.New()
 	listener, stop := w.progress(t.Context())
 	unsub := st.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
-		listener(manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, manifest.DiagnosticFor(id, st.GetObject(id)), payload.(store.StatusInfo))
+		listener(
+			manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
+			manifest.DiagnosticFor(id, st.GetObject(id)),
+			payload.(store.StatusInfo),
+		)
 	}, false)
 	cleanup := sync.OnceFunc(func() { unsub(); stop() })
 	captured := os.Stderr
@@ -348,7 +364,11 @@ func TestProgressEvents_TreeIdentity(t *testing.T) {
 	m.events.observe(base, manifest.DiagnosticFor(id, nil), store.StatusInfo{Status: store.StatusReady})
 	m.events.observe(head, manifest.DiagnosticFor(id, nil), store.StatusInfo{Status: store.StatusPending})
 	m.events.observe(other, manifest.DiagnosticFor(id, nil), store.StatusInfo{Status: store.StatusFailed})
-	m.events.observe(manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, manifest.DiagnosticFor(id, nil), store.StatusInfo{Status: store.StatusPending})
+	m.events.observe(
+		manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
+		manifest.DiagnosticFor(id, nil),
+		store.StatusInfo{Status: store.StatusPending},
+	)
 	m.drainEvents()
 	assert.Equal(t, m.total, 4)
 	assert.Equal(t, m.done, 2)
@@ -361,7 +381,11 @@ func TestProgressEvents_TreeIdentity(t *testing.T) {
 	owner := testutil.KustomizationID("flux-system", "sync")
 	entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "clusters/test", owner)
 	subject := manifest.DiagnosticFor(entry.Named(), entry)
-	m.events.observe(manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, subject, store.StatusInfo{Status: store.StatusPending})
+	m.events.observe(
+		manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
+		subject,
+		store.StatusInfo{Status: store.StatusPending},
+	)
 	m.drainEvents()
 	if _, ok := m.inflight[entry.Named()]; !ok {
 		t.Fatal("progress keyed by display instead of raw ID")
@@ -370,7 +394,6 @@ func TestProgressEvents_TreeIdentity(t *testing.T) {
 	if !slices.Contains(labels, subject.String()) {
 		t.Fatalf("progress labels=%v", labels)
 	}
-
 }
 
 type progressLogWriter struct {

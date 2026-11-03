@@ -46,7 +46,10 @@ func (o *Orchestrator) reportOwnership(claims []manifest.KSClaim) []manifest.KSC
 
 // detectOrphans finds failed resources a successful covering parent never emitted.
 // Flux never sees these local files; failed-parent cascade victims remain failures.
-func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.StatusInfo, prefixes []manifest.KSClaim) map[manifest.NamedResource]string {
+func (o *Orchestrator) detectOrphans(
+	failed map[manifest.NamedResource]store.StatusInfo,
+	prefixes []manifest.KSClaim,
+) map[manifest.NamedResource]string {
 	out := make(map[manifest.NamedResource]string)
 	for id, info := range failed {
 		if !id.KindInfo().Render {
@@ -54,7 +57,8 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 		}
 		// Any parent's emission proves that Flux saw this resource.
 		if slices.ContainsFunc(o.store.Productions(id, o.index), func(p manifest.Production) bool {
-			return p.Owner != (manifest.NamedResource{}) && p.Authored == (manifest.NamedResource{}) && p.Declaration == (manifest.NamedResource{})
+			return p.Owner != (manifest.NamedResource{}) && p.Authored == (manifest.NamedResource{}) &&
+				p.Declaration == (manifest.NamedResource{})
 		}) {
 			continue
 		}
@@ -122,7 +126,14 @@ func (o *Orchestrator) finalize() error {
 	}
 	ksCount, hrCount := counts[manifest.KindKustomization], counts[manifest.KindHelmRelease]
 	for _, id := range slices.SortedFunc(maps.Keys(o.orphans), manifest.NamedResource.Compare) {
-		o.store.AddWarning(manifest.Warning{Resource: id, Category: manifest.WarnOrphanedResource, Message: "resource orphaned", Detail: []string{o.fileOf(id), o.orphans[id]}})
+		o.store.AddWarning(
+			manifest.Warning{
+				Resource: id,
+				Category: manifest.WarnOrphanedResource,
+				Message:  "resource orphaned",
+				Detail:   []string{o.fileOf(id), o.orphans[id]},
+			},
+		)
 	}
 	o.warnMissingCRDs()
 	o.logSummary(failed, ksCount, hrCount)
@@ -194,9 +205,14 @@ func (o *Orchestrator) warnMissingCRDs() {
 			names[i] = o.diagnostic(id).String()
 		}
 		o.store.AddWarning(manifest.Warning{
-			Resource: crd, Related: dependents,
+			Resource: crd,
+			Related:  dependents,
 			Category: manifest.WarnMissingCRD,
-			Message:  fmt.Sprintf("CRD %s absent from offline inputs; accepted for %s", crd.String(), strings.Join(names, ", ")),
+			Message: fmt.Sprintf(
+				"CRD %s absent from offline inputs; accepted for %s",
+				crd.String(),
+				strings.Join(names, ", "),
+			),
 		})
 	}
 }

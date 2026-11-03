@@ -37,17 +37,34 @@ func BenchmarkFilterResolve_LargeRepo(b *testing.B) {
 }
 
 func BenchmarkFilterResolve_ProducerChain(b *testing.B) {
-	input := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "input"}
+	input := manifest.NamedResource{
+		Group:     manifest.SourceDomain,
+		Kind:      manifest.KindGitRepository,
+		Namespace: "apps",
+		Name:      "input",
+	}
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		input: {File: "input.yaml"},
 	}}
 	previous := input
 	for i := range 8 {
-		declaration := manifest.NamedResource{Group: "example.test", Kind: "Producer", Namespace: "apps", Name: fmt.Sprintf("producer-%d", i)}
-		output := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: fmt.Sprintf("output-%d", i)}
+		declaration := manifest.NamedResource{
+			Group:     "example.test",
+			Kind:      "Producer",
+			Namespace: "apps",
+			Name:      fmt.Sprintf("producer-%d", i),
+		}
+		output := manifest.NamedResource{
+			Group:     manifest.SourceDomain,
+			Kind:      manifest.KindExternalArtifact,
+			Namespace: "apps",
+			Name:      fmt.Sprintf("output-%d", i),
+		}
 		file := fmt.Sprintf("producer-%d.yaml", i)
 		index.Records[declaration] = manifest.DiscoveryRecord{File: file, Refs: []manifest.NamedResource{previous}}
-		index.Records[output] = manifest.DiscoveryRecord{Productions: []manifest.Production{{Declaration: declaration, File: file}}}
+		index.Records[output] = manifest.DiscoveryRecord{
+			Productions: []manifest.Production{{Declaration: declaration, File: file}},
+		}
 		previous = output
 	}
 	consumer := testutil.KustomizationID("apps", "consumer")
@@ -85,8 +102,13 @@ func BenchmarkTransitiveDeps(b *testing.B) {
 	s := store.New()
 	id := testutil.KustomizationID("flux-system", "apps")
 	ks := &manifest.Kustomization{
-		Name: "apps", Namespace: "flux-system",
-		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system"},
+		Name:      "apps",
+		Namespace: "flux-system",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{
+			Kind:      manifest.KindGitRepository,
+			Name:      "flux-system",
+			Namespace: "flux-system",
+		},
 		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
 			{Kind: manifest.KindConfigMap, Name: "cluster-settings"},
 			{Kind: manifest.KindConfigMap, Name: "cluster-secrets"},
@@ -146,13 +168,25 @@ func BenchmarkFilterResolve_OneSidedSuppliers(b *testing.B) {
 				if match {
 					name = "optional"
 				}
-				consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps", Path: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: name, Optional: true}}}}
+				consumer := &manifest.Kustomization{
+					Name:      "consumer",
+					Namespace: "apps",
+					Path:      "apps",
+					PostBuild: &kustomizev1.PostBuild{
+						SubstituteFrom: []manifest.SubstituteReference{
+							{Kind: manifest.KindConfigMap, Name: name, Optional: true},
+						},
+					},
+				}
 				st.AddObject(consumer)
 				index.Records[consumer.Named()] = manifest.DiscoveryRecord{File: "flux/consumer.yaml"}
 				selected := 0
 				b.ReportAllocs()
 				for b.Loop() {
-					filter := newAdmission(b, admissionConfig{changes: changes, index: index, inventory: st, root: root})
+					filter := newAdmission(
+						b,
+						admissionConfig{changes: changes, index: index, inventory: st, root: root},
+					)
 					if filter.ShouldReconcile(consumer.Named()) {
 						selected++
 					}
@@ -181,11 +215,24 @@ func BenchmarkAddEmitted_OneSidedSuppliers(b *testing.B) {
 				}
 				var children [64]store.Child
 				for i := range children {
-					children[i] = store.Child{Obj: &manifest.Kustomization{Name: fmt.Sprintf("late-%d", i), Namespace: "apps", Path: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: name, Optional: true}}}}}
+					children[i] = store.Child{
+						Obj: &manifest.Kustomization{
+							Name:      fmt.Sprintf("late-%d", i),
+							Namespace: "apps",
+							Path:      "apps",
+							PostBuild: &kustomizev1.PostBuild{
+								SubstituteFrom: []manifest.SubstituteReference{
+									{Kind: manifest.KindConfigMap, Name: name, Optional: true},
+								},
+							},
+						},
+					}
 				}
 				setup := admissionClosure{loader: filter.loader, objects: st, incoming: children[0]}
 				input := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: name, Namespace: "apps"}
-				if filter.ShouldReconcile(emitter.Named()) || filter.ShouldReconcile(input) || filter.ShouldReconcile(children[0].Obj.Named()) || setup.affected(children[0].Obj.Named(), children[0].Obj) {
+				if filter.ShouldReconcile(emitter.Named()) || filter.ShouldReconcile(input) ||
+					filter.ShouldReconcile(children[0].Obj.Named()) ||
+					setup.affected(children[0].Obj.Named(), children[0].Obj) {
 					b.Fatal("supplier scan would be bypassed")
 				}
 				for _, production := range st.IncomingProductions(children[0], index) {
@@ -230,7 +277,10 @@ func oneSidedSuppliers(b *testing.B, count int) (*change.Set, *store.Store, *man
 		supplier.Name = fmt.Sprintf("supplier-%d", i)
 		for _, st := range stores {
 			st.AddObject(&supplier)
-			st.SetArtifact(supplier.Named(), st.GetArtifact(source.Named(), store.ArtifactContent).(*store.SourceArtifact))
+			st.SetArtifact(
+				supplier.Named(),
+				st.GetArtifact(source.Named(), store.ArtifactContent).(*store.SourceArtifact),
+			)
 		}
 	}
 	changes, err := change.Qualify(b.Context(), nil, stores[0], stores[1])
@@ -246,7 +296,14 @@ func oneSidedSuppliers(b *testing.B, count int) (*change.Set, *store.Store, *man
 		if source == manifest.BootstrapSourceID {
 			continue
 		}
-		visible := manifest.InputVisibility{Source: source, Root: "inputs", Complete: true, Inputs: map[manifest.NamedResource][]string{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"}: {"inputs/optional.yaml"}}}
+		visible := manifest.InputVisibility{
+			Source:   source,
+			Root:     "inputs",
+			Complete: true,
+			Inputs: map[manifest.NamedResource][]string{
+				{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"}: {"inputs/optional.yaml"},
+			},
+		}
 		empty := visible
 		empty.Inputs = nil
 		observations[0].Visibility = append(observations[0].Visibility, visible)
@@ -271,9 +328,14 @@ func seedKSStore(n int) (*store.Store, map[manifest.NamedResource]string) {
 		name := fmt.Sprintf("app-%d", i)
 		path := fmt.Sprintf("./apps/app-%d", i)
 		ks := &manifest.Kustomization{
-			Name: name, Namespace: "flux-system",
+			Name:      name,
+			Namespace: "flux-system",
 			Path:      path,
-			SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system"},
+			SourceRef: kustomizev1.CrossNamespaceSourceReference{
+				Kind:      manifest.KindGitRepository,
+				Name:      "flux-system",
+				Namespace: "flux-system",
+			},
 		}
 		s.AddObject(ks)
 		sourceFiles[ks.Named()] = fmt.Sprintf("apps/app-%d/ks.yaml", i)
@@ -314,7 +376,15 @@ func BenchmarkDetect(b *testing.B) {
 
 func BenchmarkCollectInputs_LargeFile(b *testing.B) {
 	root := b.TempDir()
-	testutil.WriteFile(b, root, "input.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: large, namespace: apps}\ndata:\n  value: "+strings.Repeat("x", 256*1024)+"\n")
+	testutil.WriteFile(
+		b,
+		root,
+		"input.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: large, namespace: apps}\ndata:\n  value: "+strings.Repeat(
+			"x",
+			256*1024,
+		)+"\n",
+	)
 	input := os.DirFS(root)
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "large"}
 	var set change.Set
@@ -325,9 +395,25 @@ func BenchmarkCollectInputs_LargeFile(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
-	visible := &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{{Source: manifest.BootstrapSourceID, Root: ".", Complete: true, Inputs: map[manifest.NamedResource][]string{id: {"input.yaml"}}}}}
-	empty := &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{{Source: manifest.BootstrapSourceID, Root: ".", Complete: true}}}
-	resolved, err := set.WithReaders(b.Context(), empty, visible, [2]map[manifest.NamedResource]inputprojection.Projection{})
+	visible := &manifest.DiscoveryIndex{
+		Visibility: []manifest.InputVisibility{
+			{
+				Source:   manifest.BootstrapSourceID,
+				Root:     ".",
+				Complete: true,
+				Inputs:   map[manifest.NamedResource][]string{id: {"input.yaml"}},
+			},
+		},
+	}
+	empty := &manifest.DiscoveryIndex{
+		Visibility: []manifest.InputVisibility{{Source: manifest.BootstrapSourceID, Root: ".", Complete: true}},
+	}
+	resolved, err := set.WithReaders(
+		b.Context(),
+		empty,
+		visible,
+		[2]map[manifest.NamedResource]inputprojection.Projection{},
+	)
 	if err != nil {
 		b.Fatal(err)
 	}

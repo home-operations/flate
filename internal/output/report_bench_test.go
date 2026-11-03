@@ -19,11 +19,24 @@ func BenchmarkPrepareReport_ManyClusters(b *testing.B) {
 				group.Subjects = make(map[manifest.NamedResource]manifest.DiagnosticIdentity)
 				group.Models = []Model{
 					{Context: "orig snapshot", Subjects: make(map[manifest.NamedResource]manifest.DiagnosticIdentity)},
-					{Context: "current snapshot", Subjects: make(map[manifest.NamedResource]manifest.DiagnosticIdentity)},
+					{
+						Context:  "current snapshot",
+						Subjects: make(map[manifest.NamedResource]manifest.DiagnosticIdentity),
+					},
 				}
 				for j := range 4 {
-					raw := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: fmt.Sprintf("source-%d", j)}
-					owner := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "apps", Name: fmt.Sprintf("chart-%d", j)}
+					raw := manifest.NamedResource{
+						Group:     manifest.SourceDomain,
+						Kind:      manifest.KindOCIRepository,
+						Namespace: "apps",
+						Name:      fmt.Sprintf("source-%d", j),
+					}
+					owner := manifest.NamedResource{
+						Group:     manifest.SourceDomain,
+						Kind:      manifest.KindHelmChart,
+						Namespace: "apps",
+						Name:      fmt.Sprintf("chart-%d", j),
+					}
 					group.Subjects[raw] = manifest.DiagnosticIdentity{ID: raw, Resource: owner}
 					for k := range group.Models {
 						captured := owner
@@ -33,7 +46,9 @@ func BenchmarkPrepareReport_ManyClusters(b *testing.B) {
 					}
 					owner.Name = fmt.Sprintf("warning-chart-%d", j)
 					report.Warnings = append(report.Warnings, Warning{Group: i, Warning: manifest.Warning{
-						Resource: raw, Subject: manifest.DiagnosticIdentity{ID: raw, Resource: owner}, Message: "captured",
+						Resource: raw,
+						Subject:  manifest.DiagnosticIdentity{ID: raw, Resource: owner},
+						Message:  "captured",
 					}})
 				}
 				before[i] = append(before[i], maps.Clone(group.Subjects))
@@ -95,7 +110,12 @@ func benchmarkNamingFixture(clusters int) (Report, [][]manifest.NamedResource) {
 		group.Cluster = fmt.Sprintf("cluster-%d", i)
 		group.Models = []Model{{}}
 		for j := range 200 {
-			id := manifest.NamedResource{Group: "example.io", Kind: fmt.Sprintf("Kind%d", j%5), Namespace: "apps", Name: fmt.Sprintf("resource-%d", j)}
+			id := manifest.NamedResource{
+				Group:     "example.io",
+				Kind:      fmt.Sprintf("Kind%d", j%5),
+				Namespace: "apps",
+				Name:      fmt.Sprintf("resource-%d", j),
+			}
 			inventory[i] = append(inventory[i], id)
 			group.Models[0].Primary = append(group.Models[0].Primary, Primary{ID: id, Msg: "failed"})
 		}

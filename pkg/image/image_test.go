@@ -156,7 +156,11 @@ func TestExtract_EmbeddedPodSpec(t *testing.T) {
 			}},
 		}}},
 	}
-	assert.Diff(t, Extract(doc), []string{"ghcr.io/demo/worker:v1@sha256:" + sha256(), "ghcr.io/me/svc:v1@sha256:" + sha256()})
+	assert.Diff(
+		t,
+		Extract(doc),
+		[]string{"ghcr.io/demo/worker:v1@sha256:" + sha256(), "ghcr.io/me/svc:v1@sha256:" + sha256()},
+	)
 }
 
 func TestExtract_CronJob(t *testing.T) {
@@ -237,7 +241,9 @@ func TestExtract_Nested(t *testing.T) {
 		{
 			name: "missing or non-string image",
 			doc: map[string]any{"containers": []any{
-				map[string]any{}, map[string]any{"image": nil}, map[string]any{"image": 42},
+				map[string]any{},
+				map[string]any{"image": nil},
+				map[string]any{"image": 42},
 				map[string]any{"image": map[string]any{"reference": "ghcr.io/x:1.0"}},
 				map[string]any{"image": []any{"redis:7"}},
 			}},

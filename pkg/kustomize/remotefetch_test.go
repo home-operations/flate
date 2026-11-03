@@ -44,7 +44,12 @@ func TestRemoteInput_CancelQueuedGitBase(t *testing.T) {
 				calls := 0
 				c.gitBase = func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
 					calls++
-					return &store.SourceArtifact{FS: fstest.MapFS{}, Key: "key", Content: "key-generation", Revision: "revision"}, nil
+					return &store.SourceArtifact{
+						FS:       fstest.MapFS{},
+						Key:      "key",
+						Content:  "key-generation",
+						Revision: "revision",
+					}, nil
 				}
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
@@ -100,12 +105,21 @@ func TestRemoteInput_AcquisitionIdentity(t *testing.T) {
 			for _, v := range []int32{1, 1, 2} {
 				version.Store(v)
 				c := newTestTreeCache(t, "")
-				c.SetGitBaseFetcher(func(_ context.Context, request GitBaseRequest, gotRetry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-					if operation != remoteGit || request.URL != descriptor.URL || request.Ref != descriptor.Ref || request.MaxAge != time.Minute || gotRetry != retry {
-						t.Fatalf("acquisition request=%+v retry=%+v", request, gotRetry)
-					}
-					return &store.SourceArtifact{Key: "family", Content: fmt.Sprint(v), Revision: fmt.Sprint(v), FS: fstest.MapFS{"content": {Data: fmt.Append(nil, v)}}}, nil
-				})
+				c.SetGitBaseFetcher(
+					func(_ context.Context, request GitBaseRequest, gotRetry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+						if operation != remoteGit || request.URL != descriptor.URL || request.Ref != descriptor.Ref ||
+							request.MaxAge != time.Minute ||
+							gotRetry != retry {
+							t.Fatalf("acquisition request=%+v retry=%+v", request, gotRetry)
+						}
+						return &store.SourceArtifact{
+							Key:      "family",
+							Content:  fmt.Sprint(v),
+							Revision: fmt.Sprint(v),
+							FS:       fstest.MapFS{"content": {Data: fmt.Append(nil, v)}},
+						}, nil
+					},
+				)
 				input := newTreeFS(fstest.MapFS{}, "/src", nil)
 				input.retry, input.maxAge = retry, time.Minute
 				acquired, identity, err := descriptor.acquire(t.Context(), c, input)
@@ -116,7 +130,8 @@ func TestRemoteInput_AcquisitionIdentity(t *testing.T) {
 				if err != nil || string(body) != fmt.Sprint(v) {
 					t.Fatalf("acquired body=%q error=%v", body, err)
 				}
-				if operation == remoteHTTP && (identity.Content == "" || identity.Content != sourcecache.AcquisitionIdentity(acquired)) {
+				if operation == remoteHTTP &&
+					(identity.Content == "" || identity.Content != sourcecache.AcquisitionIdentity(acquired)) {
 					t.Fatalf("HTTP identity=%+v", identity)
 				}
 				if operation == remoteGit && (identity.Key != "family" || identity.Content != fmt.Sprint(v)) {
@@ -152,9 +167,11 @@ func TestRemoteInput_UnavailableGit(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			c := newTestTreeCache(t, "")
-			c.SetGitBaseFetcher(func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-				return tc.artifact, tc.err
-			})
+			c.SetGitBaseFetcher(
+				func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+					return tc.artifact, tc.err
+				},
+			)
 			descriptor := remoteInput{Operation: remoteGit, URL: "https://example.invalid/repo.git", Ref: "main"}
 			_, identity, err := descriptor.acquire(t.Context(), c, newTreeFS(fstest.MapFS{}, "/src", nil))
 			if tc.name == "content generation" {
@@ -193,13 +210,20 @@ func TestRemoteInput_HTTPFailureObservation(t *testing.T) {
 			if status == http.StatusNotFound {
 				want.HTTPStatus = status
 			}
-			if acquired != nil || !ok || response.StatusCode != status || identity != want || !errors.Is(err, manifest.ErrFlux) {
+			if acquired != nil || !ok || response.StatusCode != status || identity != want ||
+				!errors.Is(err, manifest.ErrFlux) {
 				t.Fatalf("HTTP %d: filesystem=%v identity=%+v error=%v", status, acquired, identity, err)
 			}
 			if status == http.StatusNotFound {
 				_, original := c.remoteInputs.Acquire(t.Context(), descriptor.URL, sourcecache.RetryConfig{}, nil)
-				if original != err || hits.Load() != 1 { //nolint:errorlint // Shared acquisition must return the identical error object.
-					t.Fatalf("acquisition changed error or repeated probe: original=%v error=%v requests=%d", original, err, hits.Load())
+				if original != err ||
+					hits.Load() != 1 { //nolint:errorlint // Shared acquisition must return the identical error object.
+					t.Fatalf(
+						"acquisition changed error or repeated probe: original=%v error=%v requests=%d",
+						original,
+						err,
+						hits.Load(),
+					)
 				}
 			}
 		})
@@ -264,7 +288,13 @@ func (tr *remoteHTTPTrace) serve(t *testing.T, body func() string) *httptest.Ser
 		const modified = "Mon, 01 Jun 2026 12:00:00 GMT"
 		w.Header().Set("ETag", etag)
 		w.Header().Set("Last-Modified", modified)
-		record := remoteHTTPRequest{Method: r.Method, Path: r.URL.Path, ETag: r.Header.Get("If-None-Match"), Modified: r.Header.Get("If-Modified-Since"), Status: http.StatusOK}
+		record := remoteHTTPRequest{
+			Method:   r.Method,
+			Path:     r.URL.Path,
+			ETag:     r.Header.Get("If-None-Match"),
+			Modified: r.Header.Get("If-Modified-Since"),
+			Status:   http.StatusOK,
+		}
 		if record.ETag == etag {
 			record.Status = http.StatusNotModified
 			w.WriteHeader(record.Status)

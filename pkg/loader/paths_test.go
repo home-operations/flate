@@ -34,8 +34,10 @@ func TestFinalizeIndex_ProducedChildPath(t *testing.T) {
 				"flux/settings.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\n" +
 					"metadata: {name: settings, namespace: apps}\ndata: {ROOT: apps/red}\n")},
 				"producers/kustomization.yaml": {Data: []byte("resources: [child.yaml]\n")},
-				"producers/child.yaml": {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\n" +
-					"metadata: {name: child, namespace: apps}\nspec: {path: './${ROOT}'}\n")},
+				"producers/child.yaml": {
+					Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\n" +
+						"metadata: {name: child, namespace: apps}\nspec: {path: './${ROOT}'}\n"),
+				},
 				"apps/red/kustomization.yaml": {Data: []byte("resources: []\n")},
 			}})
 			l := New(st)
@@ -88,7 +90,10 @@ func TestFinalizeIndex_EffectiveInputContent(t *testing.T) {
 				assert.NoError(t, err)
 				assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 				id := manifest.NamedResource{
-					Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "reader",
+					Group:     manifest.FluxKustomizeDomain,
+					Kind:      manifest.KindKustomization,
+					Namespace: "apps",
+					Name:      "reader",
 				}
 				got, known := l.InputContent[id]
 				assert.Equal(t, known, tc.known)
@@ -142,7 +147,13 @@ func effectiveInputCases() []effectiveInputCase {
 			operand:     `[{"op":"replace","path":"/data/value","value":"\u0024{CHANGED}"}]`,
 		},
 		{name: "unproved Flux transform", expression: "${OTHER}"},
-		{name: "inline precedence", expression: "${CHANGED}", postbuild: ", substitute: {CHANGED: fixed}", known: true, same: true},
+		{
+			name:       "inline precedence",
+			expression: "${CHANGED}",
+			postbuild:  ", substitute: {CHANGED: fixed}",
+			known:      true,
+			same:       true,
+		},
 		{name: "activation", expression: "${MISSING:=fallback}", known: true},
 		{name: "invalid syntax", expression: "${ARR[@]}"},
 		{name: "invalid names", expression: "${OTHER}"},
@@ -236,7 +247,9 @@ func TestFinalizeIndex_InputProjectionLifetime(t *testing.T) {
 		"flux/settings.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\n" +
 			"metadata: {name: settings, namespace: apps}\ndata: {VALUE: old}\n")},
 		"app/kustomization.yaml": {Data: []byte("resources: [cm.yaml]\n")},
-		"app/cm.yaml":            {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\ndata: {value: '${VALUE}'}\n")},
+		"app/cm.yaml": {
+			Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\ndata: {value: '${VALUE}'}\n"),
+		},
 	}
 	st := store.New()
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
@@ -267,8 +280,10 @@ func TestFinalizeIndex_InputProjectionLifetime(t *testing.T) {
 	assert.Equal(t, value, "old")
 	assert.Equal(t, borrowed[reader].Inputs[provider], first.Inputs[provider])
 	files = maps.Clone(files)
-	files["flux/reader.yaml"] = &fstest.MapFile{Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\n" +
-		"metadata: {name: reader, namespace: apps}\nspec: {path: ./app}\n")}
+	files["flux/reader.yaml"] = &fstest.MapFile{
+		Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\n" +
+			"metadata: {name: reader, namespace: apps}\nspec: {path: ./app}\n"),
+	}
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
 	_, err = l.Load(t.Context(), filepath.Join(root, "flux"))
 	assert.NoError(t, err)

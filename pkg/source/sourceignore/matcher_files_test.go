@@ -137,8 +137,16 @@ func TestNewFS_Parity(t *testing.T) {
 					assert.NoError(t, err)
 					for _, rel := range paths {
 						for _, isDir := range []bool{false, true} {
-							assert.Equal(t, listed.Match(rel, isDir), want.Match(strings.Split(rel, string(filepath.Separator)), isDir))
-							assert.Equal(t, walked.Match(rel, isDir), want.Match(strings.Split(rel, string(filepath.Separator)), isDir))
+							assert.Equal(
+								t,
+								listed.Match(rel, isDir),
+								want.Match(strings.Split(rel, string(filepath.Separator)), isDir),
+							)
+							assert.Equal(
+								t,
+								walked.Match(rel, isDir),
+								want.Match(strings.Split(rel, string(filepath.Separator)), isDir),
+							)
 						}
 					}
 				}
@@ -161,10 +169,25 @@ func TestNewFS_ReadErrors(t *testing.T) {
 		wantPath string
 	}{
 		{name: "missing_supplied_file", input: input, files: []string{"missing/.sourceignore", ".sourceignore"}},
-		{name: "supplied_read_error", input: ignoreReadErrorFS{FS: input}, files: []string{".sourceignore"}, wantErr: fs.ErrPermission},
+		{
+			name:    "supplied_read_error",
+			input:   ignoreReadErrorFS{FS: input},
+			files:   []string{".sourceignore"},
+			wantErr: fs.ErrPermission,
+		},
 		{name: "discovered_read_error", input: ignoreReadErrorFS{FS: input}, wantErr: fs.ErrPermission},
-		{name: "root_read_precedes_listing", input: ignoreReadErrorFS{FS: input, denied: ".sourceignore"}, wantErr: fs.ErrPermission, wantPath: ".sourceignore"},
-		{name: "nested_read_precedes_listing", input: ignoreReadErrorFS{FS: input, denied: "app/.sourceignore"}, wantErr: fs.ErrPermission, wantPath: "app/.sourceignore"},
+		{
+			name:     "root_read_precedes_listing",
+			input:    ignoreReadErrorFS{FS: input, denied: ".sourceignore"},
+			wantErr:  fs.ErrPermission,
+			wantPath: ".sourceignore",
+		},
+		{
+			name:     "nested_read_precedes_listing",
+			input:    ignoreReadErrorFS{FS: input, denied: "app/.sourceignore"},
+			wantErr:  fs.ErrPermission,
+			wantPath: "app/.sourceignore",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -210,7 +233,13 @@ func (f ignoreReadErrorFS) ReadDir(name string) ([]fs.DirEntry, error) {
 
 func TestNewFS_Evidence(t *testing.T) {
 	t.Parallel()
-	files := []string{"z/.sourceignore", "app/deep/.sourceignore", "app/.sourceignore", ".sourceignore", "missing/.sourceignore"}
+	files := []string{
+		"z/.sourceignore",
+		"app/deep/.sourceignore",
+		"app/.sourceignore",
+		".sourceignore",
+		"missing/.sourceignore",
+	}
 	want := []struct{ Path, Data string }{
 		{".sourceignore", "# root \xff\r\n*.tmp\r\nignored.yaml\r\n"},
 		{"app/.sourceignore", "!keep.tmp\n"},

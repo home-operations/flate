@@ -41,7 +41,9 @@ func TestAdmission_EffectiveProviderHistory(t *testing.T) {
 					id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: tc.child}
 					record := manifest.DiscoveryRecord{Parent: owner}
 					if tc.invalid {
-						record.ContentRoots = map[manifest.NamedResource][]string{manifest.BootstrapSourceID: {"../outside"}}
+						record.ContentRoots = map[manifest.NamedResource][]string{
+							manifest.BootstrapSourceID: {"../outside"},
+						}
 					}
 					yield(id, record)
 				}
@@ -54,7 +56,12 @@ func TestAdmission_EffectiveProviderHistory(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Equal(t, slices.Contains(proposal.Needed, owner), tc.needed)
 			assert.Equal(t, l.Options.Filter.ShouldReconcile(owner), false)
-			_, retry := l.Options.Filter.AddEmitted(proposal.Needed, proposal.Selected, proposal.Dirty, proposal.Revision)
+			_, retry := l.Options.Filter.AddEmitted(
+				proposal.Needed,
+				proposal.Selected,
+				proposal.Dirty,
+				proposal.Revision,
+			)
 			assert.Equal(t, retry, false)
 			assert.Equal(t, l.Options.Filter.ShouldReconcile(owner), tc.needed)
 			assert.Equal(
@@ -95,7 +102,12 @@ func TestAdmission_EffectiveProviderHistory(t *testing.T) {
 			assert.Equal(t, l.Options.Filter.ShouldReconcile(owner), false)
 			proposal, err = l.Prepare(ctx, store.Child{}, nil, nil)
 			assert.NoError(t, err)
-			_, retry := l.Options.Filter.AddEmitted(proposal.Needed, proposal.Selected, proposal.Dirty, proposal.Revision)
+			_, retry := l.Options.Filter.AddEmitted(
+				proposal.Needed,
+				proposal.Selected,
+				proposal.Dirty,
+				proposal.Revision,
+			)
 			assert.Equal(t, retry, false)
 			assert.Equal(t, l.Options.Filter.ShouldReconcile(owner), true)
 		})
@@ -149,7 +161,9 @@ func effectiveProviderHistoryLoader(t *testing.T) (*Loader, manifest.NamedResour
 	l := New(st)
 	l.SourceRoot = root
 	l.Options.Filter = change.NewFilter()
-	l.Options.Selection = manifest.Selection{Roots: []manifest.NamedResource{testutil.KustomizationID("apps", "consumer")}}
+	l.Options.Selection = manifest.Selection{
+		Roots: []manifest.NamedResource{testutil.KustomizationID("apps", "consumer")},
+	}
 	_, err := l.Load(t.Context(), root)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))

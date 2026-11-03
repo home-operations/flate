@@ -31,7 +31,12 @@ type registryAcquisition struct {
 	anonymous bool
 }
 
-func (f *operation) fetchLayer(ctx context.Context, repo *manifest.OCIRepository, request registryAcquisition, policy cache.Policy) (*store.SourceArtifact, error) {
+func (f *operation) fetchLayer(
+	ctx context.Context,
+	repo *manifest.OCIRepository,
+	request registryAcquisition,
+	policy cache.Policy,
+) (*store.SourceArtifact, error) {
 	var ref manifest.OCIRepositoryRef
 	if repo.Reference != nil {
 		ref = manifest.OCIRepositoryRef(*repo.Reference)
@@ -64,26 +69,52 @@ func (f *operation) fetchLayer(ctx context.Context, repo *manifest.OCIRepository
 	}
 	switch repo.LayerOperation() {
 	case sourcev1.OCILayerCopy:
-		generation, desc, key, err := f.Cache.Blob(ctx, cache.BlobKey{Content: content, Required: []string{"upstream-digest", "revision"}}, policy, produce)
+		generation, desc, key, err := f.Cache.Blob(
+			ctx,
+			cache.BlobKey{Content: content, Required: []string{"upstream-digest", "revision"}},
+			policy,
+			produce,
+		)
 		if err != nil {
 			return nil, err
 		}
 		input, descriptor, id = cache.NameBlob(source.OCICopiedLayerFilename, generation), desc, key
 	case sourcev1.OCILayerExtract:
 		var err error
-		input, descriptor, id, err = f.Cache.Acquire(ctx, cache.ArchiveKey{Content: content, Ignore: ignore, Policy: "source", Required: []string{"upstream-digest", "revision"}}, policy, produce)
+		input, descriptor, id, err = f.Cache.Acquire(
+			ctx,
+			cache.ArchiveKey{
+				Content:  content,
+				Ignore:   ignore,
+				Policy:   "source",
+				Required: []string{"upstream-digest", "revision"},
+			},
+			policy,
+			produce,
+		)
 		if err != nil {
 			return nil, err
 		}
 	default:
-		return nil, manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("unsupported layer operation %q", repo.LayerOperation()))
+		return nil, manifest.NewError(
+			manifest.ErrInput,
+			nil,
+			fmt.Sprintf("unsupported layer operation %q", repo.LayerOperation()),
+		)
 	}
-	return &store.SourceArtifact{Kind: manifest.KindOCIRepository, URL: repo.URL, FS: input, Content: cache.AcquisitionIdentity(input),
+	return &store.SourceArtifact{
+		Kind: manifest.KindOCIRepository, URL: repo.URL, FS: input, Content: cache.AcquisitionIdentity(input),
 		Key: id, Revision: descriptor.Annotations["flate.revision"],
-		Digest: descriptor.Digest.String(), Size: descriptor.Size, Metadata: maps.Clone(descriptor.Annotations)}, nil
+		Digest: descriptor.Digest.String(), Size: descriptor.Size, Metadata: maps.Clone(descriptor.Annotations),
+	}, nil
 }
 
-func resolveRef(ctx context.Context, client *remote.Repository, repo *manifest.OCIRepository, ref manifest.OCIRepositoryRef) (manifest.OCIRepositoryRef, error) {
+func resolveRef(
+	ctx context.Context,
+	client *remote.Repository,
+	repo *manifest.OCIRepository,
+	ref manifest.OCIRepositoryRef,
+) (manifest.OCIRepositoryRef, error) {
 	if ref.Digest != "" || ref.SemVer == "" {
 		return ref, nil
 	}
@@ -94,7 +125,12 @@ func resolveRef(ctx context.Context, client *remote.Repository, repo *manifest.O
 	return manifest.OCIRepositoryRef{Tag: tag}, nil
 }
 
-func (f *operation) produceLayer(ctx context.Context, client *remote.Repository, repo *manifest.OCIRepository, w cache.ProducerInput) (cache.ProducerResult, error) {
+func (f *operation) produceLayer(
+	ctx context.Context,
+	client *remote.Repository,
+	repo *manifest.OCIRepository,
+	w cache.ProducerInput,
+) (cache.ProducerResult, error) {
 	ref := manifest.OCIRepositoryRef(*repo.Reference)
 	tag := cmp.Or(versionTag(ref), latestTag)
 	desc, err := client.Resolve(ctx, tag)
@@ -133,7 +169,11 @@ func (f *operation) produceLayer(ctx context.Context, client *remote.Repository,
 		if len(m.Layers) == 0 {
 			return result, manifest.NewError(manifest.ErrInput, nil, "no layers found in artifact")
 		}
-		return result, fmt.Errorf("no layer matched mediaTypes %q (manifest has %d layer(s))", f.mediaTypes, len(m.Layers))
+		return result, fmt.Errorf(
+			"no layer matched mediaTypes %q (manifest has %d layer(s))",
+			f.mediaTypes,
+			len(m.Layers),
+		)
 	}
 	r, err := client.Fetch(ctx, layer)
 	if err != nil {
@@ -146,7 +186,10 @@ func (f *operation) produceLayer(ctx context.Context, client *remote.Repository,
 		if err != nil {
 			return result, fmt.Errorf("gzip: %w", orasError(err))
 		}
-		_, copyErr := io.Copy(w, gz) //nolint:gosec // Flux source extraction is uncapped; the cache validates and confines archive entries.
+		_, copyErr := io.Copy(
+			w,
+			gz,
+		) //nolint:gosec // Flux source extraction is uncapped; the cache validates and confines archive entries.
 		closeErr := gz.Close()
 		if copyErr != nil {
 			return result, orasError(copyErr)

@@ -51,7 +51,10 @@ func TestSetLogLevel_ExplicitLevelStreamsLive(t *testing.T) {
 			}
 			sink.Reset()
 			slog.Info("operation complete")
-			if got := strings.Contains(sink.String(), "operation complete"); got != (level == "debug" || level == "info") {
+			if got := strings.Contains(
+				sink.String(),
+				"operation complete",
+			); got != (level == "debug" || level == "info") {
 				t.Fatalf("info threshold: %q", sink.String())
 			}
 			sink.Reset()

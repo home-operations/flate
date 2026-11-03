@@ -61,7 +61,12 @@ func equalEntryInput(a, b EntryInput) bool {
 }
 
 // ApplicationReceipt captures complete local and resolved entry qualification inputs.
-func (*TreeCache) ApplicationReceipt(ctx context.Context, source *store.SourceArtifact, evidence EntryEvidence, files []string) (*manifest.RenderReceipt, error) {
+func (*TreeCache) ApplicationReceipt(
+	ctx context.Context,
+	source *store.SourceArtifact,
+	evidence EntryEvidence,
+	files []string,
+) (*manifest.RenderReceipt, error) {
 	for _, receipt := range evidence.Renders {
 		if frame, ok := receipt.Value().(renderFrame); ok && len(frame.header.Reads.Remotes) != 0 {
 			return nil, nil
@@ -96,13 +101,25 @@ func (*TreeCache) ApplicationReceipt(ctx context.Context, source *store.SourceAr
 		return nil, err
 	}
 	slog.Debug("kustomize: entry application captured", "producer", evidence.Owner, "files", len(files))
-	return manifest.NewRenderReceipt(entryApplication{Application: evidence.Application, Reads: reads.snapshot(), Inputs: inputs, Complete: true, Inventory: inventory}, equalEntryApplication), nil
+	return manifest.NewRenderReceipt(
+		entryApplication{
+			Application: evidence.Application,
+			Reads:       reads.snapshot(),
+			Inputs:      inputs,
+			Complete:    true,
+			Inventory:   inventory,
+		},
+		equalEntryApplication,
+	), nil
 }
 
 func equalEntryApplication(a, b any) bool {
 	left, ok := a.(entryApplication)
 	right, other := b.(entryApplication)
-	return ok && other && left.Complete && right.Complete && manifest.ValueEqual(left.Application, right.Application) && slices.Equal(left.Reads.Files, right.Reads.Files) && slices.EqualFunc(left.Inputs, right.Inputs, equalEntryInput) && left.Inventory.equal(&right.Inventory)
+	return ok && other && left.Complete && right.Complete && manifest.ValueEqual(left.Application, right.Application) &&
+		slices.Equal(left.Reads.Files, right.Reads.Files) &&
+		slices.EqualFunc(left.Inputs, right.Inputs, equalEntryInput) &&
+		left.Inventory.equal(&right.Inventory)
 }
 
 // EntryValid qualifies provisional evidence against current resolved input content.
@@ -116,7 +133,19 @@ func (*TreeCache) EntryValid(ctx context.Context, evidence EntryEvidence, st *st
 		}
 		actual, complete, err := resolvedEntryInput(ctx, input)
 		if err != nil || !complete || !equalEntryInput(actual, expected) {
-			slog.Debug("kustomize: entry application input changed", "resource", expected.Resource, "complete", complete, "recorded", expected.Content, "resolved", actual.Content, "binding_matches", expected.Binding == actual.Binding)
+			slog.Debug(
+				"kustomize: entry application input changed",
+				"resource",
+				expected.Resource,
+				"complete",
+				complete,
+				"recorded",
+				expected.Content,
+				"resolved",
+				actual.Content,
+				"binding_matches",
+				expected.Binding == actual.Binding,
+			)
 			return false
 		}
 	}
@@ -132,7 +161,12 @@ func (c *TreeCache) PreviousEntry(ctx context.Context, req RenderRequest) EntryE
 	if err != nil {
 		return EntryEvidence{}
 	}
-	reader, _, _, err := c.owner.Blob(ctx, sourcecache.BlobKey{Content: prepared.key, Render: sourcecache.RenderAccepted}, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
+	reader, _, _, err := c.owner.Blob(
+		ctx,
+		sourcecache.BlobKey{Content: prepared.key, Render: sourcecache.RenderAccepted},
+		sourcecache.Policy{MaxAge: sourcecache.Forever},
+		nil,
+	)
 	if err != nil {
 		return EntryEvidence{}
 	}
@@ -141,7 +175,9 @@ func (c *TreeCache) PreviousEntry(ctx context.Context, req RenderRequest) EntryE
 		return EntryEvidence{}
 	}
 	frame, err := decodeFrame(data)
-	if err != nil || frame.accepted == nil || frame.accepted.Owner != req.Spec.Named() || frame.header.Key != prepared.key || frame.header.Binding != manifest.Fingerprint(prepared.binding) {
+	if err != nil || frame.accepted == nil || frame.accepted.Owner != req.Spec.Named() ||
+		frame.header.Key != prepared.key ||
+		frame.header.Binding != manifest.Fingerprint(prepared.binding) {
 		return EntryEvidence{}
 	}
 	if frame.header.Entry == nil {
@@ -158,5 +194,11 @@ func (c *TreeCache) PreviousEntry(ctx context.Context, req RenderRequest) EntryE
 		return EntryEvidence{}
 	}
 	records, _ := (renderFrame{accepted: &application.Inventory}).history(application.Inventory.Owner)
-	return EntryEvidence{Application: application.Application, Owner: application.Inventory.Owner, Records: records, Inputs: application.Inputs, Receipt: manifest.NewRenderReceipt(application, equalEntryApplication)}
+	return EntryEvidence{
+		Application: application.Application,
+		Owner:       application.Inventory.Owner,
+		Records:     records,
+		Inputs:      application.Inputs,
+		Receipt:     manifest.NewRenderReceipt(application, equalEntryApplication),
+	}
 }

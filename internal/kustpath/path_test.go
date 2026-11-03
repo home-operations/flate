@@ -57,7 +57,16 @@ func TestResolve_SlashPolicies(t *testing.T) {
 			t.Parallel()
 			got, ok := Resolve(tc.base, tc.ref, tc.policy)
 			if got != tc.want || ok != tc.ok {
-				t.Fatalf("Resolve(%q, %q, %v) = (%q, %v), want (%q, %v)", tc.base, tc.ref, tc.policy, got, ok, tc.want, tc.ok)
+				t.Fatalf(
+					"Resolve(%q, %q, %v) = (%q, %v), want (%q, %v)",
+					tc.base,
+					tc.ref,
+					tc.policy,
+					got,
+					ok,
+					tc.want,
+					tc.ok,
+				)
 			}
 		})
 	}

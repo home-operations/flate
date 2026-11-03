@@ -135,17 +135,24 @@ func TestFailDependsOnCycles_RenderEmittedCycle(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "flux/parent.yaml", ksYAML("parent", "parent", ""))
 	testutil.WriteFile(t, root, "parent/kustomization.yaml", "resources: [trigger.yaml]\n")
-	testutil.WriteFile(t, root, "parent/trigger.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: trigger, namespace: ns}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"parent/trigger.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: trigger, namespace: ns}\n",
+	)
 	o, err := newTestOrchestrator(t, Tree{Path: root, RepoRoot: root}, Config{CacheDir: t.TempDir(), Concurrency: 2})
 	assert.NoError(t, err)
 	defer o.stop()
 	assert.NoError(t, o.bootstrap(t.Context()))
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	manifest.KindOf(&manifest.RawObject{APIVersion: manifest.FluxOperatorDomain + "/v1", Kind: manifest.KindResourceSet}).Namespaced()
+	manifest.KindOf(&manifest.RawObject{APIVersion: manifest.FluxOperatorDomain + "/v1", Kind: manifest.KindResourceSet}).
+		Namespaced()
 	var injected atomic.Bool
 	o.store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, payload any) {
-		if id.Kind != manifest.KindConfigMap || id.Name != "trigger" || payload == nil || !injected.CompareAndSwap(false, true) {
+		if id.Kind != manifest.KindConfigMap || id.Name != "trigger" || payload == nil ||
+			!injected.CompareAndSwap(false, true) {
 			return
 		}
 		defer cancel()
@@ -160,10 +167,28 @@ func TestFailDependsOnCycles_RenderEmittedCycle(t *testing.T) {
 			}
 		}
 		for _, pair := range [][2]string{{"rs-a", "rs-b"}, {"rs-b", "rs-a"}} {
-			o.store.AddObject(&manifest.ResourceSet{Name: pair[0], Namespace: "ns", DependsOn: []fluxopv1.Dependency{{APIVersion: manifest.FluxOperatorDomain + "/v1", Kind: manifest.KindResourceSet, Name: pair[1], Namespace: "ns"}}})
+			o.store.AddObject(
+				&manifest.ResourceSet{
+					Name:      pair[0],
+					Namespace: "ns",
+					DependsOn: []fluxopv1.Dependency{
+						{
+							APIVersion: manifest.FluxOperatorDomain + "/v1",
+							Kind:       manifest.KindResourceSet,
+							Name:       pair[1],
+							Namespace:  "ns",
+						},
+					},
+				},
+			)
 		}
 		for _, name := range []string{"rs-a", "rs-b"} {
-			id := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "ns", Name: name}
+			id := manifest.NamedResource{
+				Group:     manifest.FluxOperatorDomain,
+				Kind:      manifest.KindResourceSet,
+				Namespace: "ns",
+				Name:      name,
+			}
 			if msg, ok := o.preflightFailure(id); ok {
 				t.Errorf("non-render %s admitted to cycle graph: %s", id, msg)
 			}
@@ -319,7 +344,8 @@ func TestDependencyCycles_WarningsDeduplicate(t *testing.T) {
 	for range 2 {
 		o.syncPreflightFailures()
 		warnings := o.store.Warnings()
-		if len(warnings) != 1 || warnings[0].Category != manifest.WarnDependencyCycle || warnings[0].Count != 1 || len(o.preflightFailures) != members {
+		if len(warnings) != 1 || warnings[0].Category != manifest.WarnDependencyCycle || warnings[0].Count != 1 ||
+			len(o.preflightFailures) != members {
 			t.Fatalf("cycle warning/failure state = %+v / %+v", warnings, o.preflightFailures)
 		}
 	}

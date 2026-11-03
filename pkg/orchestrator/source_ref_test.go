@@ -24,12 +24,38 @@ func TestRun_DefaultGitCache(t *testing.T) {
 			remote := t.TempDir()
 			repo := testutil.GitInit(t, remote)
 			testutil.WriteFile(t, remote, "app/kustomization.yaml", "resources: [cm.yaml]\n")
-			testutil.WriteFile(t, remote, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: remote}\ndata: {value: committed}\n")
-			testutil.GitCommitAll(t, repo, "source", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}})
+			testutil.WriteFile(
+				t,
+				remote,
+				"app/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: remote}\ndata: {value: committed}\n",
+			)
+			testutil.GitCommitAll(
+				t,
+				repo,
+				"source",
+				&git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}},
+			)
 			root := t.TempDir()
-			testutil.WriteFile(t, root, "source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: remote, namespace: flux-system}\nspec:\n  url: file://"+filepath.ToSlash(remote)+"\n  interval: 10m\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"source.yaml",
+				"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: remote, namespace: flux-system}\nspec:\n  url: file://"+filepath.ToSlash(
+					remote,
+				)+"\n  interval: 10m\n",
+			)
 			for _, name := range []string{"first", "second"} {
-				testutil.WriteFile(t, root, name+".yaml", testutil.KustomizationYAML(name, "flux-system", "  {path: ./app, sourceRef: {kind: GitRepository, name: remote}}\n"))
+				testutil.WriteFile(
+					t,
+					root,
+					name+".yaml",
+					testutil.KustomizationYAML(
+						name,
+						"flux-system",
+						"  {path: ./app, sourceRef: {kind: GitRepository, name: remote}}\n",
+					),
+				)
 			}
 			cfg := treeConfig{Concurrency: 2, Path: root}
 			if mode == "disk" {
@@ -76,16 +102,25 @@ spec:
 `)
 			for i, value := range []string{"A", "B"} {
 				testutil.WriteFile(t, root, "value.txt", value)
-				hash := testutil.GitCommitAll(t, repo, value, &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}})
+				hash := testutil.GitCommitAll(
+					t,
+					repo,
+					value,
+					&git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}},
+				)
 				if i == 0 {
-					if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), hash)); err != nil {
+					if err := repo.Storer.SetReference(
+						plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), hash),
+					); err != nil {
 						t.Fatal(err)
 					}
 				}
 			}
 			selectedRoot := t.TempDir()
-			cfg := treeConfig{CacheDir: selectedRoot, Concurrency: 2, Path: filepath.Join(root, "flux"), RepoRoot: root,
-				SelfURLs: []string{"git://fixture.invalid/cluster"}}
+			cfg := treeConfig{
+				CacheDir: selectedRoot, Concurrency: 2, Path: filepath.Join(root, "flux"), RepoRoot: root,
+				SelfURLs: []string{"git://fixture.invalid/cluster"},
+			}
 			if kind != "configured-directory" {
 				ownerRoot := ""
 				if kind == "injected-disk" {
@@ -112,7 +147,12 @@ spec:
 					t.Fatalf("injected owner created independent cache backing: entries=%v err=%v", entries, err)
 				}
 			}
-			id := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}
+			id := manifest.NamedResource{
+				Group:     "source.toolkit.fluxcd.io",
+				Kind:      manifest.KindGitRepository,
+				Namespace: "flux-system",
+				Name:      "cluster",
+			}
 			if err := o.run(t.Context()); err != nil {
 				t.Fatal(err)
 			}

@@ -23,6 +23,7 @@ import (
 	"github.com/go-git/go-git/v5/storage"
 	"github.com/go-git/go-git/v5/storage/filesystem"
 	"github.com/go-git/go-git/v5/storage/transactional"
+
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
@@ -61,19 +62,24 @@ func fetchBase(ctx context.Context, url, rev string, owner *sourcecache.Cache) (
 	}
 	remote := &baseRemote{client: client, endpoint: ep, capabilities: refs.Capabilities, pin: pin, url: url}
 	key := sourcecache.GitKey{Content: struct{ URL, Commit string }{url, pin.String()}, Ref: pin.String()}
-	generation, _, err := owner.Git(ctx, key, sourcecache.Policy{MaxAge: sourcecache.Forever}, func(ctx context.Context, upper storage.Storer, _ billy.Filesystem) (plumbing.Hash, error) {
-		if err := remote.fetch(ctx, upper, nil); err != nil {
-			return plumbing.ZeroHash, err
-		}
-		if tag, err := object.GetTag(upper, pin); err == nil {
-			commit, err := tag.Commit()
-			if err != nil {
+	generation, _, err := owner.Git(
+		ctx,
+		key,
+		sourcecache.Policy{MaxAge: sourcecache.Forever},
+		func(ctx context.Context, upper storage.Storer, _ billy.Filesystem) (plumbing.Hash, error) {
+			if err := remote.fetch(ctx, upper, nil); err != nil {
 				return plumbing.ZeroHash, err
 			}
-			remote.pin = commit.Hash
-		}
-		return remote.pin, nil
-	})
+			if tag, err := object.GetTag(upper, pin); err == nil {
+				commit, err := tag.Commit()
+				if err != nil {
+					return plumbing.ZeroHash, err
+				}
+				remote.pin = commit.Hash
+			}
+			return remote.pin, nil
+		},
+	)
 	if err != nil {
 		return nil, err
 	}

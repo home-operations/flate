@@ -36,6 +36,8 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	"github.com/go-git/go-git/v5/plumbing/transport/server"
+	"golang.org/x/crypto/ssh"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -44,14 +46,19 @@ import (
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/ssrfguard"
 	"github.com/home-operations/flate/pkg/store"
-	"golang.org/x/crypto/ssh"
 )
 
 func tlsGitProxy(t *testing.T, authenticated bool) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
 	var connects atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodConnect || authenticated && r.Header.Get("Proxy-Authorization") != "Basic "+base64.StdEncoding.EncodeToString([]byte("proxy:password")) {
+		if r.Method != http.MethodConnect ||
+			authenticated &&
+				r.Header.Get(
+					"Proxy-Authorization",
+				) != "Basic "+base64.StdEncoding.EncodeToString(
+					[]byte("proxy:password"),
+				) {
 			http.Error(w, "proxy auth", http.StatusProxyAuthRequired)
 			return
 		}
@@ -102,7 +109,12 @@ func tlsGitCertificate(t *testing.T) (tls.Certificate, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+	return tls.Certificate{
+		Certificate: [][]byte{der},
+		PrivateKey:  key,
+	}, string(
+		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
+	)
 }
 
 func gitHTTPHandler(t *testing.T, root string) http.Handler {
@@ -206,7 +218,11 @@ func TestFetcher_TLSOperations(t *testing.T) {
 						}
 						handler.ServeHTTP(w, r)
 					}))
-					srv.TLS = &tls.Config{Certificates: []tls.Certificate{cert}, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: clients}
+					srv.TLS = &tls.Config{
+						Certificates: []tls.Certificate{cert},
+						ClientAuth:   tls.RequireAndVerifyClientCert,
+						ClientCAs:    clients,
+					}
 					srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
 						if state == http.StateNew {
 							connections.Add(1)
@@ -223,7 +239,15 @@ func TestFetcher_TLSOperations(t *testing.T) {
 							}
 							return &manifest.Secret{StringData: data}
 						}
-						return &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "p", "ca.crt": ca, "tls.crt": crt, "tls.key": key}}
+						return &manifest.Secret{
+							StringData: map[string]any{
+								"username": "alice",
+								"password": "p",
+								"ca.crt":   ca,
+								"tls.crt":  crt,
+								"tls.key":  key,
+							},
+						}
 					}}
 					f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
 					repo := gitRepoWithSecret("tls", srv.URL, "tls")
@@ -231,7 +255,12 @@ func TestFetcher_TLSOperations(t *testing.T) {
 					if route != "direct" {
 						repo.ProxySecretRef = &manifest.LocalObjectReference{Name: "proxy"}
 					}
-					art, err := f.Fetch(t.Context(), repo, fInputs.readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
+					art, err := f.Fetch(
+						t.Context(),
+						repo,
+						fInputs.readSet(repo),
+						sourcecache.Policy{MaxAge: repo.SourceInterval()},
+					)
 					if err != nil {
 						_, fallback := f.fallback.Load(srv.URL)
 						t.Fatalf("fetch: %v (requests=%d, fallback=%t)", err, requests.Load(), fallback)
@@ -253,20 +282,42 @@ func TestFetcher_TLSOperations(t *testing.T) {
 					if advertisements.Load() != wantAdvertisements {
 						t.Errorf("initial advertisements=%d, want %d", advertisements.Load(), wantAdvertisements)
 					}
-					t.Logf("initial: advertisements=%d upload_pack=%d accepted_connections=%d proxy_CONNECT=%d", advertisements.Load(), requests.Load(), connections.Load(), connects.Load())
-					_, err = f.Fetch(t.Context(), repo, fInputs.readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
+					t.Logf(
+						"initial: advertisements=%d upload_pack=%d accepted_connections=%d proxy_CONNECT=%d",
+						advertisements.Load(),
+						requests.Load(),
+						connections.Load(),
+						connects.Load(),
+					)
+					_, err = f.Fetch(
+						t.Context(),
+						repo,
+						fInputs.readSet(repo),
+						sourcecache.Policy{MaxAge: repo.SourceInterval()},
+					)
 					if err != nil {
 						t.Fatal(err)
 					}
-					t.Logf("after compatible operation: advertisements=%d upload_pack=%d accepted_connections=%d proxy_CONNECT=%d", advertisements.Load(), requests.Load(), connections.Load(), connects.Load())
+					t.Logf(
+						"after compatible operation: advertisements=%d upload_pack=%d accepted_connections=%d proxy_CONNECT=%d",
+						advertisements.Load(),
+						requests.Load(),
+						connections.Load(),
+						connects.Load(),
+					)
 					if tc.ref == nil || tc.ref.Commit == "" {
 						wantAdvertisements *= 2
 						want *= 2
 					}
 					if advertisements.Load() != wantAdvertisements || requests.Load() != want {
-						t.Errorf("two operations: advertisements=%d upload_pack=%d, want %d and %d", advertisements.Load(), requests.Load(), wantAdvertisements, want)
+						t.Errorf(
+							"two operations: advertisements=%d upload_pack=%d, want %d and %d",
+							advertisements.Load(),
+							requests.Load(),
+							wantAdvertisements,
+							want,
+						)
 					}
-
 				})
 			}
 		})
@@ -284,7 +335,12 @@ func TestFetcher_RestrictEgress(t *testing.T) {
 		f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
 		ssrfguard.Restrict(true)
 		defer ssrfguard.Restrict(false)
-		_, err := f.Fetch(t.Context(), gitRepoWithSecret("restricted", srv.URL, "tls"), fInputs.readSet(gitRepoWithSecret("restricted", srv.URL, "tls")), sourcecache.Policy{})
+		_, err := f.Fetch(
+			t.Context(),
+			gitRepoWithSecret("restricted", srv.URL, "tls"),
+			fInputs.readSet(gitRepoWithSecret("restricted", srv.URL, "tls")),
+			sourcecache.Policy{},
+		)
 		if op, ok := errors.AsType[*net.OpError](err); !ok || op.Op != "dial" {
 			t.Fatalf("fetch error = %v, want dial error", err)
 		}
@@ -317,7 +373,14 @@ func TestFetcher_RecursiveTLSDefaults(t *testing.T) {
 				if child == "private-ca" {
 					url = srv.URL + "/module"
 				}
-				mustInitRepoWithFiles(t, root, map[string]string{"hello.txt": "parent", ".gitmodules": "[submodule \"lib\"]\n\tpath = lib\n\turl = " + url + "\n"})
+				mustInitRepoWithFiles(
+					t,
+					root,
+					map[string]string{
+						"hello.txt":   "parent",
+						".gitmodules": "[submodule \"lib\"]\n\tpath = lib\n\turl = " + url + "\n",
+					},
+				)
 				r, err := git.PlainOpen(root)
 				if err != nil {
 					t.Fatal(err)
@@ -334,7 +397,10 @@ func TestFetcher_RecursiveTLSDefaults(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				tree.Entries = append(tree.Entries, object.TreeEntry{Name: "lib", Mode: filemode.Submodule, Hash: moduleHash})
+				tree.Entries = append(
+					tree.Entries,
+					object.TreeEntry{Name: "lib", Mode: filemode.Submodule, Hash: moduleHash},
+				)
 				encoded := r.Storer.NewEncodedObject()
 				if err := tree.Encode(encoded); err != nil {
 					t.Fatal(err)
@@ -356,7 +422,9 @@ func TestFetcher_RecursiveTLSDefaults(t *testing.T) {
 					t.Fatal(err)
 				}
 				fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
-					return &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "p", "ca.crt": ca}}
+					return &manifest.Secret{
+						StringData: map[string]any{"username": "alice", "password": "p", "ca.crt": ca},
+					}
 				}}
 				f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
 				repo := gitRepoWithSecret("recursive", srv.URL, "tls")
@@ -364,7 +432,12 @@ func TestFetcher_RecursiveTLSDefaults(t *testing.T) {
 				if exact {
 					repo.Reference = &sourcev1.GitRepositoryRef{Commit: hash.String()}
 				}
-				art, err := f.Fetch(t.Context(), repo, fInputs.readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
+				art, err := f.Fetch(
+					t.Context(),
+					repo,
+					fInputs.readSet(repo),
+					sourcecache.Policy{MaxAge: repo.SourceInterval()},
+				)
 				if child == "private-ca" {
 					if _, ok := errors.AsType[x509.UnknownAuthorityError](err); !ok {
 						t.Fatalf("child inherited private CA: %v", err)
@@ -416,16 +489,30 @@ func TestFetcher_ConcurrentCustomTLS(t *testing.T) {
 					}
 					handler.ServeHTTP(w, r)
 				}))
-				srv.TLS = &tls.Config{Certificates: []tls.Certificate{cert}, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: clients}
+				srv.TLS = &tls.Config{
+					Certificates: []tls.Certificate{cert},
+					ClientAuth:   tls.RequireAndVerifyClientCert,
+					ClientCAs:    clients,
+				}
 				srv.Config.SetKeepAlivesEnabled(false)
 				srv.StartTLS()
 				t.Cleanup(srv.Close)
 				name := fmt.Sprintf("ca%d", i)
-				secrets[name] = &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "p", "ca.crt": ca, "tls.crt": crt, "tls.key": key}}
+				secrets[name] = &manifest.Secret{
+					StringData: map[string]any{
+						"username": "alice",
+						"password": "p",
+						"ca.crt":   ca,
+						"tls.crt":  crt,
+						"tls.key":  key,
+					},
+				}
 				repos[i] = gitRepoWithSecret(name, srv.URL, name)
 				proxy, connects := tlsGitProxy(t, true)
 				proxies[i] = connects
-				secrets["proxy"+name] = &manifest.Secret{StringData: map[string]any{"address": proxy.URL, "username": "proxy", "password": "password"}}
+				secrets["proxy"+name] = &manifest.Secret{
+					StringData: map[string]any{"address": proxy.URL, "username": "proxy", "password": "password"},
+				}
 				repos[i].ProxySecretRef = &manifest.LocalObjectReference{Name: "proxy" + name}
 			}
 			wrongCA := maps.Clone(secrets[repos[0].SecretRef.Name].StringData)
@@ -438,7 +525,12 @@ func TestFetcher_ConcurrentCustomTLS(t *testing.T) {
 			done := make(chan error, len(repos))
 			for _, repo := range repos {
 				workers.Go(func() {
-					art, err := f.Fetch(ctx, repo, fInputs.readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
+					art, err := f.Fetch(
+						ctx,
+						repo,
+						fInputs.readSet(repo),
+						sourcecache.Policy{MaxAge: repo.SourceInterval()},
+					)
 					if err == nil {
 						var content []byte
 						content, err = fs.ReadFile(art.FS, "hello.txt")
@@ -456,19 +548,33 @@ func TestFetcher_ConcurrentCustomTLS(t *testing.T) {
 					t.Fatal("custom TLS acquisitions did not overlap")
 				}
 			}
-			_, err := f.Fetch(ctx, gitRepoWithSecret("anonymous", repos[0].URL, ""), fInputs.readSet(gitRepoWithSecret("anonymous", repos[0].URL, "")), sourcecache.Policy{})
+			_, err := f.Fetch(
+				ctx,
+				gitRepoWithSecret("anonymous", repos[0].URL, ""),
+				fInputs.readSet(gitRepoWithSecret("anonymous", repos[0].URL, "")),
+				sourcecache.Policy{},
+			)
 			if _, ok := errors.AsType[x509.UnknownAuthorityError](err); !ok {
 				t.Fatalf("anonymous fetch inherited private trust: %v", err)
 			}
 			for _, name := range []string{"wrong-ca", "wrong-client"} {
 				bad := gitRepoWithSecret(name, repos[0].URL, name)
 				bad.ProxySecretRef = repos[0].ProxySecretRef
-				if _, err := f.Fetch(ctx, bad, fInputs.readSet(bad), sourcecache.Policy{MaxAge: bad.SourceInterval()}); err == nil {
+				if _, err := f.Fetch(
+					ctx,
+					bad,
+					fInputs.readSet(bad),
+					sourcecache.Policy{MaxAge: bad.SourceInterval()},
+				); err == nil {
 					t.Fatalf("%s fetch inherited another operation's credentials", name)
 				}
 			}
 			for _, ref := range []string{"", mustHead(t, root)} {
-				_, err := f.FetchRemoteBase(ctx, RemoteBaseRequest{URL: repos[0].URL, Ref: ref, Timeout: 27 * time.Second, Submodules: true}, sourcecache.Policy{})
+				_, err := f.FetchRemoteBase(
+					ctx,
+					RemoteBaseRequest{URL: repos[0].URL, Ref: ref, Timeout: 27 * time.Second, Submodules: true},
+					sourcecache.Policy{},
+				)
 				if _, ok := errors.AsType[x509.UnknownAuthorityError](err); !ok {
 					t.Fatalf("anonymous remote base inherited private trust: %v", err)
 				}
@@ -515,37 +621,136 @@ func TestFetcher_ResolveTLS(t *testing.T) {
 	}
 	cases := []tlsCase{
 		{name: "anonymous", encodedData: map[string]any{"ca.crt": "%%%fixture"}},
-		{name: "ssh", url: "ssh://git@example.com/x.git", secret: "tls", encodedData: map[string]any{"ca.crt": "%%%fixture"}},
+		{
+			name:        "ssh",
+			url:         "ssh://git@example.com/x.git",
+			secret:      "tls",
+			encodedData: map[string]any{"ca.crt": "%%%fixture"},
+		},
 		{name: "scp", url: "git@example.com:x.git", secret: "tls", data: map[string]any{"ca.crt": "invalid"}},
 		{name: "git-at-path", url: "git://h/x@y", secret: "tls", data: map[string]any{"ca.crt": ca}, wantCA: ca},
 		{name: "auth-only", secret: "tls", data: map[string]any{"username": "alice", "password": "p"}},
-		{name: "empty TLS", secret: "tls", data: map[string]any{"tls.crt": "", "tls.key": "", "ca.crt": "", "caFile": ""}},
+		{
+			name:   "empty TLS",
+			secret: "tls",
+			data:   map[string]any{"tls.crt": "", "tls.key": "", "ca.crt": "", "caFile": ""},
+		},
 		{name: "ca.crt", secret: "tls", data: map[string]any{"ca.crt": ca}, wantCA: ca},
 		{name: "caFile", secret: "tls", data: map[string]any{"caFile": ca}, wantCA: ca},
 		{name: "ca.crt-precedence", secret: "tls", data: map[string]any{"ca.crt": ca, "caFile": "invalid"}, wantCA: ca},
-		{name: "ca.crt over wiped caFile", secret: "tls", data: map[string]any{"ca.crt": ca, "caFile": "..PLACEHOLDER_caFile.."}, wantCA: ca},
-		{name: "mtls", secret: "tls", data: map[string]any{"ca.crt": ca, "tls.crt": crt, "tls.key": key}, wantCA: ca, wantCRT: crt, wantKey: key},
+		{
+			name:   "ca.crt over wiped caFile",
+			secret: "tls",
+			data:   map[string]any{"ca.crt": ca, "caFile": "..PLACEHOLDER_caFile.."},
+			wantCA: ca,
+		},
+		{
+			name:    "mtls",
+			secret:  "tls",
+			data:    map[string]any{"ca.crt": ca, "tls.crt": crt, "tls.key": key},
+			wantCA:  ca,
+			wantCRT: crt,
+			wantKey: key,
+		},
 		{name: "unpaired", secret: "tls", data: map[string]any{"tls.crt": crt}, wantInput: true},
 		{name: "invalid-ca", secret: "tls", data: map[string]any{"ca.crt": "invalid"}, wantInput: true},
-		{name: "invalid-client", secret: "tls", data: map[string]any{"tls.crt": "invalid", "tls.key": "invalid"}, wantInput: true},
-		{name: "wiped client invalid CA", secret: "tls", data: map[string]any{"tls.crt": "..PLACEHOLDER_crt..", "ca.crt": "invalid"}, wantInput: true, errorKey: "ca.crt"},
-		{name: "invalid client wiped key", secret: "tls", data: map[string]any{"tls.crt": "invalid", "tls.key": "..PLACEHOLDER_key.."}, wantInput: true, errorKey: "tls.crt"},
-		{name: "valid client wiped key", secret: "tls", data: map[string]any{"tls.crt": crt, "tls.key": "..PLACEHOLDER_key.."}, wantMissing: true},
-		{name: "wiped crt malformed key", secret: "tls", data: map[string]any{"tls.crt": "..PLACEHOLDER_crt.."}, encodedData: map[string]any{"tls.key": "%%%fixture"}, wantInput: true, errorKey: "tls.key"},
-		{name: "wiped key malformed ca", secret: "tls", data: map[string]any{"tls.key": "..PLACEHOLDER_key.."}, encodedData: map[string]any{"ca.crt": "%%%fixture"}, wantInput: true, errorKey: "ca.crt"},
-		{name: "wiped ca malformed caFile", secret: "tls", data: map[string]any{"ca.crt": "..PLACEHOLDER_ca.."}, encodedData: map[string]any{"caFile": "%%%fixture"}, wantInput: true, errorKey: "caFile"},
-		{name: "caFile decoding despite valid ca", secret: "tls", data: map[string]any{"ca.crt": ca}, encodedData: map[string]any{"caFile": "%%%fixture"}, wantInput: true, errorKey: "caFile"},
-		{name: "first decoding error wins", secret: "tls", encodedData: map[string]any{"tls.crt": "%%%fixture", "tls.key": "%%%fixture", "ca.crt": "%%%fixture", "caFile": "%%%fixture"}, wantInput: true, errorKey: "tls.crt"},
+		{
+			name:      "invalid-client",
+			secret:    "tls",
+			data:      map[string]any{"tls.crt": "invalid", "tls.key": "invalid"},
+			wantInput: true,
+		},
+		{
+			name:      "wiped client invalid CA",
+			secret:    "tls",
+			data:      map[string]any{"tls.crt": "..PLACEHOLDER_crt..", "ca.crt": "invalid"},
+			wantInput: true,
+			errorKey:  "ca.crt",
+		},
+		{
+			name:      "invalid client wiped key",
+			secret:    "tls",
+			data:      map[string]any{"tls.crt": "invalid", "tls.key": "..PLACEHOLDER_key.."},
+			wantInput: true,
+			errorKey:  "tls.crt",
+		},
+		{
+			name:        "valid client wiped key",
+			secret:      "tls",
+			data:        map[string]any{"tls.crt": crt, "tls.key": "..PLACEHOLDER_key.."},
+			wantMissing: true,
+		},
+		{
+			name:        "wiped crt malformed key",
+			secret:      "tls",
+			data:        map[string]any{"tls.crt": "..PLACEHOLDER_crt.."},
+			encodedData: map[string]any{"tls.key": "%%%fixture"},
+			wantInput:   true,
+			errorKey:    "tls.key",
+		},
+		{
+			name:        "wiped key malformed ca",
+			secret:      "tls",
+			data:        map[string]any{"tls.key": "..PLACEHOLDER_key.."},
+			encodedData: map[string]any{"ca.crt": "%%%fixture"},
+			wantInput:   true,
+			errorKey:    "ca.crt",
+		},
+		{
+			name:        "wiped ca malformed caFile",
+			secret:      "tls",
+			data:        map[string]any{"ca.crt": "..PLACEHOLDER_ca.."},
+			encodedData: map[string]any{"caFile": "%%%fixture"},
+			wantInput:   true,
+			errorKey:    "caFile",
+		},
+		{
+			name:        "caFile decoding despite valid ca",
+			secret:      "tls",
+			data:        map[string]any{"ca.crt": ca},
+			encodedData: map[string]any{"caFile": "%%%fixture"},
+			wantInput:   true,
+			errorKey:    "caFile",
+		},
+		{
+			name:   "first decoding error wins",
+			secret: "tls",
+			encodedData: map[string]any{
+				"tls.crt": "%%%fixture",
+				"tls.key": "%%%fixture",
+				"ca.crt":  "%%%fixture",
+				"caFile":  "%%%fixture",
+			},
+			wantInput: true,
+			errorKey:  "tls.crt",
+		},
 	}
 	for _, field := range []string{"tls.crt", "tls.key", "ca.crt", "caFile"} {
-		cases = append(cases, tlsCase{name: field + "/wiped", secret: "tls", data: map[string]any{field: "..PLACEHOLDER_" + field + ".."}, wantMissing: true})
+		cases = append(
+			cases,
+			tlsCase{
+				name:        field + "/wiped",
+				secret:      "tls",
+				data:        map[string]any{field: "..PLACEHOLDER_" + field + ".."},
+				wantMissing: true,
+			},
+		)
 		for _, malformed := range []struct {
 			name  string
 			value any
 		}{
 			{"encoding", "%%%fixture"}, {"nonscalar", map[string]any{"credential-fixture": "payload"}},
 		} {
-			cases = append(cases, tlsCase{name: field + "/" + malformed.name, secret: "tls", encodedData: map[string]any{field: malformed.value}, wantInput: true, errorKey: field})
+			cases = append(
+				cases,
+				tlsCase{
+					name:        field + "/" + malformed.name,
+					secret:      "tls",
+					encodedData: map[string]any{field: malformed.value},
+					wantInput:   true,
+					errorKey:    field,
+				},
+			)
 		}
 	}
 	for _, tc := range cases {
@@ -564,7 +769,10 @@ func TestFetcher_ResolveTLS(t *testing.T) {
 				url = "https://example.com/x.git"
 			}
 			repo := gitRepoWithSecret("g", url, tc.secret)
-			request, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveTransport(repo, sourcecache.Policy{})
+			request, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveTransport(
+				repo,
+				sourcecache.Policy{},
+			)
 			opts := request.options
 			if tc.wantInput || tc.wantMissing {
 				assert.Diff(t, opts, git.CloneOptions{})
@@ -577,12 +785,19 @@ func TestFetcher_ResolveTLS(t *testing.T) {
 						t.Fatalf("expected MissingSecretError; got %v", err)
 					}
 					assert.Equal(t, missing.Owner, repo.Named())
-					assert.Equal(t, missing.Secret, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "tls"})
+					assert.Equal(
+						t,
+						missing.Secret,
+						manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "tls"},
+					)
 				} else {
-					if err == nil || !strings.Contains(err.Error(), tc.errorKey) || !strings.Contains(err.Error(), "ns/tls") || strings.Contains(err.Error(), manifest.DiagnosticFor(repo.Named(), repo).Label()) {
+					if err == nil || !strings.Contains(err.Error(), tc.errorKey) ||
+						!strings.Contains(err.Error(), "ns/tls") ||
+						strings.Contains(err.Error(), manifest.DiagnosticFor(repo.Named(), repo).Label()) {
 						t.Fatalf("missing input context: %v", err)
 					}
-					if strings.Contains(err.Error(), "%%%fixture") || strings.Contains(err.Error(), "credential-fixture") {
+					if strings.Contains(err.Error(), "%%%fixture") ||
+						strings.Contains(err.Error(), "credential-fixture") {
 						t.Fatal("TLS credential payload leaked")
 					}
 				}
@@ -612,7 +827,10 @@ func TestFetcher_ResolveTransport_EndpointValidation(t *testing.T) {
 			}}
 			f := &Fetcher{}
 			repo := gitRepoWithSecret("g", "http://[::1", tc.secret)
-			request, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveTransport(repo, sourcecache.Policy{})
+			request, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveTransport(
+				repo,
+				sourcecache.Policy{},
+			)
 			if tc.wantInput {
 				assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 				if err == nil || !strings.Contains(err.Error(), "parse git endpoint") {
@@ -648,12 +866,23 @@ func TestFetcher_ResolveTransport_SecretMaterial(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			sec := &manifest.Secret{Name: "different", Namespace: "elsewhere", StringData: tc.data, Data: tc.encodedData}
+			sec := &manifest.Secret{
+				Name:       "different",
+				Namespace:  "elsewhere",
+				StringData: tc.data,
+				Data:       tc.encodedData,
+			}
 			s := store.New()
 			captured := *sec
 			captured.Name, captured.Namespace = "creds", "ns"
 			s.AddObject(&captured)
-			s.AddObject(&manifest.Secret{Name: "proxy", Namespace: "ns", StringData: map[string]any{"address": "http://proxy.invalid/%"}})
+			s.AddObject(
+				&manifest.Secret{
+					Name:       "proxy",
+					Namespace:  "ns",
+					StringData: map[string]any{"address": "http://proxy.invalid/%"},
+				},
+			)
 
 			f := &Fetcher{}
 			repo := gitRepoWithSecret("g", "https://host/repo", "creds")
@@ -662,8 +891,17 @@ func TestFetcher_ResolveTransport_SecretMaterial(t *testing.T) {
 			}
 			var reads store.ReadSet
 			reads.Init(s, repo.Named(), nil)
-			request, err := (&operation{Fetcher: f, reads: &reads, secrets: source.SecretLookup(&reads)}).resolveTransport(repo, sourcecache.Policy{})
-			s.AddObject(&manifest.Secret{Name: "proxy", Namespace: "ns", StringData: map[string]any{"address": "http://changed.invalid"}})
+			request, err := (&operation{Fetcher: f, reads: &reads, secrets: source.SecretLookup(&reads)}).resolveTransport(
+				repo,
+				sourcecache.Policy{},
+			)
+			s.AddObject(
+				&manifest.Secret{
+					Name:       "proxy",
+					Namespace:  "ns",
+					StringData: map[string]any{"address": "http://changed.invalid"},
+				},
+			)
 			assert.Equal(t, reads.Valid(), !tc.proxyRead)
 			s.AddObject(&manifest.Secret{Name: "creds", Namespace: "ns"})
 			assert.Equal(t, reads.Valid(), false)
@@ -678,7 +916,9 @@ func TestFetcher_ResolveTransport_SecretMaterial(t *testing.T) {
 				if tc.proxyRead {
 					secret, owner = "ns/proxy", "GitRepository ns/g"
 				}
-				if err == nil || !strings.Contains(err.Error(), tc.errorKey) || !strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), owner) {
+				if err == nil || !strings.Contains(err.Error(), tc.errorKey) ||
+					!strings.Contains(err.Error(), secret) ||
+					strings.Contains(err.Error(), owner) {
 					t.Fatalf("wrong selected error context: %v", err)
 				}
 				if strings.Contains(err.Error(), "%%%fixture") || strings.Contains(err.Error(), "credential-fixture") {
@@ -690,7 +930,11 @@ func TestFetcher_ResolveTransport_SecretMaterial(t *testing.T) {
 						t.Fatalf("expected MissingSecretError; got %v", err)
 					}
 					assert.Equal(t, missing.Owner, repo.Named())
-					assert.Equal(t, missing.Secret, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "creds"})
+					assert.Equal(
+						t,
+						missing.Secret,
+						manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "creds"},
+					)
 				}
 				return
 			}
@@ -721,12 +965,19 @@ func TestFetcher_ResolveTransport_MalformedProxy(t *testing.T) {
 	ca := testutil.SelfSignedCA(t)
 	fInputs := testInputs{secrets: func(_, name string) *manifest.Secret {
 		if name == "proxy" {
-			return &manifest.Secret{StringData: map[string]any{"address": "http://proxy-user:proxy-password@proxy.invalid/%"}}
+			return &manifest.Secret{
+				StringData: map[string]any{"address": "http://proxy-user:proxy-password@proxy.invalid/%"},
+			}
 		}
 		return &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "p", "ca.crt": ca}}
 	}}
 	f := &Fetcher{}
-	repo := &manifest.GitRepository{Name: "tls", Namespace: "ns", URL: "https://example.com/x.git", Provider: sourcev1.GitProviderGitHub}
+	repo := &manifest.GitRepository{
+		Name:      "tls",
+		Namespace: "ns",
+		URL:       "https://example.com/x.git",
+		Provider:  sourcev1.GitProviderGitHub,
+	}
 	repo.ProxySecretRef = &manifest.LocalObjectReference{Name: "proxy"}
 	_, err := f.Fetch(t.Context(), repo, fInputs.readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
 	if !errors.Is(err, manifest.ErrInput) {
@@ -791,10 +1042,18 @@ func TestFetcher_HTTPSBasicAuth_SnapshotRotation(t *testing.T) {
 	for _, wave := range []string{"first", "password", "certificate", "proxy", "direct"} {
 		t.Run(wave, func(t *testing.T) {
 			if wave == "password" {
-				sec = &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "second", "ca.crt": ca}}
+				sec = &manifest.Secret{
+					StringData: map[string]any{"username": "alice", "password": "second", "ca.crt": ca},
+				}
 			}
 			if wave == "certificate" {
-				sec = &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "second", "ca.crt": testutil.SelfSignedCA(t)}}
+				sec = &manifest.Secret{
+					StringData: map[string]any{
+						"username": "alice",
+						"password": "second",
+						"ca.crt":   testutil.SelfSignedCA(t),
+					},
+				}
 			}
 			expected.Store(sec)
 			proxyURL := strings.Replace(proxy.URL, "://", "://proxy:first@", 1)
@@ -809,7 +1068,12 @@ func TestFetcher_HTTPSBasicAuth_SnapshotRotation(t *testing.T) {
 			fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret { lookups.Add(1); return sec }}
 			f := &Fetcher{Cache: c}
 			before := requests.Load()
-			art, err := f.Fetch(t.Context(), repo, fInputs.readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval(), Retry: sourcecache.RetryConfig{Attempts: 3}})
+			art, err := f.Fetch(
+				t.Context(),
+				repo,
+				fInputs.readSet(repo),
+				sourcecache.Policy{MaxAge: repo.SourceInterval(), Retry: sourcecache.RetryConfig{Attempts: 3}},
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -818,19 +1082,29 @@ func TestFetcher_HTTPSBasicAuth_SnapshotRotation(t *testing.T) {
 			}
 			previous = art.Key
 			before = requests.Load()
-			if _, err := f.Fetch(t.Context(), repo, fInputs.readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()}); err != nil || requests.Load() != before {
+			if _, err := f.Fetch(
+				t.Context(),
+				repo,
+				fInputs.readSet(repo),
+				sourcecache.Policy{MaxAge: repo.SourceInterval()},
+			); err != nil ||
+				requests.Load() != before {
 				t.Fatalf("warm snapshot missed: %v", err)
 			}
 			fail.Store(true)
 			failed := *repo
 			failed.Interval.Duration = 0
-			_, err = f.Fetch(t.Context(), &failed, fInputs.readSet(&failed), sourcecache.Policy{MaxAge: failed.SourceInterval()})
+			_, err = f.Fetch(
+				t.Context(),
+				&failed,
+				fInputs.readSet(&failed),
+				sourcecache.Policy{MaxAge: failed.SourceInterval()},
+			)
 			terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
 			if !ok || !terminal.Attempted {
 				t.Fatalf("failed snapshot: %v", err)
 			}
 			fail.Store(false)
-
 		})
 	}
 	if lookups.Load() != 15 {

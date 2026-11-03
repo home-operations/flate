@@ -21,15 +21,30 @@ func TestOverlayPayload_Secret(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			s := &manifest.Secret{Name: "credentials", Namespace: "apps", Data: tc.data, StringData: tc.stringData}
-			before := &manifest.Secret{Name: "credentials", Namespace: "apps", Data: manifest.DeepCopyMap(tc.data), StringData: manifest.DeepCopyMap(tc.stringData)}
+			before := &manifest.Secret{
+				Name:       "credentials",
+				Namespace:  "apps",
+				Data:       manifest.DeepCopyMap(tc.data),
+				StringData: manifest.DeepCopyMap(tc.stringData),
+			}
 			if tc.name == "values" {
 				before.Data["bytes"] = []byte("owned")
 			}
 			doc := map[string]any{
-				"apiVersion": "v1", "kind": "Secret",
-				"metadata": map[string]any{"name": "credentials", "namespace": "apps", "labels": map[string]any{"selected": "true"}, "annotations": map[string]any{"note": "authored"}},
-				"data":     map[string]any{"stale": "c3RhbGU="}, "stringData": map[string]any{"stale": "stale"}, "type": "Opaque",
-				"immutable": true,
+				"apiVersion": "v1",
+				"kind":       "Secret",
+				"metadata": map[string]any{
+					"name":        "credentials",
+					"namespace":   "apps",
+					"labels":      map[string]any{"selected": "true"},
+					"annotations": map[string]any{"note": "authored"},
+				},
+				"data": map[string]any{
+					"stale": "c3RhbGU=",
+				},
+				"stringData": map[string]any{"stale": "stale"},
+				"type":       "Opaque",
+				"immutable":  true,
 			}
 			input := manifest.DeepCopyMap(doc)
 			want := manifest.DeepCopyMap(doc)

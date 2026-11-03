@@ -61,9 +61,27 @@ func TestFetcher_SecretReferences(t *testing.T) {
 	}{
 		{name: "missing proxy owner", secret: "missing", proxy: true, wantMissing: true, wantOwner: true},
 		{name: "missing cert owner", secret: "missing", cert: true, wantMissing: true, wantOwner: true},
-		{name: "partial cert key", secret: "tls", cert: true, material: map[string]any{"tls.crt": "-only-cert-"}, wantText: "must provide both"},
-		{name: "empty cert material", secret: "tls", cert: true, material: map[string]any{"unrelated": "x"}, wantMissing: true},
-		{name: "missing Docker JSON", secret: "wrong-shape", material: map[string]any{"username": "alice"}, wantText: ".dockerconfigjson", wantMissing: true},
+		{
+			name:     "partial cert key",
+			secret:   "tls",
+			cert:     true,
+			material: map[string]any{"tls.crt": "-only-cert-"},
+			wantText: "must provide both",
+		},
+		{
+			name:        "empty cert material",
+			secret:      "tls",
+			cert:        true,
+			material:    map[string]any{"unrelated": "x"},
+			wantMissing: true,
+		},
+		{
+			name:        "missing Docker JSON",
+			secret:      "wrong-shape",
+			material:    map[string]any{"username": "alice"},
+			wantText:    ".dockerconfigjson",
+			wantMissing: true,
+		},
 		{name: "unwired getter", secret: "creds", unwired: true, wantText: "source.SecretGetter"},
 		{name: "missing auth secret", secret: "missing", wantText: "secret ns/missing not found", wantMissing: true},
 	}
@@ -97,13 +115,24 @@ func TestFetcher_SecretReferences(t *testing.T) {
 			var err error
 			switch {
 			case tt.proxy:
-				_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).newRepoClient(t.Context(), repo.RegistryAccess())
+				_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).newRepoClient(
+					t.Context(),
+					repo.RegistryAccess(),
+				)
 			case tt.cert:
-				_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).newRepoClient(t.Context(), repo.RegistryAccess())
+				_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).newRepoClient(
+					t.Context(),
+					repo.RegistryAccess(),
+				)
 			default:
-				_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveRegistryConfig(t.Context(), repo.RegistryAccess(), "ghcr.io")
+				_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveRegistryConfig(
+					t.Context(),
+					repo.RegistryAccess(),
+					"ghcr.io",
+				)
 			}
-			if err == nil || errors.Is(err, manifest.ErrMissingSecret) != tt.wantMissing || !strings.Contains(err.Error(), tt.wantText) {
+			if err == nil || errors.Is(err, manifest.ErrMissingSecret) != tt.wantMissing ||
+				!strings.Contains(err.Error(), tt.wantText) {
 				t.Fatalf("error = %v, want missing=%t containing %q", err, tt.wantMissing, tt.wantText)
 			}
 			if tt.wantOwner {
@@ -111,8 +140,21 @@ func TestFetcher_SecretReferences(t *testing.T) {
 				if !ok {
 					t.Fatalf("expected MissingSecretError; got %T", err)
 				}
-				assert.Equal(t, missing.Owner, manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "repo"})
-				assert.Equal(t, missing.Secret, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "missing"})
+				assert.Equal(
+					t,
+					missing.Owner,
+					manifest.NamedResource{
+						Group:     manifest.SourceDomain,
+						Kind:      manifest.KindOCIRepository,
+						Namespace: "ns",
+						Name:      "repo",
+					},
+				)
+				assert.Equal(
+					t,
+					missing.Secret,
+					manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "missing"},
+				)
 				assert.Equal(t, err.Error(), "secret ns/missing not found")
 			}
 		})
@@ -172,11 +214,18 @@ func TestFetcher_ResolveTLS_FromSecret(t *testing.T) {
 		s.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
 	})
 	repo.URL = "oci://registry.example/test"
-	request, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).newRepoClient(t.Context(), repo.RegistryAccess())
+	request, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).newRepoClient(
+		t.Context(),
+		repo.RegistryAccess(),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	material, err := source.ResolveTransport(fInputs.secrets, manifest.DiagnosticFor(repo.Named(), repo), []source.TransportInput{{Reference: repo.CertSecretRef, Use: source.TransportCert}})
+	material, err := source.ResolveTransport(
+		fInputs.secrets,
+		manifest.DiagnosticFor(repo.Named(), repo),
+		[]source.TransportInput{{Reference: repo.CertSecretRef, Use: source.TransportCert}},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,19 +244,56 @@ func TestFetcher_ResolveConfig_CredentialPrecedence(t *testing.T) {
 	tests := []struct {
 		name, registry, secret, config, user, pass string
 	}{
-		{name: "Secret wins", registry: "ghcr.io", secret: secretJSON, config: explicitJSON, user: "alice", pass: "hunter2"},
-		{name: "Secret wins malformed fallback", registry: "ghcr.io", secret: secretJSON, config: `{"auths":`, user: "alice", pass: "hunter2"},
-		{name: "explicit wins Docker defaults", registry: "ghcr.io", config: explicitJSON, user: "explicit", pass: "explicit"},
+		{
+			name:     "Secret wins",
+			registry: "ghcr.io",
+			secret:   secretJSON,
+			config:   explicitJSON,
+			user:     "alice",
+			pass:     "hunter2",
+		},
+		{
+			name:     "Secret wins malformed fallback",
+			registry: "ghcr.io",
+			secret:   secretJSON,
+			config:   `{"auths":`,
+			user:     "alice",
+			pass:     "hunter2",
+		},
+		{
+			name:     "explicit wins Docker defaults",
+			registry: "ghcr.io",
+			config:   explicitJSON,
+			user:     "explicit",
+			pass:     "explicit",
+		},
 		{name: "Docker fallback", registry: "ghcr.io", user: "default", pass: "default"},
-		{name: "Docker Hub docker.io", registry: "docker.io", secret: `{"auths":{"https://index.docker.io/v1/":{"auth":"YWxpY2U6aHVudGVyMg=="}}}`, user: "alice", pass: "hunter2"},
-		{name: "Docker Hub alias", registry: "registry-1.docker.io", secret: `{"auths":{"index.docker.io":{"auth":"YWxpY2U6aHVudGVyMg=="}}}`, user: "alice", pass: "hunter2"},
+		{
+			name:     "Docker Hub docker.io",
+			registry: "docker.io",
+			secret:   `{"auths":{"https://index.docker.io/v1/":{"auth":"YWxpY2U6aHVudGVyMg=="}}}`,
+			user:     "alice",
+			pass:     "hunter2",
+		},
+		{
+			name:     "Docker Hub alias",
+			registry: "registry-1.docker.io",
+			secret:   `{"auths":{"index.docker.io":{"auth":"YWxpY2U6aHVudGVyMg=="}}}`,
+			user:     "alice",
+			pass:     "hunter2",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dockerDir := t.TempDir()
 			t.Setenv("DOCKER_CONFIG", dockerDir)
 			t.Setenv("HELM_REGISTRY_CONFIG", filepath.Join(t.TempDir(), "absent.json"))
-			testutil.WriteFile(t, dockerDir, "config.json", `{"auths":{"ghcr.io":{"username":"default","password":"default"}}}`)
+			testutil.WriteFile(
+				t,
+				dockerDir,
+				"config.json",
+				`{"auths":{"ghcr.io":{"username":"default","password":"default"}}}`,
+			)
 			fInputs := testInputs{}
 			f := &Fetcher{Network: newTestNetwork(t)}
 			if tt.config != "" {
@@ -248,10 +334,16 @@ func TestFetcher_ResolveConfig_CredentialPrecedence(t *testing.T) {
 			}
 			if tt.secret != "" {
 				op.secrets = func(_, _ string) *manifest.Secret {
-					config := fmt.Sprintf(`{"auths":{%q:{"username":"rotated","password":"rotated"}}}`, credentials.ServerAddressFromRegistry(tt.registry))
+					config := fmt.Sprintf(
+						`{"auths":{%q:{"username":"rotated","password":"rotated"}}}`,
+						credentials.ServerAddressFromRegistry(tt.registry),
+					)
 					return &manifest.Secret{StringData: map[string]any{".dockerconfigjson": config}}
 				}
-				captured, err := request.client.Client.(*auth.Client).Credential(t.Context(), request.client.Reference.Host())
+				captured, err := request.client.Client.(*auth.Client).Credential(
+					t.Context(),
+					request.client.Reference.Host(),
+				)
 				if err != nil || captured != want {
 					t.Fatal("producer reread mutable credentials")
 				}
@@ -352,9 +444,12 @@ func TestFetcher_MachineCredentials(t *testing.T) {
 					s.URL = "oci://ghcr.io/app"
 					s.SecretRef = &manifest.LocalObjectReference{Name: "auth"}
 				})
-				op := &operation{Fetcher: &Fetcher{Network: newTestNetwork(t)}, secrets: func(string, string) *manifest.Secret {
-					return &manifest.Secret{StringData: map[string]any{dockerConfigJSONKey: tc.docker}}
-				}}
+				op := &operation{
+					Fetcher: &Fetcher{Network: newTestNetwork(t)},
+					secrets: func(string, string) *manifest.Secret {
+						return &manifest.Secret{StringData: map[string]any{dockerConfigJSONKey: tc.docker}}
+					},
+				}
 				selected, err = op.resolveRegistryConfig(t.Context(), repo.RegistryAccess(), "ghcr.io")
 			}
 			if (err != nil) != tc.fail {
@@ -403,12 +498,20 @@ func TestFetcher_HelmConfigAvailability(t *testing.T) {
 				testutil.WriteFileAt(t, path, `{`)
 			case "default", "override":
 				wantUser = "default"
-				testutil.WriteFileAt(t, path, `{"auths":{"https://index.docker.io/v1/":{"username":"default","password":"default"}}}`)
+				testutil.WriteFileAt(
+					t,
+					path,
+					`{"auths":{"https://index.docker.io/v1/":{"username":"default","password":"default"}}}`,
+				)
 				if mode == "override" {
 					wantUser = "override"
 					path = filepath.Join(t.TempDir(), "config.json")
 					t.Setenv("HELM_REGISTRY_CONFIG", path)
-					testutil.WriteFileAt(t, path, `{"auths":{"https://index.docker.io/v1/":{"username":"override","password":"override"}}}`)
+					testutil.WriteFileAt(
+						t,
+						path,
+						`{"auths":{"https://index.docker.io/v1/":{"username":"override","password":"override"}}}`,
+					)
 				}
 			}
 			selected, err := newTestNetwork(t).RegistryCredentials(t.Context(), "", "registry-1.docker.io")
@@ -485,7 +588,11 @@ func TestFetcher_MachineCredentialsAcquisition(t *testing.T) {
 				t.Setenv("FLATE_HELPER_MARKER", marker)
 				t.Setenv("FLATE_HELPER_SECRET", "helm")
 				program := filepath.Join(bin, "docker-credential-fixture")
-				testutil.WriteFileAt(t, program, "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$FLATE_HELPER_MARKER.args\"\n/bin/cat > \"$FLATE_HELPER_MARKER.stdin\"\n/usr/bin/env > \"$FLATE_HELPER_MARKER.env\"\nprintf called >> \"$FLATE_HELPER_MARKER\"\nprintf '{\"Username\":\"helm\",\"Secret\":\"%s\"}' \"$FLATE_HELPER_SECRET\"\n")
+				testutil.WriteFileAt(
+					t,
+					program,
+					"#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$FLATE_HELPER_MARKER.args\"\n/bin/cat > \"$FLATE_HELPER_MARKER.stdin\"\n/usr/bin/env > \"$FLATE_HELPER_MARKER.env\"\nprintf called >> \"$FLATE_HELPER_MARKER\"\nprintf '{\"Username\":\"helm\",\"Secret\":\"%s\"}' \"$FLATE_HELPER_SECRET\"\n",
+				)
 				assert.NoError(t, os.Chmod(program, 0o700))
 				testutil.WriteFile(t, dockerDir, "config.json", `{"credsStore":"fixture"}`)
 			}
@@ -527,12 +634,16 @@ func TestFetcher_MachineCredentialsAcquisition(t *testing.T) {
 				repo.CertSecretRef = repo.ProxySecretRef
 				inputs.secrets = func(string, string) *manifest.Secret {
 					return &manifest.Secret{StringData: map[string]any{
-						"address": proxyAddress, "username": "repository-proxy-user", "password": "repository-proxy-password", "ca.crt": ca,
+						"address":  proxyAddress,
+						"username": "repository-proxy-user",
+						"password": "repository-proxy-password",
+						"ca.crt":   ca,
 					}}
 				}
 			}
 			got, err := f.Fetch(t.Context(), repo, inputs.readSet(repo), sourcecache.Policy{MaxAge: time.Hour})
-			if name == "wrong Docker is authoritative" || name == "explicit miss" || name == "missing helper" || name == "unreadable Helm" {
+			if name == "wrong Docker is authoritative" || name == "explicit miss" || name == "missing helper" ||
+				name == "unreadable Helm" {
 				if err == nil || got != nil || accepted.Load() != 0 {
 					t.Fatalf("unexpected fallback: artifact=%v error=%v accepted=%d", got, err, accepted.Load())
 				}
@@ -580,7 +691,6 @@ func TestFetcher_MachineCredentialsAcquisition(t *testing.T) {
 					}
 				}
 			}
-
 		})
 	}
 }
@@ -597,7 +707,8 @@ func TestFetcher_MachineFailureCauses(t *testing.T) {
 					w.WriteHeader(http.StatusUnauthorized)
 				case "bearer absence":
 					if r.URL.Path != "/token" {
-						w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer realm=%q,service="registry",scope="repository:app:pull"`, "https://"+r.Host+"/token"))
+						w.Header().
+							Set("WWW-Authenticate", fmt.Sprintf(`Bearer realm=%q,service="registry",scope="repository:app:pull"`, "https://"+r.Host+"/token"))
 					}
 					w.WriteHeader(http.StatusUnauthorized)
 				case "forbidden":
@@ -623,14 +734,23 @@ func TestFetcher_MachineFailureCauses(t *testing.T) {
 				config = `{"credsStore":"fixture-helper"}`
 			}
 			if name == "rejected credential" {
-				config = fmt.Sprintf(`{"auths":{%q:{"username":"fixture-user","password":"private-password"}}}`, mustURL(t, srv.URL).Host)
+				config = fmt.Sprintf(
+					`{"auths":{%q:{"username":"fixture-user","password":"private-password"}}}`,
+					mustURL(t, srv.URL).Host,
+				)
 			}
 			testutil.WriteFileAt(t, path, config)
 			repo := ociRepo("advice", func(s *sourcev1.OCIRepositorySpec) {
 				s.URL = "oci://" + mustURL(t, srv.URL).Host + "/app"
 				s.Insecure = true
 			})
-			op := &operation{Fetcher: &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, "", sourcecache.New), RegistryConfig: path}}
+			op := &operation{
+				Fetcher: &Fetcher{
+					Network:        newTestNetwork(t),
+					Cache:          cachetest.New(t, "", sourcecache.New),
+					RegistryConfig: path,
+				},
+			}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			policy := sourcecache.Policy{}
@@ -701,23 +821,37 @@ func TestFetcher_SharedMachineFailure(t *testing.T) {
 				}
 				_ = r.Body.Close()
 				if requests.Add(1) == 1 {
-					_, _ = io.WriteString(server, "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+					_, _ = io.WriteString(
+						server,
+						"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+					)
 					return
 				}
 				close(entered)
 				<-release
-				_, _ = io.WriteString(server, "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"fixture\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+				_, _ = io.WriteString(
+					server,
+					"HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"fixture\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+				)
 			}()
 			return client, nil
 		}
 		path := filepath.Join(t.TempDir(), "config.json")
 		testutil.WriteFileAt(t, path, `{}`)
-		op := &operation{Fetcher: &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, t.TempDir(), sourcecache.New), RegistryConfig: path}}
+		op := &operation{
+			Fetcher: &Fetcher{
+				Network:        newTestNetwork(t),
+				Cache:          cachetest.New(t, t.TempDir(), sourcecache.New),
+				RegistryConfig: path,
+			},
+		}
 		repo := ociRepo("shared", func(s *sourcev1.OCIRepositorySpec) { s.URL = "oci://registry.invalid/app" })
 		for range 2 {
 			_, err := op.fetchSource(t.Context(), repo, sourcecache.Policy{})
 			response, ok := errors.AsType[*fetcherr.ResponseError](err)
-			if !ok || response.StatusCode != http.StatusServiceUnavailable || strings.Contains(err.Error(), "credential helper") || requests.Load() != 1 {
+			if !ok || response.StatusCode != http.StatusServiceUnavailable ||
+				strings.Contains(err.Error(), "credential helper") ||
+				requests.Load() != 1 {
 				t.Fatalf("transient replay gained advice or retried: %v, requests=%d", err, requests.Load())
 			}
 		}
@@ -767,14 +901,33 @@ func TestFetcher_SecretCredentialsAcquisitionPolicy(t *testing.T) {
 		wantMissing, wantInput, canceled bool
 	}{
 		{name: "missing auth", wantMissing: true},
-		{name: "wiped auth", material: map[string]any{".dockerconfigjson": "..PLACEHOLDER_.dockerconfigjson.."}, wantMissing: true},
+		{
+			name:        "wiped auth",
+			material:    map[string]any{".dockerconfigjson": "..PLACEHOLDER_.dockerconfigjson.."},
+			wantMissing: true,
+		},
 		{name: "malformed auth", material: map[string]any{".dockerconfigjson": `{"auths":`}, wantInput: true},
-		{name: "malformed encoded auth", encoded: true, material: map[string]any{".dockerconfigjson": "!!!"}, wantInput: true},
+		{
+			name:      "malformed encoded auth",
+			encoded:   true,
+			material:  map[string]any{".dockerconfigjson": "!!!"},
+			wantInput: true,
+		},
 		{name: "missing TLS", cert: true, wantMissing: true},
-		{name: "wiped TLS", cert: true, material: map[string]any{"ca.crt": "..PLACEHOLDER_ca.crt.."}, wantMissing: true},
+		{
+			name:        "wiped TLS",
+			cert:        true,
+			material:    map[string]any{"ca.crt": "..PLACEHOLDER_ca.crt.."},
+			wantMissing: true,
+		},
 		{name: "malformed TLS", cert: true, material: map[string]any{"ca.crt": "invalid PEM"}},
 		{name: "missing proxy", proxy: true, wantMissing: true},
-		{name: "wiped proxy", proxy: true, material: map[string]any{"address": "..PLACEHOLDER_address.."}, wantMissing: true},
+		{
+			name:        "wiped proxy",
+			proxy:       true,
+			material:    map[string]any{"address": "..PLACEHOLDER_address.."},
+			wantMissing: true,
+		},
 		{name: "malformed proxy", proxy: true, material: map[string]any{"address": "%"}},
 		{name: "canceled", canceled: true},
 	}
@@ -789,7 +942,11 @@ func TestFetcher_SecretCredentialsAcquisitionPolicy(t *testing.T) {
 			cache := cachetest.New(t, "", sourcecache.New)
 			fInputs := testInputs{secrets: func(_, name string) *manifest.Secret {
 				if name == "creds" && (tt.cert || tt.proxy || tt.canceled) {
-					return &manifest.Secret{StringData: map[string]any{".dockerconfigjson": `{"auths":{"ghcr.io":{"username":"alice","password":"hunter2"}}}`}}
+					return &manifest.Secret{
+						StringData: map[string]any{
+							".dockerconfigjson": `{"auths":{"ghcr.io":{"username":"alice","password":"hunter2"}}}`,
+						},
+					}
 				}
 				if tt.material != nil {
 					if tt.encoded {
@@ -815,9 +972,16 @@ func TestFetcher_SecretCredentialsAcquisitionPolicy(t *testing.T) {
 			if tt.canceled {
 				cancel()
 			}
-			if _, err := f.Fetch(ctx, repo, fInputs.readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()}); err == nil || errors.Is(err, manifest.ErrMissingSecret) != tt.wantMissing || errors.Is(err, context.Canceled) != tt.canceled {
+			if _, err := f.Fetch(
+				ctx,
+				repo,
+				fInputs.readSet(repo),
+				sourcecache.Policy{MaxAge: repo.SourceInterval()},
+			); err == nil || errors.Is(err, manifest.ErrMissingSecret) != tt.wantMissing ||
+				errors.Is(err, context.Canceled) != tt.canceled {
 				t.Fatalf("Fetch error = %v, want missing=%t canceled=%t", err, tt.wantMissing, tt.canceled)
-			} else if tt.wantInput && !errors.Is(err, manifest.ErrInput) {
+			} else if tt.wantInput &&
+				!errors.Is(err, manifest.ErrInput) {
 				t.Fatalf("Fetch error = %v, want malformed material to be an input error", err)
 			}
 			if got := requests.Load(); got != 0 {
@@ -859,17 +1023,35 @@ func TestFetcher_ResolveConfig_RegistryFallback(t *testing.T) {
 		{name: "not found, fallback", config: covering, wantRetry: true},
 		{name: "not found, docker default fallback", docker: covering, wantRetry: true},
 		{name: "not found, Helm fallback", helm: covering, wantRetry: true},
-		{name: "wiped, Helm fallback", secret: &manifest.Secret{StringData: map[string]any{".dockerconfigjson": "..PLACEHOLDER_.dockerconfigjson.."}}, helm: covering, wantRetry: true},
-		{name: "Helm unrelated host", helm: `{"auths":{"quay.io":{"username":"other","password":"other"}}}`, wantErr: manifest.ErrMissingSecret},
+		{
+			name: "wiped, Helm fallback",
+			secret: &manifest.Secret{
+				StringData: map[string]any{".dockerconfigjson": "..PLACEHOLDER_.dockerconfigjson.."},
+			},
+			helm:      covering,
+			wantRetry: true,
+		},
+		{
+			name:    "Helm unrelated host",
+			helm:    `{"auths":{"quay.io":{"username":"other","password":"other"}}}`,
+			wantErr: manifest.ErrMissingSecret,
+		},
 		{name: "Helm helper only", helm: `{"credsStore":"unused"}`, wantErr: manifest.ErrMissingSecret},
 		{name: "Docker helper only", docker: `{"credsStore":"unused"}`, wantErr: manifest.ErrMissingSecret},
 		{name: "malformed Helm deferred", helm: `{`},
 		{
-			name:   "placeholder-wiped, fallback",
-			secret: &manifest.Secret{StringData: map[string]any{".dockerconfigjson": "..PLACEHOLDER_.dockerconfigjson.."}},
-			config: covering, wantRetry: true,
+			name: "placeholder-wiped, fallback",
+			secret: &manifest.Secret{
+				StringData: map[string]any{".dockerconfigjson": "..PLACEHOLDER_.dockerconfigjson.."},
+			},
+			config:    covering,
+			wantRetry: true,
 		},
-		{name: "config covers another registry", config: `{"auths":{"quay.io":{"auth":"YWxpY2U6aHVudGVyMg=="}}}`, wantErr: manifest.ErrMissingSecret},
+		{
+			name:    "config covers another registry",
+			config:  `{"auths":{"quay.io":{"auth":"YWxpY2U6aHVudGVyMg=="}}}`,
+			wantErr: manifest.ErrMissingSecret,
+		},
 		{name: "no config at all", wantErr: manifest.ErrMissingSecret},
 		{name: "corrupt config fails loud", config: `{"auths":`},
 	}
@@ -895,7 +1077,11 @@ func TestFetcher_ResolveConfig_RegistryFallback(t *testing.T) {
 				s.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
 			})
 
-			_, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).fetchSource(t.Context(), repo, sourcecache.Policy{})
+			_, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).fetchSource(
+				t.Context(),
+				repo,
+				sourcecache.Policy{},
+			)
 			missing, ok := errors.AsType[*source.MissingSecretError](err)
 			if !ok || missing.RetryAmbient == nil || missing.Secret.Name != "creds" {
 				t.Fatalf("unavailable auth lost lazy continuation: %v", err)
@@ -910,7 +1096,6 @@ func TestFetcher_ResolveConfig_RegistryFallback(t *testing.T) {
 }
 
 func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
-
 	var failing atomic.Bool
 	testutil.StubDNS(t, func(context.Context, string) error {
 		if failing.Load() {
@@ -963,8 +1148,22 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 		Interval:  metav1.Duration{Duration: time.Hour},
 	}
-	chartInput := manifest.NewHelmChartSource(sourcev1.HelmChart{Name: "app", Namespace: repo.Namespace, Spec: sourcev1.HelmChartSpec{Chart: "app", Version: "1.0.0", Interval: repo.Interval, SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: manifest.KindHelmRepository, Name: repo.Name}}})
-	chartsInputs := testInputs{secrets: ociFetcherInputs.secrets, repos: func(_, _ string) *manifest.HelmRepository { return repo }}
+	chartInput := manifest.NewHelmChartSource(
+		sourcev1.HelmChart{
+			Name:      "app",
+			Namespace: repo.Namespace,
+			Spec: sourcev1.HelmChartSpec{
+				Chart:     "app",
+				Version:   "1.0.0",
+				Interval:  repo.Interval,
+				SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: manifest.KindHelmRepository, Name: repo.Name},
+			},
+		},
+	)
+	chartsInputs := testInputs{
+		secrets: ociFetcherInputs.secrets,
+		repos:   func(_, _ string) *manifest.HelmRepository { return repo },
+	}
 	charts := helmchart.New(ociFetcher, helmchart.Config{Cache: cache, Network: &network})
 
 	got, err := charts.Fetch(t.Context(), chartInput, chartsInputs.readSet(chartInput), sourcecache.Policy{})
@@ -984,7 +1183,10 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 	helmRepo := *repo
 	helmRepo.SecretRef = nil
 	helmInputs := testInputs{repos: func(_, _ string) *manifest.HelmRepository { return &helmRepo }}
-	helmCharts := helmchart.New(&Fetcher{Cache: cache, Network: &network}, helmchart.Config{Cache: cache, Network: &network})
+	helmCharts := helmchart.New(
+		&Fetcher{Cache: cache, Network: &network},
+		helmchart.Config{Cache: cache, Network: &network},
+	)
 	helmArtifact, err := helmCharts.Fetch(t.Context(), chartInput, helmInputs.readSet(chartInput), sourcecache.Policy{})
 	assert.NoError(t, err)
 	assert.Equal(t, helmArtifact.Kind, manifest.KindHelmChart)
@@ -994,11 +1196,19 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 	testutil.WriteFileAt(t, configPath, configJSON)
 	fallbackFetcherInputs := testInputs{secrets: func(_, _ string) *manifest.Secret { return nil }}
 	fallbackFetcher := &Fetcher{Cache: cache, Network: &network, RegistryConfig: configPath}
-	fallbackChartsInputs := testInputs{secrets: fallbackFetcherInputs.secrets, repos: func(_, _ string) *manifest.HelmRepository { return repo }}
+	fallbackChartsInputs := testInputs{
+		secrets: fallbackFetcherInputs.secrets,
+		repos:   func(_, _ string) *manifest.HelmRepository { return repo },
+	}
 	fallbackCharts := helmchart.New(fallbackFetcher, helmchart.Config{Cache: cache, Network: &network})
 
 	retry := sourcecache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}
-	_, err = fallbackCharts.Fetch(t.Context(), chartInput, fallbackChartsInputs.readSet(chartInput), sourcecache.Policy{Retry: retry})
+	_, err = fallbackCharts.Fetch(
+		t.Context(),
+		chartInput,
+		fallbackChartsInputs.readSet(chartInput),
+		sourcecache.Policy{Retry: retry},
+	)
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	if !ok || missing.RetryAmbient == nil {
 		t.Fatalf("missing fallback: %v", err)
@@ -1018,16 +1228,30 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 	}
 	beforeWarm := requests.Load()
 	warm, err := missing.RetryAmbient(t.Context())
-	if err != nil || warm == nil || warm.Key != got.Key || warm.Kind != manifest.KindHelmChart || requests.Load() != beforeWarm {
-		t.Fatalf("fallback lost freshness or chart identity: artifact=%+v, err=%v, new requests=%d", warm, err, requests.Load()-beforeWarm)
+	if err != nil || warm == nil || warm.Key != got.Key || warm.Kind != manifest.KindHelmChart ||
+		requests.Load() != beforeWarm {
+		t.Fatalf(
+			"fallback lost freshness or chart identity: artifact=%+v, err=%v, new requests=%d",
+			warm,
+			err,
+			requests.Load()-beforeWarm,
+		)
 	}
 	refreshRepo := *repo
 	refreshRepo.Interval = metav1.Duration{}
 	refreshInput := *chartInput
 	refreshInput.Interval = refreshRepo.Interval
-	refreshChartsInputs := testInputs{secrets: fallbackFetcherInputs.secrets, repos: func(_, _ string) *manifest.HelmRepository { return &refreshRepo }}
+	refreshChartsInputs := testInputs{
+		secrets: fallbackFetcherInputs.secrets,
+		repos:   func(_, _ string) *manifest.HelmRepository { return &refreshRepo },
+	}
 	refreshCharts := helmchart.New(fallbackFetcher, helmchart.Config{Cache: cache, Network: &network})
-	_, err = refreshCharts.Fetch(t.Context(), &refreshInput, refreshChartsInputs.readSet(&refreshInput), sourcecache.Policy{Retry: retry})
+	_, err = refreshCharts.Fetch(
+		t.Context(),
+		&refreshInput,
+		refreshChartsInputs.readSet(&refreshInput),
+		sourcecache.Policy{Retry: retry},
+	)
 	missing, ok = errors.AsType[*source.MissingSecretError](err)
 	if !ok || missing.RetryAmbient == nil {
 		t.Fatalf("refresh fallback: %v", err)
@@ -1037,7 +1261,12 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, strings.Replace(srv.URL, "127.0.0.1", "example.com", 1), nil)
+	req, _ := http.NewRequestWithContext(
+		t.Context(),
+		http.MethodGet,
+		strings.Replace(srv.URL, "127.0.0.1", "example.com", 1),
+		nil,
+	)
 	_, err = (&http.Client{Transport: tr}).Do(req)
 	terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
 	if !ok || !terminal.Attempted {
@@ -1046,7 +1275,10 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 	cause := terminal.Err
 	before := requests.Load()
 	_, err = missing.RetryAmbient(t.Context())
-	if terminal, ok := errors.AsType[*sourcecache.TerminalError](err); !ok || terminal.Attempted || !errors.Is(err, cause) || requests.Load() != before {
+	if terminal, ok := errors.AsType[*sourcecache.TerminalError](
+		err,
+	); !ok || terminal.Attempted || !errors.Is(err, cause) ||
+		requests.Load() != before {
 		t.Fatalf("suppressed fallback: %v, additional requests=%d", err, requests.Load()-before)
 	}
 }
@@ -1056,7 +1288,11 @@ func TestFetcher_ResolveConfig_CredentialSnapshot(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	write := func(password string) {
 		t.Helper()
-		testutil.WriteFileAt(t, path, fmt.Sprintf(`{"auths":{"https://index.docker.io/v1/":{"username":"fixture","password":%q}}}`, password))
+		testutil.WriteFileAt(
+			t,
+			path,
+			fmt.Sprintf(`{"auths":{"https://index.docker.io/v1/":{"username":"fixture","password":%q}}}`, password),
+		)
 	}
 	write("first")
 	op := &operation{Fetcher: &Fetcher{Network: newTestNetwork(t), RegistryConfig: path}}
@@ -1129,7 +1365,11 @@ func TestFetcher_ResolveTLS_SnapshotRotation(t *testing.T) {
 	var proxyPassword atomic.Value
 	proxyPassword.Store("first")
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Proxy-Authorization") != "Basic "+base64.StdEncoding.EncodeToString([]byte("proxy:"+proxyPassword.Load().(string))) {
+		if r.Header.Get(
+			"Proxy-Authorization",
+		) != "Basic "+base64.StdEncoding.EncodeToString(
+			[]byte("proxy:"+proxyPassword.Load().(string)),
+		) {
 			t.Error("transport used a different proxy snapshot")
 			w.WriteHeader(http.StatusProxyAuthRequired)
 			return
@@ -1185,12 +1425,21 @@ func TestFetcher_ResolveTLS_SnapshotRotation(t *testing.T) {
 			c := cachetest.New(t, root, sourcecache.New)
 			fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
 				lookups.Add(1)
-				config := fmt.Sprintf(`{"auths":{%q:{"username":"alice","password":%q}}}`, mustURL(t, srv.URL).Host, password.Load().(string))
+				config := fmt.Sprintf(
+					`{"auths":{%q:{"username":"alice","password":%q}}}`,
+					mustURL(t, srv.URL).Host,
+					password.Load().(string),
+				)
 				return &manifest.Secret{StringData: map[string]any{".dockerconfigjson": config, "ca.crt": ca}}
 			}}
 			f := &Fetcher{Network: newTestNetwork(t), Cache: c}
 			before := requests.Load()
-			art, err := f.Fetch(t.Context(), repo, fInputs.readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval(), Retry: sourcecache.RetryConfig{Attempts: 3}})
+			art, err := f.Fetch(
+				t.Context(),
+				repo,
+				fInputs.readSet(repo),
+				sourcecache.Policy{MaxAge: repo.SourceInterval(), Retry: sourcecache.RetryConfig{Attempts: 3}},
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1199,13 +1448,24 @@ func TestFetcher_ResolveTLS_SnapshotRotation(t *testing.T) {
 			}
 			previous = art.Key
 			before = requests.Load()
-			if _, err := f.Fetch(t.Context(), repo, fInputs.readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()}); err != nil || requests.Load() != before {
+			if _, err := f.Fetch(
+				t.Context(),
+				repo,
+				fInputs.readSet(repo),
+				sourcecache.Policy{MaxAge: repo.SourceInterval()},
+			); err != nil ||
+				requests.Load() != before {
 				t.Fatalf("warm snapshot missed: %v", err)
 			}
 			fail.Store(true)
 			failed := *repo
 			failed.Interval = &metav1.Duration{}
-			_, err = f.Fetch(t.Context(), &failed, fInputs.readSet(&failed), sourcecache.Policy{MaxAge: failed.SourceInterval()})
+			_, err = f.Fetch(
+				t.Context(),
+				&failed,
+				fInputs.readSet(&failed),
+				sourcecache.Policy{MaxAge: failed.SourceInterval()},
+			)
 			terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
 			if !ok || !terminal.Attempted {
 				t.Fatalf("failed snapshot: %v", err)
@@ -1227,7 +1487,11 @@ func TestFetcher_ResolveConfig_RegistryFallbackSnapshot(t *testing.T) {
 			artifact := newFakeOCIArtifact(t, map[string]string{"data.yaml": "concurrent"})
 			upstream := startFakeRegistry(t, artifact.manifest, artifact.config, artifact.layer)
 			config := filepath.Join(t.TempDir(), "config.json")
-			testutil.WriteFileAt(t, config, fmt.Sprintf(`{"auths":{%q:{"username":"alice","password":"test"}}}`, mustURL(t, upstream.URL).Host))
+			testutil.WriteFileAt(
+				t,
+				config,
+				fmt.Sprintf(`{"auths":{%q:{"username":"alice","password":"test"}}}`, mustURL(t, upstream.URL).Host),
+			)
 			c := cachetest.New(t, t.TempDir(), sourcecache.New)
 			var lookups atomic.Int32
 			fInputs := testInputs{secrets: func(_, name string) *manifest.Secret {
@@ -1244,7 +1508,12 @@ func TestFetcher_ResolveConfig_RegistryFallbackSnapshot(t *testing.T) {
 				s.SecretRef = &manifest.LocalObjectReference{Name: "missing"}
 				s.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
 			})
-			_, err := f.Fetch(t.Context(), repo, fInputs.readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
+			_, err := f.Fetch(
+				t.Context(),
+				repo,
+				fInputs.readSet(repo),
+				sourcecache.Policy{MaxAge: repo.SourceInterval()},
+			)
 			missing, ok := errors.AsType[*source.MissingSecretError](err)
 			if !ok || missing.RetryAmbient == nil || lookups.Load() != 2 {
 				t.Fatalf("snapshot before handoff: reads=%d error=%v", lookups.Load(), err)
@@ -1271,7 +1540,8 @@ func TestFetcher_ResolveConfig_RegistryFallbackSnapshot(t *testing.T) {
 			close(start)
 			wg.Wait()
 			for i, artifact := range artifacts {
-				if failures[i] != nil || artifact == nil || artifact.Key != artifacts[0].Key || mustReadFile(t, artifact.FS, "data.yaml") != "concurrent" {
+				if failures[i] != nil || artifact == nil || artifact.Key != artifacts[0].Key ||
+					mustReadFile(t, artifact.FS, "data.yaml") != "concurrent" {
 					t.Fatalf("concurrent prepared acquisition: artifact=%v error=%v", artifact, failures[i])
 				}
 			}
@@ -1298,19 +1568,23 @@ func TestFetcher_BearerTokenReuse(t *testing.T) {
 				password.Store("first")
 			}
 			token := func(host, scope, secret string) string {
-				return base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf("%s|%s|%s|%d", host, scope, secret, generation.Load())))
+				return base64.RawURLEncoding.EncodeToString(
+					[]byte(fmt.Sprintf("%s|%s|%s|%d", host, scope, secret, generation.Load())),
+				)
 			}
 			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				secret := password.Load().(string)
 				if r.URL.Path == "/token" {
 					exchanges.Add(1)
 					user, pass, present := r.BasicAuth()
-					if failTokens.Load() || secret != "" && (!present || user != "user" || pass != secret) || secret == "" && present {
+					if failTokens.Load() || secret != "" && (!present || user != "user" || pass != secret) ||
+						secret == "" && present {
 						http.Error(w, "token denied", http.StatusForbidden)
 						return
 					}
 					w.Header().Set("Content-Type", "application/json")
-					_ = json.NewEncoder(w).Encode(map[string]string{"token": token(r.Host, r.URL.Query().Get("scope"), secret)})
+					_ = json.NewEncoder(w).
+						Encode(map[string]string{"token": token(r.Host, r.URL.Query().Get("scope"), secret)})
 					return
 				}
 				name, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/v2/"), "/")
@@ -1324,7 +1598,8 @@ func TestFetcher_BearerTokenReuse(t *testing.T) {
 							wrongContext.Add(1)
 						}
 					}
-					w.Header().Set("WWW-Authenticate", fmt.Sprintf("Bearer realm=%q,service=%q,scope=%q", "https://"+r.Host+"/token", "registry", scope))
+					w.Header().
+						Set("WWW-Authenticate", fmt.Sprintf("Bearer realm=%q,service=%q,scope=%q", "https://"+r.Host+"/token", "registry", scope))
 					w.WriteHeader(http.StatusUnauthorized)
 					return
 				}
@@ -1332,15 +1607,21 @@ func TestFetcher_BearerTokenReuse(t *testing.T) {
 			})
 			srv := httptest.NewTLSServer(handler)
 			t.Cleanup(srv.Close)
-			repo := &manifest.OCIRepository{Name: "bearer", Namespace: "test",
+			repo := &manifest.OCIRepository{
+				Name: "bearer", Namespace: "test",
 				URL: "oci://" + mustURL(t, srv.URL).Host + "/app", Insecure: true,
-				Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"}}
+				Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"},
+			}
 			if authenticated {
 				repo.SecretRef = &manifest.LocalObjectReference{Name: "registry"}
 			}
 			registryHost := mustURL(t, srv.URL).Host
 			inputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
-				config := fmt.Sprintf(`{"auths":{%q:{"username":"user","password":%q}}}`, registryHost, password.Load().(string))
+				config := fmt.Sprintf(
+					`{"auths":{%q:{"username":"user","password":%q}}}`,
+					registryHost,
+					password.Load().(string),
+				)
 				return &manifest.Secret{StringData: map[string]any{".dockerconfigjson": config}}
 			}}
 
@@ -1412,7 +1693,12 @@ func TestFetcher_BearerTokenReuse(t *testing.T) {
 			assert.Equal(t, exchanges.Load(), int32(6))
 			generation.Add(1)
 			failTokens.Store(true)
-			_, err := (&Fetcher{Network: network, Cache: owner}).Fetch(t.Context(), repo, inputs.readSet(repo), sourcecache.Policy{})
+			_, err := (&Fetcher{Network: network, Cache: owner}).Fetch(
+				t.Context(),
+				repo,
+				inputs.readSet(repo),
+				sourcecache.Policy{},
+			)
 			if err == nil || !errors.Is(err, manifest.ErrFlux) {
 				t.Fatalf("token rejection did not propagate: %v", err)
 			}
@@ -1423,7 +1709,12 @@ func TestFetcher_BearerTokenReuse(t *testing.T) {
 			assert.Equal(t, challenges.Load(), int32(7))
 			assert.Equal(t, exchanges.Load(), int32(7))
 			assert.Equal(t, wrongContext.Load(), int32(0))
-			t.Logf("initial, warm, concurrent, invocation, credential, scope, registry and rejection stages: challenges=%d exchanges=%d wrong_context=%d", challenges.Load(), exchanges.Load(), wrongContext.Load())
+			t.Logf(
+				"initial, warm, concurrent, invocation, credential, scope, registry and rejection stages: challenges=%d exchanges=%d wrong_context=%d",
+				challenges.Load(),
+				exchanges.Load(),
+				wrongContext.Load(),
+			)
 		})
 	}
 }
@@ -1443,7 +1734,9 @@ func TestFetcher_ProviderTransportValidation(t *testing.T) {
 				}
 			})
 			inputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
-				return &manifest.Secret{StringData: map[string]any{"ca.crt": "invalid", "address": "http://proxy.invalid/%"}}
+				return &manifest.Secret{
+					StringData: map[string]any{"ca.crt": "invalid", "address": "http://proxy.invalid/%"},
+				}
 			}}
 			fetcher := &Fetcher{Network: newTestNetwork(t)}
 			_, err := fetcher.Fetch(t.Context(), repo, inputs.readSet(repo), sourcecache.Policy{})
@@ -1464,14 +1757,22 @@ func TestFetcher_ProviderRegistryMatching(t *testing.T) {
 				registry = "fixture.invalid"
 			}
 			config := filepath.Join(t.TempDir(), "config.json")
-			testutil.WriteFileAt(t, config, fmt.Sprintf(`{"auths":{%q:{"username":"ambient","password":"fixture"}}}`, registry))
+			testutil.WriteFileAt(
+				t,
+				config,
+				fmt.Sprintf(`{"auths":{%q:{"username":"ambient","password":"fixture"}}}`, registry),
+			)
 			repo := ociRepo("provider", func(s *sourcev1.OCIRepositorySpec) {
 				s.URL = "oci://fixture.invalid/image"
 				s.Provider = sourcev1.AmazonOCIProvider
 				s.SecretRef = &manifest.LocalObjectReference{Name: "auth"}
 			})
 			inputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
-				return &manifest.Secret{StringData: map[string]any{".dockerconfigjson": `{"auths":{"unrelated.invalid":{"username":"repository","password":"fixture"}}}`}}
+				return &manifest.Secret{
+					StringData: map[string]any{
+						".dockerconfigjson": `{"auths":{"unrelated.invalid":{"username":"repository","password":"fixture"}}}`,
+					},
+				}
 			}}
 			fetcher := &Fetcher{Network: newTestNetwork(t), RegistryConfig: config}
 			_, err := fetcher.Fetch(t.Context(), repo, inputs.readSet(repo), sourcecache.Policy{})
@@ -1493,7 +1794,22 @@ func TestFetcher_SyntheticCredentialContext(t *testing.T) {
 				chart.Chart = "app"
 				expected := chart.Named()
 				if generated {
-					release := &manifest.HelmRelease{Name: "release", Namespace: "apps", HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: "app", SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: manifest.KindHelmRepository, Name: "charts", Namespace: "sources"}}}}}
+					release := &manifest.HelmRelease{
+						Name:      "release",
+						Namespace: "apps",
+						HelmReleaseSpec: helmv2.HelmReleaseSpec{
+							Chart: &helmv2.HelmChartTemplate{
+								Spec: helmv2.HelmChartTemplateSpec{
+									Chart: "app",
+									SourceRef: &helmv2.CrossNamespaceObjectReference{
+										Kind:      manifest.KindHelmRepository,
+										Name:      "charts",
+										Namespace: "sources",
+									},
+								},
+							},
+						},
+					}
 					children, err := release.GeneratedObjects()
 					if err != nil {
 						t.Fatal(err)
@@ -1509,7 +1825,9 @@ func TestFetcher_SyntheticCredentialContext(t *testing.T) {
 				case strings.HasPrefix(material, "auth"):
 					repo.SecretRef = ref
 					if material == "auth wiped" {
-						sec = &manifest.Secret{StringData: map[string]any{".dockerconfigjson": manifest.ValuePlaceholder("config")}}
+						sec = &manifest.Secret{
+							StringData: map[string]any{".dockerconfigjson": manifest.ValuePlaceholder("config")},
+						}
 					}
 					if material == "auth malformed" {
 						sec = &manifest.Secret{StringData: map[string]any{".dockerconfigjson": "{"}}
@@ -1525,7 +1843,9 @@ func TestFetcher_SyntheticCredentialContext(t *testing.T) {
 				case strings.HasPrefix(material, "proxy"):
 					repo.ProxySecretRef = ref
 					if material == "proxy wiped" {
-						sec = &manifest.Secret{StringData: map[string]any{"address": manifest.ValuePlaceholder("proxy")}}
+						sec = &manifest.Secret{
+							StringData: map[string]any{"address": manifest.ValuePlaceholder("proxy")},
+						}
 					}
 					if material == "proxy malformed" {
 						sec = &manifest.Secret{StringData: map[string]any{"address": "http://invalid/%"}}
@@ -1535,18 +1855,22 @@ func TestFetcher_SyntheticCredentialContext(t *testing.T) {
 				}
 				config := filepath.Join(t.TempDir(), "config.json")
 				testutil.WriteFileAt(t, config, "{}")
-				op := &operation{Fetcher: &Fetcher{Network: newTestNetwork(t), RegistryConfig: config}, secrets: func(namespace, name string) *manifest.Secret {
-					if namespace != "sources" || name != ref.Name {
-						t.Fatalf("Secret lookup %s/%s used display owner", namespace, name)
-					}
-					return sec
-				}}
+				op := &operation{
+					Fetcher: &Fetcher{Network: newTestNetwork(t), RegistryConfig: config},
+					secrets: func(namespace, name string) *manifest.Secret {
+						if namespace != "sources" || name != ref.Name {
+							t.Fatalf("Secret lookup %s/%s used display owner", namespace, name)
+						}
+						return sec
+					},
+				}
 				_, err := op.fetchSource(t.Context(), repo, sourcecache.Policy{})
 				label := expected.Kind + " " + expected.NamespacedName()
 				if material == "provider" {
 					label = expected.String()
 				}
-				if err == nil || strings.Contains(err.Error(), label) || strings.Contains(err.Error(), "OCIRepository") {
+				if err == nil || strings.Contains(err.Error(), label) ||
+					strings.Contains(err.Error(), "OCIRepository") {
 					t.Fatalf("early diagnostic=%v, owner=%s", err, expected)
 				}
 				if errors.Is(err, manifest.ErrMissingSecret) != missing {

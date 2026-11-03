@@ -13,7 +13,12 @@ func TestNetwork_RegistryStoresOpenOnce(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	t.Setenv("DOCKER_CONFIG", docker)
 	t.Setenv("HELM_REGISTRY_CONFIG", helm)
-	testutil.WriteFile(t, docker, "config.json", `{"auths":{"docker.invalid":{"username":"docker","password":"secret"}}}`)
+	testutil.WriteFile(
+		t,
+		docker,
+		"config.json",
+		`{"auths":{"docker.invalid":{"username":"docker","password":"secret"}}}`,
+	)
 	testutil.WriteFileAt(t, helm, `{"auths":{"helm.invalid":{"username":"helm","password":"secret"}}}`)
 	n := new(Network)
 	first, err := n.RegistryCredentials(t.Context(), "", "docker.invalid")

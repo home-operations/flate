@@ -10,11 +10,12 @@ import (
 	"testing"
 	"time"
 
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/tree"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 func TestAcquire_ArchiveNames(t *testing.T) {
@@ -53,7 +54,12 @@ func TestAcquire_ArchiveNames(t *testing.T) {
 					if err := w.Close(); err != nil {
 						t.Fatal(err)
 					}
-					input, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: tc.name}, Policy{MaxAge: 0}, producer(data.Bytes(), ocispec.Descriptor{}))
+					input, _, _, err := c.Acquire(
+						t.Context(),
+						ArchiveKey{Content: tc.name},
+						Policy{MaxAge: 0},
+						producer(data.Bytes(), ocispec.Descriptor{}),
+					)
 					if !errors.Is(err, tc.wantErr) {
 						t.Fatalf("archive name %q: %v, want %v", tc.entry, err, tc.wantErr)
 					}
@@ -83,7 +89,12 @@ func TestAcquire_TrailingRecordPadding(t *testing.T) {
 			t.Parallel()
 			root := backing.root
 			c := cachetest.New(t, root, New)
-			if _, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: "source-padding"}, Policy{MaxAge: time.Hour}, producer(data, ocispec.Descriptor{})); err != nil {
+			if _, _, _, err := c.Acquire(
+				t.Context(),
+				ArchiveKey{Content: "source-padding"},
+				Policy{MaxAge: time.Hour},
+				producer(data, ocispec.Descriptor{}),
+			); err != nil {
 				t.Fatalf("root=%q: %v", root, err)
 			}
 		})
@@ -128,7 +139,12 @@ func TestAcquire_ArchiveEntryConflicts(t *testing.T) {
 						}
 					}
 					assert.NoError(t, w.Close())
-					input, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: tc.name}, Policy{}, producer(data.Bytes(), ocispec.Descriptor{}))
+					input, _, _, err := c.Acquire(
+						t.Context(),
+						ArchiveKey{Content: tc.name},
+						Policy{},
+						producer(data.Bytes(), ocispec.Descriptor{}),
+					)
 					if !errors.Is(err, tc.want) {
 						t.Fatalf("acquire = %v; want %v", err, tc.want)
 					}

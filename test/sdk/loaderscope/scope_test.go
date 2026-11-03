@@ -27,7 +27,14 @@ spec:
 		t.Fatal(err)
 	}
 	l.Admit(root)
-	rs, ok := s.Get[*manifest.ResourceSet](manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Name: "set", Namespace: "authored"})
+	rs, ok := s.Get[*manifest.ResourceSet](
+		manifest.NamedResource{
+			Group:     manifest.FluxOperatorDomain,
+			Kind:      manifest.KindResourceSet,
+			Name:      "set",
+			Namespace: "authored",
+		},
+	)
 	if !ok {
 		t.Fatal("standalone loader did not admit the ResourceSet")
 	}

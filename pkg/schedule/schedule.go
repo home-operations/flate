@@ -127,7 +127,11 @@ func (s *Scheduler) requeueLocked(n *node, charge bool) {
 	}
 	if charge && n.progressed {
 		if n.redispatches >= maxRedispatches {
-			s.err = manifest.NewError(manifest.ErrFlux, nil, fmt.Sprintf("schedule: %s exceeded %d redispatches; reconcile did not converge", n.id, maxRedispatches))
+			s.err = manifest.NewError(
+				manifest.ErrFlux,
+				nil,
+				fmt.Sprintf("schedule: %s exceeded %d redispatches; reconcile did not converge", n.id, maxRedispatches),
+			)
 			return
 		}
 		n.redispatches++
@@ -267,7 +271,11 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			break
 		}
 		if level == manifest.DrainForce {
-			s.err = manifest.NewError(manifest.ErrFlux, nil, "schedule: unresolved assessment after structural classification")
+			s.err = manifest.NewError(
+				manifest.ErrFlux,
+				nil,
+				"schedule: unresolved assessment after structural classification",
+			)
 			break
 		}
 		level++

@@ -24,16 +24,37 @@ func TestEntryQualification_ReceiptInputs(t *testing.T) {
 			input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}}
 			st := store.New()
 			st.SetArtifact(manifest.BootstrapSourceID, input)
-			app := testutil.KustomizationYAML("applier", "apps", "  path: ./entry\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n")
+			app := testutil.KustomizationYAML(
+				"applier",
+				"apps",
+				"  path: ./entry\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+			)
 			documents, err := manifest.DecodeDocs(strings.NewReader(app), manifest.RequiredDocuments)
 			assert.NoError(t, err)
-			evidence := kustomize.EntryEvidence{Application: documents[0].Document, Receipt: manifest.NewRenderReceipt("entry", func(a, b any) bool { return a == b })}
+			evidence := kustomize.EntryEvidence{
+				Application: documents[0].Document,
+				Receipt:     manifest.NewRenderReceipt("entry", func(a, b any) bool { return a == b }),
+			}
 			q := &entryQualification{trees: testTrees(t), visited: map[manifest.NamedResource]bool{}}
 			for _, name := range []string{"ancestor-chart", "nested-chart"} {
-				id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: name}
-				artifact := &store.SourceArtifact{Kind: id.Kind, FS: fstest.MapFS{}, Key: "same-family", Revision: "same-tag", Content: manifest.Fingerprint(name)}
+				id := manifest.NamedResource{
+					Group:     manifest.SourceDomain,
+					Kind:      manifest.KindOCIRepository,
+					Namespace: "apps",
+					Name:      name,
+				}
+				artifact := &store.SourceArtifact{
+					Kind:     id.Kind,
+					FS:       fstest.MapFS{},
+					Key:      "same-family",
+					Revision: "same-tag",
+					Content:  manifest.Fingerprint(name),
+				}
 				binding := artifact.Input(store.ArtifactContent | store.ArtifactRevision)
-				evidence.Inputs = append(evidence.Inputs, kustomize.EntryInput{Resource: id, Content: artifact.Content, Binding: binding})
+				evidence.Inputs = append(
+					evidence.Inputs,
+					kustomize.EntryInput{Resource: id, Content: artifact.Content, Binding: binding},
+				)
 				q.refresh = append(q.refresh, id)
 			}
 			q.previous = evidence
@@ -48,12 +69,24 @@ func TestEntryQualification_ReceiptInputs(t *testing.T) {
 				if scenario == "ancestor chart changed" && i == 0 {
 					content = manifest.Fingerprint("new chart behind same tag")
 				}
-				st.SetArtifact(expected.Resource, &store.SourceArtifact{Kind: expected.Resource.Kind, FS: fstest.MapFS{}, Key: "same-family", Revision: "same-tag", Content: content})
+				st.SetArtifact(
+					expected.Resource,
+					&store.SourceArtifact{
+						Kind:     expected.Resource.Kind,
+						FS:       fstest.MapFS{},
+						Key:      "same-family",
+						Revision: "same-tag",
+						Content:  content,
+					},
+				)
 				st.UpdateStatus(expected.Resource, store.StatusInfo{Status: store.StatusReady})
 			}
 			if scenario == "acquisition failure" {
 				st.SetArtifact(q.refresh[0], nil)
-				st.UpdateFailure(q.refresh[0], manifest.NewError(manifest.ErrInput, errors.New("acquisition failed"), ""))
+				st.UpdateFailure(
+					q.refresh[0],
+					manifest.NewError(manifest.ErrInput, errors.New("acquisition failed"), ""),
+				)
 			}
 			ctx := t.Context()
 			if scenario == "canceled" {

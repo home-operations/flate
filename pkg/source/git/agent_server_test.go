@@ -28,18 +28,25 @@ func localGitSSH(t *testing.T, root string, allowed ssh.PublicKey) (string, *ato
 	t.Helper()
 	_, host := testSSHIdentity(t)
 	var authenticated atomic.Int32
-	config := &ssh.ServerConfig{PublicKeyCallback: func(_ ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
-		if !bytes.Equal(key.Marshal(), allowed.Marshal()) {
-			return nil, transport.ErrAuthorizationFailed
-		}
-		return nil, nil
-	}}
+	config := &ssh.ServerConfig{
+		PublicKeyCallback: func(_ ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+			if !bytes.Equal(key.Marshal(), allowed.Marshal()) {
+				return nil, transport.ErrAuthorizationFailed
+			}
+			return nil, nil
+		},
+	}
 	config.AddHostKey(host)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	assert.NoError(t, err)
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
-	testutil.WriteFile(t, homeDir, ".ssh/known_hosts", knownhosts.Line([]string{listener.Addr().String()}, host.PublicKey())+"\n")
+	testutil.WriteFile(
+		t,
+		homeDir,
+		".ssh/known_hosts",
+		knownhosts.Line([]string{listener.Addr().String()}, host.PublicKey())+"\n",
+	)
 	endpoint, err := transport.NewEndpoint(filepath.Join(root, ".git"))
 	assert.NoError(t, err)
 	var workers sync.WaitGroup
@@ -71,7 +78,8 @@ func localGitSSH(t *testing.T, root string, allowed ssh.PublicKey) (string, *ato
 						defer channel.Close()
 						for request := range requests {
 							var command struct{ Command string }
-							if request.Type != "exec" || ssh.Unmarshal(request.Payload, &command) != nil || command.Command != fmt.Sprintf("git-upload-pack '%s'", root) {
+							if request.Type != "exec" || ssh.Unmarshal(request.Payload, &command) != nil ||
+								command.Command != fmt.Sprintf("git-upload-pack '%s'", root) {
 								_ = request.Reply(false, nil)
 								continue
 							}
@@ -149,8 +157,14 @@ func TestFetcher_LocalAgentSSH(t *testing.T) {
 			f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
 			artifact, err := f.Fetch(t.Context(), repo, reads, sourcecache.Policy{})
 			if shape == "explicit rejected" {
-				if err == nil || errors.Is(err, manifest.ErrMissingSecret) != (shape == "absent") || artifact != nil || opened.Load() != 0 {
-					t.Fatalf("explicit rejection used ambient: artifact=%v error=%v opened=%d", artifact, err, opened.Load())
+				if err == nil || errors.Is(err, manifest.ErrMissingSecret) != (shape == "absent") || artifact != nil ||
+					opened.Load() != 0 {
+					t.Fatalf(
+						"explicit rejection used ambient: artifact=%v error=%v opened=%d",
+						artifact,
+						err,
+						opened.Load(),
+					)
 				}
 				return
 			}

@@ -41,17 +41,19 @@ type admissionReader interface {
 	ListObjects(string, string) []manifest.BaseManifest
 }
 
-type admissionRole struct{ needed, selected, dirty bool }
-type admissionState struct {
-	ordinal                                   int
-	productions                               []manifest.Production
-	role, walked                              admissionRole
-	consumer, generation, restoration, claim  int
-	changed, seed, direct, rescan             bool
-	walkedOnce, productionsKnown, listed      bool
-	eligible, declarationChanged, staticOwner bool
-	comparingDeclaration                      bool
-}
+type (
+	admissionRole  struct{ needed, selected, dirty bool }
+	admissionState struct {
+		ordinal                                   int
+		productions                               []manifest.Production
+		role, walked                              admissionRole
+		consumer, generation, restoration, claim  int
+		changed, seed, direct, rescan             bool
+		walkedOnce, productionsKnown, listed      bool
+		eligible, declarationChanged, staticOwner bool
+		comparingDeclaration                      bool
+	}
+)
 
 type admissionIdentity struct {
 	id           manifest.NamedResource
@@ -91,10 +93,15 @@ type admissionClosure struct {
 
 // Prepare computes the local declaration and input closure without publishing membership or objects.
 // History is invocation-local borrowed evidence; complete inventories replace only their owner's support.
-func (l *Loader) Prepare(ctx context.Context, incoming store.Child, reads *store.ReadSet, history map[manifest.NamedResource]struct {
-	Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
-	Complete bool
-}) (*Admission, error) {
+func (l *Loader) Prepare(
+	ctx context.Context,
+	incoming store.Child,
+	reads *store.ReadSet,
+	history map[manifest.NamedResource]struct {
+		Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
+		Complete bool
+	},
+) (*Admission, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -218,7 +225,9 @@ func (c *admissionClosure) evaluate(ctx context.Context, reads *store.ReadSet) (
 		if (!role.selected || !role.dirty) && (eligible || role.needed || c.loader.Options.Selection.MatchesScope(id)) {
 			affected, footprintRead = c.affected(id, c.incoming.Obj), true
 		}
-		if (!role.selected || !role.dirty) && (eligible || role.needed || c.loader.Options.Selection.MatchesScope(id)) && (affected || c.changedInput(id, id)) {
+		if (!role.selected || !role.dirty) &&
+			(eligible || role.needed || c.loader.Options.Selection.MatchesScope(id)) &&
+			(affected || c.changedInput(id, id)) {
 			role.needed = true
 			if eligible {
 				role.selected, role.dirty = true, true
@@ -261,7 +270,8 @@ func (c *admissionClosure) evaluate(ctx context.Context, reads *store.ReadSet) (
 			}
 			for target, record := range c.loader.Index.Files() {
 				needed, _, _, _ := c.loader.Options.Filter.Membership(target)
-				if needed && record.BuilderOwner == (manifest.NamedResource{}) && c.coversDeclaration(c.incoming.Obj, target) {
+				if needed && record.BuilderOwner == (manifest.NamedResource{}) &&
+					c.coversDeclaration(c.incoming.Obj, target) {
 					role.needed = true
 					break
 				}
@@ -281,7 +291,8 @@ func (c *admissionClosure) evaluate(ctx context.Context, reads *store.ReadSet) (
 					}
 					object := c.object(reader)
 					for ref := range c.references(reader, object) {
-						if !c.reverse(reader, object, ref) || ref.Group != id.Group || ref.Kind != id.Kind || ref.Namespace != id.Namespace {
+						if !c.reverse(reader, object, ref) || ref.Group != id.Group || ref.Kind != id.Kind ||
+							ref.Namespace != id.Namespace {
 							continue
 						}
 						inputs, err := c.matchingInputs(ref, true)
@@ -348,7 +359,8 @@ func (c *admissionClosure) add(id manifest.NamedResource, role admissionRole) {
 	role.needed, role.selected, role.dirty = true, role.selected || previous.selected, role.dirty || previous.dirty
 	if previous == role && (c.incoming.Obj == nil || c.incoming.Obj.Named() != id) {
 		record := c.record(id)
-		if !c.loader.roots[id] && record.Path == "" && c.loader.candidates[id].Obj == nil || c.objects.GetObject(id) != nil {
+		if !c.loader.roots[id] && record.Path == "" && c.loader.candidates[id].Obj == nil ||
+			c.objects.GetObject(id) != nil {
 			return
 		}
 	}
@@ -397,7 +409,10 @@ func (c *admissionClosure) object(id manifest.NamedResource) manifest.BaseManife
 	return record.Declaration
 }
 
-func (c *admissionClosure) references(id manifest.NamedResource, obj manifest.BaseManifest) iter.Seq[manifest.Reference] {
+func (c *admissionClosure) references(
+	id manifest.NamedResource,
+	obj manifest.BaseManifest,
+) iter.Seq[manifest.Reference] {
 	return func(yield func(manifest.Reference) bool) {
 		if obj != nil {
 			for ref := range manifest.References(obj, manifest.ReferenceRelations) {
@@ -452,7 +467,9 @@ func (c *admissionClosure) source(id manifest.NamedResource) manifest.NamedResou
 		}
 		if located {
 			_, input, _ := c.delta(p.Source)
-			if input == nil || input.LocalPath != occurrence.Declaration.Source && input.OriginPath(input.LocalPath) != occurrence.Declaration.Source {
+			if input == nil ||
+				input.LocalPath != occurrence.Declaration.Source &&
+					input.OriginPath(input.LocalPath) != occurrence.Declaration.Source {
 				continue
 			}
 		}
@@ -470,14 +487,18 @@ func (c *admissionClosure) productions(id manifest.NamedResource) []manifest.Pro
 		} else {
 			productions = c.objects.Productions(id, c.loader.Index)
 		}
-		if !slices.ContainsFunc(productions, func(p manifest.Production) bool { return p.Owner != (manifest.NamedResource{}) && p.Owner != id }) {
+		if !slices.ContainsFunc(
+			productions,
+			func(p manifest.Production) bool { return p.Owner != (manifest.NamedResource{}) && p.Owner != id },
+		) {
 			record, _ := c.loader.Index.Lookup(id)
 			extended := false
 			for i := range c.comparisonSources().names {
 				evidence := c.comparisons.names[i]
 				delta := evidence.changes
 				for dependency, input := range delta.Inputs(id) {
-					if dependency.Group != id.Group || dependency.Kind != id.Kind || dependency.Name != id.Name || dependency.Namespace != "" && id.Namespace != "" && dependency.Namespace != id.Namespace {
+					if dependency.Group != id.Group || dependency.Kind != id.Kind || dependency.Name != id.Name ||
+						dependency.Namespace != "" && id.Namespace != "" && dependency.Namespace != id.Namespace {
 						continue
 					}
 					if len(input.Productions) == 0 {
@@ -488,12 +509,17 @@ func (c *admissionClosure) productions(id manifest.NamedResource) []manifest.Pro
 					}
 					for _, production := range input.Productions {
 						owner := production.Owner
-						if record.File != "" && record.File != production.File || !c.loader.IsFileIndexed(owner) && c.objects.GetObject(owner) == nil {
+						if record.File != "" && record.File != production.File ||
+							!c.loader.IsFileIndexed(owner) && c.objects.GetObject(owner) == nil {
 							continue
 						}
 						if !slices.Contains(productions, production) {
 							if !extended {
-								next := make([]manifest.Production, len(productions), len(productions)+len(input.Productions))
+								next := make(
+									[]manifest.Production,
+									len(productions),
+									len(productions)+len(input.Productions),
+								)
 								copy(next, productions)
 								productions, extended = next, true
 							}
@@ -519,7 +545,10 @@ func (c *admissionClosure) productions(id manifest.NamedResource) []manifest.Pro
 	}
 	owned := slices.ContainsFunc(productions, func(p manifest.Production) bool { return c.replace[p.Owner] })
 	if owned {
-		productions = slices.DeleteFunc(slices.Clone(productions), func(p manifest.Production) bool { return c.replace[p.Owner] })
+		productions = slices.DeleteFunc(
+			slices.Clone(productions),
+			func(p manifest.Production) bool { return c.replace[p.Owner] },
+		)
 	}
 	for _, records := range c.accepted {
 		if c.incoming.Obj != nil && c.incoming.Obj.Named() == id {
@@ -565,7 +594,12 @@ func (c *admissionClosure) bindSource(evidence *admissionSource) *admissionSourc
 	declaration := c.objects.GetObject(source)
 	if bindings := c.loader.bindings.Load(); bindings != nil {
 		cached := (*bindings)[source]
-		if cached.bound && cached.comparison == c.loader.Options.Changes && cached.changes == delta && cached.snapshots == snapshots && cached.declarations == declarations && cached.input == input && cached.declaration == declaration && (input == nil || input.Reads.Valid()) {
+		if cached.bound && cached.comparison == c.loader.Options.Changes && cached.changes == delta &&
+			cached.snapshots == snapshots &&
+			cached.declarations == declarations &&
+			cached.input == input &&
+			cached.declaration == declaration &&
+			(input == nil || input.Reads.Valid()) {
 			*evidence = cached
 			return evidence
 		}
@@ -585,7 +619,12 @@ func (c *admissionClosure) bindSource(evidence *admissionSource) *admissionSourc
 		}
 		bound := snapshot == input
 		if c.loader.frozen {
-			bound = c.loader.sideKnown && manifest.TreeSide(side) == c.loader.side && evidence.initial == input && snapshot.Input(store.ArtifactContent|store.ArtifactRevision) == input.Input(store.ArtifactContent|store.ArtifactRevision)
+			bound = c.loader.sideKnown && manifest.TreeSide(side) == c.loader.side && evidence.initial == input &&
+				snapshot.Input(
+					store.ArtifactContent|store.ArtifactRevision,
+				) == input.Input(
+					store.ArtifactContent|store.ArtifactRevision,
+				)
 		}
 		if bound && input.Reads.Valid() {
 			evidence.paired = true
@@ -633,14 +672,19 @@ func (c *admissionClosure) inputsChanged(source manifest.NamedResource, inputs [
 	return false
 }
 
-func (c *admissionClosure) outputChanged(id manifest.NamedResource, ref manifest.Reference, obj manifest.BaseManifest) (bool, bool) {
+func (c *admissionClosure) outputChanged(
+	id manifest.NamedResource,
+	ref manifest.Reference,
+	obj manifest.BaseManifest,
+) (bool, bool) {
 	source := c.source(id)
 	_, _, paired := c.delta(source)
 	if !paired || !c.loader.sideKnown {
 		return false, false
 	}
 	record, _ := c.loader.Index.Lookup(id)
-	if prepared := record.Declaration; prepared != nil && obj != prepared && record.Builder != "" && manifest.Equal(obj, prepared) {
+	if prepared := record.Declaration; prepared != nil && obj != prepared && record.Builder != "" &&
+		manifest.Equal(obj, prepared) {
 		child := c.loader.preparedObject(id)
 		var doc map[string]any
 		if c.incoming.Obj != nil && c.incoming.Obj.Named() == id && c.incoming.Doc != nil {
@@ -659,7 +703,11 @@ func (c *admissionClosure) outputChanged(id manifest.NamedResource, ref manifest
 		if input == nil {
 			return false, false
 		}
-		if _, known := c.outputChanged(ref.NamedResource, manifest.Reference{NamedResource: ref.NamedResource}, input); !known {
+		if _, known := c.outputChanged(
+			ref.NamedResource,
+			manifest.Reference{NamedResource: ref.NamedResource},
+			input,
+		); !known {
 			return false, false
 		}
 	}
@@ -692,7 +740,9 @@ func (c *admissionClosure) affected(id manifest.NamedResource, obj manifest.Base
 	for _, production := range c.productions(id) {
 		_, indexed := c.coordinates(production)
 		fileOwned = fileOwned || indexed == record.File
-		if production.Declaration == (manifest.NamedResource{}) && (production.Materializer(id) != (manifest.NamedResource{}) || production.Owner == (manifest.NamedResource{}) || manifest.Resolve(production.Authored, id.Namespace, "") == id) && c.changedProduction(production) {
+		if production.Declaration == (manifest.NamedResource{}) &&
+			(production.Materializer(id) != (manifest.NamedResource{}) || production.Owner == (manifest.NamedResource{}) || manifest.Resolve(production.Authored, id.Namespace, "") == id) &&
+			c.changedProduction(production) {
 			direct = true
 		}
 	}
@@ -772,7 +822,10 @@ func (c *admissionClosure) affected(id manifest.NamedResource, obj manifest.Base
 			for _, file := range files {
 				base := cmp.Or(root, ".")
 				if !paired && input != nil {
-					relative, err := filepath.Rel(c.loader.SourceRoot, input.OriginPath(filepath.Join(input.LocalPath, filepath.FromSlash(root))))
+					relative, err := filepath.Rel(
+						c.loader.SourceRoot,
+						input.OriginPath(filepath.Join(input.LocalPath, filepath.FromSlash(root))),
+					)
 					if err != nil {
 						continue
 					}
@@ -816,7 +869,10 @@ func (c *admissionClosure) affected(id manifest.NamedResource, obj manifest.Base
 	return false
 }
 
-func (c *admissionClosure) start(ctx context.Context, materializers func(materializerDemand, manifest.NamedResource) bool) error {
+func (c *admissionClosure) start(
+	ctx context.Context,
+	materializers func(materializerDemand, manifest.NamedResource) bool,
+) error {
 	c.collecting = true
 	c.queue = c.queue[:0]
 	for _, root := range c.roots {
@@ -824,19 +880,28 @@ func (c *admissionClosure) start(ctx context.Context, materializers func(materia
 		if err != nil {
 			return err
 		}
-		matches := slices.ContainsFunc(occurrences, func(o Occurrence) bool { return c.loader.Options.Selection.Matches(o.Identity) })
+		matches := slices.ContainsFunc(
+			occurrences,
+			func(o Occurrence) bool { return c.loader.Options.Selection.Matches(o.Identity) },
+		)
 		if !matches {
 			delta, _, _ := c.delta(manifest.BootstrapSourceID)
 			for id, input := range delta.Inputs(manifest.NamedResource{}) {
-				if c.loader.Options.Selection.Matches(id) && slices.ContainsFunc(input.Declarations, func(file string) bool {
-					return safepath.Contains(c.loader.SourceRoot, filepath.Join(c.loader.SourceRoot, root)) && safepath.Contains(filepath.Join(c.loader.SourceRoot, root), filepath.Join(c.loader.SourceRoot, filepath.FromSlash(file)))
-				}) {
+				if c.loader.Options.Selection.Matches(id) &&
+					slices.ContainsFunc(input.Declarations, func(file string) bool {
+						return safepath.Contains(c.loader.SourceRoot, filepath.Join(c.loader.SourceRoot, root)) &&
+							safepath.Contains(
+								filepath.Join(c.loader.SourceRoot, root),
+								filepath.Join(c.loader.SourceRoot, filepath.FromSlash(file)),
+							)
+					}) {
 					matches = true
 					break
 				}
 			}
 		}
-		entry := filepath.Join(c.loader.SourceRoot, filepath.FromSlash(root)) == c.loader.entryPath && c.loader.Options.Selection.Matches(manifest.NamedResource{})
+		entry := filepath.Join(c.loader.SourceRoot, filepath.FromSlash(root)) == c.loader.entryPath &&
+			c.loader.Options.Selection.Matches(manifest.NamedResource{})
 		if !matches && !entry {
 			continue
 		}
@@ -965,7 +1030,8 @@ func (c *admissionClosure) start(ctx context.Context, materializers func(materia
 				link(input, id)
 			}
 		}
-		if parent := record.Parent; parent != (manifest.NamedResource{}) && parent != id && !parent.ReportHidden() && !c.unchangedDeclaration(id, parent, obj) {
+		if parent := record.Parent; parent != (manifest.NamedResource{}) && parent != id && !parent.ReportHidden() &&
+			!c.unchangedDeclaration(id, parent, obj) {
 			link(parent, id)
 		}
 		productions := c.productions(id)
@@ -980,29 +1046,38 @@ func (c *admissionClosure) start(ctx context.Context, materializers func(materia
 				}
 				owner = p.Declaration
 				if c.changedProduction(p) {
-					seeds = append(seeds, seed{target: owner, origin: id, generation: c.states[id].generation, requiresConsumer: true})
+					seeds = append(
+						seeds,
+						seed{target: owner, origin: id, generation: c.states[id].generation, requiresConsumer: true},
+					)
 				}
 			}
-			if owner != id && owner != (manifest.NamedResource{}) && !owner.ReportHidden() && !c.unchangedDeclaration(id, p.Owner, obj) {
+			if owner != id && owner != (manifest.NamedResource{}) && !owner.ReportHidden() &&
+				!c.unchangedDeclaration(id, p.Owner, obj) {
 				link(owner, id)
 			}
 		}
 		state = c.states[id]
 		state.direct = changed
 		state.eligible = c.loader.Options.Selection.Matches(id)
-		state.declarationChanged = state.eligible && !changed && (c.fileChanged(c.source(id), record.File) || c.inputsChanged(c.source(id), record.Inputs))
+		state.declarationChanged = state.eligible && !changed &&
+			(c.fileChanged(c.source(id), record.File) || c.inputsChanged(c.source(id), record.Inputs))
 		for next := state.claim; next != 0; next = claims[next-1].next {
 			claim := claims[next-1]
 			if claim.ancestor {
 				continue
 			}
 			for source := range c.sources(id) {
-				state.direct = state.direct || c.changedClaim(manifest.FileReader{Reader: id, Source: source}, claim.file)
+				state.direct = state.direct ||
+					c.changedClaim(manifest.FileReader{Reader: id, Source: source}, claim.file)
 			}
 		}
 		c.states[id] = state
 		for i, target := range c.loader.Options.Selection.Roots {
-			if !known[i] && id.Group == target.Group && id.Kind == target.Kind && (target.Name == "" || id.Name == target.Name) && (target.Namespace == "" || id.Namespace == target.Namespace) && (c.loader.IsFileIndexed(id) || obj != nil || len(productions) != 0) {
+			if !known[i] && id.Group == target.Group && id.Kind == target.Kind &&
+				(target.Name == "" || id.Name == target.Name) &&
+				(target.Namespace == "" || id.Namespace == target.Namespace) &&
+				(c.loader.IsFileIndexed(id) || obj != nil || len(productions) != 0) {
 				known[i] = true
 			}
 		}
@@ -1232,7 +1307,8 @@ func (c *admissionClosure) independent(id manifest.NamedResource, owners func() 
 			root.Namespace = ""
 		}
 	}
-	if !c.loader.AdmitsRoot(c.loader.CatalogObject(root), record.Path) || record.Parent != (manifest.NamedResource{}) && record.Parent != id {
+	if !c.loader.AdmitsRoot(c.loader.CatalogObject(root), record.Path) ||
+		record.Parent != (manifest.NamedResource{}) && record.Parent != id {
 		return false
 	}
 	c.productions(id)
@@ -1268,7 +1344,8 @@ func (c *admissionClosure) coversDeclaration(owner manifest.BaseManifest, id man
 		delta, _, _ := c.delta(source)
 		root := input.OriginPath(filepath.Join(input.LocalPath, dir))
 		for dependency, changed := range delta.Inputs(id) {
-			if dependency.Group != id.Group || dependency.Kind != id.Kind || dependency.Name != id.Name || dependency.Namespace != "" && id.Namespace != "" && dependency.Namespace != id.Namespace {
+			if dependency.Group != id.Group || dependency.Kind != id.Kind || dependency.Name != id.Name ||
+				dependency.Namespace != "" && id.Namespace != "" && dependency.Namespace != id.Namespace {
 				continue
 			}
 			for _, declaration := range changed.Declarations {
@@ -1292,7 +1369,9 @@ func (c *admissionClosure) hydrate(ctx context.Context, id manifest.NamedResourc
 	blocked := false
 	for _, root := range c.roots {
 		relative := filepath.ToSlash(root)
-		if record.File == path.Join(relative, "kustomization.yaml") || strings.HasPrefix(record.File, strings.TrimSuffix(relative, "/")+"/") || relative == "." {
+		if record.File == path.Join(relative, "kustomization.yaml") ||
+			strings.HasPrefix(record.File, strings.TrimSuffix(relative, "/")+"/") ||
+			relative == "." {
 			c.proposal.Blocked = append(c.proposal.Blocked, root)
 			blocked = true
 		}
@@ -1335,7 +1414,10 @@ func (c *admissionClosure) hydrate(ctx context.Context, id manifest.NamedResourc
 	return obj, nil
 }
 
-func (c *admissionClosure) walk(ctx context.Context, materializers func(materializerDemand, manifest.NamedResource) bool) error {
+func (c *admissionClosure) walk(
+	ctx context.Context,
+	materializers func(materializerDemand, manifest.NamedResource) bool,
+) error {
 	if len(c.queue) == 0 {
 		return nil
 	}
@@ -1371,7 +1453,8 @@ func (c *admissionClosure) walk(ctx context.Context, materializers func(material
 		record := c.record(id)
 
 		independent := c.independent(id, owned)
-		materialized := record.Parent != (manifest.NamedResource{}) && record.Parent != id || record.BuilderOwner != (manifest.NamedResource{}) && record.BuilderOwner != id
+		materialized := record.Parent != (manifest.NamedResource{}) && record.Parent != id ||
+			record.BuilderOwner != (manifest.NamedResource{}) && record.BuilderOwner != id
 		if !independent || !record.Parent.ReportHidden() {
 			c.add(record.Parent, admissionRole{needed: true, dirty: c.states[record.Parent].changed})
 		}
@@ -1387,17 +1470,31 @@ func (c *admissionClosure) walk(ctx context.Context, materializers func(material
 			if independent && owner.ReportHidden() && owner == record.BuilderOwner {
 				owner = manifest.NamedResource{}
 			}
-			if owner == (manifest.NamedResource{}) && !independent && p.Declaration == (manifest.NamedResource{}) && p.Authored != (manifest.NamedResource{}) && (c.incoming.Obj == nil || c.incoming.Obj.Named() != id) && c.objects.GetDeclaration(id) == nil {
+			if owner == (manifest.NamedResource{}) && !independent && p.Declaration == (manifest.NamedResource{}) &&
+				p.Authored != (manifest.NamedResource{}) &&
+				(c.incoming.Obj == nil || c.incoming.Obj.Named() != id) &&
+				c.objects.GetDeclaration(id) == nil {
 				owner = p.Owner
 			}
-			materialized = materialized || p.Owner != (manifest.NamedResource{}) && p.Owner != id || p.Declaration != (manifest.NamedResource{}) && p.Declaration != id
+			materialized = materialized || p.Owner != (manifest.NamedResource{}) && p.Owner != id ||
+				p.Declaration != (manifest.NamedResource{}) && p.Declaration != id
 			if independent && c.incoming.Obj != nil && c.incoming.Obj.Named() == id {
 				needed, _, _, _ := c.loader.Options.Filter.Membership(id)
-				materialized = materialized || needed && p.Owner == (manifest.NamedResource{}) && p.Declaration == (manifest.NamedResource{}) &&
-					p.Path == record.Path && p.File == record.File && p.Source == c.source(id) && manifest.Resolve(p.Authored, id.Namespace, "") == id
+				materialized = materialized ||
+					needed && p.Owner == (manifest.NamedResource{}) && p.Declaration == (manifest.NamedResource{}) &&
+						p.Path == record.Path && p.File == record.File && p.Source == c.source(id) && manifest.Resolve(p.Authored, id.Namespace, "") == id
 			}
-			c.add(owner, admissionRole{needed: true, dirty: c.states[owner].changed || role.dirty && c.role(owner).selected})
-			c.add(p.Declaration, admissionRole{needed: true, dirty: c.states[p.Declaration].changed || role.dirty && c.role(p.Declaration).selected})
+			c.add(
+				owner,
+				admissionRole{needed: true, dirty: c.states[owner].changed || role.dirty && c.role(owner).selected},
+			)
+			c.add(
+				p.Declaration,
+				admissionRole{
+					needed: true,
+					dirty:  c.states[p.Declaration].changed || role.dirty && c.role(p.Declaration).selected,
+				},
+			)
 			if owner != (manifest.NamedResource{}) && filepath.IsAbs(p.Path) {
 				_, file := c.coordinates(p)
 				for reader := range c.loader.Index.ReadersOfFile(file) {
@@ -1432,7 +1529,8 @@ func (c *admissionClosure) walk(ctx context.Context, materializers func(material
 			}
 		}
 
-		if record.Path != "" && !materialized && (role.selected && (c.fileChanged(c.source(id), record.File) || id.Namespace == "" && id.KindInfo().Namespaced() && c.affected(id, obj)) || (role.selected || pathBearing) && !independent && c.objects.GetDeclaration(id) == nil) {
+		if record.Path != "" && !materialized &&
+			(role.selected && (c.fileChanged(c.source(id), record.File) || id.Namespace == "" && id.KindInfo().Namespaced() && c.affected(id, obj)) || (role.selected || pathBearing) && !independent && c.objects.GetDeclaration(id) == nil) {
 			target := id
 			if materializers(materializerDemand{target: target, source: c.declarationSource(id)}, id) {
 				if occurrence, ok := c.loader.occurrence(id); ok {
@@ -1441,7 +1539,8 @@ func (c *admissionClosure) walk(ctx context.Context, materializers func(material
 				}
 			}
 		}
-		if independent && (c.incoming.Obj == nil || c.incoming.Obj.Named() != id) && c.children[id].Obj == nil && c.objects.GetObject(id) == nil {
+		if independent && (c.incoming.Obj == nil || c.incoming.Obj.Named() != id) && c.children[id].Obj == nil &&
+			c.objects.GetObject(id) == nil {
 			var err error
 			obj, err = c.hydrate(ctx, id)
 			if err != nil {
@@ -1473,13 +1572,20 @@ func (c *admissionClosure) walk(ctx context.Context, materializers func(material
 			}
 		}
 		for ref := range c.references(id, obj) {
-			if slices.ContainsFunc(generated, func(child manifest.BaseManifest) bool { return child.Named() == ref.NamedResource }) || slices.ContainsFunc(generatedTargets, func(target manifest.ProducerTarget) bool {
-				return manifest.Resolve(target.NamedResource, "", id.Namespace) == ref.NamedResource
-			}) {
+			if slices.ContainsFunc(
+				generated,
+				func(child manifest.BaseManifest) bool { return child.Named() == ref.NamedResource },
+			) ||
+				slices.ContainsFunc(generatedTargets, func(target manifest.ProducerTarget) bool {
+					return manifest.Resolve(target.NamedResource, "", id.Namespace) == ref.NamedResource
+				}) {
 				continue
 			}
 			inputRecord, _ := c.loader.Index.Lookup(ref.NamedResource)
-			if slices.ContainsFunc(inputRecord.Productions, func(p manifest.Production) bool { return p.Owner == id && p.Declaration == id }) {
+			if slices.ContainsFunc(
+				inputRecord.Productions,
+				func(p manifest.Production) bool { return p.Owner == id && p.Declaration == id },
+			) {
 				continue
 			}
 			if ref.Ordering {
@@ -1489,7 +1595,10 @@ func (c *admissionClosure) walk(ctx context.Context, materializers func(material
 					continue
 				}
 				if !indexed && object == nil {
-					materializers(materializerDemand{target: ref.NamedResource, source: c.declarationSource(id), ordering: true}, id)
+					materializers(
+						materializerDemand{target: ref.NamedResource, source: c.declarationSource(id), ordering: true},
+						id,
+					)
 				}
 			} else if !ref.ContentInput() && ref.Gate == 0 && ref.Use != "materializer" {
 				continue
@@ -1513,15 +1622,26 @@ func (c *admissionClosure) walk(ctx context.Context, materializers func(material
 			wasNeeded := c.role(ref.NamedResource).needed
 			c.add(ref.NamedResource, admissionRole{needed: true, dirty: c.states[ref.NamedResource].changed})
 			if !ref.Ordering && (!wasNeeded || !ref.Optional && !ref.Acquisition && ref.ContentInput()) {
-				if _, indexed := c.loader.Index.Lookup(ref.NamedResource); !indexed && !c.loader.IsFileIndexed(ref.NamedResource) && c.object(ref.NamedResource) == nil && c.objects.GetArtifact(ref.NamedResource, store.ArtifactContent) == nil && c.objects.ReferenceFacts(ref.NamedResource, c.loader.Index).Supplied == nil {
+				if _, indexed := c.loader.Index.Lookup(
+					ref.NamedResource,
+				); !indexed && !c.loader.IsFileIndexed(ref.NamedResource) && c.object(ref.NamedResource) == nil && c.objects.GetArtifact(ref.NamedResource, store.ArtifactContent) == nil &&
+					c.objects.ReferenceFacts(ref.NamedResource, c.loader.Index).Supplied == nil {
 					requiredContent := !ref.Optional && !ref.Acquisition && ref.ContentInput()
-					allowedMissing := ref.Use == "valuesFrom" && slices.Contains(c.loader.Options.AllowMissingKinds, ref.Kind)
+					allowedMissing := ref.Use == "valuesFrom" &&
+						slices.Contains(c.loader.Options.AllowMissingKinds, ref.Kind)
 					required := requiredContent && !allowedMissing
 					if required {
 						input := values.NewInput(c.objects.ReferenceFacts(ref.NamedResource, c.loader.Index), id)
 						required = input.Data == nil && !input.AllowsAbsence() && !c.changedInput(id, ref.NamedResource)
 					}
-					materializers(materializerDemand{target: ref.NamedResource, source: c.declarationSource(id), required: required}, id)
+					materializers(
+						materializerDemand{
+							target:   ref.NamedResource,
+							source:   c.declarationSource(id),
+							required: required,
+						},
+						id,
+					)
 				}
 			}
 		}
@@ -1594,7 +1714,8 @@ func (c *admissionClosure) materializerCandidates(ordering bool) [2][]Occurrence
 	}
 	for _, object := range objects {
 		id := object.Named()
-		if _, indexed := c.loader.locations[id]; !ordering && (indexed || c.loader.candidates[id].Obj != nil && c.loader.Index.Records[id].Builder != "") {
+		if _, indexed := c.loader.locations[id]; !ordering &&
+			(indexed || c.loader.candidates[id].Obj != nil && c.loader.Index.Records[id].Builder != "") {
 			continue
 		}
 		if _, _, pathBearing := object.SourcePath(); !pathBearing && !ordering {
@@ -1627,7 +1748,11 @@ func (c *admissionClosure) materializerCandidates(ordering bool) [2][]Occurrence
 	return candidates
 }
 
-func (c *admissionClosure) materializers(demand materializerDemand, consumer manifest.NamedResource, snapshot [2][]Occurrence) bool {
+func (c *admissionClosure) materializers(
+	demand materializerDemand,
+	consumer manifest.NamedResource,
+	snapshot [2][]Occurrence,
+) bool {
 	demand.consumer = consumer
 	if pending, searched := c.searched[demand]; searched {
 		return pending
@@ -1648,7 +1773,8 @@ func (c *admissionClosure) materializers(demand materializerDemand, consumer man
 		}
 	}
 	for owner := range owners {
-		if owner == (manifest.NamedResource{}) || owner == consumer || !c.role(owner).needed || c.object(owner) == nil && !c.loader.IsFileIndexed(owner) {
+		if owner == (manifest.NamedResource{}) || owner == consumer || !c.role(owner).needed ||
+			c.object(owner) == nil && !c.loader.IsFileIndexed(owner) {
 			continue
 		}
 		status, _ := c.objects.GetStatus(owner)
@@ -1666,7 +1792,9 @@ func (c *admissionClosure) materializers(demand materializerDemand, consumer man
 		return false
 	}
 	matches := func(id manifest.NamedResource) bool {
-		return (target.Kind == "" || id.Group == target.Group && id.Kind == target.Kind) && (target.Namespace == "" || id.Namespace == "" || id.Namespace == target.Namespace) && (target.Name == "" || id.Name == target.Name)
+		return (target.Kind == "" || id.Group == target.Group && id.Kind == target.Kind) &&
+			(target.Namespace == "" || id.Namespace == "" || id.Namespace == target.Namespace) &&
+			(target.Name == "" || id.Name == target.Name)
 	}
 
 	candidates := func(yield func(manifest.NamedResource, Occurrence) bool) {
@@ -1680,7 +1808,8 @@ func (c *admissionClosure) materializers(demand materializerDemand, consumer man
 		}
 		for _, occurrence := range snapshot[1] {
 			id := occurrence.Identity
-			if _, indexed := c.loader.locations[id]; !demand.ordering && (indexed || c.loader.candidates[id].Obj != nil && c.loader.Index.Records[id].Builder != "") {
+			if _, indexed := c.loader.locations[id]; !demand.ordering &&
+				(indexed || c.loader.candidates[id].Obj != nil && c.loader.Index.Records[id].Builder != "") {
 				continue
 			}
 			_, _, pathBearing := occurrence.SourcePath()
@@ -1688,7 +1817,11 @@ func (c *admissionClosure) materializers(demand materializerDemand, consumer man
 			if !pathBearing && !demand.ordering || policy == nil || !policy.MatchesNamespace(target) {
 				continue
 			}
-			if demand.ordering && !slices.ContainsFunc(c.productions(id), func(p manifest.Production) bool { return p.Owner != (manifest.NamedResource{}) }) {
+			if demand.ordering &&
+				!slices.ContainsFunc(
+					c.productions(id),
+					func(p manifest.Production) bool { return p.Owner != (manifest.NamedResource{}) },
+				) {
 				continue
 			}
 			if pathBearing {
@@ -1705,9 +1838,10 @@ func (c *admissionClosure) materializers(demand materializerDemand, consumer man
 		if id == consumer || id == target || demand.source != "" && demand.source != occurrence.Declaration.Source {
 			continue
 		}
-		if consumer != (manifest.NamedResource{}) && slices.ContainsFunc(c.productions(id), func(p manifest.Production) bool {
-			return p.Owner == consumer || p.Declaration == consumer
-		}) {
+		if consumer != (manifest.NamedResource{}) &&
+			slices.ContainsFunc(c.productions(id), func(p manifest.Production) bool {
+				return p.Owner == consumer || p.Declaration == consumer
+			}) {
 			continue
 		}
 		facts := occurrence.facts
@@ -1719,11 +1853,13 @@ func (c *admissionClosure) materializers(demand materializerDemand, consumer man
 				source = manifest.BootstrapSourceID
 			}
 			_, input, _ := c.delta(source)
-			if input == nil || input.OriginPath(input.LocalPath) != demand.source || demand.ordering && c.loader.documents.cache[filepath.Join(input.LocalPath, directory)].traversed {
+			if input == nil || input.OriginPath(input.LocalPath) != demand.source ||
+				demand.ordering && c.loader.documents.cache[filepath.Join(input.LocalPath, directory)].traversed {
 				continue
 			}
 		}
-		if target.Kind == "" && facts.hasPath && !slices.ContainsFunc(facts.roots, manifest.HasEnvsubstReference) && !c.coversDeclaration(c.object(id), consumer) {
+		if target.Kind == "" && facts.hasPath && !slices.ContainsFunc(facts.roots, manifest.HasEnvsubstReference) &&
+			!c.coversDeclaration(c.object(id), consumer) {
 			continue
 		}
 		match := c.coversDeclaration(facts.catalog, target)
@@ -1732,11 +1868,15 @@ func (c *admissionClosure) materializers(demand materializerDemand, consumer man
 			targets = append(slices.Clone(targets), extra...)
 		}
 		if facts.needsCandidates {
-			targets = append(slices.Clone(targets), manifest.ProducerTargets(facts.catalog.WithNamespace(id.Namespace), target)...)
+			targets = append(
+				slices.Clone(targets),
+				manifest.ProducerTargets(facts.catalog.WithNamespace(id.Namespace), target)...)
 		}
 		for _, produced := range targets {
 			ref := produced.NamedResource
-			if (target.Kind == "" || ref.Group == target.Group && ref.Kind == target.Kind) && (target.Name == "" || ref.Name == target.Name || manifest.HasEnvsubstReference(ref.Name)) && (target.Namespace == "" || ref.Namespace == target.Namespace || ref.Namespace == "" || manifest.HasEnvsubstReference(ref.Namespace)) {
+			if (target.Kind == "" || ref.Group == target.Group && ref.Kind == target.Kind) &&
+				(target.Name == "" || ref.Name == target.Name || manifest.HasEnvsubstReference(ref.Name)) &&
+				(target.Namespace == "" || ref.Namespace == target.Namespace || ref.Namespace == "" || manifest.HasEnvsubstReference(ref.Namespace)) {
 				match = true
 				break
 			}
@@ -1745,7 +1885,8 @@ func (c *admissionClosure) materializers(demand materializerDemand, consumer man
 			if demand.required && target.Name != "" && facts.opaque(c.loader.templateTargets[id]) && !c.replace[id] {
 				status, _ := c.objects.GetStatus(id)
 				output, _ := c.objects.GetArtifact(id, store.ArtifactContent).(*store.Emission)
-				if status.Outcome() != store.OutcomeFailed && (output == nil || !output.Complete || !output.OutputReads.Valid()) {
+				if status.Outcome() != store.OutcomeFailed &&
+					(output == nil || !output.Complete || !output.OutputReads.Valid()) {
 					opaque = append(opaque, occurrence)
 				}
 			}
@@ -1764,7 +1905,11 @@ func (c *admissionClosure) materializers(demand materializerDemand, consumer man
 		if output, ok := c.objects.GetArtifact(id, store.ArtifactContent).(*store.Emission); ok && output.Complete {
 			status, _ := c.objects.GetStatus(id)
 			complete = status.Outcome() == store.OutcomePassed
-			if status.Outcome() == store.OutcomePassed && !slices.ContainsFunc(output.Children, func(child store.Child) bool { return matches(child.Obj.Named()) }) {
+			if status.Outcome() == store.OutcomePassed &&
+				!slices.ContainsFunc(
+					output.Children,
+					func(child store.Child) bool { return matches(child.Obj.Named()) },
+				) {
 				continue
 			}
 		}
@@ -1813,7 +1958,17 @@ func (c *admissionClosure) materializers(demand materializerDemand, consumer man
 				pending = true
 			}
 			if len(admitted) != 0 {
-				slog.Debug("loader: required input opaque tier", "consumer", consumer, "input", target, "tier", tier+1, "producers", admitted)
+				slog.Debug(
+					"loader: required input opaque tier",
+					"consumer",
+					consumer,
+					"input",
+					target,
+					"tier",
+					tier+1,
+					"producers",
+					admitted,
+				)
 			}
 			if pending {
 				break
@@ -1840,7 +1995,8 @@ func (c *admissionClosure) matchingInputs(ref manifest.Reference, reverse bool) 
 	var inputs []manifest.NamedResource
 	target := ref.NamedResource
 	matches := func(source, id manifest.NamedResource) {
-		if id.Group != target.Group || id.Kind != target.Kind || id.Namespace != target.Namespace || slices.Contains(inputs, id) {
+		if id.Group != target.Group || id.Kind != target.Kind || id.Namespace != target.Namespace ||
+			slices.Contains(inputs, id) {
 			return
 		}
 		object := c.object(id)
@@ -1931,7 +2087,11 @@ func (c *admissionClosure) unchangedDeclaration(id, owner manifest.NamedResource
 		return false
 	}
 	record := c.record(id)
-	if changed, known := c.declarationChanged(id, object); known && !changed && !c.inputsChanged(manifest.BootstrapSourceID, record.Inputs) {
+	if changed, known := c.declarationChanged(
+		id,
+		object,
+	); known && !changed &&
+		!c.inputsChanged(manifest.BootstrapSourceID, record.Inputs) {
 		return remember()
 	}
 	declaration := id
@@ -1952,7 +2112,8 @@ func (c *admissionClosure) unchangedDeclaration(id, owner manifest.NamedResource
 		if origin == (manifest.NamedResource{}) || origin == id {
 			origin = p.Authored
 		}
-		if origin == (manifest.NamedResource{}) || origin == id || declaration != (manifest.NamedResource{}) && declaration != origin {
+		if origin == (manifest.NamedResource{}) || origin == id ||
+			declaration != (manifest.NamedResource{}) && declaration != origin {
 			declaration = manifest.NamedResource{}
 			break
 		}
@@ -1964,16 +2125,26 @@ func (c *admissionClosure) unchangedDeclaration(id, owner manifest.NamedResource
 		ownerFile = c.loader.fileCoordinate(filepath.Join(occurrence.Declaration.Source, occurrence.Declaration.File))
 	}
 	declared := c.record(declaration)
-	if occurrence, located := c.loader.occurrence(declaration); located && owner != (manifest.NamedResource{}) && owned && declared.File != "" && declared.File != declared.Builder {
+	if occurrence, located := c.loader.occurrence(
+		declaration,
+	); located && owner != (manifest.NamedResource{}) && owned && declared.File != "" &&
+		declared.File != declared.Builder {
 		source := c.source(declaration)
 		delta, input, _ := c.delta(source)
-		stable := ownerRecord.File != ownerRecord.Builder && delta != nil && input != nil && input.FS != nil && input.Reads.Valid() && input.OriginPath(input.LocalPath) == occurrence.Declaration.Source && !c.fileChanged(source, declared.File) && !c.fileChanged(c.source(owner), ownerFile) && !slices.ContainsFunc(c.productions(owner), c.changedProduction)
+		stable := ownerRecord.File != ownerRecord.Builder && delta != nil && input != nil && input.FS != nil &&
+			input.Reads.Valid() &&
+			input.OriginPath(input.LocalPath) == occurrence.Declaration.Source &&
+			!c.fileChanged(source, declared.File) &&
+			!c.fileChanged(c.source(owner), ownerFile) &&
+			!slices.ContainsFunc(c.productions(owner), c.changedProduction)
 		if stable {
 			for ref := range c.references(owner, c.object(owner)) {
 				if !c.reverse(owner, c.object(owner), ref) {
 					continue
 				}
-				if c.changedInput(owner, ref.NamedResource) || c.affected(ref.NamedResource, c.object(ref.NamedResource)) || !ref.Artifact && c.role(ref.NamedResource).dirty {
+				if c.changedInput(owner, ref.NamedResource) ||
+					c.affected(ref.NamedResource, c.object(ref.NamedResource)) ||
+					!ref.Artifact && c.role(ref.NamedResource).dirty {
 					stable = false
 					break
 				}
@@ -2006,7 +2177,10 @@ func (c *admissionClosure) unchangedDeclaration(id, owner manifest.NamedResource
 			return remember()
 		}
 	}
-	if (record.BuilderOwner == (manifest.NamedResource{}) || owner == record.BuilderOwner) && record.File != record.Builder && record.Declaration != nil && manifest.Equal(record.Declaration, object) {
+	if (record.BuilderOwner == (manifest.NamedResource{}) || owner == record.BuilderOwner) &&
+		record.File != record.Builder &&
+		record.Declaration != nil &&
+		manifest.Equal(record.Declaration, object) {
 		return remember()
 	}
 	return false

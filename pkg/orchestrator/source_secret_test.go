@@ -25,18 +25,34 @@ type secretChartFetcher struct {
 	chart string
 }
 
-func (f *secretChartFetcher) Fetch(_ context.Context, obj manifest.BaseManifest, reads *store.ReadSet, _ sourcecache.Policy) (*store.SourceArtifact, error) {
+func (f *secretChartFetcher) Fetch(
+	_ context.Context,
+	obj manifest.BaseManifest,
+	reads *store.ReadSet,
+	_ sourcecache.Policy,
+) (*store.SourceArtifact, error) {
 	repo := obj.(*manifest.OCIRepository)
-	secret, ok := reads.Get[*manifest.Secret](manifest.NamedResource{Kind: manifest.KindSecret, Namespace: repo.Namespace, Name: repo.CertSecretRef.Name})
+	secret, ok := reads.Get[*manifest.Secret](
+		manifest.NamedResource{Kind: manifest.KindSecret, Namespace: repo.Namespace, Name: repo.CertSecretRef.Name},
+	)
 	if !ok {
-		return nil, source.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), repo.CertSecretRef.Name, "not found")
+		return nil, source.MissingSecretErr(
+			manifest.DiagnosticFor(repo.Named(), repo),
+			repo.CertSecretRef.Name,
+			"not found",
+		)
 	}
 	if got, _, _ := secret.Value("ca.crt"); got != "rendered-ca" {
 		return nil, fmt.Errorf("source: CA = %q, want rendered-ca", got)
 	}
 	const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
 	return &store.SourceArtifact{
-		Kind: manifest.KindOCIRepository, LocalPath: f.chart, Digest: digest, Revision: "0.1.0@" + digest, Key: digest, FS: os.DirFS(f.chart),
+		Kind:      manifest.KindOCIRepository,
+		LocalPath: f.chart,
+		Digest:    digest,
+		Revision:  "0.1.0@" + digest,
+		Key:       digest,
+		FS:        os.DirFS(f.chart),
 	}, nil
 }
 
@@ -142,8 +158,10 @@ spec:
     kind: OCIRepository
     name: charts
 `)
-			o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{CacheDir: t.TempDir(), WipeSecrets: true,
-				Concurrency: 4},
+			o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{
+				CacheDir: t.TempDir(), WipeSecrets: true,
+				Concurrency: 4,
+			},
 			)
 			if err != nil {
 				t.Fatalf("New: %v", err)
@@ -159,12 +177,15 @@ spec:
 				{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "charts"},
 				testutil.HelmReleaseID("flux-system", "demo"),
 			} {
-				if info, ok := o.Store().GetStatus(id); !ok || info.Status != store.StatusReady || info.Outcome() == store.OutcomeSkipped {
+				if info, ok := o.Store().
+					GetStatus(id); !ok || info.Status != store.StatusReady ||
+					info.Outcome() == store.OutcomeSkipped {
 					t.Errorf("%s status = %+v (present=%t), want Ready without a skip", id, info, ok)
 				}
 			}
 			hrID := testutil.HelmReleaseID("flux-system", "demo")
-			if docs := outputByParent(res.Manifests)[hrID]; len(docs) != 1 || manifest.DocKind(docs[0]) != manifest.KindConfigMap {
+			if docs := outputByParent(res.Manifests)[hrID]; len(docs) != 1 ||
+				manifest.DocKind(docs[0]) != manifest.KindConfigMap {
 				t.Fatalf("HelmRelease output = %+v, want the chart's ConfigMap", docs)
 			}
 		})
@@ -202,8 +223,10 @@ spec:
   certSecretRef:
     name: ca
 `, strings.TrimPrefix(server.URL, "https://")))
-	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{CacheDir: t.TempDir(), WipeSecrets: true,
-		AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}, Concurrency: 4},
+	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{
+		CacheDir: t.TempDir(), WipeSecrets: true,
+		AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}, Concurrency: 4,
+	},
 	)
 	if err != nil {
 		t.Fatalf("New: %v", err)

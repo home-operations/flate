@@ -8,6 +8,7 @@ import (
 	"testing/fstest"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/inputprojection"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -38,7 +39,11 @@ func TestWithDeclarations_OneSidedInput(t *testing.T) {
 					files["input.yaml"] = &fstest.MapFile{Data: []byte("apiVersion: source.toolkit.fluxcd.io/v1\n" +
 						"kind: OCIRepository\nmetadata: {name: chart, namespace: apps}\n" +
 						"spec: {url: oci://fixture.invalid/chart}\n")}
-					production := manifest.Production{Authored: input.Named(), Source: manifest.BootstrapSourceID, File: "input.yaml"}
+					production := manifest.Production{
+						Authored: input.Named(),
+						Source:   manifest.BootstrapSourceID,
+						File:     "input.yaml",
+					}
 					if tc.produced {
 						production.Owner = manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "emitter"}
 					}
@@ -57,7 +62,12 @@ func TestWithDeclarations_OneSidedInput(t *testing.T) {
 			}
 			changes, err := Qualify(t.Context(), NewSet(paths), stores[0], stores[1])
 			assert.NoError(t, err)
-			frozen, err := changes.WithDeclarations(t.Context(), stores[0], stores[1], [2]map[manifest.NamedResource]store.Child{})
+			frozen, err := changes.WithDeclarations(
+				t.Context(),
+				stores[0],
+				stores[1],
+				[2]map[manifest.NamedResource]store.Child{},
+			)
 			assert.NoError(t, err)
 			delta, _, _ := frozen.ForSource(manifest.BootstrapSourceID)
 			got := maps.Collect(delta.Inputs(manifest.NamedResource{}))
@@ -129,7 +139,12 @@ func TestWithDeclarations_LocalApplicabilityAndSelectedKey(t *testing.T) {
 	}
 	changes, err := Qualify(t.Context(), NewSet([]string{"values.yaml"}), stores[0], stores[1])
 	assert.NoError(t, err)
-	frozen, err := changes.WithDeclarations(t.Context(), stores[0], stores[1], [2]map[manifest.NamedResource]store.Child{})
+	frozen, err := changes.WithDeclarations(
+		t.Context(),
+		stores[0],
+		stores[1],
+		[2]map[manifest.NamedResource]store.Child{},
+	)
 	assert.NoError(t, err)
 	for side, owner := range owners {
 		var ref manifest.Reference
@@ -146,7 +161,16 @@ func TestWithDeclarations_LocalApplicabilityAndSelectedKey(t *testing.T) {
 			Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "foreign",
 		}
 		assert.Equal(t, frozen.OppositeDeclaration(manifest.TreeSide(side), foreign, owner.Named(), owner), nil)
-		assert.Equal(t, frozen.OppositeDeclaration(manifest.TreeSide(side), manifest.BootstrapSourceID, owner.Named(), owner.Clone()), nil)
+		assert.Equal(
+			t,
+			frozen.OppositeDeclaration(
+				manifest.TreeSide(side),
+				manifest.BootstrapSourceID,
+				owner.Named(),
+				owner.Clone(),
+			),
+			nil,
+		)
 		changed, known := frozen.OutputChanged(manifest.TreeSide(side), manifest.BootstrapSourceID, ref, owner)
 		assert.Equal(t, known, true)
 		assert.Equal(t, changed, false)
@@ -164,7 +188,11 @@ func TestWithDeclarations_LocalApplicabilityAndSelectedKey(t *testing.T) {
 	}
 	unknown, err := changes.WithDeclarations(t.Context(), stores[0], nil, [2]map[manifest.NamedResource]store.Child{})
 	assert.NoError(t, err)
-	assert.Equal(t, unknown.OppositeDeclaration(manifest.TreeBase, manifest.BootstrapSourceID, owners[0].Named(), owners[0]), nil)
+	assert.Equal(
+		t,
+		unknown.OppositeDeclaration(manifest.TreeBase, manifest.BootstrapSourceID, owners[0].Named(), owners[0]),
+		nil,
+	)
 	_, known := unknown.OutputChanged(
 		manifest.TreeBase, manifest.BootstrapSourceID, manifest.Reference{NamedResource: owners[0].Named()}, owners[0],
 	)
@@ -190,10 +218,24 @@ func TestWithDeclarations_ProducerOwnedRawIsUnknown(t *testing.T) {
 	}
 	changes, err := Qualify(t.Context(), NewSet(nil), stores[0], stores[1])
 	assert.NoError(t, err)
-	frozen, err := changes.WithDeclarations(t.Context(), stores[0], stores[1], [2]map[manifest.NamedResource]store.Child{})
+	frozen, err := changes.WithDeclarations(
+		t.Context(),
+		stores[0],
+		stores[1],
+		[2]map[manifest.NamedResource]store.Child{},
+	)
 	assert.NoError(t, err)
-	assert.Equal(t, frozen.OppositeDeclaration(manifest.TreeBase, manifest.BootstrapSourceID, child.Named(), child), nil)
-	_, known := frozen.OutputChanged(manifest.TreeBase, manifest.BootstrapSourceID, manifest.Reference{NamedResource: child.Named()}, child)
+	assert.Equal(
+		t,
+		frozen.OppositeDeclaration(manifest.TreeBase, manifest.BootstrapSourceID, child.Named(), child),
+		nil,
+	)
+	_, known := frozen.OutputChanged(
+		manifest.TreeBase,
+		manifest.BootstrapSourceID,
+		manifest.Reference{NamedResource: child.Named()},
+		child,
+	)
 	assert.Equal(t, known, false)
 }
 
@@ -206,15 +248,25 @@ func TestWithDeclarations_DoesNotRetainSourceCaptures(t *testing.T) {
 		reads.Init(st, manifest.BootstrapSourceID, nil)
 		t.Cleanup(reads.Close)
 		inputs[side] = &store.SourceArtifact{
-			LocalPath: t.TempDir(), FS: fstest.MapFS{}, Reads: reads,
-			Metadata: map[string]string{"key": "original"}, Warnings: []manifest.Warning{{Detail: []string{"original"}}},
+			LocalPath: t.TempDir(),
+			FS:        fstest.MapFS{},
+			Reads:     reads,
+			Metadata: map[string]string{
+				"key": "original",
+			},
+			Warnings: []manifest.Warning{{Detail: []string{"original"}}},
 		}
 		st.SetArtifact(manifest.BootstrapSourceID, inputs[side])
 	}
 	qualified, err := Qualify(t.Context(), NewSet(nil), stores[0], stores[1])
 	assert.NoError(t, err)
 	for _, other := range []*store.Store{stores[1], nil} {
-		frozen, err := qualified.WithDeclarations(t.Context(), stores[0], other, [2]map[manifest.NamedResource]store.Child{})
+		frozen, err := qualified.WithDeclarations(
+			t.Context(),
+			stores[0],
+			other,
+			[2]map[manifest.NamedResource]store.Child{},
+		)
 		assert.NoError(t, err)
 		delta, descriptors, _ := frozen.ForSource(manifest.BootstrapSourceID)
 		for side, snapshot := range descriptors {
@@ -265,7 +317,10 @@ func TestWithDeclarations_PreparedProduction(t *testing.T) {
 				Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "parent",
 			}
 			for side, st := range stores {
-				st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}})
+				st.SetArtifact(
+					manifest.BootstrapSourceID,
+					&store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}},
+				)
 				children[side] = &manifest.Kustomization{Name: "child", Namespace: "apps", Path: "./app"}
 				id := children[side].Named()
 				st.SetDiscoveryIndex(&manifest.DiscoveryIndex{
@@ -300,7 +355,11 @@ func TestWithDeclarations_PreparedProduction(t *testing.T) {
 				if !tc.foreign && !tc.missing {
 					opposite = children[1-side]
 				}
-				assert.Equal(t, frozen.OppositeDeclaration(manifest.TreeSide(side), source, child.Named(), child), opposite)
+				assert.Equal(
+					t,
+					frozen.OppositeDeclaration(manifest.TreeSide(side), source, child.Named(), child),
+					opposite,
+				)
 				assert.Equal(t, known, !tc.foreign && !tc.missing)
 				assert.Equal(t, changed, tc.output)
 			}
@@ -323,7 +382,10 @@ func TestWithReaders_UnchangedAncestorOutput(t *testing.T) {
 			stores := [2]*store.Store{store.New(), store.New()}
 			indexes := [2]*manifest.DiscoveryIndex{}
 			parent := manifest.NamedResource{
-				Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "parent",
+				Group:     manifest.FluxKustomizeDomain,
+				Kind:      manifest.KindKustomization,
+				Namespace: "apps",
+				Name:      "parent",
 			}
 			child := parent
 			child.Name = "child"
@@ -342,7 +404,10 @@ func TestWithReaders_UnchangedAncestorOutput(t *testing.T) {
 				data, err := json.Marshal(doc)
 				assert.NoError(t, err)
 				input["parent.yaml"] = &fstest.MapFile{Data: data}
-				childDoc, err := manifest.ObjectDocument(child, &manifest.Kustomization{Name: child.Name, Namespace: child.Namespace})
+				childDoc, err := manifest.ObjectDocument(
+					child,
+					&manifest.Kustomization{Name: child.Name, Namespace: child.Namespace},
+				)
 				assert.NoError(t, err)
 				data, err = json.Marshal(childDoc)
 				assert.NoError(t, err)
@@ -365,7 +430,12 @@ func TestWithReaders_UnchangedAncestorOutput(t *testing.T) {
 				t.Context(), indexes[0], indexes[1], [2]map[manifest.NamedResource]inputprojection.Projection{},
 			)
 			assert.NoError(t, err)
-			changes, err = changes.WithDeclarations(t.Context(), stores[0], stores[1], [2]map[manifest.NamedResource]store.Child{})
+			changes, err = changes.WithDeclarations(
+				t.Context(),
+				stores[0],
+				stores[1],
+				[2]map[manifest.NamedResource]store.Child{},
+			)
 			assert.NoError(t, err)
 			changes, err = changes.WithReaders(
 				t.Context(), indexes[0], indexes[1], [2]map[manifest.NamedResource]inputprojection.Projection{},
@@ -395,7 +465,12 @@ func TestWithDeclarations_EffectiveInputApplicability(t *testing.T) {
 			var frozen *Set
 			freeze := func(ctx context.Context) {
 				var err error
-				frozen, err = changes.WithDeclarations(ctx, f.stores[0], f.stores[1], [2]map[manifest.NamedResource]store.Child{})
+				frozen, err = changes.WithDeclarations(
+					ctx,
+					f.stores[0],
+					f.stores[1],
+					[2]map[manifest.NamedResource]store.Child{},
+				)
 				assert.NoError(t, err)
 			}
 			if scenario == "invalidated" {
@@ -424,7 +499,12 @@ func TestWithDeclarations_EffectiveInputApplicability(t *testing.T) {
 					if ref.NamedResource != inputID {
 						continue
 					}
-					changed, known := frozen.OutputChanged(manifest.TreeSide(side), manifest.BootstrapSourceID, ref, owner)
+					changed, known := frozen.OutputChanged(
+						manifest.TreeSide(side),
+						manifest.BootstrapSourceID,
+						ref,
+						owner,
+					)
 					assert.Equal(t, known, true)
 					assert.Equal(t, changed, scenario != "unused")
 				}
@@ -469,7 +549,9 @@ func newDeclarationInputFixture(t *testing.T, scenario string) declarationInputF
 			Inputs:  map[manifest.NamedResource]manifest.Data{inputID: f.inputs[side]},
 		}
 		if scenario != "missing projection" || side != 1 {
-			f.projections[side] = map[manifest.NamedResource]inputprojection.Projection{f.owners[side].Named(): projection}
+			f.projections[side] = map[manifest.NamedResource]inputprojection.Projection{
+				f.owners[side].Named(): projection,
+			}
 		}
 		doc, err := manifest.ObjectDocument(f.owners[side].Named(), f.owners[side])
 		assert.NoError(t, err)

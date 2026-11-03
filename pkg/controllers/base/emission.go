@@ -11,11 +11,18 @@ import (
 
 // ParseChildren selects output and retains authoritative sanitized child documents.
 // The returned objects and maps MUST remain immutable after publication.
-func (c *Controller) ParseChildren(parent manifest.BaseManifest, docs []manifest.DocOccurrence, opts manifest.ParseDocOptions) ([]store.Child, []manifest.DocOccurrence, []manifest.DocOccurrence) {
+func (c *Controller) ParseChildren(
+	parent manifest.BaseManifest,
+	docs []manifest.DocOccurrence,
+	opts manifest.ParseDocOptions,
+) ([]store.Child, []manifest.DocOccurrence, []manifest.DocOccurrence) {
 	children, visible, failures := loader.ParseChildren(parent, docs, opts, c.SkipKinds)
 	if c.Store != nil {
 		for i, child := range children {
-			if existing := c.Store.GetObject(child.Obj.Named()); existing != nil && manifest.Equal(existing, child.Obj) {
+			if existing := c.Store.GetObject(
+				child.Obj.Named(),
+			); existing != nil &&
+				manifest.Equal(existing, child.Obj) {
 				children[i].Obj = existing
 			}
 		}
@@ -23,7 +30,12 @@ func (c *Controller) ParseChildren(parent manifest.BaseManifest, docs []manifest
 	return children, visible, failures
 }
 
-func (c *Controller) emit(ctx context.Context, id manifest.NamedResource, next *store.Emission, payloads map[manifest.NamedResource]*store.SourceArtifact) error {
+func (c *Controller) emit(
+	ctx context.Context,
+	id manifest.NamedResource,
+	next *store.Emission,
+	payloads map[manifest.NamedResource]*store.SourceArtifact,
+) error {
 	children := next.Children
 	cloned := false
 	if next.Reads.Valid() {

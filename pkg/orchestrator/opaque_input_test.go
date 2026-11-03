@@ -41,7 +41,13 @@ func TestRenderTrees_RequiredOpaqueInput(t *testing.T) {
 					name + "/Chart.yaml":        "apiVersion: v2\nname: " + name + "\nversion: 1.0.0\n",
 					name + "/templates/cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: " + object + ", namespace: apps}\ndata: {VALUE: supplied}\n",
 				}, 0o644, gzip.DefaultCompression)
-				fmt.Fprintf(&index, "  %s:\n  - apiVersion: v2\n    name: %s\n    version: 1.0.0\n    urls: [%s.tgz]\n", name, name, name)
+				fmt.Fprintf(
+					&index,
+					"  %s:\n  - apiVersion: v2\n    name: %s\n    version: 1.0.0\n    urls: [%s.tgz]\n",
+					name,
+					name,
+					name,
+				)
 			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/index.yaml" {
@@ -72,24 +78,56 @@ func TestRenderTrees_RequiredOpaqueInput(t *testing.T) {
 					testutil.WriteFile(t, root, "producer/kustomization.yaml", "resources: [release.yaml]\n")
 				}
 				testutil.WriteFile(t, root, "flux/kustomization.yaml", resources+"]\n")
-				consumer := substitutionKS("consumer", "app", dependencies+"  postBuild: {substituteFrom: [{kind: ConfigMap, name: required-settings}]}\n")
+				consumer := substitutionKS(
+					"consumer",
+					"app",
+					dependencies+"  postBuild: {substituteFrom: [{kind: ConfigMap, name: required-settings}]}\n",
+				)
 				if scenario == "tier_1_builder" {
-					consumer = substitutionKS("consumer", "app", "  postBuild: {substituteFrom: [{kind: ConfigMap, name: required-settings}]}\n")
+					consumer = substitutionKS(
+						"consumer",
+						"app",
+						"  postBuild: {substituteFrom: [{kind: ConfigMap, name: required-settings}]}\n",
+					)
 					testutil.WriteFile(t, root, "consumer-parent/kustomization.yaml", "resources: [consumer.yaml]\n")
 					testutil.WriteFile(t, root, "consumer-parent/consumer.yaml", consumer)
 					consumer = substitutionKS("consumer-parent", "consumer-parent", dependencies)
 				}
 				if scenario == "generated" {
-					consumer = strings.ReplaceAll(consumer, "kind: ConfigMap, name: required-settings", "kind: Secret, name: required-settings")
-					testutil.WriteFile(t, root, "flux/external.yaml", "apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: required-settings, namespace: apps}\nspec: {dataFrom: [{extract: {key: remote}}]}\n")
-					testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [consumer.yaml, repository.yaml, releases.yaml, external.yaml]\n")
+					consumer = strings.ReplaceAll(
+						consumer,
+						"kind: ConfigMap, name: required-settings",
+						"kind: Secret, name: required-settings",
+					)
+					testutil.WriteFile(
+						t,
+						root,
+						"flux/external.yaml",
+						"apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: required-settings, namespace: apps}\nspec: {dataFrom: [{extract: {key: remote}}]}\n",
+					)
+					testutil.WriteFile(
+						t,
+						root,
+						"flux/kustomization.yaml",
+						"resources: [consumer.yaml, repository.yaml, releases.yaml, external.yaml]\n",
+					)
 				}
 				testutil.WriteFile(t, root, "flux/consumer.yaml", consumer)
-				testutil.WriteFile(t, root, "flux/repository.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: HelmRepository\nmetadata: {name: charts, namespace: apps}\nspec: {interval: 1h, url: '"+server.URL+"'}\n")
+				testutil.WriteFile(
+					t,
+					root,
+					"flux/repository.yaml",
+					"apiVersion: source.toolkit.fluxcd.io/v1\nkind: HelmRepository\nmetadata: {name: charts, namespace: apps}\nspec: {interval: 1h, url: '"+server.URL+"'}\n",
+				)
 				var releases strings.Builder
 				for i := range 3 {
 					var declaration strings.Builder
-					fmt.Fprintf(&declaration, "---\napiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: producer-%d, namespace: apps}\nspec:\n  interval: 1h\n  chart: {spec: {chart: demo-%d, version: 1.0.0, sourceRef: {kind: HelmRepository, name: charts}}}\n", i, i)
+					fmt.Fprintf(
+						&declaration,
+						"---\napiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: producer-%d, namespace: apps}\nspec:\n  interval: 1h\n  chart: {spec: {chart: demo-%d, version: 1.0.0, sourceRef: {kind: HelmRepository, name: charts}}}\n",
+						i,
+						i,
+					)
 					if tier1 && i == 0 {
 						testutil.WriteFile(t, root, "producer/release.yaml", declaration.String())
 					} else {
@@ -98,8 +136,20 @@ func TestRenderTrees_RequiredOpaqueInput(t *testing.T) {
 				}
 				testutil.WriteFile(t, root, "flux/releases.yaml", releases.String())
 				testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [cm.yaml]\n")
-				testutil.WriteFile(t, root, "app/cm.yaml", fmt.Sprintf("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: result, namespace: apps}\ndata: {value: '${VALUE}-side-%d'}\n", side))
-				trees[side] = Tree{Path: filepath.Join(root, "flux"), RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeSide(side)}}
+				testutil.WriteFile(
+					t,
+					root,
+					"app/cm.yaml",
+					fmt.Sprintf(
+						"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: result, namespace: apps}\ndata: {value: '${VALUE}-side-%d'}\n",
+						side,
+					),
+				)
+				trees[side] = Tree{
+					Path:     filepath.Join(root, "flux"),
+					RepoRoot: root,
+					ID:       manifest.TreeID{Cluster: ".", Side: manifest.TreeSide(side)},
+				}
 			}
 
 			var warmCache string
@@ -159,12 +209,17 @@ func TestRenderTrees_RequiredOpaqueInput(t *testing.T) {
 							reads.Init(run.Store(), id, nil)
 							controller := *run.hrc
 							controller.Helm = helm.NewClient(owner)
-							records, complete := controller.PreviousRender(t.Context(), run.Store().GetObject(id), &reads)
+							records, complete := controller.PreviousRender(
+								t.Context(),
+								run.Store().GetObject(id),
+								&reads,
+							)
 							assert.Equal(t, complete, true)
 							found := false
 							if records != nil {
 								for child := range records {
-									found = found || child == (manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "required-settings"})
+									found = found ||
+										child == (manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "required-settings"})
 								}
 							}
 							reads.Retire()
@@ -185,14 +240,31 @@ func TestRenderTrees_RequiredOpaqueInput(t *testing.T) {
 			}
 			delta := func(runs []Rendered, runErr error) ([]byte, error) {
 				t.Helper()
-				selected, selectedErr, err := Select(runs, runErr, []manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
+				selected, selectedErr, err := Select(
+					runs,
+					runErr,
+					[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")},
+					nil,
+				)
 				if err != nil {
 					return nil, err
 				}
 				body, _, _, err := diff.Compare(
-					diff.Snapshot{Subjects: selected[0].Subjects, Manifests: selected[0].Manifests, ProducerKeys: selected[0].ProducerKeys, Unavailable: selected[0].Unavailable},
-					diff.Snapshot{Subjects: selected[1].Subjects, Manifests: selected[1].Manifests, ProducerKeys: selected[1].ProducerKeys, Unavailable: selected[1].Unavailable},
-					selectedErr, diff.Options{Format: diff.FormatJSON})
+					diff.Snapshot{
+						Subjects:     selected[0].Subjects,
+						Manifests:    selected[0].Manifests,
+						ProducerKeys: selected[0].ProducerKeys,
+						Unavailable:  selected[0].Unavailable,
+					},
+					diff.Snapshot{
+						Subjects:     selected[1].Subjects,
+						Manifests:    selected[1].Manifests,
+						ProducerKeys: selected[1].ProducerKeys,
+						Unavailable:  selected[1].Unavailable,
+					},
+					selectedErr,
+					diff.Options{Format: diff.FormatJSON},
+				)
 				return body, errors.Join(err, runErr)
 			}
 			full := make([]Rendered, 2)

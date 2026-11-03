@@ -20,7 +20,12 @@ type HelmRepository struct {
 
 // Named identifies the repo.
 func (h *HelmRepository) Named() NamedResource {
-	return NamedResource{Group: kindTable[kindHelmRepository].Group, Kind: KindHelmRepository, Namespace: h.Namespace, Name: h.Name}
+	return NamedResource{
+		Group:     kindTable[kindHelmRepository].Group,
+		Kind:      KindHelmRepository,
+		Namespace: h.Namespace,
+		Name:      h.Name,
+	}
 }
 
 // Suspended reports whether reconciliation is paused on this resource.

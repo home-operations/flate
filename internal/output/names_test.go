@@ -77,7 +77,11 @@ func TestPrepareNames_CoreCollision(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := PrepareNames([]string{"alpha"}, [][]manifest.NamedResource{tc.inventory}, []map[manifest.NamedResource]manifest.DiagnosticIdentity{tc.subjects})
+			got := PrepareNames(
+				[]string{"alpha"},
+				[][]manifest.NamedResource{tc.inventory},
+				[]map[manifest.NamedResource]manifest.DiagnosticIdentity{tc.subjects},
+			)
 			assert.Diff(t, got, []Names{{Subjects: tc.want}})
 		})
 	}

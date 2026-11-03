@@ -131,7 +131,8 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string, freeze bool
 		l.Index.Visibility = l.inputVisibility()
 	}
 	for file, doc := range l.documents.cache {
-		incomplete := doc.decodeErr != nil || slices.ContainsFunc(doc.objects, func(object parsedObject) bool { return object.outcome.Err != nil })
+		incomplete := doc.decodeErr != nil ||
+			slices.ContainsFunc(doc.objects, func(object parsedObject) bool { return object.outcome.Err != nil })
 		if l.Options.Selection.Changed && incomplete {
 			root := l.documents.mountedRoot(file)
 			for source := range l.Index.CompleteSources {
@@ -175,7 +176,8 @@ func (l *Loader) freezeConstruction() {
 			continue
 		}
 		for ref := range manifest.References(object, manifest.ReferenceRelations) {
-			if ref.ContentInput() && (ref.Name != "" || ref.Selector != nil) && !slices.Contains(l.inputReaders[ref.NamedResource], id) {
+			if ref.ContentInput() && (ref.Name != "" || ref.Selector != nil) &&
+				!slices.Contains(l.inputReaders[ref.NamedResource], id) {
 				l.inputReaders[ref.NamedResource] = append(l.inputReaders[ref.NamedResource], id)
 			}
 		}
@@ -242,7 +244,10 @@ func (l *Loader) Retire() {
 		return
 	}
 	for file, readers := range l.Index.Readers {
-		readers = slices.DeleteFunc(readers, func(reader manifest.FileReader) bool { return !l.Options.Filter.ShouldReconcile(reader.Reader) })
+		readers = slices.DeleteFunc(
+			readers,
+			func(reader manifest.FileReader) bool { return !l.Options.Filter.ShouldReconcile(reader.Reader) },
+		)
 		if len(readers) == 0 {
 			delete(l.Index.Readers, file)
 		} else {

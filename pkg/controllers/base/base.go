@@ -93,13 +93,22 @@ func (c *Controller) Configure(opts Options) {
 
 // KeepEmitted admits the incoming child and reports whether it is selected.
 // Admission MUST precede publication; a nil child admits the captured required inputs only.
-func (c *Controller) KeepEmitted(ctx context.Context, parent manifest.NamedResource, child store.Child, reads *store.ReadSet) (bool, error) {
+func (c *Controller) KeepEmitted(
+	ctx context.Context,
+	parent manifest.NamedResource,
+	child store.Child,
+	reads *store.ReadSet,
+) (bool, error) {
 	if f := c.filter; f.Enabled() {
 		if err := ctx.Err(); err != nil {
 			return false, err
 		}
 		if c.loader == nil {
-			return false, manifest.NewError(manifest.ErrInput, nil, "restricted controller requires its invocation loader")
+			return false, manifest.NewError(
+				manifest.ErrInput,
+				nil,
+				"restricted controller requires its invocation loader",
+			)
 		}
 		if reads == nil {
 			reads = &store.ReadSet{}
@@ -195,7 +204,10 @@ func (c *Controller) StartLifecycle() {
 // preGate marks suspended objects Ready; refresh MUST never apply changed-only filtering.
 func (c *Controller) preGate(obj manifest.BaseManifest) bool {
 	if obj.Suspended() {
-		c.Store.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSuspended, Message: "suspended"})
+		c.Store.UpdateStatus(
+			obj.Named(),
+			store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSuspended, Message: "suspended"},
+		)
 		return true
 	}
 	return false

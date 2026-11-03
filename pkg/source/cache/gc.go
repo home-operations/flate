@@ -135,7 +135,12 @@ func selectSweep(ctx context.Context, r *os.Root, maxAge time.Duration) (sweepSe
 	if err != nil {
 		return sweepSelection{}, &CacheError{fmt.Errorf("read sweep store: %w", err)}
 	}
-	selection := sweepSelection{root: r, store: store, retained: make(map[string]struct{}), seen: make(map[digest.Digest]bool)}
+	selection := sweepSelection{
+		root:     r,
+		store:    store,
+		retained: make(map[string]struct{}),
+		seen:     make(map[digest.Digest]bool),
+	}
 	var tags []string
 	if err := store.Tags(ctx, "", func(names []string) error {
 		tags = append(tags, names...)

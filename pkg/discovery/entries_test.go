@@ -48,7 +48,10 @@ func TestPlan_OccurrenceBoundaries(t *testing.T) {
 				}
 				assert.Diff(t, paths, []string{root})
 			}
-			entries, err := Plan(t.Context(), Config{Path: filepath.Join(root, "alpha"), RepoRoot: root, WipeSecrets: true})
+			entries, err := Plan(
+				t.Context(),
+				Config{Path: filepath.Join(root, "alpha"), RepoRoot: root, WipeSecrets: true},
+			)
 			assert.NoError(t, err)
 			if len(entries) != 1 || entries[0].Path != filepath.Join(root, "alpha") {
 				t.Fatalf("explicit entry widened: %+v", entries)
@@ -85,13 +88,20 @@ func TestPlan_AdmittedSourceViews(t *testing.T) {
 				if dir == "right" && tc.name == "distinct groups" {
 					version = "other.example/v1"
 				}
-				input[dir+"/object.yaml"] = &fstest.MapFile{Data: []byte("apiVersion: " + version + "\nkind: Widget\nmetadata: {name: same, namespace: apps}\n---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: " + dir + ", namespace: apps}\nspec: {url: oci://fixture.invalid/chart}\n")}
+				input[dir+"/object.yaml"] = &fstest.MapFile{
+					Data: []byte(
+						"apiVersion: " + version + "\nkind: Widget\nmetadata: {name: same, namespace: apps}\n---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: " + dir + ", namespace: apps}\nspec: {url: oci://fixture.invalid/chart}\n",
+					),
+				}
 			}
 			if tc.excluded != "" {
 				input[".krmignore"] = &fstest.MapFile{Data: []byte(tc.excluded)}
 			}
 			input["decoy.zip"] = &fstest.MapFile{Data: []byte("archive bytes are not manifest input")}
-			entries, err := Plan(t.Context(), Config{Input: &store.SourceArtifact{LocalPath: root, FS: input}, Path: root})
+			entries, err := Plan(
+				t.Context(),
+				Config{Input: &store.SourceArtifact{LocalPath: root, FS: input}, Path: root},
+			)
 			assert.NoError(t, err)
 			want := 1
 			assert.Equal(t, len(entries), want)
@@ -104,7 +114,10 @@ func TestPlan_AdmittedSourceViews(t *testing.T) {
 					name = strings.Replace(name, "right/", "new-second/control/", 1)
 					renamed[name] = file
 				}
-				changed, err := Plan(t.Context(), Config{Input: &store.SourceArtifact{LocalPath: root, FS: renamed}, Path: root})
+				changed, err := Plan(
+					t.Context(),
+					Config{Input: &store.SourceArtifact{LocalPath: root, FS: renamed}, Path: root},
+				)
 				assert.NoError(t, err)
 				var paths []string
 				for _, entry := range changed {
@@ -112,8 +125,18 @@ func TestPlan_AdmittedSourceViews(t *testing.T) {
 				}
 				assert.Diff(t, paths, []string{root})
 			}
-			other := fstest.MapFS{"left/kustomization.yaml": {Data: []byte("resources: [object.yaml]\n")}, "left/object.yaml": {Data: []byte("apiVersion: example.test/v2\nkind: Widget\nmetadata: {name: changed, namespace: apps}\n")}}
-			independent, err := Plan(t.Context(), Config{Input: &store.SourceArtifact{LocalPath: root, FS: other}, Path: root})
+			other := fstest.MapFS{
+				"left/kustomization.yaml": {Data: []byte("resources: [object.yaml]\n")},
+				"left/object.yaml": {
+					Data: []byte(
+						"apiVersion: example.test/v2\nkind: Widget\nmetadata: {name: changed, namespace: apps}\n",
+					),
+				},
+			}
+			independent, err := Plan(
+				t.Context(),
+				Config{Input: &store.SourceArtifact{LocalPath: root, FS: other}, Path: root},
+			)
 			assert.NoError(t, err)
 			if len(independent) != 1 || independent[0].Path != root || independent[0].Input.FS == nil {
 				t.Fatalf("equal coordinate borrowed another admitted view: %+v", independent)
@@ -144,18 +167,40 @@ spec:
 		callers.Go(func() {
 			root := filepath.Join(t.TempDir(), "plan")
 			input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{"set.yaml": {Data: []byte(document)}}}
-			entries[i], failures[i] = Plan(t.Context(), Config{Input: input, Path: root, Selection: manifest.Selection{Changed: true}, Projections: projections})
+			entries[i], failures[i] = Plan(
+				t.Context(),
+				Config{
+					Input:       input,
+					Path:        root,
+					Selection:   manifest.Selection{Changed: true},
+					Projections: projections,
+				},
+			)
 		})
 	}
 	callers.Wait()
 	projections.Clear()
 	var objects [2]manifest.BaseManifest
-	child := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Name: "child", Namespace: "apps"}
+	child := manifest.NamedResource{
+		Group:     manifest.FluxKustomizeDomain,
+		Kind:      manifest.KindKustomization,
+		Name:      "child",
+		Namespace: "apps",
+	}
 	for i := range entries {
 		assert.NoError(t, failures[i])
 		assert.Equal(t, len(entries[i]), 1)
 		entry := entries[i][0]
-		session, err := Begin(t.Context(), Config{Entry: &entry, Input: entry.Input, Path: entry.Path, Store: store.New(), Selection: manifest.Selection{Changed: true}})
+		session, err := Begin(
+			t.Context(),
+			Config{
+				Entry:     &entry,
+				Input:     entry.Input,
+				Path:      entry.Path,
+				Store:     store.New(),
+				Selection: manifest.Selection{Changed: true},
+			},
+		)
 		assert.NoError(t, err)
 		record, ok := session.loader.Index.Lookup(child)
 		assert.Equal(t, ok, true)

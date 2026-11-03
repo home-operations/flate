@@ -20,6 +20,9 @@ import (
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/internal/selection"
@@ -32,8 +35,6 @@ import (
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
-	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 )
 
 // TestBindCommon_CacheDirFlag pins that --cache-dir is wired on every
@@ -83,7 +84,10 @@ func TestCacheDir_FlagAndEnvPopulateRoot(t *testing.T) {
 				t.Fatalf("read cache root %q: %v", selectedRoot, err)
 			}
 			if len(entries) == 0 {
-				t.Errorf("cache root %q is empty after build — --cache-dir / FLATE_CACHE_DIR did not flow through", selectedRoot)
+				t.Errorf(
+					"cache root %q is empty after build — --cache-dir / FLATE_CACHE_DIR did not flow through",
+					selectedRoot,
+				)
 			}
 		})
 	}
@@ -245,8 +249,10 @@ func TestResolveBaseline_FullTree(t *testing.T) {
 	root := t.TempDir()
 	repo := testutil.GitInit(t, root)
 	testutil.WriteFile(t, root, ".git/config", "[invalid\n")
-	c := commonFlags{path: root, pathRoot: "stale",
-		pathOrigRoot: "stale", pathOrigSelfURLs: []string{"stale"}}
+	c := commonFlags{
+		path: root, pathRoot: "stale",
+		pathOrigRoot: "stale", pathOrigSelfURLs: []string{"stale"},
+	}
 	if c.owner == nil {
 		c.owner = cachetest.New(t, "", sourcecache.New)
 	}
@@ -256,8 +262,10 @@ func TestResolveBaseline_FullTree(t *testing.T) {
 	assert.Equal(t, c.pathOrigRoot, "")
 	assert.Equal(t, c.pathOrigSelfURLs == nil, true)
 	testutil.WriteFile(t, root, ".git/config", "[core]\nrepositoryformatversion = 0\n")
-	testutil.GitCommitAll(t, repo, "fixture", &git.CommitOptions{AllowEmptyCommits: true,
-		Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}})
+	testutil.GitCommitAll(t, repo, "fixture", &git.CommitOptions{
+		AllowEmptyCommits: true,
+		Author:            &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)},
+	})
 	c.base = "HEAD"
 	if c.owner == nil {
 		c.owner = cachetest.New(t, "", sourcecache.New)
@@ -342,7 +350,8 @@ func TestResolveBaseline_SelectedRepositoryErrors(t *testing.T) {
 				c.owner = cachetest.New(t, "", sourcecache.New)
 			}
 			err := resolveBaseline(t.Context(), &c, false)
-			if err == nil || !strings.Contains(err.Error(), tc.want) || !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
+			if err == nil || !strings.Contains(err.Error(), tc.want) || !errors.Is(err, manifest.ErrInput) ||
+				!errors.Is(err, manifest.ErrFlux) {
 				t.Fatalf("error = %v, want wrapped %q error", err, tc.want)
 			}
 			assert.Equal(t, tc.data != "gitdir: missing\n" || errors.Is(err, git.ErrRepositoryNotExists), true)
@@ -412,7 +421,12 @@ func TestResolveBaseline_AdmittedIdentity(t *testing.T) {
 	current, original := writeCustomSourceDiffFixture(t, url)
 	writeBaselineGit(t, current, url)
 	writeBaselineGit(t, original, url)
-	testutil.WriteFile(t, original, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {greeting: before}\n")
+	testutil.WriteFile(
+		t,
+		original,
+		"apps/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {greeting: before}\n",
+	)
 	currentScan, originalScan := filepath.Join(current, "flux"), filepath.Join(original, "flux")
 	currentLink, originalLink := filepath.Join(t.TempDir(), "current"), filepath.Join(t.TempDir(), "original")
 	assert.NoError(t, os.Symlink(currentScan, currentLink))
@@ -482,7 +496,12 @@ func TestRunSelected_ProgressLifecycle(t *testing.T) {
 			}
 			expected := original
 			if name == "render-warning" {
-				testutil.WriteFile(t, path, "apps/kustomization.yaml", "resources: [cm.yaml]\ncommonLabels: {progress-warning: test}\n")
+				testutil.WriteFile(
+					t,
+					path,
+					"apps/kustomization.yaml",
+					"resources: [cm.yaml]\ncommonLabels: {progress-warning: test}\n",
+				)
 				f, err := os.CreateTemp(t.TempDir(), "stderr")
 				if err != nil {
 					t.Fatal(err)
@@ -505,7 +524,8 @@ func TestRunSelected_ProgressLifecycle(t *testing.T) {
 					t.Fatalf("fatal run exposed selection=%v, err=%v", selected, err)
 				}
 			case "partial-render":
-				if err == nil || selected == nil || len(selected.groups) != 1 || len(selected.groups[0].sides[0].Failed) == 0 {
+				if err == nil || selected == nil || len(selected.groups) != 1 ||
+					len(selected.groups[0].sides[0].Failed) == 0 {
 					t.Fatalf("partial run lost selection: %+v", selected)
 				}
 			default:
@@ -567,7 +587,13 @@ func TestBindCommon_HelmOptions(t *testing.T) {
 }
 
 func TestRunSelected_WarningIdentity(t *testing.T) {
-	base := manifest.Warning{Category: manifest.WarnStaleValues, Resource: testutil.HelmReleaseID("apps", "demo"), Message: "advisory", Detail: []string{"one"}, Count: 3}
+	base := manifest.Warning{
+		Category: manifest.WarnStaleValues,
+		Resource: testutil.HelmReleaseID("apps", "demo"),
+		Message:  "advisory",
+		Detail:   []string{"one"},
+		Count:    3,
+	}
 	detail, count, category, resource, message := base, base, base, base, base
 	detail.Detail = []string{"two"}
 	count.Count = 4
@@ -575,7 +601,11 @@ func TestRunSelected_WarningIdentity(t *testing.T) {
 	resource.Resource.Name = "other"
 	message.Message = "different"
 	want := []manifest.Warning{base, detail, count, category, resource, message}
-	side := &selection.Selection{Warnings: []manifest.Warning{base, detail, count, category, resource, message}, Unrelated: []manifest.Warning{base}, External: []manifest.Warning{detail}}
+	side := &selection.Selection{
+		Warnings:  []manifest.Warning{base, detail, count, category, resource, message},
+		Unrelated: []manifest.Warning{base},
+		External:  []manifest.Warning{detail},
+	}
 	before := slices.Clone(side.Warnings)
 	for i := range before {
 		before[i].Detail = slices.Clone(before[i].Detail)
@@ -584,8 +614,19 @@ func TestRunSelected_WarningIdentity(t *testing.T) {
 	var first string
 	for run := range 2 {
 		var stderr bytes.Buffer
-		err := finishSelected(selectedRequest{roots: []manifest.NamedResource{{Kind: manifest.KindHelmRelease}}, pair: true, stderr: &stderr},
-			&selectedInvocation{groups: []selectedGroup{{cluster: ".", sides: []*selection.Selection{side, {Warnings: []manifest.Warning{base}}}}}}, selectedPayload{})
+		err := finishSelected(
+			selectedRequest{
+				roots:  []manifest.NamedResource{{Kind: manifest.KindHelmRelease}},
+				pair:   true,
+				stderr: &stderr,
+			},
+			&selectedInvocation{
+				groups: []selectedGroup{
+					{cluster: ".", sides: []*selection.Selection{side, {Warnings: []manifest.Warning{base}}}},
+				},
+			},
+			selectedPayload{},
+		)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -616,13 +657,24 @@ func TestRunSelected_WarningIdentity(t *testing.T) {
 
 func TestFinishSelected_SuppliedAdvisoryUnion(t *testing.T) {
 	t.Parallel()
-	ordinary := manifest.Warning{Resource: testutil.HelmReleaseID("apps", "demo"), Category: manifest.WarnStaleValues, Message: "ordinary", Detail: []string{"kept"}, Count: 3}
+	ordinary := manifest.Warning{
+		Resource: testutil.HelmReleaseID("apps", "demo"),
+		Category: manifest.WarnStaleValues,
+		Message:  "ordinary",
+		Detail:   []string{"kept"},
+		Count:    3,
+	}
 	other := ordinary
 	other.Message, other.Detail = "another ordinary", []string{"another", "kept"}
 	inv := &selectedInvocation{}
 	for _, cluster := range []string{"alpha", "omega"} {
 		advisories := []manifest.Warning{
-			{Category: manifest.WarnSuppliedPrecedence, Message: "repository wins", Detail: []string{cluster, "common", "first", "last"}, Count: 1},
+			{
+				Category: manifest.WarnSuppliedPrecedence,
+				Message:  "repository wins",
+				Detail:   []string{cluster, "common", "first", "last"},
+				Count:    1,
+			},
 		}
 		inv.groups = append(inv.groups, selectedGroup{cluster: cluster, sides: []*selection.Selection{
 			{Warnings: []manifest.Warning{ordinary, other}},
@@ -632,7 +684,10 @@ func TestFinishSelected_SuppliedAdvisoryUnion(t *testing.T) {
 	var first string
 	for run := range 2 {
 		var stderr bytes.Buffer
-		assert.NoError(t, finishSelected(selectedRequest{pair: true, stdout: io.Discard, stderr: &stderr}, inv, selectedPayload{}))
+		assert.NoError(
+			t,
+			finishSelected(selectedRequest{pair: true, stdout: io.Discard, stderr: &stderr}, inv, selectedPayload{}),
+		)
 		text := stderr.String()
 		for _, token := range []string{"warnings (10)"} {
 			assert.Equal(t, strings.Count(text, token), 1)
@@ -647,7 +702,10 @@ func TestFinishSelected_SuppliedAdvisoryUnion(t *testing.T) {
 			}
 			for _, context := range []string{"orig snapshot", "current snapshot"} {
 				for _, warning := range []manifest.Warning{ordinary, other} {
-					row := "[StaleValues] " + context + ": HelmRelease " + cluster + ": apps/demo: " + warning.Message + " (×3)\n      " + strings.Join(warning.Detail, ", ") + "\n"
+					row := "[StaleValues] " + context + ": HelmRelease " + cluster + ": apps/demo: " + warning.Message + " (×3)\n      " + strings.Join(
+						warning.Detail,
+						", ",
+					) + "\n"
 					assert.Equal(t, strings.Count(text, row), 1)
 				}
 			}
@@ -667,7 +725,11 @@ func TestFinishSelected_SuppliedAdvisoryUnion(t *testing.T) {
 	}
 	fatal := errors.New("fatal render failure")
 	var stderr bytes.Buffer
-	err := finishSelected(selectedRequest{pair: true, stdout: io.Discard, stderr: &stderr}, inv, selectedPayload{err: fatal})
+	err := finishSelected(
+		selectedRequest{pair: true, stdout: io.Discard, stderr: &stderr},
+		inv,
+		selectedPayload{err: fatal},
+	)
 	if !errors.Is(err, fatal) || !strings.Contains(stderr.String(), "another ordinary (×3)") {
 		t.Fatalf("warnings changed fatal result or lost messages: %v\n%s", err, stderr.String())
 	}
@@ -685,12 +747,24 @@ func TestRunSelected_RemainderAndPayloadErrors(t *testing.T) {
 			}
 			id := testutil.KustomizationID("apps", "selected")
 			o.Store().AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
-			res := &orchestrator.Result{Failed: map[manifest.NamedResource]store.StatusInfo{id: {Status: store.StatusFailed, Message: "selected render failed"}}}
+			res := &orchestrator.Result{
+				Failed: map[manifest.NamedResource]store.StatusInfo{
+					id: {Status: store.StatusFailed, Message: "selected render failed"},
+				},
+			}
 			resourceErr := &orchestrator.FailuresError{Message: "aggregate render failure"}
 			closeErr, writeErr := errors.New("shared cleanup failed"), errors.New("payload write failed")
 			runs := []orchestrator.Rendered{{Orchestrator: o, Result: res, Err: resourceErr}}
 			roots := []manifest.NamedResource{id}
-			sides, selectedErr, remainder := orchestrator.Select(runs, errors.Join(fmt.Errorf("head tree: %w", errors.Join(resourceErr, context.Canceled)), fmt.Errorf("cache close: %w", closeErr)), roots, nil)
+			sides, selectedErr, remainder := orchestrator.Select(
+				runs,
+				errors.Join(
+					fmt.Errorf("head tree: %w", errors.Join(resourceErr, context.Canceled)),
+					fmt.Errorf("cache close: %w", closeErr),
+				),
+				roots,
+				nil,
+			)
 			if len(sides) != 1 || selectedErr == nil {
 				t.Fatalf("completed run selection: %v", selectedErr)
 			}
@@ -698,11 +772,19 @@ func TestRunSelected_RemainderAndPayloadErrors(t *testing.T) {
 			_, payloadErr := failingWriter{err: writeErr}.Write([]byte("partial"))
 			payload := selectedPayload{err: payloadErr}
 			if test {
-				payload.rosters = []output.TestReport{{Cases: []output.Case{{ID: id, Outcome: output.OutcomePassed}}, Passed: 1, Matched: 1}}
+				payload.rosters = []output.TestReport{
+					{Cases: []output.Case{{ID: id, Outcome: output.OutcomePassed}}, Passed: 1, Matched: 1},
+				}
 			}
-			got := finishSelected(selectedRequest{roots: roots, stdout: &stdout, stderr: &stderr, test: test},
-				&selectedInvocation{groups: []selectedGroup{{cluster: ".", sides: sides, err: selectedErr, remainder: remainder}}}, payload)
-			if !errors.Is(got, closeErr) || !errors.Is(got, writeErr) || !errors.Is(got, context.Canceled) || !errors.Is(got, selectedErr) {
+			got := finishSelected(
+				selectedRequest{roots: roots, stdout: &stdout, stderr: &stderr, test: test},
+				&selectedInvocation{
+					groups: []selectedGroup{{cluster: ".", sides: sides, err: selectedErr, remainder: remainder}},
+				},
+				payload,
+			)
+			if !errors.Is(got, closeErr) || !errors.Is(got, writeErr) || !errors.Is(got, context.Canceled) ||
+				!errors.Is(got, selectedErr) {
 				t.Fatalf("lost selected, cleanup or payload error: %v", got)
 			}
 			if _, reported := errors.AsType[reportedError](got); !reported {
@@ -732,7 +814,12 @@ func TestRun_DiagnosticOnlyComparison(t *testing.T) {
 	root := writeFixture(t)
 	repo := testutil.GitInit(t, root)
 	testutil.WriteFile(t, root, "work.txt", "before")
-	pin := testutil.GitCommitAll(t, repo, "base", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e"}})
+	pin := testutil.GitCommitAll(
+		t,
+		repo,
+		"base",
+		&git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e"}},
+	)
 	commit, err := repo.CommitObject(pin)
 	assert.NoError(t, err)
 	tree, err := commit.Tree()
@@ -749,8 +836,16 @@ func TestRun_DiagnosticOnlyComparison(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			args := append(slices.Clone(command), "--path", root, "--base", pin.String(), "--concurrency", "2")
 			code := Run(args, &stdout, &stderr)
-			if code != 1 || stdout.Len() != 0 || strings.Count(stderr.String(), "Git status unavailable") != 1 || strings.Count(stderr.String(), "missing objects") != 1 || strings.Contains(stderr.String(), `no Kustomization named`) {
-				t.Fatalf("diagnostic-only %v = exit %d, stdout %q, stderr %q", command, code, stdout.String(), stderr.String())
+			if code != 1 || stdout.Len() != 0 || strings.Count(stderr.String(), "Git status unavailable") != 1 ||
+				strings.Count(stderr.String(), "missing objects") != 1 ||
+				strings.Contains(stderr.String(), `no Kustomization named`) {
+				t.Fatalf(
+					"diagnostic-only %v = exit %d, stdout %q, stderr %q",
+					command,
+					code,
+					stdout.String(),
+					stderr.String(),
+				)
 			}
 		})
 	}
@@ -781,12 +876,23 @@ func TestRenderTrees_InputWarningOnly(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	warning := manifest.Warning{Category: manifest.WarnBaselineStatusUnavailable, Message: "before failure", Count: 1}
-	runs, err := orchestrator.RenderTrees(t.Context(), []orchestrator.Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: root, Input: &store.SourceArtifact{LocalPath: root, Warnings: []manifest.Warning{warning}}}}, orchestrator.Config{Concurrency: 2})
+	runs, err := orchestrator.RenderTrees(
+		t.Context(),
+		[]orchestrator.Tree{
+			{
+				ID:    manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
+				Path:  root,
+				Input: &store.SourceArtifact{LocalPath: root, Warnings: []manifest.Warning{warning}},
+			},
+		},
+		orchestrator.Config{Concurrency: 2},
+	)
 	if len(runs) != 1 {
 		t.Fatalf("missing diagnostic run: %v", err)
 	}
 	run := runs[0]
-	if run.Orchestrator != nil || run.Result == nil || !errors.Is(run.Err, manifest.ErrInput) || len(run.Result.Manifests)+len(run.Result.Failed) != 0 {
+	if run.Orchestrator != nil || run.Result == nil || !errors.Is(run.Err, manifest.ErrInput) ||
+		len(run.Result.Manifests)+len(run.Result.Failed) != 0 {
 		t.Fatalf("failed bootstrap exposed content: %+v", run)
 	}
 	assert.Diff(t, run.Result.Warnings, []manifest.Warning{warning})
@@ -795,23 +901,44 @@ func TestRenderTrees_InputWarningOnly(t *testing.T) {
 			t.Parallel()
 			baseWarning, headWarning := warning, warning
 			baseWarning.Message, headWarning.Message = "base before failure", "head before failure"
-			base := &store.SourceArtifact{LocalPath: root, FS: os.DirFS(filepath.Join(root, "missing")), Warnings: []manifest.Warning{baseWarning}}
-			head := &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root), Warnings: []manifest.Warning{headWarning}}
+			base := &store.SourceArtifact{
+				LocalPath: root,
+				FS:        os.DirFS(filepath.Join(root, "missing")),
+				Warnings:  []manifest.Warning{baseWarning},
+			}
+			head := &store.SourceArtifact{
+				LocalPath: root,
+				FS:        os.DirFS(root),
+				Warnings:  []manifest.Warning{headWarning},
+			}
 			wantErr := os.ErrNotExist
 			if unavailable {
 				base.FS = nil
 				wantErr = manifest.ErrInput
 			}
 			runs, err := orchestrator.RenderTrees(t.Context(), []orchestrator.Tree{
-				{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, Path: root, Input: base, BaseInput: head, ExternalChanges: change.NewSet(nil)},
-				{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: root, Input: head, BaseInput: base, ExternalChanges: change.NewSet(nil)},
+				{
+					ID:              manifest.TreeID{Cluster: ".", Side: manifest.TreeBase},
+					Path:            root,
+					Input:           base,
+					BaseInput:       head,
+					ExternalChanges: change.NewSet(nil),
+				},
+				{
+					ID:              manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
+					Path:            root,
+					Input:           head,
+					BaseInput:       base,
+					ExternalChanges: change.NewSet(nil),
+				},
 			}, orchestrator.Config{Concurrency: 2, HeadOnly: true})
 			if !errors.Is(err, wantErr) {
 				t.Fatalf("baseline discovery error lost: %v", err)
 			}
 			var warnings []manifest.Warning
 			for _, run := range runs {
-				if run.Orchestrator != nil || run.Result == nil || len(run.Result.Manifests)+len(run.Result.Failed) != 0 {
+				if run.Orchestrator != nil || run.Result == nil ||
+					len(run.Result.Manifests)+len(run.Result.Failed) != 0 {
 					t.Fatalf("failed preparation exposed content: %+v", run)
 				}
 				for _, w := range run.Result.Warnings {
@@ -827,8 +954,13 @@ func TestRenderTrees_InputWarningOnly(t *testing.T) {
 				t.Fatalf("preparation projection = %+v %v %v", sides, selectedErr, remainder)
 			}
 			var stderr bytes.Buffer
-			finished := finishSelected(selectedRequest{roots: roots, stderr: &stderr},
-				&selectedInvocation{groups: []selectedGroup{{cluster: ".", sides: sides, err: selectedErr, remainder: remainder}}}, selectedPayload{})
+			finished := finishSelected(
+				selectedRequest{roots: roots, stderr: &stderr},
+				&selectedInvocation{
+					groups: []selectedGroup{{cluster: ".", sides: sides, err: selectedErr, remainder: remainder}},
+				},
+				selectedPayload{},
+			)
 			if _, reported := errors.AsType[reportedError](finished); !reported {
 				assert.NoError(t, (output.Encoder{Writer: &stderr}).Errors(finished))
 			}
@@ -850,16 +982,41 @@ func TestFinishSelected_JoinsWriterErrors(t *testing.T) {
 	for _, test := range []bool{false, true} {
 		t.Run(fmt.Sprint(test), func(t *testing.T) {
 			t.Parallel()
-			productErr, reportErr, renderErr := errors.New("product closed"), errors.New("report closed"), errors.New("render failed")
-			side := &selection.Selection{Warnings: []manifest.Warning{{Category: manifest.WarnEmptyScan, Message: "advisory"}}}
-			inv := &selectedInvocation{groups: []selectedGroup{{cluster: ".", sides: []*selection.Selection{side, side}, err: renderErr, remainder: renderErr}}}
-			payload := selectedPayload{err: productErr, warnings: [][]manifest.Warning{{{Category: manifest.WarnDiffSuppressed, Message: "payload warning"}}}}
+			productErr, reportErr, renderErr := errors.New(
+				"product closed",
+			), errors.New(
+				"report closed",
+			), errors.New(
+				"render failed",
+			)
+			side := &selection.Selection{
+				Warnings: []manifest.Warning{{Category: manifest.WarnEmptyScan, Message: "advisory"}},
+			}
+			inv := &selectedInvocation{
+				groups: []selectedGroup{
+					{cluster: ".", sides: []*selection.Selection{side, side}, err: renderErr, remainder: renderErr},
+				},
+			}
+			payload := selectedPayload{
+				err:      productErr,
+				warnings: [][]manifest.Warning{{{Category: manifest.WarnDiffSuppressed, Message: "payload warning"}}},
+			}
 			if test {
 				payload.err = nil
 				payload.rosters = []output.TestReport{{}}
 			}
 			writer := &countFailWriter{err: reportErr}
-			err := finishSelected(selectedRequest{roots: []manifest.NamedResource{{Kind: manifest.KindKustomization}}, stdout: failingWriter{err: productErr}, stderr: writer, test: test, pair: true}, inv, payload)
+			err := finishSelected(
+				selectedRequest{
+					roots:  []manifest.NamedResource{{Kind: manifest.KindKustomization}},
+					stdout: failingWriter{err: productErr},
+					stderr: writer,
+					test:   test,
+					pair:   true,
+				},
+				inv,
+				payload,
+			)
 			for _, want := range []error{productErr, reportErr, renderErr} {
 				if !errors.Is(err, want) {
 					t.Fatalf("lost %v: %v", want, err)
@@ -891,7 +1048,11 @@ func outputByParent(batches []manifest.DocumentBatch) map[manifest.NamedResource
 
 func completedOrchestrator(tb testing.TB) (*orchestrator.Orchestrator, error) {
 	tb.Helper()
-	runs, err := orchestrator.RenderTrees(tb.Context(), []orchestrator.Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: tb.TempDir()}}, orchestrator.Config{Concurrency: 2})
+	runs, err := orchestrator.RenderTrees(
+		tb.Context(),
+		[]orchestrator.Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: tb.TempDir()}},
+		orchestrator.Config{Concurrency: 2},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -912,25 +1073,45 @@ func TestRun_ClusterReport_KindCollisionInventory(t *testing.T) {
 		victims[i] = manifest.NamedResource{Kind: "Leaf", Namespace: "ns", Name: fmt.Sprintf("leaf%d", i)}
 	}
 	victims[6] = manifest.NamedResource{Group: "hidden.example", Kind: "Gadget", Name: "hidden"}
-	warning := manifest.Warning{Resource: other, Category: "Inventory", Count: 3,
-		Message: "Widget.one.example/ns/opaque stays unchanged", Detail: []string{"Gadget.hidden.example/ns/reference"}}
-	alpha := &selection.Selection{Failed: map[manifest.NamedResource]store.StatusInfo{
-		widget: {Status: store.StatusFailed, Message: "widget failed"}, gadget: {Status: store.StatusFailed, Message: "gadget failed"}},
-		Causes: map[manifest.NamedResource][]manifest.NamedResource{widget: nil, gadget: victims}}
+	warning := manifest.Warning{
+		Resource: other, Category: "Inventory", Count: 3,
+		Message: "Widget.one.example/ns/opaque stays unchanged", Detail: []string{"Gadget.hidden.example/ns/reference"},
+	}
+	alpha := &selection.Selection{
+		Failed: map[manifest.NamedResource]store.StatusInfo{
+			widget: {
+				Status:  store.StatusFailed,
+				Message: "widget failed",
+			},
+			gadget: {Status: store.StatusFailed, Message: "gadget failed"},
+		},
+		Causes: map[manifest.NamedResource][]manifest.NamedResource{widget: nil, gadget: victims},
+	}
 	omega := &selection.Selection{Warnings: []manifest.Warning{warning}}
 	var first string
 	for run := range 2 {
 		var stderr bytes.Buffer
-		assert.NoError(t, finishSelected(selectedRequest{stderr: &stderr, stdout: io.Discard},
-			&selectedInvocation{groups: []selectedGroup{{cluster: "alpha", sides: []*selection.Selection{alpha}}, {cluster: "omega", sides: []*selection.Selection{omega}}}}, selectedPayload{}))
+		assert.NoError(t, finishSelected(
+			selectedRequest{stderr: &stderr, stdout: io.Discard},
+			&selectedInvocation{
+				groups: []selectedGroup{
+					{cluster: "alpha", sides: []*selection.Selection{alpha}},
+					{cluster: "omega", sides: []*selection.Selection{omega}},
+				},
+			},
+			selectedPayload{},
+		))
 		out := stderr.String()
-		for _, want := range []string{"Widget.one.example  alpha: ns/same", "Widget.two.example omega: ns/same: " + warning.Message,
-			"Gadget  alpha: ns/root", "alpha: ns/leaf5 +1 more", warning.Detail[0], "(×3)"} {
+		for _, want := range []string{
+			"Widget.one.example  alpha: ns/same", "Widget.two.example omega: ns/same: " + warning.Message,
+			"Gadget  alpha: ns/root", "alpha: ns/leaf5 +1 more", warning.Detail[0], "(×3)",
+		} {
 			if !strings.Contains(out, want) {
 				t.Fatalf("missing %q: %s", want, out)
 			}
 		}
-		if strings.Contains(out, "Gadget.one.example") || strings.Contains(out, "hidden.example  ") || strings.Contains(out, "Cluster:") {
+		if strings.Contains(out, "Gadget.one.example") || strings.Contains(out, "hidden.example  ") ||
+			strings.Contains(out, "Cluster:") {
 			t.Fatalf("hidden subjects changed the inventory: %s", out)
 		}
 		if run == 0 {
@@ -959,7 +1140,9 @@ func TestFinishSelected_FailureContext(t *testing.T) {
 			var rows []string
 			for _, label := range labels {
 				sides = append(sides, &selection.Selection{
-					Failed:  map[manifest.NamedResource]store.StatusInfo{root: {Status: store.StatusFailed, Message: label + " failure\nunchanged details"}},
+					Failed: map[manifest.NamedResource]store.StatusInfo{
+						root: {Status: store.StatusFailed, Message: label + " failure\nunchanged details"},
+					},
 					Blocked: map[manifest.NamedResource][]manifest.NamedResource{leaf: {root}, dependent: {missing}},
 					Causes:  map[manifest.NamedResource][]manifest.NamedResource{root: {leaf}, missing: {dependent}},
 				})
@@ -974,12 +1157,24 @@ func TestFinishSelected_FailureContext(t *testing.T) {
 					"         "+prefix+"required by ns/dependent")
 			}
 			var stderr bytes.Buffer
-			err := finishSelected(selectedRequest{pair: pair, stdout: io.Discard, stderr: &stderr},
-				&selectedInvocation{groups: []selectedGroup{{cluster: ".", sides: sides, err: errors.New("render failed")}}}, selectedPayload{})
+			err := finishSelected(
+				selectedRequest{pair: pair, stdout: io.Discard, stderr: &stderr},
+				&selectedInvocation{
+					groups: []selectedGroup{{cluster: ".", sides: sides, err: errors.New("render failed")}},
+				},
+				selectedPayload{},
+			)
 			if _, reported := errors.AsType[reportedError](err); !reported {
 				t.Fatalf("failure was not marked reported: %v", err)
 			}
-			want := "\n" + strings.Join(rows, "\n\n") + fmt.Sprintf("\n\n  ✗ %d failed · %d blocked\n", 2*len(sides), 2*len(sides))
+			want := "\n" + strings.Join(
+				rows,
+				"\n\n",
+			) + fmt.Sprintf(
+				"\n\n  ✗ %d failed · %d blocked\n",
+				2*len(sides),
+				2*len(sides),
+			)
 			assert.Equal(t, stderr.String(), want)
 		})
 	}
@@ -991,16 +1186,28 @@ func TestFinishSelected_ReportOrder(t *testing.T) {
 	var combined bytes.Buffer
 	stdout, stderr := &recordingStream{all: &combined}, &recordingStream{all: &combined}
 	failure := store.StatusInfo{Status: store.StatusFailed, Message: "primary cause"}
-	side := &selection.Selection{Failed: map[manifest.NamedResource]store.StatusInfo{id: failure},
+	side := &selection.Selection{
+		Failed:   map[manifest.NamedResource]store.StatusInfo{id: failure},
 		Causes:   map[manifest.NamedResource][]manifest.NamedResource{id: nil},
-		Warnings: []manifest.Warning{{Resource: id, Message: "selected warning"}}}
-	payload := selectedPayload{rosters: []output.TestReport{{Cases: []output.Case{{ID: id, Outcome: output.OutcomeFailed, Reason: failure.Message}}, Failed: 1},
-		{Cases: []output.Case{{ID: id, Outcome: output.OutcomePassed}}, Passed: 1}}, write: func() error {
+		Warnings: []manifest.Warning{{Resource: id, Message: "selected warning"}},
+	}
+	payload := selectedPayload{rosters: []output.TestReport{
+		{Cases: []output.Case{{ID: id, Outcome: output.OutcomeFailed, Reason: failure.Message}}, Failed: 1},
+		{Cases: []output.Case{{ID: id, Outcome: output.OutcomePassed}}, Passed: 1},
+	}, write: func() error {
 		_, err := io.WriteString(stdout, "payload\n")
 		return err
 	}}
-	err := finishSelected(selectedRequest{roots: []manifest.NamedResource{id}, stdout: stdout, stderr: stderr, test: true},
-		&selectedInvocation{groups: []selectedGroup{{cluster: "alpha", sides: []*selection.Selection{side}, err: errors.New("selected failed")}, {cluster: "omega", sides: []*selection.Selection{{}}}}}, payload)
+	err := finishSelected(
+		selectedRequest{roots: []manifest.NamedResource{id}, stdout: stdout, stderr: stderr, test: true},
+		&selectedInvocation{
+			groups: []selectedGroup{
+				{cluster: "alpha", sides: []*selection.Selection{side}, err: errors.New("selected failed")},
+				{cluster: "omega", sides: []*selection.Selection{{}}},
+			},
+		},
+		payload,
+	)
 	if err == nil {
 		t.Fatal("test failure became successful")
 	}
@@ -1061,7 +1268,9 @@ func TestFinishSelected_PhaseWriterErrors(t *testing.T) {
 			writer := &phaseFailWriter{token: phase.token, err: writeErr}
 			id := testutil.KustomizationID("ns", "root")
 			side := &selection.Selection{
-				Failed:   map[manifest.NamedResource]store.StatusInfo{id: {Status: store.StatusFailed, Message: "phase primary cause"}},
+				Failed: map[manifest.NamedResource]store.StatusInfo{
+					id: {Status: store.StatusFailed, Message: "phase primary cause"},
+				},
 				Causes:   map[manifest.NamedResource][]manifest.NamedResource{id: nil},
 				Warnings: []manifest.Warning{{Resource: id, Message: "phase advisory"}},
 			}
@@ -1135,8 +1344,18 @@ func TestRun_AllowMissingKindsValidation(t *testing.T) {
 	root := substitutionFixture(t, "", "literal")
 	for _, arg := range []string{"secret", "Unknown", "true", "Secret,,ConfigMap", "Secret,"} {
 		t.Run(arg, func(t *testing.T) {
-			_, diagnostic, code := runCLI(t, "build", "all", "--path", root, "--supply", filepath.Join(root, "absent.yaml"), "--allow-missing-kinds="+arg)
-			if code != 1 || !strings.Contains(diagnostic, "--allow-missing-kinds") || strings.Contains(diagnostic, "--supply") {
+			_, diagnostic, code := runCLI(
+				t,
+				"build",
+				"all",
+				"--path",
+				root,
+				"--supply",
+				filepath.Join(root, "absent.yaml"),
+				"--allow-missing-kinds="+arg,
+			)
+			if code != 1 || !strings.Contains(diagnostic, "--allow-missing-kinds") ||
+				strings.Contains(diagnostic, "--supply") {
 				t.Fatalf("validation after input I/O: exit=%d %s", code, diagnostic)
 			}
 		})
@@ -1201,12 +1420,31 @@ func TestRun_FlagInventory(t *testing.T) {
 }
 
 func TestRun_ProviderCredentialPolicy(t *testing.T) {
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusUnauthorized) }))
+	server := httptest.NewTLSServer(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusUnauthorized) }),
+	)
 	t.Cleanup(server.Close)
 	root := substitutionFixture(t, "", "local")
 	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux.yaml, source.yaml, remote.yaml]\n")
-	testutil.WriteFile(t, root, "source.yaml", fmt.Sprintf("apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: cloud, namespace: apps}\nspec: {provider: aws, insecure: true, url: 'oci://%s/image'}\n", strings.TrimPrefix(server.URL, "https://")))
-	testutil.WriteFile(t, root, "remote.yaml", testutil.KustomizationYAML("remote", "apps", "  path: ./remote\n  sourceRef: {kind: OCIRepository, name: cloud}\n"))
+	testutil.WriteFile(
+		t,
+		root,
+		"source.yaml",
+		fmt.Sprintf(
+			"apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: cloud, namespace: apps}\nspec: {provider: aws, insecure: true, url: 'oci://%s/image'}\n",
+			strings.TrimPrefix(server.URL, "https://"),
+		),
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"remote.yaml",
+		testutil.KustomizationYAML(
+			"remote",
+			"apps",
+			"  path: ./remote\n  sourceRef: {kind: OCIRepository, name: cloud}\n",
+		),
+	)
 	registry := filepath.Join(t.TempDir(), "config.json")
 	testutil.WriteFileAt(t, registry, `{"auths":{}}`)
 	for _, tc := range []struct {
@@ -1216,7 +1454,17 @@ func TestRun_ProviderCredentialPolicy(t *testing.T) {
 		{name: "default", want: 1}, {name: "ConfigMap", selection: "ConfigMap", want: 1}, {name: "Secret", selection: "Secret"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			out, diagnostic, code := runCLI(t, "build", "all", "--path", root, "--registry-config", registry, "--allow-missing-kinds="+tc.selection, "--concurrency=2")
+			out, diagnostic, code := runCLI(
+				t,
+				"build",
+				"all",
+				"--path",
+				root,
+				"--registry-config",
+				registry,
+				"--allow-missing-kinds="+tc.selection,
+				"--concurrency=2",
+			)
 			if code != tc.want || !strings.Contains(out, "value: local") {
 				t.Fatalf("provider blocked unrelated output: exit=%d %s %s", code, out, diagnostic)
 			}

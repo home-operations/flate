@@ -3,8 +3,9 @@ package controllertest
 import (
 	"context"
 	"fmt"
-	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"testing"
+
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -57,14 +58,26 @@ func TestReconcile_TaskFailures(t *testing.T) {
 						panic("reconcile failure")
 					}
 					execution := NewExecution(base.New(store.New(), tasks), testutil.HelmReleaseID("media", "sonarr"))
-					object := &manifest.HelmRelease{Name: "sonarr", Namespace: "media", ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}}
+					object := &manifest.HelmRelease{
+						Name:      "sonarr",
+						Namespace: "media",
+						ChartRef: &helmv2.CrossNamespaceSourceReference{
+							Kind: manifest.KindOCIRepository,
+							Name: "chart",
+						},
+					}
 					execution.Store.AddObject(object)
-					execution.Dispatch(t.Context(), manifest.DrainNone, execution, func(_ *base.Execution, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
-						if len(tc.dependencies) != 0 {
-							return &depwait.ErrBlocked{Deps: tc.dependencies}
-						}
-						return nil
-					})
+					execution.Dispatch(
+						t.Context(),
+						manifest.DrainNone,
+						execution,
+						func(_ *base.Execution, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
+							if len(tc.dependencies) != 0 {
+								return &depwait.ErrBlocked{Deps: tc.dependencies}
+							}
+							return nil
+						},
+					)
 					return execution
 				},
 			}
@@ -103,7 +116,11 @@ func TestDispatchToFixpoint_SettlesRetainedAssessment(t *testing.T) {
 	t.Parallel()
 	tasks := task.NewBounded(2)
 	st := store.New()
-	obj := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}}
+	obj := &manifest.HelmRelease{
+		Name:      "consumer",
+		Namespace: "apps",
+		ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"},
+	}
 	st.AddObject(obj)
 	dependency := manifest.DependencyRef{NamedResource: testutil.HelmReleaseID("apps", "absent")}
 	dispatches := 0
@@ -112,9 +129,14 @@ func TestDispatchToFixpoint_SettlesRetainedAssessment(t *testing.T) {
 		ReconcileNode: func(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
 			dispatches++
 			execution := NewExecution(base.New(st, tasks), id)
-			execution.Dispatch(ctx, level, execution, func(execution *base.Execution, ctx context.Context, _ *manifest.HelmRelease, level manifest.DrainLevel) error {
-				return execution.Require(ctx, []manifest.DependencyRef{dependency}, level)
-			})
+			execution.Dispatch(
+				ctx,
+				level,
+				execution,
+				func(execution *base.Execution, ctx context.Context, _ *manifest.HelmRelease, level manifest.DrainLevel) error {
+					return execution.Require(ctx, []manifest.DependencyRef{dependency}, level)
+				},
+			)
 			return execution
 		},
 	})

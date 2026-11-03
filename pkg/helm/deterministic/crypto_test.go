@@ -29,7 +29,11 @@ func TestCryptoFuncs_ShapeAndInputs(t *testing.T) {
 	}
 	htpasswd := fm["htpasswd"].(func(string, string) string)
 	assert.Equal(t, htpasswd("bad:user", "password"), "invalid username: bad:user")
-	assert.Equal(t, htpasswd("user", strings.Repeat("x", 73)), "user:failed to encrypt string with bcrypt: "+bcryptlib.ErrPasswordTooLong.Error())
+	assert.Equal(
+		t,
+		htpasswd("user", strings.Repeat("x", 73)),
+		"user:failed to encrypt string with bcrypt: "+bcryptlib.ErrPasswordTooLong.Error(),
+	)
 	assert.Equal(t, Funcs(seed)["htpasswd"].(func(string, string) string)("user", "password"), "user:"+hash)
 	encrypted, err := encryptAES(newStream(seed), "key", "")
 	if err != nil {

@@ -49,22 +49,61 @@ func TestRun_PinnedArtifactDiscovery(t *testing.T) {
 			entry := "flux"
 			if tc.revealed {
 				entry = "sources"
-				testutil.WriteFile(t, root, "flux/entry.yaml", testutil.KustomizationYAML("entry", "flux-system", "  {path: ./sources, sourceRef: {kind: GitRepository, name: flux-system}}\n"))
+				testutil.WriteFile(
+					t,
+					root,
+					"flux/entry.yaml",
+					testutil.KustomizationYAML(
+						"entry",
+						"flux-system",
+						"  {path: ./sources, sourceRef: {kind: GitRepository, name: flux-system}}\n",
+					),
+				)
 			}
 			testutil.WriteFile(t, root, entry+"/pinned.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: cluster, namespace: flux-system}
 spec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}
 `+"---\n"+
-				testutil.KustomizationYAML("parent", "flux-system", "  {path: ./apps, sourceRef: {kind: GitRepository, name: cluster}}\n"))
-			child := testutil.KustomizationYAML("child", "flux-system", "  {path: ./leaf, sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}}\n")
+				testutil.KustomizationYAML(
+					"parent",
+					"flux-system",
+					"  {path: ./apps, sourceRef: {kind: GitRepository, name: cluster}}\n",
+				))
+			child := testutil.KustomizationYAML(
+				"child",
+				"flux-system",
+				"  {path: ./leaf, sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}}\n",
+			)
 			testutil.WriteFile(t, root, "apps/child.yaml", child)
-			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [child.yaml, cm.yaml, generator.yaml]\nconfigMapGenerator:\n- name: generated\n  literals: [value=pinned]\n- name: file-generated\n  files: [value=input.txt]\n")
-			testutil.WriteFile(t, root, "apps/generator.yaml", "apiVersion: source.extensions.fluxcd.io/v1beta1\nkind: ArtifactGenerator\nmetadata: {name: generator, namespace: apps, uid: pinned}\nspec:\n  sources: [{alias: repo, kind: GitRepository, name: cluster, namespace: flux-system}]\n  artifacts: [{name: pinned-output}]\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"apps/kustomization.yaml",
+				"resources: [child.yaml, cm.yaml, generator.yaml]\nconfigMapGenerator:\n- name: generated\n  literals: [value=pinned]\n- name: file-generated\n  files: [value=input.txt]\n",
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				"apps/generator.yaml",
+				"apiVersion: source.extensions.fluxcd.io/v1beta1\nkind: ArtifactGenerator\nmetadata: {name: generator, namespace: apps, uid: pinned}\nspec:\n  sources: [{alias: repo, kind: GitRepository, name: cluster, namespace: flux-system}]\n  artifacts: [{name: pinned-output}]\n",
+			)
 			testutil.WriteFile(t, root, "apps/input.txt", "pinned")
-			testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: flux-system}\ndata: {value: pinned}\n")
-			hash := testutil.GitCommitAll(t, repo, "pinned", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(1, 0)}})
-			if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("pinned"), hash)); err != nil {
+			testutil.WriteFile(
+				t,
+				root,
+				"apps/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: flux-system}\ndata: {value: pinned}\n",
+			)
+			hash := testutil.GitCommitAll(
+				t,
+				repo,
+				"pinned",
+				&git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(1, 0)}},
+			)
+			if err := repo.Storer.SetReference(
+				plumbing.NewHashReference(plumbing.NewTagReferenceName("pinned"), hash),
+			); err != nil {
 				t.Fatal(err)
 			}
 			if err := os.Remove(filepath.Join(root, "apps/child.yaml")); err != nil {
@@ -76,13 +115,33 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}
 			if err := os.Remove(filepath.Join(root, "apps/generator.yaml")); err != nil {
 				t.Fatal(err)
 			}
-			testutil.WriteFile(t, root, "apps/child.yaml", strings.Replace(child, manifest.FluxKustomizeDomain, "foreign.example", 1))
+			testutil.WriteFile(
+				t,
+				root,
+				"apps/child.yaml",
+				strings.Replace(child, manifest.FluxKustomizeDomain, "foreign.example", 1),
+			)
 			testutil.WriteFile(t, root, "apps/phantom.yaml", strings.Replace(child, "name: child", "name: phantom", 1))
 			testutil.WriteFile(t, root, "apps/input.txt", "dirty")
-			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [phantom.yaml, child.yaml]\nconfigMapGenerator:\n- name: generated\n  literals: [value=dirty]\n- name: phantom-generated\n  literals: [value=dirty]\n")
-			testutil.GitCommitAll(t, repo, "head", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(2, 0)}})
+			testutil.WriteFile(
+				t,
+				root,
+				"apps/kustomization.yaml",
+				"resources: [phantom.yaml, child.yaml]\nconfigMapGenerator:\n- name: generated\n  literals: [value=dirty]\n- name: phantom-generated\n  literals: [value=dirty]\n",
+			)
+			testutil.GitCommitAll(
+				t,
+				repo,
+				"head",
+				&git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(2, 0)}},
+			)
 			st := store.New()
-			foreignSource := &manifest.RawObject{APIVersion: "foreign.example/v1", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}
+			foreignSource := &manifest.RawObject{
+				APIVersion: "foreign.example/v1",
+				Kind:       manifest.KindGitRepository,
+				Namespace:  "flux-system",
+				Name:       "cluster",
+			}
 			st.AddObject(foreignSource)
 			foreignArtifact := &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)}
 			st.SetArtifact(foreignSource.Named(), foreignArtifact)
@@ -90,7 +149,10 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}
 			if tc.broad {
 				scan = root
 			}
-			entries, err := Plan(t.Context(), Config{Path: scan, RepoRoot: root, SelfURLs: []string{"git://fixture.invalid/cluster"}})
+			entries, err := Plan(
+				t.Context(),
+				Config{Path: scan, RepoRoot: root, SelfURLs: []string{"git://fixture.invalid/cluster"}},
+			)
 			if err != nil || len(entries) != 1 || entries[0].Path != scan {
 				t.Fatalf("committed ownership partitioned working-tree declarations: %+v, %v", entries, err)
 			}
@@ -109,34 +171,65 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}
 			cm := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "settings"}
 			artifact, available := st.GetArtifact(manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}, store.ArtifactContent).(*store.SourceArtifact)
 			if !available {
-				t.Fatalf("pinned artifact missing: records=%+v objects=%v", result.Index.Records, st.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization))
+				t.Fatalf(
+					"pinned artifact missing: records=%+v objects=%v",
+					result.Index.Records,
+					st.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization),
+				)
 			}
-			generator := manifest.NamedResource{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Namespace: "apps", Name: "generator"}
+			generator := manifest.NamedResource{
+				Group:     "source.extensions.fluxcd.io",
+				Kind:      "ArtifactGenerator",
+				Namespace: "apps",
+				Name:      "generator",
+			}
 			generatorObj := st.GetObject(generator)
 			_, generatorDoc, attempt := st.GetEmission(generator)
 			attempt.Finish()
-			if generatorObj == nil || generatorDoc == nil || generatorDoc["metadata"].(map[string]any)["uid"] != "pinned" {
+			if generatorObj == nil || generatorDoc == nil ||
+				generatorDoc["metadata"].(map[string]any)["uid"] != "pinned" {
 				t.Fatalf("pinned generator document = %#v", generatorDoc)
 			}
 			generatorRecord, _ := result.Index.Lookup(generator)
-			input := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}
+			input := manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindGitRepository,
+				Namespace: "flux-system",
+				Name:      "cluster",
+			}
 			if !slices.Equal(generatorRecord.Refs, []manifest.NamedResource{input}) {
 				t.Fatalf("pinned generator inputs = %v", generatorRecord.Refs)
 			}
-			output := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: "pinned-output"}
+			output := manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindExternalArtifact,
+				Namespace: "apps",
+				Name:      "pinned-output",
+			}
 			productions := st.Productions(output, result.Index)
-			if len(productions) != 1 || productions[0].Owner != parent || productions[0].Declaration != generator || productions[0].Source != input || productions[0].File != generatorRecord.File {
+			if len(productions) != 1 || productions[0].Owner != parent || productions[0].Declaration != generator ||
+				productions[0].Source != input ||
+				productions[0].File != generatorRecord.File {
 				t.Fatalf("pinned generator productions = %+v", productions)
 			}
-			if st.GetObject(phantom) != nil || st.GetObject(childID) == nil || parentsForTest(result.Index)[childID] != parent {
-				t.Fatalf("pinned children: phantom=%v child=%v parent=%v", st.GetObject(phantom), st.GetObject(childID), parentsForTest(result.Index)[childID])
+			if st.GetObject(phantom) != nil || st.GetObject(childID) == nil ||
+				parentsForTest(result.Index)[childID] != parent {
+				t.Fatalf(
+					"pinned children: phantom=%v child=%v parent=%v",
+					st.GetObject(phantom),
+					st.GetObject(childID),
+					parentsForTest(result.Index)[childID],
+				)
 			}
 			generated := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "generated"}
 			generatedCM, ok := values.NewStoreProvider(st, true).Data(generated).(*manifest.ConfigMap)
 			if st.GetObject(generated) != nil {
 				t.Fatal("pinned generator lookup entered canonical inventory")
 			}
-			if !ok || generatedCM.Data["value"] != "pinned" || values.NewStoreProvider(st, true).Data(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "phantom-generated"}) != nil {
+			if !ok || generatedCM.Data["value"] != "pinned" ||
+				values.NewStoreProvider(st, true).
+					Data(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "phantom-generated"}) !=
+					nil {
 				t.Fatalf("pinned generators = %v", generatedCM)
 			}
 			fileGenerated, ok := values.NewStoreProvider(st, true).Data(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "file-generated"}).(*manifest.ConfigMap)
@@ -152,7 +245,12 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}
 			if got := renderersForTest(result.Index, cm); !slices.Equal(got, []manifest.NamedResource{parent}) {
 				t.Fatalf("self-produce = %v, want [%s]", got, parent)
 			}
-			if got := testutil.Owners(st.Productions(cm, result.Index)); !slices.Equal(got, []manifest.NamedResource{parent}) {
+			if got := testutil.Owners(
+				st.Productions(cm, result.Index),
+			); !slices.Equal(
+				got,
+				[]manifest.NamedResource{parent},
+			) {
 				t.Fatalf("producers = %v, want [%s]", got, parent)
 			}
 		})
@@ -164,12 +262,31 @@ func TestPlan_PinnedRootKeepsEntrySource(t *testing.T) {
 	root := t.TempDir()
 	repo := testutil.GitInit(t, root)
 	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [cm.yaml, flux/entry.yaml, flux/repo.yaml]\n")
-	testutil.WriteFile(t, root, "flux/entry.yaml", testutil.KustomizationYAML("root", "control", "  path: ./\n  sourceRef: {kind: GitRepository, name: cluster}\n"))
+	testutil.WriteFile(
+		t,
+		root,
+		"flux/entry.yaml",
+		testutil.KustomizationYAML(
+			"root",
+			"control",
+			"  path: ./\n  sourceRef: {kind: GitRepository, name: cluster}\n",
+		),
+	)
 	source := "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: control}\nspec: {url: 'git://fixture.invalid/cluster', ref: {tag: v1}}\n"
 	testutil.WriteFile(t, root, "flux/repo.yaml", source)
 	for i, tag := range []string{"v1", "v2"} {
-		testutil.WriteFile(t, root, "cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: same}\ndata: {value: "+tag+"}\n")
-		hash := testutil.GitCommitAll(t, repo, tag, &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(int64(i), 0)}})
+		testutil.WriteFile(
+			t,
+			root,
+			"cm.yaml",
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: same}\ndata: {value: "+tag+"}\n",
+		)
+		hash := testutil.GitCommitAll(
+			t,
+			repo,
+			tag,
+			&git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(int64(i), 0)}},
+		)
 		assert.NoError(t, repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName(tag), hash)))
 	}
 	testutil.WriteFile(t, root, "flux/repo.yaml", strings.Replace(source, "tag: v1", "tag: v2", 1))
@@ -184,18 +301,61 @@ func TestPlan_PinnedPathExcludesWorkingTreePackages(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	repo := testutil.GitInit(t, root)
-	testutil.WriteFile(t, root, "flux/entry.yaml", testutil.KustomizationYAML("root", "control", "  path: ./apps\n  sourceRef: {kind: GitRepository, name: cluster}\n"))
-	testutil.WriteFile(t, root, "flux/repo.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: control}\nspec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"flux/entry.yaml",
+		testutil.KustomizationYAML(
+			"root",
+			"control",
+			"  path: ./apps\n  sourceRef: {kind: GitRepository, name: cluster}\n",
+		),
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"flux/repo.yaml",
+		"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: control}\nspec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}\n",
+	)
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
-	testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: same}\ndata: {value: pinned}\n")
-	hash := testutil.GitCommitAll(t, repo, "pinned", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}})
+	testutil.WriteFile(
+		t,
+		root,
+		"apps/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: same}\ndata: {value: pinned}\n",
+	)
+	hash := testutil.GitCommitAll(
+		t,
+		repo,
+		"pinned",
+		&git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}},
+	)
 	assert.NoError(t, repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("pinned"), hash)))
-	testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: same}\ndata: {value: dirty}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"apps/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: same}\ndata: {value: dirty}\n",
+	)
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml, added.yaml]\n")
-	testutil.WriteFile(t, root, "apps/added.yaml", testutil.KustomizationYAML("phantom", "control", "  path: ./phantom\n  sourceRef: {kind: GitRepository, name: working}\n")+"---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: working, namespace: control}\nspec: {url: 'git://fixture.invalid/cluster'}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"apps/added.yaml",
+		testutil.KustomizationYAML(
+			"phantom",
+			"control",
+			"  path: ./phantom\n  sourceRef: {kind: GitRepository, name: working}\n",
+		)+"---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: working, namespace: control}\nspec: {url: 'git://fixture.invalid/cluster'}\n",
+	)
 	testutil.WriteFile(t, root, "phantom/kustomization.yaml", "resources: [cm.yaml]\n")
 	testutil.WriteFile(t, root, "phantom/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: phantom}\n")
-	testutil.GitCommitAll(t, repo, "head", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(1, 0)}})
+	testutil.GitCommitAll(
+		t,
+		repo,
+		"head",
+		&git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(1, 0)}},
+	)
 	entries, err := Plan(t.Context(), Config{Path: root, SelfURLs: []string{"git://fixture.invalid/cluster"}})
 	assert.NoError(t, err)
 	if len(entries) != 1 || entries[0].Path != root {
@@ -279,7 +439,8 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 			side := bootstrap.LocalPath
 			d.cfg.Path = side
 			aliased, err := d.resolveEntrySources(t.Context(), false)
-			if st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != bootstrap || st.GetObject(repository.Named()) != repository {
+			if st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != bootstrap ||
+				st.GetObject(repository.Named()) != repository {
 				t.Fatal("discovery replaced the bootstrap or authored source")
 			}
 			if tc.base != "" {
@@ -289,11 +450,18 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 				}
 				content, err := fs.ReadFile(bootstrap.FS, "value.txt")
 				if err != nil || string(content) != want || bootstrap.Key == "" || bootstrap.LocalRoot != root {
-					t.Fatalf("baseline content = %q, %v; want %s with immutable checkout identity: %+v", content, err, want, bootstrap)
+					t.Fatalf(
+						"baseline content = %q, %v; want %s with immutable checkout identity: %+v",
+						content,
+						err,
+						want,
+						bootstrap,
+					)
 				}
 			}
 			if tc.fail {
-				if !errors.Is(err, manifest.ErrFlux) || st.GetArtifact(repository.Named(), store.ArtifactContent) != nil {
+				if !errors.Is(err, manifest.ErrFlux) ||
+					st.GetArtifact(repository.Named(), store.ArtifactContent) != nil {
 					t.Fatalf("invalid source = %v, %v", err, st.GetArtifact(repository.Named(), store.ArtifactContent))
 				}
 				return
@@ -309,8 +477,14 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 					t.Fatal("fallback marked source ready")
 				}
 				warnings := st.Warnings()
-				detail := []string{(*manifest.GitRepositoryRef)(repository.Reference).String(), "ref unavailable in this tree's repository or checkout options require fetching"}
-				if len(warnings) != 1 || warnings[0].Category != manifest.WarnSourceRefUnavailable || warnings[0].Resource != repository.Named() || warnings[0].Count != 1 || !slices.Equal(warnings[0].Detail, detail) {
+				detail := []string{
+					(*manifest.GitRepositoryRef)(repository.Reference).String(),
+					"ref unavailable in this tree's repository or checkout options require fetching",
+				}
+				if len(warnings) != 1 || warnings[0].Category != manifest.WarnSourceRefUnavailable ||
+					warnings[0].Resource != repository.Named() ||
+					warnings[0].Count != 1 ||
+					!slices.Equal(warnings[0].Detail, detail) {
 					t.Fatalf("fallback warning = %+v", warnings)
 				}
 				return
@@ -323,8 +497,17 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 						t.Fatalf("pinned HEAD content = %q, %v; want B", content, err)
 					}
 				}
-				if artifact.Revision != revision || (artifact.Key == "") != tc.head || artifact.LocalRoot != side || artifact.LocalPath == side || artifact.InputAlias != tc.head || d.hasPins == tc.head || (artifact.InputAlias) != tc.head {
-					t.Fatalf("pinned HEAD identity/classification = %+v, pins=%t aliases=%v", artifact, d.hasPins, aliased)
+				if artifact.Revision != revision || (artifact.Key == "") != tc.head || artifact.LocalRoot != side ||
+					artifact.LocalPath == side ||
+					artifact.InputAlias != tc.head ||
+					d.hasPins == tc.head ||
+					artifact.InputAlias != tc.head {
+					t.Fatalf(
+						"pinned HEAD identity/classification = %+v, pins=%t aliases=%v",
+						artifact,
+						d.hasPins,
+						aliased,
+					)
 				}
 				if !tc.head && artifact.URL != repository.URL {
 					t.Fatalf("committed URL = %q, want %q", artifact.URL, repository.URL)
@@ -347,7 +530,8 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 				want = "B"
 			} else if tc.head {
 				want = "dirty"
-				if artifact.LocalRoot != root || artifact.LocalPath == root || artifact.FS == nil || artifact.Key != "" {
+				if artifact.LocalRoot != root || artifact.LocalPath == root || artifact.FS == nil ||
+					artifact.Key != "" {
 					t.Fatalf("mutable alias did not retain its admitted origin: %+v", artifact)
 				}
 			} else if artifact.FS == nil || artifact.Key == "" || artifact.URL != repository.URL {
@@ -397,7 +581,12 @@ func TestAliasBootstrapSources_LocalPathOwnership(t *testing.T) {
 			t.Parallel()
 			root := discoveryRefFixture(t)
 			st := store.New()
-			id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: tc.kind, Namespace: "flux-system", Name: "cluster"}
+			id := manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      tc.kind,
+				Namespace: "flux-system",
+				Name:      "cluster",
+			}
 			switch tc.kind {
 			case manifest.KindGitRepository:
 				st.AddObject(&manifest.GitRepository{
@@ -412,8 +601,14 @@ func TestAliasBootstrapSources_LocalPathOwnership(t *testing.T) {
 				st.AddObject(bucket)
 			}
 			ks := &manifest.Kustomization{
-				Name: "apps", Namespace: id.Namespace, Path: "./apps",
-				SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: id.Kind, Name: id.Name, Namespace: id.Namespace},
+				Name:      "apps",
+				Namespace: id.Namespace,
+				Path:      "./apps",
+				SourceRef: kustomizev1.CrossNamespaceSourceReference{
+					Kind:      id.Kind,
+					Name:      id.Name,
+					Namespace: id.Namespace,
+				},
 			}
 			st.AddObject(ks)
 			d := Session{cfg: Config{
@@ -427,7 +622,10 @@ func TestAliasBootstrapSources_LocalPathOwnership(t *testing.T) {
 				if _, err := d.resolveEntrySources(t.Context(), true); err != nil {
 					t.Fatal(err)
 				}
-				if got := st.GetArtifact(id, store.ArtifactContent) != nil; got != (tc.kind == manifest.KindGitRepository) {
+				if got := st.GetArtifact(
+					id,
+					store.ArtifactContent,
+				) != nil; got != (tc.kind == manifest.KindGitRepository) {
 					t.Fatalf("missing-source alias = %t for %s", got, tc.kind)
 				}
 				ref := ""
@@ -438,7 +636,18 @@ func TestAliasBootstrapSources_LocalPathOwnership(t *testing.T) {
 				if tc.kind == manifest.KindBucket {
 					field, ref = "endpoint", "\n  bucketName: cluster"
 				}
-				testutil.WriteFile(t, root, "authored/source.yaml", fmt.Sprintf("apiVersion: source.toolkit.fluxcd.io/v1\nkind: %s\nmetadata: {name: cluster, namespace: flux-system}\nspec:\n  %s: %q%s\n", tc.kind, field, tc.url, ref))
+				testutil.WriteFile(
+					t,
+					root,
+					"authored/source.yaml",
+					fmt.Sprintf(
+						"apiVersion: source.toolkit.fluxcd.io/v1\nkind: %s\nmetadata: {name: cluster, namespace: flux-system}\nspec:\n  %s: %q%s\n",
+						tc.kind,
+						field,
+						tc.url,
+						ref,
+					),
+				)
 				l := loader.New(st)
 				l.SourceRoot, l.PreferExisting = root, true
 				if _, err := l.Load(t.Context(), filepath.Join(root, "authored")); err != nil {
@@ -453,7 +662,11 @@ func TestAliasBootstrapSources_LocalPathOwnership(t *testing.T) {
 				t.Fatal(err)
 			}
 			authored := st.GetObject(id)
-			if aliases, err := d.resolveEntrySources(t.Context(), true); err != nil || aliases != 0 || st.GetObject(id) != authored {
+			if aliases, err := d.resolveEntrySources(
+				t.Context(),
+				true,
+			); err != nil || aliases != 0 ||
+				st.GetObject(id) != authored {
 				t.Fatalf("authored source replaced: %v, %v", aliases, err)
 			}
 			if !tc.local && st.GetArtifact(id, store.ArtifactContent) != nil {
@@ -499,27 +712,50 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			st := store.New()
-			bootstrap := &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: root, LocalRoot: root, Revision: "one", Digest: "aaa", FS: fstest.MapFS{"file": {Data: []byte("first")}}}
+			bootstrap := &store.SourceArtifact{
+				Kind:      manifest.KindGitRepository,
+				LocalPath: root,
+				LocalRoot: root,
+				Revision:  "one",
+				Digest:    "aaa",
+				FS:        fstest.MapFS{"file": {Data: []byte("first")}},
+			}
 			if pinned {
 				bootstrap.Key, bootstrap.Content = "family", "generation"
 			}
 			st.SetArtifact(manifest.BootstrapSourceID, bootstrap)
 			d := Session{cfg: Config{Path: root, Store: st, SelfURLs: []string{"https://fixture.invalid/repo"}}}
-			ids := []manifest.NamedResource{{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "one", Name: "source"}, {Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "two", Name: "alias"}}
+			ids := []manifest.NamedResource{
+				{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "one", Name: "source"},
+				{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "two", Name: "alias"},
+			}
 			for _, id := range ids {
 				if id == ids[1] {
-					repository := &manifest.GitRepository{Name: id.Name, Namespace: id.Namespace, URL: "https://fixture.invalid/repo"}
+					repository := &manifest.GitRepository{
+						Name:      id.Name,
+						Namespace: id.Namespace,
+						URL:       "https://fixture.invalid/repo",
+					}
 					repository.SparseCheckout = []string{}
 					st.AddObject(repository)
 				}
-				st.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace, SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: id.Kind, Name: id.Name}})
+				st.AddObject(
+					&manifest.Kustomization{
+						Name:      id.Name,
+						Namespace: id.Namespace,
+						SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: id.Kind, Name: id.Name},
+					},
+				)
 				if count, err := d.resolveEntrySources(t.Context(), true); err != nil || count != 1 {
 					t.Fatalf("publish alias = %d, %v", count, err)
 				}
 			}
 			first := st.GetArtifact(ids[0], store.ArtifactContent).(*store.SourceArtifact)
 			second := st.GetArtifact(ids[1], store.ArtifactContent).(*store.SourceArtifact)
-			if first.Key != "" || second.Key != "" || first.LocalPath == second.LocalPath || first.LocalRoot != root || second.LocalRoot != root || !first.InputAlias || !second.InputAlias {
+			if first.Key != "" || second.Key != "" || first.LocalPath == second.LocalPath || first.LocalRoot != root ||
+				second.LocalRoot != root ||
+				!first.InputAlias ||
+				!second.InputAlias {
 				t.Fatalf("alias view/ownership = %+v, %+v", first, second)
 			}
 			generations := []struct{ revision, digest string }{{"two", "aaa"}, {"two", "bbb"}}
@@ -538,7 +774,8 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 					t.Fatal(err)
 				}
 				got := st.GetArtifact(ids[0], store.ArtifactContent).(*store.SourceArtifact)
-				if got.FS == first.FS || got.Key != "" || got.Revision != generation.revision || got.Digest != generation.digest {
+				if got.FS == first.FS || got.Key != "" || got.Revision != generation.revision ||
+					got.Digest != generation.digest {
 					t.Fatalf("generation reused alias identity: %+v", got)
 				}
 				data, err := fs.ReadFile(got.FS, "file")
@@ -570,7 +807,12 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 	t.Run("mutable alias refresh", func(t *testing.T) {
 		t.Parallel()
 		testutil.WriteFile(t, root, "chart/Chart.yaml", "apiVersion: v2\nname: chart\nversion: 1.0.0\n")
-		testutil.WriteFile(t, root, "chart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: main\n")
+		testutil.WriteFile(
+			t,
+			root,
+			"chart/templates/cm.yaml",
+			"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: main\n",
+		)
 		testutil.WriteFile(t, root, "excluded/file", "hidden")
 		alias := &manifest.GitRepository{Name: "alias", Namespace: "flux-system", URL: repository.URL}
 		alias.Ignore = new("excluded/\n")
@@ -586,18 +828,45 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 		owner := cachetest.New(t, "", sourcecache.New)
 		cli := helm.NewClient(owner)
 
-		hr := &manifest.HelmRelease{Name: "release", Namespace: "apps", Chart: manifest.HelmChart{Name: "chart", Source: manifest.NamedResource{Group: alias.Named().Group, Kind: alias.Named().Kind, Namespace: alias.Namespace, Name: alias.Name}}}
+		hr := &manifest.HelmRelease{
+			Name:      "release",
+			Namespace: "apps",
+			Chart: manifest.HelmChart{
+				Name: "chart",
+				Source: manifest.NamedResource{
+					Group:     alias.Named().Group,
+					Kind:      alias.Named().Kind,
+					Namespace: alias.Namespace,
+					Name:      alias.Name,
+				},
+			},
+		}
 		for _, exists := range []bool{false, true, false} {
 			if exists {
-				testutil.WriteFile(t, root, "chart/templates/arrived/deep/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: arrived\n")
+				testutil.WriteFile(
+					t,
+					root,
+					"chart/templates/arrived/deep/cm.yaml",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: arrived\n",
+				)
 			} else if err := os.RemoveAll(filepath.Join(root, "chart/templates/arrived")); err != nil {
 				t.Fatal(err)
 			}
-			out, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, helm.RenderOptions{Options: helm.Options{}, Sources: helm.NewSources(st)}))
+			out, _, err := testutil.RenderMaps(
+				cli.Template(
+					t.Context(),
+					hr,
+					nil,
+					helm.RenderOptions{Options: helm.Options{}, Sources: helm.NewSources(st)},
+				),
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if slices.ContainsFunc(out, func(doc map[string]any) bool { name, _ := manifest.DocMetadata(doc); return name == "arrived" }) != exists {
+			if slices.ContainsFunc(
+				out,
+				func(doc map[string]any) bool { name, _ := manifest.DocMetadata(doc); return name == "arrived" },
+			) != exists {
 				t.Fatalf("alias membership stale: %s", out)
 			}
 			if st.GetArtifact(alias.Named(), store.ArtifactContent) != art {
@@ -618,7 +887,6 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 			t.Fatal("alias refresh changed registry or authored object")
 		}
 	})
-
 }
 
 func discoveryRefFixture(t *testing.T) string {
@@ -631,8 +899,15 @@ func discoveryRefFixture(t *testing.T) string {
 		testutil.WriteFile(t, root, "apps/ignored.txt", value)
 		testutil.WriteFile(t, root, "apps/excluded.txt", value)
 		testutil.WriteFile(t, root, ".sourceignore", "apps/ignored.txt\n")
-		hash := testutil.GitCommitAll(t, repo, value, &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}})
-		if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName([]string{"v1.0.0", "v2.0.0"}[i]), hash)); err != nil {
+		hash := testutil.GitCommitAll(
+			t,
+			repo,
+			value,
+			&git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}},
+		)
+		if err := repo.Storer.SetReference(
+			plumbing.NewHashReference(plumbing.NewTagReferenceName([]string{"v1.0.0", "v2.0.0"}[i]), hash),
+		); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -694,16 +969,28 @@ func TestEntrySourceView_WarningEvidence(t *testing.T) {
 			if failed {
 				current = warningFailureFS{}
 			}
-			input, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: current})
+			input, _, err := gittree.New(
+				t.Context(),
+				nil,
+				plumbing.ZeroHash,
+				gittree.ViewOptions{Mode: gittree.Direct, Current: current},
+			)
 			assert.NoError(t, err)
-			raw := manifest.Warning{Category: manifest.WarnSkippedSubmodule, Message: "skipping submodule", Detail: []string{"app/module"}}
+			raw := manifest.Warning{
+				Category: manifest.WarnSkippedSubmodule,
+				Message:  "skipping submodule",
+				Detail:   []string{"app/module"},
+			}
 			input.Warnings = []manifest.Warning{raw}
 			invocation := manifest.Warning{Category: manifest.WarnBaselineStatusUnavailable, Message: "current only"}
 			bootstrap := &store.SourceArtifact{LocalPath: root, FS: input, Warnings: []manifest.Warning{invocation}}
 			obj := &manifest.GitRepository{Name: "alias", Namespace: "apps"}
 			d := &Admission{aliasViews: map[string]*store.SourceArtifact{}}
 			for range 2 {
-				artifact, _, err := d.entrySourceView(t.Context(), entryResolution{object: obj, input: bootstrap, git: obj})
+				artifact, _, err := d.entrySourceView(
+					t.Context(),
+					entryResolution{object: obj, input: bootstrap, git: obj},
+				)
 				if failed && !errors.Is(err, fs.ErrPermission) || !failed && err != nil {
 					t.Fatalf("source view error=%v, failed=%t", err, failed)
 				}

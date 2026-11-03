@@ -26,7 +26,11 @@ func (e *orchestratorExistence) IsFileIndexed(id manifest.NamedResource) bool {
 	return e.DiscoveryIndex.IsFileIndexed(id)
 }
 
-func (e *orchestratorExistence) Promote(ctx context.Context, reads *store.ReadSet, id manifest.NamedResource) (bool, error) {
+func (e *orchestratorExistence) Promote(
+	ctx context.Context,
+	reads *store.ReadSet,
+	id manifest.NamedResource,
+) (bool, error) {
 	if e.o.preparation != nil {
 		if err := ctx.Err(); err != nil {
 			return false, err
@@ -66,7 +70,12 @@ func (e *orchestratorExistence) Promote(ctx context.Context, reads *store.ReadSe
 		admit := func(obj manifest.BaseManifest) (bool, error) {
 			return e.admit(ctx, store.Child{Obj: obj, Productions: []manifest.Production{p}}, reads)
 		}
-		promoted, err := loader.Promote(ctx, e.o.store, id, loader.PromoteOptions{Record: p, Reads: reads, WipeSecrets: e.o.cfg.WipeSecrets, Admit: admit})
+		promoted, err := loader.Promote(
+			ctx,
+			e.o.store,
+			id,
+			loader.PromoteOptions{Record: p, Reads: reads, WipeSecrets: e.o.cfg.WipeSecrets, Admit: admit},
+		)
 		if err != nil {
 			return false, err
 		}
@@ -221,7 +230,8 @@ func (o *Orchestrator) collectManifests() []manifest.DocumentBatch {
 		for _, child := range attempt.Children {
 			if child.Doc != nil {
 				target := child.Obj.Named()
-				selected[target] = (!parentAttributed || !manifest.KindOf(child.Obj).Render) && o.store.EmissionOwner(target) == id
+				selected[target] = (!parentAttributed || !manifest.KindOf(child.Obj).Render) &&
+					o.store.EmissionOwner(target) == id
 			}
 		}
 		for _, occurrence := range attempt.Manifests {
@@ -234,11 +244,14 @@ func (o *Orchestrator) collectManifests() []manifest.DocumentBatch {
 				}
 			}
 			apiVersion := manifest.DocAPIVersion(doc)
-			identifiable := apiVersion != "" && target.Kind != "" && target.Name != "" && target.Group != manifest.KustomizeDomain
-			if parentAttributed && identifiable && target.Namespace == "" && manifest.KindOf(&manifest.RawObject{APIVersion: apiVersion, Kind: target.Kind}).Namespaced() {
+			identifiable := apiVersion != "" && target.Kind != "" && target.Name != "" &&
+				target.Group != manifest.KustomizeDomain
+			if parentAttributed && identifiable && target.Namespace == "" &&
+				manifest.KindOf(&manifest.RawObject{APIVersion: apiVersion, Kind: target.Kind}).Namespaced() {
 				target.Namespace = id.Namespace
 			}
-			if !filterOwnership || !identifiable || selected[target] || !parentAttributed && o.store.EmissionOwner(target) == (manifest.NamedResource{}) {
+			if !filterOwnership || !identifiable || selected[target] ||
+				!parentAttributed && o.store.EmissionOwner(target) == (manifest.NamedResource{}) {
 				position, ok := positions[parent]
 				if !ok {
 					position = len(out)

@@ -52,23 +52,39 @@ type ProviderResolver func(ref fluxopv1.InputProviderReference, id manifest.Name
 // Referenced providers with no combined inputs produce no resources.
 // admit receives borrowed canonical content before matrix/template work; true skips rendering.
 // providers contains evaluated input records in canonical order.
-func Render(rs *manifest.ResourceSet, providers []ProviderInputs, admit func(any) (bool, error)) ([]manifest.DocOccurrence, []manifest.Warning, error) {
+func Render(
+	rs *manifest.ResourceSet,
+	providers []ProviderInputs,
+	admit func(any) (bool, error),
+) ([]manifest.DocOccurrence, []manifest.Warning, error) {
 	if rs == nil {
 		return nil, nil, nil
 	}
 	if len(rs.Steps) > 0 && (len(rs.Resources) > 0 || rs.ResourcesTemplate != "") {
-		return nil, nil, manifest.NewError(manifest.ErrInput, nil, "spec.steps is mutually exclusive with spec.resources and spec.resourcesTemplate")
+		return nil, nil, manifest.NewError(
+			manifest.ErrInput,
+			nil,
+			"spec.steps is mutually exclusive with spec.resources and spec.resourcesTemplate",
+		)
 	}
 	for _, step := range rs.Steps {
 		if len(step.Resources) == 0 && step.ResourcesTemplate == "" {
-			return nil, nil, manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("step %q: at least one of resources or resourcesTemplate must be set", step.Name))
+			return nil, nil, manifest.NewError(
+				manifest.ErrInput,
+				nil,
+				fmt.Sprintf("step %q: at least one of resources or resourcesTemplate must be set", step.Name),
+			)
 		}
 	}
 	var warnings []manifest.Warning
 	for _, provider := range providers {
 		if provider.State == ProviderInputUnsupported {
-			warnings = append(warnings, manifest.Warning{Resource: rs.Named(), Category: manifest.WarnOfflineInputProvider,
-				Message: "dynamic input provider contributes no inputs offline", Detail: []string{provider.ID.String(), provider.Type}})
+			warnings = append(warnings, manifest.Warning{
+				Resource: rs.Named(),
+				Category: manifest.WarnOfflineInputProvider,
+				Message:  "dynamic input provider contributes no inputs offline",
+				Detail:   []string{provider.ID.String(), provider.Type},
+			})
 		}
 	}
 	if admit != nil {
@@ -108,7 +124,16 @@ func Render(rs *manifest.ResourceSet, providers []ProviderInputs, admit func(any
 			for _, doc := range rendered {
 				key := DedupKey(doc.Document)
 				if prev, found := stepOfObject[key]; found && prev != step.Name {
-					return nil, warnings, manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("duplicate resource %s in step %q, already defined in step %q", key, step.Name, prev))
+					return nil, warnings, manifest.NewError(
+						manifest.ErrInput,
+						nil,
+						fmt.Sprintf(
+							"duplicate resource %s in step %q, already defined in step %q",
+							key,
+							step.Name,
+							prev,
+						),
+					)
 				}
 				stepOfObject[key] = step.Name
 			}
@@ -209,7 +234,11 @@ func renderResourcesTemplate(tmplStr string, inputs []map[string]any) ([]map[str
 			if bytes.HasPrefix(line, []byte("---")) {
 				tail := bytes.TrimSpace(line[3:])
 				if len(tail) > 0 && tail[0] != '#' {
-					return nil, manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("invalid Yaml document separator: %s", tail))
+					return nil, manifest.NewError(
+						manifest.ErrInput,
+						nil,
+						fmt.Sprintf("invalid Yaml document separator: %s", tail),
+					)
 				}
 			}
 		}

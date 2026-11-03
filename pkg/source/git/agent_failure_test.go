@@ -34,7 +34,12 @@ func TestFetcher_AmbientPostAuthenticationFailure(t *testing.T) {
 			closed, opened, _ := acquisitionAgent(t, identity)
 			homeDir := t.TempDir()
 			t.Setenv("HOME", homeDir)
-			testutil.WriteFile(t, homeDir, ".ssh/known_hosts", knownhosts.Line([]string{"fixture"}, host.PublicKey())+"\n")
+			testutil.WriteFile(
+				t,
+				homeDir,
+				".ssh/known_hosts",
+				knownhosts.Line([]string{"fixture"}, host.PublicKey())+"\n",
+			)
 			root := t.TempDir()
 			mustInitRepo(t, root)
 			if phase == "view" {
@@ -57,7 +62,11 @@ func TestFetcher_AmbientPostAuthenticationFailure(t *testing.T) {
 				assert.NoError(t, err)
 				assert.NoError(t, repository.Storer.SetReference(plumbing.NewHashReference(head.Name(), hash)))
 			}
-			tr := &agentAuthentication{Transport: server.DefaultServer, host: host.PublicKey(), allowed: key.PublicKey()}
+			tr := &agentAuthentication{
+				Transport: server.DefaultServer,
+				host:      host.PublicKey(),
+				allowed:   key.PublicKey(),
+			}
 			previous := client.Protocols["ssh"]
 			client.InstallProtocol("ssh", tr)
 			t.Cleanup(func() { client.InstallProtocol("ssh", previous) })
@@ -83,7 +92,9 @@ func TestFetcher_AmbientPostAuthenticationFailure(t *testing.T) {
 				t.Fatalf("prepare = %v", err)
 			}
 			artifact, err := missing.RetryAmbient(t.Context())
-			if artifact != nil || err == nil || !errors.Is(err, manifest.ErrFlux) || phase == "publication" && !strings.Contains(err.Error(), "blobs") || phase == "view" && !errors.Is(err, manifest.ErrInput) {
+			if artifact != nil || err == nil || !errors.Is(err, manifest.ErrFlux) ||
+				phase == "publication" && !strings.Contains(err.Error(), "blobs") ||
+				phase == "view" && !errors.Is(err, manifest.ErrInput) {
 				t.Fatalf("ambient %s failure = %v, %v", phase, artifact, err)
 			}
 			<-closed
@@ -103,16 +114,31 @@ func TestFetcher_AmbientSubmodulesShareAttempt(t *testing.T) {
 	testutil.WriteFile(t, homeDir, ".ssh/known_hosts", knownhosts.Line([]string{"fixture"}, host.PublicKey())+"\n")
 	root, leaf := t.TempDir(), t.TempDir()
 	mustInitRepo(t, leaf)
-	mustInitRepoWithFiles(t, root, map[string]string{"hello.txt": "parent", ".gitmodules": "[submodule \"lib\"]\n\tpath = lib\n\turl = ssh://git@fixture" + leaf + "\n"})
+	mustInitRepoWithFiles(
+		t,
+		root,
+		map[string]string{
+			"hello.txt":   "parent",
+			".gitmodules": "[submodule \"lib\"]\n\tpath = lib\n\turl = ssh://git@fixture" + leaf + "\n",
+		},
+	)
 	repository, err := gitlib.PlainOpen(root)
 	assert.NoError(t, err)
 	entries, err := repository.Storer.Index()
 	assert.NoError(t, err)
-	entries.Entries = append(entries.Entries, &index.Entry{Name: "lib", Mode: filemode.Submodule, Hash: plumbing.NewHash(mustHead(t, leaf))})
+	entries.Entries = append(
+		entries.Entries,
+		&index.Entry{Name: "lib", Mode: filemode.Submodule, Hash: plumbing.NewHash(mustHead(t, leaf))},
+	)
 	assert.NoError(t, repository.Storer.SetIndex(entries))
 	worktree, err := repository.Worktree()
 	assert.NoError(t, err)
-	_, err = worktree.Commit("fixture submodule", &gitlib.CommitOptions{Author: &object.Signature{Name: "fixture", Email: "fixture@example.test", When: time.Unix(1, 0)}})
+	_, err = worktree.Commit(
+		"fixture submodule",
+		&gitlib.CommitOptions{
+			Author: &object.Signature{Name: "fixture", Email: "fixture@example.test", When: time.Unix(1, 0)},
+		},
+	)
 	assert.NoError(t, err)
 	tr := &agentAuthentication{Transport: server.DefaultServer, host: host.PublicKey(), allowed: key.PublicKey()}
 	previous := client.Protocols["ssh"]

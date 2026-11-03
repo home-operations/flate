@@ -68,7 +68,9 @@ func classify(id manifest.NamedResource, info store.StatusInfo) output.Case {
 	case store.OutcomePassed:
 		return output.Case{ID: id, Outcome: output.OutcomePassed}
 	default:
-		return output.Case{ID: id, Outcome: output.OutcomeFailed,
-			Reason: "still " + string(info.Status) + ": " + info.String()}
+		return output.Case{
+			ID: id, Outcome: output.OutcomeFailed,
+			Reason: "still " + string(info.Status) + ": " + info.String(),
+		}
 	}
 }

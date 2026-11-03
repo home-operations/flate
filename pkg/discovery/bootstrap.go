@@ -202,7 +202,9 @@ func (d *Session) resolveEntrySources(ctx context.Context, allowMissing bool) (i
 	for _, id := range ids {
 		group := groups[id]
 		obj := d.cfg.Store.GetObject(id)
-		if previous, seen := d.resolvedSources[id]; restricted && seen && previous.synthetic && obj == previous.object && group.evidence.Obj != nil {
+		if previous, seen := d.resolvedSources[id]; restricted && seen && previous.synthetic &&
+			obj == previous.object &&
+			group.evidence.Obj != nil {
 			obj = group.evidence.Obj
 		}
 		if obj == nil {
@@ -212,14 +214,16 @@ func (d *Session) resolveEntrySources(ctx context.Context, allowMissing bool) (i
 				record, _ := d.loader.Index.Lookup(id)
 				independentlyAdmitted = d.loader.AdmitsRoot(d.loader.CatalogObject(id), record.Path)
 			}
-			if obj != nil && (independentlyAdmitted || slices.ContainsFunc(group.refs, func(requester manifest.NamedResource) bool {
-				return d.cfg.Store.GetObject(requester) != nil
-			})) {
+			if obj != nil &&
+				(independentlyAdmitted || slices.ContainsFunc(group.refs, func(requester manifest.NamedResource) bool {
+					return d.cfg.Store.GetObject(requester) != nil
+				})) {
 				d.cfg.Store.AddObject(obj, group.evidence.Doc)
 			}
 		}
 		previous, seen := d.resolvedSources[id]
-		if seen && obj != nil && previous.object == obj && previous.input != bootstrap && previous.artifact != nil && (previous.synthetic || previous.artifact.InputAlias) {
+		if seen && obj != nil && previous.object == obj && previous.input != bootstrap && previous.artifact != nil &&
+			(previous.synthetic || previous.artifact.InputAlias) {
 			previous.input = bootstrap
 			if id == manifest.BootstrapSourceID {
 				previous.artifact = bootstrap
@@ -295,7 +299,13 @@ func (d *Session) admission() *Admission {
 	if input == nil {
 		input = d.cfg.Input
 	}
-	admission := &Admission{input: input, path: d.cfg.Path, remotes: maps.Clone(d.remotes), aliasViews: maps.Clone(d.aliasViews), sources: maps.Clone(d.resolvedSources)}
+	admission := &Admission{
+		input:      input,
+		path:       d.cfg.Path,
+		remotes:    maps.Clone(d.remotes),
+		aliasViews: maps.Clone(d.aliasViews),
+		sources:    maps.Clone(d.resolvedSources),
+	}
 	admission.entryBound.Store(d.binding != (Binding{}))
 	if d.cfg.Trees != nil && !admission.entryBound.Load() {
 		d.entryState.loader, d.entryState.trees = d.loader, d.cfg.Trees
@@ -306,7 +316,11 @@ func (d *Session) admission() *Admission {
 
 // Resolve admits a known source or a missing Git bootstrap reference.
 // A nil artifact leaves normal acquisition responsible for the source.
-func (a *Admission) Resolve(ctx context.Context, id manifest.NamedResource, object manifest.BaseManifest) (manifest.BaseManifest, *store.SourceArtifact, error) {
+func (a *Admission) Resolve(
+	ctx context.Context,
+	id manifest.NamedResource,
+	object manifest.BaseManifest,
+) (manifest.BaseManifest, *store.SourceArtifact, error) {
 	if a == nil {
 		return nil, nil, nil
 	}
@@ -319,7 +333,11 @@ func (a *Admission) Resolve(ctx context.Context, id manifest.NamedResource, obje
 	return resolved.object, resolved.artifact, err
 }
 
-func (a *Admission) resolve(ctx context.Context, id manifest.NamedResource, obj manifest.BaseManifest) (entryResolution, error) {
+func (a *Admission) resolve(
+	ctx context.Context,
+	id manifest.NamedResource,
+	obj manifest.BaseManifest,
+) (entryResolution, error) {
 	bootstrap := a.input
 	candidate := entryResolution{object: obj, input: bootstrap, synthetic: obj == nil}
 	if obj == nil {
@@ -331,7 +349,8 @@ func (a *Admission) resolve(ctx context.Context, id manifest.NamedResource, obj 
 	}
 	alias, descriptor := behavior.BootstrapAlias(bootstrap.LocalPath)
 	candidate.git = descriptor
-	candidate.pinned = !candidate.synthetic && id != manifest.BootstrapSourceID && (*manifest.GitRepositoryRef)(descriptor.Reference).String() != ""
+	candidate.pinned = !candidate.synthetic && id != manifest.BootstrapSourceID &&
+		(*manifest.GitRepositoryRef)(descriptor.Reference).String() != ""
 	if id != manifest.BootstrapSourceID && !candidate.synthetic {
 		if _, match := a.remotes[normalizeGitURL(descriptor.URL)]; !match {
 			return candidate, nil
@@ -355,7 +374,17 @@ func (a *Admission) resolve(ctx context.Context, id manifest.NamedResource, obj 
 		}
 		artifact := artifacts[id]
 		if artifact == nil {
-			candidate.warnings = []manifest.Warning{{Resource: id, Category: manifest.WarnSourceRefUnavailable, Message: "declared source ref cannot be satisfied locally; using normal source fetch", Detail: []string{(*manifest.GitRepositoryRef)(descriptor.Reference).String(), "ref unavailable in this tree's repository or checkout options require fetching"}}}
+			candidate.warnings = []manifest.Warning{
+				{
+					Resource: id,
+					Category: manifest.WarnSourceRefUnavailable,
+					Message:  "declared source ref cannot be satisfied locally; using normal source fetch",
+					Detail: []string{
+						(*manifest.GitRepositoryRef)(descriptor.Reference).String(),
+						"ref unavailable in this tree's repository or checkout options require fetching",
+					},
+				},
+			}
 			return candidate, nil
 		}
 		candidate.warnings = artifact.Warnings
@@ -372,7 +401,10 @@ func (a *Admission) resolve(ctx context.Context, id manifest.NamedResource, obj 
 }
 
 // Mutable aliases keep empty keys and source-qualified mounts; their input is immutable.
-func (a *Admission) entrySourceView(ctx context.Context, candidate entryResolution) (*store.SourceArtifact, string, error) {
+func (a *Admission) entrySourceView(
+	ctx context.Context,
+	candidate entryResolution,
+) (*store.SourceArtifact, string, error) {
 	bootstrap := candidate.input
 	repoRoot := bootstrap.LocalPath
 	ignore := ""
@@ -384,12 +416,14 @@ func (a *Admission) entrySourceView(ctx context.Context, candidate entryResoluti
 		}
 		sparse, recurse = repo.SparseCheckout, repo.RecurseSubmodules
 	}
-	label, viewKey := gittree.Label(gittree.LabelOptions{Root: repoRoot, Mode: gittree.Source, Source: candidate.object.Named(), Content: struct {
-		Root, Origin, Key, Content, Digest string
-		Ignore                             string
-		Sparse                             []string `json:",omitempty"`
-		Recurse                            bool
-	}{repoRoot, bootstrap.LocalRoot, bootstrap.Key, bootstrap.Content, bootstrap.Digest, ignore, sparse, recurse}})
+	label, viewKey := gittree.Label(
+		gittree.LabelOptions{Root: repoRoot, Mode: gittree.Source, Source: candidate.object.Named(), Content: struct {
+			Root, Origin, Key, Content, Digest string
+			Ignore                             string
+			Sparse                             []string `json:",omitempty"`
+			Recurse                            bool
+		}{repoRoot, bootstrap.LocalRoot, bootstrap.Key, bootstrap.Content, bootstrap.Digest, ignore, sparse, recurse}},
+	)
 	var input fs.FS
 	var identity string
 	var err error
@@ -397,7 +431,18 @@ func (a *Admission) entrySourceView(ctx context.Context, candidate entryResoluti
 	if cached != nil {
 		input, identity, err = cached.FS, cached.Content, ctx.Err()
 	} else {
-		input, identity, err = gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: bootstrap.FS, CurrentContent: bootstrap.Content, Ignore: ignore, Sparse: sparse})
+		input, identity, err = gittree.New(
+			ctx,
+			nil,
+			plumbing.ZeroHash,
+			gittree.ViewOptions{
+				Mode:           gittree.Source,
+				Current:        bootstrap.FS,
+				CurrentContent: bootstrap.Content,
+				Ignore:         ignore,
+				Sparse:         sparse,
+			},
+		)
 	}
 	if err != nil {
 		return nil, "", err
@@ -415,7 +460,9 @@ func (a *Admission) entrySourceView(ctx context.Context, candidate entryResoluti
 
 func (d *Session) publishEntrySource(candidate entryResolution, artifact *store.SourceArtifact) {
 	id := candidate.object.Named()
-	if candidate.synthetic || (d.cfg.Selection.Changed || len(d.cfg.Selection.Roots) != 0) && d.cfg.Store.GetObject(id) != nil && d.cfg.Store.GetObject(id) != candidate.object {
+	if candidate.synthetic ||
+		(d.cfg.Selection.Changed || len(d.cfg.Selection.Roots) != 0) && d.cfg.Store.GetObject(id) != nil &&
+			d.cfg.Store.GetObject(id) != candidate.object {
 		d.cfg.Store.AddObject(candidate.object)
 	}
 
@@ -437,9 +484,11 @@ func (d *Session) warnBootstrapAliases(repoRoot string) {
 		return
 	}
 	slices.Sort(names)
-	d.cfg.Store.AddWarning(manifest.Warning{Category: manifest.WarnBootstrapAliases,
-		Message: "aliased multiple bootstrap sources to the working tree; cross-repo refs render against the wrong tree",
-		Detail:  append(names, repoRoot)})
+	d.cfg.Store.AddWarning(manifest.Warning{
+		Category: manifest.WarnBootstrapAliases,
+		Message:  "aliased multiple bootstrap sources to the working tree; cross-repo refs render against the wrong tree",
+		Detail:   append(names, repoRoot),
+	})
 }
 
 func normalizeGitURL(raw string) string {

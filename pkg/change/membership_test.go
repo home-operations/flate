@@ -27,7 +27,12 @@ func TestFilter_UnionRejectsStaleProposal(t *testing.T) {
 	support := testutil.KustomizationID("inputs", "support")
 	rejected := testutil.KustomizationID("apps", "rejected")
 	f := NewFilter()
-	added, retry := f.AddEmitted([]manifest.NamedResource{support, selected}, []manifest.NamedResource{selected}, []manifest.NamedResource{selected}, 0)
+	added, retry := f.AddEmitted(
+		[]manifest.NamedResource{support, selected},
+		[]manifest.NamedResource{selected},
+		[]manifest.NamedResource{selected},
+		0,
+	)
 	want := []manifest.NamedResource{selected, support}
 	slices.SortFunc(want, manifest.NamedResource.Compare)
 	assert.Diff(t, added, want)

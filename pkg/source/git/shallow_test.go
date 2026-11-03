@@ -11,13 +11,19 @@ import (
 
 	objectcache "github.com/go-git/go-git/v5/plumbing/cache"
 	"github.com/go-git/go-git/v5/storage/filesystem"
+
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func openGeneration(t *testing.T, f *Fetcher, spec *manifest.GitRepository, artifact *store.SourceArtifact) *git.Repository {
+func openGeneration(
+	t *testing.T,
+	f *Fetcher,
+	spec *manifest.GitRepository,
+	artifact *store.SourceArtifact,
+) *git.Repository {
 	t.Helper()
 	ref := "HEAD"
 	if label := (*manifest.GitRepositoryRef)(spec.Reference).Label(); label != "" {
@@ -38,7 +44,11 @@ func openGeneration(t *testing.T, f *Fetcher, spec *manifest.GitRepository, arti
 	if id != artifact.Key {
 		t.Fatalf("generation identity = %q, want %q", id, artifact.Key)
 	}
-	storer := filesystem.NewStorageWithOptions(generation.Backing, objectcache.NewObjectLRU(0), filesystem.Options{LargeObjectThreshold: 1})
+	storer := filesystem.NewStorageWithOptions(
+		generation.Backing,
+		objectcache.NewObjectLRU(0),
+		filesystem.Options{LargeObjectThreshold: 1},
+	)
 	t.Cleanup(func() {
 		if err := storer.Close(); err != nil {
 			t.Error(err)
@@ -85,7 +95,12 @@ func TestFetcher_NarrowInitialFetchSkipsOtherRefs(t *testing.T) {
 		URL:       "file://" + src,
 		Reference: &sourcev1.GitRepositoryRef{Tag: "v1.0.0"},
 	}
-	art, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
+	art, err := f.Fetch(
+		t.Context(),
+		repo,
+		(testInputs{}).readSet(repo),
+		sourcecache.Policy{MaxAge: repo.SourceInterval()},
+	)
 	if err != nil {
 		t.Fatalf("Fetch tag: %v", err)
 	}
@@ -146,7 +161,10 @@ func TestResolveTransport_Depth(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			f := &Fetcher{Depth: tc.depth}
-			request, err := (&operation{Fetcher: f}).resolveTransport(&manifest.GitRepository{URL: "file:///repo", Reference: tc.ref}, sourcecache.Policy{})
+			request, err := (&operation{Fetcher: f}).resolveTransport(
+				&manifest.GitRepository{URL: "file:///repo", Reference: tc.ref},
+				sourcecache.Policy{},
+			)
 			if err != nil {
 				t.Fatal(err)
 			}

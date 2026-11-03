@@ -23,9 +23,10 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/spf13/cobra"
+
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/spf13/cobra"
 )
 
 type renderNoticeKey struct{}
@@ -68,8 +69,10 @@ func New(version string) *cobra.Command {
 		if cmd.Flags().Lookup("path") != nil && renderPersistenceDisabledReason != "" {
 			dir, _ := cmd.Flags().GetString("cache-dir")
 			if dir != "" {
-				notice = manifest.Warning{Category: manifest.WarnRenderPersistenceDisabled,
-					Message: "render persistence is disabled: " + renderPersistenceDisabledReason + "; source caching remains available"}
+				notice = manifest.Warning{
+					Category: manifest.WarnRenderPersistenceDisabled,
+					Message:  "render persistence is disabled: " + renderPersistenceDisabledReason + "; source caching remains available",
+				}
 			}
 		}
 		cmd.SetContext(context.WithValue(cmd.Context(), renderNoticeKey{}, notice))
@@ -91,8 +94,10 @@ func New(version string) *cobra.Command {
 				stopProfile, err := startProfile()
 				if err != nil {
 					notice, _ := cmd.Context().Value(renderNoticeKey{}).(manifest.Warning)
-					return finishSelected(selectedRequest{notice: notice,
-						stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr()},
+					return finishSelected(selectedRequest{
+						notice: notice,
+						stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(),
+					},
 						&selectedInvocation{err: err, remainder: err}, selectedPayload{})
 				}
 				defer stopProfile()

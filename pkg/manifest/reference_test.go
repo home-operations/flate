@@ -11,11 +11,17 @@ import (
 
 func TestReferenceMatcher_Matches(t *testing.T) {
 	t.Parallel()
-	provider := &ResourceSetInputProvider{Name: "images", Namespace: "apps", Labels: map[string]string{"role": "images"}}
+	provider := &ResourceSetInputProvider{
+		Name:      "images",
+		Namespace: "apps",
+		Labels:    map[string]string{"role": "images"},
+	}
 	scope := provider.Named()
 	scope.Name = ""
 	selected := &metav1.LabelSelector{MatchLabels: map[string]string{"role": "images"}}
-	invalid := &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{Key: "role", Operator: "invalid"}}}
+	invalid := &metav1.LabelSelector{
+		MatchExpressions: []metav1.LabelSelectorRequirement{{Key: "role", Operator: "invalid"}},
+	}
 	otherNamespace, otherLabels, otherName := *provider, *provider, *provider
 	otherNamespace.Namespace = "other"
 	otherLabels.Labels = map[string]string{"role": "other"}

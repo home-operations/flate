@@ -4,13 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"slices"
 	"strings"
+
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/transport"
+
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/gittree"
 )
@@ -20,11 +22,18 @@ func checkoutRef(repo *git.Repository, hash plumbing.Hash, sparse []string) erro
 	if err != nil {
 		return err
 	}
-	return wt.Checkout(&git.CheckoutOptions{Hash: hash, SparseCheckoutDirectories: gittree.NormalizeSparsePaths(sparse)})
+	return wt.Checkout(
+		&git.CheckoutOptions{Hash: hash, SparseCheckoutDirectories: gittree.NormalizeSparsePaths(sparse)},
+	)
 }
 
 // Flux reuses the parent's credentials for submodules on every host.
-func (f *Fetcher) updateSubmodules(ctx context.Context, repo *git.Repository, auth transport.AuthMethod, depth git.SubmoduleRescursivity) error {
+func (f *Fetcher) updateSubmodules(
+	ctx context.Context,
+	repo *git.Repository,
+	auth transport.AuthMethod,
+	depth git.SubmoduleRescursivity,
+) error {
 	wt, err := repo.Worktree()
 	if err != nil {
 		return err
@@ -48,7 +57,11 @@ func (f *Fetcher) updateSubmodules(ctx context.Context, repo *git.Repository, au
 		if err != nil {
 			return err
 		}
-		if _, err := f.validateRepo(manifest.NewGitRepository(sourcev1.GitRepository{Spec: sourcev1.GitRepositorySpec{URL: remote.Config().URLs[0]}})); err != nil {
+		if _, err := f.validateRepo(
+			manifest.NewGitRepository(
+				sourcev1.GitRepository{Spec: sourcev1.GitRepositorySpec{URL: remote.Config().URLs[0]}},
+			),
+		); err != nil {
 			return fmt.Errorf("validate submodule %q: %w", sub.Config().Name, err)
 		}
 		if err := sub.UpdateContext(ctx, &git.SubmoduleUpdateOptions{Auth: auth}); err != nil {

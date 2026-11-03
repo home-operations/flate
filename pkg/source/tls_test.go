@@ -104,7 +104,8 @@ func TestBuildTLSConfig(t *testing.T) {
 				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
 					t.Fatalf("buildTLSConfig: %v, want %q", err, tc.wantError)
 				}
-				if strings.Contains(err.Error(), "invalid-tls-marker") || strings.Contains(err.Error(), "credential-tls-marker") {
+				if strings.Contains(err.Error(), "invalid-tls-marker") ||
+					strings.Contains(err.Error(), "credential-tls-marker") {
 					t.Fatal("TLS material leaked")
 				}
 				return

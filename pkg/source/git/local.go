@@ -21,7 +21,12 @@ import (
 // Only matching mutable HEAD inputs may expose working-tree edits; committed
 // artifacts retain their own object storage and use LocalPath solely for ownership.
 // On error, returned artifacts contain only warnings and no usable content.
-func ResolveLocal(ctx context.Context, location *gitrepo.Location, repositories []*manifest.GitRepository, sideRevision string) (map[manifest.NamedResource]*store.SourceArtifact, error) {
+func ResolveLocal(
+	ctx context.Context,
+	location *gitrepo.Location,
+	repositories []*manifest.GitRepository,
+	sideRevision string,
+) (map[manifest.NamedResource]*store.SourceArtifact, error) {
 	if len(repositories) == 0 {
 		return nil, nil
 	}
@@ -97,7 +102,14 @@ func ResolveLocal(ctx context.Context, location *gitrepo.Location, repositories 
 				}
 				local = input.FS
 			}
-			artifacts[repository.Named()] = &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: repository.URL, LocalPath: root, Revision: r.hash.String(), FS: local, ContentFingerprint: gittree.ContentFingerprint}
+			artifacts[repository.Named()] = &store.SourceArtifact{
+				Kind:               manifest.KindGitRepository,
+				URL:                repository.URL,
+				LocalPath:          root,
+				Revision:           r.hash.String(),
+				FS:                 local,
+				ContentFingerprint: gittree.ContentFingerprint,
+			}
 			continue
 		}
 		if repository.RecurseSubmodules {
@@ -110,7 +122,17 @@ func ResolveLocal(ctx context.Context, location *gitrepo.Location, repositories 
 		if repository.Ignore != nil {
 			ignore = *repository.Ignore
 		}
-		input, key, err := gittree.New(ctx, repo.Storer.(*filesystem.Storage).Filesystem(), r.hash, gittree.ViewOptions{Location: location, Content: struct{ Root string }{root}, Sparse: repository.SparseCheckout, Ignore: ignore})
+		input, key, err := gittree.New(
+			ctx,
+			repo.Storer.(*filesystem.Storage).Filesystem(),
+			r.hash,
+			gittree.ViewOptions{
+				Location: location,
+				Content:  struct{ Root string }{root},
+				Sparse:   repository.SparseCheckout,
+				Ignore:   ignore,
+			},
+		)
 		var warnings []manifest.Warning
 		if input != nil && len(input.Warnings) > 0 {
 			warnings = gitWarnings(input, repository.Named(), repository.URL, selected.String())
@@ -120,13 +142,25 @@ func ResolveLocal(ctx context.Context, location *gitrepo.Location, repositories 
 			return failedLocal(artifacts), localError(err)
 		}
 		label, _ := gittree.Label(gittree.LabelOptions{Root: root, Mode: gittree.Source, Key: key})
-		artifact := &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: repository.URL, LocalPath: label, Revision: r.hash.String(), Key: key, Content: key, FS: input, ContentFingerprint: gittree.ContentFingerprint, Warnings: warnings}
+		artifact := &store.SourceArtifact{
+			Kind:               manifest.KindGitRepository,
+			URL:                repository.URL,
+			LocalPath:          label,
+			Revision:           r.hash.String(),
+			Key:                key,
+			Content:            key,
+			FS:                 input,
+			ContentFingerprint: gittree.ContentFingerprint,
+			Warnings:           warnings,
+		}
 		artifacts[repository.Named()] = artifact
 	}
 	return artifacts, nil
 }
 
-func failedLocal(artifacts map[manifest.NamedResource]*store.SourceArtifact) map[manifest.NamedResource]*store.SourceArtifact {
+func failedLocal(
+	artifacts map[manifest.NamedResource]*store.SourceArtifact,
+) map[manifest.NamedResource]*store.SourceArtifact {
 	for id, artifact := range artifacts {
 		if len(artifact.Warnings) == 0 {
 			delete(artifacts, id)

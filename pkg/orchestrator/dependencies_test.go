@@ -22,8 +22,17 @@ func TestRender_GeneratedValuesAndParentGates(t *testing.T) {
 			dir := t.TempDir()
 			testutil.WriteGeneratedValuesCluster(t, dir)
 			const cipher = "ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]"
-			testutil.WriteFile(t, dir, "charts/app/templates/secret.yaml", "apiVersion: v1\nkind: Secret\nmetadata:\n  name: {{ .Release.Name }}-secret\n  namespace: flux-system\nstringData:\n  token: '"+cipher+"'\n")
-			o, err := newTestOrchestrator(t, Tree{Path: dir, RepoRoot: dir}, Config{CacheDir: t.TempDir(), WipeSecrets: tc.wipeSecrets, Concurrency: tc.workers})
+			testutil.WriteFile(
+				t,
+				dir,
+				"charts/app/templates/secret.yaml",
+				"apiVersion: v1\nkind: Secret\nmetadata:\n  name: {{ .Release.Name }}-secret\n  namespace: flux-system\nstringData:\n  token: '"+cipher+"'\n",
+			)
+			o, err := newTestOrchestrator(
+				t,
+				Tree{Path: dir, RepoRoot: dir},
+				Config{CacheDir: t.TempDir(), WipeSecrets: tc.wipeSecrets, Concurrency: tc.workers},
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -34,7 +43,8 @@ func TestRender_GeneratedValuesAndParentGates(t *testing.T) {
 				t.Fatal(err)
 			}
 			a := testutil.HelmReleaseID("flux-system", "a")
-			if o.store.GetObject(a) != nil || parentsForTest(o.index)[a] != testutil.KustomizationID("flux-system", "apps") {
+			if o.store.GetObject(a) != nil ||
+				parentsForTest(o.index)[a] != testutil.KustomizationID("flux-system", "apps") {
 				t.Fatalf("raw HR arrived or parent gate missing: %s parent=%s", a, parentsForTest(o.index)[a])
 			}
 			res, err := o.collectResult(o.run(t.Context()))
@@ -62,12 +72,20 @@ func TestRender_GeneratedValuesAndParentGates(t *testing.T) {
 						t.Fatalf("generated values unavailable: %+v", cm)
 					}
 				}
-				renderedID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: id.Namespace, Name: name + "-rendered"}
+				renderedID := manifest.NamedResource{
+					Kind:      manifest.KindConfigMap,
+					Namespace: id.Namespace,
+					Name:      name + "-rendered",
+				}
 				rendered, ok := o.store.Get[*manifest.ConfigMap](renderedID)
 				if !ok || rendered.Data["greeting"] != "hello" || rendered.Data["replicas"] != "2" {
 					t.Fatalf("effective chart values differ: %+v", rendered)
 				}
-				secretID := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: id.Namespace, Name: name + "-secret"}
+				secretID := manifest.NamedResource{
+					Kind:      manifest.KindSecret,
+					Namespace: id.Namespace,
+					Name:      name + "-secret",
+				}
 				secret, ok := o.store.Get[*manifest.Secret](secretID)
 				if !ok {
 					t.Fatalf("emitted Secret missing: %s", secretID)
@@ -83,7 +101,9 @@ func TestRender_GeneratedValuesAndParentGates(t *testing.T) {
 					t.Fatalf("HR status=%+v", info)
 				}
 			}
-			if info, _ := o.store.GetStatus(testutil.KustomizationID("flux-system", "apps")); info.Status != store.StatusReady {
+			if info, _ := o.store.GetStatus(
+				testutil.KustomizationID("flux-system", "apps"),
+			); info.Status != store.StatusReady {
 				t.Fatalf("enclosing KS status=%+v", info)
 			}
 		})
@@ -97,10 +117,27 @@ func TestRenderTrees_ExcludedOrderingAndPromotion(t *testing.T) {
 			testutil.WriteFilteredOrderingCluster(t, baseDir, "v1", broken)
 			testutil.WriteFilteredOrderingCluster(t, headDir, "v2", broken)
 			for _, dir := range []string{baseDir, headDir} {
-				testutil.WriteFile(t, dir, "apps/monitor-b/kustomization.yaml", "resources: [missing.yaml, hr.yaml, invalid.yaml]\n")
-				testutil.WriteFile(t, dir, "apps/monitor-b/invalid.yaml", "apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: invalid, namespace: flux-system}\nspec:\n  dependsOn: [{apiVersion: example.test/, kind: Widget, name: missing}]\n")
+				testutil.WriteFile(
+					t,
+					dir,
+					"apps/monitor-b/kustomization.yaml",
+					"resources: [missing.yaml, hr.yaml, invalid.yaml]\n",
+				)
+				testutil.WriteFile(
+					t,
+					dir,
+					"apps/monitor-b/invalid.yaml",
+					"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: invalid, namespace: flux-system}\nspec:\n  dependsOn: [{apiVersion: example.test/, kind: Widget, name: missing}]\n",
+				)
 			}
-			renderedTrees1, err := RenderTrees(t.Context(), []Tree{{RepoRoot: baseDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}}, {RepoRoot: headDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true, Concurrency: 4, CacheDir: t.TempDir()})
+			renderedTrees1, err := RenderTrees(
+				t.Context(),
+				[]Tree{
+					{RepoRoot: baseDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}},
+					{RepoRoot: headDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}},
+				},
+				Config{WipeSecrets: true, Concurrency: 4, CacheDir: t.TempDir()},
+			)
 			base, head := renderedTrees1[0], renderedTrees1[1]
 			if (err != nil) != broken {
 				t.Fatalf("RenderTrees error=%v, want failure=%v", err, broken)
@@ -117,21 +154,40 @@ func TestRenderTrees_ExcludedOrderingAndPromotion(t *testing.T) {
 					testutil.HelmReleaseID("flux-system", "monitor-b"),
 					{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "excluded-values"},
 				} {
-					if (id.Kind != manifest.KindKustomization && st.GetObject(id) != nil) || side.filter.ShouldReconcile(id) {
+					if (id.Kind != manifest.KindKustomization && st.GetObject(id) != nil) ||
+						side.filter.ShouldReconcile(id) {
 						t.Errorf("excluded sibling or ordering target admitted: %s", id)
 					}
 				}
-				excludedSource := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "excluded-source"}
-				if info, known := side.statusOf(excludedSource); side.filter.ShouldReconcile(excludedSource) || (known || st.GetObject(excludedSource) != nil) && info.Outcome() != store.OutcomeUnchanged {
+				excludedSource := manifest.NamedResource{
+					Group:     "source.toolkit.fluxcd.io",
+					Kind:      manifest.KindGitRepository,
+					Namespace: "flux-system",
+					Name:      "excluded-source",
+				}
+				if info, known := side.statusOf(
+					excludedSource,
+				); side.filter.ShouldReconcile(excludedSource) ||
+					(known || st.GetObject(excludedSource) != nil) && info.Outcome() != store.OutcomeUnchanged {
 					t.Fatalf("discovered excluded source was activated: %+v", info)
 				}
 				if st.GetArtifact(excludedSource, store.ArtifactContent) != nil {
 					t.Fatal("excluded source was fetched")
 				}
 				if broken {
-					source := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "selected-source"}
-					if st.GetObject(source) == nil || side.Result.Failed[source].Status != store.StatusFailed || side.Result.Failed[selected].Status != store.StatusFailed {
-						t.Fatalf("selected source failure hidden: objects=%v failures=%v", st.GetObject(source), side.Result.Failed)
+					source := manifest.NamedResource{
+						Group:     "source.toolkit.fluxcd.io",
+						Kind:      manifest.KindOCIRepository,
+						Namespace: "flux-system",
+						Name:      "selected-source",
+					}
+					if st.GetObject(source) == nil || side.Result.Failed[source].Status != store.StatusFailed ||
+						side.Result.Failed[selected].Status != store.StatusFailed {
+						t.Fatalf(
+							"selected source failure hidden: objects=%v failures=%v",
+							st.GetObject(source),
+							side.Result.Failed,
+						)
 					}
 					continue
 				}
@@ -141,12 +197,25 @@ func TestRenderTrees_ExcludedOrderingAndPromotion(t *testing.T) {
 				if st.GetArtifact(testutil.KustomizationID("flux-system", "selected"), store.ArtifactContent) == nil {
 					t.Fatal("selected KS was skipped instead of reconciled")
 				}
-				chart := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindHelmChart, Namespace: "flux-system", Name: "shared-chart"}
+				chart := manifest.NamedResource{
+					Group:     "source.toolkit.fluxcd.io",
+					Kind:      manifest.KindHelmChart,
+					Namespace: "flux-system",
+					Name:      "shared-chart",
+				}
 				if st.GetObject(chart) == nil || !side.filter.ShouldReconcile(chart) {
 					t.Fatalf("required shared chart was not admitted: %s", chart)
 				}
-				otherSource := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "selected-source"}
-				if info, known := side.statusOf(otherSource); side.filter.ShouldReconcile(otherSource) || (known || st.GetObject(otherSource) != nil) && info.Outcome() != store.OutcomeUnchanged {
+				otherSource := manifest.NamedResource{
+					Group:     "source.toolkit.fluxcd.io",
+					Kind:      manifest.KindOCIRepository,
+					Namespace: "flux-system",
+					Name:      "selected-source",
+				}
+				if info, known := side.statusOf(
+					otherSource,
+				); side.filter.ShouldReconcile(otherSource) ||
+					(known || st.GetObject(otherSource) != nil) && info.Outcome() != store.OutcomeUnchanged {
 					t.Fatalf("excluded source sibling was activated: %+v", info)
 				}
 				if st.GetArtifact(otherSource, store.ArtifactContent) != nil {
@@ -163,14 +232,22 @@ func TestRenderTrees_ExcludedOrderingAndPromotion(t *testing.T) {
 						t.Fatalf("selected resource not Ready: %s %+v", id, info)
 					}
 				}
-				if st.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "selected-values"}) == nil {
+				if st.GetObject(
+					manifest.NamedResource{
+						Kind:      manifest.KindConfigMap,
+						Namespace: "flux-system",
+						Name:      "selected-values",
+					},
+				) == nil {
 					t.Fatal("required values data was not rendered")
 				}
 			}
 			if !broken {
 				for i, side := range []Rendered{base, head} {
 					batches := canonicalBatches(side.Result)
-					if len(batches) != 3 || batches[0].Parent != (testutil.HelmReleaseID("flux-system", "selected")) || batches[1].Parent != side.entryBinding.Producer || batches[2].Parent != testutil.KustomizationID("flux-system", "selected") {
+					if len(batches) != 3 || batches[0].Parent != testutil.HelmReleaseID("flux-system", "selected") ||
+						batches[1].Parent != side.entryBinding.Producer ||
+						batches[2].Parent != testutil.KustomizationID("flux-system", "selected") {
 						t.Fatalf("unexpected selected producer batches: %+v", batches)
 					}
 					var declarations []map[string]any
@@ -192,7 +269,8 @@ func TestRenderTrees_ExcludedOrderingAndPromotion(t *testing.T) {
 					if i == 1 {
 						want = "v2"
 					}
-					if cm["kind"] != manifest.KindConfigMap || meta["name"] != "selected-rendered" || data["greeting"] != want {
+					if cm["kind"] != manifest.KindConfigMap || meta["name"] != "selected-rendered" ||
+						data["greeting"] != want {
 						t.Fatalf("rendered chart values = %+v, want %s", cm, want)
 					}
 					hrDoc, valuesDoc := batches[2].Documents[0], batches[2].Documents[1]
@@ -200,7 +278,10 @@ func TestRenderTrees_ExcludedOrderingAndPromotion(t *testing.T) {
 					hrMeta, _ := hrDoc["metadata"].(map[string]any)
 					spec, _ := hrDoc["spec"].(map[string]any)
 					values, _ := spec["values"].(map[string]any)
-					if valuesDoc["kind"] != manifest.KindConfigMap || valuesMeta["name"] != "selected-values" || hrDoc["kind"] != manifest.KindHelmRelease || hrMeta["name"] != "selected" || values["greeting"] != want {
+					if valuesDoc["kind"] != manifest.KindConfigMap || valuesMeta["name"] != "selected-values" ||
+						hrDoc["kind"] != manifest.KindHelmRelease ||
+						hrMeta["name"] != "selected" ||
+						values["greeting"] != want {
 						t.Fatalf("selected producer document order or values differ: %+v", batches[2].Documents)
 					}
 				}
@@ -217,22 +298,40 @@ func TestRenderTrees_ExcludedOrderingAndPromotion(t *testing.T) {
 		testutil.WriteFile(t, dir, "good/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: healthy}\n")
 		testutil.WriteFile(t, dir, "broken/kustomization.yaml", "resources: [missing.yaml, ../apps/invalid.yaml]\n")
 		testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: [invalid.yaml]\n")
-		testutil.WriteFile(t, dir, "apps/invalid.yaml", "apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: invalid, namespace: flux-system}\nspec:\n  dependsOn: [{apiVersion: example.test/, kind: Widget, name: missing}]\n")
-		renderedSingleton1, err := RenderTrees(t.Context(), []Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{Concurrency: 2, CacheDir: t.TempDir()})
+		testutil.WriteFile(
+			t,
+			dir,
+			"apps/invalid.yaml",
+			"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: invalid, namespace: flux-system}\nspec:\n  dependsOn: [{apiVersion: example.test/, kind: Widget, name: missing}]\n",
+		)
+		renderedSingleton1, err := RenderTrees(
+			t.Context(),
+			[]Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
+			Config{Concurrency: 2, CacheDir: t.TempDir()},
+		)
 		if len(renderedSingleton1) != 1 {
 			t.Fatalf("missing render: %v", err)
 		}
 		o := renderedSingleton1[0].Orchestrator
 		res := renderedSingleton1[0].Result
-		if err == nil || !strings.Contains(err.Error(), "ResourceSet.fluxcd.controlplane.io/flux-system/invalid") || strings.Count(err.Error(), "ResourceSet spec.dependsOn[0].apiVersion") != 1 {
+		if err == nil || !strings.Contains(err.Error(), "ResourceSet.fluxcd.controlplane.io/flux-system/invalid") ||
+			strings.Count(err.Error(), "ResourceSet spec.dependsOn[0].apiVersion") != 1 {
 			t.Fatalf("selected malformed reference lost its source: %v", err)
 		}
-		if info := res.Failed[testutil.KustomizationID("flux-system", "peer")]; !strings.Contains(info.String(), "missing.yaml") {
+		if info := res.Failed[testutil.KustomizationID("flux-system", "peer")]; !strings.Contains(
+			info.String(),
+			"missing.yaml",
+		) {
 			t.Fatalf("input error overwrote the reader's render failure: %+v", info)
 		}
 		runs := []Rendered{{Orchestrator: o, Result: res, Err: err}}
 		for _, name := range []string{"apps", "good"} {
-			_, selectedErr, remainder := Select(runs, err, []manifest.NamedResource{testutil.KustomizationID("flux-system", name)}, nil)
+			_, selectedErr, remainder := Select(
+				runs,
+				err,
+				[]manifest.NamedResource{testutil.KustomizationID("flux-system", name)},
+				nil,
+			)
 			if remainder != nil || (selectedErr != nil) != (name == "apps") {
 				t.Fatalf("selection %s: error=%v remainder=%v", name, selectedErr, remainder)
 			}
@@ -247,7 +346,14 @@ func TestRenderTrees_UnknownOrderingTargetStillFails(t *testing.T) {
 	for _, dir := range []string{baseDir, headDir} {
 		testutil.WriteFile(t, dir, "flux/selected.yaml", ksYAML("selected", "apps/selected", "unknown"))
 	}
-	renderedTrees2, err := RenderTrees(t.Context(), []Tree{{RepoRoot: baseDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}}, {RepoRoot: headDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true, Concurrency: 2, CacheDir: t.TempDir()})
+	renderedTrees2, err := RenderTrees(
+		t.Context(),
+		[]Tree{
+			{RepoRoot: baseDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}},
+			{RepoRoot: headDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}},
+		},
+		Config{WipeSecrets: true, Concurrency: 2, CacheDir: t.TempDir()},
+	)
 	base, head := renderedTrees2[0], renderedTrees2[1]
 	if err == nil {
 		t.Fatal("selected unknown ordering target was ignored")

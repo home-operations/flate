@@ -18,9 +18,19 @@ func substitutionFixture(t *testing.T, postBuild, expression string) string {
 	root := t.TempDir()
 	testutil.GitInit(t, root)
 	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux.yaml]\n")
-	testutil.WriteFile(t, root, "flux.yaml", testutil.KustomizationYAML("consumer", "apps", "  interval: 1m\n  path: ./app\n")+postBuild)
+	testutil.WriteFile(
+		t,
+		root,
+		"flux.yaml",
+		testutil.KustomizationYAML("consumer", "apps", "  interval: 1m\n  path: ./app\n")+postBuild,
+	)
 	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [cm.yaml]\n")
-	testutil.WriteFile(t, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: rendered, namespace: apps}\ndata:\n  value: '"+expression+"'\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"app/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: rendered, namespace: apps}\ndata:\n  value: '"+expression+"'\n",
+	)
 	return root
 }
 
@@ -32,7 +42,11 @@ func substitutionInput(t *testing.T, body string) string {
 }
 
 func substitutionReference(kind string, optional bool) string {
-	return fmt.Sprintf("  postBuild:\n    substituteFrom:\n      - kind: %s\n        name: external\n        optional: %v\n", kind, optional)
+	return fmt.Sprintf(
+		"  postBuild:\n    substituteFrom:\n      - kind: %s\n        name: external\n        optional: %v\n",
+		kind,
+		optional,
+	)
 }
 
 func substitutionOutput(t *testing.T, output string) string {
@@ -47,7 +61,9 @@ func substitutionOutput(t *testing.T, output string) string {
 	declaration := docs[1]
 	name, namespace := manifest.DocMetadata(declaration)
 	spec, _ := declaration["spec"].(map[string]any)
-	if manifest.DocKind(declaration) != manifest.KindKustomization || name != "consumer" || namespace != "apps" || spec["path"] != "./app" || spec["interval"] != "1m" {
+	if manifest.DocKind(declaration) != manifest.KindKustomization || name != "consumer" || namespace != "apps" ||
+		spec["path"] != "./app" ||
+		spec["interval"] != "1m" {
 		t.Fatalf("unexpected applied consumer declaration: %v", declaration)
 	}
 	name, namespace = manifest.DocMetadata(docs[0])
@@ -58,8 +74,10 @@ func substitutionOutput(t *testing.T, output string) string {
 	return value
 }
 
-const externalCM = "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: external, namespace: apps}\ndata: {VALUE: supplied}\n"
-const externalSecret = "apiVersion: v1\nkind: Secret\nmetadata: {name: external, namespace: apps}\nstringData: {VALUE: supplied}\n"
+const (
+	externalCM     = "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: external, namespace: apps}\ndata: {VALUE: supplied}\n"
+	externalSecret = "apiVersion: v1\nkind: Secret\nmetadata: {name: external, namespace: apps}\nstringData: {VALUE: supplied}\n"
+)
 
 func TestRun_ExternalSubstitution(t *testing.T) {
 	cases := []struct {
@@ -67,23 +85,93 @@ func TestRun_ExternalSubstitution(t *testing.T) {
 		fail, strict                 bool
 	}{
 		{name: "required absent", postBuild: substitutionReference("ConfigMap", false), fail: true},
-		{name: "required supplied", postBuild: substitutionReference("ConfigMap", false), input: externalCM, want: "supplied", strict: true},
+		{
+			name:      "required supplied",
+			postBuild: substitutionReference("ConfigMap", false),
+			input:     externalCM,
+			want:      "supplied",
+			strict:    true,
+		},
 		{name: "wrong kind", postBuild: substitutionReference("ConfigMap", false), input: externalSecret, fail: true},
-		{name: "wrong namespace", postBuild: substitutionReference("ConfigMap", false), input: strings.Replace(externalCM, "namespace: apps", "namespace: other", 1), fail: true},
-		{name: "wrong name", postBuild: substitutionReference("ConfigMap", false), input: strings.Replace(externalCM, "name: external", "name: other", 1), fail: true},
+		{
+			name:      "wrong namespace",
+			postBuild: substitutionReference("ConfigMap", false),
+			input:     strings.Replace(externalCM, "namespace: apps", "namespace: other", 1),
+			fail:      true,
+		},
+		{
+			name:      "wrong name",
+			postBuild: substitutionReference("ConfigMap", false),
+			input:     strings.Replace(externalCM, "name: external", "name: other", 1),
+			fail:      true,
+		},
 		{name: "optional absent", postBuild: substitutionReference("ConfigMap", true), want: "${VALUE}"},
-		{name: "optional supplied", postBuild: substitutionReference("ConfigMap", true), input: externalCM, want: "supplied"},
-		{name: "secret stringData", postBuild: substitutionReference("Secret", false), input: externalSecret, want: "supplied", strict: true},
-		{name: "secret data", postBuild: substitutionReference("Secret", false), input: strings.Replace(externalSecret, "stringData: {VALUE: supplied}", "data: {VALUE: c3VwcGxpZWQ=}", 1), want: "supplied"},
-		{name: "secret ciphertext wiped", postBuild: substitutionReference("Secret", false), input: strings.Replace(externalSecret, "supplied", "'ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]'", 1) + "sops: {encrypted_regex: data}\n", want: "..PLACEHOLDER_VALUE.."},
+		{
+			name:      "optional supplied",
+			postBuild: substitutionReference("ConfigMap", true),
+			input:     externalCM,
+			want:      "supplied",
+		},
+		{
+			name:      "secret stringData",
+			postBuild: substitutionReference("Secret", false),
+			input:     externalSecret,
+			want:      "supplied",
+			strict:    true,
+		},
+		{
+			name:      "secret data",
+			postBuild: substitutionReference("Secret", false),
+			input: strings.Replace(
+				externalSecret,
+				"stringData: {VALUE: supplied}",
+				"data: {VALUE: c3VwcGxpZWQ=}",
+				1,
+			),
+			want: "supplied",
+		},
+		{
+			name:      "secret ciphertext wiped",
+			postBuild: substitutionReference("Secret", false),
+			input: strings.Replace(
+				externalSecret,
+				"supplied",
+				"'ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]'",
+				1,
+			) + "sops: {encrypted_regex: data}\n",
+			want: "..PLACEHOLDER_VALUE..",
+		},
 		{name: "missing unsupplied secret", postBuild: substitutionReference("Secret", false), fail: true},
-		{name: "inline beats reference", postBuild: substitutionReference("ConfigMap", false) + "    substitute: {VALUE: inline}\n", input: externalCM, want: "inline", strict: true},
-		{name: "later reference wins", postBuild: substitutionReference("ConfigMap", false) + "      - kind: Secret\n        name: external\n", input: externalCM + "---\n" + strings.Replace(externalSecret, "supplied", "second", 1), want: "second", strict: true},
+		{
+			name:      "inline beats reference",
+			postBuild: substitutionReference("ConfigMap", false) + "    substitute: {VALUE: inline}\n",
+			input:     externalCM,
+			want:      "inline",
+			strict:    true,
+		},
+		{
+			name:      "later reference wins",
+			postBuild: substitutionReference("ConfigMap", false) + "      - kind: Secret\n        name: external\n",
+			input:     externalCM + "---\n" + strings.Replace(externalSecret, "supplied", "second", 1),
+			want:      "second",
+			strict:    true,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			root := substitutionFixture(t, tc.postBuild, "${VALUE}")
-			args := []string{"build", "all", "--path", root, "--concurrency", "2", "--cache-dir", t.TempDir(), "--skip-kinds", "CustomResourceDefinition"}
+			args := []string{
+				"build",
+				"all",
+				"--path",
+				root,
+				"--concurrency",
+				"2",
+				"--cache-dir",
+				t.TempDir(),
+				"--skip-kinds",
+				"CustomResourceDefinition",
+			}
 			if tc.input != "" {
 				args = append(args, "--supply", substitutionInput(t, tc.input))
 			}
@@ -95,7 +183,8 @@ func TestRun_ExternalSubstitution(t *testing.T) {
 				t.Fatalf("exit=%d: %s", code, diagnostic)
 			}
 			if tc.fail {
-				if !strings.Contains(diagnostic, "ConfigMap") && !strings.Contains(diagnostic, "Secret") || !strings.Contains(diagnostic, "apps/external") {
+				if !strings.Contains(diagnostic, "ConfigMap") && !strings.Contains(diagnostic, "Secret") ||
+					!strings.Contains(diagnostic, "apps/external") {
 					t.Fatalf("missing reference diagnostic: %s", diagnostic)
 				}
 				return
@@ -172,9 +261,43 @@ func TestRun_SubstitutionFilesAndDuplicates(t *testing.T) {
 	root := substitutionFixture(t, substitutionReference("ConfigMap", false), "${VALUE}-${OLD:-gone}")
 	cwd := t.TempDir()
 	t.Chdir(cwd)
-	testutil.WriteFile(t, cwd, "first,values.yaml", strings.Replace(externalCM, "data: {VALUE: supplied}", "data: {VALUE: first, OLD: old}", 1))
-	testutil.WriteFile(t, cwd, "last.yaml", "---\nnull\n---\n"+strings.Replace(externalCM, "supplied", "second", 1)+"---\n"+strings.Replace(externalCM, "supplied", "last", 1))
-	out, diagnostic, code := runCLI(t, "build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "4", "--supply", "first,values.yaml", "--supply", "last.yaml")
+	testutil.WriteFile(
+		t,
+		cwd,
+		"first,values.yaml",
+		strings.Replace(externalCM, "data: {VALUE: supplied}", "data: {VALUE: first, OLD: old}", 1),
+	)
+	testutil.WriteFile(
+		t,
+		cwd,
+		"last.yaml",
+		"---\nnull\n---\n"+strings.Replace(
+			externalCM,
+			"supplied",
+			"second",
+			1,
+		)+"---\n"+strings.Replace(
+			externalCM,
+			"supplied",
+			"last",
+			1,
+		),
+	)
+	out, diagnostic, code := runCLI(
+		t,
+		"build",
+		"all",
+		"--path",
+		root,
+		"--cache-dir",
+		t.TempDir(),
+		"--concurrency",
+		"4",
+		"--supply",
+		"first,values.yaml",
+		"--supply",
+		"last.yaml",
+	)
 	if code != 0 {
 		t.Fatal(diagnostic)
 	}
@@ -202,7 +325,9 @@ func TestRun_SubstitutionEnvironment(t *testing.T) {
 				t.Setenv("FLATE_STRICT_SUBSTITUTIONS", "false")
 			}
 			root := substitutionFixture(t, substitutionReference("ConfigMap", false), "${VALUE}")
-			args := append([]string{"build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2"}, tc.flags...)
+			args := append(
+				[]string{"build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2"},
+				tc.flags...)
 			out, diagnostic, code := runCLI(t, args...)
 			if code != 0 {
 				t.Fatal(diagnostic)
@@ -242,7 +367,12 @@ func TestRun_StrictSubstitutions(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			root := substitutionFixture(t, tc.postBuild, tc.expression)
 			if tc.disabled != "" {
-				testutil.WriteFile(t, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: rendered\n  namespace: apps\n  "+tc.disabled+": {kustomize.toolkit.fluxcd.io/substitute: disabled}\ndata:\n  value: '"+tc.expression+"'\n")
+				testutil.WriteFile(
+					t,
+					root,
+					"app/cm.yaml",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: rendered\n  namespace: apps\n  "+tc.disabled+": {kustomize.toolkit.fluxcd.io/substitute: disabled}\ndata:\n  value: '"+tc.expression+"'\n",
+				)
 			}
 			args := []string{"build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "4"}
 			if tc.strict {
@@ -281,7 +411,19 @@ func TestRun_SubstitutionHelpAndSharedCommands(t *testing.T) {
 					}
 				}
 			}
-			args := []string{verb, "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2", "--supply", input, "--strict-substitutions"}
+			args := []string{
+				verb,
+				"all",
+				"--path",
+				root,
+				"--cache-dir",
+				t.TempDir(),
+				"--concurrency",
+				"2",
+				"--supply",
+				input,
+				"--strict-substitutions",
+			}
 			if verb == "diff" {
 				base := substitutionFixture(t, substitutionReference("ConfigMap", false), "${VALUE}-base")
 				args = append(args, "--path-orig", base, "-o", "diff", "--skip-kinds", "CustomResourceDefinition")
@@ -301,11 +443,37 @@ func TestRun_SuppliedReaderValidation(t *testing.T) {
 	for _, ref := range []string{"secretRef", "certSecretRef", "proxySecretRef"} {
 		t.Run(ref, func(t *testing.T) {
 			root := substitutionFixture(t, "", "literal")
-			testutil.WriteFile(t, root, "flux.yaml", testutil.KustomizationYAML("consumer", "apps", "  path: ./app\n  sourceRef: {kind: OCIRepository, name: remote}\n"))
-			testutil.WriteFile(t, root, "source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: remote, namespace: apps}\nspec:\n  url: oci://example.invalid/fixture\n  "+ref+": {name: external}\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"flux.yaml",
+				testutil.KustomizationYAML(
+					"consumer",
+					"apps",
+					"  path: ./app\n  sourceRef: {kind: OCIRepository, name: remote}\n",
+				),
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				"source.yaml",
+				"apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: remote, namespace: apps}\nspec:\n  url: oci://example.invalid/fixture\n  "+ref+": {name: external}\n",
+			)
 			testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux.yaml, source.yaml]\n")
 			input := substitutionInput(t, externalSecret)
-			_, diagnostic, code := runCLI(t, "build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2", "--supply", input)
+			_, diagnostic, code := runCLI(
+				t,
+				"build",
+				"all",
+				"--path",
+				root,
+				"--cache-dir",
+				t.TempDir(),
+				"--concurrency",
+				"2",
+				"--supply",
+				input,
+			)
 			if code != 1 || !strings.Contains(diagnostic, "external") || strings.Contains(diagnostic, "not found") {
 				t.Fatalf("supplied %s was not read by its parser: %s", ref, diagnostic)
 			}
@@ -314,15 +482,37 @@ func TestRun_SuppliedReaderValidation(t *testing.T) {
 	for _, kind := range []string{"ConfigMap", "Secret"} {
 		t.Run("Helm values "+kind, func(t *testing.T) {
 			root := substitutionFixture(t, "", "literal")
-			testutil.WriteFile(t, root, "hr.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: chart, namespace: apps}\nspec:\n  interval: 1m\n  chart:\n    spec:\n      chart: charts/app\n      sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n  valuesFrom:\n    - kind: "+kind+"\n      name: external\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"hr.yaml",
+				"apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: chart, namespace: apps}\nspec:\n  interval: 1m\n  chart:\n    spec:\n      chart: charts/app\n      sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n  valuesFrom:\n    - kind: "+kind+"\n      name: external\n",
+			)
 			testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux.yaml, hr.yaml]\n")
 			testutil.WriteFile(t, root, "charts/app/Chart.yaml", "apiVersion: v2\nname: app\nversion: 0.1.0\n")
-			testutil.WriteFile(t, root, "charts/app/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: chart-output}\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"charts/app/templates/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: chart-output}\n",
+			)
 			input := externalCM
 			if kind == "Secret" {
 				input = externalSecret
 			}
-			_, diagnostic, code := runCLI(t, "build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "4", "--supply", substitutionInput(t, input))
+			_, diagnostic, code := runCLI(
+				t,
+				"build",
+				"all",
+				"--path",
+				root,
+				"--cache-dir",
+				t.TempDir(),
+				"--concurrency",
+				"4",
+				"--supply",
+				substitutionInput(t, input),
+			)
 			if code != 1 || !strings.Contains(diagnostic, "values.yaml") || !strings.Contains(diagnostic, "external") {
 				t.Fatalf("supplied %s did not retain requested-key validation: %s", kind, diagnostic)
 			}
@@ -361,15 +551,38 @@ func TestRun_StrictSubstitutionEnvironmentPrecedence(t *testing.T) {
 func TestRun_SubstitutionRepositoryCollision(t *testing.T) {
 	root := substitutionFixture(t, substitutionReference("ConfigMap", false), "${VALUE}")
 	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux.yaml, producer.yaml]\n")
-	testutil.WriteFile(t, root, "producer.yaml", testutil.KustomizationYAML("producer", "apps", "  {path: ./producer}\n"))
+	testutil.WriteFile(
+		t,
+		root,
+		"producer.yaml",
+		testutil.KustomizationYAML("producer", "apps", "  {path: ./producer}\n"),
+	)
 	testutil.WriteFile(t, root, "producer/kustomization.yaml", "resources: [input.yaml]\n")
 	testutil.WriteFile(t, root, "producer/input.yaml", strings.Replace(externalCM, "supplied", "repository", 1))
 	input := substitutionInput(t, strings.Replace(externalCM, "supplied", "private-fixture-value", 1))
-	out, diagnostic, code := runCLI(t, "build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "4", "--supply", input, "--strict-substitutions", "--log-level", "warn")
+	out, diagnostic, code := runCLI(
+		t,
+		"build",
+		"all",
+		"--path",
+		root,
+		"--cache-dir",
+		t.TempDir(),
+		"--concurrency",
+		"4",
+		"--supply",
+		input,
+		"--strict-substitutions",
+		"--log-level",
+		"warn",
+	)
 	if code != 0 {
 		t.Fatal(diagnostic)
 	}
-	if strings.Count(diagnostic, "repository data takes precedence over") != 1 || !strings.Contains(diagnostic, input) || !strings.Contains(diagnostic, "ConfigMap/apps/external: VALUE") || strings.Contains(diagnostic, "private-fixture-value") {
+	if strings.Count(diagnostic, "repository data takes precedence over") != 1 ||
+		!strings.Contains(diagnostic, input) ||
+		!strings.Contains(diagnostic, "ConfigMap/apps/external: VALUE") ||
+		strings.Contains(diagnostic, "private-fixture-value") {
 		t.Fatalf("collision diagnostic: %s", diagnostic)
 	}
 	if strings.Contains(out, "private-fixture-value") {
@@ -389,7 +602,20 @@ func TestRun_SubstitutionRepositoryCollision(t *testing.T) {
 
 func TestRun_SubstitutionSecretReadableAdvisory(t *testing.T) {
 	root := substitutionFixture(t, substitutionReference("Secret", false), "${VALUE}")
-	out, diagnostic, code := runCLI(t, "test", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2", "--supply", substitutionInput(t, externalSecret), "--strict-substitutions")
+	out, diagnostic, code := runCLI(
+		t,
+		"test",
+		"all",
+		"--path",
+		root,
+		"--cache-dir",
+		t.TempDir(),
+		"--concurrency",
+		"2",
+		"--supply",
+		substitutionInput(t, externalSecret),
+		"--strict-substitutions",
+	)
 	if code != 0 || strings.Contains(out+diagnostic, "could not be read offline") {
 		t.Fatalf("supplied Secret reported unreadable: %s %s", out, diagnostic)
 	}
@@ -397,13 +623,36 @@ func TestRun_SubstitutionSecretReadableAdvisory(t *testing.T) {
 
 func TestRun_SubstitutionSecretMissingChartValue(t *testing.T) {
 	root := substitutionFixture(t, "", "literal")
-	testutil.WriteFile(t, root, "flux.yaml", testutil.KustomizationYAML("apps", "flux-system", "  {path: ./app, sourceRef: {kind: GitRepository, name: flux-system}, postBuild: {substituteFrom: [{kind: Secret, name: cluster-secrets}]}}\n"))
+	testutil.WriteFile(
+		t,
+		root,
+		"flux.yaml",
+		testutil.KustomizationYAML(
+			"apps",
+			"flux-system",
+			"  {path: ./app, sourceRef: {kind: GitRepository, name: flux-system}, postBuild: {substituteFrom: [{kind: Secret, name: cluster-secrets}]}}\n",
+		),
+	)
 	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [cm.yaml, hr.yaml]\n")
-	testutil.WriteFile(t, root, "app/hr.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: demo, namespace: apps}\nspec: {chart: {spec: {chart: charts/mychart, sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}}}, values: {greeting: '${SECRET_X}'}}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"app/hr.yaml",
+		"apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: demo, namespace: apps}\nspec: {chart: {spec: {chart: charts/mychart, sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}}}, values: {greeting: '${SECRET_X}'}}\n",
+	)
 	testutil.WriteFile(t, root, "charts/mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
-	testutil.WriteFile(t, root, "charts/mychart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo-cm}\ndata: {greeting: {{ required \"greeting needed\" .Values.greeting | quote }}}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"charts/mychart/templates/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo-cm}\ndata: {greeting: {{ required \"greeting needed\" .Values.greeting | quote }}}\n",
+	)
 	input := filepath.Join(t.TempDir(), "sec.yaml")
-	testutil.WriteFileAt(t, input, "apiVersion: v1\nkind: Secret\nmetadata: {name: cluster-secrets, namespace: flux-system}\nstringData: {OTHER: y}\n")
+	testutil.WriteFileAt(
+		t,
+		input,
+		"apiVersion: v1\nkind: Secret\nmetadata: {name: cluster-secrets, namespace: flux-system}\nstringData: {OTHER: y}\n",
+	)
 	for _, supplied := range []bool{false, true} {
 		t.Run(fmt.Sprintf("supplied=%t", supplied), func(t *testing.T) {
 			args := []string{"test", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2"}
@@ -411,7 +660,8 @@ func TestRun_SubstitutionSecretMissingChartValue(t *testing.T) {
 				args = append(args, "--supply", input)
 			}
 			out, diagnostic, code := runCLI(t, args...)
-			if code != 1 || supplied && !strings.Contains(out+diagnostic, "greeting needed") || !supplied && !strings.Contains(out+diagnostic, "cluster-secrets") {
+			if code != 1 || supplied && !strings.Contains(out+diagnostic, "greeting needed") ||
+				!supplied && !strings.Contains(out+diagnostic, "cluster-secrets") {
 				t.Fatalf("exit %d: %s %s", code, out, diagnostic)
 			}
 		})
@@ -450,7 +700,17 @@ func TestRun_SubstitutionCachedInputChanges(t *testing.T) {
 			cache, inputs := t.TempDir(), t.TempDir()
 			var outputs []string
 			for i, value := range []string{"first", "second", "second", "first"} {
-				args := []string{"build", "all", "--path", root, "--cache-dir", cache, "--concurrency", "2", "--strict-substitutions"}
+				args := []string{
+					"build",
+					"all",
+					"--path",
+					root,
+					"--cache-dir",
+					cache,
+					"--concurrency",
+					"2",
+					"--strict-substitutions",
+				}
 				testutil.WriteFile(t, inputs, "values.yaml", strings.Replace(tc.input, "supplied", value, 1))
 				args = append(args, "--supply", filepath.Join(inputs, "values.yaml"))
 				out, diagnostic, code := runCLI(t, args...)

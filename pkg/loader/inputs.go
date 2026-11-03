@@ -44,13 +44,15 @@ type physicalContext struct {
 	sourceRoot, prefix, localBase string
 }
 
-type loadContext struct{ path, ignore string }
-type loadDirectory struct{ adHoc, traversed bool }
-type loadFacts struct {
-	complete, observed bool
-	files              []fileAdmission
-	directories        map[string]loadDirectory
-}
+type (
+	loadContext   struct{ path, ignore string }
+	loadDirectory struct{ adHoc, traversed bool }
+	loadFacts     struct {
+		complete, observed bool
+		files              []fileAdmission
+		directories        map[string]loadDirectory
+	}
+)
 
 type admissionKind uint8
 
@@ -84,7 +86,12 @@ func (l *Loader) sourceFacts(root string) parsedSource {
 		return source
 	}
 	sourceBinding := binding
-	source := parsedSource{input: identity, binding: &sourceBinding, walks: map[physicalContext][]graphVisit{}, loads: map[loadContext]loadFacts{}}
+	source := parsedSource{
+		input:   identity,
+		binding: &sourceBinding,
+		walks:   map[physicalContext][]graphVisit{},
+		loads:   map[loadContext]loadFacts{},
+	}
 	if prepared := l.documents.parsed; prepared != nil && prepared.compact {
 		if prior, ok := prepared.sources[root]; ok && prior.input == identity && *prior.binding == binding {
 			source.walks, source.loads = maps.Clone(prior.walks), maps.Clone(prior.loads)
@@ -100,7 +107,11 @@ func (l *Loader) sourceFacts(root string) parsedSource {
 
 // ParsedInputs snapshots parsed bodies without retaining entry admission state.
 func (l *Loader) ParsedInputs() *ParsedInputs {
-	inputs := &ParsedInputs{sources: map[string]parsedSource{}, wipeSecrets: l.Options.WipeSecrets, compact: l.documents.compact}
+	inputs := &ParsedInputs{
+		sources:     map[string]parsedSource{},
+		wipeSecrets: l.Options.WipeSecrets,
+		compact:     l.documents.compact,
+	}
 	for root, artifact := range l.documents.artifacts {
 		source := parsedSource{input: parsedInputIdentity(artifact)}
 		if inputs.compact {
@@ -111,7 +122,8 @@ func (l *Loader) ParsedInputs() *ParsedInputs {
 		inputs.sources[root] = source
 	}
 	for file, doc := range l.documents.cache {
-		if doc.body == nil && doc.objects == nil && (!inputs.compact || !doc.searched && doc.pathState == pathUnknown && doc.decodeErr == nil) {
+		if doc.body == nil && doc.objects == nil &&
+			(!inputs.compact || !doc.searched && doc.pathState == pathUnknown && doc.decodeErr == nil) {
 			continue
 		}
 		if source, ok := inputs.sources[l.documents.mountedRoot(file)]; ok {
@@ -127,7 +139,8 @@ func (l *Loader) ParsedInputs() *ParsedInputs {
 // Matches reports whether input owns a source view retained by these parsed facts.
 func (p *ParsedInputs) Matches(input *store.SourceArtifact) bool {
 	source, ok := p.sources[input.LocalPath]
-	return ok && source.input == parsedInputIdentity(input) && (!p.compact || *source.binding == input.Input(store.ArtifactContent|store.ArtifactRevision))
+	return ok && source.input == parsedInputIdentity(input) &&
+		(!p.compact || *source.binding == input.Input(store.ArtifactContent|store.ArtifactRevision))
 }
 
 func parsedInputIdentity(input *store.SourceArtifact) any {
@@ -151,7 +164,8 @@ func (r documentReader) restore(file string) {
 	if !ok || artifact == nil {
 		return
 	}
-	if parsedInputIdentity(artifact) != source.input || r.compact && artifact.Input(store.ArtifactContent|store.ArtifactRevision) != *source.binding {
+	if parsedInputIdentity(artifact) != source.input ||
+		r.compact && artifact.Input(store.ArtifactContent|store.ArtifactRevision) != *source.binding {
 		return
 	}
 	if doc, ok := source.documents[file]; ok {
@@ -195,7 +209,8 @@ func (l *Loader) inputVisibility() []manifest.InputVisibility {
 			if scope.root != root || scope.artifact == nil || slices.Contains(sources, scope.id) {
 				continue
 			}
-			if parsedInputIdentity(scope.artifact) != identity || scope.artifact.Input(store.ArtifactContent|store.ArtifactRevision) != *facts.binding {
+			if parsedInputIdentity(scope.artifact) != identity ||
+				scope.artifact.Input(store.ArtifactContent|store.ArtifactRevision) != *facts.binding {
 				continue
 			}
 			sources = append(sources, scope.id)
@@ -211,7 +226,8 @@ func (l *Loader) inputVisibility() []manifest.InputVisibility {
 				observation.Ignore = filepath.ToSlash(relative)
 			}
 			for _, file := range load.files {
-				if file.kind == admissionWarning || l.terminalInput(file.file) || l.documents.cache[file.file].eligible == fileInactive {
+				if file.kind == admissionWarning || l.terminalInput(file.file) ||
+					l.documents.cache[file.file].eligible == fileInactive {
 					continue
 				}
 				for _, child := range l.documents.cache[file.file].objects {
@@ -220,7 +236,8 @@ func (l *Loader) inputVisibility() []manifest.InputVisibility {
 					}
 					var id manifest.NamedResource
 					if child.fact != nil {
-						if child.fact.facts.uncertain || file.kind == admissionBootstrap && child.fact.Declaration != file.coordinate {
+						if child.fact.facts.uncertain ||
+							file.kind == admissionBootstrap && child.fact.Declaration != file.coordinate {
 							continue
 						}
 						id = child.fact.Authored
@@ -238,7 +255,10 @@ func (l *Loader) inputVisibility() []manifest.InputVisibility {
 						if observation.Inputs == nil {
 							observation.Inputs = map[manifest.NamedResource][]string{}
 						}
-						observation.Inputs[effective] = append(observation.Inputs[effective], filepath.ToSlash(relative))
+						observation.Inputs[effective] = append(
+							observation.Inputs[effective],
+							filepath.ToSlash(relative),
+						)
 					}
 				}
 			}

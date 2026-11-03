@@ -40,11 +40,36 @@ func TestSelect_RenderWarningScope(t *testing.T) {
 	t.Parallel()
 	warnings := []manifest.Warning{
 		{Category: manifest.WarnUnresolvedSubstitution, Message: "shared Secret", Count: 2},
-		{Category: manifest.WarnStaleValues, Resource: testutil.HelmReleaseID("apps", "app"), Message: "stale", Count: 1},
-		{Category: manifest.WarnStaleValues, Resource: testutil.HelmReleaseID("other", "app"), Message: "foreign", Count: 1},
-		{Category: manifest.WarnOmittedValues, Resource: testutil.HelmReleaseID("apps", "app"), Message: "selected", Count: 1},
-		{Category: manifest.WarnOmittedValues, Resource: testutil.HelmReleaseID("apps", "sibling"), Message: "other name", Count: 1},
-		{Category: manifest.WarnOmittedValues, Resource: testutil.KustomizationID("apps", "app"), Message: "other kind", Count: 1},
+		{
+			Category: manifest.WarnStaleValues,
+			Resource: testutil.HelmReleaseID("apps", "app"),
+			Message:  "stale",
+			Count:    1,
+		},
+		{
+			Category: manifest.WarnStaleValues,
+			Resource: testutil.HelmReleaseID("other", "app"),
+			Message:  "foreign",
+			Count:    1,
+		},
+		{
+			Category: manifest.WarnOmittedValues,
+			Resource: testutil.HelmReleaseID("apps", "app"),
+			Message:  "selected",
+			Count:    1,
+		},
+		{
+			Category: manifest.WarnOmittedValues,
+			Resource: testutil.HelmReleaseID("apps", "sibling"),
+			Message:  "other name",
+			Count:    1,
+		},
+		{
+			Category: manifest.WarnOmittedValues,
+			Resource: testutil.KustomizationID("apps", "app"),
+			Message:  "other kind",
+			Count:    1,
+		},
 	}
 	for _, tc := range []struct {
 		name  string
@@ -60,7 +85,12 @@ func TestSelect_RenderWarningScope(t *testing.T) {
 			for i := range runs {
 				runs[i] = selectedRun(&Result{Warnings: slices.Clone(warnings)})
 			}
-			selected, err, remainder := Select(runs, nil, []manifest.NamedResource{testutil.HelmReleaseID("apps", "app")}, nil)
+			selected, err, remainder := Select(
+				runs,
+				nil,
+				[]manifest.NamedResource{testutil.HelmReleaseID("apps", "app")},
+				nil,
+			)
 			assert.NoError(t, err)
 			assert.NoError(t, remainder)
 			assert.Equal(t, len(selected), tc.sides)
@@ -104,11 +134,16 @@ func TestSelect_CountsBeforeLabelsAndRequestedOrder(t *testing.T) {
 	hr := &manifest.HelmRelease{Name: "same", Namespace: "apps"}
 	ks := &manifest.Kustomization{Name: "same", Namespace: "apps"}
 	ks.Labels = map[string]string{"env": ""}
-	run := selectedRun(&Result{Manifests: []manifest.DocumentBatch{{Parent: ks, Documents: []map[string]any{{"kind": "ConfigMap"}}}}})
+	run := selectedRun(
+		&Result{Manifests: []manifest.DocumentBatch{{Parent: ks, Documents: []map[string]any{{"kind": "ConfigMap"}}}}},
+	)
 	run.store.AddObject(hr)
 	run.store.AddObject(ks)
 	run.store.AddObject(&manifest.Kustomization{Name: "other", Namespace: "apps", Labels: ks.Labels})
-	run.store.UpdateStatus(hr.Named(), store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSuspended, Message: "suspended"})
+	run.store.UpdateStatus(
+		hr.Named(),
+		store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSuspended, Message: "suspended"},
+	)
 	raw := outputByParent(run.Result.Manifests)
 	roots := []manifest.NamedResource{testutil.HelmReleaseID("", "same"), testutil.KustomizationID("", "same")}
 	selected, err, _ := Select([]Rendered{run}, nil, roots, map[string]string{"env": ""})
@@ -136,15 +171,29 @@ func TestSelect_CountsBeforeLabelsAndRequestedOrder(t *testing.T) {
 
 func TestSelect_InferredNamespacesAreNotIdentityFilter(t *testing.T) {
 	t.Parallel()
-	a, sibling, other := testutil.KustomizationID("flux-system", "a"), testutil.KustomizationID("flux-system", "sibling"), testutil.KustomizationID("flux-system", "other")
+	a, sibling, other := testutil.KustomizationID(
+		"flux-system",
+		"a",
+	), testutil.KustomizationID(
+		"flux-system",
+		"sibling",
+	), testutil.KustomizationID(
+		"flux-system",
+		"other",
+	)
 	other.Namespace = "other"
 	run := selectedRun(&Result{})
 	for _, id := range []manifest.NamedResource{a, sibling, other} {
 		run.store.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
 	}
 	set := change.NewSet([]string{"a.yaml"})
-	run.index = indexForTest(map[manifest.NamedResource]string{a: "a.yaml", sibling: "sibling.yaml", other: "other.yaml"})
-	run.loader = admissiontest.New(t, admissiontest.Config{Changes: set, Index: run.index, Inventory: run.store, Root: ""})
+	run.index = indexForTest(
+		map[manifest.NamedResource]string{a: "a.yaml", sibling: "sibling.yaml", other: "other.yaml"},
+	)
+	run.loader = admissiontest.New(
+		t,
+		admissiontest.Config{Changes: set, Index: run.index, Inventory: run.store, Root: ""},
+	)
 	admissiontest.Commit(t, run.loader, nil)
 	run.filter = run.loader.Options.Filter
 	selected, err, _ := Select([]Rendered{run}, nil, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
@@ -180,20 +229,41 @@ func TestSelect_IncompleteInputCoverageScope(t *testing.T) {
 				t.Parallel()
 				affected := testutil.KustomizationID("apps", "affected")
 				selected := testutil.KustomizationID("infra", "selected")
-				warning := manifest.Warning{Resource: affected, Category: manifest.WarnIncompleteInputCoverage, Message: "incomplete"}
-				run := selectedRun(&Result{Warnings: []manifest.Warning{warning, {Resource: affected, Category: manifest.WarnStaleValues}}})
+				warning := manifest.Warning{
+					Resource: affected,
+					Category: manifest.WarnIncompleteInputCoverage,
+					Message:  "incomplete",
+				}
+				run := selectedRun(
+					&Result{
+						Warnings: []manifest.Warning{warning, {Resource: affected, Category: manifest.WarnStaleValues}},
+					},
+				)
 				run.store.AddObject(&manifest.Kustomization{Name: affected.Name, Namespace: affected.Namespace})
 				run.store.AddObject(&manifest.Kustomization{Name: selected.Name, Namespace: selected.Namespace})
-				run.index = indexForTest(map[manifest.NamedResource]string{affected: "affected.yaml", selected: "selected.yaml"})
+				run.index = indexForTest(
+					map[manifest.NamedResource]string{affected: "affected.yaml", selected: "selected.yaml"},
+				)
 				paths := []string{"selected.yaml"}
 				if tc.empty {
 					paths = nil
 				}
 				runs := make([]Rendered, len(enabled))
 				for i, active := range enabled {
-					runs[i] = Rendered{Orchestrator: &Orchestrator{store: run.store, index: run.index}, Result: run.Result}
+					runs[i] = Rendered{
+						Orchestrator: &Orchestrator{store: run.store, index: run.index},
+						Result:       run.Result,
+					}
 					if active {
-						runs[i].loader = admissiontest.New(t, admissiontest.Config{Changes: change.NewSet(paths), Index: run.index, Inventory: run.store, Root: ""})
+						runs[i].loader = admissiontest.New(
+							t,
+							admissiontest.Config{
+								Changes:   change.NewSet(paths),
+								Index:     run.index,
+								Inventory: run.store,
+								Root:      "",
+							},
+						)
 						admissiontest.Commit(t, runs[i].loader, nil)
 						runs[i].filter = runs[i].loader.Options.Filter
 					}
@@ -206,9 +276,16 @@ func TestSelect_IncompleteInputCoverageScope(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				assert.Diff(t, run.Result.Warnings, []manifest.Warning{warning, {Resource: affected, Category: manifest.WarnStaleValues}})
+				assert.Diff(
+					t,
+					run.Result.Warnings,
+					[]manifest.Warning{warning, {Resource: affected, Category: manifest.WarnStaleValues}},
+				)
 				for i, result := range results {
-					visible := slices.ContainsFunc(result.Warnings, func(w manifest.Warning) bool { return w.Category == warning.Category && w.Resource == affected })
+					visible := slices.ContainsFunc(
+						result.Warnings,
+						func(w manifest.Warning) bool { return w.Category == warning.Category && w.Resource == affected },
+					)
 					assert.Equal(t, visible, enabled[i] && tc.visible)
 					if tc.namespace == "" && tc.requested == "" && !tc.helm {
 						var warnings []manifest.Warning
@@ -256,7 +333,9 @@ func TestSelect_FatalScopeAndRunErrorIdentities(t *testing.T) {
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					t.Parallel()
-					failed := map[manifest.NamedResource]store.StatusInfo{hidden: {Status: store.StatusFailed, Message: "default failed"}}
+					failed := map[manifest.NamedResource]store.StatusInfo{
+						hidden: {Status: store.StatusFailed, Message: "default failed"},
+					}
 					wantRaw := "reconcile completed with 1 failure(s):\n  " + hidden.String() + ": default failed"
 					if tc.visible {
 						failed[visible] = store.StatusInfo{Status: store.StatusFailed, Message: "media failed"}
@@ -286,7 +365,12 @@ func TestSelect_FatalScopeAndRunErrorIdentities(t *testing.T) {
 					if sides == 2 {
 						runs, runErr = []Rendered{run, run}, errors.Join(run.Err, run.Err)
 					}
-					selected, err, remainder := Select(runs, runErr, []manifest.NamedResource{testutil.KustomizationID("media", "")}, nil)
+					selected, err, remainder := Select(
+						runs,
+						runErr,
+						[]manifest.NamedResource{testutil.KustomizationID("media", "")},
+						nil,
+					)
 					if (err != nil) != (tc.visible || tc.extra != nil) || len(selected) != sides {
 						t.Fatalf("unexpected scoped failure: %+v %v", selected, err)
 					}
@@ -318,7 +402,11 @@ func TestSelect_FatalScopeAndRunErrorIdentities(t *testing.T) {
 						t.Fatalf("selected aggregate identity changed: %v", err)
 					}
 					if tc.visible {
-						assert.Equal(t, concrete.Message, "reconcile completed with 1 failure(s):\n  "+visible.String()+": media failed")
+						assert.Equal(
+							t,
+							concrete.Message,
+							"reconcile completed with 1 failure(s):\n  "+visible.String()+": media failed",
+						)
 					}
 					if _, ok := errors.AsType[*FailuresError](remainder); ok {
 						t.Fatalf("aggregate entered incidental error: %v", remainder)
@@ -341,35 +429,64 @@ func TestSelect_MissingAndCycles(t *testing.T) {
 	for _, named := range []bool{false, true} {
 		t.Run(fmt.Sprintf("named_%t", named), func(t *testing.T) {
 			t.Parallel()
-			blocked := map[manifest.NamedResource][]manifest.NamedResource{selected: {missing}, a: {b}, b: {a}, consumer: {a}}
+			blocked := map[manifest.NamedResource][]manifest.NamedResource{
+				selected: {missing},
+				a:        {b},
+				b:        {a},
+				consumer: {a},
+			}
 			run := selectedRun(&Result{Blocked: blocked, Failed: make(map[manifest.NamedResource]store.StatusInfo)})
 			for _, resource := range []manifest.NamedResource{selected, a, b, consumer} {
 				run.store.AddObject(&manifest.Kustomization{Name: resource.Name, Namespace: resource.Namespace})
-				run.store.UpdateFailure(resource, &manifest.DependencyFailedError{Parent: resource, Failed: blocked[resource]})
+				run.store.UpdateFailure(
+					resource,
+					&manifest.DependencyFailedError{Parent: resource, Failed: blocked[resource]},
+				)
 				info, _ := run.store.GetStatus(resource)
 				run.Result.Failed[resource] = info
 			}
 			for resource, deps := range blocked {
 				acceptInputsForTest(t, run.store, resource, deps)
 			}
-			setParentsForTest(run.Orchestrator, map[manifest.NamedResource]manifest.NamedResource{a: selected, b: selected, consumer: selected})
+			setParentsForTest(
+				run.Orchestrator,
+				map[manifest.NamedResource]manifest.NamedResource{a: selected, b: selected, consumer: selected},
+			)
 			run.Err = &FailuresError{Message: "raw failure summary"}
 			root := testutil.KustomizationID("", "")
 			if named {
 				root.Name = selected.Name
 			}
-			results, err, _ := Select([]Rendered{run, run}, errors.Join(run.Err, run.Err), []manifest.NamedResource{root}, nil)
+			results, err, _ := Select(
+				[]Rendered{run, run},
+				errors.Join(run.Err, run.Err),
+				[]manifest.NamedResource{root},
+				nil,
+			)
 			res := results[0]
-			assert.Diff(t, res.Causes, map[manifest.NamedResource][]manifest.NamedResource{missing: {selected}, a: {consumer}, b: nil})
+			assert.Diff(
+				t,
+				res.Causes,
+				map[manifest.NamedResource][]manifest.NamedResource{missing: {selected}, a: {consumer}, b: nil},
+			)
 			assert.Diff(t, res.Blocked, blocked)
-			assert.Equal(t, selectedFailures(res).Error(), "reconcile completed with 3 failure(s):\n  Kustomization.kustomize.toolkit.fluxcd.io/apps/a: dependency cycle: blocked by Kustomization.kustomize.toolkit.fluxcd.io/apps/b\n  Kustomization.kustomize.toolkit.fluxcd.io/apps/b: dependency cycle: blocked by Kustomization.kustomize.toolkit.fluxcd.io/apps/a\n  Kustomization.kustomize.toolkit.fluxcd.io/apps/missing: not found\n  (+2 blocked by failed/missing dependencies)")
+			assert.Equal(
+				t,
+				selectedFailures(res).Error(),
+				"reconcile completed with 3 failure(s):\n  Kustomization.kustomize.toolkit.fluxcd.io/apps/a: dependency cycle: blocked by Kustomization.kustomize.toolkit.fluxcd.io/apps/b\n  Kustomization.kustomize.toolkit.fluxcd.io/apps/b: dependency cycle: blocked by Kustomization.kustomize.toolkit.fluxcd.io/apps/a\n  Kustomization.kustomize.toolkit.fluxcd.io/apps/missing: not found\n  (+2 blocked by failed/missing dependencies)",
+			)
 			if err == nil || !strings.Contains(err.Error(), "both snapshots had reconcile failures") {
 				t.Fatalf("cycle error missing: %v", err)
 			}
 			for _, resource := range []manifest.NamedResource{a, b} {
 				raw := run.Result.Failed[resource]
 				if res.Failed[resource].String() == raw.String() || !res.Failed[resource].IsDependencyFailure() {
-					t.Fatalf("cycle message or typed evidence lost: raw=%+v selected=%+v unavailable=%+v", raw, res.Failed[resource], res.Unavailable[resource])
+					t.Fatalf(
+						"cycle message or typed evidence lost: raw=%+v selected=%+v unavailable=%+v",
+						raw,
+						res.Failed[resource],
+						res.Unavailable[resource],
+					)
 				}
 				assert.Diff(t, res.Failed[resource].BlockedBy(), blocked[resource])
 				if !named {
@@ -388,11 +505,39 @@ func TestSelect_MissingAndCycles(t *testing.T) {
 
 func TestSelect_SharedRootsAndAdvisoryCycles(t *testing.T) {
 	t.Parallel()
-	selected, root, other, a, b := testutil.KustomizationID("flux-system", "selected"), testutil.KustomizationID("flux-system", "root"), testutil.KustomizationID("flux-system", "other"), testutil.KustomizationID("flux-system", "a"), testutil.KustomizationID("flux-system", "b")
-	run := selectedRun(&Result{Failed: make(map[manifest.NamedResource]store.StatusInfo), Blocked: map[manifest.NamedResource][]manifest.NamedResource{selected: {root}, other: {root}, a: {b}, b: {a}}})
+	selected, root, other, a, b := testutil.KustomizationID(
+		"flux-system",
+		"selected",
+	), testutil.KustomizationID(
+		"flux-system",
+		"root",
+	), testutil.KustomizationID(
+		"flux-system",
+		"other",
+	), testutil.KustomizationID(
+		"flux-system",
+		"a",
+	), testutil.KustomizationID(
+		"flux-system",
+		"b",
+	)
+	run := selectedRun(
+		&Result{
+			Failed: make(map[manifest.NamedResource]store.StatusInfo),
+			Blocked: map[manifest.NamedResource][]manifest.NamedResource{
+				selected: {root},
+				other:    {root},
+				a:        {b},
+				b:        {a},
+			},
+		},
+	)
 	for _, id := range []manifest.NamedResource{selected, root, other, a, b} {
 		run.store.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
-		run.store.UpdateStatus(id, store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: id.Name + " failure"})
+		run.store.UpdateStatus(
+			id,
+			store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: id.Name + " failure"},
+		)
 		run.Result.Failed[id] = store.StatusInfo{Status: store.StatusFailed, Message: id.Name + " failure"}
 	}
 	for id, deps := range run.Result.Blocked {
@@ -400,31 +545,76 @@ func TestSelect_SharedRootsAndAdvisoryCycles(t *testing.T) {
 	}
 	run.Err = &FailuresError{Message: "raw summary"}
 	panicErr := errors.New("unattributed panic")
-	results, err, _ := Select([]Rendered{run}, errors.Join(run.Err, context.Canceled, panicErr), []manifest.NamedResource{{Group: selected.Group, Kind: selected.Kind, Name: selected.Name}}, nil)
-	if len(results[0].Failed) != 2 || len(results[0].Unrelated) != 3 || !errors.Is(err, context.Canceled) || !errors.Is(err, panicErr) {
+	results, err, _ := Select(
+		[]Rendered{run},
+		errors.Join(run.Err, context.Canceled, panicErr),
+		[]manifest.NamedResource{{Group: selected.Group, Kind: selected.Kind, Name: selected.Name}},
+		nil,
+	)
+	if len(results[0].Failed) != 2 || len(results[0].Unrelated) != 3 || !errors.Is(err, context.Canceled) ||
+		!errors.Is(err, panicErr) {
 		t.Fatalf("shared/cyclic projection lost: %+v %v", results[0], err)
 	}
 	for _, warning := range results[0].Unrelated {
-		if warning.Resource == root || warning.Category != manifest.WarnUnrelatedFailure || strings.Contains(warning.Message, "dependency cycle") {
+		if warning.Resource == root || warning.Category != manifest.WarnUnrelatedFailure ||
+			strings.Contains(warning.Message, "dependency cycle") {
 			t.Fatalf("fatal/advisory policies conflated: %+v", warning)
 		}
 	}
-	got, _, _ := Select([]Rendered{run}, run.Err, []manifest.NamedResource{{Group: selected.Group, Kind: selected.Kind, Name: selected.Name}}, nil)
+	got, _, _ := Select(
+		[]Rendered{run},
+		run.Err,
+		[]manifest.NamedResource{{Group: selected.Group, Kind: selected.Kind, Name: selected.Name}},
+		nil,
+	)
 	assert.Diff(t, got[0].Unrelated, results[0].Unrelated)
 	missing := testutil.KustomizationID("flux-system", "missing")
 	run.Result.Blocked = map[manifest.NamedResource][]manifest.NamedResource{selected: {missing}, other: {missing}}
-	run.Result.Failed = map[manifest.NamedResource]store.StatusInfo{selected: {Status: store.StatusFailed, Message: "selected blocked"}, other: {Status: store.StatusFailed, Message: "other blocked"}}
+	run.Result.Failed = map[manifest.NamedResource]store.StatusInfo{
+		selected: {Status: store.StatusFailed, Message: "selected blocked"},
+		other:    {Status: store.StatusFailed, Message: "other blocked"},
+	}
 	for id, deps := range run.Result.Blocked {
 		acceptInputsForTest(t, run.store, id, deps)
 	}
-	results, _, _ = Select([]Rendered{run}, run.Err, []manifest.NamedResource{{Group: selected.Group, Kind: selected.Kind, Name: selected.Name}}, nil)
+	results, _, _ = Select(
+		[]Rendered{run},
+		run.Err,
+		[]manifest.NamedResource{{Group: selected.Group, Kind: selected.Kind, Name: selected.Name}},
+		nil,
+	)
 	assert.Diff(t, results[0].Causes, map[manifest.NamedResource][]manifest.NamedResource{missing: {selected}})
-	assert.Diff(t, results[0].Unrelated, []manifest.Warning{{Resource: other, Subject: manifest.DiagnosticFor(other, nil), Related: []manifest.NamedResource{missing}, Category: manifest.WarnUnrelatedFailure, Message: "other blocked", Detail: []string{"blocked by " + missing.String()}}})
+	assert.Diff(
+		t,
+		results[0].Unrelated,
+		[]manifest.Warning{
+			{
+				Resource: other,
+				Subject:  manifest.DiagnosticFor(other, nil),
+				Related:  []manifest.NamedResource{missing},
+				Category: manifest.WarnUnrelatedFailure,
+				Message:  "other blocked",
+				Detail:   []string{"blocked by " + missing.String()},
+			},
+		},
+	)
 	selected.Name = "healthy"
 	run.store.AddObject(&manifest.Kustomization{Name: selected.Name, Namespace: selected.Namespace})
 	c := testutil.KustomizationID("flux-system", "c")
-	run.Result = &Result{Failed: map[manifest.NamedResource]store.StatusInfo{a: {Message: "cycle a"}, b: {Message: "cycle b"}, c: {Message: "cycle c"}}, Blocked: map[manifest.NamedResource][]manifest.NamedResource{a: {c, b, c}, b: {a}, c: {a}}}
-	results, err, _ = Select([]Rendered{run}, run.Err, []manifest.NamedResource{{Group: selected.Group, Kind: selected.Kind, Name: selected.Name}}, nil)
+	run.Result = &Result{
+		Failed: map[manifest.NamedResource]store.StatusInfo{
+			a: {Message: "cycle a"},
+			b: {Message: "cycle b"},
+			c: {Message: "cycle c"},
+		},
+		Blocked: map[manifest.NamedResource][]manifest.NamedResource{a: {c, b, c}, b: {a}, c: {a}},
+	}
+	results, err, _ = Select(
+		[]Rendered{run},
+		run.Err,
+		[]manifest.NamedResource{{Group: selected.Group, Kind: selected.Kind, Name: selected.Name}},
+		nil,
+	)
 	assert.Equal(t, err, nil)
 	assert.Diff(t, results[0].Unrelated[0].Detail, []string{"blocked by " + b.String(), "blocked by " + c.String()})
 }
@@ -434,18 +624,33 @@ func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
 	closeErr := errors.New("shared cache close")
 	inputErr := manifest.NewError(manifest.ErrInput, nil, "independent input")
 	domainErr := manifest.NewError(manifest.ErrFlux, nil, "independent domain")
-	failed := selectedRun(&Result{Failed: map[manifest.NamedResource]store.StatusInfo{testutil.KustomizationID("flux-system", "failed"): {Status: store.StatusFailed, Message: "resource failed"}}})
+	failed := selectedRun(
+		&Result{
+			Failed: map[manifest.NamedResource]store.StatusInfo{
+				testutil.KustomizationID("flux-system", "failed"): {
+					Status:  store.StatusFailed,
+					Message: "resource failed",
+				},
+			},
+		},
+	)
 	failed.Err = errors.Join(&FailuresError{Message: "raw failures"}, context.Canceled)
 	t.Run("head_only", func(t *testing.T) {
 		t.Parallel()
 		raw := errors.Join(errors.Join(inputErr, failed.Err), closeErr)
-		selected, err, remainder := Select([]Rendered{failed}, raw, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
+		selected, err, remainder := Select(
+			[]Rendered{failed},
+			raw,
+			[]manifest.NamedResource{testutil.KustomizationID("", "")},
+			nil,
+		)
 		if len(selected) != 1 || len(selected[0].Failed) != 1 {
 			t.Fatalf("head-only selection lost partial failures: %+v %v", selected, err)
 		}
 		for _, got := range []error{err, remainder} {
 			for _, cause := range []error{inputErr, manifest.ErrInput, context.Canceled, closeErr} {
-				if !errors.Is(got, cause) || !errors.Is(cause, manifest.ErrInput) && strings.Count(got.Error(), cause.Error()) != 1 {
+				if !errors.Is(got, cause) ||
+					!errors.Is(cause, manifest.ErrInput) && strings.Count(got.Error(), cause.Error()) != 1 {
 					t.Fatalf("head-only projection lost or duplicated %v: %v", cause, got)
 				}
 			}
@@ -482,8 +687,14 @@ func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
 				}
 				runs[i].Err = err
 			}
-			_, err, remainder := Select(runs, errors.Join(errors.Join(tc.orig, tc.current), tc.shared), []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
-			if (err != nil) != (tc.orig != nil || tc.current != nil || tc.shared != nil) || (tc.want != "" && !strings.Contains(err.Error(), tc.want)) {
+			_, err, remainder := Select(
+				runs,
+				errors.Join(errors.Join(tc.orig, tc.current), tc.shared),
+				[]manifest.NamedResource{testutil.KustomizationID("", "")},
+				nil,
+			)
+			if (err != nil) != (tc.orig != nil || tc.current != nil || tc.shared != nil) ||
+				(tc.want != "" && !strings.Contains(err.Error(), tc.want)) {
 				t.Fatalf("snapshot attribution changed: %v", err)
 			}
 			for _, cause := range []error{context.Canceled, closeErr, inputErr, domainErr, manifest.ErrInput} {
@@ -492,7 +703,8 @@ func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
 					t.Fatalf("error identity lost: selected=%v remainder=%v", err, remainder)
 				}
 			}
-			wantDomainRemainder := errors.Is(tc.orig, inputErr) || errors.Is(tc.current, domainErr) || errors.Is(tc.shared, manifest.ErrFlux)
+			wantDomainRemainder := errors.Is(tc.orig, inputErr) || errors.Is(tc.current, domainErr) ||
+				errors.Is(tc.shared, manifest.ErrFlux)
 			if errors.Is(remainder, manifest.ErrFlux) != wantDomainRemainder {
 				t.Fatalf("incidental domain identity changed: %v", remainder)
 			}
@@ -513,8 +725,15 @@ func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
 			if reversed {
 				slices.Reverse(children)
 			}
-			selected, err, remainder := Select(runs, errors.Join(children...), []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
-			want := "both snapshots had reconcile failures\norig snapshot: reconcile completed with 1 failure(s):\n  " + testutil.KustomizationID("flux-system", "failed").String() + ": resource failed\ncurrent snapshot: context canceled"
+			selected, err, remainder := Select(
+				runs,
+				errors.Join(children...),
+				[]manifest.NamedResource{testutil.KustomizationID("", "")},
+				nil,
+			)
+			want := "both snapshots had reconcile failures\norig snapshot: reconcile completed with 1 failure(s):\n  " + testutil.KustomizationID("flux-system", "failed").
+				String() +
+				": resource failed\ncurrent snapshot: context canceled"
 			wantRemainder := "current snapshot: context canceled"
 			if reversed {
 				want = "teardown B\n" + want + "\nteardown A"
@@ -567,7 +786,12 @@ func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
 				}
 			}
 			raw := errors.Join(errors.Join(runs[0].Err, runs[1].Err), closeErr)
-			selected, err, remainder := Select(runs, raw, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
+			selected, err, remainder := Select(
+				runs,
+				raw,
+				[]manifest.NamedResource{testutil.KustomizationID("", "")},
+				nil,
+			)
 			if len(selected) != 2 {
 				t.Fatalf("lost partial sides: %v", selected)
 			}
@@ -575,7 +799,9 @@ func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
 				previous := -1
 				for _, cause := range []error{causes[0], causes[1], closeErr} {
 					position := strings.Index(got.Error(), cause.Error())
-					if !errors.Is(got, cause) || !errors.Is(cause, manifest.ErrInput) && strings.Count(got.Error(), cause.Error()) != 1 || position <= previous {
+					if !errors.Is(got, cause) ||
+						!errors.Is(cause, manifest.ErrInput) && strings.Count(got.Error(), cause.Error()) != 1 ||
+						position <= previous {
 						t.Fatalf("base/head/backing ordering or identity lost: %v", got)
 					}
 					previous = position
@@ -583,7 +809,6 @@ func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
 			}
 		})
 	}
-
 }
 
 func TestSelect_UnavailabilityUsesLocalCanonicalEvidence(t *testing.T) {
@@ -608,48 +833,68 @@ func TestSelect_UnavailabilityUsesLocalCanonicalEvidence(t *testing.T) {
 	} {
 		disposition := tc.disposition
 		for _, reverse := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s_%s_reverse_%t", disposition.Status, disposition.String(), reverse), func(t *testing.T) {
-				t.Parallel()
-				orig := selectedRun(&Result{Manifests: []manifest.DocumentBatch{{Parent: &manifest.HelmRelease{Name: child.Name, Namespace: child.Namespace}, Documents: []map[string]any{{"kind": "Deployment"}}}}})
-				current := selectedRun(&Result{})
-				orig.store.AddObject(&manifest.HelmRelease{Name: child.Name, Namespace: child.Namespace})
-				publishFixture(t, orig.store, parent, []manifest.NamedResource{child})
-				current.store.AddObject(&manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace})
-				current.store.UpdateStatus(parent, disposition)
-				if disposition.Status == store.StatusFailed {
-					canonical := disposition
-					canonical.Message = "canonical parent failure"
-					current.Result.Failed = map[manifest.NamedResource]store.StatusInfo{parent: canonical}
-				}
-				runs := []Rendered{orig, current}
-				if reverse {
-					slices.Reverse(runs)
-				}
-				results, err, _ := Select(runs, &FailuresError{Message: "raw failures"}, []manifest.NamedResource{{Group: child.Group, Kind: child.Kind, Namespace: "apps"}}, nil)
-				assert.Equal(t, err != nil, disposition.Status == store.StatusFailed)
-				index := 1
-				if reverse {
-					index = 0
-				}
-				want := tc.unavailable
-				if _, unavailable := results[index].Unavailable[child]; unavailable != want {
-					t.Fatalf("local ancestor availability = %+v, want unavailable=%t", results[index].Unavailable, want)
-				}
-				if want {
-					message := disposition.String()
+			t.Run(
+				fmt.Sprintf("%s_%s_reverse_%t", disposition.Status, disposition.String(), reverse),
+				func(t *testing.T) {
+					t.Parallel()
+					orig := selectedRun(
+						&Result{
+							Manifests: []manifest.DocumentBatch{
+								{
+									Parent:    &manifest.HelmRelease{Name: child.Name, Namespace: child.Namespace},
+									Documents: []map[string]any{{"kind": "Deployment"}},
+								},
+							},
+						},
+					)
+					current := selectedRun(&Result{})
+					orig.store.AddObject(&manifest.HelmRelease{Name: child.Name, Namespace: child.Namespace})
+					publishFixture(t, orig.store, parent, []manifest.NamedResource{child})
+					current.store.AddObject(&manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace})
+					current.store.UpdateStatus(parent, disposition)
 					if disposition.Status == store.StatusFailed {
-						message = "canonical parent failure"
+						canonical := disposition
+						canonical.Message = "canonical parent failure"
+						current.Result.Failed = map[manifest.NamedResource]store.StatusInfo{parent: canonical}
 					}
-					assert.Equal(t, results[index].Unavailable[child].String(), message)
-				}
-				if len(results[1-index].Unavailable) != 0 {
-					t.Fatal("counterpart failure treated as local evidence")
-				}
-			})
+					runs := []Rendered{orig, current}
+					if reverse {
+						slices.Reverse(runs)
+					}
+					results, err, _ := Select(
+						runs,
+						&FailuresError{Message: "raw failures"},
+						[]manifest.NamedResource{{Group: child.Group, Kind: child.Kind, Namespace: "apps"}},
+						nil,
+					)
+					assert.Equal(t, err != nil, disposition.Status == store.StatusFailed)
+					index := 1
+					if reverse {
+						index = 0
+					}
+					want := tc.unavailable
+					if _, unavailable := results[index].Unavailable[child]; unavailable != want {
+						t.Fatalf(
+							"local ancestor availability = %+v, want unavailable=%t",
+							results[index].Unavailable,
+							want,
+						)
+					}
+					if want {
+						message := disposition.String()
+						if disposition.Status == store.StatusFailed {
+							message = "canonical parent failure"
+						}
+						assert.Equal(t, results[index].Unavailable[child].String(), message)
+					}
+					if len(results[1-index].Unavailable) != 0 {
+						t.Fatal("counterpart failure treated as local evidence")
+					}
+				},
+			)
 		}
 	}
 	t.Run("entry correspondence", testEntryCorrespondence)
-
 }
 
 func TestSelect_RequiredFailureOutsideOutputNamespace(t *testing.T) {
@@ -687,7 +932,10 @@ func TestSelect_RequiredFailureOutsideOutputNamespace(t *testing.T) {
 				}}
 				if tc.namespace != "" {
 					run.index.Records[sibling] = manifest.DiscoveryRecord{Parent: child}
-					run.Result.Failed[sibling] = store.StatusInfo{Status: store.StatusFailed, Message: "independent child failed"}
+					run.Result.Failed[sibling] = store.StatusInfo{
+						Status:  store.StatusFailed,
+						Message: "independent child failed",
+					}
 				}
 			}
 			if !tc.full {
@@ -700,11 +948,21 @@ func TestSelect_RequiredFailureOutsideOutputNamespace(t *testing.T) {
 			if tc.paired {
 				other := selectedRun(&Result{})
 				other.filter = change.NewFilter()
-				_, retry := other.filter.AddEmitted(nil, []manifest.NamedResource{testutil.HelmReleaseID(parent.Namespace, "other")}, nil, 0)
+				_, retry := other.filter.AddEmitted(
+					nil,
+					[]manifest.NamedResource{testutil.HelmReleaseID(parent.Namespace, "other")},
+					nil,
+					0,
+				)
 				assert.Equal(t, retry, false)
 				runs = append(runs, other)
 			}
-			selected, err, remainder := Select(runs, run.Err, []manifest.NamedResource{{Group: child.Group, Kind: child.Kind, Namespace: tc.namespace}}, nil)
+			selected, err, remainder := Select(
+				runs,
+				run.Err,
+				[]manifest.NamedResource{{Group: child.Group, Kind: child.Kind, Namespace: tc.namespace}},
+				nil,
+			)
 			assert.Equal(t, err != nil, tc.required)
 			assert.Equal(t, remainder == nil, true)
 			_, visible := selected[0].Failed[parent]
@@ -721,9 +979,18 @@ func TestSelect_RequiredFailureOutsideOutputNamespace(t *testing.T) {
 		t.Parallel()
 		parent := &manifest.Kustomization{Name: "parent", Namespace: "flux-system"}
 		child := &manifest.HelmRelease{Name: "child", Namespace: "monitoring"}
-		run := selectedRun(&Result{Failed: map[manifest.NamedResource]store.StatusInfo{child.Named(): {Status: store.StatusFailed, Message: "required descendant failed"}}})
+		run := selectedRun(
+			&Result{
+				Failed: map[manifest.NamedResource]store.StatusInfo{
+					child.Named(): {Status: store.StatusFailed, Message: "required descendant failed"},
+				},
+			},
+		)
 		run.store.AddObjects([]manifest.BaseManifest{parent, child})
-		setParentsForTest(run.Orchestrator, map[manifest.NamedResource]manifest.NamedResource{child.Named(): parent.Named()})
+		setParentsForTest(
+			run.Orchestrator,
+			map[manifest.NamedResource]manifest.NamedResource{child.Named(): parent.Named()},
+		)
 		var reads store.ReadSet
 		reads.Init(run.store, parent.Named(), nil)
 		reads.GetObject(parent.Named())
@@ -733,12 +1000,22 @@ func TestSelect_RequiredFailureOutsideOutputNamespace(t *testing.T) {
 		reads.Retire()
 		assert.Equal(t, slices.Contains(slices.Collect(run.store.RequiredInputs(parent.Named())), child.Named()), true)
 		run.filter = change.NewFilter()
-		_, retry := run.filter.AddEmitted([]manifest.NamedResource{parent.Named(), child.Named()}, []manifest.NamedResource{parent.Named()}, nil, 0)
+		_, retry := run.filter.AddEmitted(
+			[]manifest.NamedResource{parent.Named(), child.Named()},
+			[]manifest.NamedResource{parent.Named()},
+			nil,
+			0,
+		)
 		assert.Equal(t, retry, false)
 		_, selectedChild, _, _ := run.filter.Membership(child.Named())
 		assert.Equal(t, selectedChild, false)
 		run.Err = &FailuresError{Message: "required descendant failed"}
-		selected, err, remainder := Select([]Rendered{run}, run.Err, []manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
+		selected, err, remainder := Select(
+			[]Rendered{run},
+			run.Err,
+			[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")},
+			nil,
+		)
 		assert.Equal(t, err != nil, true)
 		assert.NoError(t, remainder)
 		_, retained := selected[0].Failed[child.Named()]
@@ -779,7 +1056,12 @@ func TestSelect_ChangedParentExcludesUnselectedFailure(t *testing.T) {
 				name = parent.Name
 			}
 			run.Err = &FailuresError{Message: "child failed"}
-			result, err, remainder := Select([]Rendered{run}, run.Err, []manifest.NamedResource{testutil.KustomizationID("", name), testutil.HelmReleaseID("", name)}, nil)
+			result, err, remainder := Select(
+				[]Rendered{run},
+				run.Err,
+				[]manifest.NamedResource{testutil.KustomizationID("", name), testutil.HelmReleaseID("", name)},
+				nil,
+			)
 			assert.Equal(t, err != nil, tc.selected || tc.named)
 			assert.NoError(t, remainder)
 			_, failed := result[0].Failed[child.Named()]
@@ -814,21 +1096,43 @@ func TestSelect_ChangedParentExcludesUnselectedFailure(t *testing.T) {
 func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
 	t.Parallel()
 	victim := testutil.KustomizationID("flux-system", "victim")
-	chart := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "flux-system", Name: victim.Name}
-	extra := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "victim"}
+	chart := manifest.NamedResource{
+		Group:     manifest.SourceDomain,
+		Kind:      manifest.KindHelmChart,
+		Namespace: "flux-system",
+		Name:      victim.Name,
+	}
+	extra := manifest.NamedResource{
+		Group:     manifest.FluxOperatorDomain,
+		Kind:      manifest.KindResourceSet,
+		Namespace: "flux-system",
+		Name:      "victim",
+	}
 	run := selectedRun(&Result{})
 	run.store.AddObject(&manifest.Kustomization{Name: victim.Name, Namespace: victim.Namespace})
 	run.store.AddObject(&manifest.HelmChartSource{Name: chart.Name, Namespace: chart.Namespace})
 	run.store.AddObject(&manifest.ResourceSet{Name: extra.Name, Namespace: extra.Namespace})
 	run.store.UpdateFailure(chart, errors.New("chart failed"))
 	run.store.UpdateFailure(extra, errors.New("generator failed"))
-	run.store.UpdateFailure(victim, &manifest.DependencyFailedError{Parent: victim, Failed: []manifest.NamedResource{chart}})
+	run.store.UpdateFailure(
+		victim,
+		&manifest.DependencyFailedError{Parent: victim, Failed: []manifest.NamedResource{chart}},
+	)
 	run.Result.Failed = run.store.FailedResources()
 	run.Result.Blocked = map[manifest.NamedResource][]manifest.NamedResource{victim: {chart}}
 	run.Err = &FailuresError{Message: "raw failures"}
-	results, _, _ := Select([]Rendered{run}, run.Err, []manifest.NamedResource{{Group: victim.Group, Kind: victim.Kind, Name: victim.Name}}, nil)
+	results, _, _ := Select(
+		[]Rendered{run},
+		run.Err,
+		[]manifest.NamedResource{{Group: victim.Group, Kind: victim.Kind, Name: victim.Name}},
+		nil,
+	)
 	res := results[0]
-	assert.Diff(t, slices.SortedFunc(maps.Keys(res.Statuses), manifest.NamedResource.Compare), []manifest.NamedResource{chart, victim, extra})
+	assert.Diff(
+		t,
+		slices.SortedFunc(maps.Keys(res.Statuses), manifest.NamedResource.Compare),
+		[]manifest.NamedResource{chart, victim, extra},
+	)
 	assert.Equal(t, res.Statuses[victim].String(), "blocked by "+chart.NamespacedName())
 	assert.Equal(t, res.Statuses[victim].IsDependencyFailure(), true)
 	assert.Diff(t, res.Statuses[victim].BlockedBy(), []manifest.NamedResource{chart})
@@ -836,22 +1140,44 @@ func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
 		t.Fatal("authored chart missing from diagnostics or root count changed")
 	}
 
-	bootstrap := &manifest.GitRepository{Name: manifest.BootstrapSourceID.Name, Namespace: manifest.BootstrapSourceID.Namespace}
+	bootstrap := &manifest.GitRepository{
+		Name:      manifest.BootstrapSourceID.Name,
+		Namespace: manifest.BootstrapSourceID.Namespace,
+	}
 	ordinary := &manifest.GitRepository{Name: "ordinary", Namespace: "flux-system"}
 	otherNamespace := &manifest.GitRepository{Name: bootstrap.Name, Namespace: "other"}
-	foreignChart := &manifest.RawObject{APIVersion: "foreign.example/v1", Kind: chart.Kind, Namespace: chart.Namespace, Name: chart.Name}
+	foreignChart := &manifest.RawObject{
+		APIVersion: "foreign.example/v1",
+		Kind:       chart.Kind,
+		Namespace:  chart.Namespace,
+		Name:       chart.Name,
+	}
 	statusless := &manifest.Kustomization{Name: "statusless", Namespace: victim.Namespace}
 	for _, obj := range []manifest.BaseManifest{bootstrap, ordinary, otherNamespace, foreignChart, statusless} {
 		run.store.AddObject(obj)
 	}
-	run.store.UpdateStatus(bootstrap.Named(), store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "bootstrap failed"})
+	run.store.UpdateStatus(
+		bootstrap.Named(),
+		store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "bootstrap failed"},
+	)
 	run.store.UpdateStatus(ordinary.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 	run.store.UpdateStatus(otherNamespace.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
-	run.store.UpdateStatus(foreignChart.Named(), store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "foreign chart failed"})
+	run.store.UpdateStatus(
+		foreignChart.Named(),
+		store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "foreign chart failed"},
+	)
 	run.Result.Failed = run.store.FailedResources()
 	run.Result.Manifests = nil
 	for _, obj := range run.store.ListObjects("", "") {
-		run.Result.Manifests = append(run.Result.Manifests, manifest.DocumentBatch{Parent: obj, Documents: []map[string]any{{"kind": "ConfigMap", "metadata": map[string]any{"name": obj.Named().Name}}}})
+		run.Result.Manifests = append(
+			run.Result.Manifests,
+			manifest.DocumentBatch{
+				Parent: obj,
+				Documents: []map[string]any{
+					{"kind": "ConfigMap", "metadata": map[string]any{"name": obj.Named().Name}},
+				},
+			},
+		)
 	}
 	for _, tc := range []struct {
 		name     string
@@ -913,22 +1239,43 @@ func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
 			{Name: obj.Name, Namespace: "other"},
 		} {
 			run.store.AddObject(extra)
-			run.store.UpdateStatus(extra.Named(), store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "extra failure"})
+			run.store.UpdateStatus(
+				extra.Named(),
+				store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "extra failure"},
+			)
 		}
 		run.Result.Failed = run.store.FailedResources()
 		selected, _, _ := Select([]Rendered{run}, nil, []manifest.NamedResource{obj.Named()}, nil)
-		assert.Diff(t, slices.SortedFunc(maps.Keys(selected[0].Statuses), manifest.NamedResource.Compare), []manifest.NamedResource{obj.Named(), eligible.Named()})
+		assert.Diff(
+			t,
+			slices.SortedFunc(maps.Keys(selected[0].Statuses), manifest.NamedResource.Compare),
+			[]manifest.NamedResource{obj.Named(), eligible.Named()},
+		)
 		if !slices.Equal(selected[0].Objects, []manifest.BaseManifest{obj}) {
 			t.Fatal("selected objects differ from the render roster")
 		}
 		assert.Equal(t, len(run.store.FailedResources()), 3)
 	})
-
 }
 
 func TestSelect_CascadesAndSharedVictims(t *testing.T) {
 	t.Parallel()
-	root, mid, leaf, missing, dual := testutil.KustomizationID("flux-system", "root"), testutil.KustomizationID("flux-system", "mid"), testutil.KustomizationID("flux-system", "leaf"), testutil.KustomizationID("flux-system", "missing"), testutil.KustomizationID("flux-system", "dual")
+	root, mid, leaf, missing, dual := testutil.KustomizationID(
+		"flux-system",
+		"root",
+	), testutil.KustomizationID(
+		"flux-system",
+		"mid",
+	), testutil.KustomizationID(
+		"flux-system",
+		"leaf",
+	), testutil.KustomizationID(
+		"flux-system",
+		"missing",
+	), testutil.KustomizationID(
+		"flux-system",
+		"dual",
+	)
 	for _, tc := range []struct {
 		name    string
 		blocked map[manifest.NamedResource][]manifest.NamedResource
@@ -942,12 +1289,21 @@ func TestSelect_CascadesAndSharedVictims(t *testing.T) {
 			run := selectedRun(&Result{Failed: make(map[manifest.NamedResource]store.StatusInfo), Blocked: tc.blocked})
 			run.Result.Failed[root] = store.StatusInfo{Status: store.StatusFailed, Message: "root boom"}
 			for id := range tc.blocked {
-				run.Result.Failed[id] = store.StatusInfo{Status: store.StatusFailed, Message: "nested dependencies failed"}
+				run.Result.Failed[id] = store.StatusInfo{
+					Status:  store.StatusFailed,
+					Message: "nested dependencies failed",
+				}
 			}
 			run.Err = &FailuresError{Message: "raw failures"}
-			selected, err, _ := Select([]Rendered{run}, run.Err, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
+			selected, err, _ := Select(
+				[]Rendered{run},
+				run.Err,
+				[]manifest.NamedResource{testutil.KustomizationID("", "")},
+				nil,
+			)
 			assert.Diff(t, selected[0].Causes, tc.want)
-			if err == nil || strings.Contains(err.Error(), "nested dependencies failed") || !strings.Contains(err.Error(), fmt.Sprintf("(+%d blocked", len(tc.blocked))) {
+			if err == nil || strings.Contains(err.Error(), "nested dependencies failed") ||
+				!strings.Contains(err.Error(), fmt.Sprintf("(+%d blocked", len(tc.blocked))) {
 				t.Fatalf("cascade error did not count distinct victims: %v", err)
 			}
 			if _, ok := errors.AsType[*FailuresError](err); !ok {
@@ -968,12 +1324,24 @@ func TestSelect_InvalidQueryAndInitialization(t *testing.T) {
 		{{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization}, {Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Name: "different"}},
 		{{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization}, {Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "different"}},
 	} {
-		if _, err, _ := Select([]Rendered{run}, nil, roots, nil); !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
+		if _, err, _ := Select(
+			[]Rendered{run},
+			nil,
+			roots,
+			nil,
+		); !errors.Is(err, manifest.ErrInput) ||
+			!errors.Is(err, manifest.ErrFlux) {
 			t.Fatalf("invalid query lacks domain identity: %+v %v", roots, err)
 		}
 	}
 	initErr := errors.New("initialization failed")
-	if selected, err, _ := Select([]Rendered{{Err: initErr}}, initErr, valid, nil); len(selected) != 1 || !errors.Is(err, initErr) {
+	if selected, err, _ := Select(
+		[]Rendered{{Err: initErr}},
+		initErr,
+		valid,
+		nil,
+	); len(selected) != 1 ||
+		!errors.Is(err, initErr) {
 		t.Fatalf("initialization error changed: %+v %v", selected, err)
 	}
 	if _, err, _ := Select([]Rendered{{}}, nil, valid, nil); !errors.Is(err, manifest.ErrInput) {
@@ -983,25 +1351,64 @@ func TestSelect_InvalidQueryAndInitialization(t *testing.T) {
 
 func TestSelect_AncestryCyclesAndOwnEvidence(t *testing.T) {
 	t.Parallel()
-	child, parent, unrelated := testutil.KustomizationID("flux-system", "child"), testutil.KustomizationID("flux-system", "parent"), testutil.KustomizationID("flux-system", "unrelated")
+	child, parent, unrelated := testutil.KustomizationID(
+		"flux-system",
+		"child",
+	), testutil.KustomizationID(
+		"flux-system",
+		"parent",
+	), testutil.KustomizationID(
+		"flux-system",
+		"unrelated",
+	)
 	orig := selectedRun(&Result{})
-	current := selectedRun(&Result{Failed: map[manifest.NamedResource]store.StatusInfo{unrelated: {Status: store.StatusFailed, Message: "unrelated failed"}}})
+	current := selectedRun(
+		&Result{
+			Failed: map[manifest.NamedResource]store.StatusInfo{
+				unrelated: {Status: store.StatusFailed, Message: "unrelated failed"},
+			},
+		},
+	)
 	for _, run := range []Rendered{orig, current} {
 		run.store.AddObject(&manifest.Kustomization{Name: child.Name, Namespace: child.Namespace})
 		run.store.AddObject(&manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace})
 		publishFixture(t, run.store, parent, []manifest.NamedResource{child})
 		publishFixture(t, run.store, child, []manifest.NamedResource{parent})
 	}
-	current.store.UpdateStatus(child, store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: "own skip"})
-	current.store.UpdateStatus(parent, store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "ancestor failed"})
-	results, _, _ := Select([]Rendered{orig, current}, &FailuresError{Message: "raw failures"}, []manifest.NamedResource{{Group: child.Group, Kind: child.Kind, Name: child.Name}}, nil)
+	current.store.UpdateStatus(
+		child,
+		store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: "own skip"},
+	)
+	current.store.UpdateStatus(
+		parent,
+		store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "ancestor failed"},
+	)
+	results, _, _ := Select(
+		[]Rendered{orig, current},
+		&FailuresError{Message: "raw failures"},
+		[]manifest.NamedResource{{Group: child.Group, Kind: child.Kind, Name: child.Name}},
+		nil,
+	)
 	assert.Equal(t, results[1].Unavailable[child].String(), "own skip")
 	assert.Equal(t, len(results[0].Unavailable), 0)
-	current.store.UpdateStatus(child, store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged, Message: "unchanged"})
-	results, _, _ = Select([]Rendered{orig, current}, &FailuresError{Message: "raw failures"}, []manifest.NamedResource{{Group: child.Group, Kind: child.Kind, Name: child.Name}}, nil)
+	current.store.UpdateStatus(
+		child,
+		store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged, Message: "unchanged"},
+	)
+	results, _, _ = Select(
+		[]Rendered{orig, current},
+		&FailuresError{Message: "raw failures"},
+		[]manifest.NamedResource{{Group: child.Group, Kind: child.Kind, Name: child.Name}},
+		nil,
+	)
 	assert.Equal(t, results[1].Unavailable[child].String(), "ancestor failed")
 	current.store.UpdateStatus(parent, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
-	results, _, _ = Select([]Rendered{orig, current}, &FailuresError{Message: "raw failures"}, []manifest.NamedResource{{Group: child.Group, Kind: child.Kind, Name: child.Name}}, nil)
+	results, _, _ = Select(
+		[]Rendered{orig, current},
+		&FailuresError{Message: "raw failures"},
+		[]manifest.NamedResource{{Group: child.Group, Kind: child.Kind, Name: child.Name}},
+		nil,
+	)
 	assert.Equal(t, len(results[1].Unavailable), 0)
 }
 
@@ -1042,13 +1449,26 @@ func TestSelect_NamespaceSnapshots(t *testing.T) {
 				for invocation := range 2 {
 					for i, run := range runs {
 						if !tc.disabled {
-							run.loader = admissiontest.New(t, admissiontest.Config{Changes: change.NewSet(tc.changes[(i+invocation)%2]), Index: run.index, Inventory: run.store, Root: ""})
+							run.loader = admissiontest.New(
+								t,
+								admissiontest.Config{
+									Changes:   change.NewSet(tc.changes[(i+invocation)%2]),
+									Index:     run.index,
+									Inventory: run.store,
+									Root:      "",
+								},
+							)
 							admissiontest.Commit(t, run.loader, nil)
 							run.filter = run.loader.Options.Filter
 						}
 						runs[i] = run
 					}
-					selected, err, remainder := Select(runs, nil, []manifest.NamedResource{testutil.KustomizationID(tc.namespace, "")}, nil)
+					selected, err, remainder := Select(
+						runs,
+						nil,
+						[]manifest.NamedResource{testutil.KustomizationID(tc.namespace, "")},
+						nil,
+					)
 					assert.NoError(t, err)
 					assert.NoError(t, remainder)
 					assert.Equal(t, len(selected), count)
@@ -1071,9 +1491,16 @@ func TestSelect_NamespaceSnapshots(t *testing.T) {
 func TestSelect_AcceptedPrerequisites(t *testing.T) {
 	t.Parallel()
 	dep := testutil.HelmReleaseID("other", "dep")
-	provider := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSetInputProvider, Namespace: "apps", Name: "provider"}
+	provider := manifest.NamedResource{
+		Group:     "fluxcd.controlplane.io",
+		Kind:      manifest.KindResourceSetInputProvider,
+		Namespace: "apps",
+		Name:      "provider",
+	}
 	rs := &manifest.ResourceSet{Name: "selected", Namespace: "apps"}
-	rs.DependsOn = []fluxopv1.Dependency{{APIVersion: dep.Group + "/v2", Kind: dep.Kind, Name: dep.Name, Namespace: dep.Namespace}}
+	rs.DependsOn = []fluxopv1.Dependency{
+		{APIVersion: dep.Group + "/v2", Kind: dep.Kind, Name: dep.Name, Namespace: dep.Namespace},
+	}
 	manifest.KindOf(&manifest.RawObject{APIVersion: dep.Group + "/v2", Kind: dep.Kind}).Namespaced()
 	rs.InputsFrom = []fluxopv1.InputProviderReference{{Name: provider.Name}, {}}
 	for _, tc := range []struct {
@@ -1103,7 +1530,12 @@ func TestSelect_AcceptedPrerequisites(t *testing.T) {
 			reads.Retire()
 			for range run.store.Sweep() {
 			}
-			selected, err, _ := Select([]Rendered{run}, &FailuresError{Message: "raw failures"}, []manifest.NamedResource{tc.object.Named()}, nil)
+			selected, err, _ := Select(
+				[]Rendered{run},
+				&FailuresError{Message: "raw failures"},
+				[]manifest.NamedResource{tc.object.Named()},
+				nil,
+			)
 			if err == nil || len(selected[0].Failed) != len(tc.deps) || len(selected[0].Unrelated) != 0 {
 				t.Fatalf("accepted prerequisites omitted: %+v %v", selected[0], err)
 			}
@@ -1113,8 +1545,23 @@ func TestSelect_AcceptedPrerequisites(t *testing.T) {
 
 func TestSelect_UnavailabilitySeparatesAncestryOwners(t *testing.T) {
 	t.Parallel()
-	present, absent := testutil.KustomizationID("flux-system", "a-present"), testutil.KustomizationID("flux-system", "z-absent")
-	middle, oldRoot, newRoot := testutil.KustomizationID("flux-system", "middle"), testutil.KustomizationID("flux-system", "old-root"), testutil.KustomizationID("flux-system", "new-root")
+	present, absent := testutil.KustomizationID(
+		"flux-system",
+		"a-present",
+	), testutil.KustomizationID(
+		"flux-system",
+		"z-absent",
+	)
+	middle, oldRoot, newRoot := testutil.KustomizationID(
+		"flux-system",
+		"middle",
+	), testutil.KustomizationID(
+		"flux-system",
+		"old-root",
+	), testutil.KustomizationID(
+		"flux-system",
+		"new-root",
+	)
 	orig, current := selectedRun(&Result{}), selectedRun(&Result{})
 	for _, id := range []manifest.NamedResource{present, absent} {
 		orig.store.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
@@ -1125,7 +1572,12 @@ func TestSelect_UnavailabilitySeparatesAncestryOwners(t *testing.T) {
 	publishFixture(t, orig.store, middle, []manifest.NamedResource{present, absent})
 	publishFixture(t, current.store, newRoot, []manifest.NamedResource{middle})
 	publishFixture(t, current.store, middle, []manifest.NamedResource{present})
-	selected, err, _ := Select([]Rendered{orig, current}, nil, []manifest.NamedResource{{Group: present.Group, Kind: present.Kind}}, nil)
+	selected, err, _ := Select(
+		[]Rendered{orig, current},
+		nil,
+		[]manifest.NamedResource{{Group: present.Group, Kind: present.Kind}},
+		nil,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1134,7 +1586,6 @@ func TestSelect_UnavailabilitySeparatesAncestryOwners(t *testing.T) {
 	}
 	assert.Equal(t, selected[1].Unavailable[absent].String(), "old ancestor failed")
 	t.Run("entry correspondence", testEntryCorrespondence)
-
 }
 
 func TestSelect_SingleRunOmitsExternalDisclosures(t *testing.T) {
@@ -1175,11 +1626,41 @@ func TestSelect_SingleRunOmitsExternalDisclosures(t *testing.T) {
 			if tc.emptyNamespace {
 				namespace = ""
 			}
-			source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "sources", Name: "source"}
-			var obj manifest.BaseManifest = &manifest.Kustomization{Name: "external", Namespace: namespace,
-				SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: source.Kind, Namespace: source.Namespace, Name: source.Name}}
+			source := manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindOCIRepository,
+				Namespace: "sources",
+				Name:      "source",
+			}
+			var obj manifest.BaseManifest = &manifest.Kustomization{
+				Name:      "external",
+				Namespace: namespace,
+				SourceRef: kustomizev1.CrossNamespaceSourceReference{
+					Kind:      source.Kind,
+					Namespace: source.Namespace,
+					Name:      source.Name,
+				},
+			}
 			if tc.nonParticipant {
-				obj = &manifest.HelmRelease{Name: "external", Namespace: namespace, Chart: manifest.HelmChart{Source: source}, HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: "chart", Version: "", SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: (source).Kind, Name: (source).Name, Namespace: (source).Namespace, APIVersion: ""}}}}}
+				obj = &manifest.HelmRelease{
+					Name:      "external",
+					Namespace: namespace,
+					Chart:     manifest.HelmChart{Source: source},
+					HelmReleaseSpec: helmv2.HelmReleaseSpec{
+						Chart: &helmv2.HelmChartTemplate{
+							Spec: helmv2.HelmChartTemplateSpec{
+								Chart:   "chart",
+								Version: "",
+								SourceRef: &helmv2.CrossNamespaceObjectReference{
+									Kind:       source.Kind,
+									Name:       source.Name,
+									Namespace:  source.Namespace,
+									APIVersion: "",
+								},
+							},
+						},
+					},
+				}
 			}
 			run, other := selectedRun(&Result{}), selectedRun(&Result{})
 			run.repoRoot = t.TempDir()
@@ -1200,13 +1681,26 @@ func TestSelect_SingleRunOmitsExternalDisclosures(t *testing.T) {
 				run.store.UpdateStatus(obj.Named(), status)
 			}
 			if tc.local {
-				run.store.SetArtifact(source, &store.SourceArtifact{LocalPath: run.repoRoot, FS: fstest.MapFS{"file": {}}})
+				run.store.SetArtifact(
+					source,
+					&store.SourceArtifact{LocalPath: run.repoRoot, FS: fstest.MapFS{"file": {}}},
+				)
 			}
 			if tc.inferred {
 				kept := &manifest.Kustomization{Name: "kept", Namespace: "kept"}
 				run.store.AddObject(kept)
-				run.index = indexForTest(map[manifest.NamedResource]string{kept.Named(): "kept.yaml", obj.Named(): "external.yaml"})
-				run.loader = admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"kept.yaml"}), Index: run.index, Inventory: run.store, Root: ""})
+				run.index = indexForTest(
+					map[manifest.NamedResource]string{kept.Named(): "kept.yaml", obj.Named(): "external.yaml"},
+				)
+				run.loader = admissiontest.New(
+					t,
+					admissiontest.Config{
+						Changes:   change.NewSet([]string{"kept.yaml"}),
+						Index:     run.index,
+						Inventory: run.store,
+						Root:      "",
+					},
+				)
 				admissiontest.Commit(t, run.loader, nil)
 				run.filter = run.loader.Options.Filter
 			}
@@ -1214,7 +1708,9 @@ func TestSelect_SingleRunOmitsExternalDisclosures(t *testing.T) {
 			if tc.labels {
 				labels = map[string]string{"app": "excluded"}
 			}
-			root := []manifest.NamedResource{{Group: obj.Named().Group, Kind: obj.Named().Kind, Name: tc.requestedName, Namespace: tc.namespace}}
+			root := []manifest.NamedResource{
+				{Group: obj.Named().Group, Kind: obj.Named().Kind, Name: tc.requestedName, Namespace: tc.namespace},
+			}
 			selected, err, _ := Select([]Rendered{run}, nil, root, labels)
 			if err != nil || len(selected[0].External) != 0 {
 				t.Fatalf("single-run external disclosures: %+v %v", selected[0].External, err)
@@ -1227,8 +1723,15 @@ func TestSelect_SingleRunOmitsExternalDisclosures(t *testing.T) {
 				for i, res := range selected {
 					var want []manifest.Warning
 					if tc.want && i == externalSide {
-						want = []manifest.Warning{{Resource: obj.Named(), Subject: manifest.DiagnosticFor(obj.Named(), obj), Related: []manifest.NamedResource{source}, Category: manifest.WarnExternalSource,
-							Message: "external source " + source.String() + " is outside the local tree; not rendered"}}
+						want = []manifest.Warning{
+							{
+								Resource: obj.Named(),
+								Subject:  manifest.DiagnosticFor(obj.Named(), obj),
+								Related:  []manifest.NamedResource{source},
+								Category: manifest.WarnExternalSource,
+								Message:  "external source " + source.String() + " is outside the local tree; not rendered",
+							},
+						}
 					}
 					assert.Diff(t, res.External, want)
 					if (tc.inferred || tc.labels) && len(res.Objects) != 0 {
@@ -1246,10 +1749,20 @@ func TestSelect_RawFluxLookalikeExcludedFromStatuses(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
 			run := selectedRun(&Result{})
-			obj := &manifest.RawObject{Kind: kind, APIVersion: "seaweed.seaweedfs.com/v1", Name: "foreign", Namespace: "apps"}
+			obj := &manifest.RawObject{
+				Kind:       kind,
+				APIVersion: "seaweed.seaweedfs.com/v1",
+				Name:       "foreign",
+				Namespace:  "apps",
+			}
 			run.store.AddObject(obj)
 			run.store.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
-			selected, err, _ := Select([]Rendered{run}, nil, []manifest.NamedResource{{Group: obj.Named().Group, Kind: obj.Kind}}, nil)
+			selected, err, _ := Select(
+				[]Rendered{run},
+				nil,
+				[]manifest.NamedResource{{Group: obj.Named().Group, Kind: obj.Kind}},
+				nil,
+			)
 			if err != nil || len(selected[0].Statuses) != 0 {
 				t.Fatalf("foreign Flux lookalike entered roster: %+v %v", selected[0].Statuses, err)
 			}
@@ -1265,14 +1778,27 @@ func TestSelect_ExplicitChartVersion(t *testing.T) {
 		var objects []manifest.BaseManifest
 		var versions map[manifest.NamedResource]string
 		for i := range 2 {
-			selected, err, diagnostic := Select([]Rendered{run}, nil, []manifest.NamedResource{{Group: id.Group, Kind: id.Kind}}, nil)
+			selected, err, diagnostic := Select(
+				[]Rendered{run},
+				nil,
+				[]manifest.NamedResource{{Group: id.Group, Kind: id.Kind}},
+				nil,
+			)
 			assert.NoError(t, err)
 			assert.NoError(t, diagnostic)
 			if len(selected) != 1 || len(selected[0].Objects) != 1 || selected[0].Objects[0] != obj {
 				t.Fatalf("selected rows: %+v, want %s", selected, id)
 			}
 			if i == 1 {
-				if diff := cmp.Diff(objects, selected[0].Objects, cmpopts.IgnoreUnexported(manifest.HelmRelease{}, manifest.OCIRepository{}, manifest.HelmChartSource{})); diff != "" {
+				if diff := cmp.Diff(
+					objects,
+					selected[0].Objects,
+					cmpopts.IgnoreUnexported(
+						manifest.HelmRelease{},
+						manifest.OCIRepository{},
+						manifest.HelmChartSource{},
+					),
+				); diff != "" {
 					t.Fatal(diff)
 				}
 				assert.Diff(t, selected[0].ChartVersions, versions)
@@ -1306,7 +1832,15 @@ func TestSelect_ExplicitChartVersion(t *testing.T) {
 				if kind == "" {
 					kind = manifest.KindOCIRepository
 				}
-				hr := &manifest.HelmRelease{Name: "app", Namespace: "authored", ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: kind, Namespace: ns.namespace, Name: "chart"}}
+				hr := &manifest.HelmRelease{
+					Name:      "app",
+					Namespace: "authored",
+					ChartRef: &helmv2.CrossNamespaceSourceReference{
+						Kind:      kind,
+						Namespace: ns.namespace,
+						Name:      "chart",
+					},
+				}
 
 				hr = hr.WithNamespace("apps").(*manifest.HelmRelease)
 				run.store.AddObject(hr)
@@ -1354,12 +1888,29 @@ func TestSelect_DiagnosticOnlyRuns(t *testing.T) {
 	t.Parallel()
 	failure, teardown := errors.New("bootstrap failed"), errors.New("shared teardown")
 	warning := manifest.Warning{Category: manifest.WarnInputParseFailed, Message: "before failure", Count: 1}
-	coverage := manifest.Warning{Resource: testutil.KustomizationID("ns", "partial"), Category: manifest.WarnIncompleteInputCoverage, Message: "coverage before failure", Count: 1}
+	coverage := manifest.Warning{
+		Resource: testutil.KustomizationID("ns", "partial"),
+		Category: manifest.WarnIncompleteInputCoverage,
+		Message:  "coverage before failure",
+		Count:    1,
+	}
 	for _, scenario := range []string{"single", "orig", "current"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Parallel()
-			failed := Rendered{Result: &Result{Warnings: []manifest.Warning{warning, coverage}, Manifests: []manifest.DocumentBatch{{Documents: []map[string]any{{"kind": "ConfigMap"}}}}}, Err: failure}
-			complete := selectedRun(&Result{Warnings: []manifest.Warning{{Category: manifest.WarnSkippedSubmodule, Message: "complete", Count: 1}}})
+			failed := Rendered{
+				Result: &Result{
+					Warnings:  []manifest.Warning{warning, coverage},
+					Manifests: []manifest.DocumentBatch{{Documents: []map[string]any{{"kind": "ConfigMap"}}}},
+				},
+				Err: failure,
+			}
+			complete := selectedRun(
+				&Result{
+					Warnings: []manifest.Warning{
+						{Category: manifest.WarnSkippedSubmodule, Message: "complete", Count: 1},
+					},
+				},
+			)
 			complete.store.AddObject(&manifest.Kustomization{Name: "completed", Namespace: "ns"})
 			runs := []Rendered{failed}
 			runErr := teardown
@@ -1371,8 +1922,15 @@ func TestSelect_DiagnosticOnlyRuns(t *testing.T) {
 				runs = []Rendered{complete, failed}
 				runErr = errors.Join(errors.Join(nil, failure), teardown)
 			}
-			selected, err, diagnostic := Select(runs, runErr, []manifest.NamedResource{testutil.KustomizationID("ns", "named")}, nil)
-			if !errors.Is(err, failure) || !errors.Is(err, teardown) || !errors.Is(diagnostic, failure) || !errors.Is(diagnostic, teardown) || len(selected) != len(runs) {
+			selected, err, diagnostic := Select(
+				runs,
+				runErr,
+				[]manifest.NamedResource{testutil.KustomizationID("ns", "named")},
+				nil,
+			)
+			if !errors.Is(err, failure) || !errors.Is(err, teardown) || !errors.Is(diagnostic, failure) ||
+				!errors.Is(diagnostic, teardown) ||
+				len(selected) != len(runs) {
 				t.Fatalf("lost failed inputs: %+v, %v, %v", selected, err, diagnostic)
 			}
 			for i, side := range selected {
@@ -1381,7 +1939,19 @@ func TestSelect_DiagnosticOnlyRuns(t *testing.T) {
 					want = complete.Result.Warnings
 				}
 				assert.Diff(t, side.Warnings, want)
-				if len(side.Objects)+len(side.Counts)+len(side.Statuses)+len(side.Manifests)+len(side.Failed)+len(side.Unavailable) != 0 {
+				if len(
+					side.Objects,
+				)+len(
+					side.Counts,
+				)+len(
+					side.Statuses,
+				)+len(
+					side.Manifests,
+				)+len(
+					side.Failed,
+				)+len(
+					side.Unavailable,
+				) != 0 {
 					t.Fatalf("partial inventory escaped: %+v", side)
 				}
 			}
@@ -1393,25 +1963,65 @@ func TestSelect_SourceWarningAttribution(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	for _, name := range []string{"one", "two"} {
-		testutil.WriteFile(t, root, name+".yaml", testutil.KustomizationYAML(name, "apps", "  path: ./app\n  sourceRef: {kind: GitRepository, name: "+name+"}\n"))
+		testutil.WriteFile(
+			t,
+			root,
+			name+".yaml",
+			testutil.KustomizationYAML(
+				name,
+				"apps",
+				"  path: ./app\n  sourceRef: {kind: GitRepository, name: "+name+"}\n",
+			),
+		)
 	}
 	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: []\n")
 	original, _, err := baseline.AdmitDirectory(t.Context(), root, root)
 	assert.NoError(t, err)
 	current, _, err := baseline.AdmitDirectory(t.Context(), root, root)
 	assert.NoError(t, err)
-	status := manifest.Warning{Category: manifest.WarnBaselineStatusUnavailable, Message: "Git status unavailable", Detail: []string{"status failure"}}
-	raw := manifest.Warning{Resource: manifest.BootstrapSourceID, Category: manifest.WarnSkippedSubmodule, Message: "skipping submodule", Detail: []string{"app/module"}}
+	status := manifest.Warning{
+		Category: manifest.WarnBaselineStatusUnavailable,
+		Message:  "Git status unavailable",
+		Detail:   []string{"status failure"},
+	}
+	raw := manifest.Warning{
+		Resource: manifest.BootstrapSourceID,
+		Category: manifest.WarnSkippedSubmodule,
+		Message:  "skipping submodule",
+		Detail:   []string{"app/module"},
+	}
 	current.Warnings = []manifest.Warning{status, raw}
 	for range 2 {
-		renderedTrees1, err := RenderTrees(t.Context(), []Tree{{RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, Input: original, BaseInput: current}, {RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: current, BaseInput: original}}, Config{Concurrency: 2})
+		renderedTrees1, err := RenderTrees(
+			t.Context(),
+			[]Tree{
+				{
+					RepoRoot:  root,
+					ID:        manifest.TreeID{Cluster: ".", Side: manifest.TreeBase},
+					Input:     original,
+					BaseInput: current,
+				},
+				{
+					RepoRoot:  root,
+					ID:        manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
+					Input:     current,
+					BaseInput: original,
+				},
+			},
+			Config{Concurrency: 2},
+		)
 		orig, head := renderedTrees1[0], renderedTrees1[1]
 		assert.NoError(t, err)
 		for _, name := range []string{"one", "two"} {
 			artifact := head.store.GetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: name}, store.ArtifactContent).(*store.SourceArtifact)
 			assert.Diff(t, artifact.Warnings, []manifest.Warning(nil))
 		}
-		selected, err, diagnostic := Select([]Rendered{orig, head}, err, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
+		selected, err, diagnostic := Select(
+			[]Rendered{orig, head},
+			err,
+			[]manifest.NamedResource{testutil.KustomizationID("", "")},
+			nil,
+		)
 		assert.NoError(t, err)
 		assert.NoError(t, diagnostic)
 		for _, warning := range selected[0].Warnings {
@@ -1444,12 +2054,23 @@ func TestRenderTrees_InputWarningOnly(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	warning := manifest.Warning{Category: manifest.WarnBaselineStatusUnavailable, Message: "before failure", Count: 1}
-	runs, err := RenderTrees(t.Context(), []Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: root, Input: &store.SourceArtifact{LocalPath: root, Warnings: []manifest.Warning{warning}}}}, Config{Concurrency: 2})
+	runs, err := RenderTrees(
+		t.Context(),
+		[]Tree{
+			{
+				ID:    manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
+				Path:  root,
+				Input: &store.SourceArtifact{LocalPath: root, Warnings: []manifest.Warning{warning}},
+			},
+		},
+		Config{Concurrency: 2},
+	)
 	if len(runs) != 1 {
 		t.Fatalf("missing diagnostic run: %v", err)
 	}
 	o, result := runs[0].Orchestrator, runs[0].Result
-	if o != nil || result == nil || !errors.Is(err, manifest.ErrInput) || len(result.Manifests)+len(result.Failed) != 0 {
+	if o != nil || result == nil || !errors.Is(err, manifest.ErrInput) ||
+		len(result.Manifests)+len(result.Failed) != 0 {
 		t.Fatalf("failed bootstrap exposed content: %v, %+v, %v", o, result, err)
 	}
 	assert.Diff(t, result.Warnings, []manifest.Warning{warning})
@@ -1466,15 +2087,25 @@ func TestSelect_ComparedRootFailureOutsideLocalNamespace(t *testing.T) {
 				failed, other := selectedRun(&Result{}), selectedRun(&Result{})
 				failed.filter, other.filter = change.NewFilter(), change.NewFilter()
 				failed.store.AddObject(parent)
-				failed.Result.Failed = map[manifest.NamedResource]store.StatusInfo{parent.Named(): {Status: store.StatusFailed, Message: "external producer failed"}}
+				failed.Result.Failed = map[manifest.NamedResource]store.StatusInfo{
+					parent.Named(): {Status: store.StatusFailed, Message: "external producer failed"},
+				}
 				failed.Err = &FailuresError{Message: "external producer failed"}
 				other.store.AddObject(child)
 				owner := parent.Named()
 				if !required {
 					owner.Name = "other"
 				}
-				setParentsForTest(other.Orchestrator, map[manifest.NamedResource]manifest.NamedResource{child.Named(): owner})
-				_, retry := other.filter.AddEmitted([]manifest.NamedResource{child.Named(), owner}, []manifest.NamedResource{child.Named()}, nil, 0)
+				setParentsForTest(
+					other.Orchestrator,
+					map[manifest.NamedResource]manifest.NamedResource{child.Named(): owner},
+				)
+				_, retry := other.filter.AddEmitted(
+					[]manifest.NamedResource{child.Named(), owner},
+					[]manifest.NamedResource{child.Named()},
+					nil,
+					0,
+				)
 				assert.Equal(t, retry, false)
 				runs := []Rendered{failed, other}
 				index := 0
@@ -1482,7 +2113,12 @@ func TestSelect_ComparedRootFailureOutsideLocalNamespace(t *testing.T) {
 					slices.Reverse(runs)
 					index = 1
 				}
-				selected, err, remainder := Select(runs, failed.Err, []manifest.NamedResource{testutil.HelmReleaseID("apps", "")}, nil)
+				selected, err, remainder := Select(
+					runs,
+					failed.Err,
+					[]manifest.NamedResource{testutil.HelmReleaseID("apps", "")},
+					nil,
+				)
 				assert.Equal(t, err != nil, required)
 				assert.NoError(t, remainder)
 				_, retained := selected[index].Failed[parent.Named()]
@@ -1510,14 +2146,26 @@ func TestSelect_ComparedRootFailureOutsideLocalNamespace(t *testing.T) {
 						selected = failed.Named()
 					}
 				} else {
-					run.Result.Failed = map[manifest.NamedResource]store.StatusInfo{failed.Named(): {Status: store.StatusFailed, Message: "required chart unavailable"}}
+					run.Result.Failed = map[manifest.NamedResource]store.StatusInfo{
+						failed.Named(): {Status: store.StatusFailed, Message: "required chart unavailable"},
+					}
 					run.Err = &FailuresError{Message: "required chart unavailable"}
 				}
-				_, retry := run.filter.AddEmitted([]manifest.NamedResource{failed.Named(), anchor.Named(), other.Named()}, []manifest.NamedResource{selected}, nil, 0)
+				_, retry := run.filter.AddEmitted(
+					[]manifest.NamedResource{failed.Named(), anchor.Named(), other.Named()},
+					[]manifest.NamedResource{selected},
+					nil,
+					0,
+				)
 				assert.Equal(t, retry, false)
 				runs = append(runs, run)
 			}
-			selected, err, _ := Select(runs, runs[0].Err, []manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
+			selected, err, _ := Select(
+				runs,
+				runs[0].Err,
+				[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")},
+				nil,
+			)
 			assert.Equal(t, err != nil, compared)
 			_, retained := selected[0].Failed[failed.Named()]
 			assert.Equal(t, retained, compared)
@@ -1542,9 +2190,16 @@ func TestSelect_EntryDocuments(t *testing.T) {
 			run.store.AddObject(entry)
 			run.store.UpdateStatus(entry.Named(), store.StatusInfo{Status: store.StatusReady})
 			run.entryBinding = discovery.Binding{Producer: entry.Named(), Key: entry.Named()}
-			docs := []map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "settings"}}}
+			docs := []map[string]any{
+				{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "settings"}},
+			}
 			run.Result.Manifests = []manifest.DocumentBatch{{Parent: entry, Documents: docs}}
-			selected, err, remainder := Select([]Rendered{run}, nil, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
+			selected, err, remainder := Select(
+				[]Rendered{run},
+				nil,
+				[]manifest.NamedResource{testutil.KustomizationID("", "")},
+				nil,
+			)
 			assert.NoError(t, err)
 			assert.NoError(t, remainder)
 			res := selected[0]
@@ -1558,7 +2213,11 @@ func TestSelect_EntryDocuments(t *testing.T) {
 			}
 			assert.Equal(t, res.Manifests[0].Parent, manifest.BaseManifest(entry))
 			assert.Diff(t, res.Manifests[0].Documents, docs)
-			assert.Diff(t, res.ProducerKeys, map[manifest.NamedResource]manifest.NamedResource{entry.Named(): entry.Named()})
+			assert.Diff(
+				t,
+				res.ProducerKeys,
+				map[manifest.NamedResource]manifest.NamedResource{entry.Named(): entry.Named()},
+			)
 		})
 	}
 	for _, tc := range []struct {
@@ -1578,13 +2237,21 @@ func TestSelect_EntryDocuments(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			run := selectedRun(&Result{})
-			ks := &manifest.Kustomization{Name: "driver-ks", Namespace: "apps", Labels: map[string]string{"selected": "yes"}}
+			ks := &manifest.Kustomization{
+				Name:      "driver-ks",
+				Namespace: "apps",
+				Labels:    map[string]string{"selected": "yes"},
+			}
 			hr := &manifest.HelmRelease{Name: "driver-hr", Namespace: "apps"}
 			for _, obj := range []manifest.BaseManifest{ks, hr, &manifest.ConfigMap{Name: "dependency", Namespace: "apps"}} {
 				run.store.AddObject(obj)
 			}
 			document := func(version, kind, namespace, name string) map[string]any {
-				return map[string]any{"apiVersion": version, "kind": kind, "metadata": map[string]any{"name": name, "namespace": namespace}}
+				return map[string]any{
+					"apiVersion": version,
+					"kind":       kind,
+					"metadata":   map[string]any{"name": name, "namespace": namespace},
+				}
 			}
 			entryDocuments := []map[string]any{
 				document("v1", manifest.KindConfigMap, "apps", "static"),
@@ -1601,7 +2268,16 @@ func TestSelect_EntryDocuments(t *testing.T) {
 				if obj == hr {
 					name = "child-hr"
 				}
-				run.store.RecordEmitted(obj.Named(), &store.Emission{Manifests: testutil.DocumentOccurrences([]map[string]any{document("v1", manifest.KindConfigMap, "unrelated", name)}), Complete: true}, nil)
+				run.store.RecordEmitted(
+					obj.Named(),
+					&store.Emission{
+						Manifests: testutil.DocumentOccurrences(
+							[]map[string]any{document("v1", manifest.KindConfigMap, "unrelated", name)},
+						),
+						Complete: true,
+					},
+					nil,
+				)
 				run.store.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady})
 			}
 			run.Result.Manifests = run.collectManifests()
@@ -1635,25 +2311,55 @@ func TestSelect_EntryDocuments(t *testing.T) {
 				anchor := &manifest.Kustomization{Name: "anchor", Namespace: "apps"}
 				release := &manifest.HelmRelease{Name: "release", Namespace: "media"}
 				run.store.AddObjects([]manifest.BaseManifest{parent, anchor, release})
-				declaration := map[string]any{"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": manifest.KindHelmRelease, "metadata": map[string]any{"name": release.Name, "namespace": release.Namespace}}
-				static := map[string]any{"apiVersion": "v1", "kind": manifest.KindConfigMap, "metadata": map[string]any{"name": "unchanged", "namespace": release.Namespace}}
+				declaration := map[string]any{
+					"apiVersion": "helm.toolkit.fluxcd.io/v2",
+					"kind":       manifest.KindHelmRelease,
+					"metadata":   map[string]any{"name": release.Name, "namespace": release.Namespace},
+				}
+				static := map[string]any{
+					"apiVersion": "v1",
+					"kind":       manifest.KindConfigMap,
+					"metadata":   map[string]any{"name": "unchanged", "namespace": release.Namespace},
+				}
 				publishEntryForTest(run, []map[string]any{static})
-				run.store.RecordEmitted(parent.Named(), &store.Emission{Children: []store.Child{{Obj: release, Doc: declaration}}, Manifests: testutil.DocumentOccurrences([]map[string]any{declaration}), Complete: true}, nil)
+				run.store.RecordEmitted(
+					parent.Named(),
+					&store.Emission{
+						Children:  []store.Child{{Obj: release, Doc: declaration}},
+						Manifests: testutil.DocumentOccurrences([]map[string]any{declaration}),
+						Complete:  true,
+					},
+					nil,
+				)
 				run.filter = change.NewFilter()
 				selected := []manifest.NamedResource{anchor.Named()}
 				if side == 1 {
 					selected = []manifest.NamedResource{release.Named()}
 				}
-				_, retry := run.filter.AddEmitted([]manifest.NamedResource{parent.Named(), anchor.Named(), release.Named()}, selected, nil, 0)
+				_, retry := run.filter.AddEmitted(
+					[]manifest.NamedResource{parent.Named(), anchor.Named(), release.Named()},
+					selected,
+					nil,
+					0,
+				)
 				assert.Equal(t, retry, false)
 				run.Result.Manifests = run.collectManifests()
 				runs = append(runs, run)
 			}
-			selected, err, _ := Select(runs, nil, []manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
+			selected, err, _ := Select(
+				runs,
+				nil,
+				[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")},
+				nil,
+			)
 			assert.NoError(t, err)
 			snapshots := [2]diff.Snapshot{}
 			for i, side := range selected {
-				snapshots[i] = diff.Snapshot{Manifests: side.Manifests, Unavailable: side.Unavailable, ProducerKeys: side.ProducerKeys}
+				snapshots[i] = diff.Snapshot{
+					Manifests:    side.Manifests,
+					Unavailable:  side.Unavailable,
+					ProducerKeys: side.ProducerKeys,
+				}
 			}
 			body, _, _, err := diff.Compare(snapshots[0], snapshots[1], nil, diff.Options{Format: diff.FormatJSON})
 			assert.NoError(t, err)
@@ -1682,17 +2388,32 @@ func TestSelect_EntryDocuments(t *testing.T) {
 				ks := &manifest.Kustomization{Name: "actual", Namespace: "apps"}
 				run.store.AddObject(ks)
 				run.store.UpdateStatus(ks.Named(), outcome)
-				publishEntryForTest(run, []map[string]any{{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": manifest.KindKustomization, "metadata": map[string]any{"name": ks.Name, "namespace": ks.Namespace}}})
+				publishEntryForTest(
+					run,
+					[]map[string]any{
+						{
+							"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+							"kind":       manifest.KindKustomization,
+							"metadata":   map[string]any{"name": ks.Name, "namespace": ks.Namespace},
+						},
+					},
+				)
 				run.Result.Manifests = run.collectManifests()
 				run.Result.Failed = run.store.FailedResources()
 				if outcome.Status == store.StatusFailed {
 					run.Err = &FailuresError{Message: outcome.Message}
 				}
-				selected, err, _ := Select([]Rendered{run}, run.Err, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
+				selected, err, _ := Select(
+					[]Rendered{run},
+					run.Err,
+					[]manifest.NamedResource{testutil.KustomizationID("", "")},
+					nil,
+				)
 				if (err != nil) != (outcome.Status == store.StatusFailed) {
 					t.Fatalf("failure attribution: %v", err)
 				}
-				if len(selected[0].Manifests) != 1 || selected[0].Manifests[0].Parent == nil || len(selected[0].Objects) != 1 {
+				if len(selected[0].Manifests) != 1 || selected[0].Manifests[0].Parent == nil ||
+					len(selected[0].Objects) != 1 {
 					t.Fatalf("real driver declaration lost: %+v", selected[0])
 				}
 			})
@@ -1706,20 +2427,50 @@ func TestSelect_EntryDocuments(t *testing.T) {
 		hr := &manifest.HelmRelease{Name: "actual", Namespace: "apps"}
 		run.store.AddObject(ks)
 		run.store.AddObject(hr)
-		declaration := map[string]any{"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": manifest.KindHelmRelease, "metadata": map[string]any{"name": hr.Name, "namespace": hr.Namespace}}
-		original := map[string]any{"apiVersion": "v1", "kind": manifest.KindConfigMap, "metadata": map[string]any{"name": "shared", "namespace": "apps"}, "data": map[string]any{"marker": "built"}}
+		declaration := map[string]any{
+			"apiVersion": "helm.toolkit.fluxcd.io/v2",
+			"kind":       manifest.KindHelmRelease,
+			"metadata":   map[string]any{"name": hr.Name, "namespace": hr.Namespace},
+		}
+		original := map[string]any{
+			"apiVersion": "v1",
+			"kind":       manifest.KindConfigMap,
+			"metadata":   map[string]any{"name": "shared", "namespace": "apps"},
+			"data":       map[string]any{"marker": "built"},
+		}
 		winner := manifest.DeepCopyMap(original)
 		winner["data"] = map[string]any{"marker": "emitted"}
 		shared := &manifest.ConfigMap{Name: "shared", Namespace: "apps"}
 		publishEntryForTest(run, []map[string]any{declaration, original})
-		run.store.RecordEmitted(ks.Named(), &store.Emission{Children: []store.Child{{Obj: hr, Doc: declaration}, {Obj: shared, Doc: winner}}, Manifests: testutil.DocumentOccurrences([]map[string]any{declaration, winner}), Complete: true}, nil)
-		descendant := map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": "descendant", "namespace": "apps"}}
-		run.store.RecordEmitted(hr.Named(), &store.Emission{Manifests: testutil.DocumentOccurrences([]map[string]any{descendant}), Complete: true}, nil)
+		run.store.RecordEmitted(
+			ks.Named(),
+			&store.Emission{
+				Children:  []store.Child{{Obj: hr, Doc: declaration}, {Obj: shared, Doc: winner}},
+				Manifests: testutil.DocumentOccurrences([]map[string]any{declaration, winner}),
+				Complete:  true,
+			},
+			nil,
+		)
+		descendant := map[string]any{
+			"apiVersion": "apps/v1",
+			"kind":       "Deployment",
+			"metadata":   map[string]any{"name": "descendant", "namespace": "apps"},
+		}
+		run.store.RecordEmitted(
+			hr.Named(),
+			&store.Emission{Manifests: testutil.DocumentOccurrences([]map[string]any{descendant}), Complete: true},
+			nil,
+		)
 		for _, obj := range []manifest.BaseManifest{ks, hr} {
 			run.store.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady})
 		}
 		run.Result.Manifests = run.collectManifests()
-		selected, err, _ := Select([]Rendered{run}, nil, []manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
+		selected, err, _ := Select(
+			[]Rendered{run},
+			nil,
+			[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")},
+			nil,
+		)
 		assert.NoError(t, err)
 		counts := map[string]int{}
 		for _, batch := range selected[0].Manifests {
@@ -1736,7 +2487,8 @@ func TestSelect_EntryDocuments(t *testing.T) {
 		assert.Diff(t, counts, map[string]int{"actual": 1, "shared": 1, "descendant": 1})
 		selected, err, _ = Select([]Rendered{run}, nil, []manifest.NamedResource{hr.Named()}, nil)
 		assert.NoError(t, err)
-		if len(selected[0].Manifests) != 1 || manifest.DocIdentity(selected[0].Manifests[0].Documents[0]).Name != "descendant" {
+		if len(selected[0].Manifests) != 1 ||
+			manifest.DocIdentity(selected[0].Manifests[0].Documents[0]).Name != "descendant" {
 			t.Fatal("deduplicated driver lost its independent output")
 		}
 	})
@@ -1751,11 +2503,20 @@ func TestSelect_EntryDocuments(t *testing.T) {
 				entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".", manifest.NamedResource{})
 				_, retry := run.filter.AddEmitted([]manifest.NamedResource{entry.Named()}, nil, nil, 0)
 				assert.Equal(t, retry, false)
-				doc := map[string]any{"apiVersion": "v1", "kind": manifest.KindConfigMap, "metadata": map[string]any{"name": "unselected", "namespace": namespace}}
+				doc := map[string]any{
+					"apiVersion": "v1",
+					"kind":       manifest.KindConfigMap,
+					"metadata":   map[string]any{"name": "unselected", "namespace": namespace},
+				}
 				publishEntryForTest(run, []map[string]any{doc})
 				run.Result.Manifests = run.collectManifests()
 				assert.Equal(t, len(run.Result.Manifests), 1)
-				selected, err, _ := Select([]Rendered{run}, nil, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
+				selected, err, _ := Select(
+					[]Rendered{run},
+					nil,
+					[]manifest.NamedResource{testutil.KustomizationID("", "")},
+					nil,
+				)
 				assert.NoError(t, err)
 				assert.Equal(t, len(selected[0].Manifests), 0)
 			})
@@ -1767,24 +2528,55 @@ func TestSelect_EntryDocuments(t *testing.T) {
 		var runs []Rendered
 		for _, name := range []string{"removed", "added"} {
 			run := selectedRun(&Result{})
-			doc := map[string]any{"apiVersion": "v1", "kind": manifest.KindConfigMap, "metadata": map[string]any{"name": name, "namespace": "apps"}}
-			unrelated := map[string]any{"apiVersion": "v1", "kind": manifest.KindConfigMap, "metadata": map[string]any{"name": "unrelated", "namespace": "apps"}}
+			doc := map[string]any{
+				"apiVersion": "v1",
+				"kind":       manifest.KindConfigMap,
+				"metadata":   map[string]any{"name": name, "namespace": "apps"},
+			}
+			unrelated := map[string]any{
+				"apiVersion": "v1",
+				"kind":       manifest.KindConfigMap,
+				"metadata":   map[string]any{"name": "unrelated", "namespace": "apps"},
+			}
 			publishEntryForTest(run, []map[string]any{doc, unrelated})
-			entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".", testutil.KustomizationID("apps", name))
+			entry := manifest.NewEntryKustomization(
+				manifest.BootstrapSourceID,
+				".",
+				testutil.KustomizationID("apps", name),
+			)
 			run.store.AddObject(entry)
 			run.entryBinding = discovery.Binding{Producer: entry.Named(), Key: entry.Named()}
 			id := manifest.DocIdentity(doc)
-			run.index = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {}}, Readers: map[string][]manifest.FileReader{"kustomization.yaml": {{Reader: id, Source: manifest.BootstrapSourceID}}}}
-			run.loader = admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"kustomization.yaml"}), Index: run.index, Inventory: run.store, Root: ""})
+			run.index = &manifest.DiscoveryIndex{
+				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {}},
+				Readers: map[string][]manifest.FileReader{
+					"kustomization.yaml": {{Reader: id, Source: manifest.BootstrapSourceID}},
+				},
+			}
+			run.loader = admissiontest.New(
+				t,
+				admissiontest.Config{
+					Changes:   change.NewSet([]string{"kustomization.yaml"}),
+					Index:     run.index,
+					Inventory: run.store,
+					Root:      "",
+				},
+			)
 			admissiontest.Commit(t, run.loader, nil)
 			run.filter = run.loader.Options.Filter
 			run.Result.Manifests = run.collectManifests()
 			runs = append(runs, run)
 		}
-		selected, err, _ := Select(runs, nil, []manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
+		selected, err, _ := Select(
+			runs,
+			nil,
+			[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")},
+			nil,
+		)
 		assert.NoError(t, err)
 		for i, name := range []string{"removed", "added"} {
-			if len(selected[i].Manifests) != 1 || len(selected[i].Manifests[0].Documents) != 2 || manifest.DocIdentity(selected[i].Manifests[0].Documents[0]).Name != name {
+			if len(selected[i].Manifests) != 1 || len(selected[i].Manifests[0].Documents) != 2 ||
+				manifest.DocIdentity(selected[i].Manifests[0].Documents[0]).Name != name {
 				t.Fatalf("side %d selected wrong changed documents: %+v", i, selected[i].Manifests)
 			}
 			assert.Equal(t, len(selected[i].Objects), 0)
@@ -1803,8 +2595,16 @@ func TestSelect_EntryDocuments(t *testing.T) {
 func TestSelect_EntryBatchSubjects(t *testing.T) {
 	t.Parallel()
 	run := selectedRun(nil)
-	entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "clusters/test", testutil.KustomizationID("apps", "captured"))
-	replacement := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "clusters/test", testutil.KustomizationID("apps", "replacement"))
+	entry := manifest.NewEntryKustomization(
+		manifest.BootstrapSourceID,
+		"clusters/test",
+		testutil.KustomizationID("apps", "captured"),
+	)
+	replacement := manifest.NewEntryKustomization(
+		manifest.BootstrapSourceID,
+		"clusters/test",
+		testutil.KustomizationID("apps", "replacement"),
+	)
 	ordinary := &manifest.Kustomization{Name: "ordinary", Namespace: "apps"}
 	run.store.AddObject(replacement)
 	run.store.AddObject(ordinary)
@@ -1818,7 +2618,11 @@ func TestSelect_EntryBatchSubjects(t *testing.T) {
 	}}
 	side.prepareSubjects()
 	assert.Diff(t, side.result.Subjects, map[manifest.NamedResource]manifest.DiagnosticIdentity{
-		entry.Named(): {ID: entry.Named(), Resource: testutil.KustomizationID("apps", "captured"), Path: "clusters/test"},
+		entry.Named(): {
+			ID:       entry.Named(),
+			Resource: testutil.KustomizationID("apps", "captured"),
+			Path:     "clusters/test",
+		},
 	})
 	assert.Equal(t, side.result.Manifests[0].Parent, manifest.BaseManifest(entry))
 	assert.Equal(t, side.result.Manifests[1].Parent, manifest.BaseManifest(ordinary))
@@ -1828,8 +2632,13 @@ func TestSelect_EntryBatchSubjects(t *testing.T) {
 func publishEntryForTest(run Rendered, docs []map[string]any) {
 	entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".", manifest.NamedResource{})
 	run.store.AddObject(entry)
-	children, retained, failures := base.New(run.store, nil).ParseChildren(entry, testutil.DocumentOccurrences(docs), manifest.ParseDocOptions{})
-	run.store.RecordEmitted(entry.Named(), &store.Emission{Children: children, Manifests: retained, Failures: failures, Complete: true}, nil)
+	children, retained, failures := base.New(run.store, nil).
+		ParseChildren(entry, testutil.DocumentOccurrences(docs), manifest.ParseDocOptions{})
+	run.store.RecordEmitted(
+		entry.Named(),
+		&store.Emission{Children: children, Manifests: retained, Failures: failures, Complete: true},
+		nil,
+	)
 	run.store.UpdateStatus(entry.Named(), store.StatusInfo{Status: store.StatusReady})
 }
 
@@ -1848,13 +2657,27 @@ func testEntryCorrespondence(t *testing.T) {
 						obj = &manifest.Kustomization{Name: name, Namespace: "apps", Path: "."}
 					}
 					runs[i].store.AddObject(obj)
-					runs[i].entryBinding = discovery.Binding{Producer: obj.Named(), Key: entry.Named(), Source: manifest.BootstrapSourceID, Path: "."}
+					runs[i].entryBinding = discovery.Binding{
+						Producer: obj.Named(),
+						Key:      entry.Named(),
+						Source:   manifest.BootstrapSourceID,
+						Path:     ".",
+					}
 					runs[i].store.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady})
 					if i == 0 {
-						docs := []map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "root-inventory"}}}
+						docs := []map[string]any{
+							{
+								"apiVersion": "v1",
+								"kind":       "ConfigMap",
+								"metadata":   map[string]any{"name": "root-inventory"},
+							},
+						}
 						runs[i].Result.Manifests = []manifest.DocumentBatch{{Parent: obj, Documents: docs}}
 					} else {
-						runs[i].store.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusFailed, Message: "entry failed"})
+						runs[i].store.UpdateStatus(
+							obj.Named(),
+							store.StatusInfo{Status: store.StatusFailed, Message: "entry failed"},
+						)
 					}
 				}
 				old := runs[0].entryBinding.Producer
@@ -1862,7 +2685,18 @@ func testEntryCorrespondence(t *testing.T) {
 				if !old.ReportHidden() && old != runs[1].entryBinding.Producer {
 					runs[1].store.AddObject(unrelated)
 					runs[1].store.UpdateStatus(unrelated.Named(), store.StatusInfo{Status: store.StatusReady})
-					runs[1].Result.Manifests = []manifest.DocumentBatch{{Parent: unrelated, Documents: []map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "unrelated-output"}}}}}
+					runs[1].Result.Manifests = []manifest.DocumentBatch{
+						{
+							Parent: unrelated,
+							Documents: []map[string]any{
+								{
+									"apiVersion": "v1",
+									"kind":       "ConfigMap",
+									"metadata":   map[string]any{"name": "unrelated-output"},
+								},
+							},
+						},
+					}
 				}
 				if reverse {
 					slices.Reverse(runs)
@@ -1875,14 +2709,25 @@ func testEntryCorrespondence(t *testing.T) {
 				if selected[failed].Unavailable[entry.Named()].String() != "entry failed" {
 					t.Fatalf("entry correspondence read an unrelated status: %+v", selected[failed].Unavailable)
 				}
-				left := diff.Snapshot{Subjects: selected[0].Subjects, Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable, ProducerKeys: selected[0].ProducerKeys}
-				right := diff.Snapshot{Subjects: selected[1].Subjects, Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable, ProducerKeys: selected[1].ProducerKeys}
+				left := diff.Snapshot{
+					Subjects:     selected[0].Subjects,
+					Manifests:    selected[0].Manifests,
+					Unavailable:  selected[0].Unavailable,
+					ProducerKeys: selected[0].ProducerKeys,
+				}
+				right := diff.Snapshot{
+					Subjects:     selected[1].Subjects,
+					Manifests:    selected[1].Manifests,
+					Unavailable:  selected[1].Unavailable,
+					ProducerKeys: selected[1].ProducerKeys,
+				}
 				output, _, notes, err := diff.Compare(left, right, nil, diff.Options{Format: diff.FormatJSON})
 				assert.NoError(t, err)
 				if len(notes) != 1 || notes[0].Count != 1 || notes[0].Parent.NamedResource != old {
 					t.Fatalf("withheld inventory attribution=%+v", notes)
 				}
-				if strings.Contains(string(output), "root-inventory") || (!old.ReportHidden() && old != runs[failed].entryBinding.Producer && !strings.Contains(string(output), "unrelated-output")) {
+				if strings.Contains(string(output), "root-inventory") ||
+					(!old.ReportHidden() && old != runs[failed].entryBinding.Producer && !strings.Contains(string(output), "unrelated-output")) {
 					t.Fatalf("suppression leaked inventory or hid retargeted owner: %s", output)
 				}
 			})
@@ -1904,14 +2749,22 @@ func TestSelect_SyntheticFailureContext(t *testing.T) {
 			run.store.UpdateFailure(authored.Named(), manifest.NewError(manifest.ErrInput, nil, "authored failure"))
 			run.Result.Failed = run.store.FailedResources()
 			run.Err = run.aggregateFailures(run.Result.Failed)
-			selected, err, _ := Select([]Rendered{run}, run.Err, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
-			if err == nil || strings.Contains(err.Error(), entry.Named().String()) || !strings.Contains(err.Error(), `entry path "clusters/test"`) || !strings.Contains(err.Error(), authored.Named().String()) {
+			selected, err, _ := Select(
+				[]Rendered{run},
+				run.Err,
+				[]manifest.NamedResource{testutil.KustomizationID("", "")},
+				nil,
+			)
+			if err == nil || strings.Contains(err.Error(), entry.Named().String()) ||
+				!strings.Contains(err.Error(), `entry path "clusters/test"`) ||
+				!strings.Contains(err.Error(), authored.Named().String()) {
 				t.Fatalf("selected diagnostic=%v", err)
 			}
 			if owner != (manifest.NamedResource{}) && !strings.Contains(err.Error(), owner.String()) {
 				t.Fatalf("real owner lost: %v", err)
 			}
-			if len(selected[0].Failed) != 2 || len(selected[0].Objects) != 1 || selected[0].Objects[0].Named() != authored.Named() {
+			if len(selected[0].Failed) != 2 || len(selected[0].Objects) != 1 ||
+				selected[0].Objects[0].Named() != authored.Named() {
 				t.Fatalf("display changed selection: %+v", selected[0])
 			}
 		})

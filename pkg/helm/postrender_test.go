@@ -78,7 +78,9 @@ func TestKustomizePostRenderer_HoldsBuildMutex(t *testing.T) {
 	if pr == nil {
 		t.Fatal("expected non-nil post renderer")
 	}
-	in := bytes.NewBufferString("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: app, namespace: default}\ndata: {greeting: hello}\n")
+	in := bytes.NewBufferString(
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: app, namespace: default}\ndata: {greeting: hello}\n",
+	)
 
 	kustomizestate.BuildMutex.Lock()
 	done := make(chan struct{})
@@ -157,7 +159,11 @@ spec:
 					}
 				}
 				kustomizestate.BuildMutex.Lock()
-				assert.Equal(t, openapi.SchemaForResourceType(yaml.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"}).Schema, definition)
+				assert.Equal(
+					t,
+					openapi.SchemaForResourceType(yaml.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"}).Schema,
+					definition,
+				)
 				kustomizestate.BuildMutex.Unlock()
 			}
 		})

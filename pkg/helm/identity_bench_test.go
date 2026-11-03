@@ -23,7 +23,19 @@ func BenchmarkLoadChart_Mode(b *testing.B) {
 				}
 				owner := cachetest.New(b, root, sourcecache.New)
 				resolver := benchChartResolver(b, dir, os.DirFS(dir))
-				hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "chart-repo", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}}}
+				hr := &manifest.HelmRelease{
+					Name:      "demo",
+					Namespace: "default",
+					Chart: manifest.HelmChart{
+						Name: "mychart",
+						Source: manifest.NamedResource{
+							Name:      "chart-repo",
+							Namespace: "flux-system",
+							Group:     manifest.SourceDomain,
+							Kind:      manifest.KindGitRepository,
+						},
+					},
+				}
 				newClient := func() *Client {
 					cli := NewClient(owner)
 					return cli
@@ -54,7 +66,21 @@ func BenchmarkTemplate_OCIIdentity(b *testing.B) {
 			b.Run(fmt.Sprintf("disk_%t/disabled_%t", disk, disabled), func(b *testing.B) {
 				st, hr, dir := ociRenderFixture(b)
 				const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
-				st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: chartFixtureFS(hr, os.DirFS(dir)), LocalPath: dir, Digest: digest, Revision: "6.15.0@" + digest})
+				st.SetArtifact(
+					manifest.NamedResource{
+						Group:     manifest.SourceDomain,
+						Kind:      manifest.KindOCIRepository,
+						Namespace: "apps",
+						Name:      "podinfo",
+					},
+					&store.SourceArtifact{
+						Kind:      manifest.KindOCIRepository,
+						FS:        chartFixtureFS(hr, os.DirFS(dir)),
+						LocalPath: dir,
+						Digest:    digest,
+						Revision:  "6.15.0@" + digest,
+					},
+				)
 				root := ""
 				if disk {
 					root = b.TempDir()
@@ -62,9 +88,17 @@ func BenchmarkTemplate_OCIIdentity(b *testing.B) {
 				cli := NewClient(cachetest.New(b, root, sourcecache.New))
 				cliSources := NewSources(st)
 				opts := Options{DisableChartDigestTracking: disabled}
-				_, receipt1, err := cli.Template(b.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources})
+				_, receipt1, err := cli.Template(
+					b.Context(),
+					hr,
+					nil,
+					RenderOptions{Options: opts, Sources: cliSources},
+				)
 				if err == nil {
-					if recordErr := cli.RecordRender(b.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt1, Records: emptyRenderInventory}); recordErr != nil {
+					if recordErr := cli.RecordRender(
+						b.Context(),
+						RenderAcceptance{Owner: hr.Named(), Receipt: receipt1, Records: emptyRenderInventory},
+					); recordErr != nil {
 						b.Fatal(recordErr)
 					}
 				}
@@ -73,9 +107,17 @@ func BenchmarkTemplate_OCIIdentity(b *testing.B) {
 				}
 				b.ReportAllocs()
 				for b.Loop() {
-					_, receipt2, err := cli.Template(b.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources})
+					_, receipt2, err := cli.Template(
+						b.Context(),
+						hr,
+						nil,
+						RenderOptions{Options: opts, Sources: cliSources},
+					)
 					if err == nil {
-						if recordErr := cli.RecordRender(b.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt2, Records: emptyRenderInventory}); recordErr != nil {
+						if recordErr := cli.RecordRender(
+							b.Context(),
+							RenderAcceptance{Owner: hr.Named(), Receipt: receipt2, Records: emptyRenderInventory},
+						); recordErr != nil {
 							b.Fatal(recordErr)
 						}
 					}
@@ -90,7 +132,15 @@ func BenchmarkTemplate_OCIIdentity(b *testing.B) {
 
 func BenchmarkChartValues_Cached(b *testing.B) {
 	st, hr, dir := ociRenderFixture(b)
-	st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: chartFixtureFS(hr, os.DirFS(dir)), LocalPath: dir})
+	st.SetArtifact(
+		manifest.NamedResource{
+			Group:     manifest.SourceDomain,
+			Kind:      manifest.KindOCIRepository,
+			Namespace: "apps",
+			Name:      "podinfo",
+		},
+		&store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: chartFixtureFS(hr, os.DirFS(dir)), LocalPath: dir},
+	)
 	cli := NewClient(cachetest.New(b, "", sourcecache.New))
 	cliSources := NewSources(st)
 	loaded, err := loadDecodedChart(b.Context(), cli, hr, cliSources)
@@ -113,7 +163,12 @@ func BenchmarkChartValues_PinnedSource(b *testing.B) {
 	names := make([]string, 10)
 	for i := range names {
 		names[i] = fmt.Sprintf("config/values-%d.yaml", i)
-		testutil.WriteFile(b, dir, names[i], fmt.Sprintf("layer-%d:\n  key: value-%d\nshared:\n  nested-%d: %d\n", i, i, i, i))
+		testutil.WriteFile(
+			b,
+			dir,
+			names[i],
+			fmt.Sprintf("layer-%d:\n  key: value-%d\nshared:\n  nested-%d: %d\n", i, i, i, i),
+		)
 	}
 	owner := cachetest.New(b, "", sourcecache.New)
 	cli := NewClient(owner)

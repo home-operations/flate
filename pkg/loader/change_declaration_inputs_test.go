@@ -22,7 +22,10 @@ func TestFilter_DeclarationInputs(t *testing.T) {
 		input:    {File: "settings.yaml", Inputs: []string{"patch.yaml"}},
 		consumer: {File: "consumer.yaml", Refs: []manifest.NamedResource{input}},
 	}}
-	filter := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"patch.yaml"}), index: index, inventory: nil, root: "/repo"})
+	filter := newAdmission(
+		t,
+		admissionConfig{changes: change.NewSet([]string{"patch.yaml"}), index: index, inventory: nil, root: "/repo"},
+	)
 	assert.Diff(t, filter.KeepNames(), []string{input.String(), consumer.String()})
 	assert.Equal(t, filter.keep[input], primary)
 	assert.Equal(t, filter.keep[consumer], primary)
@@ -36,12 +39,28 @@ func TestFilter_SelectorProviderScope(t *testing.T) {
 			for _, inventory := range []string{"stored", "indexed"} {
 				t.Run(inventory, func(t *testing.T) {
 					t.Parallel()
-					provider := &manifest.ResourceSetInputProvider{Name: "images", Namespace: "apps", Type: fluxopv1.InputProviderStatic, Labels: map[string]string{"role": "images"}}
-					ref := fluxopv1.InputProviderReference{Name: "images", Selector: &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{Key: "role", Operator: "invalid"}}}}
-					if route == "selector" {
-						ref = fluxopv1.InputProviderReference{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"role": "images"}}}
+					provider := &manifest.ResourceSetInputProvider{
+						Name:      "images",
+						Namespace: "apps",
+						Type:      fluxopv1.InputProviderStatic,
+						Labels:    map[string]string{"role": "images"},
 					}
-					set := &manifest.ResourceSet{Name: "matrix", Namespace: "apps", InputsFrom: []fluxopv1.InputProviderReference{ref}}
+					ref := fluxopv1.InputProviderReference{
+						Name: "images",
+						Selector: &metav1.LabelSelector{
+							MatchExpressions: []metav1.LabelSelectorRequirement{{Key: "role", Operator: "invalid"}},
+						},
+					}
+					if route == "selector" {
+						ref = fluxopv1.InputProviderReference{
+							Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"role": "images"}},
+						}
+					}
+					set := &manifest.ResourceSet{
+						Name:       "matrix",
+						Namespace:  "apps",
+						InputsFrom: []fluxopv1.InputProviderReference{ref},
+					}
 					objects := filtertest.MapLister{set.Named(): set}
 					if inventory == "stored" {
 						objects[provider.Named()] = provider
@@ -50,8 +69,17 @@ func TestFilter_SelectorProviderScope(t *testing.T) {
 						provider.Named(): {File: "provider.yaml", Declaration: provider},
 						set.Named():      {File: "set.yaml", Declaration: set},
 					}}
-					selected := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"provider.yaml"}), index: index, inventory: objects})
-					selected.loader.locations = map[manifest.NamedResource]Occurrence{provider.Named(): compactOccurrence(provider, manifest.ProjectProducer(provider))}
+					selected := newAdmission(
+						t,
+						admissionConfig{
+							changes:   change.NewSet([]string{"provider.yaml"}),
+							index:     index,
+							inventory: objects,
+						},
+					)
+					selected.loader.locations = map[manifest.NamedResource]Occurrence{
+						provider.Named(): compactOccurrence(provider, manifest.ProjectProducer(provider)),
+					}
 					selected.prepare(store.Child{}, nil, false)
 					assert.Equal(t, selected.ShouldReconcile(provider.Named()), true)
 					assert.Equal(t, selected.ShouldReconcile(set.Named()), true)
@@ -63,12 +91,20 @@ func TestFilter_SelectorProviderScope(t *testing.T) {
 
 func TestSelection_SelectorCandidates(t *testing.T) {
 	t.Parallel()
-	provider := &manifest.ResourceSetInputProvider{Name: "images", Namespace: "apps", Labels: map[string]string{"role": "images"}}
+	provider := &manifest.ResourceSetInputProvider{
+		Name:      "images",
+		Namespace: "apps",
+		Labels:    map[string]string{"role": "images"},
+	}
 	other := *provider
 	other.Labels = map[string]string{"role": "other"}
 	bare := *provider
 	bare.Namespace = ""
-	set := &manifest.ResourceSet{Name: "matrix", Namespace: "apps", InputsFrom: []fluxopv1.InputProviderReference{{Selector: &metav1.LabelSelector{MatchLabels: provider.Labels}}}}
+	set := &manifest.ResourceSet{
+		Name:       "matrix",
+		Namespace:  "apps",
+		InputsFrom: []fluxopv1.InputProviderReference{{Selector: &metav1.LabelSelector{MatchLabels: provider.Labels}}},
+	}
 	for _, tc := range []struct {
 		name        string
 		declaration manifest.BaseManifest

@@ -58,7 +58,11 @@ func newHTTPFetcher(t *testing.T, r *manifest.HelmRepository) (*Fetcher, testInp
 	return newHTTPFetcherWithSecrets(t, r, nil)
 }
 
-func newHTTPFetcherWithSecrets(t *testing.T, r *manifest.HelmRepository, secrets source.SecretGetter) (*Fetcher, testInputs) {
+func newHTTPFetcherWithSecrets(
+	t *testing.T,
+	r *manifest.HelmRepository,
+	secrets source.SecretGetter,
+) (*Fetcher, testInputs) {
 	t.Helper()
 	root := t.TempDir()
 	c := cachetest.New(t, root, sourcecache.New)
@@ -79,7 +83,14 @@ func TestFetchHTTPChart(t *testing.T) {
 	var index strings.Builder
 	index.WriteString("apiVersion: v1\nentries:\n")
 	for _, name := range []string{"app-template", "other"} {
-		fmt.Fprintf(&index, "  %s:\n    - name: %s\n      version: 1.0.0\n      digest: %s\n      urls: [%s-1.0.0.tgz]\n", name, name, chartDigest(charts[name]), name)
+		fmt.Fprintf(
+			&index,
+			"  %s:\n    - name: %s\n      version: 1.0.0\n      digest: %s\n      urls: [%s-1.0.0.tgz]\n",
+			name,
+			name,
+			chartDigest(charts[name]),
+			name,
+		)
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/index.yaml" {
@@ -105,7 +116,12 @@ func TestFetchHTTPChart(t *testing.T) {
 			var consumers sync.WaitGroup
 			for name, data := range charts {
 				consumers.Go(func() {
-					art, err := f.Fetch(t.Context(), helmChart("repo", name, "1.0.0"), fInputs.readSet(helmChart("repo", name, "1.0.0")), sourcecache.Policy{})
+					art, err := f.Fetch(
+						t.Context(),
+						helmChart("repo", name, "1.0.0"),
+						fInputs.readSet(helmChart("repo", name, "1.0.0")),
+						sourcecache.Policy{},
+					)
 					if err != nil {
 						t.Errorf("Fetch %s: %v", name, err)
 						return
@@ -185,7 +201,10 @@ func TestFetchIndex_InvalidResponseDoesNotPublish(t *testing.T) {
 			if err != nil {
 				t.Fatalf("disk-cached index: %v", err)
 			}
-			if memo, ok := warm.indexCache.Load("sha256:" + chartDigest([]byte(helmRepoIndex("")))); !ok || memo != cached {
+			if memo, ok := warm.indexCache.Load(
+				"sha256:" + chartDigest([]byte(helmRepoIndex(""))),
+			); !ok ||
+				memo != cached {
 				t.Fatal("disk-cached index did not populate digest-bound memo")
 			}
 			if got := attempts.Load(); got != 2 {
@@ -201,7 +220,12 @@ func TestFetchHTTPChart_DigestMismatch(t *testing.T) {
 	srv, _ := startHelmRepo(t, chartBytes, "deadbeefdeadbeef") // index advertises a wrong digest
 	f, fInputs := newHTTPFetcher(t, httpRepo(srv.URL))
 
-	if _, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0"), fInputs.readSet(helmChart("repo", "app-template", "1.0.0")), sourcecache.Policy{}); err == nil {
+	if _, err := f.Fetch(
+		context.Background(),
+		helmChart("repo", "app-template", "1.0.0"),
+		fInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
+		sourcecache.Policy{},
+	); err == nil {
 		t.Fatal("expected digest-mismatch error, got nil")
 	}
 }
@@ -262,19 +286,35 @@ func TestFetchHTTPChart_SecretReferences(t *testing.T) {
 			case "absent":
 				secret = nil
 			case "wiped":
-				secret = &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "..PLACEHOLDER_password.."}}
+				secret = &manifest.Secret{
+					StringData: map[string]any{"username": "alice", "password": "..PLACEHOLDER_password.."},
+				}
 			case "partial":
 				secret = &manifest.Secret{StringData: map[string]any{"username": "alice"}}
 			case "malformed":
-				secret = &manifest.Secret{Data: map[string]any{"username": "credential-payload!"}, StringData: map[string]any{"password": "first"}}
+				secret = &manifest.Secret{
+					Data:       map[string]any{"username": "credential-payload!"},
+					StringData: map[string]any{"password": "first"},
+				}
 			case "malformed password":
-				secret = &manifest.Secret{Data: map[string]any{"password": "credential-payload!"}, StringData: map[string]any{"username": "alice"}}
+				secret = &manifest.Secret{
+					Data:       map[string]any{"password": "credential-payload!"},
+					StringData: map[string]any{"username": "alice"},
+				}
 			case "nonscalar":
-				secret = &manifest.Secret{StringData: map[string]any{"username": []any{"credential-payload"}, "password": "first"}}
+				secret = &manifest.Secret{
+					StringData: map[string]any{"username": []any{"credential-payload"}, "password": "first"},
+				}
 			case "wiped malformed":
-				secret = &manifest.Secret{StringData: map[string]any{"username": "..PLACEHOLDER_username.."}, Data: map[string]any{"password": "credential-payload!"}}
+				secret = &manifest.Secret{
+					StringData: map[string]any{"username": "..PLACEHOLDER_username.."},
+					Data:       map[string]any{"password": "credential-payload!"},
+				}
 			case "malformed wiped":
-				secret = &manifest.Secret{Data: map[string]any{"username": "credential-payload!"}, StringData: map[string]any{"password": "..PLACEHOLDER_password.."}}
+				secret = &manifest.Secret{
+					Data:       map[string]any{"username": "credential-payload!"},
+					StringData: map[string]any{"password": "..PLACEHOLDER_password.."},
+				}
 			}
 			f.cache = nil
 			var artifact *store.SourceArtifact
@@ -282,7 +322,12 @@ func TestFetchHTTPChart_SecretReferences(t *testing.T) {
 			if tc.state == "unwired" {
 				_, err = (&operation{Fetcher: f}).prepareHTTP(r)
 			} else {
-				artifact, err = f.Fetch(t.Context(), helmChart("repo", "app-template", "1.0.0"), fInputs.readSet(helmChart("repo", "app-template", "1.0.0")), sourcecache.Policy{})
+				artifact, err = f.Fetch(
+					t.Context(),
+					helmChart("repo", "app-template", "1.0.0"),
+					fInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
+					sourcecache.Policy{},
+				)
 			}
 			if err == nil || errors.Is(err, manifest.ErrMissingSecret) != tc.missing || artifact != nil {
 				t.Fatalf("missing=%t, artifact=%v, error=%v", tc.missing, artifact, err)
@@ -291,7 +336,8 @@ func TestFetchHTTPChart_SecretReferences(t *testing.T) {
 				if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
 					t.Fatalf("expected hard input error, got %v", err)
 				}
-				if strings.Contains(err.Error(), "HelmRepository flux-system/repo") || !strings.Contains(err.Error(), "secret flux-system/creds") {
+				if strings.Contains(err.Error(), "HelmRepository flux-system/repo") ||
+					!strings.Contains(err.Error(), "secret flux-system/creds") {
 					t.Errorf("input error lost source or Secret identity: %v", err)
 				}
 				if strings.Contains(err.Error(), "credential-payload") {
@@ -300,7 +346,9 @@ func TestFetchHTTPChart_SecretReferences(t *testing.T) {
 			}
 			if tc.missing && tc.state != "unwired" && !tc.cert {
 				missing, ok := errors.AsType[*source.MissingSecretError](err)
-				if !ok || missing.Owner != r.Named() || missing.Secret.Name != "creds" || missing.Secret.Namespace != r.Namespace || missing.RetryAmbient == nil {
+				if !ok || missing.Owner != r.Named() || missing.Secret.Name != "creds" ||
+					missing.Secret.Namespace != r.Namespace ||
+					missing.RetryAmbient == nil {
 					t.Fatalf("missing error lost source identity or ambient continuation: %v", err)
 				}
 			}
@@ -379,7 +427,12 @@ func TestFetchHTTPChart_SubpathRelativeURL(t *testing.T) {
 		t.Parallel()
 		srv, hits := startHelmRepoSubpath(t, "/charts", chartBytes, chartDigest(chartBytes))
 		f, fInputs := newHTTPFetcher(t, httpRepo(srv.URL+"/charts"))
-		art, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0"), fInputs.readSet(helmChart("repo", "app-template", "1.0.0")), sourcecache.Policy{})
+		art, err := f.Fetch(
+			context.Background(),
+			helmChart("repo", "app-template", "1.0.0"),
+			fInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
+			sourcecache.Policy{},
+		)
 		if err != nil {
 			t.Fatalf("Fetch: %v", err)
 		}
@@ -395,7 +448,12 @@ func TestFetchHTTPChart_SubpathRelativeURL(t *testing.T) {
 		t.Parallel()
 		srv, hits := startHelmRepoSubpath(t, "/charts", chartBytes, chartDigest(chartBytes))
 		f, fInputs := newHTTPFetcher(t, httpRepo(srv.URL+"/charts/"))
-		if _, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0"), fInputs.readSet(helmChart("repo", "app-template", "1.0.0")), sourcecache.Policy{}); err != nil {
+		if _, err := f.Fetch(
+			context.Background(),
+			helmChart("repo", "app-template", "1.0.0"),
+			fInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
+			sourcecache.Policy{},
+		); err != nil {
 			t.Fatalf("Fetch: %v", err)
 		}
 		if *hits != 1 {
@@ -460,7 +518,12 @@ func TestFetchHTTPChart_BasicAuth(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			current := base
 			tc.change(&current)
-			art, err := f.fetchHTTPChart(t.Context(), preparedHTTP(t, f, fInputs, &current), helmChart("repo", "app-template", "1.0.0"), sourcecache.Policy{})
+			art, err := f.fetchHTTPChart(
+				t.Context(),
+				preparedHTTP(t, f, fInputs, &current),
+				helmChart("repo", "app-template", "1.0.0"),
+				sourcecache.Policy{},
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -514,7 +577,12 @@ entries:
 				return &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "hunter2"}}
 			})
 
-			if _, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0"), fInputs.readSet(helmChart("repo", "app-template", "1.0.0")), sourcecache.Policy{}); err != nil {
+			if _, err := f.Fetch(
+				context.Background(),
+				helmChart("repo", "app-template", "1.0.0"),
+				fInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
+				sourcecache.Policy{},
+			); err != nil {
 				t.Fatalf("Fetch: %v", err)
 			}
 			if gotAuth != tc.wantAuth {
@@ -560,7 +628,12 @@ func TestFetchHTTPChart_CancellationDoesNotPublish(t *testing.T) {
 				defer cancel()
 				result := make(chan error, 1)
 				go func() {
-					_, err := f.Fetch(ctx, helmChart("repo", "app-template", "1.0.0"), fInputs.readSet(helmChart("repo", "app-template", "1.0.0")), sourcecache.Policy{})
+					_, err := f.Fetch(
+						ctx,
+						helmChart("repo", "app-template", "1.0.0"),
+						fInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
+						sourcecache.Policy{},
+					)
 					result <- err
 				}()
 				select {
@@ -582,7 +655,12 @@ func TestFetchHTTPChart_CancellationDoesNotPublish(t *testing.T) {
 				case <-time.After(5 * time.Second):
 					t.Fatal("HTTP request outlived fetch")
 				}
-				art, err := f.Fetch(t.Context(), helmChart("repo", "app-template", "1.0.0"), fInputs.readSet(helmChart("repo", "app-template", "1.0.0")), sourcecache.Policy{})
+				art, err := f.Fetch(
+					t.Context(),
+					helmChart("repo", "app-template", "1.0.0"),
+					fInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
+					sourcecache.Policy{},
+				)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -646,9 +724,16 @@ func TestHTTPRepositoryGet_ResponseRules(t *testing.T) {
 	for _, status := range []int{200, 201, 204, 299, 300, 400, 401, 403, 404, 429, 499, 500, 599, 600} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			t.Parallel()
-			r := &httpRepository{HelmRepository: httpRepo("https://charts.invalid"), client: &http.Client{Transport: chartTransport(func(*http.Request) (*http.Response, error) {
-				return &http.Response{StatusCode: status, Status: fmt.Sprintf("%d %s", status, http.StatusText(status)), Body: io.NopCloser(strings.NewReader("content"))}, nil
-			})}}
+			r := &httpRepository{
+				HelmRepository: httpRepo("https://charts.invalid"),
+				client: &http.Client{Transport: chartTransport(func(*http.Request) (*http.Response, error) {
+					return &http.Response{
+						StatusCode: status,
+						Status:     fmt.Sprintf("%d %s", status, http.StatusText(status)),
+						Body:       io.NopCloser(strings.NewReader("content")),
+					}, nil
+				})},
+			}
 			var body bytes.Buffer
 			_, err := r.get(t.Context(), "https://charts.invalid/chart.tgz", &body)
 			if status == http.StatusOK {
@@ -658,8 +743,13 @@ func TestHTTPRepositoryGet_ResponseRules(t *testing.T) {
 				return
 			}
 			response, ok := errors.AsType[*fetcherr.ResponseError](err)
-			want := fmt.Sprintf("failed to fetch https://charts.invalid/chart.tgz : %d %s", status, http.StatusText(status))
-			if !ok || response.StatusCode != status || response.Op != http.MethodGet || err.Error() != want || body.Len() != 0 {
+			want := fmt.Sprintf(
+				"failed to fetch https://charts.invalid/chart.tgz : %d %s",
+				status,
+				http.StatusText(status),
+			)
+			if !ok || response.StatusCode != status || response.Op != http.MethodGet || err.Error() != want ||
+				body.Len() != 0 {
 				t.Fatalf("response=%+v body=%q error=%v want=%q", response, body.String(), err, want)
 			}
 		})
@@ -670,94 +760,119 @@ func TestFetchHTTPChart_TruncatedOutcomeReplay(t *testing.T) {
 	for _, status := range []int{0, http.StatusTooManyRequests, http.StatusServiceUnavailable} {
 		for _, target := range []string{"/index.yaml", "/app-template-1.0.0.tgz"} {
 			for _, attempts := range []int{1, 3} {
-				t.Run(fmt.Sprintf("%s/%d/status-%d", strings.TrimPrefix(target, "/"), attempts, status), func(t *testing.T) {
-					var indexHits, chartHits atomic.Int32
-					srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-						if req.URL.Path == "/index.yaml" {
-							indexHits.Add(1)
-							if target != "/index.yaml" {
-								_, _ = io.WriteString(w, helmRepoIndex(""))
+				t.Run(
+					fmt.Sprintf("%s/%d/status-%d", strings.TrimPrefix(target, "/"), attempts, status),
+					func(t *testing.T) {
+						var indexHits, chartHits atomic.Int32
+						srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+							if req.URL.Path == "/index.yaml" {
+								indexHits.Add(1)
+								if target != "/index.yaml" {
+									_, _ = io.WriteString(w, helmRepoIndex(""))
+									return
+								}
+							} else {
+								chartHits.Add(1)
+							}
+							if status != 0 {
+								w.WriteHeader(status)
 								return
 							}
-						} else {
-							chartHits.Add(1)
+							w.Header().Set("Content-Length", "20")
+							_, _ = io.WriteString(w, "partial")
+						}))
+						defer srv.Close()
+						r := httpRepo(srv.URL)
+						lookup := func(_, _ string) *manifest.HelmRepository { return r }
+						root := t.TempDir()
+						c, err := sourcecache.New(t.Context(), root)
+						if err != nil {
+							t.Fatal(err)
 						}
-						if status != 0 {
-							w.WriteHeader(status)
-							return
-						}
-						w.Header().Set("Content-Length", "20")
-						_, _ = io.WriteString(w, "partial")
-					}))
-					defer srv.Close()
-					r := httpRepo(srv.URL)
-					lookup := func(_, _ string) *manifest.HelmRepository { return r }
-					root := t.TempDir()
-					c, err := sourcecache.New(t.Context(), root)
-					if err != nil {
-						t.Fatal(err)
-					}
-					t.Cleanup(func() { _ = c.Close() })
-					fInputs := testInputs{repos: lookup}
-					f := New(nil, Config{Network: newTestNetwork(t), Cache: c})
+						t.Cleanup(func() { _ = c.Close() })
+						fInputs := testInputs{repos: lookup}
+						f := New(nil, Config{Network: newTestNetwork(t), Cache: c})
 
-					hc := helmChart("repo", "app-template", "1.0.0")
-					retry := sourcecache.RetryConfig{Attempts: attempts, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}
-					_, err = f.Fetch(t.Context(), hc, fInputs.readSet(hc), sourcecache.Policy{Retry: retry})
-					terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
-					if !ok || !terminal.Attempted || !errors.Is(err, manifest.ErrFlux) {
-						t.Fatalf("initial terminal=%+v, error=%v", terminal, err)
-					}
-					if status == 0 {
-						if transport, ok := errors.AsType[*url.Error](err); !ok || transport.Op != "Get" || transport.URL != srv.URL+target || !errors.Is(transport.Err, io.ErrUnexpectedEOF) {
-							t.Errorf("initial transport=%+v, error=%v", transport, err)
+						hc := helmChart("repo", "app-template", "1.0.0")
+						retry := sourcecache.RetryConfig{
+							Attempts: attempts,
+							MinWait:  time.Nanosecond,
+							MaxWait:  time.Nanosecond,
 						}
-					} else if response, ok := errors.AsType[*fetcherr.ResponseError](err); !ok || response.StatusCode != status || response.Op != http.MethodGet || !strings.Contains(response.Error(), srv.URL+target) {
-						t.Errorf("initial response=%+v, error=%v", response, err)
-					}
-					wantIndex, wantChart := int32(attempts), int32(0)
-					if target != "/index.yaml" {
-						wantIndex, wantChart = 1, int32(attempts)
-					}
-					if indexHits.Load() != wantIndex || chartHits.Load() != wantChart {
-						t.Fatalf("initial requests: index=%d chart=%d, want index=%d chart=%d", indexHits.Load(), chartHits.Load(), wantIndex, wantChart)
-					}
-
-					if err := c.Close(); err != nil {
-						t.Fatal(err)
-					}
-					warmCache, err := sourcecache.New(t.Context(), root)
-					if err != nil {
-						t.Fatal(err)
-					}
-					t.Cleanup(func() { _ = warmCache.Close() })
-					if warmCache == c {
-						t.Fatal("reopened cache reused the closed owner")
-					}
-					warmInputs := testInputs{repos: lookup}
-					warm := New(nil, Config{Network: newTestNetwork(t), Cache: warmCache})
-
-					_, err = warm.Fetch(t.Context(), hc, warmInputs.readSet(hc), sourcecache.Policy{Retry: retry})
-					terminal, ok = errors.AsType[*sourcecache.TerminalError](err)
-					if !ok || terminal.Attempted || !errors.Is(err, manifest.ErrFlux) {
-						t.Errorf("replayed terminal=%+v, error=%v", terminal, err)
-					}
-					if status == 0 {
-						if transport, ok := errors.AsType[*url.Error](err); !ok || transport.Op != "Get" || transport.URL != "" || !errors.Is(transport.Err, io.ErrUnexpectedEOF) {
-							t.Errorf("replayed transport=%+v, error=%v", transport, err)
+						_, err = f.Fetch(t.Context(), hc, fInputs.readSet(hc), sourcecache.Policy{Retry: retry})
+						terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
+						if !ok || !terminal.Attempted || !errors.Is(err, manifest.ErrFlux) {
+							t.Fatalf("initial terminal=%+v, error=%v", terminal, err)
 						}
-					} else if response, ok := errors.AsType[*fetcherr.ResponseError](err); !ok || response.StatusCode != status || response.Op != http.MethodGet || strings.Contains(response.Error(), srv.URL) {
-						t.Errorf("replayed response=%+v, error=%v", response, err)
-					}
-					if indexHits.Load() != wantIndex || chartHits.Load() != wantChart {
-						t.Errorf("replayed requests: index=%d chart=%d, want index=%d chart=%d", indexHits.Load(), chartHits.Load(), wantIndex, wantChart)
-					}
-				})
+						if status == 0 {
+							if transport, ok := errors.AsType[*url.Error](
+								err,
+							); !ok || transport.Op != "Get" || transport.URL != srv.URL+target ||
+								!errors.Is(transport.Err, io.ErrUnexpectedEOF) {
+								t.Errorf("initial transport=%+v, error=%v", transport, err)
+							}
+						} else if response, ok := errors.AsType[*fetcherr.ResponseError](err); !ok || response.StatusCode != status || response.Op != http.MethodGet || !strings.Contains(response.Error(), srv.URL+target) {
+							t.Errorf("initial response=%+v, error=%v", response, err)
+						}
+						wantIndex, wantChart := int32(attempts), int32(0)
+						if target != "/index.yaml" {
+							wantIndex, wantChart = 1, int32(attempts)
+						}
+						if indexHits.Load() != wantIndex || chartHits.Load() != wantChart {
+							t.Fatalf(
+								"initial requests: index=%d chart=%d, want index=%d chart=%d",
+								indexHits.Load(),
+								chartHits.Load(),
+								wantIndex,
+								wantChart,
+							)
+						}
+
+						if err := c.Close(); err != nil {
+							t.Fatal(err)
+						}
+						warmCache, err := sourcecache.New(t.Context(), root)
+						if err != nil {
+							t.Fatal(err)
+						}
+						t.Cleanup(func() { _ = warmCache.Close() })
+						if warmCache == c {
+							t.Fatal("reopened cache reused the closed owner")
+						}
+						warmInputs := testInputs{repos: lookup}
+						warm := New(nil, Config{Network: newTestNetwork(t), Cache: warmCache})
+
+						_, err = warm.Fetch(t.Context(), hc, warmInputs.readSet(hc), sourcecache.Policy{Retry: retry})
+						terminal, ok = errors.AsType[*sourcecache.TerminalError](err)
+						if !ok || terminal.Attempted || !errors.Is(err, manifest.ErrFlux) {
+							t.Errorf("replayed terminal=%+v, error=%v", terminal, err)
+						}
+						if status == 0 {
+							if transport, ok := errors.AsType[*url.Error](
+								err,
+							); !ok || transport.Op != "Get" || transport.URL != "" ||
+								!errors.Is(transport.Err, io.ErrUnexpectedEOF) {
+								t.Errorf("replayed transport=%+v, error=%v", transport, err)
+							}
+						} else if response, ok := errors.AsType[*fetcherr.ResponseError](err); !ok || response.StatusCode != status || response.Op != http.MethodGet || strings.Contains(response.Error(), srv.URL) {
+							t.Errorf("replayed response=%+v, error=%v", response, err)
+						}
+						if indexHits.Load() != wantIndex || chartHits.Load() != wantChart {
+							t.Errorf(
+								"replayed requests: index=%d chart=%d, want index=%d chart=%d",
+								indexHits.Load(),
+								chartHits.Load(),
+								wantIndex,
+								wantChart,
+							)
+						}
+					},
+				)
 			}
 		}
 	}
-
 }
+
 func TestFetchIndex_ConcurrentRefreshDuringBackoff(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
@@ -772,13 +887,22 @@ func TestFetchIndex_ConcurrentRefreshDuringBackoff(t *testing.T) {
 				body = io.MultiReader(strings.NewReader("partial"), iotest.ErrReader(io.ErrUnexpectedEOF))
 				close(failed)
 			}
-			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body), Header: make(http.Header), Request: req}, nil
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(body),
+				Header:     make(http.Header),
+				Request:    req,
+			}, nil
 		})
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		done := make(chan error, 1)
 		go func() {
-			_, err := f.fetchIndex(ctx, prepared, sourcecache.Policy{Retry: sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour, MaxWait: time.Hour}})
+			_, err := f.fetchIndex(
+				ctx,
+				prepared,
+				sourcecache.Policy{Retry: sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour, MaxWait: time.Hour}},
+			)
 			done <- err
 		}()
 		<-failed
@@ -806,12 +930,10 @@ func TestFetchIndex_ConcurrentRefreshDuringBackoff(t *testing.T) {
 }
 
 func TestFetchHTTPChart_NetworkRoutes(t *testing.T) {
-
 	for _, route := range []string{"index", "chart"} {
 		for _, authenticated := range []bool{false, true} {
 			for _, customTLS := range []bool{false, true} {
 				t.Run(fmt.Sprintf("%s/auth-%t/tls-%t", route, authenticated, customTLS), func(t *testing.T) {
-
 					var network source.Network
 					var indexHits, chartHits, dials atomic.Int32
 					var cause error
@@ -856,7 +978,10 @@ func TestFetchHTTPChart_NetworkRoutes(t *testing.T) {
 						if err := latch(); err != nil {
 							t.Error(err)
 						}
-						_, _ = io.WriteString(w, "apiVersion: v1\nentries:\n  chart:\n  - name: chart\n    version: 1.0.0\n    apiVersion: v2\n    urls: [chart.tgz]\n")
+						_, _ = io.WriteString(
+							w,
+							"apiVersion: v1\nentries:\n  chart:\n  - name: chart\n    version: 1.0.0\n    apiVersion: v2\n    urls: [chart.tgz]\n",
+						)
 					})
 					var srv *httptest.Server
 					if customTLS {
@@ -873,10 +998,15 @@ func TestFetchHTTPChart_NetworkRoutes(t *testing.T) {
 					}
 					if customTLS {
 						r.CertSecretRef = &manifest.LocalObjectReference{Name: "auth"}
-						secret.StringData["ca.crt"] = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}))
+						secret.StringData["ca.crt"] = string(
+							pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}),
+						)
 					}
 					c := cachetest.New(t, "", sourcecache.New)
-					fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret { return secret }, repos: func(_, _ string) *manifest.HelmRepository { return r }}
+					fInputs := testInputs{
+						secrets: func(_, _ string) *manifest.Secret { return secret },
+						repos:   func(_, _ string) *manifest.HelmRepository { return r },
+					}
 					f := New(nil, Config{Cache: c, Network: &network})
 
 					if route == "index" {
@@ -884,14 +1014,28 @@ func TestFetchHTTPChart_NetworkRoutes(t *testing.T) {
 							t.Fatal(err)
 						}
 					}
-					_, err := f.Fetch(t.Context(), helmChart("repo", "chart", "1.0.0"), fInputs.readSet(helmChart("repo", "chart", "1.0.0")), sourcecache.Policy{Retry: sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour}})
+					_, err := f.Fetch(
+						t.Context(),
+						helmChart("repo", "chart", "1.0.0"),
+						fInputs.readSet(helmChart("repo", "chart", "1.0.0")),
+						sourcecache.Policy{Retry: sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour}},
+					)
 					terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
 					wantIndex := int32(0)
 					if route == "chart" {
 						wantIndex = 1
 					}
-					if !ok || terminal.Attempted || !errors.Is(err, cause) || dials.Load() == 0 || indexHits.Load() != wantIndex || chartHits.Load() != 0 {
-						t.Fatalf("error=%v terminal=%+v dials=%d index=%d chart=%d", err, terminal, dials.Load(), indexHits.Load(), chartHits.Load())
+					if !ok || terminal.Attempted || !errors.Is(err, cause) || dials.Load() == 0 ||
+						indexHits.Load() != wantIndex ||
+						chartHits.Load() != 0 {
+						t.Fatalf(
+							"error=%v terminal=%+v dials=%d index=%d chart=%d",
+							err,
+							terminal,
+							dials.Load(),
+							indexHits.Load(),
+							chartHits.Load(),
+						)
 					}
 				})
 			}
@@ -917,7 +1061,12 @@ func TestFetchHTTPChart_BasicAuth_SnapshotRotation(t *testing.T) {
 	var proxyPassword atomic.Value
 	proxyPassword.Store("first")
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.IsAbs() && r.Header.Get("Proxy-Authorization") != "Basic "+base64.StdEncoding.EncodeToString([]byte("proxy:"+proxyPassword.Load().(string))) {
+		if r.URL.IsAbs() &&
+			r.Header.Get(
+				"Proxy-Authorization",
+			) != "Basic "+base64.StdEncoding.EncodeToString(
+				[]byte("proxy:"+proxyPassword.Load().(string)),
+			) {
 			t.Error("transport used a different proxy snapshot")
 			w.WriteHeader(http.StatusProxyAuthRequired)
 			return
@@ -991,12 +1140,19 @@ func TestFetchHTTPChart_BasicAuth_SnapshotRotation(t *testing.T) {
 			defer func() { _ = c.Close() }()
 			fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
 				lookups.Add(1)
-				return &manifest.Secret{StringData: map[string]any{"username": "alice", "password": password.Load().(string), "ca.crt": ca}}
+				return &manifest.Secret{
+					StringData: map[string]any{"username": "alice", "password": password.Load().(string), "ca.crt": ca},
+				}
 			}, repos: func(_, _ string) *manifest.HelmRepository { return r }}
 			f := New(nil, Config{Network: newTestNetwork(t), Cache: c})
 
 			before := hits.Load()
-			art, err := f.Fetch(t.Context(), helmChart("repo", "app-template", "1.0.0"), fInputs.readSet(helmChart("repo", "app-template", "1.0.0")), sourcecache.Policy{Retry: sourcecache.RetryConfig{Attempts: 3}})
+			art, err := f.Fetch(
+				t.Context(),
+				helmChart("repo", "app-template", "1.0.0"),
+				fInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
+				sourcecache.Policy{Retry: sourcecache.RetryConfig{Attempts: 3}},
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1005,13 +1161,24 @@ func TestFetchHTTPChart_BasicAuth_SnapshotRotation(t *testing.T) {
 			}
 			previous = art.Key
 			before = hits.Load()
-			if _, err := f.Fetch(t.Context(), helmChart("repo", "app-template", "1.0.0"), fInputs.readSet(helmChart("repo", "app-template", "1.0.0")), sourcecache.Policy{}); err != nil || hits.Load() != before {
+			if _, err := f.Fetch(
+				t.Context(),
+				helmChart("repo", "app-template", "1.0.0"),
+				fInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
+				sourcecache.Policy{},
+			); err != nil ||
+				hits.Load() != before {
 				t.Fatalf("warm chart missed: %v", err)
 			}
 			fail.Store(true)
 			failed := *r
 			failed.Interval.Duration = 0
-			_, err = f.fetchHTTPChart(t.Context(), preparedHTTP(t, f, fInputs, &failed), helmChart("repo", "app-template", "1.0.0"), sourcecache.Policy{})
+			_, err = f.fetchHTTPChart(
+				t.Context(),
+				preparedHTTP(t, f, fInputs, &failed),
+				helmChart("repo", "app-template", "1.0.0"),
+				sourcecache.Policy{},
+			)
 			terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
 			if !ok || !terminal.Attempted {
 				t.Fatalf("failed snapshot: %v", err)
@@ -1048,13 +1215,22 @@ func TestFetchHTTPChart_NestedIndexExhaustion_DueWave(t *testing.T) {
 					f := New(nil, Config{Network: newTestNetwork(t), Cache: c})
 
 					prepared := preparedHTTP(t, f, fInputs, repo)
-					outer := struct{ Repository, Chart, Transport any }{repo.Content(), helmChart("repo", "app-template", "1.0.0").Content(), prepared.material}
+					outer := struct{ Repository, Chart, Transport any }{
+						repo.Content(),
+						helmChart("repo", "app-template", "1.0.0").Content(),
+						prepared.material,
+					}
 					inner := struct{ Repository, Transport any }{repo.Content(), prepared.material}
 					cause := &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET}
 					seed := func(content any) {
-						_, _, _, err := c.Blob(t.Context(), sourcecache.BlobKey{Content: content}, sourcecache.Policy{}, func(context.Context, sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
-							return sourcecache.ProducerResult{}, cause
-						})
+						_, _, _, err := c.Blob(
+							t.Context(),
+							sourcecache.BlobKey{Content: content},
+							sourcecache.Policy{},
+							func(context.Context, sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+								return sourcecache.ProducerResult{}, cause
+							},
+						)
 						terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
 						if !ok || !terminal.Attempted {
 							t.Fatalf("seed: %v", err)
@@ -1090,13 +1266,28 @@ func TestFetchHTTPChart_NestedIndexExhaustion_DueWave(t *testing.T) {
 						} else {
 							chartCalls.Add(1)
 						}
-						return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+						return &http.Response{
+							StatusCode: http.StatusOK,
+							Header:     make(http.Header),
+							Body:       io.NopCloser(strings.NewReader(body)),
+						}, nil
 					})
 					var wg sync.WaitGroup
 					results := make(chan error, callers)
 					for range callers {
 						wg.Go(func() {
-							_, err := f.fetchHTTPChart(t.Context(), prepared, helmChart("repo", "app-template", "1.0.0"), sourcecache.Policy{Retry: sourcecache.RetryConfig{Attempts: 5, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}})
+							_, err := f.fetchHTTPChart(
+								t.Context(),
+								prepared,
+								helmChart("repo", "app-template", "1.0.0"),
+								sourcecache.Policy{
+									Retry: sourcecache.RetryConfig{
+										Attempts: 5,
+										MinWait:  time.Nanosecond,
+										MaxWait:  time.Nanosecond,
+									},
+								},
+							)
 							results <- err
 						})
 					}
@@ -1179,7 +1370,12 @@ func TestFetchHTTPChart_RequestTimeouts(t *testing.T) {
 					if blocked && (index && tc.stage == "index" || !index && tc.stage == "chart") {
 						body = timeoutChartBody{req.Context()}
 					}
-					return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: body, Request: req}, nil
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Header:     make(http.Header),
+						Body:       body,
+						Request:    req,
+					}, nil
 				})
 				prepared := preparedHTTP(t, f, testInputs{}, r)
 				prepared.client.Transport = tr
@@ -1217,7 +1413,11 @@ func TestFetchHTTPChart_RequestTimeouts(t *testing.T) {
 				if time.Since(start) != want {
 					t.Fatalf("recovered operation: elapsed=%v want=%v", time.Since(start), want)
 				}
-				if body, err := fs.ReadFile(acquired.FS, source.HelmChartArchiveFilename); err != nil || !bytes.Equal(body, chart) {
+				if body, err := fs.ReadFile(
+					acquired.FS,
+					source.HelmChartArchiveFilename,
+				); err != nil ||
+					!bytes.Equal(body, chart) {
 					t.Fatalf("chart bytes differ: %v", err)
 				}
 				if err := f.cache.Close(); err != nil {
@@ -1257,10 +1457,21 @@ func TestFetchHTTPChart_NestedRetryDeadline(t *testing.T) {
 			case <-req.Context().Done():
 				return nil, req.Context().Err()
 			}
-			return &http.Response{StatusCode: http.StatusServiceUnavailable, Header: make(http.Header), Body: http.NoBody, Request: req}, nil
+			return &http.Response{
+				StatusCode: http.StatusServiceUnavailable,
+				Header:     make(http.Header),
+				Body:       http.NoBody,
+				Request:    req,
+			}, nil
 		})
-		_, err := f.fetchHTTPChart(t.Context(), prepared, helmChart(r.Name, "app-template", "1.0.0"), sourcecache.Policy{Retry: sourcecache.RetryConfig{Attempts: 3, MinWait: time.Second}})
-		if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, manifest.ErrFlux) || calls != 2 || time.Since(start) != 5*time.Second {
+		_, err := f.fetchHTTPChart(
+			t.Context(),
+			prepared,
+			helmChart(r.Name, "app-template", "1.0.0"),
+			sourcecache.Policy{Retry: sourcecache.RetryConfig{Attempts: 3, MinWait: time.Second}},
+		)
+		if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, manifest.ErrFlux) || calls != 2 ||
+			time.Since(start) != 5*time.Second {
 			t.Fatalf("nested retries: calls=%d elapsed=%v error=%v", calls, time.Since(start), err)
 		}
 	})
@@ -1308,12 +1519,22 @@ func TestFetchHTTPChart_AdmissionTimeoutIsolation(t *testing.T) {
 			if index {
 				data = []byte(helmRepoIndex(chartDigest(chart)))
 			}
-			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(data)), Request: req}, nil
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(bytes.NewReader(data)),
+				Request:    req,
+			}, nil
 		})
 		fetch := func(r *manifest.HelmRepository, done chan<- error) {
 			prepared := preparedHTTP(t, f, inputs, r)
 			prepared.client.Transport = tr
-			_, err := f.fetchHTTPChart(t.Context(), prepared, helmChart(r.Name, "app-template", "1.0.0"), sourcecache.Policy{})
+			_, err := f.fetchHTTPChart(
+				t.Context(),
+				prepared,
+				helmChart(r.Name, "app-template", "1.0.0"),
+				sourcecache.Policy{},
+			)
 			done <- err
 		}
 		slowDone, healthyDone := make(chan error, 1), make(chan error, 1)
@@ -1376,7 +1597,12 @@ func TestFetchHTTPChart_AdmissionCancellation(t *testing.T) {
 				}
 				done := make(chan error, 1)
 				go func() {
-					_, err := f.fetchHTTPChart(ctx, prepared, helmChart(r.Name, "app-template", "1.0.0"), sourcecache.Policy{})
+					_, err := f.fetchHTTPChart(
+						ctx,
+						prepared,
+						helmChart(r.Name, "app-template", "1.0.0"),
+						sourcecache.Policy{},
+					)
 					done <- err
 				}()
 				synctest.Wait()
@@ -1387,7 +1613,8 @@ func TestFetchHTTPChart_AdmissionCancellation(t *testing.T) {
 				} else {
 					cancel()
 				}
-				if err := <-done; !errors.Is(err, want) || !errors.Is(err, manifest.ErrFlux) || calls != 0 || len(f.indexDecodes) != 1 {
+				if err := <-done; !errors.Is(err, want) || !errors.Is(err, manifest.ErrFlux) || calls != 0 ||
+					len(f.indexDecodes) != 1 {
 					t.Fatalf("queued cancellation: requests=%d permits=%d error=%v", calls, len(f.indexDecodes), err)
 				}
 				<-f.indexDecodes
@@ -1416,7 +1643,11 @@ func TestFetchHTTPChart_AdmissionTransferOverlap(t *testing.T) {
 			if index {
 				data = helmRepoIndex("")
 			}
-			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(data)), Request: req}, nil
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(data)),
+				Request:    req,
+			}, nil
 		})
 		fetch := func(host string, done chan<- error) {
 			r := &httpRepository{HelmRepository: httpRepo("https://" + host), client: &http.Client{Transport: tr}}

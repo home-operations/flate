@@ -95,7 +95,12 @@ func buildFixture(t *testing.T) (filesys.FileSystem, string) {
 		testutil.WriteFile(t, root, dir+"/schema.json", buildSchema)
 	}
 	testutil.WriteFile(t, root, "shared.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: shared}\n")
-	testutil.WriteFile(t, root, "plugin/transformer.yaml", "apiVersion: schema.example/v1\nkind: ExternalTransformer\nmetadata: {name: external}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"plugin/transformer.yaml",
+		"apiVersion: schema.example/v1\nkind: ExternalTransformer\nmetadata: {name: external}\n",
+	)
 	return filesys.MakeFsOnDisk(), root
 }
 
@@ -206,8 +211,18 @@ func TestBuild_PanicRecovery(t *testing.T) {
 	testutil.WriteFile(t, root, "malformed/kustomization.yaml", buildConfig+"openapi:\n  path: schema.json\n")
 	testutil.WriteFile(t, root, "malformed/resources.yaml", buildResources)
 	testutil.WriteFile(t, root, "malformed/schema.json", "{invalid")
-	testutil.WriteFile(t, root, "invalid-object/kustomization.yaml", "namespace: test\nnamePrefix: test\nresources: [resource.yaml]\n")
-	testutil.WriteFile(t, root, "invalid-object/resource.yaml", "apiVersion: invalid[value,kind:synthetic]\nkind: invalid[value,kind:synthetic]\nmetadata: {name: app}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"invalid-object/kustomization.yaml",
+		"namespace: test\nnamePrefix: test\nresources: [resource.yaml]\n",
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"invalid-object/resource.yaml",
+		"apiVersion: invalid[value,kind:synthetic]\nkind: invalid[value,kind:synthetic]\nmetadata: {name: app}\n",
+	)
 	kustomize.BuildMutex.Lock()
 	defer kustomize.BuildMutex.Unlock()
 	openapi.ResetOpenAPI()

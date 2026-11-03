@@ -18,7 +18,11 @@ var effectiveHistoryCases = []struct {
 	first, second map[string]string
 	same          bool
 }{
-	{name: "unused provider", second: map[string]string{"NAME": "unrelated", "USED": "kept", "OTHER": "second"}, same: true},
+	{
+		name:   "unused provider",
+		second: map[string]string{"NAME": "unrelated", "USED": "kept", "OTHER": "second"},
+		same:   true,
+	},
 	{name: "used provider", second: map[string]string{"NAME": "unrelated", "USED": "changed", "OTHER": "first"}},
 	{name: "deactivation", second: map[string]string{}},
 	{name: "optional appears", firstEmpty: true, second: map[string]string{"NAME": "unrelated", "USED": "kept"}},
@@ -180,7 +184,9 @@ func substitutionHistoryConfig(cacheDir string, variables map[string]string) Con
 		for name, value := range variables {
 			data[name] = value
 		}
-		cfg.Supply = []store.SuppliedObject{{Object: &manifest.ConfigMap{Name: "supplied", Namespace: "apps", Data: data}}}
+		cfg.Supply = []store.SuppliedObject{
+			{Object: &manifest.ConfigMap{Name: "supplied", Namespace: "apps", Data: data}},
+		}
 	}
 	return cfg
 }

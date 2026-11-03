@@ -250,15 +250,38 @@ func TestReadSet_HitAndInvalidation(t *testing.T) {
 			}
 		})
 	}
-
 }
 
 func TestReadSet_RemoteObservations(t *testing.T) {
 	entries := []remoteEntry{
-		{Input: remoteInput{Operation: remoteGit, URL: "file:///example.invalid/b.git", Ref: "z", Timeout: 27 * time.Second, Submodules: true}, Identity: remoteIdentity{ArtifactInput: store.ArtifactInput{Key: "family", Content: "1"}}},
-		{Input: remoteInput{Operation: remoteHTTP, URL: "https://example.invalid/b.git//file"}, Identity: remoteIdentity{ArtifactInput: store.ArtifactInput{Content: "http-b"}}},
-		{Input: remoteInput{Operation: remoteGit, URL: "file:///example.invalid/b.git", Ref: "a", Timeout: 27 * time.Second, Submodules: true}, Identity: remoteIdentity{ArtifactInput: store.ArtifactInput{Key: "family", Content: "2"}}},
-		{Input: remoteInput{Operation: remoteHTTP, URL: "https://example.invalid/a"}, Identity: remoteIdentity{HTTPStatus: http.StatusNotFound}},
+		{
+			Input: remoteInput{
+				Operation:  remoteGit,
+				URL:        "file:///example.invalid/b.git",
+				Ref:        "z",
+				Timeout:    27 * time.Second,
+				Submodules: true,
+			},
+			Identity: remoteIdentity{ArtifactInput: store.ArtifactInput{Key: "family", Content: "1"}},
+		},
+		{
+			Input:    remoteInput{Operation: remoteHTTP, URL: "https://example.invalid/b.git//file"},
+			Identity: remoteIdentity{ArtifactInput: store.ArtifactInput{Content: "http-b"}},
+		},
+		{
+			Input: remoteInput{
+				Operation:  remoteGit,
+				URL:        "file:///example.invalid/b.git",
+				Ref:        "a",
+				Timeout:    27 * time.Second,
+				Submodules: true,
+			},
+			Identity: remoteIdentity{ArtifactInput: store.ArtifactInput{Key: "family", Content: "2"}},
+		},
+		{
+			Input:    remoteInput{Operation: remoteHTTP, URL: "https://example.invalid/a"},
+			Identity: remoteIdentity{HTTPStatus: http.StatusNotFound},
+		},
 	}
 	policy := entries[0]
 	policy.Input.Timeout = time.Minute
@@ -266,7 +289,13 @@ func TestReadSet_RemoteObservations(t *testing.T) {
 	policy.Input.Submodules = false
 	entries = append(entries, policy)
 	entries[1].Parents = []remoteInput{entries[0].Input}
-	entries[3].Parents = []remoteInput{entries[0].Input, entries[2].Input, entries[0].Input, entries[4].Input, entries[5].Input}
+	entries[3].Parents = []remoteInput{
+		entries[0].Input,
+		entries[2].Input,
+		entries[0].Input,
+		entries[4].Input,
+		entries[5].Input,
+	}
 	want := slices.Clone(entries)
 	want[3].Parents = []remoteInput{entries[2].Input, entries[0].Input, entries[5].Input, entries[4].Input}
 	slices.SortFunc(want, func(a, b remoteEntry) int { return compareRemoteInputs(a.Input, b.Input) })
@@ -337,47 +366,79 @@ func TestReadSet_RemoteValidation(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				record(r.URL.Path)
 				body := "remote data"
-				if changed.Load() && (scenario == "changed-leaf" && r.URL.Path == "/a-child" || scenario == "independent-input" && r.URL.Path == "/0-independent") {
+				if changed.Load() &&
+					(scenario == "changed-leaf" && r.URL.Path == "/a-child" || scenario == "independent-input" && r.URL.Path == "/0-independent") {
 					body = "changed data"
 				}
 				_, _ = io.WriteString(w, body)
 			}))
 			t.Cleanup(srv.Close)
-			a := remoteInput{Operation: remoteGit, URL: "file:///example.invalid/a.git", Ref: "main", Timeout: 27 * time.Second, Submodules: true}
-			b := remoteInput{Operation: remoteGit, URL: "file:///example.invalid/z.git", Ref: "main", Timeout: 27 * time.Second, Submodules: true}
+			a := remoteInput{
+				Operation:  remoteGit,
+				URL:        "file:///example.invalid/a.git",
+				Ref:        "main",
+				Timeout:    27 * time.Second,
+				Submodules: true,
+			}
+			b := remoteInput{
+				Operation:  remoteGit,
+				URL:        "file:///example.invalid/z.git",
+				Ref:        "main",
+				Timeout:    27 * time.Second,
+				Submodules: true,
+			}
 			child := remoteInput{Operation: remoteHTTP, URL: srv.URL + "/a-child"}
 			independent := remoteInput{Operation: remoteHTTP, URL: srv.URL + "/z-independent"}
 			if scenario == "independent-input" || scenario == "descriptor-cycle" || scenario == "missing-parent" {
 				independent.URL = srv.URL + "/0-independent"
 			}
 			repositories := map[string]map[string]string{
-				a.URL: {"subdir/kustomization.yaml": "resources: ['" + b.URL + "//subdir?ref=main']\n", "leaf/kustomization.yaml": "resources: []\n"},
+				a.URL: {
+					"subdir/kustomization.yaml": "resources: ['" + b.URL + "//subdir?ref=main']\n",
+					"leaf/kustomization.yaml":   "resources: []\n",
+				},
 				b.URL: {"subdir/kustomization.yaml": "resources: ['" + a.URL + "//leaf?ref=main']\n"},
 			}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			newCache := func() *TreeCache {
 				c := newTestTreeCache(t, "")
-				c.SetGitBaseFetcher(func(_ context.Context, request GitBaseRequest, _ sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-					record(request.URL)
-					revision := "1"
-					if changed.Load() {
-						switch {
-						case scenario == "shared-parent-changes" && request.URL == b.URL:
-							revision = "2"
-						case scenario == "parent-failure" && request.URL == a.URL:
-							return nil, fs.ErrNotExist
-						case scenario == "canceled-parent" && request.URL == a.URL:
-							cancel()
-							return nil, ctx.Err()
+				c.SetGitBaseFetcher(
+					func(_ context.Context, request GitBaseRequest, _ sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+						record(request.URL)
+						revision := "1"
+						if changed.Load() {
+							switch {
+							case scenario == "shared-parent-changes" && request.URL == b.URL:
+								revision = "2"
+							case scenario == "parent-failure" && request.URL == a.URL:
+								return nil, fs.ErrNotExist
+							case scenario == "canceled-parent" && request.URL == a.URL:
+								cancel()
+								return nil, ctx.Err()
+							}
 						}
-					}
-					return &store.SourceArtifact{FS: memoryTree(t, repositories[request.URL]), Key: request.URL, Content: revision, Revision: revision}, nil
-				})
+						return &store.SourceArtifact{
+							FS:       memoryTree(t, repositories[request.URL]),
+							Key:      request.URL,
+							Content:  revision,
+							Revision: revision,
+						}, nil
+					},
+				)
 				return c
 			}
 			rec := newReadSet("/src")
-			input := newTreeFS(memoryTree(t, map[string]string{"kustomization.yaml": "resources: ['" + independent.URL + "', '" + a.URL + "//subdir?ref=main']\n"}), "/src", rec)
+			input := newTreeFS(
+				memoryTree(
+					t,
+					map[string]string{
+						"kustomization.yaml": "resources: ['" + independent.URL + "', '" + a.URL + "//subdir?ref=main']\n",
+					},
+				),
+				"/src",
+				rec,
+			)
 			c := newCache()
 			if scenario == "descriptor-cycle" {
 				if err := preflightRemoteResources(t.Context(), c, input, "/src"); err != nil {
@@ -408,7 +469,15 @@ func TestReadSet_RemoteValidation(t *testing.T) {
 						}
 					}
 					if scenario == "missing-parent" && descriptor == child {
-						parents = append(parents, remoteInput{Operation: remoteGit, URL: "file:///example.invalid/missing.git", Timeout: 27 * time.Second, Submodules: true})
+						parents = append(
+							parents,
+							remoteInput{
+								Operation:  remoteGit,
+								URL:        "file:///example.invalid/missing.git",
+								Timeout:    27 * time.Second,
+								Submodules: true,
+							},
+						)
 					}
 					rec.recordRemote(descriptor, identity, parents)
 				}
@@ -492,13 +561,15 @@ func TestReadSet_RemotePolicyValidation(t *testing.T) {
 	t.Parallel()
 	c := newTestTreeCache(t, "")
 	var changed atomic.Bool
-	c.SetGitBaseFetcher(func(_ context.Context, request GitBaseRequest, _ sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-		revision := fmt.Sprintf("%v/%t", request.Timeout, request.Submodules)
-		if changed.Load() && request.Timeout == time.Minute && !request.Submodules {
-			revision = "changed"
-		}
-		return &store.SourceArtifact{Key: "same", Content: revision, Revision: revision, FS: fstest.MapFS{}}, nil
-	})
+	c.SetGitBaseFetcher(
+		func(_ context.Context, request GitBaseRequest, _ sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+			revision := fmt.Sprintf("%v/%t", request.Timeout, request.Submodules)
+			if changed.Load() && request.Timeout == time.Minute && !request.Submodules {
+				revision = "changed"
+			}
+			return &store.SourceArtifact{Key: "same", Content: revision, Revision: revision, FS: fstest.MapFS{}}, nil
+		},
+	)
 	rec := newReadSet("/src")
 	for _, input := range []remoteInput{
 		{Operation: remoteGit, URL: "file:///repo", Timeout: time.Second, Submodules: true},
@@ -572,18 +643,29 @@ func TestReadSet_RemoteFailureCancellation(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			probe := remoteInput{Operation: remoteHTTP, URL: srv.URL}
-			snap := readSetSnapshot{Remotes: []remoteEntry{{Input: probe, Identity: remoteIdentity{HTTPStatus: http.StatusNotFound}}}}
+			snap := readSetSnapshot{
+				Remotes: []remoteEntry{{Input: probe, Identity: remoteIdentity{HTTPStatus: http.StatusNotFound}}},
+			}
 			if completed {
 				_, identity, err := probe.acquire(t.Context(), c, &treeFS{})
 				if err == nil || identity != snap.Remotes[0].Identity {
 					t.Fatalf("completed probe=%+v error=%v", identity, err)
 				}
 				git := remoteInput{Operation: remoteGit, URL: "file:///repo"}
-				snap.Remotes = append(snap.Remotes, remoteEntry{Input: git, Identity: remoteIdentity{Key: "family", Revision: "1"}, Parents: []remoteInput{probe}})
-				c.SetGitBaseFetcher(func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-					cancel()
-					return &store.SourceArtifact{FS: fstest.MapFS{}, Key: "family", Revision: "1"}, nil
-				})
+				snap.Remotes = append(
+					snap.Remotes,
+					remoteEntry{
+						Input:    git,
+						Identity: remoteIdentity{Key: "family", Revision: "1"},
+						Parents:  []remoteInput{probe},
+					},
+				)
+				c.SetGitBaseFetcher(
+					func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+						cancel()
+						return &store.SourceArtifact{FS: fstest.MapFS{}, Key: "family", Revision: "1"}, nil
+					},
+				)
 			}
 			type result struct {
 				valid bool

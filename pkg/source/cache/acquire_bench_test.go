@@ -6,8 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/home-operations/flate/internal/testutil"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+
+	"github.com/home-operations/flate/internal/testutil"
 )
 
 func BenchmarkAcquire_Warm(b *testing.B) {
@@ -25,16 +26,26 @@ func BenchmarkAcquire_Warm(b *testing.B) {
 			var buf bytes.Buffer
 			testutil.WriteTar(b, &buf, map[string]string{"file": string(make([]byte, 4096))}, 0o600)
 			key := ArchiveKey{Content: "source-benchmark"}
-			input, _, _, err := c.Acquire(b.Context(), key, Policy{MaxAge: time.Hour}, producer(buf.Bytes(), ocispec.Descriptor{}))
+			input, _, _, err := c.Acquire(
+				b.Context(),
+				key,
+				Policy{MaxAge: time.Hour},
+				producer(buf.Bytes(), ocispec.Descriptor{}),
+			)
 			if err != nil {
 				b.Fatal(err)
 			}
 			b.Run("acquire", func(b *testing.B) {
 				for b.Loop() {
-					if _, _, _, err := c.Acquire(b.Context(), key, Policy{MaxAge: time.Hour}, func(context.Context, ProducerInput) (ProducerResult, error) {
-						b.Fatal("warm acquisition called producer")
-						return ProducerResult{}, nil
-					}); err != nil {
+					if _, _, _, err := c.Acquire(
+						b.Context(),
+						key,
+						Policy{MaxAge: time.Hour},
+						func(context.Context, ProducerInput) (ProducerResult, error) {
+							b.Fatal("warm acquisition called producer")
+							return ProducerResult{}, nil
+						},
+					); err != nil {
 						b.Fatal(err)
 					}
 				}

@@ -30,12 +30,22 @@ func TestFinalizeIndex_DuplicateDocumentKeys(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "entry/kustomization.yaml", "resources: [../shared]\nnamespace: one\nnamespace: two\n")
-	testutil.WriteFile(t, root, "shared/kustomization.yaml", "resources: [cm.yaml]\npatches: [{path: ../inputs/ignored, path: ../inputs/patch}]\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"shared/kustomization.yaml",
+		"resources: [cm.yaml]\npatches: [{path: ../inputs/ignored, path: ../inputs/patch}]\n",
+	)
 	testutil.WriteFile(t, root, "shared/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: cm}\n")
 	testutil.WriteFile(t, root, "inputs/ignored", "[]\n")
 	testutil.WriteFile(t, root, "inputs/patch", "- op: add\n  path: /data\n  value: {key: changed}\n")
 	testutil.WriteFile(t, root, "alias/kustomization.yaml", "namespace: one\nx: &namespace y\n*namespace: z\n")
-	testutil.WriteFile(t, root, "merge/kustomization.yaml", "a: &a {namespace: one}\nb: &b {namePrefix: pre-}\n<<: *a\n<<: *b\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"merge/kustomization.yaml",
+		"a: &a {namespace: one}\nb: &b {namePrefix: pre-}\n<<: *a\n<<: *b\n",
+	)
 	s := store.New()
 	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./entry"}
 	s.AddObject(owner)
@@ -48,7 +58,11 @@ func TestFinalizeIndex_DuplicateDocumentKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, file := range []string{"shared/kustomization.yaml", "shared/cm.yaml", "inputs/patch"} {
-		assert.Diff(t, l.Index.Readers[file], []manifest.FileReader{{Reader: owner.Named(), Source: manifest.BootstrapSourceID}})
+		assert.Diff(
+			t,
+			l.Index.Readers[file],
+			[]manifest.FileReader{{Reader: owner.Named(), Source: manifest.BootstrapSourceID}},
+		)
 		if !slices.Contains(ownersForTest(l.Index, file), owner.Named()) {
 			t.Errorf("owner missing for %s", file)
 		}
@@ -63,7 +77,8 @@ func TestFinalizeIndex_DuplicateDocumentKeys(t *testing.T) {
 		t.Fatal("nested duplicate keys discarded the typed patch")
 	}
 	assert.Equal(t, doc.Patches[0].Path, "../inputs/patch")
-	if len(l.Index.Readers["inputs/ignored"]) != 0 || slices.Contains(ownersForTest(l.Index, "inputs/ignored"), owner.Named()) {
+	if len(l.Index.Readers["inputs/ignored"]) != 0 ||
+		slices.Contains(ownersForTest(l.Index, "inputs/ignored"), owner.Named()) {
 		t.Error("discarded duplicate patch gained a reader or owner")
 	}
 	doc, _ = l.documents.read(filepath.Join(root, "alias"))
@@ -116,7 +131,11 @@ func TestFinalizeIndex_ConfigurationBoundaries(t *testing.T) {
 			root := filepath.Join(parent, "source")
 			input := fstest.MapFS{
 				"source/apps/kustomization.yaml": {Data: []byte("generators: [../../foreign/plugin.yaml]\n")},
-				"foreign/plugin.yaml":            {Data: []byte("apiVersion: builtin\nkind: SecretGenerator\nmetadata: {name: foreign}\nfiles: [private.txt]\n")},
+				"foreign/plugin.yaml": {
+					Data: []byte(
+						"apiVersion: builtin\nkind: SecretGenerator\nmetadata: {name: foreign}\nfiles: [private.txt]\n",
+					),
+				},
 			}
 			if mounted {
 				root = parent
@@ -128,20 +147,31 @@ func TestFinalizeIndex_ConfigurationBoundaries(t *testing.T) {
 			}
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: path}
 			s.AddObject(owner)
-			s.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: parent, LocalRoot: parent, FS: input})
+			s.SetArtifact(
+				manifest.BootstrapSourceID,
+				&store.SourceArtifact{LocalPath: parent, LocalRoot: parent, FS: input},
+			)
 			if mounted {
 				source := &manifest.GitRepository{Name: "foreign", Namespace: "apps"}
 				s.AddObject(source)
-				s.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: filepath.Join(parent, "foreign"), FS: fstest.MapFS{"plugin.yaml": input["foreign/plugin.yaml"]}})
+				s.SetArtifact(
+					source.Named(),
+					&store.SourceArtifact{
+						LocalPath: filepath.Join(parent, "foreign"),
+						FS:        fstest.MapFS{"plugin.yaml": input["foreign/plugin.yaml"]},
+					},
+				)
 			}
 			l := New(s)
 			if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 				t.Fatal(err)
 			}
 			warnings := s.Warnings()
-			if len(warnings) != 1 || warnings[0].Resource != owner.Named() || warnings[0].Category != manifest.WarnIncompleteInputCoverage || !slices.ContainsFunc(warnings[0].Detail, func(detail string) bool {
-				return strings.Contains(detail, "configuration reference cannot be inspected locally")
-			}) {
+			if len(warnings) != 1 || warnings[0].Resource != owner.Named() ||
+				warnings[0].Category != manifest.WarnIncompleteInputCoverage ||
+				!slices.ContainsFunc(warnings[0].Detail, func(detail string) bool {
+					return strings.Contains(detail, "configuration reference cannot be inspected locally")
+				}) {
 				t.Fatalf("missing source-boundary uncertainty: %+v", warnings)
 			}
 			for _, file := range []string{"../foreign/plugin.yaml", "foreign/plugin.yaml", "source/apps/private.txt", "apps/private.txt"} {
@@ -149,7 +179,10 @@ func TestFinalizeIndex_ConfigurationBoundaries(t *testing.T) {
 					t.Errorf("foreign configuration gained attribution: %s", file)
 				}
 			}
-			if id := (manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "foreign"}); len(l.Index.Records[id].Productions) != 0 || s.GetObject(id) != nil {
+			if id := (manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "foreign"}); len(
+				l.Index.Records[id].Productions,
+			) != 0 ||
+				s.GetObject(id) != nil {
 				t.Fatal("foreign configuration admitted a producer")
 			}
 		})
@@ -160,19 +193,54 @@ func TestFinalizeIndex_ConfigurationInvokingLoader(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "configs/kustomization.yaml", "namespace: wrappers\nresources: [nested]\n")
-	testutil.WriteFile(t, root, "configs/nested/kustomization.yaml", "resources: [../plugin.yaml]\ncomponents: [../component]\n")
-	testutil.WriteFile(t, root, "configs/component/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [plugin.yaml]\n")
-	testutil.WriteFile(t, root, "configs/component/plugin.yaml", "apiVersion: builtin\nkind: SecretGenerator\nmetadata: {name: nested}\nenvs: [extra.env]\n")
-	testutil.WriteFile(t, root, "configs/plugin.yaml", "apiVersion: builtin\nkind: ConfigMapGenerator\nmetadata: {name: generated}\nfiles: [value.txt]\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"configs/nested/kustomization.yaml",
+		"resources: [../plugin.yaml]\ncomponents: [../component]\n",
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"configs/component/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [plugin.yaml]\n",
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"configs/component/plugin.yaml",
+		"apiVersion: builtin\nkind: SecretGenerator\nmetadata: {name: nested}\nenvs: [extra.env]\n",
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"configs/plugin.yaml",
+		"apiVersion: builtin\nkind: ConfigMapGenerator\nmetadata: {name: generated}\nfiles: [value.txt]\n",
+	)
 	s := store.New()
 	for _, name := range []string{"a", "b"} {
-		testutil.WriteFile(t, root, name+"/kustomization.yaml", "resources: [../configs/plugin.yaml]\ngenerators: [../configs]\n")
+		testutil.WriteFile(
+			t,
+			root,
+			name+"/kustomization.yaml",
+			"resources: [../configs/plugin.yaml]\ngenerators: [../configs]\n",
+		)
 		testutil.WriteFile(t, root, name+"/value.txt", name)
 		testutil.WriteFile(t, root, name+"/extra.env", "VALUE="+name)
 		s.AddObject(&manifest.Kustomization{Name: name, Namespace: "apps", Path: "./" + name})
 	}
-	testutil.WriteFile(t, root, "combined/kustomization.yaml", "resources: [../a, ../b, dual.yaml]\ngenerators: [dual.yaml]\n")
-	testutil.WriteFile(t, root, "combined/dual.yaml", "apiVersion: builtin\nkind: ConfigMapGenerator\nmetadata: {name: dual}\nfiles: [dual.txt]\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"combined/kustomization.yaml",
+		"resources: [../a, ../b, dual.yaml]\ngenerators: [dual.yaml]\n",
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"combined/dual.yaml",
+		"apiVersion: builtin\nkind: ConfigMapGenerator\nmetadata: {name: dual}\nfiles: [dual.txt]\n",
+	)
 	testutil.WriteFile(t, root, "combined/dual.txt", "dual input")
 	combined := &manifest.Kustomization{Name: "combined", Namespace: "apps", Path: "./combined"}
 	s.AddObject(combined)
@@ -181,14 +249,36 @@ func TestFinalizeIndex_ConfigurationInvokingLoader(t *testing.T) {
 	l := New(s)
 	idx := rendererFixture(t, l, root)
 	for _, name := range []string{"a", "b"} {
-		assert.Diff(t, idx.Readers[name+"/value.txt"], []manifest.FileReader{{Reader: testutil.KustomizationID("apps", name), Source: manifest.BootstrapSourceID}, {Reader: combined.Named(), Source: manifest.BootstrapSourceID}})
-		assert.Diff(t, idx.Readers[name+"/extra.env"], []manifest.FileReader{{Reader: testutil.KustomizationID("apps", name), Source: manifest.BootstrapSourceID}, {Reader: combined.Named(), Source: manifest.BootstrapSourceID}})
+		assert.Diff(
+			t,
+			idx.Readers[name+"/value.txt"],
+			[]manifest.FileReader{
+				{Reader: testutil.KustomizationID("apps", name), Source: manifest.BootstrapSourceID},
+				{Reader: combined.Named(), Source: manifest.BootstrapSourceID},
+			},
+		)
+		assert.Diff(
+			t,
+			idx.Readers[name+"/extra.env"],
+			[]manifest.FileReader{
+				{Reader: testutil.KustomizationID("apps", name), Source: manifest.BootstrapSourceID},
+				{Reader: combined.Named(), Source: manifest.BootstrapSourceID},
+			},
+		)
 	}
-	assert.Diff(t, idx.Readers["combined/dual.txt"], []manifest.FileReader{{Reader: combined.Named(), Source: manifest.BootstrapSourceID}})
-	if len(idx.Readers["configs/value.txt"]) != 0 || len(idx.Readers["configs/nested/value.txt"]) != 0 || len(idx.Readers["ordinary/value.txt"]) != 0 || len(s.Warnings()) != 0 {
+	assert.Diff(
+		t,
+		idx.Readers["combined/dual.txt"],
+		[]manifest.FileReader{{Reader: combined.Named(), Source: manifest.BootstrapSourceID}},
+	)
+	if len(idx.Readers["configs/value.txt"]) != 0 || len(idx.Readers["configs/nested/value.txt"]) != 0 ||
+		len(idx.Readers["ordinary/value.txt"]) != 0 ||
+		len(s.Warnings()) != 0 {
 		t.Fatalf("configuration used its own loader or lost namespace-wrapper proof: %+v", s.Warnings())
 	}
-	if _, exists := idx.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "generated", Namespace: "wrappers"}); exists {
+	if _, exists := idx.Lookup(
+		manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "generated", Namespace: "wrappers"},
+	); exists {
 		t.Fatal("configuration content became a generated object")
 	}
 }
@@ -206,18 +296,41 @@ func TestFinalizeIndex_NestedConfigurationLoader(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", "generators: [../config]\n")
-			testutil.WriteFile(t, root, "config/kustomization.yaml", "resources: [plugin.yaml]\ntransformers: [nested.yaml]\n")
-			testutil.WriteFile(t, root, "config/plugin.yaml", "apiVersion: builtin\nkind: ConfigMapGenerator\nmetadata: {name: generated}\nfiles: [value.txt]\n")
-			testutil.WriteFile(t, root, "config/nested.yaml", "apiVersion: builtin\nmetadata: {name: nested}\n"+tc.transformer)
+			testutil.WriteFile(
+				t,
+				root,
+				"config/kustomization.yaml",
+				"resources: [plugin.yaml]\ntransformers: [nested.yaml]\n",
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				"config/plugin.yaml",
+				"apiVersion: builtin\nkind: ConfigMapGenerator\nmetadata: {name: generated}\nfiles: [value.txt]\n",
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				"config/nested.yaml",
+				"apiVersion: builtin\nmetadata: {name: nested}\n"+tc.transformer,
+			)
 			testutil.WriteFile(t, root, "config/operand-patch", "[]\n")
 			testutil.WriteFile(t, root, "apps/value.txt", "value")
 			s := store.New()
 			owner := &manifest.Kustomization{Name: "apps", Namespace: "apps", Path: "./apps"}
 			s.AddObject(owner)
 			idx := rendererFixture(t, New(s), root)
-			assert.Diff(t, idx.Readers["apps/value.txt"], []manifest.FileReader{{Reader: owner.Named(), Source: manifest.BootstrapSourceID}})
+			assert.Diff(
+				t,
+				idx.Readers["apps/value.txt"],
+				[]manifest.FileReader{{Reader: owner.Named(), Source: manifest.BootstrapSourceID}},
+			)
 			if tc.warn {
-				assert.Diff(t, idx.Readers["config/operand-patch"], []manifest.FileReader{{Reader: owner.Named(), Source: manifest.BootstrapSourceID}})
+				assert.Diff(
+					t,
+					idx.Readers["config/operand-patch"],
+					[]manifest.FileReader{{Reader: owner.Named(), Source: manifest.BootstrapSourceID}},
+				)
 				if len(s.Warnings()) != 1 {
 					t.Fatalf("nested operand rewrite must warn: %+v", s.Warnings())
 				}
@@ -242,13 +355,48 @@ func TestLoader_InputRolesAndAdmission(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
-			testutil.WriteFile(t, root, "apps/kustomization.yaml", "namespace: projected\nresources: [dual.yaml]\nconfigMapGenerator: [{name: data, files: [dual.yaml]}]\n"+tc.patch+"\ngenerators: [configuration.yaml, configuration]\n")
-			testutil.WriteFile(t, root, "apps/dual.yaml", testutil.KustomizationYAML("dual", "authored", "  path: ./child\n"))
-			testutil.WriteFile(t, root, tc.terminal, testutil.KustomizationYAML("terminal", "authored", "  path: ./hidden\n"))
-			testutil.WriteFile(t, root, "apps/configuration.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: hidden-config, namespace: authored}\nspec: {path: ./hidden}\n---\napiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: config}\nspec: {target: {name: hidden}, data: [{secretKey: KEY, remoteRef: {key: hidden}}]}\n")
-			testutil.WriteFile(t, root, "apps/configuration/kustomization.yaml", "namespace: configuration-only\nresources: [flux.yaml, external.yaml]\n")
-			testutil.WriteFile(t, root, "apps/configuration/flux.yaml", testutil.KustomizationYAML("directory-config", "authored", "  path: ./hidden\n"))
-			testutil.WriteFile(t, root, "apps/configuration/external.yaml", "apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: directory-config}\nspec: {target: {name: directory-secret}, data: [{secretKey: KEY, remoteRef: {key: hidden}}]}\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"apps/kustomization.yaml",
+				"namespace: projected\nresources: [dual.yaml]\nconfigMapGenerator: [{name: data, files: [dual.yaml]}]\n"+tc.patch+"\ngenerators: [configuration.yaml, configuration]\n",
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				"apps/dual.yaml",
+				testutil.KustomizationYAML("dual", "authored", "  path: ./child\n"),
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				tc.terminal,
+				testutil.KustomizationYAML("terminal", "authored", "  path: ./hidden\n"),
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				"apps/configuration.yaml",
+				"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: hidden-config, namespace: authored}\nspec: {path: ./hidden}\n---\napiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: config}\nspec: {target: {name: hidden}, data: [{secretKey: KEY, remoteRef: {key: hidden}}]}\n",
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				"apps/configuration/kustomization.yaml",
+				"namespace: configuration-only\nresources: [flux.yaml, external.yaml]\n",
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				"apps/configuration/flux.yaml",
+				testutil.KustomizationYAML("directory-config", "authored", "  path: ./hidden\n"),
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				"apps/configuration/external.yaml",
+				"apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: directory-config}\nspec: {target: {name: directory-secret}, data: [{secretKey: KEY, remoteRef: {key: hidden}}]}\n",
+			)
 			s := store.New()
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./apps"}
 			s.AddObject(owner)
@@ -280,10 +428,17 @@ func TestLoader_InputRolesAndAdmission(t *testing.T) {
 				}
 			}
 			for _, file := range []string{"apps/dual.yaml", tc.terminal, "apps/configuration.yaml", "apps/configuration/flux.yaml", "apps/configuration/external.yaml"} {
-				assert.Diff(t, l.Index.Readers[file], []manifest.FileReader{{Reader: owner.Named(), Source: manifest.BootstrapSourceID}})
+				assert.Diff(
+					t,
+					l.Index.Readers[file],
+					[]manifest.FileReader{{Reader: owner.Named(), Source: manifest.BootstrapSourceID}},
+				)
 			}
 			terminal := testutil.KustomizationID("authored", "terminal")
-			if _, ok := l.Index.Lookup(terminal); ok || l.candidates[terminal].Obj != nil || len(l.documents.cache[filepath.Join(root, tc.terminal)].objects) != 0 {
+			if _, ok := l.Index.Lookup(
+				terminal,
+			); ok || l.candidates[terminal].Obj != nil ||
+				len(l.documents.cache[filepath.Join(root, tc.terminal)].objects) != 0 {
 				t.Fatal("terminal-only patch retained raw admission evidence")
 			}
 		})
@@ -294,9 +449,24 @@ func TestAdmit_FluxComponentInputContexts(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", "namespace: effective\n")
-	testutil.WriteFile(t, root, "components/a/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [secret.yaml]\ntransformers: [https://example.invalid/opaque]\n")
-	testutil.WriteFile(t, root, "components/a/secret.yaml", "apiVersion: v1\nkind: Secret\nmetadata: {name: component}\nstringData: {KEY: 'ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]'}\nsops: {mac: encrypted}\n")
-	testutil.WriteFile(t, root, "components/b/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nconfigMapGenerator: [{name: b, files: [value.txt]}]\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"components/a/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [secret.yaml]\ntransformers: [https://example.invalid/opaque]\n",
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"components/a/secret.yaml",
+		"apiVersion: v1\nkind: Secret\nmetadata: {name: component}\nstringData: {KEY: 'ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]'}\nsops: {mac: encrypted}\n",
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"components/b/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nconfigMapGenerator: [{name: b, files: [value.txt]}]\n",
+	)
 	testutil.WriteFile(t, root, "components/b/value.txt", "value")
 	s := store.New()
 	a := &manifest.Kustomization{Name: "a", Namespace: "apps", Path: "./apps"}
@@ -311,10 +481,30 @@ func TestAdmit_FluxComponentInputContexts(t *testing.T) {
 	s.AddObject(required)
 	l := New(s)
 	idx := rendererFixture(t, l, root)
-	assert.Diff(t, idx.Readers["apps/kustomization.yaml"], []manifest.FileReader{{Reader: a.Named(), Source: manifest.BootstrapSourceID}, {Reader: b.Named(), Source: manifest.BootstrapSourceID}, {Reader: required.Named(), Source: manifest.BootstrapSourceID}})
-	assert.Diff(t, idx.Readers["components/a/secret.yaml"], []manifest.FileReader{{Reader: a.Named(), Source: manifest.BootstrapSourceID}})
-	assert.Diff(t, idx.Readers["components/b/value.txt"], []manifest.FileReader{{Reader: b.Named(), Source: manifest.BootstrapSourceID}})
-	assert.Diff(t, idx.Readers["apps/missing"], []manifest.FileReader{{Reader: required.Named(), Source: manifest.BootstrapSourceID}})
+	assert.Diff(
+		t,
+		idx.Readers["apps/kustomization.yaml"],
+		[]manifest.FileReader{
+			{Reader: a.Named(), Source: manifest.BootstrapSourceID},
+			{Reader: b.Named(), Source: manifest.BootstrapSourceID},
+			{Reader: required.Named(), Source: manifest.BootstrapSourceID},
+		},
+	)
+	assert.Diff(
+		t,
+		idx.Readers["components/a/secret.yaml"],
+		[]manifest.FileReader{{Reader: a.Named(), Source: manifest.BootstrapSourceID}},
+	)
+	assert.Diff(
+		t,
+		idx.Readers["components/b/value.txt"],
+		[]manifest.FileReader{{Reader: b.Named(), Source: manifest.BootstrapSourceID}},
+	)
+	assert.Diff(
+		t,
+		idx.Readers["apps/missing"],
+		[]manifest.FileReader{{Reader: required.Named(), Source: manifest.BootstrapSourceID}},
+	)
 	if len(l.documents.cache[filepath.Join(root, "apps")].body.Components) != 0 {
 		t.Fatal("injected components mutated the cached document or retained ignored input")
 	}
@@ -322,7 +512,8 @@ func TestAdmit_FluxComponentInputContexts(t *testing.T) {
 		t.Fatal("injected component lost its inherited namespace")
 	}
 	warnings := s.Warnings()
-	if len(warnings) != 1 || len(warnings[0].Detail) != 1 || warnings[0].Resource != a.Named() || warnings[0].Category != manifest.WarnIncompleteInputCoverage {
+	if len(warnings) != 1 || len(warnings[0].Detail) != 1 || warnings[0].Resource != a.Named() ||
+		warnings[0].Category != manifest.WarnIncompleteInputCoverage {
 		t.Fatalf("component warnings crossed owners: %+v", warnings)
 	}
 }
@@ -354,11 +545,26 @@ func TestFinalizeIndex_ConfigurationCoverage(t *testing.T) {
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", "generators: [../config]\n")
 			testutil.WriteFile(t, root, "config/kustomization.yaml", tc.config)
-			testutil.WriteFile(t, root, "config/plugin.yaml", "apiVersion: builtin\nkind: ConfigMapGenerator\nmetadata: {name: values}\nfiles: [value.txt]\n")
-			testutil.WriteFile(t, root, "config/unknown.yaml", "apiVersion: example.invalid/v1\nkind: UnknownPlugin\nmetadata: {name: opaque}\nfiles: [../shared/value.txt]\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"config/plugin.yaml",
+				"apiVersion: builtin\nkind: ConfigMapGenerator\nmetadata: {name: values}\nfiles: [value.txt]\n",
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				"config/unknown.yaml",
+				"apiVersion: example.invalid/v1\nkind: UnknownPlugin\nmetadata: {name: opaque}\nfiles: [../shared/value.txt]\n",
+			)
 			testutil.WriteFile(t, root, "apps/value.txt", "known")
 			testutil.WriteFile(t, root, "shared/value.txt", "hidden remote input")
-			testutil.WriteFile(t, root, "clean/kustomization.yaml", "resources: [https://example.invalid/ordinary.yaml]\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"clean/kustomization.yaml",
+				"resources: [https://example.invalid/ordinary.yaml]\n",
+			)
 			s := store.New()
 			owner := &manifest.Kustomization{Name: "apps", Namespace: "apps", Path: "./apps"}
 			s.AddObject(owner)
@@ -367,21 +573,29 @@ func TestFinalizeIndex_ConfigurationCoverage(t *testing.T) {
 			rendererFixture(t, l, root)
 			first := s.Warnings()
 			if tc.warn {
-				if len(first) != 1 || first[0].Resource != owner.Named() || first[0].Category != manifest.WarnIncompleteInputCoverage || first[0].Count != 1 || !strings.Contains(first[0].Message, "flate build all without --base or --path-orig") {
+				if len(first) != 1 || first[0].Resource != owner.Named() ||
+					first[0].Category != manifest.WarnIncompleteInputCoverage ||
+					first[0].Count != 1 ||
+					!strings.Contains(first[0].Message, "flate build all without --base or --path-orig") {
 					t.Fatalf("incomplete warning = %+v", first)
 				}
 			} else if len(first) != 0 {
 				t.Fatalf("safe namespace wrapper warned: %+v", first)
 			}
 			if !strings.HasPrefix(tc.name, "remote") {
-				assert.Diff(t, l.Index.Readers["apps/value.txt"], []manifest.FileReader{{Reader: owner.Named(), Source: manifest.BootstrapSourceID}})
+				assert.Diff(
+					t,
+					l.Index.Readers["apps/value.txt"],
+					[]manifest.FileReader{{Reader: owner.Named(), Source: manifest.BootstrapSourceID}},
+				)
 			}
 			if tc.warn {
 				declaring := "config/kustomization.yaml"
 				if tc.name == "unknown plugin" {
 					declaring = "config/unknown.yaml"
 				}
-				if len(first[0].Detail) == 0 || !strings.Contains(first[0].Detail[0], declaring) || !slices.IsSorted(first[0].Detail) {
+				if len(first[0].Detail) == 0 || !strings.Contains(first[0].Detail[0], declaring) ||
+					!slices.IsSorted(first[0].Detail) {
 					t.Fatalf("missing declaring source or unstable detail: %+v", first)
 				}
 			}
@@ -425,7 +639,12 @@ func TestFinalizeIndex_FlatopsNamespaceWrappers(t *testing.T) {
 		name := fmt.Sprintf("ns-%02d", i)
 		base := "kubernetes/apps/" + name
 		testutil.WriteFile(t, root, base+"/kustomization.yaml", "transformers: [transformers]\n")
-		testutil.WriteFile(t, root, base+"/transformers/kustomization.yaml", "namespace: "+name+"\nresources: [../../../transformers]\n")
+		testutil.WriteFile(
+			t,
+			root,
+			base+"/transformers/kustomization.yaml",
+			"namespace: "+name+"\nresources: [../../../transformers]\n",
+		)
 		owner := &manifest.Kustomization{Name: name, Namespace: "flux-system", Path: "./" + base}
 		s.AddObject(owner)
 		owners = append(owners, owner.Named())
@@ -440,7 +659,11 @@ func TestFinalizeIndex_FlatopsNamespaceWrappers(t *testing.T) {
 		assert.Diff(t, idx.Readers[file], want)
 	}
 	for _, owner := range owners {
-		assert.Diff(t, idx.Readers["kubernetes/apps/"+owner.Name+"/transformers/kustomization.yaml"], []manifest.FileReader{{Reader: owner, Source: manifest.BootstrapSourceID}})
+		assert.Diff(
+			t,
+			idx.Readers["kubernetes/apps/"+owner.Name+"/transformers/kustomization.yaml"],
+			[]manifest.FileReader{{Reader: owner, Source: manifest.BootstrapSourceID}},
+		)
 	}
 	assert.Equal(t, len(s.Warnings()), 0)
 }
@@ -467,15 +690,29 @@ func TestFinalizeIndex_InputInventory(t *testing.T) {
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", tc.body)
 			testutil.WriteFile(t, root, "shared/kustomization.yaml", "resources: [cm.yaml]\n")
 			testutil.WriteFile(t, root, "shared/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input}\n")
-			testutil.WriteFile(t, root, "component/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nsecretGenerator: [{name: input, files: [value.txt]}]\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"component/kustomization.yaml",
+				"apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nsecretGenerator: [{name: input, files: [value.txt]}]\n",
+			)
 			testutil.WriteFile(t, root, "component/value.txt", "component data")
 			testutil.WriteFile(t, root, "inputs/value", "terminal data")
-			testutil.WriteFile(t, root, "plugin.yaml", "apiVersion: builtin\nkind: SecretGenerator\nmetadata: {name: input}\nenvs: [../inputs/value]\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"plugin.yaml",
+				"apiVersion: builtin\nkind: SecretGenerator\nmetadata: {name: input}\nenvs: [../inputs/value]\n",
+			)
 			s := store.New()
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./apps"}
 			s.AddObject(owner)
 			idx := rendererFixture(t, New(s), root)
-			assert.Diff(t, idx.Readers[tc.file], []manifest.FileReader{{Reader: owner.Named(), Source: manifest.BootstrapSourceID}})
+			assert.Diff(
+				t,
+				idx.Readers[tc.file],
+				[]manifest.FileReader{{Reader: owner.Named(), Source: manifest.BootstrapSourceID}},
+			)
 			assert.Diff(t, ownersForTest(idx, tc.file), []manifest.NamedResource{owner.Named()})
 			if len(idx.Readers["inputs/unrelated"]) != 0 {
 				t.Fatal("unrelated sibling gained readers")
@@ -491,35 +728,79 @@ func TestFinalizeIndex_InputCoordinatesAndAdmission(t *testing.T) {
 			t.Parallel()
 			parent := t.TempDir()
 			root := filepath.Join(parent, "source")
-			testutil.WriteFile(t, parent, "outside.yaml", testutil.KustomizationYAML("outside", "authored", "  path: ./hidden\n"))
-			testutil.WriteFile(t, root, "inputs/absolute.yaml", testutil.KustomizationYAML("absolute", "authored", "  path: ./hidden\n"))
-			testutil.WriteFile(t, root, "inputs/escaped.yaml", testutil.KustomizationYAML("escaped", "authored", "  path: ./hidden\n"))
-			body := fmt.Sprintf("resources: [%q, ../inputs/escaped.yaml, ../../outside.yaml]\npatches: [{path: ../inputs/missing}, {path: patch.yaml}]\n", filepath.ToSlash(filepath.Join(root, "inputs/absolute.yaml")))
+			testutil.WriteFile(
+				t,
+				parent,
+				"outside.yaml",
+				testutil.KustomizationYAML("outside", "authored", "  path: ./hidden\n"),
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				"inputs/absolute.yaml",
+				testutil.KustomizationYAML("absolute", "authored", "  path: ./hidden\n"),
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				"inputs/escaped.yaml",
+				testutil.KustomizationYAML("escaped", "authored", "  path: ./hidden\n"),
+			)
+			body := fmt.Sprintf(
+				"resources: [%q, ../inputs/escaped.yaml, ../../outside.yaml]\npatches: [{path: ../inputs/missing}, {path: patch.yaml}]\n",
+				filepath.ToSlash(filepath.Join(root, "inputs/absolute.yaml")),
+			)
 			testutil.WriteFile(t, root, "apps/"+filename, body)
 			s := store.New()
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./apps"}
 			s.AddObject(owner)
 			sibling := &manifest.Kustomization{Name: "sibling", Namespace: "apps", Path: "./hidden"}
 			s.AddObject(sibling)
-			testutil.WriteFile(t, root, "apps/patch.yaml", testutil.KustomizationYAML("sibling", "apps", "  path: ./hidden\n"))
+			testutil.WriteFile(
+				t,
+				root,
+				"apps/patch.yaml",
+				testutil.KustomizationYAML("sibling", "apps", "  path: ./hidden\n"),
+			)
 			l := New(s)
-			l.Index.Records[sibling.Named()] = manifest.DiscoveryRecord{File: "apps/patch.yaml", Path: filepath.Join(root, "apps/patch.yaml")}
+			l.Index.Records[sibling.Named()] = manifest.DiscoveryRecord{
+				File: "apps/patch.yaml",
+				Path: filepath.Join(root, "apps/patch.yaml"),
+			}
 			l.SourceRoot = root
 			admitForTest(s, root)
 			l.Admit(root)
-			admitted := l.AdmitsRoot(l.IndexedObject(sibling.Named(), l.Index.Records[sibling.Named()]).Obj, filepath.Join(root, "apps/patch.yaml"))
+			admitted := l.AdmitsRoot(
+				l.IndexedObject(sibling.Named(), l.Index.Records[sibling.Named()]).Obj,
+				filepath.Join(root, "apps/patch.yaml"),
+			)
 			assert.Equal(t, admitted, false)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 			idx := l.Index
-			assert.Equal(t, l.AdmitsRoot(l.IndexedObject(sibling.Named(), l.Index.Records[sibling.Named()]).Obj, filepath.Join(root, "apps/patch.yaml")), admitted)
-			if l.AdmitsRoot(l.IndexedObject(sibling.Named(), l.Index.Records[sibling.Named()]).Obj, filepath.Join(root, "apps/patch.yaml")) {
+			assert.Equal(
+				t,
+				l.AdmitsRoot(
+					l.IndexedObject(sibling.Named(), l.Index.Records[sibling.Named()]).Obj,
+					filepath.Join(root, "apps/patch.yaml"),
+				),
+				admitted,
+			)
+			if l.AdmitsRoot(
+				l.IndexedObject(sibling.Named(), l.Index.Records[sibling.Named()]).Obj,
+				filepath.Join(root, "apps/patch.yaml"),
+			) {
 				t.Fatal("file-role input counted as a listed structural resource")
 			}
 			for _, file := range []string{"apps/" + filename, "inputs/absolute.yaml", "inputs/escaped.yaml", "inputs/missing", "apps/patch.yaml"} {
-				assert.Diff(t, idx.Readers[file], []manifest.FileReader{{Reader: owner.Named(), Source: manifest.BootstrapSourceID}})
+				assert.Diff(
+					t,
+					idx.Readers[file],
+					[]manifest.FileReader{{Reader: owner.Named(), Source: manifest.BootstrapSourceID}},
+				)
 			}
 			for _, name := range []string{"absolute", "escaped", "outside"} {
-				if s.GetObject(testutil.KustomizationID("authored", name)) != nil || len(idx.Records[testutil.KustomizationID("authored", name)].Productions) != 0 {
+				if s.GetObject(testutil.KustomizationID("authored", name)) != nil ||
+					len(idx.Records[testutil.KustomizationID("authored", name)].Productions) != 0 {
 					t.Fatalf("dependency coordinate broadened object admission: %s", name)
 				}
 			}
@@ -535,7 +816,12 @@ func TestLoader_InputRolesDualResourceOutside(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: []\npatches: [{path: ../inputs/dual.yaml}]\n")
 	testutil.WriteFile(t, root, "inputs/kustomization.yaml", "resources: [dual.yaml]\n")
-	testutil.WriteFile(t, root, "inputs/dual.yaml", testutil.KustomizationYAML("dual", "authored", "  path: ./hidden\n"))
+	testutil.WriteFile(
+		t,
+		root,
+		"inputs/dual.yaml",
+		testutil.KustomizationYAML("dual", "authored", "  path: ./hidden\n"),
+	)
 	st := store.New()
 	admitForTest(st, root)
 	l := New(st)
@@ -545,7 +831,10 @@ func TestLoader_InputRolesDualResourceOutside(t *testing.T) {
 	}
 	l.Admit(root)
 	id := testutil.KustomizationID("authored", "dual")
-	if _, ok := l.Index.Lookup(id); !ok || l.candidates[id].Obj == nil || st.GetObject(id) == nil || len(l.documents.cache[filepath.Join(root, "inputs/dual.yaml")].objects) != 1 {
+	if _, ok := l.Index.Lookup(
+		id,
+	); !ok || l.candidates[id].Obj == nil || st.GetObject(id) == nil ||
+		len(l.documents.cache[filepath.Join(root, "inputs/dual.yaml")].objects) != 1 {
 		t.Fatal("terminal role suppressed a separately declared resource")
 	}
 	file := filepath.Join(root, "inputs/dual.yaml")
@@ -564,7 +853,12 @@ func TestFinalizeIndex_AdmissionAndConcurrentQueries(t *testing.T) {
 	testutil.WriteFile(t, root, "target/kustomization.yaml", "resources: [../declarations, ../missing, broken.yaml]\n")
 	testutil.WriteFile(t, root, "target/broken.yaml", "invalid: [\n")
 	testutil.WriteFile(t, root, "declarations/kustomization.yaml", "resources: [peer.yaml]\n")
-	testutil.WriteFile(t, root, "declarations/peer.yaml", testutil.KustomizationYAML("peer", "apps", "  path: ./target\n"))
+	testutil.WriteFile(
+		t,
+		root,
+		"declarations/peer.yaml",
+		testutil.KustomizationYAML("peer", "apps", "  path: ./target\n"),
+	)
 	st := store.New()
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps", Path: "./target"}
 	st.AddObject(parent)
@@ -575,14 +869,30 @@ func TestFinalizeIndex_AdmissionAndConcurrentQueries(t *testing.T) {
 	assert.NoError(t, err)
 	peer, missing := testutil.KustomizationID("apps", "peer"), testutil.HelmReleaseID("apps", "missing")
 	peerFile, missingFile := filepath.Join(root, "declarations/peer.yaml"), filepath.Join(root, "missing/release.yaml")
-	l.Index.Records[missing] = manifest.DiscoveryRecord{Authored: missing, File: "missing/release.yaml", Path: missingFile}
-	l.Index.Readers = map[string][]manifest.FileReader{"missing": {{Reader: parent.Named(), Source: manifest.BootstrapSourceID}}}
-	before := map[manifest.NamedResource]bool{peer: l.AdmitsRoot(l.IndexedObject(peer, l.Index.Records[peer]).Obj, peerFile), missing: l.AdmitsRoot(l.IndexedObject(missing, l.Index.Records[missing]).Obj, missingFile)}
+	l.Index.Records[missing] = manifest.DiscoveryRecord{
+		Authored: missing,
+		File:     "missing/release.yaml",
+		Path:     missingFile,
+	}
+	l.Index.Readers = map[string][]manifest.FileReader{
+		"missing": {{Reader: parent.Named(), Source: manifest.BootstrapSourceID}},
+	}
+	before := map[manifest.NamedResource]bool{
+		peer:    l.AdmitsRoot(l.IndexedObject(peer, l.Index.Records[peer]).Obj, peerFile),
+		missing: l.AdmitsRoot(l.IndexedObject(missing, l.Index.Records[missing]).Obj, missingFile),
+	}
 	assert.Equal(t, before[peer], true)
 	assert.Equal(t, before[missing], false)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	assert.Diff(t, l.Index.Claims["target/"], []manifest.NamedResource{parent.Named(), peer})
-	assert.Diff(t, l.Index.Readers["missing"], []manifest.FileReader{{Reader: parent.Named(), Source: manifest.BootstrapSourceID}, {Reader: peer, Source: manifest.BootstrapSourceID}})
+	assert.Diff(
+		t,
+		l.Index.Readers["missing"],
+		[]manifest.FileReader{
+			{Reader: parent.Named(), Source: manifest.BootstrapSourceID},
+			{Reader: peer, Source: manifest.BootstrapSourceID},
+		},
+	)
 	assert.Equal(t, len(retainedErrorsForTest(l)), 1)
 	assert.Equal(t, l.scopes == nil, true)
 	frozen := snapshotIndexForTest(l.Index)
@@ -640,15 +950,30 @@ func TestOccurrences_InputSourceViews(t *testing.T) {
 			root := t.TempDir()
 			local := filepath.Join(root, ".artifacts", mode)
 			input := fstest.MapFS{
-				"entry/nested/kustomization.yaml": {Data: []byte("namePrefix: pre-\nnameSuffix: -post\nresources: [../../shared]\n")},
-				"shared/kustomization.yaml":       {Data: []byte("resources: [resource.yaml]\npatches: [{path: ../inputs/patch}]\n")},
-				"shared/resource.yaml":            {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: mounted}\n")},
+				"entry/nested/kustomization.yaml": {
+					Data: []byte("namePrefix: pre-\nnameSuffix: -post\nresources: [../../shared]\n"),
+				},
+				"shared/kustomization.yaml": {
+					Data: []byte("resources: [resource.yaml]\npatches: [{path: ../inputs/patch}]\n"),
+				},
+				"shared/resource.yaml": {
+					Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: mounted}\n"),
+				},
 			}
 			testutil.WriteFile(t, local, "shared/kustomization.yaml", "patches: [{path: ../inputs/host-only}]\n")
 			s := store.New()
 			source := &manifest.GitRepository{Name: "cluster", Namespace: "flux-system"}
 			s.AddObject(source)
-			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./entry", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: source.Name, Namespace: source.Namespace}}
+			owner := &manifest.Kustomization{
+				Name:      "owner",
+				Namespace: "apps",
+				Path:      "./entry",
+				SourceRef: kustomizev1.CrossNamespaceSourceReference{
+					Kind:      manifest.KindGitRepository,
+					Name:      source.Name,
+					Namespace: source.Namespace,
+				},
+			}
 			s.AddObject(owner)
 			art := &store.SourceArtifact{LocalRoot: local, LocalPath: local, FS: input}
 			if mode == "alias" {
@@ -665,7 +990,8 @@ func TestOccurrences_InputSourceViews(t *testing.T) {
 			assert.NoError(t, err)
 			occurrences, err := l.Occurrences(t.Context(), filepath.Join(local, "entry"), "projected")
 			assert.NoError(t, err)
-			if len(occurrences) != 1 || occurrences[0].Identity.Name != "pre-mounted-post" || occurrences[0].Identity.Namespace != "projected" {
+			if len(occurrences) != 1 || occurrences[0].Identity.Name != "pre-mounted-post" ||
+				occurrences[0].Identity.Namespace != "projected" {
 				t.Fatalf("source-view occurrence projection: %+v", occurrences)
 			}
 			wantSource, wantFile := local, "shared/resource.yaml"

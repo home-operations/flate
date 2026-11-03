@@ -59,7 +59,11 @@ func TestDiscover_FailureDetailsEvaluation(t *testing.T) {
 			})
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "kustomization.yaml", "resources: []\n")
-			o, err := newTestOrchestrator(t, Tree{Path: root}, Config{Concurrency: 2, Selection: manifest.Selection{Changed: true}})
+			o, err := newTestOrchestrator(
+				t,
+				Tree{Path: root},
+				Config{Concurrency: 2, Selection: manifest.Selection{Changed: true}},
+			)
 			assert.NoError(t, err)
 			assert.NoError(t, o.prepareBootstrap(t.Context()))
 			detail := new(countedDetailError)
@@ -76,8 +80,13 @@ func TestDiscover_FailureDetailsEvaluation(t *testing.T) {
 
 func TestRenderTrees_MissingPath(t *testing.T) {
 	t.Parallel()
-	runs, err := RenderTrees(t.Context(), []Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{})
-	if len(runs) != 1 || runs[0].Orchestrator != nil || !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
+	runs, err := RenderTrees(
+		t.Context(),
+		[]Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
+		Config{},
+	)
+	if len(runs) != 1 || runs[0].Orchestrator != nil || !errors.Is(err, manifest.ErrInput) ||
+		!errors.Is(err, manifest.ErrFlux) {
 		t.Fatalf("missing path identity: runs=%v err=%v", runs, err)
 	}
 	if !strings.Contains(err.Error(), "tree path is required") {
@@ -151,8 +160,14 @@ func TestDetectOrphans(t *testing.T) {
 	}
 	o.store.AddObject(&manifest.GitRepository{Name: "external", Namespace: "flux-system"})
 	o.store.AddObject(&manifest.Kustomization{
-		Name: "external", Namespace: "flux-system", Path: "./",
-		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "external", Namespace: "flux-system"},
+		Name:      "external",
+		Namespace: "flux-system",
+		Path:      "./",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{
+			Kind:      manifest.KindGitRepository,
+			Name:      "external",
+			Namespace: "flux-system",
+		},
 	})
 	assert.Diff(t, o.detectOrphans(failed, o.reportOwnership(o.reportingClaims())), orphans)
 }
@@ -168,7 +183,12 @@ func TestDetectOrphans_NonReconcilableKindsIgnored(t *testing.T) {
 		Path: "./apps",
 	}
 	cm := &manifest.ConfigMap{Name: "stuck", Namespace: "ns"}
-	foreign := &manifest.RawObject{APIVersion: "example.test/v1", Kind: manifest.KindKustomization, Name: cm.Name, Namespace: cm.Namespace}
+	foreign := &manifest.RawObject{
+		APIVersion: "example.test/v1",
+		Kind:       manifest.KindKustomization,
+		Name:       cm.Name,
+		Namespace:  cm.Namespace,
+	}
 
 	o := &Orchestrator{
 		store: store.New(),
@@ -267,7 +287,16 @@ func TestOrchestrator_StopBeforeBootstrapCompletion(t *testing.T) {
 
 func TestOrchestrator_SimpleCluster(t *testing.T) {
 	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "ks.yaml", testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n    namespace: flux-system\n"))
+	testutil.WriteFile(
+		t,
+		dir,
+		"ks.yaml",
+		testutil.KustomizationYAML(
+			"apps",
+			"flux-system",
+			"  path: ./apps\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n    namespace: flux-system\n",
+		),
+	)
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- cm.yaml\n")
 	testutil.WriteFile(t, dir, "apps/cm.yaml", `apiVersion: v1
 kind: ConfigMap
@@ -320,7 +349,16 @@ kind: ConfigMap
 metadata: {name: flux-cm}
 data: {k: v}
 `)
-	testutil.WriteFile(t, dir, "consumer.yaml", testutil.KustomizationYAML("consumer", "flux-system", "  path: ./apps\n  dependsOn:\n    - name: config-a\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
+	testutil.WriteFile(
+		t,
+		dir,
+		"consumer.yaml",
+		testutil.KustomizationYAML(
+			"consumer",
+			"flux-system",
+			"  path: ./apps\n  dependsOn:\n    - name: config-a\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+		),
+	)
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- cm.yaml\n")
 	testutil.WriteFile(t, dir, "apps/cm.yaml", `apiVersion: v1
 kind: ConfigMap
@@ -358,7 +396,16 @@ func TestOrchestrator_CommentedOutKSNotReconciled(t *testing.T) {
 				dir := t.TempDir()
 				testutil.GitInit(t, dir)
 				testutil.WriteFile(t, dir, "kustomization.yaml", "resources: [kubernetes/flux/cluster-apps.yaml]\n")
-				testutil.WriteFile(t, dir, "kubernetes/flux/cluster-apps.yaml", testutil.KustomizationYAML("cluster-apps", "flux-system", "  path: ./kubernetes/apps/test\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
+				testutil.WriteFile(
+					t,
+					dir,
+					"kubernetes/flux/cluster-apps.yaml",
+					testutil.KustomizationYAML(
+						"cluster-apps",
+						"flux-system",
+						"  path: ./kubernetes/apps/test\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+					),
+				)
 				resources := "namespace: network\nresources: [echo.yaml]\n"
 				if enabled {
 					resources = "namespace: network\nresources: [echo.yaml, tunnel.yaml]\n"
@@ -369,13 +416,44 @@ func TestOrchestrator_CommentedOutKSNotReconciled(t *testing.T) {
 					if name == "tunnel" {
 						spec += "  components: [../../../components/backup]\n"
 					}
-					testutil.WriteFile(t, dir, "kubernetes/apps/test/network/"+name+".yaml", testutil.KustomizationYAML(name, "network", spec))
-					testutil.WriteFile(t, dir, "kubernetes/apps/base/"+name+"/kustomization.yaml", "resources: [cm.yaml]\n")
-					testutil.WriteFile(t, dir, "kubernetes/apps/base/"+name+"/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+name+"-cm}\n")
+					testutil.WriteFile(
+						t,
+						dir,
+						"kubernetes/apps/test/network/"+name+".yaml",
+						testutil.KustomizationYAML(name, "network", spec),
+					)
+					testutil.WriteFile(
+						t,
+						dir,
+						"kubernetes/apps/base/"+name+"/kustomization.yaml",
+						"resources: [cm.yaml]\n",
+					)
+					testutil.WriteFile(
+						t,
+						dir,
+						"kubernetes/apps/base/"+name+"/cm.yaml",
+						"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+name+"-cm}\n",
+					)
 				}
-				testutil.WriteFile(t, dir, "kubernetes/components/backup/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [backup.yaml]\n")
-				testutil.WriteFile(t, dir, "kubernetes/components/backup/backup.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: backup-cm}\n")
-				renderedSingleton1, err := RenderTrees(t.Context(), []Tree{{Path: filepath.Join(dir, entry), ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true, Concurrency: 2})
+				testutil.WriteFile(
+					t,
+					dir,
+					"kubernetes/components/backup/kustomization.yaml",
+					"apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [backup.yaml]\n",
+				)
+				testutil.WriteFile(
+					t,
+					dir,
+					"kubernetes/components/backup/backup.yaml",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: backup-cm}\n",
+				)
+				renderedSingleton1, err := RenderTrees(
+					t.Context(),
+					[]Tree{
+						{Path: filepath.Join(dir, entry), ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}},
+					},
+					Config{WipeSecrets: true, Concurrency: 2},
+				)
 				if len(renderedSingleton1) != 1 {
 					t.Fatalf("missing render: %v", err)
 				}
@@ -419,7 +497,16 @@ func TestOrchestrator_CommentedOutKSNotReconciled(t *testing.T) {
 func TestOrchestrator_ExplicitRepoRootNoGit(t *testing.T) {
 	writeCluster := func(t *testing.T, dir string) {
 		t.Helper()
-		testutil.WriteFile(t, dir, "kubernetes/flux/cluster/ks.yaml", testutil.KustomizationYAML("cluster-apps", "flux-system", "  path: ./kubernetes/apps\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
+		testutil.WriteFile(
+			t,
+			dir,
+			"kubernetes/flux/cluster/ks.yaml",
+			testutil.KustomizationYAML(
+				"cluster-apps",
+				"flux-system",
+				"  path: ./kubernetes/apps\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+			),
+		)
 		testutil.WriteFile(t, dir, "kubernetes/apps/kustomization.yaml", "resources:\n- cm.yaml\n")
 		testutil.WriteFile(t, dir, "kubernetes/apps/cm.yaml",
 			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo, namespace: default}\ndata: {k: v}\n")
@@ -427,7 +514,21 @@ func TestOrchestrator_ExplicitRepoRootNoGit(t *testing.T) {
 	clusterApps := testutil.KustomizationID("flux-system", "cluster-apps")
 	rendersDemo := func(t *testing.T, cfg treeConfig) bool {
 		t.Helper()
-		renderedSingleton2, err := RenderTrees(context.Background(), []Tree{{RepoRoot: cfg.RepoRoot, Path: cfg.Path, SelfURLs: cfg.SelfURLs, Input: cfg.Input, BaseInput: cfg.BaseInput, ExternalChanges: cfg.ExternalChanges, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, cfg.Config)
+		renderedSingleton2, err := RenderTrees(
+			context.Background(),
+			[]Tree{
+				{
+					RepoRoot:        cfg.RepoRoot,
+					Path:            cfg.Path,
+					SelfURLs:        cfg.SelfURLs,
+					Input:           cfg.Input,
+					BaseInput:       cfg.BaseInput,
+					ExternalChanges: cfg.ExternalChanges,
+					ID:              manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
+				},
+			},
+			cfg.Config,
+		)
 		if len(renderedSingleton2) != 1 {
 			t.Fatalf("missing render: %v", err)
 		}
@@ -466,15 +567,24 @@ func TestOrchestrator_ExplicitRepoRootNoGit(t *testing.T) {
 func TestOrchestrator_SelfSubstituteBareDirNoDeadlock(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "kustomization.yaml", "resources: [kubernetes/flux/cluster-apps.yaml]\n")
-	testutil.WriteFile(t, dir, "kubernetes/flux/cluster-apps.yaml", testutil.KustomizationYAML("cluster-apps", "flux-system", `  path: ./kubernetes/apps
+	testutil.WriteFile(
+		t,
+		dir,
+		"kubernetes/flux/cluster-apps.yaml",
+		testutil.KustomizationYAML("cluster-apps", "flux-system", `  path: ./kubernetes/apps
   sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
   postBuild:
     substituteFrom:
       - kind: ConfigMap
         name: cluster-settings
-`))
-	testutil.WriteFile(t, dir, "kubernetes/apps/flux-system/kustomization.yaml",
-		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: flux-system\ncomponents:\n  - ../../components/substitutions\n")
+`),
+	)
+	testutil.WriteFile(
+		t,
+		dir,
+		"kubernetes/apps/flux-system/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: flux-system\ncomponents:\n  - ../../components/substitutions\n",
+	)
 	testutil.WriteFile(t, dir, "kubernetes/components/substitutions/kustomization.yaml",
 		"apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources:\n  - ./cluster-settings.yaml\n")
 	testutil.WriteFile(t, dir, "kubernetes/components/substitutions/cluster-settings.yaml",
@@ -510,15 +620,24 @@ func TestOrchestrator_SelfSubstituteBareDirNoDeadlock(t *testing.T) {
 // cluster-settings, so nothing produces ConfigMap/flux-system/cluster-settings.
 func TestOrchestrator_SelfSubstituteAbsentCMFailsLoud(t *testing.T) {
 	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "kubernetes/flux/cluster-apps.yaml", testutil.KustomizationYAML("cluster-apps", "flux-system", `  path: ./kubernetes/apps
+	testutil.WriteFile(
+		t,
+		dir,
+		"kubernetes/flux/cluster-apps.yaml",
+		testutil.KustomizationYAML("cluster-apps", "flux-system", `  path: ./kubernetes/apps
   sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
   postBuild:
     substituteFrom:
       - kind: ConfigMap
         name: cluster-settings
-`))
-	testutil.WriteFile(t, dir, "kubernetes/apps/flux-system/kustomization.yaml",
-		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: flux-system\nresources:\n  - ./cm.yaml\n")
+`),
+	)
+	testutil.WriteFile(
+		t,
+		dir,
+		"kubernetes/apps/flux-system/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: flux-system\nresources:\n  - ./cm.yaml\n",
+	)
 	testutil.WriteFile(t, dir, "kubernetes/apps/flux-system/cm.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: other\ndata:\n  k: v\n")
 
@@ -556,24 +675,51 @@ func TestRS_EmissionGrouping(t *testing.T) {
 			b := &manifest.ResourceSet{Name: "b", Namespace: "apps"}
 			s.AddObject(a)
 			s.AddObject(b)
-			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{a.Named(): {Parent: parent}, b.Named(): {Parent: parent}}}
+			index := &manifest.DiscoveryIndex{
+				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+					a.Named(): {Parent: parent},
+					b.Named(): {Parent: parent},
+				},
+			}
 			o := &Orchestrator{store: s, index: index}
-			doc := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "shared", "namespace": "apps"}, "data": map[string]any{"value": "equal"}}
+			doc := map[string]any{
+				"apiVersion": "v1",
+				"kind":       "ConfigMap",
+				"metadata":   map[string]any{"name": "shared", "namespace": "apps"},
+				"data":       map[string]any{"value": "equal"},
+			}
 			children, docs := parseChildrenForTest(parent, []map[string]any{doc}, manifest.ParseDocOptions{})
 			ids := []manifest.NamedResource{a.Named(), b.Named()}
 			if reverse {
 				slices.Reverse(ids)
 			}
 			for _, id := range ids {
-				s.RecordEmitted(id, &store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(docs), Complete: true}, nil)
+				s.RecordEmitted(
+					id,
+					&store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(docs), Complete: true},
+					nil,
+				)
 			}
-			assert.Diff(t, outputByParent(o.collectManifests()), map[manifest.NamedResource][]map[string]any{parent: docs})
+			assert.Diff(
+				t,
+				outputByParent(o.collectManifests()),
+				map[manifest.NamedResource][]map[string]any{parent: docs},
+			)
 			second := manifest.DeepCopyMap(doc)
 			second["metadata"].(map[string]any)["name"] = "second"
 			for _, ordered := range [][]map[string]any{{doc, second}, {second, doc}} {
 				entries, authoritative := parseChildrenForTest(b.Named(), ordered, manifest.ParseDocOptions{})
-				s.RecordEmitted(b.Named(), &store.Emission{Children: entries, Manifests: testutil.DocumentOccurrences(authoritative), Complete: true}, nil)
-				if got := outputByParent(o.collectManifests())[parent]; len(got) != 2 || resourceset.DedupKey(got[0]) != resourceset.DedupKey(ordered[0]) {
+				s.RecordEmitted(
+					b.Named(),
+					&store.Emission{
+						Children:  entries,
+						Manifests: testutil.DocumentOccurrences(authoritative),
+						Complete:  true,
+					},
+					nil,
+				)
+				if got := outputByParent(o.collectManifests())[parent]; len(got) != 2 ||
+					resourceset.DedupKey(got[0]) != resourceset.DedupKey(ordered[0]) {
 					t.Fatalf("authoritative document order lost: %v", got)
 				}
 			}
@@ -582,19 +728,48 @@ func TestRS_EmissionGrouping(t *testing.T) {
 			changed, changedDocs := parseChildrenForTest(parent, []map[string]any{unequal}, manifest.ParseDocOptions{})
 			for _, id := range ids {
 				if id == a.Named() {
-					s.RecordEmitted(id, &store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(docs), Complete: true}, nil)
+					s.RecordEmitted(
+						id,
+						&store.Emission{
+							Children:  children,
+							Manifests: testutil.DocumentOccurrences(docs),
+							Complete:  true,
+						},
+						nil,
+					)
 				} else {
-					s.RecordEmitted(id, &store.Emission{Children: changed, Manifests: testutil.DocumentOccurrences(changedDocs), Complete: true}, nil)
+					s.RecordEmitted(
+						id,
+						&store.Emission{
+							Children:  changed,
+							Manifests: testutil.DocumentOccurrences(changedDocs),
+							Complete:  true,
+						},
+						nil,
+					)
 				}
 			}
-			assert.Diff(t, outputByParent(o.collectManifests()), map[manifest.NamedResource][]map[string]any{parent: changedDocs})
+			assert.Diff(
+				t,
+				outputByParent(o.collectManifests()),
+				map[manifest.NamedResource][]map[string]any{parent: changedDocs},
+			)
 		})
 	}
 }
 
 func TestOrchestrator_Render(t *testing.T) {
 	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "ks.yaml", testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n    namespace: flux-system\n"))
+	testutil.WriteFile(
+		t,
+		dir,
+		"ks.yaml",
+		testutil.KustomizationYAML(
+			"apps",
+			"flux-system",
+			"  path: ./apps\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n    namespace: flux-system\n",
+		),
+	)
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- cm.yaml\n")
 	testutil.WriteFile(t, dir, "apps/cm.yaml", `apiVersion: v1
 kind: ConfigMap
@@ -603,7 +778,11 @@ metadata:
 data: {k: v}
 `)
 
-	renderedSingleton3, err := RenderTrees(context.Background(), []Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true})
+	renderedSingleton3, err := RenderTrees(
+		context.Background(),
+		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
+		Config{WipeSecrets: true},
+	)
 	if len(renderedSingleton3) != 1 {
 		t.Fatalf("missing render: %v", err)
 	}
@@ -628,7 +807,11 @@ data: {k: v}
 	if len(res.Orphans) != 0 {
 		t.Errorf("expected no orphans; got %v", res.Orphans)
 	}
-	again, err := RenderTrees(t.Context(), []Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: dir}}, Config{WipeSecrets: true, Concurrency: 2})
+	again, err := RenderTrees(
+		t.Context(),
+		[]Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: dir}},
+		Config{WipeSecrets: true, Concurrency: 2},
+	)
 	assert.NoError(t, err)
 	if len(again) != 1 {
 		t.Fatal("second invocation lost tree")
@@ -645,11 +828,19 @@ func TestOrchestrator_TypedNullErrors(t *testing.T) {
 		t.Run(tc.field, func(t *testing.T) {
 			t.Parallel()
 			dir := testutil.WriteTree(t, map[string]string{
-				"ks.yaml":                 testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n  "+tc.field+": [null]\n"),
+				"ks.yaml": testutil.KustomizationYAML(
+					"apps",
+					"flux-system",
+					"  path: ./apps\n  "+tc.field+": [null]\n",
+				),
 				"apps/kustomization.yaml": "resources: [cm.yaml]\n",
 				"apps/cm.yaml":            "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo}\n",
 			})
-			renderedSingleton1, err := RenderTrees(t.Context(), []Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{CacheDir: t.TempDir(), Concurrency: 2})
+			renderedSingleton1, err := RenderTrees(
+				t.Context(),
+				[]Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
+				Config{CacheDir: t.TempDir(), Concurrency: 2},
+			)
 			if len(renderedSingleton1) != 1 {
 				t.Fatalf("missing render: %v", err)
 			}
@@ -674,7 +865,16 @@ func TestOrchestrator_TypedNullErrors(t *testing.T) {
 func TestOrchestrator_Render_RSExtensionAttributedToParentKS(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "kustomization.yaml", "resources: [ks.yaml]\n")
-	testutil.WriteFile(t, dir, "ks.yaml", testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
+	testutil.WriteFile(
+		t,
+		dir,
+		"ks.yaml",
+		testutil.KustomizationYAML(
+			"apps",
+			"flux-system",
+			"  path: ./apps\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+		),
+	)
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml", `namespace: flux-system
 resources: [rsip.yaml]
 generatorOptions:
@@ -726,7 +926,12 @@ spec:
 	if err := o.bootstrap(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	rsID := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "acl"}
+	rsID := manifest.NamedResource{
+		Group:     "fluxcd.controlplane.io",
+		Kind:      manifest.KindResourceSet,
+		Namespace: "flux-system",
+		Name:      "acl",
+	}
 	if _, ok := o.index.Lookup(rsID); ok {
 		t.Fatal("fixture ResourceSet must only exist in render output")
 	}
@@ -750,8 +955,11 @@ spec:
 		}
 	}
 	if !found {
-		t.Errorf("expected ExternalSecret/acl in outputByParent(res.Manifests)[%s] (the RS-rendered child); kinds in stream: %v",
-			ksID, kindsOf(mans))
+		t.Errorf(
+			"expected ExternalSecret/acl in outputByParent(res.Manifests)[%s] (the RS-rendered child); kinds in stream: %v",
+			ksID,
+			kindsOf(mans),
+		)
 	}
 }
 
@@ -779,9 +987,25 @@ spec:
   secretRef:
     name: ghcr-creds
 `, registryURL))
-	testutil.WriteFile(t, dir, "ks.yaml", testutil.KustomizationYAML("private-app", "default", "  interval: 5m\n  path: ./\n  sourceRef:\n    kind: OCIRepository\n    name: private-app\n    namespace: default\n"))
+	testutil.WriteFile(
+		t,
+		dir,
+		"ks.yaml",
+		testutil.KustomizationYAML(
+			"private-app",
+			"default",
+			"  interval: 5m\n  path: ./\n  sourceRef:\n    kind: OCIRepository\n    name: private-app\n    namespace: default\n",
+		),
+	)
 
-	renderedSingleton4, err := RenderTrees(context.Background(), []Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{RegistryConfig: registryConfig, AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}})
+	renderedSingleton4, err := RenderTrees(
+		context.Background(),
+		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
+		Config{
+			RegistryConfig:    registryConfig,
+			AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap},
+		},
+	)
 	if len(renderedSingleton4) != 1 {
 		t.Fatalf("missing render: %v", err)
 	}
@@ -791,11 +1015,19 @@ spec:
 		t.Fatalf("Render: %v", err)
 	}
 
-	ociID := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindOCIRepository, Namespace: "default", Name: "private-app"}
+	ociID := manifest.NamedResource{
+		Group:     "source.toolkit.fluxcd.io",
+		Kind:      manifest.KindOCIRepository,
+		Namespace: "default",
+		Name:      "private-app",
+	}
 	ksID := testutil.KustomizationID("default", "private-app")
 
 	if _, failed := res.Failed[ociID]; failed {
-		t.Errorf("OCIRepository must not be in Failed when --allow-missing-kinds Secret is on; got %v", res.Failed[ociID])
+		t.Errorf(
+			"OCIRepository must not be in Failed when --allow-missing-kinds Secret is on; got %v",
+			res.Failed[ociID],
+		)
 	}
 	if _, failed := res.Failed[ksID]; failed {
 		t.Errorf("dependent KS must propagate skip, not fail; got %v", res.Failed[ksID])
@@ -839,7 +1071,14 @@ spec:
     namespace: flux-system
 `)
 
-	renderedSingleton5, err := RenderTrees(context.Background(), []Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{RegistryConfig: registryConfig, AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}})
+	renderedSingleton5, err := RenderTrees(
+		context.Background(),
+		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
+		Config{
+			RegistryConfig:    registryConfig,
+			AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap},
+		},
+	)
 	if len(renderedSingleton5) != 1 {
 		t.Fatalf("missing render: %v", err)
 	}
@@ -872,9 +1111,18 @@ func keysOf[V any](m map[manifest.NamedResource]V) []manifest.NamedResource {
 
 func TestOrchestrator_ChangedOnlyKeepsSubstituteFromProducer(t *testing.T) {
 	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "kustomization.yaml", "resources: [kubernetes/flux/cluster-apps.yaml, kubernetes/flux/cluster-vars.yaml]\n")
+	testutil.WriteFile(
+		t,
+		dir,
+		"kustomization.yaml",
+		"resources: [kubernetes/flux/cluster-apps.yaml, kubernetes/flux/cluster-vars.yaml]\n",
+	)
 
-	testutil.WriteFile(t, dir, "kubernetes/flux/cluster-apps.yaml", testutil.KustomizationYAML("cluster-apps", "flux-system", `  interval: 10m
+	testutil.WriteFile(
+		t,
+		dir,
+		"kubernetes/flux/cluster-apps.yaml",
+		testutil.KustomizationYAML("cluster-apps", "flux-system", `  interval: 10m
   path: ./kubernetes/apps
   prune: true
   sourceRef:
@@ -885,18 +1133,33 @@ func TestOrchestrator_ChangedOnlyKeepsSubstituteFromProducer(t *testing.T) {
     substituteFrom:
       - kind: ConfigMap
         name: cluster-settings
-`))
-	testutil.WriteFile(t, dir, "kubernetes/flux/cluster-vars.yaml", testutil.KustomizationYAML("cluster-vars", "flux-system", "  interval: 10m\n  path: ./kubernetes/flux/vars\n  prune: true\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n    namespace: flux-system\n"))
+`),
+	)
+	testutil.WriteFile(
+		t,
+		dir,
+		"kubernetes/flux/cluster-vars.yaml",
+		testutil.KustomizationYAML(
+			"cluster-vars",
+			"flux-system",
+			"  interval: 10m\n  path: ./kubernetes/flux/vars\n  prune: true\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n    namespace: flux-system\n",
+		),
+	)
 	testutil.WriteFile(t, dir, "kubernetes/flux/vars/kustomization.yaml", `namespace: flux-system
 components:
   - ../../components/cluster-settings
 `)
-	testutil.WriteFile(t, dir, "kubernetes/components/cluster-settings/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1alpha1
+	testutil.WriteFile(
+		t,
+		dir,
+		"kubernetes/components/cluster-settings/kustomization.yaml",
+		`apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
 resources:
   - cluster-settings.yaml
   - retained.yaml
-`)
+`,
+	)
 	testutil.WriteFile(t, dir, "kubernetes/components/cluster-settings/cluster-settings.yaml", `apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -904,24 +1167,43 @@ metadata:
 data:
   CLUSTER_DOMAIN: example.test
 `)
-	testutil.WriteFile(t, dir, "kubernetes/components/cluster-settings/retained.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: retained}\ndata: {value: kept}\n")
-	testutil.WriteFile(t, dir, "kubernetes/apps/consumed.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: consumed, namespace: flux-system}\ndata: {domain: '${CLUSTER_DOMAIN}'}\n")
+	testutil.WriteFile(
+		t,
+		dir,
+		"kubernetes/components/cluster-settings/retained.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: retained}\ndata: {value: kept}\n",
+	)
+	testutil.WriteFile(
+		t,
+		dir,
+		"kubernetes/apps/consumed.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: consumed, namespace: flux-system}\ndata: {domain: '${CLUSTER_DOMAIN}'}\n",
+	)
 	testutil.WriteFile(t, dir, "kubernetes/apps/kustomization.yaml", `resources:
   - communication/ntfy/ks.yaml
   - consumed.yaml
 `)
-	testutil.WriteFile(t, dir, "kubernetes/apps/communication/ntfy/ks.yaml", testutil.KustomizationYAML("ntfy", "communication", `  interval: 10m
+	testutil.WriteFile(
+		t,
+		dir,
+		"kubernetes/apps/communication/ntfy/ks.yaml",
+		testutil.KustomizationYAML("ntfy", "communication", `  interval: 10m
   path: ./kubernetes/apps/communication/ntfy/app
   prune: true
   sourceRef:
     kind: GitRepository
     name: flux-system
     namespace: flux-system
-`))
+`),
+	)
 	testutil.WriteFile(t, dir, "kubernetes/apps/communication/ntfy/app/kustomization.yaml", `resources:
   - helmrelease.yaml
 `)
-	testutil.WriteFile(t, dir, "kubernetes/apps/communication/ntfy/app/helmrelease.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+	testutil.WriteFile(
+		t,
+		dir,
+		"kubernetes/apps/communication/ntfy/app/helmrelease.yaml",
+		`apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
   name: ntfy
@@ -933,24 +1215,33 @@ spec:
     kind: OCIRepository
     name: ntfy
     namespace: flux-system
-`)
+`,
+	)
 
 	input := &countedProducerFS{FS: os.DirFS(dir)}
 	artifact := &store.SourceArtifact{FS: input, LocalPath: dir, Key: "fixture-pin"}
 	cacheDir := t.TempDir()
-	prime, err := newTestOrchestrator(t, Tree{Path: dir, RepoRoot: dir, Input: artifact}, Config{CacheDir: cacheDir, Concurrency: 2, WipeSecrets: true})
+	prime, err := newTestOrchestrator(
+		t,
+		Tree{Path: dir, RepoRoot: dir, Input: artifact},
+		Config{CacheDir: cacheDir, Concurrency: 2, WipeSecrets: true},
+	)
 	assert.NoError(t, err)
 	assert.NoError(t, prime.bootstrap(t.Context()))
 	assert.NoError(t, prime.run(t.Context()))
 	prime.stop()
 	coldReads := input.reads.Swap(0)
 
-	o, err := newTestOrchestrator(t, Tree{Path: dir, RepoRoot: dir, Input: artifact,
+	o, err := newTestOrchestrator(t, Tree{
+		Path: dir, RepoRoot: dir, Input: artifact,
 
 		ExternalChanges: change.NewSet([]string{
 			"kubernetes/apps/communication/ntfy/app/helmrelease.yaml",
-		})}, Config{CacheDir: cacheDir, Concurrency: 2,
-		WipeSecrets: true},
+		}),
+	}, Config{
+		CacheDir: cacheDir, Concurrency: 2,
+		WipeSecrets: true,
+	},
 	)
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -1025,7 +1316,16 @@ func (f *countedProducerFS) Open(name string) (fs.File, error) {
 // with a fake FileOwnerLookup would still pass).
 func TestOrchestrator_ChangedOnlyKeepsResourcesEscapeOwner(t *testing.T) {
 	writeTree := func(dir, value string) {
-		testutil.WriteFile(t, dir, "clusters/prod/flux-system/apps.yaml", testutil.KustomizationYAML("apps", "flux-system", "  interval: 10m\n  path: ./apps/prod\n  prune: true\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n    namespace: flux-system\n"))
+		testutil.WriteFile(
+			t,
+			dir,
+			"clusters/prod/flux-system/apps.yaml",
+			testutil.KustomizationYAML(
+				"apps",
+				"flux-system",
+				"  interval: 10m\n  path: ./apps/prod\n  prune: true\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n    namespace: flux-system\n",
+			),
+		)
 		testutil.WriteFile(t, dir, "apps/prod/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
@@ -1049,7 +1349,11 @@ data:
 	writeTree(origDir, "1")
 	writeTree(dir, "2")
 
-	o, err := newTestOrchestrator(t, Tree{Path: dir, BaseInput: testDirectoryInput(t, origDir)}, Config{WipeSecrets: true})
+	o, err := newTestOrchestrator(
+		t,
+		Tree{Path: dir, BaseInput: testDirectoryInput(t, origDir)},
+		Config{WipeSecrets: true},
+	)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -1072,7 +1376,16 @@ data:
 func TestRenderTrees_IndependentInvocations(t *testing.T) {
 	dir := t.TempDir()
 	origDir := t.TempDir()
-	testutil.WriteFile(t, dir, "ks.yaml", testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n    namespace: flux-system\n"))
+	testutil.WriteFile(
+		t,
+		dir,
+		"ks.yaml",
+		testutil.KustomizationYAML(
+			"apps",
+			"flux-system",
+			"  path: ./apps\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n    namespace: flux-system\n",
+		),
+	)
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- cm.yaml\n")
 	testutil.WriteFile(t, dir, "apps/cm.yaml", `apiVersion: v1
 kind: ConfigMap
@@ -1083,9 +1396,22 @@ data: {k: v}
 	// Baseline with different content forces changed-only mode, which
 	// makes buildChangeFilter actually construct a filter we can pin
 	// across the two Bootstrap calls.
-	testutil.WriteFile(t, origDir, "ks.yaml", testutil.KustomizationYAML("apps", "flux-system", "  path: ./other\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n    namespace: flux-system\n"))
+	testutil.WriteFile(
+		t,
+		origDir,
+		"ks.yaml",
+		testutil.KustomizationYAML(
+			"apps",
+			"flux-system",
+			"  path: ./other\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n    namespace: flux-system\n",
+		),
+	)
 
-	tree := Tree{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: dir, BaseInput: testDirectoryInput(t, origDir)}
+	tree := Tree{
+		ID:        manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
+		Path:      dir,
+		BaseInput: testDirectoryInput(t, origDir),
+	}
 	first, err := RenderTrees(t.Context(), []Tree{tree}, Config{WipeSecrets: true, Concurrency: 2})
 	assert.NoError(t, err)
 	second, err := RenderTrees(t.Context(), []Tree{tree}, Config{WipeSecrets: true, Concurrency: 2})
@@ -1101,8 +1427,16 @@ data: {k: v}
 			t.Fatal("apps Kustomization missing")
 		}
 	}
-	assert.Equal(t, len(first[0].Store().ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)), len(second[0].Store().ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)))
-	assert.Equal(t, len(first[0].Store().ListObjects("", manifest.KindConfigMap)), len(second[0].Store().ListObjects("", manifest.KindConfigMap)))
+	assert.Equal(
+		t,
+		len(first[0].Store().ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)),
+		len(second[0].Store().ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)),
+	)
+	assert.Equal(
+		t,
+		len(first[0].Store().ListObjects("", manifest.KindConfigMap)),
+		len(second[0].Store().ListObjects("", manifest.KindConfigMap)),
+	)
 	assert.Diff(t, first[0].filter.KeepNames(), second[0].filter.KeepNames())
 	assert.Diff(t, canonicalBatches(first[0].Result), canonicalBatches(second[0].Result))
 }
@@ -1126,7 +1460,16 @@ spec:
 
 func writeDigestTrackingTree(t *testing.T, root string) *store.SourceArtifact {
 	t.Helper()
-	testutil.WriteFile(t, root, "flux/ks.yaml", testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n  sourceRef: {kind: GitRepository, name: flux-system}\n  postBuild:\n    substitute: {GATE: \"true\"}\n"))
+	testutil.WriteFile(
+		t,
+		root,
+		"flux/ks.yaml",
+		testutil.KustomizationYAML(
+			"apps",
+			"flux-system",
+			"  path: ./apps\n  sourceRef: {kind: GitRepository, name: flux-system}\n  postBuild:\n    substitute: {GATE: \"true\"}\n",
+		),
+	)
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [hr.yaml]\n")
 	testutil.WriteFile(t, root, "chart/Chart.yaml", "apiVersion: v2\nname: fixture\nversion: 0.1.0\n")
 	testutil.WriteFile(t, root, "chart/templates/cm.yaml", `apiVersion: v1
@@ -1145,7 +1488,12 @@ data:
 		files[file] = string(body)
 	}
 	registry := newInlineChartRegistry(t, []map[string]string{files}, false)
-	testutil.WriteFile(t, root, "flux/source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: fixture, namespace: flux-system}\nspec:\n  url: "+registry.url+"\n  insecure: true\n  ref: {tag: 0.1.0}\n  layerSelector: {mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip, operation: copy}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"flux/source.yaml",
+		"apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: fixture, namespace: flux-system}\nspec:\n  url: "+registry.url+"\n  insecure: true\n  ref: {tag: 0.1.0}\n  layerSelector: {mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip, operation: copy}\n",
+	)
 	writeDigestTrackingActive(t, root, "stable")
 	digest := "sha256:" + strings.Repeat("abcdef0123456789", 4)
 	return &store.SourceArtifact{FS: os.DirFS(root), LocalPath: root, Revision: "0.1.0@" + digest, Digest: digest}
@@ -1191,11 +1539,22 @@ func TestOrchestrator_BootstrapChartDigestTracking(t *testing.T) {
 					testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: []\n")
 				}
 				if !covered {
-					testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [ks.yaml, hr.yaml, active.yaml, source.yaml]\n")
+					testutil.WriteFile(
+						t,
+						root,
+						"flux/kustomization.yaml",
+						"resources: [ks.yaml, hr.yaml, active.yaml, source.yaml]\n",
+					)
 				}
 				writeDigestTrackingRelease(t, root, rel, "true")
-				o, err := newTestOrchestrator(t, Tree{Path: filepath.Join(root, "flux"), RepoRoot: root, Input: input}, Config{Concurrency: 2,
-					HelmOptions: helm.Options{DisableChartDigestTracking: disabled}})
+				o, err := newTestOrchestrator(
+					t,
+					Tree{Path: filepath.Join(root, "flux"), RepoRoot: root, Input: input},
+					Config{
+						Concurrency: 2,
+						HelmOptions: helm.Options{DisableChartDigestTracking: disabled},
+					},
+				)
 				assert.NoError(t, err)
 				t.Cleanup(func() { o.stop() })
 				assert.NoError(t, o.bootstrap(t.Context()))
@@ -1216,8 +1575,16 @@ func TestRenderTrees_ChartDigestTrackingFailureRetry(t *testing.T) {
 	root := t.TempDir()
 	input := writeDigestTrackingTree(t, root)
 	writeDigestTrackingRelease(t, root, "apps/hr.yaml", "true")
-	tree := Tree{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: filepath.Join(root, "flux"), RepoRoot: root, Input: input}
-	tree.BaseInput = &store.SourceArtifact{LocalPath: filepath.Join(root, "absent"), FS: os.DirFS(filepath.Join(root, "absent"))}
+	tree := Tree{
+		ID:       manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
+		Path:     filepath.Join(root, "flux"),
+		RepoRoot: root,
+		Input:    input,
+	}
+	tree.BaseInput = &store.SourceArtifact{
+		LocalPath: filepath.Join(root, "absent"),
+		FS:        os.DirFS(filepath.Join(root, "absent")),
+	}
 	cfg := Config{CacheDir: t.TempDir(), Concurrency: 2}
 	_, err := RenderTrees(t.Context(), []Tree{tree}, cfg)
 	if err == nil {
@@ -1267,8 +1634,14 @@ spec:
 			for _, disabled := range []bool{false, true} {
 				var previous []byte
 				for range 2 {
-					o, err := newTestOrchestrator(t, Tree{Path: filepath.Join(root, "flux"), RepoRoot: root, Input: input}, Config{Cache: owner, Concurrency: 2,
-						HelmOptions: helm.Options{DisableChartDigestTracking: disabled}})
+					o, err := newTestOrchestrator(
+						t,
+						Tree{Path: filepath.Join(root, "flux"), RepoRoot: root, Input: input},
+						Config{
+							Cache: owner, Concurrency: 2,
+							HelmOptions: helm.Options{DisableChartDigestTracking: disabled},
+						},
+					)
 					assert.NoError(t, err)
 					t.Cleanup(func() { o.stop() })
 					assert.NoError(t, o.bootstrap(t.Context()))
@@ -1282,7 +1655,14 @@ spec:
 					}
 					instance := hr.Values["instance"].(map[string]any)
 					patches := instance["kustomize"].(map[string]any)["patches"].([]any)
-					assert.Equal(t, strings.Contains(patches[0].(map[string]any)["patch"].(string), "DisableChartDigestTracking=true"), true)
+					assert.Equal(
+						t,
+						strings.Contains(
+							patches[0].(map[string]any)["patch"].(string),
+							"DisableChartDigestTracking=true",
+						),
+						true,
+					)
 					assert.Equal(t, o.hrc.Options.DisableChartDigestTracking, disabled)
 					output, err := json.Marshal(res.Manifests)
 					assert.NoError(t, err)
@@ -1308,8 +1688,29 @@ func TestRenderTrees_ChartDigestTrackingIndependent(t *testing.T) {
 	for _, disabled := range []bool{false, true} {
 		var previous []byte
 		for range 2 {
-			renderedTrees1, err := RenderTrees(t.Context(), []Tree{{Path: filepath.Join(baseRoot, "flux"), RepoRoot: baseRoot, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, BaseInput: headInput, Input: baseInput}, {Path: filepath.Join(headRoot, "flux"), RepoRoot: headRoot, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: headInput, BaseInput: baseInput}}, Config{Cache: owner, Concurrency: 2,
-				HelmOptions: helm.Options{DisableChartDigestTracking: disabled}})
+			renderedTrees1, err := RenderTrees(
+				t.Context(),
+				[]Tree{
+					{
+						Path:      filepath.Join(baseRoot, "flux"),
+						RepoRoot:  baseRoot,
+						ID:        manifest.TreeID{Cluster: ".", Side: manifest.TreeBase},
+						BaseInput: headInput,
+						Input:     baseInput,
+					},
+					{
+						Path:      filepath.Join(headRoot, "flux"),
+						RepoRoot:  headRoot,
+						ID:        manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
+						Input:     headInput,
+						BaseInput: baseInput,
+					},
+				},
+				Config{
+					Cache: owner, Concurrency: 2,
+					HelmOptions: helm.Options{DisableChartDigestTracking: disabled},
+				},
+			)
 			base, head := renderedTrees1[0], renderedTrees1[1]
 			assert.NoError(t, err)
 			assertDigestTrackingOutput(t, base, disabled, "base")
@@ -1351,15 +1752,29 @@ func TestRenderTrees_InjectedCacheRemainsCallerOwned(t *testing.T) {
 			for _, dir := range []string{baseDir, headDir} {
 				writeSubstitutionCluster(t, dir, "values", "value")
 				testutil.WriteFile(t, dir, "kustomization.yaml", "resources: [flux.yaml, values.yaml]\n")
-				testutil.WriteFile(t, dir, "values.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: values, namespace: apps}\ndata: {VALUE: stable}\n")
+				testutil.WriteFile(
+					t,
+					dir,
+					"values.yaml",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: values, namespace: apps}\ndata: {VALUE: stable}\n",
+				)
 			}
 			configuredRoot := t.TempDir()
-			renderedTrees2, err := RenderTrees(t.Context(), []Tree{{RepoRoot: baseDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}}, {RepoRoot: headDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{Cache: c, CacheDir: configuredRoot, Concurrency: 2})
+			renderedTrees2, err := RenderTrees(
+				t.Context(),
+				[]Tree{
+					{RepoRoot: baseDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}},
+					{RepoRoot: headDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}},
+				},
+				Config{Cache: c, CacheDir: configuredRoot, Concurrency: 2},
+			)
 			base, head := renderedTrees2[0], renderedTrees2[1]
 			if err != nil {
 				t.Fatal(err)
 			}
-			if base.cache != c || head.cache != c || base.hrc.Helm == nil || head.hrc.Helm == nil || base.ksc.Trees == nil || head.ksc.Trees == nil {
+			if base.cache != c || head.cache != c || base.hrc.Helm == nil || head.hrc.Helm == nil ||
+				base.ksc.Trees == nil ||
+				head.ksc.Trees == nil {
 				t.Fatal("diff sides did not wire both renderers through the selected owner")
 			}
 			entries, err := os.ReadDir(configuredRoot)
@@ -1375,13 +1790,31 @@ func TestRenderTrees_InjectedCacheRemainsCallerOwned(t *testing.T) {
 				t.Fatalf("caller cache after both sides stop: data=%q calls=%d err=%v", data, calls, err)
 			}
 			assert.NoError(t, os.Remove(filepath.Join(baseDir, "app/cm.yaml")))
-			renderedTrees3, err := RenderTrees(t.Context(), []Tree{{RepoRoot: baseDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}}, {RepoRoot: headDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{Cache: c, Concurrency: 2})
+			renderedTrees3, err := RenderTrees(
+				t.Context(),
+				[]Tree{
+					{RepoRoot: baseDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}},
+					{RepoRoot: headDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}},
+				},
+				Config{Cache: c, Concurrency: 2},
+			)
 			base, head = renderedTrees3[0], renderedTrees3[1]
-			if _, ok := errors.AsType[*FailuresError](err); !ok || base.Result == nil || len(base.Result.Failed) == 0 || head.Result == nil || len(head.Result.Manifests) == 0 || head.Err != nil {
+			if _, ok := errors.AsType[*FailuresError](
+				err,
+			); !ok || base.Result == nil || len(base.Result.Failed) == 0 || head.Result == nil || len(head.Result.Manifests) == 0 ||
+				head.Err != nil {
 				t.Fatalf("resource failure canceled healthy sibling: base=%+v head=%+v err=%v", base, head, err)
 			}
 			for _, side := range []Rendered{base, head} {
-				if _, err := side.inputs.Acquire(t.Context(), "://closed", sourcecache.RetryConfig{}, nil); !errors.Is(err, fs.ErrClosed) {
+				if _, err := side.inputs.Acquire(
+					t.Context(),
+					"://closed",
+					sourcecache.RetryConfig{},
+					nil,
+				); !errors.Is(
+					err,
+					fs.ErrClosed,
+				) {
 					t.Fatalf("partial side left TreeCache open: %v", err)
 				}
 			}
@@ -1399,7 +1832,30 @@ func TestRenderTrees_NetworkRunIsolation(t *testing.T) {
 			testutil.WriteFile(t, root, "cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input}\n")
 			tree := Tree{RepoRoot: root}
 			cfg := treeConfig{Cache: c, Concurrency: workers, Tree: Tree{}}
-			renderedTrees4, err := RenderTrees(t.Context(), []Tree{{RepoRoot: tree.RepoRoot, Path: tree.Path, SelfURLs: tree.SelfURLs, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, ExternalChanges: cfg.ExternalChanges, Input: cfg.BaseInput, BaseInput: cfg.Input}, {RepoRoot: tree.RepoRoot, Path: tree.Path, SelfURLs: tree.SelfURLs, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: cfg.Input, BaseInput: cfg.BaseInput, ExternalChanges: cfg.ExternalChanges}}, cfg.Config)
+			renderedTrees4, err := RenderTrees(
+				t.Context(),
+				[]Tree{
+					{
+						RepoRoot:        tree.RepoRoot,
+						Path:            tree.Path,
+						SelfURLs:        tree.SelfURLs,
+						ID:              manifest.TreeID{Cluster: ".", Side: manifest.TreeBase},
+						ExternalChanges: cfg.ExternalChanges,
+						Input:           cfg.BaseInput,
+						BaseInput:       cfg.Input,
+					},
+					{
+						RepoRoot:        tree.RepoRoot,
+						Path:            tree.Path,
+						SelfURLs:        tree.SelfURLs,
+						ID:              manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
+						Input:           cfg.Input,
+						BaseInput:       cfg.BaseInput,
+						ExternalChanges: cfg.ExternalChanges,
+					},
+				},
+				cfg.Config,
+			)
 			base, head := renderedTrees4[0], renderedTrees4[1]
 			if err != nil {
 				t.Fatal(err)
@@ -1409,7 +1865,11 @@ func TestRenderTrees_NetworkRunIsolation(t *testing.T) {
 				t.Fatal("diff sides did not share one Network")
 			}
 			var hits atomic.Int32
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { hits.Add(1); _, _ = io.WriteString(w, "new run") }))
+			srv := httptest.NewServer(
+				http.HandlerFunc(
+					func(w http.ResponseWriter, _ *http.Request) { hits.Add(1); _, _ = io.WriteString(w, "new run") },
+				),
+			)
 			t.Cleanup(srv.Close)
 			var failing atomic.Bool
 			failing.Store(true)
@@ -1431,12 +1891,25 @@ func TestRenderTrees_NetworkRunIsolation(t *testing.T) {
 			cause := terminal.Err
 			failing.Store(false)
 			for i, side := range []Rendered{base, head} {
-				if _, err := side.inputs.Acquire(t.Context(), target, sourcecache.RetryConfig{}, nil); !errors.Is(err, fs.ErrClosed) {
+				if _, err := side.inputs.Acquire(
+					t.Context(),
+					target,
+					sourcecache.RetryConfig{},
+					nil,
+				); !errors.Is(
+					err,
+					fs.ErrClosed,
+				) {
 					t.Fatalf("returned side %d is not terminal: %v", i, err)
 				}
 				trees := source.NewHTTPInputs(c, side.cfg.Network, task.NewBounded(2))
 				t.Cleanup(trees.Close)
-				_, err := trees.Acquire(t.Context(), fmt.Sprintf("%s/%d", target, i), sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour}, nil)
+				_, err := trees.Acquire(
+					t.Context(),
+					fmt.Sprintf("%s/%d", target, i),
+					sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour},
+					nil,
+				)
 				terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
 				if !ok || terminal.Attempted || !errors.Is(err, cause) {
 					t.Fatalf("side %d: %v", i, err)
@@ -1445,7 +1918,30 @@ func TestRenderTrees_NetworkRunIsolation(t *testing.T) {
 			if hits.Load() != 0 {
 				t.Fatalf("suppressed requests=%d", hits.Load())
 			}
-			renderedTrees5, err := RenderTrees(t.Context(), []Tree{{RepoRoot: tree.RepoRoot, Path: tree.Path, SelfURLs: tree.SelfURLs, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, Input: cfg.BaseInput, BaseInput: cfg.Input, ExternalChanges: cfg.ExternalChanges}, {RepoRoot: tree.RepoRoot, Path: tree.Path, SelfURLs: tree.SelfURLs, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, BaseInput: cfg.BaseInput, ExternalChanges: cfg.ExternalChanges, Input: cfg.Input}}, cfg.Config)
+			renderedTrees5, err := RenderTrees(
+				t.Context(),
+				[]Tree{
+					{
+						RepoRoot:        tree.RepoRoot,
+						Path:            tree.Path,
+						SelfURLs:        tree.SelfURLs,
+						ID:              manifest.TreeID{Cluster: ".", Side: manifest.TreeBase},
+						Input:           cfg.BaseInput,
+						BaseInput:       cfg.Input,
+						ExternalChanges: cfg.ExternalChanges,
+					},
+					{
+						RepoRoot:        tree.RepoRoot,
+						Path:            tree.Path,
+						SelfURLs:        tree.SelfURLs,
+						ID:              manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
+						BaseInput:       cfg.BaseInput,
+						ExternalChanges: cfg.ExternalChanges,
+						Input:           cfg.Input,
+					},
+				},
+				cfg.Config,
+			)
 			next, other := renderedTrees5[0], renderedTrees5[1]
 			if err != nil {
 				t.Fatal(err)
@@ -1454,7 +1950,15 @@ func TestRenderTrees_NetworkRunIsolation(t *testing.T) {
 				t.Fatal("Network leaked across invocations sharing Cache")
 			}
 			for _, side := range []Rendered{next, other} {
-				if _, err := side.inputs.Acquire(t.Context(), target, sourcecache.RetryConfig{}, nil); !errors.Is(err, fs.ErrClosed) {
+				if _, err := side.inputs.Acquire(
+					t.Context(),
+					target,
+					sourcecache.RetryConfig{},
+					nil,
+				); !errors.Is(
+					err,
+					fs.ErrClosed,
+				) {
 					t.Fatalf("fresh returned side is not terminal: %v", err)
 				}
 			}
@@ -1478,17 +1982,51 @@ func TestRenderTrees_NetworkRunIsolation(t *testing.T) {
 		}))
 		defer server.Close()
 		root := t.TempDir()
-		testutil.WriteFile(t, root, "flux.yaml", testutil.KustomizationYAML("owner", "apps", "  path: ./apps\n  interval: 5m\n"))
-		testutil.WriteFile(t, root, "apps/kustomization.yaml", fmt.Sprintf("namespace: apps\nconfigMapGenerator: [{name: remote, envs: [%s]}]\ngeneratorOptions: {disableNameSuffixHash: true}\n", server.URL))
+		testutil.WriteFile(
+			t,
+			root,
+			"flux.yaml",
+			testutil.KustomizationYAML("owner", "apps", "  path: ./apps\n  interval: 5m\n"),
+		)
+		testutil.WriteFile(
+			t,
+			root,
+			"apps/kustomization.yaml",
+			fmt.Sprintf(
+				"namespace: apps\nconfigMapGenerator: [{name: remote, envs: [%s]}]\ngeneratorOptions: {disableNameSuffixHash: true}\n",
+				server.URL,
+			),
+		)
 		cfg := treeConfig{Cache: cachetest.New(t, "", sourcecache.New), Concurrency: 2, Tree: Tree{}}
 		for _, v := range []int32{1, 2} {
 			version.Store(v)
 			before := requests.Load()
-			renderedTrees6, err := RenderTrees(t.Context(), []Tree{{RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, ExternalChanges: cfg.ExternalChanges, Input: cfg.BaseInput, BaseInput: cfg.Input}, {RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, ExternalChanges: cfg.ExternalChanges, Input: cfg.Input, BaseInput: cfg.BaseInput}}, cfg.Config)
+			renderedTrees6, err := RenderTrees(
+				t.Context(),
+				[]Tree{
+					{
+						RepoRoot:        root,
+						ID:              manifest.TreeID{Cluster: ".", Side: manifest.TreeBase},
+						ExternalChanges: cfg.ExternalChanges,
+						Input:           cfg.BaseInput,
+						BaseInput:       cfg.Input,
+					},
+					{
+						RepoRoot:        root,
+						ID:              manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
+						ExternalChanges: cfg.ExternalChanges,
+						Input:           cfg.Input,
+						BaseInput:       cfg.BaseInput,
+					},
+				},
+				cfg.Config,
+			)
 			base, head := renderedTrees6[0], renderedTrees6[1]
 			assert.NoError(t, err)
 			for _, side := range []Rendered{base, head} {
-				obj, ok := side.store.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "remote"})
+				obj, ok := side.store.Get[*manifest.ConfigMap](
+					manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "remote"},
+				)
 				if !ok {
 					t.Fatal("snapshot lost bootstrap generator data")
 				}
@@ -1511,15 +2049,29 @@ func TestRenderTrees_ErrorProjectionRetainsCleanup(t *testing.T) {
 	testutil.WriteFile(t, root, "healthy.yaml", substitutionKS("healthy", "healthy", ""))
 	testutil.WriteFile(t, root, "healthy/kustomization.yaml", "resources: [cm.yaml]\n")
 	testutil.WriteFile(t, root, "healthy/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: partial}\n")
-	testutil.WriteFile(t, root, "values.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: values, namespace: apps}\ndata: {VALUE: stable}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"values.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: values, namespace: apps}\ndata: {VALUE: stable}\n",
+	)
 	assert.NoError(t, os.Remove(filepath.Join(root, "app/cm.yaml")))
-	runs, err := RenderTrees(t.Context(), []Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: root, RepoRoot: root}}, Config{Concurrency: 2})
+	runs, err := RenderTrees(
+		t.Context(),
+		[]Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: root, RepoRoot: root}},
+		Config{Concurrency: 2},
+	)
 	if err == nil || len(runs) != 1 || runs[0].Orchestrator == nil || len(runs[0].Result.Manifests) == 0 {
 		t.Fatalf("partial output lost: runs=%v error=%v", runs, err)
 	}
 	cleanupErr := errors.New("backing close failed")
 	joined := errors.Join(err, cleanupErr)
-	_, selected, remainder := Select(runs, joined, []manifest.NamedResource{testutil.KustomizationID("", "healthy")}, nil)
+	_, selected, remainder := Select(
+		runs,
+		joined,
+		[]manifest.NamedResource{testutil.KustomizationID("", "healthy")},
+		nil,
+	)
 	for _, projected := range []error{selected, remainder} {
 		if !errors.Is(projected, cleanupErr) || strings.Count(projected.Error(), cleanupErr.Error()) != 1 {
 			t.Fatalf("cleanup error must survive once: %v", projected)
@@ -1567,7 +2119,15 @@ func TestOrchestrator_RunJoinsRemoteWorkers(t *testing.T) {
 					}
 				}
 				<-completed
-				if _, err := o.inputs.Acquire(t.Context(), srv.URL, sourcecache.RetryConfig{}, nil); !errors.Is(err, fs.ErrClosed) {
+				if _, err := o.inputs.Acquire(
+					t.Context(),
+					srv.URL,
+					sourcecache.RetryConfig{},
+					nil,
+				); !errors.Is(
+					err,
+					fs.ErrClosed,
+				) {
 					t.Fatalf("run left TreeCache live: %v", err)
 				}
 				assert.NoError(t, o.cache.Close())
@@ -1586,8 +2146,18 @@ func TestRSRawSink_DeterministicCollisionWinner(t *testing.T) {
 	t.Parallel()
 
 	parent := testutil.KustomizationID("flux-system", "apps")
-	ownerA := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "rs-a"}
-	ownerB := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "rs-b"}
+	ownerA := manifest.NamedResource{
+		Group:     "fluxcd.controlplane.io",
+		Kind:      manifest.KindResourceSet,
+		Namespace: "flux-system",
+		Name:      "rs-a",
+	}
+	ownerB := manifest.NamedResource{
+		Group:     "fluxcd.controlplane.io",
+		Kind:      manifest.KindResourceSet,
+		Namespace: "flux-system",
+		Name:      "rs-b",
+	}
 	mkDoc := func(owner string) map[string]any {
 		return map[string]any{
 			"apiVersion": "example.com/v1",
@@ -1602,13 +2172,23 @@ func TestRSRawSink_DeterministicCollisionWinner(t *testing.T) {
 	version := mkDoc("version-loses")
 	version["apiVersion"] = "example.com/v2"
 
-	omitted := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "foo"}, "data": map[string]any{"value": "a-omitted"}}
+	omitted := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata":   map[string]any{"name": "foo"},
+		"data":       map[string]any{"value": "a-omitted"},
+	}
 	explicit := manifest.DeepCopyMap(omitted)
 	explicit["metadata"].(map[string]any)["namespace"] = "flux-system"
 	explicit["data"].(map[string]any)["value"] = "a-explicit"
 	winningCM := manifest.DeepCopyMap(explicit)
 	winningCM["data"].(map[string]any)["value"] = "b-wins"
-	namespaceA := map[string]any{"apiVersion": "v1", "kind": "Namespace", "metadata": map[string]any{"name": "shared"}, "spec": map[string]any{"owner": "a-loses"}}
+	namespaceA := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Namespace",
+		"metadata":   map[string]any{"name": "shared"},
+		"spec":       map[string]any{"owner": "a-loses"},
+	}
 	namespaceB := manifest.DeepCopyMap(namespaceA)
 	namespaceB["spec"].(map[string]any)["owner"] = "b-wins"
 	incomplete := []map[string]any{
@@ -1616,7 +2196,12 @@ func TestRSRawSink_DeterministicCollisionWinner(t *testing.T) {
 		{"apiVersion": "example.com/v1", "metadata": map[string]any{"name": "kindless"}},
 		{"kind": "Widget", "metadata": map[string]any{"name": "versionless"}},
 	}
-	malformed := map[string]any{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization", "metadata": map[string]any{"name": "invalid", "namespace": "flux-system"}, "spec": map[string]any{"path": []any{"invalid"}}}
+	malformed := map[string]any{
+		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+		"kind":       "Kustomization",
+		"metadata":   map[string]any{"name": "invalid", "namespace": "flux-system"},
+		"spec":       map[string]any{"path": []any{"invalid"}},
+	}
 
 	for _, reverse := range []bool{false, true} {
 		t.Run(fmt.Sprintf("reverse=%t", reverse), func(t *testing.T) {
@@ -1624,8 +2209,18 @@ func TestRSRawSink_DeterministicCollisionWinner(t *testing.T) {
 			s := store.New()
 			a := &manifest.ResourceSet{Name: ownerA.Name, Namespace: ownerA.Namespace}
 			b := &manifest.ResourceSet{Name: ownerB.Name, Namespace: ownerB.Namespace}
-			s.AddObjects([]manifest.BaseManifest{a, b, &manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace}})
-			o := &Orchestrator{store: s, index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{ownerA: {Parent: parent}, ownerB: {Parent: parent}}}}
+			s.AddObjects(
+				[]manifest.BaseManifest{a, b, &manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace}},
+			)
+			o := &Orchestrator{
+				store: s,
+				index: &manifest.DiscoveryIndex{
+					Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+						ownerA: {Parent: parent},
+						ownerB: {Parent: parent},
+					},
+				},
+			}
 			ids := []manifest.NamedResource{ownerA, ownerB}
 			if reverse {
 				slices.Reverse(ids)
@@ -1633,10 +2228,21 @@ func TestRSRawSink_DeterministicCollisionWinner(t *testing.T) {
 			for _, id := range ids {
 				input := []map[string]any{docB, other, winningCM, namespaceB}
 				if id == ownerA {
-					input = append([]map[string]any{docA, version, omitted, explicit, namespaceA, malformed}, incomplete...)
+					input = append(
+						[]map[string]any{docA, version, omitted, explicit, namespaceA, malformed},
+						incomplete...)
 				}
-				parent := &manifest.RawObject{APIVersion: id.Group + "/v1", Kind: id.Kind, Name: id.Name, Namespace: id.Namespace}
-				children, authoritative, failures := (&base.Controller{}).ParseChildren(parent, testutil.DocumentOccurrences(input), manifest.ParseDocOptions{})
+				parent := &manifest.RawObject{
+					APIVersion: id.Group + "/v1",
+					Kind:       id.Kind,
+					Name:       id.Name,
+					Namespace:  id.Namespace,
+				}
+				children, authoritative, failures := (&base.Controller{}).ParseChildren(
+					parent,
+					testutil.DocumentOccurrences(input),
+					manifest.ParseDocOptions{},
+				)
 				assert.Diff(t, testutil.DocumentMaps(authoritative), input)
 				mixedChildren := 0
 				for i, child := range children {
@@ -1653,7 +2259,11 @@ func TestRSRawSink_DeterministicCollisionWinner(t *testing.T) {
 				if id == ownerA {
 					assert.Equal(t, mixedChildren, 2)
 				}
-				s.RecordEmitted(id, &store.Emission{Children: children, Manifests: authoritative, Failures: failures, Complete: true}, nil)
+				s.RecordEmitted(
+					id,
+					&store.Emission{Children: children, Manifests: authoritative, Failures: failures, Complete: true},
+					nil,
+				)
 				_, _, admitted := s.GetEmission(id)
 				admitted.Finish()
 				mixedChildren = 0
@@ -1669,7 +2279,11 @@ func TestRSRawSink_DeterministicCollisionWinner(t *testing.T) {
 			}
 			assert.Equal(t, s.GetObject(testutil.KustomizationID("flux-system", "invalid")), manifest.BaseManifest(nil))
 			want := append(slices.Clone(incomplete), docB, other, winningCM, namespaceB)
-			assert.Diff(t, outputByParent(o.collectManifests()), map[manifest.NamedResource][]map[string]any{parent: want})
+			assert.Diff(
+				t,
+				outputByParent(o.collectManifests()),
+				map[manifest.NamedResource][]map[string]any{parent: want},
+			)
 		})
 	}
 }
@@ -1703,8 +2317,12 @@ spec:
 `)
 			}
 			testutil.WriteFile(t, root, "apps/demo/kustomization.yaml", resources)
-			testutil.WriteFile(t, root, "apps/demo/hr.yaml",
-				"apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: demo, namespace: apps}\nspec:\n  interval: 10m\n"+spec)
+			testutil.WriteFile(
+				t,
+				root,
+				"apps/demo/hr.yaml",
+				"apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: demo, namespace: apps}\nspec:\n  interval: 10m\n"+spec,
+			)
 			testutil.WriteFile(t, root, "apps/demo/sibling.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata: {name: sibling, namespace: apps}
@@ -1719,8 +2337,10 @@ metadata: {name: rendered, namespace: apps}
 data: {greeting: {{ .Values.greeting | quote }}}
 `)
 			testutil.WriteFile(t, root, "config/prod.yaml", "greeting: production\n")
-			o, err := newTestOrchestrator(t, Tree{Path: filepath.Join(root, "flux"), RepoRoot: root,
-				ExternalChanges: change.NewSet([]string{"config/prod.yaml"})}, Config{CacheDir: t.TempDir(), Concurrency: 2},
+			o, err := newTestOrchestrator(t, Tree{
+				Path: filepath.Join(root, "flux"), RepoRoot: root,
+				ExternalChanges: change.NewSet([]string{"config/prod.yaml"}),
+			}, Config{CacheDir: t.TempDir(), Concurrency: 2},
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -1738,13 +2358,19 @@ data: {greeting: {{ .Values.greeting | quote }}}
 			assert.Equal(t, len(result.Failed), 0)
 			assert.Equal(t, len(result.Blocked), 0)
 			assert.Equal(t, o.store.GetArtifact(owner, store.ArtifactContent) != nil, true)
-			rendered, ok := o.store.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "rendered"})
+			rendered, ok := o.store.Get[*manifest.ConfigMap](
+				manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "rendered"},
+			)
 			if !ok {
 				t.Fatal("selected release did not render")
 			}
 			assert.Equal(t, rendered.Data["greeting"], "production")
 			assert.Equal(t, o.filter.ShouldReconcile(testutil.HelmReleaseID("apps", "sibling")), false)
-			assert.Equal(t, o.store.GetArtifact(testutil.HelmReleaseID("apps", "sibling"), store.ArtifactContent) == nil, true)
+			assert.Equal(
+				t,
+				o.store.GetArtifact(testutil.HelmReleaseID("apps", "sibling"), store.ArtifactContent) == nil,
+				true,
+			)
 		})
 	}
 }
@@ -1835,8 +2461,17 @@ func TestRenderTrees_NetworkBootstrapOwnership(t *testing.T) {
 				if failure {
 					envs += ", " + srv.URL + "/bad.env"
 				}
-				testutil.WriteFile(t, root, "kustomization.yaml", "configMapGenerator:\n- name: generated\n  envs: ["+envs+"]\n")
-				runs, err := RenderTrees(ctx, []Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: root, RepoRoot: root}}, cfg)
+				testutil.WriteFile(
+					t,
+					root,
+					"kustomization.yaml",
+					"configMapGenerator:\n- name: generated\n  envs: ["+envs+"]\n",
+				)
+				runs, err := RenderTrees(
+					ctx,
+					[]Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: root, RepoRoot: root}},
+					cfg,
+				)
 				if (err != nil) != failure || len(runs) != 1 || runs[0].Orchestrator == nil || runs[0].Result == nil {
 					t.Fatalf("render result=%+v error=%v", runs, err)
 				}
@@ -1897,7 +2532,26 @@ func TestRenderTrees_NetworkOwnership(t *testing.T) {
 			testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: ["+srv.URL+"/cm.yaml]\n")
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
-			renderedTrees7, err := RenderTrees(ctx, []Tree{{RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, BaseInput: cfg.Input, ExternalChanges: cfg.ExternalChanges, Input: cfg.BaseInput}, {RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: cfg.Input, BaseInput: cfg.BaseInput, ExternalChanges: cfg.ExternalChanges}}, cfg.Config)
+			renderedTrees7, err := RenderTrees(
+				ctx,
+				[]Tree{
+					{
+						RepoRoot:        root,
+						ID:              manifest.TreeID{Cluster: ".", Side: manifest.TreeBase},
+						BaseInput:       cfg.Input,
+						ExternalChanges: cfg.ExternalChanges,
+						Input:           cfg.BaseInput,
+					},
+					{
+						RepoRoot:        root,
+						ID:              manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
+						Input:           cfg.Input,
+						BaseInput:       cfg.BaseInput,
+						ExternalChanges: cfg.ExternalChanges,
+					},
+				},
+				cfg.Config,
+			)
 			base, head := renderedTrees7[0], renderedTrees7[1]
 			assert.NoError(t, err)
 			if base.cfg.Network != head.cfg.Network {
@@ -1981,7 +2635,14 @@ data: {marker: aaa-explicit}
 `))
 			assert.NoError(t, err)
 			if tc.competitor {
-				want = []map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "foo", "namespace": "flux-system"}, "data": map[string]any{"marker": "zzz-winner"}}}
+				want = []map[string]any{
+					{
+						"apiVersion": "v1",
+						"kind":       "ConfigMap",
+						"metadata":   map[string]any{"name": "foo", "namespace": "flux-system"},
+						"data":       map[string]any{"marker": "zzz-winner"},
+					},
+				}
 			}
 			owner := "aaa"
 			if tc.competitor {
@@ -1995,7 +2656,11 @@ data: {marker: aaa-explicit}
 			}
 			var previous map[manifest.NamedResource][]map[string]any
 			for range 2 {
-				renderedSingleton2, err := RenderTrees(t.Context(), []Tree{{Path: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{Concurrency: 2})
+				renderedSingleton2, err := RenderTrees(
+					t.Context(),
+					[]Tree{{Path: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
+					Config{Concurrency: 2},
+				)
 				if len(renderedSingleton2) != 1 {
 					t.Fatalf("missing render: %v", err)
 				}
@@ -2012,7 +2677,8 @@ data: {marker: aaa-explicit}
 						if tc.competitor && manifest.DocKind(doc) == manifest.KindConfigMap {
 							encoded, err := json.Marshal(doc)
 							assert.NoError(t, err)
-							if strings.Contains(string(encoded), "aaa-omitted") || strings.Contains(string(encoded), "aaa-explicit") {
+							if strings.Contains(string(encoded), "aaa-omitted") ||
+								strings.Contains(string(encoded), "aaa-explicit") {
 								t.Errorf("losing marker in output: %s", encoded)
 							}
 						}
@@ -2040,7 +2706,11 @@ func TestOrchestrator_Render_ResourceSetDocumentBoundary(t *testing.T) {
 	testutil.CopyTree(t, source, path)
 	var previous map[manifest.NamedResource][]map[string]any
 	for range 2 {
-		renderedSingleton3, err := RenderTrees(t.Context(), []Tree{{Path: path, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true, Concurrency: 2})
+		renderedSingleton3, err := RenderTrees(
+			t.Context(),
+			[]Tree{{Path: path, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
+			Config{WipeSecrets: true, Concurrency: 2},
+		)
 		if len(renderedSingleton3) != 1 {
 			t.Fatalf("missing render: %v", err)
 		}
@@ -2100,7 +2770,9 @@ func TestOrchestrator_Render_ResourceSetDocumentBoundary(t *testing.T) {
 
 func privateRegistry(t *testing.T) (string, string) {
 	t.Helper()
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusUnauthorized) }))
+	server := httptest.NewTLSServer(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusUnauthorized) }),
+	)
 	t.Cleanup(server.Close)
 	registry := filepath.Join(t.TempDir(), "config.json")
 	testutil.WriteFileAt(t, registry, "{}")

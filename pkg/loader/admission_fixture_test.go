@@ -108,7 +108,12 @@ func (f *admissionFixture) prepare(child store.Child, reads *store.ReadSet, comm
 		f.tb.Fatal(err)
 	}
 	if commit {
-		_, retry := f.loader.Options.Filter.AddEmitted(proposal.Needed, proposal.Selected, proposal.Dirty, proposal.Revision)
+		_, retry := f.loader.Options.Filter.AddEmitted(
+			proposal.Needed,
+			proposal.Selected,
+			proposal.Dirty,
+			proposal.Revision,
+		)
 		if retry {
 			return f.prepare(child, reads, commit)
 		}
@@ -133,6 +138,7 @@ func (f *admissionFixture) prepare(child store.Child, reads *store.ReadSet, comm
 func (f *admissionFixture) Enabled() bool {
 	return f != nil && f.loader != nil && f.loader.Options.Filter.Enabled()
 }
+
 func (f *admissionFixture) ShouldReconcile(id manifest.NamedResource) bool {
 	if !f.Enabled() {
 		return true
@@ -141,6 +147,7 @@ func (f *admissionFixture) ShouldReconcile(id manifest.NamedResource) bool {
 	defer f.mu.Unlock()
 	return f.keep[id] != absent
 }
+
 func (f *admissionFixture) KeepNames() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -151,6 +158,7 @@ func (f *admissionFixture) KeepNames() []string {
 	slices.Sort(names)
 	return names
 }
+
 func (f *admissionFixture) KeepNamespaces() map[string]struct{} {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -162,7 +170,12 @@ func (f *admissionFixture) KeepNamespaces() map[string]struct{} {
 	}
 	return namespaces
 }
-func (f *admissionFixture) AddEmitted(parent manifest.NamedResource, child store.Child, reader any) []manifest.NamedResource {
+
+func (f *admissionFixture) AddEmitted(
+	parent manifest.NamedResource,
+	child store.Child,
+	reader any,
+) []manifest.NamedResource {
 	f.mu.Lock()
 	var needs, selected []manifest.NamedResource
 	for id, role := range f.keep {
@@ -178,7 +191,11 @@ func (f *admissionFixture) AddEmitted(parent manifest.NamedResource, child store
 	reads, _ := reader.(*store.ReadSet)
 	return f.prepare(child, reads, true)
 }
-func (f *admissionFixture) RefineHistory(records map[manifest.NamedResource]iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], complete map[manifest.NamedResource]bool) {
+
+func (f *admissionFixture) RefineHistory(
+	records map[manifest.NamedResource]iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord],
+	complete map[manifest.NamedResource]bool,
+) {
 	f.history = map[manifest.NamedResource]struct {
 		Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
 		Complete bool
@@ -192,6 +209,7 @@ func (f *admissionFixture) RefineHistory(records map[manifest.NamedResource]iter
 	clear(f.keep)
 	f.prepare(store.Child{}, nil, false)
 }
+
 func sourceChanges(changes *change.Set, source manifest.NamedResource) *change.Set {
 	delta, _, _ := changes.ForSource(source)
 	return delta
@@ -207,6 +225,7 @@ func inputMap(changes *change.Set) map[manifest.NamedResource]string {
 	}
 	return inputs
 }
+
 func testInput(root string) *store.SourceArtifact {
 	if root == "" {
 		return nil

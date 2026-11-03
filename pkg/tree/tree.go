@@ -103,7 +103,11 @@ func (t *view) lookup(name string) (*node, error) {
 			if err != nil {
 				return nil, err
 			}
-			n := &node{name: path.Base(name), mode: info.Mode(), foreign: &foreignNode{source: input, path: rel, info: info, mount: prefix}}
+			n := &node{
+				name:    path.Base(name),
+				mode:    info.Mode(),
+				foreign: &foreignNode{source: input, path: rel, info: info, mount: prefix},
+			}
 			if n.mode&fs.ModeSymlink != 0 {
 				n.target, err = fs.ReadLink(input, rel)
 			}
@@ -124,7 +128,11 @@ func (t *view) lookup(name string) (*node, error) {
 	if err != nil {
 		return nil, err
 	}
-	n := &node{name: path.Base(name), mode: info.Mode(), foreign: &foreignNode{source: t.input.lower, path: name, info: info}}
+	n := &node{
+		name:    path.Base(name),
+		mode:    info.Mode(),
+		foreign: &foreignNode{source: t.input.lower, path: name, info: info},
+	}
 	if n.mode&fs.ModeSymlink != 0 {
 		n.target, err = fs.ReadLink(t.input.lower, name)
 	}

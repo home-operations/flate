@@ -40,7 +40,8 @@ func TestE2E_StaleValuesWarning(t *testing.T) {
 			t.Errorf("test stderr missing %q:\n%s\nstderr:\n%s", want, tOut, tErr)
 		}
 	}
-	if strings.Contains(tOut, "values not used by the chart") || strings.Count(tErr, "values not used by the chart") != 1 {
+	if strings.Contains(tOut, "values not used by the chart") ||
+		strings.Count(tErr, "values not used by the chart") != 1 {
 		t.Errorf("test warning destination/count: stdout=%s stderr=%s", tOut, tErr)
 	}
 }

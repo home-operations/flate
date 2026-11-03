@@ -120,8 +120,10 @@ func TestProjectionCompatible_ContentBoundary(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			previous := &Kustomization{Name: "app", Namespace: "authored",
-				Path: "./app", TargetNamespace: tc.previousTarget}
+			previous := &Kustomization{
+				Name: "app", Namespace: "authored",
+				Path: "./app", TargetNamespace: tc.previousTarget,
+			}
 			desired := previous.Clone()
 			desired.TargetNamespace = tc.desiredTarget
 			if tc.path != "" {
@@ -138,8 +140,10 @@ func TestProjectionCompatible_ContentBoundary(t *testing.T) {
 	}
 	t.Run("changed repository URL", func(t *testing.T) {
 		t.Parallel()
-		previous := &GitRepository{Name: "source", Namespace: "apps",
-			URL: "https://fixture.invalid/previous"}
+		previous := &GitRepository{
+			Name: "source", Namespace: "apps",
+			URL: "https://fixture.invalid/previous",
+		}
 		desired := *previous
 		desired.GitRepositorySpec = *previous.DeepCopy()
 		desired.URL = "https://fixture.invalid/desired"
@@ -258,10 +262,20 @@ func TestParseDoc_Suspended(t *testing.T) {
 		for _, suspend := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/suspend=%t", tc.kind, suspend), func(t *testing.T) {
 				t.Parallel()
-				doc := mustYAML(t, fmt.Sprintf("apiVersion: %s\nkind: %s\nmetadata: {name: test, namespace: ns}\nspec: %s\n", tc.apiVersion, tc.kind, tc.spec))
+				doc := mustYAML(
+					t,
+					fmt.Sprintf(
+						"apiVersion: %s\nkind: %s\nmetadata: {name: test, namespace: ns}\nspec: %s\n",
+						tc.apiVersion,
+						tc.kind,
+						tc.spec,
+					),
+				)
 				doc["spec"].(map[string]any)["suspend"] = suspend
 				if tc.kind == KindResourceSet && suspend {
-					doc["metadata"].(map[string]any)["annotations"] = map[string]any{FluxOperatorDomain + "/reconcile": "disabled"}
+					doc["metadata"].(map[string]any)["annotations"] = map[string]any{
+						FluxOperatorDomain + "/reconcile": "disabled",
+					}
 				}
 				obj, _, _, err := ParseDoc(doc, defaultParseDocOptions())
 				if err != nil {
@@ -344,7 +358,12 @@ func TestParseHelmChartSource_DefaultsAndReconcileStrategy(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			hc, err := parseHelmChartSource(mustYAML(t, "apiVersion: source.toolkit.fluxcd.io/v1\nkind: HelmChart\nmetadata: {name: c, namespace: '"+tc.namespace+"'}\nspec: {chart: nginx, reconcileStrategy: '"+tc.strategy+"', sourceRef: "+tc.source+"}\n"))
+			hc, err := parseHelmChartSource(
+				mustYAML(
+					t,
+					"apiVersion: source.toolkit.fluxcd.io/v1\nkind: HelmChart\nmetadata: {name: c, namespace: '"+tc.namespace+"'}\nspec: {chart: nginx, reconcileStrategy: '"+tc.strategy+"', sourceRef: "+tc.source+"}\n",
+				),
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -402,7 +421,14 @@ spec:
   ref: {tag: '%[1]s', semver: '%[1]s', digest: '%[1]s'}
 `, value))
 					case KindHelmRelease:
-						doc = helmReleaseDoc(t, fmt.Sprintf("  valuesFrom: [{kind: ConfigMap, name: '%s', valuesKey: '%s', optional: true}]", value, value))
+						doc = helmReleaseDoc(
+							t,
+							fmt.Sprintf(
+								"  valuesFrom: [{kind: ConfigMap, name: '%s', valuesKey: '%s', optional: true}]",
+								value,
+								value,
+							),
+						)
 					}
 					before := DeepCopyMap(doc)
 					obj, authoritative, changed, err := ParseDoc(doc, ParseDocOptions{})
@@ -413,16 +439,36 @@ spec:
 					var fields map[string]string
 					switch obj := obj.(type) {
 					case *Kustomization:
-						fields = map[string]string{"path": obj.Path, "sourceRef.name": obj.SourceRef.Name, "sourceRef.namespace": obj.SourceRef.Namespace, "dependsOn.namespace": obj.DependsOn[0].Namespace}
+						fields = map[string]string{
+							"path":                obj.Path,
+							"sourceRef.name":      obj.SourceRef.Name,
+							"sourceRef.namespace": obj.SourceRef.Namespace,
+							"dependsOn.namespace": obj.DependsOn[0].Namespace,
+						}
 						assert.Equal(t, obj.PostBuild.SubstituteFrom[0].Optional, true)
 					case *GitRepository:
 						ref := obj.Reference
-						fields = map[string]string{"url": obj.URL, "ref.branch": ref.Branch, "ref.tag": ref.Tag, "ref.semver": ref.SemVer, "ref.commit": ref.Commit, "ref.name": ref.Name}
+						fields = map[string]string{
+							"url":        obj.URL,
+							"ref.branch": ref.Branch,
+							"ref.tag":    ref.Tag,
+							"ref.semver": ref.SemVer,
+							"ref.commit": ref.Commit,
+							"ref.name":   ref.Name,
+						}
 					case *OCIRepository:
 						ref := obj.Reference
-						fields = map[string]string{"url": obj.URL, "ref.tag": ref.Tag, "ref.semver": ref.SemVer, "ref.digest": ref.Digest}
+						fields = map[string]string{
+							"url":        obj.URL,
+							"ref.tag":    ref.Tag,
+							"ref.semver": ref.SemVer,
+							"ref.digest": ref.Digest,
+						}
 					case *HelmRelease:
-						fields = map[string]string{"valuesFrom.name": obj.ValuesFrom[0].Name, "valuesFrom.valuesKey": obj.ValuesFrom[0].ValuesKey}
+						fields = map[string]string{
+							"valuesFrom.name":      obj.ValuesFrom[0].Name,
+							"valuesFrom.valuesKey": obj.ValuesFrom[0].ValuesKey,
+						}
 						assert.Equal(t, obj.ValuesFrom[0].Optional, true)
 					default:
 						t.Fatalf("unexpected child %T", obj)
@@ -828,7 +874,10 @@ func TestReleaseName_Shortens(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			hr := &HelmRelease{Name: tc.metadata, HelmReleaseSpec: helmv2.HelmReleaseSpec{TargetNamespace: tc.target, ReleaseName: tc.explicit}}
+			hr := &HelmRelease{
+				Name:            tc.metadata,
+				HelmReleaseSpec: helmv2.HelmReleaseSpec{TargetNamespace: tc.target, ReleaseName: tc.explicit},
+			}
 			assert.Equal(t, hr.ReleaseName(), tc.want)
 			assert.Equal(t, hr.ReleaseName(), tc.want)
 		})
@@ -853,7 +902,11 @@ spec:
 	if err != nil {
 		t.Fatalf("parseHelmRelease: %v", err)
 	}
-	assert.Equal(t, hr.Chart.Source, NamedResource{Group: SourceDomain, Kind: KindHelmChart, Namespace: "flux-system", Name: "my-chart"})
+	assert.Equal(
+		t,
+		hr.Chart.Source,
+		NamedResource{Group: SourceDomain, Kind: KindHelmChart, Namespace: "flux-system", Name: "my-chart"},
+	)
 	if hr.Chart.Source.Kind != KindHelmChart || hr.Chart.Version != "" {
 		t.Fatalf("expected unresolved chartRef, got %+v", hr.Chart)
 	}
@@ -878,7 +931,9 @@ spec:
 		t.Errorf("after resolve: %+v", hr.Chart)
 	}
 
-	missing := &HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: KindHelmChart, Name: "absent", Namespace: "ns"}}
+	missing := &HelmRelease{
+		ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: KindHelmChart, Name: "absent", Namespace: "ns"},
+	}
 	none := func(NamedResource) BaseManifest { return nil }
 	if err := missing.ResolveChartSource(none); !errors.Is(err, ErrObjectNotFound) {
 		t.Errorf("expected ErrObjectNotFound, got %v", err)
@@ -1118,7 +1173,10 @@ func TestRenderDocument_TypedSpec(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			doc := mustYAML(t, "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: apps}\nspec: "+tc.spec+"\n")
+			doc := mustYAML(
+				t,
+				"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: apps}\nspec: "+tc.spec+"\n",
+			)
 			raw, err := json.Marshal(doc)
 			assert.NoError(t, err)
 			var cr kustomizev1.Kustomization
@@ -1141,7 +1199,12 @@ func TestParseKustomization_InvalidGeneratorFields(t *testing.T) {
 	for _, field := range []string{"patches", "images", "components", "buildMetadata"} {
 		t.Run(field, func(t *testing.T) {
 			t.Parallel()
-			_, err := parseKustomization(mustYAML(t, "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: apps}\nspec: {"+field+": not-a-list}\n"))
+			_, err := parseKustomization(
+				mustYAML(
+					t,
+					"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: apps}\nspec: {"+field+": not-a-list}\n",
+				),
+			)
 			if !errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux) {
 				t.Fatalf("invalid typed field error = %v, want input error", err)
 			}
@@ -1426,10 +1489,30 @@ metadata: {name: c, namespace: ns}`, KindConfigMap, false},
 apiVersion: v1
 kind: Secret
 metadata: {name: s, namespace: ns}`, KindSecret, false},
-		{"externalartifact", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: ExternalArtifact\nmetadata: {name: a}", KindExternalArtifact, false},
-		{"bucket", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: Bucket\nmetadata: {name: b}\nspec: {bucketName: b, endpoint: example.test}", KindBucket, false},
-		{"resourceset", "apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: s}", KindResourceSet, false},
-		{"resourcesetinputprovider", "apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSetInputProvider\nmetadata: {name: p}", KindResourceSetInputProvider, false},
+		{
+			"externalartifact",
+			"apiVersion: source.toolkit.fluxcd.io/v1\nkind: ExternalArtifact\nmetadata: {name: a}",
+			KindExternalArtifact,
+			false,
+		},
+		{
+			"bucket",
+			"apiVersion: source.toolkit.fluxcd.io/v1\nkind: Bucket\nmetadata: {name: b}\nspec: {bucketName: b, endpoint: example.test}",
+			KindBucket,
+			false,
+		},
+		{
+			"resourceset",
+			"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: s}",
+			KindResourceSet,
+			false,
+		},
+		{
+			"resourcesetinputprovider",
+			"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSetInputProvider\nmetadata: {name: p}",
+			KindResourceSetInputProvider,
+			false,
+		},
 		{"unknown", `
 apiVersion: example.com/v1
 kind: Foo
@@ -1453,8 +1536,13 @@ metadata: {name: x}`, "Foo", false},
 			cluster          bool
 		}{
 			raw.kind + "/" + raw.apiVersion,
-			fmt.Sprintf("apiVersion: %s\nkind: %s\nmetadata: {name: raw}\nspec: {value: keep}", raw.apiVersion, raw.kind),
-			raw.kind, raw.cluster,
+			fmt.Sprintf(
+				"apiVersion: %s\nkind: %s\nmetadata: {name: raw}\nspec: {value: keep}",
+				raw.apiVersion,
+				raw.kind,
+			),
+			raw.kind,
+			raw.cluster,
 		})
 	}
 	for _, tc := range cases {
@@ -1468,7 +1556,10 @@ metadata: {name: x}`, "Foo", false},
 					md["namespace"] = ns.authored
 				}
 				before := DeepCopyMap(doc)
-				obj, authoritative, changed, err := ParseDoc(doc, ParseDocOptions{WipeSecrets: true, DefaultNamespace: ns.fallback})
+				obj, authoritative, changed, err := ParseDoc(
+					doc,
+					ParseDocOptions{WipeSecrets: true, DefaultNamespace: ns.fallback},
+				)
 				assert.NoError(t, err)
 				want := ns.authored
 				if want == "" && !tc.cluster {
@@ -1484,7 +1575,10 @@ metadata: {name: x}`, "Foo", false},
 					before["metadata"].(map[string]any)["namespace"] = want
 				}
 				assert.Diff(t, authoritative, before)
-				replayed, replayDoc, replayChanged, err := ParseDoc(authoritative, ParseDocOptions{WipeSecrets: true, DefaultNamespace: ns.fallback})
+				replayed, replayDoc, replayChanged, err := ParseDoc(
+					authoritative,
+					ParseDocOptions{WipeSecrets: true, DefaultNamespace: ns.fallback},
+				)
 				assert.NoError(t, err)
 				assert.Equal(t, replayed.Named(), obj.Named())
 				assert.Equal(t, replayChanged, false)
@@ -1569,9 +1663,21 @@ metadata: {name: b, namespace: default}
 spec: {name: b}`},
 	}
 	for _, kind := range []string{KindKustomization, KindHelmChart, KindExternalArtifact, KindResourceSet, KindResourceSetInputProvider, KindSecret} {
-		cases = append(cases, struct{ name, yaml string }{kind, "apiVersion: foreign.example/v1\nkind: " + kind + "\nmetadata: {name: raw}"})
+		cases = append(
+			cases,
+			struct{ name, yaml string }{
+				kind,
+				"apiVersion: foreign.example/v1\nkind: " + kind + "\nmetadata: {name: raw}",
+			},
+		)
 	}
-	cases = append(cases, struct{ name, yaml string }{"explicit core flux kind", "apiVersion: v1\nkind: Kustomization\nmetadata: {name: raw}"})
+	cases = append(
+		cases,
+		struct{ name, yaml string }{
+			"explicit core flux kind",
+			"apiVersion: v1\nkind: Kustomization\nmetadata: {name: raw}",
+		},
+	)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -1646,7 +1752,6 @@ func TestStripResourceAttributes(t *testing.T) {
 		StripResourceAttributes(malformed, []string{"helm.sh/chart", "checksum/"})
 		assert.Diff(t, malformed, before)
 	}
-
 }
 
 // TestStripResourceAttributes_CronJob pins the CronJob walk: chart
@@ -1806,7 +1911,11 @@ func TestRawObject_DoesNotAliasParsedDoc(t *testing.T) {
 
 func TestParseDoc_MissingFields(t *testing.T) {
 	t.Parallel()
-	if _, _, _, err := ParseDoc(map[string]any{"kind": "Foo"}, ParseDocOptions{DefaultNamespace: "apps"}); err == nil || !strings.Contains(err.Error(), "apiVersion") {
+	if _, _, _, err := ParseDoc(
+		map[string]any{"kind": "Foo"},
+		ParseDocOptions{DefaultNamespace: "apps"},
+	); err == nil ||
+		!strings.Contains(err.Error(), "apiVersion") {
 		t.Errorf("expected apiVersion error, got %v", err)
 	}
 	// Bare data files (no kind:) are not Kubernetes resources.
@@ -1851,7 +1960,8 @@ func TestParseDoc_MissingFields(t *testing.T) {
 						assert.Equal(t, obj.Named().Namespace, "apps")
 						assert.Equal(t, changed, true)
 					} else {
-						if !errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux) || !strings.Contains(err.Error(), admission.want) {
+						if !errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux) ||
+							!strings.Contains(err.Error(), admission.want) {
 							t.Fatalf("error = %v, want %q with ErrInput/ErrFlux", err, admission.want)
 						}
 						assert.Equal(t, changed, false)
@@ -1866,13 +1976,13 @@ func TestParseDoc_MissingFields(t *testing.T) {
 		t.Parallel()
 		doc := map[string]any{"apiVersion": HelmReleaseDomain + "/v2", "kind": KindHelmRelease, "spec": "bad"}
 		_, authoritative, changed, err := ParseDoc(doc, ParseDocOptions{DefaultNamespace: "apps"})
-		if !errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux) || !strings.Contains(err.Error(), "HelmRelease decode: json: cannot unmarshal string") {
+		if !errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux) ||
+			!strings.Contains(err.Error(), "HelmRelease decode: json: cannot unmarshal string") {
 			t.Fatalf("malformed spec lost decode precedence: %v", err)
 		}
 		assert.Equal(t, changed, false)
 		assert.Diff(t, authoritative, doc)
 	})
-
 }
 
 func TestSplitDocs(t *testing.T) {
@@ -1961,7 +2071,9 @@ data:
 				assert.NoError(t, err)
 			}
 			ReleaseDoc(docs[0])
-			next, err := decodeDocMaps(strings.NewReader("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: next}\ndata: {key: next}\n"))
+			next, err := decodeDocMaps(
+				strings.NewReader("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: next}\ndata: {key: next}\n"),
+			)
 			assert.NoError(t, err)
 			ReleaseDoc(next[0])
 			assert.Equal(t, Fingerprint(obj), before)
@@ -2020,7 +2132,11 @@ data:
 		assert.Equal(t, replay.Named(), obj.Named())
 		assert.Equal(t, changed, false)
 		{
-			next, err := decodeDocMaps(strings.NewReader("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: next, namespace: other}\ndata: {key: next}\n"))
+			next, err := decodeDocMaps(
+				strings.NewReader(
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: next, namespace: other}\ndata: {key: next}\n",
+				),
+			)
 			assert.NoError(t, err)
 			_, _, _, err = ParseDoc(next[0], opts)
 			assert.NoError(t, err)
@@ -2076,7 +2192,10 @@ func TestParseDoc_BuildDirectives(t *testing.T) {
 	for _, kind := range []string{"Kustomization", "Component"} {
 		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
-			obj, _, _, err := ParseDoc(map[string]any{"kind": kind, "apiVersion": "kustomize.config.k8s.io/v1beta1"}, ParseDocOptions{DefaultNamespace: "apps"})
+			obj, _, _, err := ParseDoc(
+				map[string]any{"kind": kind, "apiVersion": "kustomize.config.k8s.io/v1beta1"},
+				ParseDocOptions{DefaultNamespace: "apps"},
+			)
 			if err != nil || obj != nil {
 				t.Fatalf("ParseDoc = %T, %v; want nil, nil", obj, err)
 			}
@@ -2098,7 +2217,11 @@ func TestParseHelmRelease_DisableValidationCombinations(t *testing.T) {
 		for _, stage := range []string{"neither", "install", "upgrade", "both"} {
 			t.Run(flags.name+"/"+stage, func(t *testing.T) {
 				t.Parallel()
-				enabled := fmt.Sprintf("{disableSchemaValidation: %t, disableOpenAPIValidation: %t}", flags.schema, flags.openAPI)
+				enabled := fmt.Sprintf(
+					"{disableSchemaValidation: %t, disableOpenAPIValidation: %t}",
+					flags.schema,
+					flags.openAPI,
+				)
 				var spec string
 				if stage == "install" || stage == "both" {
 					spec += "  install: " + enabled + "\n"
@@ -2113,8 +2236,16 @@ func TestParseHelmRelease_DisableValidationCombinations(t *testing.T) {
 				wantSchema := (stage == "install" || stage == "both") && flags.schema
 				assert.Equal(t, hr.DisableSchemaValidation, wantSchema)
 				release := helmv2.HelmRelease{Spec: hr.HelmReleaseSpec}
-				assert.Equal(t, release.GetInstall().DisableOpenAPIValidation, (stage == "install" || stage == "both") && flags.openAPI)
-				assert.Equal(t, release.GetUpgrade().DisableOpenAPIValidation, (stage == "upgrade" || stage == "both") && flags.openAPI)
+				assert.Equal(
+					t,
+					release.GetInstall().DisableOpenAPIValidation,
+					(stage == "install" || stage == "both") && flags.openAPI,
+				)
+				assert.Equal(
+					t,
+					release.GetUpgrade().DisableOpenAPIValidation,
+					(stage == "upgrade" || stage == "both") && flags.openAPI,
+				)
 			})
 		}
 	}
@@ -2167,10 +2298,19 @@ func TestResolve_NamespacePrecedence(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			id := NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: tc.authored, Name: "app"}
+			id := NamedResource{
+				Group:     FluxKustomizeDomain,
+				Kind:      KindKustomization,
+				Namespace: tc.authored,
+				Name:      "app",
+			}
 			want := NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: tc.want, Name: "app"}
 			assert.Equal(t, Resolve(id, tc.forced, tc.fallback), want)
-			assert.Equal(t, id, NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: tc.authored, Name: "app"})
+			assert.Equal(
+				t,
+				id,
+				NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: tc.authored, Name: "app"},
+			)
 		})
 	}
 }
@@ -2188,19 +2328,26 @@ func TestNamedResource_BindLocal(t *testing.T) {
 			assert.Equal(t, KindOf(obj).APIVersion(), sourcev1.GroupVersion.String())
 			switch kind {
 			case KindGitRepository:
-				if g, ok := obj.(*GitRepository); !ok || g.URL != "file:///chosen/root" || g.Provider != sourcev1.GitProviderGeneric {
+				if g, ok := obj.(*GitRepository); !ok || g.URL != "file:///chosen/root" ||
+					g.Provider != sourcev1.GitProviderGeneric {
 					t.Fatalf("decoded Git identity: %#v", obj)
 				}
 			case KindOCIRepository:
-				if o, ok := obj.(*OCIRepository); !ok || o.URL != "file:///chosen/root" || o.Provider != sourcev1.GenericOCIProvider {
+				if o, ok := obj.(*OCIRepository); !ok || o.URL != "file:///chosen/root" ||
+					o.Provider != sourcev1.GenericOCIProvider {
 					t.Fatalf("decoded OCI identity: %#v", obj)
 				}
 			case KindBucket:
-				if b, ok := obj.(*Bucket); !ok || b.Endpoint != "file:///chosen/root" || b.BucketName != id.Name || b.Provider != sourcev1.BucketProviderGeneric {
+				if b, ok := obj.(*Bucket); !ok || b.Endpoint != "file:///chosen/root" || b.BucketName != id.Name ||
+					b.Provider != sourcev1.BucketProviderGeneric {
 					t.Fatalf("decoded bucket identity: %#v", obj)
 				}
 			}
-			doc := map[string]any{"apiVersion": sourcev1.GroupVersion.String(), "kind": kind, "metadata": map[string]any{"name": id.Name, "namespace": id.Namespace}}
+			doc := map[string]any{
+				"apiVersion": sourcev1.GroupVersion.String(),
+				"kind":       kind,
+				"metadata":   map[string]any{"name": id.Name, "namespace": id.Namespace},
+			}
 			_, _, _, err = ParseDoc(doc, defaultParseDocOptions())
 			if !errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux) {
 				t.Fatalf("authored missing spec: %v", err)
@@ -2215,7 +2362,10 @@ func TestNamedResource_BindLocal(t *testing.T) {
 		{Kind: KindConfigMap, Namespace: "other", Name: "entry"},
 	} {
 		assert.Equal(t, id.CanBindLocal(), false)
-		if obj, err := id.BindLocal("/chosen/root"); obj != nil || !errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux) {
+		if obj, err := id.BindLocal(
+			"/chosen/root",
+		); obj != nil || !errors.Is(err, ErrInput) ||
+			!errors.Is(err, ErrFlux) {
 			t.Fatalf("invalid identity %s: %v, %v", id, obj, err)
 		}
 	}
@@ -2225,7 +2375,15 @@ func TestBootstrapAlias_SourceKinds(t *testing.T) {
 	t.Parallel()
 	ignore := "excluded/"
 	ref := &sourcev1.GitRepositoryRef{Tag: "v1"}
-	git := &GitRepository{Name: "entry", Namespace: "other", URL: "https://fixture.invalid/repo", Reference: ref, Ignore: &ignore, SparseCheckout: []string{"apps"}, RecurseSubmodules: true}
+	git := &GitRepository{
+		Name:              "entry",
+		Namespace:         "other",
+		URL:               "https://fixture.invalid/repo",
+		Reference:         ref,
+		Ignore:            &ignore,
+		SparseCheckout:    []string{"apps"},
+		RecurseSubmodules: true,
+	}
 	for _, obj := range []BaseManifest{git, &OCIRepository{}, &Bucket{}, &HelmRepository{}} {
 		t.Run(obj.Named().Kind, func(t *testing.T) {
 			t.Parallel()

@@ -20,7 +20,10 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func optionalSupplierPair(tb testing.TB, namespace string) (*change.Set, [2]*store.Store, [2]string, *manifest.GitRepository) {
+func optionalSupplierPair(
+	tb testing.TB,
+	namespace string,
+) (*change.Set, [2]*store.Store, [2]string, *manifest.GitRepository) {
 	tb.Helper()
 	var stores [2]*store.Store
 	var roots [2]string
@@ -32,20 +35,40 @@ func optionalSupplierPair(tb testing.TB, namespace string) (*change.Set, [2]*sto
 		st := store.New()
 		stores[side] = st
 		st.AddObject(source)
-		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{
-			"flux/consumer.yaml":      {Data: []byte("unchanged consumer")},
-			"apps/kustomization.yaml": {Data: []byte("resources: [output.yaml]\n")},
-			"apps/output.yaml":        {Data: []byte("unchanged output")},
-		}})
+		st.SetArtifact(
+			manifest.BootstrapSourceID,
+			&store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{
+				"flux/consumer.yaml":      {Data: []byte("unchanged consumer")},
+				"apps/kustomization.yaml": {Data: []byte("resources: [output.yaml]\n")},
+				"apps/output.yaml":        {Data: []byte("unchanged output")},
+			}},
+		)
 		files := fstest.MapFS{"inputs/kustomization.yaml": {Data: []byte("resources: []\n")}}
 		if side == 0 {
 			files["inputs/kustomization.yaml"].Data = []byte("resources: [optional.yaml]\n")
-			files["inputs/optional.yaml"] = &fstest.MapFile{Data: fmt.Appendf(nil, "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: optional, namespace: %q}\ndata: {VALUE: available}\n", namespace)}
+			files["inputs/optional.yaml"] = &fstest.MapFile{
+				Data: fmt.Appendf(
+					nil,
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: optional, namespace: %q}\ndata: {VALUE: available}\n",
+					namespace,
+				),
+			}
 		}
-		st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: filepath.Join(root, ".supplier"), LocalRoot: root, Key: fmt.Sprint(side), Content: fmt.Sprint(side), FS: files})
+		st.SetArtifact(
+			source.Named(),
+			&store.SourceArtifact{
+				LocalPath: filepath.Join(root, ".supplier"),
+				LocalRoot: root,
+				Key:       fmt.Sprint(side),
+				Content:   fmt.Sprint(side),
+				FS:        files,
+			},
+		)
 		observation := manifest.InputVisibility{Source: source.Named(), Root: "inputs", Complete: true}
 		if side == 0 {
-			observation.Inputs = map[manifest.NamedResource][]string{{Kind: manifest.KindConfigMap, Namespace: namespace, Name: "optional"}: {"inputs/optional.yaml"}}
+			observation.Inputs = map[manifest.NamedResource][]string{
+				{Kind: manifest.KindConfigMap, Namespace: namespace, Name: "optional"}: {"inputs/optional.yaml"},
+			}
 		}
 		indexes[side] = &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{observation}}
 
@@ -54,7 +77,12 @@ func optionalSupplierPair(tb testing.TB, namespace string) (*change.Set, [2]*sto
 	if err != nil {
 		tb.Fatal(err)
 	}
-	changes, err = changes.WithReaders(tb.Context(), indexes[0], indexes[1], [2]map[manifest.NamedResource]inputprojection.Projection{})
+	changes, err = changes.WithReaders(
+		tb.Context(),
+		indexes[0],
+		indexes[1],
+		[2]map[manifest.NamedResource]inputprojection.Projection{},
+	)
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -80,12 +108,30 @@ func TestFilter_CrossSourceOptionalInputPairedSides(t *testing.T) {
 				var indexes [2]*manifest.DiscoveryIndex
 				for side, st := range stores {
 					st.AddObject(foreign)
-					st.SetArtifact(foreign.Named(), &store.SourceArtifact{LocalPath: filepath.Join(roots[side], ".foreign"), Content: "same", Key: "same", FS: fstest.MapFS{"inputs/optional.yaml": {Data: []byte("same")}}})
+					st.SetArtifact(
+						foreign.Named(),
+						&store.SourceArtifact{
+							LocalPath: filepath.Join(roots[side], ".foreign"),
+							Content:   "same",
+							Key:       "same",
+							FS:        fstest.MapFS{"inputs/optional.yaml": {Data: []byte("same")}},
+						},
+					)
 					observation := manifest.InputVisibility{Source: source.Named(), Root: "inputs", Complete: true}
 					if side == 0 {
 						observation.Inputs = map[manifest.NamedResource][]string{input: {"inputs/optional.yaml"}}
 					}
-					indexes[side] = &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{observation, {Source: foreign.Named(), Root: "inputs", Complete: true, Inputs: map[manifest.NamedResource][]string{input: {"inputs/optional.yaml"}}}}}
+					indexes[side] = &manifest.DiscoveryIndex{
+						Visibility: []manifest.InputVisibility{
+							observation,
+							{
+								Source:   foreign.Named(),
+								Root:     "inputs",
+								Complete: true,
+								Inputs:   map[manifest.NamedResource][]string{input: {"inputs/optional.yaml"}},
+							},
+						},
+					}
 				}
 				var err error
 				changes, err = change.Qualify(t.Context(), changes, stores[0], stores[1])
@@ -101,21 +147,46 @@ func TestFilter_CrossSourceOptionalInputPairedSides(t *testing.T) {
 			assert.Equal(t, inputMap(sourceChanges(changes, source.Named()))[input], "inputs/optional.yaml")
 			assert.Equal(t, len(inputMap(changes)), 0)
 			assert.Equal(t, changes.Len(), 0)
-			assert.Diff(t, sourceChanges(changes, source.Named()).Paths(), []string{"inputs/kustomization.yaml", "inputs/optional.yaml"})
-			consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps", Path: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "optional", Optional: true}}}}
+			assert.Diff(
+				t,
+				sourceChanges(changes, source.Named()).Paths(),
+				[]string{"inputs/kustomization.yaml", "inputs/optional.yaml"},
+			)
+			consumer := &manifest.Kustomization{
+				Name:      "consumer",
+				Namespace: "apps",
+				Path:      "apps",
+				PostBuild: &kustomizev1.PostBuild{
+					SubstituteFrom: []manifest.SubstituteReference{
+						{Kind: manifest.KindConfigMap, Name: "optional", Optional: true},
+					},
+				},
+			}
 			sibling := consumer.Clone()
 			sibling.Name = "sibling"
-			sibling.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "unrelated", Optional: true}}}
+			sibling.PostBuild = &kustomizev1.PostBuild{
+				SubstituteFrom: []manifest.SubstituteReference{
+					{Kind: manifest.KindConfigMap, Name: "unrelated", Optional: true},
+				},
+			}
 			if mode == "stale_bootstrap_alternative" {
 				var original [2]store.Artifact
 				for side, st := range stores {
 					original[side] = st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
-					st.SetArtifact(manifest.BootstrapSourceID, st.GetArtifact(source.Named(), store.ArtifactContent).(*store.SourceArtifact))
+					st.SetArtifact(
+						manifest.BootstrapSourceID,
+						st.GetArtifact(source.Named(), store.ArtifactContent).(*store.SourceArtifact),
+					)
 				}
 				var err error
 				changes, err = change.Qualify(t.Context(), nil, stores[0], stores[1])
 				assert.NoError(t, err)
-				before := manifest.InputVisibility{Source: source.Named(), Root: "inputs", Complete: true, Inputs: map[manifest.NamedResource][]string{input: {"inputs/optional.yaml"}}}
+				before := manifest.InputVisibility{
+					Source:   source.Named(),
+					Root:     "inputs",
+					Complete: true,
+					Inputs:   map[manifest.NamedResource][]string{input: {"inputs/optional.yaml"}},
+				}
 				after := before
 				after.Inputs = nil
 				changes, err = changes.WithReaders(
@@ -131,8 +202,13 @@ func TestFilter_CrossSourceOptionalInputPairedSides(t *testing.T) {
 			}
 			for side, st := range stores {
 				index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-					consumer.Named(): {File: "flux/consumer.yaml", Refs: []manifest.NamedResource{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"}}},
-					sibling.Named():  {File: "flux/sibling.yaml"},
+					consumer.Named(): {
+						File: "flux/consumer.yaml",
+						Refs: []manifest.NamedResource{
+							{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"},
+						},
+					},
+					sibling.Named(): {File: "flux/sibling.yaml"},
 				}}
 				if mode != "deferred_consumer" {
 					st.AddObject(consumer)
@@ -148,8 +224,13 @@ func TestFilter_CrossSourceOptionalInputPairedSides(t *testing.T) {
 					replacement.URL = "https://example.test/replaced"
 					st.AddObject(&replacement)
 				}
-				filter := newAdmission(t, admissionConfig{changes: changes, index: index, inventory: st, root: roots[side]})
-				want := mode == "exact_removed" || mode == "deferred_consumer" || mode == "stale_bootstrap_alternative" || mode == "foreign_duplicate"
+				filter := newAdmission(
+					t,
+					admissionConfig{changes: changes, index: index, inventory: st, root: roots[side]},
+				)
+				want := mode == "exact_removed" || mode == "deferred_consumer" ||
+					mode == "stale_bootstrap_alternative" ||
+					mode == "foreign_duplicate"
 				if got := filter.ShouldReconcile(consumer.Named()); got != want {
 					t.Errorf("side %d consumer selected=%t, want %t: %v", side, got, want, filter.KeepNames())
 				}
@@ -166,7 +247,24 @@ func TestFilter_ChangedInputUsesDeclarationSource(t *testing.T) {
 			t.Parallel()
 			var stores [2]*store.Store
 			var roots [2]string
-			consumer := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Name: "chart", Namespace: "apps"}}, ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart", Namespace: "apps"}, ValuesFrom: []helmv2.ValuesReference{{Kind: manifest.KindConfigMap, Name: "settings"}}}
+			consumer := &manifest.HelmRelease{
+				Name:      "consumer",
+				Namespace: "apps",
+				Chart: manifest.HelmChart{
+					Source: manifest.NamedResource{
+						Group:     manifest.SourceDomain,
+						Kind:      manifest.KindOCIRepository,
+						Name:      "chart",
+						Namespace: "apps",
+					},
+				},
+				ChartRef: &helmv2.CrossNamespaceSourceReference{
+					Kind:      manifest.KindOCIRepository,
+					Name:      "chart",
+					Namespace: "apps",
+				},
+				ValuesFrom: []helmv2.ValuesReference{{Kind: manifest.KindConfigMap, Name: "settings"}},
+			}
 			var indexes [2]*manifest.DiscoveryIndex
 			for side := range stores {
 				root := t.TempDir()
@@ -176,22 +274,48 @@ func TestFilter_ChangedInputUsesDeclarationSource(t *testing.T) {
 				st.AddObject(consumer)
 				files := fstest.MapFS{"consumer.yaml": {Data: []byte("unchanged consumer")}}
 				if side == 1 {
-					files["input.yaml"] = &fstest.MapFile{Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings}\ndata: {value: changed}\n")}
+					files["input.yaml"] = &fstest.MapFile{
+						Data: []byte(
+							"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings}\ndata: {value: changed}\n",
+						),
+					}
 				}
-				st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: files})
+				st.SetArtifact(
+					manifest.BootstrapSourceID,
+					&store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: files},
+				)
 				origin := manifest.BootstrapSourceID
 				if foreign {
-					source := &manifest.GitRepository{Name: "foreign", Namespace: "infra", URL: "https://fixture.invalid/foreign"}
+					source := &manifest.GitRepository{
+						Name:      "foreign",
+						Namespace: "infra",
+						URL:       "https://fixture.invalid/foreign",
+					}
 					st.AddObject(source)
 					origin = source.Named()
-					st.SetArtifact(origin, &store.SourceArtifact{LocalPath: t.TempDir(), Content: "foreign", Key: "foreign", FS: fstest.MapFS{}})
+					st.SetArtifact(
+						origin,
+						&store.SourceArtifact{
+							LocalPath: t.TempDir(),
+							Content:   "foreign",
+							Key:       "foreign",
+							FS:        fstest.MapFS{},
+						},
+					)
 				}
 				indexes[side] = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-					consumer.Named(): {File: "consumer.yaml", Productions: []manifest.Production{{Authored: consumer.Named(), Source: origin, File: "consumer.yaml"}}},
+					consumer.Named(): {
+						File: "consumer.yaml",
+						Productions: []manifest.Production{
+							{Authored: consumer.Named(), Source: origin, File: "consumer.yaml"},
+						},
+					},
 				}}
 				observation := manifest.InputVisibility{Source: manifest.BootstrapSourceID, Root: ".", Complete: true}
 				if side == 1 {
-					observation.Inputs = map[manifest.NamedResource][]string{{Kind: manifest.KindConfigMap, Name: "settings"}: {"input.yaml"}}
+					observation.Inputs = map[manifest.NamedResource][]string{
+						{Kind: manifest.KindConfigMap, Name: "settings"}: {"input.yaml"},
+					}
 				}
 				indexes[side].Visibility = []manifest.InputVisibility{observation}
 			}
@@ -205,7 +329,10 @@ func TestFilter_ChangedInputUsesDeclarationSource(t *testing.T) {
 			)
 			assert.NoError(t, err)
 			for side, st := range stores {
-				filter := newAdmission(t, admissionConfig{changes: changes, index: indexes[side], inventory: st, root: roots[side]})
+				filter := newAdmission(
+					t,
+					admissionConfig{changes: changes, index: indexes[side], inventory: st, root: roots[side]},
+				)
 				assert.Equal(t, filter.ShouldReconcile(consumer.Named()), !foreign)
 			}
 		})
@@ -227,7 +354,12 @@ func TestFilter_DeferredSourceValuesPairedSides(t *testing.T) {
 			for side := range stores {
 				root := t.TempDir()
 				roots[side] = root
-				testutil.WriteFile(t, root, "flux/parent.yaml", testutil.KustomizationYAML("parent", "flux-system", "  path: ./apps\n  targetNamespace: apps\n"))
+				testutil.WriteFile(
+					t,
+					root,
+					"flux/parent.yaml",
+					testutil.KustomizationYAML("parent", "flux-system", "  path: ./apps\n  targetNamespace: apps\n"),
+				)
 				testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [hr.yaml, sibling.yaml]\n")
 				testutil.WriteFile(t, root, "apps/hr.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
@@ -239,16 +371,33 @@ spec:
       sourceRef: {kind: GitRepository, name: values}
       valuesFiles: [config/prod.yaml]
 `)
-				testutil.WriteFile(t, root, "apps/sibling.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: sibling, namespace: apps}\nspec: {chartRef: {kind: OCIRepository, name: unrelated}}\n")
+				testutil.WriteFile(
+					t,
+					root,
+					"apps/sibling.yaml",
+					"apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: sibling, namespace: apps}\nspec: {chartRef: {kind: OCIRepository, name: unrelated}}\n",
+				)
 				st := store.New()
 				stores[side] = st
 				st.AddObject(source)
-				st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: os.DirFS(root)})
+				st.SetArtifact(
+					manifest.BootstrapSourceID,
+					&store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: os.DirFS(root)},
+				)
 				value := side
 				if state == "unchanged_collision" {
 					value = 0
 				}
-				st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: filepath.Join(root, ".selected"), LocalRoot: root, Key: fmt.Sprint(side), Content: fmt.Sprint(side), FS: fstest.MapFS{"config/prod.yaml": {Data: fmt.Appendf(nil, "value: %d\n", value)}}})
+				st.SetArtifact(
+					source.Named(),
+					&store.SourceArtifact{
+						LocalPath: filepath.Join(root, ".selected"),
+						LocalRoot: root,
+						Key:       fmt.Sprint(side),
+						Content:   fmt.Sprint(side),
+						FS:        fstest.MapFS{"config/prod.yaml": {Data: fmt.Appendf(nil, "value: %d\n", value)}},
+					},
+				)
 				l := New(st)
 				l.SourceRoot = root
 				_, err := l.Load(t.Context(), root)
@@ -256,11 +405,42 @@ spec:
 				assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 				indexes[side] = l.Index
 				r, ok := l.Index.Lookup(release)
-				if !ok || r.Parent != parent || !slices.ContainsFunc(r.Productions, func(p manifest.Production) bool { return p.Owner == parent }) || st.GetObject(release) != nil {
-					t.Fatalf("SETUP side %d: release must be indexed with its contributing parent and absent from Store: %+v", side, r)
+				if !ok || r.Parent != parent ||
+					!slices.ContainsFunc(
+						r.Productions,
+						func(p manifest.Production) bool { return p.Owner == parent },
+					) ||
+					st.GetObject(release) != nil {
+					t.Fatalf(
+						"SETUP side %d: release must be indexed with its contributing parent and absent from Store: %+v",
+						side,
+						r,
+					)
 				}
 				if state == "present" {
-					st.AddObject(&manifest.HelmRelease{Name: release.Name, Namespace: release.Namespace, Chart: manifest.HelmChart{Source: source.Named()}, ChartValuesFiles: []string{"config/prod.yaml"}, HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: "chart", Version: "", SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: (source.Named()).Kind, Name: (source.Named()).Name, Namespace: (source.Named()).Namespace, APIVersion: ""}, ValuesFiles: []string{"config/prod.yaml"}}}}})
+					st.AddObject(
+						&manifest.HelmRelease{
+							Name:             release.Name,
+							Namespace:        release.Namespace,
+							Chart:            manifest.HelmChart{Source: source.Named()},
+							ChartValuesFiles: []string{"config/prod.yaml"},
+							HelmReleaseSpec: helmv2.HelmReleaseSpec{
+								Chart: &helmv2.HelmChartTemplate{
+									Spec: helmv2.HelmChartTemplateSpec{
+										Chart:   "chart",
+										Version: "",
+										SourceRef: &helmv2.CrossNamespaceObjectReference{
+											Kind:       source.Named().Kind,
+											Name:       source.Named().Name,
+											Namespace:  source.Named().Namespace,
+											APIVersion: "",
+										},
+										ValuesFiles: []string{"config/prod.yaml"},
+									},
+								},
+							},
+						},
+					)
 				}
 			}
 			bootstrap := change.NewSet(nil)
@@ -273,7 +453,10 @@ spec:
 			assert.Equal(t, sourceChanges(changes, source.Named()).Contains("config/prod.yaml"), want)
 			assert.Equal(t, changes.Len(), bootstrap.Len())
 			for side, st := range stores {
-				filter := newAdmission(t, admissionConfig{changes: changes, index: indexes[side], inventory: st, root: roots[side]})
+				filter := newAdmission(
+					t,
+					admissionConfig{changes: changes, index: indexes[side], inventory: st, root: roots[side]},
+				)
 				for _, id := range []manifest.NamedResource{release, parent} {
 					if got := filter.ShouldReconcile(id); got != want {
 						t.Errorf("SELECTION side %d: %s selected=%t, want %t", side, id, got, want)
@@ -308,13 +491,27 @@ func TestFilter_ReadSourceAlternatives(t *testing.T) {
 						value = side
 					}
 					st.AddObject(source)
-					st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: filepath.Join(root, ".selected"), LocalRoot: root, Key: fmt.Sprintf("%s-%d", name, side), Content: fmt.Sprintf("%s-%d", name, side), FS: fstest.MapFS{"input.yaml": {Data: fmt.Appendf(nil, "value: %d\n", value)}}})
+					st.SetArtifact(
+						source.Named(),
+						&store.SourceArtifact{
+							LocalPath: filepath.Join(root, ".selected"),
+							LocalRoot: root,
+							Key:       fmt.Sprintf("%s-%d", name, side),
+							Content:   fmt.Sprintf("%s-%d", name, side),
+							FS:        fstest.MapFS{"input.yaml": {Data: fmt.Appendf(nil, "value: %d\n", value)}},
+						},
+					)
 					reads = append(reads, manifest.FileReader{Reader: reader.Named(), Source: source.Named()})
 				}
 				if mode == "changed_first" {
 					slices.Reverse(reads)
 				}
-				index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{reader.Named(): {File: "flux/reader.yaml"}}, Readers: map[string][]manifest.FileReader{".selected/input.yaml": reads}}
+				index := &manifest.DiscoveryIndex{
+					Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+						reader.Named(): {File: "flux/reader.yaml"},
+					},
+					Readers: map[string][]manifest.FileReader{".selected/input.yaml": reads},
+				}
 				indexes[side] = index
 				owners, _ := index.OwnersOfFile(".selected/input.yaml")
 				assert.Diff(t, owners, []manifest.NamedResource{reader.Named()})
@@ -330,7 +527,10 @@ func TestFilter_ReadSourceAlternatives(t *testing.T) {
 			changes, err := change.Qualify(t.Context(), bootstrap, stores[0], stores[1])
 			assert.NoError(t, err)
 			for side, st := range stores {
-				filter := newAdmission(t, admissionConfig{changes: changes, index: indexes[side], inventory: st, root: roots[side]})
+				filter := newAdmission(
+					t,
+					admissionConfig{changes: changes, index: indexes[side], inventory: st, root: roots[side]},
+				)
 				assert.Equal(t, filter.ShouldReconcile(reader.Named()), mode != "read_only_collision")
 			}
 		})
@@ -345,16 +545,30 @@ func TestSet_WithReadersSelectedSource(t *testing.T) {
 	opposite := testutil.HelmReleaseID("apps", "opposite")
 	var indexes [2]*manifest.DiscoveryIndex
 	for side := range indexes {
-		indexes[side] = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}, Readers: map[string][]manifest.FileReader{}}
+		indexes[side] = &manifest.DiscoveryIndex{
+			Records: map[manifest.NamedResource]manifest.DiscoveryRecord{},
+			Readers: map[string][]manifest.FileReader{},
+		}
 		for _, id := range []manifest.NamedResource{reader, foreign, opposite} {
-			indexes[side].Records[id] = manifest.DiscoveryRecord{File: "flux/" + id.Name + ".yaml", Refs: []manifest.NamedResource{source.Named()}}
+			indexes[side].Records[id] = manifest.DiscoveryRecord{
+				File: "flux/" + id.Name + ".yaml",
+				Refs: []manifest.NamedResource{source.Named()},
+			}
 		}
 	}
 	file := ".supplier/inputs/optional.yaml"
-	indexes[0].Readers[file] = []manifest.FileReader{{Reader: reader, Source: source.Named(), Exact: true}, {Reader: foreign, Source: manifest.BootstrapSourceID, Exact: true}}
+	indexes[0].Readers[file] = []manifest.FileReader{
+		{Reader: reader, Source: source.Named(), Exact: true},
+		{Reader: foreign, Source: manifest.BootstrapSourceID, Exact: true},
+	}
 	indexes[1].Readers[file] = []manifest.FileReader{{Reader: opposite, Source: source.Named(), Exact: true}}
 	original := maps.Clone(inputMap(sourceChanges(changes, source.Named())))
-	resolved, err := changes.WithReaders(t.Context(), indexes[0], indexes[1], [2]map[manifest.NamedResource]inputprojection.Projection{})
+	resolved, err := changes.WithReaders(
+		t.Context(),
+		indexes[0],
+		indexes[1],
+		[2]map[manifest.NamedResource]inputprojection.Projection{},
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, len(inputMap(resolved)), 0)
 	assert.Equal(t, inputMap(sourceChanges(resolved, source.Named()))[reader], "inputs/optional.yaml")
@@ -362,7 +576,10 @@ func TestSet_WithReadersSelectedSource(t *testing.T) {
 	assert.Equal(t, inputMap(sourceChanges(resolved, source.Named()))[opposite], "")
 	assert.Diff(t, inputMap(sourceChanges(changes, source.Named())), original)
 	for side, st := range stores {
-		filter := newAdmission(t, admissionConfig{changes: resolved, index: indexes[side], inventory: st, root: roots[side]})
+		filter := newAdmission(
+			t,
+			admissionConfig{changes: resolved, index: indexes[side], inventory: st, root: roots[side]},
+		)
 		assert.Equal(t, filter.ShouldReconcile(reader), true)
 		assert.Equal(t, filter.ShouldReconcile(foreign), false)
 		assert.Equal(t, filter.ShouldReconcile(opposite), side == 1)

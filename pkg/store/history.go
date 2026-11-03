@@ -18,15 +18,29 @@ func (e *Emission) SourcePaths() []manifest.SourceEvidence {
 }
 
 // ChildSourcePaths projects the source paths of a complete discovery batch.
-func (s *Store) ChildSourcePaths(parent manifest.NamedResource, children []Child, index *manifest.DiscoveryIndex) []manifest.SourceEvidence {
+func (s *Store) ChildSourcePaths(
+	parent manifest.NamedResource,
+	children []Child,
+	index *manifest.DiscoveryIndex,
+) []manifest.SourceEvidence {
 	_, _, assessment := s.GetEmission(parent)
 	defer assessment.Finish()
 	assessment.Children, assessment.family, assessment.origin = children, index, parent
-	entries := s.prepareAdmissions(parent, &assessment, assessment.previous, make(map[manifest.NamedResource]int, len(children)))
+	entries := s.prepareAdmissions(
+		parent,
+		&assessment,
+		assessment.previous,
+		make(map[manifest.NamedResource]int, len(children)),
+	)
 	return sourcePaths(s, assessment.OutputReads, entries, index)
 }
 
-func sourcePaths(s *Store, reads *ReadSet, entries []admission, index *manifest.DiscoveryIndex) []manifest.SourceEvidence {
+func sourcePaths(
+	s *Store,
+	reads *ReadSet,
+	entries []admission,
+	index *manifest.DiscoveryIndex,
+) []manifest.SourceEvidence {
 	out := []manifest.SourceEvidence{}
 	roots := func(object manifest.BaseManifest) {
 		if object == nil {
@@ -59,7 +73,13 @@ func sourcePaths(s *Store, reads *ReadSet, entries []admission, index *manifest.
 			binding := input.view.sourceBinding()
 			for _, production := range input.view.child.Productions {
 				if production.File != "" && production.Source == binding.source && binding.artifact != nil {
-					out = append(out, manifest.SourceEvidence{Source: binding.artifact.HistoryIdentity(binding.source), Path: filepath.ToSlash(production.File)})
+					out = append(
+						out,
+						manifest.SourceEvidence{
+							Source: binding.artifact.HistoryIdentity(binding.source),
+							Path:   filepath.ToSlash(production.File),
+						},
+					)
 				}
 			}
 		}
@@ -68,7 +88,13 @@ func sourcePaths(s *Store, reads *ReadSet, entries []admission, index *manifest.
 		roots(entry.child.Obj)
 		for _, production := range entry.child.Productions {
 			if production.File != "" && production.Source == entry.binding.source && entry.binding.artifact != nil {
-				out = append(out, manifest.SourceEvidence{Source: entry.binding.artifact.HistoryIdentity(entry.binding.source), Path: filepath.ToSlash(production.File)})
+				out = append(
+					out,
+					manifest.SourceEvidence{
+						Source: entry.binding.artifact.HistoryIdentity(entry.binding.source),
+						Path:   filepath.ToSlash(production.File),
+					},
+				)
 			}
 		}
 		for ref := range manifest.References(entry.child.Obj, manifest.ReferenceRelations) {
@@ -85,7 +111,13 @@ func sourcePaths(s *Store, reads *ReadSet, entries []admission, index *manifest.
 				}
 				artifact, _ := s.GetArtifact(production.Source, ArtifactContent).(*SourceArtifact)
 				if artifact != nil {
-					out = append(out, manifest.SourceEvidence{Source: artifact.HistoryIdentity(production.Source), Path: filepath.ToSlash(production.File)})
+					out = append(
+						out,
+						manifest.SourceEvidence{
+							Source: artifact.HistoryIdentity(production.Source),
+							Path:   filepath.ToSlash(production.File),
+						},
+					)
 				}
 			}
 		}

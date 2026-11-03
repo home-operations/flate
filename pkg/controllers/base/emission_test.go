@@ -16,6 +16,7 @@ import (
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/google/go-cmp/cmp"
+
 	"github.com/home-operations/flate/internal/assert"
 	_ "github.com/home-operations/flate/internal/kustomize" // Standalone controller tests MUST install the process scope owner before parsing.
 	"github.com/home-operations/flate/internal/testutil"
@@ -38,12 +39,34 @@ func TestEmit_RetainsSanitizedInvalidDocuments(t *testing.T) {
 			c.Configure(Options{SkipKinds: []string{"ConfigMap"}})
 			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps", TargetNamespace: "apps"}
 			s.AddObject(parent)
-			doc := map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": "credentials"}, "stringData": map[string]any{"X": "ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]"}}
-			skipped := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "skipped", "namespace": "apps"}}
-			invalid := map[string]any{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization", "metadata": map[string]any{"name": "invalid"}, "spec": "invalid"}
+			doc := map[string]any{
+				"apiVersion": "v1",
+				"kind":       "Secret",
+				"metadata":   map[string]any{"name": "credentials"},
+				"stringData": map[string]any{"X": "ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]"},
+			}
+			skipped := map[string]any{
+				"apiVersion": "v1",
+				"kind":       "ConfigMap",
+				"metadata":   map[string]any{"name": "skipped", "namespace": "apps"},
+			}
+			invalid := map[string]any{
+				"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+				"kind":       "Kustomization",
+				"metadata":   map[string]any{"name": "invalid"},
+				"spec":       "invalid",
+			}
 			borrowed := []map[string]any{doc, skipped, invalid}
-			before := []map[string]any{manifest.DeepCopyMap(doc), manifest.DeepCopyMap(skipped), manifest.DeepCopyMap(invalid)}
-			children, docs, failures := c.ParseChildren(parent, testutil.DocumentOccurrences(borrowed), manifest.ParseDocOptions{WipeSecrets: wipe})
+			before := []map[string]any{
+				manifest.DeepCopyMap(doc),
+				manifest.DeepCopyMap(skipped),
+				manifest.DeepCopyMap(invalid),
+			}
+			children, docs, failures := c.ParseChildren(
+				parent,
+				testutil.DocumentOccurrences(borrowed),
+				manifest.ParseDocOptions{WipeSecrets: wipe},
+			)
 			if len(failures) != 1 || !errors.Is(failures[0].Err, manifest.ErrInput) {
 				t.Fatalf("retained failures = %v", failures)
 			}
@@ -86,17 +109,44 @@ func TestEmit_OwnershipPrecedesArrivals(t *testing.T) {
 			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps", TargetNamespace: "tenant"}
 			sibling := &manifest.Kustomization{Name: "sibling", Namespace: "tenant"}
 			s.AddObjects([]manifest.BaseManifest{parent, sibling})
-			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}, sibling.Named(): {File: "sibling.yaml"}}}
-			filterLoader := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"parent.yaml"}), Index: index, Inventory: s, Root: ""})
+			index := &manifest.DiscoveryIndex{
+				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+					parent.Named():  {File: "parent.yaml"},
+					sibling.Named(): {File: "sibling.yaml"},
+				},
+			}
+			filterLoader := admissiontest.New(
+				t,
+				admissiontest.Config{
+					Changes:   change.NewSet([]string{"parent.yaml"}),
+					Index:     index,
+					Inventory: s,
+					Root:      "",
+				},
+			)
 			admissiontest.Commit(t, filterLoader, nil)
 			filter := filterLoader.Options.Filter
 			c.Configure(Options{Filter: filter, Index: index, Loader: filterLoader})
 			s.SetIncluded(parent.Named(), true)
 			docs := []map[string]any{
-				{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "settings"}, "data": map[string]any{"VALUE": "value"}},
-				{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization", "metadata": map[string]any{"name": "child"}, "spec": map[string]any{"path": "./app"}},
+				{
+					"apiVersion": "v1",
+					"kind":       "ConfigMap",
+					"metadata":   map[string]any{"name": "settings"},
+					"data":       map[string]any{"VALUE": "value"},
+				},
+				{
+					"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+					"kind":       "Kustomization",
+					"metadata":   map[string]any{"name": "child"},
+					"spec":       map[string]any{"path": "./app"},
+				},
 			}
-			children, retained, failures := c.ParseChildren(parent, testutil.DocumentOccurrences(docs), manifest.ParseDocOptions{})
+			children, retained, failures := c.ParseChildren(
+				parent,
+				testutil.DocumentOccurrences(docs),
+				manifest.ParseDocOptions{},
+			)
 			assert.Equal(t, len(failures), 0)
 			type observation struct {
 				id                       manifest.NamedResource
@@ -151,13 +201,23 @@ func TestEmit_PayloadProvenance(t *testing.T) {
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 	s.AddObject(parent)
 	child, childDoc := emissionDependency(t, "child", "  dependsOn: [{name: '${PREFIX:-dev-}config'}]\n")
-	doc := map[string]any{"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": manifest.KindExternalArtifact, "metadata": map[string]any{"name": "output", "namespace": "apps"}, "spec": map[string]any{}}
+	doc := map[string]any{
+		"apiVersion": "source.toolkit.fluxcd.io/v1",
+		"kind":       manifest.KindExternalArtifact,
+		"metadata":   map[string]any{"name": "output", "namespace": "apps"},
+		"spec":       map[string]any{},
+	}
 	children, docs := parseChildrenForTest(parent.Named(), []map[string]any{childDoc, doc}, manifest.ParseDocOptions{})
 	if len(children) != 2 {
 		t.Fatalf("parsed children = %d, want 2", len(children))
 	}
 	target := children[1].Obj.Named()
-	payload := &store.SourceArtifact{Kind: target.Kind, Key: "key", Digest: "digest", FS: fstest.MapFS{"file": {Data: []byte("bytes")}}}
+	payload := &store.SourceArtifact{
+		Kind:   target.Kind,
+		Key:    "key",
+		Digest: "digest",
+		FS:     fstest.MapFS{"file": {Data: []byte("bytes")}},
+	}
 	_, _, attempt := s.GetEmission(parent.Named())
 	defer attempt.Finish()
 	attempt.Children, attempt.Manifests = children, testutil.DocumentOccurrences(docs)
@@ -182,15 +242,31 @@ func TestEmit_PayloadProvenance(t *testing.T) {
 	attempt.Children, attempt.Complete, attempt.Fingerprint = children, true, manifest.Fingerprint("inputs")
 	c.emit(t.Context(), parent.Named(), &attempt, nil)
 	checkPayload()
-	if attempt.Children[0].Obj == children[0].Obj || attempt.Children[0].Obj.(*manifest.Kustomization).DependsOn[0].Name != "dev-config" || attempt.Footprint() == nil {
+	if attempt.Children[0].Obj == children[0].Obj ||
+		attempt.Children[0].Obj.(*manifest.Kustomization).DependsOn[0].Name != "dev-config" ||
+		attempt.Footprint() == nil {
 		t.Fatal("completed emission did not return its substituted accepted inventory")
 	}
-	if _, handled, err := newExecution(c, parent.Named()).FingerprintDedup(t.Context(), parent.Named(), "inputs", &store.Emission{}); !handled || err != nil {
+	if _, handled, err := newExecution(
+		c,
+		parent.Named(),
+	).FingerprintDedup(t.Context(), parent.Named(), "inputs", &store.Emission{}); !handled ||
+		err != nil {
 		t.Fatalf("borrowed replay handled=%t err=%v", handled, err)
 	}
 	checkPayload()
 	fresh, retained := parseChildrenForTest(parent.Named(), docs, manifest.ParseDocOptions{})
-	c.emit(t.Context(), parent.Named(), &store.Emission{Children: fresh, Manifests: testutil.DocumentOccurrences(retained), Fingerprint: attempt.Fingerprint, Complete: true}, nil)
+	c.emit(
+		t.Context(),
+		parent.Named(),
+		&store.Emission{
+			Children:    fresh,
+			Manifests:   testutil.DocumentOccurrences(retained),
+			Fingerprint: attempt.Fingerprint,
+			Complete:    true,
+		},
+		nil,
+	)
 	if s.GetObject(target) == nil || s.GetArtifact(target, store.ArtifactContent) != nil {
 		t.Fatal("fresh equal declaration-only emission retained borrowed payload authority")
 	}
@@ -203,12 +279,24 @@ func TestEmit_SelfCopyIsNotPublished(t *testing.T) {
 	c := New(s, nil)
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps", Path: "effective"}
 	s.AddObject(parent)
-	docs := []map[string]any{{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization", "metadata": map[string]any{"name": "parent", "namespace": "apps"}, "spec": map[string]any{"path": "stale"}}}
+	docs := []map[string]any{
+		{
+			"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+			"kind":       "Kustomization",
+			"metadata":   map[string]any{"name": "parent", "namespace": "apps"},
+			"spec":       map[string]any{"path": "stale"},
+		},
+	}
 	children, retained := parseChildrenForTest(parent.Named(), docs, manifest.ParseDocOptions{})
 	if len(children) != 0 {
 		t.Fatal("self copy admitted")
 	}
-	c.emit(t.Context(), parent.Named(), &store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(retained), Complete: true}, nil)
+	c.emit(
+		t.Context(),
+		parent.Named(),
+		&store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(retained), Complete: true},
+		nil,
+	)
 	if s.GetObject(parent.Named()) != parent {
 		t.Fatal("self copy overwrote effective input")
 	}
@@ -236,9 +324,28 @@ func TestEmit_RuntimeProducerReplacement(t *testing.T) {
 				}
 			}, false)
 			for _, key := range []string{"X", "Y"} {
-				doc := map[string]any{"apiVersion": "external-secrets.io/v1", "kind": "ExternalSecret", "metadata": map[string]any{"name": "declaration", "namespace": "apps"}, "spec": map[string]any{"target": map[string]any{"name": target.Name, "template": map[string]any{"data": map[string]any{key: "remote"}}}}}
-				children, docs := parseChildrenForTest(parent.Named(), []map[string]any{doc}, manifest.ParseDocOptions{WipeSecrets: wipe})
-				c.emit(t.Context(), parent.Named(), &store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(docs), Complete: true}, nil)
+				doc := map[string]any{
+					"apiVersion": "external-secrets.io/v1",
+					"kind":       "ExternalSecret",
+					"metadata":   map[string]any{"name": "declaration", "namespace": "apps"},
+					"spec": map[string]any{
+						"target": map[string]any{
+							"name":     target.Name,
+							"template": map[string]any{"data": map[string]any{key: "remote"}},
+						},
+					},
+				}
+				children, docs := parseChildrenForTest(
+					parent.Named(),
+					[]map[string]any{doc},
+					manifest.ParseDocOptions{WipeSecrets: wipe},
+				)
+				c.emit(
+					t.Context(),
+					parent.Named(),
+					&store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(docs), Complete: true},
+					nil,
+				)
 				if s.GetObject(target) != nil {
 					t.Fatal("runtime placeholder has a store writer")
 				}
@@ -266,7 +373,6 @@ func TestEmit_RuntimeProducerReplacement(t *testing.T) {
 			if invalidations != 3 {
 				t.Fatalf("declaration target invalidations=%d want admission, key refresh and omission", invalidations)
 			}
-
 		})
 	}
 }
@@ -282,7 +388,8 @@ func TestEmit_RuntimeProducerTargets(t *testing.T) {
 			{"external", "external-secrets.io", "ExternalSecret", []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "apps", Name: "old"}}},
 			{"sealed", "bitnami.com", "SealedSecret", []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "apps", Name: "old"}}},
 			{"bucket", "objectbucket.io", "ObjectBucketClaim", []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "apps", Name: "declaration"}, {Kind: manifest.KindConfigMap, Namespace: "apps", Name: "declaration"}}},
-			{"foreign", "example.test", "ExternalSecret", nil}, {"group-less", "", "SealedSecret", nil},
+			{"foreign", "example.test", "ExternalSecret", nil},
+			{"group-less", "", "SealedSecret", nil},
 		} {
 			t.Run(fmt.Sprintf("%s/wipe=%t", tc.name, wipe), func(t *testing.T) {
 				t.Parallel()
@@ -296,12 +403,37 @@ func TestEmit_RuntimeProducerTargets(t *testing.T) {
 				if tc.group != "" {
 					apiVersion = tc.group + "/v1"
 				}
-				spec := map[string]any{"target": map[string]any{"name": "old", "template": map[string]any{"data": map[string]any{"X": "remote"}}}, "template": map[string]any{"metadata": map[string]any{"name": "old"}}, "encryptedData": map[string]any{"X": "ciphertext"}}
-				doc := map[string]any{"apiVersion": apiVersion, "kind": tc.kind, "metadata": map[string]any{"name": "declaration", "namespace": "apps"}, "spec": spec}
+				spec := map[string]any{
+					"target": map[string]any{
+						"name":     "old",
+						"template": map[string]any{"data": map[string]any{"X": "remote"}},
+					},
+					"template":      map[string]any{"metadata": map[string]any{"name": "old"}},
+					"encryptedData": map[string]any{"X": "ciphertext"},
+				}
+				doc := map[string]any{
+					"apiVersion": apiVersion,
+					"kind":       tc.kind,
+					"metadata":   map[string]any{"name": "declaration", "namespace": "apps"},
+					"spec":       spec,
+				}
 				publish := func(owner manifest.NamedResource, doc map[string]any) {
 					t.Helper()
-					children, docs := parseChildrenForTest(owner, []map[string]any{doc}, manifest.ParseDocOptions{WipeSecrets: wipe})
-					c.emit(t.Context(), owner, &store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(docs), Complete: true}, nil)
+					children, docs := parseChildrenForTest(
+						owner,
+						[]map[string]any{doc},
+						manifest.ParseDocOptions{WipeSecrets: wipe},
+					)
+					c.emit(
+						t.Context(),
+						owner,
+						&store.Emission{
+							Children:  children,
+							Manifests: testutil.DocumentOccurrences(docs),
+							Complete:  true,
+						},
+						nil,
+					)
 				}
 				publish(root.Named(), doc)
 				for _, target := range tc.targets {
@@ -316,7 +448,12 @@ func TestEmit_RuntimeProducerTargets(t *testing.T) {
 				}
 				if len(tc.targets) == 0 {
 					for _, kind := range []string{manifest.KindSecret, manifest.KindConfigMap} {
-						if got := s.Productions(manifest.NamedResource{Kind: kind, Namespace: "apps", Name: "old"}, nil); len(got) != 0 {
+						if got := s.Productions(
+							manifest.NamedResource{Kind: kind, Namespace: "apps", Name: "old"},
+							nil,
+						); len(
+							got,
+						) != 0 {
 							t.Fatal("lookalike produced a target")
 						}
 					}
@@ -407,12 +544,40 @@ func TestEmit_RuntimeProducerDataPrecedence(t *testing.T) {
 						proof.Path = "source/credentials.yaml"
 						proof.File = "credentials.yaml"
 					}
-					s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{target: {Productions: []manifest.Production{proof}}}})
+					s.SetDiscoveryIndex(
+						&manifest.DiscoveryIndex{
+							Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+								target: {Productions: []manifest.Production{proof}},
+							},
+						},
+					)
 				}
-				declaration := &manifest.RawObject{APIVersion: "external-secrets.io/v1", Kind: "ExternalSecret", Name: "declaration", Namespace: "apps", Spec: map[string]any{"target": map[string]any{"name": target.Name, "template": map[string]any{"data": map[string]any{"X": "remote"}}}}}
-				c.emit(t.Context(), root.Named(), &store.Emission{Children: []store.Child{{Obj: declaration}}, Complete: true}, nil)
+				declaration := &manifest.RawObject{
+					APIVersion: "external-secrets.io/v1",
+					Kind:       "ExternalSecret",
+					Name:       "declaration",
+					Namespace:  "apps",
+					Spec: map[string]any{
+						"target": map[string]any{
+							"name":     target.Name,
+							"template": map[string]any{"data": map[string]any{"X": "remote"}},
+						},
+					},
+				}
+				c.emit(
+					t.Context(),
+					root.Named(),
+					&store.Emission{Children: []store.Child{{Obj: declaration}}, Complete: true},
+					nil,
+				)
 				if actual {
-					s.AddObject(&manifest.Secret{Name: target.Name, Namespace: target.Namespace, StringData: map[string]any{"X": "actual"}})
+					s.AddObject(
+						&manifest.Secret{
+							Name:       target.Name,
+							Namespace:  target.Namespace,
+							StringData: map[string]any{"X": "actual"},
+						},
+					)
 				}
 				data := values.NewStoreProvider(s, true).Data(target)
 				if pending != "none" && !actual {
@@ -447,7 +612,16 @@ func TestEmit_MetadataRefreshFingerprintReuse(t *testing.T) {
 	childID := testutil.KustomizationID("apps", "child")
 	publish := func(label, path string) {
 		t.Helper()
-		doc := map[string]any{"apiVersion": manifest.FluxKustomizeDomain + "/v1", "kind": manifest.KindKustomization, "metadata": map[string]any{"name": "child", "namespace": "apps", "labels": map[string]any{"kustomize.toolkit.fluxcd.io/name": label}}, "spec": map[string]any{"path": path}}
+		doc := map[string]any{
+			"apiVersion": manifest.FluxKustomizeDomain + "/v1",
+			"kind":       manifest.KindKustomization,
+			"metadata": map[string]any{
+				"name":      "child",
+				"namespace": "apps",
+				"labels":    map[string]any{"kustomize.toolkit.fluxcd.io/name": label},
+			},
+			"spec": map[string]any{"path": path},
+		}
 		children, docs := parseChildrenForTest(parent.Named(), []map[string]any{doc}, manifest.ParseDocOptions{})
 		_, _, next := s.GetEmission(parent.Named())
 		defer next.Finish()
@@ -456,7 +630,10 @@ func TestEmit_MetadataRefreshFingerprintReuse(t *testing.T) {
 	}
 	publish("first", "app")
 	_, _, next := s.GetEmission(childID)
-	fingerprint, _, _ := newExecution(c, childID).FingerprintDedup(t.Context(), childID, "effective-owner-input", &store.Emission{})
+	fingerprint, _, _ := newExecution(
+		c,
+		childID,
+	).FingerprintDedup(t.Context(), childID, "effective-owner-input", &store.Emission{})
 	next.Fingerprint, next.Complete = fingerprint, true
 	s.RecordEmitted(childID, &next, nil)
 	next.Finish()
@@ -468,8 +645,18 @@ func TestEmit_MetadataRefreshFingerprintReuse(t *testing.T) {
 	defer stopObjects()
 	stopStatus := s.AddListener(store.EventStatusUpdated, func(manifest.NamedResource, any) { statuses++ }, false)
 	defer stopStatus()
-	if _, handled, err := newExecution(c, childID).FingerprintDedup(t.Context(), childID, "effective-owner-input", &store.Emission{}); !handled || err != nil || s.GetArtifact(childID, store.ArtifactContent).(*store.Emission).Fingerprint != before.(*store.Emission).Fingerprint || arrivals != 0 || statuses != 0 {
-		t.Fatalf("metadata refresh discarded current artifact or replayed work: handled=%t error=%v arrivals=%d statuses=%d", handled, err, arrivals, statuses)
+	if _, handled, err := newExecution(
+		c,
+		childID,
+	).FingerprintDedup(t.Context(), childID, "effective-owner-input", &store.Emission{}); !handled || err != nil || s.GetArtifact(childID, store.ArtifactContent).(*store.Emission).Fingerprint != before.(*store.Emission).Fingerprint || arrivals != 0 ||
+		statuses != 0 {
+		t.Fatalf(
+			"metadata refresh discarded current artifact or replayed work: handled=%t error=%v arrivals=%d statuses=%d",
+			handled,
+			err,
+			arrivals,
+			statuses,
+		)
 	}
 	publish("third", "different")
 	if s.GetArtifact(childID, store.ArtifactContent) != nil {
@@ -493,15 +680,31 @@ func TestFingerprintDedup_WarningsRebind(t *testing.T) {
 			obj := &manifest.Kustomization{Name: "reader", Namespace: "apps"}
 			child := &manifest.ConfigMap{Name: "output", Namespace: "apps"}
 			s.AddObject(obj)
-			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{obj.Named(): {File: "reader.yaml"}}}
-			admissionLoader1 := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"reader.yaml"}), Index: index, Inventory: s, Root: ""})
+			index := &manifest.DiscoveryIndex{
+				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{obj.Named(): {File: "reader.yaml"}},
+			}
+			admissionLoader1 := admissiontest.New(
+				t,
+				admissiontest.Config{
+					Changes:   change.NewSet([]string{"reader.yaml"}),
+					Index:     index,
+					Inventory: s,
+					Root:      "",
+				},
+			)
 			admissiontest.Commit(t, admissionLoader1, nil)
 			c.Configure(Options{Filter: admissionLoader1.Options.Filter, Index: index, Loader: admissionLoader1})
 			first := newExecution(c, obj.Named())
 			first.Reads.GetObject(obj.Named())
-			warning := manifest.Warning{Resource: obj.Named(), Category: manifest.WarnStaleValues, Message: "unused value"}
+			warning := manifest.Warning{
+				Resource: obj.Named(),
+				Category: manifest.WarnStaleValues,
+				Message:  "unused value",
+			}
 			first.Reads.AddWarning(warning)
-			first.Reads.RecordSuppliedOverride(store.SuppliedOverride{Resource: obj.Named(), Keys: []string{"previous"}})
+			first.Reads.RecordSuppliedOverride(
+				store.SuppliedOverride{Resource: obj.Named(), Keys: []string{"previous"}},
+			)
 			_, _, next := first.Reads.GetEmission(obj.Named())
 			next.Children = []store.Child{{Obj: child}}
 			next.Fingerprint, next.Complete = manifest.Fingerprint("equal projection"), true
@@ -518,7 +721,13 @@ func TestFingerprintDedup_WarningsRebind(t *testing.T) {
 			second := newExecution(c, obj.Named())
 			current := store.SuppliedOverride{Resource: obj.Named(), Keys: []string{"current"}}
 			second.Reads.RecordSuppliedOverride(current)
-			if _, handled, err := second.FingerprintDedup(t.Context(), obj.Named(), "equal projection", &store.Emission{}); !handled || err != nil {
+			if _, handled, err := second.FingerprintDedup(
+				t.Context(),
+				obj.Named(),
+				"equal projection",
+				&store.Emission{},
+			); !handled ||
+				err != nil {
 				t.Fatalf("projection replay: handled=%t error=%v", handled, err)
 			}
 			second.Reads.Accept()
@@ -543,12 +752,26 @@ func TestEmit_PartialRetainsUnvisitedDocuments(t *testing.T) {
 	c := New(s, nil)
 	root := &manifest.Kustomization{Name: "root", Namespace: "apps"}
 	s.AddObject(root)
-	invalid := map[string]any{"apiVersion": manifest.FluxKustomizeDomain + "/v1", "kind": manifest.KindKustomization, "metadata": map[string]any{"name": "unvisited", "namespace": "apps"}, "spec": map[string]any{"path": "unvisited"}}
-	secret := map[string]any{"apiVersion": "v1", "kind": manifest.KindSecret, "metadata": map[string]any{"name": "secret", "namespace": "apps"}, "stringData": map[string]any{"X": "ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]"}}
+	invalid := map[string]any{
+		"apiVersion": manifest.FluxKustomizeDomain + "/v1",
+		"kind":       manifest.KindKustomization,
+		"metadata":   map[string]any{"name": "unvisited", "namespace": "apps"},
+		"spec":       map[string]any{"path": "unvisited"},
+	}
+	secret := map[string]any{
+		"apiVersion": "v1",
+		"kind":       manifest.KindSecret,
+		"metadata":   map[string]any{"name": "secret", "namespace": "apps"},
+		"stringData": map[string]any{"X": "ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]"},
+	}
 	valid := manifest.DeepCopyMap(invalid)
 	valid["metadata"].(map[string]any)["name"] = "updated"
 	valid["spec"] = map[string]any{"path": "original"}
-	children, docs := parseChildrenForTest(root.Named(), []map[string]any{secret, valid, invalid}, manifest.ParseDocOptions{WipeSecrets: true})
+	children, docs := parseChildrenForTest(
+		root.Named(),
+		[]map[string]any{secret, valid, invalid},
+		manifest.ParseDocOptions{WipeSecrets: true},
+	)
 	if len(children) != 3 || len(docs) != 3 {
 		t.Fatal("invalid predecessor fixture")
 	}
@@ -564,7 +787,12 @@ func TestEmit_PartialRetainsUnvisitedDocuments(t *testing.T) {
 		t.Fatalf("inherited partial changed order or bytes (-want +got): %s", diff)
 	}
 	inherited.Finish()
-	fresh := map[string]any{"apiVersion": "v1", "kind": manifest.KindConfigMap, "metadata": map[string]any{"name": "fresh", "namespace": "apps"}, "data": map[string]any{"value": "first"}}
+	fresh := map[string]any{
+		"apiVersion": "v1",
+		"kind":       manifest.KindConfigMap,
+		"metadata":   map[string]any{"name": "fresh", "namespace": "apps"},
+		"data":       map[string]any{"value": "first"},
+	}
 	incoming, incomingDocs := parseChildrenForTest(root.Named(), []map[string]any{fresh}, manifest.ParseDocOptions{})
 	_, _, partial := s.GetEmission(root.Named())
 	partial.Children, partial.Manifests = incoming, testutil.DocumentOccurrences(incomingDocs)
@@ -616,20 +844,53 @@ func TestEmit_DefaultsNamespace(t *testing.T) {
 				c := New(s, nil)
 				parent := manifest.NamedResource{Group: kind.Group, Kind: kind.Kind, Namespace: "parent", Name: "infra"}
 				docs := []map[string]any{
-					{"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": "OCIRepository", "metadata": map[string]any{"name": "chart"}, "spec": map[string]any{"url": "oci://example.test/chart"}},
-					{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "cm", "namespace": "release"}},
+					{
+						"apiVersion": "source.toolkit.fluxcd.io/v1",
+						"kind":       "OCIRepository",
+						"metadata":   map[string]any{"name": "chart"},
+						"spec":       map[string]any{"url": "oci://example.test/chart"},
+					},
+					{
+						"apiVersion": "v1",
+						"kind":       "ConfigMap",
+						"metadata":   map[string]any{"name": "cm", "namespace": "release"},
+					},
 					{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": "app"}},
-					{"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRole", "metadata": map[string]any{"name": "role"}},
-					{"apiVersion": "foreign.example/v1", "kind": "ClusterRole", "metadata": map[string]any{"name": "foreign"}},
+					{
+						"apiVersion": "rbac.authorization.k8s.io/v1",
+						"kind":       "ClusterRole",
+						"metadata":   map[string]any{"name": "role"},
+					},
+					{
+						"apiVersion": "foreign.example/v1",
+						"kind":       "ClusterRole",
+						"metadata":   map[string]any{"name": "foreign"},
+					},
 				}
 				before := make([]map[string]any, len(docs))
 				for i, doc := range docs {
 					before[i] = manifest.DeepCopyMap(doc)
 				}
 				opts := manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: fallback}
-				s.AddObject(&manifest.RawObject{APIVersion: parent.Group + "/v1", Kind: parent.Kind, Name: parent.Name, Namespace: parent.Namespace})
+				s.AddObject(
+					&manifest.RawObject{
+						APIVersion: parent.Group + "/v1",
+						Kind:       parent.Kind,
+						Name:       parent.Name,
+						Namespace:  parent.Namespace,
+					},
+				)
 				children, retained := parseChildrenForTest(parent, docs, opts)
-				c.emit(t.Context(), parent, &store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(retained), Complete: true}, nil)
+				c.emit(
+					t.Context(),
+					parent,
+					&store.Emission{
+						Children:  children,
+						Manifests: testutil.DocumentOccurrences(retained),
+						Complete:  true,
+					},
+					nil,
+				)
 				assert.Equal(t, len(children), len(docs))
 				for i, want := range []string{fallback, "release", fallback, "", fallback} {
 					assert.Equal(t, children[i].Obj.Named().Namespace, want)
@@ -645,7 +906,16 @@ func TestEmit_DefaultsNamespace(t *testing.T) {
 				}
 				assert.Diff(t, retained, before)
 				replayed, replay := parseChildrenForTest(parent, retained, opts)
-				c.emit(t.Context(), parent, &store.Emission{Children: replayed, Manifests: testutil.DocumentOccurrences(replay), Complete: true}, nil)
+				c.emit(
+					t.Context(),
+					parent,
+					&store.Emission{
+						Children:  replayed,
+						Manifests: testutil.DocumentOccurrences(replay),
+						Complete:  true,
+					},
+					nil,
+				)
 				for i := range children {
 					assert.Equal(t, replayed[i].Obj.Named(), children[i].Obj.Named())
 				}
@@ -663,27 +933,80 @@ func TestKeepEmitted_InvalidatesCapturedExclusion(t *testing.T) {
 	settings := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "settings"}
 	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
 	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps"}
-	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps",
-		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "settings"}}}}
-	release := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindHelmChart, Name: "chart"}, Name: "release", Namespace: "apps",
-		Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "apps", Name: "chart"}}}
+	consumer := &manifest.Kustomization{
+		Name:      "consumer",
+		Namespace: "apps",
+		PostBuild: &kustomizev1.PostBuild{
+			SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "settings"}},
+		},
+	}
+	release := &manifest.HelmRelease{
+		ChartRef: &helmv2.CrossNamespaceSourceReference{
+			Kind: manifest.KindHelmChart,
+			Name: "chart",
+		},
+		Name:      "release",
+		Namespace: "apps",
+		Chart: manifest.HelmChart{
+			Source: manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindHelmChart,
+				Namespace: "apps",
+				Name:      "chart",
+			},
+		},
+	}
 	for _, obj := range []manifest.BaseManifest{producer, chart, consumer, release} {
 		s.AddObject(obj)
-		s.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged, Message: "unchanged"})
+		s.UpdateStatus(
+			obj.Named(),
+			store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged, Message: "unchanged"},
+		)
 	}
-	foreignProducer := &manifest.RawObject{APIVersion: "example.test/v1", Kind: manifest.KindKustomization, Name: producer.Name, Namespace: producer.Namespace}
+	foreignProducer := &manifest.RawObject{
+		APIVersion: "example.test/v1",
+		Kind:       manifest.KindKustomization,
+		Name:       producer.Name,
+		Namespace:  producer.Namespace,
+	}
 	s.AddObject(foreignProducer)
-	s.UpdateStatus(foreignProducer.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "foreign unchanged"})
+	s.UpdateStatus(
+		foreignProducer.Named(),
+		store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "foreign unchanged"},
+	)
 	foreignSettings := settings
 	foreignSettings.Group = "example.test"
 	index := &manifest.DiscoveryIndex{
 		Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-			parent:          {File: "parent.yaml"},
-			settings:        {Productions: []manifest.Production{{Owner: producer.Named(), Authored: settings, Path: "/fixtures/settings.yaml", File: "settings.yaml", Source: manifest.BootstrapSourceID}}},
-			foreignSettings: {Productions: []manifest.Production{{Owner: foreignProducer.Named(), Authored: foreignSettings, Path: "/fixtures/foreign-settings.yaml", File: "foreign-settings.yaml", Source: manifest.BootstrapSourceID}}},
+			parent: {File: "parent.yaml"},
+			settings: {
+				Productions: []manifest.Production{
+					{
+						Owner:    producer.Named(),
+						Authored: settings,
+						Path:     "/fixtures/settings.yaml",
+						File:     "settings.yaml",
+						Source:   manifest.BootstrapSourceID,
+					},
+				},
+			},
+			foreignSettings: {
+				Productions: []manifest.Production{
+					{
+						Owner:    foreignProducer.Named(),
+						Authored: foreignSettings,
+						Path:     "/fixtures/foreign-settings.yaml",
+						File:     "foreign-settings.yaml",
+						Source:   manifest.BootstrapSourceID,
+					},
+				},
+			},
 		},
 	}
-	admissionLoader1 := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"parent.yaml"}), Index: index, Inventory: s, Root: ""})
+	admissionLoader1 := admissiontest.New(
+		t,
+		admissiontest.Config{Changes: change.NewSet([]string{"parent.yaml"}), Index: index, Inventory: s, Root: ""},
+	)
 	admissiontest.Commit(t, admissionLoader1, nil)
 	c.Configure(Options{Filter: admissionLoader1.Options.Filter, Index: index, Loader: admissionLoader1})
 
@@ -742,11 +1065,22 @@ func TestKeepEmitted_InvalidatesCapturedExclusion(t *testing.T) {
 			c := New(s, nil)
 			obj := obj.WithNamespace("apps")
 			s.AddObject(obj)
-			s.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged, Message: "unchanged"})
+			s.UpdateStatus(
+				obj.Named(),
+				store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged, Message: "unchanged"},
+			)
 			index := &manifest.DiscoveryIndex{
 				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent: {File: "parent.yaml"}},
 			}
-			admissionLoader2 := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"parent.yaml"}), Index: index, Inventory: s, Root: ""})
+			admissionLoader2 := admissiontest.New(
+				t,
+				admissiontest.Config{
+					Changes:   change.NewSet([]string{"parent.yaml"}),
+					Index:     index,
+					Inventory: s,
+					Root:      "",
+				},
+			)
 			admissiontest.Commit(t, admissionLoader2, nil)
 			c.Configure(Options{Filter: admissionLoader2.Options.Filter, Index: index, Loader: admissionLoader2})
 			s.SetIncluded(obj.Named(), false)
@@ -783,7 +1117,12 @@ func TestEmit_ChangedCompletePayloadDoesNotInheritKey(t *testing.T) {
 	first := newExecution(c, parent.Named())
 	defer first.Close()
 	_, _, initial := first.Reads.GetEmission(parent.Named())
-	doc := map[string]any{"apiVersion": "v1", "kind": manifest.KindConfigMap, "metadata": map[string]any{"name": "output", "namespace": "apps"}, "data": map[string]any{"value": "one"}}
+	doc := map[string]any{
+		"apiVersion": "v1",
+		"kind":       manifest.KindConfigMap,
+		"metadata":   map[string]any{"name": "output", "namespace": "apps"},
+		"data":       map[string]any{"value": "one"},
+	}
 	children, retained := parseChildrenForTest(parent.Named(), []map[string]any{doc}, manifest.ParseDocOptions{})
 	initial.Children, initial.Manifests = children, testutil.DocumentOccurrences(retained)
 	initial.Fingerprint, initial.Complete = manifest.Fingerprint("rendered input"), true
@@ -812,7 +1151,13 @@ func TestEmit_ChangedCompletePayloadDoesNotInheritKey(t *testing.T) {
 	}
 	second := newExecution(c, parent.Named())
 	defer second.Close()
-	if _, handled, err := second.FingerprintDedup(t.Context(), parent.Named(), "rendered input", &store.Emission{}); handled || err != nil {
+	if _, handled, err := second.FingerprintDedup(
+		t.Context(),
+		parent.Named(),
+		"rendered input",
+		&store.Emission{},
+	); handled ||
+		err != nil {
 		t.Fatalf("old render input reused changed bytes: handled=%t error=%v", handled, err)
 	}
 }
@@ -828,7 +1173,11 @@ func TestExecution_ReplacementReclaimsBorrowedOutput(t *testing.T) {
 			st.AddObject(parent)
 			st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			publish := func(obj *manifest.Kustomization) {
-				st.RecordEmitted(parent.Named(), &store.Emission{Children: []store.Child{{Obj: obj}}, Complete: true}, nil)
+				st.RecordEmitted(
+					parent.Named(),
+					&store.Emission{Children: []store.Child{{Obj: obj}}, Complete: true},
+					nil,
+				)
 			}
 			publish(declaration)
 			tasks := task.NewBounded(2)
@@ -844,13 +1193,16 @@ func TestExecution_ReplacementReclaimsBorrowedOutput(t *testing.T) {
 				first.Reads.GetObject(declaration.Named())
 				first.Reads.GetStatus(parent.Named())
 				_, _, attempt := first.Reads.GetEmission(declaration.Named())
-				attempt.Children = []store.Child{{Obj: &manifest.ConfigMap{Name: "output", Namespace: "apps", Data: map[string]any{"value": "old"}}}}
+				attempt.Children = []store.Child{
+					{Obj: &manifest.ConfigMap{Name: "output", Namespace: "apps", Data: map[string]any{"value": "old"}}},
+				}
 				attempt.Complete = true
 				first.Emit(t.Context(), declaration.Named(), &attempt, nil)
 				attempt.Finish()
 				first.Reads.Accept()
 				first.Retire()
-				if output, ok := st.GetArtifact(declaration.Named(), store.ArtifactContent).(*store.Emission); !ok || output.OutputReads != &first.Reads {
+				if output, ok := st.GetArtifact(declaration.Named(), store.ArtifactContent).(*store.Emission); !ok ||
+					output.OutputReads != &first.Reads {
 					t.Error("predecessor lost its borrowed output")
 					return
 				}
@@ -881,7 +1233,9 @@ func TestExecution_ReplacementReclaimsBorrowedOutput(t *testing.T) {
 				if replacement {
 					name = "replacement"
 				}
-				attempt.Children = []store.Child{{Obj: &manifest.ConfigMap{Name: name, Namespace: "apps", Data: map[string]any{"value": "new"}}}}
+				attempt.Children = []store.Child{
+					{Obj: &manifest.ConfigMap{Name: name, Namespace: "apps", Data: map[string]any{"value": "new"}}},
+				}
 				attempt.Complete = true
 				current.Emit(t.Context(), declaration.Named(), &attempt, nil)
 				attempt.Finish()
@@ -914,8 +1268,13 @@ func TestEmit_InvalidReads(t *testing.T) {
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps", Path: "A"}
 	child := &manifest.Kustomization{Name: "child", Namespace: "apps", Path: "A"}
 	s.AddObject(parent)
-	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}}}
-	filterLoader := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"parent.yaml"}), Index: index, Inventory: s, Root: ""})
+	index := &manifest.DiscoveryIndex{
+		Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}},
+	}
+	filterLoader := admissiontest.New(
+		t,
+		admissiontest.Config{Changes: change.NewSet([]string{"parent.yaml"}), Index: index, Inventory: s, Root: ""},
+	)
 	admissiontest.Commit(t, filterLoader, nil)
 	filter := filterLoader.Options.Filter
 	c.Configure(Options{Filter: filter, Index: index, Loader: filterLoader})
@@ -931,7 +1290,9 @@ func TestEmit_InvalidReads(t *testing.T) {
 	if run.Reads.Valid() {
 		t.Fatal("changed parent left captured reads valid")
 	}
-	if !filter.ShouldReconcile(parent.Named()) || filter.ShouldReconcile(child.Named()) || s.GetObject(child.Named()) != nil || s.HasInventory(parent.Named()) {
+	if !filter.ShouldReconcile(parent.Named()) || filter.ShouldReconcile(child.Named()) ||
+		s.GetObject(child.Named()) != nil ||
+		s.HasInventory(parent.Named()) {
 		t.Fatal("invalid emission fixture already selected or published the child")
 	}
 	c.emit(t.Context(), parent.Named(), &next, nil)
@@ -950,8 +1311,13 @@ func TestEmit_InputReplacementSelection(t *testing.T) {
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps", Path: "A"}
 	child := &manifest.Kustomization{Name: "child", Namespace: "apps", Path: "A"}
 	s.AddObject(parent)
-	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}}}
-	filterLoader := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"parent.yaml"}), Index: index, Inventory: s, Root: ""})
+	index := &manifest.DiscoveryIndex{
+		Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}},
+	}
+	filterLoader := admissiontest.New(
+		t,
+		admissiontest.Config{Changes: change.NewSet([]string{"parent.yaml"}), Index: index, Inventory: s, Root: ""},
+	)
 	admissiontest.Commit(t, filterLoader, nil)
 	filter := filterLoader.Options.Filter
 	c.Configure(Options{Filter: filter, Index: index, Loader: filterLoader})
@@ -971,7 +1337,11 @@ func TestEmit_InputReplacementSelection(t *testing.T) {
 	}
 	accepted := child.Clone()
 	accepted.Path = "B"
-	fresh := captureEmission(s, parent.Named(), &store.Emission{Children: []store.Child{{Obj: accepted}}, Complete: true})
+	fresh := captureEmission(
+		s,
+		parent.Named(),
+		&store.Emission{Children: []store.Child{{Obj: accepted}}, Complete: true},
+	)
 	newExecution(c, parent.Named()).Emit(t.Context(), parent.Named(), fresh, nil)
 	if !filter.ShouldReconcile(accepted.Named()) || s.GetDeclaration(accepted.Named()) != accepted {
 		t.Fatal("ordinary replacement did not publish and extend selection")
@@ -986,22 +1356,53 @@ func TestFingerprintDedup_AcceptedReceipt(t *testing.T) {
 				t.Parallel()
 				st := store.New()
 				owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
-				dependency := &manifest.ConfigMap{Name: "input", Namespace: "apps", Data: map[string]any{"value": "first"}}
+				dependency := &manifest.ConfigMap{
+					Name:      "input",
+					Namespace: "apps",
+					Data:      map[string]any{"value": "first"},
+				}
 				st.AddObjects([]manifest.BaseManifest{owner, dependency})
 				controller := New(st, nil)
 				first := newExecution(controller, owner.Named())
 				defer first.Retire()
 				first.Reads.GetObject(dependency.Named())
-				doc := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "output", "namespace": "apps"}}
-				children, docs := testutil.ParseChildren(controller, owner, []map[string]any{doc}, manifest.ParseDocOptions{})
-				next := store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(docs), Fingerprint: manifest.Fingerprint("content"), Complete: true, Render: manifest.NewRenderReceipt("previous", func(a, b any) bool { return a == b })}
+				doc := map[string]any{
+					"apiVersion": "v1",
+					"kind":       "ConfigMap",
+					"metadata":   map[string]any{"name": "output", "namespace": "apps"},
+				}
+				children, docs := testutil.ParseChildren(
+					controller,
+					owner,
+					[]map[string]any{doc},
+					manifest.ParseDocOptions{},
+				)
+				next := store.Emission{
+					Children:    children,
+					Manifests:   testutil.DocumentOccurrences(docs),
+					Fingerprint: manifest.Fingerprint("content"),
+					Complete:    true,
+					Render:      manifest.NewRenderReceipt("previous", func(a, b any) bool { return a == b }),
+				}
 				first.Emit(t.Context(), owner.Named(), &next, nil)
 				if branch == "borrowed" {
 					progress := newExecution(controller, owner.Named())
 					defer progress.Retire()
-					partialDoc := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "progress", "namespace": "apps"}}
-					partialChildren, partialDocs, partialFailures := controller.ParseChildren(owner, testutil.DocumentOccurrences([]map[string]any{partialDoc}), manifest.ParseDocOptions{})
-					partial := store.Emission{Children: partialChildren, Manifests: partialDocs, Failures: partialFailures}
+					partialDoc := map[string]any{
+						"apiVersion": "v1",
+						"kind":       "ConfigMap",
+						"metadata":   map[string]any{"name": "progress", "namespace": "apps"},
+					}
+					partialChildren, partialDocs, partialFailures := controller.ParseChildren(
+						owner,
+						testutil.DocumentOccurrences([]map[string]any{partialDoc}),
+						manifest.ParseDocOptions{},
+					)
+					partial := store.Emission{
+						Children:  partialChildren,
+						Manifests: partialDocs,
+						Failures:  partialFailures,
+					}
 					progress.Emit(t.Context(), owner.Named(), &partial, nil)
 					if st.GetArtifact(owner.Named(), store.ArtifactContent).(*store.Emission).Complete {
 						t.Fatal("fixture did not preserve a borrowed complete predecessor")
@@ -1013,7 +1414,13 @@ func TestFingerprintDedup_AcceptedReceipt(t *testing.T) {
 					}
 				}
 				if receipt == "invalid_input" || receipt == "aba_input" || receipt == "retired_input" {
-					st.AddObject(&manifest.ConfigMap{Name: dependency.Name, Namespace: dependency.Namespace, Data: map[string]any{"value": "changed"}})
+					st.AddObject(
+						&manifest.ConfigMap{
+							Name:      dependency.Name,
+							Namespace: dependency.Namespace,
+							Data:      map[string]any{"value": "changed"},
+						},
+					)
 				}
 				if receipt == "aba_input" {
 					st.AddObject(dependency)
@@ -1068,13 +1475,22 @@ func TestEmit_RejectedAttemptClearsFootprint(t *testing.T) {
 			run := newExecution(controller, owner.Named())
 			defer run.Retire()
 			run.Reads.GetObject(dependency.Named())
-			next := store.Emission{Complete: true, Render: manifest.NewRenderReceipt("accepted", func(a, b any) bool { return a == b })}
+			next := store.Emission{
+				Complete: true,
+				Render:   manifest.NewRenderReceipt("accepted", func(a, b any) bool { return a == b }),
+			}
 			run.Emit(t.Context(), owner.Named(), &next, nil)
 			if next.Footprint() == nil {
 				t.Fatal("fixture did not accept complete-empty output")
 			}
 			before := st.GetArtifact(owner.Named(), store.ArtifactContent)
-			st.AddObject(&manifest.ConfigMap{Name: dependency.Name, Namespace: dependency.Namespace, Data: map[string]any{"value": "changed"}})
+			st.AddObject(
+				&manifest.ConfigMap{
+					Name:      dependency.Name,
+					Namespace: dependency.Namespace,
+					Data:      map[string]any{"value": "changed"},
+				},
+			)
 			if caller == "store" {
 				st.RecordEmitted(owner.Named(), &next, nil)
 			} else {
@@ -1096,11 +1512,34 @@ func TestEmit_FailedAuthorityReplacesSuccess(t *testing.T) {
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
 			s.AddObject(owner)
 			c := New(s, task.NewBounded(2))
-			valid := map[string]any{"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": "HelmRelease", "metadata": map[string]any{"name": "child", "namespace": "apps"}, "spec": map[string]any{"interval": "10m", "chart": map[string]any{"spec": map[string]any{"chart": "demo", "sourceRef": map[string]any{"kind": "HelmRepository", "name": "charts"}}}}}
+			valid := map[string]any{
+				"apiVersion": "helm.toolkit.fluxcd.io/v2",
+				"kind":       "HelmRelease",
+				"metadata":   map[string]any{"name": "child", "namespace": "apps"},
+				"spec": map[string]any{
+					"interval": "10m",
+					"chart": map[string]any{
+						"spec": map[string]any{
+							"chart":     "demo",
+							"sourceRef": map[string]any{"kind": "HelmRepository", "name": "charts"},
+						},
+					},
+				},
+			}
 			first := newExecution(c, owner.Named())
 			defer first.Close()
-			children, docs, failures := c.ParseChildren(owner, testutil.DocumentOccurrences([]map[string]any{valid}), manifest.ParseDocOptions{})
-			attempt := store.Emission{Children: children, Manifests: docs, Failures: failures, Complete: true, Fingerprint: manifest.Fingerprint("content")}
+			children, docs, failures := c.ParseChildren(
+				owner,
+				testutil.DocumentOccurrences([]map[string]any{valid}),
+				manifest.ParseDocOptions{},
+			)
+			attempt := store.Emission{
+				Children:    children,
+				Manifests:   docs,
+				Failures:    failures,
+				Complete:    true,
+				Fingerprint: manifest.Fingerprint("content"),
+			}
 			if err := first.Emit(t.Context(), owner.Named(), &attempt, nil); err != nil {
 				t.Fatal(err)
 			}
@@ -1118,7 +1557,11 @@ func TestEmit_FailedAuthorityReplacesSuccess(t *testing.T) {
 			}
 			invalid := manifest.DeepCopyMap(valid)
 			invalid["spec"].(map[string]any)["interval"] = []any{}
-			sibling := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "healthy", "namespace": "apps"}}
+			sibling := map[string]any{
+				"apiVersion": "v1",
+				"kind":       "ConfigMap",
+				"metadata":   map[string]any{"name": "healthy", "namespace": "apps"},
+			}
 			var diagnostic string
 			for _, phase := range []string{"failure", "repeat"} {
 				run := newExecution(c, owner.Named())
@@ -1135,7 +1578,13 @@ func TestEmit_FailedAuthorityReplacesSuccess(t *testing.T) {
 					}
 				}
 				children, docs, failures = c.ParseChildren(owner, outcomes, manifest.ParseDocOptions{})
-				attempt = store.Emission{Children: children, Manifests: docs, Failures: failures, Complete: true, Fingerprint: manifest.Fingerprint("content")}
+				attempt = store.Emission{
+					Children:    children,
+					Manifests:   docs,
+					Failures:    failures,
+					Complete:    true,
+					Fingerprint: manifest.Fingerprint("content"),
+				}
 				err := run.Emit(t.Context(), owner.Named(), &attempt, nil)
 				if !errors.Is(err, manifest.ErrInput) {
 					t.Fatalf("%s accepted invalid output: %v", phase, err)
@@ -1146,7 +1595,8 @@ func TestEmit_FailedAuthorityReplacesSuccess(t *testing.T) {
 				}
 				assert.Equal(t, err.Error(), diagnostic)
 				current := s.GetArtifact(owner.Named(), store.ArtifactContent).(*store.Emission)
-				if current.Complete || attempt.Footprint() != nil || len(current.Failures) != 1 || len(current.Manifests) != 2 {
+				if current.Complete || attempt.Footprint() != nil || len(current.Failures) != 1 ||
+					len(current.Manifests) != 2 {
 					t.Fatalf("failed inventory: %+v", current)
 				}
 				if _, hit := current.Replay(manifest.Fingerprint("content")); hit {
@@ -1165,7 +1615,11 @@ func TestEmit_FailedAuthorityReplacesSuccess(t *testing.T) {
 			if hit || err != nil {
 				t.Fatalf("failed fingerprint bypassed admission: %t %v", hit, err)
 			}
-			next.Children, next.Manifests, next.Failures = c.ParseChildren(owner, testutil.DocumentOccurrences([]map[string]any{valid}), manifest.ParseDocOptions{})
+			next.Children, next.Manifests, next.Failures = c.ParseChildren(
+				owner,
+				testutil.DocumentOccurrences([]map[string]any{valid}),
+				manifest.ParseDocOptions{},
+			)
 			next.Complete, next.Fingerprint = true, manifest.Fingerprint("content")
 			if err := corrected.Emit(t.Context(), owner.Named(), &next, nil); err != nil {
 				t.Fatal(err)
@@ -1193,11 +1647,23 @@ func TestParseChildren_RetainsRendererFailure(t *testing.T) {
 			t.Parallel()
 			owner := &manifest.HelmRelease{Name: "owner", Namespace: "apps"}
 			invalid := map[string]any{"apiVersion": "v1", "kind": "List", "items": "invalid"}
-			sibling := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "healthy", "namespace": "apps"}}
+			sibling := map[string]any{
+				"apiVersion": "v1",
+				"kind":       "ConfigMap",
+				"metadata":   map[string]any{"name": "healthy", "namespace": "apps"},
+			}
 			failure := manifest.NewError(manifest.ErrInput, nil, "normalize helm list")
 			c := Controller{SkipKinds: tc.skipKinds}
-			children, docs, failures := c.ParseChildren(owner, []manifest.DocOccurrence{{Document: invalid, Ordinal: 2, Err: failure}, {Document: sibling, Ordinal: 3}}, manifest.ParseDocOptions{})
-			if len(children) != 1 || len(docs) != tc.wantDocs || len(failures) != 1 || failures[0].Ordinal != 2 || !errors.Is(failures[0].Err, failure) {
+			children, docs, failures := c.ParseChildren(
+				owner,
+				[]manifest.DocOccurrence{
+					{Document: invalid, Ordinal: 2, Err: failure},
+					{Document: sibling, Ordinal: 3},
+				},
+				manifest.ParseDocOptions{},
+			)
+			if len(children) != 1 || len(docs) != tc.wantDocs || len(failures) != 1 || failures[0].Ordinal != 2 ||
+				!errors.Is(failures[0].Err, failure) {
 				t.Fatalf("renderer failure was dropped: children=%v docs=%v failures=%v", children, docs, failures)
 			}
 			assert.Equal(t, children[0].Obj.Named().Name, "healthy")

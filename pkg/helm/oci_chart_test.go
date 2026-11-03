@@ -3,10 +3,11 @@ package helm
 import (
 	"context"
 	"errors"
-	"github.com/google/go-cmp/cmp/cmpopts"
 	"os"
 	"reflect"
 	"testing"
+
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/google/go-cmp/cmp"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
@@ -76,14 +77,28 @@ func TestTemplate_OCIConcurrentIdentities(t *testing.T) {
 			hrB.Name = "second"
 			hrB.Chart.Source.Name = "second-source"
 			hrB.ChartRef.Name = "second-source"
-			st.AddObject(&manifest.OCIRepository{Name: "second-source", Namespace: "apps", URL: "oci://example.test/podinfo"})
+			st.AddObject(
+				&manifest.OCIRepository{Name: "second-source", Namespace: "apps", URL: "oci://example.test/podinfo"},
+			)
 			const digestA = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
 			const digestB = "sha256:abcdef12345675476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
 			for i, release := range []*manifest.HelmRelease{hr, hrB} {
 				digest := []string{digestA, digestB}[i]
-				st.SetArtifact(manifest.NamedResource{
-					Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: release.Chart.Source.Name},
-					&store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: chartFixtureFS(hr, os.DirFS(dir)), LocalPath: dir, Revision: "6.15.0@" + digest, Digest: digest})
+				st.SetArtifact(
+					manifest.NamedResource{
+						Group:     manifest.SourceDomain,
+						Kind:      manifest.KindOCIRepository,
+						Namespace: "apps",
+						Name:      release.Chart.Source.Name,
+					},
+					&store.SourceArtifact{
+						Kind:      manifest.KindOCIRepository,
+						FS:        chartFixtureFS(hr, os.DirFS(dir)),
+						LocalPath: dir,
+						Revision:  "6.15.0@" + digest,
+						Digest:    digest,
+					},
+				)
 			}
 			originals := []*manifest.HelmRelease{hr.Clone(), hrB.Clone()}
 			ts := task.NewBounded(2)
@@ -102,7 +117,14 @@ func TestTemplate_OCIConcurrentIdentities(t *testing.T) {
 							errs[i] = ctx.Err()
 							return
 						}
-						output[i], _, errs[i] = testutil.RenderMaps(cli.Template(ctx, release, nil, RenderOptions{DisableChartDigestTracking: mode.disable, Sources: NewSources(st)}))
+						output[i], _, errs[i] = testutil.RenderMaps(
+							cli.Template(
+								ctx,
+								release,
+								nil,
+								RenderOptions{DisableChartDigestTracking: mode.disable, Sources: NewSources(st)},
+							),
+						)
 					})
 				}
 				<-entered
@@ -127,7 +149,11 @@ func TestTemplate_OCIConcurrentIdentities(t *testing.T) {
 				expected = output
 			}
 			for i, release := range []*manifest.HelmRelease{hr, hrB} {
-				if diff := cmp.Diff(originals[i], release, cmpopts.IgnoreUnexported(manifest.HelmRelease{})); diff != "" {
+				if diff := cmp.Diff(
+					originals[i],
+					release,
+					cmpopts.IgnoreUnexported(manifest.HelmRelease{}),
+				); diff != "" {
 					t.Fatalf("release mutated (-want +got):\n%s", diff)
 				}
 			}
@@ -138,7 +164,6 @@ func TestTemplate_OCIConcurrentIdentities(t *testing.T) {
 			if canonical.Metadata.Version != "6.15.0" || canonical.Dependencies()[0].Metadata.Version != "1.2.3+child" {
 				t.Fatal("parallel renders mutated canonical metadata")
 			}
-
 		})
 	}
 }
@@ -154,19 +179,42 @@ func TestTemplate_OCIInvalidChartVersion(t *testing.T) {
 
 			st, hr, dir := ociRenderFixture(t)
 			const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
-			st.SetArtifact(manifest.NamedResource{
-				Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"},
-				&store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: chartFixtureFS(hr, os.DirFS(dir)), LocalPath: dir, Revision: "6.15.0@" + digest, Digest: digest})
+			st.SetArtifact(
+				manifest.NamedResource{
+					Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo",
+				},
+				&store.SourceArtifact{
+					Kind:      manifest.KindOCIRepository,
+					FS:        chartFixtureFS(hr, os.DirFS(dir)),
+					LocalPath: dir,
+					Revision:  "6.15.0@" + digest,
+					Digest:    digest,
+				},
+			)
 			cli := NewClient(cachetest.New(t, "", sourcecache.New))
 
-			if _, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{DisableChartDigestTracking: mode.disable, Sources: NewSources(st)})); err != nil {
+			if _, _, err := testutil.RenderMaps(
+				cli.Template(
+					t.Context(),
+					hr,
+					nil,
+					RenderOptions{DisableChartDigestTracking: mode.disable, Sources: NewSources(st)},
+				),
+			); err != nil {
 				t.Fatal(err)
 			}
 			writeChartFiles(t, dir, "podinfo", "invalid")
-			if _, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{DisableChartDigestTracking: mode.disable, Sources: NewSources(st)})); !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
+			if _, _, err := testutil.RenderMaps(
+				cli.Template(
+					t.Context(),
+					hr,
+					nil,
+					RenderOptions{DisableChartDigestTracking: mode.disable, Sources: NewSources(st)},
+				),
+			); !errors.Is(err, manifest.ErrInput) ||
+				!errors.Is(err, manifest.ErrFlux) {
 				t.Fatalf("invalid chart version bypassed validation: %v", err)
 			}
-
 		})
 	}
 }

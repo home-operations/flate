@@ -33,7 +33,10 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 	if !renderPersistenceEligible(t) {
 		t.Skip("requires a clean VCS-stamped build for positive persistence")
 	}
-	root := testutil.WriteTree(t, map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("original")})
+	root := testutil.WriteTree(
+		t,
+		map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("original")},
+	)
 	req := RenderRequest{
 		Source: localSource(t, root),
 		Spec: &manifest.Kustomization{
@@ -121,7 +124,9 @@ func TestRecordRender_AcceptedLimit(t *testing.T) {
 	assert.NoError(t, err)
 	frame := renderFrame{header: renderHeader{Key: "oversized-accepted"}, output: payload}
 	receipt := manifest.NewRenderReceipt(frame, equalRenderFrame)
-	records := map[manifest.NamedResource]manifest.DiscoveryRecord{owner: {File: string(bytes.Repeat([]byte{'x'}, frameHeaderLimit+1))}}
+	records := map[manifest.NamedResource]manifest.DiscoveryRecord{
+		owner: {File: string(bytes.Repeat([]byte{'x'}, frameHeaderLimit+1))},
+	}
 	if err := renderer.RecordRender(t.Context(), RenderAcceptance{
 		Owner:   owner,
 		Receipt: receipt,
@@ -134,7 +139,10 @@ func TestRecordRender_AcceptedLimit(t *testing.T) {
 
 func TestRenderKey_DependsOnProjection(t *testing.T) {
 	t.Parallel()
-	root := testutil.WriteTree(t, map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("original")})
+	root := testutil.WriteTree(
+		t,
+		map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("original")},
+	)
 	spec := &manifest.Kustomization{Name: "emitter", Namespace: "apps", Path: "."}
 	spec.DependsOn = []kustomizev1.DependencyReference{{Name: "${PREFIX:-dev-}ready", Namespace: "${TEAM:-apps}"}}
 	req := RenderRequest{Source: localSource(t, root), Spec: spec, SubPath: "."}
@@ -185,7 +193,10 @@ func TestRecordRender_FinalDependencyBinding(t *testing.T) {
 	if !renderPersistenceEligible(t) {
 		t.Skip("requires a clean VCS-stamped build for positive persistence")
 	}
-	root := testutil.WriteTree(t, map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("original")})
+	root := testutil.WriteTree(
+		t,
+		map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("original")},
+	)
 	cacheDir := t.TempDir()
 	renderer := newTestTreeCache(t, cacheDir)
 	spec := &manifest.Kustomization{
@@ -235,7 +246,13 @@ func TestRecordRender_FinalDependencyBinding(t *testing.T) {
 		Content:                 acceptedInput,
 	}
 	assert.NoError(t, renderer.RecordRender(t.Context(), acceptance))
-	if records, complete := previousHistory(t.Context(), renderer, projected, spec.Named()); !complete || records == nil {
+	if records, complete := previousHistory(
+		t.Context(),
+		renderer,
+		projected,
+		spec.Named(),
+	); !complete ||
+		records == nil {
 		t.Fatal("final projected binding missed accepted history")
 	}
 	if _, complete := previousHistory(t.Context(), renderer, req, spec.Named()); complete {
@@ -293,7 +310,10 @@ func TestRender_AcceptedMutableInputPreparation(t *testing.T) {
 	if !renderPersistenceEligible(t) {
 		t.Skip("requires clean VCS-stamped accepted render persistence")
 	}
-	root := testutil.WriteTree(t, map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("before")})
+	root := testutil.WriteTree(
+		t,
+		map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("before")},
+	)
 	input := &preparationReadFS{FS: os.DirFS(root)}
 	cacheDir := t.TempDir()
 	c := newTestTreeCache(t, cacheDir)
@@ -339,19 +359,31 @@ func TestRecordRender_AcceptanceRequired(t *testing.T) {
 			assert.NoError(t, err)
 			st := store.New()
 			st.AddObject(demoSpec)
-			provider := &manifest.ConfigMap{Name: "provider", Namespace: demoSpec.Namespace, Data: map[string]any{"VALUE": "first"}}
+			provider := &manifest.ConfigMap{
+				Name:      "provider",
+				Namespace: demoSpec.Namespace,
+				Data:      map[string]any{"VALUE": "first"},
+			}
 			st.AddObject(provider)
 			reads := &store.ReadSet{}
 			reads.Init(st, demoSpec.Named(), nil)
 			defer reads.Close()
 			reads.GetObject(provider.Named())
-			emission := &store.Emission{Fingerprint: manifest.Fingerprint(acceptedInput), Render: receipt, Complete: state != "incomplete"}
+			emission := &store.Emission{
+				Fingerprint: manifest.Fingerprint(acceptedInput),
+				Render:      receipt,
+				Complete:    state != "incomplete",
+			}
 			reads.Bind(emission)
 			controller := base.New(st, task.NewBounded(2))
 			if state == "failed" {
 				ctx, cancel := context.WithCancel(t.Context())
 				cancel()
-				assert.Equal(t, errors.Is(controllertest.Emit(ctx, controller, demoSpec.Named(), emission), context.Canceled), true)
+				assert.Equal(
+					t,
+					errors.Is(controllertest.Emit(ctx, controller, demoSpec.Named(), emission), context.Canceled),
+					true,
+				)
 			} else if state != "unemitted" {
 				assert.NoError(t, controllertest.Emit(t.Context(), controller, demoSpec.Named(), emission))
 			}

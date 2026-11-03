@@ -45,27 +45,62 @@ func TestRender_EntryOwnerDependsOnSibling(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
-			testutil.WriteFile(t, root, "entry/kustomization.yaml", "resources: [owner.yaml, sibling.yaml, settings.yaml]\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"entry/kustomization.yaml",
+				"resources: [owner.yaml, sibling.yaml, settings.yaml]\n",
+			)
 			extra := ""
 			if mode == "deferred_required" || mode == "deferred_optional" {
-				extra = "  postBuild: {substituteFrom: [{kind: ConfigMap, name: settings, optional: " + fmt.Sprint(mode == "deferred_optional") + "}]}\n"
+				extra = "  postBuild: {substituteFrom: [{kind: ConfigMap, name: settings, optional: " + fmt.Sprint(
+					mode == "deferred_optional",
+				) + "}]}\n"
 			}
-			testutil.WriteFile(t, root, "entry/owner.yaml", testutil.KustomizationYAML("owner", "apps", "  path: ./entry\n  dependsOn: [{name: sibling}]\n"+extra))
-			testutil.WriteFile(t, root, "entry/settings.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {SIBLING: sibling}\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"entry/owner.yaml",
+				testutil.KustomizationYAML("owner", "apps", "  path: ./entry\n  dependsOn: [{name: sibling}]\n"+extra),
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				"entry/settings.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {SIBLING: sibling}\n",
+			)
 			siblingExtra := ""
 			if mode == "cycle" {
 				siblingExtra = "  dependsOn: [{name: owner}]\n"
 			}
 			siblingDeclaration := testutil.KustomizationYAML("sibling", "apps", "  path: ./sibling\n"+siblingExtra)
 			if mode == "deferred_required" || mode == "deferred_optional" {
-				siblingDeclaration = testutil.KustomizationYAML("declare-sibling", "apps", "  path: ./declarations\n"+extra)
+				siblingDeclaration = testutil.KustomizationYAML(
+					"declare-sibling",
+					"apps",
+					"  path: ./declarations\n"+extra,
+				)
 				testutil.WriteFile(t, root, "declarations/kustomization.yaml", "resources: [sibling.yaml]\n")
-				testutil.WriteFile(t, root, "declarations/sibling.yaml", testutil.KustomizationYAML("${SIBLING}", "apps", "  path: ./sibling\n"))
+				testutil.WriteFile(
+					t,
+					root,
+					"declarations/sibling.yaml",
+					testutil.KustomizationYAML("${SIBLING}", "apps", "  path: ./sibling\n"),
+				)
 			}
 			testutil.WriteFile(t, root, "entry/sibling.yaml", siblingDeclaration)
 			testutil.WriteFile(t, root, "sibling/kustomization.yaml", "resources: [cm.yaml]\n")
-			testutil.WriteFile(t, root, "sibling/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: workload, namespace: apps}\n")
-			o, err := newTestOrchestrator(t, Tree{Path: filepath.Join(root, "entry"), RepoRoot: root}, Config{Concurrency: 2})
+			testutil.WriteFile(
+				t,
+				root,
+				"sibling/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: workload, namespace: apps}\n",
+			)
+			o, err := newTestOrchestrator(
+				t,
+				Tree{Path: filepath.Join(root, "entry"), RepoRoot: root},
+				Config{Concurrency: 2},
+			)
 			assert.NoError(t, err)
 			t.Cleanup(o.stop)
 			assert.NoError(t, o.bootstrap(t.Context()))
@@ -96,7 +131,10 @@ func TestRender_EntryOwnerDependsOnSibling(t *testing.T) {
 					t.Fatal("authored cycle rendered successfully")
 				}
 				for _, name := range []string{"owner", "sibling"} {
-					if message, ok := o.preflightFailure(testutil.KustomizationID("apps", name)); !ok || !strings.Contains(message, "dependency cycle detected") {
+					if message, ok := o.preflightFailure(
+						testutil.KustomizationID("apps", name),
+					); !ok ||
+						!strings.Contains(message, "dependency cycle detected") {
 						t.Fatalf("authored cycle lost its ordinary diagnosis: %s", message)
 					}
 				}
@@ -140,12 +178,35 @@ func TestBootstrap_EntryReceiptDependencySubstitutions(t *testing.T) {
 			if declaration == "independent" {
 				entry = "resources: [child.yaml, owner.yaml]\n"
 				inline = ""
-				testutil.WriteFile(t, root, "entry/owner.yaml", testutil.KustomizationYAML("owner", "apps", "  path: ./entry\n  dependsOn: [{name: '${PREFIX:-dev-}ready', namespace: '${TEAM:-dev}'}]\n"))
-				testutil.WriteFile(t, root, "leaf/supplier.yaml", testutil.KustomizationYAML("supplier", "control", "  path: ./empty\n  postBuild: {substitute: {PREFIX: prod-, TEAM: control}}\n"))
+				testutil.WriteFile(
+					t,
+					root,
+					"entry/owner.yaml",
+					testutil.KustomizationYAML(
+						"owner",
+						"apps",
+						"  path: ./entry\n  dependsOn: [{name: '${PREFIX:-dev-}ready', namespace: '${TEAM:-dev}'}]\n",
+					),
+				)
+				testutil.WriteFile(
+					t,
+					root,
+					"leaf/supplier.yaml",
+					testutil.KustomizationYAML(
+						"supplier",
+						"control",
+						"  path: ./empty\n  postBuild: {substitute: {PREFIX: prod-, TEAM: control}}\n",
+					),
+				)
 				testutil.WriteFile(t, root, "empty/kustomization.yaml", "resources: []\n")
 			}
 			testutil.WriteFile(t, root, "entry/kustomization.yaml", entry)
-			testutil.WriteFile(t, root, "entry/child.yaml", testutil.KustomizationYAML("child", "apps", "  path: ./leaf\n"+inline))
+			testutil.WriteFile(
+				t,
+				root,
+				"entry/child.yaml",
+				testutil.KustomizationYAML("child", "apps", "  path: ./leaf\n"+inline),
+			)
 			leaf := "resources: []\n"
 			if declaration == "independent" {
 				leaf = "resources: [supplier.yaml]\n"
@@ -155,11 +216,21 @@ func TestBootstrap_EntryReceiptDependencySubstitutions(t *testing.T) {
 			for _, lifetime := range []string{"cold", "warm"} {
 				t.Run(lifetime, func(t *testing.T) {
 					input.builds.Store(0)
-					o, err := newTestOrchestrator(t, Tree{Path: filepath.Join(root, "entry"), RepoRoot: root, Input: &store.SourceArtifact{LocalPath: root, FS: input}}, Config{CacheDir: cacheDir, Concurrency: 2})
+					o, err := newTestOrchestrator(
+						t,
+						Tree{
+							Path:     filepath.Join(root, "entry"),
+							RepoRoot: root,
+							Input:    &store.SourceArtifact{LocalPath: root, FS: input},
+						},
+						Config{CacheDir: cacheDir, Concurrency: 2},
+					)
 					assert.NoError(t, err)
 					defer o.stop()
 					if declaration == "independent" {
-						o.store.AddObject(&manifest.Kustomization{Name: "prod-ready", Namespace: "control", Path: "./empty"})
+						o.store.AddObject(
+							&manifest.Kustomization{Name: "prod-ready", Namespace: "control", Path: "./empty"},
+						)
 					}
 					assert.NoError(t, o.bootstrap(t.Context()))
 					o.configureControllers()
@@ -194,7 +265,15 @@ func TestBootstrap_EntryReceiptDependencySubstitutions(t *testing.T) {
 					t.Cleanup(func() { assert.NoError(t, reopened.Close()) })
 					o.ksc.Trees = kustomize.NewTreeCache(reopened, &o.inputs, o.tasks)
 					bootstrap := o.cfg.Input
-					owners, err := reopened.ProducersForPaths(t.Context(), []manifest.SourceEvidence{{Source: bootstrap.HistoryIdentity(manifest.BootstrapSourceID), Path: "entry/kustomization.yaml"}})
+					owners, err := reopened.ProducersForPaths(
+						t.Context(),
+						[]manifest.SourceEvidence{
+							{
+								Source: bootstrap.HistoryIdentity(manifest.BootstrapSourceID),
+								Path:   "entry/kustomization.yaml",
+							},
+						},
+					)
 					assert.NoError(t, err)
 					assert.Equal(t, slices.Contains(owners, owner), true)
 					again, complete := o.controllers.PreviousRender(t.Context(), o.store.GetObject(owner), &reads)
@@ -225,16 +304,53 @@ func TestBootstrap_EntryHistoryMatchesEmission(t *testing.T) {
 			}
 			testutil.WriteFile(t, root, "entry/kustomization.yaml", "resources: "+resources+"\n")
 			if mode != "literal" {
-				testutil.WriteFile(t, root, "entry/owner.yaml", testutil.KustomizationYAML("owner", "apps", "  path: ./entry\n"))
+				testutil.WriteFile(
+					t,
+					root,
+					"entry/owner.yaml",
+					testutil.KustomizationYAML("owner", "apps", "  path: ./entry\n"),
+				)
 			}
 			if mode != "empty" {
-				testutil.WriteFile(t, root, "entry/child.yaml", testutil.KustomizationYAML("child", "apps", "  path: ./leaf\n  dependsOn: [{name: '${DEP}', namespace: apps}]\n  postBuild: {substitute: {DEP: ready}}\n"))
-				testutil.WriteFile(t, root, "entry/bucket.yaml", "apiVersion: objectbucket.io/v1alpha1\nkind: ObjectBucketClaim\nmetadata: {name: bucket, namespace: apps}\n")
-				testutil.WriteFile(t, root, "entry/generator.yaml", "apiVersion: source.extensions.fluxcd.io/v1beta1\nkind: ArtifactGenerator\nmetadata: {name: generator, namespace: apps}\nspec:\n  pathPattern: '@inputs/{team}'\n  artifacts: [{name: 'artifact-{team}'}]\n")
-				testutil.WriteFile(t, root, "entry/consumer.yaml", testutil.KustomizationYAML("consumer", "apps", "  path: .\n  sourceRef: {kind: ExternalArtifact, name: artifact-blue, namespace: apps}\n"))
+				testutil.WriteFile(
+					t,
+					root,
+					"entry/child.yaml",
+					testutil.KustomizationYAML(
+						"child",
+						"apps",
+						"  path: ./leaf\n  dependsOn: [{name: '${DEP}', namespace: apps}]\n  postBuild: {substitute: {DEP: ready}}\n",
+					),
+				)
+				testutil.WriteFile(
+					t,
+					root,
+					"entry/bucket.yaml",
+					"apiVersion: objectbucket.io/v1alpha1\nkind: ObjectBucketClaim\nmetadata: {name: bucket, namespace: apps}\n",
+				)
+				testutil.WriteFile(
+					t,
+					root,
+					"entry/generator.yaml",
+					"apiVersion: source.extensions.fluxcd.io/v1beta1\nkind: ArtifactGenerator\nmetadata: {name: generator, namespace: apps}\nspec:\n  pathPattern: '@inputs/{team}'\n  artifacts: [{name: 'artifact-{team}'}]\n",
+				)
+				testutil.WriteFile(
+					t,
+					root,
+					"entry/consumer.yaml",
+					testutil.KustomizationYAML(
+						"consumer",
+						"apps",
+						"  path: .\n  sourceRef: {kind: ExternalArtifact, name: artifact-blue, namespace: apps}\n",
+					),
+				)
 			}
 			testutil.WriteFile(t, root, "leaf/kustomization.yaml", "resources: []\n")
-			o, err := newTestOrchestrator(t, Tree{Path: filepath.Join(root, "entry"), RepoRoot: root}, Config{CacheDir: t.TempDir(), Concurrency: 2})
+			o, err := newTestOrchestrator(
+				t,
+				Tree{Path: filepath.Join(root, "entry"), RepoRoot: root},
+				Config{CacheDir: t.TempDir(), Concurrency: 2},
+			)
 			assert.NoError(t, err)
 			assert.NoError(t, o.bootstrap(t.Context()))
 			o.configureControllers()
@@ -253,7 +369,9 @@ func TestBootstrap_EntryHistoryMatchesEmission(t *testing.T) {
 			before := readHistory()
 			reopened := cachetest.New(t, o.cfg.CacheDir, sourcecache.New)
 			bootstrap := o.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
-			query := []manifest.SourceEvidence{{Source: bootstrap.HistoryIdentity(manifest.BootstrapSourceID), Path: "entry/kustomization.yaml"}}
+			query := []manifest.SourceEvidence{
+				{Source: bootstrap.HistoryIdentity(manifest.BootstrapSourceID), Path: "entry/kustomization.yaml"},
+			}
 			owners, err := reopened.ProducersForPaths(t.Context(), query)
 			assert.NoError(t, err)
 			assert.Equal(t, slices.Contains(owners, owner), true)
@@ -265,17 +383,51 @@ func TestBootstrap_EntryHistoryMatchesEmission(t *testing.T) {
 			} else {
 				child := testutil.KustomizationID("apps", "child")
 				assert.Diff(t, before[child].Refs, []manifest.NamedResource{testutil.KustomizationID("apps", "ready")})
-				assert.Diff(t, before[child].ContentRoots, map[manifest.NamedResource][]string{manifest.BootstrapSourceID: {"leaf"}})
+				assert.Diff(
+					t,
+					before[child].ContentRoots,
+					map[manifest.NamedResource][]string{manifest.BootstrapSourceID: {"leaf"}},
+				)
 				consumer := testutil.KustomizationID("apps", "consumer")
-				source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Name: "artifact-blue", Namespace: "apps"}
+				source := manifest.NamedResource{
+					Group:     manifest.SourceDomain,
+					Kind:      manifest.KindExternalArtifact,
+					Name:      "artifact-blue",
+					Namespace: "apps",
+				}
 				assert.Diff(t, before[consumer].ContentRoots, map[manifest.NamedResource][]string{source: {"."}})
-				generator := manifest.NamedResource{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Name: "generator", Namespace: "apps"}
-				assert.Diff(t, before[source].Productions, []manifest.Production{{Owner: owner, Declaration: generator, Source: o.entryBinding.Source}})
+				generator := manifest.NamedResource{
+					Group:     "source.extensions.fluxcd.io",
+					Kind:      "ArtifactGenerator",
+					Name:      "generator",
+					Namespace: "apps",
+				}
+				assert.Diff(
+					t,
+					before[source].Productions,
+					[]manifest.Production{{Owner: owner, Declaration: generator, Source: o.entryBinding.Source}},
+				)
 				secret := manifest.NamedResource{Kind: manifest.KindSecret, Name: "bucket", Namespace: "apps"}
-				claim := manifest.NamedResource{Group: "objectbucket.io", Kind: "ObjectBucketClaim", Name: "bucket", Namespace: "apps"}
-				assert.Diff(t, before[secret].Productions, []manifest.Production{{Owner: owner, Declaration: claim, Source: o.entryBinding.Source}})
+				claim := manifest.NamedResource{
+					Group:     "objectbucket.io",
+					Kind:      "ObjectBucketClaim",
+					Name:      "bucket",
+					Namespace: "apps",
+				}
+				assert.Diff(
+					t,
+					before[secret].Productions,
+					[]manifest.Production{{Owner: owner, Declaration: claim, Source: o.entryBinding.Source}},
+				)
 				for _, record := range before {
-					if record.Authored != (manifest.NamedResource{}) || record.Parent != (manifest.NamedResource{}) || record.BuilderOwner != (manifest.NamedResource{}) || record.Path != "" || record.File != "" || record.Builder != "" || len(record.Inputs) != 0 || record.Pinned || record.Declaration != nil {
+					if record.Authored != (manifest.NamedResource{}) || record.Parent != (manifest.NamedResource{}) ||
+						record.BuilderOwner != (manifest.NamedResource{}) ||
+						record.Path != "" ||
+						record.File != "" ||
+						record.Builder != "" ||
+						len(record.Inputs) != 0 ||
+						record.Pinned ||
+						record.Declaration != nil {
 						t.Fatal("accepted history contains static-only evidence")
 					}
 				}
@@ -284,11 +436,24 @@ func TestBootstrap_EntryHistoryMatchesEmission(t *testing.T) {
 			selection := func(records map[manifest.NamedResource]manifest.DiscoveryRecord) [][]bool {
 				selected := make([][]bool, len(paths))
 				for i, path := range paths {
-					fixture := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{path}), Index: o.index, Inventory: o.store, Root: root})
-					proposal, failure := fixture.Prepare(t.Context(), store.Child{}, nil, map[manifest.NamedResource]struct {
-						Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
-						Complete bool
-					}{owner: {Records: maps.All(records), Complete: true}})
+					fixture := admissiontest.New(
+						t,
+						admissiontest.Config{
+							Changes:   change.NewSet([]string{path}),
+							Index:     o.index,
+							Inventory: o.store,
+							Root:      root,
+						},
+					)
+					proposal, failure := fixture.Prepare(
+						t.Context(),
+						store.Child{},
+						nil,
+						map[manifest.NamedResource]struct {
+							Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
+							Complete bool
+						}{owner: {Records: maps.All(records), Complete: true}},
+					)
 					assert.NoError(t, failure)
 					admissiontest.Commit(t, fixture, proposal)
 					filter := fixture.Options.Filter
@@ -364,7 +529,12 @@ func TestBootstrap_AcceptedLiteralChildRoot(t *testing.T) {
     name: content
 `))
 	testutil.WriteFile(t, root, "apps/red/kustomization.yaml", "resources: [cm.yaml]\n")
-	testutil.WriteFile(t, root, "apps/red/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload, namespace: apps}\ndata: {value: before}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"apps/red/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload, namespace: apps}\ndata: {value: before}\n",
+	)
 	tree := Tree{Path: filepath.Join(root, "flux"), RepoRoot: root}
 	cfg := Config{CacheDir: cacheDir, Concurrency: 2}
 	warm, err := newTestOrchestrator(t, tree, cfg)
@@ -374,7 +544,12 @@ func TestBootstrap_AcceptedLiteralChildRoot(t *testing.T) {
 	owner := testutil.KustomizationID("apps", "emitter")
 	child := testutil.KustomizationID("apps", "child")
 	assert.Equal(t, warm.store.GetObject(child).(*manifest.Kustomization).Path, "./apps/red")
-	testutil.WriteFile(t, root, "apps/red/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload, namespace: apps}\ndata: {value: after}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"apps/red/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload, namespace: apps}\ndata: {value: after}\n",
+	)
 	tree.ExternalChanges = change.NewSet([]string{"apps/red/cm.yaml"})
 	fresh, err := newTestOrchestrator(t, tree, cfg)
 	assert.NoError(t, err)
@@ -385,7 +560,11 @@ func TestBootstrap_AcceptedLiteralChildRoot(t *testing.T) {
 	assert.Equal(t, fresh.filter.ShouldReconcile(owner), true)
 	assert.Equal(t, fresh.store.GetArtifact(owner, store.ArtifactContent) == nil, true)
 	assert.Equal(t, fresh.store.GetArtifact(child, store.ArtifactContent) == nil, true)
-	assert.Equal(t, fresh.loader.IndexedObject(child, fresh.index.Records[child]).Obj.(*manifest.Kustomization).Path, "./${ROOT}")
+	assert.Equal(
+		t,
+		fresh.loader.IndexedObject(child, fresh.index.Records[child]).Obj.(*manifest.Kustomization).Path,
+		"./${ROOT}",
+	)
 	for range fresh.store.Sweep() {
 		t.Fatal("Bootstrap left probe registrations waiting for retirement")
 	}
@@ -409,8 +588,16 @@ func TestCompleteBootstrap_Cancellation(t *testing.T) {
 	for range o.store.Sweep() {
 		t.Fatal("canceled preparation left probe registrations")
 	}
-	assert.Equal(t, o.store.GetArtifact(testutil.KustomizationID("apps", "emitter"), store.ArtifactContent) == nil, true)
-	assert.Equal(t, o.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact).FS != nil, true)
+	assert.Equal(
+		t,
+		o.store.GetArtifact(testutil.KustomizationID("apps", "emitter"), store.ArtifactContent) == nil,
+		true,
+	)
+	assert.Equal(
+		t,
+		o.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact).FS != nil,
+		true,
+	)
 }
 
 func TestHistory_ProspectiveReader(t *testing.T) {
@@ -431,10 +618,20 @@ spec:
         substituteFrom: [{kind: ConfigMap, name: settings}]
 `)
 	testutil.WriteFile(t, root, "apps/child/kustomization.yaml", "resources: [output.yaml]\n")
-	testutil.WriteFile(t, root, "apps/child/output.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload, namespace: apps}\ndata: {value: '${VALUE}'}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"apps/child/output.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload, namespace: apps}\ndata: {value: '${VALUE}'}\n",
+	)
 	input := func(value string) {
 		t.Helper()
-		testutil.WriteFile(t, root, "flux/settings.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: '"+value+"'}\n")
+		testutil.WriteFile(
+			t,
+			root,
+			"flux/settings.yaml",
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: '"+value+"'}\n",
+		)
 	}
 	run := func(t *testing.T, tree Tree, cacheDir string) *Result {
 		t.Helper()
@@ -453,14 +650,21 @@ spec:
 		t.Helper()
 		for _, batch := range result.Manifests {
 			for _, doc := range batch.Documents {
-				if manifest.DocIdentity(doc) == (manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "payload", Namespace: "apps"}) {
+				if manifest.DocIdentity(
+					doc,
+				) == (manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "payload", Namespace: "apps"}) {
 					return doc
 				}
 			}
 		}
 		return nil
 	}
-	testutil.WriteFile(t, root, "flux/source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: content, namespace: apps}\nspec: {url: https://fixture.invalid/repo, interval: 1m}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"flux/source.yaml",
+		"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: content, namespace: apps}\nspec: {url: https://fixture.invalid/repo, interval: 1m}\n",
+	)
 	tree := Tree{RepoRoot: root, Path: filepath.Join(root, "flux"), SelfURLs: []string{"https://fixture.invalid/repo"}}
 	input("before")
 	cacheDir := t.TempDir()
@@ -478,8 +682,18 @@ spec:
 					t.Skip(reason)
 				}
 				reopened := cachetest.New(t, cacheDir, sourcecache.New)
-				producer := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "apps", Name: "templates"}
-				owners, err := reopened.ProducersForPaths(t.Context(), []manifest.SourceEvidence{{Source: manifest.SourceIdentity{Root: root}, Path: "apps/child/output.yaml"}})
+				producer := manifest.NamedResource{
+					Group:     manifest.FluxOperatorDomain,
+					Kind:      manifest.KindResourceSet,
+					Namespace: "apps",
+					Name:      "templates",
+				}
+				owners, err := reopened.ProducersForPaths(
+					t.Context(),
+					[]manifest.SourceEvidence{
+						{Source: manifest.SourceIdentity{Root: root}, Path: "apps/child/output.yaml"},
+					},
+				)
 				assert.NoError(t, err)
 				assert.NoError(t, reopened.Close())
 				if !slices.Contains(owners, producer) {
@@ -558,35 +772,116 @@ spec:
       chart: ./charts/unrelated
       sourceRef: {kind: GitRepository, name: charts}
 `)
-			testutil.WriteFile(t, root, "charts/unrelated/Chart.yaml", "apiVersion: v2\nname: unrelated\nversion: 0.1.0\n")
-			testutil.WriteFile(t, root, "charts/unrelated/templates/output.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unrelated-output, namespace: apps}\n")
-			testutil.WriteFile(t, root, "flux/unrelated-kustomize.yaml", testutil.KustomizationYAML("unrelated", "apps", "  path: ./apps/unrelated\n  sourceRef: {kind: GitRepository, name: content}\n"))
+			testutil.WriteFile(
+				t,
+				root,
+				"charts/unrelated/Chart.yaml",
+				"apiVersion: v2\nname: unrelated\nversion: 0.1.0\n",
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				"charts/unrelated/templates/output.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unrelated-output, namespace: apps}\n",
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				"flux/unrelated-kustomize.yaml",
+				testutil.KustomizationYAML(
+					"unrelated",
+					"apps",
+					"  path: ./apps/unrelated\n  sourceRef: {kind: GitRepository, name: content}\n",
+				),
+			)
 			testutil.WriteFile(t, root, "apps/unrelated/kustomization.yaml", "resources: [cm.yaml]\n")
-			testutil.WriteFile(t, root, "apps/unrelated/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unrelated-kustomize, namespace: apps}\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"apps/unrelated/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unrelated-kustomize, namespace: apps}\n",
+			)
 			for _, name := range []string{"charts", "content"} {
-				testutil.WriteFile(t, root, "flux/"+name+".yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: "+name+", namespace: apps}\nspec: {url: https://fixture.invalid/repo}\n")
+				testutil.WriteFile(
+					t,
+					root,
+					"flux/"+name+".yaml",
+					"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: "+name+", namespace: apps}\nspec: {url: https://fixture.invalid/repo}\n",
+				)
 			}
 			testutil.WriteFile(t, root, "charts/demo/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 0.1.0\n")
-			testutil.WriteFile(t, root, "charts/demo/templates/child.yaml", strings.Replace(testutil.KustomizationYAML("child", "apps", `  path: {{ .Values.root }}
+			testutil.WriteFile(
+				t,
+				root,
+				"charts/demo/templates/child.yaml",
+				strings.Replace(testutil.KustomizationYAML("child", "apps", `  path: {{ .Values.root }}
   sourceRef: {kind: GitRepository, name: content}
-`), "metadata: {name: child, namespace: apps}", `metadata: {name: child, namespace: apps, labels: {witness: {{ .Values.marker }}}}`, 1))
+`), "metadata: {name: child, namespace: apps}", `metadata: {name: child, namespace: apps, labels: {witness: {{ .Values.marker }}}}`, 1),
+			)
 			if mode != "inline" {
-				testutil.WriteFile(t, root, "flux/supplied.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: supplied, namespace: apps}\ndata:\n  values.yaml: 'root: ./apps/blue'\n  ROOT: ./apps/blue\n")
+				testutil.WriteFile(
+					t,
+					root,
+					"flux/supplied.yaml",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: supplied, namespace: apps}\ndata:\n  values.yaml: 'root: ./apps/blue'\n  ROOT: ./apps/blue\n",
+				)
 			}
 			if mode == "values_from" {
 				release, err := os.ReadFile(filepath.Join(root, "flux/release.yaml"))
 				assert.NoError(t, err)
-				testutil.WriteFile(t, root, "flux/release.yaml", strings.Replace(string(release), "  values: {root: ./apps/blue, marker: keep}", "  values: {marker: keep}\n  valuesFrom: [{kind: ConfigMap, name: supplied}]", 1))
+				testutil.WriteFile(
+					t,
+					root,
+					"flux/release.yaml",
+					strings.Replace(
+						string(release),
+						"  values: {root: ./apps/blue, marker: keep}",
+						"  values: {marker: keep}\n  valuesFrom: [{kind: ConfigMap, name: supplied}]",
+						1,
+					),
+				)
 			}
 			if mode == "substitute_from" {
-				testutil.WriteFile(t, root, "flux/supplied.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: supplied, namespace: apps}\ndata: {ROOT: ./apps/blue}\n")
-				testutil.WriteFile(t, root, "flux/release.yaml", testutil.KustomizationYAML("emitter", "apps", "  path: ./producers\n  sourceRef: {kind: GitRepository, name: content}\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: supplied}]}\n  patches:\n  - target: {kind: Kustomization, name: child}\n    patch: '[{\"op\":\"add\",\"path\":\"/spec/interval\",\"value\":\"11m\"}]'\n"))
+				testutil.WriteFile(
+					t,
+					root,
+					"flux/supplied.yaml",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: supplied, namespace: apps}\ndata: {ROOT: ./apps/blue}\n",
+				)
+				testutil.WriteFile(
+					t,
+					root,
+					"flux/release.yaml",
+					testutil.KustomizationYAML(
+						"emitter",
+						"apps",
+						"  path: ./producers\n  sourceRef: {kind: GitRepository, name: content}\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: supplied}]}\n  patches:\n  - target: {kind: Kustomization, name: child}\n    patch: '[{\"op\":\"add\",\"path\":\"/spec/interval\",\"value\":\"11m\"}]'\n",
+					),
+				)
 				testutil.WriteFile(t, root, "producers/kustomization.yaml", "resources: [child.yaml]\n")
-				testutil.WriteFile(t, root, "producers/child.yaml", testutil.KustomizationYAML("child", "apps", "  path: '${ROOT}'\n  sourceRef: {kind: GitRepository, name: content}\n"))
+				testutil.WriteFile(
+					t,
+					root,
+					"producers/child.yaml",
+					testutil.KustomizationYAML(
+						"child",
+						"apps",
+						"  path: '${ROOT}'\n  sourceRef: {kind: GitRepository, name: content}\n",
+					),
+				)
 			}
 			testutil.WriteFile(t, root, "apps/blue/kustomization.yaml", "resources: [cm.yaml]\n")
-			testutil.WriteFile(t, root, "apps/blue/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload, namespace: apps}\ndata: {value: before}\n")
-			tree := Tree{Path: filepath.Join(root, "flux"), RepoRoot: root, SelfURLs: []string{"https://fixture.invalid/repo"}}
+			testutil.WriteFile(
+				t,
+				root,
+				"apps/blue/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload, namespace: apps}\ndata: {value: before}\n",
+			)
+			tree := Tree{
+				Path:     filepath.Join(root, "flux"),
+				RepoRoot: root,
+				SelfURLs: []string{"https://fixture.invalid/repo"},
+			}
 			cfg := Config{CacheDir: t.TempDir(), Concurrency: 2}
 			warm, err := newTestOrchestrator(t, tree, cfg)
 			assert.NoError(t, err)
@@ -601,7 +896,12 @@ spec:
 			if mode == "substitute_from" {
 				assert.Equal(t, warm.store.GetObject(child).(*manifest.Kustomization).Interval.Duration, 11*time.Minute)
 			}
-			testutil.WriteFile(t, root, "apps/blue/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload, namespace: apps}\ndata: {value: after}\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"apps/blue/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload, namespace: apps}\ndata: {value: after}\n",
+			)
 			logs.Reset()
 			tree.ExternalChanges = change.NewSet([]string{"apps/blue/cm.yaml"})
 			fresh, err := newTestOrchestrator(t, tree, cfg)
@@ -686,7 +986,6 @@ spec:
 			for id := range fresh.store.Sweep() {
 				t.Fatalf("Bootstrap left a live probe for %s", id)
 			}
-
 		})
 	}
 }
@@ -704,7 +1003,15 @@ func (f cancelProbeFS) Open(name string) (fs.File, error) {
 func TestCompleteBootstrap_CanceledLookupMiss(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "flux/emitter.yaml", testutil.KustomizationYAML("emitter", "apps", "  path: ./apps\n"))
-	o, err := newTestOrchestrator(t, Tree{Path: filepath.Join(root, "flux"), RepoRoot: root, ExternalChanges: change.NewSet([]string{"flux/emitter.yaml"})}, Config{CacheDir: t.TempDir(), Concurrency: 2})
+	o, err := newTestOrchestrator(
+		t,
+		Tree{
+			Path:            filepath.Join(root, "flux"),
+			RepoRoot:        root,
+			ExternalChanges: change.NewSet([]string{"flux/emitter.yaml"}),
+		},
+		Config{CacheDir: t.TempDir(), Concurrency: 2},
+	)
 	assert.NoError(t, err)
 	t.Cleanup(func() { o.stop() })
 	err = o.prepareBootstrap(t.Context())
@@ -754,12 +1061,36 @@ func TestBuildChangeFilter_PreviousRenderNarrowing(t *testing.T) {
 			if mode == "substitute_from" {
 				postBuild = "  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: supplied}]\n"
 			}
-			testutil.WriteFile(t, root, "flux/emitter.yaml", testutil.KustomizationYAML("emitter", "apps", "  path: ./producers\n"+postBuild))
-			testutil.WriteFile(t, root, "flux/consumer.yaml", testutil.KustomizationYAML("consumer", "apps", "  path: ./apps\n  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: target}]\n"))
+			testutil.WriteFile(
+				t,
+				root,
+				"flux/emitter.yaml",
+				testutil.KustomizationYAML("emitter", "apps", "  path: ./producers\n"+postBuild),
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				"flux/consumer.yaml",
+				testutil.KustomizationYAML(
+					"consumer",
+					"apps",
+					"  path: ./apps\n  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: target}]\n",
+				),
+			)
 			testutil.WriteFile(t, root, "producers/kustomization.yaml", "resources: [cm.yaml]\n")
-			testutil.WriteFile(t, root, "producers/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: target, namespace: apps}\ndata: {value: rendered}\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"producers/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: target, namespace: apps}\ndata: {value: rendered}\n",
+			)
 			if mode == "helm_values_from" {
-				testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [emitter.yaml, consumer.yaml, charts.yaml, supplied.yaml]\n")
+				testutil.WriteFile(
+					t,
+					root,
+					"flux/kustomization.yaml",
+					"resources: [emitter.yaml, consumer.yaml, charts.yaml, supplied.yaml]\n",
+				)
 				testutil.WriteFile(t, root, "flux/emitter.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata: {name: emitter, namespace: apps}
@@ -771,15 +1102,39 @@ spec:
       sourceRef: {kind: GitRepository, name: charts}
   valuesFrom: [{kind: ConfigMap, name: supplied}]
 `)
-				testutil.WriteFile(t, root, "flux/charts.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: charts, namespace: apps}\nspec: {url: https://fixture.invalid/repo}\n")
-				testutil.WriteFile(t, root, "flux/supplied.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: supplied, namespace: apps}\ndata: {values.yaml: '{}'}\n")
+				testutil.WriteFile(
+					t,
+					root,
+					"flux/charts.yaml",
+					"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: charts, namespace: apps}\nspec: {url: https://fixture.invalid/repo}\n",
+				)
+				testutil.WriteFile(
+					t,
+					root,
+					"flux/supplied.yaml",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: supplied, namespace: apps}\ndata: {values.yaml: '{}'}\n",
+				)
 				testutil.WriteFile(t, root, "charts/demo/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 0.1.0\n")
 			}
 
-			tree := Tree{Path: filepath.Join(root, "flux"), RepoRoot: root, SelfURLs: []string{"https://fixture.invalid/repo"}}
+			tree := Tree{
+				Path:     filepath.Join(root, "flux"),
+				RepoRoot: root,
+				SelfURLs: []string{"https://fixture.invalid/repo"},
+			}
 
-			cfg := Config{CacheDir: t.TempDir(), Concurrency: 2,
-				Supply:              []store.SuppliedObject{{Object: &manifest.ConfigMap{Name: "supplied", Namespace: "apps", Data: map[string]any{"ROOT": "apps/red"}}}},
+			cfg := Config{
+				CacheDir:    t.TempDir(),
+				Concurrency: 2,
+				Supply: []store.SuppliedObject{
+					{
+						Object: &manifest.ConfigMap{
+							Name:      "supplied",
+							Namespace: "apps",
+							Data:      map[string]any{"ROOT": "apps/red"},
+						},
+					},
+				},
 				StrictSubstitutions: true,
 			}
 			warm, err := newTestOrchestrator(t, tree, cfg)
@@ -805,18 +1160,51 @@ spec:
 				assert.Equal(t, warm.store.GetDeclaration(supplied) != nil, true)
 				reads.Init(warm.store, owner, nil)
 				hr := declaration.(*manifest.HelmRelease)
-				prepared, omitted, err := helm.Prepare(hr, helm.NewSources(reads).Declaration, values.NewStoreProvider(reads, cfg.WipeSecrets), warm.hrc.Helm.ValuesCache())
+				prepared, omitted, err := helm.Prepare(
+					hr,
+					helm.NewSources(reads).Declaration,
+					values.NewStoreProvider(reads, cfg.WipeSecrets),
+					warm.hrc.Helm.ValuesCache(),
+				)
 				assert.NoError(t, err)
 				assert.Equal(t, len(omitted), 0)
-				_, receipt, err := testutil.RenderMaps(warm.hrc.Helm.Template(t.Context(), prepared, prepared.Values, helm.RenderOptions{Options: warm.hrc.Options, DependencySubstitutions: warm.dependencySubstitutions, Sources: helm.NewSources(reads), WipeSecrets: cfg.WipeSecrets}))
+				_, receipt, err := testutil.RenderMaps(
+					warm.hrc.Helm.Template(
+						t.Context(),
+						prepared,
+						prepared.Values,
+						helm.RenderOptions{
+							Options:                 warm.hrc.Options,
+							DependencySubstitutions: warm.dependencySubstitutions,
+							Sources:                 helm.NewSources(reads),
+							WipeSecrets:             cfg.WipeSecrets,
+						},
+					),
+				)
 				assert.NoError(t, err)
-				assert.NoError(t, warm.hrc.Helm.RecordRender(t.Context(), helm.RenderAcceptance{Owner: owner, Receipt: receipt, Records: func(func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {}, Sources: []manifest.SourceEvidence{}}))
+				assert.NoError(
+					t,
+					warm.hrc.Helm.RecordRender(
+						t.Context(),
+						helm.RenderAcceptance{
+							Owner:   owner,
+							Receipt: receipt,
+							Records: func(func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {},
+							Sources: []manifest.SourceEvidence{},
+						},
+					),
+				)
 			} else {
 				reconcileEntryForTest(t, warm)
 				info := controllertest.DispatchToFixpoint(
 					t.Context(),
 					t,
-					controllertest.Dispatch{Tasks: warm.tasks, Store: warm.store, ID: owner, ReconcileNode: warm.ksc.ReconcileNode},
+					controllertest.Dispatch{
+						Tasks:         warm.tasks,
+						Store:         warm.store,
+						ID:            owner,
+						ReconcileNode: warm.ksc.ReconcileNode,
+					},
 				)
 				assert.Equal(t, info.Status, store.StatusReady)
 			}
@@ -875,9 +1263,19 @@ func TestBuildChangeFilter_ReclaimsProbes(t *testing.T) {
 			}
 			root, cacheDir := t.TempDir(), t.TempDir()
 			testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [emitter.yaml]\n")
-			testutil.WriteFile(t, root, "flux/emitter.yaml", testutil.KustomizationYAML("emitter", "apps", "  path: ./apps\n"))
+			testutil.WriteFile(
+				t,
+				root,
+				"flux/emitter.yaml",
+				testutil.KustomizationYAML("emitter", "apps", "  path: ./apps\n"),
+			)
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
-			testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output, namespace: apps}\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"apps/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output, namespace: apps}\n",
+			)
 			tree := Tree{Path: filepath.Join(root, "flux"), RepoRoot: root}
 			cfg := Config{CacheDir: cacheDir, Concurrency: 2}
 			if mode == "hit" {
@@ -904,7 +1302,9 @@ func TestBuildChangeFilter_ReclaimsProbes(t *testing.T) {
 			}
 			current.store.SetArtifact(manifest.BootstrapSourceID, &source)
 			owner := testutil.KustomizationID("apps", "emitter")
-			current.store.AddObject(&manifest.Kustomization{Name: owner.Name, Namespace: owner.Namespace, Path: "./apps"})
+			current.store.AddObject(
+				&manifest.Kustomization{Name: owner.Name, Namespace: owner.Namespace, Path: "./apps"},
+			)
 			released := func() <-chan struct{} {
 				declaration := current.store.GetObject(owner).(*manifest.Kustomization)
 				done := make(chan struct{})
@@ -973,11 +1373,30 @@ spec:
       sourceRef: {kind: GitRepository, name: cluster}
 `)
 	testutil.WriteFile(t, root, "charts/unrelated/Chart.yaml", "apiVersion: v2\nname: unrelated\nversion: 0.1.0\n")
-	testutil.WriteFile(t, root, "charts/unrelated/templates/output.yaml", testutil.KustomizationYAML("emitted", "apps", "  path: ./apps/unrelated\n  sourceRef: {kind: GitRepository, name: cluster}\n"))
+	testutil.WriteFile(
+		t,
+		root,
+		"charts/unrelated/templates/output.yaml",
+		testutil.KustomizationYAML(
+			"emitted",
+			"apps",
+			"  path: ./apps/unrelated\n  sourceRef: {kind: GitRepository, name: cluster}\n",
+		),
+	)
 	testutil.WriteFile(t, root, "apps/unrelated/kustomization.yaml", "resources: [output.yaml]\n")
-	testutil.WriteFile(t, root, "apps/unrelated/output.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: kustomize-output, namespace: apps}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"apps/unrelated/output.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: kustomize-output, namespace: apps}\n",
+	)
 	testutil.WriteFile(t, root, "unclaimed/notes.txt", "changed\n")
-	testutil.WriteFile(t, root, "unclaimed/input.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unclaimed, namespace: apps}\ndata: {value: changed}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"unclaimed/input.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unclaimed, namespace: apps}\ndata: {value: changed}\n",
+	)
 	counts := func() [2]int {
 		var renders [2]int
 		for line := range bytes.Lines(logs.Bytes()) {
@@ -1045,8 +1464,20 @@ func TestHistory_RemovedPathSourceQualification(t *testing.T) {
 				foreign := t.TempDir()
 				repo := testutil.GitInit(t, foreign)
 				testutil.WriteFile(t, foreign, "apps/blue/kustomization.yaml", "resources: [cm.yaml]\n")
-				testutil.WriteFile(t, foreign, "apps/blue/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload, namespace: apps}\ndata: {value: foreign}\n")
-				testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+				testutil.WriteFile(
+					t,
+					foreign,
+					"apps/blue/cm.yaml",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload, namespace: apps}\ndata: {value: foreign}\n",
+				)
+				testutil.GitCommitAll(
+					t,
+					repo,
+					"init",
+					&gogit.CommitOptions{
+						Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)},
+					},
+				)
 				contentURL = "file://" + filepath.ToSlash(foreign)
 			}
 			cacheDir := t.TempDir()
@@ -1060,20 +1491,64 @@ spec:
       chart: ./charts/demo
       sourceRef: {kind: GitRepository, name: charts}
 `)
-				testutil.WriteFile(t, root, "flux/unrelated.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: unrelated, namespace: apps}\nspec: {chart: {spec: {chart: ./charts/unrelated, sourceRef: {kind: GitRepository, name: charts}}}}\n")
-				testutil.WriteFile(t, root, "charts/unrelated/Chart.yaml", "apiVersion: v2\nname: unrelated\nversion: 0.1.0\n")
-				testutil.WriteFile(t, root, "charts/unrelated/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unrelated, namespace: apps}\n")
-				testutil.WriteFile(t, root, "flux/charts.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: charts, namespace: apps}\nspec: {url: https://fixture.invalid/repo}\n")
-				testutil.WriteFile(t, root, "flux/content.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: content, namespace: apps}\nspec: {url: "+contentURL+"}\n")
+				testutil.WriteFile(
+					t,
+					root,
+					"flux/unrelated.yaml",
+					"apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: unrelated, namespace: apps}\nspec: {chart: {spec: {chart: ./charts/unrelated, sourceRef: {kind: GitRepository, name: charts}}}}\n",
+				)
+				testutil.WriteFile(
+					t,
+					root,
+					"charts/unrelated/Chart.yaml",
+					"apiVersion: v2\nname: unrelated\nversion: 0.1.0\n",
+				)
+				testutil.WriteFile(
+					t,
+					root,
+					"charts/unrelated/templates/cm.yaml",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unrelated, namespace: apps}\n",
+				)
+				testutil.WriteFile(
+					t,
+					root,
+					"flux/charts.yaml",
+					"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: charts, namespace: apps}\nspec: {url: https://fixture.invalid/repo}\n",
+				)
+				testutil.WriteFile(
+					t,
+					root,
+					"flux/content.yaml",
+					"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: content, namespace: apps}\nspec: {url: "+contentURL+"}\n",
+				)
 				testutil.WriteFile(t, root, "charts/demo/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 0.1.0\n")
-				testutil.WriteFile(t, root, "charts/demo/templates/child.yaml", testutil.KustomizationYAML("child", "apps", "  path: ./apps/blue\n  sourceRef: {kind: GitRepository, name: content}\n"))
+				testutil.WriteFile(
+					t,
+					root,
+					"charts/demo/templates/child.yaml",
+					testutil.KustomizationYAML(
+						"child",
+						"apps",
+						"  path: ./apps/blue\n  sourceRef: {kind: GitRepository, name: content}\n",
+					),
+				)
 				testutil.WriteFile(t, root, "apps/blue/kustomization.yaml", "resources: [cm.yaml]\n")
-				testutil.WriteFile(t, root, "apps/blue/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload, namespace: apps}\ndata: {value: before}\n")
+				testutil.WriteFile(
+					t,
+					root,
+					"apps/blue/cm.yaml",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload, namespace: apps}\ndata: {value: before}\n",
+				)
 			}
 			var trees [2]Tree
 			var configs [2]Config
 			for side, root := range roots {
-				trees[side] = Tree{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeSide(side)}, Path: filepath.Join(root, "flux"), RepoRoot: root, SelfURLs: []string{"https://fixture.invalid/repo"}}
+				trees[side] = Tree{
+					ID:       manifest.TreeID{Cluster: ".", Side: manifest.TreeSide(side)},
+					Path:     filepath.Join(root, "flux"),
+					RepoRoot: root,
+					SelfURLs: []string{"https://fixture.invalid/repo"},
+				}
 				configs[side] = Config{CacheDir: cacheDir, Concurrency: 2}
 				warm, err := newTestOrchestrator(t, trees[side], configs[side])
 				assert.NoError(t, err)
@@ -1090,13 +1565,21 @@ spec:
 				assert.NoError(t, err)
 				assert.NoError(t, current[side].discover(t.Context()))
 			}
-			changes, err := change.Qualify(t.Context(), change.NewSet([]string{"apps/blue/cm.yaml"}), current[0].store, current[1].store)
+			changes, err := change.Qualify(
+				t.Context(),
+				change.NewSet([]string{"apps/blue/cm.yaml"}),
+				current[0].store,
+				current[1].store,
+			)
 			assert.NoError(t, err)
 			changes, err = changes.WithReaders(
 				t.Context(),
 				current[0].index,
 				current[1].index,
-				[2]map[manifest.NamedResource]inputprojection.Projection{current[0].loader.InputContent, current[1].loader.InputContent},
+				[2]map[manifest.NamedResource]inputprojection.Projection{
+					current[0].loader.InputContent,
+					current[1].loader.InputContent,
+				},
 			)
 			assert.NoError(t, err)
 			owner := testutil.HelmReleaseID("apps", "emitter")
@@ -1127,7 +1610,8 @@ spec:
 						Release string `json:"release"`
 					}
 					assert.NoError(t, json.Unmarshal(line, &event))
-					if event.Message == "helm: render" && event.Release == testutil.HelmReleaseID("apps", "unrelated").String() {
+					if event.Message == "helm: render" &&
+						event.Release == testutil.HelmReleaseID("apps", "unrelated").String() {
 						t.Fatal("paired removal rendered an unrelated producer")
 					}
 				}
@@ -1157,8 +1641,18 @@ spec:
       sourceRef: {kind: GitRepository, name: generated}
 `)
 	testutil.WriteFile(t, root, "apps/generated/kustomization.yaml", "resources: [payload.yaml]\n")
-	testutil.WriteFile(t, root, "apps/generated/payload.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload, namespace: apps}\ndata: {value: changed}\n")
-	tree := Tree{ID: manifest.TreeID{Cluster: "."}, Path: filepath.Join(root, "flux"), RepoRoot: root, SelfURLs: []string{"https://fixture.invalid/repo"}}
+	testutil.WriteFile(
+		t,
+		root,
+		"apps/generated/payload.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload, namespace: apps}\ndata: {value: changed}\n",
+	)
+	tree := Tree{
+		ID:       manifest.TreeID{Cluster: "."},
+		Path:     filepath.Join(root, "flux"),
+		RepoRoot: root,
+		SelfURLs: []string{"https://fixture.invalid/repo"},
+	}
 	var expected map[string]any
 	for _, changed := range []bool{false, true} {
 		if changed {
@@ -1189,7 +1683,12 @@ spec:
 func TestRender_ChangedPathInputFromProjectedComponent(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	testutil.WriteFile(t, root, "flux/source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: flux-system}\nspec: {url: https://fixture.invalid/repo}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"flux/source.yaml",
+		"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: flux-system}\nspec: {url: https://fixture.invalid/repo}\n",
+	)
 	testutil.WriteFile(t, root, "flux/producer.yaml", `apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSet
 metadata: {name: producer, namespace: flux-system}
@@ -1216,11 +1715,31 @@ spec:
       sourceRef: {kind: GitRepository, name: cluster}
 `)
 	testutil.WriteFile(t, root, "apps/workload/kustomization.yaml", "resources: [payload.yaml]\n")
-	testutil.WriteFile(t, root, "apps/workload/payload.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload}\ndata: {value: '${SETTING}'}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"apps/workload/payload.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload}\ndata: {value: '${SETTING}'}\n",
+	)
 	testutil.WriteFile(t, root, "apps/configuration/kustomization.yaml", "resources: []\n")
-	testutil.WriteFile(t, root, "components/settings/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [settings.yaml]\n")
-	testutil.WriteFile(t, root, "components/settings/settings.yaml", "apiVersion: v1\nkind: Secret\nmetadata: {name: settings}\ndata: {SETTING: dmFsdWU=}\n")
-	tree := Tree{ID: manifest.TreeID{Cluster: "."}, Path: filepath.Join(root, "flux"), RepoRoot: root, SelfURLs: []string{"https://fixture.invalid/repo"}}
+	testutil.WriteFile(
+		t,
+		root,
+		"components/settings/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [settings.yaml]\n",
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"components/settings/settings.yaml",
+		"apiVersion: v1\nkind: Secret\nmetadata: {name: settings}\ndata: {SETTING: dmFsdWU=}\n",
+	)
+	tree := Tree{
+		ID:       manifest.TreeID{Cluster: "."},
+		Path:     filepath.Join(root, "flux"),
+		RepoRoot: root,
+		SelfURLs: []string{"https://fixture.invalid/repo"},
+	}
 	var expected map[string]any
 	for _, changed := range []bool{false, true} {
 		if changed {
@@ -1255,12 +1774,31 @@ func TestRender_ChangedSubstitutedChildPath(t *testing.T) {
 		t.Skip(reason)
 	}
 	root, cacheDir := t.TempDir(), t.TempDir()
-	testutil.WriteFile(t, root, "flux/emitter.yaml", testutil.KustomizationYAML("emitter", "apps", "  path: ./producers\n  postBuild:\n    substitute:\n      ROOT: apps/red\n"))
+	testutil.WriteFile(
+		t,
+		root,
+		"flux/emitter.yaml",
+		testutil.KustomizationYAML(
+			"emitter",
+			"apps",
+			"  path: ./producers\n  postBuild:\n    substitute:\n      ROOT: apps/red\n",
+		),
+	)
 	testutil.WriteFile(t, root, "producers/kustomization.yaml", "resources: [child.yaml]\n")
-	testutil.WriteFile(t, root, "producers/child.yaml", testutil.KustomizationYAML("child", "apps", "  path: ./${ROOT}\n"))
+	testutil.WriteFile(
+		t,
+		root,
+		"producers/child.yaml",
+		testutil.KustomizationYAML("child", "apps", "  path: ./${ROOT}\n"),
+	)
 	testutil.WriteFile(t, root, "apps/red/kustomization.yaml", "resources: [cm.yaml]\n")
 	write := func(value string) {
-		testutil.WriteFile(t, root, "apps/red/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload, namespace: apps}\ndata: {value: "+value+"}\n")
+		testutil.WriteFile(
+			t,
+			root,
+			"apps/red/cm.yaml",
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload, namespace: apps}\ndata: {value: "+value+"}\n",
+		)
 	}
 	tree := Tree{Path: filepath.Join(root, "flux"), RepoRoot: root}
 	run := func(input Tree, dir string) *Result {
@@ -1282,7 +1820,9 @@ func TestRender_ChangedSubstitutedChildPath(t *testing.T) {
 	payload := func(result *Result) map[string]any {
 		for _, batch := range result.Manifests {
 			for _, doc := range batch.Documents {
-				if manifest.DocIdentity(doc) == (manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "payload", Namespace: "apps"}) {
+				if manifest.DocIdentity(
+					doc,
+				) == (manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "payload", Namespace: "apps"}) {
 					return doc
 				}
 			}

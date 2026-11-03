@@ -77,7 +77,12 @@ func projectClaims(countOwners int, ownerAt func(int) ownerClaims) ([]manifest.K
 }
 
 // Owners are distinct and ordered by identity; captured occurrences derive separately.
-func (r documentReader) buildClaims(repoRoot string, kss []*manifest.Kustomization, source func(manifest.NamedResource) sourceScope, out []ownerClaims) []ownerClaims {
+func (r documentReader) buildClaims(
+	repoRoot string,
+	kss []*manifest.Kustomization,
+	source func(manifest.NamedResource) sourceScope,
+	out []ownerClaims,
+) []ownerClaims {
 	if cap(out) < len(kss) {
 		out = make([]ownerClaims, len(kss))
 	} else {
@@ -202,12 +207,18 @@ func SourceView(s sourceStore, ref manifest.NamedResource, repoRoot string) (roo
 	return sourceView(ref, repoRoot, art, s.GetObject(ref))
 }
 
-func sourceView(ref manifest.NamedResource, repoRoot string, art *store.SourceArtifact, object manifest.BaseManifest) (root string, pinned, external bool) {
+func sourceView(
+	ref manifest.NamedResource,
+	repoRoot string,
+	art *store.SourceArtifact,
+	object manifest.BaseManifest,
+) (root string, pinned, external bool) {
 	if art != nil && art.FS != nil {
 		if art.LocalPath == repoRoot {
 			return repoRoot, false, false
 		}
-		if art.LocalRoot != "" && (art.LocalRoot == repoRoot || art.InputAlias && safepath.Contains(repoRoot, art.LocalRoot)) {
+		if art.LocalRoot != "" &&
+			(art.LocalRoot == repoRoot || art.InputAlias && safepath.Contains(repoRoot, art.LocalRoot)) {
 			// Derived input keys pin selected bootstrap bytes, never authored refs.
 			return art.LocalPath, art.Content != "" && !art.InputAlias, false
 		}

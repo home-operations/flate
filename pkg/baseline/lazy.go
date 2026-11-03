@@ -57,10 +57,24 @@ func selectChanges(ctx context.Context, s selection) (*gittree.FS, *change.Set, 
 	}
 	s.repo.Storer.(*filesystem.Storage).Reindex()
 	// go-git initializes its pack index without synchronization, before readers share it.
-	if err := s.current.Location().Repository.Storer.HasEncodedObject(plumbing.ZeroHash); err != nil && !errors.Is(err, plumbing.ErrObjectNotFound) {
+	if err := s.current.Location().Repository.Storer.HasEncodedObject(
+		plumbing.ZeroHash,
+	); err != nil &&
+		!errors.Is(err, plumbing.ErrObjectNotFound) {
 		return nil, nil, "", warnings, err
 	}
-	baseline, identity, err := gittree.New(ctx, backing, s.base.Hash, gittree.ViewOptions{Location: s.current.Location(), Content: s.content, Mode: gittree.Direct, Current: s.current, Changes: routing})
+	baseline, identity, err := gittree.New(
+		ctx,
+		backing,
+		s.base.Hash,
+		gittree.ViewOptions{
+			Location: s.current.Location(),
+			Content:  s.content,
+			Mode:     gittree.Direct,
+			Current:  s.current,
+			Changes:  routing,
+		},
+	)
 	if err != nil {
 		return baseline, nil, "", warnings, err
 	}
@@ -95,7 +109,11 @@ func (s selection) baseEntries(ctx context.Context) (*object.Tree, map[string]ob
 	return baseTree, entries, nil
 }
 
-func (s selection) candidates(ctx context.Context, baseTree *object.Tree, entries map[string]object.TreeEntry) (map[string]bool, []manifest.Warning, error) {
+func (s selection) candidates(
+	ctx context.Context,
+	baseTree *object.Tree,
+	entries map[string]object.TreeEntry,
+) (map[string]bool, []manifest.Warning, error) {
 	candidates := make(map[string]bool)
 	headEntries := map[string]object.TreeEntry{}
 	head, err := s.repo.Head()
@@ -138,8 +156,14 @@ func (s selection) candidates(ctx context.Context, baseTree *object.Tree, entrie
 	status, statusErr := worktree.Status()
 	var warnings []manifest.Warning
 	if statusErr != nil {
-		warnings = []manifest.Warning{{Category: manifest.WarnBaselineStatusUnavailable,
-			Message: "Git status unavailable; comparing checkout conservatively", Count: 1, Detail: []string{statusErr.Error()}}}
+		warnings = []manifest.Warning{
+			{
+				Category: manifest.WarnBaselineStatusUnavailable,
+				Message:  "Git status unavailable; comparing checkout conservatively",
+				Count:    1,
+				Detail:   []string{statusErr.Error()},
+			},
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, warnings, err
@@ -165,7 +189,11 @@ func (s selection) candidates(ctx context.Context, baseTree *object.Tree, entrie
 	return candidates, warnings, nil
 }
 
-func (s selection) acquireBodies(ctx context.Context, entries map[string]object.TreeEntry, candidates map[string]bool) error {
+func (s selection) acquireBodies(
+	ctx context.Context,
+	entries map[string]object.TreeEntry,
+	candidates map[string]bool,
+) error {
 	routed := make(map[plumbing.Hash]bool)
 	missing := false
 	for name, entry := range entries {
@@ -193,47 +221,52 @@ func (s selection) acquireBodies(ctx context.Context, entries map[string]object.
 		Commit string
 		Wants  []plumbing.Hash
 	}{s.base.remote.url, s.base.Hash.String(), hashes}
-	generation, _, err := s.owner.Git(ctx, sourcecache.GitKey{Content: content, Ref: s.base.Hash.String()}, sourcecache.Policy{MaxAge: sourcecache.Forever}, func(ctx context.Context, upper storage.Storer, _ billy.Filesystem) (plumbing.Hash, error) {
-		if err := copyMetadata(ctx, s.base.Repo.Storer, upper, s.base.Hash); err != nil {
-			return plumbing.ZeroHash, err
-		}
-		var wants []plumbing.Hash
-		for _, hash := range hashes {
-			if err := ctx.Err(); err != nil {
+	generation, _, err := s.owner.Git(
+		ctx,
+		sourcecache.GitKey{Content: content, Ref: s.base.Hash.String()},
+		sourcecache.Policy{MaxAge: sourcecache.Forever},
+		func(ctx context.Context, upper storage.Storer, _ billy.Filesystem) (plumbing.Hash, error) {
+			if err := copyMetadata(ctx, s.base.Repo.Storer, upper, s.base.Hash); err != nil {
 				return plumbing.ZeroHash, err
 			}
-			obj, err := s.base.Repo.Storer.EncodedObject(plumbing.BlobObject, hash)
-			if errors.Is(err, plumbing.ErrObjectNotFound) {
-				wants = append(wants, hash)
-			} else if err != nil {
-				return plumbing.ZeroHash, err
-			} else if _, err := upper.SetEncodedObject(obj); err != nil {
-				return plumbing.ZeroHash, err
-			}
-		}
-		if len(wants) > 0 {
-			if err := s.base.remote.fetch(ctx, upper, wants); err != nil {
-				return plumbing.ZeroHash, err
-			}
-		}
-		for _, hash := range wants {
-			err := upper.HasEncodedObject(hash)
-			if errors.Is(err, plumbing.ErrObjectNotFound) && !s.base.remote.full {
-				s.base.remote.full = true
-				if err := s.base.remote.fetch(ctx, upper, nil); err != nil {
+			var wants []plumbing.Hash
+			for _, hash := range hashes {
+				if err := ctx.Err(); err != nil {
 					return plumbing.ZeroHash, err
 				}
-			} else if err != nil {
-				return plumbing.ZeroHash, err
+				obj, err := s.base.Repo.Storer.EncodedObject(plumbing.BlobObject, hash)
+				if errors.Is(err, plumbing.ErrObjectNotFound) {
+					wants = append(wants, hash)
+				} else if err != nil {
+					return plumbing.ZeroHash, err
+				} else if _, err := upper.SetEncodedObject(obj); err != nil {
+					return plumbing.ZeroHash, err
+				}
 			}
-		}
-		for _, hash := range hashes {
-			if err := upper.HasEncodedObject(hash); err != nil {
-				return plumbing.ZeroHash, err
+			if len(wants) > 0 {
+				if err := s.base.remote.fetch(ctx, upper, wants); err != nil {
+					return plumbing.ZeroHash, err
+				}
 			}
-		}
-		return s.base.Hash, nil
-	})
+			for _, hash := range wants {
+				err := upper.HasEncodedObject(hash)
+				if errors.Is(err, plumbing.ErrObjectNotFound) && !s.base.remote.full {
+					s.base.remote.full = true
+					if err := s.base.remote.fetch(ctx, upper, nil); err != nil {
+						return plumbing.ZeroHash, err
+					}
+				} else if err != nil {
+					return plumbing.ZeroHash, err
+				}
+			}
+			for _, hash := range hashes {
+				if err := upper.HasEncodedObject(hash); err != nil {
+					return plumbing.ZeroHash, err
+				}
+			}
+			return s.base.Hash, nil
+		},
+	)
 	if err != nil {
 		return err
 	}
@@ -241,7 +274,11 @@ func (s selection) acquireBodies(ctx context.Context, entries map[string]object.
 	return s.base.adopt(s.repo.Storer)
 }
 
-func (s selection) compareCandidates(ctx context.Context, candidates map[string]bool, entries map[string]object.TreeEntry) ([]string, error) {
+func (s selection) compareCandidates(
+	ctx context.Context,
+	candidates map[string]bool,
+	entries map[string]object.TreeEntry,
+) ([]string, error) {
 	routing := make([]string, 0, len(candidates))
 	for name, dirty := range candidates {
 		if err := ctx.Err(); err != nil {
@@ -296,7 +333,12 @@ func (s selection) compareCandidates(ctx context.Context, candidates map[string]
 	return routing, nil
 }
 
-func (s selection) filterChanges(ctx context.Context, baseline *gittree.FS, routing []string, entries map[string]object.TreeEntry) (*change.Set, error) {
+func (s selection) filterChanges(
+	ctx context.Context,
+	baseline *gittree.FS,
+	routing []string,
+	entries map[string]object.TreeEntry,
+) (*change.Set, error) {
 	beforeIgnore, err := baseline.SourcePolicy(ctx)
 	if err != nil {
 		return nil, err
@@ -362,7 +404,11 @@ func (s selection) filterChanges(ctx context.Context, baseline *gittree.FS, rout
 func (s selection) acquireBase(ctx context.Context) error {
 	url, ok := originURL(s.current.Location().Config)
 	if !ok {
-		return manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("base %s is missing objects and no origin is configured", s.base.Hash))
+		return manifest.NewError(
+			manifest.ErrInput,
+			nil,
+			fmt.Sprintf("base %s is missing objects and no origin is configured", s.base.Hash),
+		)
 	}
 	r, err := fetchBase(ctx, url, s.base.Hash.String(), s.owner)
 	if err != nil {

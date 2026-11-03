@@ -43,7 +43,10 @@ func (d dagDispatcher) Sweep(ctx context.Context, quiescent bool) []schedule.Nod
 		var reads *store.ReadSet
 		for id, record := range d.o.index.Files() {
 			_, selected, _, _ := d.o.filter.Membership(id)
-			if selected && record.Path != "" && record.Parent == (manifest.NamedResource{}) && record.BuilderOwner == (manifest.NamedResource{}) && d.o.loader.AdmitsRoot(d.o.loader.CatalogObject(id), record.Path) && d.o.store.GetObject(id) == nil {
+			if selected && record.Path != "" && record.Parent == (manifest.NamedResource{}) &&
+				record.BuilderOwner == (manifest.NamedResource{}) &&
+				d.o.loader.AdmitsRoot(d.o.loader.CatalogObject(id), record.Path) &&
+				d.o.store.GetObject(id) == nil {
 				if reads == nil {
 					reads = &store.ReadSet{}
 					reads.Init(d.o.store, manifest.NamedResource{}, nil)

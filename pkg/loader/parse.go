@@ -31,7 +31,11 @@ func Prepare(doc manifest.DocOccurrence, opts manifest.ParseDocOptions) (store.C
 	return store.Child{Obj: obj, Doc: authoritative}, doc, changed
 }
 
-func (r documentReader) parseFile(ctx context.Context, path string, opts manifest.ParseDocOptions) ([]store.Child, error) {
+func (r documentReader) parseFile(
+	ctx context.Context,
+	path string,
+	opts manifest.ParseDocOptions,
+) ([]store.Child, error) {
 	if r.compact && r.coordinate == nil {
 		facts, err := r.censusFile(ctx, path, opts)
 		var children []store.Child
@@ -78,7 +82,12 @@ func (r documentReader) fileObjects(path string, opts manifest.ParseDocOptions) 
 	return out, nil
 }
 
-func (r documentReader) decodeFileObjects(path string, opts manifest.ParseDocOptions, keepRaw bool, yield func(parsedObject)) error {
+func (r documentReader) decodeFileObjects(
+	path string,
+	opts manifest.ParseDocOptions,
+	keepRaw bool,
+	yield func(parsedObject),
+) error {
 	input, name := r.input(path)
 	path = r.localPath(path)
 	var f fs.File
@@ -89,10 +98,17 @@ func (r documentReader) decodeFileObjects(path string, opts manifest.ParseDocOpt
 		f, err = input.Open(name)
 	}
 	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, errSourceUnavailable) {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+			errors.Is(err, errSourceUnavailable) {
 			return fmt.Errorf("open %s: %w", path, err)
 		}
-		yield(parsedObject{outcome: manifest.DocOccurrence{Err: manifest.NewError(manifest.ErrInput, fmt.Errorf("open %s: %w", path, err), "")}})
+		yield(
+			parsedObject{
+				outcome: manifest.DocOccurrence{
+					Err: manifest.NewError(manifest.ErrInput, fmt.Errorf("open %s: %w", path, err), ""),
+				},
+			},
+		)
 		return nil
 	}
 	defer func() { _ = f.Close() }()
@@ -139,8 +155,15 @@ func (r documentReader) decodeFileObjects(path string, opts manifest.ParseDocOpt
 				continue
 			}
 			id := obj.Named()
-			if (!r.compact || r.coordinate != nil) && (manifest.HasEnvsubstReference(id.Name) || manifest.HasEnvsubstReference(id.Namespace)) {
-				slog.Debug("loader: skipped template doc (unresolved envsubst in name/namespace)", "path", path, "id", id.String())
+			if (!r.compact || r.coordinate != nil) &&
+				(manifest.HasEnvsubstReference(id.Name) || manifest.HasEnvsubstReference(id.Namespace)) {
+				slog.Debug(
+					"loader: skipped template doc (unresolved envsubst in name/namespace)",
+					"path",
+					path,
+					"id",
+					id.String(),
+				)
 				manifest.ReleaseDoc(leaf.Document)
 				continue
 			}
@@ -160,7 +183,11 @@ func (r documentReader) decodeFileObjects(path string, opts manifest.ParseDocOpt
 	return nil
 }
 
-func (r documentReader) censusFile(ctx context.Context, path string, opts manifest.ParseDocOptions) ([]parsedObject, error) {
+func (r documentReader) censusFile(
+	ctx context.Context,
+	path string,
+	opts manifest.ParseDocOptions,
+) ([]parsedObject, error) {
 	r.restore(path)
 	if cached := r.cache[path]; cached.objects != nil || cached.decodeErr != nil {
 		return cached.objects, cached.decodeErr
@@ -183,7 +210,12 @@ func (r documentReader) censusFile(ctx context.Context, path string, opts manife
 		origin := r.localPath(path)
 		root := r.mountedRoot(origin)
 		file, _ := filepath.Rel(root, origin)
-		o.Declaration = OccurrenceID{Source: root, File: filepath.ToSlash(file), Document: child.outcome.Ordinal, item: child.item}
+		o.Declaration = OccurrenceID{
+			Source:   root,
+			File:     filepath.ToSlash(file),
+			Document: child.outcome.Ordinal,
+			item:     child.item,
+		}
 		var structural manifest.BaseManifest
 		if o.facts.structural != nil {
 			structural = o.facts.structural

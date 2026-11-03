@@ -209,22 +209,25 @@ func TestScheduler_RunStopDrains(t *testing.T) {
 				fail, release := make(chan struct{}), make(chan struct{})
 				victim, held := testutil.KustomizationID("ns", "feedback"), testutil.KustomizationID("ns", "held")
 				var active, runs atomic.Int64
-				s := New(task.NewBounded(2), dispatchFunc(func(ctx context.Context, id NodeID, _ manifest.DrainLevel) Result {
-					active.Add(1)
-					defer active.Add(-1)
-					runs.Add(1)
-					started <- struct{}{}
-					if capFirst && id == victim {
-						<-fail
-						a := &testAssessment{}
-						a.invalid.Store(true)
-						return Result{Assessment: a}
-					}
-					<-ctx.Done()
-					stopping <- struct{}{}
-					<-release
-					return Result{Assessment: &testAssessment{}}
-				}))
+				s := New(
+					task.NewBounded(2),
+					dispatchFunc(func(ctx context.Context, id NodeID, _ manifest.DrainLevel) Result {
+						active.Add(1)
+						defer active.Add(-1)
+						runs.Add(1)
+						started <- struct{}{}
+						if capFirst && id == victim {
+							<-fail
+							a := &testAssessment{}
+							a.invalid.Store(true)
+							return Result{Assessment: a}
+						}
+						<-ctx.Done()
+						stopping <- struct{}{}
+						<-release
+						return Result{Assessment: &testAssessment{}}
+					}),
+				)
 				s.Seed([]NodeID{victim, held})
 				if capFirst {
 					s.nodes[victim].redispatches = maxRedispatches
@@ -339,7 +342,13 @@ func TestScheduler_SettleBoundedRetainedAssessment(t *testing.T) {
 			}
 			return Result{Assessment: a}
 		}))
-		s.Seed([]NodeID{testutil.KustomizationID("ns", "a"), testutil.KustomizationID("ns", "b"), testutil.KustomizationID("ns", "c")})
+		s.Seed(
+			[]NodeID{
+				testutil.KustomizationID("ns", "a"),
+				testutil.KustomizationID("ns", "b"),
+				testutil.KustomizationID("ns", "c"),
+			},
+		)
 		done := make(chan error, 1)
 		go func() { done <- s.Run(t.Context()) }()
 		<-entered
@@ -359,9 +368,11 @@ func TestScheduler_UnresolvedAfterForce(t *testing.T) {
 	t.Parallel()
 	var levels []manifest.DrainLevel
 	s := New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) Result {
-		return Result{Assessment: &testAssessment{unresolved: true, settle: func(_ context.Context, level manifest.DrainLevel) {
-			levels = append(levels, level)
-		}}}
+		return Result{
+			Assessment: &testAssessment{unresolved: true, settle: func(_ context.Context, level manifest.DrainLevel) {
+				levels = append(levels, level)
+			}},
+		}
 	}))
 	s.Seed([]NodeID{testutil.KustomizationID("ns", "stuck")})
 	err := s.Run(t.Context())

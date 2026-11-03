@@ -18,7 +18,13 @@ func (o *Orchestrator) buildChangeFilter(ctx context.Context) error {
 		return err
 	}
 	if o.cfg.BaseInput == o.cfg.Input && o.cfg.ExternalChanges == nil {
-		o.store.AddWarning(manifest.Warning{Category: manifest.WarnPathConfig, Message: "--path and --path-orig resolve to the same root; ignoring --path-orig", Detail: []string{o.repoRoot}})
+		o.store.AddWarning(
+			manifest.Warning{
+				Category: manifest.WarnPathConfig,
+				Message:  "--path and --path-orig resolve to the same root; ignoring --path-orig",
+				Detail:   []string{o.repoRoot},
+			},
+		)
 		if o.loader == nil {
 			return nil
 		}
@@ -198,8 +204,14 @@ func (o *Orchestrator) installAdmission(ctx context.Context) error {
 	o.changeNamespaces = proposal.Namespaces
 	o.preparation, o.history = nil, nil
 	o.loader.Options.HistoryOwners = nil
-	if changes := o.cfg.ExternalChanges; changes != nil && changes.Len() == 0 && len(o.filter.KeepNames()) == 0 && o.cfg.BaseInput != nil {
-		o.store.AddWarning(manifest.Warning{Category: manifest.WarnPathConfig, Message: "no changes detected between --path and --path-orig; output will be empty; Flux-excluded files are not counted; verify both paths reference distinct snapshots"})
+	if changes := o.cfg.ExternalChanges; changes != nil && changes.Len() == 0 && len(o.filter.KeepNames()) == 0 &&
+		o.cfg.BaseInput != nil {
+		o.store.AddWarning(
+			manifest.Warning{
+				Category: manifest.WarnPathConfig,
+				Message:  "no changes detected between --path and --path-orig; output will be empty; Flux-excluded files are not counted; verify both paths reference distinct snapshots",
+			},
+		)
 	}
 	slog.Debug("orchestrator: changed-only keep set", "filter", o.filter)
 	return nil

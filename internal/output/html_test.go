@@ -10,21 +10,30 @@ import (
 
 func TestEncoderLines_PreservesStatus(t *testing.T) {
 	t.Parallel()
-	lines := []LineChange{{
-		Resource: Subject{ID: manifest.NamedResource{Group: "example.test", Kind: "Widget", Namespace: "ns", Name: "same"}},
-		Parent:   Subject{ID: manifest.NamedResource{Group: "parents.test", Kind: "Producer", Namespace: "ns", Name: "same"}},
-		From:     "key: old\n", To: "key: new\n",
-	}}
+	lines := []LineChange{
+		{
+			Resource: Subject{
+				ID: manifest.NamedResource{Group: "example.test", Kind: "Widget", Namespace: "ns", Name: "same"},
+			},
+			Parent: Subject{
+				ID: manifest.NamedResource{Group: "parents.test", Kind: "Producer", Namespace: "ns", Name: "same"},
+			},
+			From: "key: old\n",
+			To:   "key: new\n",
+		},
+	}
 	names := PrepareNames([]string{""}, [][]manifest.NamedResource{LineSubjects(lines, FormatHTML)}, nil)
 	NameLines(lines, names[0])
 	var buf bytes.Buffer
 	if err := (Encoder{Writer: &buf, Format: FormatHTML}).Lines(lines); err != nil {
 		t.Fatal(err)
 	}
-	if out := buf.String(); !strings.Contains(out, "1 changed") || !strings.Contains(out, `<span class="status status-"></span>`) || !strings.Contains(out, "Widget ns/same") || !strings.Contains(out, "Producer ns/same") {
+	if out := buf.String(); !strings.Contains(out, "1 changed") ||
+		!strings.Contains(out, `<span class="status status-"></span>`) ||
+		!strings.Contains(out, "Widget ns/same") ||
+		!strings.Contains(out, "Producer ns/same") {
 		t.Fatalf("HTML must preserve prepared empty status for unequal YAML: %s", out)
 	}
-
 }
 
 func TestRuneDiffRange(t *testing.T) {

@@ -109,7 +109,11 @@ func checkAPIVersion(doc map[string]any, want string) error {
 	}
 	gv, err := schema.ParseGroupVersion(v)
 	if err != nil || gv.Version == "" {
-		return NewError(ErrInput, fmt.Errorf("invalid %w", field.Invalid(field.NewPath("apiVersion"), v, "must have a valid version")), "")
+		return NewError(
+			ErrInput,
+			fmt.Errorf("invalid %w", field.Invalid(field.NewPath("apiVersion"), v, "must have a valid version")),
+			"",
+		)
 	}
 	if gv.Group != want {
 		return inputf("expected apiVersion %q, got %q", want, v)

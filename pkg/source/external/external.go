@@ -14,6 +14,11 @@ type Fetcher struct{}
 
 // Fetch implements source.TypedFetcher[*manifest.ExternalArtifact].
 // Wrapped via source.Wrap at orchestrator registration.
-func (*Fetcher) Fetch(_ context.Context, _ *manifest.ExternalArtifact, _ *store.ReadSet, _ cache.Policy) (*store.SourceArtifact, error) {
+func (*Fetcher) Fetch(
+	_ context.Context,
+	_ *manifest.ExternalArtifact,
+	_ *store.ReadSet,
+	_ cache.Policy,
+) (*store.SourceArtifact, error) {
 	return nil, manifest.NewError(manifest.ErrInput, nil, "no generated content")
 }

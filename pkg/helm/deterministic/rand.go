@@ -103,7 +103,9 @@ func randInt(s *stream, minN, maxN int) int {
 	}
 	var buf [8]byte
 	_, _ = s.Read(buf[:])
-	return minN + int(binary.LittleEndian.Uint64(buf[:])%uint64(span)) //nolint:gosec // G115: the remainder is less than the positive int span.
+	return minN + int(
+		binary.LittleEndian.Uint64(buf[:])%uint64(span),
+	) //nolint:gosec // G115: the remainder is less than the positive int span.
 }
 
 func uuidv4(s *stream) string {

@@ -76,17 +76,34 @@ data:
 	foreign.Group = "example.test"
 	foreignArtifact := &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: "foreign"}
 	st.SetArtifact(foreign, foreignArtifact)
-	if resolver.LocalSourceArtifact(foreign, store.ArtifactContent) != foreignArtifact || resolver.LocalSourceArtifact(gr.Named(), store.ArtifactContent).URL != gr.URL {
+	if resolver.LocalSourceArtifact(foreign, store.ArtifactContent) != foreignArtifact ||
+		resolver.LocalSourceArtifact(gr.Named(), store.ArtifactContent).URL != gr.URL {
 		t.Fatal("source resolver lost canonical artifact identity")
 	}
 	cliSources := resolver
 
 	hr := &manifest.HelmRelease{
-		Name: "demo", Namespace: "default",
-		Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "chart-repo", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}},
+		Name:      "demo",
+		Namespace: "default",
+		Chart: manifest.HelmChart{
+			Name: "mychart",
+			Source: manifest.NamedResource{
+				Name:      "chart-repo",
+				Namespace: "flux-system",
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindGitRepository,
+			},
+		},
 	}
 
-	out, _, err := testutil.RenderMaps(cli.Template(context.Background(), hr, map[string]any{"greeting": "hello"}, helm.RenderOptions{Options: helm.Options{}, Sources: cliSources}))
+	out, _, err := testutil.RenderMaps(
+		cli.Template(
+			context.Background(),
+			hr,
+			map[string]any{"greeting": "hello"},
+			helm.RenderOptions{Options: helm.Options{}, Sources: cliSources},
+		),
+	)
 	if err != nil {
 		t.Fatalf("Template via resolver: %v", err)
 	}
@@ -110,12 +127,33 @@ func TestSourceResolver_OverlappingCapturedInputs(t *testing.T) {
 	for i, name := range []string{"first", "second"} {
 		root := t.TempDir()
 		testutil.WriteFile(t, root, "mychart/Chart.yaml", "apiVersion: v2\nname: "+name+"\nversion: 1.0.0\n")
-		testutil.WriteFile(t, root, "mychart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Chart.Name }}\ndata:\n  greeting: {{ .Values.greeting }}\n")
+		testutil.WriteFile(
+			t,
+			root,
+			"mychart/templates/cm.yaml",
+			"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Chart.Name }}\ndata:\n  greeting: {{ .Values.greeting }}\n",
+		)
 		testutil.WriteFile(t, root, "config.yaml", "greeting: "+name+"\n")
 		repository := &manifest.GitRepository{Name: name, Namespace: "apps"}
 		st.AddObject(repository)
-		st.SetArtifact(repository.Named(), &store.SourceArtifact{FS: &capturedChartFS{FS: os.DirFS(root), entered: entered, release: release}})
-		releases[i] = &manifest.HelmRelease{Name: name, Namespace: "apps", Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: name}}, ChartValuesFiles: []string{"config.yaml"}}
+		st.SetArtifact(
+			repository.Named(),
+			&store.SourceArtifact{FS: &capturedChartFS{FS: os.DirFS(root), entered: entered, release: release}},
+		)
+		releases[i] = &manifest.HelmRelease{
+			Name:      name,
+			Namespace: "apps",
+			Chart: manifest.HelmChart{
+				Name: "mychart",
+				Source: manifest.NamedResource{
+					Group:     manifest.SourceDomain,
+					Kind:      manifest.KindGitRepository,
+					Namespace: "apps",
+					Name:      name,
+				},
+			},
+			ChartValuesFiles: []string{"config.yaml"},
+		}
 		reads[i].Init(st, releases[i].Named(), nil)
 	}
 	defer func() {
@@ -128,20 +166,28 @@ func TestSourceResolver_OverlappingCapturedInputs(t *testing.T) {
 	var workers sync.WaitGroup
 	for i := range reads {
 		workers.Go(func() {
-			outputs[i], _, failures[i] = testutil.RenderMaps(client.Template(t.Context(), releases[i], nil, helm.RenderOptions{Sources: helm.NewSources(&reads[i])}))
+			outputs[i], _, failures[i] = testutil.RenderMaps(
+				client.Template(t.Context(), releases[i], nil, helm.RenderOptions{Sources: helm.NewSources(&reads[i])}),
+			)
 		})
 	}
 	<-entered
 	<-entered
 	replacement := t.TempDir()
 	testutil.WriteFile(t, replacement, "mychart/Chart.yaml", "apiVersion: v2\nname: replacement\nversion: 1.0.0\n")
-	testutil.WriteFile(t, replacement, "mychart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Chart.Name }}\ndata:\n  greeting: {{ .Values.greeting }}\n")
+	testutil.WriteFile(
+		t,
+		replacement,
+		"mychart/templates/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Chart.Name }}\ndata:\n  greeting: {{ .Values.greeting }}\n",
+	)
 	testutil.WriteFile(t, replacement, "config.yaml", "greeting: replacement\n")
 	st.SetArtifact(releases[0].ChartSource(), &store.SourceArtifact{FS: os.DirFS(replacement)})
 	close(release)
 	workers.Wait()
 	for i, name := range []string{"first", "second"} {
-		if failures[i] != nil || len(outputs[i]) != 1 || outputs[i][0]["metadata"].(map[string]any)["name"] != name || outputs[i][0]["data"].(map[string]any)["greeting"] != name {
+		if failures[i] != nil || len(outputs[i]) != 1 || outputs[i][0]["metadata"].(map[string]any)["name"] != name ||
+			outputs[i][0]["data"].(map[string]any)["greeting"] != name {
 			t.Fatalf("operation %s: err=%v output=%s", name, failures[i], outputs[i])
 		}
 	}
@@ -151,8 +197,12 @@ func TestSourceResolver_OverlappingCapturedInputs(t *testing.T) {
 	var successor store.ReadSet
 	successor.Init(st, releases[0].Named(), nil)
 	defer successor.Retire()
-	output, _, err := testutil.RenderMaps(client.Template(t.Context(), releases[0], nil, helm.RenderOptions{Sources: helm.NewSources(&successor)}))
-	if err != nil || len(output) != 1 || output[0]["metadata"].(map[string]any)["name"] != "replacement" || output[0]["data"].(map[string]any)["greeting"] != "replacement" || !successor.Valid() {
+	output, _, err := testutil.RenderMaps(
+		client.Template(t.Context(), releases[0], nil, helm.RenderOptions{Sources: helm.NewSources(&successor)}),
+	)
+	if err != nil || len(output) != 1 || output[0]["metadata"].(map[string]any)["name"] != "replacement" ||
+		output[0]["data"].(map[string]any)["greeting"] != "replacement" ||
+		!successor.Valid() {
 		t.Fatalf("successor: err=%v output=%s", err, output)
 	}
 }

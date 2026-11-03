@@ -23,6 +23,7 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/storage/filesystem"
+
 	"github.com/home-operations/flate/internal/testutil"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	sourcegit "github.com/home-operations/flate/pkg/source/git"
@@ -46,17 +47,34 @@ func fakeWorktree(t *testing.T, files map[string]string) string {
 func withFakeGitBase(t *testing.T, c *TreeCache, worktree string, calls *atomic.Int32) {
 	t.Helper()
 	repo := testutil.GitInit(t, worktree)
-	commit := testutil.GitCommitAll(t, repo, "fixture", &git.CommitOptions{Author: &object.Signature{Name: "fixture", Email: "fixture@example.invalid"}})
-	input, _, err := gittree.New(t.Context(), repo.Storer.(*filesystem.Storage).Filesystem(), commit, gittree.ViewOptions{Mode: gittree.RemoteBase})
+	commit := testutil.GitCommitAll(
+		t,
+		repo,
+		"fixture",
+		&git.CommitOptions{Author: &object.Signature{Name: "fixture", Email: "fixture@example.invalid"}},
+	)
+	input, _, err := gittree.New(
+		t.Context(),
+		repo.Storer.(*filesystem.Storage).Filesystem(),
+		commit,
+		gittree.ViewOptions{Mode: gittree.RemoteBase},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.SetGitBaseFetcher(func(_ context.Context, _ GitBaseRequest, _ sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-		if calls != nil {
-			calls.Add(1)
-		}
-		return &store.SourceArtifact{FS: input, Key: "fake-base", Content: "fake-base-generation", Revision: "deadbeef"}, nil
-	})
+	c.SetGitBaseFetcher(
+		func(_ context.Context, _ GitBaseRequest, _ sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+			if calls != nil {
+				calls.Add(1)
+			}
+			return &store.SourceArtifact{
+				FS:       input,
+				Key:      "fake-base",
+				Content:  "fake-base-generation",
+				Revision: "deadbeef",
+			}, nil
+		},
+	)
 }
 
 func TestPreflightGitBase_RewritesToDirectory(t *testing.T) {
@@ -80,7 +98,15 @@ func TestPreflightGitBase_RewritesToDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantDir := remoteResourcePrefix + manifest.Fingerprint(remoteInput{Operation: remoteGit, URL: "https://github.com/o/r", Ref: "v1", Timeout: 27 * time.Second, Submodules: true})
+	wantDir := remoteResourcePrefix + manifest.Fingerprint(
+		remoteInput{
+			Operation:  remoteGit,
+			URL:        "https://github.com/o/r",
+			Ref:        "v1",
+			Timeout:    27 * time.Second,
+			Submodules: true,
+		},
+	)
 	wantEntry := "./" + wantDir + "/overlays/prod"
 	if !strings.Contains(string(body), wantEntry) {
 		t.Errorf("entry not rewritten to base subdir %q:\n%s", wantEntry, body)
@@ -129,7 +155,15 @@ func TestPreflightGitBase_NonResourceBody(t *testing.T) {
 	if n := hits.Load(); n != 1 {
 		t.Errorf("resource selection HTTP probes = %d, want 1", n)
 	}
-	wantDir := remoteResourcePrefix + manifest.Fingerprint(remoteInput{Operation: remoteGit, URL: srv.URL + "/o/r", Ref: "v1", Timeout: 27 * time.Second, Submodules: true})
+	wantDir := remoteResourcePrefix + manifest.Fingerprint(
+		remoteInput{
+			Operation:  remoteGit,
+			URL:        srv.URL + "/o/r",
+			Ref:        "v1",
+			Timeout:    27 * time.Second,
+			Submodules: true,
+		},
+	)
 	if !fsys.IsDir(wantDir) {
 		t.Fatalf("git URL not materialized as a base directory (#616)")
 	}
@@ -155,12 +189,25 @@ func TestPreflightGitBase_WholeRepoPreservesParentRefs(t *testing.T) {
 	cache := newTestTreeCache(t, "")
 	withFakeGitBase(t, cache, worktree, nil)
 
-	out, _, err := testutil.RenderMaps(Render(context.Background(), cache, RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: parsedKS(t, map[string]any{
-		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
-		"kind":       "Kustomization",
-		"metadata":   map[string]any{"name": "apps", "namespace": "flux-system"},
-		"spec":       map[string]any{"path": "."},
-	})}, sourcecache.RetryConfig{}))
+	out, _, err := testutil.RenderMaps(
+		Render(
+			context.Background(),
+			cache,
+			RenderRequest{
+				Source:      localSource(t, src),
+				Label:       src,
+				ApplyIgnore: false,
+				SubPath:     ".",
+				Spec: parsedKS(t, map[string]any{
+					"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+					"kind":       "Kustomization",
+					"metadata":   map[string]any{"name": "apps", "namespace": "flux-system"},
+					"spec":       map[string]any{"path": "."},
+				}),
+			},
+			sourcecache.RetryConfig{},
+		),
+	)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -185,12 +232,25 @@ func TestPreflightGitBase_SourceTreeImmutable(t *testing.T) {
 	cache := newTestTreeCache(t, "")
 	withFakeGitBase(t, cache, worktree, nil)
 
-	if _, _, err := testutil.RenderMaps(Render(context.Background(), cache, RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: parsedKS(t, map[string]any{
-		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
-		"kind":       "Kustomization",
-		"metadata":   map[string]any{"name": "apps", "namespace": "flux-system"},
-		"spec":       map[string]any{"path": "."},
-	})}, sourcecache.RetryConfig{})); err != nil {
+	if _, _, err := testutil.RenderMaps(
+		Render(
+			context.Background(),
+			cache,
+			RenderRequest{
+				Source:      localSource(t, src),
+				Label:       src,
+				ApplyIgnore: false,
+				SubPath:     ".",
+				Spec: parsedKS(t, map[string]any{
+					"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+					"kind":       "Kustomization",
+					"metadata":   map[string]any{"name": "apps", "namespace": "flux-system"},
+					"spec":       map[string]any{"path": "."},
+				}),
+			},
+			sourcecache.RetryConfig{},
+		),
+	); err != nil {
 		t.Fatalf("Render: %v", err)
 	}
 
@@ -248,7 +308,15 @@ func TestPreflightGitBase_ReusesMountWithinRender(t *testing.T) {
 		t.Fatalf("preflight: %v", err)
 	}
 
-	wantDir := remoteResourcePrefix + manifest.Fingerprint(remoteInput{Operation: remoteGit, URL: "https://example.com/o/r", Ref: "v1", Timeout: 27 * time.Second, Submodules: true})
+	wantDir := remoteResourcePrefix + manifest.Fingerprint(
+		remoteInput{
+			Operation:  remoteGit,
+			URL:        "https://example.com/o/r",
+			Ref:        "v1",
+			Timeout:    27 * time.Second,
+			Submodules: true,
+		},
+	)
 	if calls.Load() != 1 {
 		t.Fatalf("fetches = %d, want 1", calls.Load())
 	}
@@ -300,15 +368,29 @@ func TestPreflightGitBase_SymlinkEscapeNotMaterialized(t *testing.T) {
 		}
 	}
 
-	fsys := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - git::https://example.com/o/r?ref=v1\n"})
+	fsys := memFSWith(
+		t,
+		map[string]string{"kustomization.yaml": "resources:\n  - git::https://example.com/o/r?ref=v1\n"},
+	)
 	cache := newTestTreeCache(t, "")
 	withFakeGitBase(t, cache, worktree, nil)
 	if err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
 
-	wantDir := remoteResourcePrefix + manifest.Fingerprint(remoteInput{Operation: remoteGit, URL: "https://example.com/o/r", Ref: "v1", Timeout: 27 * time.Second, Submodules: true})
-	if data, err := fsys.ReadFile(filepath.Join(wantDir, "alias.yaml")); err != nil || !strings.Contains(string(data), "name: base") {
+	wantDir := remoteResourcePrefix + manifest.Fingerprint(
+		remoteInput{
+			Operation:  remoteGit,
+			URL:        "https://example.com/o/r",
+			Ref:        "v1",
+			Timeout:    27 * time.Second,
+			Submodules: true,
+		},
+	)
+	if data, err := fsys.ReadFile(
+		filepath.Join(wantDir, "alias.yaml"),
+	); err != nil ||
+		!strings.Contains(string(data), "name: base") {
 		t.Fatalf("regular alias: %s, %v", data, err)
 	}
 	for _, name := range []string{".github", "node_modules", "missing.yaml", "dirlink"} {
@@ -363,34 +445,67 @@ func TestRender_NestedGitBasesAndIntervals(t *testing.T) {
 			})
 			for _, dir := range []string{parent, child} {
 				r := testutil.GitInit(t, dir)
-				testutil.GitCommitAll(t, r, "seed", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example.invalid"}})
+				testutil.GitCommitAll(
+					t,
+					r,
+					"seed",
+					&git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example.invalid"}},
+				)
 			}
 			sources := cachetest.New(t, "", sourcecache.New)
 			fetcher := &sourcegit.Fetcher{Cache: sources}
 			c := newTestTreeCache(t, "")
 			var requests []GitBaseRequest
-			c.SetGitBaseFetcher(func(ctx context.Context, request GitBaseRequest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-				wantTimeout, wantSubmodules := 5*time.Second, false
-				if request.URL == childURL {
-					wantTimeout, wantSubmodules = 9*time.Second, true
-				}
-				if request.Timeout != wantTimeout || request.Submodules != wantSubmodules {
-					t.Errorf("nested policy=%+v", request)
-				}
-				requests = append(requests, request)
-				dir := parent
-				if request.URL == childURL {
-					dir = child
-				}
-				return fetcher.FetchRemoteBase(ctx, sourcegit.RemoteBaseRequest{URL: "file://" + dir, Ref: request.Ref, Timeout: request.Timeout, Submodules: request.Submodules}, sourcecache.Policy{MaxAge: request.MaxAge, Retry: retry})
-			})
-			input := &store.SourceArtifact{Key: "root", FS: fstest.MapFS{"kustomization.yaml": &fstest.MapFile{Data: []byte("resources:\n  - " + parentURL + "?timeout=5s&submodules=false\n")}}}
+			c.SetGitBaseFetcher(
+				func(ctx context.Context, request GitBaseRequest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+					wantTimeout, wantSubmodules := 5*time.Second, false
+					if request.URL == childURL {
+						wantTimeout, wantSubmodules = 9*time.Second, true
+					}
+					if request.Timeout != wantTimeout || request.Submodules != wantSubmodules {
+						t.Errorf("nested policy=%+v", request)
+					}
+					requests = append(requests, request)
+					dir := parent
+					if request.URL == childURL {
+						dir = child
+					}
+					return fetcher.FetchRemoteBase(
+						ctx,
+						sourcegit.RemoteBaseRequest{
+							URL:        "file://" + dir,
+							Ref:        request.Ref,
+							Timeout:    request.Timeout,
+							Submodules: request.Submodules,
+						},
+						sourcecache.Policy{MaxAge: request.MaxAge, Retry: retry},
+					)
+				},
+			)
+			input := &store.SourceArtifact{
+				Key: "root",
+				FS: fstest.MapFS{
+					"kustomization.yaml": &fstest.MapFile{
+						Data: []byte("resources:\n  - " + parentURL + "?timeout=5s&submodules=false\n"),
+					},
+				},
+			}
 			render := func(interval string) ([]map[string]any, error) {
 				duration, err := time.ParseDuration(interval)
 				if err != nil {
 					return nil, err
 				}
-				docs, _, err := testutil.RenderMaps(Render(t.Context(), c, RenderRequest{Source: input, Spec: &manifest.Kustomization{Interval: metav1.Duration{Duration: duration}}}, sourcecache.RetryConfig{}))
+				docs, _, err := testutil.RenderMaps(
+					Render(
+						t.Context(),
+						c,
+						RenderRequest{
+							Source: input,
+							Spec:   &manifest.Kustomization{Interval: metav1.Duration{Duration: duration}},
+						},
+						sourcecache.RetryConfig{},
+					),
+				)
 				return docs, err
 			}
 			update := func(name, body string) {
@@ -400,9 +515,18 @@ func TestRender_NestedGitBasesAndIntervals(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				testutil.GitCommitAll(t, r, name, &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example.invalid"}})
+				testutil.GitCommitAll(
+					t,
+					r,
+					name,
+					&git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example.invalid"}},
+				)
 			}
-			if output, err := render("1h"); err != nil || !hasRenderField(output, strings.TrimSuffix(fixture.marker, ": "), "first") && (fixture.name != "generators" || !strings.HasPrefix(output[0]["metadata"].(map[string]any)["name"].(string), "first-")) {
+			if output, err := render(
+				"1h",
+			); err != nil ||
+				!hasRenderField(output, strings.TrimSuffix(fixture.marker, ": "), "first") &&
+					(fixture.name != "generators" || !strings.HasPrefix(output[0]["metadata"].(map[string]any)["name"].(string), "first-")) {
 				t.Fatalf("nested base: %s, %v", output, err)
 			}
 			update("cm.yaml", strings.ReplaceAll(fixture.resource, "first", "second"))
@@ -414,7 +538,9 @@ func TestRender_NestedGitBasesAndIntervals(t *testing.T) {
 			} {
 				requests = nil
 				output, err := render(tc.interval)
-				if err != nil || !hasRenderField(output, strings.TrimSuffix(fixture.marker, ": "), tc.want) && (fixture.name != "generators" || !strings.HasPrefix(output[0]["metadata"].(map[string]any)["name"].(string), tc.want+"-")) {
+				if err != nil ||
+					!hasRenderField(output, strings.TrimSuffix(fixture.marker, ": "), tc.want) &&
+						(fixture.name != "generators" || !strings.HasPrefix(output[0]["metadata"].(map[string]any)["name"].(string), tc.want+"-")) {
 					t.Fatalf("interval %s: %s, %v", tc.interval, output, err)
 				}
 				wantRequests := 2
@@ -465,23 +591,30 @@ func TestRender_RemoteRetryPolicies(t *testing.T) {
 						close(release)
 					}
 				}()
-				c.SetGitBaseFetcher(func(ctx context.Context, request GitBaseRequest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-					if request.MaxAge != time.Hour {
-						t.Errorf("remote interval=%v", request.MaxAge)
-					}
-					select {
-					case <-release:
-					default:
-						entered <- retry.Attempts
-					}
-					select {
-					case <-release:
-					case <-ctx.Done():
-						return nil, ctx.Err()
-					}
-					body := fmt.Sprintf("resources:\n  - %s/%d\n", srv.URL, retry.Attempts)
-					return &store.SourceArtifact{Key: "family", Content: fmt.Sprint(retry.Attempts), Revision: fmt.Sprint(retry.Attempts), FS: fstest.MapFS{"kustomization.yaml": {Data: []byte(body)}}}, nil
-				})
+				c.SetGitBaseFetcher(
+					func(ctx context.Context, request GitBaseRequest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+						if request.MaxAge != time.Hour {
+							t.Errorf("remote interval=%v", request.MaxAge)
+						}
+						select {
+						case <-release:
+						default:
+							entered <- retry.Attempts
+						}
+						select {
+						case <-release:
+						case <-ctx.Done():
+							return nil, ctx.Err()
+						}
+						body := fmt.Sprintf("resources:\n  - %s/%d\n", srv.URL, retry.Attempts)
+						return &store.SourceArtifact{
+							Key:      "family",
+							Content:  fmt.Sprint(retry.Attempts),
+							Revision: fmt.Sprint(retry.Attempts),
+							FS:       fstest.MapFS{"kustomization.yaml": {Data: []byte(body)}},
+						}, nil
+					},
+				)
 				type result struct {
 					attempts int
 					body     []map[string]any
@@ -494,9 +627,30 @@ func TestRender_RemoteRetryPolicies(t *testing.T) {
 						if i%2 != 0 {
 							attempts = 3
 						}
-						retry := sourcecache.RetryConfig{Attempts: attempts, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}
-						input := &store.SourceArtifact{Key: "root", FS: fstest.MapFS{"kustomization.yaml": {Data: []byte("resources:\n  - https://example.invalid/owner/repo?ref=main\n")}}}
-						body, _, err := testutil.RenderMaps(Render(t.Context(), c, RenderRequest{Source: input, Spec: &manifest.Kustomization{Interval: metav1.Duration{Duration: time.Hour}}}, retry))
+						retry := sourcecache.RetryConfig{
+							Attempts: attempts,
+							MinWait:  time.Nanosecond,
+							MaxWait:  time.Nanosecond,
+						}
+						input := &store.SourceArtifact{
+							Key: "root",
+							FS: fstest.MapFS{
+								"kustomization.yaml": {
+									Data: []byte("resources:\n  - https://example.invalid/owner/repo?ref=main\n"),
+								},
+							},
+						}
+						body, _, err := testutil.RenderMaps(
+							Render(
+								t.Context(),
+								c,
+								RenderRequest{
+									Source: input,
+									Spec:   &manifest.Kustomization{Interval: metav1.Duration{Duration: time.Hour}},
+								},
+								retry,
+							),
+						)
 						done <- result{attempts, body, err}
 					}()
 				}
@@ -549,14 +703,31 @@ func TestPreflightGitBase_UpstreamSelection(t *testing.T) {
 			var httpCalls, gitCalls atomic.Int32
 			stubHTTPTransport(t, remoteRoundTrip(func(r *http.Request) (*http.Response, error) {
 				httpCalls.Add(1)
-				return &http.Response{StatusCode: tc.status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(tc.body)), Request: r}, nil
+				return &http.Response{
+					StatusCode: tc.status,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(tc.body)),
+					Request:    r,
+				}, nil
 			}))
 			fsys := memFSWith(t, map[string]string{"kustomization.yaml": tc.role + ":\n  - " + tc.raw + "\n"})
 			cache := newTestTreeCache(t, "")
-			withFakeGitBase(t, cache, fakeWorktree(t, map[string]string{"base/kustomization.yaml": "resources: []\n"}), &gitCalls)
+			withFakeGitBase(
+				t,
+				cache,
+				fakeWorktree(t, map[string]string{"base/kustomization.yaml": "resources: []\n"}),
+				&gitCalls,
+			)
 			err := preflightRemoteResources(t.Context(), cache, fsys, ".")
 			if err != nil || int(httpCalls.Load()) != tc.http || int(gitCalls.Load()) != tc.git {
-				t.Errorf("preflight: HTTP=%d Git=%d error=%v; want HTTP=%d Git=%d and success", httpCalls.Load(), gitCalls.Load(), err, tc.http, tc.git)
+				t.Errorf(
+					"preflight: HTTP=%d Git=%d error=%v; want HTTP=%d Git=%d and success",
+					httpCalls.Load(),
+					gitCalls.Load(),
+					err,
+					tc.http,
+					tc.git,
+				)
 			}
 		})
 	}
@@ -566,10 +737,23 @@ func TestPreflightGitBase_PolicyMounts(t *testing.T) {
 	t.Parallel()
 	c := newTestTreeCache(t, "")
 	var requests []GitBaseRequest
-	c.SetGitBaseFetcher(func(_ context.Context, r GitBaseRequest, _ sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-		requests = append(requests, r)
-		return &store.SourceArtifact{Key: "same", Content: "same-content", Revision: "same", FS: memoryTree(t, map[string]string{"one/kustomization.yaml": "resources: []\n", "two/kustomization.yaml": "resources: []\n"})}, nil
-	})
+	c.SetGitBaseFetcher(
+		func(_ context.Context, r GitBaseRequest, _ sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+			requests = append(requests, r)
+			return &store.SourceArtifact{
+				Key:      "same",
+				Content:  "same-content",
+				Revision: "same",
+				FS: memoryTree(
+					t,
+					map[string]string{
+						"one/kustomization.yaml": "resources: []\n",
+						"two/kustomization.yaml": "resources: []\n",
+					},
+				),
+			}, nil
+		},
+	)
 	view := memFSWith(t, map[string]string{"kustomization.yaml": `resources:
 - file:///org/repo//one?timeout=1s&submodules=false
 - file:///org/repo//two?timeout=1s&submodules=false
@@ -609,15 +793,24 @@ func TestPreflightGitBase_ErrorPrecedence(t *testing.T) {
 			t.Cleanup(srv.Close)
 			c := newTestTreeCache(t, "")
 			var calls atomic.Int32
-			c.SetGitBaseFetcher(func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-				calls.Add(1)
-				if tc.timeout {
-					return nil, context.DeadlineExceeded
-				}
-				return nil, errors.New("directory failed")
-			})
-			input := &store.SourceArtifact{FS: memoryTree(t, map[string]string{"kustomization.yaml": "resources: ['" + srv.URL + tc.path + "']\n"})}
-			_, _, err := testutil.RenderMaps(Render(t.Context(), c, RenderRequest{Source: input, Spec: demoSpec}, sourcecache.RetryConfig{}))
+			c.SetGitBaseFetcher(
+				func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+					calls.Add(1)
+					if tc.timeout {
+						return nil, context.DeadlineExceeded
+					}
+					return nil, errors.New("directory failed")
+				},
+			)
+			input := &store.SourceArtifact{
+				FS: memoryTree(
+					t,
+					map[string]string{"kustomization.yaml": "resources: ['" + srv.URL + tc.path + "']\n"},
+				),
+			}
+			_, _, err := testutil.RenderMaps(
+				Render(t.Context(), c, RenderRequest{Source: input, Spec: demoSpec}, sourcecache.RetryConfig{}),
+			)
 			if err == nil {
 				t.Fatal("invalid input rendered")
 			}

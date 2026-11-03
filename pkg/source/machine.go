@@ -26,7 +26,10 @@ func (n *Network) RegistryCredentials(ctx context.Context, configPath, hostname 
 			n.registryErr = err
 			return
 		}
-		helm, err := credentials.NewStore(cmp.Or(os.Getenv("HELM_REGISTRY_CONFIG"), helmpath.ConfigPath("registry/config.json")), opts)
+		helm, err := credentials.NewStore(
+			cmp.Or(os.Getenv("HELM_REGISTRY_CONFIG"), helmpath.ConfigPath("registry/config.json")),
+			opts,
+		)
 		if err != nil {
 			n.registryErr = err
 			return

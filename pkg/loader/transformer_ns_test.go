@@ -105,7 +105,12 @@ func TestAdmit_SelfProducedTransformerIdentity(t *testing.T) {
 		writeFile(t, root, "entry/kustomization.yaml", "resources: [ks.yaml]\ntransformers: [proof]\n")
 		writeFile(t, root, "entry/ks.yaml", testutil.KustomizationYAML("child", "", "  path: ./leaf\n"))
 		writeFile(t, root, "entry/proof/kustomization.yaml", "namespace: forbidden\ncomponents: [component]\n")
-		writeFile(t, root, "entry/proof/component/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [transformer.yaml]\n")
+		writeFile(
+			t,
+			root,
+			"entry/proof/component/kustomization.yaml",
+			"apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [transformer.yaml]\n",
+		)
 		writeFile(t, root, "entry/proof/component/transformer.yaml", namespaceTransformer)
 		writeFile(t, root, "leaf/kustomization.yaml", "resources: []\n")
 		st := store.New()
@@ -124,7 +129,6 @@ func TestAdmit_SelfProducedTransformerIdentity(t *testing.T) {
 			t.Fatal("declined prediction lost the authored child evidence")
 		}
 	})
-
 }
 
 func TestStampTransformerTargetNamespaces_NamespaceTransformer(t *testing.T) {
@@ -148,7 +152,15 @@ func TestStampTransformerTargetNamespaces_NamespaceTransformer(t *testing.T) {
 			st.AddObject(source)
 			l := loaderFixture(st, nil)
 			l.SourceRoot = root
-			doc := testutil.KustomizationYAML("gpu-operator", fmt.Sprintf("%q", tc.authored), "  {path: ./output, sourceRef: {kind: GitRepository, name: view}"+tc.target+"}\n") + "---\n" + testutil.KustomizationYAML("explicit", fmt.Sprintf("%q", tc.authored), "  {path: ./explicit, targetNamespace: authored, sourceRef: {kind: GitRepository, name: view}}\n")
+			doc := testutil.KustomizationYAML(
+				"gpu-operator",
+				fmt.Sprintf("%q", tc.authored),
+				"  {path: ./output, sourceRef: {kind: GitRepository, name: view}"+tc.target+"}\n",
+			) + "---\n" + testutil.KustomizationYAML(
+				"explicit",
+				fmt.Sprintf("%q", tc.authored),
+				"  {path: ./explicit, targetNamespace: authored, sourceRef: {kind: GitRepository, name: view}}\n",
+			)
 			check := func(ns string) {
 				for _, name := range []string{"gpu-operator", "explicit"} {
 					id := testutil.KustomizationID(ns, name)
@@ -188,22 +200,43 @@ func TestStampTransformerTargetNamespaces_NamespaceTransformer(t *testing.T) {
 						"apps/gpu-operator/gpu-operator/ks.yaml": {Data: []byte(doc)},
 					}
 					if version == 0 {
-						input["apps/gpu-operator/kustomization.yaml"].Data = []byte("resources: [gpu-operator/ks.yaml, removed.yaml, bad.yaml]\n")
-						input["apps/gpu-operator/removed.yaml"] = &fstest.MapFile{Data: []byte(testutil.KustomizationYAML("removed", "", "  {path: ./output}\n"))}
+						input["apps/gpu-operator/kustomization.yaml"].Data = []byte(
+							"resources: [gpu-operator/ks.yaml, removed.yaml, bad.yaml]\n",
+						)
+						input["apps/gpu-operator/removed.yaml"] = &fstest.MapFile{
+							Data: []byte(testutil.KustomizationYAML("removed", "", "  {path: ./output}\n")),
+						}
 						input["apps/gpu-operator/bad.yaml"] = &fstest.MapFile{Data: []byte("metadata: [\n")}
 					}
 					if ns != "" {
-						input["apps/gpu-operator/kustomization.yaml"].Data = append(input["apps/gpu-operator/kustomization.yaml"].Data, []byte("transformers: [transformers]\n")...)
-						input["apps/gpu-operator/transformers/kustomization.yaml"] = &fstest.MapFile{Data: []byte("namespace: " + ns + "\nresources: [../../../transformers]\n")}
-						input["transformers/kustomization.yaml"] = &fstest.MapFile{Data: []byte("resources: [transformer.yaml]\n")}
+						input["apps/gpu-operator/kustomization.yaml"].Data = append(
+							input["apps/gpu-operator/kustomization.yaml"].Data,
+							[]byte("transformers: [transformers]\n")...)
+						input["apps/gpu-operator/transformers/kustomization.yaml"] = &fstest.MapFile{
+							Data: []byte("namespace: " + ns + "\nresources: [../../../transformers]\n"),
+						}
+						input["transformers/kustomization.yaml"] = &fstest.MapFile{
+							Data: []byte("resources: [transformer.yaml]\n"),
+						}
 						input["transformers/transformer.yaml"] = &fstest.MapFile{Data: []byte(namespaceTransformer)}
 					}
-					st.SetArtifact(source.Named(), &store.SourceArtifact{Key: fmt.Sprintf("view-%d", version), LocalRoot: root, LocalPath: local, FS: input})
+					st.SetArtifact(
+						source.Named(),
+						&store.SourceArtifact{
+							Key:       fmt.Sprintf("view-%d", version),
+							LocalRoot: root,
+							LocalPath: local,
+							FS:        input,
+						},
+					)
 				} else {
 					local = root
 					writeFlatopsOverlay(t, root, ns)
 					writeFile(t, root, "apps/gpu-operator/gpu-operator/ks.yaml", doc)
-					st.SetArtifact(source.Named(), &store.SourceArtifact{LocalRoot: root, LocalPath: local, FS: os.DirFS(local)})
+					st.SetArtifact(
+						source.Named(),
+						&store.SourceArtifact{LocalRoot: root, LocalPath: local, FS: os.DirFS(local)},
+					)
 				}
 				if _, err := l.Load(t.Context(), filepath.Join(local, "apps/gpu-operator")); err != nil {
 					t.Fatal(err)
@@ -216,7 +249,12 @@ func TestStampTransformerTargetNamespaces_NamespaceTransformer(t *testing.T) {
 					removed := testutil.KustomizationID(removedNS, "removed")
 					_, indexed := l.Index.Lookup(removed)
 					if st.GetObject(removed) != nil || indexed != (version == 0) {
-						t.Fatalf("removed declaration: store=%t index=%t version=%d", st.GetObject(removed) != nil, indexed, version)
+						t.Fatalf(
+							"removed declaration: store=%t index=%t version=%d",
+							st.GetObject(removed) != nil,
+							indexed,
+							version,
+						)
 					}
 					if (len(retainedErrorsForTest(l)) != 0) != (version == 0) {
 						t.Fatalf("decode errors after mount version %d: %v", version, retainedErrorsForTest(l))
@@ -417,7 +455,11 @@ func TestStampTransformerTargetNamespaces_Replacements(t *testing.T) {
 				writeFile(t, root, "components/replacements/ks.yaml", nsReplacementRule)
 				rule = "- path: ../../components/replacements/ks.yaml"
 			}
-			overlay := "namespace: storage\nreplacements:\n  " + strings.ReplaceAll(rule, "\n", "\n  ") + "\nresources: [./app/ks.yaml]\n"
+			overlay := "namespace: storage\nreplacements:\n  " + strings.ReplaceAll(
+				rule,
+				"\n",
+				"\n  ",
+			) + "\nresources: [./app/ks.yaml]\n"
 			if tc.from != "" {
 				overlay = strings.Replace(overlay, tc.from, tc.to, 1)
 			}
@@ -434,7 +476,12 @@ func TestStampTransformerTargetNamespaces_Replacements(t *testing.T) {
 func TestStampTransformerTargetNamespaces_MalformedOverlayIgnored(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	got := stampReplacementsKS(t, root, "apps/storage", "namespace:\n  unexpected: map\nresources:\n  - ./app/ks.yaml\n")
+	got := stampReplacementsKS(
+		t,
+		root,
+		"apps/storage",
+		"namespace:\n  unexpected: map\nresources:\n  - ./app/ks.yaml\n",
+	)
 	if got.TargetNamespace != "" {
 		t.Errorf("TargetNamespace=%q want empty (malformed overlay)", got.TargetNamespace)
 	}
@@ -518,7 +565,12 @@ func TestSubtreeHasNamespaceTransformer_DepthCapAndCycle(t *testing.T) {
 		})
 	}
 	writeFile(t, root, "component/kustomization.yaml", "components: [nested]\n")
-	writeFile(t, root, "component/nested/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [transformer.yaml]\n")
+	writeFile(
+		t,
+		root,
+		"component/nested/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [transformer.yaml]\n",
+	)
 	writeFile(t, root, "component/nested/transformer.yaml", namespaceTransformer)
 	if readerForTest(root).subtreeHasNamespaceTransformer(root, "component", map[string]struct{}{}) {
 		t.Fatal("Component edge supplied namespace proof")
@@ -566,7 +618,12 @@ func TestAdmit_UnloadedAncestorNamespace(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	writeFlatopsOverlay(t, root, "outside")
-	testutil.WriteFile(t, root, "apps/outside/selected/ks.yaml", testutil.KustomizationYAML("selected", "apps", "  path: ./leaf\n"))
+	testutil.WriteFile(
+		t,
+		root,
+		"apps/outside/selected/ks.yaml",
+		testutil.KustomizationYAML("selected", "apps", "  path: ./leaf\n"),
+	)
 	l := New(store.New())
 	l.SourceRoot = root
 	_, err := l.Load(t.Context(), filepath.Join(root, "apps/outside/selected"))
@@ -575,7 +632,8 @@ func TestAdmit_UnloadedAncestorNamespace(t *testing.T) {
 	}
 	l.Admit(root)
 	owners := l.Kustomizations()
-	if len(owners) != 1 || owners[0].Obj.(*manifest.Kustomization).TargetNamespace != "" || owners[0].Obj.(*manifest.Kustomization).Namespace != "apps" {
+	if len(owners) != 1 || owners[0].Obj.(*manifest.Kustomization).TargetNamespace != "" ||
+		owners[0].Obj.(*manifest.Kustomization).Namespace != "apps" {
 		t.Fatalf("unloaded ancestor injected namespace: %+v", owners)
 	}
 }

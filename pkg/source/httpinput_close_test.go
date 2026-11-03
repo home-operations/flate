@@ -158,7 +158,8 @@ func TestHTTPInputs_Close(t *testing.T) {
 						close(workers.drain)
 						c.remoteFetches.Store(key, rf)
 						_, err := c.Acquire(t.Context(), key.url, key.retry, nil)
-						if !errors.Is(err, fs.ErrClosed) || !errors.Is(err, manifest.ErrFlux) || rf.cancel.Load() != nil {
+						if !errors.Is(err, fs.ErrClosed) || !errors.Is(err, manifest.ErrFlux) ||
+							rf.cancel.Load() != nil {
 							t.Fatalf("rejected admission: %v, cancel=%v", err, rf.cancel.Load())
 						}
 						if _, ok := c.remoteFetches.Load(key); ok {
@@ -235,7 +236,13 @@ func TestHTTPInputs_Close(t *testing.T) {
 					if c.workers.CompareAndSwap(nil, candidate) {
 						t.Fatal("paused initializer replaced closed sentinel")
 					}
-					if _, err := c.Acquire(t.Context(), key.url, key.retry, nil); !errors.Is(err, fs.ErrClosed) || !errors.Is(err, manifest.ErrFlux) {
+					if _, err := c.Acquire(
+						t.Context(),
+						key.url,
+						key.retry,
+						nil,
+					); !errors.Is(err, fs.ErrClosed) ||
+						!errors.Is(err, manifest.ErrFlux) {
 						t.Fatalf("closed fetch: %v", err)
 					}
 					cancel()

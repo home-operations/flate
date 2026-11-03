@@ -21,6 +21,9 @@ import (
 	"testing/synctest"
 	"time"
 
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"oras.land/oras-go/v2/errdef"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/internal/testutil"
@@ -28,8 +31,6 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/task"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"oras.land/oras-go/v2/errdef"
 )
 
 type remoteHTTPRequest struct {
@@ -51,7 +52,13 @@ func (tr *remoteHTTPTrace) serve(t *testing.T, body func() string) *httptest.Ser
 		const modified = "Mon, 01 Jun 2026 12:00:00 GMT"
 		w.Header().Set("ETag", etag)
 		w.Header().Set("Last-Modified", modified)
-		record := remoteHTTPRequest{Method: r.Method, Path: r.URL.Path, ETag: r.Header.Get("If-None-Match"), Modified: r.Header.Get("If-Modified-Since"), Status: http.StatusOK}
+		record := remoteHTTPRequest{
+			Method:   r.Method,
+			Path:     r.URL.Path,
+			ETag:     r.Header.Get("If-None-Match"),
+			Modified: r.Header.Get("If-Modified-Since"),
+			Status:   http.StatusOK,
+		}
 		if record.ETag == etag {
 			record.Status = http.StatusNotModified
 			w.WriteHeader(record.Status)
@@ -89,7 +96,13 @@ func TestAcquire_ConditionalValidation(t *testing.T) {
 			var phase atomic.Int32
 			var trace remoteHTTPTrace
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				record := remoteHTTPRequest{Method: r.Method, Path: r.URL.Path, ETag: r.Header.Get("If-None-Match"), Modified: r.Header.Get("If-Modified-Since"), Status: http.StatusOK}
+				record := remoteHTTPRequest{
+					Method:   r.Method,
+					Path:     r.URL.Path,
+					ETag:     r.Header.Get("If-None-Match"),
+					Modified: r.Header.Get("If-Modified-Since"),
+					Status:   http.StatusOK,
+				}
 				defer func() {
 					trace.mu.Lock()
 					trace.requests = append(trace.requests, record)
@@ -117,7 +130,11 @@ func TestAcquire_ConditionalValidation(t *testing.T) {
 				} else {
 					w.Header().Set("Last-Modified", older.Format(http.TimeFormat))
 				}
-				record.Bytes, _ = fmt.Fprintf(w, "version: %s\n", strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/"), ".yaml"))
+				record.Bytes, _ = fmt.Fprintf(
+					w,
+					"version: %s\n",
+					strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/"), ".yaml"),
+				)
 			}))
 			t.Cleanup(srv.Close)
 			root := t.TempDir()
@@ -195,7 +212,8 @@ func TestAcquire_ConditionalValidation(t *testing.T) {
 				}
 				w.Header().Set("ETag", etag)
 				w.Header().Set("Last-Modified", lastModified)
-				if phase.Load() != 0 && (scenario == "redirected-304" || scenario == "direct-to-redirected-304" || r.Header.Get("If-None-Match") == etag || r.Header.Get("If-Modified-Since") == modified) {
+				if phase.Load() != 0 &&
+					(scenario == "redirected-304" || scenario == "direct-to-redirected-304" || r.Header.Get("If-None-Match") == etag || r.Header.Get("If-Modified-Since") == modified) {
 					w.WriteHeader(http.StatusNotModified)
 					return
 				}
@@ -208,7 +226,8 @@ func TestAcquire_ConditionalValidation(t *testing.T) {
 				phase.Store(int32(run))
 				c := newTestHTTPInputs(t, root)
 				input, err := c.Acquire(t.Context(), srv.URL+"/input", sourcecache.RetryConfig{}, nil)
-				if scenario == "redirect-limit" || run == 1 && (scenario == "redirected-304" || scenario == "direct-to-redirected-304") {
+				if scenario == "redirect-limit" ||
+					run == 1 && (scenario == "redirected-304" || scenario == "direct-to-redirected-304") {
 					if err == nil || input != nil {
 						t.Fatalf("invalid redirect succeeded: %v", err)
 					}
@@ -280,7 +299,13 @@ func TestAcquire_ConditionalValidation(t *testing.T) {
 		}
 		assert.Diff(t, trace.snapshot(), []remoteHTTPRequest{
 			{Method: http.MethodGet, Path: "/input", Status: http.StatusOK, Bytes: len(content)},
-			{Method: http.MethodGet, Path: "/input", ETag: `"` + manifest.Fingerprint(content) + `"`, Modified: "Mon, 01 Jun 2026 12:00:00 GMT", Status: http.StatusNotModified},
+			{
+				Method:   http.MethodGet,
+				Path:     "/input",
+				ETag:     `"` + manifest.Fingerprint(content) + `"`,
+				Modified: "Mon, 01 Jun 2026 12:00:00 GMT",
+				Status:   http.StatusNotModified,
+			},
 		})
 	})
 	t.Run("owner/missing", func(t *testing.T) {
@@ -290,14 +315,19 @@ func TestAcquire_ConditionalValidation(t *testing.T) {
 		url := srv.URL + "/input?version=2"
 		root := t.TempDir()
 		c := newTestHTTPInputs(t, root)
-		reader, _, _, err := c.owner.Blob(t.Context(), sourcecache.BlobKey{Content: struct{ URL string }{url}}, sourcecache.Policy{}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
-			annotations := map[string]string{
-				httpETagAnnotation:         `"` + manifest.Fingerprint("changed") + `"`,
-				httpLastModifiedAnnotation: "Mon, 01 Jun 2026 12:00:00 GMT",
-			}
-			size, err := io.WriteString(w, "original")
-			return sourcecache.ProducerResult{Size: int64(size), Annotations: annotations}, err
-		})
+		reader, _, _, err := c.owner.Blob(
+			t.Context(),
+			sourcecache.BlobKey{Content: struct{ URL string }{url}},
+			sourcecache.Policy{},
+			func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+				annotations := map[string]string{
+					httpETagAnnotation:         `"` + manifest.Fingerprint("changed") + `"`,
+					httpLastModifiedAnnotation: "Mon, 01 Jun 2026 12:00:00 GMT",
+				}
+				size, err := io.WriteString(w, "original")
+				return sourcecache.ProducerResult{Size: int64(size), Annotations: annotations}, err
+			},
+		)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -315,7 +345,11 @@ func TestAcquire_ConditionalValidation(t *testing.T) {
 		if sourcecache.AcquisitionIdentity(input) == firstIdentity {
 			t.Error("different owner retained previous acquisition identity")
 		}
-		assert.Diff(t, trace.snapshot(), []remoteHTTPRequest{{Method: http.MethodGet, Path: "/input", Status: http.StatusOK, Bytes: len("changed")}})
+		assert.Diff(
+			t,
+			trace.snapshot(),
+			[]remoteHTTPRequest{{Method: http.MethodGet, Path: "/input", Status: http.StatusOK, Bytes: len("changed")}},
+		)
 		closeTestHTTPInputs(t, c)
 	})
 	var version atomic.Int32
@@ -424,13 +458,20 @@ func TestAcquire_ConditionalValidation(t *testing.T) {
 					if phase == 1 && scenario == "close-304" {
 						closer = closeErr
 					}
-					return &http.Response{Request: r.Clone(r.Context()), StatusCode: status, Header: headers, Body: remoteBody{Reader: strings.NewReader(body), close: func() error { return closer }}}, nil
+					return &http.Response{
+						Request:    r.Clone(r.Context()),
+						StatusCode: status,
+						Header:     headers,
+						Body:       remoteBody{Reader: strings.NewReader(body), close: func() error { return closer }},
+					}, nil
 				})
 				input, err := c.Acquire(t.Context(), url, sourcecache.RetryConfig{}, nil)
 				if requests != 1 {
 					t.Fatalf("phase=%d requests=%d, want 1", phase, requests)
 				}
-				if scenario == "unsolicited-304" || phase == 1 && (scenario == "unauthorized" || scenario == "close-304" || scenario == "unvalidated-304") {
+				if scenario == "unsolicited-304" ||
+					phase == 1 &&
+						(scenario == "unauthorized" || scenario == "close-304" || scenario == "unvalidated-304") {
 					if err == nil || input != nil {
 						t.Fatalf("invalid validation succeeded: %v", err)
 					}
@@ -476,7 +517,12 @@ func TestAcquire_ConditionalValidation(t *testing.T) {
 					}
 					for _, desc := range index.Manifests {
 						if desc.MediaType == "application/octet-stream" {
-							path := filepath.Join(root, "oci/blobs", desc.Digest.Algorithm().String(), desc.Digest.Encoded())
+							path := filepath.Join(
+								root,
+								"oci/blobs",
+								desc.Digest.Algorithm().String(),
+								desc.Digest.Encoded(),
+							)
 							if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 								t.Fatal(err)
 							}
@@ -506,9 +552,17 @@ func TestAcquire_CancelDoesNotPoisonCache(t *testing.T) {
 						case <-r.Context().Done():
 							return nil, r.Context().Err()
 						}
-						return &http.Response{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header)}, nil
+						return &http.Response{
+							StatusCode: http.StatusServiceUnavailable,
+							Body:       io.NopCloser(strings.NewReader("")),
+							Header:     make(http.Header),
+						}, nil
 					}
-					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("body: ok\n")), Header: make(http.Header)}, nil
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader("body: ok\n")),
+						Header:     make(http.Header),
+					}, nil
 				})}
 				retry := sourcecache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}
 				ctx, cancel := context.WithCancel(t.Context())
@@ -543,7 +597,15 @@ func TestAcquire_CancelDoesNotPoisonCache(t *testing.T) {
 				if hits != 2 {
 					t.Fatalf("requests=%d, want 2", hits)
 				}
-				if _, err := c.Acquire(ctx, "https://example.invalid/resource", retry, nil); !errors.Is(err, context.Canceled) {
+				if _, err := c.Acquire(
+					ctx,
+					"https://example.invalid/resource",
+					retry,
+					nil,
+				); !errors.Is(
+					err,
+					context.Canceled,
+				) {
 					t.Fatalf("canceled warm waiter: %v", err)
 				}
 			})
@@ -568,8 +630,19 @@ func TestIsHTTPClientError(t *testing.T) {
 		{"500 transient", &fetcherr.ResponseError{StatusCode: 500}, false},
 		{"599 transient", &fetcherr.ResponseError{StatusCode: 599}, false},
 		{"600 terminal", &fetcherr.ResponseError{StatusCode: 600}, false},
-		{"client after transient", errors.Join(&fetcherr.ResponseError{StatusCode: 503}, fmt.Errorf("edge: %w", &fetcherr.ResponseError{StatusCode: 404})), true},
-		{"client before transient", errors.Join(&fetcherr.ResponseError{StatusCode: 404}, &fetcherr.ResponseError{StatusCode: 503}), true},
+		{
+			"client after transient",
+			errors.Join(
+				&fetcherr.ResponseError{StatusCode: 503},
+				fmt.Errorf("edge: %w", &fetcherr.ResponseError{StatusCode: 404}),
+			),
+			true,
+		},
+		{
+			"client before transient",
+			errors.Join(&fetcherr.ResponseError{StatusCode: 404}, &fetcherr.ResponseError{StatusCode: 503}),
+			true,
+		},
 		{"200 never-client-error", &fetcherr.ResponseError{StatusCode: 200}, false},
 		{"wrapped 404", fmt.Errorf("preflight: %w", &fetcherr.ResponseError{StatusCode: 404}), true},
 		{"wrapped 500", fmt.Errorf("preflight: %w", &fetcherr.ResponseError{StatusCode: 500}), false},
@@ -590,8 +663,15 @@ func TestAcquire_RetryTransientCacheClientError(t *testing.T) {
 		client bool
 		retry  bool
 	}{
-		{400, true, false}, {401, true, false}, {403, true, false}, {404, true, false},
-		{429, false, true}, {499, true, false}, {500, false, true}, {599, false, true}, {600, false, false},
+		{400, true, false},
+		{401, true, false},
+		{403, true, false},
+		{404, true, false},
+		{429, false, true},
+		{499, true, false},
+		{500, false, true},
+		{599, false, true},
+		{600, false, false},
 	} {
 		t.Run(fmt.Sprint(tc.status), func(t *testing.T) {
 			var hits atomic.Int64
@@ -652,22 +732,32 @@ func TestAcquire_PolicyIsolation(t *testing.T) {
 						entered, release := make(chan struct{}), make(chan struct{})
 						hits := 0
 						c := newTestHTTPInputs(t, "")
-						c.httpClient = &http.Client{Transport: remoteRoundTrip(func(r *http.Request) (*http.Response, error) {
-							hits++
-							if hits == 1 {
-								close(entered)
-								select {
-								case <-release:
-								case <-r.Context().Done():
-									return nil, r.Context().Err()
+						c.httpClient = &http.Client{
+							Transport: remoteRoundTrip(func(r *http.Request) (*http.Response, error) {
+								hits++
+								if hits == 1 {
+									close(entered)
+									select {
+									case <-release:
+									case <-r.Context().Done():
+										return nil, r.Context().Err()
+									}
 								}
-							}
-							return &http.Response{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header)}, nil
-						})}
+								return &http.Response{
+									StatusCode: http.StatusServiceUnavailable,
+									Body:       io.NopCloser(strings.NewReader("")),
+									Header:     make(http.Header),
+								}, nil
+							}),
+						}
 						done := make(chan error, concurrency)
 						launch := func(i int) {
 							go func() {
-								retry := sourcecache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}
+								retry := sourcecache.RetryConfig{
+									Attempts: 3,
+									MinWait:  time.Nanosecond,
+									MaxWait:  time.Nanosecond,
+								}
 								if !equal && i == 0 {
 									retry.Attempts = 1
 								}
@@ -799,7 +889,9 @@ func TestAcquire_NetworkSuppression(t *testing.T) {
 				}
 				return nil
 			})
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "new run") }))
+			srv := httptest.NewServer(
+				http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "new run") }),
+			)
 			t.Cleanup(srv.Close)
 			target := strings.Replace(srv.URL, "127.0.0.1", "network.test", 1)
 			retry := sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour}
@@ -872,61 +964,76 @@ func TestAcquire_CloseJoinsAcquisition(t *testing.T) {
 						if storage == "disk" {
 							root = t.TempDir()
 						}
-						c := newHTTPInputs(t, cachetest.New(t, root, sourcecache.New), nil, task.NewBounded(concurrency))
+						c := newHTTPInputs(
+							t,
+							cachetest.New(t, root, sourcecache.New),
+							nil,
+							task.NewBounded(concurrency),
+						)
 						t.Cleanup(c.Close)
-						entered, canceled, release, completed := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{})
+						entered, canceled, release, completed := make(
+							chan struct{},
+						), make(
+							chan struct{},
+						), make(
+							chan struct{},
+						), make(
+							chan struct{},
+						)
 						hits := 0
-						c.httpClient = &http.Client{Transport: remoteRoundTrip(func(r *http.Request) (*http.Response, error) {
-							hits++
-							if stage == "headers" {
-								close(entered)
-								select {
-								case <-r.Context().Done():
-									close(canceled)
-								case <-release:
+						c.httpClient = &http.Client{
+							Transport: remoteRoundTrip(func(r *http.Request) (*http.Response, error) {
+								hits++
+								if stage == "headers" {
+									close(entered)
+									select {
+									case <-r.Context().Done():
+										close(canceled)
+									case <-release:
+									}
+									<-release
+									close(completed)
+									return nil, context.Canceled
 								}
-								<-release
-								close(completed)
-								return nil, context.Canceled
-							}
-							status := http.StatusOK
-							var reader io.Reader = strings.NewReader("complete")
-							if stage == "read" {
-								reader = remoteRead(func([]byte) (int, error) {
-									close(entered)
-									select {
-									case <-r.Context().Done():
-										close(canceled)
-									case <-release:
-									}
-									<-release
-									return 0, context.Canceled
-								})
-							}
-							if stage == "backoff" {
-								status = http.StatusServiceUnavailable
-							}
-							body := remoteBody{Reader: reader, close: func() error {
-								defer close(completed)
-								if stage == "cleanup" || stage == "publication" {
-									close(entered)
-									select {
-									case <-r.Context().Done():
-										close(canceled)
-									case <-release:
-									}
-									<-release
-									if stage == "cleanup" {
-										return context.Canceled
-									}
+								status := http.StatusOK
+								var reader io.Reader = strings.NewReader("complete")
+								if stage == "read" {
+									reader = remoteRead(func([]byte) (int, error) {
+										close(entered)
+										select {
+										case <-r.Context().Done():
+											close(canceled)
+										case <-release:
+										}
+										<-release
+										return 0, context.Canceled
+									})
 								}
 								if stage == "backoff" {
-									close(entered)
+									status = http.StatusServiceUnavailable
 								}
-								return nil
-							}}
-							return &http.Response{StatusCode: status, Body: body, Header: make(http.Header)}, nil
-						})}
+								body := remoteBody{Reader: reader, close: func() error {
+									defer close(completed)
+									if stage == "cleanup" || stage == "publication" {
+										close(entered)
+										select {
+										case <-r.Context().Done():
+											close(canceled)
+										case <-release:
+										}
+										<-release
+										if stage == "cleanup" {
+											return context.Canceled
+										}
+									}
+									if stage == "backoff" {
+										close(entered)
+									}
+									return nil
+								}}
+								return &http.Response{StatusCode: status, Body: body, Header: make(http.Header)}, nil
+							}),
+						}
 						retry := sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour, MaxWait: time.Hour}
 						url := "https://example.invalid/resource"
 						ctx, cancel := context.WithCancel(t.Context())
@@ -972,14 +1079,25 @@ func TestAcquire_CloseJoinsAcquisition(t *testing.T) {
 						<-completed
 						<-rf.done
 						if workers.state.Load() != remoteClosed || rf.cancel.Load() != nil || hits != 1 {
-							t.Fatalf("incomplete teardown: state=%d cancel=%v hits=%d", workers.state.Load(), rf.cancel.Load(), hits)
+							t.Fatalf(
+								"incomplete teardown: state=%d cancel=%v hits=%d",
+								workers.state.Load(),
+								rf.cancel.Load(),
+								hits,
+							)
 						}
-						if stage != "publication" && (!errors.Is(rf.err, context.Canceled) || !errors.Is(rf.err, manifest.ErrFlux)) {
+						if stage != "publication" &&
+							(!errors.Is(rf.err, context.Canceled) || !errors.Is(rf.err, manifest.ErrFlux)) {
 							t.Fatalf("owner cancellation identity: %v", rf.err)
 						}
 						check := func(owner *sourcecache.Cache) {
 							t.Helper()
-							reader, _, _, err := owner.Blob(t.Context(), sourcecache.BlobKey{Content: struct{ URL string }{url}}, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
+							reader, _, _, err := owner.Blob(
+								t.Context(),
+								sourcecache.BlobKey{Content: struct{ URL string }{url}},
+								sourcecache.Policy{MaxAge: sourcecache.Forever},
+								nil,
+							)
 							if err != nil {
 								if !errors.Is(err, errdef.ErrNotFound) {
 									t.Fatal(err)
@@ -1021,11 +1139,16 @@ func TestAcquire_CloseJoinsKeyWait(t *testing.T) {
 					key := sourcecache.BlobKey{Content: struct{ URL string }{url}}
 					entered, release, held := make(chan struct{}), make(chan struct{}), make(chan error, 1)
 					go func() {
-						_, _, _, err := c.owner.Blob(t.Context(), key, sourcecache.Policy{}, func(context.Context, sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
-							close(entered)
-							<-release
-							return sourcecache.ProducerResult{}, nil
-						})
+						_, _, _, err := c.owner.Blob(
+							t.Context(),
+							key,
+							sourcecache.Policy{},
+							func(context.Context, sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+								close(entered)
+								<-release
+								return sourcecache.ProducerResult{}, nil
+							},
+						)
 						held <- err
 					}()
 					<-entered
@@ -1065,7 +1188,11 @@ func TestAcquire_ExactSuccessor(t *testing.T) {
 				c.httpClient = &http.Client{Transport: remoteRoundTrip(func(*http.Request) (*http.Response, error) {
 					close(entered)
 					<-release
-					return &http.Response{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header)}, nil
+					return &http.Response{
+						StatusCode: http.StatusServiceUnavailable,
+						Body:       io.NopCloser(strings.NewReader("")),
+						Header:     make(http.Header),
+					}, nil
 				})}
 				key := remoteKey{url: "https://example.invalid/successor", retry: sourcecache.RetryConfig{Attempts: 1}}
 				done := make(chan error, concurrency)
@@ -1113,7 +1240,17 @@ func TestAcquire_OwnerIsolation(t *testing.T) {
 					if sharedNetwork {
 						nb = na
 					}
-					a, b := newHTTPInputs(t, owner, na, task.NewBounded(2)), newHTTPInputs(t, owner, nb, task.NewBounded(2))
+					a, b := newHTTPInputs(
+						t,
+						owner,
+						na,
+						task.NewBounded(2),
+					), newHTTPInputs(
+						t,
+						owner,
+						nb,
+						task.NewBounded(2),
+					)
 					t.Cleanup(a.Close)
 					t.Cleanup(b.Close)
 					transport := a.httpClient.Transport
@@ -1159,7 +1296,15 @@ func TestAcquire_OwnerIsolation(t *testing.T) {
 							t.Fatal(err)
 						}
 					}
-					if _, err := a.Acquire(t.Context(), srv.URL, sourcecache.RetryConfig{}, nil); !errors.Is(err, fs.ErrClosed) {
+					if _, err := a.Acquire(
+						t.Context(),
+						srv.URL,
+						sourcecache.RetryConfig{},
+						nil,
+					); !errors.Is(
+						err,
+						fs.ErrClosed,
+					) {
 						t.Fatalf("closed owner: %v", err)
 					}
 					input, err := b.Acquire(t.Context(), srv.URL+"/after", sourcecache.RetryConfig{}, nil)
@@ -1184,9 +1329,23 @@ func TestAcquire_NetworkSuppressionOwnerCancellation(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				var network Network
 				owner := cachetest.New(t, "", sourcecache.New)
-				c, other := newHTTPInputs(t, owner, &network, task.NewBounded(concurrency)), newHTTPInputs(t, owner, &network, task.NewBounded(concurrency))
+				c, other := newHTTPInputs(
+					t,
+					owner,
+					&network,
+					task.NewBounded(concurrency),
+				), newHTTPInputs(
+					t,
+					owner,
+					&network,
+					task.NewBounded(concurrency),
+				)
 				testutil.StubDNS(t, func(context.Context, string) error { return os.ErrDeadlineExceeded })
-				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "healthy") }))
+				srv := httptest.NewServer(
+					http.HandlerFunc(
+						func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "healthy") },
+					),
+				)
 				entered := make(chan struct{}, concurrency)
 				release := make(chan struct{})
 				var senders sync.WaitGroup

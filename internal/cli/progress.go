@@ -60,7 +60,9 @@ func (w *barWriter) Write(p []byte) (int, error) {
 	return w.out.Write(p)
 }
 
-func (w *barWriter) progress(ctx context.Context) (func(manifest.TreeID, manifest.DiagnosticIdentity, store.StatusInfo), func()) {
+func (w *barWriter) progress(
+	ctx context.Context,
+) (func(manifest.TreeID, manifest.DiagnosticIdentity, store.StatusInfo), func()) {
 	m := newBarModel(w.color)
 	events := m.events
 	restore := captureStderr(func(line string) { slog.Debug(line) })

@@ -22,7 +22,11 @@ func headsForTest(s *Store, id manifest.NamedResource) authorityHeads {
 	sh := s.shardFor(id)
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
-	h := authorityHeads{object: sh.cells[id].generation, condition: sh.conditions[id].stamp().generation, artifact: sh.artifacts[id].generation}
+	h := authorityHeads{
+		object:    sh.cells[id].generation,
+		condition: sh.conditions[id].stamp().generation,
+		artifact:  sh.artifacts[id].generation,
+	}
 	if slot := sh.slots[id]; slot != nil {
 		h.producer = slot.generation
 	}
@@ -36,7 +40,12 @@ func TestReadRegistration_SameByteAuthorityTransitions(t *testing.T) {
 			t.Parallel()
 			s := New()
 			p, q := ownerID("a"), ownerID("z")
-			s.AddObjects([]manifest.BaseManifest{&manifest.Kustomization{Name: p.Name, Namespace: p.Namespace}, &manifest.Kustomization{Name: q.Name, Namespace: q.Namespace}})
+			s.AddObjects(
+				[]manifest.BaseManifest{
+					&manifest.Kustomization{Name: p.Name, Namespace: p.Namespace},
+					&manifest.Kustomization{Name: q.Name, Namespace: q.Namespace},
+				},
+			)
 			child := emissionChild("shared", "equal")
 			s.RecordEmitted(p, &Emission{Children: []Child{child}, Complete: true}, nil)
 			h1 := headsForTest(s, child.Obj.Named())
@@ -113,11 +122,20 @@ func TestStore_CollectionAuthority(t *testing.T) {
 			versions := make([]manifest.BaseManifest, 3)
 			for i, label := range []string{"a", "a", "b"} {
 				if raw {
-					versions[i] = &manifest.RawObject{APIVersion: "v1", Kind: "ConfigMap", Name: "input", Spec: map[string]any{
-						"metadata": map[string]any{"labels": map[string]any{"selected": label}}, "data": i,
-					}}
+					versions[i] = &manifest.RawObject{
+						APIVersion: "v1",
+						Kind:       "ConfigMap",
+						Name:       "input",
+						Spec: map[string]any{
+							"metadata": map[string]any{"labels": map[string]any{"selected": label}}, "data": i,
+						},
+					}
 				} else {
-					versions[i] = &manifest.Kustomization{Name: "input", Labels: map[string]string{"selected": label}, Path: string(rune('a' + i))}
+					versions[i] = &manifest.Kustomization{
+						Name:   "input",
+						Labels: map[string]string{"selected": label},
+						Path:   string(rune('a' + i)),
+					}
 				}
 			}
 			id := versions[0].Named()
@@ -298,7 +316,11 @@ func TestReadRegistration_NoABA(t *testing.T) {
 				case "artifact":
 					s.SetArtifact(id, &SourceArtifact{Key: "new"})
 				case "producer":
-					s.RecordEmitted(id, &Emission{Children: []Child{emissionChild("child", "new")}, Complete: true}, nil)
+					s.RecordEmitted(
+						id,
+						&Emission{Children: []Child{emissionChild("child", "new")}, Complete: true},
+						nil,
+					)
 				case "bucket":
 					s.AddObject(emissionChild("new", "new").Obj)
 				}
@@ -409,7 +431,12 @@ func TestFeasibility_PointerOnlyExistingSection(t *testing.T) {
 				for i, child := range proposed.Children {
 					prepared[i] = admission{child: child, targets: manifest.ProducerTargets(child.Obj)}
 				}
-				proposal := prepareEmission(&proposed, previous, prepared, make(map[manifest.NamedResource]int, len(prepared)))
+				proposal := prepareEmission(
+					&proposed,
+					previous,
+					prepared,
+					make(map[manifest.NamedResource]int, len(prepared)),
+				)
 				close(captured)
 				tasks.YieldSlot(func() { <-replaced })
 				var result publicationResult
@@ -496,7 +523,11 @@ func TestOfflockModel_ActivationAfterValidation(t *testing.T) {
 	seed := &manifest.ConfigMap{Name: "leaf"}
 	s.AddObjects([]manifest.BaseManifest{p, seed})
 	s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-		seed.Named(): {Productions: []manifest.Production{{Owner: p.Named(), Source: manifest.BootstrapSourceID, Authored: seed.Named(), Path: "leaf.yaml"}}},
+		seed.Named(): {
+			Productions: []manifest.Production{
+				{Owner: p.Named(), Source: manifest.BootstrapSourceID, Authored: seed.Named(), Path: "leaf.yaml"},
+			},
+		},
 	}})
 	paused, resume := make(chan struct{}), make(chan struct{})
 	unsub := s.AddListener(EventArtifactUpdated, func(id manifest.NamedResource, _ any) {
@@ -602,8 +633,17 @@ func TestStore_AnchorRechecksEffective(t *testing.T) {
 		st := New()
 		producer := ownerID("producer")
 		st.AddObject(&manifest.Kustomization{Name: producer.Name, Namespace: producer.Namespace})
-		obj := &manifest.RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Name: "generator", Namespace: "apps"}
-		doc := map[string]any{"apiVersion": obj.APIVersion, "kind": obj.Kind, "metadata": map[string]any{"name": obj.Name, "namespace": obj.Namespace}}
+		obj := &manifest.RawObject{
+			APIVersion: "source.extensions.fluxcd.io/v1beta1",
+			Kind:       "ArtifactGenerator",
+			Name:       "generator",
+			Namespace:  "apps",
+		}
+		doc := map[string]any{
+			"apiVersion": obj.APIVersion,
+			"kind":       obj.Kind,
+			"metadata":   map[string]any{"name": obj.Name, "namespace": obj.Namespace},
+		}
 		st.RecordEmitted(producer, &Emission{Children: []Child{{Obj: obj, Doc: doc}}, Complete: true}, nil)
 		shard := st.shardFor(obj.Named())
 		shard.mu.RLock()
@@ -671,7 +711,13 @@ func TestReadRegistration_SeedReplacement(t *testing.T) {
 	s := New()
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 	child := &manifest.HelmRelease{Name: "child", Namespace: "apps", Values: map[string]any{"value": "old"}}
-	s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{child.Named(): {Productions: []manifest.Production{{Owner: parent.Named()}}}}})
+	s.SetDiscoveryIndex(
+		&manifest.DiscoveryIndex{
+			Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				child.Named(): {Productions: []manifest.Production{{Owner: parent.Named()}}},
+			},
+		},
+	)
 	s.AddObject(parent)
 	s.AddObject(child)
 	replacement := child.Clone()

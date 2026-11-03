@@ -22,7 +22,11 @@ func TestObjectDocument_Ownership(t *testing.T) {
 	} {
 		t.Run(tc.kind, func(t *testing.T) {
 			t.Parallel()
-			docs, err := splitDocMaps([]byte("apiVersion: " + tc.version + "\nkind: " + tc.kind + "\nmetadata: {name: original, namespace: authored, labels: {}, annotations: {}}\nspec: {}\n"))
+			docs, err := splitDocMaps(
+				[]byte(
+					"apiVersion: " + tc.version + "\nkind: " + tc.kind + "\nmetadata: {name: original, namespace: authored, labels: {}, annotations: {}}\nspec: {}\n",
+				),
+			)
 			assert.NoError(t, err)
 			specs, err := splitDocMaps([]byte(tc.spec))
 			assert.NoError(t, err)
@@ -70,7 +74,9 @@ func TestObjectDocument_Ownership(t *testing.T) {
 				changed = clone
 			case *HelmRelease:
 				spec := doc["spec"].(map[string]any)
-				want, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&helmv2.HelmRelease{Spec: o.HelmReleaseSpec})
+				want, err := runtime.DefaultUnstructuredConverter.ToUnstructured(
+					&helmv2.HelmRelease{Spec: o.HelmReleaseSpec},
+				)
 				assert.NoError(t, err)
 				if diff := cmp.Diff(want["spec"], spec); diff != "" {
 					t.Fatalf("desired spec differs from upstream (-want +got):\n%s", diff)
@@ -121,7 +127,13 @@ func TestExternalArtifact_RenderDocument(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			cr := sourcev1.ExternalArtifact{Name: "output", Namespace: "apps", Labels: map[string]string{"capture": "value"}, Annotations: map[string]string{"annotation": "value"}, Spec: sourcev1.ExternalArtifactSpec{SourceRef: tc.ref}}
+			cr := sourcev1.ExternalArtifact{
+				Name:        "output",
+				Namespace:   "apps",
+				Labels:      map[string]string{"capture": "value"},
+				Annotations: map[string]string{"annotation": "value"},
+				Spec:        sourcev1.ExternalArtifactSpec{SourceRef: tc.ref},
+			}
 			want, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&cr)
 			assert.NoError(t, err)
 			delete(want, "status")

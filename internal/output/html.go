@@ -198,7 +198,12 @@ func foldGaps(groups [][]difflib.OpCode, nOld int) []gap {
 	gaps := make([]gap, len(groups)+1)
 	set := func(pos, oldStart, oldEnd, newStart int) {
 		if oldEnd > oldStart {
-			gaps[pos] = gap{id: fmt.Sprintf("g%d", pos), oldStart: oldStart, newStart: newStart, count: oldEnd - oldStart}
+			gaps[pos] = gap{
+				id:       fmt.Sprintf("g%d", pos),
+				oldStart: oldStart,
+				newStart: newStart,
+				count:    oldEnd - oldStart,
+			}
 		}
 	}
 	for gi, group := range groups {
@@ -231,8 +236,10 @@ func unifiedRows(ah, bh []template.HTML, groups [][]difflib.OpCode) []uRow {
 		}
 		rows = append(rows, uRow{Hunk: true, Fold: g.id, Count: g.count})
 		for k := range g.count {
-			rows = append(rows, uRow{Folded: true, Fold: g.id, Kind: kindCtx,
-				OldNo: g.oldStart + k + 1, NewNo: g.newStart + k + 1, HTML: ah[g.oldStart+k]})
+			rows = append(rows, uRow{
+				Folded: true, Fold: g.id, Kind: kindCtx,
+				OldNo: g.oldStart + k + 1, NewNo: g.newStart + k + 1, HTML: ah[g.oldStart+k],
+			})
 		}
 	}
 	for gi, group := range groups {
@@ -240,7 +247,10 @@ func unifiedRows(ah, bh []template.HTML, groups [][]difflib.OpCode) []uRow {
 		for _, op := range group {
 			if op.Tag == 'e' {
 				for k := range op.I2 - op.I1 {
-					rows = append(rows, uRow{Kind: kindCtx, OldNo: op.I1 + k + 1, NewNo: op.J1 + k + 1, HTML: ah[op.I1+k]})
+					rows = append(
+						rows,
+						uRow{Kind: kindCtx, OldNo: op.I1 + k + 1, NewNo: op.J1 + k + 1, HTML: ah[op.I1+k]},
+					)
 				}
 				continue
 			}
@@ -295,11 +305,23 @@ func sideRows(ah, bh []template.HTML, groups [][]difflib.OpCode) []sRow {
 				}
 			case 'd':
 				for k := range op.I2 - op.I1 {
-					rows = append(rows, sRow{Left: cell{Kind: kindDel, No: op.I1 + k + 1, HTML: ah[op.I1+k]}, Right: cell{Kind: kindBlank}})
+					rows = append(
+						rows,
+						sRow{
+							Left:  cell{Kind: kindDel, No: op.I1 + k + 1, HTML: ah[op.I1+k]},
+							Right: cell{Kind: kindBlank},
+						},
+					)
 				}
 			case 'i':
 				for k := range op.J2 - op.J1 {
-					rows = append(rows, sRow{Left: cell{Kind: kindBlank}, Right: cell{Kind: kindAdd, No: op.J1 + k + 1, HTML: bh[op.J1+k]}})
+					rows = append(
+						rows,
+						sRow{
+							Left:  cell{Kind: kindBlank},
+							Right: cell{Kind: kindAdd, No: op.J1 + k + 1, HTML: bh[op.J1+k]},
+						},
+					)
 				}
 			case 'r':
 				dn, an := op.I2-op.I1, op.J2-op.J1
@@ -442,7 +464,11 @@ func newHighlighter() (*highlighter, string, error) {
 	// mode (.chroma.light / .chroma.dark) — the light/dark scoping diff.html.tmpl
 	// toggles. chroma made it opt-in in v2.27.0 (implicitly on before); without it
 	// both stylesheets collapse onto a single unscoped .chroma.
-	fmtr := chromahtml.New(chromahtml.WithClasses(true), chromahtml.WithModeClasses(true), chromahtml.PreventSurroundingPre(true))
+	fmtr := chromahtml.New(
+		chromahtml.WithClasses(true),
+		chromahtml.WithModeClasses(true),
+		chromahtml.PreventSurroundingPre(true),
+	)
 	var css bytes.Buffer
 	if err := fmtr.WriteCSS(&css, light); err != nil {
 		return nil, "", fmt.Errorf("chroma css (light): %w", err)

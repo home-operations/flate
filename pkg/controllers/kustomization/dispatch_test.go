@@ -20,7 +20,12 @@ func TestEmitRenderedChildrenBatchesLeafDispatch(t *testing.T) {
 	idB := testutil.KustomizationID("ns", "b")
 	parent := testutil.KustomizationID("ns", "parent")
 
-	rs := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "ns", Name: "render-only"}
+	rs := manifest.NamedResource{
+		Group:     manifest.FluxOperatorDomain,
+		Kind:      manifest.KindResourceSet,
+		Namespace: "ns",
+		Name:      "render-only",
+	}
 	var sawBOnA bool
 	var sawRS bool
 	s.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
@@ -36,7 +41,12 @@ func TestEmitRenderedChildrenBatchesLeafDispatch(t *testing.T) {
 	}, false)
 
 	publishDocuments(c, parent, []map[string]any{
-		{"apiVersion": "fluxcd.controlplane.io/v1", "kind": "ResourceSet", "metadata": map[string]any{"name": rs.Name, "namespace": rs.Namespace}, "spec": map[string]any{}},
+		{
+			"apiVersion": "fluxcd.controlplane.io/v1",
+			"kind":       "ResourceSet",
+			"metadata":   map[string]any{"name": rs.Name, "namespace": rs.Namespace},
+			"spec":       map[string]any{},
+		},
 		fluxKustomizationDoc("a", "b"),
 		fluxKustomizationDoc("b", "a"),
 	}, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: parent.Namespace})
@@ -87,7 +97,14 @@ func TestEmitRenderedChildren_EqualReplay(t *testing.T) {
 	c := New(s, nil, nil, false)
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 	s.AddObject(parent)
-	docs := []map[string]any{{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization", "metadata": map[string]any{"name": "child", "namespace": "apps"}, "spec": map[string]any{"path": "./child"}}}
+	docs := []map[string]any{
+		{
+			"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+			"kind":       "Kustomization",
+			"metadata":   map[string]any{"name": "child", "namespace": "apps"},
+			"spec":       map[string]any{"path": "./child"},
+		},
+	}
 	children, retained := parseChildrenForTest(parent.Named(), docs, manifest.ParseDocOptions{})
 	next := &store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(retained), Complete: true}
 	controllertest.Emit(t.Context(), c.Controller, parent.Named(), next)

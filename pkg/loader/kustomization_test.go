@@ -37,7 +37,13 @@ func TestResolve_File(t *testing.T) {
 		{"traversal mixed", base, "sub/../../escape", "", false},
 		{"sibling prefix escape", base, "../foobar/values.yaml", "", false},
 		{"absolute passes through", base, absolute, absolute, true},
-		{"absolute cleaned", base, filepath.Dir(absolute) + string(filepath.Separator) + "sub/../values.yaml", absolute, true},
+		{
+			"absolute cleaned",
+			base,
+			filepath.Dir(absolute) + string(filepath.Separator) + "sub/../values.yaml",
+			absolute,
+			true,
+		},
 		{"empty rejected", base, "", "", false},
 		{"dot", base, ".", base, true},
 		{"dot prefix", base, "..foo", filepath.Join(base, "..foo"), true},
@@ -123,7 +129,13 @@ func TestFinalizeIndex_ResourceMembership(t *testing.T) {
 			assert.NoError(t, err)
 			l.Admit(root)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
-			if got := l.AdmitsRoot(l.IndexedObject(testutil.KustomizationID("apps", "stray"), l.Index.Records[testutil.KustomizationID("apps", "stray")]).Obj, filepath.Join(root, "app/ks.yaml")); got != tc.want {
+			if got := l.AdmitsRoot(
+				l.IndexedObject(
+					testutil.KustomizationID("apps", "stray"),
+					l.Index.Records[testutil.KustomizationID("apps", "stray")],
+				).Obj,
+				filepath.Join(root, "app/ks.yaml"),
+			); got != tc.want {
 				t.Fatalf("admission=%t want %t", got, tc.want)
 			}
 			var owners []manifest.NamedResource
@@ -138,8 +150,18 @@ func TestFinalizeIndex_ResourceMembership(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "kustomization.yaml", "resources: [selected.yaml]\n")
-			testutil.WriteFile(t, root, "selected.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: selected, namespace: apps}\nspec: {url: https://example.test/repo.git}\n")
-			testutil.WriteFile(t, root, "excluded.yaml", "apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: excluded}\nspec:\n  dependsOn: [{apiVersion: '"+version+"', kind: Kustomization, name: missing}]\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"selected.yaml",
+				"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: selected, namespace: apps}\nspec: {url: https://example.test/repo.git}\n",
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				"excluded.yaml",
+				"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: excluded}\nspec:\n  dependsOn: [{apiVersion: '"+version+"', kind: Kustomization, name: missing}]\n",
+			)
 			l := New(store.New())
 			_, err := loadForTest(t.Context(), t, l, root)
 			if err != nil {
@@ -148,7 +170,15 @@ func TestFinalizeIndex_ResourceMembership(t *testing.T) {
 			if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 				t.Fatal(err)
 			}
-			if len(retainedErrorsForTest(l)) != 0 || l.Store.GetObject(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "selected"}) == nil {
+			if len(retainedErrorsForTest(l)) != 0 ||
+				l.Store.GetObject(
+					manifest.NamedResource{
+						Group:     manifest.SourceDomain,
+						Kind:      manifest.KindGitRepository,
+						Namespace: "apps",
+						Name:      "selected",
+					},
+				) == nil {
 				t.Fatalf("unlisted input affected selected source: errors=%v", retainedErrorsForTest(l))
 			}
 		})
@@ -171,7 +201,12 @@ func TestLoader_KustomizationFilenames(t *testing.T) {
 			root := t.TempDir()
 			testutil.WriteFile(t, root, tc.name, "resources: [included.yaml]\nunknownDirective: ignored\n")
 			for _, file := range []string{"included.yaml", "unlisted.yaml"} {
-				testutil.WriteFile(t, root, file, "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: "+file+"}\nspec: {url: https://example.test/repo.git}\n")
+				testutil.WriteFile(
+					t,
+					root,
+					file,
+					"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: "+file+"}\nspec: {url: https://example.test/repo.git}\n",
+				)
 			}
 			if loaded, err := New(store.New()).Load(t.Context(), root); err != nil || loaded != tc.loaded {
 				t.Fatalf("Load = %d, %v; want %d objects", loaded, err, tc.loaded)
@@ -203,7 +238,9 @@ func TestDocumentReader_SourceViewsAndReuse(t *testing.T) {
 	objects, err := r.parseFile(t.Context(), host, manifest.ParseDocOptions{DefaultNamespace: ""})
 	assert.NoError(t, err)
 	assert.Equal(t, len(objects), 0)
-	if failed := r.cache[host].objects; len(failed) != 1 || !errors.Is(failed[0].outcome.Err, fs.ErrNotExist) || failed[0].Obj != nil || failed[0].Doc != nil {
+	if failed := r.cache[host].objects; len(failed) != 1 || !errors.Is(failed[0].outcome.Err, fs.ErrNotExist) ||
+		failed[0].Obj != nil ||
+		failed[0].Doc != nil {
 		t.Fatalf("absent committed file fell through to disk: %+v", failed)
 	}
 	testutil.WriteFile(t, working, "Kustomization", "namespace: changed\n")
@@ -280,7 +317,12 @@ metadata: {name: pending}
 		c := objects[1].(*manifest.ConfigMap)
 		before, err := k.RenderDocument()
 		assert.NoError(t, err)
-		testutil.WriteFile(t, root, "next.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: next}\ndata: {VALUE: replaced}\n")
+		testutil.WriteFile(
+			t,
+			root,
+			"next.yaml",
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: next}\ndata: {VALUE: replaced}\n",
+		)
 		_, err = reader.parseFile(t.Context(), filepath.Join(root, "next.yaml"), opts)
 		assert.NoError(t, err)
 		assert.Equal(t, k.Namespace, "apps")
@@ -306,10 +348,13 @@ metadata: {name: pending}
 		if _, err := loadForTest(t.Context(), t, l, child); !errors.Is(err, fs.ErrNotExist) {
 			t.Fatalf("missing mounted child error = %v, want absent source content", err)
 		}
-		if len(st.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)) != 0 || len(l.Index.Records) != 0 || len(retainedErrorsForTest(l)) != 0 {
+		if len(st.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)) != 0 ||
+			len(l.Index.Records) != 0 ||
+			len(retainedErrorsForTest(l)) != 0 {
 			t.Fatal("physical decoy supplied an object or indexed evidence")
 		}
-		if st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != input || l.documents.mountedRoot(child) != committed {
+		if st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != input ||
+			l.documents.mountedRoot(child) != committed {
 			t.Fatal("missing child replaced the authoritative mounted view")
 		}
 		if k, _ := l.documents.read(committed); k == nil || k.Namespace != "committed" {
@@ -324,7 +369,14 @@ metadata: {name: pending}
 		st.AddObject(repo)
 		st.SetArtifact(repo.Named(), &store.SourceArtifact{LocalPath: committed, Key: "pin"})
 		r.mountSources(st)
-		if _, err := r.parseFile(t.Context(), filepath.Join(committed, "host.yaml"), manifest.ParseDocOptions{DefaultNamespace: ""}); !errors.Is(err, manifest.ErrInput) {
+		if _, err := r.parseFile(
+			t.Context(),
+			filepath.Join(committed, "host.yaml"),
+			manifest.ParseDocOptions{DefaultNamespace: ""},
+		); !errors.Is(
+			err,
+			manifest.ErrInput,
+		) {
 			t.Fatalf("released pin read host content through its coordinate: %v", err)
 		}
 	})
@@ -408,7 +460,6 @@ metadata: {name: pending}
 		}
 		if body, _ := reader.read(bucketPath); body != nil || reader.mountedRoot(bucketPath) != "" {
 			t.Fatal("removed source retained a mount or read the physical decoy")
-
 		}
 	})
 	t.Run("native_reader_ownership", func(t *testing.T) {
@@ -432,7 +483,8 @@ metadata: {name: pending}
 		}
 		l := New(st)
 		l.mountSources()
-		if l.documents.views[root] == artifact.FS || st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != artifact {
+		if l.documents.views[root] == artifact.FS ||
+			st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != artifact {
 			t.Fatal("loader did not own its private view independently of the artifact")
 		}
 	})
@@ -453,7 +505,9 @@ metadata: {name: pending}
 				for _, name := range []string{"first", "second"} {
 					input := fstest.MapFS{
 						"kustomization.yaml": {Data: []byte("namespace: " + name + "\nresources: [ks.yaml, child]\n")},
-						"ks.yaml":            {Data: []byte(testutil.KustomizationYAML(name, "", "  {path: ./apps}\n"))},
+						"ks.yaml": {
+							Data: []byte(testutil.KustomizationYAML(name, "", "  {path: ./apps}\n")),
+						},
 					}
 					if name == "second" {
 						input["child/kustomization.yaml"] = &fstest.MapFile{Data: []byte("namespace: replacement\n")}
@@ -492,7 +546,8 @@ metadata: {name: pending}
 						t.Fatalf("%s source retained a stale document: %v", name, k)
 					}
 					child, _ := l.documents.read(filepath.Join(committed, "child"))
-					if name == "first" && child != nil || name == "second" && (child == nil || child.Namespace != "replacement") {
+					if name == "first" && child != nil ||
+						name == "second" && (child == nil || child.Namespace != "replacement") {
 						t.Fatalf("%s source retained a stale miss: %v", name, child)
 					}
 					id := testutil.KustomizationID(name, name)
@@ -510,7 +565,8 @@ metadata: {name: pending}
 				if _, err := loadForTest(t.Context(), t, l, committed); !errors.Is(err, manifest.ErrInput) {
 					t.Fatalf("nil replacement read host content: %v", err)
 				}
-				if len(l.Index.Records) != 0 || len(st.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)) != 0 {
+				if len(l.Index.Records) != 0 ||
+					len(st.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)) != 0 {
 					t.Fatal("nil replacement retained old objects or index records")
 				}
 				st.SetArtifact(manifest.BootstrapSourceID, replacement)
@@ -521,7 +577,10 @@ metadata: {name: pending}
 
 				st.SetArtifact(manifest.BootstrapSourceID, nil)
 				l.mountSources()
-				if l.documents.mountedRoot(committed) != "" || len(l.documents.cache) != 0 || len(retainedErrorsForTest(l)) != 0 || len(l.Index.Records) != 0 || len(st.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)) != 0 {
+				if l.documents.mountedRoot(committed) != "" || len(l.documents.cache) != 0 ||
+					len(retainedErrorsForTest(l)) != 0 ||
+					len(l.Index.Records) != 0 ||
+					len(st.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)) != 0 {
 					t.Fatal("removed artifact retained a stale binding, document or index error")
 				}
 			})
@@ -578,7 +637,8 @@ metadata: {name: pending}
 		if n, err := loadForTest(t.Context(), t, l, filepath.Join(root, "child")); err != nil || n != 1 {
 			t.Fatalf("late mount Load = %d, %v; want one object", n, err)
 		}
-		if l.documents.views[artifact.LocalPath] == artifact.FS || l.documents.mountedRoot(filepath.Join(root, "child/ks.yaml")) != artifact.LocalPath {
+		if l.documents.views[artifact.LocalPath] == artifact.FS ||
+			l.documents.mountedRoot(filepath.Join(root, "child/ks.yaml")) != artifact.LocalPath {
 			t.Fatal("late native mount did not bind its own private operation view")
 		}
 		id := testutil.KustomizationID("apps", "nested")
@@ -683,7 +743,9 @@ func TestDocumentReader_UnreadableBuilder(t *testing.T) {
 	st := store.New()
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
 		"plain/unreadable/kustomization.yaml": {Mode: fs.ModeDir | 0o755},
-		"plain/unreadable/ks.yaml":            {Data: []byte(testutil.KustomizationYAML("raw", "apps", "  path: ./leaf\n"))},
+		"plain/unreadable/ks.yaml": {
+			Data: []byte(testutil.KustomizationYAML("raw", "apps", "  path: ./leaf\n")),
+		},
 	}})
 	l := New(st)
 	l.mountSources()
@@ -708,7 +770,12 @@ func TestDocumentReader_IndexedSource(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "kustomization.yaml", "namespace: host\n")
 	st := store.New()
-	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "indexed"}
+	id := manifest.NamedResource{
+		Group:     manifest.SourceDomain,
+		Kind:      manifest.KindGitRepository,
+		Namespace: "apps",
+		Name:      "indexed",
+	}
 	st.SetArtifact(id, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
 		"kustomization.yaml": {Data: []byte("namespace: authoritative\n")},
 	}})
@@ -736,17 +803,25 @@ func TestLoader_ReplacedProjectedEvidence(t *testing.T) {
 				resources = "namespace: apps\nresources: [owner.yaml]\n"
 			}
 			l.Store.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-				"app/kustomization.yaml":    {Data: []byte(resources)},
-				"app/owner.yaml":            {Data: []byte(testutil.KustomizationYAML("owner", "apps", "  path: ./target\n"))},
+				"app/kustomization.yaml": {Data: []byte(resources)},
+				"app/owner.yaml": {
+					Data: []byte(testutil.KustomizationYAML("owner", "apps", "  path: ./target\n")),
+				},
 				"target/kustomization.yaml": {Data: []byte("resources: [cm.yaml]\n")},
-				"target/cm.yaml":            {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: target}\n")},
+				"target/cm.yaml": {
+					Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: target}\n"),
+				},
 			}})
 			_, err := l.Load(t.Context(), root)
 			assert.NoError(t, err)
 			l.Admit(root)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 			id := testutil.KustomizationID("apps", "owner")
-			if l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, filepath.Join(root, "app/owner.yaml")) != included || (l.Store.GetObject(id) != nil) != included {
+			if l.AdmitsRoot(
+				l.IndexedObject(id, l.Index.Records[id]).Obj,
+				filepath.Join(root, "app/owner.yaml"),
+			) != included ||
+				(l.Store.GetObject(id) != nil) != included {
 				t.Fatalf("replacement membership retained another view: included=%t", included)
 			}
 		}
@@ -760,13 +835,22 @@ func TestLoader_ReplacedProjectedEvidence(t *testing.T) {
 	for _, version := range []string{"first", "second"} {
 		l.Store.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
 			"kustomization.yaml": {Data: []byte("namespace: apps\nresources: [objects.yaml]\n")},
-			"objects.yaml":       {Data: []byte(testutil.KustomizationYAML("child", "", "  path: ./"+version+"\n") + "---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: source}\nspec: {url: https://fixture.invalid/" + version + "}\n")},
+			"objects.yaml": {
+				Data: []byte(
+					testutil.KustomizationYAML(
+						"child",
+						"",
+						"  path: ./"+version+"\n",
+					) + "---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: source}\nspec: {url: https://fixture.invalid/" + version + "}\n",
+				),
+			},
 		}})
 		_, err := l.Load(t.Context(), root)
 		assert.NoError(t, err)
 		l.Admit(root)
 		owners := l.Kustomizations()
-		if len(owners) != 1 || owners[0].Obj.(*manifest.Kustomization).Namespace != "apps" || owners[0].Obj.(*manifest.Kustomization).Path != "./"+version {
+		if len(owners) != 1 || owners[0].Obj.(*manifest.Kustomization).Namespace != "apps" ||
+			owners[0].Obj.(*manifest.Kustomization).Path != "./"+version {
 			t.Fatalf("replacement kept stale owner: %+v", owners)
 		}
 		sources := 0
@@ -783,7 +867,8 @@ func TestLoader_ReplacedProjectedEvidence(t *testing.T) {
 			{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "source"},
 		} {
 			candidate, published := l.candidates[id].Obj, l.Store.GetObject(id)
-			if candidate == nil || published != candidate || candidate == previousCandidates[id] || published == previousPublished[id] {
+			if candidate == nil || published != candidate || candidate == previousCandidates[id] ||
+				published == previousPublished[id] {
 				t.Fatalf("source replacement did not refresh %s: candidate=%p, published=%p", id, candidate, published)
 			}
 			previousCandidates[id], previousPublished[id] = candidate, published

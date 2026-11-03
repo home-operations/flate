@@ -71,7 +71,12 @@ func validateCommitBranch(repo *git.Repository, commit *object.Commit, branch st
 	reachable, err := commit.IsAncestor(branchObj)
 	if err != nil {
 		if errors.Is(err, plumbing.ErrObjectNotFound) {
-			return fmt.Errorf("%w: incomplete history for commit %s from branch %q", errRefUnavailable, commit.Hash, branch)
+			return fmt.Errorf(
+				"%w: incomplete history for commit %s from branch %q",
+				errRefUnavailable,
+				commit.Hash,
+				branch,
+			)
 		}
 		return fmt.Errorf("check commit %s reachability from branch %q: %w", commit.Hash, branch, err)
 	}
@@ -83,7 +88,11 @@ func validateCommitBranch(repo *git.Repository, commit *object.Commit, branch st
 
 func lookupBranch(repo *git.Repository, name string, originFirst bool) (plumbing.Hash, error) {
 	if originFirst {
-		return lookupReference(repo, plumbing.NewRemoteReferenceName("origin", name), plumbing.NewBranchReferenceName(name))
+		return lookupReference(
+			repo,
+			plumbing.NewRemoteReferenceName("origin", name),
+			plumbing.NewBranchReferenceName(name),
+		)
 	}
 	return lookupReference(repo, plumbing.NewBranchReferenceName(name), plumbing.NewRemoteReferenceName("origin", name))
 }

@@ -76,9 +76,9 @@ type objectCell struct {
 	static   manifest.BaseManifest
 	document map[string]any
 	// Direct writes use this revision; emitted values use the immutable producer record.
-	publication                                    uint64
-	binding                                        *Input
-	support                                        *Input
+	publication                                              uint64
+	binding                                                  *Input
+	support                                                  *Input
 	excluded, included, rooted, retired, hidden, independent bool
 	// Auxiliary follows the emitted contender; current static authority still wins.
 	auxiliary bool
@@ -292,7 +292,8 @@ func (u *objectUpdate) compare() {
 		}
 	}
 	u.staticEqual = u.cell.binding == u.binding && u.cell.support == u.support && equal
-	u.membershipEqual = u.staticEqual || u.cell.static != nil && manifest.LabelsEqual(u.cell.static, u.obj, [2]map[string]any{}, nil)
+	u.membershipEqual = u.staticEqual ||
+		u.cell.static != nil && manifest.LabelsEqual(u.cell.static, u.obj, [2]map[string]any{}, nil)
 	u.effectiveEqual = equal
 	if u.effectiveEqual {
 		u.effectiveEqual, _ = reconcileInputEqual(u.obj, u.cell.document, u.document)
@@ -307,7 +308,8 @@ func (u *objectUpdate) compare() {
 
 // currentLocked MUST hold the effective producer's shard as well as the target's.
 func (u objectUpdate) currentLocked(sh *shard) bool {
-	return sh.cells[u.obj.Named()].publication == u.cell.publication && sh.cells[u.obj.Named()].generation == u.cell.generation &&
+	return sh.cells[u.obj.Named()].publication == u.cell.publication &&
+		sh.cells[u.obj.Named()].generation == u.cell.generation &&
 		(u.effective.owner == nil || u.effective.owner.current.Load() == u.effective.record)
 }
 
@@ -326,11 +328,20 @@ func (s *Store) addObject(obj manifest.BaseManifest, binding, support *Input, do
 		sh.mu.RLock()
 		cell := sh.cells[id]
 		needsRoot := !cell.rooted && (len(sh.members[id]) > 0 || sh.slots[id] != nil)
-		if len(docs) == 0 && cell.static == obj && cell.binding == binding && cell.support == support && !cell.hidden && !cell.retired && !needsRoot {
+		if len(docs) == 0 && cell.static == obj && cell.binding == binding && cell.support == support && !cell.hidden &&
+			!cell.retired &&
+			!needsRoot {
 			sh.mu.RUnlock()
 			return
 		}
-		u := objectUpdate{obj: obj, binding: binding, support: support, cell: cell, needsRoot: needsRoot, explicit: len(docs) != 0}
+		u := objectUpdate{
+			obj:       obj,
+			binding:   binding,
+			support:   support,
+			cell:      cell,
+			needsRoot: needsRoot,
+			explicit:  len(docs) != 0,
+		}
 		if u.explicit {
 			u.document = docs[0]
 		}
@@ -341,7 +352,10 @@ func (s *Store) addObject(obj manifest.BaseManifest, binding, support *Input, do
 		}
 		sh.mu.RUnlock()
 		u.compare()
-		if u.staticEqual && u.effectiveEqual && (!u.explicit || manifest.ValueEqual(u.cell.document, u.document)) && !u.cell.hidden && !u.cell.retired && !u.needsRoot {
+		if u.staticEqual && u.effectiveEqual && (!u.explicit || manifest.ValueEqual(u.cell.document, u.document)) &&
+			!u.cell.hidden &&
+			!u.cell.retired &&
+			!u.needsRoot {
 			return
 		}
 		u.independent = declarationIndependent(s.index.Load(), id)
@@ -435,7 +449,10 @@ func (s *Store) AddObjects(objs []manifest.BaseManifest) {
 	var buckets [shardCount][]objectUpdate
 	for _, obj := range objs {
 		i := kindShardIndex(obj.Named().Kind)
-		buckets[i] = append(buckets[i], objectUpdate{obj: obj, independent: declarationIndependent(s.index.Load(), obj.Named())})
+		buckets[i] = append(
+			buckets[i],
+			objectUpdate{obj: obj, independent: declarationIndependent(s.index.Load(), obj.Named())},
+		)
 	}
 	var anchors []objectUpdate
 	dispatches := make([]eventDispatch, 0, len(objs))
@@ -574,7 +591,14 @@ func (sh *shard) deleteLocked(id manifest.NamedResource) bool {
 		sh.mu.Unlock()
 		panic("store: publication revision exhausted")
 	}
-	sh.requireCapacityLocked(cell.authority, sh.conditions[id].stamp(), sh.artifacts[id].authority, sh.artifacts[id].revisionHead, sh.artifacts[id].originHead, bucket.authority)
+	sh.requireCapacityLocked(
+		cell.authority,
+		sh.conditions[id].stamp(),
+		sh.artifacts[id].authority,
+		sh.artifacts[id].revisionHead,
+		sh.artifacts[id].originHead,
+		bucket.authority,
+	)
 	cell.authority = cell.current().nextGeneration()
 	if cell.links != nil {
 		cell.authority = sh.enqueueLocked(cell.authority)
@@ -671,7 +695,9 @@ func (s *Store) ListObjects(group, kind string) []manifest.BaseManifest {
 		inner := sh.byName[kindID{group, kind}].names
 		out := make([]manifest.BaseManifest, 0, len(inner))
 		for name := range inner {
-			if obj := sh.objectLocked(manifest.NamedResource{Group: group, Kind: kind, Namespace: name.namespace, Name: name.name}); obj != nil {
+			if obj := sh.objectLocked(
+				manifest.NamedResource{Group: group, Kind: kind, Namespace: name.namespace, Name: name.name},
+			); obj != nil {
 				out = append(out, obj)
 			}
 		}
@@ -717,7 +743,8 @@ func (s *Store) addAnchor(u objectUpdate) bool {
 	changed := newObjectRegion(1, storage[:])
 	changed = changed.add(id, !u.effectiveEqual || u.cell.static == nil, u.independent)
 	s.lockAll()
-	if !u.currentLocked(sh) || u.binding != nil && !u.binding.current() || u.support != nil && !u.support.productionCurrent() {
+	if !u.currentLocked(sh) || u.binding != nil && !u.binding.current() ||
+		u.support != nil && !u.support.productionCurrent() {
 		s.unlockAll()
 		return false
 	}
@@ -790,7 +817,8 @@ func artifactReadEqual(a, b Artifact, read ArtifactRead) bool {
 	x, xok := a.(*SourceArtifact)
 	y, yok := b.(*SourceArtifact)
 	if xok || yok {
-		return (x == nil || x.Content != "" || x.FS == nil) && (y == nil || y.Content != "" || y.FS == nil) && x.Input(read) == y.Input(read)
+		return (x == nil || x.Content != "" || x.FS == nil) && (y == nil || y.Content != "" || y.FS == nil) &&
+			x.Input(read) == y.Input(read)
 	}
 	return artifactValueEqual(a, b)
 }

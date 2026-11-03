@@ -19,13 +19,22 @@ type Names struct {
 }
 
 // PrepareNames resolves cluster qualifiers and kind collisions across printed subjects.
-func PrepareNames(clusters []string, inventory [][]manifest.NamedResource, subjects []map[manifest.NamedResource]manifest.DiagnosticIdentity) []Names {
+func PrepareNames(
+	clusters []string,
+	inventory [][]manifest.NamedResource,
+	subjects []map[manifest.NamedResource]manifest.DiagnosticIdentity,
+) []Names {
 	collisions, update := nameOccurrenceUpdater()
 	collectNameOccurrences(inventory, subjects, update)
 	return prepareNames(clusters, inventory, subjects, collisions)
 }
 
-func prepareNames(clusters []string, inventory [][]manifest.NamedResource, subjects []map[manifest.NamedResource]manifest.DiagnosticIdentity, collisions map[string]bool) []Names {
+func prepareNames(
+	clusters []string,
+	inventory [][]manifest.NamedResource,
+	subjects []map[manifest.NamedResource]manifest.DiagnosticIdentity,
+	collisions map[string]bool,
+) []Names {
 	out := make([]Names, len(clusters))
 	for i, cluster := range clusters {
 		prefix := ""
@@ -91,7 +100,11 @@ func nameOccurrenceUpdater() (map[string]bool, func(string, string, int)) {
 	return collisions, update
 }
 
-func collectNameOccurrences(inventory [][]manifest.NamedResource, subjects []map[manifest.NamedResource]manifest.DiagnosticIdentity, update func(string, string, int)) {
+func collectNameOccurrences(
+	inventory [][]manifest.NamedResource,
+	subjects []map[manifest.NamedResource]manifest.DiagnosticIdentity,
+	update func(string, string, int),
+) {
 	for i, ids := range inventory {
 		for _, raw := range ids {
 			id := raw
@@ -105,7 +118,11 @@ func collectNameOccurrences(inventory [][]manifest.NamedResource, subjects []map
 	}
 }
 
-func adjustNameOccurrences(occurrences map[manifest.NamedResource]int, from, to map[manifest.NamedResource]manifest.DiagnosticIdentity, update func(string, string, int)) {
+func adjustNameOccurrences(
+	occurrences map[manifest.NamedResource]int,
+	from, to map[manifest.NamedResource]manifest.DiagnosticIdentity,
+	update func(string, string, int),
+) {
 	for raw, count := range occurrences {
 		before, after := raw, raw
 		if subject, ok := from[raw]; ok {
@@ -121,7 +138,12 @@ func adjustNameOccurrences(occurrences map[manifest.NamedResource]int, from, to 
 	}
 }
 
-func prepareGroupNames(prefix string, inventory []manifest.NamedResource, subjects map[manifest.NamedResource]manifest.DiagnosticIdentity, collisions map[string]bool) Names {
+func prepareGroupNames(
+	prefix string,
+	inventory []manifest.NamedResource,
+	subjects map[manifest.NamedResource]manifest.DiagnosticIdentity,
+	collisions map[string]bool,
+) Names {
 	names := Names{Prefix: prefix, Subjects: make(map[manifest.NamedResource]Subject, len(inventory))}
 	for _, id := range inventory {
 		if id == (manifest.NamedResource{}) {

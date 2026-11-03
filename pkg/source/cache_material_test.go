@@ -41,7 +41,9 @@ func TestFetcher_TransportMaterialAbsentFromCache(t *testing.T) {
 	var expected atomic.Pointer[generation]
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		g := expected.Load()
-		if r.Method != http.MethodGet || !r.URL.IsAbs() || r.URL.Scheme != "http" || r.URL.Host != "origin.invalid" || r.URL.Path != "/data/" || r.URL.Query().Get("list-type") != "2" {
+		if r.Method != http.MethodGet || !r.URL.IsAbs() || r.URL.Scheme != "http" || r.URL.Host != "origin.invalid" ||
+			r.URL.Path != "/data/" ||
+			r.URL.Query().Get("list-type") != "2" {
 			t.Error("unexpected proxy request target")
 			w.WriteHeader(http.StatusBadRequest)
 			return
@@ -52,7 +54,10 @@ func TestFetcher_TransportMaterialAbsentFromCache(t *testing.T) {
 			return
 		}
 		g.requests.Add(1)
-		_, err := io.WriteString(w, `<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated></ListBucketResult>`)
+		_, err := io.WriteString(
+			w,
+			`<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated></ListBucketResult>`,
+		)
 		if err != nil {
 			t.Errorf("write bucket listing: %v", err)
 		}
@@ -70,9 +75,13 @@ func TestFetcher_TransportMaterialAbsentFromCache(t *testing.T) {
 		credentialURL := *proxyAddress
 		credentialURL.User = url.UserPassword(g.username, g.password)
 		for _, material := range []struct{ label, value string }{
-			{"proxy username", g.username}, {"proxy password", g.password},
-			{"proxy URL", credentialURL.String()}, {"proxy Basic payload", strings.TrimPrefix(g.authorization, "Basic ")},
-			{"CA PEM", g.ca}, {"client certificate PEM", g.cert}, {"client key PEM", g.key},
+			{"proxy username", g.username},
+			{"proxy password", g.password},
+			{"proxy URL", credentialURL.String()},
+			{"proxy Basic payload", strings.TrimPrefix(g.authorization, "Basic ")},
+			{"CA PEM", g.ca},
+			{"client certificate PEM", g.cert},
+			{"client key PEM", g.key},
 		} {
 			label := g.name + " " + material.label
 			markers = append(markers, marker{label, []byte(material.value)})
@@ -87,8 +96,18 @@ func TestFetcher_TransportMaterialAbsentFromCache(t *testing.T) {
 	}
 
 	root := t.TempDir()
-	b := &manifest.Bucket{Name: "material", Namespace: "ns", Endpoint: "http://origin.invalid", Insecure: true, Region: "us-east-1", BucketName: "data",
-		ProxySecretRef: &manifest.LocalObjectReference{Name: "proxy"}, CertSecretRef: &manifest.LocalObjectReference{Name: "tls"}}
+	b := &manifest.Bucket{
+		Name:       "material",
+		Namespace:  "ns",
+		Endpoint:   "http://origin.invalid",
+		Insecure:   true,
+		Region:     "us-east-1",
+		BucketName: "data",
+		ProxySecretRef: &manifest.LocalObjectReference{
+			Name: "proxy",
+		},
+		CertSecretRef: &manifest.LocalObjectReference{Name: "tls"},
+	}
 	b.Interval.Duration = time.Hour
 	var previousKey string
 	for i := range generations {
@@ -107,10 +126,18 @@ func TestFetcher_TransportMaterialAbsentFromCache(t *testing.T) {
 					assert.Equal(t, ns, b.Namespace)
 					switch name {
 					case "proxy":
-						return &manifest.Secret{StringData: map[string]any{"address": proxy.URL, "username": g.username, "password": g.password}}
+						return &manifest.Secret{
+							StringData: map[string]any{
+								"address":  proxy.URL,
+								"username": g.username,
+								"password": g.password,
+							},
+						}
 					case "tls":
 						certLookups++
-						return &manifest.Secret{StringData: map[string]any{"ca.crt": g.ca, "tls.crt": g.cert, "tls.key": g.key}}
+						return &manifest.Secret{
+							StringData: map[string]any{"ca.crt": g.ca, "tls.crt": g.cert, "tls.key": g.key},
+						}
 					default:
 						t.Errorf("unexpected Secret reference %q", name)
 						return nil
@@ -137,7 +164,13 @@ func TestFetcher_TransportMaterialAbsentFromCache(t *testing.T) {
 					assert.Equal(t, artifact.Key, acquiredKey)
 				}
 				assert.NoError(t, owner.Close())
-				t.Logf("%s: key=%s proxy requests=%d certificate lookups=%d", phase, artifact.Key, g.requests.Load(), certLookups)
+				t.Logf(
+					"%s: key=%s proxy requests=%d certificate lookups=%d",
+					phase,
+					artifact.Key,
+					g.requests.Load(),
+					certLookups,
+				)
 			}
 			previousKey = acquiredKey
 			var inspectedBytes int

@@ -22,7 +22,11 @@ func TestClassify_AdmissionErrorPrecedesAbsence(t *testing.T) {
 	t.Parallel()
 	cause := manifest.NewError(manifest.ErrInput, nil, "unavailable exact occurrence")
 	w := Waiter{Store: store.New(), Existence: errorPromotion{cause}, AllowMissingCRDs: true}
-	dep := manifest.DependencyRef{Group: "apiextensions.k8s.io", Kind: manifest.KindCustomResourceDefinition, Name: "examples.test"}
+	dep := manifest.DependencyRef{
+		Group: "apiextensions.k8s.io",
+		Kind:  manifest.KindCustomResourceDefinition,
+		Name:  "examples.test",
+	}
 	for range 2 {
 		if got := w.Classify(t.Context(), dep, manifest.DrainForce); !errors.Is(got.Err, cause) {
 			t.Fatalf("Classify error = %v, want %v", got.Err, cause)
@@ -33,7 +37,12 @@ func TestClassify_AdmissionErrorPrecedesAbsence(t *testing.T) {
 func TestAvailable_AdmissionErrorPrecedesOptionalOmission(t *testing.T) {
 	t.Parallel()
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "values", Namespace: "apps"}
-	producer := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "producer"}
+	producer := manifest.NamedResource{
+		Group:     manifest.FluxKustomizeDomain,
+		Kind:      manifest.KindKustomization,
+		Namespace: "apps",
+		Name:      "producer",
+	}
 	for _, materializer := range []bool{false, true} {
 		t.Run(fmt.Sprintf("materializer=%t", materializer), func(t *testing.T) {
 			t.Parallel()

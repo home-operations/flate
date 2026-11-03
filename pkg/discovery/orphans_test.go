@@ -11,6 +11,7 @@ import (
 	"testing/fstest"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/loader"
@@ -22,14 +23,31 @@ func TestPromoteOrphans_IndexedEvidence(t *testing.T) {
 	t.Parallel()
 	const root = "/virtual/orphan-evidence"
 	input := fstest.MapFS{
-		"a.yaml":         {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: x, namespace: default}\ndata: {VALUE: X}\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: shared, namespace: default}\ndata: {VALUE: A}\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: sibling, namespace: default}\ndata: {VALUE: S}\n")},
-		"z.yaml":         {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: shared, namespace: default}\ndata: {VALUE: Z}\n")},
-		"generator.yaml": {Data: []byte("apiVersion: source.extensions.fluxcd.io/v1beta1\nkind: ArtifactGenerator\nmetadata: {name: generator, namespace: default, uid: authored, annotations: {source.extensions.fluxcd.io/reconcile: disabled}}\nspec: {sources: [{alias: repo, kind: GitRepository, name: input}]}\n")},
+		"a.yaml": {
+			Data: []byte(
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: x, namespace: default}\ndata: {VALUE: X}\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: shared, namespace: default}\ndata: {VALUE: A}\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: sibling, namespace: default}\ndata: {VALUE: S}\n",
+			),
+		},
+		"z.yaml": {
+			Data: []byte(
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: shared, namespace: default}\ndata: {VALUE: Z}\n",
+			),
+		},
+		"generator.yaml": {
+			Data: []byte(
+				"apiVersion: source.extensions.fluxcd.io/v1beta1\nkind: ArtifactGenerator\nmetadata: {name: generator, namespace: default, uid: authored, annotations: {source.extensions.fluxcd.io/reconcile: disabled}}\nspec: {sources: [{alias: repo, kind: GitRepository, name: input}]}\n",
+			),
+		},
 	}
 	x := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "x"}
 	shared := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "shared"}
 	sibling := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "sibling"}
-	generator := manifest.NamedResource{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Namespace: "default", Name: "generator"}
+	generator := manifest.NamedResource{
+		Group:     "source.extensions.fluxcd.io",
+		Kind:      "ArtifactGenerator",
+		Namespace: "default",
+		Name:      "generator",
+	}
 	for _, tc := range []struct {
 		name      string
 		order     []manifest.NamedResource
@@ -49,24 +67,50 @@ func TestPromoteOrphans_IndexedEvidence(t *testing.T) {
 				view[path.Join(tc.chartPath, name)] = file
 			}
 			var documentReads atomic.Int64
-			inputFS := entryReadFS{FS: view, reads: map[string]*atomic.Int64{path.Join(tc.chartPath, "a.yaml"): &documentReads}}
-			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: inputFS})
+			inputFS := entryReadFS{
+				FS:    view,
+				reads: map[string]*atomic.Int64{path.Join(tc.chartPath, "a.yaml"): &documentReads},
+			}
+			st.SetArtifact(
+				manifest.BootstrapSourceID,
+				&store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: inputFS},
+			)
 			l := loader.New(st)
 			l.SourceRoot = root
 			if tc.chartPath != "" {
-				view[path.Join(tc.chartPath, "Chart.yaml")] = &fstest.MapFile{Data: []byte("apiVersion: v2\nname: demo\nversion: 1.0.0\n")}
+				view[path.Join(tc.chartPath, "Chart.yaml")] = &fstest.MapFile{
+					Data: []byte("apiVersion: v2\nname: demo\nversion: 1.0.0\n"),
+				}
 				source := &manifest.GitRepository{Name: "source", Namespace: "default"}
-				release := &manifest.HelmRelease{Name: "demo", Namespace: "default", Chart: manifest.HelmChart{Name: tc.chartPath, Source: source.Named()}}
-				release.HelmReleaseSpec.Chart = &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: tc.chartPath,
-					SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: manifest.KindGitRepository, Name: source.Name}}}
+				release := &manifest.HelmRelease{
+					Name:      "demo",
+					Namespace: "default",
+					Chart:     manifest.HelmChart{Name: tc.chartPath, Source: source.Named()},
+				}
+				release.HelmReleaseSpec.Chart = &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{
+					Chart: tc.chartPath,
+					SourceRef: &helmv2.CrossNamespaceObjectReference{
+						Kind: manifest.KindGitRepository,
+						Name: source.Name,
+					},
+				}}
 				st.AddObjects([]manifest.BaseManifest{source, release})
-				st.SetArtifact(source.Named(), st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact))
-				l.Index.Records[release.Named()] = manifest.DiscoveryRecord{File: "release.yaml", Refs: []manifest.NamedResource{source.Named()}}
+				st.SetArtifact(
+					source.Named(),
+					st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact),
+				)
+				l.Index.Records[release.Named()] = manifest.DiscoveryRecord{
+					File: "release.yaml",
+					Refs: []manifest.NamedResource{source.Named()},
+				}
 				if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 					t.Fatal(err)
 				}
 				readers := l.Index.Readers[path.Join(tc.chartPath, "a.yaml")]
-				if !slices.Contains(readers, manifest.FileReader{Reader: release.Named(), Source: source.Named(), Exact: true}) {
+				if !slices.Contains(
+					readers,
+					manifest.FileReader{Reader: release.Named(), Source: source.Named(), Exact: true},
+				) {
 					t.Fatalf("chart did not read independent declarations: %+v", readers)
 				}
 			} else {
@@ -96,7 +140,11 @@ func TestPromoteOrphans_IndexedEvidence(t *testing.T) {
 				l.Index.Records[id] = manifest.DiscoveryRecord{Authored: id, Path: root + "/" + file, File: file}
 			}
 			file := path.Join(tc.chartPath, "generator.yaml")
-			l.Index.Records[generator] = manifest.DiscoveryRecord{Authored: generator, Path: root + "/" + file, File: file}
+			l.Index.Records[generator] = manifest.DiscoveryRecord{
+				Authored: generator,
+				Path:     root + "/" + file,
+				File:     file,
+			}
 			if tc.name == "discovery" {
 				if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 					t.Fatal(err)
@@ -112,7 +160,20 @@ func TestPromoteOrphans_IndexedEvidence(t *testing.T) {
 					admit := func(obj manifest.BaseManifest) (bool, error) {
 						return d.loader.AdmitsRoot(obj, record.Path), nil
 					}
-					if promoted, err := loader.Promote(t.Context(), st, id, loader.PromoteOptions{Record: manifest.Production{Authored: record.Authored, Path: record.Path, File: record.File}, Admit: admit}); err != nil || !promoted {
+					if promoted, err := loader.Promote(
+						t.Context(),
+						st,
+						id,
+						loader.PromoteOptions{
+							Record: manifest.Production{
+								Authored: record.Authored,
+								Path:     record.Path,
+								File:     record.File,
+							},
+							Admit: admit,
+						},
+					); err != nil ||
+						!promoted {
 						t.Fatalf("promotion failed for %s", id)
 					}
 				}
@@ -123,7 +184,8 @@ func TestPromoteOrphans_IndexedEvidence(t *testing.T) {
 			}
 			obj, doc, attempt := st.GetEmission(generator)
 			attempt.Finish()
-			if obj == nil || doc == nil || doc["metadata"].(map[string]any)["uid"] != "authored" || doc["metadata"].(map[string]any)["annotations"].(map[string]any)["source.extensions.fluxcd.io/reconcile"] != "disabled" {
+			if obj == nil || doc == nil || doc["metadata"].(map[string]any)["uid"] != "authored" ||
+				doc["metadata"].(map[string]any)["annotations"].(map[string]any)["source.extensions.fluxcd.io/reconcile"] != "disabled" {
 				t.Fatalf("orphan generator lost authored document: %#v", doc)
 			}
 			for _, want := range []struct {
@@ -244,8 +306,16 @@ func TestPromoteOrphans_NamespaceAdmission(t *testing.T) {
 func TestPromoteOrphans_ChecksEachSiblingsProducer(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "apps/bundle.yaml", testutil.KustomizationYAML("self", "authored", "  {path: ./apps, sourceRef: {kind: GitRepository, name: source}}\n")+"---\n"+
-		`apiVersion: helm.toolkit.fluxcd.io/v2
+	testutil.WriteFile(
+		t,
+		dir,
+		"apps/bundle.yaml",
+		testutil.KustomizationYAML(
+			"self",
+			"authored",
+			"  {path: ./apps, sourceRef: {kind: GitRepository, name: source}}\n",
+		)+"---\n"+
+			`apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata: {name: child, namespace: apps}
 spec:
@@ -258,15 +328,25 @@ apiVersion: source.extensions.fluxcd.io/v1beta1
 kind: ArtifactGenerator
 metadata: {name: generator, namespace: apps, uid: authored}
 spec: {sources: [{alias: repo, kind: GitRepository, name: source}]}
-`)
+`,
+	)
 	st := store.New()
 	admitDiscoveryForTest(st, dir)
 	l := loader.New(st)
 	self := testutil.KustomizationID("apps", "self")
 	child := testutil.HelmReleaseID("apps", "child")
-	generator := manifest.NamedResource{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Namespace: "apps", Name: "generator"}
+	generator := manifest.NamedResource{
+		Group:     "source.extensions.fluxcd.io",
+		Kind:      "ArtifactGenerator",
+		Namespace: "apps",
+		Name:      "generator",
+	}
 	for _, id := range []manifest.NamedResource{self, child, generator} {
-		record := manifest.DiscoveryRecord{Authored: id, Path: filepath.Join(dir, "apps/bundle.yaml"), File: "apps/bundle.yaml"}
+		record := manifest.DiscoveryRecord{
+			Authored: id,
+			Path:     filepath.Join(dir, "apps/bundle.yaml"),
+			File:     "apps/bundle.yaml",
+		}
 		if id == self {
 			record.Authored.Namespace = "authored"
 		}
@@ -293,7 +373,11 @@ func TestPromoteOrphans_GraphOwnedSiblingsAndSelf(t *testing.T) {
 	t.Run("omitted mixed file", func(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()
-		body := testutil.KustomizationYAML("disabled", "apps", "  path: ./target\n") + "---\napiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: sibling, namespace: apps}\nspec: {chartRef: {kind: OCIRepository, name: chart}}\n"
+		body := testutil.KustomizationYAML(
+			"disabled",
+			"apps",
+			"  path: ./target\n",
+		) + "---\napiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: sibling, namespace: apps}\nspec: {chartRef: {kind: OCIRepository, name: chart}}\n"
 		testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: []\n")
 		testutil.WriteFile(t, root, "apps/disabled.yaml", body)
 		testutil.WriteFile(t, root, "target/kustomization.yaml", "resources: []\n")
@@ -317,7 +401,11 @@ func TestPromoteOrphans_GraphOwnedSiblingsAndSelf(t *testing.T) {
 	})
 
 	dir := t.TempDir()
-	body := testutil.KustomizationYAML("self", "apps", "  {path: ./apps, sourceRef: {kind: GitRepository, name: source}}\n") + "---\n" +
+	body := testutil.KustomizationYAML(
+		"self",
+		"apps",
+		"  {path: ./apps, sourceRef: {kind: GitRepository, name: source}}\n",
+	) + "---\n" +
 		`apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata: {name: child, namespace: apps}
@@ -338,7 +426,10 @@ spec: {chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: sourc
 	st.AddObject(ks)
 	source := &manifest.GitRepository{Name: "source", Namespace: ks.Named().Namespace}
 	st.AddObject(source)
-	st.SetArtifact(source.Named(), st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact))
+	st.SetArtifact(
+		source.Named(),
+		st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact),
+	)
 	l := loader.New(st)
 	l.Options.WipeSecrets = false
 	if err := l.FinalizeIndex(t.Context(), dir, true); err != nil {
@@ -348,7 +439,11 @@ spec: {chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: sourc
 	st.DeleteObject(self)
 	child := testutil.HelmReleaseID("apps", "child")
 	for _, id := range []manifest.NamedResource{self, child} {
-		l.Index.Records[id] = manifest.DiscoveryRecord{Authored: id, Path: filepath.Join(dir, "bundle.yaml"), File: "bundle.yaml"}
+		l.Index.Records[id] = manifest.DiscoveryRecord{
+			Authored: id,
+			Path:     filepath.Join(dir, "bundle.yaml"),
+			File:     "bundle.yaml",
+		}
 	}
 	d := &Session{cfg: Config{Store: st}, loader: l}
 	d.promoteOrphans(t.Context(), nil)
@@ -379,7 +474,11 @@ func TestPromoteOrphans_SecretPrecedence(t *testing.T) {
 			var saved []*manifest.Secret
 			for _, id := range ids {
 				body += "---\napiVersion: v1\nkind: Secret\nmetadata: {name: " + id.Name + ", namespace: secure}\nstringData: {HOST: fixture-value}\n"
-				l.Index.Records[id] = manifest.DiscoveryRecord{Authored: id, Path: filepath.Join(dir, "bundle.yaml"), File: "bundle.yaml"}
+				l.Index.Records[id] = manifest.DiscoveryRecord{
+					Authored: id,
+					Path:     filepath.Join(dir, "bundle.yaml"),
+					File:     "bundle.yaml",
+				}
 				if scenario == "unknown-file" {
 					r := l.Index.Records[id]
 					r.File = ""
@@ -389,7 +488,11 @@ func TestPromoteOrphans_SecretPrecedence(t *testing.T) {
 				if scenario == "preexisting" {
 					value = "preexisting-value"
 				}
-				obj := &manifest.Secret{Name: id.Name, Namespace: id.Namespace, StringData: map[string]any{"HOST": value}}
+				obj := &manifest.Secret{
+					Name:       id.Name,
+					Namespace:  id.Namespace,
+					StringData: map[string]any{"HOST": value},
+				}
 				saved = append(saved, obj)
 				if scenario != "unknown-file" {
 					doc := obj.Snapshot()
@@ -400,7 +503,15 @@ func TestPromoteOrphans_SecretPrecedence(t *testing.T) {
 			testutil.WriteFile(t, dir, "bundle.yaml", body)
 			if scenario == "graph-owned" {
 				testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: [../bundle.yaml]\n")
-				ksDoc, err := testutil.SplitDocs([]byte(testutil.KustomizationYAML("owner", "flux-system", "  {path: ./apps, sourceRef: {kind: GitRepository, name: source}}\n")))
+				ksDoc, err := testutil.SplitDocs(
+					[]byte(
+						testutil.KustomizationYAML(
+							"owner",
+							"flux-system",
+							"  {path: ./apps, sourceRef: {kind: GitRepository, name: source}}\n",
+						),
+					),
+				)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -411,7 +522,10 @@ func TestPromoteOrphans_SecretPrecedence(t *testing.T) {
 				st.AddObject(ks)
 				source := &manifest.GitRepository{Name: "source", Namespace: ks.Named().Namespace}
 				st.AddObject(source)
-				st.SetArtifact(source.Named(), st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact))
+				st.SetArtifact(
+					source.Named(),
+					st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact),
+				)
 				l.SourceRoot = dir
 				if _, err := l.Load(t.Context(), dir); err != nil {
 					t.Fatal(err)

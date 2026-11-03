@@ -5,7 +5,6 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
-	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +16,8 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/opencontainers/go-digest"
@@ -45,8 +46,10 @@ func TestDAG_SourceEffectiveWarmCache(t *testing.T) {
 		"app-template/templates/cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: effective-output}\ndata: {value: accepted}\n",
 	}, 0o644, gzip.DefaultCompression)
 	descriptor := ocispec.Descriptor{MediaType: mediaType, Digest: digest.FromBytes(layer), Size: int64(len(layer))}
-	image := ocispec.Manifest{MediaType: ocispec.MediaTypeImageManifest, Layers: []ocispec.Descriptor{descriptor},
-		SchemaVersion: 2}
+	image := ocispec.Manifest{
+		MediaType: ocispec.MediaTypeImageManifest, Layers: []ocispec.Descriptor{descriptor},
+		SchemaVersion: 2,
+	}
 	body, err := json.Marshal(image)
 	assert.NoError(t, err)
 	var requests atomic.Int64
@@ -71,8 +74,11 @@ func TestDAG_SourceEffectiveWarmCache(t *testing.T) {
 	t.Cleanup(server.Close)
 	root := t.TempDir()
 	effective := &manifest.OCIRepository{
-		Name: "app-template", Namespace: "apps", URL: "oci://" + strings.TrimPrefix(server.URL, "https://") + "/app-template",
-		Insecure: true, Reference: &sourcev1.OCIRepositoryRef{Tag: "4.4.0"},
+		Name:          "app-template",
+		Namespace:     "apps",
+		URL:           "oci://" + strings.TrimPrefix(server.URL, "https://") + "/app-template",
+		Insecure:      true,
+		Reference:     &sourcev1.OCIRepositoryRef{Tag: "4.4.0"},
 		Interval:      &metav1.Duration{Duration: time.Hour},
 		LayerSelector: &sourcev1.OCILayerSelector{MediaType: mediaType, Operation: sourcev1.OCILayerCopy},
 	}
@@ -86,7 +92,12 @@ func TestDAG_SourceEffectiveWarmCache(t *testing.T) {
 	var reads store.ReadSet
 	reads.Init(warmStore, effective.Named(), nil)
 	defer reads.Retire()
-	artifact, err := fetcher.Fetch(t.Context(), effective, &reads, sourcecache.Policy{MaxAge: effective.Interval.Duration})
+	artifact, err := fetcher.Fetch(
+		t.Context(),
+		effective,
+		&reads,
+		sourcecache.Policy{MaxAge: effective.Interval.Duration},
+	)
 	assert.NoError(t, err)
 	before, err := fs.ReadFile(artifact.FS, source.OCICopiedLayerFilename)
 	assert.NoError(t, err)
@@ -103,17 +114,29 @@ func TestDAG_SourceEffectiveWarmCache(t *testing.T) {
 		o, err := newTestOrchestrator(t, Tree{Path: dir, RepoRoot: dir}, Config{CacheDir: root, Concurrency: 2})
 		assert.NoError(t, err)
 		t.Cleanup(func() { o.stop() })
-		o.src.Fetchers[manifest.KindOCIRepository] = source.Wrap(manifest.KindOCIRepository, &oci.Fetcher{Cache: o.cache, Network: o.cfg.Network})
+		o.src.Fetchers[manifest.KindOCIRepository] = source.Wrap(
+			manifest.KindOCIRepository,
+			&oci.Fetcher{Cache: o.cache, Network: o.cfg.Network},
+		)
 		s := o.store
 		parent := &manifest.Kustomization{Name: "materializer", Namespace: effective.Namespace}
 		raw := *effective
 		raw.Interval, raw.LayerSelector = &metav1.Duration{}, nil
-		hr := &manifest.HelmRelease{Name: "consumer", Namespace: effective.Namespace, ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: effective.Name}}
+		hr := &manifest.HelmRelease{
+			Name:      "consumer",
+			Namespace: effective.Namespace,
+			ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: effective.Name},
+		}
 
 		s.AddObjects([]manifest.BaseManifest{parent, &raw, hr})
-		s.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "materializing peers"})
+		s.UpdateStatus(
+			parent.Named(),
+			store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "materializing peers"},
+		)
 		o.index = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-			raw.Named(): {Productions: []manifest.Production{{Owner: parent.Named(), Source: manifest.BootstrapSourceID}}},
+			raw.Named(): {
+				Productions: []manifest.Production{{Owner: parent.Named(), Source: manifest.BootstrapSourceID}},
+			},
 		}}
 		s.SetDiscoveryIndex(o.index)
 		o.configureControllers()
@@ -122,26 +145,37 @@ func TestDAG_SourceEffectiveWarmCache(t *testing.T) {
 		parked := make(chan struct{})
 		var once sync.Once
 		d := dagDispatcher{o}
-		dispatch := fixtureDispatcher{store: s, dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
-			if id == parent.Named() {
-				o.tasks.YieldSlot(func() {
-					select {
-					case <-parked:
-					case <-ctx.Done():
+		dispatch := fixtureDispatcher{
+			store: s,
+			dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+				if id == parent.Named() {
+					o.tasks.YieldSlot(func() {
+						select {
+						case <-parked:
+						case <-ctx.Done():
+						}
+					})
+					if attempts.Load() != 0 || requests.Load() != 0 {
+						t.Error("covered raw source attempted acquisition")
 					}
-				})
-				if attempts.Load() != 0 || requests.Load() != 0 {
-					t.Error("covered raw source attempted acquisition")
+					s.RecordEmitted(
+						id,
+						captureEmission(
+							s,
+							id,
+							&store.Emission{Children: []store.Child{{Obj: effective}}, Complete: false},
+						),
+						nil,
+					)
+					return schedule.Result{}
 				}
-				s.RecordEmitted(id, captureEmission(s, id, &store.Emission{Children: []store.Child{{Obj: effective}}, Complete: false}), nil)
-				return schedule.Result{}
-			}
-			out := d.Dispatch(ctx, id, level)
-			if id == effective.Named() {
-				once.Do(func() { close(parked) })
-			}
-			return out
-		}}
+				out := d.Dispatch(ctx, id, level)
+				if id == effective.Named() {
+					once.Do(func() { close(parked) })
+				}
+				return out
+			},
+		}
 		scheduler := schedule.New(o.tasks, dispatch)
 		unwatch := o.watchDAG(scheduler)
 		scheduler.Seed(o.seedNodes())
@@ -168,20 +202,38 @@ func TestDAG_SourceEffectiveWarmCache(t *testing.T) {
 		outputs[run] = stdout.Bytes()
 		t.Logf("warm run=%d stdout=%q", run, outputs[run])
 		if o.tasks.Failures() != 0 || len(s.FailedResources()) != 0 || attempts.Load() != 0 || requests.Load() != 0 {
-			t.Fatalf("warm source: attempts=%d requests=%d failures=%v", attempts.Load(), requests.Load(), s.FailedResources())
+			t.Fatalf(
+				"warm source: attempts=%d requests=%d failures=%v",
+				attempts.Load(),
+				requests.Load(),
+				s.FailedResources(),
+			)
 		}
 		o.stop()
 	}
 	if !bytes.Equal(outputs[0], outputs[1]) || !bytes.Contains(outputs[0], []byte("effective-output")) {
 		t.Fatalf("warm blocked source changed stdout: %q %q", outputs[0], outputs[1])
 	}
-	t.Logf("source=%s interval=%s layerSelector=%+v attempts=%d requests=%d stdout=%q", effective.Named(), effective.Interval.Duration, effective.LayerSelector, attempts.Load(), requests.Load(), outputs[0])
+	t.Logf(
+		"source=%s interval=%s layerSelector=%+v attempts=%d requests=%d stdout=%q",
+		effective.Named(),
+		effective.Interval.Duration,
+		effective.LayerSelector,
+		attempts.Load(),
+		requests.Load(),
+		outputs[0],
+	)
 	control := *effective
 	control.Interval = &metav1.Duration{}
 	owner := cachetest.New(t, root, sourcecache.New)
 	_, err = (&oci.Fetcher{Cache: owner, Network: network}).Fetch(ctx, &control, &reads, sourcecache.Policy{})
 	if err == nil || attempts.Load() == 0 || requests.Load() == 0 {
-		t.Fatalf("blocked control failed to detect a request: err=%v attempts=%d requests=%d", err, attempts.Load(), requests.Load())
+		t.Fatalf(
+			"blocked control failed to detect a request: err=%v attempts=%d requests=%d",
+			err,
+			attempts.Load(),
+			requests.Load(),
+		)
 	}
 	t.Logf("blocked control attempts=%d requests=%d error=%v", attempts.Load(), requests.Load(), err)
 }
@@ -203,7 +255,10 @@ func TestDAGDispatch_CoveredArrival(t *testing.T) {
 					accepted := *raw
 					accepted.URL = "oci://accepted.example"
 					s.AddObject(parent)
-					s.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "materializing peers"})
+					s.UpdateStatus(
+						parent.Named(),
+						store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "materializing peers"},
+					)
 					production := manifest.Production{Owner: parent.Named(), Source: manifest.BootstrapSourceID}
 					if order == "excluded then refire" {
 						production.Authored = raw.Named()
@@ -215,7 +270,15 @@ func TestDAGDispatch_CoveredArrival(t *testing.T) {
 						raw.Named():    {File: "unchanged.yaml", Productions: []manifest.Production{production}},
 					}}
 					if order == "excluded then refire" {
-						o.loader = admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"changed.yaml"}), Index: o.index, Inventory: s, Root: ""})
+						o.loader = admissiontest.New(
+							t,
+							admissiontest.Config{
+								Changes:   change.NewSet([]string{"changed.yaml"}),
+								Index:     o.index,
+								Inventory: s,
+								Root:      "",
+							},
+						)
 						admissiontest.Commit(t, o.loader, nil)
 						o.filter = o.loader.Options.Filter
 						if o.filter.ShouldReconcile(raw.Named()) {
@@ -238,57 +301,76 @@ func TestDAGDispatch_CoveredArrival(t *testing.T) {
 					var dispatches atomic.Int64
 					var initial schedule.Kind
 					d := dagDispatcher{o}
-					dispatch := fixtureDispatcher{store: s, dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
-						if id == parent.Named() {
-							if order == "excluded then refire" {
-								once.Do(func() { close(entered) })
-							}
-							o.tasks.YieldSlot(func() {
-								select {
-								case <-publishPermit:
-								case <-ctx.Done():
+					dispatch := fixtureDispatcher{
+						store: s,
+						dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+							if id == parent.Named() {
+								if order == "excluded then refire" {
+									once.Do(func() { close(entered) })
 								}
-							})
-							f.mu.Lock()
-							if f.calls[raw.Named()] != 0 {
-								t.Error("raw covered source acquired before publication")
-							}
-							f.mu.Unlock()
-							if order == "excluded then refire" {
-								info, exists := s.GetStatus(raw.Named())
-								if exists || dispatches.Load() != 0 || len(s.FailedResources()) != 0 {
-									t.Errorf("excluded source created work/failure: %+v", info)
-								}
-								s.RecordEmitted(id, captureEmission(s, id, &store.Emission{Children: []store.Child{{Obj: &accepted}}, Complete: false}), nil)
-								close(excluded)
 								o.tasks.YieldSlot(func() {
 									select {
-									case <-extendPermit:
+									case <-publishPermit:
 									case <-ctx.Done():
 									}
 								})
-								o.ksc.KeepEmitted(t.Context(), id, store.Child{Obj: &accepted}, nil)
-							} else {
-								s.RecordEmitted(id, captureEmission(s, id, &store.Emission{Children: []store.Child{{Obj: &accepted}}, Complete: false}), nil)
+								f.mu.Lock()
+								if f.calls[raw.Named()] != 0 {
+									t.Error("raw covered source acquired before publication")
+								}
+								f.mu.Unlock()
+								if order == "excluded then refire" {
+									info, exists := s.GetStatus(raw.Named())
+									if exists || dispatches.Load() != 0 || len(s.FailedResources()) != 0 {
+										t.Errorf("excluded source created work/failure: %+v", info)
+									}
+									s.RecordEmitted(
+										id,
+										captureEmission(
+											s,
+											id,
+											&store.Emission{Children: []store.Child{{Obj: &accepted}}, Complete: false},
+										),
+										nil,
+									)
+									close(excluded)
+									o.tasks.YieldSlot(func() {
+										select {
+										case <-extendPermit:
+										case <-ctx.Done():
+										}
+									})
+									o.ksc.KeepEmitted(t.Context(), id, store.Child{Obj: &accepted}, nil)
+								} else {
+									s.RecordEmitted(
+										id,
+										captureEmission(
+											s,
+											id,
+											&store.Emission{Children: []store.Child{{Obj: &accepted}}, Complete: false},
+										),
+										nil,
+									)
+								}
+								close(published)
+								return schedule.Result{}
 							}
-							close(published)
-							return schedule.Result{}
-						}
-						call := dispatches.Add(1)
-						out := d.Dispatch(ctx, id, level)
-						if call == 1 {
-							initial = out.Assessment.Outcome()
-							if order != "before parking" {
-								once.Do(func() { close(entered) })
+							call := dispatches.Add(1)
+							out := d.Dispatch(ctx, id, level)
+							if call == 1 {
+								initial = out.Assessment.Outcome()
+								if order != "before parking" {
+									once.Do(func() { close(entered) })
+								}
 							}
-						}
 
-						if call == 1 && order == "before parking" {
-							once.Do(func() { close(entered) })
-							o.tasks.YieldSlot(func() { <-published })
-						}
-						return out
-					}}
+							if call == 1 && order == "before parking" {
+								once.Do(func() { close(entered) })
+								o.tasks.YieldSlot(func() { <-published })
+							}
+							return out
+						},
+					}
 					scheduler := schedule.New(o.tasks, dispatch)
 					unwatch := o.watchDAG(scheduler)
 					defer unwatch()
@@ -330,14 +412,27 @@ func TestDAGDispatch_CoveredArrival(t *testing.T) {
 					f.mu.Lock()
 					calls := f.calls[raw.Named()]
 					f.mu.Unlock()
-					if calls != 1 || o.tasks.Failures() != 0 || len(s.FailedResources()) != 0 || dispatches.Load() != wantDispatches {
-						t.Fatalf("publication lost scheduler progress: fetches=%d dispatches=%d failures=%v", calls, dispatches.Load(), s.FailedResources())
+					if calls != 1 || o.tasks.Failures() != 0 || len(s.FailedResources()) != 0 ||
+						dispatches.Load() != wantDispatches {
+						t.Fatalf(
+							"publication lost scheduler progress: fetches=%d dispatches=%d failures=%v",
+							calls,
+							dispatches.Load(),
+							s.FailedResources(),
+						)
 					}
 					info, _ := s.GetStatus(parent.Named())
 					if info.Status == store.StatusReady {
 						t.Fatal("child waited for its parent to settle")
 					}
-					t.Logf("%s/%s: dispatches=%d effective fetches=%d failures=%d", order, admission, dispatches.Load(), calls, len(s.FailedResources()))
+					t.Logf(
+						"%s/%s: dispatches=%d effective fetches=%d failures=%d",
+						order,
+						admission,
+						dispatches.Load(),
+						calls,
+						len(s.FailedResources()),
+					)
 				})
 			})
 		}

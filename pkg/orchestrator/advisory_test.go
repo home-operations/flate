@@ -40,7 +40,9 @@ func TestClusterAdvisories_ContributorsAndCarrier(t *testing.T) {
 	shared := store.SuppliedOverride{Resource: settings, SupplyPath: "first.yaml", Keys: []string{"Z", "A"}}
 	stores := []*store.Store{
 		newStore([]store.SuppliedOverride{shared}),
-		newStore([]store.SuppliedOverride{shared, {Resource: secret, SupplyPath: "second.yaml", Keys: []string{"TOKEN"}}}),
+		newStore(
+			[]store.SuppliedOverride{shared, {Resource: secret, SupplyPath: "second.yaml", Keys: []string{"TOKEN"}}},
+		),
 		newStore([]store.SuppliedOverride{{Resource: settings, SupplyPath: "omega.yaml", Keys: []string{"OMEGA"}}}),
 		nil,
 	}
@@ -52,9 +54,16 @@ func TestClusterAdvisories_ContributorsAndCarrier(t *testing.T) {
 		{ID: manifest.TreeID{Cluster: "omega", Side: manifest.TreeHead}, Absent: true, Result: &Result{}},
 	}
 	want := []manifest.Warning{
-		{Category: manifest.WarnSuppliedPrecedence, Message: "repository data takes precedence over supplied data", Detail: []string{
-			settings.String() + ": A (first.yaml)", settings.String() + ": Z (first.yaml)", secret.String() + ": TOKEN (second.yaml)",
-		}, Count: 1},
+		{
+			Category: manifest.WarnSuppliedPrecedence,
+			Message:  "repository data takes precedence over supplied data",
+			Detail: []string{
+				settings.String() + ": A (first.yaml)",
+				settings.String() + ": Z (first.yaml)",
+				secret.String() + ": TOKEN (second.yaml)",
+			},
+			Count: 1,
+		},
 	}
 	for range 2 {
 		clusterAdvisories(runs, stores)
@@ -77,7 +86,12 @@ func TestRenderTrees_ClusterAdvisories(t *testing.T) {
 	for _, scenario := range []string{"head", "paired", "head_only", "base", "two_clusters", "head_failed", "base_failed"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Parallel()
-			cfg := Config{Concurrency: 2, CacheDir: t.TempDir(), HeadOnly: scenario == "head_only", Supply: []store.SuppliedObject{suppliedSubstitution("settings")}}
+			cfg := Config{
+				Concurrency: 2,
+				CacheDir:    t.TempDir(),
+				HeadOnly:    scenario == "head_only",
+				Supply:      []store.SuppliedObject{suppliedSubstitution("settings")},
+			}
 			clusters := []manifest.ClusterID{"alpha"}
 			if scenario == "two_clusters" {
 				clusters = append(clusters, "omega")
@@ -85,14 +99,21 @@ func TestRenderTrees_ClusterAdvisories(t *testing.T) {
 			var trees []Tree
 			for _, cluster := range clusters {
 				for _, side := range []manifest.TreeSide{manifest.TreeBase, manifest.TreeHead} {
-					if scenario == "head" && side == manifest.TreeBase || scenario == "base" && side == manifest.TreeHead {
+					if scenario == "head" && side == manifest.TreeBase ||
+						scenario == "base" && side == manifest.TreeHead {
 						continue
 					}
 					root := t.TempDir()
 					writeSubstitutionCluster(t, root, "settings", fmt.Sprintf("${VALUE}-%d", side))
 					testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux.yaml, settings.yaml]\n")
-					testutil.WriteFile(t, root, "settings.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: repository}\n")
-					failed := scenario == "head_failed" && side == manifest.TreeHead || scenario == "base_failed" && side == manifest.TreeBase
+					testutil.WriteFile(
+						t,
+						root,
+						"settings.yaml",
+						"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: repository}\n",
+					)
+					failed := scenario == "head_failed" && side == manifest.TreeHead ||
+						scenario == "base_failed" && side == manifest.TreeBase
 					if failed {
 						testutil.WriteFile(t, root, "app/cm.yaml", "apiVersion: [\n")
 					}
@@ -123,8 +144,14 @@ func TestRenderTrees_ClusterAdvisories(t *testing.T) {
 					wantSide = manifest.TreeBase
 				}
 				assert.Equal(t, run.ID.Side, wantSide)
-				assert.Diff(t, run.Result.ClusterWarnings, []manifest.Warning{{Category: manifest.WarnSuppliedPrecedence,
-					Message: "repository data takes precedence over supplied data", Detail: []string{"ConfigMap/apps/settings: VALUE (ci-values.yaml)"}, Count: 1}})
+				assert.Diff(t, run.Result.ClusterWarnings, []manifest.Warning{
+					{
+						Category: manifest.WarnSuppliedPrecedence,
+						Message:  "repository data takes precedence over supplied data",
+						Detail:   []string{"ConfigMap/apps/settings: VALUE (ci-values.yaml)"},
+						Count:    1,
+					},
+				})
 			}
 			assert.Equal(t, carriers, len(clusters))
 		})
@@ -135,18 +162,50 @@ func TestRenderTrees_ClusterAdvisoriesWarmAcquisition(t *testing.T) {
 	root := t.TempDir()
 	writeSubstitutionCluster(t, root, "settings", "${VALUE}")
 	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux.yaml, source.yaml, settings.yaml]\n")
-	testutil.WriteFile(t, root, "flux.yaml", substitutionKS("consumer", "app", "  sourceRef: {kind: GitRepository, name: remote, namespace: apps}\n  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: settings}]\n"))
-	testutil.WriteFile(t, root, "source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: remote, namespace: apps}\nspec: {url: 'https://fixture.invalid/source', interval: 1h}\n")
-	testutil.WriteFile(t, root, "settings.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: repository}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"flux.yaml",
+		substitutionKS(
+			"consumer",
+			"app",
+			"  sourceRef: {kind: GitRepository, name: remote, namespace: apps}\n  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: settings}]\n",
+		),
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"source.yaml",
+		"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: remote, namespace: apps}\nspec: {url: 'https://fixture.invalid/source', interval: 1h}\n",
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"settings.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: repository}\n",
+	)
 	var runs []Rendered
 	var stores []*store.Store
 	var fetchers []*advisorySourceFetcher
-	source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "remote"}
+	source := manifest.NamedResource{
+		Group:     manifest.SourceDomain,
+		Kind:      manifest.KindGitRepository,
+		Namespace: "apps",
+		Name:      "remote",
+	}
 	consumer := testutil.KustomizationID("apps", "consumer")
 	for _, cluster := range []manifest.ClusterID{"alpha", "omega"} {
 		for _, side := range []manifest.TreeSide{manifest.TreeBase, manifest.TreeHead} {
 			tree := Tree{ID: manifest.TreeID{Cluster: cluster, Side: side}, RepoRoot: root}
-			o, err := newTestOrchestrator(t, tree, Config{Concurrency: 2, CacheDir: t.TempDir(), Supply: []store.SuppliedObject{suppliedSubstitution("settings")}})
+			o, err := newTestOrchestrator(
+				t,
+				tree,
+				Config{
+					Concurrency: 2,
+					CacheDir:    t.TempDir(),
+					Supply:      []store.SuppliedObject{suppliedSubstitution("settings")},
+				},
+			)
 			assert.NoError(t, err)
 			fetcher := &advisorySourceFetcher{root: root}
 			o.src.Fetchers[manifest.KindGitRepository] = fetcher
@@ -199,7 +258,12 @@ func TestRenderTrees_ClusterAdvisoriesWarmAcquisition(t *testing.T) {
 				continue
 			}
 			assert.Diff(t, run.Result.ClusterWarnings, []manifest.Warning{
-				{Category: manifest.WarnSuppliedPrecedence, Message: "repository data takes precedence over supplied data", Detail: []string{"ConfigMap/apps/settings: VALUE (ci-values.yaml)"}, Count: 1},
+				{
+					Category: manifest.WarnSuppliedPrecedence,
+					Message:  "repository data takes precedence over supplied data",
+					Detail:   []string{"ConfigMap/apps/settings: VALUE (ci-values.yaml)"},
+					Count:    1,
+				},
 			})
 		}
 	}
@@ -210,16 +274,30 @@ type advisorySourceFetcher struct {
 	calls atomic.Int64
 }
 
-func (f *advisorySourceFetcher) Fetch(context.Context, manifest.BaseManifest, *store.ReadSet, sourcecache.Policy) (*store.SourceArtifact, error) {
+func (f *advisorySourceFetcher) Fetch(
+	context.Context,
+	manifest.BaseManifest,
+	*store.ReadSet,
+	sourcecache.Policy,
+) (*store.SourceArtifact, error) {
 	f.calls.Add(1)
-	return &store.SourceArtifact{Kind: manifest.KindGitRepository, Key: "advisory-source", FS: os.DirFS(f.root), LocalPath: f.root}, nil
+	return &store.SourceArtifact{
+		Kind:      manifest.KindGitRepository,
+		Key:       "advisory-source",
+		FS:        os.DirFS(f.root),
+		LocalPath: f.root,
+	}, nil
 }
 
 func TestRenderTrees_ClusterAdvisoriesDiscoveryFailure(t *testing.T) {
 	t.Parallel()
 	failure := errors.New("discovery failed before evidence")
 	input := &store.SourceArtifact{LocalPath: t.TempDir(), FS: &joinedTreeFS{acquire: func() error { return failure }}}
-	runs, err := RenderTrees(t.Context(), []Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: input}}, Config{Concurrency: 2})
+	runs, err := RenderTrees(
+		t.Context(),
+		[]Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: input}},
+		Config{Concurrency: 2},
+	)
 	if !errors.Is(err, failure) || len(runs) != 1 || !errors.Is(runs[0].Err, failure) || runs[0].Orchestrator != nil {
 		t.Fatalf("discovery failure lost original incomplete result: %+v, %v", runs, err)
 	}
@@ -230,15 +308,34 @@ func TestSelect_ClusterAdvisories(t *testing.T) {
 	t.Parallel()
 	secret := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "flux-system", Name: "settings"}
 	warnings := []manifest.Warning{
-		{Category: manifest.WarnSuppliedPrecedence, Message: "repository data takes precedence over supplied data", Detail: []string{fmt.Sprintf("%s: token (/supply/settings.yaml)", secret)}, Count: 1},
+		{
+			Category: manifest.WarnSuppliedPrecedence,
+			Message:  "repository data takes precedence over supplied data",
+			Detail:   []string{fmt.Sprintf("%s: token (/supply/settings.yaml)", secret)},
+			Count:    1,
+		},
 	}
-	ordinary := manifest.Warning{Resource: manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "reader"}, Category: manifest.WarnStaleValues, Message: "ordinary", Detail: []string{"kept"}, Count: 4}
+	ordinary := manifest.Warning{
+		Resource: manifest.NamedResource{
+			Group:     manifest.HelmReleaseDomain,
+			Kind:      manifest.KindHelmRelease,
+			Namespace: "apps",
+			Name:      "reader",
+		},
+		Category: manifest.WarnStaleValues,
+		Message:  "ordinary",
+		Detail:   []string{"kept"},
+		Count:    4,
+	}
 	outside := ordinary
 	outside.Resource.Namespace = "flux-system"
 	for _, failedSide := range []int{-1, 0, 1} {
 		t.Run(fmt.Sprint(failedSide), func(t *testing.T) {
 			t.Parallel()
-			runs := []Rendered{selectedRun(&Result{Warnings: []manifest.Warning{ordinary, outside}}), selectedRun(&Result{ClusterWarnings: warnings})}
+			runs := []Rendered{
+				selectedRun(&Result{Warnings: []manifest.Warning{ordinary, outside}}),
+				selectedRun(&Result{ClusterWarnings: warnings}),
+			}
 			failure := errors.New("original failure")
 			var runErr error
 			if failedSide >= 0 {
@@ -246,8 +343,14 @@ func TestSelect_ClusterAdvisories(t *testing.T) {
 				runs[failedSide].Err = failure
 				runErr = failure
 			}
-			selected, err, diagnostic := Select(runs, runErr, []manifest.NamedResource{testutil.KustomizationID("apps", "named")}, nil)
-			if failedSide >= 0 && (!errors.Is(err, failure) || !errors.Is(diagnostic, failure)) || failedSide < 0 && err != nil {
+			selected, err, diagnostic := Select(
+				runs,
+				runErr,
+				[]manifest.NamedResource{testutil.KustomizationID("apps", "named")},
+				nil,
+			)
+			if failedSide >= 0 && (!errors.Is(err, failure) || !errors.Is(diagnostic, failure)) ||
+				failedSide < 0 && err != nil {
 				t.Fatalf("selection changed fatal error: %v, %v", err, diagnostic)
 			}
 			assert.Diff(t, selected[0].Warnings, []manifest.Warning{ordinary})

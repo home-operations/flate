@@ -147,7 +147,16 @@ func BenchmarkRecordEmitted_Replacement1000(b *testing.B) {
 	var versions [2][]Child
 	for side := range versions {
 		for i := range 1000 {
-			versions[side] = append(versions[side], Child{Obj: &manifest.ConfigMap{Name: fmt.Sprintf("child-%d-%04d", side, i), Namespace: "ns", Data: map[string]any{"key": "value"}}})
+			versions[side] = append(
+				versions[side],
+				Child{
+					Obj: &manifest.ConfigMap{
+						Name:      fmt.Sprintf("child-%d-%04d", side, i),
+						Namespace: "ns",
+						Data:      map[string]any{"key": "value"},
+					},
+				},
+			)
 		}
 	}
 	i := 0

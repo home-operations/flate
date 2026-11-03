@@ -23,7 +23,13 @@ func TestAdmission_ProjectedReaderNamespace(t *testing.T) {
 	st := store.New()
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
 	input := &manifest.ConfigMap{Name: "settings", Namespace: "apps"}
-	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: input.Name}}}}
+	consumer := &manifest.Kustomization{
+		Name:      "consumer",
+		Namespace: "apps",
+		PostBuild: &kustomizev1.PostBuild{
+			SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: input.Name}},
+		},
+	}
 	st.AddObject(consumer)
 	owner := (&manifest.Kustomization{Name: "owner", Namespace: "apps"}).Named()
 	l := New(st)
@@ -32,14 +38,23 @@ func TestAdmission_ProjectedReaderNamespace(t *testing.T) {
 	l.Options.Selection = manifest.Selection{Changed: true}
 	l.Options.Filter = change.NewFilter()
 	l.Index.Records[consumer.Named()] = manifest.DiscoveryRecord{File: "consumer.yaml"}
-	l.Index.Records[input.Named()] = manifest.DiscoveryRecord{Productions: []manifest.Production{{Owner: owner, Source: manifest.BootstrapSourceID, Path: filepath.Join(root, "shared.yaml")}}}
+	l.Index.Records[input.Named()] = manifest.DiscoveryRecord{
+		Productions: []manifest.Production{
+			{Owner: owner, Source: manifest.BootstrapSourceID, Path: filepath.Join(root, "shared.yaml")},
+		},
+	}
 	l.Index.Readers = map[string][]manifest.FileReader{}
 	l.candidates = map[manifest.NamedResource]store.Child{}
 	for _, namespace := range []string{"apps", "other"} {
 		reader := &manifest.Kustomization{Name: namespace, Namespace: "flux-system", TargetNamespace: namespace}
 		l.candidates[reader.Named()] = store.Child{Obj: reader}
-		l.Index.Records[reader.Named()] = manifest.DiscoveryRecord{Parent: (&manifest.ResourceSet{Name: "templates", Namespace: "flux-system"}).Named()}
-		l.Index.Readers["shared.yaml"] = append(l.Index.Readers["shared.yaml"], manifest.FileReader{Reader: reader.Named(), Source: manifest.BootstrapSourceID})
+		l.Index.Records[reader.Named()] = manifest.DiscoveryRecord{
+			Parent: (&manifest.ResourceSet{Name: "templates", Namespace: "flux-system"}).Named(),
+		}
+		l.Index.Readers["shared.yaml"] = append(
+			l.Index.Readers["shared.yaml"],
+			manifest.FileReader{Reader: reader.Named(), Source: manifest.BootstrapSourceID},
+		)
 	}
 	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
 	assert.NoError(t, err)
@@ -105,13 +120,25 @@ func TestAdmission_MaterializerInventoryAuthority(t *testing.T) {
 					root := t.TempDir()
 					st := store.New()
 					st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-						"consumer.yaml": {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: apps}\nspec:\n  path: ./payload\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: missing}]}\n")},
-						"producer.yaml": {Data: []byte("apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: producer, namespace: apps}\nspec:\n  interval: 1m\n  chart: {spec: {chart: demo, sourceRef: {kind: GitRepository, name: charts}}}\n")},
+						"consumer.yaml": {
+							Data: []byte(
+								"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: apps}\nspec:\n  path: ./payload\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: missing}]}\n",
+							),
+						},
+						"producer.yaml": {
+							Data: []byte(
+								"apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: producer, namespace: apps}\nspec:\n  interval: 1m\n  chart: {spec: {chart: demo, sourceRef: {kind: GitRepository, name: charts}}}\n",
+							),
+						},
 					}})
 					input := st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 					files := input.FS.(fstest.MapFS)
-					files["demo/Chart.yaml"] = &fstest.MapFile{Data: []byte("apiVersion: v2\nname: demo\nversion: 0.1.0\n")}
-					files["demo/templates/cm.yaml"] = &fstest.MapFile{Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: missing, namespace: apps}\n")}
+					files["demo/Chart.yaml"] = &fstest.MapFile{
+						Data: []byte("apiVersion: v2\nname: demo\nversion: 0.1.0\n"),
+					}
+					files["demo/templates/cm.yaml"] = &fstest.MapFile{
+						Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: missing, namespace: apps}\n"),
+					}
 					charts := &manifest.GitRepository{Name: "charts", Namespace: "apps"}
 					st.AddObject(charts)
 					st.SetArtifact(charts.Named(), input)
@@ -120,7 +147,12 @@ func TestAdmission_MaterializerInventoryAuthority(t *testing.T) {
 					l := New(st)
 					l.SourceRoot = root
 					l.Options.Filter = change.NewFilter()
-					consumer := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "consumer"}
+					consumer := manifest.NamedResource{
+						Group:     manifest.FluxKustomizeDomain,
+						Kind:      manifest.KindKustomization,
+						Namespace: "apps",
+						Name:      "consumer",
+					}
 					target := consumer
 					if scope == "namespace" {
 						target.Name = ""
@@ -138,19 +170,42 @@ func TestAdmission_MaterializerInventoryAuthority(t *testing.T) {
 						input := st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 						reader := documentReader{}
 						reader.setSources(map[string]*store.SourceArtifact{root: input})
-						docs, err := reader.parseFile(t.Context(), filepath.Join(root, "consumer.yaml"), manifest.ParseDocOptions{})
+						docs, err := reader.parseFile(
+							t.Context(),
+							filepath.Join(root, "consumer.yaml"),
+							manifest.ParseDocOptions{},
+						)
 						assert.NoError(t, err)
-						producers, err := reader.parseFile(t.Context(), filepath.Join(root, "producer.yaml"), manifest.ParseDocOptions{})
+						producers, err := reader.parseFile(
+							t.Context(),
+							filepath.Join(root, "producer.yaml"),
+							manifest.ParseDocOptions{},
+						)
 						assert.NoError(t, err)
 						docs = append(docs, producers...)
 						source, builtRoot := manifest.BootstrapSourceID, root
 						if mode == "prepared_foreign" {
-							source = manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "foreign"}
+							source = manifest.NamedResource{
+								Group: manifest.SourceDomain,
+								Kind:  manifest.KindGitRepository,
+								Name:  "foreign",
+							}
 							builtRoot = t.TempDir()
 							input := st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 							st.SetArtifact(source, &store.SourceArtifact{LocalPath: builtRoot, FS: input.FS})
 						}
-						l.RegisterBuilt(BuiltInput{Root: builtRoot, Source: source, Owner: manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Name: "entry"}}, docs)
+						l.RegisterBuilt(
+							BuiltInput{
+								Root:   builtRoot,
+								Source: source,
+								Owner: manifest.NamedResource{
+									Group: manifest.FluxKustomizeDomain,
+									Kind:  manifest.KindKustomization,
+									Name:  "entry",
+								},
+							},
+							docs,
+						)
 					}
 					assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 					if mode == "complete" || mode == "stale" {
@@ -170,7 +225,10 @@ func TestAdmission_MaterializerInventoryAuthority(t *testing.T) {
 						st.RecordEmitted(producer.Named(), &next, nil)
 						next.Finish()
 						if mode == "stale" {
-							st.UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusFailed, Message: "failed successor"})
+							st.UpdateStatus(
+								producer.Named(),
+								store.StatusInfo{Status: store.StatusFailed, Message: "failed successor"},
+							)
 						}
 					}
 					history := map[manifest.NamedResource]struct {
@@ -189,7 +247,11 @@ func TestAdmission_MaterializerInventoryAuthority(t *testing.T) {
 					}
 					proposal, err := l.Prepare(t.Context(), store.Child{}, nil, history)
 					assert.NoError(t, err)
-					assert.Equal(t, slices.Contains(proposal.Needed, producer.Named()), mode != "complete" && mode != "history" && mode != "prepared_foreign")
+					assert.Equal(
+						t,
+						slices.Contains(proposal.Needed, producer.Named()),
+						mode != "complete" && mode != "history" && mode != "prepared_foreign",
+					)
 					assert.Equal(t, slices.Contains(proposal.Selected, producer.Named()), false)
 					assert.Equal(t, slices.Contains(proposal.Dirty, producer.Named()), false)
 				})
@@ -201,10 +263,22 @@ func TestAdmission_MaterializerInventoryAuthority(t *testing.T) {
 		root := t.TempDir()
 		st := store.New()
 		input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-			"indexed.yaml":                  {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: indexed, namespace: apps}\nspec: {path: ./payload}\n")},
-			"producer.yaml":                 {Data: []byte("apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: producer, namespace: apps}\nspec:\n  interval: 1m\n  chart: {spec: {chart: demo, sourceRef: {kind: GitRepository, name: charts}}}\n")},
-			"demo/Chart.yaml":               {Data: []byte("apiVersion: v2\nname: demo\nversion: 0.1.0\n")},
-			"demo/templates/generated.yaml": {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: generated, namespace: apps}\nspec: {path: ./generated}\n")},
+			"indexed.yaml": {
+				Data: []byte(
+					"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: indexed, namespace: apps}\nspec: {path: ./payload}\n",
+				),
+			},
+			"producer.yaml": {
+				Data: []byte(
+					"apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: producer, namespace: apps}\nspec:\n  interval: 1m\n  chart: {spec: {chart: demo, sourceRef: {kind: GitRepository, name: charts}}}\n",
+				),
+			},
+			"demo/Chart.yaml": {Data: []byte("apiVersion: v2\nname: demo\nversion: 0.1.0\n")},
+			"demo/templates/generated.yaml": {
+				Data: []byte(
+					"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: generated, namespace: apps}\nspec: {path: ./generated}\n",
+				),
+			},
 		}}
 		st.SetArtifact(manifest.BootstrapSourceID, input)
 		charts := &manifest.GitRepository{Name: "charts", Namespace: "apps"}
@@ -213,7 +287,11 @@ func TestAdmission_MaterializerInventoryAuthority(t *testing.T) {
 		l := New(st)
 		l.SourceRoot = root
 		l.Options.Filter = change.NewFilter()
-		l.Options.Selection = manifest.Selection{Roots: []manifest.NamedResource{{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps"}}}
+		l.Options.Selection = manifest.Selection{
+			Roots: []manifest.NamedResource{
+				{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps"},
+			},
+		}
 		_, err := l.Load(t.Context(), root)
 		assert.NoError(t, err)
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))

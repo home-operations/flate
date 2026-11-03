@@ -32,7 +32,12 @@ func (c Classification) DiagnosticReason(id manifest.NamedResource) manifest.Dia
 	return manifest.DiagnosticReason{Subject: subject, Message: c.Message, Causes: c.Causes}
 }
 
-func failedClassification(id manifest.NamedResource, obj manifest.BaseManifest, message string, info *store.Observation) Classification {
+func failedClassification(
+	id manifest.NamedResource,
+	obj manifest.BaseManifest,
+	message string,
+	info *store.Observation,
+) Classification {
 	reason := manifest.DiagnosticReason{Subject: manifest.DiagnosticFor(id, obj), Message: message}
 	if info != nil {
 		reason = info.DependencyReason(reason.Subject)
@@ -131,7 +136,13 @@ func (w *Waiter) artifactReady(dep manifest.DependencyRef, level manifest.DrainL
 		label = "chart source"
 	}
 	if info, ok := w.Store.GetStatus(id); ok && info.Outcome() == store.OutcomeSkipped {
-		return Classification{Err: manifest.NewError(manifest.ErrSourceSkipped, nil, fmt.Sprintf("%s %s skipped: %s", label, manifest.DiagnosticFor(id, obj), info.String()))}
+		return Classification{
+			Err: manifest.NewError(
+				manifest.ErrSourceSkipped,
+				nil,
+				fmt.Sprintf("%s %s skipped: %s", label, manifest.DiagnosticFor(id, obj), info.String()),
+			),
+		}
 	}
 	if descriptor, ok := obj.(existenceOnly); ok && descriptor.ExistenceOnly() && !dep.ArtifactOnly {
 		return Classification{Kind: schedule.Terminal}
@@ -141,7 +152,13 @@ func (w *Waiter) artifactReady(dep manifest.DependencyRef, level manifest.DrainL
 		return Classification{Kind: schedule.Terminal}
 	}
 	if dep.ArtifactOnly {
-		return Classification{Err: manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("source %s has no readable content", manifest.DiagnosticFor(id, obj)))}
+		return Classification{
+			Err: manifest.NewError(
+				manifest.ErrInput,
+				nil,
+				fmt.Sprintf("source %s has no readable content", manifest.DiagnosticFor(id, obj)),
+			),
+		}
 	}
 	if level >= manifest.DrainCascade {
 		message := fmt.Sprintf("%s %s artifact content unavailable", label, manifest.DiagnosticFor(id, obj))

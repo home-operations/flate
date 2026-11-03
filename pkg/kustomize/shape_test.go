@@ -10,14 +10,15 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/fluxcd/pkg/envsubst"
 	fluxkustomize "github.com/fluxcd/pkg/kustomize"
-	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/values"
 	yamlv3 "go.yaml.in/yaml/v3"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/kustomize/api/resource"
 	kyaml "sigs.k8s.io/kustomize/kyaml/yaml"
 	"sigs.k8s.io/yaml"
+
+	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/values"
 
 	"github.com/google/go-cmp/cmp"
 )
@@ -58,14 +59,34 @@ func TestSubstituteDoc_PrecheckEquivalence(t *testing.T) {
 		{"nested escape", map[string]any{"spec": []any{map[string]any{"$$PID": "literal"}}}, map[string]string{"VAR": "example"}, true, nil},
 		{"infinity", map[string]any{"spec": []any{math.Inf(1)}}, map[string]string{"VAR": "example"}, true, nil},
 		{"NaN", map[string]any{"spec": map[string]any{"value": math.NaN()}}, map[string]string{"VAR": "example"}, true, nil},
-		{"double dollar value", map[string]any{"data": map[string]any{"script": "echo $$PID"}},
-			map[string]string{"PID": "expanded"}, true, map[string]any{"data": map[string]any{"script": "echo $PID"}}},
-		{"double dollar key", map[string]any{"data": map[string]any{"$$PID": "literal"}},
-			map[string]string{"PID": "expanded"}, true, map[string]any{"data": map[string]any{"$PID": "literal"}}},
-		{"double dollar nested list", map[string]any{"spec": map[string]any{"args": []any{"literal", "echo $$PID"}}},
-			map[string]string{"PID": "expanded"}, true, map[string]any{"spec": map[string]any{"args": []any{"literal", "echo $PID"}}}},
-		{"double dollar nested map in list", map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"command": "echo $$PID"}}}},
-			map[string]string{"PID": "expanded"}, true, map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"command": "echo $PID"}}}}},
+		{
+			"double dollar value",
+			map[string]any{"data": map[string]any{"script": "echo $$PID"}},
+			map[string]string{"PID": "expanded"},
+			true,
+			map[string]any{"data": map[string]any{"script": "echo $PID"}},
+		},
+		{
+			"double dollar key",
+			map[string]any{"data": map[string]any{"$$PID": "literal"}},
+			map[string]string{"PID": "expanded"},
+			true,
+			map[string]any{"data": map[string]any{"$PID": "literal"}},
+		},
+		{
+			"double dollar nested list",
+			map[string]any{"spec": map[string]any{"args": []any{"literal", "echo $$PID"}}},
+			map[string]string{"PID": "expanded"},
+			true,
+			map[string]any{"spec": map[string]any{"args": []any{"literal", "echo $PID"}}},
+		},
+		{
+			"double dollar nested map in list",
+			map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"command": "echo $$PID"}}}},
+			map[string]string{"PID": "expanded"},
+			true,
+			map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"command": "echo $PID"}}}},
+		},
 		{"substituted map key", map[string]any{
 			"apiVersion": "external-secrets.io/v1", "kind": "ClusterSecretStore",
 			"spec": map[string]any{"provider": map[string]any{"onepassword": map[string]any{"vaults": map[string]any{"${OP_VAULT}": 1}}}},
@@ -73,14 +94,34 @@ func TestSubstituteDoc_PrecheckEquivalence(t *testing.T) {
 			"apiVersion": "external-secrets.io/v1", "kind": "ClusterSecretStore",
 			"spec": map[string]any{"provider": map[string]any{"onepassword": map[string]any{"vaults": map[string]any{"homelab": float64(1)}}}},
 		}},
-		{"key collision last wins", map[string]any{"${OP_VAULT}": 1, "homelab": 2},
-			map[string]string{"OP_VAULT": "homelab"}, false, map[string]any{"homelab": float64(2)}},
-		{"escaped dollar key", map[string]any{"data": map[string]any{"$${OP_VAULT}": 1}},
-			map[string]string{"OP_VAULT": "homelab"}, false, map[string]any{"data": map[string]any{"${OP_VAULT}": float64(1)}}},
-		{"integer coercion", map[string]any{"spec": map[string]any{"value": "${VALUE}"}},
-			map[string]string{"VALUE": "3"}, false, map[string]any{"spec": map[string]any{"value": float64(3)}}},
-		{"date coercion", map[string]any{"spec": map[string]any{"value": "${VALUE}"}},
-			map[string]string{"VALUE": "2001-01-01"}, false, map[string]any{"spec": map[string]any{"value": "2001-01-01"}}},
+		{
+			"key collision last wins",
+			map[string]any{"${OP_VAULT}": 1, "homelab": 2},
+			map[string]string{"OP_VAULT": "homelab"},
+			false,
+			map[string]any{"homelab": float64(2)},
+		},
+		{
+			"escaped dollar key",
+			map[string]any{"data": map[string]any{"$${OP_VAULT}": 1}},
+			map[string]string{"OP_VAULT": "homelab"},
+			false,
+			map[string]any{"data": map[string]any{"${OP_VAULT}": float64(1)}},
+		},
+		{
+			"integer coercion",
+			map[string]any{"spec": map[string]any{"value": "${VALUE}"}},
+			map[string]string{"VALUE": "3"},
+			false,
+			map[string]any{"spec": map[string]any{"value": float64(3)}},
+		},
+		{
+			"date coercion",
+			map[string]any{"spec": map[string]any{"value": "${VALUE}"}},
+			map[string]string{"VALUE": "2001-01-01"},
+			false,
+			map[string]any{"spec": map[string]any{"value": "2001-01-01"}},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -108,11 +149,19 @@ func TestSubstituteDoc_PrecheckEquivalence(t *testing.T) {
 			for key, value := range tc.vars {
 				vars[key] = value
 			}
-			res, err := fluxkustomize.SubstituteVariables(t.Context(), nil,
+			res, err := fluxkustomize.SubstituteVariables(
+				t.Context(),
+				nil,
 				unstructured.Unstructured{Object: map[string]any{
 					"spec": map[string]any{"postBuild": map[string]any{"substitute": vars}},
-				}}, &resource.Resource{RNode: *node},
-				fluxkustomize.SubstituteWithDryRun(true), fluxkustomize.SubstituteWithAlways(true), fluxkustomize.SubstituteWithStrict(tc.strict))
+				}},
+				&resource.Resource{RNode: *node},
+				fluxkustomize.SubstituteWithDryRun(
+					true,
+				),
+				fluxkustomize.SubstituteWithAlways(true),
+				fluxkustomize.SubstituteWithStrict(tc.strict),
+			)
 			if (gotErr != nil) != (err != nil) {
 				t.Fatalf("precheck error = %v, Flux error = %v", gotErr, err)
 			}
@@ -156,7 +205,10 @@ func TestSubstitutionNames_EvaluatorReads(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if diff := cmp.Diff(want, values.SubstitutionNames([]manifest.DocOccurrence{{Document: doc}}, true)); diff != "" {
+			if diff := cmp.Diff(
+				want,
+				values.SubstitutionNames([]manifest.DocOccurrence{{Document: doc}}, true),
+			); diff != "" {
 				t.Errorf("names (-want +got):\n%s", diff)
 			}
 		})

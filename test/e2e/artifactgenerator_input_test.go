@@ -18,18 +18,30 @@ import (
 func TestE2E_ArtifactGenerator_InputSourceChangedOnly(t *testing.T) {
 	root := t.TempDir()
 	repo := testutil.GitInit(t, root)
-	if _, err := repo.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{"https://example.test/cluster.git"}}); err != nil {
+	if _, err := repo.CreateRemote(
+		&config.RemoteConfig{Name: "origin", URLs: []string{"https://example.test/cluster.git"}},
+	); err != nil {
 		t.Fatal(err)
 	}
-	options := &git.CommitOptions{Author: &object.Signature{Name: "test", Email: "test@example.test", When: time.Unix(0, 0)}}
+	options := &git.CommitOptions{
+		Author: &object.Signature{Name: "test", Email: "test@example.test", When: time.Unix(0, 0)},
+	}
 	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [cm.yaml]\n")
 	var content [2]string
 	for i, value := range []string{"before", "after"} {
-		testutil.WriteFile(t, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: generated-config, namespace: apps}\ndata: {value: "+value+"}\n")
+		testutil.WriteFile(
+			t,
+			root,
+			"app/cm.yaml",
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: generated-config, namespace: apps}\ndata: {value: "+value+"}\n",
+		)
 		content[i] = testutil.GitCommitAll(t, repo, value+" content", options).String()
 	}
 	source := func(ref string) string {
-		return fmt.Sprintf("apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: input, namespace: apps}\nspec: {url: https://example.test/cluster.git, ref: {commit: %s}}\n", ref)
+		return fmt.Sprintf(
+			"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: input, namespace: apps}\nspec: {url: https://example.test/cluster.git, ref: {commit: %s}}\n",
+			ref,
+		)
 	}
 	testutil.WriteFile(t, root, "entry/generator.yaml", `apiVersion: source.extensions.fluxcd.io/v1beta1
 kind: ArtifactGenerator
@@ -42,11 +54,39 @@ spec:
         - {from: '@repo/app/kustomization.yaml', to: '@artifact/render/kustomization.yaml'}
         - {from: '@repo/app/cm.yaml', to: '@artifact/render/cm.yaml'}
 `)
-	testutil.WriteFile(t, root, "entry/consumer.yaml", testutil.KustomizationYAML("consumer", "apps", "  path: ./render\n  sourceRef: {kind: ExternalArtifact, name: generated}\n"))
-	testutil.WriteFile(t, root, "entry/independent.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: independent, namespace: apps}\nspec: {url: https://example.test/cluster.git}\n")
-	testutil.WriteFile(t, root, "entry/unrelated.yaml", testutil.KustomizationYAML("unrelated", "apps", "  path: ./unrelated\n  sourceRef: {kind: GitRepository, name: independent}\n"))
+	testutil.WriteFile(
+		t,
+		root,
+		"entry/consumer.yaml",
+		testutil.KustomizationYAML(
+			"consumer",
+			"apps",
+			"  path: ./render\n  sourceRef: {kind: ExternalArtifact, name: generated}\n",
+		),
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"entry/independent.yaml",
+		"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: independent, namespace: apps}\nspec: {url: https://example.test/cluster.git}\n",
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"entry/unrelated.yaml",
+		testutil.KustomizationYAML(
+			"unrelated",
+			"apps",
+			"  path: ./unrelated\n  sourceRef: {kind: GitRepository, name: independent}\n",
+		),
+	)
 	testutil.WriteFile(t, root, "unrelated/kustomization.yaml", "resources: [cm.yaml]\n")
-	testutil.WriteFile(t, root, "unrelated/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unrelated-config, namespace: apps}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"unrelated/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unrelated-config, namespace: apps}\n",
+	)
 	var revisions [2]string
 	for i, ref := range content {
 		testutil.WriteFile(t, root, "entry/source.yaml", source(ref))
@@ -90,13 +130,19 @@ spec:
 						args = append(args, "-o", "diff")
 					}
 					stdout, stderr := harness.RequireCLIOK(t, args...)
-					if !strings.Contains(stdout, "value: "+tc.newValue) || strings.Contains(stdout, "unrelated-config") {
-						t.Fatalf("changed input lost consumer output or selected unrelated workload:\n%s\n%s", stdout, stderr)
+					if !strings.Contains(stdout, "value: "+tc.newValue) ||
+						strings.Contains(stdout, "unrelated-config") {
+						t.Fatalf(
+							"changed input lost consumer output or selected unrelated workload:\n%s\n%s",
+							stdout,
+							stderr,
+						)
 					}
 					if tc.command == "build" && strings.Count(stdout, "name: generated-config") != 1 {
 						t.Fatalf("consumer output was missing or duplicated:\n%s", stdout)
 					}
-					if tc.command == "diff" && (strings.Count(stdout, "-  value: "+tc.oldValue) != 1 || strings.Count(stdout, "+  value: "+tc.newValue) != 1) {
+					if tc.command == "diff" &&
+						(strings.Count(stdout, "-  value: "+tc.oldValue) != 1 || strings.Count(stdout, "+  value: "+tc.newValue) != 1) {
 						t.Fatalf("diff lost one generated side:\n%s", stdout)
 					}
 					again, _ := harness.RequireCLIOK(t, args...)

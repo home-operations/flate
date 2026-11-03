@@ -17,7 +17,15 @@ func TestLoader_CompactOwnedDataAuthority(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	input := fstest.MapFS{
-		"owner.yaml":                 {Data: []byte(testutil.KustomizationYAML("owner", "apps", "  path: ./payload\n  sourceRef: {kind: GitRepository, name: cluster}\n"))},
+		"owner.yaml": {
+			Data: []byte(
+				testutil.KustomizationYAML(
+					"owner",
+					"apps",
+					"  path: ./payload\n  sourceRef: {kind: GitRepository, name: cluster}\n",
+				),
+			),
+		},
 		"payload/kustomization.yaml": {Data: []byte("resources: [cm.yaml]\n")},
 		"payload/cm.yaml":            {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: data}\n")},
 	}
@@ -25,7 +33,10 @@ func TestLoader_CompactOwnedDataAuthority(t *testing.T) {
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
 	source := &manifest.GitRepository{Name: "cluster", Namespace: "apps"}
 	st.AddObject(source)
-	st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: filepath.Join(root, "mounted"), LocalRoot: root, InputAlias: true, FS: input})
+	st.SetArtifact(
+		source.Named(),
+		&store.SourceArtifact{LocalPath: filepath.Join(root, "mounted"), LocalRoot: root, InputAlias: true, FS: input},
+	)
 	l := New(st)
 	l.SourceRoot = root
 	l.Options.Selection = manifest.Selection{Changed: true}
@@ -39,7 +50,11 @@ func TestLoader_CompactOwnedDataAuthority(t *testing.T) {
 	record, found := l.Index.Lookup(id)
 	assert.Equal(t, found, true)
 	assert.Equal(t, l.AdmitsRoot(l.CatalogObject(id), record.Path), false)
-	assert.Diff(t, testutil.ProductionOwners(record), []manifest.NamedResource{testutil.KustomizationID("apps", "owner")})
+	assert.Diff(
+		t,
+		testutil.ProductionOwners(record),
+		[]manifest.NamedResource{testutil.KustomizationID("apps", "owner")},
+	)
 }
 
 func TestLoader_ConstructionReplacesDerivedRecords(t *testing.T) {
@@ -52,7 +67,9 @@ func TestLoader_ConstructionReplacesDerivedRecords(t *testing.T) {
 	first := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "first", Namespace: "apps"}
 	for _, name := range []string{"first", "second"} {
 		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-			"kustomization.yaml": {Data: []byte("namespace: apps\nconfigMapGenerator: [{name: " + name + ", literals: ['KEY=value']}]\n")},
+			"kustomization.yaml": {
+				Data: []byte("namespace: apps\nconfigMapGenerator: [{name: " + name + ", literals: ['KEY=value']}]\n"),
+			},
 		}})
 		_, err := l.Load(t.Context(), root)
 		assert.NoError(t, err)
@@ -70,7 +87,13 @@ func TestLoader_ConstructionReplacesDerivedRecords(t *testing.T) {
 func TestLoader_CompactSourceHydrationSurvivesAdmission(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	files := fstest.MapFS{"source.yaml": {Data: []byte("apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: apps}\nspec: {url: https://example.test/first.git, secretRef: {name: first-auth}}\n")}}
+	files := fstest.MapFS{
+		"source.yaml": {
+			Data: []byte(
+				"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: apps}\nspec: {url: https://example.test/first.git, secretRef: {name: first-auth}}\n",
+			),
+		},
+	}
 	st := store.New()
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
 	l := New(st)
@@ -94,7 +117,11 @@ func TestLoader_CompactSourceHydrationSurvivesAdmission(t *testing.T) {
 	}
 	assert.Equal(t, st.GetObject(first.Named()), nil)
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"source.yaml": {Data: []byte("apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: apps}\nspec: {url: https://example.test/second.git, secretRef: {name: second-auth}}\n")},
+		"source.yaml": {
+			Data: []byte(
+				"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: apps}\nspec: {url: https://example.test/second.git, secretRef: {name: second-auth}}\n",
+			),
+		},
 	}})
 	_, err = l.Load(t.Context(), root)
 	assert.NoError(t, err)
@@ -103,7 +130,14 @@ func TestLoader_CompactSourceHydrationSurvivesAdmission(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, child.Obj == first, false)
 		assert.Equal(t, child.Obj.(*manifest.GitRepository).URL, "https://example.test/second.git")
-		assert.Equal(t, slices.ContainsFunc(l.locations[child.Obj.Named()].facts.refs, func(ref manifest.Reference) bool { return ref.Name == "second-auth" }), true)
+		assert.Equal(
+			t,
+			slices.ContainsFunc(
+				l.locations[child.Obj.Named()].facts.refs,
+				func(ref manifest.Reference) bool { return ref.Name == "second-auth" },
+			),
+			true,
+		)
 	}
 }
 
@@ -201,18 +235,46 @@ func TestLoader_CompactContextualNamespace(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			input := fstest.MapFS{
-				"entry/kustomization.yaml":   {Data: []byte("namespace: apps\nresources: [owner.yaml, namespace.yaml]\nreplacements: [{path: ../replacement.yaml}]\n")},
-				"entry/owner.yaml":           {Data: []byte(testutil.KustomizationYAML("owner", "", "  path: ./payload\n  sourceRef: {kind: GitRepository, name: cluster, namespace: apps}\n"))},
-				"entry/namespace.yaml":       {Data: []byte("apiVersion: v1\nkind: Namespace\nmetadata: {name: apps}\n")},
-				"replacement.yaml":           {Data: []byte(strings.ReplaceAll(nsReplacementRule, "spec.targetNamespace", tc.field))},
+				"entry/kustomization.yaml": {
+					Data: []byte(
+						"namespace: apps\nresources: [owner.yaml, namespace.yaml]\nreplacements: [{path: ../replacement.yaml}]\n",
+					),
+				},
+				"entry/owner.yaml": {
+					Data: []byte(
+						testutil.KustomizationYAML(
+							"owner",
+							"",
+							"  path: ./payload\n  sourceRef: {kind: GitRepository, name: cluster, namespace: apps}\n",
+						),
+					),
+				},
+				"entry/namespace.yaml": {
+					Data: []byte("apiVersion: v1\nkind: Namespace\nmetadata: {name: apps}\n"),
+				},
+				"replacement.yaml": {
+					Data: []byte(strings.ReplaceAll(nsReplacementRule, "spec.targetNamespace", tc.field)),
+				},
 				"payload/kustomization.yaml": {Data: []byte("resources: [source.yaml]\n")},
-				"payload/source.yaml":        {Data: []byte("apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: chart}\nspec: {url: oci://example.test/chart, ref: {tag: v1}}\n")},
+				"payload/source.yaml": {
+					Data: []byte(
+						"apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: chart}\nspec: {url: oci://example.test/chart, ref: {tag: v1}}\n",
+					),
+				},
 			}
 			st := store.New()
 			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
 			source := &manifest.GitRepository{Name: "cluster", Namespace: "apps"}
 			st.AddObject(source)
-			st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: filepath.Join(root, "mounted"), LocalRoot: root, InputAlias: true, FS: input})
+			st.SetArtifact(
+				source.Named(),
+				&store.SourceArtifact{
+					LocalPath:  filepath.Join(root, "mounted"),
+					LocalRoot:  root,
+					InputAlias: true,
+					FS:         input,
+				},
+			)
 			l := New(st)
 			l.SourceRoot = root
 			l.Options.Selection = manifest.Selection{Changed: true}
@@ -226,7 +288,12 @@ func TestLoader_CompactContextualNamespace(t *testing.T) {
 			_, err = l.Load(t.Context(), filepath.Join(root, "mounted", "payload"))
 			assert.NoError(t, err)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
-			id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: tc.namespace, Name: "chart"}
+			id := manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindOCIRepository,
+				Namespace: tc.namespace,
+				Name:      "chart",
+			}
 			_, found := l.Index.Lookup(id)
 			assert.Equal(t, found, true)
 		})
@@ -239,7 +306,9 @@ func TestLoader_FreezeIncludesLateProducer(t *testing.T) {
 	st := store.New()
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
 		"kustomization.yaml": {Data: []byte("resources: [cm.yaml]\n")},
-		"cm.yaml":            {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: data, namespace: apps}\n")},
+		"cm.yaml": {
+			Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: data, namespace: apps}\n"),
+		},
 	}})
 	l := New(st)
 	l.SourceRoot = root

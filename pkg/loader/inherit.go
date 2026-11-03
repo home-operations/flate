@@ -88,13 +88,26 @@ func (l *Loader) scopeSource(state sourceState) int {
 		}
 	}
 	root, pinned, external := SourceView(l.Store, state.id, state.repoRoot)
-	l.scopes.sources = append(l.scopes.sources, sourceScope{sourceState: state, root: root, pinned: pinned, external: external, origin: l.documents.localBase(root, state.repoRoot)})
+	l.scopes.sources = append(
+		l.scopes.sources,
+		sourceScope{
+			sourceState: state,
+			root:        root,
+			pinned:      pinned,
+			external:    external,
+			origin:      l.documents.localBase(root, state.repoRoot),
+		},
+	)
 	return len(l.scopes.sources) - 1
 }
 
 func (l *Loader) ensureScopes() {
 	if l.scopes == nil {
-		l.scopes = &scopeConstruction{walks: map[graphContext]scopeTraversal{}, scanned: map[string]struct{}{}, visits: map[string][]graphVisit{}}
+		l.scopes = &scopeConstruction{
+			walks:   map[graphContext]scopeTraversal{},
+			scanned: map[string]struct{}{},
+			visits:  map[string][]graphVisit{},
+		}
 		l.scopes.sources = l.scopes.sourceBuf[:0]
 	}
 }
@@ -218,12 +231,25 @@ func (l *Loader) admit(repoRoot string) {
 				continue
 			}
 			if external {
-				v := graphVisit{root: repoRoot, dir: l.documents.claimBase(repoRoot, ks.Path), owner: ks.Named(), source: ref, input: i + 1}
+				v := graphVisit{
+					root:   repoRoot,
+					dir:    l.documents.claimBase(repoRoot, ks.Path),
+					owner:  ks.Named(),
+					source: ref,
+					input:  i + 1,
+				}
 				l.visitScope(v, true)
 				continue
 			}
-			v := graphVisit{root: root, dir: l.documents.claimBase(root, ks.Path),
-				namespace: ks.TargetNamespace, fallback: ks.TargetNamespace, owner: ks.Named(), source: ks.SourceID(), input: i + 1}
+			v := graphVisit{
+				root:      root,
+				dir:       l.documents.claimBase(root, ks.Path),
+				namespace: ks.TargetNamespace,
+				fallback:  ks.TargetNamespace,
+				owner:     ks.Named(),
+				source:    ks.SourceID(),
+				input:     i + 1,
+			}
 			if v.source.Name == "" || v.source.Kind == "" {
 				v.source = manifest.BootstrapSourceID
 			}
@@ -250,7 +276,11 @@ func (l *Loader) admit(repoRoot string) {
 		}
 		for _, dir := range l.scopes.roots {
 			v := graphVisit{root: repoRoot, dir: dir, source: manifest.BootstrapSourceID, role: kustomizeinput.Resource}
-			if l.anchorRoot(repoRoot, dir) && slices.ContainsFunc(l.scopes.claims, func(claim manifest.KSClaim) bool { return strings.HasPrefix(dir+"/", claim.Prefix) }) {
+			if l.anchorRoot(repoRoot, dir) &&
+				slices.ContainsFunc(
+					l.scopes.claims,
+					func(claim manifest.KSClaim) bool { return strings.HasPrefix(dir+"/", claim.Prefix) },
+				) {
 				l.visitScope(v, true)
 			} else {
 				l.visitScope(v, false)
@@ -285,7 +315,8 @@ func (l *Loader) anchorRoot(repoRoot, dir string) bool {
 		owner, _ := l.Index.Lookup(claim.ID)
 		origin := l.documents.localPath(owner.Path)
 		if owner.Path == "" || !slices.ContainsFunc(visits, func(visit graphVisit) bool {
-			return visit.role == kustomizeinput.Resource && (visit.file == owner.Path || visit.file == origin || visit.origin != "" && visit.origin == origin)
+			return visit.role == kustomizeinput.Resource &&
+				(visit.file == owner.Path || visit.file == origin || visit.origin != "" && visit.origin == origin)
 		}) {
 			return false
 		}
@@ -331,7 +362,12 @@ func (l *Loader) scopeWalk(root graphVisit) []graphVisit {
 	var key physicalContext
 	if !seen && l.documents.compact {
 		source = l.sourceFacts(root.root)
-		key = physicalContext{graphContext: root.graphContext, sourceRoot: l.SourceRoot, prefix: root.prefix, localBase: root.localBase}
+		key = physicalContext{
+			graphContext: root.graphContext,
+			sourceRoot:   l.SourceRoot,
+			prefix:       root.prefix,
+			localBase:    root.localBase,
+		}
 		walk.visits, seen = source.walks[key]
 		if seen {
 			l.scopes.walks[root.graphContext] = walk
@@ -402,7 +438,18 @@ func (l *Loader) visitScope(root graphVisit, membershipOnly bool) []graphVisit {
 			visits = append(visits, l.scopeWalk(child)...)
 		}
 	}
-	l.scopes.contributions = append(l.scopes.contributions, scopeContribution{owner: root.owner, source: root.source, visits: visits, context: root.graphContext, unshared: unshared, membershipOnly: membershipOnly, input: root.input})
+	l.scopes.contributions = append(
+		l.scopes.contributions,
+		scopeContribution{
+			owner:          root.owner,
+			source:         root.source,
+			visits:         visits,
+			context:        root.graphContext,
+			unshared:       unshared,
+			membershipOnly: membershipOnly,
+			input:          root.input,
+		},
+	)
 	for _, v := range visits {
 		v.owner, v.source, v.input = root.owner, root.source, root.input
 		v.membershipOnly = membershipOnly
@@ -459,7 +506,10 @@ func (l *Loader) projectAuthored(repoRoot string) bool {
 		}
 		doc := l.documents.cache[file]
 		if l.documents.compact || doc.bootstrap || l.entry == entryKustomize || !doc.loaded {
-			structural := slices.ContainsFunc(indexed[start:end], func(r authoredRecord) bool { return r.id.KindInfo().Structural })
+			structural := slices.ContainsFunc(
+				indexed[start:end],
+				func(r authoredRecord) bool { return r.id.KindInfo().Structural },
+			)
 			scopes[file] = l.rootAdmission(file, first.file, structural)
 		}
 		for _, r := range indexed[start:end] {
@@ -491,7 +541,8 @@ func (l *Loader) projectAuthored(repoRoot string) bool {
 			continue
 		}
 		doc := l.documents.cache[r.Path]
-		allowed[id] = doc.eligible != fileInactive && (l.entry != entryKustomize && doc.loaded && !doc.bootstrap || scopes[r.Path].admits(l, id, r))
+		allowed[id] = doc.eligible != fileInactive &&
+			(l.entry != entryKustomize && doc.loaded && !doc.bootstrap || scopes[r.Path].admits(l, id, r))
 	}
 	if l.documents.compact {
 		for id, record := range next {
@@ -503,7 +554,8 @@ func (l *Loader) projectAuthored(repoRoot string) bool {
 				continue
 			}
 			doc := l.documents.cache[record.Path]
-			allowed[id] = doc.eligible != fileInactive && (id.KindInfo().Discovery && l.entry != entryKustomize && doc.loaded && !doc.bootstrap || scopes[record.Path].admits(l, id, record))
+			allowed[id] = doc.eligible != fileInactive &&
+				(id.KindInfo().Discovery && l.entry != entryKustomize && doc.loaded && !doc.bootstrap || scopes[record.Path].admits(l, id, record))
 		}
 	}
 	l.scopes.candidates, l.candidates = l.candidates, objects
@@ -511,7 +563,10 @@ func (l *Loader) projectAuthored(repoRoot string) bool {
 	return l.applyAuthored(next, objects, allowed)
 }
 
-func (l *Loader) desiredAuthored(raw []authoredRecord, repoRoot string) (map[manifest.NamedResource]manifest.DiscoveryRecord, map[manifest.NamedResource]store.Child) {
+func (l *Loader) desiredAuthored(
+	raw []authoredRecord,
+	repoRoot string,
+) (map[manifest.NamedResource]manifest.DiscoveryRecord, map[manifest.NamedResource]store.Child) {
 	next := l.scopes.records
 	if next == nil {
 		next = map[manifest.NamedResource]manifest.DiscoveryRecord{}
@@ -568,7 +623,8 @@ func (l *Loader) desiredAuthored(raw []authoredRecord, repoRoot string) (map[man
 					l.locations[projected.Identity] = projected
 					if authored.Obj != nil {
 						object := authored.Obj
-						if previous := l.candidates[projected.Identity]; previous.Obj != nil && object.ProjectionCompatible(previous.Obj) {
+						if previous := l.candidates[projected.Identity]; previous.Obj != nil &&
+							object.ProjectionCompatible(previous.Obj) {
 							object = previous.Obj
 						}
 						if object.Named().Namespace != projected.Identity.Namespace {
@@ -576,7 +632,10 @@ func (l *Loader) desiredAuthored(raw []authoredRecord, repoRoot string) (map[man
 						}
 						objects[projected.Identity] = store.Child{Obj: object}
 					} else if previous := l.candidates[projected.Identity]; previous.Obj != nil {
-						if current, ok := l.Index.Lookup(projected.Identity); ok && current.Path == r.Path && current.Authored == r.Authored {
+						if current, ok := l.Index.Lookup(
+							projected.Identity,
+						); ok && current.Path == r.Path &&
+							current.Authored == r.Authored {
 							objects[projected.Identity] = previous
 						}
 					}
@@ -642,13 +701,18 @@ func (l *Loader) authoredObject(path string, id manifest.NamedResource) store.Ch
 		}
 		return doc.lookup[id]
 	}
-	if len(doc.objects) == 1 && doc.objects[0].Obj != nil && doc.objects[0].outcome.Err == nil && doc.objects[0].Obj.Named() == id {
+	if len(doc.objects) == 1 && doc.objects[0].Obj != nil && doc.objects[0].outcome.Err == nil &&
+		doc.objects[0].Obj.Named() == id {
 		return doc.objects[0].Child
 	}
 	return store.Child{}
 }
 
-func (l *Loader) applyAuthored(next map[manifest.NamedResource]manifest.DiscoveryRecord, objects map[manifest.NamedResource]store.Child, allowed map[manifest.NamedResource]bool) bool {
+func (l *Loader) applyAuthored(
+	next map[manifest.NamedResource]manifest.DiscoveryRecord,
+	objects map[manifest.NamedResource]store.Child,
+	allowed map[manifest.NamedResource]bool,
+) bool {
 	var deletes []manifest.NamedResource
 	changed := false
 	for id, r := range l.Index.Files() {
@@ -667,7 +731,10 @@ func (l *Loader) applyAuthored(next map[manifest.NamedResource]manifest.Discover
 	}
 	for _, id := range slices.SortedFunc(maps.Keys(next), manifest.NamedResource.Compare) {
 		r := next[id]
-		if previous, ok := l.Index.Lookup(id); !ok || previous.Authored != r.Authored || previous.Path != r.Path || previous.File != r.File || !slices.Equal(previous.Refs, r.Refs) {
+		if previous, ok := l.Index.Lookup(
+			id,
+		); !ok || previous.Authored != r.Authored || previous.Path != r.Path || previous.File != r.File ||
+			!slices.Equal(previous.Refs, r.Refs) {
 			changed = true
 		}
 		l.Index.Records[id] = r
@@ -820,7 +887,8 @@ func (l *Loader) resolveEligibility() {
 				mark(v.file, fileInactive)
 				continue
 			}
-			if c.owner == (manifest.NamedResource{}) || declaredSource || owner.Path == v.file || v.origin != "" && owner.Path == v.origin {
+			if c.owner == (manifest.NamedResource{}) || declaredSource || owner.Path == v.file ||
+				v.origin != "" && owner.Path == v.origin {
 				controlled = false
 				continue
 			}
@@ -867,7 +935,9 @@ func (l *Loader) resolveEligibility() {
 			c := &l.scopes.contributions[i]
 			r, indexed := l.Index.Lookup(c.owner)
 			object := l.Store.GetObject(c.owner)
-			active := c.owner == (manifest.NamedResource{}) || !indexed || r.Path == "" || l.documents.cache[r.Path].eligible >= fileEligible || object != nil && object != l.admitted[c.owner]
+			active := c.owner == (manifest.NamedResource{}) || !indexed || r.Path == "" ||
+				l.documents.cache[r.Path].eligible >= fileEligible ||
+				object != nil && object != l.admitted[c.owner]
 			if c.owner == (manifest.NamedResource{}) && !c.membershipOnly && len(c.visits) != 0 {
 				claimed, enabled := false, false
 				for _, claim := range l.scopes.claims {
@@ -887,7 +957,11 @@ func (l *Loader) resolveEligibility() {
 				continue
 			}
 			reachability := fileEligible
-			if c.owner == (manifest.NamedResource{}) && !c.membershipOnly && len(c.visits) != 0 && !slices.ContainsFunc(l.scopes.claims, func(claim manifest.KSClaim) bool { return strings.HasPrefix(c.visits[0].dir+"/", claim.Prefix) }) {
+			if c.owner == (manifest.NamedResource{}) && !c.membershipOnly && len(c.visits) != 0 &&
+				!slices.ContainsFunc(
+					l.scopes.claims,
+					func(claim manifest.KSClaim) bool { return strings.HasPrefix(c.visits[0].dir+"/", claim.Prefix) },
+				) {
 				reachability = fileIndependent
 			}
 			if !c.unshared {

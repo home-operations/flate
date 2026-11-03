@@ -52,7 +52,10 @@ func (f *Filter) ShouldReconcile(id manifest.NamedResource) bool {
 
 // AddEmitted commits prepared roles if revision still applies, returning newly needed identities and retry.
 // Callers MUST perform capture validation, inclusion arrivals and publication outside this lock.
-func (f *Filter) AddEmitted(needs, selects, dirties []manifest.NamedResource, revision uint64) ([]manifest.NamedResource, bool) {
+func (f *Filter) AddEmitted(
+	needs, selects, dirties []manifest.NamedResource,
+	revision uint64,
+) ([]manifest.NamedResource, bool) {
 	if f == nil {
 		return nil, false
 	}

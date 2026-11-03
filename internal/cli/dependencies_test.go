@@ -17,7 +17,20 @@ func TestRun_GeneratedValuesDirectDependentAndKS(t *testing.T) {
 	for _, workers := range []string{"1", "2", "4"} {
 		for _, tc := range []struct{ kind, name string }{{"hr", "a"}, {"hr", "b"}, {"ks", "apps"}} {
 			t.Run(workers+"/"+tc.kind+"/"+tc.name, func(t *testing.T) {
-				stdout, stderr, code := runCLI(t, "build", tc.kind, tc.name, "--path", dir, "--cache-dir", cache, "--concurrency", workers, "-o", "json")
+				stdout, stderr, code := runCLI(
+					t,
+					"build",
+					tc.kind,
+					tc.name,
+					"--path",
+					dir,
+					"--cache-dir",
+					cache,
+					"--concurrency",
+					workers,
+					"-o",
+					"json",
+				)
 				if code != 0 {
 					t.Fatalf("build exited %d: %s", code, stderr)
 				}
@@ -48,7 +61,18 @@ func TestRun_GeneratedValuesDirectDependentAndKS(t *testing.T) {
 				if !found {
 					t.Fatalf("selected output missing: %s", stdout)
 				}
-				stdout, stderr, code = runCLI(t, "test", tc.kind, tc.name, "--path", dir, "--cache-dir", cache, "--concurrency", workers)
+				stdout, stderr, code = runCLI(
+					t,
+					"test",
+					tc.kind,
+					tc.name,
+					"--path",
+					dir,
+					"--cache-dir",
+					cache,
+					"--concurrency",
+					workers,
+				)
 				if code != 0 || !strings.Contains(stdout, "1 passed") {
 					t.Fatalf("test exited %d: stdout=%s stderr=%s", code, stdout, stderr)
 				}
@@ -73,7 +97,12 @@ func TestRun_DiffExcludedOrderingAndSelectedSourceFailure(t *testing.T) {
 					foreignKind = "HelmRelease"
 				}
 				for _, dir := range []string{baseDir, headDir} {
-					testutil.WriteFile(t, dir, "foreign.yaml", "apiVersion: example.test/v1\nkind: "+foreignKind+"\nmetadata: {name: selected, namespace: flux-system}\nspec: {value: foreign-marker}\n")
+					testutil.WriteFile(
+						t,
+						dir,
+						"foreign.yaml",
+						"apiVersion: example.test/v1\nkind: "+foreignKind+"\nmetadata: {name: selected, namespace: flux-system}\nspec: {value: foreign-marker}\n",
+					)
 				}
 				stdout, stderr, code := runCLI(t, "diff", kind, "selected", "--path", headDir, "--path-orig", baseDir,
 					"--cache-dir", t.TempDir(), "--concurrency", "4", "-o", "diff")
@@ -113,17 +142,61 @@ func TestRun_Diff_UnchangedInputProducerOutput(t *testing.T) {
 	before, after := t.TempDir(), t.TempDir()
 	for _, root := range []string{before, after} {
 		testutil.GitInit(t, root)
-		testutil.WriteFile(t, root, "flux/inputs.yaml", testutil.KustomizationYAML("inputs", "apps", "  path: ./inputs\n  targetNamespace: apps\n"))
-		testutil.WriteFile(t, root, "flux/app.yaml", testutil.KustomizationYAML("app", "apps", "  path: ./app\n  targetNamespace: apps\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: vars}]}\n"))
+		testutil.WriteFile(
+			t,
+			root,
+			"flux/inputs.yaml",
+			testutil.KustomizationYAML("inputs", "apps", "  path: ./inputs\n  targetNamespace: apps\n"),
+		)
+		testutil.WriteFile(
+			t,
+			root,
+			"flux/app.yaml",
+			testutil.KustomizationYAML(
+				"app",
+				"apps",
+				"  path: ./app\n  targetNamespace: apps\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: vars}]}\n",
+			),
+		)
 		testutil.WriteFile(t, root, "inputs/kustomization.yaml", "resources: [cm.yaml]\n")
-		testutil.WriteFile(t, root, "inputs/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: vars, namespace: apps}\ndata: {VALUE: stable}\n")
+		testutil.WriteFile(
+			t,
+			root,
+			"inputs/cm.yaml",
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: vars, namespace: apps}\ndata: {VALUE: stable}\n",
+		)
 		testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [cm.yaml]\n")
-		testutil.WriteFile(t, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: rendered, namespace: apps}\ndata: {value: '${VALUE}'}\n")
+		testutil.WriteFile(
+			t,
+			root,
+			"app/cm.yaml",
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: rendered, namespace: apps}\ndata: {value: '${VALUE}'}\n",
+		)
 	}
-	testutil.WriteFile(t, after, "flux/app.yaml", testutil.KustomizationYAML("app", "apps", "  path: ./app\n  targetNamespace: apps\n  postBuild: {substitute: {VALUE: stable}}\n"))
+	testutil.WriteFile(
+		t,
+		after,
+		"flux/app.yaml",
+		testutil.KustomizationYAML(
+			"app",
+			"apps",
+			"  path: ./app\n  targetNamespace: apps\n  postBuild: {substitute: {VALUE: stable}}\n",
+		),
+	)
 	var full []string
 	for _, root := range []string{before, after} {
-		output, diagnostic, code := runCLI(t, "build", "ks", "app", "--path", filepath.Join(root, "flux"), "--cache-dir", t.TempDir(), "--concurrency", "2")
+		output, diagnostic, code := runCLI(
+			t,
+			"build",
+			"ks",
+			"app",
+			"--path",
+			filepath.Join(root, "flux"),
+			"--cache-dir",
+			t.TempDir(),
+			"--concurrency",
+			"2",
+		)
 		if code != 0 {
 			t.Fatalf("full render failed: %s", diagnostic)
 		}
@@ -132,7 +205,22 @@ func TestRun_Diff_UnchangedInputProducerOutput(t *testing.T) {
 	if full[0] != full[1] {
 		t.Fatalf("full outputs differ: before=%s after=%s", full[0], full[1])
 	}
-	output, diagnostic, code := runCLI(t, "diff", "ks", "app", "--path", filepath.Join(after, "flux"), "--path-orig", filepath.Join(before, "flux"), "--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "diff")
+	output, diagnostic, code := runCLI(
+		t,
+		"diff",
+		"ks",
+		"app",
+		"--path",
+		filepath.Join(after, "flux"),
+		"--path-orig",
+		filepath.Join(before, "flux"),
+		"--cache-dir",
+		t.TempDir(),
+		"--concurrency",
+		"2",
+		"-o",
+		"diff",
+	)
 	if code != 0 || output != "" {
 		t.Fatalf("unchanged input producer appeared in diff: code=%d stdout=%s stderr=%s", code, output, diagnostic)
 	}

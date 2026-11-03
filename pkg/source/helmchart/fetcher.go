@@ -45,9 +45,11 @@ type Config struct {
 
 // New constructs a fetcher borrowing the caller's cache and required non-nil Network.
 func New(oci ociFetcher, cfg Config) *Fetcher {
-	return &Fetcher{oci: oci, cache: cfg.Cache,
+	return &Fetcher{
+		oci: oci, cache: cfg.Cache,
 		network: cfg.Network, disableChartDigestTracking: cfg.DisableChartDigestTracking,
-		indexLocks: keylock.New[string](), indexDecodes: make(chan struct{}, max(1, cfg.Concurrency/128))}
+		indexLocks: keylock.New[string](), indexDecodes: make(chan struct{}, max(1, cfg.Concurrency/128)),
+	}
 }
 
 // Fetch implements source.TypedFetcher[*manifest.HelmChartSource]. It
@@ -60,16 +62,34 @@ type operation struct {
 }
 
 // Fetch acquires content using one execution's captured credentials and declarations.
-func (f *Fetcher) Fetch(ctx context.Context, hc *manifest.HelmChartSource, reads *store.ReadSet, policy cache.Policy) (*store.SourceArtifact, error) {
+func (f *Fetcher) Fetch(
+	ctx context.Context,
+	hc *manifest.HelmChartSource,
+	reads *store.ReadSet,
+	policy cache.Policy,
+) (*store.SourceArtifact, error) {
 	operation := operation{Fetcher: f, reads: reads, secrets: source.SecretLookup(reads)}
 	return operation.fetchSource(ctx, hc, policy)
 }
 
-func (f *operation) fetchSource(ctx context.Context, hc *manifest.HelmChartSource, policy cache.Policy) (*store.SourceArtifact, error) {
-	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: hc.Namespace, Name: hc.SourceRef.Name}
+func (f *operation) fetchSource(
+	ctx context.Context,
+	hc *manifest.HelmChartSource,
+	policy cache.Policy,
+) (*store.SourceArtifact, error) {
+	id := manifest.NamedResource{
+		Group:     manifest.SourceDomain,
+		Kind:      manifest.KindHelmRepository,
+		Namespace: hc.Namespace,
+		Name:      hc.SourceRef.Name,
+	}
 	r, _ := f.reads.Get[*manifest.HelmRepository](id)
 	if r == nil {
-		return nil, manifest.NewError(manifest.ErrObjectNotFound, nil, fmt.Sprintf("%s not found", manifest.DiagnosticFor(id, nil).Label()))
+		return nil, manifest.NewError(
+			manifest.ErrObjectNotFound,
+			nil,
+			fmt.Sprintf("%s not found", manifest.DiagnosticFor(id, nil).Label()),
+		)
 	}
 	policy.MaxAge = r.SourceInterval()
 	if f.disableChartDigestTracking && hc.ExactVersion() {
@@ -111,7 +131,13 @@ func (f *operation) fetchSource(ctx context.Context, hc *manifest.HelmChartSourc
 					}
 					credentials := [2]string{local.username, local.password}
 					local.material = local.resolved.Identity(credentials)
-					tr, err := f.network.HTTPTransport(source.HTTPTransportConfig{Material: local.resolved, Credentials: credentials, DisableCompression: true})
+					tr, err := f.network.HTTPTransport(
+						source.HTTPTransportConfig{
+							Material:           local.resolved,
+							Credentials:        credentials,
+							DisableCompression: true,
+						},
+					)
 					local.client = &http.Client{Transport: tr}
 					return err
 				}, func(ctx context.Context, policy cache.Policy) (*store.SourceArtifact, error) {

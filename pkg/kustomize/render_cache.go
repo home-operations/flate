@@ -49,7 +49,16 @@ type renderBinding struct {
 }
 
 func (a renderBinding) equal(b renderBinding) bool {
-	return a.Render == b.Render && a.Source == b.Source && a.Kind == b.Kind && a.URL == b.URL && a.Path == b.Path && a.Root == b.Root && a.Key == b.Key && a.Revision == b.Revision && a.Digest == b.Digest && a.Alias == b.Alias && a.Wipe == b.Wipe && a.Strict == b.Strict && slices.Equal(a.Skip, b.Skip) && a.Dependencies.Equal(b.Dependencies)
+	return a.Render == b.Render && a.Source == b.Source && a.Kind == b.Kind && a.URL == b.URL && a.Path == b.Path &&
+		a.Root == b.Root &&
+		a.Key == b.Key &&
+		a.Revision == b.Revision &&
+		a.Digest == b.Digest &&
+		a.Alias == b.Alias &&
+		a.Wipe == b.Wipe &&
+		a.Strict == b.Strict &&
+		slices.Equal(a.Skip, b.Skip) &&
+		a.Dependencies.Equal(b.Dependencies)
 }
 
 type renderFrame struct {
@@ -64,13 +73,15 @@ type renderFrame struct {
 func equalRenderFrame(a, b any) bool {
 	left, ok := a.(renderFrame)
 	right, other := b.(renderFrame)
-	if !ok || !other || left.header.Key != right.header.Key || !left.binding.equal(right.binding) || !bytes.Equal(left.output, right.output) {
+	if !ok || !other || left.header.Key != right.header.Key || !left.binding.equal(right.binding) ||
+		!bytes.Equal(left.output, right.output) {
 		return false
 	}
 	x, y := left.header.Reads, right.header.Reads
-	return slices.Equal(x.Files, y.Files) && slices.Equal(x.Dirs, y.Dirs) && slices.Equal(x.Nodes, y.Nodes) && slices.EqualFunc(x.Remotes, y.Remotes, func(a, b remoteEntry) bool {
-		return a.Input == b.Input && a.Identity == b.Identity && slices.Equal(a.Parents, b.Parents)
-	})
+	return slices.Equal(x.Files, y.Files) && slices.Equal(x.Dirs, y.Dirs) && slices.Equal(x.Nodes, y.Nodes) &&
+		slices.EqualFunc(x.Remotes, y.Remotes, func(a, b remoteEntry) bool {
+			return a.Input == b.Input && a.Identity == b.Identity && slices.Equal(a.Parents, b.Parents)
+		})
 }
 
 type acceptedRoot struct {
@@ -97,7 +108,8 @@ func (a *acceptedRender) equal(b *acceptedRender) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	if a.Version != b.Version || a.Complete != b.Complete || a.Owner != b.Owner || a.Raw != b.Raw || a.Final != b.Final {
+	if a.Version != b.Version || a.Complete != b.Complete || a.Owner != b.Owner || a.Raw != b.Raw ||
+		a.Final != b.Final {
 		return false
 	}
 	if (a.Records == nil) != (b.Records == nil) || len(a.Records) != len(b.Records) {
@@ -105,12 +117,14 @@ func (a *acceptedRender) equal(b *acceptedRender) bool {
 	}
 	for i, x := range a.Records {
 		y := b.Records[i]
-		if x.ID != y.ID || !x.Record.Equal(y.Record) || (x.Roots == nil) != (y.Roots == nil) || len(x.Roots) != len(y.Roots) {
+		if x.ID != y.ID || !x.Record.Equal(y.Record) || (x.Roots == nil) != (y.Roots == nil) ||
+			len(x.Roots) != len(y.Roots) {
 			return false
 		}
 		for j, root := range x.Roots {
 			other := y.Roots[j]
-			if root.Source != other.Source || (root.Paths == nil) != (other.Paths == nil) || !slices.Equal(root.Paths, other.Paths) {
+			if root.Source != other.Source || (root.Paths == nil) != (other.Paths == nil) ||
+				!slices.Equal(root.Paths, other.Paths) {
 				return false
 			}
 		}
@@ -132,7 +146,10 @@ func encodeFrame(header renderHeader, output []byte) ([]byte, error) {
 	}
 	frame := make([]byte, 12+len(data)+len(output))
 	copy(frame, frameDomain)
-	binary.BigEndian.PutUint32(frame[8:12], uint32(len(data))) //nolint:gosec // The header is bounded by frameHeaderLimit.
+	binary.BigEndian.PutUint32(
+		frame[8:12],
+		uint32(len(data)),
+	) //nolint:gosec // The header is bounded by frameHeaderLimit.
 	copy(frame[12:], data)
 	copy(frame[12+len(data):], output)
 	return frame, nil
@@ -208,7 +225,14 @@ func prepareAccepted(
 		item.Record.Refs = slices.Compact(item.Record.Refs)
 		item.Record.Productions = slices.Clone(record.Productions)
 		slices.SortFunc(item.Record.Productions, func(a, b manifest.Production) int {
-			return cmp.Or(a.Owner.Compare(b.Owner), a.Declaration.Compare(b.Declaration), a.Authored.Compare(b.Authored), a.Source.Compare(b.Source), cmp.Compare(a.Path, b.Path), cmp.Compare(a.File, b.File))
+			return cmp.Or(
+				a.Owner.Compare(b.Owner),
+				a.Declaration.Compare(b.Declaration),
+				a.Authored.Compare(b.Authored),
+				a.Source.Compare(b.Source),
+				cmp.Compare(a.Path, b.Path),
+				cmp.Compare(a.File, b.File),
+			)
 		})
 		item.Record.Productions = slices.Compact(item.Record.Productions)
 		for source, paths := range record.ContentRoots {
@@ -228,7 +252,9 @@ func prepareAccepted(
 	return accepted, nil
 }
 
-func (f renderFrame) history(owner manifest.NamedResource) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
+func (f renderFrame) history(
+	owner manifest.NamedResource,
+) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
 	if f.accepted == nil || f.accepted.Owner != owner {
 		return nil, false
 	}
@@ -252,7 +278,10 @@ func (f renderFrame) history(owner manifest.NamedResource) (iter.Seq2[manifest.N
 }
 
 // PreviousRender returns validated raw output without rendering or acquiring remote inputs.
-func (c *TreeCache) PreviousRender(ctx context.Context, req RenderRequest) ([]manifest.DocOccurrence, *manifest.RenderReceipt, bool) {
+func (c *TreeCache) PreviousRender(
+	ctx context.Context,
+	req RenderRequest,
+) ([]manifest.DocOccurrence, *manifest.RenderReceipt, bool) {
 	if c == nil || ctx.Err() != nil || !c.owner.CanPersistRenders() {
 		return nil, nil, false
 	}
@@ -274,7 +303,8 @@ func (c *TreeCache) PreviousRender(ctx context.Context, req RenderRequest) ([]ma
 		return nil, nil, false
 	}
 	frame, err := decodeFrame(data)
-	validBinding := err == nil && frame.header.Key == prepared.key && frame.header.Binding == manifest.Fingerprint(prepared.binding)
+	validBinding := err == nil && frame.header.Key == prepared.key &&
+		frame.header.Binding == manifest.Fingerprint(prepared.binding)
 	if !validBinding || len(frame.header.Reads.Remotes) != 0 {
 		return nil, nil, false
 	}
@@ -303,7 +333,8 @@ func (*TreeCache) RenderHistory(
 		return nil, false
 	}
 	frame, ok := receipt.Value().(renderFrame)
-	if !ok || frame.accepted == nil || frame.accepted.Final == "" || frame.accepted.Final != manifest.Fingerprint(content) {
+	if !ok || frame.accepted == nil || frame.accepted.Final == "" ||
+		frame.accepted.Final != manifest.Fingerprint(content) {
 		return nil, false
 	}
 	return frame.history(owner)
@@ -436,5 +467,15 @@ func (c *TreeCache) RecordRender(ctx context.Context, acceptance RenderAcceptanc
 			content = manifest.Fingerprint(data)
 		}
 	}
-	return sourcecache.RecordInventory(ctx, c.owner, sourcecache.AcceptedInventory[renderPublication]{Key: frame.header.Key, Lookup: frame.lookup, Acceptance: content, History: sourcecache.RenderHistory{Owner: owner, Sources: sources}, Content: renderPublication{frame: frame, accepted: accepted, data: data}})
+	return sourcecache.RecordInventory(
+		ctx,
+		c.owner,
+		sourcecache.AcceptedInventory[renderPublication]{
+			Key:        frame.header.Key,
+			Lookup:     frame.lookup,
+			Acceptance: content,
+			History:    sourcecache.RenderHistory{Owner: owner, Sources: sources},
+			Content:    renderPublication{frame: frame, accepted: accepted, data: data},
+		},
+	)
 }

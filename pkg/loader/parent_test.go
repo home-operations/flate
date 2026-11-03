@@ -59,7 +59,12 @@ func TestClaims_ReadinessViews(t *testing.T) {
 		"apps/kustomization.yaml": {Data: []byte("resources: []\n")},
 	}, reads: map[string]*atomic.Int64{"apps/kustomization.yaml": &reads}}}
 	st.SetArtifact(manifest.BootstrapSourceID, input)
-	ks := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "source"}}
+	ks := &manifest.Kustomization{
+		Name:      "owner",
+		Namespace: "apps",
+		Path:      "./apps",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "source"},
+	}
 	st.AddObject(ks)
 	l := New(st)
 	l.SourceRoot = root
@@ -88,7 +93,11 @@ func TestClaims_ReadinessViews(t *testing.T) {
 	st.AddObject(&earlier)
 	claims = l.Claims(root)
 	claims[0].Prefix = "caller/"
-	assert.Diff(t, l.Claims(root), []manifest.KSClaim{{ID: earlier.Named(), Prefix: "apps/"}, {ID: ks.Named(), Prefix: "apps/"}})
+	assert.Diff(
+		t,
+		l.Claims(root),
+		[]manifest.KSClaim{{ID: earlier.Named(), Prefix: "apps/"}, {ID: ks.Named(), Prefix: "apps/"}},
+	)
 	if &l.scopes.inputs[1].claims[0] != derived {
 		t.Fatal("owner insertion discarded unchanged claim derivation")
 	}
@@ -104,14 +113,26 @@ func TestClaims_ReadinessViews(t *testing.T) {
 	later.Name, later.SourceRef.Name = "z-later", "other"
 	st.SetArtifact(later.SourceID(), input)
 	st.AddObject(&later)
-	assert.Diff(t, l.Claims(root), []manifest.KSClaim{{ID: earlier.Named(), Prefix: "apps/"}, {ID: ks.Named(), Prefix: "apps/"}, {ID: later.Named(), Prefix: "apps/"}})
+	assert.Diff(
+		t,
+		l.Claims(root),
+		[]manifest.KSClaim{
+			{ID: earlier.Named(), Prefix: "apps/"},
+			{ID: ks.Named(), Prefix: "apps/"},
+			{ID: later.Named(), Prefix: "apps/"},
+		},
+	)
 	assert.Equal(t, len(l.scopes.sources), sourcesBefore+1)
 	assert.Equal(t, reads.Load(), readsBefore)
 	if &l.scopes.inputs[1].claims[0] != derived {
 		t.Fatal("source storage growth discarded unchanged claim derivation")
 	}
 	st.SetArtifact(later.SourceID(), nil)
-	assert.Diff(t, l.Claims(root), []manifest.KSClaim{{ID: earlier.Named(), Prefix: "apps/"}, {ID: ks.Named(), Prefix: "apps/"}})
+	assert.Diff(
+		t,
+		l.Claims(root),
+		[]manifest.KSClaim{{ID: earlier.Named(), Prefix: "apps/"}, {ID: ks.Named(), Prefix: "apps/"}},
+	)
 	assert.Equal(t, reads.Load(), readsBefore)
 	if &l.scopes.inputs[1].claims[0] != derived {
 		t.Fatal("source withdrawal discarded unrelated claim derivation")
@@ -145,22 +166,44 @@ func TestFinalizeIndex_ParentSegments(t *testing.T) {
 			if prefix != "" {
 				prefix += "/"
 			}
-			testutil.WriteFile(t, root, prefix+"kustomization.yaml", "namespace: apps\nresources: [hr.yaml, cm.yaml]\nconfigMapGenerator:\n- name: generated\n  literals: [VALUE=fixture]\n")
-			testutil.WriteFile(t, root, prefix+"hr.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: child, namespace: apps}\n")
-			testutil.WriteFile(t, root, prefix+"cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: data, namespace: apps}\n")
+			testutil.WriteFile(
+				t,
+				root,
+				prefix+"kustomization.yaml",
+				"namespace: apps\nresources: [hr.yaml, cm.yaml]\nconfigMapGenerator:\n- name: generated\n  literals: [VALUE=fixture]\n",
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				prefix+"hr.yaml",
+				"apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: child, namespace: apps}\n",
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				prefix+"cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: data, namespace: apps}\n",
+			)
 			st := store.New()
 			if !tc.mounted || tc.pinned {
 				admitForTest(st, root)
 			}
 			ks := &manifest.Kustomization{Name: "parent", Namespace: "flux-system", Path: tc.path}
 			if tc.pinned {
-				ks.SourceRef = kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "pinned", Namespace: "flux-system"}
+				ks.SourceRef = kustomizev1.CrossNamespaceSourceReference{
+					Kind:      manifest.KindGitRepository,
+					Name:      "pinned",
+					Namespace: "flux-system",
+				}
 			}
 			st.AddObject(ks)
 			child := testutil.HelmReleaseID("apps", "child")
 			data := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "data"}
 			generated := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "generated"}
-			l := loaderFixture(st, map[manifest.NamedResource]string{child: prefix + "hr.yaml", data: prefix + "cm.yaml"})
+			l := loaderFixture(
+				st,
+				map[manifest.NamedResource]string{child: prefix + "hr.yaml", data: prefix + "cm.yaml"},
+			)
 			if tc.mounted {
 				b := tree.NewBuilder(os.DirFS(root))
 				if err := b.AddSymlink("alias", "deep/inner"); err != nil {
@@ -173,7 +216,16 @@ func TestFinalizeIndex_ParentSegments(t *testing.T) {
 				if tc.pinned {
 					src := &manifest.GitRepository{Name: ks.SourceRef.Name, Namespace: ks.SourceRef.Namespace}
 					st.AddObject(src)
-					st.SetArtifact(src.Named(), &store.SourceArtifact{LocalRoot: root, LocalPath: filepath.Join(root, "snapshot"), Key: "pinned", Content: "pinned", FS: input})
+					st.SetArtifact(
+						src.Named(),
+						&store.SourceArtifact{
+							LocalRoot: root,
+							LocalPath: filepath.Join(root, "snapshot"),
+							Key:       "pinned",
+							Content:   "pinned",
+							FS:        input,
+						},
+					)
 				} else {
 					l.documents.views = map[string]fs.FS{root: input}
 				}
@@ -295,23 +347,38 @@ func TestClaims_DropsExternalSourced(t *testing.T) {
 
 	// Bootstrap-sourced root (sourceRef == BootstrapSourceID) — kept.
 	bootstrap := &manifest.Kustomization{
-		Name: "cluster-apps", Namespace: "flux-system",
-		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system"},
-		Path:      "./kubernetes/apps",
+		Name:      "cluster-apps",
+		Namespace: "flux-system",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{
+			Kind:      manifest.KindGitRepository,
+			Name:      "flux-system",
+			Namespace: "flux-system",
+		},
+		Path: "./kubernetes/apps",
 	}
 	// Self/aliased source: an in-tree GitRepository with a working-tree artifact
 	// (URL-matched by discovery) — kept.
 	aliasedKS := &manifest.Kustomization{
-		Name: "self-apps", Namespace: "flux-system",
-		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "home-kubernetes", Namespace: "flux-system"},
-		Path:      "./kubernetes/self",
+		Name:      "self-apps",
+		Namespace: "flux-system",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{
+			Kind:      manifest.KindGitRepository,
+			Name:      "home-kubernetes",
+			Namespace: "flux-system",
+		},
+		Path: "./kubernetes/self",
 	}
 	// External source: an in-tree GitRepository with NO working-tree artifact,
 	// claiming the WIDE ./kubernetes — must be dropped.
 	external := &manifest.Kustomization{
-		Name: "side-sync", Namespace: "flux-system",
-		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "side-repo", Namespace: "flux-system"},
-		Path:      "./kubernetes",
+		Name:      "side-sync",
+		Namespace: "flux-system",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{
+			Kind:      manifest.KindGitRepository,
+			Name:      "side-repo",
+			Namespace: "flux-system",
+		},
+		Path: "./kubernetes",
 	}
 	s.AddObject(bootstrap)
 	s.AddObject(aliasedKS)
@@ -320,8 +387,18 @@ func TestClaims_DropsExternalSourced(t *testing.T) {
 	s.AddObject(&manifest.GitRepository{Name: "side-repo", Namespace: "flux-system"})
 	// home-kubernetes is aliased to the working tree (LocalPath == repoRoot).
 	s.SetArtifact(
-		manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "home-kubernetes"},
-		&store.SourceArtifact{Kind: manifest.KindGitRepository, URL: "file://" + repoRoot, LocalPath: repoRoot, FS: fstest.MapFS{}},
+		manifest.NamedResource{
+			Group:     "source.toolkit.fluxcd.io",
+			Kind:      manifest.KindGitRepository,
+			Namespace: "flux-system",
+			Name:      "home-kubernetes",
+		},
+		&store.SourceArtifact{
+			Kind:      manifest.KindGitRepository,
+			URL:       "file://" + repoRoot,
+			LocalPath: repoRoot,
+			FS:        fstest.MapFS{},
+		},
 	)
 
 	prefixes := loaderFixture(s, nil).Claims(repoRoot)
@@ -335,7 +412,17 @@ func TestClaims_DropsExternalSourced(t *testing.T) {
 	if !seen[bootstrap.Named()] || !seen[aliasedKS.Named()] {
 		t.Errorf("local-sourced KS claims must be retained; seen=%v", seen)
 	}
-	if parent, ok := manifest.StrictParent(Claims(s, repoRoot, s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)), "kubernetes/other/bad.yaml", manifest.NamedResource{}, nil); !ok || parent != external.Named() {
+	if parent, ok := manifest.StrictParent(
+		Claims(
+			s,
+			repoRoot,
+			s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization),
+		),
+		"kubernetes/other/bad.yaml",
+		manifest.NamedResource{},
+		nil,
+	); !ok ||
+		parent != external.Named() {
 		t.Fatalf("final reporting must retain external-source ownership: parent=%v, found=%t", parent, ok)
 	}
 }
@@ -355,7 +442,15 @@ func TestSourceView_LocalRoot(t *testing.T) {
 	} {
 		t.Run("absent/"+tc.group+"/"+tc.kind, func(t *testing.T) {
 			t.Parallel()
-			ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", SourceRef: kustomizev1.CrossNamespaceSourceReference{APIVersion: tc.group + "/v1", Kind: tc.kind, Name: "entry"}}
+			ks := &manifest.Kustomization{
+				Name:      "apps",
+				Namespace: "flux-system",
+				SourceRef: kustomizev1.CrossNamespaceSourceReference{
+					APIVersion: tc.group + "/v1",
+					Kind:       tc.kind,
+					Name:       "entry",
+				},
+			}
 			root, pinned, external := SourceView(store.New(), ks.SourceID(), "/repo")
 			if root != "/repo" || pinned || external != tc.external {
 				t.Fatalf("absent source: %q, %t, %t", root, pinned, external)
@@ -377,13 +472,24 @@ func TestSourceView_LocalRoot(t *testing.T) {
 			st := store.New()
 			repo := &manifest.GitRepository{Name: "cluster", Namespace: "flux-system"}
 			ks := &manifest.Kustomization{
-				Name: "apps", Namespace: repo.Namespace, Path: "./apps",
-				SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: repo.Name, Namespace: repo.Namespace},
+				Name:      "apps",
+				Namespace: repo.Namespace,
+				Path:      "./apps",
+				SourceRef: kustomizev1.CrossNamespaceSourceReference{
+					Kind:      manifest.KindGitRepository,
+					Name:      repo.Name,
+					Namespace: repo.Namespace,
+				},
 			}
 			st.AddObject(repo)
 			st.AddObject(ks)
 			artifact := &store.SourceArtifact{
-				Kind: manifest.KindGitRepository, LocalPath: "/cache", LocalRoot: tc.localRoot, Key: "pinned", Content: "pinned", FS: fstest.MapFS{},
+				Kind:      manifest.KindGitRepository,
+				LocalPath: "/cache",
+				LocalRoot: tc.localRoot,
+				Key:       "pinned",
+				Content:   "pinned",
+				FS:        fstest.MapFS{},
 			}
 			if tc.unavailable {
 				artifact.FS = nil
@@ -608,12 +714,21 @@ func TestClaims_SortsLongestFirst(t *testing.T) {
 	s.AddObject(mid)
 	s.AddObject(leaf)
 
-	prefixes := Claims(s, "", s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization))
+	prefixes := Claims(
+		s,
+		"",
+		s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization),
+	)
 	if len(prefixes) != 3 {
 		t.Fatalf("expected 3 prefixes, got %d", len(prefixes))
 	}
 	// Longest first: leaf > mid > root.
-	if got := []string{prefixes[0].ID.Name, prefixes[1].ID.Name, prefixes[2].ID.Name}; got[0] != "leaf" || got[1] != "mid" || got[2] != "root" {
+	if got := []string{
+		prefixes[0].ID.Name,
+		prefixes[1].ID.Name,
+		prefixes[2].ID.Name,
+	}; got[0] != "leaf" || got[1] != "mid" ||
+		got[2] != "root" {
 		t.Errorf("expected leaf/mid/root by descending prefix length, got %v", got)
 	}
 }
@@ -626,17 +741,33 @@ func TestClaims_EmptyPathClaimsRoot(t *testing.T) {
 		Path: "./apps",
 	}
 	without := &manifest.Kustomization{
-		Name: "without", Namespace: "flux-system",
-		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system"},
+		Name:      "without",
+		Namespace: "flux-system",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{
+			Kind:      manifest.KindGitRepository,
+			Name:      "flux-system",
+			Namespace: "flux-system",
+		},
 	}
 	s.AddObject(with)
 	s.AddObject(without)
 
-	prefixes := Claims(s, "", s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization))
-	if len(prefixes) != 2 || prefixes[0].ID != with.Named() || prefixes[1].ID != without.Named() || prefixes[1].Prefix != "" {
+	prefixes := Claims(
+		s,
+		"",
+		s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization),
+	)
+	if len(prefixes) != 2 || prefixes[0].ID != with.Named() || prefixes[1].ID != without.Named() ||
+		prefixes[1].Prefix != "" {
 		t.Fatalf("expected apps and source-root claims; got %+v", prefixes)
 	}
-	if parent, ok := manifest.StrictParent(prefixes, "root.yaml", manifest.NamedResource{}, nil); !ok || parent != without.Named() {
+	if parent, ok := manifest.StrictParent(
+		prefixes,
+		"root.yaml",
+		manifest.NamedResource{},
+		nil,
+	); !ok ||
+		parent != without.Named() {
 		t.Fatalf("root.yaml parent = %v, %t; want %v", parent, ok, without.Named())
 	}
 }
@@ -646,8 +777,13 @@ func TestClaims_EmptyExternalPath(t *testing.T) {
 	s := store.New()
 	repo := &manifest.GitRepository{Name: "external", Namespace: "flux-system"}
 	external := &manifest.Kustomization{
-		Name: "external", Namespace: "flux-system",
-		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: repo.Name, Namespace: repo.Namespace},
+		Name:      "external",
+		Namespace: "flux-system",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{
+			Kind:      manifest.KindGitRepository,
+			Name:      repo.Name,
+			Namespace: repo.Namespace,
+		},
 	}
 	local := &manifest.Kustomization{Name: "local", Namespace: "flux-system", Path: "./apps"}
 	s.AddObject(repo)
@@ -657,7 +793,13 @@ func TestClaims_EmptyExternalPath(t *testing.T) {
 	if len(prefixes) != 1 || prefixes[0].ID != local.Named() {
 		t.Fatalf("external source root must not claim local files: %+v", prefixes)
 	}
-	if parent, ok := manifest.StrictParent(Claims(s, "", s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)), "bad.yaml", manifest.NamedResource{}, nil); !ok || parent != external.Named() {
+	if parent, ok := manifest.StrictParent(
+		Claims(s, "", s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)),
+		"bad.yaml",
+		manifest.NamedResource{},
+		nil,
+	); !ok ||
+		parent != external.Named() {
 		t.Fatalf("final reporting must retain external source-root ownership: parent=%v, found=%t", parent, ok)
 	}
 }
@@ -681,8 +823,18 @@ func TestClaims_IncludesSpecComponents(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "apps/team-a/kustomization.yaml", "components: [../shared/local]\n")
-	testutil.WriteFile(t, root, "apps/shared/observability/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\n")
-	testutil.WriteFile(t, root, "apps/shared/local/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"apps/shared/observability/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\n",
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"apps/shared/local/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\n",
+	)
 	s := store.New()
 	admitForTest(s, root)
 	parent := &manifest.Kustomization{
@@ -692,7 +844,11 @@ func TestClaims_IncludesSpecComponents(t *testing.T) {
 	}
 	s.AddObject(parent)
 
-	prefixes := Claims(s, root, s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization))
+	prefixes := Claims(
+		s,
+		root,
+		s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization),
+	)
 	assert.Diff(t, prefixes, []manifest.KSClaim{
 		{ID: parent.Named(), Prefix: "apps/shared/observability/"},
 		{ID: parent.Named(), Prefix: "apps/shared/local/"},
@@ -704,7 +860,10 @@ func TestClaims_IncludesSpecComponents(t *testing.T) {
 		t.Fatalf("StrictParent missed component-dir child — components fold regression")
 	}
 	if got.Name != "parent" {
-		t.Errorf("StrictParent = %q, want 'parent' (component-dir child should attribute to its containing KS)", got.Name)
+		t.Errorf(
+			"StrictParent = %q, want 'parent' (component-dir child should attribute to its containing KS)",
+			got.Name,
+		)
 	}
 }
 
@@ -726,7 +885,11 @@ func TestStrictParent_DeepestMatchWins(t *testing.T) {
 	}
 	s.AddObject(root)
 	s.AddObject(leaf)
-	prefixes := Claims(s, "", s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization))
+	prefixes := Claims(
+		s,
+		"",
+		s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization),
+	)
 	got, ok := manifest.StrictParent(prefixes, "apps/team-a/web/deploy.yaml", manifest.NamedResource{}, nil)
 	if !ok {
 		t.Fatalf("expected a parent match")
@@ -750,9 +913,18 @@ func TestStrictParent_AbsoluteSpecPath(t *testing.T) {
 	}
 	s.AddObject(ks)
 
-	prefixes := Claims(s, "", s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization))
+	prefixes := Claims(
+		s,
+		"",
+		s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization),
+	)
 	hr := testutil.HelmReleaseID("", "flux-instance")
-	parent, ok := manifest.StrictParent(prefixes, "kubernetes/apps/flux-system/flux-operator/instance/helm-release.yaml", hr, nil)
+	parent, ok := manifest.StrictParent(
+		prefixes,
+		"kubernetes/apps/flux-system/flux-operator/instance/helm-release.yaml",
+		hr,
+		nil,
+	)
 	if !ok {
 		t.Fatalf("expected the absolute spec.path KS to parent its helm-release.yaml; prefixes=%v", prefixes)
 	}
@@ -781,7 +953,13 @@ func TestSourceView_InputOrigin(t *testing.T) {
 			t.Parallel()
 			repoRoot := t.TempDir()
 			mount := filepath.Join(repoRoot, ".inputs", "source")
-			art := &store.SourceArtifact{LocalPath: mount, LocalRoot: repoRoot, Key: "derived", InputAlias: tc.alias, FS: fstest.MapFS{}}
+			art := &store.SourceArtifact{
+				LocalPath:  mount,
+				LocalRoot:  repoRoot,
+				Key:        "derived",
+				InputAlias: tc.alias,
+				FS:         fstest.MapFS{},
+			}
 			if tc.pinned {
 				art.Content = art.Key
 			}
@@ -805,13 +983,25 @@ func TestSourceView_InputOrigin(t *testing.T) {
 				wantRoot = repoRoot
 			}
 			if root != wantRoot || pinned != tc.pinned || external != tc.external {
-				t.Fatalf("source view = (%q, %t, %t), want (%q, %t, %t)", root, pinned, external, wantRoot, tc.pinned, tc.external)
+				t.Fatalf(
+					"source view = (%q, %t, %t), want (%q, %t, %t)",
+					root,
+					pinned,
+					external,
+					wantRoot,
+					tc.pinned,
+					tc.external,
+				)
 			}
 			file := filepath.Join(mount, "apps")
 			origin := filepath.Join(repoRoot, filepath.FromSlash(tc.physicalInput))
 			assert.Equal(t, art.OriginPath(file), origin)
 			if tc.identity {
-				assert.Equal(t, art.OriginPath(mount+string(filepath.Separator)+filepath.FromSlash("discard/../apps")), origin)
+				assert.Equal(
+					t,
+					art.OriginPath(mount+string(filepath.Separator)+filepath.FromSlash("discard/../apps")),
+					origin,
+				)
 			}
 			reader := documentReader{}
 			reader.mountSources(st)

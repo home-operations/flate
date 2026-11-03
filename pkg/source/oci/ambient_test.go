@@ -40,7 +40,12 @@ type ambientObserver struct {
 	calls        int
 }
 
-func (f *ambientObserver) Fetch(ctx context.Context, repo *manifest.OCIRepository, reads *store.ReadSet, policy sourcecache.Policy) (*store.SourceArtifact, error) {
+func (f *ambientObserver) Fetch(
+	ctx context.Context,
+	repo *manifest.OCIRepository,
+	reads *store.ReadSet,
+	policy sourcecache.Policy,
+) (*store.SourceArtifact, error) {
 	artifact, err := f.Fetcher.Fetch(ctx, repo, reads, policy)
 	if missing, ok := errors.AsType[*source.MissingSecretError](err); ok && missing.RetryAmbient != nil {
 		f.missing = missing
@@ -80,10 +85,16 @@ func TestFetcher_LateProducerInvalidatesAmbient(t *testing.T) {
 			t.Cleanup(srv.Close)
 			host := mustURL(t, srv.URL).Host
 			config := filepath.Join(t.TempDir(), "config.json")
-			testutil.WriteFileAt(t, config, fmt.Sprintf(`{"auths":{%q:{"username":"fixture","password":"fixture"}}}`, host))
+			testutil.WriteFileAt(
+				t,
+				config,
+				fmt.Sprintf(`{"auths":{%q:{"username":"fixture","password":"fixture"}}}`, host),
+			)
 			t.Setenv("DOCKER_CONFIG", t.TempDir())
 			t.Setenv("HELM_REGISTRY_CONFIG", config)
-			f := &ambientObserver{Fetcher: &Fetcher{Cache: cachetest.New(t, "", sourcecache.New), Network: newTestNetwork(t)}}
+			f := &ambientObserver{
+				Fetcher: &Fetcher{Cache: cachetest.New(t, "", sourcecache.New), Network: newTestNetwork(t)},
+			}
 			s := store.New()
 			s.SetDiscoveryIndex(&manifest.DiscoveryIndex{})
 			tasks := task.NewBounded(2)
@@ -91,12 +102,22 @@ func TestFetcher_LateProducerInvalidatesAmbient(t *testing.T) {
 			c.Fetchers[manifest.KindOCIRepository] = source.Wrap(manifest.KindOCIRepository, f)
 			c.Configure(sourcecontroller.FetchOptions{}, sourcecache.RetryConfig{})
 			c.StartLifecycle()
-			repo := &manifest.OCIRepository{Name: "image", Namespace: "apps", URL: "oci://" + host + "/fixture", Insecure: true, SecretRef: &manifest.LocalObjectReference{Name: "auth"}}
+			repo := &manifest.OCIRepository{
+				Name:      "image",
+				Namespace: "apps",
+				URL:       "oci://" + host + "/fixture",
+				Insecure:  true,
+				SecretRef: &manifest.LocalObjectReference{Name: "auth"},
+			}
 			owner := &manifest.Kustomization{Name: "producer", Namespace: repo.Namespace}
 			s.AddObjects([]manifest.BaseManifest{repo, owner})
 			reconcile := func() *base.Execution {
 				var run *base.Execution
-				tasks.Go(t.Context(), "source", func(ctx context.Context) { run = c.ReconcileNode(ctx, repo.Named(), manifest.DrainNone) })
+				tasks.Go(
+					t.Context(),
+					"source",
+					func(ctx context.Context) { run = c.ReconcileNode(ctx, repo.Named(), manifest.DrainNone) },
+				)
 				tasks.BlockTillDone()
 				return run
 			}
@@ -107,8 +128,17 @@ func TestFetcher_LateProducerInvalidatesAmbient(t *testing.T) {
 			}
 			missing := f.missing
 			publish := func() {
-				producer := &manifest.RawObject{Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1", Name: "auth", Namespace: repo.Namespace}
-				s.RecordEmitted(owner.Named(), &store.Emission{Children: []store.Child{{Obj: producer}}, Complete: true}, nil)
+				producer := &manifest.RawObject{
+					Kind:       "ExternalSecret",
+					APIVersion: "external-secrets.io/v1",
+					Name:       "auth",
+					Namespace:  repo.Namespace,
+				}
+				s.RecordEmitted(
+					owner.Named(),
+					&store.Emission{Children: []store.Child{{Obj: producer}}, Complete: true},
+					nil,
+				)
 			}
 			if timing == "before_settlement" {
 				unblock()
@@ -127,7 +157,8 @@ func TestFetcher_LateProducerInvalidatesAmbient(t *testing.T) {
 			wantCalls := 0
 			if timing == "during_acquisition" {
 				wantCalls = 1
-				if f.artifact == nil || f.ambientError != nil || authenticated.Load() == 0 || mustReadFile(t, f.artifact.FS, "data.yaml") != "ambient" {
+				if f.artifact == nil || f.ambientError != nil || authenticated.Load() == 0 ||
+					mustReadFile(t, f.artifact.FS, "data.yaml") != "ambient" {
 					t.Fatalf("ambient acquisition control: artifact=%v error=%v", f.artifact, f.ambientError)
 				}
 			}
@@ -137,17 +168,26 @@ func TestFetcher_LateProducerInvalidatesAmbient(t *testing.T) {
 			first.Retire()
 			next := reconcile()
 			defer next.Close()
-			if next.Outcome() != schedule.Blocked || !slices.Contains(next.Blocked, missing.Secret) || f.missing == missing || f.calls != wantCalls {
+			if next.Outcome() != schedule.Blocked || !slices.Contains(next.Blocked, missing.Secret) ||
+				f.missing == missing ||
+				f.calls != wantCalls {
 				t.Fatalf("rerun did not wait on the captured producer: blocked=%v calls=%d", next.Blocked, f.calls)
 			}
-			if f.missing.Owner != missing.Owner || f.missing.Secret != missing.Secret || f.missing.Detail != missing.Detail {
+			if f.missing.Owner != missing.Owner || f.missing.Secret != missing.Secret ||
+				f.missing.Detail != missing.Detail {
 				t.Fatal("rerun changed the structured missing-material outcome")
 			}
 			before := authenticated.Load()
-			tasks.Go(t.Context(), "producer settlement", func(ctx context.Context) { next.Settle(ctx, manifest.DrainCascade) })
+			tasks.Go(
+				t.Context(),
+				"producer settlement",
+				func(ctx context.Context) { next.Settle(ctx, manifest.DrainCascade) },
+			)
 			tasks.BlockTillDone()
 			status, _ := s.GetStatus(repo.Named())
-			if !next.Valid() || status.Outcome() != store.OutcomeSkipped || f.calls != wantCalls || authenticated.Load() != before || s.GetArtifact(repo.Named(), store.ArtifactContent) != nil {
+			if !next.Valid() || status.Outcome() != store.OutcomeSkipped || f.calls != wantCalls ||
+				authenticated.Load() != before ||
+				s.GetArtifact(repo.Named(), store.ArtifactContent) != nil {
 				t.Fatalf("producer settlement: status=%+v error=%v calls=%d", status, f.ambientError, f.calls)
 			}
 		})
@@ -170,7 +210,13 @@ func TestFetcher_AmbientFailedAcquisition(t *testing.T) {
 	host := mustURL(t, srv.URL).Host
 	config := filepath.Join(t.TempDir(), "config.json")
 	testutil.WriteFileAt(t, config, fmt.Sprintf(`{"auths":{%q:{"username":"fixture","password":"fixture"}}}`, host))
-	repo := &manifest.OCIRepository{Name: "image", Namespace: "apps", URL: "oci://" + host + "/fixture", Insecure: true, SecretRef: &manifest.LocalObjectReference{Name: "auth"}}
+	repo := &manifest.OCIRepository{
+		Name:      "image",
+		Namespace: "apps",
+		URL:       "oci://" + host + "/fixture",
+		Insecure:  true,
+		SecretRef: &manifest.LocalObjectReference{Name: "auth"},
+	}
 	s := store.New()
 	s.AddObject(repo)
 	var reads store.ReadSet
@@ -183,7 +229,8 @@ func TestFetcher_AmbientFailedAcquisition(t *testing.T) {
 		t.Fatalf("prepare = %v", err)
 	}
 	artifact, err := missing.RetryAmbient(t.Context())
-	if artifact != nil || err == nil || authenticated.Load() == 0 || !errors.Is(err, manifest.ErrMissingSecret) || !errors.Is(err, manifest.ErrFlux) {
+	if artifact != nil || err == nil || authenticated.Load() == 0 || !errors.Is(err, manifest.ErrMissingSecret) ||
+		!errors.Is(err, manifest.ErrFlux) {
 		t.Fatalf("ambient failure: artifact=%v error=%v authenticated=%d", artifact, err, authenticated.Load())
 	}
 }
@@ -214,10 +261,20 @@ func TestFetcher_HelmAmbientReload(t *testing.T) {
 			t.Setenv("HELM_REGISTRY_CONFIG", path)
 			write := func(password string) {
 				t.Helper()
-				testutil.WriteFileAt(t, path, fmt.Sprintf(`{"auths":{%q:{"username":"fixture","password":%q}}}`, host, password))
+				testutil.WriteFileAt(
+					t,
+					path,
+					fmt.Sprintf(`{"auths":{%q:{"username":"fixture","password":%q}}}`, host, password),
+				)
 			}
 			write("first")
-			repo := &manifest.OCIRepository{Name: "image", Namespace: "apps", URL: "oci://" + host + "/fixture", Insecure: true, SecretRef: &manifest.LocalObjectReference{Name: "missing"}}
+			repo := &manifest.OCIRepository{
+				Name:      "image",
+				Namespace: "apps",
+				URL:       "oci://" + host + "/fixture",
+				Insecure:  true,
+				SecretRef: &manifest.LocalObjectReference{Name: "missing"},
+			}
 			var lookups atomic.Int32
 			inputs := testInputs{secrets: func(_, _ string) *manifest.Secret { lookups.Add(1); return nil }}
 			f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New), Network: newTestNetwork(t)}
@@ -238,7 +295,11 @@ func TestFetcher_HelmAmbientReload(t *testing.T) {
 			}
 			before := accepted.Load()
 			f = &Fetcher{Cache: f.Cache, Network: newTestNetwork(t)}
-			_, err = (&operation{Fetcher: f, secrets: inputs.lookup(repo)}).fetchSource(t.Context(), repo, sourcecache.Policy{})
+			_, err = (&operation{Fetcher: f, secrets: inputs.lookup(repo)}).fetchSource(
+				t.Context(),
+				repo,
+				sourcecache.Policy{},
+			)
 			missing, _ = errors.AsType[*source.MissingSecretError](err)
 			got, err := missing.RetryMachine(t.Context(), nil)
 			if mode == "removed" {
@@ -249,7 +310,12 @@ func TestFetcher_HelmAmbientReload(t *testing.T) {
 			}
 			assert.NoError(t, err)
 			if got.Key == first.Key || accepted.Load() == before || lookups.Load() != 2 {
-				t.Fatalf("retry reused stale credentials/identity or reread missing Secret: requests=%d->%d lookups=%d", before, accepted.Load(), lookups.Load())
+				t.Fatalf(
+					"retry reused stale credentials/identity or reread missing Secret: requests=%d->%d lookups=%d",
+					before,
+					accepted.Load(),
+					lookups.Load(),
+				)
 			}
 			assert.Equal(t, mustReadFile(t, got.FS, "data.yaml"), "current")
 		})
@@ -263,7 +329,12 @@ func TestFetcher_SuppliedRegistryIdentity(t *testing.T) {
 	helmPath := filepath.Join(t.TempDir(), "config.json")
 	t.Setenv("HELM_REGISTRY_CONFIG", helmPath)
 	testutil.WriteFileAt(t, helmPath, `{`)
-	repo := &manifest.OCIRepository{Name: "image", Namespace: "apps", URL: "oci://ghcr.io/fixture/image", SecretRef: &manifest.LocalObjectReference{Name: "auth"}}
+	repo := &manifest.OCIRepository{
+		Name:      "image",
+		Namespace: "apps",
+		URL:       "oci://ghcr.io/fixture/image",
+		SecretRef: &manifest.LocalObjectReference{Name: "auth"},
+	}
 	f := &Fetcher{Network: newTestNetwork(t)}
 	var identities []any
 	for _, tc := range []struct{ path, password, repository string }{
@@ -275,13 +346,23 @@ func TestFetcher_SuppliedRegistryIdentity(t *testing.T) {
 		config := func(password string) string {
 			return fmt.Sprintf(`{"auths":{"ghcr.io":{"username":"fixture","password":%q}}}`, password)
 		}
-		secret := &manifest.Secret{Name: "auth", Namespace: "apps", StringData: map[string]any{".dockerconfigjson": config(tc.password)}}
+		secret := &manifest.Secret{
+			Name:       "auth",
+			Namespace:  "apps",
+			StringData: map[string]any{".dockerconfigjson": config(tc.password)},
+		}
 		snapshot, err := store.NewSupplied([]store.SuppliedObject{{Object: secret, Path: tc.path}})
 		assert.NoError(t, err)
 		s := store.New()
 		s.SetSupplied(snapshot)
 		if tc.repository != "" {
-			s.AddObject(&manifest.Secret{Name: "auth", Namespace: "apps", StringData: map[string]any{".dockerconfigjson": config(tc.repository)}})
+			s.AddObject(
+				&manifest.Secret{
+					Name:       "auth",
+					Namespace:  "apps",
+					StringData: map[string]any{".dockerconfigjson": config(tc.repository)},
+				},
+			)
 		}
 		var reads store.ReadSet
 		reads.Init(s, repo.Named(), nil)
@@ -291,7 +372,8 @@ func TestFetcher_SuppliedRegistryIdentity(t *testing.T) {
 		identities = append(identities, request.material)
 		reads.Close()
 	}
-	if identities[0] == nil || !cmp.Equal(identities[0], identities[1]) || cmp.Equal(identities[0], identities[2]) || !cmp.Equal(identities[0], identities[3]) {
+	if identities[0] == nil || !cmp.Equal(identities[0], identities[1]) || cmp.Equal(identities[0], identities[2]) ||
+		!cmp.Equal(identities[0], identities[3]) {
 		t.Fatal("credential identity depends on input path or shadowed supply, or misses rotation")
 	}
 }
@@ -313,13 +395,26 @@ func TestFetcher_AmbientAcquisitionErrors(t *testing.T) {
 				t.Setenv("FLATE_HELPER_MARKER", marker)
 				helper := filepath.Join(bin, "docker-credential-fixture")
 				if stage != "missing helper" {
-					testutil.WriteFileAt(t, helper, "#!/bin/sh\nprintf called >> \"$FLATE_HELPER_MARKER\"\nprintf '%s' 'credential-canary'\nexit 1\n")
+					testutil.WriteFileAt(
+						t,
+						helper,
+						"#!/bin/sh\nprintf called >> \"$FLATE_HELPER_MARKER\"\nprintf '%s' 'credential-canary'\nexit 1\n",
+					)
 					assert.NoError(t, os.Chmod(helper, 0o700))
 				}
 				var remote atomic.Int32
-				srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { remote.Add(1); w.WriteHeader(http.StatusForbidden) }))
+				srv := httptest.NewTLSServer(
+					http.HandlerFunc(
+						func(w http.ResponseWriter, _ *http.Request) { remote.Add(1); w.WriteHeader(http.StatusForbidden) },
+					),
+				)
 				t.Cleanup(srv.Close)
-				repo := &manifest.OCIRepository{Name: "image", Namespace: "apps", URL: "oci://" + mustURL(t, srv.URL).Host + "/fixture", Insecure: true}
+				repo := &manifest.OCIRepository{
+					Name:      "image",
+					Namespace: "apps",
+					URL:       "oci://" + mustURL(t, srv.URL).Host + "/fixture",
+					Insecure:  true,
+				}
 				if deferred {
 					repo.SecretRef = &manifest.LocalObjectReference{Name: "auth"}
 				}
@@ -340,13 +435,33 @@ func TestFetcher_AmbientAcquisitionErrors(t *testing.T) {
 				st.AddObject(repo)
 				if stage == "producer" {
 					secret := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "auth"}
-					st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{secret: {Productions: []manifest.Production{{Declaration: manifest.NamedResource{Kind: "ExternalSecret", Namespace: "apps", Name: "auth"}}}}}})
+					st.SetDiscoveryIndex(
+						&manifest.DiscoveryIndex{
+							Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+								secret: {
+									Productions: []manifest.Production{
+										{
+											Declaration: manifest.NamedResource{
+												Kind:      "ExternalSecret",
+												Namespace: "apps",
+												Name:      "auth",
+											},
+										},
+									},
+								},
+							},
+						},
+					)
 				}
 				var reads store.ReadSet
 				reads.Init(st, repo.Named(), nil)
 				defer reads.Close()
 				cacheRoot := t.TempDir()
-				f := &Fetcher{Cache: cachetest.New(t, cacheRoot, sourcecache.New), Network: newTestNetwork(t), RegistryConfig: config}
+				f := &Fetcher{
+					Cache:          cachetest.New(t, cacheRoot, sourcecache.New),
+					Network:        newTestNetwork(t),
+					RegistryConfig: config,
+				}
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
 				if stage == "canceled" {
@@ -367,8 +482,15 @@ func TestFetcher_AmbientAcquisitionErrors(t *testing.T) {
 				} else {
 					art, err = f.Fetch(ctx, repo, &reads, sourcecache.Policy{})
 				}
-				if art != nil || err == nil || remote.Load() != map[bool]int32{false: 0, true: 1}[stage == "unavailable"] || strings.Contains(err.Error(), "canary") || strings.Contains(diagnostic.String(), "canary") {
-					t.Fatalf("preparation admitted remote work or exposed provider text: remote=%d %v", remote.Load(), err)
+				if art != nil || err == nil ||
+					remote.Load() != map[bool]int32{false: 0, true: 1}[stage == "unavailable"] ||
+					strings.Contains(err.Error(), "canary") ||
+					strings.Contains(diagnostic.String(), "canary") {
+					t.Fatalf(
+						"preparation admitted remote work or exposed provider text: remote=%d %v",
+						remote.Load(),
+						err,
+					)
 				}
 				if stage == "canceled" && !errors.Is(err, context.Canceled) {
 					t.Fatalf("lost cancellation: %v", err)

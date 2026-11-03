@@ -56,16 +56,21 @@ func TestWalk_Admission(t *testing.T) {
 			}
 			opens := map[string]int{}
 			var names []string
-			err := Walk(t.Context(), observedFS{FS: input, opens: opens}, true, func(name string, info fs.FileInfo, data []byte) error {
-				names = append(names, name)
-				assert.Equal(t, info.Mode().IsRegular(), true)
-				if name == ".helmignore" {
-					assert.Equal(t, string(data), policy)
-				} else {
-					assert.Equal(t, data == nil, true)
-				}
-				return nil
-			})
+			err := Walk(
+				t.Context(),
+				observedFS{FS: input, opens: opens},
+				true,
+				func(name string, info fs.FileInfo, data []byte) error {
+					names = append(names, name)
+					assert.Equal(t, info.Mode().IsRegular(), true)
+					if name == ".helmignore" {
+						assert.Equal(t, string(data), policy)
+					} else {
+						assert.Equal(t, data == nil, true)
+					}
+					return nil
+				},
+			)
 			assert.NoError(t, err)
 			slices.Sort(want)
 			assert.Diff(t, names, want)
@@ -86,18 +91,31 @@ func TestWalk_Admission(t *testing.T) {
 			}
 			opens := map[string]int{}
 			var names []string
-			err := Walk(t.Context(), observedFS{FS: input, opens: opens}, false, func(name string, _ fs.FileInfo, data []byte) error {
-				names = append(names, name)
-				assert.Equal(t, data == nil, true)
-				return nil
-			})
+			err := Walk(
+				t.Context(),
+				observedFS{FS: input, opens: opens},
+				false,
+				func(name string, _ fs.FileInfo, data []byte) error {
+					names = append(names, name)
+					assert.Equal(t, data == nil, true)
+					return nil
+				},
+			)
 			assert.NoError(t, err)
-			assert.Diff(t, names, []string{"demo/.helmignore", "demo/Chart.yaml", "demo/templates/.hidden", "demo/templates/excluded.yaml"})
+			assert.Diff(
+				t,
+				names,
+				[]string{
+					"demo/.helmignore",
+					"demo/Chart.yaml",
+					"demo/templates/.hidden",
+					"demo/templates/excluded.yaml",
+				},
+			)
 			assert.Equal(t, opens[".helmignore"], 0)
 			assert.Equal(t, opens["demo/.helmignore"], 0)
 		})
 	}
-
 }
 
 func TestWalk_Errors(t *testing.T) {

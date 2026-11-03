@@ -183,9 +183,17 @@ func (e Encoder) Native(report dyff.Report) error {
 func diffSyntax(path, root, change string) func(dyff.Report) dyff.ReportWriter {
 	return func(report dyff.Report) dyff.ReportWriter {
 		return &dyff.DiffSyntaxReport{
-			PathPrefix: path, RootDescriptionPrefix: root, ChangeTypePrefix: change,
-			Report: report, Indent: 0, UseIndentLines: true, NoTableStyle: true, OmitHeader: true,
-			PrefixMultiline: true, MultilineContextLines: dyffContextLines, MinorChangeThreshold: dyffMinorChangeThreshold,
+			PathPrefix:            path,
+			RootDescriptionPrefix: root,
+			ChangeTypePrefix:      change,
+			Report:                report,
+			Indent:                0,
+			UseIndentLines:        true,
+			NoTableStyle:          true,
+			OmitHeader:            true,
+			PrefixMultiline:       true,
+			MultilineContextLines: dyffContextLines,
+			MinorChangeThreshold:  dyffMinorChangeThreshold,
 		}
 	}
 }

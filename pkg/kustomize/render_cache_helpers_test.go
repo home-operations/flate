@@ -21,9 +21,21 @@ func acceptedEmission(
 	children []store.Child,
 ) *store.Emission {
 	tb.Helper()
-	emission := &store.Emission{Render: receipt, Fingerprint: manifest.Fingerprint(acceptedInput), Complete: true, Children: children}
+	emission := &store.Emission{
+		Render:      receipt,
+		Fingerprint: manifest.Fingerprint(acceptedInput),
+		Complete:    true,
+		Children:    children,
+	}
 	st := store.New()
-	st.AddObject(&manifest.RawObject{APIVersion: owner.Group + "/v1", Kind: owner.Kind, Name: owner.Name, Namespace: owner.Namespace})
+	st.AddObject(
+		&manifest.RawObject{
+			APIVersion: owner.Group + "/v1",
+			Kind:       owner.Kind,
+			Name:       owner.Name,
+			Namespace:  owner.Namespace,
+		},
+	)
 	controller := base.New(st, task.NewBounded(2))
 	if err := controllertest.Emit(tb.Context(), controller, owner, emission); err != nil {
 		tb.Fatal(err)

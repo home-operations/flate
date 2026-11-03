@@ -45,6 +45,11 @@ func Plan(ctx context.Context, cfg Config) ([]Entry, error) {
 	if err := d.loadManifests(ctx, input.LocalPath, false); err != nil {
 		return nil, err
 	}
-	prepared := &entryInputs{input: *input, parsed: l.ParsedInputs(), aliasViews: maps.Clone(d.aliasViews), wipeSecrets: cfg.WipeSecrets}
+	prepared := &entryInputs{
+		input:       *input,
+		parsed:      l.ParsedInputs(),
+		aliasViews:  maps.Clone(d.aliasViews),
+		wipeSecrets: cfg.WipeSecrets,
+	}
 	return []Entry{{Path: d.cfg.Path, Input: input, prepared: prepared}}, nil
 }

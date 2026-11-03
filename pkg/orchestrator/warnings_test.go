@@ -113,15 +113,27 @@ spec:
 	// appchart names .Values.greeting → flate flags the unreferenced oldUnusedKey.
 	testutil.WriteFile(t, dir, "charts/app/Chart.yaml", "apiVersion: v2\nname: app\nversion: 0.1.0\n")
 	testutil.WriteFile(t, dir, "charts/app/values.yaml", "greeting: hi\n")
-	testutil.WriteFile(t, dir, "charts/app/templates/cm.yaml",
-		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\ndata:\n  g: {{ .Values.greeting | quote }}\n")
+	testutil.WriteFile(
+		t,
+		dir,
+		"charts/app/templates/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\ndata:\n  g: {{ .Values.greeting | quote }}\n",
+	)
 	// opaquechart dumps .Values wholesale → detection must stay silent.
 	testutil.WriteFile(t, dir, "charts/opaque/Chart.yaml", "apiVersion: v2\nname: opaque\nversion: 0.1.0\n")
 	testutil.WriteFile(t, dir, "charts/opaque/values.yaml", "greeting: hi\n")
-	testutil.WriteFile(t, dir, "charts/opaque/templates/cm.yaml",
-		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\ndata:\n  v: |\n    {{- toYaml .Values | nindent 4 }}\n")
+	testutil.WriteFile(
+		t,
+		dir,
+		"charts/opaque/templates/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\ndata:\n  v: |\n    {{- toYaml .Values | nindent 4 }}\n",
+	)
 
-	renderedSingleton1, err := RenderTrees(context.Background(), []Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true})
+	renderedSingleton1, err := RenderTrees(
+		context.Background(),
+		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
+		Config{WipeSecrets: true},
+	)
 	if len(renderedSingleton1) != 1 {
 		t.Fatalf("missing render: %v", err)
 	}
@@ -157,26 +169,44 @@ spec:
 func TestRender_UnresolvedSubstitutionWarning(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "kubernetes/flux/cluster-apps.yaml", testutil.KustomizationYAML("cluster-apps", "flux-system", `  path: ./kubernetes/apps
+	testutil.WriteFile(
+		t,
+		dir,
+		"kubernetes/flux/cluster-apps.yaml",
+		testutil.KustomizationYAML("cluster-apps", "flux-system", `  path: ./kubernetes/apps
   sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
   postBuild:
     substituteFrom:
       - kind: Secret
         name: cluster-secrets
-`))
-	testutil.WriteFile(t, dir, "kubernetes/flux/other-apps.yaml", testutil.KustomizationYAML("other-apps", "flux-system", `  path: ./kubernetes/apps
+`),
+	)
+	testutil.WriteFile(
+		t,
+		dir,
+		"kubernetes/flux/other-apps.yaml",
+		testutil.KustomizationYAML("other-apps", "flux-system", `  path: ./kubernetes/apps
   sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
   postBuild:
     substituteFrom:
       - kind: Secret
         name: cluster-secrets
-`))
-	testutil.WriteFile(t, dir, "kubernetes/apps/kustomization.yaml",
-		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: flux-system\nresources:\n  - ./cm.yaml\n")
+`),
+	)
+	testutil.WriteFile(
+		t,
+		dir,
+		"kubernetes/apps/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: flux-system\nresources:\n  - ./cm.yaml\n",
+	)
 	testutil.WriteFile(t, dir, "kubernetes/apps/cm.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app\ndata:\n  k: v\n")
 
-	renderedSingleton2, err := RenderTrees(t.Context(), []Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true, Concurrency: 2})
+	renderedSingleton2, err := RenderTrees(
+		t.Context(),
+		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
+		Config{WipeSecrets: true, Concurrency: 2},
+	)
 	if len(renderedSingleton2) != 1 {
 		t.Fatalf("missing render: %v", err)
 	}
@@ -195,9 +225,17 @@ metadata: {name: cluster-secrets, namespace: flux-system}
 spec:
   target: {name: cluster-secrets}
 `)
-	testutil.WriteFile(t, dir, "kubernetes/apps/kustomization.yaml",
-		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: flux-system\nresources:\n  - ./cm.yaml\n  - ./external-secret.yaml\n")
-	renderedSingleton2, err = RenderTrees(t.Context(), []Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true, Concurrency: 2})
+	testutil.WriteFile(
+		t,
+		dir,
+		"kubernetes/apps/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: flux-system\nresources:\n  - ./cm.yaml\n  - ./external-secret.yaml\n",
+	)
+	renderedSingleton2, err = RenderTrees(
+		t.Context(),
+		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
+		Config{WipeSecrets: true, Concurrency: 2},
+	)
 	if err != nil || len(renderedSingleton2) != 1 {
 		t.Fatalf("producer-declared render: %v", err)
 	}
@@ -241,8 +279,12 @@ spec:
       - kind: Secret
         name: cloudflared-secret
 `))
-	testutil.WriteFile(t, dir, "apps/kustomization.yaml",
-		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: flux-system\nresources:\n  - ./externalsecret.yaml\n  - ./cm.yaml\n")
+	testutil.WriteFile(
+		t,
+		dir,
+		"apps/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: flux-system\nresources:\n  - ./externalsecret.yaml\n  - ./cm.yaml\n",
+	)
 	// The ExternalSecret materializing cloudflared-secret enumerates its output
 	// keys via target.template.data (the dataFrom feeds the template's inputs).
 	testutil.WriteFile(t, dir, "apps/externalsecret.yaml", `apiVersion: external-secrets.io/v1
@@ -260,10 +302,18 @@ spec:
     - extract: {key: cloudflare}
 `)
 	// A resource consuming the secret-sourced var through postBuild substitution.
-	testutil.WriteFile(t, dir, "apps/cm.yaml",
-		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: tunnel\ndata:\n  target: \"${CLOUDFLARE_TUNNEL_ID}.cfargotunnel.com\"\n")
+	testutil.WriteFile(
+		t,
+		dir,
+		"apps/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: tunnel\ndata:\n  target: \"${CLOUDFLARE_TUNNEL_ID}.cfargotunnel.com\"\n",
+	)
 
-	renderedSingleton4, err := RenderTrees(context.Background(), []Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true})
+	renderedSingleton4, err := RenderTrees(
+		context.Background(),
+		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
+		Config{WipeSecrets: true},
+	)
 	if len(renderedSingleton4) != 1 {
 		t.Fatalf("missing render: %v", err)
 	}
@@ -279,7 +329,10 @@ spec:
 	var reads store.ReadSet
 	reads.Init(o.Store(), repo.Named(), nil)
 	_, err = o.src.Fetchers[manifest.KindGitRepository].Fetch(t.Context(), repo, &reads, sourcecache.Policy{})
-	if missing, ok := errors.AsType[*source.MissingSecretError](err); !ok || missing.Detail != "missing 'identity' for SSH auth" || missing.Secret.Name != "cloudflared-secret" || !reads.Valid() {
+	if missing, ok := errors.AsType[*source.MissingSecretError](
+		err,
+	); !ok || missing.Detail != "missing 'identity' for SSH auth" || missing.Secret.Name != "cloudflared-secret" ||
+		!reads.Valid() {
 		t.Fatalf("producer-declared credential did not retain placeholder classification: %v", err)
 	}
 

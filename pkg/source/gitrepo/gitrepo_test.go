@@ -44,7 +44,12 @@ func TestLocate_RepositorySelection(t *testing.T) {
 				}
 			}
 			if tc.remotes {
-				testutil.WriteFile(t, parent, ".git/config", "[remote \"z\"]\nurl = ssh://host/z\nurl = https://host/a\n[remote \"a\"]\nurl = https://host/a\n")
+				testutil.WriteFile(
+					t,
+					parent,
+					".git/config",
+					"[remote \"z\"]\nurl = ssh://host/z\nurl = https://host/a\n[remote \"a\"]\nurl = https://host/a\n",
+				)
 			}
 			location, err := Locate(t.Context(), root, "")
 			assert.Equal(t, err, nil)
@@ -120,5 +125,4 @@ func TestLocate_RepositorySelection(t *testing.T) {
 		assert.Equal(t, location.RepositoryRoot, root)
 		assert.Diff(t, location.URLs, []string{"https://host/outer"})
 	})
-
 }

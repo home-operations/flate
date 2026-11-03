@@ -23,12 +23,19 @@ import (
 func TestOrchestrator_ParentOf(t *testing.T) {
 	t.Parallel()
 	id := testutil.HelmReleaseID("apps", "child")
-	structural, rendered := testutil.KustomizationID("flux-system", "structural"), testutil.KustomizationID("flux-system", "rendered")
+	structural, rendered := testutil.KustomizationID(
+		"flux-system",
+		"structural",
+	), testutil.KustomizationID(
+		"flux-system",
+		"rendered",
+	)
 	for _, tc := range []struct {
 		name                       string
 		structural, rendered, want bool
 	}{
-		{name: "none"}, {name: "structural", structural: true, want: true},
+		{name: "none"},
+		{name: "structural", structural: true, want: true},
 		{name: "rendered", rendered: true, want: true},
 		{name: "precedence", structural: true, rendered: true, want: true},
 	} {
@@ -100,7 +107,6 @@ func TestOrchestrator_ParentOf(t *testing.T) {
 			assert.Diff(t, o.store.Productions(id, o.index), []manifest.Production{proof.production})
 		})
 	}
-
 }
 
 func TestOrchestrator_ParentOfAllocations(t *testing.T) {
@@ -161,9 +167,21 @@ func acceptInputsForTest(t *testing.T, st *store.Store, id manifest.NamedResourc
 func TestSelection_CompletedReadClosure(t *testing.T) {
 	t.Parallel()
 	selected := &manifest.HelmRelease{Name: "selected", Namespace: "apps"}
-	selected.ValuesFrom = []helmv2.ValuesReference{{Kind: manifest.KindConfigMap, Name: "optional", Optional: true}, {Kind: manifest.KindSecret, Name: "unconsumed"}}
+	selected.ValuesFrom = []helmv2.ValuesReference{
+		{Kind: manifest.KindConfigMap, Name: "optional", Optional: true},
+		{Kind: manifest.KindSecret, Name: "unconsumed"},
+	}
 	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "required"}
-	owner, optional, sibling := testutil.KustomizationID("apps", "required-owner"), testutil.KustomizationID("apps", "optional-owner"), testutil.KustomizationID("apps", "sibling")
+	owner, optional, sibling := testutil.KustomizationID(
+		"apps",
+		"required-owner",
+	), testutil.KustomizationID(
+		"apps",
+		"optional-owner",
+	), testutil.KustomizationID(
+		"apps",
+		"sibling",
+	)
 	run := selectedRun(&Result{Failed: make(map[manifest.NamedResource]store.StatusInfo)})
 	run.store.AddObject(selected)
 	publishFixture(t, run.store, owner, []manifest.NamedResource{input})
@@ -175,9 +193,19 @@ func TestSelection_CompletedReadClosure(t *testing.T) {
 		run.store.UpdateStatus(id, store.StatusInfo{Status: info.Status, Reason: info.Reason, Message: info.Message})
 		run.Result.Failed[id] = info
 	}
-	setParentsForTest(run.Orchestrator, map[manifest.NamedResource]manifest.NamedResource{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"}: optional})
+	setParentsForTest(
+		run.Orchestrator,
+		map[manifest.NamedResource]manifest.NamedResource{
+			{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"}: optional,
+		},
+	)
 	acceptInputsForTest(t, run.store, selected.Named(), []manifest.NamedResource{input})
-	results, err, remainder := Select([]Rendered{run}, &FailuresError{Message: "raw failures"}, []manifest.NamedResource{selected.Named()}, nil)
+	results, err, remainder := Select(
+		[]Rendered{run},
+		&FailuresError{Message: "raw failures"},
+		[]manifest.NamedResource{selected.Named()},
+		nil,
+	)
 	assert.Equal(t, err != nil, true)
 	assert.NoError(t, remainder)
 	assert.Equal(t, len(results[0].Failed), 2)
@@ -197,7 +225,15 @@ func TestSelection_AcceptedFootprintReplacement(t *testing.T) {
 	st := store.New()
 	obj := &manifest.HelmRelease{Name: "selected", Namespace: "apps"}
 	st.AddObject(obj)
-	first, second := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "first"}, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "second"}
+	first, second := manifest.NamedResource{
+		Kind:      manifest.KindConfigMap,
+		Namespace: "apps",
+		Name:      "first",
+	}, manifest.NamedResource{
+		Kind:      manifest.KindSecret,
+		Namespace: "apps",
+		Name:      "second",
+	}
 	acceptInputsForTest(t, st, obj.Named(), []manifest.NamedResource{first})
 	before := slices.Collect(st.RequiredInputs(obj.Named()))
 	acceptInputsForTest(t, st, obj.Named(), []manifest.NamedResource{second})
@@ -214,11 +250,16 @@ func TestSelection_SkippedHasNoConsumedPrerequisites(t *testing.T) {
 	obj.ValuesFrom = []helmv2.ValuesReference{{Kind: manifest.KindConfigMap, Name: "unconsumed"}}
 	st.AddObject(obj)
 	e := controllertest.NewExecution(base.New(st, tasks), obj.Named())
-	e.Dispatch[*manifest.HelmRelease](t.Context(), manifest.DrainNone, t, func(t *testing.T, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
-		t.Helper()
-		t.Fatal("suspended declaration reconciled")
-		return nil
-	})
+	e.Dispatch[*manifest.HelmRelease](
+		t.Context(),
+		manifest.DrainNone,
+		t,
+		func(t *testing.T, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
+			t.Helper()
+			t.Fatal("suspended declaration reconciled")
+			return nil
+		},
+	)
 	e.Close()
 	for range st.Sweep() {
 	}
@@ -254,7 +295,9 @@ func TestSelection_AcceptedWarningWithdrawal(t *testing.T) {
 	first := new(store.ReadSet)
 	first.Init(run.store, obj.Named(), nil)
 	first.GetObject(obj.Named())
-	first.AddWarning(manifest.Warning{Resource: obj.Named(), Category: manifest.WarnUnresolvedSubstitution, Message: "missing key"})
+	first.AddWarning(
+		manifest.Warning{Resource: obj.Named(), Category: manifest.WarnUnresolvedSubstitution, Message: "missing key"},
+	)
 	first.Accept()
 	run.Result.Warnings = run.store.Warnings()
 	selected, err, _ := Select([]Rendered{run}, nil, []manifest.NamedResource{obj.Named()}, nil)
@@ -273,10 +316,25 @@ func TestSelection_AcceptedWarningWithdrawal(t *testing.T) {
 func TestDAGSweep_ClassifiesBeforeTermination(t *testing.T) {
 	t.Parallel()
 	st := store.New()
-	parent, child, reader := &manifest.Kustomization{Name: "parent", Namespace: "apps", Path: "./apps"}, &manifest.Kustomization{Name: "child", Namespace: "apps"}, &manifest.Kustomization{Name: "reader", Namespace: "apps"}
+	parent, child, reader := &manifest.Kustomization{
+		Name:      "parent",
+		Namespace: "apps",
+		Path:      "./apps",
+	}, &manifest.Kustomization{
+		Name:      "child",
+		Namespace: "apps",
+	}, &manifest.Kustomization{
+		Name:      "reader",
+		Namespace: "apps",
+	}
 	st.AddObjects([]manifest.BaseManifest{parent, child, reader})
 	st.UpdateStatus(child.Named(), store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "unwired"})
-	o := &Orchestrator{store: st, index: indexForTest(map[manifest.NamedResource]string{parent.Named(): "root.yaml", child.Named(): "apps/child.yaml"})}
+	o := &Orchestrator{
+		store: st,
+		index: indexForTest(
+			map[manifest.NamedResource]string{parent.Named(): "root.yaml", child.Named(): "apps/child.yaml"},
+		),
+	}
 	d := dagDispatcher{o}
 	assert.Equal(t, len(d.Sweep(t.Context(), true)), 0)
 	info, _ := st.GetStatus(child.Named())
@@ -302,11 +360,24 @@ func TestDAGSweep_ClassifiesBeforeTermination(t *testing.T) {
 func TestFinalize_InspectionDoesNotChangeStatus(t *testing.T) {
 	t.Parallel()
 	st := store.New()
-	parent, child := &manifest.Kustomization{Name: "parent", Namespace: "apps", Path: "./apps"}, &manifest.Kustomization{Name: "child", Namespace: "apps"}
+	parent, child := &manifest.Kustomization{
+		Name:      "parent",
+		Namespace: "apps",
+		Path:      "./apps",
+	}, &manifest.Kustomization{
+		Name:      "child",
+		Namespace: "apps",
+	}
 	st.AddObjects([]manifest.BaseManifest{parent, child})
 	st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 	st.UpdateStatus(child.Named(), store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "unwired"})
-	o := &Orchestrator{store: st, tasks: task.NewBounded(2), index: indexForTest(map[manifest.NamedResource]string{parent.Named(): "root.yaml", child.Named(): "apps/child.yaml"})}
+	o := &Orchestrator{
+		store: st,
+		tasks: task.NewBounded(2),
+		index: indexForTest(
+			map[manifest.NamedResource]string{parent.Named(): "root.yaml", child.Named(): "apps/child.yaml"},
+		),
+	}
 	publications := 0
 	u := st.AddListener(store.EventStatusUpdated, func(manifest.NamedResource, any) { publications++ }, false)
 	defer u()
@@ -319,13 +390,22 @@ func TestFinalize_InspectionDoesNotChangeStatus(t *testing.T) {
 func TestDAGSweep_ProducerFailureAttribution(t *testing.T) {
 	t.Parallel()
 	st := store.New()
-	producer, consumer := &manifest.Kustomization{Name: "producer", Namespace: "apps", Path: "./apps"}, &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
+	producer, consumer := &manifest.Kustomization{
+		Name:      "producer",
+		Namespace: "apps",
+		Path:      "./apps",
+	}, &manifest.Kustomization{
+		Name:      "consumer",
+		Namespace: "apps",
+	}
 	st.AddObjects([]manifest.BaseManifest{producer, consumer})
 	st.UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 	failure := manifest.NewError(manifest.ErrInput, nil, "invalid yaml")
 	index := indexForTest(map[manifest.NamedResource]string{producer.Named(): "root.yaml"})
 
-	index.Readers = map[string][]manifest.FileReader{"apps/invalid.yaml": {{Reader: producer.Named(), Source: manifest.BootstrapSourceID}}}
+	index.Readers = map[string][]manifest.FileReader{
+		"apps/invalid.yaml": {{Reader: producer.Named(), Source: manifest.BootstrapSourceID}},
+	}
 	o := &Orchestrator{store: st, index: index}
 	var reads store.ReadSet
 	reads.Init(st, consumer.Named(), nil)
@@ -356,9 +436,13 @@ func TestDAGSweep_OrphanDecodeAttributionStable(t *testing.T) {
 	st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 	failure := manifest.NewError(manifest.ErrInput, nil, "invalid yaml")
 	st.UpdateFailure(orphan.Named(), failure)
-	index := indexForTest(map[manifest.NamedResource]string{parent.Named(): "root.yaml", orphan.Named(): "apps/orphan/ks.yaml"})
+	index := indexForTest(
+		map[manifest.NamedResource]string{parent.Named(): "root.yaml", orphan.Named(): "apps/orphan/ks.yaml"},
+	)
 
-	index.Readers = map[string][]manifest.FileReader{"apps/orphan/invalid.yaml": {{Reader: orphan.Named(), Source: manifest.BootstrapSourceID}}}
+	index.Readers = map[string][]manifest.FileReader{
+		"apps/orphan/invalid.yaml": {{Reader: orphan.Named(), Source: manifest.BootstrapSourceID}},
+	}
 	o := &Orchestrator{store: st, index: index}
 	publications := 0
 	u := st.AddListener(store.EventStatusUpdated, func(manifest.NamedResource, any) { publications++ }, false)
@@ -392,7 +476,12 @@ func TestRenderTrees_ChangedOnlyAndDiff_GeneratedInputs(t *testing.T) {
 				values[1] = "fallback"
 			}
 			for side, root := range dirs {
-				testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux/producer.yaml, flux/consumer.yaml, flux/sibling.yaml]\n")
+				testutil.WriteFile(
+					t,
+					root,
+					"kustomization.yaml",
+					"resources: [flux/producer.yaml, flux/consumer.yaml, flux/sibling.yaml]\n",
+				)
 				target, key, file := "settings", "VALUE", "generator.env"
 				if side == 1 {
 					switch scenario {
@@ -410,18 +499,46 @@ func TestRenderTrees_ChangedOnlyAndDiff_GeneratedInputs(t *testing.T) {
 				} else {
 					testutil.WriteFile(t, root, "producer/"+file, key+"="+values[side]+"\n")
 				}
-				testutil.WriteFile(t, root, "producer/kustomization.yaml", "namespace: flux-system\ngeneratorOptions: {disableNameSuffixHash: true}\nconfigMapGenerator:\n- name: "+target+"\n"+generator)
+				testutil.WriteFile(
+					t,
+					root,
+					"producer/kustomization.yaml",
+					"namespace: flux-system\ngeneratorOptions: {disableNameSuffixHash: true}\nconfigMapGenerator:\n- name: "+target+"\n"+generator,
+				)
 				for _, name := range []string{"producer", "consumer", "sibling"} {
 					postBuild := ""
 					if name == "consumer" {
-						postBuild = fmt.Sprintf("  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: %s, optional: %t}]\n", target, scenario == "optional")
+						postBuild = fmt.Sprintf(
+							"  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: %s, optional: %t}]\n",
+							target,
+							scenario == "optional",
+						)
 					}
-					testutil.WriteFile(t, root, "flux/"+name+".yaml", testutil.KustomizationYAML(name, "flux-system", "  path: ./"+name+"\n  sourceRef: {kind: GitRepository, name: flux-system}\n"+postBuild))
+					testutil.WriteFile(
+						t,
+						root,
+						"flux/"+name+".yaml",
+						testutil.KustomizationYAML(
+							name,
+							"flux-system",
+							"  path: ./"+name+"\n  sourceRef: {kind: GitRepository, name: flux-system}\n"+postBuild,
+						),
+					)
 				}
 				testutil.WriteFile(t, root, "consumer/kustomization.yaml", "resources: [result.yaml]\n")
-				testutil.WriteFile(t, root, "consumer/result.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: result}\ndata: {value: '${VALUE:=fallback}'}\n")
+				testutil.WriteFile(
+					t,
+					root,
+					"consumer/result.yaml",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: result}\ndata: {value: '${VALUE:=fallback}'}\n",
+				)
 				testutil.WriteFile(t, root, "sibling/kustomization.yaml", "resources: [result.yaml]\n")
-				testutil.WriteFile(t, root, "sibling/result.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: untouched}\n")
+				testutil.WriteFile(
+					t,
+					root,
+					"sibling/result.yaml",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: untouched}\n",
+				)
 				if scenario == "unrelated" {
 					testutil.WriteFile(t, root, "notes.txt", fmt.Sprintf("revision %d\n", side))
 				}
@@ -430,7 +547,28 @@ func TestRenderTrees_ChangedOnlyAndDiff_GeneratedInputs(t *testing.T) {
 			var previous [2]string
 			for run, state := range []string{"cold", "warm"} {
 				cfg := treeConfig{CacheDir: cache, Concurrency: 2}
-				renderedTrees1, err := RenderTrees(t.Context(), []Tree{{Path: dirs[0], RepoRoot: dirs[0], ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, Input: cfg.BaseInput, BaseInput: cfg.Input, ExternalChanges: cfg.ExternalChanges}, {Path: dirs[1], RepoRoot: dirs[1], ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: cfg.Input, BaseInput: cfg.BaseInput, ExternalChanges: cfg.ExternalChanges}}, cfg.Config)
+				renderedTrees1, err := RenderTrees(
+					t.Context(),
+					[]Tree{
+						{
+							Path:            dirs[0],
+							RepoRoot:        dirs[0],
+							ID:              manifest.TreeID{Cluster: ".", Side: manifest.TreeBase},
+							Input:           cfg.BaseInput,
+							BaseInput:       cfg.Input,
+							ExternalChanges: cfg.ExternalChanges,
+						},
+						{
+							Path:            dirs[1],
+							RepoRoot:        dirs[1],
+							ID:              manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
+							Input:           cfg.Input,
+							BaseInput:       cfg.BaseInput,
+							ExternalChanges: cfg.ExternalChanges,
+						},
+					},
+					cfg.Config,
+				)
 				base, head := renderedTrees1[0], renderedTrees1[1]
 				assert.NoError(t, err)
 				for side, rendered := range []Rendered{base, head} {
@@ -467,7 +605,10 @@ func TestRenderTrees_ChangedOnlyAndDiff_GeneratedInputs(t *testing.T) {
 					}
 					body, err := json.Marshal(outputByParent(rendered.Result.Manifests)[consumer])
 					assert.NoError(t, err)
-					wantBody := fmt.Sprintf(`[{"apiVersion":"v1","data":{"value":%q},"kind":"ConfigMap","metadata":{"labels":{"kustomize.toolkit.fluxcd.io/name":"consumer","kustomize.toolkit.fluxcd.io/namespace":"flux-system"},"name":"result"}}]`, values[side])
+					wantBody := fmt.Sprintf(
+						`[{"apiVersion":"v1","data":{"value":%q},"kind":"ConfigMap","metadata":{"labels":{"kustomize.toolkit.fluxcd.io/name":"consumer","kustomize.toolkit.fluxcd.io/namespace":"flux-system"},"name":"result"}}]`,
+						values[side],
+					)
 					assert.Equal(t, string(body), wantBody)
 					if run > 0 {
 						assert.Equal(t, string(body), previous[side])
@@ -482,9 +623,21 @@ func TestRenderTrees_ChangedOnlyAndDiff_GeneratedInputs(t *testing.T) {
 					}
 					producerBody, err := json.Marshal(outputByParent(rendered.Result.Manifests)[producer])
 					assert.NoError(t, err)
-					wantProducer := fmt.Sprintf(`[{"apiVersion":"v1","data":{%q:%q},"kind":"ConfigMap","metadata":{"annotations":{"config.kubernetes.io/origin":"configuredIn: kustomization.yaml\nconfiguredBy:\n  apiVersion: builtin\n  kind: ConfigMapGenerator\n"},"labels":{"kustomize.toolkit.fluxcd.io/name":"producer","kustomize.toolkit.fluxcd.io/namespace":"flux-system"},"name":%q,"namespace":"flux-system"}}]`, key, values[side], target)
+					wantProducer := fmt.Sprintf(
+						`[{"apiVersion":"v1","data":{%q:%q},"kind":"ConfigMap","metadata":{"annotations":{"config.kubernetes.io/origin":"configuredIn: kustomization.yaml\nconfiguredBy:\n  apiVersion: builtin\n  kind: ConfigMapGenerator\n"},"labels":{"kustomize.toolkit.fluxcd.io/name":"producer","kustomize.toolkit.fluxcd.io/namespace":"flux-system"},"name":%q,"namespace":"flux-system"}}]`,
+						key,
+						values[side],
+						target,
+					)
 					assert.Equal(t, string(producerBody), wantProducer)
-					t.Logf("state=%s side=%d affected=%v producer=%s consumer=%s", state, side, want, producerBody, body)
+					t.Logf(
+						"state=%s side=%d affected=%v producer=%s consumer=%s",
+						state,
+						side,
+						want,
+						producerBody,
+						body,
+					)
 				}
 			}
 		})

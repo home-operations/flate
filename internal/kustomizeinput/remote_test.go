@@ -23,7 +23,15 @@ func TestParseGitBase_UpstreamGrammar(t *testing.T) {
 			t.Parallel()
 			got, ok := ParseGitBase(tc.raw)
 			if !ok || got.RepoURL != tc.repo || got.SubPath != tc.subpath || got.Ref != tc.ref {
-				t.Errorf("ParseGitBase(%q) = %+v, %t; want repo=%q subpath=%q ref=%q", tc.raw, got, ok, tc.repo, tc.subpath, tc.ref)
+				t.Errorf(
+					"ParseGitBase(%q) = %+v, %t; want repo=%q subpath=%q ref=%q",
+					tc.raw,
+					got,
+					ok,
+					tc.repo,
+					tc.subpath,
+					tc.ref,
+				)
 			}
 		})
 	}
@@ -69,8 +77,11 @@ func TestParseGitBase_Boundaries(t *testing.T) {
 		{"https://host.example/org/repo.git//base", "https://host.example/org/repo.git", "base"},
 		{"https://github.com/org/", "https://github.com/org/", ""},
 		{"https://github.com//repo", "https://github.com//repo", ""},
-		{"./relative", "", ""}, {"/absolute", "", ""}, {"oci://host/repo", "", ""},
-		{"host.example/org/repo", "", ""}, {"https://host/only", "", ""},
+		{"./relative", "", ""},
+		{"/absolute", "", ""},
+		{"oci://host/repo", "", ""},
+		{"host.example/org/repo", "", ""},
+		{"https://host/only", "", ""},
 		{"https://host/org/repo//../../escape", "", ""},
 	} {
 		t.Run(tc.raw, func(t *testing.T) {

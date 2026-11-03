@@ -18,8 +18,8 @@ import (
 type Bucket struct {
 	Name        string            `json:"name"                yaml:"name"`
 	Namespace   string            `json:"namespace,omitempty" yaml:"namespace,omitempty"`
-	Labels      map[string]string `json:"-" yaml:"-"`
-	Annotations map[string]string `json:"-" yaml:"-"`
+	Labels      map[string]string `json:"-"                   yaml:"-"`
+	Annotations map[string]string `json:"-"                   yaml:"-"`
 	// BucketSpec is the embedded upstream sourcev1.BucketSpec — all
 	// fields (Provider, BucketName, Endpoint, Region, Prefix, Insecure,
 	// SecretRef, CertSecretRef, ProxySecretRef, Suspend, ...) are
@@ -30,7 +30,13 @@ type Bucket struct {
 // NewBucket normalizes an owned typed Bucket declaration.
 func NewBucket(cr sourcev1.Bucket) *Bucket {
 	cr.Spec.Provider = cmp.Or(cr.Spec.Provider, sourcev1.BucketProviderGeneric)
-	return &Bucket{Name: cr.Name, Namespace: cr.Namespace, Labels: cr.Labels, Annotations: cr.Annotations, BucketSpec: cr.Spec}
+	return &Bucket{
+		Name:        cr.Name,
+		Namespace:   cr.Namespace,
+		Labels:      cr.Labels,
+		Annotations: cr.Annotations,
+		BucketSpec:  cr.Spec,
+	}
 }
 
 // GetLabels returns the Bucket's metadata.labels.

@@ -73,27 +73,40 @@ func runScaleDAG(t *testing.T, workers, producers int) {
 	firstWave := min(workers, producers-128)
 	started, release := make(chan struct{}, firstWave), make(chan struct{})
 	var active, overBound, roots atomic.Int64
-	s, st := registeredScheduler(t, workers, objects, func(ctx context.Context, e *base.Execution, id schedule.NodeID, level manifest.DrainLevel) error {
-		current := active.Add(1)
-		defer active.Add(-1)
-		if current > int64(workers) {
-			overBound.Add(1)
-		}
-		if len(deps[id]) == 0 && roots.Add(1) <= int64(firstWave) {
-			started <- struct{}{}
-			<-release
-		}
-		if err := e.Require(ctx, deps[id], level); err != nil {
-			return err
-		}
-		_, _, next := e.Reads.GetEmission(id)
-		defer next.Finish()
-		for n := range 10 {
-			next.Children = append(next.Children, store.Child{Obj: &manifest.ConfigMap{Name: fmt.Sprintf("%s-object-%02d", id.Name, n), Namespace: id.Namespace}})
-		}
-		next.Complete = true
-		return e.Emit(t.Context(), id, &next, nil)
-	})
+	s, st := registeredScheduler(
+		t,
+		workers,
+		objects,
+		func(ctx context.Context, e *base.Execution, id schedule.NodeID, level manifest.DrainLevel) error {
+			current := active.Add(1)
+			defer active.Add(-1)
+			if current > int64(workers) {
+				overBound.Add(1)
+			}
+			if len(deps[id]) == 0 && roots.Add(1) <= int64(firstWave) {
+				started <- struct{}{}
+				<-release
+			}
+			if err := e.Require(ctx, deps[id], level); err != nil {
+				return err
+			}
+			_, _, next := e.Reads.GetEmission(id)
+			defer next.Finish()
+			for n := range 10 {
+				next.Children = append(
+					next.Children,
+					store.Child{
+						Obj: &manifest.ConfigMap{
+							Name:      fmt.Sprintf("%s-object-%02d", id.Name, n),
+							Namespace: id.Namespace,
+						},
+					},
+				)
+			}
+			next.Complete = true
+			return e.Emit(t.Context(), id, &next, nil)
+		},
+	)
 	var publications atomic.Int64
 	unsubscribe := st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, payload any) {
 		if id.Kind == manifest.KindConfigMap && payload != nil {
@@ -124,7 +137,11 @@ func runScaleDAG(t *testing.T, workers, producers int) {
 		assert.Equal(t, ok, true)
 		assert.Equal(t, status.Status, store.StatusReady)
 		for n := range 10 {
-			child := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: fmt.Sprintf("%s-object-%02d", id.Name, n), Namespace: id.Namespace}
+			child := manifest.NamedResource{
+				Kind:      manifest.KindConfigMap,
+				Name:      fmt.Sprintf("%s-object-%02d", id.Name, n),
+				Namespace: id.Namespace,
+			}
 			assert.Equal(t, st.GetObject(child) != nil, true)
 		}
 	}
@@ -133,11 +150,20 @@ func runScaleDAG(t *testing.T, workers, producers int) {
 	assert.Equal(t, len(st.FailedResources()), 0)
 }
 
-func (d *registeredDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+func (d *registeredDispatcher) Dispatch(
+	ctx context.Context,
+	id schedule.NodeID,
+	level manifest.DrainLevel,
+) schedule.Result {
 	e := controllertest.NewExecution(d.controller, id)
-	e.Dispatch[*manifest.Kustomization](ctx, level, e, func(e *base.Execution, ctx context.Context, obj *manifest.Kustomization, level manifest.DrainLevel) error {
-		return d.reconcile(ctx, e, obj.Named(), level)
-	})
+	e.Dispatch[*manifest.Kustomization](
+		ctx,
+		level,
+		e,
+		func(e *base.Execution, ctx context.Context, obj *manifest.Kustomization, level manifest.DrainLevel) error {
+			return d.reconcile(ctx, e, obj.Named(), level)
+		},
+	)
 	return schedule.Result{Assessment: e}
 }
 
@@ -145,14 +171,25 @@ func (d *registeredDispatcher) Sweep(context.Context, bool) []schedule.NodeID {
 	return slices.Collect(d.controller.Store.Sweep())
 }
 
-func registeredScheduler(t *testing.T, workers int, objects []manifest.BaseManifest, reconcile func(context.Context, *base.Execution, schedule.NodeID, manifest.DrainLevel) error) (*schedule.Scheduler, *store.Store) {
+func registeredScheduler(
+	t *testing.T,
+	workers int,
+	objects []manifest.BaseManifest,
+	reconcile func(context.Context, *base.Execution, schedule.NodeID, manifest.DrainLevel) error,
+) (*schedule.Scheduler, *store.Store) {
 	t.Helper()
 	st, tasks := store.New(), task.NewBounded(workers)
 	st.AddObjects(objects)
 	c := base.New(st, tasks)
 	c.StartLifecycle()
 	s := schedule.New(tasks, &registeredDispatcher{controller: c, reconcile: reconcile})
-	t.Cleanup(st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) { s.OnArrival(id, id.KindInfo().Runnable) }, true))
+	t.Cleanup(
+		st.AddListener(
+			store.EventObjectAdded,
+			func(id manifest.NamedResource, _ any) { s.OnArrival(id, id.KindInfo().Runnable) },
+			true,
+		),
+	)
 	for _, event := range []store.EventKind{store.EventArtifactUpdated, store.EventStatusUpdated} {
 		t.Cleanup(st.AddListener(event, func(manifest.NamedResource, any) { s.OnPublication() }, true))
 	}
@@ -187,17 +224,25 @@ func TestScheduler_RegisteredDependencyGraphs(t *testing.T) {
 						objects = append(objects, &manifest.Kustomization{Name: name, Namespace: "ns"})
 						counts[name] = &atomic.Int64{}
 					}
-					s, st := registeredScheduler(t, workers, objects, func(ctx context.Context, e *base.Execution, id schedule.NodeID, level manifest.DrainLevel) error {
-						deps := make([]manifest.DependencyRef, 0, len(tc.graph[id.Name]))
-						for _, dep := range tc.graph[id.Name] {
-							deps = append(deps, manifest.DependencyRef{NamedResource: testutil.KustomizationID("ns", dep)})
-						}
-						if err := e.Require(ctx, deps, level); err != nil {
-							return err
-						}
-						counts[id.Name].Add(1)
-						return nil
-					})
+					s, st := registeredScheduler(
+						t,
+						workers,
+						objects,
+						func(ctx context.Context, e *base.Execution, id schedule.NodeID, level manifest.DrainLevel) error {
+							deps := make([]manifest.DependencyRef, 0, len(tc.graph[id.Name]))
+							for _, dep := range tc.graph[id.Name] {
+								deps = append(
+									deps,
+									manifest.DependencyRef{NamedResource: testutil.KustomizationID("ns", dep)},
+								)
+							}
+							if err := e.Require(ctx, deps, level); err != nil {
+								return err
+							}
+							counts[id.Name].Add(1)
+							return nil
+						},
+					)
 					if tc.name == "cycle" {
 						for _, obj := range objects {
 							st.SetPreflight(obj.Named(), "dependency cycle detected")
@@ -238,7 +283,6 @@ func TestScheduler_RegisteredDependencyGraphs(t *testing.T) {
 					} else {
 						assert.Equal(t, len(failures), 0)
 					}
-
 				})
 			}
 		})
@@ -263,30 +307,46 @@ func TestDispatchNode_SelfStatusSettlement(t *testing.T) {
 			consumer := &manifest.Kustomization{Name: "consumer", Namespace: "ns"}
 			dependency := &manifest.Kustomization{Name: "dependency", Namespace: "ns"}
 			var assessments, renders atomic.Int64
-			s, st := registeredScheduler(t, 4, []manifest.BaseManifest{consumer, dependency}, func(ctx context.Context, e *base.Execution, id schedule.NodeID, level manifest.DrainLevel) error {
-				if id == dependency.Named() {
+			s, st := registeredScheduler(
+				t,
+				4,
+				[]manifest.BaseManifest{consumer, dependency},
+				func(ctx context.Context, e *base.Execution, id schedule.NodeID, level manifest.DrainLevel) error {
+					if id == dependency.Named() {
+						return nil
+					}
+					count := assessments.Add(1)
+					e.SetPendingUnlessReady(id, "working")
+					if err := e.Require(
+						ctx,
+						[]manifest.DependencyRef{{NamedResource: dependency.Named(), ReadyExpr: new(tc.expression)}},
+						level,
+					); err != nil {
+						return err
+					}
+					if tc.feedback {
+						e.Store.UpdateStatus(
+							id,
+							store.StatusInfo{
+								Status:  store.StatusReady,
+								Reason:  "",
+								Message: fmt.Sprintf("feedback %d", count),
+							},
+						)
+						return nil
+					}
+					fp, reused, err := e.FingerprintDedup(t.Context(), id, "unchanged output", &store.Emission{})
+					if reused || err != nil {
+						return err
+					}
+					renders.Add(1)
+					_, _, output := e.Reads.GetEmission(id)
+					output.Fingerprint, output.Complete = fp, true
+					e.Emit(t.Context(), id, &output, nil)
+					output.Finish()
 					return nil
-				}
-				count := assessments.Add(1)
-				e.SetPendingUnlessReady(id, "working")
-				if err := e.Require(ctx, []manifest.DependencyRef{{NamedResource: dependency.Named(), ReadyExpr: new(tc.expression)}}, level); err != nil {
-					return err
-				}
-				if tc.feedback {
-					e.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: fmt.Sprintf("feedback %d", count)})
-					return nil
-				}
-				fp, reused, err := e.FingerprintDedup(t.Context(), id, "unchanged output", &store.Emission{})
-				if reused || err != nil {
-					return err
-				}
-				renders.Add(1)
-				_, _, output := e.Reads.GetEmission(id)
-				output.Fingerprint, output.Complete = fp, true
-				e.Emit(t.Context(), id, &output, nil)
-				output.Finish()
-				return nil
-			})
+				},
+			)
 			st.UpdateStatus(dependency.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			s.Seed([]schedule.NodeID{consumer.Named()})
 			err := s.Run(t.Context())
@@ -318,44 +378,68 @@ func TestScheduler_RegisteredFailureRecovery(t *testing.T) {
 						read, published, failed := make(chan struct{}), make(chan struct{}), make(chan struct{})
 						var runs atomic.Int64
 						var st *store.Store
-						s, current := registeredScheduler(t, workers, []manifest.BaseManifest{consumer, driver, dependency}, func(ctx context.Context, e *base.Execution, id schedule.NodeID, level manifest.DrainLevel) error {
-							if id == dependency.Named() {
-								if e.Reads.GetObject(id).(*manifest.Kustomization).Path == "recovered" {
+						s, current := registeredScheduler(
+							t,
+							workers,
+							[]manifest.BaseManifest{consumer, driver, dependency},
+							func(ctx context.Context, e *base.Execution, id schedule.NodeID, level manifest.DrainLevel) error {
+								if id == dependency.Named() {
+									if e.Reads.GetObject(id).(*manifest.Kustomization).Path == "recovered" {
+										return nil
+									}
+									return manifest.NewError(manifest.ErrInput, nil, "initial failure")
+								}
+								if id == driver.Named() {
+									e.Tasks.YieldSlot(func() { <-read })
+									if data {
+										st.AddObject(
+											&manifest.ConfigMap{
+												Name:      "late",
+												Namespace: "ns",
+												Data:      map[string]any{"value": "ready"},
+											},
+										)
+									} else {
+										replacement := dependency.Clone()
+										replacement.Path = "recovered"
+										st.AddObject(replacement)
+										st.UpdateStatus(
+											dependency.Named(),
+											store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""},
+										)
+									}
+									close(published)
 									return nil
 								}
-								return manifest.NewError(manifest.ErrInput, nil, "initial failure")
-							}
-							if id == driver.Named() {
-								e.Tasks.YieldSlot(func() { <-read })
+								if !data {
+									e.Tasks.YieldSlot(func() { <-failed })
+								}
+								run := runs.Add(1)
+								var err error
 								if data {
-									st.AddObject(&manifest.ConfigMap{Name: "late", Namespace: "ns", Data: map[string]any{"value": "ready"}})
+									if e.Reads.GetObject(
+										manifest.NamedResource{
+											Kind:      manifest.KindConfigMap,
+											Namespace: "ns",
+											Name:      "late",
+										},
+									) == nil {
+										err = manifest.NewError(manifest.ErrInput, nil, "data unavailable")
+									}
 								} else {
-									replacement := dependency.Clone()
-									replacement.Path = "recovered"
-									st.AddObject(replacement)
-									st.UpdateStatus(dependency.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
+									err = e.Require(
+										ctx,
+										[]manifest.DependencyRef{{NamedResource: dependency.Named()}},
+										level,
+									)
 								}
-								close(published)
-								return nil
-							}
-							if !data {
-								e.Tasks.YieldSlot(func() { <-failed })
-							}
-							run := runs.Add(1)
-							var err error
-							if data {
-								if e.Reads.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "late"}) == nil {
-									err = manifest.NewError(manifest.ErrInput, nil, "data unavailable")
+								if run == 1 {
+									close(read)
+									e.Tasks.YieldSlot(func() { <-published })
 								}
-							} else {
-								err = e.Require(ctx, []manifest.DependencyRef{{NamedResource: dependency.Named()}}, level)
-							}
-							if run == 1 {
-								close(read)
-								e.Tasks.YieldSlot(func() { <-published })
-							}
-							return err
-						})
+								return err
+							},
+						)
 						st = current
 						u := st.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
 							if id == dependency.Named() && payload.(store.StatusInfo).Status == store.StatusFailed {
@@ -378,7 +462,6 @@ func TestScheduler_RegisteredFailureRecovery(t *testing.T) {
 						} else {
 							assert.Equal(t, len(failures), 0)
 						}
-
 					})
 				})
 			}
@@ -389,23 +472,36 @@ func TestScheduler_RegisteredFailureRecovery(t *testing.T) {
 func TestScheduler_RegisteredIrrelevantPublication(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
-		consumer, driver := &manifest.Kustomization{Name: "consumer", Namespace: "ns"}, &manifest.Kustomization{Name: "driver", Namespace: "ns"}
+		consumer, driver := &manifest.Kustomization{
+			Name:      "consumer",
+			Namespace: "ns",
+		}, &manifest.Kustomization{
+			Name:      "driver",
+			Namespace: "ns",
+		}
 		read, published := make(chan struct{}), make(chan struct{})
 		var renders atomic.Int64
 		var st *store.Store
-		s, current := registeredScheduler(t, 4, []manifest.BaseManifest{consumer, driver}, func(_ context.Context, e *base.Execution, id schedule.NodeID, _ manifest.DrainLevel) error {
-			if id == driver.Named() {
-				e.Tasks.YieldSlot(func() { <-read })
-				st.AddObject(&manifest.Secret{Name: "irrelevant", Namespace: "ns"})
-				close(published)
+		s, current := registeredScheduler(
+			t,
+			4,
+			[]manifest.BaseManifest{consumer, driver},
+			func(_ context.Context, e *base.Execution, id schedule.NodeID, _ manifest.DrainLevel) error {
+				if id == driver.Named() {
+					e.Tasks.YieldSlot(func() { <-read })
+					st.AddObject(&manifest.Secret{Name: "irrelevant", Namespace: "ns"})
+					close(published)
+					return nil
+				}
+				renders.Add(1)
+				e.Reads.GetObject(
+					manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "optional"},
+				)
+				close(read)
+				e.Tasks.YieldSlot(func() { <-published })
 				return nil
-			}
-			renders.Add(1)
-			e.Reads.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "optional"})
-			close(read)
-			e.Tasks.YieldSlot(func() { <-published })
-			return nil
-		})
+			},
+		)
 		st = current
 		assert.NoError(t, s.Run(t.Context()))
 		assert.Equal(t, renders.Load(), int64(1))
@@ -421,46 +517,70 @@ func TestScheduler_RegisteredFixpointBound(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
-				x, y := &manifest.Kustomization{Name: "x", Namespace: "ns"}, &manifest.Kustomization{Name: "y", Namespace: "ns"}
+				x, y := &manifest.Kustomization{
+					Name:      "x",
+					Namespace: "ns",
+				}, &manifest.Kustomization{
+					Name:      "y",
+					Namespace: "ns",
+				}
 				started, held := make(chan struct{}, 2), make(chan struct{}, 2)
 				release := make(chan struct{})
 				var active, total atomic.Int64
 				counts := map[schedule.NodeID]*atomic.Int64{x.Named(): {}, y.Named(): {}}
-				s, st := registeredScheduler(t, 4, []manifest.BaseManifest{x, y}, func(ctx context.Context, e *base.Execution, id schedule.NodeID, level manifest.DrainLevel) error {
-					if err := ctx.Err(); err != nil {
-						return err
-					}
-					active.Add(1)
-					defer active.Add(-1)
-					run, count := counts[id].Add(1), total.Add(1)
-					other := x.Named()
-					if id == other {
-						other = y.Named()
-					}
-					e.Reads.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: other.Name})
-					if run == 1 {
-						started <- struct{}{}
-						e.Tasks.YieldSlot(func() { <-release })
-					}
-					if blocked && count >= 80 {
-						held <- struct{}{}
-						<-ctx.Done()
-					}
-					_, _, next := e.Reads.GetEmission(id)
-					defer next.Finish()
-					child := &manifest.ConfigMap{Name: id.Name, Namespace: "ns", Data: map[string]any{"value": run}}
-					next.Children = []store.Child{{Obj: child, Doc: child.Snapshot()}}
-					next.Manifests, next.Complete = testutil.DocumentOccurrences([]map[string]any{child.Snapshot()}), true
-					e.Emit(t.Context(), id, &next, nil)
-					if blocked {
-						return e.Require(ctx, []manifest.DependencyRef{{NamedResource: other}}, level)
-					}
-					return nil
-				})
+				s, st := registeredScheduler(
+					t,
+					4,
+					[]manifest.BaseManifest{x, y},
+					func(ctx context.Context, e *base.Execution, id schedule.NodeID, level manifest.DrainLevel) error {
+						if err := ctx.Err(); err != nil {
+							return err
+						}
+						active.Add(1)
+						defer active.Add(-1)
+						run, count := counts[id].Add(1), total.Add(1)
+						other := x.Named()
+						if id == other {
+							other = y.Named()
+						}
+						e.Reads.GetObject(
+							manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: other.Name},
+						)
+						if run == 1 {
+							started <- struct{}{}
+							e.Tasks.YieldSlot(func() { <-release })
+						}
+						if blocked && count >= 80 {
+							held <- struct{}{}
+							<-ctx.Done()
+						}
+						_, _, next := e.Reads.GetEmission(id)
+						defer next.Finish()
+						child := &manifest.ConfigMap{Name: id.Name, Namespace: "ns", Data: map[string]any{"value": run}}
+						next.Children = []store.Child{{Obj: child, Doc: child.Snapshot()}}
+						next.Manifests, next.Complete = testutil.DocumentOccurrences(
+							[]map[string]any{child.Snapshot()},
+						), true
+						e.Emit(t.Context(), id, &next, nil)
+						if blocked {
+							return e.Require(ctx, []manifest.DependencyRef{{NamedResource: other}}, level)
+						}
+						return nil
+					},
+				)
 				c := base.New(st, nil)
 				for _, obj := range []*manifest.Kustomization{x, y} {
-					child := &manifest.ConfigMap{Name: obj.Name, Namespace: "ns", Data: map[string]any{"value": int64(0)}}
-					controllertest.Emit(t.Context(), c, obj.Named(), &store.Emission{Children: []store.Child{{Obj: child, Doc: child.Snapshot()}}, Complete: true})
+					child := &manifest.ConfigMap{
+						Name:      obj.Name,
+						Namespace: "ns",
+						Data:      map[string]any{"value": int64(0)},
+					}
+					controllertest.Emit(
+						t.Context(),
+						c,
+						obj.Named(),
+						&store.Emission{Children: []store.Child{{Obj: child, Doc: child.Snapshot()}}, Complete: true},
+					)
 				}
 				done := make(chan error, 1)
 				go func() { done <- s.Run(ctx) }()
@@ -485,7 +605,12 @@ func TestScheduler_RegisteredFixpointBound(t *testing.T) {
 					}
 				} else {
 					if err == nil || !strings.Contains(err.Error(), "exceeded 32 redispatches") || ctx.Err() != nil {
-						t.Fatalf("registered terminal feedback did not hit its bound: error=%v context=%v runs=%d", err, ctx.Err(), total.Load())
+						t.Fatalf(
+							"registered terminal feedback did not hit its bound: error=%v context=%v runs=%d",
+							err,
+							ctx.Err(),
+							total.Load(),
+						)
 					}
 					for id, runs := range counts {
 						if got := runs.Load(); got > 33 {
@@ -504,32 +629,46 @@ func TestScheduler_RegisteredSelection(t *testing.T) {
 		t.Run(fmt.Sprintf("matching_bucket=%v", matching), func(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
-				selector, driver := &manifest.Kustomization{Name: "selector", Namespace: "ns"}, &manifest.Kustomization{Name: "driver", Namespace: "ns"}
+				selector, driver := &manifest.Kustomization{
+					Name:      "selector",
+					Namespace: "ns",
+				}, &manifest.Kustomization{
+					Name:      "driver",
+					Namespace: "ns",
+				}
 				read, published := make(chan struct{}), make(chan struct{})
 				var runs atomic.Int64
 				var st *store.Store
-				s, current := registeredScheduler(t, 4, []manifest.BaseManifest{selector, driver}, func(_ context.Context, e *base.Execution, id schedule.NodeID, _ manifest.DrainLevel) error {
-					if id == driver.Named() {
-						e.Tasks.YieldSlot(func() { <-read })
-						if matching {
-							st.AddObject(&manifest.ResourceSetInputProvider{Name: "late", Namespace: "ns"})
-						} else {
-							st.AddObject(&manifest.Secret{Name: "unrelated", Namespace: "ns"})
+				s, current := registeredScheduler(
+					t,
+					4,
+					[]manifest.BaseManifest{selector, driver},
+					func(_ context.Context, e *base.Execution, id schedule.NodeID, _ manifest.DrainLevel) error {
+						if id == driver.Named() {
+							e.Tasks.YieldSlot(func() { <-read })
+							if matching {
+								st.AddObject(&manifest.ResourceSetInputProvider{Name: "late", Namespace: "ns"})
+							} else {
+								st.AddObject(&manifest.Secret{Name: "unrelated", Namespace: "ns"})
+							}
+							close(published)
+							return nil
 						}
-						close(published)
+						run := runs.Add(1)
+						providers := e.Reads.ListObjects(
+							manifest.FluxOperatorDomain,
+							manifest.KindResourceSetInputProvider,
+						)
+						if run == 1 {
+							assert.Equal(t, len(providers), 0)
+							close(read)
+							e.Tasks.YieldSlot(func() { <-published })
+						} else {
+							assert.Equal(t, len(providers), 1)
+						}
 						return nil
-					}
-					run := runs.Add(1)
-					providers := e.Reads.ListObjects(manifest.FluxOperatorDomain, manifest.KindResourceSetInputProvider)
-					if run == 1 {
-						assert.Equal(t, len(providers), 0)
-						close(read)
-						e.Tasks.YieldSlot(func() { <-published })
-					} else {
-						assert.Equal(t, len(providers), 1)
-					}
-					return nil
-				})
+					},
+				)
 				st = current
 				assert.NoError(t, s.Run(t.Context()))
 				want := int64(1)
@@ -545,38 +684,64 @@ func TestScheduler_RegisteredSelection(t *testing.T) {
 func TestScheduler_RegisteredOverlappingLifetimes(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
-		consumer, driver := &manifest.Kustomization{Name: "consumer", Namespace: "ns"}, &manifest.Kustomization{Name: "driver", Namespace: "ns"}
+		consumer, driver := &manifest.Kustomization{
+			Name:      "consumer",
+			Namespace: "ns",
+		}, &manifest.Kustomization{
+			Name:      "driver",
+			Namespace: "ns",
+		}
 		input := &manifest.ConfigMap{Name: "settings", Namespace: "ns", Data: map[string]any{"value": "old"}}
 		accepted, entered, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
 		var runs atomic.Int64
 		var first atomic.Pointer[base.Execution]
 		var st *store.Store
-		s, current := registeredScheduler(t, 4, []manifest.BaseManifest{consumer, driver, input}, func(_ context.Context, e *base.Execution, id schedule.NodeID, _ manifest.DrainLevel) error {
-			if id == driver.Named() {
-				e.Tasks.YieldSlot(func() { <-accepted })
-				st.AddObject(&manifest.ConfigMap{Name: input.Name, Namespace: input.Namespace, Data: map[string]any{"value": "new"}})
+		s, current := registeredScheduler(
+			t,
+			4,
+			[]manifest.BaseManifest{consumer, driver, input},
+			func(_ context.Context, e *base.Execution, id schedule.NodeID, _ manifest.DrainLevel) error {
+				if id == driver.Named() {
+					e.Tasks.YieldSlot(func() { <-accepted })
+					st.AddObject(
+						&manifest.ConfigMap{
+							Name:      input.Name,
+							Namespace: input.Namespace,
+							Data:      map[string]any{"value": "new"},
+						},
+					)
+					return nil
+				}
+				run := runs.Add(1)
+				e.Reads.GetObject(input.Named())
+				switch run {
+				case 1:
+					first.Store(e)
+				case 2:
+					close(entered)
+					<-release
+				}
+				_, _, next := e.Reads.GetEmission(id)
+				defer next.Finish()
+				child := &manifest.ConfigMap{
+					Name:      "rendered",
+					Namespace: "ns",
+					Data:      map[string]any{"value": "identical"},
+				}
+				next.Children, next.Manifests, next.Complete = []store.Child{
+					{Obj: child, Doc: child.Snapshot()},
+				}, testutil.DocumentOccurrences(
+					[]map[string]any{child.Snapshot()},
+				), true
+				e.Emit(t.Context(), id, &next, nil)
 				return nil
-			}
-			run := runs.Add(1)
-			e.Reads.GetObject(input.Named())
-			switch run {
-			case 1:
-				first.Store(e)
-			case 2:
-				close(entered)
-				<-release
-			}
-			_, _, next := e.Reads.GetEmission(id)
-			defer next.Finish()
-			child := &manifest.ConfigMap{Name: "rendered", Namespace: "ns", Data: map[string]any{"value": "identical"}}
-			next.Children, next.Manifests, next.Complete = []store.Child{{Obj: child, Doc: child.Snapshot()}}, testutil.DocumentOccurrences([]map[string]any{child.Snapshot()}), true
-			e.Emit(t.Context(), id, &next, nil)
-			return nil
-		})
+			},
+		)
 		st = current
 		var signaled atomic.Bool
 		u := st.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
-			if id == consumer.Named() && payload.(store.StatusInfo).Status == store.StatusReady && signaled.CompareAndSwap(false, true) {
+			if id == consumer.Named() && payload.(store.StatusInfo).Status == store.StatusReady &&
+				signaled.CompareAndSwap(false, true) {
 				close(accepted)
 			}
 		}, false)
@@ -601,41 +766,66 @@ func TestScheduler_RegisteredOverlappingLifetimes(t *testing.T) {
 func TestScheduler_RegisteredLateDeclaration(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
-		consumer, driver := &manifest.Kustomization{Name: "consumer", Namespace: "ns"}, &manifest.Kustomization{Name: "driver", Namespace: "ns"}
+		consumer, driver := &manifest.Kustomization{
+			Name:      "consumer",
+			Namespace: "ns",
+		}, &manifest.Kustomization{
+			Name:      "driver",
+			Namespace: "ns",
+		}
 		dependency := testutil.KustomizationID("ns", "late")
 		read, published, ready := make(chan struct{}), make(chan struct{}), make(chan struct{})
 		var renders, dependencies atomic.Int64
-		s, st := registeredScheduler(t, 4, []manifest.BaseManifest{consumer, driver}, func(ctx context.Context, e *base.Execution, id schedule.NodeID, level manifest.DrainLevel) error {
-			if id == dependency {
-				dependencies.Add(1)
-				return nil
-			}
-			if id == driver.Named() {
-				e.Tasks.YieldSlot(func() { <-read })
-				docs := []map[string]any{
-					{"apiVersion": "example.test/v1", "kind": manifest.KindKustomization, "metadata": map[string]any{"name": "late", "namespace": "ns"}},
-					{"apiVersion": manifest.FluxKustomizeDomain + "/v1", "kind": manifest.KindKustomization, "metadata": map[string]any{"name": "late", "namespace": "ns"}, "spec": map[string]any{"path": "./late"}},
+		s, st := registeredScheduler(
+			t,
+			4,
+			[]manifest.BaseManifest{consumer, driver},
+			func(ctx context.Context, e *base.Execution, id schedule.NodeID, level manifest.DrainLevel) error {
+				if id == dependency {
+					dependencies.Add(1)
+					return nil
 				}
-				_, _, next := e.Reads.GetEmission(id)
-				defer next.Finish()
-				late := &manifest.Kustomization{Name: "late", Namespace: "ns"}
-				late.Path = "./late"
-				foreign := &manifest.RawObject{APIVersion: "example.test/v1", Kind: manifest.KindKustomization, Namespace: "ns", Name: "late"}
-				next.Children = []store.Child{{Obj: foreign, Doc: docs[0]}, {Obj: late, Doc: docs[1]}}
-				next.Manifests, next.Complete = testutil.DocumentOccurrences(docs), true
-				e.Emit(t.Context(), id, &next, nil)
-				e.Tasks.YieldSlot(func() { <-ready })
-				close(published)
-				return nil
-			}
-			run := renders.Add(1)
-			err := e.Require(ctx, []manifest.DependencyRef{{NamedResource: dependency}}, level)
-			if run == 1 {
-				close(read)
-				e.Tasks.YieldSlot(func() { <-published })
-			}
-			return err
-		})
+				if id == driver.Named() {
+					e.Tasks.YieldSlot(func() { <-read })
+					docs := []map[string]any{
+						{
+							"apiVersion": "example.test/v1",
+							"kind":       manifest.KindKustomization,
+							"metadata":   map[string]any{"name": "late", "namespace": "ns"},
+						},
+						{
+							"apiVersion": manifest.FluxKustomizeDomain + "/v1",
+							"kind":       manifest.KindKustomization,
+							"metadata":   map[string]any{"name": "late", "namespace": "ns"},
+							"spec":       map[string]any{"path": "./late"},
+						},
+					}
+					_, _, next := e.Reads.GetEmission(id)
+					defer next.Finish()
+					late := &manifest.Kustomization{Name: "late", Namespace: "ns"}
+					late.Path = "./late"
+					foreign := &manifest.RawObject{
+						APIVersion: "example.test/v1",
+						Kind:       manifest.KindKustomization,
+						Namespace:  "ns",
+						Name:       "late",
+					}
+					next.Children = []store.Child{{Obj: foreign, Doc: docs[0]}, {Obj: late, Doc: docs[1]}}
+					next.Manifests, next.Complete = testutil.DocumentOccurrences(docs), true
+					e.Emit(t.Context(), id, &next, nil)
+					e.Tasks.YieldSlot(func() { <-ready })
+					close(published)
+					return nil
+				}
+				run := renders.Add(1)
+				err := e.Require(ctx, []manifest.DependencyRef{{NamedResource: dependency}}, level)
+				if run == 1 {
+					close(read)
+					e.Tasks.YieldSlot(func() { <-published })
+				}
+				return err
+			},
+		)
 		u := st.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
 			if id == dependency && payload.(store.StatusInfo).Status == store.StatusReady {
 				close(ready)
@@ -670,7 +860,13 @@ func (ts *completedTasks) Go(ctx context.Context, name string, fn func(context.C
 func TestScheduler_RegisteredCompletedPublication(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
-		consumer, driver := &manifest.Kustomization{Name: "consumer", Namespace: "ns"}, &manifest.Kustomization{Name: "driver", Namespace: "ns"}
+		consumer, driver := &manifest.Kustomization{
+			Name:      "consumer",
+			Namespace: "ns",
+		}, &manifest.Kustomization{
+			Name:      "driver",
+			Namespace: "ns",
+		}
 		input := &manifest.ConfigMap{Name: "input", Namespace: "ns", Data: map[string]any{"value": "old"}}
 		st, bodies := store.New(), task.NewBounded(2)
 		st.AddObjects([]manifest.BaseManifest{consumer, driver, input})
@@ -679,35 +875,52 @@ func TestScheduler_RegisteredCompletedPublication(t *testing.T) {
 		completed, started, settled := make(chan struct{}), make(chan struct{}), make(chan struct{})
 		tasks := &completedTasks{Service: bodies, name: "schedule/" + consumer.Named().String(), completed: completed}
 		var active, renders atomic.Int64
-		d := &registeredDispatcher{controller: controller, reconcile: func(_ context.Context, e *base.Execution, id schedule.NodeID, _ manifest.DrainLevel) error {
-			active.Add(1)
-			defer active.Add(-1)
-			if id == driver.Named() {
-				close(started)
-				e.Tasks.YieldSlot(func() { <-completed })
-				st.AddObject(&manifest.ConfigMap{Name: input.Name, Namespace: input.Namespace, Data: map[string]any{"value": "new"}})
-				e.Tasks.YieldSlot(func() { <-settled })
-				return nil
-			}
-			if renders.Add(1) == 1 {
-				e.Tasks.YieldSlot(func() { <-started })
-				assert.Equal(t, active.Load(), int64(2))
-			} else {
-				assert.Equal(t, active.Load(), int64(2))
-				defer close(settled)
-			}
-			captured, ok := e.Reads.Get[*manifest.ConfigMap](input.Named())
-			assert.Equal(t, ok, true)
-			e.Reads.RequireData(input.Named())
-			_, _, next := e.Reads.GetEmission(id)
-			defer next.Finish()
-			child := &manifest.ConfigMap{Name: "output", Namespace: "ns", Data: map[string]any{"value": captured.Data["value"]}}
-			next.Children = []store.Child{{Obj: child, Doc: child.Snapshot()}}
-			next.Manifests, next.Complete = testutil.DocumentOccurrences([]map[string]any{child.Snapshot()}), true
-			return e.Emit(t.Context(), id, &next, nil)
-		}}
+		d := &registeredDispatcher{
+			controller: controller,
+			reconcile: func(_ context.Context, e *base.Execution, id schedule.NodeID, _ manifest.DrainLevel) error {
+				active.Add(1)
+				defer active.Add(-1)
+				if id == driver.Named() {
+					close(started)
+					e.Tasks.YieldSlot(func() { <-completed })
+					st.AddObject(
+						&manifest.ConfigMap{
+							Name:      input.Name,
+							Namespace: input.Namespace,
+							Data:      map[string]any{"value": "new"},
+						},
+					)
+					e.Tasks.YieldSlot(func() { <-settled })
+					return nil
+				}
+				if renders.Add(1) == 1 {
+					e.Tasks.YieldSlot(func() { <-started })
+					assert.Equal(t, active.Load(), int64(2))
+				} else {
+					assert.Equal(t, active.Load(), int64(2))
+					defer close(settled)
+				}
+				captured, ok := e.Reads.Get[*manifest.ConfigMap](input.Named())
+				assert.Equal(t, ok, true)
+				e.Reads.RequireData(input.Named())
+				_, _, next := e.Reads.GetEmission(id)
+				defer next.Finish()
+				child := &manifest.ConfigMap{
+					Name:      "output",
+					Namespace: "ns",
+					Data:      map[string]any{"value": captured.Data["value"]},
+				}
+				next.Children = []store.Child{{Obj: child, Doc: child.Snapshot()}}
+				next.Manifests, next.Complete = testutil.DocumentOccurrences([]map[string]any{child.Snapshot()}), true
+				return e.Emit(t.Context(), id, &next, nil)
+			},
+		}
 		s := schedule.New(tasks, d)
-		defer st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) { s.OnArrival(id, id.KindInfo().Runnable) }, true)()
+		defer st.AddListener(
+			store.EventObjectAdded,
+			func(id manifest.NamedResource, _ any) { s.OnArrival(id, id.KindInfo().Runnable) },
+			true,
+		)()
 		for _, event := range []store.EventKind{store.EventArtifactUpdated, store.EventStatusUpdated} {
 			defer st.AddListener(event, func(manifest.NamedResource, any) { s.OnPublication() }, true)()
 		}
@@ -715,7 +928,9 @@ func TestScheduler_RegisteredCompletedPublication(t *testing.T) {
 		if got := renders.Load(); got != 2 {
 			t.Fatalf("completed captured input scheduled %d executions, want exactly 2", got)
 		}
-		output, ok := st.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "output"})
+		output, ok := st.Get[*manifest.ConfigMap](
+			manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "output"},
+		)
 		assert.Equal(t, ok, true)
 		assert.Equal(t, output.Data["value"], any("new"))
 		assert.Equal(t, active.Load(), int64(0))

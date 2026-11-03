@@ -16,10 +16,26 @@ func TestPermute_UpstreamIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 	assert.Diff(t, got, []map[string]any{
-		{"id": "2075461889", "provider_1": map[string]any{"key1": "value1"}, "provider_2": map[string]any{"key2": "value1"}},
-		{"id": "2075527426", "provider_1": map[string]any{"key1": "value1"}, "provider_2": map[string]any{"key2": "value2"}},
-		{"id": "2076379394", "provider_1": map[string]any{"key1": "value2"}, "provider_2": map[string]any{"key2": "value1"}},
-		{"id": "2076444931", "provider_1": map[string]any{"key1": "value2"}, "provider_2": map[string]any{"key2": "value2"}},
+		{
+			"id":         "2075461889",
+			"provider_1": map[string]any{"key1": "value1"},
+			"provider_2": map[string]any{"key2": "value1"},
+		},
+		{
+			"id":         "2075527426",
+			"provider_1": map[string]any{"key1": "value1"},
+			"provider_2": map[string]any{"key2": "value2"},
+		},
+		{
+			"id":         "2076379394",
+			"provider_1": map[string]any{"key1": "value2"},
+			"provider_2": map[string]any{"key2": "value1"},
+		},
+		{
+			"id":         "2076444931",
+			"provider_1": map[string]any{"key1": "value2"},
+			"provider_2": map[string]any{"key2": "value2"},
+		},
 	})
 }
 

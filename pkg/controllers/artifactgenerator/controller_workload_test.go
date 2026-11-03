@@ -2,10 +2,11 @@ package artifactgenerator
 
 import (
 	"fmt"
-	"github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/store"
 	"io/fs"
 	"testing"
+
+	"github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 func TestArtifactGenerator_GeneratedWorkloads(t *testing.T) {
@@ -68,9 +69,24 @@ func TestArtifactGenerator_GeneratedWorkloads(t *testing.T) {
 						want = 0
 					}
 					if input.opens.Load() != want || input.bytes.Load() != want*9 {
-						t.Fatalf("%s input work = %d opens / %d bytes, want %d / %d", phase, input.opens.Load(), input.bytes.Load(), want, want*9)
+						t.Fatalf(
+							"%s input work = %d opens / %d bytes, want %d / %d",
+							phase,
+							input.opens.Load(),
+							input.bytes.Load(),
+							want,
+							want*9,
+						)
 					}
-					t.Logf("outputs=%d backing=%s phase=%s input_opens=%d input_bytes=%d readable_payload_bytes=%d", count, backing, phase, input.opens.Load(), input.bytes.Load(), count*9)
+					t.Logf(
+						"outputs=%d backing=%s phase=%s input_opens=%d input_bytes=%d readable_payload_bytes=%d",
+						count,
+						backing,
+						phase,
+						input.opens.Load(),
+						input.bytes.Load(),
+						count*9,
+					)
 				}
 			})
 		}

@@ -15,7 +15,8 @@ func TestDiagnosticFor_EntryContext(t *testing.T) {
 			t.Parallel()
 			entry := NewEntryKustomization(BootstrapSourceID, "clusters/test", owner)
 			subject := DiagnosticFor(entry.Named(), entry)
-			if subject.ID != entry.Named() || subject.Resource != owner || subject.Path != "clusters/test" || strings.Contains(subject.String(), "/entry") {
+			if subject.ID != entry.Named() || subject.Resource != owner || subject.Path != "clusters/test" ||
+				strings.Contains(subject.String(), "/entry") {
 				t.Fatalf("entry diagnostic = %+v (%s)", subject, subject)
 			}
 			for _, copy := range []BaseManifest{entry.Clone(), entry.WithNamespace("projected")} {

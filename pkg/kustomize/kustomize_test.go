@@ -27,12 +27,24 @@ func TestRender_RespectsCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, _, err := testutil.RenderMaps(Render(ctx, cache, RenderRequest{Source: localSource(t, t.TempDir()), ApplyIgnore: false, SubPath: ".", Spec: parsedKS(t, map[string]any{
-		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
-		"kind":       "Kustomization",
-		"metadata":   map[string]any{"name": "k", "namespace": "ns"},
-		"spec":       map[string]any{"path": "./"},
-	})}, sourcecache.RetryConfig{}))
+	_, _, err := testutil.RenderMaps(
+		Render(
+			ctx,
+			cache,
+			RenderRequest{
+				Source:      localSource(t, t.TempDir()),
+				ApplyIgnore: false,
+				SubPath:     ".",
+				Spec: parsedKS(t, map[string]any{
+					"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+					"kind":       "Kustomization",
+					"metadata":   map[string]any{"name": "k", "namespace": "ns"},
+					"spec":       map[string]any{"path": "./"},
+				}),
+			},
+			sourcecache.RetryConfig{},
+		),
+	)
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("expected context.Canceled, got %v", err)
 	}
@@ -200,7 +212,9 @@ patches:
 				"cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo, labels: {app: original}}\ndata: {value: original}\n",
 			})
 			req := RenderRequest{Source: localSource(t, root), SubPath: ".", Spec: parsedKS(t, ksDoc(tc.spec))}
-			out, _, err := testutil.RenderMaps(Render(t.Context(), newTestTreeCache(t, ""), req, sourcecache.RetryConfig{}))
+			out, _, err := testutil.RenderMaps(
+				Render(t.Context(), newTestTreeCache(t, ""), req, sourcecache.RetryConfig{}),
+			)
 			if tc.wantError != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
 					t.Fatalf("render error = %v, want %q", err, tc.wantError)
@@ -208,11 +222,15 @@ patches:
 				return
 			}
 			assert.NoError(t, err)
-			repeated, _, err := testutil.RenderMaps(Render(t.Context(), newTestTreeCache(t, ""), req, sourcecache.RetryConfig{}))
+			repeated, _, err := testutil.RenderMaps(
+				Render(t.Context(), newTestTreeCache(t, ""), req, sourcecache.RetryConfig{}),
+			)
 			assert.NoError(t, err)
 			assert.Diff(t, repeated, out)
 			req.Spec = parsedKS(t, ksDoc(nil))
-			absent, _, err := testutil.RenderMaps(Render(t.Context(), newTestTreeCache(t, ""), req, sourcecache.RetryConfig{}))
+			absent, _, err := testutil.RenderMaps(
+				Render(t.Context(), newTestTreeCache(t, ""), req, sourcecache.RetryConfig{}),
+			)
 			assert.NoError(t, err)
 			assert.Diff(t, out, absent)
 			got := out[0]
@@ -256,7 +274,10 @@ items:
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			root := testutil.WriteTree(t, map[string]string{"kustomization.yaml": existingKustomization("list.yaml"), "list.yaml": tc.input})
+			root := testutil.WriteTree(
+				t,
+				map[string]string{"kustomization.yaml": existingKustomization("list.yaml"), "list.yaml": tc.input},
+			)
 			kustomizestate.BuildMutex.Lock()
 			rm, oracleErr := kustomizestate.Build(filesys.MakeFsOnDisk(), root)
 			var raw []byte
@@ -267,7 +288,14 @@ items:
 			if (oracleErr != nil) != tc.wantError {
 				t.Fatalf("complete upstream build error = %v, wantError = %t", oracleErr, tc.wantError)
 			}
-			out, _, err := testutil.RenderMaps(Render(t.Context(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), SubPath: "."}, sourcecache.RetryConfig{}))
+			out, _, err := testutil.RenderMaps(
+				Render(
+					t.Context(),
+					newTestTreeCache(t, ""),
+					RenderRequest{Source: localSource(t, root), SubPath: "."},
+					sourcecache.RetryConfig{},
+				),
+			)
 			if oracleErr != nil {
 				if err == nil || out != nil {
 					t.Fatalf("Render = %#v, %v; upstream error = %v", out, err, oracleErr)

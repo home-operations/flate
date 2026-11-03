@@ -26,7 +26,12 @@ type selectionSide struct {
 // Borrowed objects, graphs and document batches MUST remain immutable in use.
 // The second return retains selected failures and non-resource errors; the
 // third contains only non-resource errors for diagnostics outside failure rows.
-func Select(runs []Rendered, runErr error, roots []manifest.NamedResource, labels map[string]string) ([]*selection.Selection, error, error) {
+func Select(
+	runs []Rendered,
+	runErr error,
+	roots []manifest.NamedResource,
+	labels map[string]string,
+) ([]*selection.Selection, error, error) {
 	if len(runs) < 1 || len(runs) > 2 {
 		err := errors.Join(manifest.NewError(manifest.ErrInput, nil, "selection requires one or two runs"), runErr)
 		return nil, err, nonResourceErrors(err)
@@ -112,8 +117,14 @@ func validateRoots(roots []manifest.NamedResource) (map[manifest.NamedResource]b
 	}
 	kinds := make(map[manifest.NamedResource]bool, len(roots))
 	for _, root := range roots {
-		if root.Kind == "" || kinds[manifest.NamedResource{Group: root.Group, Kind: root.Kind}] || root.Namespace != roots[0].Namespace || root.Name != roots[0].Name {
-			return nil, manifest.NewError(manifest.ErrInput, nil, "selection kinds must be distinct with a common namespace and name")
+		if root.Kind == "" || kinds[manifest.NamedResource{Group: root.Group, Kind: root.Kind}] ||
+			root.Namespace != roots[0].Namespace ||
+			root.Name != roots[0].Name {
+			return nil, manifest.NewError(
+				manifest.ErrInput,
+				nil,
+				"selection kinds must be distinct with a common namespace and name",
+			)
 		}
 		kinds[manifest.NamedResource{Group: root.Group, Kind: root.Kind}] = true
 	}
@@ -232,12 +243,17 @@ func (s *selectionSide) collect(roots []manifest.NamedResource, labels map[strin
 				policy = producer.EmissionPolicy()
 			}
 			if policy.DocumentScope {
-				compared := other == nil || other.run.Absent || other.run.filter.ShouldReconcile(other.actualProducer(s.comparisonKey(obj.Named())))
+				compared := other == nil || other.run.Absent ||
+					other.run.filter.ShouldReconcile(other.actualProducer(s.comparisonKey(obj.Named())))
 				batch.Documents = nil
 				for _, doc := range s.run.Result.Manifests[i].Documents {
 					if s.run.filter.Enabled() && !scoped {
 						id := manifest.DocIdentity(doc)
-						declaration := compared && slices.ContainsFunc(roots, func(root manifest.NamedResource) bool { return root.Group == id.Group && root.Kind == id.Kind })
+						declaration := compared &&
+							slices.ContainsFunc(
+								roots,
+								func(root manifest.NamedResource) bool { return root.Group == id.Group && root.Kind == id.Kind },
+							)
 						if !declaration && !selectedOutput(id) {
 							continue
 						}
@@ -269,10 +285,14 @@ func (s *selectionSide) collect(roots []manifest.NamedResource, labels map[strin
 	}
 }
 
-func (o *Orchestrator) unchangedDeclaration(id manifest.NamedResource, record manifest.DiscoveryRecord) manifest.BaseManifest {
+func (o *Orchestrator) unchangedDeclaration(
+	id manifest.NamedResource,
+	record manifest.DiscoveryRecord,
+) manifest.BaseManifest {
 	restricted := o.filter.Enabled()
 	if restricted {
-		if o.filter.ShouldReconcile(id) || !o.cfg.Selection.Matches(id) || !o.loader.AdmitsRoot(o.loader.CatalogObject(id), record.Path) {
+		if o.filter.ShouldReconcile(id) || !o.cfg.Selection.Matches(id) ||
+			!o.loader.AdmitsRoot(o.loader.CatalogObject(id), record.Path) {
 			return nil
 		}
 	} else if record.Declaration == nil {
@@ -299,7 +319,11 @@ func (o *Orchestrator) statusOf(id manifest.NamedResource) (store.StatusInfo, bo
 	if o.filter.Enabled() && !o.filter.ShouldReconcile(id) {
 		_, indexed := o.index.Lookup(id)
 		if o.store.GetObject(id) != nil || indexed && o.cfg.Selection.Matches(id) {
-			return store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged, Message: "unchanged"}, true
+			return store.StatusInfo{
+				Status:  store.StatusReady,
+				Reason:  store.ReasonUnchanged,
+				Message: "unchanged",
+			}, true
 		}
 	}
 	if parent, found := o.parentOf(id); found {
@@ -347,7 +371,11 @@ func (s *selectionSide) chartVersion(obj manifest.BaseManifest) string {
 	return ""
 }
 
-func (s *selectionSide) collectWarnings(root manifest.NamedResource, kinds map[manifest.NamedResource]bool, comparison bool) {
+func (s *selectionSide) collectWarnings(
+	root manifest.NamedResource,
+	kinds map[manifest.NamedResource]bool,
+	comparison bool,
+) {
 	if s.run.Result == nil {
 		return
 	}
@@ -355,7 +383,10 @@ func (s *selectionSide) collectWarnings(root manifest.NamedResource, kinds map[m
 	for _, warning := range s.run.Result.Warnings {
 		if warning.Category == manifest.WarnIncompleteInputCoverage {
 			id := warning.Resource
-			if (s.run.Orchestrator == nil || !s.run.filter.Enabled()) || !kinds[manifest.NamedResource{Group: id.Group, Kind: id.Kind}] || root.Name != "" && id.Name != root.Name || root.Namespace != "" && id.Namespace != "" && id.Namespace != root.Namespace {
+			if (s.run.Orchestrator == nil || !s.run.filter.Enabled()) ||
+				!kinds[manifest.NamedResource{Group: id.Group, Kind: id.Kind}] ||
+				root.Name != "" && id.Name != root.Name ||
+				root.Namespace != "" && id.Namespace != "" && id.Namespace != root.Namespace {
 				continue
 			}
 		} else if warning.Resource != (manifest.NamedResource{}) && !s.includes(warning.Resource.Namespace) {
@@ -421,7 +452,16 @@ func (s *selectionSide) prepareExternal(root manifest.NamedResource, obj manifes
 	}) {
 		return
 	}
-	s.result.External = append(s.result.External, manifest.Warning{Resource: id, Subject: s.result.Diagnostic(id), Related: []manifest.NamedResource{src}, Category: manifest.WarnExternalSource, Message: "external source " + s.run.diagnostic(src).String() + " is outside the local tree; not rendered"})
+	s.result.External = append(
+		s.result.External,
+		manifest.Warning{
+			Resource: id,
+			Subject:  s.result.Diagnostic(id),
+			Related:  []manifest.NamedResource{src},
+			Category: manifest.WarnExternalSource,
+			Message:  "external source " + s.run.diagnostic(src).String() + " is outside the local tree; not rendered",
+		},
+	)
 }
 
 func (s *selectionSide) prepareUnavailable(other *selectionSide, candidates []manifest.NamedResource) {

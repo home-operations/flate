@@ -18,8 +18,8 @@ type HelmChartSource struct {
 	hasDiagnostic   bool
 	Name            string            `json:"name"      yaml:"name"`
 	Namespace       string            `json:"namespace" yaml:"namespace"`
-	Labels          map[string]string `json:"-" yaml:"-"`
-	Annotations     map[string]string `json:"-" yaml:"-"`
+	Labels          map[string]string `json:"-"         yaml:"-"`
+	Annotations     map[string]string `json:"-"         yaml:"-"`
 
 	sourcev1.HelmChartSpec `json:",inline" yaml:",inline"`
 }
@@ -27,7 +27,13 @@ type HelmChartSource struct {
 // NewHelmChartSource normalizes an owned typed HelmChart declaration.
 func NewHelmChartSource(cr sourcev1.HelmChart) *HelmChartSource {
 	cr.Spec.SourceRef.Kind = cmp.Or(cr.Spec.SourceRef.Kind, KindHelmRepository)
-	return &HelmChartSource{Name: cr.Name, Namespace: cr.Namespace, Labels: cr.Labels, Annotations: cr.Annotations, HelmChartSpec: cr.Spec}
+	return &HelmChartSource{
+		Name:          cr.Name,
+		Namespace:     cr.Namespace,
+		Labels:        cr.Labels,
+		Annotations:   cr.Annotations,
+		HelmChartSpec: cr.Spec,
+	}
 }
 
 // GetLabels returns the HelmChartSource's metadata.labels.
@@ -38,7 +44,12 @@ func (h *HelmChartSource) GetAnnotations() map[string]string { return h.Annotati
 
 // Named identifies the chart resource.
 func (h *HelmChartSource) Named() NamedResource {
-	return NamedResource{Group: kindTable[kindHelmChartSource].Group, Kind: KindHelmChart, Namespace: h.Namespace, Name: h.Name}
+	return NamedResource{
+		Group:     kindTable[kindHelmChartSource].Group,
+		Kind:      KindHelmChart,
+		Namespace: h.Namespace,
+		Name:      h.Name,
+	}
 }
 
 // Suspended reports whether reconciliation is paused on this resource.
@@ -73,7 +84,8 @@ func (h *HelmChartSource) WithNamespace(namespace string) BaseManifest {
 // ProjectionCompatible reports whether an eligible previous projection can be reused.
 func (h *HelmChartSource) ProjectionCompatible(previous BaseManifest) bool {
 	p := previous.(*HelmChartSource)
-	return h.diagnosticOwner == p.diagnosticOwner && h.diagnosticPath == p.diagnosticPath && h.hasDiagnostic == p.hasDiagnostic
+	return h.diagnosticOwner == p.diagnosticOwner && h.diagnosticPath == p.diagnosticPath &&
+		h.hasDiagnostic == p.hasDiagnostic
 }
 
 func parseHelmChartSource(doc map[string]any) (*HelmChartSource, error) {
@@ -99,8 +111,16 @@ func (h *HelmChartSource) references(yield func(Reference) bool) {
 		gate = GateInputs
 	}
 	yield(Reference{
-		NamedResource: Resolve(NamedResource{Group: referenceGroup(kind, h.SourceRef.APIVersion), Kind: kind, Name: h.SourceRef.Name}, "", h.Namespace),
-		Use:           "source", Content: h.SourceRef.Name != "", Files: files, ChartPath: chartPath, Gate: gate,
+		NamedResource: Resolve(
+			NamedResource{Group: referenceGroup(kind, h.SourceRef.APIVersion), Kind: kind, Name: h.SourceRef.Name},
+			"",
+			h.Namespace,
+		),
+		Use:       "source",
+		Content:   h.SourceRef.Name != "",
+		Files:     files,
+		ChartPath: chartPath,
+		Gate:      gate,
 	})
 }
 

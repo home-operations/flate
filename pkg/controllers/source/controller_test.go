@@ -16,6 +16,8 @@ import (
 	"time"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/fetcherr"
@@ -31,7 +33,6 @@ import (
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type fakeFetcher struct {
@@ -44,7 +45,12 @@ type fakeFetcher struct {
 	objects  []manifest.BaseManifest
 }
 
-func (f *fakeFetcher) Fetch(_ context.Context, obj manifest.BaseManifest, reads *store.ReadSet, policy sourcecache.Policy) (*store.SourceArtifact, error) {
+func (f *fakeFetcher) Fetch(
+	_ context.Context,
+	obj manifest.BaseManifest,
+	reads *store.ReadSet,
+	policy sourcecache.Policy,
+) (*store.SourceArtifact, error) {
 	f.calls++
 	f.objects = append(f.objects, obj)
 	f.retry = policy
@@ -65,7 +71,11 @@ func TestSource_CapturedMaterialRefresh(t *testing.T) {
 	f := &fakeFetcher{secret: "credentials", artifact: &store.SourceArtifact{Key: "acquired", FS: fstest.MapFS{}}}
 	c, st := newController(t, map[string]src.Fetcher{manifest.KindGitRepository: f})
 	repo := &manifest.GitRepository{Name: "source", Namespace: "apps", URL: "https://example.test/source"}
-	secret := &manifest.Secret{Name: f.secret, Namespace: repo.Namespace, StringData: map[string]any{"username": "first"}}
+	secret := &manifest.Secret{
+		Name:       f.secret,
+		Namespace:  repo.Namespace,
+		StringData: map[string]any{"username": "first"},
+	}
 	parent := &manifest.Kustomization{Name: "parent", Namespace: repo.Namespace}
 	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		repo.Named(): {Productions: []manifest.Production{{Owner: parent.Named()}}},
@@ -74,7 +84,12 @@ func TestSource_CapturedMaterialRefresh(t *testing.T) {
 	supply, err := store.NewSupplied([]store.SuppliedObject{{Object: secret, Path: "credentials.yaml"}})
 	assert.NoError(t, err)
 	st.SetSupplied(supply)
-	controllertest.Emit(t.Context(), c.Controller, parent.Named(), &store.Emission{Children: []store.Child{{Obj: repo}}, Complete: true})
+	controllertest.Emit(
+		t.Context(),
+		c.Controller,
+		parent.Named(),
+		&store.Emission{Children: []store.Child{{Obj: repo}}, Complete: true},
+	)
 	var pending int
 	st.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
 		if info, ok := payload.(store.StatusInfo); id == repo.Named() && ok && info.Status == store.StatusPending {
@@ -98,12 +113,22 @@ func TestSource_CapturedMaterialRefresh(t *testing.T) {
 			secret.StringData = map[string]any{"username": "second"}
 			st.AddObject(secret)
 		case "authority":
-			controllertest.Emit(t.Context(), c.Controller, parent.Named(), &store.Emission{Children: []store.Child{{Obj: repo}}, Complete: true})
+			controllertest.Emit(
+				t.Context(),
+				c.Controller,
+				parent.Named(),
+				&store.Emission{Children: []store.Child{{Obj: repo}}, Complete: true},
+			)
 		case "declaration":
 			next := *repo
 			repo = &next
 			repo.URL = "https://example.test/changed"
-			controllertest.Emit(t.Context(), c.Controller, parent.Named(), &store.Emission{Children: []store.Child{{Obj: repo}}, Complete: true})
+			controllertest.Emit(
+				t.Context(),
+				c.Controller,
+				parent.Named(),
+				&store.Emission{Children: []store.Child{{Obj: repo}}, Complete: true},
+			)
 		}
 		previous := accepted
 		c.Tasks.Go(t.Context(), phase.name, func(ctx context.Context) {
@@ -117,12 +142,26 @@ func TestSource_CapturedMaterialRefresh(t *testing.T) {
 		if previous != nil {
 			previous.Retire()
 		}
-		assert.Diff(t, st.AdvisoryEvidence(), store.AdvisoryEvidence{Overrides: []store.SuppliedOverride{{Resource: secret.Named(), SupplyPath: "credentials.yaml", Keys: []string{"username"}}}})
+		assert.Diff(
+			t,
+			st.AdvisoryEvidence(),
+			store.AdvisoryEvidence{
+				Overrides: []store.SuppliedOverride{
+					{Resource: secret.Named(), SupplyPath: "credentials.yaml", Keys: []string{"username"}},
+				},
+			},
+		)
 		if pending != 1 {
 			t.Fatalf("pending transitions=%d, want only initial acquisition", pending)
 		}
 		if accepted.Outcome() == schedule.Blocked || !accepted.Valid() || f.calls != phase.calls {
-			t.Fatalf("assessment valid=%t unresolved=%t acquisitions=%d, want %d", accepted.Valid(), accepted.Outcome() == schedule.Blocked, f.calls, phase.calls)
+			t.Fatalf(
+				"assessment valid=%t unresolved=%t acquisitions=%d, want %d",
+				accepted.Valid(),
+				accepted.Outcome() == schedule.Blocked,
+				f.calls,
+				phase.calls,
+			)
 		}
 	}
 	accepted.Close()
@@ -135,27 +174,67 @@ func TestSource_DeclarationContributorsReuse(t *testing.T) {
 		for _, timing := range []string{"accepted", "in_flight", "changed_in_flight"} {
 			t.Run(fmt.Sprintf("complete=%t/filtered=%t/%s", complete, tc.filtered, timing), func(t *testing.T) {
 				t.Parallel()
-				f := &fakeFetcher{secret: "credentials", artifact: &store.SourceArtifact{Key: "shared", FS: fstest.MapFS{}}}
+				f := &fakeFetcher{
+					secret:   "credentials",
+					artifact: &store.SourceArtifact{Key: "shared", FS: fstest.MapFS{}},
+				}
 				chart := &manifest.HelmChartSource{Name: "shared", Namespace: "apps"}
 				first := &manifest.HelmRelease{Name: "first", Namespace: "apps"}
 				second := &manifest.HelmRelease{Name: "second", Namespace: "apps"}
 				var filterLoader *loader.Loader
 				var filter *change.Filter
 				if tc.filtered {
-					index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{chart.Named(): {File: "chart.yaml"}}}
-					filterLoader = admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"chart.yaml"}), Index: index, Inventory: store.New(), Root: "/repo"})
+					index := &manifest.DiscoveryIndex{
+						Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+							chart.Named(): {File: "chart.yaml"},
+						},
+					}
+					filterLoader = admissiontest.New(
+						t,
+						admissiontest.Config{
+							Changes:   change.NewSet([]string{"chart.yaml"}),
+							Index:     index,
+							Inventory: store.New(),
+							Root:      "/repo",
+						},
+					)
 					admissiontest.Commit(t, filterLoader, nil)
 					filter = filterLoader.Options.Filter
 				}
-				c, st := newConfiguredController(t, map[string]src.Fetcher{manifest.KindHelmChart: f}, FetchOptions{Filter: filter, Loader: filterLoader})
+				c, st := newConfiguredController(
+					t,
+					map[string]src.Fetcher{manifest.KindHelmChart: f},
+					FetchOptions{Filter: filter, Loader: filterLoader},
+				)
 				st.AddObjects([]manifest.BaseManifest{first, second})
-				secret := &manifest.Secret{Name: "credentials", Namespace: "apps", StringData: map[string]any{"username": "same"}}
+				secret := &manifest.Secret{
+					Name:       "credentials",
+					Namespace:  "apps",
+					StringData: map[string]any{"username": "same"},
+				}
 				st.AddObject(secret)
 				supply, err := store.NewSupplied([]store.SuppliedObject{{Object: secret, Path: "credentials.yaml"}})
 				assert.NoError(t, err)
 				st.SetSupplied(supply)
 				publish := func(value string) {
-					controllertest.Emit(t.Context(), c.Controller, first.Named(), &store.Emission{Children: []store.Child{{Obj: chart}, {Obj: &manifest.ConfigMap{Name: "other", Namespace: "apps", Data: map[string]any{"VALUE": value}}}}, Complete: complete})
+					controllertest.Emit(
+						t.Context(),
+						c.Controller,
+						first.Named(),
+						&store.Emission{
+							Children: []store.Child{
+								{Obj: chart},
+								{
+									Obj: &manifest.ConfigMap{
+										Name:      "other",
+										Namespace: "apps",
+										Data:      map[string]any{"VALUE": value},
+									},
+								},
+							},
+							Complete: complete,
+						},
+					)
 				}
 				publish("first")
 				entered, release := make(chan struct{}), make(chan struct{})
@@ -181,7 +260,12 @@ func TestSource_DeclarationContributorsReuse(t *testing.T) {
 						next.Version = "2.0.0"
 						chart = &next
 					}
-					controllertest.Emit(t.Context(), c.Controller, second.Named(), &store.Emission{Children: []store.Child{{Obj: chart}}, Complete: complete})
+					controllertest.Emit(
+						t.Context(),
+						c.Controller,
+						second.Named(),
+						&store.Emission{Children: []store.Child{{Obj: chart}}, Complete: complete},
+					)
 					publish("changed")
 					unblock()
 				}
@@ -200,11 +284,25 @@ func TestSource_DeclarationContributorsReuse(t *testing.T) {
 				}
 				defer accepted.Close()
 				if accepted.Outcome() == schedule.Blocked || !accepted.Valid() || f.calls != wantCalls {
-					t.Fatalf("initial valid=%t unresolved=%t acquisitions=%d", accepted.Valid(), accepted.Outcome() == schedule.Blocked, f.calls)
+					t.Fatalf(
+						"initial valid=%t unresolved=%t acquisitions=%d",
+						accepted.Valid(),
+						accepted.Outcome() == schedule.Blocked,
+						f.calls,
+					)
 				}
-				wantEvidence := store.AdvisoryEvidence{Overrides: []store.SuppliedOverride{{Resource: secret.Named(), SupplyPath: "credentials.yaml", Keys: []string{"username"}}}}
+				wantEvidence := store.AdvisoryEvidence{
+					Overrides: []store.SuppliedOverride{
+						{Resource: secret.Named(), SupplyPath: "credentials.yaml", Keys: []string{"username"}},
+					},
+				}
 				assert.Diff(t, st.AdvisoryEvidence(), wantEvidence)
-				controllertest.Emit(t.Context(), c.Controller, second.Named(), &store.Emission{Children: []store.Child{{Obj: chart}}, Complete: complete})
+				controllertest.Emit(
+					t.Context(),
+					c.Controller,
+					second.Named(),
+					&store.Emission{Children: []store.Child{{Obj: chart}}, Complete: complete},
+				)
 				publish("changed again")
 				if accepted.Valid() {
 					t.Fatal("producer publication did not invalidate the captured availability assessment")
@@ -213,7 +311,12 @@ func TestSource_DeclarationContributorsReuse(t *testing.T) {
 					next := c.ReconcileNode(ctx, chart.Named(), manifest.DrainNone)
 					defer next.Close()
 					if next.Outcome() == schedule.Blocked || !next.Valid() || f.calls != wantCalls {
-						t.Errorf("successor valid=%t unresolved=%t acquisitions=%d, want unchanged content reused", next.Valid(), next.Outcome() == schedule.Blocked, f.calls)
+						t.Errorf(
+							"successor valid=%t unresolved=%t acquisitions=%d, want unchanged content reused",
+							next.Valid(),
+							next.Outcome() == schedule.Blocked,
+							f.calls,
+						)
 					}
 				})
 				c.Tasks.BlockTillDone()
@@ -230,8 +333,10 @@ func TestSource_DeclarationSettlement(t *testing.T) {
 			t.Parallel()
 			f := &fakeFetcher{artifact: &store.SourceArtifact{Key: "settled", FS: fstest.MapFS{}}}
 			c, st := newController(t, map[string]src.Fetcher{manifest.KindOCIRepository: f})
-			repo := &manifest.OCIRepository{Name: "chart", Namespace: "apps",
-				URL: "oci://example.test/chart", Reference: &sourcev1.OCIRepositoryRef{Tag: "first"}}
+			repo := &manifest.OCIRepository{
+				Name: "chart", Namespace: "apps",
+				URL: "oci://example.test/chart", Reference: &sourcev1.OCIRepositoryRef{Tag: "first"},
+			}
 			settled := *repo
 			if name == "tag" {
 				settled.Reference = &sourcev1.OCIRepositoryRef{Tag: "settled"}
@@ -252,16 +357,34 @@ func TestSource_DeclarationSettlement(t *testing.T) {
 			c.Tasks.Go(t.Context(), "producer", func(context.Context) {
 				<-attempted
 				if provisional.Outcome() != schedule.Blocked || f.calls != 0 {
-					t.Errorf("provisional unresolved=%t acquisitions=%d, want deferred with no acquisition", provisional.Outcome() == schedule.Blocked, f.calls)
+					t.Errorf(
+						"provisional unresolved=%t acquisitions=%d, want deferred with no acquisition",
+						provisional.Outcome() == schedule.Blocked,
+						f.calls,
+					)
 				}
-				controllertest.Emit(t.Context(), c.Controller, parent.Named(), &store.Emission{Children: []store.Child{{Obj: &settled}}, Complete: true})
+				controllertest.Emit(
+					t.Context(),
+					c.Controller,
+					parent.Named(),
+					&store.Emission{Children: []store.Child{{Obj: &settled}}, Complete: true},
+				)
 				st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			})
 			c.Tasks.BlockTillDone()
 			provisional.Retire()
-			info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode})
+			info := controllertest.DispatchToFixpoint(
+				t.Context(),
+				t,
+				controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode},
+			)
 			if info.Status != store.StatusReady || f.calls != 1 || len(f.objects) != 1 || f.objects[0] != &settled {
-				t.Fatalf("status=%v acquisitions=%d identities=%v, want exactly the settled declaration", info, f.calls, f.objects)
+				t.Fatalf(
+					"status=%v acquisitions=%d identities=%v, want exactly the settled declaration",
+					info,
+					f.calls,
+					f.objects,
+				)
 			}
 			t.Logf("acquired settled identity: %#v", f.objects[0])
 		})
@@ -280,32 +403,52 @@ func TestSource_DeclarationProgress(t *testing.T) {
 			st.AddObject(repo)
 			ids := []schedule.NodeID{repo.Named()}
 			if name != "absent producer" {
-				st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-					repo.Named(): {Productions: []manifest.Production{{Owner: parent.Named()}}},
-				}})
+				st.SetDiscoveryIndex(
+					&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+						repo.Named(): {Productions: []manifest.Production{{Owner: parent.Named()}}},
+					}},
+				)
 				st.AddObject(parent)
 				ids = append(ids, parent.Named())
 			}
-			dispatch := controllertest.Dispatch{Tasks: c.Tasks, Store: st, ReconcileNode: func(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
-				if id == repo.Named() {
-					return c.ReconcileNode(ctx, id, level)
-				}
-				run := controllertest.NewExecution(c.Controller, id)
-				run.Dispatch(ctx, level, run, func(run *base.Execution, ctx context.Context, _ *manifest.Kustomization, level manifest.DrainLevel) error {
-					if name == "failed producer" {
-						return manifest.NewError(manifest.ErrInput, nil, "failed producer")
+			dispatch := controllertest.Dispatch{
+				Tasks: c.Tasks,
+				Store: st,
+				ReconcileNode: func(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
+					if id == repo.Named() {
+						return c.ReconcileNode(ctx, id, level)
 					}
-					if err := run.Require(ctx, []manifest.DependencyRef{{NamedResource: repo.Named()}}, level); err != nil {
-						return err
-					}
-					if run.Reads.GetArtifact(repo.Named(), store.ArtifactContent) == nil {
-						t.Error("producer did not receive source content")
-					}
-					run.Emit(t.Context(), id, &store.Emission{Children: []store.Child{{Obj: repo}}, Complete: true}, nil)
-					return nil
-				})
-				return run
-			}}
+					run := controllertest.NewExecution(c.Controller, id)
+					run.Dispatch(
+						ctx,
+						level,
+						run,
+						func(run *base.Execution, ctx context.Context, _ *manifest.Kustomization, level manifest.DrainLevel) error {
+							if name == "failed producer" {
+								return manifest.NewError(manifest.ErrInput, nil, "failed producer")
+							}
+							if err := run.Require(
+								ctx,
+								[]manifest.DependencyRef{{NamedResource: repo.Named()}},
+								level,
+							); err != nil {
+								return err
+							}
+							if run.Reads.GetArtifact(repo.Named(), store.ArtifactContent) == nil {
+								t.Error("producer did not receive source content")
+							}
+							run.Emit(
+								t.Context(),
+								id,
+								&store.Emission{Children: []store.Child{{Obj: repo}}, Complete: true},
+								nil,
+							)
+							return nil
+						},
+					)
+					return run
+				},
+			}
 			scheduler := schedule.New(c.Tasks, dispatch)
 			scheduler.Seed(ids)
 			if err := scheduler.Run(t.Context()); err != nil {
@@ -328,7 +471,11 @@ func newController(t *testing.T, fetchers map[string]src.Fetcher) (*Controller, 
 	return newConfiguredController(t, fetchers, FetchOptions{})
 }
 
-func newConfiguredController(t *testing.T, fetchers map[string]src.Fetcher, opts FetchOptions) (*Controller, *store.Store) {
+func newConfiguredController(
+	t *testing.T,
+	fetchers map[string]src.Fetcher,
+	opts FetchOptions,
+) (*Controller, *store.Store) {
 	t.Helper()
 	st := store.New()
 	if opts.Loader != nil {
@@ -340,7 +487,6 @@ func newConfiguredController(t *testing.T, fetchers map[string]src.Fetcher, opts
 	c.Configure(opts, sourcecache.RetryConfig{Attempts: 3})
 	c.StartLifecycle()
 	t.Cleanup(func() {
-
 		ts.BlockTillDone()
 	})
 	return c, st
@@ -353,7 +499,12 @@ func TestController_FetchesAndStoresArtifact(t *testing.T) {
 		FS: fstest.MapFS{"source.txt": {Data: []byte(content)}},
 	}}
 	c, st := newController(t, map[string]src.Fetcher{manifest.KindGitRepository: f})
-	repo := &manifest.GitRepository{Name: "r", Namespace: "ns", URL: "https://example/r.git", Interval: metav1.Duration{Duration: time.Hour}}
+	repo := &manifest.GitRepository{
+		Name:      "r",
+		Namespace: "ns",
+		URL:       "https://example/r.git",
+		Interval:  metav1.Duration{Duration: time.Hour},
+	}
 	st.AddObject(repo)
 
 	for _, phase := range []string{"initial", "revised", "digested", "reacquired"} {
@@ -375,14 +526,22 @@ func TestController_FetchesAndStoresArtifact(t *testing.T) {
 				pin.FS = nil
 				st.SetArtifact(repo.Named(), &pin)
 			}
-			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
+			if info := controllertest.DispatchToFixpoint(
+				t.Context(),
+				t,
+				controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode},
+			); info.Status != store.StatusReady {
 				t.Fatalf("status = %+v, want StatusReady", info)
 			}
-			if f.retry.MaxAge != time.Hour || f.retry.Retry != (sourcecache.RetryConfig{Attempts: 3}) || f.retry.Timeout != nil || f.retry.Admit != nil {
+			if f.retry.MaxAge != time.Hour || f.retry.Retry != (sourcecache.RetryConfig{Attempts: 3}) ||
+				f.retry.Timeout != nil ||
+				f.retry.Admit != nil {
 				t.Fatalf("configured policy=%+v", f.retry)
 			}
 			art, ok := st.GetArtifact(repo.Named(), store.ArtifactContent).(*store.SourceArtifact)
-			if !ok || art.FS == nil || art.Kind != f.artifact.Kind || art.URL != f.artifact.URL || art.Key != "pin" || art.Revision != f.artifact.Revision || art.Digest != f.artifact.Digest {
+			if !ok || art.FS == nil || art.Kind != f.artifact.Kind || art.URL != f.artifact.URL || art.Key != "pin" ||
+				art.Revision != f.artifact.Revision ||
+				art.Digest != f.artifact.Digest {
 				t.Fatalf("artifact = %+v, want readable source with original identity", art)
 			}
 			if got, err := fs.ReadFile(art.FS, "source.txt"); err != nil || string(got) != content {
@@ -403,7 +562,11 @@ func TestController_FetchErrorMarksFailed(t *testing.T) {
 	}
 	st.AddObject(repo)
 
-	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode})
+	info := controllertest.DispatchToFixpoint(
+		t.Context(),
+		t,
+		controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode},
+	)
 	if info.Status != store.StatusFailed {
 		t.Fatalf("status = %+v, want StatusFailed", info)
 	}
@@ -433,7 +596,16 @@ func TestController_ShortCircuitsToReady(t *testing.T) {
 					f := &fakeFetcher{}
 					c, st := newController(t, map[string]src.Fetcher{tc.obj.Named().Kind: f})
 					st.AddObject(tc.obj)
-					info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: tc.obj.Named(), ReconcileNode: c.ReconcileNode})
+					info := controllertest.DispatchToFixpoint(
+						t.Context(),
+						t,
+						controllertest.Dispatch{
+							Tasks:         c.Tasks,
+							Store:         st,
+							ID:            tc.obj.Named(),
+							ReconcileNode: c.ReconcileNode,
+						},
+					)
 					message, calls := "", tc.calls
 					outcome := store.OutcomePassed
 					if suspended {
@@ -458,7 +630,15 @@ func TestController_ShortCircuitsToReady(t *testing.T) {
 		c := New(st, tasks)
 		f := &fakeFetcher{artifact: &store.SourceArtifact{Kind: manifest.KindGitRepository}}
 		c.Fetchers[manifest.KindGitRepository] = f
-		filterLoader := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet(nil), Index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}, Inventory: filtertest.MapLister{}, Root: ""})
+		filterLoader := admissiontest.New(
+			t,
+			admissiontest.Config{
+				Changes:   change.NewSet(nil),
+				Index:     &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}},
+				Inventory: filtertest.MapLister{},
+				Root:      "",
+			},
+		)
 		admissiontest.Commit(t, filterLoader, nil)
 		filter := filterLoader.Options.Filter
 		c.Configure(FetchOptions{Filter: filter, Loader: filterLoader}, sourcecache.RetryConfig{})
@@ -502,7 +682,11 @@ func TestController_UnregisteredKindIgnored(t *testing.T) {
 		URL: "oci://example/img",
 	}
 	st.AddObject(oci)
-	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: oci.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
+	if info := controllertest.DispatchToFixpoint(
+		t.Context(),
+		t,
+		controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: oci.Named(), ReconcileNode: c.ReconcileNode},
+	); info.Status != store.StatusReady {
 		t.Fatalf("status = %+v, want StatusReady", info)
 	}
 
@@ -551,7 +735,9 @@ func TestController_OwnsExcludesForeignKind(t *testing.T) {
 	}
 	// An id the store never saw stays ours — the vanished-object report is
 	// the controller's to write.
-	if !c.Owns(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindBucket, Namespace: "ns", Name: "gone"}) {
+	if !c.Owns(
+		manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindBucket, Namespace: "ns", Name: "gone"},
+	) {
 		t.Errorf("Owns = false for an absent id of a registered kind")
 	}
 	if c.Owns(manifest.NamedResource{Group: "apps", Kind: "Deployment", Namespace: "ns", Name: "app"}) {
@@ -571,14 +757,33 @@ func TestController_MissingSecretWaitsForRender(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			f := &fakeFetcher{err: src.MissingSecretErr(manifest.DiagnosticFor(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "r"}, nil), "ca", "not found")}
+			f := &fakeFetcher{
+				err: src.MissingSecretErr(
+					manifest.DiagnosticFor(
+						manifest.NamedResource{
+							Group:     manifest.SourceDomain,
+							Kind:      manifest.KindOCIRepository,
+							Namespace: "ns",
+							Name:      "r",
+						},
+						nil,
+					),
+					"ca",
+					"not found",
+				),
+			}
 			c, st := newConfiguredController(t,
 				map[string]src.Fetcher{manifest.KindOCIRepository: f},
 				FetchOptions{AllowMissingSecrets: tt.allowMissing})
 			repo := &manifest.OCIRepository{Name: "r", Namespace: "ns"}
 			st.AddObject(repo)
 
-			if controllertest.Reconcile(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode}, 0) {
+			if controllertest.Reconcile(
+				t.Context(),
+				t,
+				controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode},
+				0,
+			) {
 				t.Fatal("missing Secret must block while renders can still produce it")
 			}
 			if info, _ := st.GetStatus(repo.Named()); info.Status != store.StatusPending {
@@ -588,10 +793,18 @@ func TestController_MissingSecretWaitsForRender(t *testing.T) {
 			st.AddObject(&manifest.Secret{Name: "ca", Namespace: "ns"})
 			f.err = nil
 			f.artifact = &store.SourceArtifact{Kind: manifest.KindOCIRepository}
-			if !controllertest.Reconcile(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode}, 0) {
+			if !controllertest.Reconcile(
+				t.Context(),
+				t,
+				controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode},
+				0,
+			) {
 				t.Fatal("source must finish after the Secret arrives")
 			}
-			if info, _ := st.GetStatus(repo.Named()); info.Status != store.StatusReady || info.Outcome() == store.OutcomeSkipped {
+			if info, _ := st.GetStatus(
+				repo.Named(),
+			); info.Status != store.StatusReady ||
+				info.Outcome() == store.OutcomeSkipped {
 				t.Fatalf("status = %+v, want Ready without a skip", info)
 			}
 			if st.GetArtifact(repo.Named(), store.ArtifactContent) == nil {
@@ -633,14 +846,27 @@ func TestController_UnavailableSecretAtFixpoint(t *testing.T) {
 			if tt.present {
 				detail = "missing username/password"
 			}
-			repo := &manifest.OCIRepository{Name: "r", Namespace: "ns", URL: "oci://example/img", Interval: &metav1.Duration{Duration: time.Hour}}
+			repo := &manifest.OCIRepository{
+				Name:      "r",
+				Namespace: "ns",
+				URL:       "oci://example/img",
+				Interval:  &metav1.Duration{Duration: time.Hour},
+			}
 			fetchErr := src.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), secret.Name, detail)
 			if tt.plain {
-				fetchErr = manifest.NewError(manifest.ErrMissingSecret, nil, fmt.Sprintf("OCIRepository ns/r: secret ns/%s %s", secret.Name, detail))
+				fetchErr = manifest.NewError(
+					manifest.ErrMissingSecret,
+					nil,
+					fmt.Sprintf("OCIRepository ns/r: secret ns/%s %s", secret.Name, detail),
+				)
 			}
 			if tt.malformed {
 				detail = "invalid credential encoding"
-				fetchErr = manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("OCIRepository ns/r: secret ns/%s %s", secret.Name, detail))
+				fetchErr = manifest.NewError(
+					manifest.ErrInput,
+					nil,
+					fmt.Sprintf("OCIRepository ns/r: secret ns/%s %s", secret.Name, detail),
+				)
 			}
 			ambientCalls := 0
 			if tt.producer && !tt.malformed {
@@ -653,7 +879,16 @@ func TestController_UnavailableSecretAtFixpoint(t *testing.T) {
 			f := &fakeFetcher{err: fetchErr, secret: secret.Name}
 			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
 			if tt.producer {
-				addDeclaration(index, secret.Named(), manifest.NamedResource{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "ns", Name: "auth"})
+				addDeclaration(
+					index,
+					secret.Named(),
+					manifest.NamedResource{
+						Group:     "external-secrets.io",
+						Kind:      "ExternalSecret",
+						Namespace: "ns",
+						Name:      "auth",
+					},
+				)
 			}
 			c, st := newConfiguredController(t,
 				map[string]src.Fetcher{manifest.KindOCIRepository: f},
@@ -665,15 +900,34 @@ func TestController_UnavailableSecretAtFixpoint(t *testing.T) {
 			st.AddObject(repo)
 			var info store.StatusInfo
 			if tt.plain || tt.malformed {
-				info = controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode})
+				info = controllertest.DispatchToFixpoint(
+					t.Context(),
+					t,
+					controllertest.Dispatch{
+						Tasks:         c.Tasks,
+						Store:         st,
+						ID:            repo.Named(),
+						ReconcileNode: c.ReconcileNode,
+					},
+				)
 			} else {
-				if controllertest.Reconcile(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode}, manifest.DrainNone) {
+				if controllertest.Reconcile(
+					t.Context(),
+					t,
+					controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode},
+					manifest.DrainNone,
+				) {
 					t.Fatal("must wait while renders can still supply Secret contents")
 				}
 				if pending, _ := st.GetStatus(repo.Named()); pending.Status != store.StatusPending {
 					t.Fatalf("status = %+v, want Pending", pending)
 				}
-				if !controllertest.Reconcile(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode}, manifest.DrainCascade) {
+				if !controllertest.Reconcile(
+					t.Context(),
+					t,
+					controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode},
+					manifest.DrainCascade,
+				) {
 					t.Fatal("unavailable Secret must terminalize at the fixpoint")
 				}
 				info, _ = st.GetStatus(repo.Named())
@@ -685,8 +939,17 @@ func TestController_UnavailableSecretAtFixpoint(t *testing.T) {
 			if tt.wantSkip {
 				wantStatus = store.StatusReady
 			}
-			if info.Status != wantStatus || (info.Outcome() == store.OutcomeSkipped) != tt.wantSkip || !strings.Contains(info.String(), detail) || !strings.Contains(info.String(), secret.Name) {
-				t.Fatalf("status = %+v, want %v (skip=%t) preserving %q and %q", info, wantStatus, tt.wantSkip, detail, secret.Name)
+			if info.Status != wantStatus || (info.Outcome() == store.OutcomeSkipped) != tt.wantSkip ||
+				!strings.Contains(info.String(), detail) ||
+				!strings.Contains(info.String(), secret.Name) {
+				t.Fatalf(
+					"status = %+v, want %v (skip=%t) preserving %q and %q",
+					info,
+					wantStatus,
+					tt.wantSkip,
+					detail,
+					secret.Name,
+				)
 			}
 			if ambientCalls != 0 {
 				t.Fatalf("index-only producer invoked ambient continuation %d times", ambientCalls)
@@ -708,12 +971,31 @@ type fallbackFetcher struct {
 	fallbackErr   error
 }
 
-func (f *fallbackFetcher) Fetch(_ context.Context, _ manifest.BaseManifest, _ *store.ReadSet, policy sourcecache.Policy) (*store.SourceArtifact, error) {
+func (f *fallbackFetcher) Fetch(
+	_ context.Context,
+	_ manifest.BaseManifest,
+	_ *store.ReadSet,
+	policy sourcecache.Policy,
+) (*store.SourceArtifact, error) {
 	f.retry = policy
 	if f.rendered {
 		return &store.SourceArtifact{Kind: manifest.KindOCIRepository}, nil
 	}
-	missing, _ := errors.AsType[*src.MissingSecretError](src.MissingSecretErr(manifest.DiagnosticFor(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "r"}, nil), "ghcr-creds", "not found"))
+	missing, _ := errors.AsType[*src.MissingSecretError](
+		src.MissingSecretErr(
+			manifest.DiagnosticFor(
+				manifest.NamedResource{
+					Group:     manifest.SourceDomain,
+					Kind:      manifest.KindOCIRepository,
+					Namespace: "ns",
+					Name:      "r",
+				},
+				nil,
+			),
+			"ghcr-creds",
+			"not found",
+		),
+	)
 	missing.RetryAmbient = func(_ context.Context) (*store.SourceArtifact, error) {
 		f.fallbackCalls++
 		f.fallbackRetry = policy
@@ -740,10 +1022,20 @@ func TestController_MissingSecretRegistryFallback(t *testing.T) {
 			t.Parallel()
 			f := &fallbackFetcher{}
 			c, st := newController(t, map[string]src.Fetcher{manifest.KindOCIRepository: f})
-			repo := &manifest.OCIRepository{Name: "r", Namespace: "ns", URL: "oci://example/img", Interval: &metav1.Duration{Duration: time.Hour}}
+			repo := &manifest.OCIRepository{
+				Name:      "r",
+				Namespace: "ns",
+				URL:       "oci://example/img",
+				Interval:  &metav1.Duration{Duration: time.Hour},
+			}
 			st.AddObject(repo)
 
-			if controllertest.Reconcile(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode}, 0) {
+			if controllertest.Reconcile(
+				t.Context(),
+				t,
+				controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode},
+				0,
+			) {
 				t.Fatal("missing Secret must block before any registry fallback")
 			}
 			if f.fallbackCalls != 0 {
@@ -754,7 +1046,12 @@ func TestController_MissingSecretRegistryFallback(t *testing.T) {
 				st.AddObject(&manifest.Secret{Name: "ghcr-creds", Namespace: "ns"})
 				f.rendered = true
 			}
-			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady || info.Outcome() == store.OutcomeSkipped {
+			if info := controllertest.DispatchToFixpoint(
+				t.Context(),
+				t,
+				controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode},
+			); info.Status != store.StatusReady ||
+				info.Outcome() == store.OutcomeSkipped {
 				t.Fatalf("status = %+v, want Ready without a skip", info)
 			}
 			if st.GetArtifact(repo.Named(), store.ArtifactContent) == nil {
@@ -765,7 +1062,9 @@ func TestController_MissingSecretRegistryFallback(t *testing.T) {
 				policies = append(policies, f.fallbackRetry)
 			}
 			for _, policy := range policies {
-				if policy.MaxAge != time.Hour || policy.Retry != (sourcecache.RetryConfig{Attempts: 3}) || policy.Timeout != nil || policy.Admit != nil {
+				if policy.MaxAge != time.Hour || policy.Retry != (sourcecache.RetryConfig{Attempts: 3}) ||
+					policy.Timeout != nil ||
+					policy.Admit != nil {
 					t.Fatalf("normal/fallback policies=%+v/%+v", f.retry, f.fallbackRetry)
 				}
 			}
@@ -806,7 +1105,9 @@ func TestController_AmbientPolicy(t *testing.T) {
 		} {
 			t.Run(repo.Named().Kind+"/"+tt.name, func(t *testing.T) {
 				t.Parallel()
-				missing, _ := errors.AsType[*src.MissingSecretError](src.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), "auth", "not found"))
+				missing, _ := errors.AsType[*src.MissingSecretError](
+					src.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), "auth", "not found"),
+				)
 				calls := 0
 				failure := tt.failure
 				if failure != nil {
@@ -820,28 +1121,60 @@ func TestController_AmbientPolicy(t *testing.T) {
 					return &store.SourceArtifact{Kind: repo.Named().Kind, FS: fstest.MapFS{}}, nil
 				}
 				f := &fakeFetcher{err: missing, secret: "auth"}
-				c, st := newConfiguredController(t, map[string]src.Fetcher{repo.Named().Kind: f}, FetchOptions{AllowMissingSecrets: tt.allow})
+				c, st := newConfiguredController(
+					t,
+					map[string]src.Fetcher{repo.Named().Kind: f},
+					FetchOptions{AllowMissingSecrets: tt.allow},
+				)
 				index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
 				if tt.producer {
-					addDeclaration(index, missing.Secret, manifest.NamedResource{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "ns", Name: "producer"})
+					addDeclaration(
+						index,
+						missing.Secret,
+						manifest.NamedResource{
+							Group:     "external-secrets.io",
+							Kind:      "ExternalSecret",
+							Namespace: "ns",
+							Name:      "producer",
+						},
+					)
 				}
 				st.SetDiscoveryIndex(index)
 				repository := &manifest.HelmRepository{Name: "r", Namespace: "ns", URL: "https://charts.invalid"}
 				st.AddObject(repository)
 				st.UpdateStatus(repository.Named(), store.StatusInfo{Status: store.StatusReady})
 				st.AddObject(repo)
-				info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode})
+				info := controllertest.DispatchToFixpoint(
+					t.Context(),
+					t,
+					controllertest.Dispatch{
+						Tasks:         c.Tasks,
+						Store:         st,
+						ID:            repo.Named(),
+						ReconcileNode: c.ReconcileNode,
+					},
+				)
 				wantCalls := 1
 				if tt.producer {
 					wantCalls = 0
 				}
-				wantSkip := tt.producer || tt.allow && errors.Is(failure, manifest.ErrMissingSecret) && !errors.Is(failure, context.Canceled) && !errors.Is(failure, context.DeadlineExceeded)
+				wantSkip := tt.producer ||
+					tt.allow && errors.Is(failure, manifest.ErrMissingSecret) && !errors.Is(failure, context.Canceled) &&
+						!errors.Is(failure, context.DeadlineExceeded)
 				wantStatus := store.StatusReady
 				if failure != nil && !wantSkip {
 					wantStatus = store.StatusFailed
 				}
-				if calls != wantCalls || info.Status != wantStatus || (info.Outcome() == store.OutcomeSkipped) != wantSkip {
-					t.Fatalf("status=%+v calls=%d; want status=%v skip=%t calls=%d", info, calls, wantStatus, wantSkip, wantCalls)
+				if calls != wantCalls || info.Status != wantStatus ||
+					(info.Outcome() == store.OutcomeSkipped) != wantSkip {
+					t.Fatalf(
+						"status=%+v calls=%d; want status=%v skip=%t calls=%d",
+						info,
+						calls,
+						wantStatus,
+						wantSkip,
+						wantCalls,
+					)
 				}
 				if failure != nil && !wantSkip && info.Message != "secret ns/auth not found" {
 					t.Fatalf("settlement message = %q", info.Message)
@@ -853,7 +1186,16 @@ func TestController_AmbientPolicy(t *testing.T) {
 					t.Fatal("ambient settlement published the wrong content outcome")
 				}
 				if !wantSkip && failure == nil {
-					controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode})
+					controllertest.DispatchToFixpoint(
+						t.Context(),
+						t,
+						controllertest.Dispatch{
+							Tasks:         c.Tasks,
+							Store:         st,
+							ID:            repo.Named(),
+							ReconcileNode: c.ReconcileNode,
+						},
+					)
 					if calls != wantCalls {
 						t.Fatal("accepted source artifact was acquired again")
 					}
@@ -875,8 +1217,13 @@ func TestController_AmbientContextError(t *testing.T) {
 		t.Run(cause.Error(), func(t *testing.T) {
 			t.Parallel()
 			repo := &manifest.GitRepository{Name: "r", Namespace: "ns"}
-			failure := errors.Join(src.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), "", "unavailable"), cause)
-			missing, _ := errors.AsType[*src.MissingSecretError](src.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), "auth", "not found"))
+			failure := errors.Join(
+				src.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), "", "unavailable"),
+				cause,
+			)
+			missing, _ := errors.AsType[*src.MissingSecretError](
+				src.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), "auth", "not found"),
+			)
 			missing.RetryAmbient = func(context.Context) (*store.SourceArtifact, error) { return nil, failure }
 			controller, st := newConfiguredController(t, nil, FetchOptions{AllowMissingSecrets: true})
 			st.AddObject(repo)
@@ -896,7 +1243,8 @@ func TestController_AmbientContextError(t *testing.T) {
 				}, manifest.DrainCascade)
 			})
 			c.Tasks.BlockTillDone()
-			if !errors.Is(err, cause) || !errors.Is(err, manifest.ErrFlux) || errors.Is(err, manifest.ErrSourceSkipped) {
+			if !errors.Is(err, cause) || !errors.Is(err, manifest.ErrFlux) ||
+				errors.Is(err, manifest.ErrSourceSkipped) {
 				t.Fatalf("default settlement error = %v; want %v and ErrFlux", err, cause)
 			}
 		})
@@ -915,7 +1263,11 @@ func TestController_ExistenceOnly_NoTransientPendingOnReemit(t *testing.T) {
 		URL: "https://charts.example", Type: "default",
 	}
 	st.AddObject(repo)
-	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
+	if info := controllertest.DispatchToFixpoint(
+		t.Context(),
+		t,
+		controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode},
+	); info.Status != store.StatusReady {
 		t.Fatalf("status = %+v, want StatusReady", info)
 	}
 
@@ -938,7 +1290,12 @@ func TestController_ExistenceOnly_NoTransientPendingOnReemit(t *testing.T) {
 		Interval: metav1.Duration{Duration: time.Hour},
 	}
 	st.AddObject(reemit)
-	controllertest.Reconcile(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode}, 0)
+	controllertest.Reconcile(
+		t.Context(),
+		t,
+		controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode},
+		0,
+	)
 	if f.calls != 0 {
 		t.Errorf("presence-only acquisitions = %d, want 0", f.calls)
 	}
@@ -946,7 +1303,9 @@ func TestController_ExistenceOnly_NoTransientPendingOnReemit(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	if sawPending {
-		t.Error("presence-only source transiently downgraded Ready to Pending on a no-op re-run (the quiescence-race window)")
+		t.Error(
+			"presence-only source transiently downgraded Ready to Pending on a no-op re-run (the quiescence-race window)",
+		)
 	}
 	if info, _ := st.GetStatus(repo.Named()); info.Status != store.StatusReady {
 		t.Errorf("source not Ready after no-op re-run: %+v", info)
@@ -960,10 +1319,29 @@ func TestController_ArtifactMaterializers(t *testing.T) {
 			t.Parallel()
 			fetcher := &fakeFetcher{err: manifest.NewError(manifest.ErrInput, nil, "content unavailable")}
 			c, st := newController(t, map[string]src.Fetcher{manifest.KindExternalArtifact: fetcher})
-			generator := &manifest.RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Name: "generator", Namespace: "apps"}
+			generator := &manifest.RawObject{
+				APIVersion: "source.extensions.fluxcd.io/v1beta1",
+				Kind:       "ArtifactGenerator",
+				Name:       "generator",
+				Namespace:  "apps",
+			}
 			st.AddObject(generator)
-			st.UpdateStatus(generator.Named(), store.StatusInfo{Status: state, Reason: "", Message: "materializer state"})
-			doc := map[string]any{"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": "ExternalArtifact", "metadata": map[string]any{"name": "generated", "namespace": "apps"}, "spec": map[string]any{"sourceRef": map[string]any{"apiVersion": generator.APIVersion, "kind": generator.Kind, "name": generator.Name}}}
+			st.UpdateStatus(
+				generator.Named(),
+				store.StatusInfo{Status: state, Reason: "", Message: "materializer state"},
+			)
+			doc := map[string]any{
+				"apiVersion": "source.toolkit.fluxcd.io/v1",
+				"kind":       "ExternalArtifact",
+				"metadata":   map[string]any{"name": "generated", "namespace": "apps"},
+				"spec": map[string]any{
+					"sourceRef": map[string]any{
+						"apiVersion": generator.APIVersion,
+						"kind":       generator.Kind,
+						"name":       generator.Name,
+					},
+				},
+			}
 			obj, authoritative, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
 			if err != nil {
 				t.Fatal(err)
@@ -982,13 +1360,22 @@ func TestController_ArtifactMaterializers(t *testing.T) {
 			c.Tasks.BlockTillDone()
 			switch state {
 			case store.StatusPending:
-				if outcome != schedule.Blocked || len(blocked) != 1 || blocked[0] != generator.Named() || fetcher.calls != 0 {
+				if outcome != schedule.Blocked || len(blocked) != 1 || blocked[0] != generator.Named() ||
+					fetcher.calls != 0 {
 					t.Fatalf("materializer wait = %v, calls=%d", blocked, fetcher.calls)
 				}
 			case store.StatusFailed:
 				status, _ := st.GetStatus(obj.Named())
-				if outcome != schedule.DependencyFailed || len(blocked) != 1 || blocked[0] != generator.Named() || status.Status != store.StatusFailed || fetcher.calls != 0 {
-					t.Fatalf("failed materializer result = %+v, %+v, %v, calls=%d", outcome, status, blocked, fetcher.calls)
+				if outcome != schedule.DependencyFailed || len(blocked) != 1 || blocked[0] != generator.Named() ||
+					status.Status != store.StatusFailed ||
+					fetcher.calls != 0 {
+					t.Fatalf(
+						"failed materializer result = %+v, %+v, %v, calls=%d",
+						outcome,
+						status,
+						blocked,
+						fetcher.calls,
+					)
 				}
 			default:
 				status, _ := st.GetStatus(obj.Named())
@@ -996,8 +1383,16 @@ func TestController_ArtifactMaterializers(t *testing.T) {
 					t.Fatalf("contentless result = %+v, %v", status, blocked)
 				}
 			}
-			payload := &store.SourceArtifact{Kind: manifest.KindExternalArtifact, Key: "generated", FS: fstest.MapFS{"file": {Data: []byte("available")}}}
-			st.RecordEmitted(generator.Named(), &store.Emission{Children: []store.Child{{Obj: obj, Doc: authoritative}}}, map[manifest.NamedResource]*store.SourceArtifact{obj.Named(): payload})
+			payload := &store.SourceArtifact{
+				Kind: manifest.KindExternalArtifact,
+				Key:  "generated",
+				FS:   fstest.MapFS{"file": {Data: []byte("available")}},
+			}
+			st.RecordEmitted(
+				generator.Named(),
+				&store.Emission{Children: []store.Child{{Obj: obj, Doc: authoritative}}},
+				map[manifest.NamedResource]*store.SourceArtifact{obj.Named(): payload},
+			)
 			before := fetcher.calls
 			st.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: ""})
 			c.Tasks.Go(t.Context(), "accepted", func(ctx context.Context) {
@@ -1015,7 +1410,12 @@ func TestController_ArtifactMaterializers(t *testing.T) {
 
 type materializerFetcher struct{ calls atomic.Int64 }
 
-func (f *materializerFetcher) Fetch(context.Context, manifest.BaseManifest, *store.ReadSet, sourcecache.Policy) (*store.SourceArtifact, error) {
+func (f *materializerFetcher) Fetch(
+	context.Context,
+	manifest.BaseManifest,
+	*store.ReadSet,
+	sourcecache.Policy,
+) (*store.SourceArtifact, error) {
 	f.calls.Add(1)
 	return nil, manifest.NewError(manifest.ErrInput, nil, "content unavailable")
 }
@@ -1028,7 +1428,12 @@ func TestController_ArtifactMaterializersProduction(t *testing.T) {
 			fetcher := &materializerFetcher{}
 			c, st := newController(t, map[string]src.Fetcher{manifest.KindExternalArtifact: fetcher})
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
-			generator := &manifest.RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Name: "generator", Namespace: "apps"}
+			generator := &manifest.RawObject{
+				APIVersion: "source.extensions.fluxcd.io/v1beta1",
+				Kind:       "ArtifactGenerator",
+				Name:       "generator",
+				Namespace:  "apps",
+			}
 			obj := &manifest.ExternalArtifact{Name: "generated", Namespace: "apps"}
 			st.AddObject(owner)
 			st.AddObject(obj)
@@ -1038,9 +1443,14 @@ func TestController_ArtifactMaterializersProduction(t *testing.T) {
 				materializer = generator.Named()
 			}
 			st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-				obj.Named(): {Productions: []manifest.Production{{Owner: owner.Named(), Declaration: generator.Named()}}},
+				obj.Named(): {
+					Productions: []manifest.Production{{Owner: owner.Named(), Declaration: generator.Named()}},
+				},
 			}})
-			st.UpdateStatus(materializer, store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "progressing"})
+			st.UpdateStatus(
+				materializer,
+				store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "progressing"},
+			)
 			var blocked []manifest.NamedResource
 			c.Tasks.Go(t.Context(), "predicted", func(ctx context.Context) {
 				run := c.ReconcileNode(ctx, obj.Named(), manifest.DrainNone)
@@ -1048,7 +1458,12 @@ func TestController_ArtifactMaterializersProduction(t *testing.T) {
 			})
 			c.Tasks.BlockTillDone()
 			if len(blocked) != 1 || blocked[0] != materializer || fetcher.calls.Load() != 0 {
-				t.Fatalf("progressing materializer = %v, want %s; fetches=%d", blocked, materializer, fetcher.calls.Load())
+				t.Fatalf(
+					"progressing materializer = %v, want %s; fetches=%d",
+					blocked,
+					materializer,
+					fetcher.calls.Load(),
+				)
 			}
 		})
 	}
@@ -1058,16 +1473,36 @@ func TestController_ArtifactMaterializersCompleteEmpty(t *testing.T) {
 	t.Parallel()
 	fetcher := &materializerFetcher{}
 	c, st := newController(t, map[string]src.Fetcher{manifest.KindExternalArtifact: fetcher})
-	generator := &manifest.RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Name: "generator", Namespace: "apps"}
+	generator := &manifest.RawObject{
+		APIVersion: "source.extensions.fluxcd.io/v1beta1",
+		Kind:       "ArtifactGenerator",
+		Name:       "generator",
+		Namespace:  "apps",
+	}
 	st.AddObject(generator)
-	doc := map[string]any{"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": manifest.KindExternalArtifact, "metadata": map[string]any{"name": "generated", "namespace": "apps"}, "spec": map[string]any{"sourceRef": map[string]any{"apiVersion": generator.APIVersion, "kind": generator.Kind, "name": generator.Name}}}
+	doc := map[string]any{
+		"apiVersion": "source.toolkit.fluxcd.io/v1",
+		"kind":       manifest.KindExternalArtifact,
+		"metadata":   map[string]any{"name": "generated", "namespace": "apps"},
+		"spec": map[string]any{
+			"sourceRef": map[string]any{
+				"apiVersion": generator.APIVersion,
+				"kind":       generator.Kind,
+				"name":       generator.Name,
+			},
+		},
+	}
 	obj, authoritative, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	st.AddObject(obj, authoritative)
 	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-		obj.Named(): {Productions: []manifest.Production{{Owner: generator.Named(), Declaration: generator.Named(), Source: manifest.BootstrapSourceID}}},
+		obj.Named(): {
+			Productions: []manifest.Production{
+				{Owner: generator.Named(), Declaration: generator.Named(), Source: manifest.BootstrapSourceID},
+			},
+		},
 	}})
 	if len(st.Productions(obj.Named(), nil)) != 1 {
 		t.Fatal("fixture has no bound output prediction")
@@ -1076,8 +1511,12 @@ func TestController_ArtifactMaterializersCompleteEmpty(t *testing.T) {
 	defer empty.Finish()
 	empty.Complete = true
 	st.RecordEmitted(generator.Named(), &empty, nil)
-	st.UpdateStatus(generator.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "complete empty"})
-	if len(st.Productions(obj.Named(), nil)) != 0 || st.GetObject(obj.Named()) != nil || st.GetArtifact(obj.Named(), store.ArtifactContent) != nil {
+	st.UpdateStatus(
+		generator.Named(),
+		store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "complete empty"},
+	)
+	if len(st.Productions(obj.Named(), nil)) != 0 || st.GetObject(obj.Named()) != nil ||
+		st.GetArtifact(obj.Named(), store.ArtifactContent) != nil {
 		t.Fatal("complete empty inventory retained predicted output authority")
 	}
 	st.AddObject(obj, authoritative)
@@ -1091,7 +1530,9 @@ func TestController_ArtifactMaterializersCompleteEmpty(t *testing.T) {
 	})
 	c.Tasks.BlockTillDone()
 	status, _ := st.GetStatus(obj.Named())
-	if len(blocked) != 0 || status.Status != store.StatusFailed || status.IsDependencyFailure() || fetcher.calls.Load() != 1 || st.GetArtifact(obj.Named(), store.ArtifactContent) != nil {
+	if len(blocked) != 0 || status.Status != store.StatusFailed || status.IsDependencyFailure() ||
+		fetcher.calls.Load() != 1 ||
+		st.GetArtifact(obj.Named(), store.ArtifactContent) != nil {
 		t.Fatalf("complete empty source = %+v, blocked=%v, fetches=%d", status, blocked, fetcher.calls.Load())
 	}
 }
@@ -1101,10 +1542,17 @@ type materializerDispatcher struct {
 	drains     [3]atomic.Int64
 }
 
-func (d *materializerDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+func (d *materializerDispatcher) Dispatch(
+	ctx context.Context,
+	id schedule.NodeID,
+	level manifest.DrainLevel,
+) schedule.Result {
 	d.drains[level].Add(1)
-	return schedule.Result{Assessment: &materializerAssessment{Execution: d.controller.ReconcileNode(ctx, id, level), drains: &d.drains}}
+	return schedule.Result{
+		Assessment: &materializerAssessment{Execution: d.controller.ReconcileNode(ctx, id, level), drains: &d.drains},
+	}
 }
+
 func (d *materializerDispatcher) Sweep(_ context.Context, _ bool) []schedule.NodeID {
 	return slices.Collect(d.controller.Store.Sweep())
 }
@@ -1123,9 +1571,23 @@ func TestController_ArtifactMaterializersCycleDrains(t *testing.T) {
 	t.Parallel()
 	fetcher := &materializerFetcher{}
 	c, st := newController(t, map[string]src.Fetcher{manifest.KindExternalArtifact: fetcher})
-	ids := []manifest.NamedResource{{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Name: "a", Namespace: "apps"}, {Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Name: "b", Namespace: "apps"}}
+	ids := []manifest.NamedResource{
+		{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Name: "a", Namespace: "apps"},
+		{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Name: "b", Namespace: "apps"},
+	}
 	for i, id := range ids {
-		doc := map[string]any{"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": id.Kind, "metadata": map[string]any{"name": id.Name, "namespace": id.Namespace}, "spec": map[string]any{"sourceRef": map[string]any{"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": id.Kind, "name": ids[1-i].Name}}}
+		doc := map[string]any{
+			"apiVersion": "source.toolkit.fluxcd.io/v1",
+			"kind":       id.Kind,
+			"metadata":   map[string]any{"name": id.Name, "namespace": id.Namespace},
+			"spec": map[string]any{
+				"sourceRef": map[string]any{
+					"apiVersion": "source.toolkit.fluxcd.io/v1",
+					"kind":       id.Kind,
+					"name":       ids[1-i].Name,
+				},
+			},
+		}
 		obj, authoritative, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
 		if err != nil {
 			t.Fatal(err)
@@ -1142,12 +1604,19 @@ func TestController_ArtifactMaterializersCycleDrains(t *testing.T) {
 		t.Fatal(err)
 	}
 	if dispatcher.drains[manifest.DrainForce].Load() == 0 || fetcher.calls.Load() != 0 || c.Tasks.Failures() != 0 {
-		t.Fatalf("cycle force passes=%d, fetches=%d, task failures=%d", dispatcher.drains[manifest.DrainForce].Load(), fetcher.calls.Load(), c.Tasks.Failures())
+		t.Fatalf(
+			"cycle force passes=%d, fetches=%d, task failures=%d",
+			dispatcher.drains[manifest.DrainForce].Load(),
+			fetcher.calls.Load(),
+			c.Tasks.Failures(),
+		)
 	}
 	for i, id := range ids {
 		status, _ := st.GetStatus(id)
 		blocked := status.BlockedBy()
-		if status.Status != store.StatusFailed || !status.IsDependencyFailure() || len(blocked) != 1 || blocked[0] != ids[1-i] || st.GetArtifact(id, store.ArtifactContent) != nil {
+		if status.Status != store.StatusFailed || !status.IsDependencyFailure() || len(blocked) != 1 ||
+			blocked[0] != ids[1-i] ||
+			st.GetArtifact(id, store.ArtifactContent) != nil {
 			t.Fatalf("contentless cycle %s = %+v, blocked=%v", id, status, blocked)
 		}
 	}
@@ -1160,7 +1629,9 @@ func TestController_AmbientSettlementExactlyOnce(t *testing.T) {
 			t.Run(fmt.Sprintf("secret=%q/level=%d", secret, level), func(t *testing.T) {
 				t.Parallel()
 				repo := &manifest.GitRepository{Name: "source", Namespace: "apps", URL: "ssh://git@fixture/repo"}
-				missing, _ := errors.AsType[*src.MissingSecretError](src.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), secret, "credentials unavailable"))
+				missing, _ := errors.AsType[*src.MissingSecretError](
+					src.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), secret, "credentials unavailable"),
+				)
 				calls := 0
 				missing.RetryAmbient = func(context.Context) (*store.SourceArtifact, error) {
 					calls++
@@ -1188,18 +1659,39 @@ func TestController_AmbientSettlementExactlyOnce(t *testing.T) {
 func TestController_SyntheticCredentialSkip(t *testing.T) {
 	t.Parallel()
 	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "sources"}
-	repo := chart.OCIRepository(&manifest.HelmRepository{URL: "oci://registry.example/charts", SecretRef: &manifest.LocalObjectReference{Name: "auth"}})
+	repo := chart.OCIRepository(
+		&manifest.HelmRepository{
+			URL:       "oci://registry.example/charts",
+			SecretRef: &manifest.LocalObjectReference{Name: "auth"},
+		},
+	)
 	failure := src.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), "auth", "not found")
 	fetcher := &fakeFetcher{err: failure, secret: "auth"}
-	controller, st := newConfiguredController(t, map[string]src.Fetcher{manifest.KindOCIRepository: fetcher}, FetchOptions{AllowMissingSecrets: true})
+	controller, st := newConfiguredController(
+		t,
+		map[string]src.Fetcher{manifest.KindOCIRepository: fetcher},
+		FetchOptions{AllowMissingSecrets: true},
+	)
 	st.AddObject(repo)
-	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: controller.Tasks, Store: st, ID: repo.Named(), ReconcileNode: controller.ReconcileNode})
+	info := controllertest.DispatchToFixpoint(
+		t.Context(),
+		t,
+		controllertest.Dispatch{
+			Tasks:         controller.Tasks,
+			Store:         st,
+			ID:            repo.Named(),
+			ReconcileNode: controller.ReconcileNode,
+		},
+	)
 	warnings := st.Warnings()
 	secret := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "sources", Name: "auth"}
-	if info.Outcome() != store.OutcomeSkipped || info.String() != "secret sources/auth not found" || len(warnings) != 1 {
+	if info.Outcome() != store.OutcomeSkipped || info.String() != "secret sources/auth not found" ||
+		len(warnings) != 1 {
 		t.Fatalf("skip lost display or outcome: %+v %+v", info, warnings)
 	}
-	if warnings[0].Resource != repo.Named() || warnings[0].Subject.Resource != chart.Named() || !slices.Equal(warnings[0].Related, []manifest.NamedResource{secret}) || st.GetArtifact(repo.Named(), store.ArtifactContent) != nil {
+	if warnings[0].Resource != repo.Named() || warnings[0].Subject.Resource != chart.Named() ||
+		!slices.Equal(warnings[0].Related, []manifest.NamedResource{secret}) ||
+		st.GetArtifact(repo.Named(), store.ArtifactContent) != nil {
 		t.Fatalf("skip lost raw provenance: %+v", warnings)
 	}
 }
@@ -1210,14 +1702,20 @@ func TestController_AmbientFailureRetainsCause(t *testing.T) {
 		t.Run(fmt.Sprint(rejected), func(t *testing.T) {
 			t.Parallel()
 			repo := &manifest.GitRepository{Name: "kubernetes-secrets", Namespace: "flux-system"}
-			missing, _ := errors.AsType[*src.MissingSecretError](src.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), repo.Name, "not found"))
+			missing, _ := errors.AsType[*src.MissingSecretError](
+				src.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), repo.Name, "not found"),
+			)
 			var cause error = missing
 			if rejected {
 				cause = manifest.NewError(manifest.ErrFlux, &fetcherr.ResponseError{StatusCode: 401}, "")
 			}
 			missing.RetryAmbient = func(context.Context) (*store.SourceArtifact, error) {
 				if !rejected {
-					return nil, src.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), "", "SSH agent unavailable")
+					return nil, src.MissingSecretErr(
+						manifest.DiagnosticFor(repo.Named(), repo),
+						"",
+						"SSH agent unavailable",
+					)
 				}
 				return nil, cause
 			}
@@ -1234,15 +1732,24 @@ func TestController_AmbientFailureRetainsCause(t *testing.T) {
 				},
 			}
 			var err error
-			c.Tasks.Go(t.Context(), "settle", func(ctx context.Context) { err = c.run.Acquire(ctx, repo, acquisition, manifest.DrainCascade) })
+			c.Tasks.Go(
+				t.Context(),
+				"settle",
+				func(ctx context.Context) { err = c.run.Acquire(ctx, repo, acquisition, manifest.DrainCascade) },
+			)
 			c.Tasks.BlockTillDone()
-			if err == nil || err.Error() != "secret flux-system/kubernetes-secrets not found" || !errors.Is(err, cause) || errors.Is(err, manifest.ErrSourceSkipped) == rejected {
+			if err == nil || err.Error() != "secret flux-system/kubernetes-secrets not found" ||
+				!errors.Is(err, cause) ||
+				errors.Is(err, manifest.ErrSourceSkipped) == rejected {
 				t.Fatalf("ambient classification: %v", err)
 			}
 			if !strings.Contains(manifest.ErrorDetails(err), cause.Error()) {
 				t.Fatal("lost ambient diagnostic")
 			}
-			if response, ok := errors.AsType[*fetcherr.ResponseError](err); rejected && (!ok || response.StatusCode != http.StatusUnauthorized) {
+			if response, ok := errors.AsType[*fetcherr.ResponseError](
+				err,
+			); rejected &&
+				(!ok || response.StatusCode != http.StatusUnauthorized) {
 				t.Fatal("lost typed rejection")
 			}
 		})
@@ -1256,7 +1763,11 @@ func TestController_DeclaredNonGitWithAdmission(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			st := store.New()
-			input := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{"decoy": {Data: []byte("local")}}}
+			input := &store.SourceArtifact{
+				LocalPath: root,
+				LocalRoot: root,
+				FS:        fstest.MapFS{"decoy": {Data: []byte("local")}},
+			}
 			result, err := discovery.Run(t.Context(), discovery.Config{Input: input, Store: st})
 			assert.NoError(t, err)
 			spec := map[string]any{"url": "oci://fixture.invalid/artifact"}
@@ -1266,14 +1777,33 @@ func TestController_DeclaredNonGitWithAdmission(t *testing.T) {
 			if kind == manifest.KindBucket {
 				spec = map[string]any{"endpoint": "fixture.invalid", "bucketName": "published"}
 			}
-			doc := map[string]any{"apiVersion": manifest.SourceDomain + "/v1", "kind": kind, "metadata": map[string]any{"name": "declared", "namespace": "sources"}, "spec": spec}
+			doc := map[string]any{
+				"apiVersion": manifest.SourceDomain + "/v1",
+				"kind":       kind,
+				"metadata":   map[string]any{"name": "declared", "namespace": "sources"},
+				"spec":       spec,
+			}
 			obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
 			assert.NoError(t, err)
 			before := manifest.Fingerprint(obj)
-			f := &fakeFetcher{artifact: &store.SourceArtifact{Kind: kind, URL: "remote", FS: fstest.MapFS{"payload": {Data: []byte("acquired")}}}}
-			c, _ := newConfiguredController(t, map[string]src.Fetcher{kind: f}, FetchOptions{Admission: result.Admission, Loader: loader.New(st)})
+			f := &fakeFetcher{
+				artifact: &store.SourceArtifact{
+					Kind: kind,
+					URL:  "remote",
+					FS:   fstest.MapFS{"payload": {Data: []byte("acquired")}},
+				},
+			}
+			c, _ := newConfiguredController(
+				t,
+				map[string]src.Fetcher{kind: f},
+				FetchOptions{Admission: result.Admission, Loader: loader.New(st)},
+			)
 			st.AddObject(obj, doc)
-			status := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: obj.Named(), ReconcileNode: c.ReconcileNode})
+			status := controllertest.DispatchToFixpoint(
+				t.Context(),
+				t,
+				controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: obj.Named(), ReconcileNode: c.ReconcileNode},
+			)
 			assert.Equal(t, status.Status, store.StatusReady)
 			if kind == manifest.KindHelmRepository {
 				assert.Equal(t, f.calls, 0)

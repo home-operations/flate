@@ -9,9 +9,16 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func publishDocuments(c *Controller, id manifest.NamedResource, docs []manifest.DocOccurrence, opts manifest.ParseDocOptions) ([]store.Child, []manifest.DocOccurrence) {
+func publishDocuments(
+	c *Controller,
+	id manifest.NamedResource,
+	docs []manifest.DocOccurrence,
+	opts manifest.ParseDocOptions,
+) ([]store.Child, []manifest.DocOccurrence) {
 	if c.Store.GetObject(id) == nil {
-		c.Store.AddObject(&manifest.RawObject{APIVersion: id.Group + "/v1", Kind: id.Kind, Name: id.Name, Namespace: id.Namespace})
+		c.Store.AddObject(
+			&manifest.RawObject{APIVersion: id.Group + "/v1", Kind: id.Kind, Name: id.Name, Namespace: id.Namespace},
+		)
 	}
 	children, retained, failures := c.ParseChildren(c.Store.GetObject(id), docs, opts)
 	_, _, next := c.Store.GetEmission(id)
@@ -24,7 +31,10 @@ func publishDocuments(c *Controller, id manifest.NamedResource, docs []manifest.
 func parentIndexForTest(parents map[manifest.NamedResource]manifest.NamedResource) *manifest.DiscoveryIndex {
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
 	for id, parent := range parents {
-		index.Records[id] = manifest.DiscoveryRecord{Parent: parent, Productions: []manifest.Production{{Owner: parent}}}
+		index.Records[id] = manifest.DiscoveryRecord{
+			Parent:      parent,
+			Productions: []manifest.Production{{Owner: parent}},
+		}
 	}
 	return index
 }
@@ -35,5 +45,10 @@ func publishRawFixture(t *testing.T, c *Controller, obj manifest.BaseManifest) {
 	if c.Store.GetObject(root.Named()) == nil {
 		c.Store.AddObject(root)
 	}
-	controllertest.Emit(t.Context(), c.Controller, root.Named(), &store.Emission{Children: []store.Child{{Obj: obj}}, Complete: true})
+	controllertest.Emit(
+		t.Context(),
+		c.Controller,
+		root.Named(),
+		&store.Emission{Children: []store.Child{{Obj: obj}}, Complete: true},
+	)
 }

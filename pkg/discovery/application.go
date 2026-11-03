@@ -44,7 +44,9 @@ func (d *Session) needsEntry(changes *change.Set) bool {
 	}
 	delta, _, _ := changes.ForSource(manifest.BootstrapSourceID)
 	for id, record := range d.loader.Index.Files() {
-		if record.Path == "" || record.Parent != (manifest.NamedResource{}) || !d.cfg.Selection.Matches(id) || !delta.Contains(record.File) || !safepath.Contains(d.cfg.Path, record.Path) {
+		if record.Path == "" || record.Parent != (manifest.NamedResource{}) || !d.cfg.Selection.Matches(id) ||
+			!delta.Contains(record.File) ||
+			!safepath.Contains(d.cfg.Path, record.Path) {
 			continue
 		}
 		if slices.ContainsFunc(record.Productions, func(p manifest.Production) bool {
@@ -62,10 +64,20 @@ func (d *Session) qualifyEntry(ctx context.Context, admission *Admission) error 
 	q := &d.entryState
 	admission.qualification = q
 	relative, _ := filepath.Rel(d.cfg.Input.LocalPath, d.cfg.Path)
-	root := manifest.NewEntryKustomization(manifest.BootstrapSourceID, filepath.ToSlash(relative), manifest.NamedResource{})
+	root := manifest.NewEntryKustomization(
+		manifest.BootstrapSourceID,
+		filepath.ToSlash(relative),
+		manifest.NamedResource{},
+	)
 	evidence := d.cfg.Trees.PreviousEntry(ctx, kustomize.RenderRequest{
-		Source: d.cfg.Input, ApplyIgnore: true, SubPath: root.Path, Spec: root,
-		WipeSecrets: d.cfg.WipeSecrets, StrictSubstitutions: d.cfg.StrictSubstitutions, SkipKinds: d.cfg.SkipKinds, DependencySubstitutions: d.substitutions,
+		Source:                  d.cfg.Input,
+		ApplyIgnore:             true,
+		SubPath:                 root.Path,
+		Spec:                    root,
+		WipeSecrets:             d.cfg.WipeSecrets,
+		StrictSubstitutions:     d.cfg.StrictSubstitutions,
+		SkipKinds:               d.cfg.SkipKinds,
+		DependencySubstitutions: d.substitutions,
 	})
 	if evidence.Application != nil {
 		q.previous = evidence
@@ -128,7 +140,11 @@ func (a *Admission) EntryProducers() []manifest.NamedResource {
 	return nil
 }
 
-func (a *Admission) captureApplication(ctx context.Context, st *store.Store, owner manifest.BaseManifest) (*manifest.RenderReceipt, error) {
+func (a *Admission) captureApplication(
+	ctx context.Context,
+	st *store.Store,
+	owner manifest.BaseManifest,
+) (*manifest.RenderReceipt, error) {
 	q := a.qualification
 	if q == nil {
 		return nil, nil
@@ -172,13 +188,20 @@ func (a *Admission) captureApplication(ctx context.Context, st *store.Store, own
 			if !source || artifact.FS == nil || !artifact.Reads.Valid() {
 				return nil, nil
 			}
-			if id != manifest.BootstrapSourceID && !artifact.InputAlias && artifact.OriginPath(artifact.LocalPath) != a.input.OriginPath(a.input.LocalPath) {
+			if id != manifest.BootstrapSourceID && !artifact.InputAlias &&
+				artifact.OriginPath(artifact.LocalPath) != a.input.OriginPath(a.input.LocalPath) {
 				inputs = append(inputs, kustomize.EntryInput{Resource: id, Artifact: artifact})
 			}
 		}
 		if output, ok := st.GetArtifact(id, store.ArtifactContent).(*store.Emission); ok {
 			if !output.Complete || !output.OutputReads.Valid() || output.Render == nil && !id.ReportHidden() {
-				slog.Debug("discovery: entry application evidence incomplete", "resource", id, "reason", "producer output lacks a valid receipt")
+				slog.Debug(
+					"discovery: entry application evidence incomplete",
+					"resource",
+					id,
+					"reason",
+					"producer output lacks a valid receipt",
+				)
 				return nil, nil
 			}
 			if output.Render != nil {
@@ -190,10 +213,17 @@ func (a *Admission) captureApplication(ctx context.Context, st *store.Store, own
 		}
 		record, _ := q.loader.Index.Lookup(id)
 		if source && !artifact.InputAlias && id != manifest.BootstrapSourceID && record.Path == "" {
-			slog.Debug("discovery: entry application evidence incomplete", "resource", id, "reason", "source declaration cannot be reacquired")
+			slog.Debug(
+				"discovery: entry application evidence incomplete",
+				"resource",
+				id,
+				"reason",
+				"source declaration cannot be reacquired",
+			)
 			return nil, nil
 		}
-		if st.GetObject(id) == nil && record.Path == "" && len(st.Productions(id, q.loader.Index)) == 0 && id != manifest.BootstrapSourceID {
+		if st.GetObject(id) == nil && record.Path == "" && len(st.Productions(id, q.loader.Index)) == 0 &&
+			id != manifest.BootstrapSourceID {
 			return nil, nil
 		}
 		if record.File != "" {
@@ -250,7 +280,18 @@ func (a *Admission) captureApplication(ctx context.Context, st *store.Store, own
 	if !ok {
 		return nil, nil
 	}
-	return q.trees.ApplicationReceipt(ctx, a.input, kustomize.EntryEvidence{Application: document, Owner: q.current, Inputs: inputs, Renders: renders, Records: st.ChildFootprint(q.current, output.Children, q.loader.Index)}, slices.Compact(files))
+	return q.trees.ApplicationReceipt(
+		ctx,
+		a.input,
+		kustomize.EntryEvidence{
+			Application: document,
+			Owner:       q.current,
+			Inputs:      inputs,
+			Renders:     renders,
+			Records:     st.ChildFootprint(q.current, output.Children, q.loader.Index),
+		},
+		slices.Compact(files),
+	)
 }
 
 func (d *Session) applications() []manifest.BaseManifest {
@@ -311,7 +352,12 @@ func (a *Admission) addApplication(st *store.Store, obj manifest.BaseManifest, h
 	if !valid {
 		return
 	}
-	evidence := &applicationEvidence{object: obj, application: application, source: a.applicationSource(st, application), history: history}
+	evidence := &applicationEvidence{
+		object:      obj,
+		application: application,
+		source:      a.applicationSource(st, application),
+		history:     history,
+	}
 	for {
 		evidence.next = a.applications.Load()
 		if a.applications.CompareAndSwap(evidence.next, evidence) {
@@ -347,7 +393,11 @@ func (a *Admission) applicationSource(st *store.Store, application manifest.Entr
 	return resolved
 }
 
-func (a *Admission) qualifyEntry(ctx context.Context, st *store.Store, objects []manifest.BaseManifest) ([]manifest.BaseManifest, error) {
+func (a *Admission) qualifyEntry(
+	ctx context.Context,
+	st *store.Store,
+	objects []manifest.BaseManifest,
+) ([]manifest.BaseManifest, error) {
 	repoRoot := a.input.LocalPath
 	var appliers []manifest.BaseManifest
 	qualify := func(obj manifest.BaseManifest, application manifest.EntryApplication, resolved entryResolution) error {
@@ -387,7 +437,10 @@ func (a *Admission) qualifyEntry(ctx context.Context, st *store.Store, objects [
 	}
 	for evidence := a.applications.Load(); evidence != nil; evidence = evidence.next {
 		if !evidence.history {
-			if current := st.GetObject(evidence.object.Named()); current == nil || !manifest.Equal(current, evidence.object) {
+			if current := st.GetObject(
+				evidence.object.Named(),
+			); current == nil ||
+				!manifest.Equal(current, evidence.object) {
 				continue
 			}
 		}
@@ -410,7 +463,11 @@ func (r entryResolution) GetArtifact(manifest.NamedResource, store.ArtifactRead)
 	return r.artifact
 }
 
-func (a *Admission) entry(ctx context.Context, st *store.Store, objects []manifest.BaseManifest) (*manifest.Kustomization, manifest.BaseManifest, error) {
+func (a *Admission) entry(
+	ctx context.Context,
+	st *store.Store,
+	objects []manifest.BaseManifest,
+) (*manifest.Kustomization, manifest.BaseManifest, error) {
 	appliers, err := a.qualifyEntry(ctx, st, objects)
 	if err != nil {
 		return nil, nil, err
@@ -489,7 +546,11 @@ func (a *Admission) BindEntry(ctx context.Context, st *store.Store) (*manifest.K
 			for _, owner := range parents {
 
 				parent, accepted := st.GetArtifact(owner, store.ArtifactContent).(*store.Emission)
-				if accepted && parent.Complete && parent.OutputReads.Valid() && !slices.ContainsFunc(parent.Children, func(child store.Child) bool { return child.Obj.Named() == q.current }) {
+				if accepted && parent.Complete && parent.OutputReads.Valid() &&
+					!slices.ContainsFunc(
+						parent.Children,
+						func(child store.Child) bool { return child.Obj.Named() == q.current },
+					) {
 					q.observed = true
 				}
 			}
@@ -526,7 +587,8 @@ func (a *Admission) BindEntry(ctx context.Context, st *store.Store) (*manifest.K
 		}
 	}
 	key := root.Named()
-	if candidate, ok := owner.(*manifest.Kustomization); ok && len(candidate.DependsOn) == 0 && (candidate.PostBuild == nil || len(candidate.PostBuild.SubstituteFrom) == 0) {
+	if candidate, ok := owner.(*manifest.Kustomization); ok && len(candidate.DependsOn) == 0 &&
+		(candidate.PostBuild == nil || len(candidate.PostBuild.SubstituteFrom) == 0) {
 		if current := st.GetObject(candidate.Named()); current == nil || manifest.Equal(current, candidate) {
 			root = candidate
 		}
@@ -543,5 +605,11 @@ func (a *Admission) BindEntry(ctx context.Context, st *store.Store) (*manifest.K
 	if source.Name == "" || source.Kind == "" {
 		source = manifest.BootstrapSourceID
 	}
-	return root, Binding{Producer: root.Named(), Source: source, Key: key, Path: manifest.NormalizeClaimBase(root.Path), Entry: evidence}, nil
+	return root, Binding{
+		Producer: root.Named(),
+		Source:   source,
+		Key:      key,
+		Path:     manifest.NormalizeClaimBase(root.Path),
+		Entry:    evidence,
+	}, nil
 }

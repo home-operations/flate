@@ -13,15 +13,33 @@ import (
 
 func TestHelmChartSource_OCIRepository(t *testing.T) {
 	t.Parallel()
-	repository := &HelmRepository{Name: "repository", Namespace: "sources", URL: "oci://registry.example/charts/",
-		Provider: "aws", SecretRef: &LocalObjectReference{Name: "auth"}, CertSecretRef: &LocalObjectReference{Name: "tls"},
-		Insecure: true, Interval: metav1.Duration{Duration: time.Hour}, Timeout: &metav1.Duration{Duration: 3 * time.Minute}}
-	chart := NewHelmChartSource(sourcev1.HelmChart{Name: "chart", Namespace: "sources",
-		Spec: sourcev1.HelmChartSpec{Chart: "app", Version: "1.0.0"}})
+	repository := &HelmRepository{
+		Name:          "repository",
+		Namespace:     "sources",
+		URL:           "oci://registry.example/charts/",
+		Provider:      "aws",
+		SecretRef:     &LocalObjectReference{Name: "auth"},
+		CertSecretRef: &LocalObjectReference{Name: "tls"},
+		Insecure:      true,
+		Interval:      metav1.Duration{Duration: time.Hour},
+		Timeout:       &metav1.Duration{Duration: 3 * time.Minute},
+	}
+	chart := NewHelmChartSource(sourcev1.HelmChart{
+		Name: "chart", Namespace: "sources",
+		Spec: sourcev1.HelmChartSpec{Chart: "app", Version: "1.0.0"},
+	})
 	got := chart.OCIRepository(repository)
-	assert.Equal(t, got.Named(), NamedResource{Group: SourceDomain, Kind: KindOCIRepository, Name: chart.Name, Namespace: chart.Namespace})
+	assert.Equal(
+		t,
+		got.Named(),
+		NamedResource{Group: SourceDomain, Kind: KindOCIRepository, Name: chart.Name, Namespace: chart.Namespace},
+	)
 	assert.Equal(t, DiagnosticFor(got.Named(), got), DiagnosticIdentity{ID: got.Named(), Resource: chart.Named()})
-	assert.Equal(t, DiagnosticFor(got.WithNamespace("other").Named(), got.WithNamespace("other")).Resource, chart.Named())
+	assert.Equal(
+		t,
+		DiagnosticFor(got.WithNamespace("other").Named(), got.WithNamespace("other")).Resource,
+		chart.Named(),
+	)
 	assert.Equal(t, got.URL, "oci://registry.example/charts/app")
 	assert.Equal(t, got.Provider, repository.Provider)
 	assert.Equal(t, got.SecretRef, repository.SecretRef)
@@ -57,7 +75,9 @@ func TestHelmChartSource_OCIRepositoryVersion(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			chart := NewHelmChartSource(sourcev1.HelmChart{Spec: sourcev1.HelmChartSpec{Chart: "app", Version: tc.version}})
+			chart := NewHelmChartSource(
+				sourcev1.HelmChart{Spec: sourcev1.HelmChartSpec{Chart: "app", Version: tc.version}},
+			)
 			got := chart.OCIRepository(&HelmRepository{URL: "oci://registry.example/charts"})
 			if diff := cmp.Diff(tc.want, got.Reference); diff != "" {
 				t.Fatalf("reference (-want +got):\n%s", diff)

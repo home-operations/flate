@@ -218,7 +218,11 @@ func (g *FS) identifyFiles(ctx context.Context, files map[string]string) error {
 			return err
 		}
 		prefix = filepath.ToSlash(prefix)
-		nodes["."] = merklefs.NewRootNodeWithOptions(osfs.New(g.location.RepositoryRoot, osfs.WithBoundOS()), nil, merklefs.Options{Index: idx})
+		nodes["."] = merklefs.NewRootNodeWithOptions(
+			osfs.New(g.location.RepositoryRoot, osfs.WithBoundOS()),
+			nil,
+			merklefs.Options{Index: idx},
+		)
 	}
 	var lookup func(string) (noder.Noder, error)
 	lookup = func(name string) (noder.Noder, error) {
@@ -415,7 +419,8 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 			if source && matcher != nil && opts.Ignore != "" {
 				matcher = matcher.WithExtra(opts.Ignore)
 			}
-			reuse = reuse || commit == plumbing.ZeroHash && source && v.mode == Source && opts.Ignore == "" && len(opts.Sparse) == 0
+			reuse = reuse ||
+				commit == plumbing.ZeroHash && source && v.mode == Source && opts.Ignore == "" && len(opts.Sparse) == 0
 		}
 		if source && commit == plumbing.ZeroHash && matcher == nil {
 			var err error
@@ -464,7 +469,9 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 	if commit != plumbing.ZeroHash {
 		identity = ""
 	}
-	if committed := commit != plumbing.ZeroHash && (opts.Worktree == nil || opts.Content != nil); committed || identity != "" {
+	if committed := commit != plumbing.ZeroHash &&
+		(opts.Worktree == nil || opts.Content != nil); committed ||
+		identity != "" {
 		g.identity = manifest.Fingerprint(struct {
 			Content         any
 			Commit, Current string
@@ -473,7 +480,13 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 			Ignore          string
 		}{opts.Content, commit.String(), identity, opts.Mode, opts.Sparse, opts.Ignore})
 		if g.identity == "" {
-			return warningOnly(input), "", manifest.NewError(manifest.ErrInput, nil, "git view content cannot be fingerprinted")
+			return warningOnly(
+					input,
+				), "", manifest.NewError(
+					manifest.ErrInput,
+					nil,
+					"git view content cannot be fingerprinted",
+				)
 		}
 	}
 	if err := g.shape(ctx, opts, input); err != nil {
@@ -677,7 +690,12 @@ func (g *gitView) walk(ctx context.Context, commit plumbing.Hash) ([]manifest.Wa
 	return g.walkCommit(ctx, storer, c.TreeHash, ".")
 }
 
-func (g *gitView) walkCommit(ctx context.Context, storer storer.EncodedObjectStorer, hash plumbing.Hash, prefix string) ([]manifest.Warning, error) {
+func (g *gitView) walkCommit(
+	ctx context.Context,
+	storer storer.EncodedObjectStorer,
+	hash plumbing.Hash,
+	prefix string,
+) ([]manifest.Warning, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -696,8 +714,10 @@ func (g *gitView) walkCommit(ctx context.Context, storer storer.EncodedObjectSto
 			return warnings, err
 		}
 		if entry.Mode == filemode.Submodule {
-			warnings = append(warnings, manifest.Warning{Category: manifest.WarnSkippedSubmodule,
-				Message: "skipping submodule", Count: 1, Detail: []string{name, g.commit.String()}})
+			warnings = append(warnings, manifest.Warning{
+				Category: manifest.WarnSkippedSubmodule,
+				Message:  "skipping submodule", Count: 1, Detail: []string{name, g.commit.String()},
+			})
 			continue
 		}
 		if !mode.IsRegular() && !mode.IsDir() && mode&fs.ModeSymlink == 0 {
@@ -919,6 +939,7 @@ func (f *gitFile) Stat() (fs.FileInfo, error) {
 	}
 	return f.info, nil
 }
+
 func (f *gitFile) Close() error {
 	if f.input == nil {
 		return fs.ErrClosed
@@ -930,6 +951,7 @@ func (f *gitFile) Close() error {
 	f.input, f.reader, f.info, f.entries = nil, nil, nil, nil
 	return err
 }
+
 func (f *gitFile) Read(p []byte) (int, error) {
 	if f.input == nil {
 		return 0, fs.ErrClosed
@@ -939,6 +961,7 @@ func (f *gitFile) Read(p []byte) (int, error) {
 	}
 	return f.reader.Read(p)
 }
+
 func (f *gitFile) ReadDir(n int) ([]fs.DirEntry, error) {
 	if f.input == nil {
 		return nil, fs.ErrClosed
@@ -969,7 +992,9 @@ func (g *gitView) ReadFile(name string) ([]byte, error) {
 				if err != nil {
 					return nil, err
 				}
-				return os.ReadFile(abs) //nolint:gosec // Source membership admits regular files from the stable checkout.
+				return os.ReadFile(
+					abs,
+				) //nolint:gosec // Source membership admits regular files from the stable checkout.
 			}
 		}
 	}

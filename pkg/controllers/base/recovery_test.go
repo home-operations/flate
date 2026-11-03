@@ -4,9 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"slices"
 	"testing"
+
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/testutil"
@@ -25,7 +26,12 @@ func TestExecution_ReplacesDerivedFailureProvenance(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			st := store.New()
-			obj := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "consumer", Namespace: "apps", Suspend: mode == "suspended"}
+			obj := &manifest.HelmRelease{
+				ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"},
+				Name:      "consumer",
+				Namespace: "apps",
+				Suspend:   mode == "suspended",
+			}
 			id := obj.Named()
 			old := testutil.HelmReleaseID("apps", "old")
 			fresh := testutil.HelmReleaseID("apps", "fresh")
@@ -38,30 +44,52 @@ func TestExecution_ReplacesDerivedFailureProvenance(t *testing.T) {
 			}
 			c := base.New(st, nil)
 			if mode == "filtered" {
-				admissionLoader1 := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"other.yaml"}), Index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "consumer.yaml"}}}, Inventory: st, Root: ""})
+				admissionLoader1 := admissiontest.New(
+					t,
+					admissiontest.Config{
+						Changes: change.NewSet([]string{"other.yaml"}),
+						Index: &manifest.DiscoveryIndex{
+							Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "consumer.yaml"}},
+						},
+						Inventory: st,
+						Root:      "",
+					},
+				)
 				admissiontest.Commit(t, admissionLoader1, nil)
 				c.Configure(base.Options{Filter: admissionLoader1.Options.Filter, Loader: admissionLoader1})
 			}
 			if mode == "preflight" {
-				c.Configure(base.Options{PreflightFailure: func(manifest.NamedResource) (string, bool) { return "cycle", true }})
+				c.Configure(
+					base.Options{
+						PreflightFailure: func(manifest.NamedResource) (string, bool) { return "cycle", true },
+					},
+				)
 			}
 			ran := false
 			execution := controllertest.NewExecution(c, id)
-			execution.Dispatch(t.Context(), manifest.DrainNone, execution, func(_ *base.Execution, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
-				ran = true
+			execution.Dispatch(
+				t.Context(),
+				manifest.DrainNone,
+				execution,
+				func(_ *base.Execution, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
+					ran = true
 
-				switch mode {
-				case "primary error":
-					return errors.New("render failed")
-				case "primary status":
-					st.UpdateStatus(id, store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "render failed"})
-				case "blocked":
-					return &depwait.ErrBlocked{Deps: []manifest.NamedResource{fresh}}
-				case "new dependency failure":
-					return &manifest.DependencyFailedError{Failed: []manifest.NamedResource{fresh}}
-				}
-				return nil
-			})
+					switch mode {
+					case "primary error":
+						return errors.New("render failed")
+					case "primary status":
+						st.UpdateStatus(
+							id,
+							store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "render failed"},
+						)
+					case "blocked":
+						return &depwait.ErrBlocked{Deps: []manifest.NamedResource{fresh}}
+					case "new dependency failure":
+						return &manifest.DependencyFailedError{Failed: []manifest.NamedResource{fresh}}
+					}
+					return nil
+				},
+			)
 			wantStatus := store.StatusReady
 			wantRan := true
 			switch mode {
@@ -114,14 +142,25 @@ func TestDispatchNode_CanonicalRead(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/replaced-type=%t", stage, replacedType), func(t *testing.T) {
 				t.Parallel()
 				s := store.New()
-				hr := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "release", Namespace: "apps"}
+				hr := &manifest.HelmRelease{
+					ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"},
+					Name:      "release",
+					Namespace: "apps",
+				}
 				fresh := hr.Clone()
 				fresh.Values = map[string]any{"current": true}
 				s.AddObject(hr)
 				id := hr.Named()
 				replace := func() {
 					if replacedType {
-						s.AddObject(&manifest.RawObject{APIVersion: manifest.HelmReleaseDomain + "/v2", Kind: manifest.KindHelmRelease, Name: id.Name, Namespace: id.Namespace})
+						s.AddObject(
+							&manifest.RawObject{
+								APIVersion: manifest.HelmReleaseDomain + "/v2",
+								Kind:       manifest.KindHelmRelease,
+								Name:       id.Name,
+								Namespace:  id.Namespace,
+							},
+						)
 					} else {
 						s.AddObject(fresh)
 					}
@@ -129,9 +168,19 @@ func TestDispatchNode_CanonicalRead(t *testing.T) {
 				c := base.New(s, task.NewBounded(2))
 				if stage == "preflight" {
 					s.UpdateStatus(id, store.StatusInfo{Status: store.StatusPending})
-					c.Configure(base.Options{PreflightFailure: func(manifest.NamedResource) (string, bool) { replace(); return "", false }})
+					c.Configure(
+						base.Options{
+							PreflightFailure: func(manifest.NamedResource) (string, bool) { replace(); return "", false },
+						},
+					)
 				} else {
-					s.UpdateFailure(id, &manifest.DependencyFailedError{Parent: id, Failed: []manifest.NamedResource{testutil.HelmReleaseID("apps", "dependency")}})
+					s.UpdateFailure(
+						id,
+						&manifest.DependencyFailedError{
+							Parent: id,
+							Failed: []manifest.NamedResource{testutil.HelmReleaseID("apps", "dependency")},
+						},
+					)
 					s.AddListener(store.EventStatusUpdated, func(_ manifest.NamedResource, payload any) {
 						if payload.(store.StatusInfo).Status == store.StatusPending {
 							replace()
@@ -140,30 +189,40 @@ func TestDispatchNode_CanonicalRead(t *testing.T) {
 				}
 				called := false
 				execution := controllertest.NewExecution(c, id)
-				execution.Dispatch(t.Context(), manifest.DrainNone, execution, func(execution *base.Execution, _ context.Context, obj *manifest.HelmRelease, _ manifest.DrainLevel) error {
-					if stage == "retry" {
-						s.UpdateStatus(id, store.StatusInfo{Status: store.StatusPending})
-						if execution.Reads.Valid() {
-							t.Fatal("replacement did not invalidate original attempt")
+				execution.Dispatch(
+					t.Context(),
+					manifest.DrainNone,
+					execution,
+					func(execution *base.Execution, _ context.Context, obj *manifest.HelmRelease, _ manifest.DrainLevel) error {
+						if stage == "retry" {
+							s.UpdateStatus(id, store.StatusInfo{Status: store.StatusPending})
+							if execution.Reads.Valid() {
+								t.Fatal("replacement did not invalidate original attempt")
+							}
+							return nil
+						}
+						called = true
+						if obj != fresh {
+							t.Fatal("reconciliation retained the replaced canonical object")
 						}
 						return nil
-					}
-					called = true
-					if obj != fresh {
-						t.Fatal("reconciliation retained the replaced canonical object")
-					}
-					return nil
-				})
+					},
+				)
 				if stage == "retry" {
 					execution.Retire()
 					execution = controllertest.NewExecution(c, id)
-					execution.Dispatch(t.Context(), manifest.DrainNone, execution, func(_ *base.Execution, _ context.Context, obj *manifest.HelmRelease, _ manifest.DrainLevel) error {
-						called = true
-						if obj != fresh {
-							t.Fatal("fresh attempt retained replaced declaration")
-						}
-						return nil
-					})
+					execution.Dispatch(
+						t.Context(),
+						manifest.DrainNone,
+						execution,
+						func(_ *base.Execution, _ context.Context, obj *manifest.HelmRelease, _ manifest.DrainLevel) error {
+							called = true
+							if obj != fresh {
+								t.Fatal("fresh attempt retained replaced declaration")
+							}
+							return nil
+						},
+					)
 				}
 				defer execution.Close()
 				if called == replacedType {

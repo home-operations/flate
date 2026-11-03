@@ -100,7 +100,12 @@ type remoteKey struct {
 // Shared work outlives individual waiters. Only
 // Close guarantees worker cleanup; an Acquire return does not join the owner.
 // heldSlot is the borrowed service when the caller holds its slot, or nil.
-func (h *HTTPInputs) Acquire(ctx context.Context, urlStr string, retry cache.RetryConfig, heldSlot *task.Service) (fs.FS, error) {
+func (h *HTTPInputs) Acquire(
+	ctx context.Context,
+	urlStr string,
+	retry cache.RetryConfig,
+	heldSlot *task.Service,
+) (fs.FS, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -157,9 +162,14 @@ func (h *HTTPInputs) Acquire(ctx context.Context, urlStr string, retry cache.Ret
 				h.remoteFetches.CompareAndDelete(key, rf)
 				return
 			}
-			generation, _, _, err := h.owner.Blob(workerCtx, cache.BlobKey{Content: struct{ URL string }{urlStr}}, cache.Policy{Retry: retry}, func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-				return h.httpGetURL(ctx, urlStr, w)
-			})
+			generation, _, _, err := h.owner.Blob(
+				workerCtx,
+				cache.BlobKey{Content: struct{ URL string }{urlStr}},
+				cache.Policy{Retry: retry},
+				func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+					return h.httpGetURL(ctx, urlStr, w)
+				},
+			)
 			if err == nil {
 				rf.input = cache.NameBlob("content", generation)
 			}
@@ -186,7 +196,12 @@ func (h *HTTPInputs) Acquire(ctx context.Context, urlStr string, retry cache.Ret
 	}
 	return input, err
 }
-func (h *HTTPInputs) httpGetURL(ctx context.Context, urlStr string, w cache.ProducerInput) (result cache.ProducerResult, resultErr error) {
+
+func (h *HTTPInputs) httpGetURL(
+	ctx context.Context,
+	urlStr string,
+	w cache.ProducerInput,
+) (result cache.ProducerResult, resultErr error) {
 	previous, err := w.Previous(ctx)
 	if err != nil {
 		return cache.ProducerResult{}, err
@@ -208,9 +223,11 @@ func (h *HTTPInputs) httpGetURL(ctx context.Context, urlStr string, w cache.Prod
 		return cache.ProducerResult{}, err
 	}
 	defer func() { resultErr = errors.Join(resultErr, resp.Body.Close()) }()
-	if resp.StatusCode == http.StatusNotModified && previous != nil && (resp.Request.Header.Get("If-None-Match") != "" || resp.Request.Header.Get("If-Modified-Since") != "") {
+	if resp.StatusCode == http.StatusNotModified && previous != nil &&
+		(resp.Request.Header.Get("If-None-Match") != "" || resp.Request.Header.Get("If-Modified-Since") != "") {
 		result.Descriptor, result.Unchanged = *previous, true
-	} else if resp.StatusCode < 200 || resp.StatusCode > 299 {
+	} else if resp.StatusCode < 200 ||
+		resp.StatusCode > 299 {
 		return cache.ProducerResult{}, &fetcherr.ResponseError{StatusCode: resp.StatusCode, Op: http.MethodGet}
 	} else {
 		result.Annotations = make(map[string]string)

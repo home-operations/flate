@@ -304,7 +304,9 @@ func (f *countedDirFS) ReadDir(name string) ([]fs.DirEntry, error) {
 
 func TestBuilder_ForeignDirectoriesStayLazy(t *testing.T) {
 	t.Parallel()
-	lower := &countedDirFS{FS: fstest.MapFS{"apps/one/file": {Data: []byte("one")}, "apps/two/file": {Data: []byte("two")}}}
+	lower := &countedDirFS{
+		FS: fstest.MapFS{"apps/one/file": {Data: []byte("one")}, "apps/two/file": {Data: []byte("two")}},
+	}
 	b := tree.NewBuilder(lower)
 	must(t, b.AddFile("apps/one/generated", []byte("upper"), 0o644))
 	if lower.dirs != 0 {
@@ -328,7 +330,9 @@ func TestBuilder_ForeignDirectoriesStayLazy(t *testing.T) {
 
 func TestBuilder_RemoveAllMasksForeignListing(t *testing.T) {
 	t.Parallel()
-	b := tree.NewBuilder(fstest.MapFS{"d/a": {Data: []byte("a")}, "d/b": {Data: []byte("b")}, "d/sub/c": {Data: []byte("c")}})
+	b := tree.NewBuilder(
+		fstest.MapFS{"d/a": {Data: []byte("a")}, "d/b": {Data: []byte("b")}, "d/sub/c": {Data: []byte("c")}},
+	)
 	must(t, b.RemoveAll("d/a"))
 	must(t, b.RemoveAll("d/sub"))
 	must(t, b.AddFile("d/z", []byte("z"), 0o644))

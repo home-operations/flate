@@ -119,9 +119,18 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 				return nil, err
 			}
 			if !advanced {
-				added, retry := cfg.Loader.Options.Filter.AddEmitted(proposal.Needed, proposal.Selected, proposal.Dirty, proposal.Revision)
+				added, retry := cfg.Loader.Options.Filter.AddEmitted(
+					proposal.Needed,
+					proposal.Selected,
+					proposal.Dirty,
+					proposal.Revision,
+				)
 				if retry {
-					return nil, manifest.NewError(manifest.ErrInput, nil, "discovery membership changed during construction")
+					return nil, manifest.NewError(
+						manifest.ErrInput,
+						nil,
+						"discovery membership changed during construction",
+					)
 				}
 				for _, id := range added {
 					cfg.Store.SetIncluded(id, true)
@@ -148,7 +157,12 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	}
 	for _, child := range d.loader.Kustomizations() {
 		ks := child.Obj.(*manifest.Kustomization)
-		if resolved := manifest.MapDependsOn(ks, d.substitutions.Resolve, d.substitutions.Resolve); resolved != ks && cfg.Store.GetObject(ks.Named()) != nil {
+		if resolved := manifest.MapDependsOn(
+			ks,
+			d.substitutions.Resolve,
+			d.substitutions.Resolve,
+		); resolved != ks &&
+			cfg.Store.GetObject(ks.Named()) != nil {
 			_, doc, emission := cfg.Store.GetEmission(ks.Named())
 			emission.Finish()
 			cfg.Store.AddObject(resolved, doc)
@@ -300,7 +314,9 @@ func newDiscoverer(cfg Config) *Session {
 		return d
 	}
 	if !prepared.parsed.Matches(input) || input.LocalPath != prepared.input.LocalPath || input.LocalRoot != prepared.input.LocalRoot ||
-		input.Key != prepared.input.Key || input.Content != prepared.input.Content || input.Revision != prepared.input.Revision || input.Digest != prepared.input.Digest {
+		input.Key != prepared.input.Key || input.Content != prepared.input.Content ||
+		input.Revision != prepared.input.Revision ||
+		input.Digest != prepared.input.Digest {
 		return d
 	}
 	l.Options.ParsedInputs = prepared.parsed
@@ -436,7 +452,17 @@ func (d *Session) loadManifests(ctx context.Context, repoRoot string, build bool
 	}
 	l.PreferExisting = false
 	d.warnBootstrapAliases(repoRoot)
-	slog.Debug("discovery: loaded objects", "count", total, "rounds", rounds, "scan_root", d.cfg.Path, "source_root", repoRoot)
+	slog.Debug(
+		"discovery: loaded objects",
+		"count",
+		total,
+		"rounds",
+		rounds,
+		"scan_root",
+		d.cfg.Path,
+		"source_root",
+		repoRoot,
+	)
 	return nil
 }
 
@@ -477,7 +503,8 @@ func (d *Session) bindEntry(ctx context.Context, repoRoot string) (*manifest.Kus
 		}
 		if source, ok := d.cfg.Store.GetObject(ks.SourceID()).(entrySource); ok {
 			_, descriptor := source.BootstrapAlias(input.LocalPath)
-			if descriptor != nil && (descriptor.Ignore != nil && *descriptor.Ignore != "" || len(descriptor.SparseCheckout) != 0) {
+			if descriptor != nil &&
+				(descriptor.Ignore != nil && *descriptor.Ignore != "" || len(descriptor.SparseCheckout) != 0) {
 				continue
 			}
 		}
@@ -538,7 +565,13 @@ func (d *Session) bindEntry(ctx context.Context, repoRoot string) (*manifest.Kus
 	if d.binding.Producer != ks.Named() {
 		failure = nil
 	}
-	d.binding = Binding{Producer: ks.Named(), Source: source, Path: manifest.NormalizeClaimBase(ks.Path), Key: internal.Named(), Failure: failure}
+	d.binding = Binding{
+		Producer: ks.Named(),
+		Source:   source,
+		Path:     manifest.NormalizeClaimBase(ks.Path),
+		Key:      internal.Named(),
+		Failure:  failure,
+	}
 	return ks, nil
 }
 
@@ -556,7 +589,8 @@ func (d *Session) entryEligible(owner *manifest.Kustomization, children []store.
 	prerequisites := func(obj manifest.BaseManifest) bool {
 		obj = manifest.MapDependsOn(obj, d.substitutions.Resolve, d.substitutions.Resolve)
 		for ref := range manifest.References(obj, manifest.ReferenceRelations) {
-			if (ref.Ordering || ref.ArtifactStages != 0 && d.cfg.Store.GetArtifact(ref.NamedResource, store.ArtifactContent) == nil) && captured(ref.NamedResource) {
+			if (ref.Ordering || ref.ArtifactStages != 0 && d.cfg.Store.GetArtifact(ref.NamedResource, store.ArtifactContent) == nil) &&
+				captured(ref.NamedResource) {
 				return true
 			}
 		}
@@ -588,7 +622,8 @@ func (d *Session) entryEligible(owner *manifest.Kustomization, children []store.
 			if production.Source != (manifest.NamedResource{}) && production.Source != source {
 				continue
 			}
-			if production.Owner == owner.Named() || captured(production.Materializer(id)) || captured(production.Declaration) {
+			if production.Owner == owner.Named() || captured(production.Materializer(id)) ||
+				captured(production.Declaration) {
 				return true
 			}
 		}
@@ -610,8 +645,14 @@ func (d *Session) prepareDocuments(
 		return declarationPreparation{}, err
 	}
 	request := kustomize.RenderRequest{
-		Source: input, ApplyIgnore: ks.SourceID() == manifest.BootstrapSourceID || input.InputAlias || input.Content == "", SubPath: prepared.Path, Spec: prepared,
-		WipeSecrets: d.cfg.WipeSecrets, StrictSubstitutions: d.cfg.StrictSubstitutions, SkipKinds: d.cfg.SkipKinds, DependencySubstitutions: d.substitutions,
+		Source:                  input,
+		ApplyIgnore:             ks.SourceID() == manifest.BootstrapSourceID || input.InputAlias || input.Content == "",
+		SubPath:                 prepared.Path,
+		Spec:                    prepared,
+		WipeSecrets:             d.cfg.WipeSecrets,
+		StrictSubstitutions:     d.cfg.StrictSubstitutions,
+		SkipKinds:               d.cfg.SkipKinds,
+		DependencySubstitutions: d.substitutions,
 	}
 	docs, receipt, found := d.cfg.Trees.PreviousRender(ctx, request)
 	if !found {
@@ -625,7 +666,12 @@ func (d *Session) prepareDocuments(
 	if err := kustomize.Shape(prepared, docs, d.cfg.StrictSubstitutions); err != nil {
 		return declarationPreparation{}, err
 	}
-	built, _, failures := loader.ParseChildren(prepared, docs, manifest.ParseDocOptions{WipeSecrets: d.cfg.WipeSecrets}, d.cfg.SkipKinds)
+	built, _, failures := loader.ParseChildren(
+		prepared,
+		docs,
+		manifest.ParseDocOptions{WipeSecrets: d.cfg.WipeSecrets},
+		d.cfg.SkipKinds,
+	)
 	if err := manifest.DocumentFailure(failures); err != nil {
 		return declarationPreparation{}, err
 	}
@@ -650,7 +696,15 @@ func (d *Session) prepareProducer(ctx context.Context, ks *manifest.Kustomizatio
 	if d.binding.Producer == ks.Named() || !ks.Named().ReportHidden() {
 		owner = ks.Named()
 	}
-	d.loader.RegisterBuilt(loader.BuiltInput{Root: filepath.Join(input.LocalPath, manifest.NormalizeClaimBase(ks.Path)), Owner: owner, Source: source, Reads: kustomize.RenderInputs(prepared.receipt)}, prepared.children)
+	d.loader.RegisterBuilt(
+		loader.BuiltInput{
+			Root:   filepath.Join(input.LocalPath, manifest.NormalizeClaimBase(ks.Path)),
+			Owner:  owner,
+			Source: source,
+			Reads:  kustomize.RenderInputs(prepared.receipt),
+		},
+		prepared.children,
+	)
 	prepared.registered = true
 	d.prepared[ks] = prepared
 	if d.binding.Producer == ks.Named() {
@@ -720,7 +774,10 @@ func (d *Session) discardPinnedWorkingTreeFiles(repoRoot string) {
 }
 
 // scratch MUST be caller-owned; package-owned occurrence slices are immutable.
-func (d *Session) pinnedWorkingTreeClaims(repoRoot string, scratch []loader.Occurrence) ([]manifest.KSClaim, map[manifest.NamedResource]struct{}) {
+func (d *Session) pinnedWorkingTreeClaims(
+	repoRoot string,
+	scratch []loader.Occurrence,
+) ([]manifest.KSClaim, map[manifest.NamedResource]struct{}) {
 	pinned := scratch[:0]
 	sources := map[manifest.NamedResource]struct{}{}
 	for _, o := range scratch {
@@ -736,7 +793,12 @@ func (d *Session) pinnedWorkingTreeClaims(repoRoot string, scratch []loader.Occu
 	return d.loader.OccurrenceClaims(repoRoot, pinned), sources
 }
 
-func (d *Session) pinnedWorkingTreeFile(repoRoot string, prefixes []manifest.KSClaim, id manifest.NamedResource, record manifest.DiscoveryRecord) bool {
+func (d *Session) pinnedWorkingTreeFile(
+	repoRoot string,
+	prefixes []manifest.KSClaim,
+	id manifest.NamedResource,
+	record manifest.DiscoveryRecord,
+) bool {
 	if len(prefixes) == 0 {
 		return false
 	}
@@ -772,7 +834,12 @@ func (d *Session) loadAt(ctx context.Context, dir string, total *int) error {
 	return nil
 }
 
-func (d *Session) loadSourcePath(ctx context.Context, dir string, input *store.SourceArtifact, total *int) (bool, error) {
+func (d *Session) loadSourcePath(
+	ctx context.Context,
+	dir string,
+	input *store.SourceArtifact,
+	total *int,
+) (bool, error) {
 	if err := d.loadAt(ctx, dir, total); err != nil {
 		if errors.Is(err, fs.ErrPermission) && input != nil && input.FS != nil {
 			name, _ := filepath.Rel(input.LocalPath, dir)

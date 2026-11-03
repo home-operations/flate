@@ -31,7 +31,10 @@ func TestAdmission_NativeEntryNeedsOwnObligation(t *testing.T) {
 			entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", owner.Named())
 			st.AddObjects([]manifest.BaseManifest{owner, child, entry})
 			if tc.failed {
-				st.UpdateStatus(entry.Named(), store.StatusInfo{Status: store.StatusFailed, Message: "invalid entry package"})
+				st.UpdateStatus(
+					entry.Named(),
+					store.StatusInfo{Status: store.StatusFailed, Message: "invalid entry package"},
+				)
 			}
 			l := New(st)
 			l.SourceRoot = root

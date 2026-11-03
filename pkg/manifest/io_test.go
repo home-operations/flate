@@ -238,7 +238,8 @@ func TestDecodeDocs_RetainedOutcomes(t *testing.T) {
 							assert.NoError(t, doc.Err)
 							continue
 						}
-						if doc.Ordinal != 1 || doc.Document != nil || !errors.Is(doc.Err, ErrInput) || !errors.Is(doc.Err, ErrFlux) {
+						if doc.Ordinal != 1 || doc.Document != nil || !errors.Is(doc.Err, ErrInput) ||
+							!errors.Is(doc.Err, ErrFlux) {
 							t.Fatalf("invalid outcome: %+v", doc)
 						}
 						_, constructor := errors.AsType[*yaml.LoadErrors](doc.Err)
@@ -296,7 +297,10 @@ func TestDecodeDocs_ReadFailures(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			docs, err := DecodeDocs(&failingDocReader{input: tc.input, err: cause, together: tc.together}, IncidentalDocuments)
+			docs, err := DecodeDocs(
+				&failingDocReader{input: tc.input, err: cause, together: tc.together},
+				IncidentalDocuments,
+			)
 			assert.NoError(t, err)
 			assert.Equal(t, len(docs), tc.prefix+1)
 			if tc.prefix != 0 {
@@ -304,7 +308,9 @@ func TestDecodeDocs_ReadFailures(t *testing.T) {
 				assert.Equal(t, docs[0].Ordinal, 0)
 			}
 			failure := docs[len(docs)-1]
-			if failure.Ordinal != tc.ordinal || failure.Document != nil || !errors.Is(failure.Err, cause) || !errors.Is(failure.Err, ErrInput) || !errors.Is(failure.Err, ErrFlux) {
+			if failure.Ordinal != tc.ordinal || failure.Document != nil || !errors.Is(failure.Err, cause) ||
+				!errors.Is(failure.Err, ErrInput) ||
+				!errors.Is(failure.Err, ErrFlux) {
 				t.Fatalf("retained read failure = %+v", failure)
 			}
 		})

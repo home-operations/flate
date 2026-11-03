@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -71,15 +72,28 @@ func TestReconcile_ProviderAcquisitionSettlement(t *testing.T) {
 			tasks := task.NewBounded(2)
 			t.Cleanup(tasks.BlockTillDone)
 			c := New(st, tasks, nil, false)
-			c.Inputs = &oci.Fetcher{Network: network, Cache: cachetest.New(t, t.TempDir(), cache.New), RegistryConfig: registryConfig}
+			c.Inputs = &oci.Fetcher{
+				Network:        network,
+				Cache:          cachetest.New(t, t.TempDir(), cache.New),
+				RegistryConfig: registryConfig,
+			}
 			c.Configure(base.Options{})
 			c.StartLifecycle()
 			ready := staticRSIP("a-ready", "effective", nil, map[string]string{"tag": "ready"})
-			pending := &manifest.ResourceSetInputProvider{Name: "b-pending", Namespace: "effective",
-				Type: fluxopv1.InputProviderOCIArtifactTag, URL: "oci://" + host + "/images", Insecure: true, SecretRef: &manifest.LocalObjectReference{Name: "registry-auth"}}
-			rs := &manifest.ResourceSet{Name: "consumer", Namespace: "effective",
+			pending := &manifest.ResourceSetInputProvider{
+				Name:      "b-pending",
+				Namespace: "effective",
+				Type:      fluxopv1.InputProviderOCIArtifactTag,
+				URL:       "oci://" + host + "/images",
+				Insecure:  true,
+				SecretRef: &manifest.LocalObjectReference{Name: "registry-auth"},
+			}
+			rs := &manifest.ResourceSet{
+				Name:              "consumer",
+				Namespace:         "effective",
 				InputsFrom:        []fluxopv1.InputProviderReference{{Name: pending.Name}, {Name: ready.Name}},
-				ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '<< inputs.provider.name >>'}\ndata: {tag: '<< inputs.tag >>'}\n"}
+				ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '<< inputs.provider.name >>'}\ndata: {tag: '<< inputs.tag >>'}\n",
+			}
 			st.AddObjects([]manifest.BaseManifest{ready, pending, rs})
 			before, err := json.Marshal(ready)
 			assert.NoError(t, err)
@@ -90,16 +104,39 @@ func TestReconcile_ProviderAcquisitionSettlement(t *testing.T) {
 				}
 			}, false)()
 			var run *base.Execution
-			tasks.Go(t.Context(), "acquire", func(ctx context.Context) { run = c.ReconcileNode(ctx, rs.Named(), manifest.DrainNone) })
+			tasks.Go(
+				t.Context(),
+				"acquire",
+				func(ctx context.Context) { run = c.ReconcileNode(ctx, rs.Named(), manifest.DrainNone) },
+			)
 			tasks.BlockTillDone()
 			defer run.Close()
-			secretID := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: pending.Namespace, Name: pending.SecretRef.Name}
-			if run.Outcome() != schedule.Blocked || !slices.Equal(run.Blocked, []manifest.NamedResource{secretID}) || lists.Load() != 0 || publications.Load() != 0 || st.GetArtifact(rs.Named(), store.ArtifactContent) != nil {
-				t.Fatalf("partial collection outcome=%v blocked=%v listings=%d publications=%d", run.Outcome(), run.Blocked, lists.Load(), publications.Load())
+			secretID := manifest.NamedResource{
+				Kind:      manifest.KindSecret,
+				Namespace: pending.Namespace,
+				Name:      pending.SecretRef.Name,
+			}
+			if run.Outcome() != schedule.Blocked || !slices.Equal(run.Blocked, []manifest.NamedResource{secretID}) ||
+				lists.Load() != 0 ||
+				publications.Load() != 0 ||
+				st.GetArtifact(rs.Named(), store.ArtifactContent) != nil {
+				t.Fatalf(
+					"partial collection outcome=%v blocked=%v listings=%d publications=%d",
+					run.Outcome(),
+					run.Blocked,
+					lists.Load(),
+					publications.Load(),
+				)
 			}
 			wantTag := "ready"
 			if mode != "ambient" {
-				st.AddObject(&manifest.Secret{Name: secretID.Name, Namespace: secretID.Namespace, StringData: map[string]any{".dockerconfigjson": credentials}})
+				st.AddObject(
+					&manifest.Secret{
+						Name:       secretID.Name,
+						Namespace:  secretID.Namespace,
+						StringData: map[string]any{".dockerconfigjson": credentials},
+					},
+				)
 				if mode == "changed completed provider" {
 					st.AddObject(staticRSIP(ready.Name, ready.Namespace, nil, map[string]string{"tag": "updated"}))
 					wantTag = "updated"
@@ -111,10 +148,15 @@ func TestReconcile_ProviderAcquisitionSettlement(t *testing.T) {
 			tasks.Go(t.Context(), "settle", func(ctx context.Context) { run.Settle(ctx, manifest.DrainCascade) })
 			tasks.BlockTillDone()
 			if mode != "ambient" {
-				if publications.Load() != 0 || lists.Load() != 0 || st.GetArtifact(rs.Named(), store.ArtifactContent) != nil {
+				if publications.Load() != 0 || lists.Load() != 0 ||
+					st.GetArtifact(rs.Named(), store.ArtifactContent) != nil {
 					t.Fatal("stale partial collection acquired or published inputs")
 				}
-				info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: tasks, Store: st, ID: rs.Named(), ReconcileNode: c.ReconcileNode})
+				info := controllertest.DispatchToFixpoint(
+					t.Context(),
+					t,
+					controllertest.Dispatch{Tasks: tasks, Store: st, ID: rs.Named(), ReconcileNode: c.ReconcileNode},
+				)
 				if info.Status != store.StatusReady || info.Outcome() == store.OutcomeSkipped {
 					t.Fatalf("rendered Secret did not take precedence over broken machine credentials: %+v", info)
 				}
@@ -122,15 +164,28 @@ func TestReconcile_ProviderAcquisitionSettlement(t *testing.T) {
 				if run.Outcome() != schedule.Terminal {
 					t.Fatalf("settled collection outcome=%v", run.Outcome())
 				}
-				tasks.Go(t.Context(), "settle again", func(ctx context.Context) { run.Settle(ctx, manifest.DrainCascade) })
+				tasks.Go(
+					t.Context(),
+					"settle again",
+					func(ctx context.Context) { run.Settle(ctx, manifest.DrainCascade) },
+				)
 				tasks.BlockTillDone()
 			}
 			emission, ok := st.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 			if !ok {
 				t.Fatal("completed collection did not publish its output")
 			}
-			if publications.Load() != 1 || lists.Load() != 1 || rejected.Load() != 0 || len(emission.Manifests) != 2 || !emission.Complete || len(st.Warnings()) != 0 {
-				t.Fatalf("completed collection publications=%d listings=%d rejected=%d output=%+v warnings=%+v", publications.Load(), lists.Load(), rejected.Load(), emission, st.Warnings())
+			if publications.Load() != 1 || lists.Load() != 1 || rejected.Load() != 0 || len(emission.Manifests) != 2 ||
+				!emission.Complete ||
+				len(st.Warnings()) != 0 {
+				t.Fatalf(
+					"completed collection publications=%d listings=%d rejected=%d output=%+v warnings=%+v",
+					publications.Load(),
+					lists.Load(),
+					rejected.Load(),
+					emission,
+					st.Warnings(),
+				)
 			}
 			data := map[string]any{}
 			for _, doc := range emission.Manifests {
@@ -192,29 +247,56 @@ func TestReconcile_ProviderAcquisitionRefresh(t *testing.T) {
 			tasks := task.NewBounded(2)
 			t.Cleanup(tasks.BlockTillDone)
 			c := New(st, tasks, nil, false)
-			c.Inputs = &oci.Fetcher{Network: network, Cache: cachetest.New(t, t.TempDir(), cache.New), RegistryConfig: registryConfig}
+			c.Inputs = &oci.Fetcher{
+				Network:        network,
+				Cache:          cachetest.New(t, t.TempDir(), cache.New),
+				RegistryConfig: registryConfig,
+			}
 			c.Configure(base.Options{})
 			c.StartLifecycle()
-			provider := &manifest.ResourceSetInputProvider{Name: "images", Namespace: "apps",
-				Type: fluxopv1.InputProviderOCIArtifactTag, URL: "oci://" + strings.TrimPrefix(server.URL, "https://") + "/images", Insecure: true,
+			provider := &manifest.ResourceSetInputProvider{
+				Name:          "images",
+				Namespace:     "apps",
+				Type:          fluxopv1.InputProviderOCIArtifactTag,
+				URL:           "oci://" + strings.TrimPrefix(server.URL, "https://") + "/images",
+				Insecure:      true,
 				SecretRef:     &manifest.LocalObjectReference{Name: "registry-auth"},
-				DefaultValues: fluxopv1.ResourceSetInput{"color": {Raw: []byte(`"blue"`)}}}
+				DefaultValues: fluxopv1.ResourceSetInput{"color": {Raw: []byte(`"blue"`)}},
+			}
 			credentialData := func(password string) map[string]any {
-				return map[string]any{".dockerconfigjson": fmt.Sprintf(`{"auths":{%q:{"username":"fixture","password":%q}}}`, strings.TrimPrefix(server.URL, "https://"), password)}
+				return map[string]any{
+					".dockerconfigjson": fmt.Sprintf(
+						`{"auths":{%q:{"username":"fixture","password":%q}}}`,
+						strings.TrimPrefix(server.URL, "https://"),
+						password,
+					),
+				}
 			}
 			secret := &manifest.Secret{Name: "registry-auth", Namespace: "apps", StringData: credentialData("first")}
-			rs := &manifest.ResourceSet{Name: "consumer", Namespace: "apps",
+			rs := &manifest.ResourceSet{
+				Name:              "consumer",
+				Namespace:         "apps",
 				InputsFrom:        []fluxopv1.InputProviderReference{{Name: provider.Name}},
-				ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: current}\ndata: {tag: '<< inputs.tag >>', digest: '<< inputs.digest >>', color: '<< inputs.color >>'}\n"}
+				ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: current}\ndata: {tag: '<< inputs.tag >>', digest: '<< inputs.digest >>', color: '<< inputs.color >>'}\n",
+			}
 			st.AddObjects([]manifest.BaseManifest{provider, secret, rs})
 			render := func(digest, color string) *store.Emission {
 				t.Helper()
 				var run *base.Execution
-				tasks.Go(t.Context(), "refresh", func(ctx context.Context) { run = c.ReconcileNode(ctx, rs.Named(), manifest.DrainNone) })
+				tasks.Go(
+					t.Context(),
+					"refresh",
+					func(ctx context.Context) { run = c.ReconcileNode(ctx, rs.Named(), manifest.DrainNone) },
+				)
 				tasks.BlockTillDone()
 				defer run.Close()
 				if run.Outcome() != schedule.Terminal || run.Reused || !run.Reads.Valid() {
-					t.Fatalf("fresh acquisition outcome=%v reused=%t valid=%t", run.Outcome(), run.Reused, run.Reads.Valid())
+					t.Fatalf(
+						"fresh acquisition outcome=%v reused=%t valid=%t",
+						run.Outcome(),
+						run.Reused,
+						run.Reads.Valid(),
+					)
 				}
 				info, _ := st.GetStatus(rs.Named())
 				assert.Equal(t, info.Status, store.StatusReady)
@@ -222,7 +304,11 @@ func TestReconcile_ProviderAcquisitionRefresh(t *testing.T) {
 				if !ok || !emission.Complete || emission.Fingerprint == "" || len(emission.Manifests) != 1 {
 					t.Fatalf("missing complete emission: %+v", emission)
 				}
-				assert.Diff(t, emission.Manifests[0].Document["data"], map[string]any{"tag": "current", "digest": digest, "color": color})
+				assert.Diff(
+					t,
+					emission.Manifests[0].Document["data"],
+					map[string]any{"tag": "current", "digest": digest, "color": color},
+				)
 				return emission
 			}
 			first := render(firstDigest, "blue")
@@ -245,7 +331,11 @@ func TestReconcile_ProviderAcquisitionRefresh(t *testing.T) {
 			if current.Fingerprint == first.Fingerprint {
 				t.Fatal("changed live inputs retained the prior emission fingerprint")
 			}
-			assert.Diff(t, first.Manifests[0].Document["data"], map[string]any{"tag": "current", "digest": firstDigest, "color": "blue"})
+			assert.Diff(
+				t,
+				first.Manifests[0].Document["data"],
+				map[string]any{"tag": "current", "digest": firstDigest, "color": "blue"},
+			)
 			assert.Equal(t, string(provider.DefaultValues["color"].Raw), `"blue"`)
 			assert.Diff(t, secret.StringData, credentialData("first"))
 		})

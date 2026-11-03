@@ -37,7 +37,12 @@ const sourceHeader = "# Source: "
 
 // Template renders a HelmRelease and returns independently owned documents.
 // The immutable receipt may be persisted after complete accepted publication.
-func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValues map[string]any, input RenderOptions) ([]manifest.DocOccurrence, *manifest.RenderReceipt, error) {
+func (c *Client) Template(
+	ctx context.Context,
+	hr *manifest.HelmRelease,
+	hrValues map[string]any,
+	input RenderOptions,
+) ([]manifest.DocOccurrence, *manifest.RenderReceipt, error) {
 	prepared, err := c.prepareTemplate(ctx, hr, hrValues, input)
 	if err != nil {
 		return nil, nil, err
@@ -125,12 +130,18 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 			return nil, nil, err
 		}
 		var receipt *manifest.RenderReceipt
-		if key != "" && manifest.DocumentFailure(docs) == nil && utf8.ValidString(out) && validChartTemplates(loaded.chart) {
+		if key != "" && manifest.DocumentFailure(docs) == nil && utf8.ValidString(out) &&
+			validChartTemplates(loaded.chart) {
 			payload, err := manifest.EncodeRender(docs)
 			if err != nil {
 				return nil, nil, err
 			}
-			frame := renderFrame{header: renderHeader{Key: key, Analysis: loaded.analysis}, binding: prepared.binding, chart: loaded.chart, output: payload}
+			frame := renderFrame{
+				header:  renderHeader{Key: key, Analysis: loaded.analysis},
+				binding: prepared.binding,
+				chart:   loaded.chart,
+				output:  payload,
+			}
 			receipt = manifest.NewRenderReceipt(frame, equalRenderFrame)
 		}
 		return normalizeLists(docs), receipt, nil
@@ -144,83 +155,107 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		produced *renderRecord
 		receipt  *manifest.RenderReceipt
 	}
-	blobKey := cache.BlobKey{Content: key, Render: cache.RenderPending, Validate: func(ctx context.Context, generation fs.FS) (bool, error) {
-		identity := cache.AcquisitionIdentity(generation)
-		record := result.produced
-		if record == nil {
-			record = loaded.record
-			if record == nil || record.key != key || record.identity != identity {
-				data, err := fs.ReadFile(generation, "content")
-				if err != nil {
-					return false, manifest.NewError(manifest.ErrFlux, fmt.Errorf("read helm render cache: %w", err), "")
+	blobKey := cache.BlobKey{
+		Content: key,
+		Render:  cache.RenderPending,
+		Validate: func(ctx context.Context, generation fs.FS) (bool, error) {
+			identity := cache.AcquisitionIdentity(generation)
+			record := result.produced
+			if record == nil {
+				record = loaded.record
+				if record == nil || record.key != key || record.identity != identity {
+					data, err := fs.ReadFile(generation, "content")
+					if err != nil {
+						return false, manifest.NewError(
+							manifest.ErrFlux,
+							fmt.Errorf("read helm render cache: %w", err),
+							"",
+						)
+					}
+					frame, err := decodeFrame(data)
+					if err != nil || frame.header.Key != key || frame.header.Analysis == nil {
+						return false, nil
+					}
+					record = &renderRecord{
+						key:      key,
+						identity: identity,
+						Output:   frame.output,
+						Analysis: frame.header.Analysis,
+						frame:    frame,
+					}
 				}
-				frame, err := decodeFrame(data)
-				if err != nil || frame.header.Key != key || frame.header.Analysis == nil {
+				var err error
+				result.docs, err = manifest.DecodeRender(record.Output)
+				if err != nil {
 					return false, nil
 				}
-				record = &renderRecord{key: key, identity: identity, Output: frame.output, Analysis: frame.header.Analysis, frame: frame}
+			} else {
+				record.identity = identity
 			}
+			if record.Analysis.RequiresLoader {
+				if err := c.decodeChart(ctx, &loaded); err != nil {
+					return false, err
+				}
+			}
+			if loaded.oci != nil {
+				if _, err := ociChartVersion(record.Analysis.Version, loaded.artifact.Revision); err != nil {
+					return false, err
+				}
+			}
+			if !record.binding.same(prepared.binding) || record.receipt == nil {
+				fresh := *record
+				fresh.binding = prepared.binding
+				frame := record.frame
+				frame.binding = prepared.binding
+				binding := manifest.Fingerprint(prepared.binding)
+				if frame.header.Binding != binding {
+					frame.header.Binding, frame.encoded, frame.raw = binding, nil, ""
+					frame.accepted, frame.acceptedKey = nil, ""
+				}
+				fresh.receipt = manifest.NewRenderReceipt(frame, equalRenderFrame)
+				record = &fresh
+			}
+			if record != loaded.record {
+				c.rememberDescription(loaded, record)
+			}
+			result.receipt = record.receipt
+			return true, nil
+		},
+	}
+	_, _, _, err = c.cache.Blob(
+		ctx,
+		blobKey,
+		cache.Policy{MaxAge: cache.Forever},
+		func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 			var err error
-			result.docs, err = manifest.DecodeRender(record.Output)
+			result.docs, result.receipt, err = render(ctx, nil)
 			if err != nil {
-				return false, nil
+				return cache.ProducerResult{}, err
 			}
-		} else {
-			record.identity = identity
-		}
-		if record.Analysis.RequiresLoader {
-			if err := c.decodeChart(ctx, &loaded); err != nil {
-				return false, err
+			if result.receipt == nil {
+				// Incomplete renders MUST fail frame validation to preserve each caller's local output.
+				return cache.ProducerResult{}, nil
 			}
-		}
-		if loaded.oci != nil {
-			if _, err := ociChartVersion(record.Analysis.Version, loaded.artifact.Revision); err != nil {
-				return false, err
+			frame := result.receipt.Value().(renderFrame)
+			if frame.header.Analysis == nil {
+				frame.header.Analysis = loaded.analyze()
 			}
-		}
-		if !record.binding.same(prepared.binding) || record.receipt == nil {
-			fresh := *record
-			fresh.binding = prepared.binding
-			frame := record.frame
-			frame.binding = prepared.binding
-			binding := manifest.Fingerprint(prepared.binding)
-			if frame.header.Binding != binding {
-				frame.header.Binding, frame.encoded, frame.raw = binding, nil, ""
-				frame.accepted, frame.acceptedKey = nil, ""
+			data, err := encodeFrame(frame.header, frame.output)
+			if err == nil {
+				_, err = w.Write(data)
 			}
-			fresh.receipt = manifest.NewRenderReceipt(frame, equalRenderFrame)
-			record = &fresh
-		}
-		if record != loaded.record {
-			c.rememberDescription(loaded, record)
-		}
-		result.receipt = record.receipt
-		return true, nil
-	}}
-	_, _, _, err = c.cache.Blob(ctx, blobKey, cache.Policy{MaxAge: cache.Forever}, func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-		var err error
-		result.docs, result.receipt, err = render(ctx, nil)
-		if err != nil {
+			if err == nil {
+				frame.chart = nil
+				result.produced = &renderRecord{
+					key:      key,
+					Output:   frame.output,
+					Analysis: frame.header.Analysis,
+					frame:    frame,
+				}
+			}
 			return cache.ProducerResult{}, err
-		}
-		if result.receipt == nil {
-			// Incomplete renders MUST fail frame validation to preserve each caller's local output.
-			return cache.ProducerResult{}, nil
-		}
-		frame := result.receipt.Value().(renderFrame)
-		if frame.header.Analysis == nil {
-			frame.header.Analysis = loaded.analyze()
-		}
-		data, err := encodeFrame(frame.header, frame.output)
-		if err == nil {
-			_, err = w.Write(data)
-		}
-		if err == nil {
-			frame.chart = nil
-			result.produced = &renderRecord{key: key, Output: frame.output, Analysis: frame.header.Analysis, frame: frame}
-		}
-		return cache.ProducerResult{}, err
-	})
+		},
+	)
 	if err != nil {
 		if _, storage := errors.AsType[*cache.CacheError](err); !storage {
 			return nil, nil, err
@@ -239,7 +274,12 @@ type templateRequest struct {
 	values        map[string]any
 }
 
-func (c *Client) prepareTemplate(ctx context.Context, hr *manifest.HelmRelease, hrValues map[string]any, input RenderOptions) (templateRequest, error) {
+func (c *Client) prepareTemplate(
+	ctx context.Context,
+	hr *manifest.HelmRelease,
+	hrValues map[string]any,
+	input RenderOptions,
+) (templateRequest, error) {
 	opts := input.Options
 	if err := ctx.Err(); err != nil {
 		return templateRequest{}, err
@@ -249,17 +289,40 @@ func (c *Client) prepareTemplate(ctx context.Context, hr *manifest.HelmRelease, 
 		return templateRequest{}, err
 	}
 	if hr.TracksDigest() {
-		loaded.oci = &ociChartContent{Digest: loaded.artifact.Digest, Revision: loaded.artifact.Revision, DisableTracking: opts.DisableChartDigestTracking}
+		loaded.oci = &ociChartContent{
+			Digest:          loaded.artifact.Digest,
+			Revision:        loaded.artifact.Revision,
+			DisableTracking: opts.DisableChartDigestTracking,
+		}
 	}
 	caps, capabilityErr := opts.capabilities()
 	if loaded.valuesFS != nil {
-		loaded.values, loaded.valuesErr = c.observeValuesFiles(ctx, loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
+		loaded.values, loaded.valuesErr = c.observeValuesFiles(
+			ctx,
+			loaded,
+			hr.ChartValuesFiles,
+			hr.IgnoreMissingValuesFiles,
+		)
 	}
 	if hrValues == nil {
 		hrValues = map[string]any{}
 	}
 	key := computeTemplateKey(loaded, hrValues, opts, hr)
-	binding := templateBinding{Policy: hr.HistoryPolicy(), Source: hr.ChartSource(), Kind: loaded.artifact.Kind, URL: loaded.artifact.URL, Path: loaded.artifact.LocalPath, Root: loaded.artifact.LocalRoot, Key: loaded.artifact.Key, Revision: loaded.artifact.Revision, Digest: loaded.artifact.Digest, Alias: loaded.artifact.InputAlias, Options: input.Options, Wipe: input.WipeSecrets, Dependencies: input.DependencySubstitutions}
+	binding := templateBinding{
+		Policy:       hr.HistoryPolicy(),
+		Source:       hr.ChartSource(),
+		Kind:         loaded.artifact.Kind,
+		URL:          loaded.artifact.URL,
+		Path:         loaded.artifact.LocalPath,
+		Root:         loaded.artifact.LocalRoot,
+		Key:          loaded.artifact.Key,
+		Revision:     loaded.artifact.Revision,
+		Digest:       loaded.artifact.Digest,
+		Alias:        loaded.artifact.InputAlias,
+		Options:      input.Options,
+		Wipe:         input.WipeSecrets,
+		Dependencies: input.DependencySubstitutions,
+	}
 	if loaded.record != nil && loaded.record.key == key && loaded.record.binding.same(binding) {
 		binding = loaded.record.binding
 	} else {
@@ -268,7 +331,14 @@ func (c *Client) prepareTemplate(ctx context.Context, hr *manifest.HelmRelease, 
 			binding.Options.SkipKinds = slices.Clone(input.SkipKinds)
 		}
 	}
-	return templateRequest{loaded: loaded, caps: caps, capabilityErr: capabilityErr, key: key, values: hrValues, binding: binding}, nil
+	return templateRequest{
+		loaded:        loaded,
+		caps:          caps,
+		capabilityErr: capabilityErr,
+		key:           key,
+		values:        hrValues,
+		binding:       binding,
+	}, nil
 }
 
 func normalizeLists(docs []manifest.DocOccurrence) []manifest.DocOccurrence {
@@ -290,14 +360,23 @@ func normalizeLists(docs []manifest.DocOccurrence) []manifest.DocOccurrence {
 			out = append(out, doc)
 			continue
 		}
-		infos, err := resource.NewLocalBuilder().ContinueOnError().Unstructured().Flatten().Stream(bytes.NewReader(data), "").Do().Infos()
+		infos, err := resource.NewLocalBuilder().
+			ContinueOnError().
+			Unstructured().
+			Flatten().
+			Stream(bytes.NewReader(data), "").
+			Do().
+			Infos()
 		if err != nil {
 			doc.Err = manifest.NewError(manifest.ErrInput, fmt.Errorf("normalize helm list: %w", err), "")
 			out = append(out, doc)
 			continue
 		}
 		for _, info := range infos {
-			out = append(out, manifest.DocOccurrence{Document: info.Object.(*unstructured.Unstructured).Object, Ordinal: doc.Ordinal})
+			out = append(
+				out,
+				manifest.DocOccurrence{Document: info.Object.(*unstructured.Unstructured).Object, Ordinal: doc.Ordinal},
+			)
 		}
 	}
 	if out == nil {
@@ -367,7 +446,12 @@ func schemaValidationSkipped(hr *manifest.HelmRelease, values map[string]any) bo
 	return hr.DisableSchemaValidation || manifest.ContainsValuePlaceholder(values)
 }
 
-func newInstallAction(cfg *action.Configuration, hr *manifest.HelmRelease, opts Options, caps *common.Capabilities) (*action.Install, bool) {
+func newInstallAction(
+	cfg *action.Configuration,
+	hr *manifest.HelmRelease,
+	opts Options,
+	caps *common.Capabilities,
+) (*action.Install, bool) {
 	inst := action.NewInstall(cfg)
 	inst.DryRunStrategy = action.DryRunClient
 	inst.ReleaseName = hr.ReleaseName()
@@ -414,7 +498,11 @@ type chartValuesFile struct {
 
 func (l chartDescription) readValuesFile(ctx context.Context, name, clean string) (chartValuesFile, error) {
 	if err := ctx.Err(); err != nil {
-		return chartValuesFile{}, manifest.NewError(manifest.ErrInput, fmt.Errorf("read values file %q: %w", name, err), "")
+		return chartValuesFile{}, manifest.NewError(
+			manifest.ErrInput,
+			fmt.Errorf("read values file %q: %w", name, err),
+			"",
+		)
 	}
 	var data []byte
 	var err error
@@ -447,7 +535,13 @@ func (l chartDescription) readValuesFile(ctx context.Context, name, clean string
 		}
 	}
 	if err != nil {
-		return chartValuesFile{Missing: missing}, manifest.NewError(manifest.ErrInput, fmt.Errorf("read values file %q: %w", name, err), "")
+		return chartValuesFile{
+			Missing: missing,
+		}, manifest.NewError(
+			manifest.ErrInput,
+			fmt.Errorf("read values file %q: %w", name, err),
+			"",
+		)
 	}
 	return chartValuesFile{Data: data}, nil
 }
@@ -460,7 +554,12 @@ type chartValuesEntry struct {
 	merged      map[string]any
 }
 
-func (c *Client) observeValuesFiles(ctx context.Context, loaded chartDescription, names []string, ignoreMissing bool) (chartValuesEntry, error) {
+func (c *Client) observeValuesFiles(
+	ctx context.Context,
+	loaded chartDescription,
+	names []string,
+	ignoreMissing bool,
+) (chartValuesEntry, error) {
 	if len(names) == 0 {
 		return chartValuesEntry{}, nil
 	}
@@ -469,7 +568,11 @@ func (c *Client) observeValuesFiles(ctx context.Context, loaded chartDescription
 	for i, name := range names {
 		clean := path.Clean(name)
 		if name == "" || !fs.ValidPath(clean) || clean == "." || strings.IndexByte(clean, 0) >= 0 {
-			return chartValuesEntry{}, manifest.NewError(manifest.ErrInput, fmt.Errorf("read values file %q: %w", name, fs.ErrInvalid), "")
+			return chartValuesEntry{}, manifest.NewError(
+				manifest.ErrInput,
+				fmt.Errorf("read values file %q: %w", name, fs.ErrInvalid),
+				"",
+			)
 		}
 		if clean != name {
 			if !normalized {
@@ -480,7 +583,11 @@ func (c *Client) observeValuesFiles(ctx context.Context, loaded chartDescription
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		return chartValuesEntry{}, manifest.NewError(manifest.ErrInput, fmt.Errorf("read values file %q: %w", names[0], err), "")
+		return chartValuesEntry{}, manifest.NewError(
+			manifest.ErrInput,
+			fmt.Errorf("read values file %q: %w", names[0], err),
+			"",
+		)
 	}
 	var key string
 	if loaded.valuesFS == nil || loaded.valuesPin != "" {
@@ -514,7 +621,11 @@ func (c *Client) observeValuesFiles(ctx context.Context, loaded chartDescription
 		entry.inputs[i] = file
 	}
 	if err := ctx.Err(); err != nil {
-		return chartValuesEntry{}, manifest.NewError(manifest.ErrInput, fmt.Errorf("read values file %q: %w", names[len(names)-1], err), "")
+		return chartValuesEntry{}, manifest.NewError(
+			manifest.ErrInput,
+			fmt.Errorf("read values file %q: %w", names[len(names)-1], err),
+			"",
+		)
 	}
 	fingerprint := manifest.Fingerprint(entry.inputs)
 	entry.fingerprint = &fingerprint
@@ -535,7 +646,12 @@ func (c *Client) observeValuesFiles(ctx context.Context, loaded chartDescription
 	return entry, nil
 }
 
-func (c *Client) mergeChartValuesFiles(ctx context.Context, loaded chartDescription, names []string, ignoreMissing bool) (map[string]any, error) {
+func (c *Client) mergeChartValuesFiles(
+	ctx context.Context,
+	loaded chartDescription,
+	names []string,
+	ignoreMissing bool,
+) (map[string]any, error) {
 	if loaded.valuesErr != nil {
 		return nil, loaded.valuesErr
 	}

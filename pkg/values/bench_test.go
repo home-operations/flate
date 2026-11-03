@@ -20,8 +20,20 @@ func bigPlatformValuesYAML() string {
 	b.WriteString("global:\n  domain: example.com\n  registry: ghcr.io\n")
 	for app := range 30 {
 		fmt.Fprintf(&b, "app%d:\n", app)
-		fmt.Fprintf(&b, "  image:\n    repository: ghcr.io/org/app%d\n    tag: v1.%d.0\n    pullPolicy: IfNotPresent\n", app, app)
-		fmt.Fprintf(&b, "  resources:\n    requests:\n      cpu: %dm\n      memory: %dMi\n    limits:\n      cpu: %dm\n      memory: %dMi\n", app*10, app*32, app*20, app*64)
+		fmt.Fprintf(
+			&b,
+			"  image:\n    repository: ghcr.io/org/app%d\n    tag: v1.%d.0\n    pullPolicy: IfNotPresent\n",
+			app,
+			app,
+		)
+		fmt.Fprintf(
+			&b,
+			"  resources:\n    requests:\n      cpu: %dm\n      memory: %dMi\n    limits:\n      cpu: %dm\n      memory: %dMi\n",
+			app*10,
+			app*32,
+			app*20,
+			app*64,
+		)
 		b.WriteString("  env:\n")
 		for e := range 8 {
 			fmt.Fprintf(&b, "    - name: VAR_%d\n      value: \"value-%d-%d\"\n", e, app, e)
@@ -114,12 +126,28 @@ counts:
 func BenchmarkExpandValueReferences_TargetPaths(b *testing.B) {
 	for _, count := range []int{1, 5} {
 		b.Run(fmt.Sprintf("targets=%d", count), func(b *testing.B) {
-			cm := &manifest.ConfigMap{Name: "platform", Namespace: "default", Data: map[string]any{"values.yaml": bigPlatformValuesYAML()}}
-			inject := &manifest.ConfigMap{Name: "inject", Namespace: "default", Data: map[string]any{"value": "replacement"}}
+			cm := &manifest.ConfigMap{
+				Name:      "platform",
+				Namespace: "default",
+				Data:      map[string]any{"values.yaml": bigPlatformValuesYAML()},
+			}
+			inject := &manifest.ConfigMap{
+				Name:      "inject",
+				Namespace: "default",
+				Data:      map[string]any{"value": "replacement"},
+			}
 			provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm, inject}}
 			refs := []manifest.ValuesReference{{Kind: "ConfigMap", Name: cm.Name}}
 			for i := range count {
-				refs = append(refs, manifest.ValuesReference{Kind: "ConfigMap", Name: inject.Name, ValuesKey: "value", TargetPath: fmt.Sprintf("app%d.image.tag", i)})
+				refs = append(
+					refs,
+					manifest.ValuesReference{
+						Kind:       "ConfigMap",
+						Name:       inject.Name,
+						ValuesKey:  "value",
+						TargetPath: fmt.Sprintf("app%d.image.tag", i),
+					},
+				)
 			}
 			cache := &Cache{}
 			b.ReportAllocs()
@@ -189,7 +217,9 @@ func BenchmarkExpandPostBuildSubstituteReference_SharedCM(b *testing.B) {
 	for b.Loop() {
 		// Fresh KS per iteration mirrors a distinct KS reconcile sharing
 		// the same substituteFrom CM.
-		postBuild := kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: "ConfigMap", Name: "cluster-settings"}}}
+		postBuild := kustomizev1.PostBuild{
+			SubstituteFrom: []manifest.SubstituteReference{{Kind: "ConfigMap", Name: "cluster-settings"}},
+		}
 		ks := &manifest.Kustomization{Name: "app", Namespace: "flux-system"}
 		ks.PostBuild = &postBuild
 		if err := ExpandPostBuildSubstituteReference(ks, provider); err != nil {
@@ -210,7 +240,9 @@ spec:
 	for i := range 50 {
 		data[fmt.Sprintf("VAR_%d", i)] = fmt.Sprintf("value-%d", i)
 	}
-	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{{Name: "cluster-settings", Namespace: "flux-system", Data: data}}}
+	provider := &SliceProvider{
+		ConfigMaps: []*manifest.ConfigMap{{Name: "cluster-settings", Namespace: "flux-system", Data: data}},
+	}
 	b.ReportAllocs()
 	for b.Loop() {
 		docs, err := manifest.DecodeDocs(strings.NewReader(input), manifest.IncidentalDocuments)

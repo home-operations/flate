@@ -32,8 +32,20 @@ func TestPickLayer_Selection(t *testing.T) {
 		{name: "unmatched", layers: layers, mediaTypes: []string{"application/missing"}},
 		{name: "provenance first", layers: []ocispec.Descriptor{prov, chart}, want: prov, wantOK: true},
 		{name: "all provenance", layers: []ocispec.Descriptor{prov}, want: prov, wantOK: true},
-		{name: "first matching chart", layers: []ocispec.Descriptor{prov, chart, otherChart}, mediaTypes: []string{registry.ChartLayerMediaType}, want: chart, wantOK: true},
-		{name: "manifest order before allowed media order", layers: []ocispec.Descriptor{prov, olderChart, chart}, mediaTypes: []string{registry.ChartLayerMediaType, registry.LegacyChartLayerMediaType}, want: olderChart, wantOK: true},
+		{
+			name:       "first matching chart",
+			layers:     []ocispec.Descriptor{prov, chart, otherChart},
+			mediaTypes: []string{registry.ChartLayerMediaType},
+			want:       chart,
+			wantOK:     true,
+		},
+		{
+			name:       "manifest order before allowed media order",
+			layers:     []ocispec.Descriptor{prov, olderChart, chart},
+			mediaTypes: []string{registry.ChartLayerMediaType, registry.LegacyChartLayerMediaType},
+			want:       olderChart,
+			wantOK:     true,
+		},
 		{name: "empty"},
 		{name: "empty with media", mediaTypes: []string{registry.ChartLayerMediaType}},
 	}

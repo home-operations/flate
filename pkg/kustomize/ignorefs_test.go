@@ -135,7 +135,20 @@ func TestRender_SourceignoreAllowlist(t *testing.T) {
 
 	t.Run("spec.path excluded", func(t *testing.T) {
 		t.Parallel()
-		_, _, err := testutil.RenderMaps(Render(ctx, newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: "bundles/common", Spec: parsedKS(t, spec("./bundles/common"))}, sourcecache.RetryConfig{}))
+		_, _, err := testutil.RenderMaps(
+			Render(
+				ctx,
+				newTestTreeCache(t, ""),
+				RenderRequest{
+					Source:      localSource(t, root),
+					Label:       root,
+					ApplyIgnore: true,
+					SubPath:     "bundles/common",
+					Spec:        parsedKS(t, spec("./bundles/common")),
+				},
+				sourcecache.RetryConfig{},
+			),
+		)
 		if !errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "not a directory") {
 			t.Fatalf("expected the excluded spec.path to be reported missing, got %v", err)
 		}
@@ -143,7 +156,20 @@ func TestRender_SourceignoreAllowlist(t *testing.T) {
 
 	t.Run("kustomization base excluded", func(t *testing.T) {
 		t.Parallel()
-		_, _, err := testutil.RenderMaps(Render(ctx, newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: "clusters/dev/app", Spec: parsedKS(t, spec("./clusters/dev/app"))}, sourcecache.RetryConfig{}))
+		_, _, err := testutil.RenderMaps(
+			Render(
+				ctx,
+				newTestTreeCache(t, ""),
+				RenderRequest{
+					Source:      localSource(t, root),
+					Label:       root,
+					ApplyIgnore: true,
+					SubPath:     "clusters/dev/app",
+					Spec:        parsedKS(t, spec("./clusters/dev/app")),
+				},
+				sourcecache.RetryConfig{},
+			),
+		)
 		if err == nil || !strings.Contains(err.Error(), "bundles/common") {
 			t.Fatalf("expected the build to fail resolving the excluded base, got %v", err)
 		}
@@ -151,7 +177,20 @@ func TestRender_SourceignoreAllowlist(t *testing.T) {
 
 	t.Run("allowlisted path renders", func(t *testing.T) {
 		t.Parallel()
-		out, _, err := testutil.RenderMaps(Render(ctx, newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: "clusters/dev/ok", Spec: parsedKS(t, spec("./clusters/dev/ok"))}, sourcecache.RetryConfig{}))
+		out, _, err := testutil.RenderMaps(
+			Render(
+				ctx,
+				newTestTreeCache(t, ""),
+				RenderRequest{
+					Source:      localSource(t, root),
+					Label:       root,
+					ApplyIgnore: true,
+					SubPath:     "clusters/dev/ok",
+					Spec:        parsedKS(t, spec("./clusters/dev/ok")),
+				},
+				sourcecache.RetryConfig{},
+			),
+		)
 		if err != nil {
 			t.Fatalf("render: %v", err)
 		}
@@ -162,7 +201,20 @@ func TestRender_SourceignoreAllowlist(t *testing.T) {
 
 	t.Run("fetched artifact not refiltered", func(t *testing.T) {
 		t.Parallel()
-		out, _, err := testutil.RenderMaps(Render(ctx, newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "bundles/common", Spec: parsedKS(t, spec("./bundles/common"))}, sourcecache.RetryConfig{}))
+		out, _, err := testutil.RenderMaps(
+			Render(
+				ctx,
+				newTestTreeCache(t, ""),
+				RenderRequest{
+					Source:      localSource(t, root),
+					Label:       root,
+					ApplyIgnore: false,
+					SubPath:     "bundles/common",
+					Spec:        parsedKS(t, spec("./bundles/common")),
+				},
+				sourcecache.RetryConfig{},
+			),
+		)
 		if err != nil {
 			t.Fatalf("render: %v", err)
 		}
@@ -191,14 +243,23 @@ func TestRender_SourceignoreCacheReplaysFilteredView(t *testing.T) {
 				"b.yaml":        cmYAML("b"),
 			})
 			if explicit {
-				if err := os.WriteFile(filepath.Join(root, ".sourceignore"), []byte("# file policy empty\n"), 0o600); err != nil {
+				if err := os.WriteFile(
+					filepath.Join(root, ".sourceignore"),
+					[]byte("# file policy empty\n"),
+					0o600,
+				); err != nil {
 					t.Fatal(err)
 				}
 			}
 			admit := func() *store.SourceArtifact {
 				artifact := localSource(t, root)
 				if explicit {
-					input, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: artifact.FS, Ignore: "b.yaml\n"})
+					input, _, err := gittree.New(
+						t.Context(),
+						nil,
+						plumbing.ZeroHash,
+						gittree.ViewOptions{Mode: gittree.Source, Current: artifact.FS, Ignore: "b.yaml\n"},
+					)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -209,7 +270,14 @@ func TestRender_SourceignoreCacheReplaysFilteredView(t *testing.T) {
 			cache := newTestTreeCache(t, t.TempDir())
 			ctx := context.Background()
 
-			out1, receipt, err := testutil.RenderMaps(Render(ctx, cache, RenderRequest{Source: admit(), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoSpec}, sourcecache.RetryConfig{}))
+			out1, receipt, err := testutil.RenderMaps(
+				Render(
+					ctx,
+					cache,
+					RenderRequest{Source: admit(), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoSpec},
+					sourcecache.RetryConfig{},
+				),
+			)
 			if err != nil {
 				t.Fatalf("first render: %v", err)
 			}
@@ -229,15 +297,26 @@ func TestRender_SourceignoreCacheReplaysFilteredView(t *testing.T) {
 			if !ok {
 				t.Fatal("owner did not retain filtered render")
 			}
-			publishTestFrame(t, cache.owner, sourcecache.BlobKey{Content: key, Render: sourcecache.RenderPending}, testRenderFrame(t, snap, testRenderPayload(t, "SENTINEL")))
-			out2, _, err := testutil.RenderMaps(Render(ctx, cache, RenderRequest{Source: admit(), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoSpec}, sourcecache.RetryConfig{}))
+			publishTestFrame(
+				t,
+				cache.owner,
+				sourcecache.BlobKey{Content: key, Render: sourcecache.RenderPending},
+				testRenderFrame(t, snap, testRenderPayload(t, "SENTINEL")),
+			)
+			out2, _, err := testutil.RenderMaps(
+				Render(
+					ctx,
+					cache,
+					RenderRequest{Source: admit(), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoSpec},
+					sourcecache.RetryConfig{},
+				),
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if !hasRenderField(out2, "witness", "SENTINEL") {
 				t.Fatalf("filtered view missed its validated frame: %s", out2)
 			}
-
 		})
 	}
 }
@@ -277,13 +356,31 @@ configMapGenerator:
 			root := testutil.WriteTree(t, files)
 			artifact := localSource(t, root)
 			if tc.shaped {
-				input, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: artifact.FS, Ignore: tc.extra})
+				input, _, err := gittree.New(
+					t.Context(),
+					nil,
+					plumbing.ZeroHash,
+					gittree.ViewOptions{Mode: gittree.Source, Current: artifact.FS, Ignore: tc.extra},
+				)
 				if err != nil {
 					t.Fatal(err)
 				}
 				artifact.FS = input
 			}
-			out, _, err := testutil.RenderMaps(Render(t.Context(), newTestTreeCache(t, ""), RenderRequest{Source: artifact, Label: root, ApplyIgnore: true, SubPath: "app", Spec: parsedKS(t, ksDoc(map[string]any{"path": "./app"}))}, sourcecache.RetryConfig{}))
+			out, _, err := testutil.RenderMaps(
+				Render(
+					t.Context(),
+					newTestTreeCache(t, ""),
+					RenderRequest{
+						Source:      artifact,
+						Label:       root,
+						ApplyIgnore: true,
+						SubPath:     "app",
+						Spec:        parsedKS(t, ksDoc(map[string]any{"path": "./app"})),
+					},
+					sourcecache.RetryConfig{},
+				),
+			)
 			if tc.wantErr {
 				if err == nil || !strings.Contains(err.Error(), "logo.png") {
 					t.Fatalf("expected excluded image to fail the build, got %v", err)
@@ -293,7 +390,8 @@ configMapGenerator:
 			if err != nil {
 				t.Fatalf("render: %v", err)
 			}
-			if !hasRenderField(out, "kind", "ConfigMap") || !hasRenderField(out, "logo.png", base64.StdEncoding.EncodeToString([]byte(image))) {
+			if !hasRenderField(out, "kind", "ConfigMap") ||
+				!hasRenderField(out, "logo.png", base64.StdEncoding.EncodeToString([]byte(image))) {
 				t.Fatalf("expected image bytes in generated ConfigMap, got: %v", out)
 			}
 		})

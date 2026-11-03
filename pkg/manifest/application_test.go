@@ -47,16 +47,28 @@ func TestEntryApplication_FluxInstance(t *testing.T) {
 		sync     map[string]any
 		expected BaseManifest
 	}{
-		{name: "git namespace default", sync: map[string]any{"kind": KindGitRepository, "url": "https://fixture.invalid/self", "ref": "refs/heads/main", "path": "./clusters", "pullSecret": "credentials", "provider": "github"},
-			expected: NewGitRepository(sourcev1.GitRepository{Name: "control", Namespace: "control", Spec: sourcev1.GitRepositorySpec{URL: "https://fixture.invalid/self", Reference: &sourcev1.GitRepositoryRef{Name: "refs/heads/main"}, SecretRef: secret, Provider: "github"}})},
-		{name: "oci explicit name", sync: map[string]any{"name": "custom", "kind": KindOCIRepository, "url": "oci://fixture.invalid/self", "ref": "latest", "path": "./clusters", "pullSecret": "credentials", "provider": "aws"},
-			expected: NewOCIRepository(sourcev1.OCIRepository{Name: "custom", Namespace: "control", Spec: sourcev1.OCIRepositorySpec{URL: "oci://fixture.invalid/self", Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"}, SecretRef: secret, Provider: "aws"}})},
-		{name: "bucket", sync: map[string]any{"kind": KindBucket, "url": "s3.fixture.invalid", "ref": "cluster", "path": "./clusters", "pullSecret": "credentials"},
-			expected: NewBucket(sourcev1.Bucket{Name: "control", Namespace: "control", Spec: sourcev1.BucketSpec{Endpoint: "s3.fixture.invalid", BucketName: "cluster", SecretRef: secret}})},
+		{
+			name: "git namespace default", sync: map[string]any{"kind": KindGitRepository, "url": "https://fixture.invalid/self", "ref": "refs/heads/main", "path": "./clusters", "pullSecret": "credentials", "provider": "github"},
+			expected: NewGitRepository(sourcev1.GitRepository{Name: "control", Namespace: "control", Spec: sourcev1.GitRepositorySpec{URL: "https://fixture.invalid/self", Reference: &sourcev1.GitRepositoryRef{Name: "refs/heads/main"}, SecretRef: secret, Provider: "github"}}),
+		},
+		{
+			name: "oci explicit name", sync: map[string]any{"name": "custom", "kind": KindOCIRepository, "url": "oci://fixture.invalid/self", "ref": "latest", "path": "./clusters", "pullSecret": "credentials", "provider": "aws"},
+			expected: NewOCIRepository(sourcev1.OCIRepository{Name: "custom", Namespace: "control", Spec: sourcev1.OCIRepositorySpec{URL: "oci://fixture.invalid/self", Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"}, SecretRef: secret, Provider: "aws"}}),
+		},
+		{
+			name: "bucket", sync: map[string]any{"kind": KindBucket, "url": "s3.fixture.invalid", "ref": "cluster", "path": "./clusters", "pullSecret": "credentials"},
+			expected: NewBucket(sourcev1.Bucket{Name: "control", Namespace: "control", Spec: sourcev1.BucketSpec{Endpoint: "s3.fixture.invalid", BucketName: "cluster", SecretRef: secret}}),
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			object := &RawObject{APIVersion: FluxOperatorDomain + "/v1", Kind: "FluxInstance", Namespace: "control", Name: "flux", Spec: map[string]any{"sync": tc.sync}}
+			object := &RawObject{
+				APIVersion: FluxOperatorDomain + "/v1",
+				Kind:       "FluxInstance",
+				Namespace:  "control",
+				Name:       "flux",
+				Spec:       map[string]any{"sync": tc.sync},
+			}
 			before := DeepCopyMap(object.Spec)
 			application, valid := object.EntryApplication()
 			assert.Equal(t, valid, true)
@@ -71,16 +83,30 @@ func TestEntryApplication_FluxInstance(t *testing.T) {
 			assert.Equal(t, present, true)
 			assert.Diff(t, slices.Collect(SourceRoots(object)), []string{"clusters"})
 			assert.Equal(t, len(slices.Collect(RenderRoots(object))), 0)
-			assert.Diff(t, slices.Collect(References(object, ReferenceRelations)), []Reference{{NamedResource: application.Source, Use: "source", Content: true}})
+			assert.Diff(
+				t,
+				slices.Collect(References(object, ReferenceRelations)),
+				[]Reference{{NamedResource: application.Source, Use: "source", Content: true}},
+			)
 			assert.Diff(t, object.Spec, before)
 		})
 	}
 	for _, missing := range []string{"kind", "url", "ref", "path"} {
 		t.Run("missing "+missing, func(t *testing.T) {
 			t.Parallel()
-			sync := map[string]any{"kind": KindGitRepository, "url": "https://fixture.invalid/self", "ref": "refs/heads/main", "path": "./clusters"}
+			sync := map[string]any{
+				"kind": KindGitRepository,
+				"url":  "https://fixture.invalid/self",
+				"ref":  "refs/heads/main",
+				"path": "./clusters",
+			}
 			delete(sync, missing)
-			object := &RawObject{APIVersion: FluxOperatorDomain + "/v1", Kind: "FluxInstance", Namespace: "control", Spec: map[string]any{"sync": sync}}
+			object := &RawObject{
+				APIVersion: FluxOperatorDomain + "/v1",
+				Kind:       "FluxInstance",
+				Namespace:  "control",
+				Spec:       map[string]any{"sync": sync},
+			}
 			_, valid := object.EntryApplication()
 			assert.Equal(t, valid, false)
 			sync = maps.Clone(sync)
@@ -97,7 +123,19 @@ func TestEntryApplication_FluxInstance(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			object := &RawObject{APIVersion: tc.group + "/v1", Kind: tc.kind, Namespace: "control", Spec: map[string]any{"sync": map[string]any{"kind": tc.sourceKind, "url": "https://fixture.invalid/self", "ref": "main", "path": "."}}}
+			object := &RawObject{
+				APIVersion: tc.group + "/v1",
+				Kind:       tc.kind,
+				Namespace:  "control",
+				Spec: map[string]any{
+					"sync": map[string]any{
+						"kind": tc.sourceKind,
+						"url":  "https://fixture.invalid/self",
+						"ref":  "main",
+						"path": ".",
+					},
+				},
+			}
 			_, valid := object.EntryApplication()
 			assert.Equal(t, valid, false)
 		})

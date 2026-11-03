@@ -21,10 +21,19 @@ func TestEncoderReport_WarningsSection(t *testing.T) {
 	t.Parallel()
 	hr := testutil.HelmReleaseID("default", "app")
 	warns := []manifest.Warning{
-		{Resource: hr, Category: manifest.WarnStaleValues, Message: "values not defined by the chart schema", Detail: []string{"image.tagg", "oldKey"}},
+		{
+			Resource: hr,
+			Category: manifest.WarnStaleValues,
+			Message:  "values not defined by the chart schema",
+			Detail:   []string{"image.tagg", "oldKey"},
+		},
 		{Category: manifest.WarnEmptyScan, Message: "no Flux objects found"},
 		{Message: "SDK warning"},
-		{Resource: hr, Category: manifest.WarnDiffSuppressed, Message: "1 object not rendered on the current side; diff suppressed (secret default/auth not found)"},
+		{
+			Resource: hr,
+			Category: manifest.WarnDiffSuppressed,
+			Message:  "1 object not rendered on the current side; diff suppressed (secret default/auth not found)",
+		},
 	}
 	m := Model{}
 	var b bytes.Buffer
@@ -37,7 +46,8 @@ func TestEncoderReport_WarningsSection(t *testing.T) {
 			t.Errorf("warnings section missing %q:\n%s", want, out)
 		}
 	}
-	if strings.Count(out, "HelmRelease default/app: 1 object") != 1 || strings.Count(out, "secret default/auth not found") != 1 {
+	if strings.Count(out, "HelmRelease default/app: 1 object") != 1 ||
+		strings.Count(out, "secret default/auth not found") != 1 {
 		t.Fatalf("warning repeated identity or cause: %s", out)
 	}
 	if strings.Contains(out, "[]") {
@@ -61,9 +71,23 @@ func TestEncoderReport_WarningCount(t *testing.T) {
 func TestEncoderReport_PrimaryMessageIsMultiLine(t *testing.T) {
 	t.Parallel()
 	m := Model{
-		Primary: []Primary{{ID: testutil.KustomizationID("flux-system", "root"), Msg: " may not add resource with an already registered id: X \n\t\n" +
-			"duplicate resource(s) produced by multiple accumulated paths:\n  - ./one\n  - ./two ", Blocks: []manifest.NamedResource{testutil.KustomizationID("flux-system", "leaf"), testutil.KustomizationID("flux-system", "mid")}}},
-		Missing: []Missing{{ID: testutil.KustomizationID("flux-system", "missing"), RequiredBy: []manifest.NamedResource{testutil.KustomizationID("flux-system", "dependent")}}},
+		Primary: []Primary{
+			{
+				ID: testutil.KustomizationID("flux-system", "root"),
+				Msg: " may not add resource with an already registered id: X \n\t\n" +
+					"duplicate resource(s) produced by multiple accumulated paths:\n  - ./one\n  - ./two ",
+				Blocks: []manifest.NamedResource{
+					testutil.KustomizationID("flux-system", "leaf"),
+					testutil.KustomizationID("flux-system", "mid"),
+				},
+			},
+		},
+		Missing: []Missing{
+			{
+				ID:         testutil.KustomizationID("flux-system", "missing"),
+				RequiredBy: []manifest.NamedResource{testutil.KustomizationID("flux-system", "dependent")},
+			},
+		},
 		Blocked: 3,
 	}
 	for _, context := range []string{"", "current snapshot"} {
@@ -78,12 +102,42 @@ func TestEncoderReport_PrimaryMessageIsMultiLine(t *testing.T) {
 			for _, color := range []bool{false, true} {
 				t.Run(fmt.Sprint(color), func(t *testing.T) {
 					t.Parallel()
-					want := "\n  " + Fail(GlyphFail, color) + "  " + Dim(prefix+"Kustomization", color) + "  flux-system/root  may not add resource with an already registered id: X\n" +
+					want := "\n  " + Fail(
+						GlyphFail,
+						color,
+					) + "  " + Dim(
+						prefix+"Kustomization",
+						color,
+					) + "  flux-system/root  may not add resource with an already registered id: X\n" +
 						"         duplicate resource(s) produced by multiple accumulated paths:\n         - ./one\n         - ./two" +
-						"\n         " + Dim(prefix+"blocks flux-system/leaf, flux-system/mid", color) +
-						"\n  " + Fail(GlyphFail, color) + "  " + Dim(prefix+"Kustomization", color) + "  flux-system/missing  " + Fail("not found", color) +
-						"\n         " + Dim(prefix+"required by flux-system/dependent", color) +
-						"\n\n  " + Fail(GlyphFail, color) + " " + Fail("2 failed", color) + " · " + Dim("3 blocked", color) + "\n"
+						"\n         " + Dim(
+						prefix+"blocks flux-system/leaf, flux-system/mid",
+						color,
+					) +
+						"\n  " + Fail(
+						GlyphFail,
+						color,
+					) + "  " + Dim(
+						prefix+"Kustomization",
+						color,
+					) + "  flux-system/missing  " + Fail(
+						"not found",
+						color,
+					) +
+						"\n         " + Dim(
+						prefix+"required by flux-system/dependent",
+						color,
+					) +
+						"\n\n  " + Fail(
+						GlyphFail,
+						color,
+					) + " " + Fail(
+						"2 failed",
+						color,
+					) + " · " + Dim(
+						"3 blocked",
+						color,
+					) + "\n"
 					var b bytes.Buffer
 					if err := writeModel(Encoder{Writer: &b, Color: color}, m); err != nil {
 						t.Fatal(err)
@@ -104,10 +158,43 @@ func TestSummarize_KindOnCollision(t *testing.T) {
 		ids  []manifest.NamedResource // sorted, as Build delivers them
 		want string
 	}{
-		{"same name, different kind", []manifest.NamedResource{testutil.HelmReleaseID("flux-system", "acars"), testutil.KustomizationID("flux-system", "acars")}, "HelmRelease flux-system/acars, Kustomization flux-system/acars"},
-		{"same name, different group", []manifest.NamedResource{{Group: "example.test", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "acars"}, testutil.KustomizationID("flux-system", "acars")}, "Kustomization.example.test flux-system/acars, Kustomization.kustomize.toolkit.fluxcd.io flux-system/acars"},
-		{"same name, different namespace", []manifest.NamedResource{testutil.HelmReleaseID("default", "acars"), testutil.KustomizationID("flux-system", "acars")}, "default/acars, flux-system/acars"},
-		{"collision hidden by the cap", []manifest.NamedResource{testutil.HelmReleaseID("flux-system", "zzz"), testutil.KustomizationID("flux-system", "a"), testutil.KustomizationID("flux-system", "b"), testutil.KustomizationID("flux-system", "c"), testutil.KustomizationID("flux-system", "d"), testutil.KustomizationID("flux-system", "e"), testutil.KustomizationID("flux-system", "zzz")}, "flux-system/zzz, flux-system/a, flux-system/b, flux-system/c, flux-system/d, flux-system/e +1 more"},
+		{
+			"same name, different kind",
+			[]manifest.NamedResource{
+				testutil.HelmReleaseID("flux-system", "acars"),
+				testutil.KustomizationID("flux-system", "acars"),
+			},
+			"HelmRelease flux-system/acars, Kustomization flux-system/acars",
+		},
+		{
+			"same name, different group",
+			[]manifest.NamedResource{
+				{Group: "example.test", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "acars"},
+				testutil.KustomizationID("flux-system", "acars"),
+			},
+			"Kustomization.example.test flux-system/acars, Kustomization.kustomize.toolkit.fluxcd.io flux-system/acars",
+		},
+		{
+			"same name, different namespace",
+			[]manifest.NamedResource{
+				testutil.HelmReleaseID("default", "acars"),
+				testutil.KustomizationID("flux-system", "acars"),
+			},
+			"default/acars, flux-system/acars",
+		},
+		{
+			"collision hidden by the cap",
+			[]manifest.NamedResource{
+				testutil.HelmReleaseID("flux-system", "zzz"),
+				testutil.KustomizationID("flux-system", "a"),
+				testutil.KustomizationID("flux-system", "b"),
+				testutil.KustomizationID("flux-system", "c"),
+				testutil.KustomizationID("flux-system", "d"),
+				testutil.KustomizationID("flux-system", "e"),
+				testutil.KustomizationID("flux-system", "zzz"),
+			},
+			"flux-system/zzz, flux-system/a, flux-system/b, flux-system/c, flux-system/d, flux-system/e +1 more",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -194,7 +281,14 @@ func TestEncoderErrors_NonResourceDiagnostics(t *testing.T) {
 	if err := (Encoder{Writer: errorWriter{writeErr}}).Errors(closeErr); !errors.Is(err, writeErr) {
 		t.Fatalf("writer error = %v, want %v", err, writeErr)
 	}
-	if err := writeModel(Encoder{Writer: errorWriter{writeErr}}, Model{}, manifest.Warning{Message: "advisory"}); !errors.Is(err, writeErr) {
+	if err := writeModel(
+		Encoder{Writer: errorWriter{writeErr}},
+		Model{},
+		manifest.Warning{Message: "advisory"},
+	); !errors.Is(
+		err,
+		writeErr,
+	) {
 		t.Fatalf("report writer error = %v, want %v", err, writeErr)
 	}
 }
@@ -214,10 +308,20 @@ func writeModel(e Encoder, m Model, warnings ...manifest.Warning) error {
 
 func TestEncoderReport_AdvisoryNames(t *testing.T) {
 	t.Parallel()
-	source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "source"}
+	source := manifest.NamedResource{
+		Group:     manifest.SourceDomain,
+		Kind:      manifest.KindGitRepository,
+		Namespace: "apps",
+		Name:      "source",
+	}
 	other := source
 	other.Group = "custom.example"
-	agent := manifest.Warning{Resource: source, Category: manifest.WarnSkippedSubmodule, Message: "submodule omitted", Count: 1}
+	agent := manifest.Warning{
+		Resource: source,
+		Category: manifest.WarnSkippedSubmodule,
+		Message:  "submodule omitted",
+		Count:    1,
+	}
 	ordinary := manifest.Warning{Resource: source, Category: manifest.WarnPathConfig, Message: "ordinary", Count: 3}
 	collision := ordinary
 	collision.Resource = other
@@ -312,7 +416,22 @@ func TestReport_SyntheticSubjectsRemainDistinct(t *testing.T) {
 	}
 	entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "clusters/test", manifest.NamedResource{})
 	subjects[entry.Named()] = manifest.DiagnosticFor(entry.Named(), entry)
-	report := Report{Groups: []ReportGroup{{Subjects: subjects, Models: []Model{{Primary: []Primary{{ID: ids[0], Msg: "first failed"}, {ID: ids[1], Msg: "second failed"}, {ID: entry.Named(), Msg: "root failed"}}}}}}}
+	report := Report{
+		Groups: []ReportGroup{
+			{
+				Subjects: subjects,
+				Models: []Model{
+					{
+						Primary: []Primary{
+							{ID: ids[0], Msg: "first failed"},
+							{ID: ids[1], Msg: "second failed"},
+							{ID: entry.Named(), Msg: "root failed"},
+						},
+					},
+				},
+			},
+		},
+	}
 	report.Prepare(nil)
 	var out bytes.Buffer
 	encoder := Encoder{Writer: &out}
@@ -320,7 +439,10 @@ func TestReport_SyntheticSubjectsRemainDistinct(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := out.String()
-	if strings.Contains(text, "OCIRepository") || strings.Contains(text, "Kustomization entry") || !strings.Contains(text, `path "clusters/test"`) || strings.Count(text, "HelmChart") < 2 || !strings.Contains(text, "3 failed") {
+	if strings.Contains(text, "OCIRepository") || strings.Contains(text, "Kustomization entry") ||
+		!strings.Contains(text, `path "clusters/test"`) ||
+		strings.Count(text, "HelmChart") < 2 ||
+		!strings.Contains(text, "3 failed") {
 		t.Fatalf("raw causes collapsed or leaked: %s", text)
 	}
 }
@@ -331,7 +453,25 @@ func TestReport_SnapshotSpecificAttribution(t *testing.T) {
 	synthetic := chart.OCIRepository(&manifest.HelmRepository{URL: "oci://registry.example/charts"})
 	raw := synthetic.Named()
 	subjects := map[manifest.NamedResource]manifest.DiagnosticIdentity{raw: manifest.DiagnosticFor(raw, synthetic)}
-	report := Report{Groups: []ReportGroup{{Subjects: subjects, Models: []Model{{Context: "orig snapshot", Subjects: map[manifest.NamedResource]manifest.DiagnosticIdentity{}, Primary: []Primary{{ID: raw, Msg: "ordinary source failed"}}}, {Context: "current snapshot", Subjects: subjects, Primary: []Primary{{ID: raw, Msg: "synthetic source failed"}}}}}}}
+	report := Report{
+		Groups: []ReportGroup{
+			{
+				Subjects: subjects,
+				Models: []Model{
+					{
+						Context:  "orig snapshot",
+						Subjects: map[manifest.NamedResource]manifest.DiagnosticIdentity{},
+						Primary:  []Primary{{ID: raw, Msg: "ordinary source failed"}},
+					},
+					{
+						Context:  "current snapshot",
+						Subjects: subjects,
+						Primary:  []Primary{{ID: raw, Msg: "synthetic source failed"}},
+					},
+				},
+			},
+		},
+	}
 	report.Prepare(nil)
 	var out bytes.Buffer
 	encoder := Encoder{Writer: &out}
@@ -339,14 +479,21 @@ func TestReport_SnapshotSpecificAttribution(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := out.String()
-	if !strings.Contains(text, "OCIRepository") || !strings.Contains(text, "HelmChart") || !strings.Contains(text, "ordinary source failed") || !strings.Contains(text, "synthetic source failed") {
+	if !strings.Contains(text, "OCIRepository") || !strings.Contains(text, "HelmChart") ||
+		!strings.Contains(text, "ordinary source failed") ||
+		!strings.Contains(text, "synthetic source failed") {
 		t.Fatalf("snapshot provenance crossed sides: %s", text)
 	}
 }
 
 func TestReport_OverrideCollisions(t *testing.T) {
 	t.Parallel()
-	raw := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "source"}
+	raw := manifest.NamedResource{
+		Group:     manifest.SourceDomain,
+		Kind:      manifest.KindOCIRepository,
+		Namespace: "apps",
+		Name:      "source",
+	}
 	a := manifest.NamedResource{Group: "a.example", Kind: "Widget", Namespace: "apps", Name: "a"}
 	b := manifest.NamedResource{Group: "b.example", Kind: "Widget", Namespace: "apps", Name: "b"}
 	c := manifest.NamedResource{Group: "c.example", Kind: "Widget", Namespace: "apps", Name: "c"}
@@ -370,7 +517,12 @@ func TestReport_OverrideCollisions(t *testing.T) {
 	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps"}
 	synthetic := chart.OCIRepository(&manifest.HelmRepository{URL: "oci://registry.example/charts"})
 	chartRaw := synthetic.Named()
-	otherChart := manifest.NamedResource{Group: "custom.example", Kind: manifest.KindHelmChart, Namespace: "apps", Name: "other"}
+	otherChart := manifest.NamedResource{
+		Group:     "custom.example",
+		Kind:      manifest.KindHelmChart,
+		Namespace: "apps",
+		Name:      "other",
+	}
 	for _, tc := range []struct {
 		name         string
 		report       Report
@@ -426,7 +578,8 @@ func TestReport_OverrideCollisions(t *testing.T) {
 			name: "another group retains the removed contributor",
 			report: Report{Groups: []ReportGroup{
 				{Cluster: "alpha", Subjects: capture(a), Models: []Model{model("captured", capture(b))}},
-				{Cluster: "beta"}, {Cluster: "gamma"},
+				{Cluster: "beta"},
+				{Cluster: "gamma"},
 			}},
 			extra:      [][]manifest.NamedResource{nil, {b}, {a}},
 			wantNames:  []Names{*alphaA, *betaB, *labels("gamma: ", Subject{ID: a, Kind: "Widget.a.example", Name: "gamma: apps/a"})},
@@ -458,7 +611,9 @@ func TestReport_OverrideCollisions(t *testing.T) {
 				{ID: raw, Kind: "Widget.a.example", Name: `alpha: apps/a (entry path "warning/a")`},
 				{ID: b, Kind: "Widget.c.example", Name: "beta: apps/c"},
 				{ID: raw, Kind: "OCIRepository", Name: "alpha: apps/source"},
-				{ID: b, Kind: "Widget.a.example", Name: "alpha: apps/a"}, {}, {},
+				{ID: b, Kind: "Widget.a.example", Name: "alpha: apps/a"},
+				{},
+				{},
 			},
 			wantText: "\n  ⚠ warnings (8)\n    [Captured] Widget alpha: apps/b: first (×2)\n      kept\n" +
 				"    Widget beta: apps/a: second\n" +

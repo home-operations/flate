@@ -63,7 +63,11 @@ func (r generatorRecord) materialize(ctx context.Context, opts options) (manifes
 	}
 	pairs, err := kv.NewLoader(ldr, provider.NewDefaultDepProvider().GetFieldValidator()).Load(r.args.KvPairSources)
 	if err != nil {
-		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("generator %s in %s: %w", r.args.Name, r.file, err), "")
+		return nil, manifest.NewError(
+			manifest.ErrInput,
+			fmt.Errorf("generator %s in %s: %w", r.args.Name, r.file, err),
+			"",
+		)
 	}
 	data := make(map[string]any, len(pairs))
 	for _, pair := range pairs {

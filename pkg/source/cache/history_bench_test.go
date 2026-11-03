@@ -17,8 +17,24 @@ func BenchmarkProducersForPaths(b *testing.B) {
 			source := manifest.SourceIdentity{Root: "/input"}
 			for i := range count {
 				name := fmt.Sprint(i)
-				owner := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Name: name}
-				err := RecordInventory(b.Context(), cache, AcceptedInventory[*strings.Reader]{Key: name, Acceptance: name, History: RenderHistory{Owner: owner, Sources: []manifest.SourceEvidence{{Source: source, Path: "apps/" + name, Subtree: true}}}, Content: strings.NewReader(name)})
+				owner := manifest.NamedResource{
+					Group: manifest.HelmReleaseDomain,
+					Kind:  manifest.KindHelmRelease,
+					Name:  name,
+				}
+				err := RecordInventory(
+					b.Context(),
+					cache,
+					AcceptedInventory[*strings.Reader]{
+						Key:        name,
+						Acceptance: name,
+						History: RenderHistory{
+							Owner:   owner,
+							Sources: []manifest.SourceEvidence{{Source: source, Path: "apps/" + name, Subtree: true}},
+						},
+						Content: strings.NewReader(name),
+					},
+				)
 				if err != nil {
 					b.Fatal(err)
 				}

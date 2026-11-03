@@ -23,53 +23,82 @@ func TestProducerTargets(t *testing.T) {
 	}{
 		{
 			name: "ExternalSecret explicit target.name",
-			raw: &RawObject{Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1", Namespace: "default", Name: "app-creds",
-				Spec: map[string]any{"target": map[string]any{"name": "app-values"}}},
+			raw: &RawObject{
+				Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1", Namespace: "default", Name: "app-creds",
+				Spec: map[string]any{"target": map[string]any{"name": "app-values"}},
+			},
 			want: []ProducerTarget{secret("default", "app-values")},
 		},
 		{
 			name: "ExternalSecret no target falls back to own name",
-			raw:  &RawObject{Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1", Namespace: "staging", Name: "my-secret", Spec: map[string]any{}},
+			raw: &RawObject{
+				Kind:       "ExternalSecret",
+				APIVersion: "external-secrets.io/v1",
+				Namespace:  "staging",
+				Name:       "my-secret",
+				Spec:       map[string]any{},
+			},
 			want: []ProducerTarget{secret("staging", "my-secret")},
 		},
 		{
 			name: "ExternalSecret template.data declares the output keys",
-			raw: &RawObject{Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1", Namespace: "default", Name: "app-creds",
+			raw: &RawObject{
+				Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1", Namespace: "default", Name: "app-creds",
 				Spec: map[string]any{"target": map[string]any{"template": map[string]any{
-					"data": map[string]any{"PASSWORD": "{{ .pw }}", "USERNAME": "{{ .user }}"}}}}},
+					"data": map[string]any{"PASSWORD": "{{ .pw }}", "USERNAME": "{{ .user }}"},
+				}}},
+			},
 			want: []ProducerTarget{secret("default", "app-creds", "PASSWORD", "USERNAME")},
 		},
 		{
 			name: "ExternalSecret without template declares data[].secretKey",
-			raw: &RawObject{Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1", Namespace: "default", Name: "app-creds",
+			raw: &RawObject{
+				Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1", Namespace: "default", Name: "app-creds",
 				Spec: map[string]any{"data": []any{
 					map[string]any{"secretKey": "TOKEN"},
 					map[string]any{"secretKey": "API_KEY"},
-				}}},
+				}},
+			},
 			want: []ProducerTarget{secret("default", "app-creds", "API_KEY", "TOKEN")},
 		},
 		{
 			name: "ExternalSecret dataFrom-only declares nothing",
-			raw: &RawObject{Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1", Namespace: "default", Name: "app-creds",
-				Spec: map[string]any{"dataFrom": []any{map[string]any{"extract": map[string]any{"key": "vault/app"}}}}},
+			raw: &RawObject{
+				Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1", Namespace: "default", Name: "app-creds",
+				Spec: map[string]any{"dataFrom": []any{map[string]any{"extract": map[string]any{"key": "vault/app"}}}},
+			},
 			want: []ProducerTarget{secret("default", "app-creds")},
 		},
 		{
 			name: "SealedSecret template.metadata.name + encryptedData keys",
-			raw: &RawObject{Kind: "SealedSecret", APIVersion: "bitnami.com/v1alpha1", Namespace: "prod", Name: "sealed",
+			raw: &RawObject{
+				Kind: "SealedSecret", APIVersion: "bitnami.com/v1alpha1", Namespace: "prod", Name: "sealed",
 				Spec: map[string]any{
 					"template":      map[string]any{"metadata": map[string]any{"name": "sealed-db"}},
-					"encryptedData": map[string]any{"password": "AgB...", "username": "AgC..."}}},
+					"encryptedData": map[string]any{"password": "AgB...", "username": "AgC..."},
+				},
+			},
 			want: []ProducerTarget{secret("prod", "sealed-db", "password", "username")},
 		},
 		{
 			name: "SealedSecret no template falls back to own name, no keys",
-			raw:  &RawObject{Kind: "SealedSecret", APIVersion: "bitnami.com/v1alpha1", Namespace: "prod", Name: "sealed-db", Spec: map[string]any{}},
+			raw: &RawObject{
+				Kind:       "SealedSecret",
+				APIVersion: "bitnami.com/v1alpha1",
+				Namespace:  "prod",
+				Name:       "sealed-db",
+				Spec:       map[string]any{},
+			},
 			want: []ProducerTarget{secret("prod", "sealed-db")},
 		},
 		{
 			name: "ObjectBucketClaim produces a Secret and a ConfigMap named after the claim",
-			raw:  &RawObject{Kind: "ObjectBucketClaim", APIVersion: "objectbucket.io/v1alpha1", Namespace: "default", Name: "netbox-obc"},
+			raw: &RawObject{
+				Kind:       "ObjectBucketClaim",
+				APIVersion: "objectbucket.io/v1alpha1",
+				Namespace:  "default",
+				Name:       "netbox-obc",
+			},
 			want: []ProducerTarget{
 				secret("default", "netbox-obc"),
 				{Kind: KindConfigMap, Namespace: "default", Name: "netbox-obc"},
@@ -102,7 +131,13 @@ func TestProducerTargets_ForeignAPIGroup(t *testing.T) {
 		for _, group := range []string{"example.com/v1", tc.group + ".example.com/v1", "", "v1"} {
 			t.Run(tc.kind+"/"+group, func(t *testing.T) {
 				t.Parallel()
-				raw := &RawObject{Kind: tc.kind, APIVersion: group, Name: "producer", Namespace: "apps", Spec: map[string]any{"artifacts": []any{map[string]any{"name": "output"}}}}
+				raw := &RawObject{
+					Kind:       tc.kind,
+					APIVersion: group,
+					Name:       "producer",
+					Namespace:  "apps",
+					Spec:       map[string]any{"artifacts": []any{map[string]any{"name": "output"}}},
+				}
 				if got := ProducerTargets(raw); len(got) != 0 {
 					t.Errorf("foreign producer targets = %v, want none", got)
 				}
@@ -159,8 +194,16 @@ func TestProducerTargets_ArtifactGenerator(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			ea := ea
-			raw := &RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Namespace: "apps", Name: "generator",
-				Spec: map[string]any{"pathPattern": tc.pattern, "artifacts": []any{map[string]any{"name": tc.template}}}}
+			raw := &RawObject{
+				APIVersion: "source.extensions.fluxcd.io/v1beta1",
+				Kind:       "ArtifactGenerator",
+				Namespace:  "apps",
+				Name:       "generator",
+				Spec: map[string]any{
+					"pathPattern": tc.pattern,
+					"artifacts":   []any{map[string]any{"name": tc.template}},
+				},
+			}
 			var candidates []NamedResource
 			if tc.candidate != "" {
 				ea.Name = tc.candidate
@@ -227,9 +270,27 @@ func TestArtifactMatch_Budget(t *testing.T) {
 func TestProducerTargets_ArtifactCandidates(t *testing.T) {
 	t.Parallel()
 	ea := NamedResource{Group: SourceDomain, Kind: KindExternalArtifact, Namespace: "apps", Name: "api-prod"}
-	raw := &RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Namespace: "apps", Name: "generator",
-		Spec: map[string]any{"pathPattern": "@repo/{app}", "artifacts": []any{map[string]any{"name": "z"}, map[string]any{"name": "{app}"}, map[string]any{"name": "api-prod"}, map[string]any{"name": "z"}, nil, map[string]any{"name": 1}}}}
-	want := []ProducerTarget{{NamedResource: ea}, {Group: SourceDomain, Kind: KindExternalArtifact, Namespace: "apps", Name: "z"}}
+	raw := &RawObject{
+		APIVersion: "source.extensions.fluxcd.io/v1beta1",
+		Kind:       "ArtifactGenerator",
+		Namespace:  "apps",
+		Name:       "generator",
+		Spec: map[string]any{
+			"pathPattern": "@repo/{app}",
+			"artifacts": []any{
+				map[string]any{"name": "z"},
+				map[string]any{"name": "{app}"},
+				map[string]any{"name": "api-prod"},
+				map[string]any{"name": "z"},
+				nil,
+				map[string]any{"name": 1},
+			},
+		},
+	}
+	want := []ProducerTarget{
+		{NamedResource: ea},
+		{Group: SourceDomain, Kind: KindExternalArtifact, Namespace: "apps", Name: "z"},
+	}
 	if got := ProducerTargets(raw, ea, ea); !reflect.DeepEqual(got, want) {
 		t.Fatalf("targets = %v, want %v", got, want)
 	}
@@ -300,11 +361,20 @@ func BenchmarkProducerTargets_ArtifactGenerator(b *testing.B) {
 		{"Incompatible", "app-{app}", "api"},
 	} {
 		b.Run(tc.name, func(b *testing.B) {
-			raw := &RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Namespace: "apps",
-				Spec: map[string]any{"pathPattern": "@repo/{app}/{env}", "artifacts": []any{map[string]any{"name": tc.template}}}}
+			raw := &RawObject{
+				APIVersion: "source.extensions.fluxcd.io/v1beta1",
+				Kind:       "ArtifactGenerator",
+				Namespace:  "apps",
+				Spec: map[string]any{
+					"pathPattern": "@repo/{app}/{env}",
+					"artifacts":   []any{map[string]any{"name": tc.template}},
+				},
+			}
 			var candidates []NamedResource
 			if tc.candidate != "" {
-				candidates = []NamedResource{{Group: SourceDomain, Kind: KindExternalArtifact, Namespace: "apps", Name: tc.candidate}}
+				candidates = []NamedResource{
+					{Group: SourceDomain, Kind: KindExternalArtifact, Namespace: "apps", Name: tc.candidate},
+				}
 			}
 			b.ReportAllocs()
 			for b.Loop() {

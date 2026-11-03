@@ -54,7 +54,13 @@ func TestDependencySubstitutions_ParsedDependsOn(t *testing.T) {
 			t.Parallel()
 			st := store.New()
 			for i, value := range tt.declarations {
-				st.AddObject(parsedDependency(t, fmt.Sprintf("supplier-%d", i), fmt.Sprintf("  postBuild: {substitute: {PREFIX: %q, NS: shared}}\n", value)))
+				st.AddObject(
+					parsedDependency(
+						t,
+						fmt.Sprintf("supplier-%d", i),
+						fmt.Sprintf("  postBuild: {substitute: {PREFIX: %q, NS: shared}}\n", value),
+					),
+				)
 			}
 			spec := fmt.Sprintf("  dependsOn: [{name: %q, namespace: %q}]\n", tt.expression, tt.namespace)
 			if tt.inline != "" {
@@ -63,12 +69,19 @@ func TestDependencySubstitutions_ParsedDependsOn(t *testing.T) {
 			original := parsedDependency(t, "consumer", spec)
 			before := original.Clone()
 			st.AddObject(original)
-			d := NewDependencySubstitutions(st.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization))
+			d := NewDependencySubstitutions(
+				st.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization),
+			)
 			resolved := manifest.MapDependsOn(original, d.Resolve, d.Resolve).(*manifest.Kustomization)
 			assert.Equal(t, resolved.DependsOn[0].Name, tt.want)
 			assert.Equal(t, resolved.DependsOn[0].Namespace, tt.wantNamespace)
 			st.AddObject(resolved)
-			if diff := cmp.Diff(before, original, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection")); diff != "" {
+			if diff := cmp.Diff(
+				before,
+				original,
+				cmp.AllowUnexported(manifest.Kustomization{}),
+				cmpopts.IgnoreFields(manifest.Kustomization{}, "projection"),
+			); diff != "" {
 				t.Fatalf("stored input mutated (-want +got):\n%s", diff)
 			}
 			if again := manifest.MapDependsOn(resolved, d.Resolve, d.Resolve); again != resolved {

@@ -14,14 +14,23 @@ import (
 type sourceGenerator struct{ *manifest.GitRepository }
 
 func (g *sourceGenerator) GeneratedObjects() ([]manifest.BaseManifest, error) {
-	return []manifest.BaseManifest{manifest.NewConfigMap(manifest.NamedResource{Name: "source-info", Namespace: g.Namespace}, map[string]any{"url": g.URL})}, nil
+	return []manifest.BaseManifest{
+		manifest.NewConfigMap(
+			manifest.NamedResource{Name: "source-info", Namespace: g.Namespace},
+			map[string]any{"url": g.URL},
+		),
+	}, nil
 }
 
 func TestSource_GeneratedInventoryAndAcquisition(t *testing.T) {
 	t.Parallel()
-	fetcher := &fakeFetcher{artifact: &store.SourceArtifact{Key: "acquisition", Content: "generation", FS: fstest.MapFS{}}}
+	fetcher := &fakeFetcher{
+		artifact: &store.SourceArtifact{Key: "acquisition", Content: "generation", FS: fstest.MapFS{}},
+	}
 	c, st := newController(t, map[string]src.Fetcher{manifest.KindGitRepository: fetcher})
-	repository := &sourceGenerator{GitRepository: &manifest.GitRepository{Name: "source", Namespace: "apps", URL: "https://example.test/first"}}
+	repository := &sourceGenerator{
+		GitRepository: &manifest.GitRepository{Name: "source", Namespace: "apps", URL: "https://example.test/first"},
+	}
 	st.AddObject(repository)
 	var previous *base.Execution
 	for _, url := range []string{repository.URL, "https://example.test/second"} {
@@ -30,14 +39,22 @@ func TestSource_GeneratedInventoryAndAcquisition(t *testing.T) {
 		repository = &sourceGenerator{GitRepository: &next}
 		st.AddObject(repository)
 		fetcher.during = func() {
-			id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: repository.Namespace, Name: "source-info"}
+			id := manifest.NamedResource{
+				Kind:      manifest.KindConfigMap,
+				Namespace: repository.Namespace,
+				Name:      "source-info",
+			}
 			data, _ := st.GetObject(id).(*manifest.ConfigMap)
 			if data == nil || data.Data["url"] != url || !st.ReportHidden(id) {
 				t.Error("source acquired content before publishing its current generated declaration")
 			}
 		}
 		var execution *base.Execution
-		c.Tasks.Go(t.Context(), "source", func(ctx context.Context) { execution = c.ReconcileNode(ctx, repository.Named(), manifest.DrainNone) })
+		c.Tasks.Go(
+			t.Context(),
+			"source",
+			func(ctx context.Context) { execution = c.ReconcileNode(ctx, repository.Named(), manifest.DrainNone) },
+		)
 		c.Tasks.BlockTillDone()
 		if previous != nil {
 			previous.Retire()

@@ -38,7 +38,10 @@ func (f fileFS) Open(name string) (fs.File, error) {
 	}
 	if name == "." {
 		node := &tarNode{FileInfo: (&tar.Header{Name: f.name, Mode: 0o600, Size: f.size}).FileInfo()}
-		root := &tarNode{FileInfo: (&tar.Header{Name: ".", Mode: 0o750, Typeflag: tar.TypeDir}).FileInfo(), children: []fs.DirEntry{node}}
+		root := &tarNode{
+			FileInfo: (&tar.Header{Name: ".", Mode: 0o750, Typeflag: tar.TypeDir}).FileInfo(),
+			children: []fs.DirEntry{node},
+		}
 		return &tarFile{tarNode: root, Reader: bytes.NewReader(nil)}, nil
 	}
 	if name != f.name {

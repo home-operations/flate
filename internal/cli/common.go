@@ -73,12 +73,34 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
 	bindBase(fs, f)
 	fs.StringVarP(&f.namespace, "namespace", "n", "", "Select resources in this namespace")
 	fs.StringArrayVar(&f.supply, "supply", nil, "Read missing Secret and ConfigMap data from YAML (repeatable)")
-	fs.BoolVar(&f.strictSubstitutions, "strict-substitutions", false, "Match kustomize-controller StrictPostBuildSubstitutions")
-	fs.StringSliceVar(&f.allowMissingKinds, "allow-missing-kinds", nil, "Tolerate missing cluster inputs: Secret,ConfigMap,CustomResourceDefinition. Missing source auth without a producer first tries native registry helpers, SSH agent, Helm login or AWS environment/shared-profile/IAM credentials")
+	fs.BoolVar(
+		&f.strictSubstitutions,
+		"strict-substitutions",
+		false,
+		"Match kustomize-controller StrictPostBuildSubstitutions",
+	)
+	fs.StringSliceVar(
+		&f.allowMissingKinds,
+		"allow-missing-kinds",
+		nil,
+		"Tolerate missing cluster inputs: Secret,ConfigMap,CustomResourceDefinition. Missing source auth without a producer first tries native registry helpers, SSH agent, Helm login or AWS environment/shared-profile/IAM credentials",
+	)
 	fs.BoolVar(&f.restrictEgress, "restrict-egress", false, "Block private-address fetches and local Git transports")
-	fs.StringSliceVar(&f.skipKinds, "skip-kinds",
-		[]string{manifest.KindSecret, manifest.KindCustomResourceDefinition}, "Exclude these output kinds (empty includes all)")
-	fs.StringVar(&f.registryConfig, "registry-config", "", "Read OCI credentials through this native Docker/Helm store, including credential helpers")
+	fs.StringSliceVar(
+		&f.skipKinds,
+		"skip-kinds",
+		[]string{
+			manifest.KindSecret,
+			manifest.KindCustomResourceDefinition,
+		},
+		"Exclude these output kinds (empty includes all)",
+	)
+	fs.StringVar(
+		&f.registryConfig,
+		"registry-config",
+		"",
+		"Read OCI credentials through this native Docker/Helm store, including credential helpers",
+	)
 	bindCacheDir(fs, &f.cacheDir, "Store fetched sources and renders in this directory")
 	fs.IntVar(&f.concurrency, "concurrency", runtime.NumCPU()*4, "Limit parallel reconciles (0 means unbounded)")
 	// Shallow clone is the dominant speedup for GitRepository sources that
@@ -86,10 +108,20 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
 	// the tip commit, which is all the worktree materialization needs.
 	// Commit-pinned refs always full-clone (the pinned commit may be deep).
 	fs.IntVar(&f.gitDepth, "git-depth", 1, "Set Git fetch depth (0 means full history)")
-	fs.StringVar(&f.helm.KubeVersion, "kube-version", helm.BundledKubeVersion(), "Set the cluster Kubernetes version for Helm")
+	fs.StringVar(
+		&f.helm.KubeVersion,
+		"kube-version",
+		helm.BundledKubeVersion(),
+		"Set the cluster Kubernetes version for Helm",
+	)
 	fs.StringVarP(&f.helm.APIVersions, "api-versions", "a", "", "Set cluster APIs available to Helm (comma-separated)")
 	fs.BoolVar(&f.helm.EnableDNS, "enable-dns", false, "Match helm-controller AllowDNSLookups")
-	fs.BoolVar(&f.helm.DisableChartDigestTracking, "disable-chart-digest-tracking", false, "Match helm-controller DisableChartDigestTracking")
+	fs.BoolVar(
+		&f.helm.DisableChartDigestTracking,
+		"disable-chart-digest-tracking",
+		false,
+		"Match helm-controller DisableChartDigestTracking",
+	)
 }
 
 // listFlags holds flags that are only meaningful for list/get commands.
@@ -170,7 +202,15 @@ func resolveBaseline(ctx context.Context, c *commonFlags, autoFallback bool) err
 	c.pathOrigSelfURLs = res.SelfURLs
 	c.selfURLs = res.SelfURLs
 	rev := res.BaseInput.Revision
-	slog.Debug("cli: baseline", "source", res.Source.Metadata["baseline-selection"], "rev", rev[:min(len(rev), 7)], "path_orig", c.pathOrig)
+	slog.Debug(
+		"cli: baseline",
+		"source",
+		res.Source.Metadata["baseline-selection"],
+		"rev",
+		rev[:min(len(rev), 7)],
+		"path_orig",
+		c.pathOrig,
+	)
 	return nil
 }
 
@@ -394,7 +434,9 @@ func runSelected(ctx context.Context, req selectedRequest, payload func(*selecte
 						result = *selected[0].Result
 					}
 					result.Warnings = append(slices.Clone(base.Result.Warnings), result.Warnings...)
-					result.ClusterWarnings = append(slices.Clone(base.Result.ClusterWarnings), result.ClusterWarnings...)
+					result.ClusterWarnings = append(
+						slices.Clone(base.Result.ClusterWarnings),
+						result.ClusterWarnings...)
 					selected[0].Result = &result
 				}
 			}
@@ -428,7 +470,11 @@ func runSelected(ctx context.Context, req selectedRequest, payload func(*selecte
 	} else if complete {
 		if root.Name != "" {
 			inv.groups = slices.DeleteFunc(inv.groups, func(group selectedGroup) bool {
-				return group.complete && !slices.ContainsFunc(group.sides, func(side *selection.Selection) bool { return side.Counts[root.Kind] != 0 })
+				return group.complete &&
+					!slices.ContainsFunc(
+						group.sides,
+						func(side *selection.Selection) bool { return side.Counts[root.Kind] != 0 },
+					)
 			})
 		}
 		result = payload(&inv)
@@ -441,7 +487,11 @@ func runSelected(ctx context.Context, req selectedRequest, payload func(*selecte
 func finishSelected(req selectedRequest, inv *selectedInvocation, payload selectedPayload) error {
 	final := errors.Join(payload.err, inv.err)
 	diagnostic := errors.Join(payload.err, inv.remainder)
-	report := output.Report{Groups: make([]output.ReportGroup, len(inv.groups)), Test: payload.rosters != nil, Elapsed: inv.elapsed}
+	report := output.Report{
+		Groups:  make([]output.ReportGroup, len(inv.groups)),
+		Test:    payload.rosters != nil,
+		Elapsed: inv.elapsed,
+	}
 	if req.notice.Category != "" {
 		report.Warnings = append(report.Warnings, output.Warning{Warning: req.notice, Group: -1})
 	}
@@ -475,7 +525,10 @@ func finishSelected(req selectedRequest, inv *selectedInvocation, payload select
 			}
 			if g.Test != nil {
 				model.Primary = slices.DeleteFunc(model.Primary, func(p output.Primary) bool {
-					return slices.ContainsFunc(g.Test.Cases, func(c output.Case) bool { return c.ID == p.ID && c.Outcome == output.OutcomeFailed })
+					return slices.ContainsFunc(
+						g.Test.Cases,
+						func(c output.Case) bool { return c.ID == p.ID && c.Outcome == output.OutcomeFailed },
+					)
 				})
 			}
 			context := ""
@@ -526,9 +579,14 @@ func finishSelected(req selectedRequest, inv *selectedInvocation, payload select
 		return errors.Join(final, err)
 	}
 	if final != nil {
-		presented := diagnostic != nil || writeErr != nil || report.Test && slices.ContainsFunc(payload.rosters, output.TestReport.AnyFailed)
+		presented := diagnostic != nil || writeErr != nil ||
+			report.Test && slices.ContainsFunc(payload.rosters, output.TestReport.AnyFailed)
 		for _, group := range report.Groups {
-			presented = presented || slices.ContainsFunc(group.Models, func(m output.Model) bool { return len(m.Primary)+len(m.Missing) > 0 || m.Blocked > 0 })
+			presented = presented ||
+				slices.ContainsFunc(
+					group.Models,
+					func(m output.Model) bool { return len(m.Primary)+len(m.Missing) > 0 || m.Blocked > 0 },
+				)
 		}
 		if presented {
 			return reportedError{final}

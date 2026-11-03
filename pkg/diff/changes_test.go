@@ -84,7 +84,15 @@ func TestChanges_Classification(t *testing.T) {
 		assert.Equal(t, c.APIVersion, "v2")
 		assert.Equal(t, c.APIVersion, manifest.DocAPIVersion(present))
 	}
-	assert.Diff(t, got, map[string]ChangeStatus{"edit-normalized": StatusChanged, "gone-normalized": StatusRemoved, "fresh-normalized": StatusAdded})
+	assert.Diff(
+		t,
+		got,
+		map[string]ChangeStatus{
+			"edit-normalized":  StatusChanged,
+			"gone-normalized":  StatusRemoved,
+			"fresh-normalized": StatusAdded,
+		},
+	)
 }
 
 func TestRenderJSON_SubjectSides(t *testing.T) {
@@ -105,14 +113,22 @@ func TestRenderJSON_SubjectSides(t *testing.T) {
 			var subjects [2]map[manifest.NamedResource]manifest.DiagnosticIdentity
 			if tc.original {
 				subjects[0] = map[manifest.NamedResource]manifest.DiagnosticIdentity{
-					parent.NamedResource: {ID: parent.NamedResource, Resource: original.NamedResource, Path: original.Path},
+					parent.NamedResource: {
+						ID:       parent.NamedResource,
+						Resource: original.NamedResource,
+						Path:     original.Path,
+					},
 				}
 			} else {
 				original = parent
 			}
 			if tc.current {
 				subjects[1] = map[manifest.NamedResource]manifest.DiagnosticIdentity{
-					parent.NamedResource: {ID: parent.NamedResource, Resource: current.NamedResource, Path: current.Path},
+					parent.NamedResource: {
+						ID:       parent.NamedResource,
+						Resource: current.NamedResource,
+						Path:     current.Path,
+					},
 				}
 			} else {
 				current = parent
@@ -190,7 +206,9 @@ func TestChanges_ReturnedManifestsIndependent(t *testing.T) {
 			}
 			left, right := inputs()
 			wantLeft, wantRight := inputs()
-			want := []Change{{Parent: p, APIVersion: "v1", Kind: "ConfigMap", Namespace: "ns", Name: "edit", Status: tt.status}}
+			want := []Change{
+				{Parent: p, APIVersion: "v1", Kind: "ConfigMap", Namespace: "ns", Name: "edit", Status: tt.status},
+			}
 			if tt.status != StatusAdded {
 				want[0].Old = doc("edit", "old", tt.leftBinary).Manifest
 			}
@@ -316,8 +334,14 @@ func TestChanges_Sorted(t *testing.T) {
 	t.Parallel()
 	pa := Parent{NamedResource: testutil.KustomizationID("ns", "a")}
 	pb := Parent{NamedResource: testutil.KustomizationID("ns", "b")}
-	left := []Doc{cmDoc(pb, manifest.NamedResource{Name: "z", Namespace: "ns"}, "1", ""), cmDoc(pa, manifest.NamedResource{Name: "y", Namespace: "ns"}, "1", "")}
-	right := []Doc{cmDoc(pb, manifest.NamedResource{Name: "z", Namespace: "ns"}, "2", ""), cmDoc(pa, manifest.NamedResource{Name: "y", Namespace: "ns"}, "2", "")}
+	left := []Doc{
+		cmDoc(pb, manifest.NamedResource{Name: "z", Namespace: "ns"}, "1", ""),
+		cmDoc(pa, manifest.NamedResource{Name: "y", Namespace: "ns"}, "1", ""),
+	}
+	right := []Doc{
+		cmDoc(pb, manifest.NamedResource{Name: "z", Namespace: "ns"}, "2", ""),
+		cmDoc(pa, manifest.NamedResource{Name: "y", Namespace: "ns"}, "2", ""),
+	}
 	foreign := cmDoc(pa, manifest.NamedResource{Name: "y", Namespace: "ns"}, "3", "")
 	foreign.Manifest["apiVersion"] = "example.test/v1"
 	left = append(left, foreign)
@@ -343,7 +367,10 @@ func TestChanges_Sorted(t *testing.T) {
 func TestChanges_DuplicateDocumentsLastWins(t *testing.T) {
 	t.Parallel()
 	p := Parent{NamedResource: testutil.KustomizationID("ns", "apps")}
-	left := []Doc{cmDoc(p, manifest.NamedResource{Name: "first-left", Namespace: "ns"}, "shadowed", "shadowed-1"), cmDoc(p, manifest.NamedResource{Name: "last-left", Namespace: "ns"}, "retained", "retained-1")}
+	left := []Doc{
+		cmDoc(p, manifest.NamedResource{Name: "first-left", Namespace: "ns"}, "shadowed", "shadowed-1"),
+		cmDoc(p, manifest.NamedResource{Name: "last-left", Namespace: "ns"}, "retained", "retained-1"),
+	}
 	for _, tt := range []struct {
 		name string
 		last string
@@ -354,7 +381,15 @@ func TestChanges_DuplicateDocumentsLastWins(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			right := []Doc{cmDoc(p, manifest.NamedResource{Name: "first-right", Namespace: "ns"}, "changed-shadowed", "shadowed-2"), cmDoc(p, manifest.NamedResource{Name: "last-right", Namespace: "ns"}, tt.last, "retained-2")}
+			right := []Doc{
+				cmDoc(
+					p,
+					manifest.NamedResource{Name: "first-right", Namespace: "ns"},
+					"changed-shadowed",
+					"shadowed-2",
+				),
+				cmDoc(p, manifest.NamedResource{Name: "last-right", Namespace: "ns"}, tt.last, "retained-2"),
+			}
 			calls := map[string]int{}
 			opts := Options{StripAttrs: DefaultStripAttrs, Normalize: func(m map[string]any) {
 				meta := m["metadata"].(map[string]any)

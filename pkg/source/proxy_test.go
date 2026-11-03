@@ -16,20 +16,32 @@ func TestResolveProxy(t *testing.T) {
 		secret                *manifest.Secret
 		unwired               bool
 	}{
-		{name: "unwired Git", kind: manifest.KindGitRepository, unwired: true,
-			wantError: "references proxySecretRef but no source.SecretGetter is wired"},
-		{name: "unwired Helm", kind: manifest.KindHelmRepository, unwired: true,
-			wantError: "references proxySecretRef but no source.SecretGetter is wired"},
-		{name: "absent", kind: manifest.KindOCIRepository,
-			wantError: "secret ns/px not found"},
-		{name: "missing address", kind: manifest.KindBucket,
+		{
+			name: "unwired Git", kind: manifest.KindGitRepository, unwired: true,
+			wantError: "references proxySecretRef but no source.SecretGetter is wired",
+		},
+		{
+			name: "unwired Helm", kind: manifest.KindHelmRepository, unwired: true,
+			wantError: "references proxySecretRef but no source.SecretGetter is wired",
+		},
+		{
+			name: "absent", kind: manifest.KindOCIRepository,
+			wantError: "secret ns/px not found",
+		},
+		{
+			name: "missing address", kind: manifest.KindBucket,
 			secret:    &manifest.Secret{StringData: map[string]any{"username": "alice"}},
-			wantError: "proxy secret ns/px missing required 'address' key"},
-		{name: "malformed address wiped password", kind: manifest.KindGitRepository,
+			wantError: "proxy secret ns/px missing required 'address' key",
+		},
+		{
+			name: "malformed address wiped password", kind: manifest.KindGitRepository,
 			secret:    &manifest.Secret{StringData: map[string]any{"address": "http://proxy-credential-marker@proxy.invalid/%", "password": "..PLACEHOLDER_password.."}},
-			wantError: "proxySecretRef ns/px: invalid proxy address"},
-		{name: "full secret", kind: manifest.KindGitRepository,
-			secret: &manifest.Secret{StringData: map[string]any{"address": "http://proxy.example.com:8080", "username": "alice", "password": "hunter2"}}},
+			wantError: "proxySecretRef ns/px: invalid proxy address",
+		},
+		{
+			name: "full secret", kind: manifest.KindGitRepository,
+			secret: &manifest.Secret{StringData: map[string]any{"address": "http://proxy.example.com:8080", "username": "alice", "password": "hunter2"}},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -44,7 +56,11 @@ func TestResolveProxy(t *testing.T) {
 				}
 			}
 			owner := manifest.NamedResource{Group: manifest.SourceDomain, Kind: tc.kind, Namespace: "ns", Name: "r"}
-			material, err := ResolveTransport(getter, manifest.DiagnosticFor(owner, nil), []TransportInput{{Reference: &manifest.LocalObjectReference{Name: "px"}, Use: TransportProxy}})
+			material, err := ResolveTransport(
+				getter,
+				manifest.DiagnosticFor(owner, nil),
+				[]TransportInput{{Reference: &manifest.LocalObjectReference{Name: "px"}, Use: TransportProxy}},
+			)
 			if !tc.unwired {
 				assert.Equal(t, lookup, [2]string{"ns", "px"})
 				assert.Equal(t, calls, 1)
@@ -59,7 +75,11 @@ func TestResolveProxy(t *testing.T) {
 						t.Fatalf("expected missing-secret error: %v", err)
 					}
 					assert.Equal(t, missing.Owner, owner)
-					assert.Equal(t, missing.Secret, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "px"})
+					assert.Equal(
+						t,
+						missing.Secret,
+						manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "px"},
+					)
 				}
 				return
 			}

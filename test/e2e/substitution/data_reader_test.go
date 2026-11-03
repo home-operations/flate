@@ -37,7 +37,10 @@ type suppliedSSHTransport struct {
 	onAuth        func()
 }
 
-func (s *suppliedSSHTransport) NewUploadPackSession(endpoint *transport.Endpoint, auth transport.AuthMethod) (transport.UploadPackSession, error) {
+func (s *suppliedSSHTransport) NewUploadPackSession(
+	endpoint *transport.Endpoint,
+	auth transport.AuthMethod,
+) (transport.UploadPackSession, error) {
 	var signers []ssh.Signer
 	switch keys := auth.(type) {
 	case *gitssh.PublicKeys:
@@ -49,7 +52,11 @@ func (s *suppliedSSHTransport) NewUploadPackSession(endpoint *transport.Endpoint
 		if keys.User != "git" || s.host == nil {
 			return nil, transport.ErrAuthenticationRequired
 		}
-		if err := keys.HostKeyCallback("fixture:22", &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 22}, s.host); err != nil {
+		if err := keys.HostKeyCallback(
+			"fixture:22",
+			&net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 22},
+			s.host,
+		); err != nil {
 			return nil, err
 		}
 		var err error
@@ -115,32 +122,76 @@ func TestE2E_DataReader_SuppliedSSHOnBothDiffSides(t *testing.T) {
 	for _, value := range []string{"before", "after"} {
 		for _, name := range []string{"one", "two"} {
 			testutil.WriteFile(t, remote, name+"/kustomization.yaml", "resources: [cm.yaml]\n")
-			testutil.WriteFile(t, remote, name+"/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+name+", namespace: apps}\ndata: {value: "+value+"}\n")
+			testutil.WriteFile(
+				t,
+				remote,
+				name+"/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+name+", namespace: apps}\ndata: {value: "+value+"}\n",
+			)
 		}
 		commit := testutil.GitCommitAll(t, repository, value, &gitlib.CommitOptions{Author: author})
 		root := t.TempDir()
 		local := testutil.GitInit(t, root)
-		if _, err := local.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{"https://local.invalid/cluster"}}); err != nil {
+		if _, err := local.CreateRemote(
+			&config.RemoteConfig{Name: "origin", URLs: []string{"https://local.invalid/cluster"}},
+		); err != nil {
 			t.Fatal(err)
 		}
 		roots = append(roots, root)
 		declarations := "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: flux-system}\nspec: {url: 'https://local.invalid/cluster'}\n---\n" +
 			"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: private, namespace: flux-system}\nspec:\n  url: ssh://git@fixture" + remote + "\n  ref: {commit: " + commit.String() + "}\n  secretRef: {name: ursa-major-ssh}\n"
 		for _, name := range []string{"one", "two"} {
-			declarations += "---\n" + testutil.KustomizationYAML(name, "flux-system", "  path: ./"+name+"\n  sourceRef: {kind: GitRepository, name: private}\n")
+			declarations += "---\n" + testutil.KustomizationYAML(
+				name,
+				"flux-system",
+				"  path: ./"+name+"\n  sourceRef: {kind: GitRepository, name: private}\n",
+			)
 		}
-		declarations += "---\n" + testutil.KustomizationYAML("credentials", "flux-system", "  path: ./local\n  sourceRef: {kind: GitRepository, name: cluster}\n")
+		declarations += "---\n" + testutil.KustomizationYAML(
+			"credentials",
+			"flux-system",
+			"  path: ./local\n  sourceRef: {kind: GitRepository, name: cluster}\n",
+		)
 		testutil.WriteFile(t, root, "local/kustomization.yaml", "resources: [auth.yaml]\n")
-		testutil.WriteFile(t, root, "local/auth.yaml", "apiVersion: v1\nkind: Secret\nmetadata: {name: ursa-major-ssh, namespace: flux-system}\nstringData: {identity: 'ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]'}\nsops: {mac: encrypted}\n")
+		testutil.WriteFile(
+			t,
+			root,
+			"local/auth.yaml",
+			"apiVersion: v1\nkind: Secret\nmetadata: {name: ursa-major-ssh, namespace: flux-system}\nstringData: {identity: 'ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]'}\nsops: {mac: encrypted}\n",
+		)
 		testutil.WriteFile(t, root, "flux.yaml", declarations)
 		testutil.GitCommitAll(t, local, "cluster "+value, &gitlib.CommitOptions{Author: author})
 	}
 	supplied := t.TempDir()
-	testutil.WriteFile(t, supplied, "credentials.yaml", "apiVersion: v1\nkind: Secret\nmetadata: {name: ursa-major-ssh, namespace: flux-system}\nstringData:\n  identity: |\n    "+strings.ReplaceAll(strings.TrimSpace(identity), "\n", "\n    ")+"\n")
+	testutil.WriteFile(
+		t,
+		supplied,
+		"credentials.yaml",
+		"apiVersion: v1\nkind: Secret\nmetadata: {name: ursa-major-ssh, namespace: flux-system}\nstringData:\n  identity: |\n    "+strings.ReplaceAll(
+			strings.TrimSpace(identity),
+			"\n",
+			"\n    ",
+		)+"\n",
+	)
 	input := filepath.Join(supplied, "credentials.yaml")
 	for i, root := range roots {
-		stdout, stderr, code := harness.RunCLIBuffers("build", "all", "--path", root, "--supply", input, "--concurrency", "2", "--cache-dir", t.TempDir(), "--no-progress", "--skip-kinds", "CustomResourceDefinition")
-		if code != 0 || !strings.Contains(stdout, "..PLACEHOLDER_identity..") || strings.Contains(stdout+stderr, "BEGIN OPENSSH PRIVATE KEY") {
+		stdout, stderr, code := harness.RunCLIBuffers(
+			"build",
+			"all",
+			"--path",
+			root,
+			"--supply",
+			input,
+			"--concurrency",
+			"2",
+			"--cache-dir",
+			t.TempDir(),
+			"--no-progress",
+			"--skip-kinds",
+			"CustomResourceDefinition",
+		)
+		if code != 0 || !strings.Contains(stdout, "..PLACEHOLDER_identity..") ||
+			strings.Contains(stdout+stderr, "BEGIN OPENSSH PRIVATE KEY") {
 			t.Fatalf("supplied build: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 		}
 		if strings.Count(stdout, "value: "+[]string{"before", "after"}[i]) != 2 {
@@ -151,18 +202,45 @@ func TestE2E_DataReader_SuppliedSSHOnBothDiffSides(t *testing.T) {
 	var changed sync.Once
 	tr.onAuth = func() {
 		changed.Do(func() {
-			testutil.WriteFileAt(t, input, "apiVersion: v1\nkind: Secret\nmetadata: {name: ursa-major-ssh, namespace: flux-system}\nstringData: {identity: changed-after-snapshot}\n")
+			testutil.WriteFileAt(
+				t,
+				input,
+				"apiVersion: v1\nkind: Secret\nmetadata: {name: ursa-major-ssh, namespace: flux-system}\nstringData: {identity: changed-after-snapshot}\n",
+			)
 		})
 	}
-	args := []string{"diff", "all", "--path", roots[1], "--path-orig", roots[0], "--concurrency", "2", "--no-progress", "-o", "diff"}
+	args := []string{
+		"diff",
+		"all",
+		"--path",
+		roots[1],
+		"--path-orig",
+		roots[0],
+		"--concurrency",
+		"2",
+		"--no-progress",
+		"-o",
+		"diff",
+	}
 	stdout, stderr, code := harness.RunCLIBuffers(append(args, "--cache-dir", t.TempDir(), "--supply", input)...)
-	if code != 0 || strings.Count(stdout, "-  value: before") != 2 || strings.Count(stdout, "+  value: after") != 2 || tr.authenticated.Load()-before < 2 {
-		t.Fatalf("supplied diff: exit=%d authenticated=%d stdout=%s stderr=%s", code, tr.authenticated.Load()-before, stdout, stderr)
+	if code != 0 || strings.Count(stdout, "-  value: before") != 2 || strings.Count(stdout, "+  value: after") != 2 ||
+		tr.authenticated.Load()-before < 2 {
+		t.Fatalf(
+			"supplied diff: exit=%d authenticated=%d stdout=%s stderr=%s",
+			code,
+			tr.authenticated.Load()-before,
+			stdout,
+			stderr,
+		)
 	}
 	tr.onAuth = nil
 	before = tr.authenticated.Load()
-	stdout, stderr, code = harness.RunCLIBuffers(append(args, "--cache-dir", t.TempDir(), "--allow-missing-kinds=Secret,ConfigMap")...)
-	if code != 0 || !strings.Contains(stderr, "SourceCredentialsUnavailable") || !strings.Contains(stderr, "ursa-major-ssh") || strings.Contains(stderr, "ExternalSource") || tr.authenticated.Load() != before {
+	stdout, stderr, code = harness.RunCLIBuffers(
+		append(args, "--cache-dir", t.TempDir(), "--allow-missing-kinds=Secret,ConfigMap")...)
+	if code != 0 || !strings.Contains(stderr, "SourceCredentialsUnavailable") ||
+		!strings.Contains(stderr, "ursa-major-ssh") ||
+		strings.Contains(stderr, "ExternalSource") ||
+		tr.authenticated.Load() != before {
 		t.Fatalf("absent-agent cause: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 	}
 }
@@ -176,15 +254,45 @@ func TestE2E_DataReader_GeneratorEmbeddedCiphertext(t *testing.T) {
 			if kind == "configMapGenerator" {
 				refKind = "ConfigMap"
 			}
-			testutil.WriteFile(t, root, "flux/ks.yaml", testutil.KustomizationYAML("consumer", "flux-system", "  path: ./apps\n  postBuild: {substituteFrom: [{kind: "+refKind+", name: creds}]}\n"))
-			testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux]\ngeneratorOptions: {disableNameSuffixHash: true}\n"+kind+":\n- name: creds\n  namespace: flux-system\n  files: [VALUE=values.yaml]\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"flux/ks.yaml",
+				testutil.KustomizationYAML(
+					"consumer",
+					"flux-system",
+					"  path: ./apps\n  postBuild: {substituteFrom: [{kind: "+refKind+", name: creds}]}\n",
+				),
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				"kustomization.yaml",
+				"resources: [flux]\ngeneratorOptions: {disableNameSuffixHash: true}\n"+kind+":\n- name: creds\n  namespace: flux-system\n  files: [VALUE=values.yaml]\n",
+			)
 			testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [ks.yaml]\n")
 			testutil.WriteFile(t, root, "values.yaml", value+"\n")
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
-			testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: result}\ndata:\n  value: |\n    ${VALUE}\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"apps/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: result}\ndata:\n  value: |\n    ${VALUE}\n",
+			)
 			var first string
 			for i := range 2 {
-				stdout, stderr, code := harness.RunCLIBuffers("build", "ks", "consumer", "--path", root, "--concurrency", "2", "--cache-dir", t.TempDir(), "--no-progress")
+				stdout, stderr, code := harness.RunCLIBuffers(
+					"build",
+					"ks",
+					"consumer",
+					"--path",
+					root,
+					"--concurrency",
+					"2",
+					"--cache-dir",
+					t.TempDir(),
+					"--no-progress",
+				)
 				if code != 0 || strings.Contains(stdout, "..PLACEHOLDER_VALUE..") {
 					t.Fatalf("exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 				}
@@ -218,11 +326,41 @@ func TestE2E_DataReader_GeneratorEmbeddedCiphertext(t *testing.T) {
 
 func TestE2E_DataReader_StringDataPrecedence(t *testing.T) {
 	root := t.TempDir()
-	testutil.WriteFile(t, root, "ks.yaml", testutil.KustomizationYAML("consumer", "flux-system", "  path: ./apps\n  postBuild: {substituteFrom: [{kind: Secret, name: creds}]}\n"))
-	testutil.WriteFile(t, root, "secret.yaml", "apiVersion: v1\nkind: Secret\nmetadata: {name: creds, namespace: flux-system}\ndata: {VALUE: QQ==, EMPTY: invalid-base64!}\nstringData: {VALUE: B, EMPTY: ''}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"ks.yaml",
+		testutil.KustomizationYAML(
+			"consumer",
+			"flux-system",
+			"  path: ./apps\n  postBuild: {substituteFrom: [{kind: Secret, name: creds}]}\n",
+		),
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"secret.yaml",
+		"apiVersion: v1\nkind: Secret\nmetadata: {name: creds, namespace: flux-system}\ndata: {VALUE: QQ==, EMPTY: invalid-base64!}\nstringData: {VALUE: B, EMPTY: ''}\n",
+	)
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
-	testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: result}\ndata: {value: '${VALUE}', empty: '${EMPTY:=fallback}'}\n")
-	stdout, stderr, code := harness.RunCLIBuffers("build", "ks", "consumer", "--path", root, "--concurrency", "2", "--cache-dir", t.TempDir(), "--no-progress")
+	testutil.WriteFile(
+		t,
+		root,
+		"apps/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: result}\ndata: {value: '${VALUE}', empty: '${EMPTY:=fallback}'}\n",
+	)
+	stdout, stderr, code := harness.RunCLIBuffers(
+		"build",
+		"ks",
+		"consumer",
+		"--path",
+		root,
+		"--concurrency",
+		"2",
+		"--cache-dir",
+		t.TempDir(),
+		"--no-progress",
+	)
 	if code != 0 || !strings.Contains(stdout, "value: B") || !strings.Contains(stdout, "empty: fallback") {
 		t.Fatalf("exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 	}
@@ -248,28 +386,64 @@ func TestE2E_DataReader_SuppliedSourceProducesCredential(t *testing.T) {
 	t.Cleanup(func() { client.InstallProtocol("ssh", previous) })
 	remote := t.TempDir()
 	repository := testutil.GitInit(t, remote)
-	secret := "apiVersion: v1\nkind: Secret\nmetadata: {name: credentials, namespace: flux-system}\nstringData:\n  identity: |\n    " + strings.ReplaceAll(strings.TrimSpace(identity), "\n", "\n    ") + "\n"
+	secret := "apiVersion: v1\nkind: Secret\nmetadata: {name: credentials, namespace: flux-system}\nstringData:\n  identity: |\n    " + strings.ReplaceAll(
+		strings.TrimSpace(identity),
+		"\n",
+		"\n    ",
+	) + "\n"
 	testutil.WriteFile(t, remote, "credentials/kustomization.yaml", "resources: [auth.yaml]\n")
 	testutil.WriteFile(t, remote, "credentials/auth.yaml", secret)
 	testutil.WriteFile(t, remote, "workload/kustomization.yaml", "resources: [cm.yaml]\n")
-	testutil.WriteFile(t, remote, "workload/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: source-produced, namespace: apps}\ndata: {value: complete}\n")
-	commit := testutil.GitCommitAll(t, repository, "fixture", &gitlib.CommitOptions{Author: &object.Signature{Name: "fixture", Email: "fixture@example.test", When: time.Unix(1, 0)}})
+	testutil.WriteFile(
+		t,
+		remote,
+		"workload/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: source-produced, namespace: apps}\ndata: {value: complete}\n",
+	)
+	commit := testutil.GitCommitAll(
+		t,
+		repository,
+		"fixture",
+		&gitlib.CommitOptions{
+			Author: &object.Signature{Name: "fixture", Email: "fixture@example.test", When: time.Unix(1, 0)},
+		},
+	)
 	root := t.TempDir()
 	local := testutil.GitInit(t, root)
-	if _, err := local.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{"https://local.invalid/cluster"}}); err != nil {
+	if _, err := local.CreateRemote(
+		&config.RemoteConfig{Name: "origin", URLs: []string{"https://local.invalid/cluster"}},
+	); err != nil {
 		t.Fatal(err)
 	}
 	declarations := "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: flux-system}\nspec: {url: https://local.invalid/cluster}\n---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: private, namespace: flux-system}\nspec:\n  url: ssh://git@fixture" + remote + "\n  ref: {commit: " + commit.String() + "}\n  secretRef: {name: credentials}\n"
 	for _, name := range []string{"credentials", "workload"} {
-		declarations += "---\n" + testutil.KustomizationYAML(name, "flux-system", "  path: ./"+name+"\n  sourceRef: {kind: GitRepository, name: private}\n")
+		declarations += "---\n" + testutil.KustomizationYAML(
+			name,
+			"flux-system",
+			"  path: ./"+name+"\n  sourceRef: {kind: GitRepository, name: private}\n",
+		)
 	}
 	testutil.WriteFile(t, root, "flux.yaml", declarations)
 	input := filepath.Join(t.TempDir(), "credentials.yaml")
 	testutil.WriteFileAt(t, input, secret)
 	var first string
 	for i := range 2 {
-		stdout, stderr, code := harness.RunCLIBuffers("build", "all", "--path", root, "--supply", input, "--concurrency", "2", "--cache-dir", t.TempDir(), "--no-progress")
-		if code != 0 || !strings.Contains(stdout, "name: source-produced") || strings.Contains(stdout, "BEGIN OPENSSH PRIVATE KEY") || strings.Contains(stderr, "dependency cycle") {
+		stdout, stderr, code := harness.RunCLIBuffers(
+			"build",
+			"all",
+			"--path",
+			root,
+			"--supply",
+			input,
+			"--concurrency",
+			"2",
+			"--cache-dir",
+			t.TempDir(),
+			"--no-progress",
+		)
+		if code != 0 || !strings.Contains(stdout, "name: source-produced") ||
+			strings.Contains(stdout, "BEGIN OPENSSH PRIVATE KEY") ||
+			strings.Contains(stderr, "dependency cycle") {
 			t.Fatalf("source-producing credential: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 		}
 		if i == 1 && stdout != first {
@@ -332,39 +506,68 @@ func TestE2E_DataReader_ClusterAdvisoriesOnBothBaseSides(t *testing.T) {
 	t.Cleanup(func() { _ = listener.Close(); workers.Wait() })
 	remote, root := t.TempDir(), t.TempDir()
 	repository, local := testutil.GitInit(t, remote), testutil.GitInit(t, root)
-	if _, err := local.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{"https://local.invalid/cluster"}}); err != nil {
+	if _, err := local.CreateRemote(
+		&config.RemoteConfig{Name: "origin", URLs: []string{"https://local.invalid/cluster"}},
+	); err != nil {
 		t.Fatal(err)
 	}
 	author := &object.Signature{Name: "fixture", Email: "fixture@example.test", When: time.Unix(1, 0)}
 	var base string
 	for _, value := range []string{"before", "after"} {
 		testutil.WriteFile(t, remote, "app/kustomization.yaml", "resources: [cm.yaml]\n")
-		testutil.WriteFile(t, remote, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output, namespace: apps}\ndata: {value: "+value+", override: '${OVERRIDE}'}\n")
+		testutil.WriteFile(
+			t,
+			remote,
+			"app/cm.yaml",
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output, namespace: apps}\ndata: {value: "+value+", override: '${OVERRIDE}'}\n",
+		)
 		commit := testutil.GitCommitAll(t, repository, value, &gitlib.CommitOptions{Author: author})
 		declarations := "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: flux-system}\nspec: {url: https://local.invalid/cluster}\n---\n" +
 			"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: private, namespace: flux-system}\nspec:\n  url: ssh://git@fixture" + remote + "\n  ref: {commit: " + commit.String() + "}\n---\n" +
-			testutil.KustomizationYAML("consumer", "flux-system", "  path: ./app\n  sourceRef: {kind: GitRepository, name: private}\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: settings}]}\n")
+			testutil.KustomizationYAML(
+				"consumer",
+				"flux-system",
+				"  path: ./app\n  sourceRef: {kind: GitRepository, name: private}\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: settings}]}\n",
+			)
 		testutil.WriteFile(t, root, "flux.yaml", declarations)
-		testutil.WriteFile(t, root, "settings.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: flux-system}\ndata: {OVERRIDE: repository}\n")
+		testutil.WriteFile(
+			t,
+			root,
+			"settings.yaml",
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: flux-system}\ndata: {OVERRIDE: repository}\n",
+		)
 		commit = testutil.GitCommitAll(t, local, value, &gitlib.CommitOptions{Author: author})
 		if value == "before" {
 			base = commit.String()
 		}
 	}
 	input := filepath.Join(t.TempDir(), "supply.yaml")
-	testutil.WriteFileAt(t, input, "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: flux-system}\ndata: {OVERRIDE: supplied}\n")
+	testutil.WriteFileAt(
+		t,
+		input,
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: flux-system}\ndata: {OVERRIDE: supplied}\n",
+	)
 	var previousOut, previousErr string
 	for run := range 2 {
 		before := tr.authenticated.Load()
 		stdout, stderr, code := harness.RunCLIBuffers("diff", "all", "--path", root, "--base", base, "--supply", input,
 			"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir(), "-o", "diff")
-		if code != 0 || tr.authenticated.Load()-before < 2 || strings.Count(stdout, "-  value: before") != 1 || strings.Count(stdout, "+  value: after") != 1 {
-			t.Fatalf("base diff: exit=%d authentications=%d stdout=%s stderr=%s", code, tr.authenticated.Load()-before, stdout, stderr)
+		if code != 0 || tr.authenticated.Load()-before < 2 || strings.Count(stdout, "-  value: before") != 1 ||
+			strings.Count(stdout, "+  value: after") != 1 {
+			t.Fatalf(
+				"base diff: exit=%d authentications=%d stdout=%s stderr=%s",
+				code,
+				tr.authenticated.Load()-before,
+				stdout,
+				stderr,
+			)
 		}
-		if strings.Count(stderr, "[SuppliedPrecedence]") != 1 || strings.Contains(stderr, "authenticated with") || !strings.Contains(stderr, "ConfigMap/flux-system/settings: OVERRIDE") {
+		if strings.Count(stderr, "[SuppliedPrecedence]") != 1 || strings.Contains(stderr, "authenticated with") ||
+			!strings.Contains(stderr, "ConfigMap/flux-system/settings: OVERRIDE") {
 			t.Fatalf("cluster advisories lost or duplicated: %s", stderr)
 		}
-		if strings.Contains(stdout+stderr, "PRIVATE KEY") || strings.Contains(stdout, "supplied") || !strings.Contains(stdout, "override: repository") {
+		if strings.Contains(stdout+stderr, "PRIVATE KEY") || strings.Contains(stdout, "supplied") ||
+			!strings.Contains(stdout, "override: repository") {
 			t.Fatalf("private material or incorrect precedence: stdout=%s stderr=%s", stdout, stderr)
 		}
 		if run == 1 && (stdout != previousOut || stderr != previousErr) {

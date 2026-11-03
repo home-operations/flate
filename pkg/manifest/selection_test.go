@@ -42,5 +42,9 @@ func TestSelection_CompleteKindsIncludeStandaloneNamespace(t *testing.T) {
 	}
 	assert.Equal(t, intent.Matches(NamedResource{Kind: KindConfigMap, Namespace: "apps", Name: "data"}), true)
 	assert.Equal(t, intent.Matches(NamedResource{Kind: KindConfigMap, Namespace: "other", Name: "data"}), false)
-	assert.Equal(t, intent.Matches(NamedResource{Group: "rbac.authorization.k8s.io", Kind: "ClusterRole", Name: "cluster"}), true)
+	assert.Equal(
+		t,
+		intent.Matches(NamedResource{Group: "rbac.authorization.k8s.io", Kind: "ClusterRole", Name: "cluster"}),
+		true,
+	)
 }

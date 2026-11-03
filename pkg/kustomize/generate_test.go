@@ -46,7 +46,12 @@ func testTreeFS(t *testing.T, root string) filesys.FileSystem {
 
 func testIgnoreTreeFS(t *testing.T, root string) filesys.FileSystem {
 	t.Helper()
-	input, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: localSource(t, root).FS})
+	input, _, err := gittree.New(
+		t.Context(),
+		nil,
+		plumbing.ZeroHash,
+		gittree.ViewOptions{Mode: gittree.Source, Current: localSource(t, root).FS},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,8 +130,11 @@ func TestGenerateManifest_ByteEquivalentToFlux(t *testing.T) {
 		spec    map[string]any
 	}{
 		{
-			name:    "existing kustomization with resources",
-			files:   map[string]string{"kustomization.yaml": existingKustomization("deploy.yaml"), "deploy.yaml": cmYAML("deploy")},
+			name: "existing kustomization with resources",
+			files: map[string]string{
+				"kustomization.yaml": existingKustomization("deploy.yaml"),
+				"deploy.yaml":        cmYAML("deploy"),
+			},
 			subPath: ".",
 		},
 		{
@@ -155,34 +163,56 @@ func TestGenerateManifest_ByteEquivalentToFlux(t *testing.T) {
 			subPath: ".",
 		},
 		{
-			name:    "targetNamespace + namePrefix + nameSuffix",
-			files:   map[string]string{"kustomization.yaml": existingKustomization("deploy.yaml"), "deploy.yaml": cmYAML("deploy")},
+			name: "targetNamespace + namePrefix + nameSuffix",
+			files: map[string]string{
+				"kustomization.yaml": existingKustomization("deploy.yaml"),
+				"deploy.yaml":        cmYAML("deploy"),
+			},
 			subPath: ".",
 			spec:    map[string]any{"targetNamespace": "team-a", "namePrefix": "pre-", "nameSuffix": "-suf"},
 		},
 		{
-			name:    "patches with target selector",
-			files:   map[string]string{"kustomization.yaml": existingKustomization("deploy.yaml"), "deploy.yaml": cmYAML("deploy")},
+			name: "patches with target selector",
+			files: map[string]string{
+				"kustomization.yaml": existingKustomization("deploy.yaml"),
+				"deploy.yaml":        cmYAML("deploy"),
+			},
 			subPath: ".",
 			spec: map[string]any{"patches": []any{
-				map[string]any{"patch": patch, "target": map[string]any{"kind": "Deployment", "labelSelector": "app=x"}},
+				map[string]any{
+					"patch":  patch,
+					"target": map[string]any{"kind": "Deployment", "labelSelector": "app=x"},
+				},
 			}},
 		},
 		{
-			name:    "patchesStrategicMerge",
-			files:   map[string]string{"kustomization.yaml": existingKustomization("deploy.yaml"), "deploy.yaml": cmYAML("deploy")},
+			name: "patchesStrategicMerge",
+			files: map[string]string{
+				"kustomization.yaml": existingKustomization("deploy.yaml"),
+				"deploy.yaml":        cmYAML("deploy"),
+			},
 			subPath: ".",
 			spec: map[string]any{"patchesStrategicMerge": []any{
-				map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": "app"}, "spec": map[string]any{"replicas": int64(2)}},
+				map[string]any{
+					"apiVersion": "apps/v1",
+					"kind":       "Deployment",
+					"metadata":   map[string]any{"name": "app"},
+					"spec":       map[string]any{"replicas": int64(2)},
+				},
 			}},
 		},
 		{
-			name:    "patchesJson6902",
-			files:   map[string]string{"kustomization.yaml": existingKustomization("deploy.yaml"), "deploy.yaml": cmYAML("deploy")},
+			name: "patchesJson6902",
+			files: map[string]string{
+				"kustomization.yaml": existingKustomization("deploy.yaml"),
+				"deploy.yaml":        cmYAML("deploy"),
+			},
 			subPath: ".",
 			spec: map[string]any{"patchesJson6902": []any{
 				map[string]any{
-					"patch":  []any{map[string]any{"op": "replace", "path": "/spec/replicas", "value": int64(9007199254740993)}},
+					"patch": []any{
+						map[string]any{"op": "replace", "path": "/spec/replicas", "value": int64(9007199254740993)},
+					},
 					"target": map[string]any{"group": "apps", "version": "v1", "kind": "Deployment", "name": "app"},
 				},
 			}},
@@ -202,8 +232,10 @@ func TestGenerateManifest_ByteEquivalentToFlux(t *testing.T) {
 		{
 			name: "image tag override preserves registry",
 			files: map[string]string{
-				"kustomization.yaml": existingKustomization("deploy.yaml") + "images:\n- name: nginx\n  newName: mirror/nginx\n  newTag: \"1.0\"\n",
-				"deploy.yaml":        cmYAML("deploy"),
+				"kustomization.yaml": existingKustomization(
+					"deploy.yaml",
+				) + "images:\n- name: nginx\n  newName: mirror/nginx\n  newTag: \"1.0\"\n",
+				"deploy.yaml": cmYAML("deploy"),
 			},
 			subPath: ".",
 			spec:    map[string]any{"images": []any{map[string]any{"name": "nginx", "newTag": "2.0"}}},
@@ -211,8 +243,10 @@ func TestGenerateManifest_ByteEquivalentToFlux(t *testing.T) {
 		{
 			name: "image registry override preserves version",
 			files: map[string]string{
-				"kustomization.yaml": existingKustomization("deploy.yaml") + "images:\n- name: nginx\n  newName: mirror/nginx\n  digest: sha256:old\n",
-				"deploy.yaml":        cmYAML("deploy"),
+				"kustomization.yaml": existingKustomization(
+					"deploy.yaml",
+				) + "images:\n- name: nginx\n  newName: mirror/nginx\n  digest: sha256:old\n",
+				"deploy.yaml": cmYAML("deploy"),
 			},
 			subPath: ".",
 			spec:    map[string]any{"images": []any{map[string]any{"name": "nginx", "newName": "other/nginx"}}},
@@ -220,8 +254,10 @@ func TestGenerateManifest_ByteEquivalentToFlux(t *testing.T) {
 		{
 			name: "image digest override clears tag",
 			files: map[string]string{
-				"kustomization.yaml": existingKustomization("deploy.yaml") + "images:\n- name: nginx\n  newTag: \"1.0\"\n",
-				"deploy.yaml":        cmYAML("deploy"),
+				"kustomization.yaml": existingKustomization(
+					"deploy.yaml",
+				) + "images:\n- name: nginx\n  newTag: \"1.0\"\n",
+				"deploy.yaml": cmYAML("deploy"),
 			},
 			subPath: ".",
 			spec:    map[string]any{"images": []any{map[string]any{"name": "nginx", "digest": "sha256:new"}}},
@@ -229,8 +265,10 @@ func TestGenerateManifest_ByteEquivalentToFlux(t *testing.T) {
 		{
 			name: "image tag override clears digest",
 			files: map[string]string{
-				"kustomization.yaml": existingKustomization("deploy.yaml") + "images:\n- name: nginx\n  digest: sha256:old\n",
-				"deploy.yaml":        cmYAML("deploy"),
+				"kustomization.yaml": existingKustomization(
+					"deploy.yaml",
+				) + "images:\n- name: nginx\n  digest: sha256:old\n",
+				"deploy.yaml": cmYAML("deploy"),
 			},
 			subPath: ".",
 			spec:    map[string]any{"images": []any{map[string]any{"name": "nginx", "newTag": "2.0"}}},
@@ -238,11 +276,18 @@ func TestGenerateManifest_ByteEquivalentToFlux(t *testing.T) {
 		{
 			name: "repeated spec image merges fields",
 			files: map[string]string{
-				"kustomization.yaml": existingKustomization("deploy.yaml") + "images:\n- name: nginx\n  newTag: \"1.0\"\n",
-				"deploy.yaml":        cmYAML("deploy"),
+				"kustomization.yaml": existingKustomization(
+					"deploy.yaml",
+				) + "images:\n- name: nginx\n  newTag: \"1.0\"\n",
+				"deploy.yaml": cmYAML("deploy"),
 			},
 			subPath: ".",
-			spec:    map[string]any{"images": []any{map[string]any{"name": "nginx", "newName": "mirror/nginx"}, map[string]any{"name": "nginx", "newTag": "2.0"}}},
+			spec: map[string]any{
+				"images": []any{
+					map[string]any{"name": "nginx", "newName": "mirror/nginx"},
+					map[string]any{"name": "nginx", "newTag": "2.0"},
+				},
+			},
 		},
 		{
 			name: "components with ignoreMissing",
@@ -293,10 +338,17 @@ func TestGenerateManifest_ByteEquivalentToFlux(t *testing.T) {
 				files   map[string]string
 				subPath string
 				spec    map[string]any
-			}{field + "/" + shape, map[string]string{
-				"kustomization.yaml": existingKustomization("cm.yaml") + "namespace: original\nnamePrefix: before-\nnameSuffix: -after\n",
-				"cm.yaml":            cmYAML("config"),
-			}, ".", spec})
+			}{
+				field + "/" + shape,
+				map[string]string{
+					"kustomization.yaml": existingKustomization(
+						"cm.yaml",
+					) + "namespace: original\nnamePrefix: before-\nnameSuffix: -after\n",
+					"cm.yaml": cmYAML("config"),
+				},
+				".",
+				spec,
+			})
 		}
 	}
 	for _, field := range []string{"patches", "images", "components", "buildMetadata", "patchesStrategicMerge", "patchesJson6902"} {
@@ -393,17 +445,27 @@ func TestGenerateManifest_TypedOverrides(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			root := testutil.WriteTree(t, map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("config")})
+			root := testutil.WriteTree(
+				t,
+				map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("config")},
+			)
 			ks := parsedKS(t, ksDoc(tc.authored)).Clone()
 			plain := parsedKS(t, ksDoc(tc.effective))
 			ks.KustomizationSpec = plain.KustomizationSpec
 			got, _, err := generateManifest(testTreeFS(t, root), root, renderDoc(t, ks))
 			assert.NoError(t, err)
-			oracle := fluxkustomize.NewGenerator(root, unstructured.Unstructured{Object: typedFluxDoc(t, ksDoc(tc.effective))})
+			oracle := fluxkustomize.NewGenerator(
+				root,
+				unstructured.Unstructured{Object: typedFluxDoc(t, ksDoc(tc.effective))},
+			)
 			want, _, _, err := oracle.GenerateManifest(root)
 			assert.NoError(t, err)
 			assert.Equal(t, string(got), string(want))
-			assert.Equal(t, manifest.Fingerprint(ks.Content(nil, nil, false)), manifest.Fingerprint(plain.Content(nil, nil, false)))
+			assert.Equal(
+				t,
+				manifest.Fingerprint(ks.Content(nil, nil, false)),
+				manifest.Fingerprint(plain.Content(nil, nil, false)),
+			)
 		})
 	}
 }

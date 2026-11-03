@@ -97,8 +97,10 @@ func TestRenderDocs_UnsupportedFormat(t *testing.T) {
 	} {
 		t.Run(string(tc.format), func(t *testing.T) {
 			t.Parallel()
-			out, warnings, err := RenderDocs([]Doc{d, d}, nil, Options{Format: tc.format,
-				Suppressed: []Suppression{{Parent: hrParent, Side: SideCurrent, Reason: "chart not ready"}}})
+			out, warnings, err := RenderDocs([]Doc{d, d}, nil, Options{
+				Format:     tc.format,
+				Suppressed: []Suppression{{Parent: hrParent, Side: SideCurrent, Reason: "chart not ready"}},
+			})
 			if len(warnings) != 1 {
 				t.Fatalf("formatter error lost discovered warnings: %+v", warnings)
 			}

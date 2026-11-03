@@ -23,15 +23,28 @@ func TestOccurrenceClaims_CapturedSubsetAndIdentity(t *testing.T) {
 	input := fstest.MapFS{}
 	source := &manifest.GitRepository{Name: "pin", Namespace: "sources"}
 	st.AddObject(source)
-	st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: pin, LocalRoot: root, Key: "committed", Content: "committed", FS: input})
+	st.SetArtifact(
+		source.Named(),
+		&store.SourceArtifact{LocalPath: pin, LocalRoot: root, Key: "committed", Content: "committed", FS: input},
+	)
 	st.AddObject(&manifest.Kustomization{Name: "stored", Namespace: "apps", Path: "unrelated"})
 	for _, side := range []string{"one", "two"} {
-		input[side+"/kustomization.yaml"] = &fstest.MapFile{Data: []byte("namespace: " + side + "\nnamePrefix: " + side + "-\nresources: [owners.yaml]\n")}
+		input[side+"/kustomization.yaml"] = &fstest.MapFile{
+			Data: []byte("namespace: " + side + "\nnamePrefix: " + side + "-\nresources: [owners.yaml]\n"),
+		}
 		paths := []string{"captured-a", "captured-b"}
 		if side == "two" {
 			paths = []string{"captured-c", "excluded"}
 		}
-		body := testutil.KustomizationYAML("owner", "authored", "  path: ./"+paths[0]+"\n  sourceRef: {kind: GitRepository, name: pin, namespace: sources}\n") + "---\n" + testutil.KustomizationYAML("owner", "authored", "  path: ./"+paths[1]+"\n  sourceRef: {kind: GitRepository, name: pin, namespace: sources}\n")
+		body := testutil.KustomizationYAML(
+			"owner",
+			"authored",
+			"  path: ./"+paths[0]+"\n  sourceRef: {kind: GitRepository, name: pin, namespace: sources}\n",
+		) + "---\n" + testutil.KustomizationYAML(
+			"owner",
+			"authored",
+			"  path: ./"+paths[1]+"\n  sourceRef: {kind: GitRepository, name: pin, namespace: sources}\n",
+		)
 		input[side+"/owners.yaml"] = &fstest.MapFile{Data: []byte(body)}
 	}
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: input})
@@ -98,19 +111,30 @@ func TestOccurrenceClaims_CapturedSubsetAndIdentity(t *testing.T) {
 	assert.Equal(t, captured[0].Identity, testutil.KustomizationID("one", "one-owner"))
 	assert.Equal(t, captured[1].Identity, captured[0].Identity)
 	assert.Equal(t, captured[2].Identity, testutil.KustomizationID("two", "two-owner"))
-	assert.Equal(t, slices.Equal([]OccurrenceID{captured[0].Declaration, captured[1].Declaration, captured[2].Declaration}, []OccurrenceID{
-		{Source: root, File: "one/owners.yaml", Document: 0},
-		{Source: root, File: "one/owners.yaml", Document: 1},
-		{Source: root, File: "two/owners.yaml", Document: 0},
-	}), true)
+	assert.Equal(
+		t,
+		slices.Equal(
+			[]OccurrenceID{captured[0].Declaration, captured[1].Declaration, captured[2].Declaration},
+			[]OccurrenceID{
+				{Source: root, File: "one/owners.yaml", Document: 0},
+				{Source: root, File: "one/owners.yaml", Document: 1},
+				{Source: root, File: "two/owners.yaml", Document: 0},
+			},
+		),
+		true,
+	)
 
 	t.Run("retained failure before successful declaration", func(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()
 		input := fstest.MapFS{
-			"overlay/kustomization.yaml": {Data: []byte("namespace: selected\nnamePrefix: pre-\nnameSuffix: -post\nresources: [owners.yaml]\n")},
-			"overlay/owners.yaml": {Data: []byte(testutil.KustomizationYAML("failed", "authored", "  path: []\n") + "---\n" +
-				testutil.KustomizationYAML("owner", "authored", "  path: ./captured\n"))},
+			"overlay/kustomization.yaml": {
+				Data: []byte("namespace: selected\nnamePrefix: pre-\nnameSuffix: -post\nresources: [owners.yaml]\n"),
+			},
+			"overlay/owners.yaml": {
+				Data: []byte(testutil.KustomizationYAML("failed", "authored", "  path: []\n") + "---\n" +
+					testutil.KustomizationYAML("owner", "authored", "  path: ./captured\n")),
+			},
 		}
 		st := store.New()
 		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
@@ -168,7 +192,9 @@ func TestPackages_ScanProvenance(t *testing.T) {
 	input := fstest.MapFS{}
 	for _, dir := range []string{"one/pkg", "two/pkg"} {
 		input[dir+"/kustomization.yaml"] = &fstest.MapFile{Data: []byte("resources: [cm.yaml]\n")}
-		input[dir+"/cm.yaml"] = &fstest.MapFile{Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: values}\n")}
+		input[dir+"/cm.yaml"] = &fstest.MapFile{
+			Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: values}\n"),
+		}
 	}
 	st := store.New()
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
@@ -217,14 +243,24 @@ func TestProjectIdentity_NamespaceOnly(t *testing.T) {
 				assert.Equal(t, len(l.scopes.projections[0])+len(l.scopes.projections[1]), 1)
 			}
 			allocations := testing.AllocsPerRun(1, func() {
-				got, err = l.projectIdentity(tc.object.Named(), view, tc.version, manifest.KindOf(tc.object).Namespaced())
+				got, err = l.projectIdentity(
+					tc.object.Named(),
+					view,
+					tc.version,
+					manifest.KindOf(tc.object).Namespaced(),
+				)
 			})
 			assert.NoError(t, err)
 			assert.Equal(t, got, tc.want)
 			assert.Equal(t, allocations, 0)
 			if tc.noAllocation {
 				l.ensureScopes()
-				got, err = l.projectIdentity(tc.object.Named(), view, tc.version, manifest.KindOf(tc.object).Namespaced())
+				got, err = l.projectIdentity(
+					tc.object.Named(),
+					view,
+					tc.version,
+					manifest.KindOf(tc.object).Namespaced(),
+				)
 				assert.NoError(t, err)
 				assert.Equal(t, got, tc.want)
 				if l.scopes.projections[0] != nil || l.scopes.projections[1] != nil {
@@ -260,14 +296,33 @@ func TestProjectIdentity_CompleteInputs(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			l := &Loader{}
-			obj := &manifest.RawObject{APIVersion: "example.test/v1", Kind: "Widget", Name: "item", Namespace: "authored"}
+			obj := &manifest.RawObject{
+				APIVersion: "example.test/v1",
+				Kind:       "Widget",
+				Name:       "item",
+				Namespace:  "authored",
+			}
 			view := graphVisit{fallback: "fallback", namePrefix: "pre-", nameSuffix: "-post"}
-			first, err := l.projectIdentity((obj).Named(), view, obj.APIVersion, manifest.KindOf(obj).Namespaced())
+			first, err := l.projectIdentity(obj.Named(), view, obj.APIVersion, manifest.KindOf(obj).Namespaced())
 			assert.NoError(t, err)
-			assert.Equal(t, first, manifest.NamedResource{Group: "example.test", Kind: "Widget", Namespace: "authored", Name: "pre-item-post"})
+			assert.Equal(
+				t,
+				first,
+				manifest.NamedResource{
+					Group:     "example.test",
+					Kind:      "Widget",
+					Namespace: "authored",
+					Name:      "pre-item-post",
+				},
+			)
 			authored := tc.object.Named()
 			for range 2 {
-				got, err := l.projectIdentity((&tc.object).Named(), tc.view, tc.version, manifest.KindOf(&tc.object).Namespaced())
+				got, err := l.projectIdentity(
+					(&tc.object).Named(),
+					tc.view,
+					tc.version,
+					manifest.KindOf(&tc.object).Namespaced(),
+				)
 				assert.NoError(t, err)
 				assert.Equal(t, got, tc.want)
 				assert.Equal(t, len(l.scopes.projections[0])+len(l.scopes.projections[1]), tc.entries)
@@ -280,7 +335,12 @@ func TestProjectIdentity_CompleteInputs(t *testing.T) {
 		l := &Loader{}
 		obj := &manifest.RawObject{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRole", Name: "policy"}
 		for _, namespace := range []string{"one", "two"} {
-			got, err := l.projectIdentity((obj).Named(), graphVisit{namespace: namespace}, obj.APIVersion, manifest.KindOf(obj).Namespaced())
+			got, err := l.projectIdentity(
+				obj.Named(),
+				graphVisit{namespace: namespace},
+				obj.APIVersion,
+				manifest.KindOf(obj).Namespaced(),
+			)
 			assert.NoError(t, err)
 			assert.Equal(t, got, obj.Named())
 		}
@@ -295,9 +355,13 @@ func TestProjectIdentity_CompleteInputs(t *testing.T) {
 			{namespace: "selected", fallback: "ignored", namePrefix: "pre-"},
 			{fallback: "selected", namePrefix: "pre-"},
 		} {
-			got, err := l.projectIdentity((obj).Named(), view, "v1", manifest.KindOf(obj).Namespaced())
+			got, err := l.projectIdentity(obj.Named(), view, "v1", manifest.KindOf(obj).Namespaced())
 			assert.NoError(t, err)
-			assert.Equal(t, got, manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "selected", Name: "pre-values"})
+			assert.Equal(
+				t,
+				got,
+				manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "selected", Name: "pre-values"},
+			)
 		}
 		assert.Equal(t, len(l.scopes.projections[0])+len(l.scopes.projections[1]), 2)
 	})
@@ -310,7 +374,7 @@ func TestProjectIdentity_CompleteInputs(t *testing.T) {
 			{namespace: "selected", namePrefix: "pre-"},
 			{namespace: "selected", nameSuffix: "-post"},
 		} {
-			got, err := l.projectIdentity((obj).Named(), view, obj.APIVersion, manifest.KindOf(obj).Namespaced())
+			got, err := l.projectIdentity(obj.Named(), view, obj.APIVersion, manifest.KindOf(obj).Namespaced())
 			assert.NoError(t, err)
 			assert.Equal(t, got, manifest.NamedResource{Kind: "Namespace", Name: "selected"})
 			assert.Equal(t, len(l.scopes.projections[0])+len(l.scopes.projections[1]), i+1)
@@ -326,7 +390,11 @@ func TestEntryFailure_ChangedUnownedResource(t *testing.T) {
 			root := t.TempDir()
 			st := store.New()
 			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-				"input.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input, namespace: apps}\ndata: [unterminated\n")},
+				"input.yaml": {
+					Data: []byte(
+						"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input, namespace: apps}\ndata: [unterminated\n",
+					),
+				},
 			}})
 			l := New(st)
 			l.SourceRoot = root

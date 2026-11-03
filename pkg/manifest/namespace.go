@@ -37,8 +37,14 @@ func MergeStringMap(md map[string]any, key string, in map[string]string) {
 	md[key] = out
 }
 
-func defaultNamespace(obj BaseManifest, doc map[string]any, namespace string, changed bool) (BaseManifest, map[string]any, bool) {
-	if obj == nil || namespace == "" || obj.Named().Namespace != "" || !(KindInfo{Kind: DocKind(doc), apiVersion: DocAPIVersion(doc)}).Namespaced() {
+func defaultNamespace(
+	obj BaseManifest,
+	doc map[string]any,
+	namespace string,
+	changed bool,
+) (BaseManifest, map[string]any, bool) {
+	if obj == nil || namespace == "" || obj.Named().Namespace != "" ||
+		!(KindInfo{Kind: DocKind(doc), apiVersion: DocAPIVersion(doc)}).Namespaced() {
 		return obj, doc, changed
 	}
 	obj = obj.WithNamespace(namespace)

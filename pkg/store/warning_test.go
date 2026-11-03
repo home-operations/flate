@@ -25,8 +25,10 @@ func TestAddWarning_DedupAndCount(t *testing.T) {
 	t.Parallel()
 	s := New()
 	origin := hrID("app")
-	w := manifest.Warning{Resource: origin, Category: manifest.WarnStaleValues, Count: 42,
-		Message: "values not defined by the chart schema", Detail: []string{"a", "b"}}
+	w := manifest.Warning{
+		Resource: origin, Category: manifest.WarnStaleValues, Count: 42,
+		Message: "values not defined by the chart schema", Detail: []string{"a", "b"},
+	}
 	s.AddWarning(w)
 	s.AddWarning(w)
 	w.Count = -1
@@ -147,7 +149,9 @@ func TestAddWarning_DefensiveCopy(t *testing.T) {
 	t.Parallel()
 	s := New()
 	detail := []string{"x"}
-	s.AddWarning(manifest.Warning{Category: manifest.WarnStaleValues, Resource: hrID("app"), Message: "m", Detail: detail})
+	s.AddWarning(
+		manifest.Warning{Category: manifest.WarnStaleValues, Resource: hrID("app"), Message: "m", Detail: detail},
+	)
 	detail[0] = "MUTATED"
 
 	got := s.Warnings()
@@ -208,7 +212,13 @@ func TestWarnings_AcceptedOrigins(t *testing.T) {
 	s.AddObject(first)
 	s.AddObject(second)
 	resource := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "credentials"}
-	s.AddObject(&manifest.Secret{Name: resource.Name, Namespace: resource.Namespace, StringData: map[string]any{"VALUE": "before"}})
+	s.AddObject(
+		&manifest.Secret{
+			Name:       resource.Name,
+			Namespace:  resource.Namespace,
+			StringData: map[string]any{"VALUE": "before"},
+		},
+	)
 	var a, b ReadSet
 	a.Init(s, first.Named(), nil)
 	b.Init(s, second.Named(), nil)
@@ -241,7 +251,13 @@ func TestWarnings_AcceptedOrigins(t *testing.T) {
 		want[i].Count = 1
 	}
 	assert.Diff(t, s.Warnings(), warningSubjects(want))
-	s.AddObject(&manifest.Secret{Name: resource.Name, Namespace: resource.Namespace, StringData: map[string]any{"VALUE": "after"}})
+	s.AddObject(
+		&manifest.Secret{
+			Name:       resource.Name,
+			Namespace:  resource.Namespace,
+			StringData: map[string]any{"VALUE": "after"},
+		},
+	)
 	assert.Equal(t, b.Valid(), false)
 	assert.Diff(t, s.Warnings(), []manifest.Warning(nil))
 }
@@ -254,7 +270,13 @@ func TestAdvisoryEvidence_AcceptedLifetime(t *testing.T) {
 	s.AddObject(first)
 	s.AddObject(second)
 	resource := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "credentials"}
-	s.AddObject(&manifest.Secret{Name: resource.Name, Namespace: resource.Namespace, StringData: map[string]any{"VALUE": "before"}})
+	s.AddObject(
+		&manifest.Secret{
+			Name:       resource.Name,
+			Namespace:  resource.Namespace,
+			StringData: map[string]any{"VALUE": "before"},
+		},
+	)
 	var a, b, unaccepted ReadSet
 	a.Init(s, first.Named(), nil)
 	b.Init(s, second.Named(), nil)
@@ -292,7 +314,13 @@ func TestAdvisoryEvidence_AcceptedLifetime(t *testing.T) {
 	replacement.GetObject(first.Named())
 	replacement.Accept()
 	assert.Diff(t, s.AdvisoryEvidence(), AdvisoryEvidence{Overrides: want.Overrides[1:]})
-	s.AddObject(&manifest.Secret{Name: resource.Name, Namespace: resource.Namespace, StringData: map[string]any{"VALUE": "after"}})
+	s.AddObject(
+		&manifest.Secret{
+			Name:       resource.Name,
+			Namespace:  resource.Namespace,
+			StringData: map[string]any{"VALUE": "after"},
+		},
+	)
 	assert.Equal(t, b.Valid(), false)
 	assert.Diff(t, s.AdvisoryEvidence(), AdvisoryEvidence{})
 	var carried ReadSet
@@ -319,10 +347,17 @@ func warningSubjects(warnings []manifest.Warning) []manifest.Warning {
 	}
 	return out
 }
+
 func TestWarnings_RelatedIdentity(t *testing.T) {
 	t.Parallel()
 	s := New()
-	first, second := &manifest.Kustomization{Name: "first", Namespace: "apps"}, &manifest.Kustomization{Name: "second", Namespace: "apps"}
+	first, second := &manifest.Kustomization{
+		Name:      "first",
+		Namespace: "apps",
+	}, &manifest.Kustomization{
+		Name:      "second",
+		Namespace: "apps",
+	}
 	s.AddObject(first)
 	s.AddObject(second)
 	var a, b ReadSet
@@ -332,7 +367,13 @@ func TestWarnings_RelatedIdentity(t *testing.T) {
 	defer b.Close()
 	raw := []manifest.NamedResource{first.Named(), second.Named()}
 	for i, id := range raw {
-		warning := manifest.Warning{Resource: first.Named(), Subject: manifest.DiagnosticFor(first.Named(), first), Related: []manifest.NamedResource{id}, Category: manifest.WarnUnrelatedFailure, Message: "same displayed owner"}
+		warning := manifest.Warning{
+			Resource: first.Named(),
+			Subject:  manifest.DiagnosticFor(first.Named(), first),
+			Related:  []manifest.NamedResource{id},
+			Category: manifest.WarnUnrelatedFailure,
+			Message:  "same displayed owner",
+		}
 		s.AddWarning(warning)
 		warning.Subject.Resource = second.Named()
 		s.AddWarning(warning)
@@ -348,7 +389,9 @@ func TestWarnings_RelatedIdentity(t *testing.T) {
 	a.Accept()
 	b.Accept()
 	warnings := s.Warnings()
-	if len(warnings) != 2 || warnings[0].Count != 3 || warnings[1].Count != 3 || warnings[0].Related[0] != first.Named() || warnings[1].Related[0] != second.Named() {
+	if len(warnings) != 2 || warnings[0].Count != 3 || warnings[1].Count != 3 ||
+		warnings[0].Related[0] != first.Named() ||
+		warnings[1].Related[0] != second.Named() {
 		t.Fatalf("origins collapsed: %+v", warnings)
 	}
 	warnings[0].Related[0] = manifest.NamedResource{}

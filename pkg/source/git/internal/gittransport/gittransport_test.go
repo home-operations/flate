@@ -13,6 +13,7 @@ import (
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing/transport/client"
 	"github.com/go-git/go-git/v5/storage/memory"
+
 	"github.com/home-operations/flate/pkg/source/ssrfguard"
 )
 
@@ -41,7 +42,9 @@ func TestDefaultClient_PerCallControls(t *testing.T) {
 			defer srv.Close()
 			defer close(release)
 			remote := git.NewRemote(memory.NewStorage(), &config.RemoteConfig{Name: "origin", URLs: []string{srv.URL}})
-			opts := &git.ListOptions{CABundle: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})}
+			opts := &git.ListOptions{
+				CABundle: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}),
+			}
 			if name == "insecure-cancel" {
 				opts.CABundle, opts.InsecureSkipTLS = nil, true
 			}
@@ -76,7 +79,8 @@ func TestDefaultClient_PerCallControls(t *testing.T) {
 					t.Fatalf("caller cancellation: %v", err)
 				}
 			}
-			if boundedHTTPSTransport.TLSClientConfig != nil && boundedHTTPSTransport.TLSClientConfig.InsecureSkipVerify {
+			if boundedHTTPSTransport.TLSClientConfig != nil &&
+				boundedHTTPSTransport.TLSClientConfig.InsecureSkipVerify {
 				t.Fatal("per-call TLS mutated the installed transport")
 			}
 		})

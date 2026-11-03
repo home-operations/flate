@@ -117,7 +117,8 @@ func TestPlugin_Inputs(t *testing.T) {
 				t.Fatal(err)
 			}
 			refs, known := Plugin(&doc)
-			if known != tc.known || tc.want == "" && len(refs) != 0 || tc.want != "" && (len(refs) != 1 || refs[0].Path != tc.want) {
+			if known != tc.known || tc.want == "" && len(refs) != 0 ||
+				tc.want != "" && (len(refs) != 1 || refs[0].Path != tc.want) {
 				t.Fatalf("Plugin = %+v, %v; want %q, %v", refs, known, tc.want, tc.known)
 			}
 		})
@@ -127,7 +128,12 @@ func TestPlugin_Inputs(t *testing.T) {
 func TestKustomization_InlineConfiguration(t *testing.T) {
 	t.Parallel()
 	var doc types.Kustomization
-	if err := syaml.Unmarshal([]byte("generators:\n  - |\n    apiVersion: builtin\n    kind: ConfigMapGenerator\n    metadata: {name: data}\n    files: [input]\npatchesStrategicMerge:\n  - |\n    apiVersion: v1\n    kind: ConfigMap\n    metadata: {name: data}\n"), &doc); err != nil {
+	if err := syaml.Unmarshal(
+		[]byte(
+			"generators:\n  - |\n    apiVersion: builtin\n    kind: ConfigMapGenerator\n    metadata: {name: data}\n    files: [input]\npatchesStrategicMerge:\n  - |\n    apiVersion: v1\n    kind: ConfigMap\n    metadata: {name: data}\n",
+		),
+		&doc,
+	); err != nil {
 		t.Fatal(err)
 	}
 	refs := slices.Collect(Kustomization(&doc))

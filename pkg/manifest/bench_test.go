@@ -312,9 +312,14 @@ func BenchmarkParseDoc_ConfigMapAndStringData(b *testing.B) {
 			doc := map[string]any{
 				"apiVersion": "v1", "kind": kind, "metadata": map[string]any{"name": "vars", "namespace": "ns"},
 				field: map[string]any{
-					"HOST": "service.cluster.example.com", "URL": "https://service.cluster.example.com/path?key=value",
-					"HEX": strings.Repeat("0123456789abcdef", 4), "TEXT": strings.Repeat("line of text\n", 30),
-					"PEM": "-----BEGIN CERTIFICATE-----\n" + strings.Repeat("abcdefgh", 200) + "\n-----END CERTIFICATE-----",
+					"HOST": "service.cluster.example.com",
+					"URL":  "https://service.cluster.example.com/path?key=value",
+					"HEX":  strings.Repeat("0123456789abcdef", 4),
+					"TEXT": strings.Repeat("line of text\n", 30),
+					"PEM": "-----BEGIN CERTIFICATE-----\n" + strings.Repeat(
+						"abcdefgh",
+						200,
+					) + "\n-----END CERTIFICATE-----",
 				},
 			}
 			b.ReportAllocs()

@@ -105,7 +105,10 @@ func Kustomization(k *types.Kustomization) iter.Seq[Reference] {
 			return
 		}
 		add := func(value string, f field, indices [2]int) bool {
-			if r, ok := inputReference(Reference{Path: value, Field: f.path, Role: f.role, Indices: indices}, f.kind); ok {
+			if r, ok := inputReference(
+				Reference{Path: value, Field: f.path, Role: f.role, Indices: indices},
+				f.kind,
+			); ok {
 				return yield(r)
 			}
 			return true
@@ -170,12 +173,28 @@ func Kustomization(k *types.Kustomization) iter.Seq[Reference] {
 			return add(g.EnvSource, inventory[2], [2]int{index})
 		}
 		for i := range k.ConfigMapGenerator {
-			if !generatorInputs(&k.ConfigMapGenerator[i].KvPairSources, [3]field{{".configMapGenerator.*.files.*", File, generator}, {".configMapGenerator.*.envs.*", File, plain}, {".configMapGenerator.*.env", File, plain}}, i) {
+			if !generatorInputs(
+				&k.ConfigMapGenerator[i].KvPairSources,
+				[3]field{
+					{".configMapGenerator.*.files.*", File, generator},
+					{".configMapGenerator.*.envs.*", File, plain},
+					{".configMapGenerator.*.env", File, plain},
+				},
+				i,
+			) {
 				return
 			}
 		}
 		for i := range k.SecretGenerator {
-			if !generatorInputs(&k.SecretGenerator[i].KvPairSources, [3]field{{".secretGenerator.*.files.*", File, generator}, {".secretGenerator.*.envs.*", File, plain}, {".secretGenerator.*.env", File, plain}}, i) {
+			if !generatorInputs(
+				&k.SecretGenerator[i].KvPairSources,
+				[3]field{
+					{".secretGenerator.*.files.*", File, generator},
+					{".secretGenerator.*.envs.*", File, plain},
+					{".secretGenerator.*.env", File, plain},
+				},
+				i,
+			) {
 				return
 			}
 		}
@@ -227,7 +246,10 @@ func fields(doc *yaml.Node, inventory []field) []Reference {
 			continue
 		}
 		if !indexed {
-			if r, ok := inputReference(Reference{Node: node, Path: node.Value, Field: f.path, Role: f.role}, f.kind); ok {
+			if r, ok := inputReference(
+				Reference{Node: node, Path: node.Value, Field: f.path, Role: f.role},
+				f.kind,
+			); ok {
 				refs = append(refs, r)
 			}
 			continue
@@ -240,7 +262,10 @@ func fields(doc *yaml.Node, inventory []field) []Reference {
 				child = MappingValue(child, strings.TrimPrefix(rest, "."))
 			}
 			if child != nil {
-				if r, ok := inputReference(Reference{Node: child, Path: child.Value, Field: f.path, Role: f.role, Indices: [2]int{i}}, f.kind); ok {
+				if r, ok := inputReference(
+					Reference{Node: child, Path: child.Value, Field: f.path, Role: f.role, Indices: [2]int{i}},
+					f.kind,
+				); ok {
 					refs = append(refs, r)
 				}
 			}
@@ -373,7 +398,12 @@ func MetadataOnly(doc *yaml.Node) bool {
 		return false
 	}
 	switch kind.Value {
-	case "NamespaceTransformer", "AnnotationsTransformer", "LabelTransformer", "PrefixSuffixTransformer", "PrefixTransformer", "SuffixTransformer":
+	case "NamespaceTransformer",
+		"AnnotationsTransformer",
+		"LabelTransformer",
+		"PrefixSuffixTransformer",
+		"PrefixTransformer",
+		"SuffixTransformer":
 	default:
 		return false
 	}

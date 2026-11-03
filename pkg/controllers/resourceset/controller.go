@@ -67,7 +67,11 @@ func (*Controller) Owns(id manifest.NamedResource) bool {
 }
 
 // ReconcileNode captures one ResourceSet execution for the scheduler.
-func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
+func (c *Controller) ReconcileNode(
+	ctx context.Context,
+	id manifest.NamedResource,
+	level manifest.DrainLevel,
+) *base.Execution {
 	ex := c.newExecution(id)
 	ex.run.Dispatch(ctx, level, ex, (*execution).reconcile)
 	return &ex.run
@@ -93,7 +97,11 @@ func (c *execution) collect(ctx context.Context, rs *manifest.ResourceSet, level
 		provider := input.Declaration
 		plan, err := provider.InputPlan()
 		if err != nil {
-			return manifest.NewError(manifest.ErrInput, fmt.Errorf("ResourceSetInputProvider %s: %w", provider.Named().NamespacedName(), err), "")
+			return manifest.NewError(
+				manifest.ErrInput,
+				fmt.Errorf("ResourceSetInputProvider %s: %w", provider.Named().NamespacedName(), err),
+				"",
+			)
 		}
 		input.Inputs = plan.Inputs
 		switch plan.Kind {
@@ -122,7 +130,11 @@ func (c *execution) collect(ctx context.Context, rs *manifest.ResourceSet, level
 							return manifest.NewError(manifest.ErrFlux, fmt.Errorf("read provider inputs: %w", err), "")
 						}
 						if err := json.Unmarshal(body, &input.Inputs); err != nil {
-							return manifest.NewError(manifest.ErrFlux, fmt.Errorf("decode provider inputs: %w", err), "")
+							return manifest.NewError(
+								manifest.ErrFlux,
+								fmt.Errorf("decode provider inputs: %w", err),
+								"",
+							)
 						}
 					}
 					c.next++
@@ -158,7 +170,11 @@ func (c *execution) render(ctx context.Context, rs *manifest.ResourceSet) error 
 	}
 	if !handled {
 		rs.EmissionPolicy().Stamp(docs)
-		attempt.Children, attempt.Manifests, attempt.Failures = c.ParseChildren(rs, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets})
+		attempt.Children, attempt.Manifests, attempt.Failures = c.ParseChildren(
+			rs,
+			docs,
+			manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets},
+		)
 		attempt.Complete = true
 		if err := c.run.Emit(ctx, id, &attempt, nil); err != nil {
 			return err
@@ -171,5 +187,14 @@ func (c *execution) render(ctx context.Context, rs *manifest.ResourceSet) error 
 	if sources == nil {
 		return nil
 	}
-	return cache.RecordInventory(ctx, c.cache, cache.AcceptedInventory[*strings.Reader]{Key: attempt.Fingerprint, Acceptance: attempt.Fingerprint, History: cache.RenderHistory{Owner: id, Sources: sources}, Content: strings.NewReader(attempt.Fingerprint)})
+	return cache.RecordInventory(
+		ctx,
+		c.cache,
+		cache.AcceptedInventory[*strings.Reader]{
+			Key:        attempt.Fingerprint,
+			Acceptance: attempt.Fingerprint,
+			History:    cache.RenderHistory{Owner: id, Sources: sources},
+			Content:    strings.NewReader(attempt.Fingerprint),
+		},
+	)
 }

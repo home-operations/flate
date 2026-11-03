@@ -12,7 +12,16 @@ import (
 
 func TestDependencyGraph_CycleMessages(t *testing.T) {
 	t.Parallel()
-	a, b, c := testutil.KustomizationID("ns", "a"), testutil.KustomizationID("ns", "b"), testutil.KustomizationID("ns", "c")
+	a, b, c := testutil.KustomizationID(
+		"ns",
+		"a",
+	), testutil.KustomizationID(
+		"ns",
+		"b",
+	), testutil.KustomizationID(
+		"ns",
+		"c",
+	)
 	ab := []manifest.NamedResource{a, b, a}
 	ac := []manifest.NamedResource{a, c, a}
 	t.Run("intersecting cycles", func(t *testing.T) {
@@ -26,7 +35,11 @@ func TestDependencyGraph_CycleMessages(t *testing.T) {
 				}
 				g.ReplaceEdges(id, deps)
 			}
-			assert.Diff(t, cyclePaths(g.Failures()), map[manifest.NamedResource][]manifest.NamedResource{a: ab, b: ab, c: ac})
+			assert.Diff(
+				t,
+				cyclePaths(g.Failures()),
+				map[manifest.NamedResource][]manifest.NamedResource{a: ab, b: ab, c: ac},
+			)
 		}
 	})
 	t.Run("partial break", func(t *testing.T) {
@@ -52,7 +65,22 @@ func TestDependencyGraph_CycleMessages(t *testing.T) {
 
 func TestDependencyGraph_NonMembersStayHealthy(t *testing.T) {
 	t.Parallel()
-	a, b, c, d, e := testutil.KustomizationID("ns", "a"), testutil.KustomizationID("ns", "b"), testutil.KustomizationID("ns", "c"), testutil.KustomizationID("ns", "d"), testutil.KustomizationID("ns", "e")
+	a, b, c, d, e := testutil.KustomizationID(
+		"ns",
+		"a",
+	), testutil.KustomizationID(
+		"ns",
+		"b",
+	), testutil.KustomizationID(
+		"ns",
+		"c",
+	), testutil.KustomizationID(
+		"ns",
+		"d",
+	), testutil.KustomizationID(
+		"ns",
+		"e",
+	)
 	g := newDependencyGraph()
 	g.ReplaceEdges(c, []manifest.NamedResource{d})
 	g.ReplaceEdges(d, []manifest.NamedResource{testutil.KustomizationID("ns", "leaf")})
@@ -65,7 +93,19 @@ func TestDependencyGraph_NonMembersStayHealthy(t *testing.T) {
 
 func TestDependencyGraph_CycleMembershipRegistrationOrder(t *testing.T) {
 	t.Parallel()
-	x, y, w, z := testutil.KustomizationID("ns", "x"), testutil.KustomizationID("ns", "y"), testutil.KustomizationID("ns", "w"), testutil.KustomizationID("ns", "z")
+	x, y, w, z := testutil.KustomizationID(
+		"ns",
+		"x",
+	), testutil.KustomizationID(
+		"ns",
+		"y",
+	), testutil.KustomizationID(
+		"ns",
+		"w",
+	), testutil.KustomizationID(
+		"ns",
+		"z",
+	)
 	xw := []manifest.NamedResource{w, z, x, w}
 	xy := []manifest.NamedResource{x, y, z, x}
 	want := map[manifest.NamedResource][]manifest.NamedResource{w: xw, x: xw, y: xy, z: xw}
@@ -92,7 +132,9 @@ func TestDependencyGraph_CycleMembershipRegistrationOrder(t *testing.T) {
 	checkOrder(nil)
 }
 
-func cyclePaths(failures map[manifest.NamedResource]*dependencyCycle) map[manifest.NamedResource][]manifest.NamedResource {
+func cyclePaths(
+	failures map[manifest.NamedResource]*dependencyCycle,
+) map[manifest.NamedResource][]manifest.NamedResource {
 	if failures == nil {
 		return nil
 	}

@@ -48,7 +48,12 @@ func (r *ResourceSet) Suspended() bool { return r.Suspend }
 
 // Named identifies the ResourceSet.
 func (r *ResourceSet) Named() NamedResource {
-	return NamedResource{Group: kindTable[kindResourceSet].Group, Kind: KindResourceSet, Namespace: r.Namespace, Name: r.Name}
+	return NamedResource{
+		Group:     kindTable[kindResourceSet].Group,
+		Kind:      KindResourceSet,
+		Namespace: r.Namespace,
+		Name:      r.Name,
+	}
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
@@ -74,7 +79,18 @@ func parseResourceSet(doc map[string]any) (*ResourceSet, error) {
 	for i, dep := range cr.Spec.DependsOn {
 		gv, err := schema.ParseGroupVersion(dep.APIVersion)
 		if err != nil || gv.Version == "" {
-			return nil, NewError(ErrInput, fmt.Errorf("ResourceSet %w", field.Invalid(field.NewPath("spec", "dependsOn").Index(i).Child("apiVersion"), dep.APIVersion, "must have a valid version")), "")
+			return nil, NewError(
+				ErrInput,
+				fmt.Errorf(
+					"ResourceSet %w",
+					field.Invalid(
+						field.NewPath("spec", "dependsOn").Index(i).Child("apiVersion"),
+						dep.APIVersion,
+						"must have a valid version",
+					),
+				),
+				"",
+			)
 		}
 		scopes.ResolveScope(yaml.TypeMeta{APIVersion: dep.APIVersion, Kind: dep.Kind})
 	}
@@ -91,7 +107,18 @@ func parseResourceSet(doc map[string]any) (*ResourceSet, error) {
 		}
 		gv, err := schema.ParseGroupVersion(ref.APIVersion)
 		if err != nil || gv.Version == "" {
-			return nil, NewError(ErrInput, fmt.Errorf("ResourceSet %w", field.Invalid(field.NewPath("spec", "inputsFrom").Index(i).Child("apiVersion"), ref.APIVersion, "must have a valid version")), "")
+			return nil, NewError(
+				ErrInput,
+				fmt.Errorf(
+					"ResourceSet %w",
+					field.Invalid(
+						field.NewPath("spec", "inputsFrom").Index(i).Child("apiVersion"),
+						ref.APIVersion,
+						"must have a valid version",
+					),
+				),
+				"",
+			)
 		}
 	}
 	return &ResourceSet{
@@ -121,7 +148,12 @@ type ResourceSetInputProvider struct {
 
 // Named identifies the ResourceSetInputProvider.
 func (p *ResourceSetInputProvider) Named() NamedResource {
-	return NamedResource{Group: kindTable[kindResourceSetInputProvider].Group, Kind: KindResourceSetInputProvider, Namespace: p.Namespace, Name: p.Name}
+	return NamedResource{
+		Group:     kindTable[kindResourceSetInputProvider].Group,
+		Kind:      KindResourceSetInputProvider,
+		Namespace: p.Namespace,
+		Name:      p.Name,
+	}
 }
 
 // Suspended reports whether reconciliation is paused on this resource.
@@ -357,8 +389,17 @@ func (r *ResourceSet) references(yield func(Reference) bool) {
 			gate = GateInputs
 		}
 		if !yield(Reference{
-			NamedResource: Resolve(NamedResource{Group: referenceGroup(kind, ref.APIVersion), Kind: kind, Name: ref.Name}, "", r.Namespace),
-			Use:           "inputsFrom", Position: i, Content: true, Gate: gate, Selector: ref.Selector, NamespaceDefault: true,
+			NamedResource: Resolve(
+				NamedResource{Group: referenceGroup(kind, ref.APIVersion), Kind: kind, Name: ref.Name},
+				"",
+				r.Namespace,
+			),
+			Use:              "inputsFrom",
+			Position:         i,
+			Content:          true,
+			Gate:             gate,
+			Selector:         ref.Selector,
+			NamespaceDefault: true,
 		}) {
 			return
 		}

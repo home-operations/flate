@@ -14,16 +14,135 @@ func TestKindInfo_Rosters(t *testing.T) {
 		want    KindInfo
 		version string
 	}{
-		{&Kustomization{}, KindInfo{Group: FluxKustomizeDomain, Kind: KindKustomization, Tracked: true, Runnable: true, Status: true, Discovery: true, Test: true, Parent: true, Structural: true, Render: true}, kustomizeAPIVersion},
-		{&HelmRelease{}, KindInfo{Group: HelmReleaseDomain, Kind: KindHelmRelease, Tracked: true, Runnable: true, Status: true, Test: true, Parent: true, SourceOnly: true, TransientOutput: true, Render: true}, helmAPIVersion},
-		{&GitRepository{}, KindInfo{Group: SourceDomain, Kind: KindGitRepository, Tracked: true, Runnable: true, Status: true, Discovery: true, Test: true, SourceArtifact: true}, sourceAPIVersion},
-		{&OCIRepository{}, KindInfo{Group: SourceDomain, Kind: KindOCIRepository, Tracked: true, Runnable: true, Status: true, Discovery: true, Test: true, SourceArtifact: true}, sourceAPIVersion},
-		{&HelmRepository{}, KindInfo{Group: SourceDomain, Kind: KindHelmRepository, Tracked: true, Runnable: true, Status: true, Discovery: true, Test: true}, sourceAPIVersion},
-		{&HelmChartSource{}, KindInfo{Group: SourceDomain, Kind: KindHelmChart, Tracked: true, Runnable: true, Status: true, Discovery: true}, sourceAPIVersion},
-		{&ExternalArtifact{}, KindInfo{Group: SourceDomain, Kind: KindExternalArtifact, Tracked: true, Runnable: true, Status: true, Discovery: true, SourceArtifact: true}, sourceAPIVersion},
-		{&Bucket{}, KindInfo{Group: SourceDomain, Kind: KindBucket, Tracked: true, Runnable: true, Status: true, Discovery: true, Test: true, SourceArtifact: true}, sourceAPIVersion},
-		{&ResourceSet{}, KindInfo{Group: FluxOperatorDomain, Kind: KindResourceSet, Tracked: true, Runnable: true, Discovery: true, Parent: true}, ""},
-		{&ResourceSetInputProvider{}, KindInfo{Group: FluxOperatorDomain, Kind: KindResourceSetInputProvider, Tracked: true, Discovery: true}, ""},
+		{
+			&Kustomization{},
+			KindInfo{
+				Group:      FluxKustomizeDomain,
+				Kind:       KindKustomization,
+				Tracked:    true,
+				Runnable:   true,
+				Status:     true,
+				Discovery:  true,
+				Test:       true,
+				Parent:     true,
+				Structural: true,
+				Render:     true,
+			},
+			kustomizeAPIVersion,
+		},
+		{
+			&HelmRelease{},
+			KindInfo{
+				Group:           HelmReleaseDomain,
+				Kind:            KindHelmRelease,
+				Tracked:         true,
+				Runnable:        true,
+				Status:          true,
+				Test:            true,
+				Parent:          true,
+				SourceOnly:      true,
+				TransientOutput: true,
+				Render:          true,
+			},
+			helmAPIVersion,
+		},
+		{
+			&GitRepository{},
+			KindInfo{
+				Group:          SourceDomain,
+				Kind:           KindGitRepository,
+				Tracked:        true,
+				Runnable:       true,
+				Status:         true,
+				Discovery:      true,
+				Test:           true,
+				SourceArtifact: true,
+			},
+			sourceAPIVersion,
+		},
+		{
+			&OCIRepository{},
+			KindInfo{
+				Group:          SourceDomain,
+				Kind:           KindOCIRepository,
+				Tracked:        true,
+				Runnable:       true,
+				Status:         true,
+				Discovery:      true,
+				Test:           true,
+				SourceArtifact: true,
+			},
+			sourceAPIVersion,
+		},
+		{
+			&HelmRepository{},
+			KindInfo{
+				Group:     SourceDomain,
+				Kind:      KindHelmRepository,
+				Tracked:   true,
+				Runnable:  true,
+				Status:    true,
+				Discovery: true,
+				Test:      true,
+			},
+			sourceAPIVersion,
+		},
+		{
+			&HelmChartSource{},
+			KindInfo{
+				Group:     SourceDomain,
+				Kind:      KindHelmChart,
+				Tracked:   true,
+				Runnable:  true,
+				Status:    true,
+				Discovery: true,
+			},
+			sourceAPIVersion,
+		},
+		{
+			&ExternalArtifact{},
+			KindInfo{
+				Group:          SourceDomain,
+				Kind:           KindExternalArtifact,
+				Tracked:        true,
+				Runnable:       true,
+				Status:         true,
+				Discovery:      true,
+				SourceArtifact: true,
+			},
+			sourceAPIVersion,
+		},
+		{
+			&Bucket{},
+			KindInfo{
+				Group:          SourceDomain,
+				Kind:           KindBucket,
+				Tracked:        true,
+				Runnable:       true,
+				Status:         true,
+				Discovery:      true,
+				Test:           true,
+				SourceArtifact: true,
+			},
+			sourceAPIVersion,
+		},
+		{
+			&ResourceSet{},
+			KindInfo{
+				Group:     FluxOperatorDomain,
+				Kind:      KindResourceSet,
+				Tracked:   true,
+				Runnable:  true,
+				Discovery: true,
+				Parent:    true,
+			},
+			"",
+		},
+		{
+			&ResourceSetInputProvider{},
+			KindInfo{Group: FluxOperatorDomain, Kind: KindResourceSetInputProvider, Tracked: true, Discovery: true},
+			"",
+		},
 		{&ConfigMap{}, KindInfo{Kind: KindConfigMap, Tracked: true, Data: true}, ""},
 		{&Secret{}, KindInfo{Kind: KindSecret, Tracked: true, Data: true}, ""},
 	}
@@ -81,7 +200,12 @@ func TestNamedResource_ReportHidden(t *testing.T) {
 
 func TestKindInfo_ArtifactGenerator(t *testing.T) {
 	t.Parallel()
-	doc := map[string]any{"apiVersion": "source.extensions.fluxcd.io/v1beta1", "kind": "ArtifactGenerator", "metadata": map[string]any{"name": "generator", "namespace": "apps"}, "spec": map[string]any{}}
+	doc := map[string]any{
+		"apiVersion": "source.extensions.fluxcd.io/v1beta1",
+		"kind":       "ArtifactGenerator",
+		"metadata":   map[string]any{"name": "generator", "namespace": "apps"},
+		"spec":       map[string]any{},
+	}
 	obj, _, _, err := ParseDoc(doc, ParseDocOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +213,14 @@ func TestKindInfo_ArtifactGenerator(t *testing.T) {
 	if _, ok := obj.(*RawObject); !ok {
 		t.Fatalf("generator type = %T", obj)
 	}
-	want := KindInfo{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Tracked: true, Runnable: true, Status: true, Discovery: true}
+	want := KindInfo{
+		Group:     "source.extensions.fluxcd.io",
+		Kind:      "ArtifactGenerator",
+		Tracked:   true,
+		Runnable:  true,
+		Status:    true,
+		Discovery: true,
+	}
 	assert.Equal(t, obj.Named().KindInfo(), want)
 	want.apiVersion = "source.extensions.fluxcd.io/v1beta1"
 	assert.Equal(t, KindOf(obj), want)
@@ -113,14 +244,31 @@ func TestKindInfo_RawIdentity(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			raw := &RawObject{Kind: tc.kind, APIVersion: tc.apiVersion, Name: "generator", Namespace: "apps", Spec: map[string]any{
-				"pathPattern": "@repo/{app}", "artifacts": []any{map[string]any{"name": "app-{app}"}},
-			}}
-			want := KindInfo{Group: tc.group, Kind: tc.kind, Tracked: tc.tracked, Discovery: tc.tracked, Runnable: tc.tracked, Status: tc.tracked, apiVersion: tc.apiVersion}
+			raw := &RawObject{
+				Kind:       tc.kind,
+				APIVersion: tc.apiVersion,
+				Name:       "generator",
+				Namespace:  "apps",
+				Spec: map[string]any{
+					"pathPattern": "@repo/{app}", "artifacts": []any{map[string]any{"name": "app-{app}"}},
+				},
+			}
+			want := KindInfo{
+				Group:      tc.group,
+				Kind:       tc.kind,
+				Tracked:    tc.tracked,
+				Discovery:  tc.tracked,
+				Runnable:   tc.tracked,
+				Status:     tc.tracked,
+				apiVersion: tc.apiVersion,
+			}
 			assert.Equal(t, KindOf(raw), want)
 			assert.Equal(t, raw.Named().Group, tc.group)
 			assert.Equal(t, ProducerNeedsCandidates(raw), tc.tracked)
-			targets := ProducerTargets(raw, NamedResource{Group: SourceDomain, Kind: KindExternalArtifact, Namespace: "apps", Name: "app-api"})
+			targets := ProducerTargets(
+				raw,
+				NamedResource{Group: SourceDomain, Kind: KindExternalArtifact, Namespace: "apps", Name: "app-api"},
+			)
 			assert.Equal(t, len(targets) == 1, tc.tracked)
 		})
 	}

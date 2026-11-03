@@ -24,7 +24,12 @@ func visibleLen(s string) int { return len([]rune(ansiRE.ReplaceAllString(s, "")
 func inflightModel(color bool, names ...string) barModel {
 	m := newBarModel(color)
 	for _, n := range names {
-		m.events.publish(testutil.KustomizationID("ns", n), store.StatusPending, time.Now(), testutil.KustomizationID("ns", n).Name)
+		m.events.publish(
+			testutil.KustomizationID("ns", n),
+			store.StatusPending,
+			time.Now(),
+			testutil.KustomizationID("ns", n).Name,
+		)
 	}
 	m.drainEvents()
 	return m
@@ -140,7 +145,16 @@ func TestSummarizeInflight(t *testing.T) {
 func TestModel_Counts(t *testing.T) {
 	t.Parallel()
 	m := newBarModel(false)
-	a, b, s := testutil.KustomizationID("ns", "a"), testutil.KustomizationID("ns", "b"), testutil.KustomizationID("ns", "suspended")
+	a, b, s := testutil.KustomizationID(
+		"ns",
+		"a",
+	), testutil.KustomizationID(
+		"ns",
+		"b",
+	), testutil.KustomizationID(
+		"ns",
+		"suspended",
+	)
 	m.events.publish(a, store.StatusPending, time.Now(), a.Name)
 	m.events.publish(b, store.StatusPending, time.Now(), b.Name)
 	m.events.publish(a, store.StatusReady, time.Now(), a.Name)
@@ -198,7 +212,12 @@ func TestModel_InflightLabelsFirstSeenOrder(t *testing.T) {
 				if name == "alpha" {
 					observedAt = first.Add(time.Second)
 				}
-				m.events.publish(testutil.KustomizationID("ns", name), store.StatusPending, observedAt, testutil.KustomizationID("ns", name).Name)
+				m.events.publish(
+					testutil.KustomizationID("ns", name),
+					store.StatusPending,
+					observedAt,
+					testutil.KustomizationID("ns", name).Name,
+				)
 			}
 			m.drainEvents()
 			assert.Diff(t, m.inflightLabels(), []string{"bravo", "charlie", "alpha"})
@@ -210,7 +229,12 @@ func TestModel_TracksAdmittedEvents(t *testing.T) {
 	t.Parallel()
 	m := newBarModel(false)
 	boot := manifest.BootstrapSourceID
-	chart := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindHelmChart, Namespace: "ns", Name: "repo-app-abc1234"}
+	chart := manifest.NamedResource{
+		Group:     "source.toolkit.fluxcd.io",
+		Kind:      manifest.KindHelmChart,
+		Namespace: "ns",
+		Name:      "repo-app-abc1234",
+	}
 	declared := []manifest.NamedResource{
 		testutil.KustomizationID("ns", "declared"),
 		{Group: "foreign.example", Kind: chart.Kind, Namespace: chart.Namespace, Name: chart.Name},

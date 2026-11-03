@@ -25,15 +25,36 @@ func TestAdmission_SelectorInputs(t *testing.T) {
 	root := t.TempDir()
 	st := store.New()
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"set.yaml":     {Data: []byte("apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: app, namespace: apps}\nspec:\n  inputsFrom: [{kind: ResourceSetInputProvider, selector: {matchLabels: {app: selected}}}]\n  resourcesTemplate: 'apiVersion: v1'\n")},
-		"chosen.yaml":  {Data: []byte("apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSetInputProvider\nmetadata: {name: chosen, namespace: apps, labels: {app: selected}}\nspec: {type: Static}\n")},
-		"other.yaml":   {Data: []byte("apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSetInputProvider\nmetadata: {name: other, namespace: apps, labels: {app: other}}\nspec: {type: Static}\n")},
-		"foreign.yaml": {Data: []byte("apiVersion: foreign.example/v1\nkind: ResourceSetInputProvider\nmetadata: {name: foreign, namespace: apps, labels: {app: selected}}\nspec: {type: Static}\n")},
+		"set.yaml": {
+			Data: []byte(
+				"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: app, namespace: apps}\nspec:\n  inputsFrom: [{kind: ResourceSetInputProvider, selector: {matchLabels: {app: selected}}}]\n  resourcesTemplate: 'apiVersion: v1'\n",
+			),
+		},
+		"chosen.yaml": {
+			Data: []byte(
+				"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSetInputProvider\nmetadata: {name: chosen, namespace: apps, labels: {app: selected}}\nspec: {type: Static}\n",
+			),
+		},
+		"other.yaml": {
+			Data: []byte(
+				"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSetInputProvider\nmetadata: {name: other, namespace: apps, labels: {app: other}}\nspec: {type: Static}\n",
+			),
+		},
+		"foreign.yaml": {
+			Data: []byte(
+				"apiVersion: foreign.example/v1\nkind: ResourceSetInputProvider\nmetadata: {name: foreign, namespace: apps, labels: {app: selected}}\nspec: {type: Static}\n",
+			),
+		},
 	}})
 	l := New(st)
 	l.SourceRoot = root
 	l.Options.Filter = change.NewFilter()
-	app := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "apps", Name: "app"}
+	app := manifest.NamedResource{
+		Group:     manifest.FluxOperatorDomain,
+		Kind:      manifest.KindResourceSet,
+		Namespace: "apps",
+		Name:      "app",
+	}
 	l.Options.Selection = manifest.Selection{Roots: []manifest.NamedResource{app}}
 	_, err := l.Load(t.Context(), root)
 	assert.NoError(t, err)
@@ -58,13 +79,28 @@ func TestAdmission_SelectorInputs(t *testing.T) {
 			occurrence.Identity.Namespace = "apps"
 			l.locations[occurrence.Identity] = occurrence
 		}
-		query := manifest.Reference{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSetInputProvider, Namespace: "apps", Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "selected"}}}
+		query := manifest.Reference{
+			Group:     manifest.FluxOperatorDomain,
+			Kind:      manifest.KindResourceSetInputProvider,
+			Namespace: "apps",
+			Selector:  &metav1.LabelSelector{MatchLabels: map[string]string{"app": "selected"}},
+		}
 		closure := admissionClosure{loader: l, objects: st}
 		got, err := closure.matchingInputs(query, false)
 		assert.NoError(t, err)
 		assert.Diff(t, got, []manifest.NamedResource{
-			{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSetInputProvider, Namespace: "apps", Name: "a"},
-			{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSetInputProvider, Namespace: "apps", Name: "z"},
+			{
+				Group:     manifest.FluxOperatorDomain,
+				Kind:      manifest.KindResourceSetInputProvider,
+				Namespace: "apps",
+				Name:      "a",
+			},
+			{
+				Group:     manifest.FluxOperatorDomain,
+				Kind:      manifest.KindResourceSetInputProvider,
+				Namespace: "apps",
+				Name:      "z",
+			},
 		})
 		assert.Equal(t, len(st.Objects()), 0)
 	})
@@ -88,13 +124,29 @@ func TestAdmission_SelectorInputs(t *testing.T) {
 				if manifest.TreeSide(side) == tc.side {
 					label = "selected"
 				}
-				provider := &manifest.ResourceSetInputProvider{Name: "chosen", Namespace: "apps", Labels: map[string]string{"app": label}}
-				consumer := &manifest.ResourceSet{Name: "app", Namespace: "apps", InputsFrom: []fluxopv1.InputProviderReference{{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "selected"}}}}}
+				provider := &manifest.ResourceSetInputProvider{
+					Name:      "chosen",
+					Namespace: "apps",
+					Labels:    map[string]string{"app": label},
+				}
+				consumer := &manifest.ResourceSet{
+					Name:      "app",
+					Namespace: "apps",
+					InputsFrom: []fluxopv1.InputProviderReference{
+						{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "selected"}}},
+					},
+				}
 				providers[side], consumers[side] = provider, consumer
-				prepared[side] = map[manifest.NamedResource]store.Child{provider.Named(): {Obj: provider}, consumer.Named(): {Obj: consumer}}
+				prepared[side] = map[manifest.NamedResource]store.Child{
+					provider.Named(): {Obj: provider},
+					consumer.Named(): {Obj: consumer},
+				}
 				l := New(st)
 				l.SourceRoot = root
-				l.Options.Selection = manifest.Selection{Roots: []manifest.NamedResource{consumer.Named()}, Changed: true}
+				l.Options.Selection = manifest.Selection{
+					Roots:   []manifest.NamedResource{consumer.Named()},
+					Changed: true,
+				}
 				l.Options.Filter = change.NewFilter()
 				l.candidates = prepared[side]
 				l.Index.Records[provider.Named()] = manifest.DiscoveryRecord{File: "chosen.yaml"}
@@ -109,20 +161,35 @@ func TestAdmission_SelectorInputs(t *testing.T) {
 			assert.NoError(t, err)
 			for side, l := range loaders {
 				l.Options.Changes = changes
-				l.bindings.Store(&map[manifest.NamedResource]admissionSource{manifest.BootstrapSourceID: {initial: stores[side].GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)}})
+				l.bindings.Store(
+					&map[manifest.NamedResource]admissionSource{
+						manifest.BootstrapSourceID: {
+							initial: stores[side].GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact),
+						},
+					},
+				)
 				assert.Equal(t, len(stores[side].Objects()), 0)
 				proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
 				assert.NoError(t, err)
 				assert.Equal(t, slices.Contains(proposal.Selected, app), true)
 				assert.Equal(t, slices.Contains(proposal.Dirty, app), true)
-				assert.Equal(t, slices.Contains(proposal.Needed, providers[side].Named()), manifest.TreeSide(side) == tc.side)
+				assert.Equal(
+					t,
+					slices.Contains(proposal.Needed, providers[side].Named()),
+					manifest.TreeSide(side) == tc.side,
+				)
 
 				proposal, err = l.Prepare(t.Context(), store.Child{Obj: consumers[side]}, nil, nil)
 				assert.NoError(t, err)
 				assert.Equal(t, slices.Contains(proposal.Selected, app), true)
 				assert.Equal(t, slices.Contains(proposal.Dirty, app), true)
 
-				_, retry := l.Options.Filter.AddEmitted([]manifest.NamedResource{providers[side].Named()}, nil, []manifest.NamedResource{providers[side].Named()}, 0)
+				_, retry := l.Options.Filter.AddEmitted(
+					[]manifest.NamedResource{providers[side].Named()},
+					nil,
+					[]manifest.NamedResource{providers[side].Named()},
+					0,
+				)
 				assert.Equal(t, retry, false)
 				proposal, err = l.Prepare(t.Context(), store.Child{Obj: providers[side]}, nil, nil)
 				assert.NoError(t, err)
@@ -131,7 +198,11 @@ func TestAdmission_SelectorInputs(t *testing.T) {
 
 				producer := &manifest.HelmRelease{Name: "producer", Namespace: "apps"}
 				stores[side].AddObject(producer)
-				stores[side].RecordEmitted(producer.Named(), &store.Emission{Complete: true, Children: []store.Child{{Obj: consumers[side]}}}, nil)
+				stores[side].RecordEmitted(
+					producer.Named(),
+					&store.Emission{Complete: true, Children: []store.Child{{Obj: consumers[side]}}},
+					nil,
+				)
 				stores[side].UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusReady})
 				l.Options.HistoryOwners = []manifest.NamedResource{producer.Named()}
 				proposal, err = l.Prepare(t.Context(), store.Child{}, nil, nil)
@@ -140,7 +211,10 @@ func TestAdmission_SelectorInputs(t *testing.T) {
 
 				if manifest.TreeSide(side) != tc.side {
 					l.Options.Filter = change.NewFilter()
-					stores[side].SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: l.SourceRoot, FS: fstest.MapFS{}})
+					stores[side].SetArtifact(
+						manifest.BootstrapSourceID,
+						&store.SourceArtifact{LocalPath: l.SourceRoot, FS: fstest.MapFS{}},
+					)
 					proposal, err = l.Prepare(t.Context(), store.Child{Obj: consumers[side]}, nil, nil)
 					assert.NoError(t, err)
 					assert.Equal(t, slices.Contains(proposal.Selected, app), false)
@@ -159,7 +233,11 @@ func TestAdmission_LateSelectorInput(t *testing.T) {
 	root := t.TempDir()
 	st := store.New()
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"set.yaml": {Data: []byte("apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: app, namespace: apps}\nspec:\n  inputsFrom: [{kind: ResourceSetInputProvider, selector: {matchLabels: {app: selected}}}]\n  resourcesTemplate: 'apiVersion: v1'\n")},
+		"set.yaml": {
+			Data: []byte(
+				"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: app, namespace: apps}\nspec:\n  inputsFrom: [{kind: ResourceSetInputProvider, selector: {matchLabels: {app: selected}}}]\n  resourcesTemplate: 'apiVersion: v1'\n",
+			),
+		},
 	}})
 	l := New(st)
 	l.SourceRoot = root
@@ -169,16 +247,40 @@ func TestAdmission_LateSelectorInput(t *testing.T) {
 	_, err := l.Load(t.Context(), root)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
-	parent := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "parent"}
-	_, retry := l.Options.Filter.AddEmitted([]manifest.NamedResource{parent}, []manifest.NamedResource{parent}, []manifest.NamedResource{parent}, 0)
+	parent := manifest.NamedResource{
+		Group:     manifest.FluxKustomizeDomain,
+		Kind:      manifest.KindKustomization,
+		Namespace: "apps",
+		Name:      "parent",
+	}
+	_, retry := l.Options.Filter.AddEmitted(
+		[]manifest.NamedResource{parent},
+		[]manifest.NamedResource{parent},
+		[]manifest.NamedResource{parent},
+		0,
+	)
 	assert.Equal(t, retry, false)
 	reads := &store.ReadSet{}
 	reads.Init(st, parent, nil)
 	t.Cleanup(reads.Retire)
-	provider := &manifest.ResourceSetInputProvider{Name: "late", Namespace: "apps", Labels: map[string]string{"app": "selected"}}
-	proposal, err := l.Prepare(t.Context(), store.Child{Obj: provider, Productions: []manifest.Production{{Owner: parent}}}, reads, nil)
+	provider := &manifest.ResourceSetInputProvider{
+		Name:      "late",
+		Namespace: "apps",
+		Labels:    map[string]string{"app": "selected"},
+	}
+	proposal, err := l.Prepare(
+		t.Context(),
+		store.Child{Obj: provider, Productions: []manifest.Production{{Owner: parent}}},
+		reads,
+		nil,
+	)
 	assert.NoError(t, err)
-	app := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "apps", Name: "app"}
+	app := manifest.NamedResource{
+		Group:     manifest.FluxOperatorDomain,
+		Kind:      manifest.KindResourceSet,
+		Namespace: "apps",
+		Name:      "app",
+	}
 	assert.Equal(t, slices.Contains(proposal.Needed, app), true)
 	assert.Equal(t, slices.Contains(proposal.Selected, app), true)
 	if len(proposal.Objects) != 1 {
@@ -200,18 +302,40 @@ func TestAdmission_ExcludedSelectorKeepsQueryObservation(t *testing.T) {
 	_, err := l.Load(t.Context(), root)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
-	parent := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "support"}
+	parent := manifest.NamedResource{
+		Group:     manifest.FluxKustomizeDomain,
+		Kind:      manifest.KindKustomization,
+		Namespace: "apps",
+		Name:      "support",
+	}
 	_, retry := l.Options.Filter.AddEmitted([]manifest.NamedResource{parent}, nil, nil, 0)
 	assert.Equal(t, retry, false)
 	reads := &store.ReadSet{}
 	reads.Init(st, parent, nil)
 	defer reads.Retire()
-	consumer := &manifest.ResourceSet{Name: "late", Namespace: "apps", InputsFrom: []fluxopv1.InputProviderReference{{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "selected"}}}}}
-	proposal, err := l.Prepare(t.Context(), store.Child{Obj: consumer, Productions: []manifest.Production{{Owner: parent}}}, reads, nil)
+	consumer := &manifest.ResourceSet{
+		Name:      "late",
+		Namespace: "apps",
+		InputsFrom: []fluxopv1.InputProviderReference{
+			{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "selected"}}},
+		},
+	}
+	proposal, err := l.Prepare(
+		t.Context(),
+		store.Child{Obj: consumer, Productions: []manifest.Production{{Owner: parent}}},
+		reads,
+		nil,
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(proposal.Needed, consumer.Named()), false)
 	assert.Equal(t, reads.Valid(), true)
-	st.AddObject(&manifest.ResourceSetInputProvider{Name: "provider", Namespace: "apps", Labels: map[string]string{"app": "selected"}})
+	st.AddObject(
+		&manifest.ResourceSetInputProvider{
+			Name:      "provider",
+			Namespace: "apps",
+			Labels:    map[string]string{"app": "selected"},
+		},
+	)
 	assert.Equal(t, reads.Valid(), false)
 }
 
@@ -225,24 +349,53 @@ func testSelectorVisibility(t *testing.T, incoming bool) {
 				var loaders [2]*Loader
 				var prepared [2]map[manifest.NamedResource]store.Child
 				var indexes [2]*manifest.DiscoveryIndex
-				app := &manifest.ResourceSet{Name: "consumer", Namespace: "apps", InputsFrom: []fluxopv1.InputProviderReference{{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "selected"}}}}}
+				app := &manifest.ResourceSet{
+					Name:      "consumer",
+					Namespace: "apps",
+					InputsFrom: []fluxopv1.InputProviderReference{
+						{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "selected"}}},
+					},
+				}
 				other := *app
 				other.InputsFrom = slices.Clone(app.InputsFrom)
 				other.Name = "nonmatching"
 				other.InputsFrom[0].Selector = &metav1.LabelSelector{MatchLabels: map[string]string{"app": "absent"}}
-				provider := &manifest.ResourceSetInputProvider{Name: "chosen", Namespace: "apps", Labels: map[string]string{"app": "selected"}}
+				provider := &manifest.ResourceSetInputProvider{
+					Name:      "chosen",
+					Namespace: "apps",
+					Labels:    map[string]string{"app": "selected"},
+				}
 				controls := []manifest.BaseManifest{
 					provider,
-					&manifest.ResourceSetInputProvider{Name: "other", Namespace: "apps", Labels: map[string]string{"app": "other"}},
-					&manifest.ResourceSetInputProvider{Name: "namespace", Namespace: "elsewhere", Labels: map[string]string{"app": "selected"}},
-					&manifest.RawObject{APIVersion: "foreign.example/v1", Kind: manifest.KindResourceSetInputProvider, Name: "foreign", Namespace: "apps"},
+					&manifest.ResourceSetInputProvider{
+						Name:      "other",
+						Namespace: "apps",
+						Labels:    map[string]string{"app": "other"},
+					},
+					&manifest.ResourceSetInputProvider{
+						Name:      "namespace",
+						Namespace: "elsewhere",
+						Labels:    map[string]string{"app": "selected"},
+					},
+					&manifest.RawObject{
+						APIVersion: "foreign.example/v1",
+						Kind:       manifest.KindResourceSetInputProvider,
+						Name:       "foreign",
+						Namespace:  "apps",
+					},
 				}
 				for side, st := range stores {
 					root := t.TempDir()
-					st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+					st.SetArtifact(
+						manifest.BootstrapSourceID,
+						&store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}},
+					)
 					l := New(st)
 					l.SourceRoot = root
-					l.Options.Selection = manifest.Selection{Roots: []manifest.NamedResource{app.Named(), other.Named()}, Changed: true}
+					l.Options.Selection = manifest.Selection{
+						Roots:   []manifest.NamedResource{app.Named(), other.Named()},
+						Changed: true,
+					}
 					l.Options.Filter = change.NewFilter()
 					l.sideKnown, l.side = true, manifest.TreeSide(side)
 					l.locations = map[manifest.NamedResource]Occurrence{}
@@ -253,10 +406,18 @@ func testSelectorVisibility(t *testing.T, incoming bool) {
 						prepared[side][object.Named()] = store.Child{Obj: object}
 						if !incoming {
 							l.candidates[object.Named()] = store.Child{Obj: object}
-							l.Index.Records[object.Named()] = manifest.DiscoveryRecord{File: object.Named().Name + ".yaml", Declaration: object}
+							l.Index.Records[object.Named()] = manifest.DiscoveryRecord{
+								File:        object.Named().Name + ".yaml",
+								Declaration: object,
+							}
 						}
 					}
-					observation := manifest.InputVisibility{Source: manifest.BootstrapSourceID, Root: ".", Complete: true, Inputs: map[manifest.NamedResource][]string{}}
+					observation := manifest.InputVisibility{
+						Source:   manifest.BootstrapSourceID,
+						Root:     ".",
+						Complete: true,
+						Inputs:   map[manifest.NamedResource][]string{},
+					}
 					if manifest.TreeSide(side) == visibleSide {
 						for _, object := range controls {
 							id := object.Named()
@@ -307,7 +468,11 @@ func testSelectorVisibility(t *testing.T, incoming bool) {
 					assert.NoError(t, err)
 					assert.Equal(t, slices.Contains(proposal.Selected, app.Named()), true)
 					assert.Equal(t, slices.Contains(proposal.Dirty, app.Named()), true)
-					assert.Equal(t, slices.Contains(proposal.Needed, provider.Named()), manifest.TreeSide(side) == visibleSide)
+					assert.Equal(
+						t,
+						slices.Contains(proposal.Needed, provider.Named()),
+						manifest.TreeSide(side) == visibleSide,
+					)
 					assert.Equal(t, slices.Contains(proposal.Selected, other.Named()), false)
 					assert.Equal(t, slices.Contains(proposal.Dirty, other.Named()), false)
 					for _, control := range controls[1:] {

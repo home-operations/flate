@@ -10,9 +10,9 @@ import (
 
 // ConfigMap is the core/v1 ConfigMap.
 type ConfigMap struct {
-	Name      string         `json:"name" yaml:"name"`
+	Name      string         `json:"name"                yaml:"name"`
 	Namespace string         `json:"namespace,omitempty" yaml:"namespace,omitempty"`
-	Data      map[string]any `json:"-" yaml:"-"`
+	Data      map[string]any `json:"-"                   yaml:"-"`
 }
 
 // NewConfigMap constructs lookup data at the given identity without converting its payload.
@@ -22,7 +22,12 @@ func NewConfigMap(id NamedResource, data map[string]any) *ConfigMap {
 
 // Named identifies the ConfigMap.
 func (c *ConfigMap) Named() NamedResource {
-	return NamedResource{Group: kindTable[kindConfigMap].Group, Kind: KindConfigMap, Namespace: c.Namespace, Name: c.Name}
+	return NamedResource{
+		Group:     kindTable[kindConfigMap].Group,
+		Kind:      KindConfigMap,
+		Namespace: c.Namespace,
+		Name:      c.Name,
+	}
 }
 
 // Suspended reports whether reconciliation is paused on this resource.
@@ -78,9 +83,11 @@ func (c *ConfigMap) WithSupplied(supplied Data) (Data, []string) {
 
 // Snapshot returns an owned document for sanitation through ParseDoc.
 func (c *ConfigMap) Snapshot() map[string]any {
-	return map[string]any{"apiVersion": "v1", "kind": KindConfigMap,
+	return map[string]any{
+		"apiVersion": "v1", "kind": KindConfigMap,
 		"metadata": map[string]any{"name": c.Name, "namespace": c.Namespace},
-		"data":     copyData(c.Data)}
+		"data":     copyData(c.Data),
+	}
 }
 
 func parseConfigMap(doc map[string]any) (*ConfigMap, error) {
@@ -94,10 +101,10 @@ func parseConfigMap(doc map[string]any) (*ConfigMap, error) {
 
 // Secret is the core/v1 Secret.
 type Secret struct {
-	Name       string         `json:"name" yaml:"name"`
+	Name       string         `json:"name"                yaml:"name"`
 	Namespace  string         `json:"namespace,omitempty" yaml:"namespace,omitempty"`
-	Data       map[string]any `json:"-" yaml:"-"`
-	StringData map[string]any `json:"-" yaml:"-"`
+	Data       map[string]any `json:"-"                   yaml:"-"`
+	StringData map[string]any `json:"-"                   yaml:"-"`
 }
 
 // NewSecret constructs lookup data at the given identity without converting its payload.
@@ -206,9 +213,11 @@ func (s *Secret) HasPlaceholder() bool {
 
 // Snapshot returns an owned document for sanitation through ParseDoc.
 func (s *Secret) Snapshot() map[string]any {
-	return map[string]any{"apiVersion": "v1", "kind": KindSecret,
+	return map[string]any{
+		"apiVersion": "v1", "kind": KindSecret,
 		"metadata": map[string]any{"name": s.Name, "namespace": s.Namespace},
-		"data":     copyData(s.Data), "stringData": copyData(s.StringData)}
+		"data":     copyData(s.Data), "stringData": copyData(s.StringData),
+	}
 }
 
 func copyData(data map[string]any) map[string]any {

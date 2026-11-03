@@ -65,7 +65,11 @@ func (p *ProducerProjections) Project(ctx context.Context, object BaseManifest) 
 }
 
 // ProjectTemplate derives immutable references and identities once per template content and namespace.
-func (p *ProducerProjections) ProjectTemplate(ctx context.Context, data []byte, namespace string) (TemplateProjection, error) {
+func (p *ProducerProjections) ProjectTemplate(
+	ctx context.Context,
+	data []byte,
+	namespace string,
+) (TemplateProjection, error) {
 	build := func() TemplateProjection {
 		var projection TemplateProjection
 		projectTemplate(data, namespace, true, func(object BaseManifest, authoredNamespace string) {
@@ -83,7 +87,11 @@ func (p *ProducerProjections) ProjectTemplate(ctx context.Context, data []byte, 
 	return p.project(ctx, key, build)
 }
 
-func (p *ProducerProjections) project(ctx context.Context, key string, build func() TemplateProjection) (TemplateProjection, error) {
+func (p *ProducerProjections) project(
+	ctx context.Context,
+	key string,
+	build func() TemplateProjection,
+) (TemplateProjection, error) {
 	if key == "" {
 		return build(), nil
 	}
@@ -156,8 +164,15 @@ func projectTemplate(data []byte, namespace string, projected bool, yield func(B
 				continue
 			}
 			if !strings.HasSuffix(fields.Kind, "List") {
-				doc := map[string]any{"apiVersion": fields.APIVersion, "kind": fields.Kind,
-					"metadata": map[string]any{"name": fields.Metadata.Name, "namespace": fields.Metadata.Namespace}, "spec": fields.Spec}
+				doc := map[string]any{
+					"apiVersion": fields.APIVersion,
+					"kind":       fields.Kind,
+					"metadata": map[string]any{
+						"name":      fields.Metadata.Name,
+						"namespace": fields.Metadata.Namespace,
+					},
+					"spec": fields.Spec,
+				}
 				object, _, _, err := ParseDoc(doc, ParseDocOptions{DefaultNamespace: namespace})
 				if err == nil && object != nil {
 					yield(object, fields.Metadata.Namespace)
@@ -237,7 +252,8 @@ func (p *TemplateProjection) addObject(object BaseManifest, authoredNamespace st
 		p.Objects = append(p.Objects, nested.Objects...)
 	}
 	for ref := range References(object, ReferenceRelations) {
-		if !ref.ContentInput() || ref.Ordering || !concreteTemplateOperand(ref.Name) || !concreteTemplateOperand(ref.Namespace) {
+		if !ref.ContentInput() || ref.Ordering || !concreteTemplateOperand(ref.Name) ||
+			!concreteTemplateOperand(ref.Namespace) {
 			continue
 		}
 		ref.NamespaceDefault = ref.NamespaceDefault && authoredNamespace == ""
@@ -304,7 +320,10 @@ func (r *ResourceSet) templateProjection() TemplateProjection {
 		if !inputsKnown {
 			inputsKnown = true
 			var err error
-			inputs, err = resourcesetinput.Combine([]resourcesetinput.Group{resourcesetinput.Inline(r.Name, r.Namespace, r.Inputs)}, r.InputStrategy)
+			inputs, err = resourcesetinput.Combine(
+				[]resourcesetinput.Group{resourcesetinput.Inline(r.Name, r.Namespace, r.Inputs)},
+				r.InputStrategy,
+			)
 			if err != nil {
 				return
 			}

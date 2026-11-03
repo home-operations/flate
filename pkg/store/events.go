@@ -151,7 +151,11 @@ func (s *Store) snapshotForReplay(event EventKind) []idPayload {
 // pre-sized to the summed map lengths so the common all-keep case never
 // re-grows. Caller MUST hold every shard's write lock (see
 // snapshotForReplay).
-func collectReplay[V any](shards []*shard, pick func(*shard) map[manifest.NamedResource]V, conv func(*shard, manifest.NamedResource, V) (any, bool)) []idPayload {
+func collectReplay[V any](
+	shards []*shard,
+	pick func(*shard) map[manifest.NamedResource]V,
+	conv func(*shard, manifest.NamedResource, V) (any, bool),
+) []idPayload {
 	total := 0
 	for _, sh := range shards {
 		total += len(pick(sh))

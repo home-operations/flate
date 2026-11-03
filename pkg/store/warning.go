@@ -49,7 +49,10 @@ func (s *Store) Warnings() []manifest.Warning {
 	for _, reads := range s.assessments() {
 		start := len(out)
 		for _, warning := range reads.warnings {
-			if !slices.ContainsFunc(out[start:], func(w manifest.Warning) bool { return manifest.CompareWarning(w, warning) == 0 }) {
+			if !slices.ContainsFunc(
+				out[start:],
+				func(w manifest.Warning) bool { return manifest.CompareWarning(w, warning) == 0 },
+			) {
 				out = append(out, warning)
 			}
 		}
@@ -79,7 +82,8 @@ func (s *Store) Warnings() []manifest.Warning {
 				if payload == nil {
 					payload = c.child.payload
 				}
-				return !semanticEqual(contributions[0].child, c.child) || payload != nil && c.child.payload != nil && !artifactValueEqual(payload, c.child.payload)
+				return !semanticEqual(contributions[0].child, c.child) ||
+					payload != nil && c.child.payload != nil && !artifactValueEqual(payload, c.child.payload)
 			}) {
 				continue
 			}

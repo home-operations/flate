@@ -45,7 +45,12 @@ func mustCELEnv() *cel.Env {
 	return env
 }
 
-func (w *Waiter) evaluateReadyExpr(expr string, dep manifest.NamedResource, obj manifest.BaseManifest, conds []store.Condition) (bool, error) {
+func (w *Waiter) evaluateReadyExpr(
+	expr string,
+	dep manifest.NamedResource,
+	obj manifest.BaseManifest,
+	conds []store.Condition,
+) (bool, error) {
 	compiled, err := compileReadyExpr(expr)
 	if err != nil {
 		return false, &celCompileErr{err}
@@ -130,7 +135,8 @@ func readsSelfStatus(checked *cel.Ast) bool {
 			case ast.CallKind:
 				call := parent.AsCall()
 				args := call.Args()
-				if call.FunctionName() == operators.Index && len(args) == 2 && args[0].ID() == ident.ID() && args[1].Kind() == ast.LiteralKind {
+				if call.FunctionName() == operators.Index && len(args) == 2 && args[0].ID() == ident.ID() &&
+					args[1].Kind() == ast.LiteralKind {
 					if key, ok := args[1].AsLiteral().Value().(string); ok && key != "status" {
 						continue
 					}

@@ -16,6 +16,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
 	"github.com/home-operations/flate/internal/assert"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -91,7 +92,14 @@ func TestExpandValueReferences_ConfigMap(t *testing.T) {
 	}
 	st := store.New()
 	st.AddObject(cm)
-	st.AddObject(&manifest.RawObject{APIVersion: "example.test/v1", Kind: manifest.KindConfigMap, Name: cm.Name, Namespace: cm.Namespace})
+	st.AddObject(
+		&manifest.RawObject{
+			APIVersion: "example.test/v1",
+			Kind:       manifest.KindConfigMap,
+			Name:       cm.Name,
+			Namespace:  cm.Namespace,
+		},
+	)
 	provider := NewStoreProvider(st, true)
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
@@ -120,7 +128,11 @@ func TestExpandValueReferences_MalformedSiblingTolerated(t *testing.T) {
 			t.Parallel()
 			st := store.New()
 			st.AddObject(obj)
-			hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", ValuesFrom: []manifest.ValuesReference{{Kind: obj.Named().Kind, Name: "extra"}}}
+			hr := &manifest.HelmRelease{
+				Name:       "demo",
+				Namespace:  "default",
+				ValuesFrom: []manifest.ValuesReference{{Kind: obj.Named().Kind, Name: "extra"}},
+			}
 			expandValuesForTest(t, hr, NewStoreProvider(st, true), nil)
 			if got := hr.Values["replicaCount"]; fmt.Sprint(got) != "3" {
 				t.Errorf("replicaCount = %v, want 3", got)
@@ -140,7 +152,11 @@ func TestExpandValueReferences_MalformedRequestedKeyStillFails(t *testing.T) {
 				t.Parallel()
 				st := store.New()
 				st.AddObject(obj)
-				hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", ValuesFrom: []manifest.ValuesReference{{Kind: obj.Named().Kind, Name: "extra", Optional: optional}}}
+				hr := &manifest.HelmRelease{
+					Name:       "demo",
+					Namespace:  "default",
+					ValuesFrom: []manifest.ValuesReference{{Kind: obj.Named().Kind, Name: "extra", Optional: optional}},
+				}
 				_, err := ExpandValueReferences(hr, NewStoreProvider(st, true), nil)
 				if !errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "data[values.yaml]") {
 					t.Fatalf("malformed requested key must fail with its name: %v", err)
@@ -285,8 +301,14 @@ func TestExpandValueReferences_MissingReferences(t *testing.T) {
 				if tc.object != nil {
 					st.AddObject(tc.object)
 				}
-				hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Values: map[string]any{"existing": "kept"},
-					ValuesFrom: []manifest.ValuesReference{{Kind: tc.kind, Name: "vars", ValuesKey: "v", TargetPath: "k", Optional: optional}}}
+				hr := &manifest.HelmRelease{
+					Name:      "demo",
+					Namespace: "default",
+					Values:    map[string]any{"existing": "kept"},
+					ValuesFrom: []manifest.ValuesReference{
+						{Kind: tc.kind, Name: "vars", ValuesKey: "v", TargetPath: "k", Optional: optional},
+					},
+				}
 				_, err := ExpandValueReferences(hr, NewStoreProvider(st, true), nil)
 				if optional && tc.kind != "Deployment" && tc.want != nil {
 					assert.NoError(t, err)
@@ -300,7 +322,8 @@ func TestExpandValueReferences_MissingReferences(t *testing.T) {
 					assert.Diff(t, hr.Values, map[string]any{"existing": "kept", "k": ""})
 					return
 				}
-				if tc.kind != "Deployment" && strings.Contains(err.Error(), `key "v"`) != errors.Is(tc.want, manifest.ErrInvalidValuesReference) {
+				if tc.kind != "Deployment" &&
+					strings.Contains(err.Error(), `key "v"`) != errors.Is(tc.want, manifest.ErrInvalidValuesReference) {
 					t.Fatalf("wrong missing-resource/key disposition: %v", err)
 				}
 			})
@@ -354,8 +377,10 @@ func TestExpandValueReferences_CacheHits(t *testing.T) {
 		t.Fatalf("first: replicaCount=%v", a.Values["replicaCount"])
 	}
 
-	other := &manifest.ConfigMap{Name: "other", Namespace: "apps",
-		Data: map[string]any{"extra.yaml": cm.Data["values.yaml"]}}
+	other := &manifest.ConfigMap{
+		Name: "other", Namespace: "apps",
+		Data: map[string]any{"extra.yaml": cm.Data["values.yaml"]},
+	}
 	provider.ConfigMaps = append(provider.ConfigMaps, other)
 	b := hr()
 	b.Namespace = other.Namespace
@@ -449,9 +474,25 @@ func TestExpandPostBuildSubstituteReference(t *testing.T) {
 	}
 	st := store.New()
 	st.AddObject(cm)
-	st.AddObject(&manifest.RawObject{APIVersion: "example.test/v1", Kind: manifest.KindConfigMap, Name: cm.Name, Namespace: cm.Namespace})
-	st.AddObject(&manifest.Secret{Name: "secret-vars", Namespace: cm.Namespace, StringData: map[string]any{"TOKEN": "core"}})
-	st.AddObject(&manifest.RawObject{APIVersion: "example.test/v1", Kind: manifest.KindSecret, Name: "secret-vars", Namespace: cm.Namespace})
+	st.AddObject(
+		&manifest.RawObject{
+			APIVersion: "example.test/v1",
+			Kind:       manifest.KindConfigMap,
+			Name:       cm.Name,
+			Namespace:  cm.Namespace,
+		},
+	)
+	st.AddObject(
+		&manifest.Secret{Name: "secret-vars", Namespace: cm.Namespace, StringData: map[string]any{"TOKEN": "core"}},
+	)
+	st.AddObject(
+		&manifest.RawObject{
+			APIVersion: "example.test/v1",
+			Kind:       manifest.KindSecret,
+			Name:       "secret-vars",
+			Namespace:  cm.Namespace,
+		},
+	)
 	provider := NewStoreProvider(st, true)
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
@@ -478,12 +519,20 @@ func TestExpandPostBuildSubstituteReference_MalformedDataLeavesSubstitutionsUnto
 		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
 			provider := &SliceProvider{
-				ConfigMaps: []*manifest.ConfigMap{{Name: "vars", Namespace: "ns", Data: map[string]any{"INVALID": []any{"nested"}}}},
-				Secrets:    []*manifest.Secret{{Name: "vars", Namespace: "ns", Data: map[string]any{"INVALID": "invalid-base64"}}},
+				ConfigMaps: []*manifest.ConfigMap{
+					{Name: "vars", Namespace: "ns", Data: map[string]any{"INVALID": []any{"nested"}}},
+				},
+				Secrets: []*manifest.Secret{
+					{Name: "vars", Namespace: "ns", Data: map[string]any{"INVALID": "invalid-base64"}},
+				},
 			}
 			ks := &manifest.Kustomization{
-				Name: "app", Namespace: "ns",
-				PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"INLINE": "kept"}, SubstituteFrom: []manifest.SubstituteReference{{Kind: kind, Name: "vars"}}},
+				Name:      "app",
+				Namespace: "ns",
+				PostBuild: &kustomizev1.PostBuild{
+					Substitute:     map[string]string{"INLINE": "kept"},
+					SubstituteFrom: []manifest.SubstituteReference{{Kind: kind, Name: "vars"}},
+				},
 			}
 			if err := ExpandPostBuildSubstituteReference(ks, provider); !errors.Is(err, manifest.ErrInput) {
 				t.Fatalf("got %v, want ErrInput", err)
@@ -497,7 +546,13 @@ func TestExpandPostBuildSubstituteReference_MalformedKeysDeterministic(t *testin
 	t.Parallel()
 	sec := &manifest.Secret{Name: "vars", Namespace: "ns", Data: map[string]any{"C": "!", "A": "!", "B": "!"}}
 	provider := &SliceProvider{Secrets: []*manifest.Secret{sec}}
-	ks := &manifest.Kustomization{Name: "app", Namespace: "ns", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindSecret, Name: "vars"}}}}
+	ks := &manifest.Kustomization{
+		Name:      "app",
+		Namespace: "ns",
+		PostBuild: &kustomizev1.PostBuild{
+			SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindSecret, Name: "vars"}},
+		},
+	}
 	_, _, want := sec.Value("A")
 	for range 50 {
 		err := ExpandPostBuildSubstituteReference(ks, provider)
@@ -516,9 +571,13 @@ func TestExpandPostBuildSubstituteReference_RejectsInvalidVarName(t *testing.T) 
 			vars := map[string]any{"z-var": "v", "my-var": "v", "ok_name": "v"}
 			provider := &SliceProvider{}
 			if source == "inline" {
-				ks.PostBuild = &kustomizev1.PostBuild{Substitute: map[string]string{"z-var": "v", "my-var": "v", "ok_name": "v"}}
+				ks.PostBuild = &kustomizev1.PostBuild{
+					Substitute: map[string]string{"z-var": "v", "my-var": "v", "ok_name": "v"},
+				}
 			} else {
-				ks.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "cm"}}}
+				ks.PostBuild = &kustomizev1.PostBuild{
+					SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "cm"}},
+				}
 				provider.ConfigMaps = []*manifest.ConfigMap{{Name: "cm", Namespace: "ns", Data: vars}}
 			}
 
@@ -537,11 +596,17 @@ func TestExpandPostBuildSubstituteReference_RejectsInvalidVarName(t *testing.T) 
 
 func TestExpandPostBuildSubstituteReference_InvalidSingleName(t *testing.T) {
 	t.Parallel()
-	ks := &manifest.Kustomization{Name: "k", Namespace: "ns", PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"flate-campaign": "v"}}}
+	ks := &manifest.Kustomization{
+		Name:      "k",
+		Namespace: "ns",
+		PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"flate-campaign": "v"}},
+	}
 	before := ks.Clone()
 	err := ExpandPostBuildSubstituteReference(ks, &SliceProvider{})
 	assert.Diff(t, ks.PostBuild.Substitute, before.PostBuild.Substitute)
-	if err == nil || err.Error() != "invalid substitute variable flate-campaign" || !errors.Is(err, manifest.ErrInvalidSubstituteReference) || !errors.Is(err, manifest.ErrFlux) {
+	if err == nil || err.Error() != "invalid substitute variable flate-campaign" ||
+		!errors.Is(err, manifest.ErrInvalidSubstituteReference) ||
+		!errors.Is(err, manifest.ErrFlux) {
 		t.Fatalf("invalid variable: %v", err)
 	}
 	if !strings.Contains(manifest.ErrorDetails(err), varsubRegex.String()) {
@@ -569,7 +634,11 @@ func TestStoreProvider_LookupReadability(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			var reads store.ReadSet
-			reads.Init(s, manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "reader"}, nil)
+			reads.Init(
+				s,
+				manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "reader"},
+				nil,
+			)
 			provider := NewStoreProvider(&reads, true)
 			id := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: tc.name}
 			input := provider.Lookup(id)
@@ -680,9 +749,21 @@ func TestDeepMergeInto_MatchesHelmMerge(t *testing.T) {
 		{"empty-override", map[string]any{"m": map[string]any{"x": 1.0}}, map[string]any{}},
 		{"disjoint", map[string]any{"a": 1.0}, map[string]any{"b": 2.0}},
 		{"scalar-over-scalar", map[string]any{"a": 1.0}, map[string]any{"a": 2.0}},
-		{"nested-collision", map[string]any{"m": map[string]any{"x": 1.0, "y": 2.0}}, map[string]any{"m": map[string]any{"y": 9.0, "z": 3.0}}},
-		{"deep-collision", map[string]any{"m": map[string]any{"n": map[string]any{"x": 1.0}}}, map[string]any{"m": map[string]any{"n": map[string]any{"y": 2.0}}}},
-		{"list-map-replace", map[string]any{"l": []any{map[string]any{"x": 1.0}}}, map[string]any{"l": []any{map[string]any{"y": 2.0}}}},
+		{
+			"nested-collision",
+			map[string]any{"m": map[string]any{"x": 1.0, "y": 2.0}},
+			map[string]any{"m": map[string]any{"y": 9.0, "z": 3.0}},
+		},
+		{
+			"deep-collision",
+			map[string]any{"m": map[string]any{"n": map[string]any{"x": 1.0}}},
+			map[string]any{"m": map[string]any{"n": map[string]any{"y": 2.0}}},
+		},
+		{
+			"list-map-replace",
+			map[string]any{"l": []any{map[string]any{"x": 1.0}}},
+			map[string]any{"l": []any{map[string]any{"y": 2.0}}},
+		},
 		{"list-replace", map[string]any{"l": []any{1.0, 2.0}}, map[string]any{"l": []any{3.0}}},
 		{"scalar-over-map", map[string]any{"k": map[string]any{"x": 1.0}}, map[string]any{"k": "scalar"}},
 		{"map-over-scalar", map[string]any{"k": "scalar"}, map[string]any{"k": map[string]any{"x": 1.0}}},
@@ -706,8 +787,11 @@ func TestDeepMergeInto_MatchesHelmMerge(t *testing.T) {
 // list document — the shape a platform-wide values CM takes.
 func nestedValuesCM() *manifest.ConfigMap {
 	return &manifest.ConfigMap{
-		Name: "platform", Namespace: "default",
-		Data: map[string]any{"values.yaml": "image:\n  repository: nginx\n  tag: v1\nenv:\n  - name: A\n    value: \"1\"\n"},
+		Name:      "platform",
+		Namespace: "default",
+		Data: map[string]any{
+			"values.yaml": "image:\n  repository: nginx\n  tag: v1\nenv:\n  - name: A\n    value: \"1\"\n",
+		},
 	}
 }
 
@@ -739,23 +823,68 @@ func TestExpandValueReferences_ConcurrentSharedCache(t *testing.T) {
 		want    map[string]any
 		wantErr bool
 	}{
-		{name: "ordinary", inline: map[string]any{"image": map[string]any{"tag": "inline"}},
-			want: map[string]any{"image": map[string]any{"repository": "nginx", "tag": "inline"}, "env": []any{map[string]any{"name": "A", "value": "1"}}}},
-		{name: "target map", refs: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "image.tag"}},
-			want: map[string]any{"image": map[string]any{"repository": "nginx", "tag": "Always"}, "env": []any{map[string]any{"name": "A", "value": "1"}}}},
-		{name: "target list map", refs: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "env[0].value"}},
-			want: map[string]any{"image": map[string]any{"repository": "nginx", "tag": "v1"}, "env": []any{map[string]any{"name": "A", "value": "Always"}}}},
-		{name: "target list element", refs: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "env[0]"}},
-			want: map[string]any{"image": map[string]any{"repository": "nginx", "tag": "v1"}, "env": []any{"Always"}}},
+		{
+			name:   "ordinary",
+			inline: map[string]any{"image": map[string]any{"tag": "inline"}},
+			want: map[string]any{
+				"image": map[string]any{"repository": "nginx", "tag": "inline"},
+				"env":   []any{map[string]any{"name": "A", "value": "1"}},
+			},
+		},
+		{
+			name: "target map",
+			refs: []manifest.ValuesReference{
+				{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "image.tag"},
+			},
+			want: map[string]any{
+				"image": map[string]any{"repository": "nginx", "tag": "Always"},
+				"env":   []any{map[string]any{"name": "A", "value": "1"}},
+			},
+		},
+		{
+			name: "target list map",
+			refs: []manifest.ValuesReference{
+				{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "env[0].value"},
+			},
+			want: map[string]any{
+				"image": map[string]any{"repository": "nginx", "tag": "v1"},
+				"env":   []any{map[string]any{"name": "A", "value": "Always"}},
+			},
+		},
+		{
+			name: "target list element",
+			refs: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "env[0]"}},
+			want: map[string]any{"image": map[string]any{"repository": "nginx", "tag": "v1"}, "env": []any{"Always"}},
+		},
 		{name: "yaml between writes", refs: []manifest.ValuesReference{
 			{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "env[0].name", Literal: true},
 			{Kind: "ConfigMap", Name: "platform"},
 			{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "env[0].value"},
 		}, want: map[string]any{"image": map[string]any{"repository": "nginx", "tag": "v1"}, "env": []any{map[string]any{"name": "A", "value": "Always"}}}},
-		{name: "partial ordinary failure", refs: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "env[0].value=changed,broken[bad]"}},
-			inline: map[string]any{"untouched": true}, want: map[string]any{"untouched": true}, wantErr: true},
-		{name: "partial literal failure", refs: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "env[0].value=changed,broken[bad]", Literal: true}},
-			inline: map[string]any{"untouched": true}, want: map[string]any{"untouched": true}, wantErr: true},
+		{
+			name: "partial ordinary failure",
+			refs: []manifest.ValuesReference{
+				{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "env[0].value=changed,broken[bad]"},
+			},
+			inline:  map[string]any{"untouched": true},
+			want:    map[string]any{"untouched": true},
+			wantErr: true,
+		},
+		{
+			name: "partial literal failure",
+			refs: []manifest.ValuesReference{
+				{
+					Kind:       "ConfigMap",
+					Name:       "inject",
+					ValuesKey:  "v",
+					TargetPath: "env[0].value=changed,broken[bad]",
+					Literal:    true,
+				},
+			},
+			inline:  map[string]any{"untouched": true},
+			want:    map[string]any{"untouched": true},
+			wantErr: true,
+		},
 	}
 	start := make(chan struct{})
 	var ready, done sync.WaitGroup
@@ -839,20 +968,42 @@ func TestExpandValueReferences_InterleavedTargetPaths(t *testing.T) {
 			}}}
 			cache := &Cache{}
 			priorFirst := wholeDocHR()
-			priorSecond := &manifest.HelmRelease{Name: "prior", Namespace: "default", ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: second.Name}}}
+			priorSecond := &manifest.HelmRelease{
+				Name:       "prior",
+				Namespace:  "default",
+				ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: second.Name}},
+			}
 			expandValuesForTest(t, priorFirst, provider, cache)
 			expandValuesForTest(t, priorSecond, provider, cache)
 			firstBefore := manifest.DeepCopyMap(priorFirst.Values)
 			secondBefore := manifest.DeepCopyMap(priorSecond.Values)
 			hr := wholeDocHR()
 			hr.Values = map[string]any{"image": map[string]any{"tag": "inline"}}
-			hr.ValuesFrom = append(hr.ValuesFrom,
-				manifest.ValuesReference{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "image.pullPolicy"},
+			hr.ValuesFrom = append(
+				hr.ValuesFrom,
+				manifest.ValuesReference{
+					Kind:       "ConfigMap",
+					Name:       "inject",
+					ValuesKey:  "v",
+					TargetPath: "image.pullPolicy",
+				},
 				manifest.ValuesReference{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "env[0].value"},
 				manifest.ValuesReference{Kind: "ConfigMap", Name: "missing", Optional: true},
 				manifest.ValuesReference{Kind: "ConfigMap", Name: second.Name},
-				manifest.ValuesReference{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "later.image.tag", Literal: literal},
-				manifest.ValuesReference{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "later.env[0].value", Literal: literal},
+				manifest.ValuesReference{
+					Kind:       "ConfigMap",
+					Name:       "inject",
+					ValuesKey:  "v",
+					TargetPath: "later.image.tag",
+					Literal:    literal,
+				},
+				manifest.ValuesReference{
+					Kind:       "ConfigMap",
+					Name:       "inject",
+					ValuesKey:  "v",
+					TargetPath: "later.env[0].value",
+					Literal:    literal,
+				},
 			)
 			expandValuesForTest(t, hr, provider, cache)
 			assert.Diff(t, hr.Values, map[string]any{
@@ -951,8 +1102,20 @@ func TestExpandValueReferences_MalformedYAMLClassified(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/optional=%t", tc.name, optional), func(t *testing.T) {
 				t.Parallel()
 				st := store.New()
-				st.AddObject(&manifest.ConfigMap{Name: "extra", Namespace: "default", Data: map[string]any{"requested.yaml": tc.document}})
-				hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindConfigMap, Name: "extra", ValuesKey: "requested.yaml", Optional: optional}}}
+				st.AddObject(
+					&manifest.ConfigMap{
+						Name:      "extra",
+						Namespace: "default",
+						Data:      map[string]any{"requested.yaml": tc.document},
+					},
+				)
+				hr := &manifest.HelmRelease{
+					Name:      "demo",
+					Namespace: "default",
+					ValuesFrom: []manifest.ValuesReference{
+						{Kind: manifest.KindConfigMap, Name: "extra", ValuesKey: "requested.yaml", Optional: optional},
+					},
+				}
 				_, err := ExpandValueReferences(hr, NewStoreProvider(st, true), &Cache{})
 				if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
 					t.Fatalf("malformed values must retain input/domain identity: %v", err)
@@ -992,9 +1155,24 @@ func TestExpandValueReferences_MalformedTargetPathClassified(t *testing.T) {
 			t.Parallel()
 			const path = "env[bad].value"
 			cm := &manifest.ConfigMap{Name: "extra", Namespace: "default", Data: map[string]any{"value": "replacement"}}
-			hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Values: map[string]any{"retained": "yes"}, ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindConfigMap, Name: cm.Name, ValuesKey: "value", TargetPath: path, Literal: literal, Optional: true}}}
+			hr := &manifest.HelmRelease{
+				Name:      "demo",
+				Namespace: "default",
+				Values:    map[string]any{"retained": "yes"},
+				ValuesFrom: []manifest.ValuesReference{
+					{
+						Kind:       manifest.KindConfigMap,
+						Name:       cm.Name,
+						ValuesKey:  "value",
+						TargetPath: path,
+						Literal:    literal,
+						Optional:   true,
+					},
+				},
+			}
 			_, err := ExpandValueReferences(hr, &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil)
-			if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || !errors.Is(err, strconv.ErrSyntax) {
+			if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) ||
+				!errors.Is(err, strconv.ErrSyntax) {
 				t.Fatalf("target parser identities lost: %v", err)
 			}
 			cause, ok := errors.AsType[*strconv.NumError](err)
@@ -1016,7 +1194,10 @@ type countedDataReader struct {
 	objects, productions int
 }
 
-func (r *countedDataReader) ReferenceFacts(id manifest.NamedResource, index *manifest.DiscoveryIndex) store.ReferenceFacts {
+func (r *countedDataReader) ReferenceFacts(
+	id manifest.NamedResource,
+	index *manifest.DiscoveryIndex,
+) store.ReferenceFacts {
 	r.objects++
 	r.productions++
 	return r.ReadSet.ReferenceFacts(id, index)
@@ -1031,18 +1212,40 @@ func TestStoreProvider_LookupRetainsOneSource(t *testing.T) {
 	s.SetSupplied(snapshot)
 	first := &manifest.ConfigMap{Name: "settings", Namespace: "apps", Data: map[string]any{"VALUE": "first"}}
 	s.AddObject(first)
-	owner := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "producer"}
+	owner := manifest.NamedResource{
+		Group:     manifest.FluxKustomizeDomain,
+		Kind:      manifest.KindKustomization,
+		Namespace: "apps",
+		Name:      "producer",
+	}
 	generatedID := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "generated"}
-	materializer := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "materializer"}
-	declaration := manifest.NamedResource{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "apps", Name: "declared"}
+	materializer := manifest.NamedResource{
+		Group:     manifest.FluxKustomizeDomain,
+		Kind:      manifest.KindKustomization,
+		Namespace: "apps",
+		Name:      "materializer",
+	}
+	declaration := manifest.NamedResource{
+		Group:     "external-secrets.io",
+		Kind:      "ExternalSecret",
+		Namespace: "apps",
+		Name:      "declared",
+	}
 	s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-		first.Named(): {Productions: []manifest.Production{{Owner: owner, Path: "settings.yaml", Authored: first.Named()}}},
-		generatedID:   {Productions: []manifest.Production{{Owner: materializer, Declaration: declaration}}},
+		first.Named(): {
+			Productions: []manifest.Production{{Owner: owner, Path: "settings.yaml", Authored: first.Named()}},
+		},
+		generatedID: {Productions: []manifest.Production{{Owner: materializer, Declaration: declaration}}},
 	}})
 	s.AddObject(&manifest.Kustomization{Name: owner.Name, Namespace: owner.Namespace})
 	s.RecordEmitted(owner, &store.Emission{Children: []store.Child{{Obj: first}}, Complete: true}, nil)
 	var reads store.ReadSet
-	reader := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "reader"}
+	reader := manifest.NamedResource{
+		Group:     manifest.FluxKustomizeDomain,
+		Kind:      manifest.KindKustomization,
+		Namespace: "apps",
+		Name:      "reader",
+	}
 	reads.Init(s, reader, nil)
 	defer reads.Close()
 	counted := &countedDataReader{ReadSet: &reads}
@@ -1055,11 +1258,14 @@ func TestStoreProvider_LookupRetainsOneSource(t *testing.T) {
 	other := &manifest.ConfigMap{Name: first.Name, Namespace: "other", Data: map[string]any{"VALUE": "other"}}
 	s.AddObject(other)
 	missing := provider.Lookup(absent)
-	if missing.Data != nil || missing.Generated || missing.Offline || missing.Private || len(missing.Materializers) != 0 {
+	if missing.Data != nil || missing.Generated || missing.Offline || missing.Private ||
+		len(missing.Materializers) != 0 {
 		t.Fatalf("missing input=%+v", missing)
 	}
 	generated := provider.Lookup(generatedID)
-	if generated.Data != nil || !generated.Generated || generated.Offline || generated.Private || len(generated.Materializers) != 1 || generated.Materializers[0] != materializer {
+	if generated.Data != nil || !generated.Generated || generated.Offline || generated.Private ||
+		len(generated.Materializers) != 1 ||
+		generated.Materializers[0] != materializer {
 		t.Fatalf("generated input=%+v", generated)
 	}
 	otherInput := provider.Lookup(other.Named())
@@ -1067,7 +1273,13 @@ func TestStoreProvider_LookupRetainsOneSource(t *testing.T) {
 	if otherInput.Data != other || private.Data == nil || private.Private {
 		t.Fatalf("distinct inputs=%+v %+v", otherInput, private)
 	}
-	s.AddObject(&manifest.Secret{Name: absent.Name, Namespace: absent.Namespace, StringData: map[string]any{"VALUE": "inserted"}})
+	s.AddObject(
+		&manifest.Secret{
+			Name:       absent.Name,
+			Namespace:  absent.Namespace,
+			StringData: map[string]any{"VALUE": "inserted"},
+		},
+	)
 	for _, captured := range []struct {
 		id    manifest.NamedResource
 		input Input
@@ -1080,7 +1292,8 @@ func TestStoreProvider_LookupRetainsOneSource(t *testing.T) {
 	next := *first
 	next.Data = map[string]any{"VALUE": "next"}
 	s.RecordEmitted(owner, &store.Emission{Children: []store.Child{{Obj: &next}}, Complete: true}, nil)
-	if provider.Data(first.Named()) != first || provider.Lookup(first.Named()).Data != first || counted.objects != 5 || counted.productions != 5 {
+	if provider.Data(first.Named()) != first || provider.Lookup(first.Named()).Data != first || counted.objects != 5 ||
+		counted.productions != 5 {
 		t.Fatalf("expansion rescanned captured input: object=%d productions=%d", counted.objects, counted.productions)
 	}
 	if reads.Valid() {
@@ -1104,7 +1317,11 @@ func TestStoreProvider_SuppliedProductionReplacementAndWithdrawal(t *testing.T) 
 	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
 	s.AddObject(owner)
 	s.AddObject(consumer)
-	supplied := &manifest.Secret{Name: "credentials", Namespace: "apps", StringData: map[string]any{"VALUE": "supplied"}}
+	supplied := &manifest.Secret{
+		Name:       "credentials",
+		Namespace:  "apps",
+		StringData: map[string]any{"VALUE": "supplied"},
+	}
 	snapshot, err := store.NewSupplied([]store.SuppliedObject{{Object: supplied, Path: "credentials.yaml"}})
 	assert.NoError(t, err)
 	s.SetSupplied(snapshot)
@@ -1118,7 +1335,11 @@ func TestStoreProvider_SuppliedProductionReplacementAndWithdrawal(t *testing.T) 
 	value, _, err := input.Data.Value("VALUE")
 	assert.NoError(t, err)
 	assert.Equal(t, value, "supplied")
-	repository := &manifest.Secret{Name: supplied.Name, Namespace: supplied.Namespace, StringData: map[string]any{"VALUE": "repository"}}
+	repository := &manifest.Secret{
+		Name:       supplied.Name,
+		Namespace:  supplied.Namespace,
+		StringData: map[string]any{"VALUE": "repository"},
+	}
 	published := make(chan struct{})
 	go func() {
 		s.RecordEmitted(owner.Named(), &store.Emission{Children: []store.Child{{Obj: repository}}, Complete: true}, nil)
@@ -1137,7 +1358,15 @@ func TestStoreProvider_SuppliedProductionReplacementAndWithdrawal(t *testing.T) 
 		t.Fatal("accepted repository data did not supersede supply")
 	}
 	second.Accept()
-	assert.Diff(t, s.AdvisoryEvidence(), store.AdvisoryEvidence{Overrides: []store.SuppliedOverride{{Resource: supplied.Named(), SupplyPath: "credentials.yaml", Keys: []string{"VALUE"}}}})
+	assert.Diff(
+		t,
+		s.AdvisoryEvidence(),
+		store.AdvisoryEvidence{
+			Overrides: []store.SuppliedOverride{
+				{Resource: supplied.Named(), SupplyPath: "credentials.yaml", Keys: []string{"VALUE"}},
+			},
+		},
+	)
 	assert.Equal(t, len(s.Warnings()), 0)
 	s.RecordEmitted(owner.Named(), &store.Emission{Complete: true}, nil)
 	if second.Valid() {
@@ -1160,10 +1389,27 @@ func TestReferenceFacts_DataOnlyProviderPolicy(t *testing.T) {
 	st := store.New()
 	id := manifest.NamedResource{Kind: manifest.KindSecret, Name: "input", Namespace: "apps"}
 	raw := &manifest.Secret{Name: id.Name, Namespace: id.Namespace, StringData: map[string]any{"VALUE": "visible"}}
-	owner := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Name: "owner", Namespace: "apps"}
+	owner := manifest.NamedResource{
+		Group:     manifest.FluxKustomizeDomain,
+		Kind:      manifest.KindKustomization,
+		Name:      "owner",
+		Namespace: "apps",
+	}
 	st.AddObject(&manifest.Kustomization{Name: owner.Name, Namespace: owner.Namespace})
-	proof := manifest.Production{Owner: owner, Source: manifest.BootstrapSourceID, Authored: id, Path: "input.yaml", File: "input.yaml"}
-	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {Productions: []manifest.Production{proof}}}})
+	proof := manifest.Production{
+		Owner:    owner,
+		Source:   manifest.BootstrapSourceID,
+		Authored: id,
+		Path:     "input.yaml",
+		File:     "input.yaml",
+	}
+	st.SetDiscoveryIndex(
+		&manifest.DiscoveryIndex{
+			Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				id: {Productions: []manifest.Production{proof}},
+			},
+		},
+	)
 	st.AddObject(raw)
 	facts := st.ReferenceFacts(id, nil)
 	if facts.Data != raw || facts.Accepted {
@@ -1189,8 +1435,14 @@ func TestReferenceFacts_DataOnlyProviderPolicy(t *testing.T) {
 	assert.Equal(t, visits, 1)
 
 	external := &manifest.RawObject{
-		Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1", Name: "external", Namespace: id.Namespace,
-		Spec: map[string]any{"target": map[string]any{"name": id.Name}, "data": []any{map[string]any{"secretKey": "VALUE"}}},
+		Kind:       "ExternalSecret",
+		APIVersion: "external-secrets.io/v1",
+		Name:       "external",
+		Namespace:  id.Namespace,
+		Spec: map[string]any{
+			"target": map[string]any{"name": id.Name},
+			"data":   []any{map[string]any{"secretKey": "VALUE"}},
+		},
 	}
 	_, _, next := st.GetEmission(owner)
 	defer next.Finish()
@@ -1204,9 +1456,18 @@ func TestReferenceFacts_DataOnlyProviderPolicy(t *testing.T) {
 	defer current.Retire()
 	want := []manifest.Production{{Owner: owner, Source: manifest.BootstrapSourceID, Declaration: external.Named()}}
 	for _, reader := range []dataReader{st, &current} {
-		assert.Diff(t, reader.ReferenceFacts(id, nil), store.ReferenceFacts{Productions: want, ReferenceData: []manifest.ReferenceData{{Production: want[0], DeclaredKeys: []string{"VALUE"}}}})
+		assert.Diff(
+			t,
+			reader.ReferenceFacts(id, nil),
+			store.ReferenceFacts{
+				Productions:   want,
+				ReferenceData: []manifest.ReferenceData{{Production: want[0], DeclaredKeys: []string{"VALUE"}}},
+			},
+		)
 		assert.Diff(t, NewStoreProvider(reader, true).Data(id), &manifest.Secret{
-			Name: id.Name, Namespace: id.Namespace, StringData: map[string]any{"VALUE": manifest.ValuePlaceholder("VALUE")},
+			Name:       id.Name,
+			Namespace:  id.Namespace,
+			StringData: map[string]any{"VALUE": manifest.ValuePlaceholder("VALUE")},
 		})
 		if NewStoreProvider(reader, false).Data(id) != nil {
 			t.Fatal("provider supplied declared placeholders with wiping disabled")
@@ -1217,16 +1478,45 @@ func TestReferenceFacts_DataOnlyProviderPolicy(t *testing.T) {
 func TestStoreProvider_SharedSuppliedValues(t *testing.T) {
 	t.Parallel()
 	s := store.New()
-	secret := &manifest.Secret{Name: "settings", Namespace: "apps", StringData: map[string]any{"VALUE": "supplied", "VALUES": "greeting: supplied\n", "tag": "supplied-tag"}}
+	secret := &manifest.Secret{
+		Name:       "settings",
+		Namespace:  "apps",
+		StringData: map[string]any{"VALUE": "supplied", "VALUES": "greeting: supplied\n", "tag": "supplied-tag"},
+	}
 	snapshot, err := store.NewSupplied([]store.SuppliedObject{{Object: secret}})
 	assert.NoError(t, err)
 	s.SetSupplied(snapshot)
-	s.AddObject(&manifest.Secret{Name: secret.Name, Namespace: secret.Namespace, StringData: map[string]any{"VALUE": "repository", "tag": ""}})
+	s.AddObject(
+		&manifest.Secret{
+			Name:       secret.Name,
+			Namespace:  secret.Namespace,
+			StringData: map[string]any{"VALUE": "repository", "tag": ""},
+		},
+	)
 	provider := NewStoreProvider(s, true)
-	ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "absent", Optional: true}, {Kind: manifest.KindSecret, Name: secret.Name}}, Substitute: map[string]string{"VALUE": "inline"}}}
+	ks := &manifest.Kustomization{
+		Name:      "consumer",
+		Namespace: "apps",
+		PostBuild: &kustomizev1.PostBuild{
+			SubstituteFrom: []manifest.SubstituteReference{
+				{Kind: manifest.KindConfigMap, Name: "absent", Optional: true},
+				{Kind: manifest.KindSecret, Name: secret.Name},
+			},
+			Substitute: map[string]string{"VALUE": "inline"},
+		},
+	}
 	assert.NoError(t, ExpandPostBuildSubstituteReference(ks, provider))
 	assert.Equal(t, ks.PostBuild.Substitute["VALUE"], "inline")
-	hr := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindConfigMap, Name: "absent", Optional: true}, {Kind: manifest.KindSecret, Name: secret.Name, ValuesKey: "VALUES"}, {Kind: manifest.KindSecret, Name: secret.Name, ValuesKey: "tag", TargetPath: "image.tag"}}, Values: map[string]any{"greeting": "inline"}}
+	hr := &manifest.HelmRelease{
+		Name:      "consumer",
+		Namespace: "apps",
+		ValuesFrom: []manifest.ValuesReference{
+			{Kind: manifest.KindConfigMap, Name: "absent", Optional: true},
+			{Kind: manifest.KindSecret, Name: secret.Name, ValuesKey: "VALUES"},
+			{Kind: manifest.KindSecret, Name: secret.Name, ValuesKey: "tag", TargetPath: "image.tag"},
+		},
+		Values: map[string]any{"greeting": "inline"},
+	}
 	omitted, err := ExpandValueReferences(hr, provider, nil)
 	assert.NoError(t, err)
 	if len(omitted) != 0 {
@@ -1240,9 +1530,19 @@ func TestExpandPostBuildSubstituteReference_DiagnosticLogContext(t *testing.T) {
 	previous := slog.Default()
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	t.Cleanup(func() { slog.SetDefault(previous) })
-	owner := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: "FluxInstance", Namespace: "flux-system", Name: "sync"}
+	owner := manifest.NamedResource{
+		Group:     "fluxcd.controlplane.io",
+		Kind:      "FluxInstance",
+		Namespace: "flux-system",
+		Name:      "sync",
+	}
 	entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "clusters/test", owner).WithNamespace("sources").(*manifest.Kustomization)
-	entry.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: "Unsupported", Name: "ignored"}, {Kind: manifest.KindConfigMap, Name: "missing"}}}
+	entry.PostBuild = &kustomizev1.PostBuild{
+		SubstituteFrom: []manifest.SubstituteReference{
+			{Kind: "Unsupported", Name: "ignored"},
+			{Kind: manifest.KindConfigMap, Name: "missing"},
+		},
+	}
 	if err := ExpandPostBuildSubstituteReference(entry, NewStoreProvider(store.New(), true)); err != nil {
 		t.Fatal(err)
 	}

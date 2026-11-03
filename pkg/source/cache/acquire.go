@@ -18,13 +18,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/home-operations/flate/internal/keylock"
-	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/content/oci"
 	"oras.land/oras-go/v2/errdef"
+
+	"github.com/home-operations/flate/internal/keylock"
+	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/safepath"
 )
 
 const prefix = "flate."
@@ -152,16 +153,28 @@ func (e *producerError) Unwrap() []error { return e.causes[:] }
 
 // Acquire publishes a complete archive or revalidates its previous generation after produce succeeds.
 // Its acquisition identity is empty on failure.
-func (c *Cache) Acquire(ctx context.Context, key ArchiveKey, policy Policy, produce func(context.Context, ProducerInput) (ProducerResult, error)) (fs.FS, ocispec.Descriptor, string, error) {
+func (c *Cache) Acquire(
+	ctx context.Context,
+	key ArchiveKey,
+	policy Policy,
+	produce func(context.Context, ProducerInput) (ProducerResult, error),
+) (fs.FS, ocispec.Descriptor, string, error) {
 	switch key.Policy {
 	case "", "source", "fixed", "extract":
 	default:
-		return nil, ocispec.Descriptor{}, "", &CacheError{manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("unknown archive policy %q", key.Policy))}
+		return nil, ocispec.Descriptor{}, "", &CacheError{
+			manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("unknown archive policy %q", key.Policy)),
+		}
 	}
 	producer := archiveProducer{key: key}
-	e, id, err := c.acquire(ctx, acquireKey{producer: producer, required: key.Required}, policy, acquisitionCallbacks{produce: func(ctx context.Context, c *Cache, staged *payload) (*entry, error) {
-		return producer.produce(ctx, c, staged, produce)
-	}})
+	e, id, err := c.acquire(
+		ctx,
+		acquireKey{producer: producer, required: key.Required},
+		policy,
+		acquisitionCallbacks{produce: func(ctx context.Context, c *Cache, staged *payload) (*entry, error) {
+			return producer.produce(ctx, c, staged, produce)
+		}},
+	)
 	if err != nil {
 		return nil, ocispec.Descriptor{}, "", err
 	}
@@ -188,16 +201,25 @@ func (c *Cache) CanPersistRenders() bool { return c.persistBlob }
 // Unchanged production retains the previous payload and replaces its upstream metadata.
 // A successful generation rejected by Validate is returned once without being retained for reuse.
 // Its acquisition identity is empty on failure.
-func (c *Cache) Blob(ctx context.Context, key BlobKey, policy Policy, produce func(context.Context, ProducerInput) (ProducerResult, error)) (fs.FS, ocispec.Descriptor, string, error) {
+func (c *Cache) Blob(
+	ctx context.Context,
+	key BlobKey,
+	policy Policy,
+	produce func(context.Context, ProducerInput) (ProducerResult, error),
+) (fs.FS, ocispec.Descriptor, string, error) {
 	switch key.Render {
 	case 0, RenderPending, RenderAccepted:
 	default:
-		return nil, ocispec.Descriptor{}, "", &CacheError{manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("unknown render mode %d", key.Render))}
+		return nil, ocispec.Descriptor{}, "", &CacheError{
+			manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("unknown render mode %d", key.Render)),
+		}
 	}
 	if key.Render != 0 {
 		id, ok := key.Content.(string)
 		if !ok || id == "" {
-			return nil, ocispec.Descriptor{}, "", &CacheError{manifest.NewError(manifest.ErrInput, nil, "render blob content must be a nonempty identity")}
+			return nil, ocispec.Descriptor{}, "", &CacheError{
+				manifest.NewError(manifest.ErrInput, nil, "render blob content must be a nonempty identity"),
+			}
 		}
 		if key.Render == RenderAccepted {
 			enabled, err := c.renderEnabled(ctx, id)
@@ -208,13 +230,22 @@ func (c *Cache) Blob(ctx context.Context, key BlobKey, policy Policy, produce fu
 				if produce == nil {
 					return nil, ocispec.Descriptor{}, "", &CacheError{errdef.ErrNotFound}
 				}
-				return fileFS{name: "content", open: func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader("")), nil }}, ocispec.Descriptor{}, id, nil
+				return fileFS{
+					name: "content",
+					open: func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader("")), nil },
+				}, ocispec.Descriptor{}, id, nil
 			}
 		}
 		key.Required = nil
 	}
 	producer := blobProducer{content: key.Content, render: key.Render}
-	request := acquireKey{producer: producer, required: key.Required, lookupOnly: produce == nil, memoryOnly: key.Render == RenderPending, render: key.Render != 0}
+	request := acquireKey{
+		producer:   producer,
+		required:   key.Required,
+		lookupOnly: produce == nil,
+		memoryOnly: key.Render == RenderPending,
+		render:     key.Render != 0,
+	}
 	if key.Render == RenderPending && c.CanPersistRenders() && policy.MaxAge != 0 {
 		request.accepted = key.Content.(string)
 	}
@@ -222,9 +253,17 @@ func (c *Cache) Blob(ctx context.Context, key BlobKey, policy Policy, produce fu
 	if key.Validate != nil {
 		validate = func(ctx context.Context, e *entry) (bool, error) { return key.Validate(ctx, e.fs) }
 	}
-	e, id, err := c.acquire(ctx, request, policy, acquisitionCallbacks{validate: validate, produce: func(ctx context.Context, c *Cache, staged *payload) (*entry, error) {
-		return producer.produce(ctx, c, staged, produce)
-	}})
+	e, id, err := c.acquire(
+		ctx,
+		request,
+		policy,
+		acquisitionCallbacks{
+			validate: validate,
+			produce: func(ctx context.Context, c *Cache, staged *payload) (*entry, error) {
+				return producer.produce(ctx, c, staged, produce)
+			},
+		},
+	)
 	if err != nil {
 		return nil, ocispec.Descriptor{}, "", err
 	}
@@ -249,13 +288,21 @@ func (c *Cache) RenderMetadata(ctx context.Context, content, lookup string) (oci
 	}
 	var e *entry
 	if lookup != "" {
-		if current, ok := c.entries.Load(lookup); ok && current.(*entry).ready.Load() && time.Now().UnixNano()-current.(*entry).touched.Load() < int64(accessInterval) {
+		if current, ok := c.entries.Load(
+			lookup,
+		); ok && current.(*entry).ready.Load() &&
+			time.Now().UnixNano()-current.(*entry).touched.Load() < int64(accessInterval) {
 			e = current.(*entry)
 		}
 	}
 	if e == nil {
 		key := BlobKey{Content: content, Render: RenderAccepted}
-		request := acquireKey{producer: blobProducer{content: key.Content, render: key.Render}, lookupOnly: true, render: true, policy: Policy{MaxAge: Forever}}
+		request := acquireKey{
+			producer:   blobProducer{content: key.Content, render: key.Render},
+			lookupOnly: true,
+			render:     true,
+			policy:     Policy{MaxAge: Forever},
+		}
 		if lookup == "" {
 			e, _, err = c.acquire(ctx, request, Policy{MaxAge: Forever}, acquisitionCallbacks{})
 		} else {
@@ -282,14 +329,18 @@ func (c *Cache) RenderMetadata(ctx context.Context, content, lookup string) (oci
 		return ocispec.Descriptor{}, "", true, &CacheError{err}
 	}
 	if !info.Mode().IsRegular() {
-		return ocispec.Descriptor{}, "", true, &CacheError{fmt.Errorf("%w: render blob is not a regular file", fs.ErrInvalid)}
+		return ocispec.Descriptor{}, "", true, &CacheError{
+			fmt.Errorf("%w: render blob is not a regular file", fs.ErrInvalid),
+		}
 	}
 	return e.descriptor, e.stored.Digest.String(), true, nil
 }
 
 func (c *Cache) renderEnabled(ctx context.Context, content string) (bool, error) {
 	if content == "" {
-		return false, &CacheError{manifest.NewError(manifest.ErrInput, nil, "render blob content must be a nonempty identity")}
+		return false, &CacheError{
+			manifest.NewError(manifest.ErrInput, nil, "render blob content must be a nonempty identity"),
+		}
 	}
 	if !c.CanPersistRenders() {
 		if err := ctx.Err(); err != nil {
@@ -316,7 +367,12 @@ func (c *Cache) acquireOnce(ctx context.Context, key acquireKey, callbacks acqui
 	}
 	defer release()
 	if key.accepted != "" {
-		generation, descriptor, _, err := c.Blob(ctx, BlobKey{Content: key.accepted, Render: RenderAccepted}, Policy{MaxAge: Forever}, nil)
+		generation, descriptor, _, err := c.Blob(
+			ctx,
+			BlobKey{Content: key.accepted, Render: RenderAccepted},
+			Policy{MaxAge: Forever},
+			nil,
+		)
 		if err != nil && !errors.Is(err, errdef.ErrNotFound) {
 			return nil, err
 		}
@@ -385,7 +441,11 @@ func (c *Cache) acquireOnce(ctx context.Context, key acquireKey, callbacks acqui
 	return c.attempt(ctx, key, e, callbacks)
 }
 
-func (c *Cache) validCandidate(ctx context.Context, validate func(context.Context, *entry) (bool, error), e *entry) (bool, error) {
+func (c *Cache) validCandidate(
+	ctx context.Context,
+	validate func(context.Context, *entry) (bool, error),
+	e *entry,
+) (bool, error) {
 	if validate == nil {
 		return true, nil
 	}
@@ -450,7 +510,8 @@ func (c *Cache) attempt(ctx context.Context, key acquireKey, e *entry, callbacks
 			}
 		}
 		// Retry and deadline failures MUST retain each caller's policy.
-		shareFailure := !retryable(err) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)
+		shareFailure := !retryable(err) && !errors.Is(err, context.Canceled) &&
+			!errors.Is(err, context.DeadlineExceeded)
 		if _, terminal := errors.AsType[*TerminalError](err); due || shareFailure && !terminal {
 			e.waveErr = err
 		}
@@ -527,7 +588,12 @@ func fresh(at time.Time, maxAge time.Duration) bool {
 	return !at.IsZero() && (maxAge < 0 || maxAge > 0 && time.Since(at) < maxAge)
 }
 
-func (c *Cache) fill(ctx context.Context, key acquireKey, previous *entry, callbacks acquisitionCallbacks) (result *entry, resultErr error) {
+func (c *Cache) fill(
+	ctx context.Context,
+	key acquireKey,
+	previous *entry,
+	callbacks acquisitionCallbacks,
+) (result *entry, resultErr error) {
 	if key.policy.Admit != nil {
 		release, err := key.policy.Admit(ctx)
 		if err != nil {
@@ -574,7 +640,10 @@ func (c *Cache) fill(ctx context.Context, key acquireKey, previous *entry, callb
 	}
 	e, err := callbacks.produce(ctx, c, &staged)
 	if err != nil {
-		if producer, ok := errors.AsType[*producerError](err); ok && errors.Is(producer, err) && (key.policy.Machine || credentialsUnavailable(producer.error)) {
+		if producer, ok := errors.AsType[*producerError](
+			err,
+		); ok && errors.Is(producer, err) &&
+			(key.policy.Machine || credentialsUnavailable(producer.error)) {
 			err = newProducerError(MachineCredentialErr(producer.error))
 		}
 		return nil, err
@@ -632,7 +701,12 @@ func (c *Cache) fill(ctx context.Context, key acquireKey, previous *entry, callb
 	return e, nil
 }
 
-func (c *Cache) publish(ctx context.Context, tmp *os.File, payload digest.Digest, e *entry) (ocispec.Descriptor, string, error) {
+func (c *Cache) publish(
+	ctx context.Context,
+	tmp *os.File,
+	payload digest.Digest,
+	e *entry,
+) (ocispec.Descriptor, string, error) {
 	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
 		return ocispec.Descriptor{}, "", err
 	}
@@ -676,7 +750,12 @@ func (c *Cache) publish(ctx context.Context, tmp *os.File, payload digest.Digest
 }
 
 func (e *entry) storedDescriptor(payload digest.Digest, size int64) ocispec.Descriptor {
-	stored := ocispec.Descriptor{MediaType: "application/octet-stream", Digest: payload, Size: size, Annotations: maps.Clone(e.descriptor.Annotations)}
+	stored := ocispec.Descriptor{
+		MediaType:   "application/octet-stream",
+		Digest:      payload,
+		Size:        size,
+		Annotations: maps.Clone(e.descriptor.Annotations),
+	}
 	if stored.Annotations == nil {
 		stored.Annotations = make(map[string]string)
 	}
@@ -697,7 +776,8 @@ func decode(stored ocispec.Descriptor, required []string) (ocispec.Descriptor, t
 	at, err := time.Parse(time.RFC3339Nano, a[prefix+"resolved-at"])
 	size, sizeErr := strconv.ParseInt(a[prefix+"upstream-size"], 10, 64)
 	d := digest.Digest(a[prefix+"upstream-digest"])
-	valid := stored.Digest.Validate() == nil && err == nil && sizeErr == nil && size >= 0 && (d == "" || d.Validate() == nil)
+	valid := stored.Digest.Validate() == nil && err == nil && sizeErr == nil && size >= 0 &&
+		(d == "" || d.Validate() == nil)
 	for _, field := range required {
 		valid = valid && a[prefix+field] != ""
 		if field == "object-count" {

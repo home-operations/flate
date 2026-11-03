@@ -27,24 +27,43 @@ func TestE2E_ResourceSetExpandsIntoChildKustomizations(t *testing.T) {
 	inputFile := filepath.Join(root, "tenants", "apps.yaml")
 	body, err := os.ReadFile(inputFile)
 	assert.NoError(t, err)
-	testutil.WriteFile(t, root, "tenants/apps.yaml", strings.Replace(string(body), "  inputs:", "  inputsFrom: [{name: branches}]\n  inputs:", 1))
-	testutil.WriteFile(t, root, "tenants/provider.yaml", "apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSetInputProvider\nmetadata: {name: branches, namespace: flux-system}\nspec: {type: GitHubBranch, url: https://example.invalid/branches}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"tenants/apps.yaml",
+		strings.Replace(string(body), "  inputs:", "  inputsFrom: [{name: branches}]\n  inputs:", 1),
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"tenants/provider.yaml",
+		"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSetInputProvider\nmetadata: {name: branches, namespace: flux-system}\nspec: {type: GitHubBranch, url: https://example.invalid/branches}\n",
+	)
 	testutil.WriteFile(t, root, "tenants/kustomization.yaml", "resources: [apps.yaml, provider.yaml]\n")
 	var out string
 	for _, verb := range []string{"get", "build", "test"} {
 		for range 2 {
-			args := []string{verb, "all", "--path", root, "--concurrency=2", "--allow-missing-kinds=CustomResourceDefinition"}
+			args := []string{
+				verb,
+				"all",
+				"--path",
+				root,
+				"--concurrency=2",
+				"--allow-missing-kinds=CustomResourceDefinition",
+			}
 			if verb == "get" {
 				args[1] = "ks"
 			}
 			stdout, stderr := harness.RequireCLIOK(t, args...)
-			if strings.Count(stderr, "[OfflineInputProvider]") != 1 || !strings.Contains(stderr, "branches") || strings.Contains(stdout, "warnings (") {
+			if strings.Count(stderr, "[OfflineInputProvider]") != 1 || !strings.Contains(stderr, "branches") ||
+				strings.Contains(stdout, "warnings (") {
 				t.Fatalf("provider warning: stdout=%s stderr=%s", stdout, stderr)
 			}
 			if verb == "get" {
 				out = stdout
 			}
-			if verb == "build" && (!strings.Contains(stdout, "frontend") || !strings.Contains(stdout, "backend")) || verb == "test" && !strings.Contains(stdout, "passed") {
+			if verb == "build" && (!strings.Contains(stdout, "frontend") || !strings.Contains(stdout, "backend")) ||
+				verb == "test" && !strings.Contains(stdout, "passed") {
 				t.Fatalf("provider product: %s", stdout)
 			}
 		}
@@ -84,7 +103,12 @@ func TestE2E_ResourceSetGeneratedData(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
 			testutil.GitInit(t, root)
-			testutil.WriteFile(t, root, "entry/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources: [root.yaml]\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"entry/kustomization.yaml",
+				"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources: [root.yaml]\n",
+			)
 			testutil.WriteFile(t, root, "entry/root.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: flux-system, namespace: flux-system}
@@ -99,7 +123,12 @@ spec:
   path: ./app
   sourceRef: {kind: GitRepository, name: flux-system}
 `)
-			testutil.WriteFile(t, root, "app/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources: [resourceset.yaml]\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"app/kustomization.yaml",
+				"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources: [resourceset.yaml]\n",
+			)
 			fields, secretData := "{key: value}", ""
 			wantFields := map[string]any{"key": "value"}
 			if tc.encrypted {
@@ -126,7 +155,19 @@ spec:
       kind: ServiceAccount
       metadata: {name: sa-<< inputs.name >>, namespace: default}
 `, fields, secretData, fields))
-			args := append([]string{"build", "ks", "app", "--path", filepath.Join(root, "entry"), "--concurrency=2", "--no-progress", "--cache-dir", t.TempDir()}, tc.flags...)
+			args := append(
+				[]string{
+					"build",
+					"ks",
+					"app",
+					"--path",
+					filepath.Join(root, "entry"),
+					"--concurrency=2",
+					"--no-progress",
+					"--cache-dir",
+					t.TempDir(),
+				},
+				tc.flags...)
 			stdout, _ := harness.RequireCLIOK(t, args...)
 			if tc.name == "all" {
 				again, _ := harness.RequireCLIOK(t, args...)
@@ -165,7 +206,9 @@ func TestE2E_ResourceSetDocumentBoundary(t *testing.T) {
 	var previous string
 	for range 2 {
 		out, stderr, code := harness.RunCLIBuffers(args...)
-		if code != 1 || !strings.Contains(stderr, "flux-system/documents") || !strings.Contains(stderr, "document 1:") || !strings.Contains(stderr, "missing metadata.name for List") {
+		if code != 1 || !strings.Contains(stderr, "flux-system/documents") ||
+			!strings.Contains(stderr, "document 1:") ||
+			!strings.Contains(stderr, "missing metadata.name for List") {
 			t.Fatalf("invalid ResourceSet output: exit=%d stderr=%s", code, stderr)
 		}
 		counts := map[string]int{}
@@ -220,14 +263,35 @@ func TestE2E_ResourceSetDocumentBoundary(t *testing.T) {
 	testutil.CopyTree(t, path, original)
 	body, err := os.ReadFile(filepath.Join(path, "apps/rs.yaml"))
 	assert.NoError(t, err)
-	testutil.WriteFile(t, path, "apps/rs.yaml", strings.ReplaceAll(string(body), "metadata: {name: duplicate, annotations: {fluxcd.controlplane.io/reconcile: disabled}}", "metadata: {name: duplicate, annotations: {fluxcd.controlplane.io/reconcile: disabled}}\n      spec: {replicas: 2}"))
+	testutil.WriteFile(
+		t,
+		path,
+		"apps/rs.yaml",
+		strings.ReplaceAll(
+			string(body),
+			"metadata: {name: duplicate, annotations: {fluxcd.controlplane.io/reconcile: disabled}}",
+			"metadata: {name: duplicate, annotations: {fluxcd.controlplane.io/reconcile: disabled}}\n      spec: {replicas: 2}",
+		),
+	)
 	var previousDiff, previousWarnings string
 	for run := range 2 {
-		product, diagnostics, code := harness.RunCLIBuffers("diff", "all", "--path", path, "--path-orig", original, "--output=json", "--concurrency=2")
+		product, diagnostics, code := harness.RunCLIBuffers(
+			"diff",
+			"all",
+			"--path",
+			path,
+			"--path-orig",
+			original,
+			"--output=json",
+			"--concurrency=2",
+		)
 		if code != 1 || !strings.Contains(diagnostics, "missing metadata.name for List") {
 			t.Fatalf("invalid ResourceSet diff: exit=%d stderr=%s", code, diagnostics)
 		}
-		if strings.Count(diagnostics, "[DuplicateDocument]") != 2 || !strings.Contains(diagnostics, "duplicate") || !strings.Contains(diagnostics, "orig") || !strings.Contains(diagnostics, "current") || strings.Contains(product, "[DuplicateDocument]") {
+		if strings.Count(diagnostics, "[DuplicateDocument]") != 2 || !strings.Contains(diagnostics, "duplicate") ||
+			!strings.Contains(diagnostics, "orig") ||
+			!strings.Contains(diagnostics, "current") ||
+			strings.Contains(product, "[DuplicateDocument]") {
 			t.Fatalf("duplicate diff: stdout=%s stderr=%s", product, diagnostics)
 		}
 		var changes struct {
@@ -244,7 +308,8 @@ func TestE2E_ResourceSetDocumentBoundary(t *testing.T) {
 			t.Fatalf("duplicate product changed: %s", product)
 		}
 		suppressed := changes.Suppressed[0]
-		if suppressed.Parent.Name != "child" || suppressed.Side != "both" || suppressed.Count != 2 || !strings.Contains(suppressed.Reason, "missing metadata.name for List") {
+		if suppressed.Parent.Name != "child" || suppressed.Side != "both" || suppressed.Count != 2 ||
+			!strings.Contains(suppressed.Reason, "missing metadata.name for List") {
 			t.Fatalf("failed ResourceSet descendant was not suppressed: %+v", suppressed)
 		}
 		if run == 0 {
@@ -255,7 +320,12 @@ func TestE2E_ResourceSetDocumentBoundary(t *testing.T) {
 		}
 	}
 
-	testutil.WriteFile(t, path, "apps/rs.yaml", "apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: documents, namespace: flux-system}\nspec:\n resourcesTemplate: |\n  items: [null]\n")
+	testutil.WriteFile(
+		t,
+		path,
+		"apps/rs.yaml",
+		"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: documents, namespace: flux-system}\nspec:\n resourcesTemplate: |\n  items: [null]\n",
+	)
 	out, code := harness.RunCLIExpectErr(t, args...)
 	assert.Equal(t, code, 1)
 	if !strings.Contains(out, "read rendered list") {

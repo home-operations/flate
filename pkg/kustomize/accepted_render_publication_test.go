@@ -52,14 +52,20 @@ func (h *acceptedHistoryCase) publication(t *testing.T) {
 
 func (p *acceptedHistoryPublication) storedKey(t *testing.T) string {
 	t.Helper()
-	reader, descriptor, _, err := p.renderer.owner.Blob(t.Context(), p.key, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
+	reader, descriptor, _, err := p.renderer.owner.Blob(
+		t.Context(),
+		p.key,
+		sourcecache.Policy{MaxAge: sourcecache.Forever},
+		nil,
+	)
 	assert.NoError(t, err)
 	data, err := fs.ReadFile(reader, "content")
 	assert.NoError(t, err)
 	stored, err := decodeFrame(data)
 	assert.NoError(t, err)
 	content := descriptor.Annotations["flate.accepted-render"]
-	if content == "" || content != manifest.Fingerprint(data[12+int(binary.BigEndian.Uint32(data[8:12]))+stored.header.Size:]) {
+	if content == "" ||
+		content != manifest.Fingerprint(data[12+int(binary.BigEndian.Uint32(data[8:12]))+stored.header.Size:]) {
 		t.Fatal("stored accepted-frame key does not identify the actual accepted frame")
 	}
 	return content

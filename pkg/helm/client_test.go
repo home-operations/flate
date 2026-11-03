@@ -8,15 +8,16 @@ import (
 	"sync"
 	"testing"
 
+	chart "helm.sh/helm/v4/pkg/chart/v2"
+	chartutil "helm.sh/helm/v4/pkg/chart/v2/util"
+	"sigs.k8s.io/yaml"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
-	chart "helm.sh/helm/v4/pkg/chart/v2"
-	chartutil "helm.sh/helm/v4/pkg/chart/v2/util"
-	"sigs.k8s.io/yaml"
 )
 
 func TestLoadChart_ValidationAcrossSources(t *testing.T) {
@@ -31,7 +32,10 @@ func TestLoadChart_ValidationAcrossSources(t *testing.T) {
 				hr.ChartRef = nil
 			}
 			writeChartFiles(t, dir, "podinfo", "invalid")
-			st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: kind, FS: chartFixtureFS(hr, os.DirFS(dir)), LocalPath: dir})
+			st.SetArtifact(
+				manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Namespace: "apps", Name: "podinfo"},
+				&store.SourceArtifact{Kind: kind, FS: chartFixtureFS(hr, os.DirFS(dir)), LocalPath: dir},
+			)
 			cli := NewClient(cachetest.New(t, "", sourcecache.New))
 			cliSources := NewSources(st)
 			_, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
@@ -56,12 +60,25 @@ func TestLoadChart_ValuesContentWithMemoryOwner(t *testing.T) {
 	cliSources := NewSources(st)
 	var previous string
 	for i, dir := range []string{first, second} {
-		st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindGitRepository, FS: chartFixtureFS(hr, os.DirFS(dir)), LocalPath: dir})
+		st.SetArtifact(
+			manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindGitRepository,
+				Namespace: "apps",
+				Name:      "podinfo",
+			},
+			&store.SourceArtifact{
+				Kind:      manifest.KindGitRepository,
+				FS:        chartFixtureFS(hr, os.DirFS(dir)),
+				LocalPath: dir,
+			},
+		)
 		loaded, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if chartValuesCacheKey(loaded, hr.ChartValuesFiles, false, "") == "" || chartValuesCacheKey(loaded, hr.ChartValuesFiles, false, "") == previous {
+		if chartValuesCacheKey(loaded, hr.ChartValuesFiles, false, "") == "" ||
+			chartValuesCacheKey(loaded, hr.ChartValuesFiles, false, "") == previous {
 			t.Fatal("different chart content shared a fingerprint")
 		}
 		merged, err := cli.mergeChartValuesFiles(t.Context(), loaded, hr.ChartValuesFiles, false)
@@ -84,7 +101,14 @@ func TestLoadChart_SharedChartRetainsValuesFingerprint(t *testing.T) {
 			if kind == manifest.KindGitRepository {
 				hr.ChartRef = nil
 			}
-			st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: chartFixtureFS(hr, os.DirFS(dir)), LocalPath: dir})
+			st.SetArtifact(
+				manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Namespace: "apps", Name: "podinfo"},
+				&store.SourceArtifact{
+					Kind:      manifest.KindOCIRepository,
+					FS:        chartFixtureFS(hr, os.DirFS(dir)),
+					LocalPath: dir,
+				},
+			)
 			cli := NewClient(cachetest.New(t, "", sourcecache.New))
 			cliSources := NewSources(st)
 			withoutFiles := hr.Clone()
@@ -107,7 +131,11 @@ func TestLoadChart_SharedChartRetainsValuesFingerprint(t *testing.T) {
 				if failures[i] != nil {
 					t.Fatal(failures[i])
 				}
-				assert.Equal(t, chartValuesCacheKey(result, hr.ChartValuesFiles, false, ""), chartValuesCacheKey(loaded, hr.ChartValuesFiles, false, ""))
+				assert.Equal(
+					t,
+					chartValuesCacheKey(result, hr.ChartValuesFiles, false, ""),
+					chartValuesCacheKey(loaded, hr.ChartValuesFiles, false, ""),
+				)
 			}
 			loaded = results[0]
 			merged, err := cli.mergeChartValuesFiles(t.Context(), loaded, hr.ChartValuesFiles, false)
@@ -119,7 +147,12 @@ func TestLoadChart_SharedChartRetainsValuesFingerprint(t *testing.T) {
 	}
 }
 
-func loadDecodedChart(ctx context.Context, c *Client, hr *manifest.HelmRelease, sources Sources) (chartDescription, error) {
+func loadDecodedChart(
+	ctx context.Context,
+	c *Client,
+	hr *manifest.HelmRelease,
+	sources Sources,
+) (chartDescription, error) {
 	d, err := c.describeChart(ctx, hr, sources)
 	if err != nil {
 		return chartDescription{}, err
@@ -140,7 +173,19 @@ func chartFixtureDescription(t *testing.T, ch *chart.Chart) chartDescription {
 	captured, _, err := captureChart(t.Context(), os.DirFS(root), ch.Name(), false)
 	assert.NoError(t, err)
 	fingerprint := captured.fingerprint()
-	return chartDescription{chart: ch, captured: captured, fingerprint: fingerprint, key: fingerprint, location: ch.Name(), analysis: &chartAnalysis{Version: ch.Metadata.Version, Templates: chartTemplateText(ch), Allowed: knownTopLevelKeys(ch), RequiresLoader: requiresChartLoader(ch)}}
+	return chartDescription{
+		chart:       ch,
+		captured:    captured,
+		fingerprint: fingerprint,
+		key:         fingerprint,
+		location:    ch.Name(),
+		analysis: &chartAnalysis{
+			Version:        ch.Metadata.Version,
+			Templates:      chartTemplateText(ch),
+			Allowed:        knownTopLevelKeys(ch),
+			RequiresLoader: requiresChartLoader(ch),
+		},
+	}
 }
 
 func TestSourceResolver_SharedClientDeclarations(t *testing.T) {
@@ -162,7 +207,10 @@ func TestSourceResolver_SharedClientDeclarations(t *testing.T) {
 	defer next.Finish()
 	next.Children = []store.Child{{Obj: &accepted}}
 	st.RecordEmitted(parent.Named(), &next, nil)
-	st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "other children pending"})
+	st.UpdateStatus(
+		parent.Named(),
+		store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "other children pending"},
+	)
 	if resolver.Declaration(raw.Named()) != &accepted {
 		t.Fatal("shared resolver lost effective accepted source")
 	}

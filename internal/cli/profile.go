@@ -18,7 +18,10 @@ func startProfile() (func(), error) {
 	if mode == "" {
 		return func() {}, nil
 	}
-	if err := os.MkdirAll(outDir, 0o750); err != nil { //nolint:gosec // FLATE_PROFILE_OUT is an operator-selected profile destination.
+	if err := os.MkdirAll(
+		outDir,
+		0o750,
+	); err != nil { //nolint:gosec // FLATE_PROFILE_OUT is an operator-selected profile destination.
 		return nil, fmt.Errorf("FLATE_PROFILE_OUT: %w", err)
 	}
 	path := filepath.Join(outDir, mode+".pprof")

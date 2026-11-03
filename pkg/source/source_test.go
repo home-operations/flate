@@ -29,7 +29,12 @@ type stubTypedFetcher struct {
 	reads  *store.ReadSet
 }
 
-func (s *stubTypedFetcher) Fetch(_ context.Context, obj *manifest.GitRepository, reads *store.ReadSet, policy sourcecache.Policy) (*store.SourceArtifact, error) {
+func (s *stubTypedFetcher) Fetch(
+	_ context.Context,
+	obj *manifest.GitRepository,
+	reads *store.ReadSet,
+	policy sourcecache.Policy,
+) (*store.SourceArtifact, error) {
 	s.called = obj
 	s.reads = reads
 	s.policy = policy
@@ -49,7 +54,9 @@ func TestWrap_DispatchesTypedPayload(t *testing.T) {
 	if inner.reads != reads {
 		t.Fatal("ReadSet was not forwarded")
 	}
-	if inner.policy.MaxAge != policy.MaxAge || inner.policy.Retry != policy.Retry || inner.policy.Timeout != policy.Timeout || inner.policy.Admit != nil {
+	if inner.policy.MaxAge != policy.MaxAge || inner.policy.Retry != policy.Retry ||
+		inner.policy.Timeout != policy.Timeout ||
+		inner.policy.Admit != nil {
 		t.Fatalf("policy=%+v, want %+v", inner.policy, policy)
 	}
 	if err != nil {
@@ -87,15 +94,25 @@ func TestOperationView_AcquisitionBoundary(t *testing.T) {
 	var buf bytes.Buffer
 	testutil.WriteTar(t, &buf, map[string]string{"file": "content"}, 0o600)
 	data := buf.Bytes()
-	acquired, _, _, err := owner.Acquire(t.Context(), sourcecache.ArchiveKey{Content: "admission"}, sourcecache.Policy{MaxAge: sourcecache.Forever}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
-		_, err := w.Write(data)
-		return sourcecache.ProducerResult{}, err
-	})
+	acquired, _, _, err := owner.Acquire(
+		t.Context(),
+		sourcecache.ArchiveKey{Content: "admission"},
+		sourcecache.Policy{MaxAge: sourcecache.Forever},
+		func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+			_, err := w.Write(data)
+			return sourcecache.ProducerResult{}, err
+		},
+	)
 	assert.NoError(t, err)
-	r, _, _, err := owner.Blob(t.Context(), sourcecache.BlobKey{Content: "blob"}, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
-		_, err := io.WriteString(w, "content")
-		return sourcecache.ProducerResult{}, err
-	})
+	r, _, _, err := owner.Blob(
+		t.Context(),
+		sourcecache.BlobKey{Content: "blob"},
+		sourcecache.Policy{MaxAge: 0},
+		func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+			_, err := io.WriteString(w, "content")
+			return sourcecache.ProducerResult{}, err
+		},
+	)
 	assert.NoError(t, err)
 	blob := sourcecache.NameBlob("file", r)
 
@@ -110,7 +127,12 @@ func TestOperationView_AcquisitionBoundary(t *testing.T) {
 	assert.NoError(t, err)
 	admitted, err := gittree.AdmitDirectory(t.Context(), location)
 	assert.NoError(t, err)
-	shaped, pin, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: admitted.FS})
+	shaped, pin, err := gittree.New(
+		t.Context(),
+		nil,
+		plumbing.ZeroHash,
+		gittree.ViewOptions{Mode: gittree.Source, Current: admitted.FS},
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, pin, "")
 	if shaped.PolicyEvidence() == nil {

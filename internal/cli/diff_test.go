@@ -22,13 +22,24 @@ import (
 func TestAppendSuppressionWarnings_Presentation(t *testing.T) {
 	t.Parallel()
 	duplicate := manifest.Warning{Category: manifest.WarnDuplicateDocument, Message: "shadowed"}
-	suppressed := []diff.Suppression{{Parent: diff.Parent{NamedResource: testutil.HelmReleaseID("apps", "demo")}, Side: diff.SideCurrent, Count: 2, Reason: "missing source"}}
+	suppressed := []diff.Suppression{
+		{
+			Parent: diff.Parent{NamedResource: testutil.HelmReleaseID("apps", "demo")},
+			Side:   diff.SideCurrent,
+			Count:  2,
+			Reason: "missing source",
+		},
+	}
 	want := manifest.Warning{
 		Resource: suppressed[0].Parent.NamedResource, Category: manifest.WarnDiffSuppressed,
 		Message: "2 objects not rendered on the current side; diff suppressed (missing source)",
 	}
 	assert.Diff(t, appendSuppressionWarnings(nil, suppressed), []manifest.Warning{want})
-	assert.Diff(t, appendSuppressionWarnings([]manifest.Warning{duplicate}, suppressed), []manifest.Warning{want, duplicate})
+	assert.Diff(
+		t,
+		appendSuppressionWarnings([]manifest.Warning{duplicate}, suppressed),
+		[]manifest.Warning{want, duplicate},
+	)
 	assert.Diff(t, appendSuppressionWarnings([]manifest.Warning{duplicate}, nil), []manifest.Warning{duplicate})
 }
 
@@ -122,13 +133,42 @@ spec:
 			if tc.json {
 				format = "json"
 			}
-			stdout, stderr, code := runCLI(t, "diff", "hr", "--path", current, "--path-orig", orig,
-				"--allow-missing-kinds=Secret,ConfigMap", "--output", format, "--no-progress", "--cache-dir", t.TempDir(), "--concurrency", "2")
+			stdout, stderr, code := runCLI(
+				t,
+				"diff",
+				"hr",
+				"--path",
+				current,
+				"--path-orig",
+				orig,
+				"--allow-missing-kinds=Secret,ConfigMap",
+				"--output",
+				format,
+				"--no-progress",
+				"--cache-dir",
+				t.TempDir(),
+				"--concurrency",
+				"2",
+			)
 			if code != 0 {
 				t.Fatalf("diff hr exited %d: stderr=%s", code, stderr)
 			}
-			images, imageStderr, imageCode := runCLI(t, "diff", "images", "--include-removed", "--path", current, "--path-orig", orig,
-				"--allow-missing-kinds=Secret,ConfigMap", "--no-progress", "--cache-dir", t.TempDir(), "--concurrency", "2")
+			images, imageStderr, imageCode := runCLI(
+				t,
+				"diff",
+				"images",
+				"--include-removed",
+				"--path",
+				current,
+				"--path-orig",
+				orig,
+				"--allow-missing-kinds=Secret,ConfigMap",
+				"--no-progress",
+				"--cache-dir",
+				t.TempDir(),
+				"--concurrency",
+				"2",
+			)
 			assert.Equal(t, imageCode, 0)
 			if tc.wantRemove {
 				assert.Equal(t, images, "ghcr.io/demo/private:v1\n")
@@ -141,14 +181,18 @@ spec:
 					side = "current"
 				}
 				prefix := "HelmRelease apps/demo: 2 objects not rendered on the " + side + " side; diff suppressed ("
-				if strings.Count(imageStderr, "[DiffSuppressed]") != 1 || strings.Count(imageStderr, prefix) != 1 || strings.Contains(imageStderr, "×2") || !strings.Contains(imageStderr, "missing-ca") {
+				if strings.Count(imageStderr, "[DiffSuppressed]") != 1 || strings.Count(imageStderr, prefix) != 1 ||
+					strings.Contains(imageStderr, "×2") ||
+					!strings.Contains(imageStderr, "missing-ca") {
 					t.Fatalf("image suppression missing: %s", imageStderr)
 				}
 				writeErr := errors.New("image disclosure write failed")
 				cmd := New("test")
 				cmd.SetContext(t.Context())
-				cmd.SetArgs([]string{"diff", "images", "--path", current, "--path-orig", orig,
-					"--allow-missing-kinds=Secret,ConfigMap", "--cache-dir", t.TempDir(), "--concurrency", "2"})
+				cmd.SetArgs([]string{
+					"diff", "images", "--path", current, "--path-orig", orig,
+					"--allow-missing-kinds=Secret,ConfigMap", "--cache-dir", t.TempDir(), "--concurrency", "2",
+				})
 				cmd.SetOut(&bytes.Buffer{})
 				cmd.SetErr(failingWriter{err: writeErr})
 				if err := cmd.Execute(); !errors.Is(err, writeErr) {
@@ -169,14 +213,19 @@ spec:
 				}
 				assert.Equal(t, got.Suppressed[0].Side, diff.SideCurrent)
 				assert.Equal(t, got.Suppressed[0].Count, 2)
-				assert.Equal(t, got.Suppressed[0].Parent, diff.Parent{NamedResource: testutil.HelmReleaseID("apps", "demo")})
+				assert.Equal(
+					t,
+					got.Suppressed[0].Parent,
+					diff.Parent{NamedResource: testutil.HelmReleaseID("apps", "demo")},
+				)
 				assert.Equal(t, strings.Contains(got.Suppressed[0].Reason, "missing-ca"), true)
 				assert.Equal(t, strings.HasPrefix(got.Suppressed[0].Reason, "skipped:"), false)
 				return
 			}
 			if tc.wantSide != "" {
 				prefix := "HelmRelease apps/demo: 2 objects not rendered on the " + tc.wantSide + " side; diff suppressed ("
-				if strings.Count(stderr, "[DiffSuppressed]") != 1 || strings.Count(stderr, prefix) != 1 || !strings.Contains(stderr, "missing-ca") {
+				if strings.Count(stderr, "[DiffSuppressed]") != 1 || strings.Count(stderr, prefix) != 1 ||
+					!strings.Contains(stderr, "missing-ca") {
 					t.Errorf("expected suppression with the missing Secret reason; got:\n%s", stderr)
 				}
 				if strings.Contains(stdout, "diff suppressed") || strings.Contains(stdout, "ConfigMap apps/demo") {
@@ -188,7 +237,8 @@ spec:
 			if tc.wantRemove && !strings.Contains(stdout, "-  greeting: hello") {
 				t.Errorf("actual release removal must remain visible:\n%s", stdout)
 			}
-			if tc.other && (!strings.Contains(stdout, "-  greeting: before") || !strings.Contains(stdout, "+  greeting: after")) {
+			if tc.other &&
+				(!strings.Contains(stdout, "-  greeting: before") || !strings.Contains(stdout, "+  greeting: after")) {
 				t.Errorf("unrelated change must remain visible:\n%s", stdout)
 			}
 		})
@@ -204,8 +254,22 @@ kind: GitRepository
 metadata: {name: flux-system, namespace: flux-system}
 spec: {url: https://example.test/cluster.git}
 `)
-		testutil.WriteFile(t, path, "apps/kustomization.yaml", "resources: [cm.yaml, hr.yaml, child.yaml]\nnamePrefix: x-\n")
-		testutil.WriteFile(t, path, "apps/child.yaml", testutil.KustomizationYAML("child", "flux-system", "  path: ./nested\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
+		testutil.WriteFile(
+			t,
+			path,
+			"apps/kustomization.yaml",
+			"resources: [cm.yaml, hr.yaml, child.yaml]\nnamePrefix: x-\n",
+		)
+		testutil.WriteFile(
+			t,
+			path,
+			"apps/child.yaml",
+			testutil.KustomizationYAML(
+				"child",
+				"flux-system",
+				"  path: ./nested\n  sourceRef: {kind: GitRepository, name: flux-system}\n",
+			),
+		)
 		hr := `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata: {name: demo, namespace: apps}
@@ -234,7 +298,12 @@ spec:
 		testutil.KustomizationYAML("apps", "flux-system", `  path: ./apps
   sourceRef: {kind: OCIRepository, name: private}
 `))
-	testutil.WriteFile(t, failed, "apps/kustomization.yaml", "resources: [cm.yaml, hr.yaml, child.yaml, missing.yaml]\nnamePrefix: x-\n")
+	testutil.WriteFile(
+		t,
+		failed,
+		"apps/kustomization.yaml",
+		"resources: [cm.yaml, hr.yaml, child.yaml, missing.yaml]\nnamePrefix: x-\n",
+	)
 	for _, tc := range []struct {
 		name, side, namespace, orig, current string
 		wantCode                             int
@@ -248,14 +317,32 @@ spec:
 		{name: "orig failed/apps", side: "orig", namespace: "apps", orig: failed, current: orig, wantCode: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			stdout, stderr, code := runCLI(t, "diff", "all", "--path", tc.current, "--path-orig", tc.orig,
-				"--namespace", tc.namespace, "--allow-missing-kinds=Secret,ConfigMap", "--output", "diff", "--no-progress", "--cache-dir", t.TempDir(), "--concurrency", "2")
+			stdout, stderr, code := runCLI(
+				t,
+				"diff",
+				"all",
+				"--path",
+				tc.current,
+				"--path-orig",
+				tc.orig,
+				"--namespace",
+				tc.namespace,
+				"--allow-missing-kinds=Secret,ConfigMap",
+				"--output",
+				"diff",
+				"--no-progress",
+				"--cache-dir",
+				t.TempDir(),
+				"--concurrency",
+				"2",
+			)
 			assert.Equal(t, code, tc.wantCode)
 			parent := "Kustomization flux-system/apps:"
 			if tc.namespace != "" {
 				parent = "HelmRelease apps/x-demo:"
 			}
-			if !strings.Contains(stderr, parent) || !strings.Contains(stderr, "on the "+tc.side+" side; diff suppressed (") {
+			if !strings.Contains(stderr, parent) ||
+				!strings.Contains(stderr, "on the "+tc.side+" side; diff suppressed (") {
 				t.Errorf("missing ownership suppression: stdout=%s stderr=%s", stdout, stderr)
 			}
 			for _, name := range []string{"x-demo", "y-demo"} {
@@ -273,13 +360,27 @@ spec:
 	t.Run("moved HelmRelease", func(t *testing.T) {
 		orig, current := writeFixture(t), writeFixture(t)
 		for _, path := range []string{orig, current} {
-			testutil.WriteFile(t, path, "kustomization.yaml", "resources: [flux/source.yaml, flux/cluster.yaml, flux/other.yaml]\n")
+			testutil.WriteFile(
+				t,
+				path,
+				"kustomization.yaml",
+				"resources: [flux/source.yaml, flux/cluster.yaml, flux/other.yaml]\n",
+			)
 			testutil.WriteFile(t, path, "flux/source.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: flux-system, namespace: flux-system}
 spec: {url: https://example.test/cluster.git}
 `)
-			testutil.WriteFile(t, path, "flux/other.yaml", testutil.KustomizationYAML("other", "flux-system", "  path: ./other\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
+			testutil.WriteFile(
+				t,
+				path,
+				"flux/other.yaml",
+				testutil.KustomizationYAML(
+					"other",
+					"flux-system",
+					"  path: ./other\n  sourceRef: {kind: GitRepository, name: flux-system}\n",
+				),
+			)
 			dir, greeting := "apps", "before"
 			if path == current {
 				dir, greeting = "other", "after"
@@ -314,14 +415,29 @@ data:
   greeting: {{ .Values.greeting }}
 `)
 		}
-		stdout, stderr, code := runCLI(t, "diff", "all", "--path", current, "--path-orig", orig,
-			"--allow-missing-kinds=Secret,ConfigMap", "--output", "diff", "--no-progress", "--cache-dir", t.TempDir(), "--concurrency", "2")
-		if code != 0 || !strings.Contains(stdout, "-  greeting: before") || !strings.Contains(stdout, "+  greeting: after") {
+		stdout, stderr, code := runCLI(
+			t,
+			"diff",
+			"all",
+			"--path",
+			current,
+			"--path-orig",
+			orig,
+			"--allow-missing-kinds=Secret,ConfigMap",
+			"--output",
+			"diff",
+			"--no-progress",
+			"--cache-dir",
+			t.TempDir(),
+			"--concurrency",
+			"2",
+		)
+		if code != 0 || !strings.Contains(stdout, "-  greeting: before") ||
+			!strings.Contains(stdout, "+  greeting: after") {
 			t.Errorf("moved release change must remain visible: code=%d stdout=%s stderr=%s", code, stdout, stderr)
 		}
 		assert.Equal(t, strings.Contains(stdout, "# HelmRelease.helm.toolkit.fluxcd.io apps/demo:"), false)
 	})
-
 }
 
 func TestRun_DiffJSON(t *testing.T) {
@@ -330,16 +446,40 @@ func TestRun_DiffJSON(t *testing.T) {
 		testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux/cluster.yaml, flux/broken.yaml]\n")
 	}
 	testutil.WriteFile(t, orig, "apps/kustomization.yaml", "resources: [cm.yaml, removed.yaml]\n")
-	testutil.WriteFile(t, orig, "apps/removed.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: removed, namespace: apps}\n")
+	testutil.WriteFile(
+		t,
+		orig,
+		"apps/removed.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: removed, namespace: apps}\n",
+	)
 	testutil.WriteFile(t, current, "apps/kustomization.yaml", "resources: [cm.yaml, added.yaml]\n")
-	testutil.WriteFile(t, current, "apps/added.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: added, namespace: apps}\n")
-	testutil.WriteFile(t, current, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {greeting: hola}\n")
+	testutil.WriteFile(
+		t,
+		current,
+		"apps/added.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: added, namespace: apps}\n",
+	)
+	testutil.WriteFile(
+		t,
+		current,
+		"apps/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {greeting: hola}\n",
+	)
 	for _, dir := range []string{orig, current} {
 		failure := ""
 		if dir == current {
 			failure = "  postBuild: {substituteFrom: [{kind: ConfigMap, name: missing}]}\n"
 		}
-		testutil.WriteFile(t, dir, "flux/broken.yaml", testutil.KustomizationYAML("broken", "flux-system", "  interval: 10m\n  path: ./broken\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n")+failure)
+		testutil.WriteFile(
+			t,
+			dir,
+			"flux/broken.yaml",
+			testutil.KustomizationYAML(
+				"broken",
+				"flux-system",
+				"  interval: 10m\n  path: ./broken\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+			)+failure,
+		)
 		testutil.WriteFile(t, dir, "broken/kustomization.yaml", "resources: [cm.yaml]\n")
 		testutil.WriteFile(t, dir, "broken/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: withheld}\n")
 	}
@@ -365,7 +505,11 @@ func TestRun_DiffJSON(t *testing.T) {
 		t.Fatalf("unexpected changes or suppressions: %s", stdout)
 	}
 	assert.Equal(t, got.Suppressed[0]["side"], any("current"))
-	assert.Diff(t, slices.Sorted(maps.Keys(got.Changes[0])), []string{"apiVersion", "kind", "name", "namespace", "new", "newChart", "old", "oldChart", "parent", "status"})
+	assert.Diff(
+		t,
+		slices.Sorted(maps.Keys(got.Changes[0])),
+		[]string{"apiVersion", "kind", "name", "namespace", "new", "newChart", "old", "oldChart", "parent", "status"},
+	)
 	assert.Diff(t, got.Changes[0]["parent"], any(map[string]any{"kind": "", "name": "", "path": "."}))
 	assert.Diff(t, slices.Sorted(maps.Keys(got.Suppressed[0])), []string{"count", "parent", "reason", "side"})
 }
@@ -471,8 +615,22 @@ spec:
 				if tc.verb != "" {
 					verb = tc.verb
 				}
-				args := []string{"diff", verb, "--path", current, "--path-orig", orig,
-					"--cache-dir", cache, "--concurrency", "2", "--output", output, "--no-progress", "--allow-missing-kinds=Secret,ConfigMap"}
+				args := []string{
+					"diff",
+					verb,
+					"--path",
+					current,
+					"--path-orig",
+					orig,
+					"--cache-dir",
+					cache,
+					"--concurrency",
+					"2",
+					"--output",
+					output,
+					"--no-progress",
+					"--allow-missing-kinds=Secret,ConfigMap",
+				}
 				if tc.resource != "" {
 					args = append(args, tc.resource)
 				}
@@ -482,7 +640,11 @@ spec:
 
 				stdout, stderr, code := runCLI(t, args...)
 				assert.Equal(t, code, tc.wantCode)
-				assert.Equal(t, strings.Contains(stderr, "values not used by the chart"), tc.namespace == "" && tc.verb != "ks")
+				assert.Equal(
+					t,
+					strings.Contains(stderr, "values not used by the chart"),
+					tc.namespace == "" && tc.verb != "ks",
+				)
 				assert.Equal(t, strings.Contains(stdout, "flate warning:"), false)
 				for _, side := range []struct {
 					name string
@@ -503,7 +665,9 @@ spec:
 					}
 					assert.Equal(t, len(got.Changes) > 0, tc.change || tc.verb == "ks")
 					if tc.verb == "ks" {
-						if len(got.Changes) != 1 || got.Changes[0]["kind"] != manifest.KindHelmRelease || got.Changes[0]["name"] != "demo" || len(got.Suppressed) != 0 {
+						if len(got.Changes) != 1 || got.Changes[0]["kind"] != manifest.KindHelmRelease ||
+							got.Changes[0]["name"] != "demo" ||
+							len(got.Suppressed) != 0 {
 							t.Fatalf("KS entry lost its applied HelmRelease declaration: %s", stdout)
 						}
 						old := got.Changes[0]["old"].(map[string]any)["spec"].(map[string]any)
@@ -511,7 +675,11 @@ spec:
 						assert.Equal(t, old["interval"], any("5m"))
 						assert.Equal(t, current["interval"], any("10m"))
 						assert.Equal(t, old["valuesFrom"], nil)
-						assert.Diff(t, current["valuesFrom"], []any{map[string]any{"kind": "ConfigMap", "name": "extra-values"}})
+						assert.Diff(
+							t,
+							current["valuesFrom"],
+							[]any{map[string]any{"kind": "ConfigMap", "name": "extra-values"}},
+						)
 					}
 				} else if tc.change {
 					for _, want := range []string{"-  message: before", "+  message: after"} {
@@ -558,7 +726,16 @@ kind: ConfigMap
 metadata: {name: hello, namespace: apps}
 data: {greeting: hi}
 `)
-	testutil.WriteFile(t, current, "flux/second.yaml", testutil.KustomizationYAML("second-apps", "gitops-system", "  path: ./second-apps\n  sourceRef: {kind: GitRepository, name: home-kubernetes}\n  interval: 1h\n"))
+	testutil.WriteFile(
+		t,
+		current,
+		"flux/second.yaml",
+		testutil.KustomizationYAML(
+			"second-apps",
+			"gitops-system",
+			"  path: ./second-apps\n  sourceRef: {kind: GitRepository, name: home-kubernetes}\n  interval: 1h\n",
+		),
+	)
 	testutil.WriteFile(t, current, "second-apps/kustomization.yaml", "resources:\n- cm.yaml\n")
 	testutil.WriteFile(t, current, "second-apps/cm.yaml", `apiVersion: v1
 kind: ConfigMap
@@ -634,8 +811,10 @@ data: {greeting: hola}
 		{name: "other namespace", args: []string{"--namespace", "other"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			args := append([]string{"diff", "ks", "--path", current, "--path-orig", orig,
-				"--cache-dir", filepath.Join(t.TempDir(), "cache"), "-o", "diff"}, tc.args...)
+			args := append([]string{
+				"diff", "ks", "--path", current, "--path-orig", orig,
+				"--cache-dir", filepath.Join(t.TempDir(), "cache"), "-o", "diff",
+			}, tc.args...)
 			stdout, stderr, code := runCLI(t, args...)
 			if code != 0 {
 				t.Fatalf("diff exited %d: %s", code, stderr)
@@ -694,10 +873,20 @@ func TestRun_DiffKS_PathOrigRepositoryIdentity(t *testing.T) {
 				if app == "second-apps" {
 					name = "second"
 				}
-				testutil.WriteFile(t, orig, app+"/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+name+", namespace: apps}\ndata: {greeting: hola}\n")
+				testutil.WriteFile(
+					t,
+					orig,
+					app+"/cm.yaml",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+name+", namespace: apps}\ndata: {greeting: hola}\n",
+				)
 			}
 			for _, dir := range []string{current, orig} {
-				testutil.WriteFile(t, dir, "flux/kustomization.yaml", "resources: [cluster.yaml, second.yaml, external.yaml]\n")
+				testutil.WriteFile(
+					t,
+					dir,
+					"flux/kustomization.yaml",
+					"resources: [cluster.yaml, second.yaml, external.yaml]\n",
+				)
 				testutil.WriteFile(t, dir, "flux/external.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: unrelated, namespace: beta}
@@ -708,7 +897,12 @@ spec: {url: "https://example.invalid/unrelated.git", interval: 1h}
   interval: 1h
 `))
 				testutil.WriteFile(t, dir, "external/kustomization.yaml", "resources:\n- cm.yaml\n")
-				testutil.WriteFile(t, dir, "external/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: must-not-render}\n")
+				testutil.WriteFile(
+					t,
+					dir,
+					"external/cm.yaml",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: must-not-render}\n",
+				)
 			}
 			currentScan, origScan := current, orig
 			if tc.nested {
@@ -723,10 +917,16 @@ spec: {url: "https://example.invalid/unrelated.git", interval: 1h}
 				t.Fatal(err)
 			}
 			if len(c.pathOrigSelfURLs) != 1 || c.pathOrigSelfURLs[0] != url {
-				t.Fatalf("baseline identity = %v, want [%s]; stopping before render to prevent an external fetch", c.pathOrigSelfURLs, url)
+				t.Fatalf(
+					"baseline identity = %v, want [%s]; stopping before render to prevent an external fetch",
+					c.pathOrigSelfURLs,
+					url,
+				)
 			}
-			args := []string{"diff", "ks", "--path", currentScan, "--path-orig", origScan,
-				"--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "diff"}
+			args := []string{
+				"diff", "ks", "--path", currentScan, "--path-orig", origScan,
+				"--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "diff",
+			}
 			stdout, stderr, code := runCLI(t, args...)
 			if code != 0 {
 				t.Fatalf("diff exited %d: %s", code, stderr)
@@ -767,7 +967,12 @@ func TestRun_DiffKS_PathOrigCurrentOnlySource(t *testing.T) {
 			current, orig := writeCustomSourceDiffFixture(t, currentURL)
 			writeBaselineGit(t, current, currentURL)
 			writeBaselineGit(t, orig, tc.urls...)
-			testutil.WriteFile(t, orig, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {greeting: hola}\n")
+			testutil.WriteFile(
+				t,
+				orig,
+				"apps/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {greeting: hola}\n",
+			)
 			c := commonFlags{path: current, pathOrig: orig}
 			if c.owner == nil {
 				c.owner = cachetest.New(t, "", sourcecache.New)
@@ -787,7 +992,8 @@ func TestRun_DiffKS_PathOrigCurrentOnlySource(t *testing.T) {
 			if strings.Contains(stdout, "hola") {
 				t.Errorf("external baseline rendered local manifests:\n%s", stdout)
 			}
-			if !strings.Contains(stderr, "Kustomization gitops-system/apps: external source") || strings.Contains(stderr, "current snapshot") {
+			if !strings.Contains(stderr, "Kustomization gitops-system/apps: external source") ||
+				strings.Contains(stderr, "current snapshot") {
 				t.Errorf("want only baseline external-source disclosure: %s", stderr)
 			}
 		})
@@ -820,7 +1026,12 @@ spec: {url: "https://example.invalid/external.git", interval: 1h}
 		if app == "second-apps" {
 			name = "second"
 		}
-		testutil.WriteFile(t, orig, app+"/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+name+", namespace: apps}\ndata: {greeting: hola}\n")
+		testutil.WriteFile(
+			t,
+			orig,
+			app+"/cm.yaml",
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+name+", namespace: apps}\ndata: {greeting: hola}\n",
+		)
 	}
 	for _, tc := range []struct {
 		name      string
@@ -849,7 +1060,12 @@ spec: {url: "https://example.invalid/external.git", interval: 1h}
 			currentWarning := strings.Index(stderr, "current snapshot:")
 			errorAt := strings.Index(stderr, "no Kustomization named")
 			if tc.warn {
-				if origWarning < 0 || currentWarning <= origWarning || strings.Count(stderr, "Kustomization beta/external-apps: external source GitRepository.source.toolkit.fluxcd.io/beta/external") != 2 || strings.Count(stderr, "not rendered") != 2 {
+				if origWarning < 0 || currentWarning <= origWarning ||
+					strings.Count(
+						stderr,
+						"Kustomization beta/external-apps: external source GitRepository.source.toolkit.fluxcd.io/beta/external",
+					) != 2 ||
+					strings.Count(stderr, "not rendered") != 2 {
 					t.Errorf("want orig then current external-source disclosure: %s", stderr)
 				}
 				if tc.code != 0 && (errorAt < 0 || errorAt >= origWarning) {
@@ -884,11 +1100,31 @@ func TestRun_Diff_ProducerDispositionAndPath(t *testing.T) {
 				}
 				switch mode {
 				case "both-failed":
-					testutil.WriteFile(t, orig, "apps/kustomization.yaml", "resources: [cm.yaml, missing-before.yaml]\n")
-					testutil.WriteFile(t, current, "apps/kustomization.yaml", "resources: [cm.yaml, missing-after.yaml]\n")
+					testutil.WriteFile(
+						t,
+						orig,
+						"apps/kustomization.yaml",
+						"resources: [cm.yaml, missing-before.yaml]\n",
+					)
+					testutil.WriteFile(
+						t,
+						current,
+						"apps/kustomization.yaml",
+						"resources: [cm.yaml, missing-after.yaml]\n",
+					)
 				case "both-suspended":
-					appendScopeSpec(t, orig, "flux/cluster.yaml", "  suspend: true\n  postBuild: {substitute: {CONTROL: before}}\n")
-					appendScopeSpec(t, current, "flux/cluster.yaml", "  suspend: true\n  postBuild: {substitute: {CONTROL: after}}\n")
+					appendScopeSpec(
+						t,
+						orig,
+						"flux/cluster.yaml",
+						"  suspend: true\n  postBuild: {substitute: {CONTROL: before}}\n",
+					)
+					appendScopeSpec(
+						t,
+						current,
+						"flux/cluster.yaml",
+						"  suspend: true\n  postBuild: {substitute: {CONTROL: after}}\n",
+					)
 				default:
 					if err := os.Rename(filepath.Join(current, "apps"), filepath.Join(current, "moved")); err != nil {
 						t.Fatal(err)
@@ -897,9 +1133,19 @@ func TestRun_Diff_ProducerDispositionAndPath(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					testutil.WriteFile(t, current, "flux/cluster.yaml", strings.Replace(string(body), "./apps", "./moved", 1))
+					testutil.WriteFile(
+						t,
+						current,
+						"flux/cluster.yaml",
+						strings.Replace(string(body), "./apps", "./moved", 1),
+					)
 					if mode == "path-content" {
-						testutil.WriteFile(t, current, "moved/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {greeting: changed}\n")
+						testutil.WriteFile(
+							t,
+							current,
+							"moved/cm.yaml",
+							"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {greeting: changed}\n",
+						)
 					}
 				}
 				stdout, stderr, code := runCLI(t, "diff", "ks", "--path", current, "--path-orig", orig,
@@ -920,19 +1166,30 @@ func TestRun_Diff_ProducerDispositionAndPath(t *testing.T) {
 				}
 				switch mode {
 				case "both-failed":
-					if len(out.Changes) != 0 || len(out.Suppressed) != 1 || out.Suppressed[0].Side != "both" || out.Suppressed[0].Count != 0 {
+					if len(out.Changes) != 0 || len(out.Suppressed) != 1 || out.Suppressed[0].Side != "both" ||
+						out.Suppressed[0].Count != 0 {
 						t.Fatalf("unavailable producer disclosure: %s", stdout)
 					}
 				case "both-suspended":
-					if len(out.Changes) != 1 || out.Changes[0].Kind != manifest.KindKustomization || out.Changes[0].Name != "apps" || out.Changes[0].Status != diff.StatusChanged || len(out.Suppressed) != 1 || out.Suppressed[0].Side != "both" || out.Suppressed[0].Count != 0 {
+					if len(out.Changes) != 1 || out.Changes[0].Kind != manifest.KindKustomization ||
+						out.Changes[0].Name != "apps" ||
+						out.Changes[0].Status != diff.StatusChanged ||
+						len(out.Suppressed) != 1 ||
+						out.Suppressed[0].Side != "both" ||
+						out.Suppressed[0].Count != 0 {
 						t.Fatalf("suspended workload or applied declaration disclosure: %s", stdout)
 					}
 				case "path-only":
-					if len(out.Changes) != 1 || out.Changes[0].Kind != manifest.KindKustomization || out.Changes[0].Name != "apps" || out.Changes[0].Status != diff.StatusChanged || len(out.Suppressed) != 0 {
+					if len(out.Changes) != 1 || out.Changes[0].Kind != manifest.KindKustomization ||
+						out.Changes[0].Name != "apps" ||
+						out.Changes[0].Status != diff.StatusChanged ||
+						len(out.Suppressed) != 0 {
 						t.Fatalf("path-only move changed workload output or lost its applied declaration: %s", stdout)
 					}
 				case "path-content":
-					if len(out.Changes) != 2 || out.Changes[0].Kind != manifest.KindKustomization || out.Changes[1].Status != diff.StatusChanged || out.Changes[1].Parent.Path != "moved" {
+					if len(out.Changes) != 2 || out.Changes[0].Kind != manifest.KindKustomization ||
+						out.Changes[1].Status != diff.StatusChanged ||
+						out.Changes[1].Parent.Path != "moved" {
 						t.Fatalf("content move did not pair with current path: %s", stdout)
 					}
 				}

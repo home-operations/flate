@@ -179,5 +179,6 @@ func Select[V any](policy *Matcher, candidates map[string]V, files []string) {
 
 // PruneDir applies shared directory exclusions, including Helm directories during scans.
 func PruneDir(name string, scan bool) bool {
-	return name != "." && strings.HasPrefix(name, ".") || name == "node_modules" || scan && (name == "templates" || name == "crds")
+	return name != "." && strings.HasPrefix(name, ".") || name == "node_modules" ||
+		scan && (name == "templates" || name == "crds")
 }

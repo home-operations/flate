@@ -16,11 +16,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/opencontainers/go-digest"
+
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/home-operations/flate/pkg/source/sourceignore"
 	"github.com/home-operations/flate/pkg/tree"
-	"github.com/opencontainers/go-digest"
 )
 
 type tarFS struct {
@@ -56,6 +57,7 @@ func (f *tarFile) Close() error {
 	}
 	return nil
 }
+
 func (f *tarFile) ReadDir(n int) ([]fs.DirEntry, error) {
 	if !f.IsDir() {
 		return nil, fs.ErrInvalid
@@ -130,6 +132,7 @@ func (r *positionReader) Read(p []byte) (int, error) {
 	r.offset += int64(n)
 	return n, err
 }
+
 func (r *positionReader) Seek(offset int64, whence int) (int64, error) {
 	s, ok := r.Reader.(io.Seeker)
 	if !ok {
@@ -151,7 +154,9 @@ func readArchive(r io.Reader, key ArchiveKey, index *tarFS) (*tarFS, error) {
 	if index.root == nil {
 		builder = tree.NewBuilder(nil)
 	}
-	index.nodes = map[string]*tarNode{".": {FileInfo: (&tar.Header{Name: ".", Mode: 0o750, Typeflag: tar.TypeDir}).FileInfo()}}
+	index.nodes = map[string]*tarNode{
+		".": {FileInfo: (&tar.Header{Name: ".", Mode: 0o750, Typeflag: tar.TypeDir}).FileInfo()},
+	}
 	var total, nextHeader int64
 	for {
 		header := nextHeader
@@ -179,7 +184,10 @@ func readArchive(r io.Reader, key ArchiveKey, index *tarFS) (*tarFS, error) {
 			return nil, fmt.Errorf("unsupported tar entry %q type %d", h.Name, h.Typeflag)
 		}
 		if h.Typeflag != tar.TypeReg && h.Typeflag != tar.TypeDir && !link {
-			if _, err := io.Copy(io.Discard, tr); err != nil { //nolint:gosec // Flux source archives permit uncapped traversal; member paths are validated.
+			if _, err := io.Copy(
+				io.Discard,
+				tr,
+			); err != nil { //nolint:gosec // Flux source archives permit uncapped traversal; member paths are validated.
 				return nil, err
 			}
 			nextHeader = alignNext(pos.offset)
@@ -203,11 +211,15 @@ func readArchive(r io.Reader, key ArchiveKey, index *tarFS) (*tarFS, error) {
 				if key.Policy == "extract" {
 					mode = 0o755
 				}
-				index.nodes[parent] = &tarNode{FileInfo: (&tar.Header{Name: path.Base(parent), Mode: mode, Typeflag: tar.TypeDir}).FileInfo()}
+				index.nodes[parent] = &tarNode{
+					FileInfo: (&tar.Header{Name: path.Base(parent), Mode: mode, Typeflag: tar.TypeDir}).FileInfo(),
+				}
 			}
 		}
 		if link {
-			index.nodes[name] = &tarNode{FileInfo: (&tar.Header{Name: path.Base(name), Typeflag: tar.TypeSymlink}).FileInfo()}
+			index.nodes[name] = &tarNode{
+				FileInfo: (&tar.Header{Name: path.Base(name), Typeflag: tar.TypeSymlink}).FileInfo(),
+			}
 			if index.denied == nil {
 				index.denied = make(map[string]bool)
 			}
@@ -234,7 +246,12 @@ func readArchive(r io.Reader, key ArchiveKey, index *tarFS) (*tarFS, error) {
 			copyHeader.Uid, copyHeader.Gid, copyHeader.Uname, copyHeader.Gname = 0, 0, "", ""
 			copyHeader.AccessTime, copyHeader.ChangeTime = time.Time{}, time.Time{}
 		}
-		index.nodes[name] = &tarNode{FileInfo: copyHeader.FileInfo(), offset: pos.offset, header: header, sparse: sparse}
+		index.nodes[name] = &tarNode{
+			FileInfo: copyHeader.FileInfo(),
+			offset:   pos.offset,
+			header:   header,
+			sparse:   sparse,
+		}
 		if h.Typeflag == tar.TypeDir {
 			if builder != nil && (key.Policy == "fixed" || key.Policy == "extract") {
 				if _, err := fs.Stat(builder, name); errors.Is(err, fs.ErrNotExist) {
@@ -249,7 +266,10 @@ func readArchive(r io.Reader, key ArchiveKey, index *tarFS) (*tarFS, error) {
 			continue
 		}
 		if sparse && builder == nil {
-			if _, err := io.Copy(io.Discard, tr); err != nil { //nolint:gosec // Flux source archives permit sparse expansion; reads stay confined to this member.
+			if _, err := io.Copy(
+				io.Discard,
+				tr,
+			); err != nil { //nolint:gosec // Flux source archives permit sparse expansion; reads stay confined to this member.
 				return nil, err
 			}
 			nextHeader = alignNext(pos.offset)
@@ -305,7 +325,8 @@ func pruneArchive(raw fs.FS, nodes map[string]*tarNode, key ArchiveKey) error {
 	}
 	kept := map[string]bool{".": true}
 	for name, node := range nodes {
-		if name == "." || !node.Mode().IsRegular() && (key.Policy != "fixed" || !node.IsDir()) || matcher.Match(filepath.FromSlash(name), node.IsDir()) {
+		if name == "." || !node.Mode().IsRegular() && (key.Policy != "fixed" || !node.IsDir()) ||
+			matcher.Match(filepath.FromSlash(name), node.IsDir()) {
 			continue
 		}
 		kept[name] = true

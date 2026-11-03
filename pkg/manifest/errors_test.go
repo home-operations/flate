@@ -116,14 +116,27 @@ func TestError_CauseTraversalAllocations(t *testing.T) {
 func TestDependencyFailedError_Format(t *testing.T) {
 	t.Parallel()
 	parent := NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "default", Name: "child"}
-	depA := NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "security", Name: "pocket-id-instance"}
-	depB := NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "database", Name: "cnpg-cluster"}
+	depA := NamedResource{
+		Group:     FluxKustomizeDomain,
+		Kind:      KindKustomization,
+		Namespace: "security",
+		Name:      "pocket-id-instance",
+	}
+	depB := NamedResource{
+		Group:     FluxKustomizeDomain,
+		Kind:      KindKustomization,
+		Namespace: "database",
+		Name:      "cnpg-cluster",
+	}
 
 	err := &DependencyFailedError{
 		Parent: parent,
 		Failed: []NamedResource{depA, depB},
 		Reasons: map[NamedResource]DiagnosticReason{
-			depA: {Subject: DiagnosticFor(depA, nil), Message: `variable "SECRET_DOMAIN" is undefined and has no default`},
+			depA: {
+				Subject: DiagnosticFor(depA, nil),
+				Message: `variable "SECRET_DOMAIN" is undefined and has no default`,
+			},
 			depB: {Subject: DiagnosticFor(depB, nil), Message: "rendering timed out"},
 		},
 	}

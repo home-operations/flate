@@ -22,15 +22,28 @@ import (
 
 func BenchmarkCollectDeps(b *testing.B) {
 	id := testutil.KustomizationID("apps", "target")
-	ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps", DependsOn: []kustomizev1.DependencyReference{{Name: id.Name, Namespace: id.Namespace}}}
+	ks := &manifest.Kustomization{
+		Name:      "consumer",
+		Namespace: "apps",
+		DependsOn: []kustomizev1.DependencyReference{{Name: id.Name, Namespace: id.Namespace}},
+	}
 	st := store.New()
 	c := gateExecution(New(st, nil), manifest.NamedResource{})
-	admissionLoader1 := admissiontest.New(b, admissiontest.Config{Changes: change.NewSet([]string{"target.yaml"}), Index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "target.yaml"}}}, Inventory: st, Root: ""})
+	admissionLoader1 := admissiontest.New(
+		b,
+		admissiontest.Config{
+			Changes: change.NewSet([]string{"target.yaml"}),
+			Index: &manifest.DiscoveryIndex{
+				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "target.yaml"}},
+			},
+			Inventory: st,
+			Root:      "",
+		},
+	)
 	admissiontest.Commit(b, admissionLoader1, nil)
 	c.Configure(Options{Filter: admissionLoader1.Options.Filter, Loader: admissionLoader1})
 	b.ReportAllocs()
 	for b.Loop() {
-
 		c.dependencies(ks, manifest.GateInputs)
 	}
 }
@@ -59,10 +72,18 @@ func TestDependencies_Kustomization_SubstitutionProducers(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			id := manifest.NamedResource{Kind: tc.ref.Kind, Namespace: consumer.Namespace, Name: tc.ref.Name}
-			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {Productions: testutil.ProductionEvidence(append(slices.Clone(tc.producers), tc.owners...))}}}
+			index := &manifest.DiscoveryIndex{
+				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+					id: {Productions: testutil.ProductionEvidence(append(slices.Clone(tc.producers), tc.owners...))},
+				},
+			}
 			c := gateExecution(New(store.New(), nil), manifest.NamedResource{})
 			c.Configure(Options{Index: index})
-			ks := &manifest.Kustomization{Name: consumer.Name, Namespace: consumer.Namespace, PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{tc.ref}}}
+			ks := &manifest.Kustomization{
+				Name:      consumer.Name,
+				Namespace: consumer.Namespace,
+				PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{tc.ref}},
+			}
 			var got []manifest.NamedResource
 			for _, dep := range c.dependenciesForTest(ks) {
 				got = append(got, dep.NamedResource)
@@ -98,21 +119,37 @@ func TestResolve_SubstitutionProducers(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			id := manifest.NamedResource{Kind: tc.ref.Kind, Namespace: consumer.Namespace, Name: tc.ref.Name}
-			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {Productions: testutil.ProductionEvidence(append(slices.Clone(tc.producers), tc.owners...))}}}
+			index := &manifest.DiscoveryIndex{
+				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+					id: {Productions: testutil.ProductionEvidence(append(slices.Clone(tc.producers), tc.owners...))},
+				},
+			}
 			c := gateExecution(New(store.New(), nil), manifest.NamedResource{})
 			c.Configure(Options{Index: index})
-			ks := &manifest.Kustomization{Name: consumer.Name, Namespace: consumer.Namespace, PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{tc.ref}}}
+			ks := &manifest.Kustomization{
+				Name:      consumer.Name,
+				Namespace: consumer.Namespace,
+				PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{tc.ref}},
+			}
 
 			c.Reads.Init(c.Store, ks.Named(), nil)
 			inputs, admissionErr1 := c.DataInputs(t.Context(), ks, values.NewStoreProvider(&c.Reads, false))
 			if admissionErr1 != nil {
 				t.Fatal(admissionErr1)
 			}
-			err := c.AwaitData(t.Context(), DataWait{Inputs: inputs, Resume: func(context.Context, manifest.DrainLevel, []manifest.NamedResource) error { return nil }}, manifest.DrainNone)
+			err := c.AwaitData(
+				t.Context(),
+				DataWait{
+					Inputs: inputs,
+					Resume: func(context.Context, manifest.DrainLevel, []manifest.NamedResource) error { return nil },
+				},
+				manifest.DrainNone,
+			)
 			blocked, waiting := errors.AsType[*depwait.ErrBlocked](err)
 			var want []manifest.NamedResource
 			for _, supplier := range append(slices.Clone(tc.producers), tc.owners...) {
-				if supplier != consumer && tc.ref.Name != "" && (tc.ref.Kind == manifest.KindConfigMap || tc.ref.Kind == manifest.KindSecret) {
+				if supplier != consumer && tc.ref.Name != "" &&
+					(tc.ref.Kind == manifest.KindConfigMap || tc.ref.Kind == manifest.KindSecret) {
 					want = append(want, supplier)
 				}
 			}
@@ -132,17 +169,30 @@ func TestResolve_SubstitutionProducers(t *testing.T) {
 			} else if err != nil {
 				t.Fatal(err)
 			}
-
 		})
 	}
 }
 
 func TestCollectDeps_Allocations(t *testing.T) {
 	id := testutil.KustomizationID("apps", "target")
-	ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps", DependsOn: []kustomizev1.DependencyReference{{Name: id.Name, Namespace: id.Namespace}}}
+	ks := &manifest.Kustomization{
+		Name:      "consumer",
+		Namespace: "apps",
+		DependsOn: []kustomizev1.DependencyReference{{Name: id.Name, Namespace: id.Namespace}},
+	}
 	st := store.New()
 	c := gateExecution(New(st, nil), manifest.NamedResource{})
-	admissionLoader1 := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"target.yaml"}), Index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "target.yaml"}}}, Inventory: st, Root: ""})
+	admissionLoader1 := admissiontest.New(
+		t,
+		admissiontest.Config{
+			Changes: change.NewSet([]string{"target.yaml"}),
+			Index: &manifest.DiscoveryIndex{
+				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "target.yaml"}},
+			},
+			Inventory: st,
+			Root:      "",
+		},
+	)
 	admissiontest.Commit(t, admissionLoader1, nil)
 	c.Configure(Options{Filter: admissionLoader1.Options.Filter, Loader: admissionLoader1})
 	allocs := testing.AllocsPerRun(100, func() { c.dependencies(ks, manifest.GateInputs) })
@@ -191,14 +241,31 @@ func TestSubstitutionAvailability_ObservesMaterializers(t *testing.T) {
 			}
 			c := New(store.New(), nil)
 			c.Configure(Options{Index: index})
-			ks := &manifest.Kustomization{Name: consumer.Name, Namespace: consumer.Namespace, PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: tc.kind, Name: id.Name, Optional: tc.optional}}}}
+			ks := &manifest.Kustomization{
+				Name:      consumer.Name,
+				Namespace: consumer.Namespace,
+				PostBuild: &kustomizev1.PostBuild{
+					SubstituteFrom: []manifest.SubstituteReference{
+						{Kind: tc.kind, Name: id.Name, Optional: tc.optional},
+					},
+				},
+			}
 			execution := gateExecution(c, consumer)
 			if deps := execution.authoredDependenciesForTest(ks); len(deps) != 0 {
 				t.Fatalf("data became authored readiness gate: %v", deps)
 			}
 			input := values.NewStoreProvider(&execution.Reads, false).Lookup(id)
 			w := depwait.Waiter{Store: &execution.Reads, Parent: consumer}
-			got := w.Available(t.Context(), depwait.DataDependency{NamedResource: id, Input: input, Optional: tc.optional, AllowMissing: tc.kind == manifest.KindSecret}, manifest.DrainNone)
+			got := w.Available(
+				t.Context(),
+				depwait.DataDependency{
+					NamedResource: id,
+					Input:         input,
+					Optional:      tc.optional,
+					AllowMissing:  tc.kind == manifest.KindSecret,
+				},
+				manifest.DrainNone,
+			)
 			if got.Kind != tc.want {
 				t.Fatalf("availability=%+v want=%v", got, tc.want)
 			}
@@ -232,25 +299,53 @@ func TestSubstitutionAvailability_UnselectedMaterializer(t *testing.T) {
 	cmObj := &manifest.ConfigMap{Name: "cluster-settings", Namespace: ""}
 	cmID := cmObj.Named()
 
-	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{consumer: {File: "kubernetes/flux/cluster-apps.yaml"}, producer: {File: "kubernetes/flux/cluster-vars.yaml"}, cmID: {File: "kubernetes/flux/vars/cluster-settings.yaml", Productions: []manifest.Production{{Owner: producer, Authored: cmID, Path: "kubernetes/flux/vars/cluster-settings.yaml", File: "kubernetes/flux/vars/cluster-settings.yaml"}}}}, Claims: map[string][]manifest.NamedResource{"kubernetes/apps/": {consumer}, "kubernetes/flux/vars/": {producer}}}
+	index := &manifest.DiscoveryIndex{
+		Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+			consumer: {File: "kubernetes/flux/cluster-apps.yaml"},
+			producer: {File: "kubernetes/flux/cluster-vars.yaml"},
+			cmID: {
+				File: "kubernetes/flux/vars/cluster-settings.yaml",
+				Productions: []manifest.Production{
+					{
+						Owner:    producer,
+						Authored: cmID,
+						Path:     "kubernetes/flux/vars/cluster-settings.yaml",
+						File:     "kubernetes/flux/vars/cluster-settings.yaml",
+					},
+				},
+			},
+		},
+		Claims: map[string][]manifest.NamedResource{
+			"kubernetes/apps/":      {consumer},
+			"kubernetes/flux/vars/": {producer},
+		},
+	}
 	fixture := store.New()
 	fixture.AddObjects([]manifest.BaseManifest{consumerObj, producerObj, cmObj})
 	fixture.SetDiscoveryIndex(index)
-	fLoader := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"kubernetes/apps/changed.yaml"}), Index: index, Inventory: fixture, Root: ""})
+	fLoader := admissiontest.New(
+		t,
+		admissiontest.Config{
+			Changes:   change.NewSet([]string{"kubernetes/apps/changed.yaml"}),
+			Index:     index,
+			Inventory: fixture,
+			Root:      "",
+		},
+	)
 	admissiontest.Commit(t, fLoader, nil)
 	f := fLoader.Options.Filter
 
 	c := New(store.New(), nil)
 	c.Configure(Options{Filter: f, Index: index, Loader: fLoader})
 	execution := gateExecution(c, consumerObj.Named())
-	input := values.NewStoreProvider(&execution.Reads, false).Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: consumer.Namespace, Name: cmID.Name})
+	input := values.NewStoreProvider(&execution.Reads, false).
+		Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: consumer.Namespace, Name: cmID.Name})
 	if !slices.Equal(input.Materializers, []manifest.NamedResource{producer}) || !input.Offline {
 		t.Fatalf("missing unselected materializer evidence: %+v", input)
 	}
 	if deps := execution.authoredDependenciesForTest(consumerObj); len(deps) != 0 {
 		t.Fatalf("materializer became required gate: %v", deps)
 	}
-
 }
 
 func TestCollectDeps_SkipsSelfProducer(t *testing.T) {
@@ -266,11 +361,28 @@ func TestCollectDeps_SkipsSelfProducer(t *testing.T) {
 	cmObj := &manifest.ConfigMap{Name: "settings", Namespace: self.Namespace}
 	cmID := cmObj.Named()
 
-	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{self: {File: "kubernetes/foo/app/ks.yaml"}, cmID: {File: "kubernetes/foo/app/settings.yaml", Productions: testutil.ProductionEvidence([]manifest.NamedResource{self})}}, Claims: map[string][]manifest.NamedResource{"kubernetes/foo/app/": {self}}}
+	index := &manifest.DiscoveryIndex{
+		Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+			self: {File: "kubernetes/foo/app/ks.yaml"},
+			cmID: {
+				File:        "kubernetes/foo/app/settings.yaml",
+				Productions: testutil.ProductionEvidence([]manifest.NamedResource{self}),
+			},
+		},
+		Claims: map[string][]manifest.NamedResource{"kubernetes/foo/app/": {self}},
+	}
 	fixture := store.New()
 	fixture.AddObjects([]manifest.BaseManifest{selfObj, cmObj})
 	fixture.SetDiscoveryIndex(index)
-	fLoader := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"kubernetes/foo/app/changed.yaml"}), Index: index, Inventory: fixture, Root: ""})
+	fLoader := admissiontest.New(
+		t,
+		admissiontest.Config{
+			Changes:   change.NewSet([]string{"kubernetes/foo/app/changed.yaml"}),
+			Index:     index,
+			Inventory: fixture,
+			Root:      "",
+		},
+	)
 	admissiontest.Commit(t, fLoader, nil)
 	f := fLoader.Options.Filter
 
@@ -295,9 +407,31 @@ func TestSubstitutionAvailability_RuntimeDeclaration(t *testing.T) {
 	c := New(s, nil)
 	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
 	s.AddObject(producer)
-	declaration := &manifest.RawObject{APIVersion: "external-secrets.io/v1", Kind: "ExternalSecret", Name: "declaration", Namespace: "apps", Spec: map[string]any{"target": map[string]any{"name": "credentials", "template": map[string]any{"data": map[string]any{"X": "remote"}}}}}
-	c.emit(t.Context(), producer.Named(), &store.Emission{Children: []store.Child{{Obj: declaration}}, Complete: true}, nil)
-	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindSecret, Name: "credentials"}}}}
+	declaration := &manifest.RawObject{
+		APIVersion: "external-secrets.io/v1",
+		Kind:       "ExternalSecret",
+		Name:       "declaration",
+		Namespace:  "apps",
+		Spec: map[string]any{
+			"target": map[string]any{
+				"name":     "credentials",
+				"template": map[string]any{"data": map[string]any{"X": "remote"}},
+			},
+		},
+	}
+	c.emit(
+		t.Context(),
+		producer.Named(),
+		&store.Emission{Children: []store.Child{{Obj: declaration}}, Complete: true},
+		nil,
+	)
+	consumer := &manifest.Kustomization{
+		Name:      "consumer",
+		Namespace: "apps",
+		PostBuild: &kustomizev1.PostBuild{
+			SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindSecret, Name: "credentials"}},
+		},
+	}
 	execution := gateExecution(c, consumer.Named())
 	target := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: consumer.Namespace, Name: "credentials"}
 	input := values.NewStoreProvider(&execution.Reads, true).Lookup(target)
@@ -313,7 +447,6 @@ func TestSubstitutionAvailability_RuntimeDeclaration(t *testing.T) {
 	if deps := execution.authoredDependenciesForTest(consumer); len(deps) != 0 {
 		t.Fatalf("runtime declaration became required gate: %v", deps)
 	}
-
 }
 
 func TestCollectDeps_DeclarationAvailabilityUsesCommonGate(t *testing.T) {
@@ -333,7 +466,12 @@ func TestCollectDeps_DeclarationAvailabilityUsesCommonGate(t *testing.T) {
 			}
 			if name == "file evidence" {
 				r := index.Records[child.Named()]
-				r.Productions = []manifest.Production{{Owner: manifest.NamedResource{Kind: manifest.KindKustomization, Name: "file-owner"}, Path: "child.yaml"}}
+				r.Productions = []manifest.Production{
+					{
+						Owner: manifest.NamedResource{Kind: manifest.KindKustomization, Name: "file-owner"},
+						Path:  "child.yaml",
+					},
+				}
 				index.Records[child.Named()] = r
 			}
 			if strings.HasPrefix(name, "self declared") {
@@ -347,7 +485,15 @@ func TestCollectDeps_DeclarationAvailabilityUsesCommonGate(t *testing.T) {
 				st.SetDiscoveryIndex(index)
 				other := &manifest.Kustomization{Name: "other", Namespace: child.Namespace}
 				st.AddObject(other)
-				st.RecordEmitted(other.Named(), captureEmission(st, other.Named(), &store.Emission{Children: []store.Child{{Obj: child}}, Complete: true}), nil)
+				st.RecordEmitted(
+					other.Named(),
+					captureEmission(
+						st,
+						other.Named(),
+						&store.Emission{Children: []store.Child{{Obj: child}}, Complete: true},
+					),
+					nil,
+				)
 			}
 			c := New(st, nil)
 			c.Configure(Options{Index: index})
@@ -394,29 +540,90 @@ func TestCollectDeps_OrderingFilter(t *testing.T) {
 				changes = change.NewSet(files)
 			}
 			consumer := &manifest.Kustomization{
-				Name: "consumer", Namespace: "apps",
-				DependsOn: []kustomizev1.DependencyReference{{Name: target.Name, Namespace: target.Namespace, ReadyExpr: "dep.spec.suspend == false"}, {Name: target.Name, Namespace: target.Namespace, ReadyExpr: "true"}},
-				SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "source", Namespace: "apps"},
-				PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "optional", Optional: true}, {Kind: manifest.KindConfigMap, Name: "ignored"}, {Kind: "Unsupported", Name: "unsupported"}, {Kind: manifest.KindConfigMap, Name: "self"}, {Kind: manifest.KindConfigMap, Name: "values"}}},
+				Name:      "consumer",
+				Namespace: "apps",
+				DependsOn: []kustomizev1.DependencyReference{
+					{Name: target.Name, Namespace: target.Namespace, ReadyExpr: "dep.spec.suspend == false"},
+					{Name: target.Name, Namespace: target.Namespace, ReadyExpr: "true"},
+				},
+				SourceRef: kustomizev1.CrossNamespaceSourceReference{
+					Kind:      manifest.KindGitRepository,
+					Name:      "source",
+					Namespace: "apps",
+				},
+				PostBuild: &kustomizev1.PostBuild{
+					SubstituteFrom: []manifest.SubstituteReference{
+						{Kind: manifest.KindConfigMap, Name: "optional", Optional: true},
+						{Kind: manifest.KindConfigMap, Name: "ignored"},
+						{Kind: "Unsupported", Name: "unsupported"},
+						{Kind: manifest.KindConfigMap, Name: "self"},
+						{Kind: manifest.KindConfigMap, Name: "values"},
+					},
+				},
 			}
 			if tc.noData {
 				consumer.PostBuild = nil
 			}
-			filterLoader := admissiontest.New(t, admissiontest.Config{Changes: changes, Index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{consumer.Named(): {File: "consumer.yaml"}, target.Named(): {File: "target.yaml"}}}, Inventory: st, Root: ""})
+			filterLoader := admissiontest.New(
+				t,
+				admissiontest.Config{
+					Changes: changes,
+					Index: &manifest.DiscoveryIndex{
+						Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+							consumer.Named(): {File: "consumer.yaml"},
+							target.Named():   {File: "target.yaml"},
+						},
+					},
+					Inventory: st,
+					Root:      "",
+				},
+			)
 			admissiontest.Commit(t, filterLoader, nil)
 			filter := filterLoader.Options.Filter
 			parent := testutil.KustomizationID("apps", "parent")
-			producers := []manifest.NamedResource{testutil.KustomizationID("apps", "second"), testutil.KustomizationID("apps", "first")}
+			producers := []manifest.NamedResource{
+				testutil.KustomizationID("apps", "second"),
+				testutil.KustomizationID("apps", "first"),
+			}
 			slices.SortFunc(producers, manifest.NamedResource.Compare)
 			c := New(st, nil)
-			c.Configure(Options{Index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{consumer.Named(): {Productions: []manifest.Production{{Owner: parent}}}, {Kind: manifest.KindConfigMap, Namespace: "apps", Name: "values"}: {Productions: testutil.ProductionEvidence(producers)}, {Kind: manifest.KindConfigMap, Namespace: "apps", Name: "self"}: {Productions: testutil.ProductionEvidence([]manifest.NamedResource{consumer.Named()})}}}, Filter: filter, Existence: indexedOrderingDeps{target.Named(): tc.indexed}, Loader: filterLoader})
+			c.Configure(
+				Options{
+					Index: &manifest.DiscoveryIndex{
+						Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+							consumer.Named(): {Productions: []manifest.Production{{Owner: parent}}},
+							{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "values"}: {
+								Productions: testutil.ProductionEvidence(producers),
+							},
+							{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "self"}: {
+								Productions: testutil.ProductionEvidence([]manifest.NamedResource{consumer.Named()}),
+							},
+						},
+					},
+					Filter:    filter,
+					Existence: indexedOrderingDeps{target.Named(): tc.indexed},
+					Loader:    filterLoader,
+				},
+			)
 			size := len(filter.KeepNames())
 			deps := gateExecution(c, consumer.Named()).authoredDependenciesForTest(consumer)
 			var want []manifest.DependencyRef
 			if tc.retain {
-				want = append(want, manifest.DependencyRef{NamedResource: target.Named(), ReadyExpr: new("dep.spec.suspend == false")}, manifest.DependencyRef{NamedResource: target.Named(), ReadyExpr: new("true")})
+				want = append(
+					want,
+					manifest.DependencyRef{NamedResource: target.Named(), ReadyExpr: new("dep.spec.suspend == false")},
+					manifest.DependencyRef{NamedResource: target.Named(), ReadyExpr: new("true")},
+				)
 			}
-			want = append(want, manifest.DependencyRef{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "source"})
+			want = append(
+				want,
+				manifest.DependencyRef{
+					Group:     manifest.SourceDomain,
+					Kind:      manifest.KindGitRepository,
+					Namespace: "apps",
+					Name:      "source",
+				},
+			)
 			assert.Diff(t, deps, want)
 			if len(filter.KeepNames()) != size || len(consumer.DependsOn) != 2 {
 				t.Error("ordering collection must preserve keep and input edges")

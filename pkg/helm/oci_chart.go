@@ -23,11 +23,19 @@ func ociChartVersion(version, revision string) (string, error) {
 		return "", err
 	}
 	if tag != nil && !tag.Equal(ver) {
-		return "", manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("artifact revision %q does not match chart version %q", revision, version))
+		return "", manifest.NewError(
+			manifest.ErrInput,
+			nil,
+			fmt.Sprintf("artifact revision %q does not match chart version %q", revision, version),
+		)
 	}
 	tracked, err := ver.SetMetadata(suffix)
 	if err != nil {
-		return "", manifest.NewError(manifest.ErrInput, fmt.Errorf("invalid artifact revision %q: %w", revision, err), "")
+		return "", manifest.NewError(
+			manifest.ErrInput,
+			fmt.Errorf("invalid artifact revision %q: %w", revision, err),
+			"",
+		)
 	}
 	return tracked.String(), nil
 }

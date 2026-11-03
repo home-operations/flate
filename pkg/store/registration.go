@@ -220,7 +220,8 @@ func (input *Input) current() bool {
 
 func (input *Input) productionCurrent() bool {
 	cell := input.cell(producerFacet)
-	return cell == nil || cell.head == nil || cell.absent == nil && cell.head.generation.Load() == cell.generation.Load()
+	return cell == nil || cell.head == nil ||
+		cell.absent == nil && cell.head.generation.Load() == cell.generation.Load()
 }
 
 // Valid reports whether every consumed authority still has its original stamp.
@@ -232,7 +233,9 @@ func (r *ReadSet) Valid() bool {
 		return false
 	}
 	for input := r.inputs; input != nil; input = input.next {
-		if !input.current() || input.view.bound && (input.view.binding != nil && !input.view.binding.current() || input.view.support != nil && !input.view.support.productionCurrent()) {
+		if !input.current() ||
+			input.view.bound &&
+				(input.view.binding != nil && !input.view.binding.current() || input.view.support != nil && !input.view.support.productionCurrent()) {
 			if !r.accepted.Load() {
 				r.invalid.Store(true)
 			}

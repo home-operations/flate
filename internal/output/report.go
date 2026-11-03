@@ -258,8 +258,15 @@ func (e Encoder) Report(r Report, results Encoder) error {
 func (m Model) failuresBlock(names Names, color bool) string {
 	rows := make([]string, 0, len(m.Primary)+len(m.Missing))
 	for _, p := range m.Primary {
-		row := fmt.Sprintf("  %s  %s  %s",
-			Fail(GlyphFail, color), Dim(withContext(m.Context, names.Subjects[p.ID].Kind), color), names.Subjects[p.ID].Name) +
+		row := fmt.Sprintf(
+			"  %s  %s  %s",
+			Fail(
+				GlyphFail,
+				color,
+			),
+			Dim(withContext(m.Context, names.Subjects[p.ID].Kind), color),
+			names.Subjects[p.ID].Name,
+		) +
 			MessageTail(p.Msg, nil, color)
 		if len(p.Blocks) > 0 {
 			row += "\n" + msgIndent + Dim(withContext(m.Context, "blocks "+summarize(p.Blocks, names)), color)
@@ -267,10 +274,18 @@ func (m Model) failuresBlock(names Names, color bool) string {
 		rows = append(rows, row)
 	}
 	for _, mr := range m.Missing {
-		rows = append(rows, fmt.Sprintf("  %s  %s  %s  %s\n%s%s",
-			Fail(GlyphFail, color), Dim(withContext(m.Context, names.Subjects[mr.ID].Kind), color), names.Subjects[mr.ID].Name,
-			Fail("not found", color), msgIndent,
-			Dim(withContext(m.Context, "required by "+summarize(mr.RequiredBy, names)), color)))
+		rows = append(rows, fmt.Sprintf(
+			"  %s  %s  %s  %s\n%s%s",
+			Fail(
+				GlyphFail,
+				color,
+			),
+			Dim(withContext(m.Context, names.Subjects[mr.ID].Kind), color),
+			names.Subjects[mr.ID].Name,
+			Fail("not found", color),
+			msgIndent,
+			Dim(withContext(m.Context, "required by "+summarize(mr.RequiredBy, names)), color),
+		))
 	}
 	return strings.Join(rows, "\n")
 }

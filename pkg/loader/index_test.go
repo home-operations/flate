@@ -71,7 +71,10 @@ func readerForTest(root string) documentReader {
 }
 
 func admitForTest(s *store.Store, root string) {
-	s.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: root, LocalRoot: root, FS: os.DirFS(root)})
+	s.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: root, LocalRoot: root, FS: os.DirFS(root)},
+	)
 }
 
 func rendererFixture(t *testing.T, l *Loader, root string) *manifest.DiscoveryIndex {
@@ -162,7 +165,12 @@ func TestFinalizeIndex_Productions(t *testing.T) {
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "raw/kustomization.yaml", "namespace: raw\nresources: [input.yaml]\n")
 			testutil.WriteFile(t, root, "overlay/kustomization.yaml", "namespace: apps\nresources: [../raw]\n")
-			testutil.WriteFile(t, root, "raw/input.yaml", "apiVersion: v1\nkind: "+tc.kind+"\nmetadata: {name: input, namespace: '"+tc.namespace+"'}\ndata: {value: fixture}\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"raw/input.yaml",
+				"apiVersion: v1\nkind: "+tc.kind+"\nmetadata: {name: input, namespace: '"+tc.namespace+"'}\ndata: {value: fixture}\n",
+			)
 			id := manifest.NamedResource{Kind: tc.kind, Name: "input", Namespace: tc.namespace}
 			overlay := &manifest.Kustomization{Name: "overlay", Namespace: "flux-system", Path: "./overlay"}
 			newLoader := func() *Loader {
@@ -183,8 +191,10 @@ func TestFinalizeIndex_Productions(t *testing.T) {
 			if got := testutil.ProductionOwners(r); !slices.Equal(got, want) {
 				t.Fatalf("projected materializers: %v", got)
 			}
-			assert.Diff(t, r.Productions, []manifest.Production{{Owner: overlay.Named(), Authored: id,
-				Path: filepath.Join(root, "raw/input.yaml"), File: "raw/input.yaml", Source: manifest.BootstrapSourceID}})
+			assert.Diff(t, r.Productions, []manifest.Production{{
+				Owner: overlay.Named(), Authored: id,
+				Path: filepath.Join(root, "raw/input.yaml"), File: "raw/input.yaml", Source: manifest.BootstrapSourceID,
+			}})
 			snapshot := snapshotIndexForTest(l.Index)
 			if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 				t.Fatal(err)
@@ -203,8 +213,22 @@ func TestFinalizeIndex_RecordCompletion(t *testing.T) {
 	first := testutil.KustomizationID("flux-system", "a")
 	last := testutil.KustomizationID("flux-system", "z")
 	source := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "source"}
-	a := manifest.Production{Owner: first, Declaration: id, Authored: id, Path: "declared.yaml", File: "declared.yaml", Source: source}
-	z := manifest.Production{Owner: last, Declaration: id, Authored: id, Path: "declared.yaml", File: "declared.yaml", Source: source}
+	a := manifest.Production{
+		Owner:       first,
+		Declaration: id,
+		Authored:    id,
+		Path:        "declared.yaml",
+		File:        "declared.yaml",
+		Source:      source,
+	}
+	z := manifest.Production{
+		Owner:       last,
+		Declaration: id,
+		Authored:    id,
+		Path:        "declared.yaml",
+		File:        "declared.yaml",
+		Source:      source,
+	}
 	root := a
 	root.Owner, root.Declaration = manifest.NamedResource{}, manifest.NamedResource{}
 	otherSource := root
@@ -223,18 +247,30 @@ func TestFinalizeIndex_RecordCompletion(t *testing.T) {
 		name         string
 		record, want manifest.DiscoveryRecord
 	}{
-		{name: "authored fallback", record: manifest.DiscoveryRecord{Authored: id, Path: "raw.yaml", File: "raw.yaml"},
-			want: manifest.DiscoveryRecord{Authored: id, Path: "raw.yaml", File: "raw.yaml", Productions: []manifest.Production{{Authored: id, Path: "raw.yaml", File: "raw.yaml", Source: manifest.BootstrapSourceID}}}},
-		{name: "empty path is file backed", record: manifest.DiscoveryRecord{Authored: id, File: "generator.yaml"},
-			want: manifest.DiscoveryRecord{Authored: id, File: "generator.yaml", Productions: []manifest.Production{{Authored: id, File: "generator.yaml", Source: manifest.BootstrapSourceID}}}},
-		{name: "no authored identity", record: manifest.DiscoveryRecord{Path: "raw.yaml", File: "raw.yaml"},
-			want: manifest.DiscoveryRecord{Path: "raw.yaml", File: "raw.yaml"}},
-		{name: "non file authored record", record: manifest.DiscoveryRecord{Authored: id, Path: "raw.yaml"},
-			want: manifest.DiscoveryRecord{Authored: id, Path: "raw.yaml"}},
-		{name: "existing file evidence is sorted", record: manifest.DiscoveryRecord{Authored: id, Path: "raw.yaml", File: "raw.yaml", Refs: []manifest.NamedResource{source}, Parent: first, Pinned: true, Productions: []manifest.Production{z, a}},
-			want: manifest.DiscoveryRecord{Authored: id, Path: "raw.yaml", File: "raw.yaml", Refs: []manifest.NamedResource{source}, Parent: first, Pinned: true, Productions: []manifest.Production{a, z}}},
-		{name: "existing non file evidence is sorted", record: manifest.DiscoveryRecord{Authored: id, Productions: []manifest.Production{z, a}},
-			want: manifest.DiscoveryRecord{Authored: id, Productions: []manifest.Production{a, z}}},
+		{
+			name: "authored fallback", record: manifest.DiscoveryRecord{Authored: id, Path: "raw.yaml", File: "raw.yaml"},
+			want: manifest.DiscoveryRecord{Authored: id, Path: "raw.yaml", File: "raw.yaml", Productions: []manifest.Production{{Authored: id, Path: "raw.yaml", File: "raw.yaml", Source: manifest.BootstrapSourceID}}},
+		},
+		{
+			name: "empty path is file backed", record: manifest.DiscoveryRecord{Authored: id, File: "generator.yaml"},
+			want: manifest.DiscoveryRecord{Authored: id, File: "generator.yaml", Productions: []manifest.Production{{Authored: id, File: "generator.yaml", Source: manifest.BootstrapSourceID}}},
+		},
+		{
+			name: "no authored identity", record: manifest.DiscoveryRecord{Path: "raw.yaml", File: "raw.yaml"},
+			want: manifest.DiscoveryRecord{Path: "raw.yaml", File: "raw.yaml"},
+		},
+		{
+			name: "non file authored record", record: manifest.DiscoveryRecord{Authored: id, Path: "raw.yaml"},
+			want: manifest.DiscoveryRecord{Authored: id, Path: "raw.yaml"},
+		},
+		{
+			name: "existing file evidence is sorted", record: manifest.DiscoveryRecord{Authored: id, Path: "raw.yaml", File: "raw.yaml", Refs: []manifest.NamedResource{source}, Parent: first, Pinned: true, Productions: []manifest.Production{z, a}},
+			want: manifest.DiscoveryRecord{Authored: id, Path: "raw.yaml", File: "raw.yaml", Refs: []manifest.NamedResource{source}, Parent: first, Pinned: true, Productions: []manifest.Production{a, z}},
+		},
+		{
+			name: "existing non file evidence is sorted", record: manifest.DiscoveryRecord{Authored: id, Productions: []manifest.Production{z, a}},
+			want: manifest.DiscoveryRecord{Authored: id, Productions: []manifest.Production{a, z}},
+		},
 		{name: "file origin gains owner", record: manifest.DiscoveryRecord{Authored: id, Productions: []manifest.Production{root, a}}, want: manifest.DiscoveryRecord{Authored: id, Productions: []manifest.Production{a}}},
 		{name: "file origin follows owners", record: manifest.DiscoveryRecord{Authored: id, Productions: []manifest.Production{z, root, a}}, want: manifest.DiscoveryRecord{Authored: id, Productions: []manifest.Production{a, z}}},
 		{name: "independent source survives", record: manifest.DiscoveryRecord{Authored: id, Productions: []manifest.Production{otherSource, a}}, want: manifest.DiscoveryRecord{Authored: id, Productions: []manifest.Production{otherSource, a}}},

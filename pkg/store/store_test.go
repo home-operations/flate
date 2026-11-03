@@ -191,12 +191,48 @@ func TestStore_AddObject_NestedContent(t *testing.T) {
 		spec  map[string]any
 		equal bool
 	}{
-		{"equal", map[string]any{"items": []any{map[string]any{"value": "same"}, true, int64(1), 1.5}, "extra": []string{"a"}}, true},
-		{"nested map changed", map[string]any{"items": []any{map[string]any{"value": "changed"}, true, int64(1), 1.5}, "extra": []string{"a"}}, false},
-		{"slice length changed", map[string]any{"items": []any{map[string]any{"value": "same"}}, "extra": []string{"a"}}, false},
-		{"scalar type changed", map[string]any{"items": []any{map[string]any{"value": "same"}, true, 1, 1.5}, "extra": []string{"a"}}, false},
-		{"fallback changed", map[string]any{"items": []any{map[string]any{"value": "same"}, true, int64(1), 1.5}, "extra": []string{"b"}}, false},
-		{"missing key", map[string]any{"items": []any{map[string]any{"value": "same"}, true, int64(1), 1.5}, "other": []string{"a"}}, false},
+		{
+			"equal",
+			map[string]any{
+				"items": []any{map[string]any{"value": "same"}, true, int64(1), 1.5},
+				"extra": []string{"a"},
+			},
+			true,
+		},
+		{
+			"nested map changed",
+			map[string]any{
+				"items": []any{map[string]any{"value": "changed"}, true, int64(1), 1.5},
+				"extra": []string{"a"},
+			},
+			false,
+		},
+		{
+			"slice length changed",
+			map[string]any{"items": []any{map[string]any{"value": "same"}}, "extra": []string{"a"}},
+			false,
+		},
+		{
+			"scalar type changed",
+			map[string]any{"items": []any{map[string]any{"value": "same"}, true, 1, 1.5}, "extra": []string{"a"}},
+			false,
+		},
+		{
+			"fallback changed",
+			map[string]any{
+				"items": []any{map[string]any{"value": "same"}, true, int64(1), 1.5},
+				"extra": []string{"b"},
+			},
+			false,
+		},
+		{
+			"missing key",
+			map[string]any{
+				"items": []any{map[string]any{"value": "same"}, true, int64(1), 1.5},
+				"other": []string{"a"},
+			},
+			false,
+		},
 		{"nil spec", nil, false},
 		{"empty spec", map[string]any{}, false},
 	}
@@ -225,9 +261,13 @@ func TestObjectEqual_ConcurrentProjection(t *testing.T) {
 	parse := func() *manifest.Kustomization {
 		t.Helper()
 		obj, _, _, err := manifest.ParseDoc(map[string]any{
-			"apiVersion": manifest.FluxKustomizeDomain + "/v1", "kind": manifest.KindKustomization,
-			"metadata": map[string]any{"name": "app", "namespace": "ns"},
-			"spec":     map[string]any{"path": "./app", "sourceRef": map[string]any{"kind": "GitRepository", "name": "repo"}},
+			"apiVersion": manifest.FluxKustomizeDomain + "/v1",
+			"kind":       manifest.KindKustomization,
+			"metadata":   map[string]any{"name": "app", "namespace": "ns"},
+			"spec": map[string]any{
+				"path":      "./app",
+				"sourceRef": map[string]any{"kind": "GitRepository", "name": "repo"},
+			},
 		}, manifest.ParseDocOptions{})
 		if err != nil {
 			t.Fatal(err)
@@ -441,7 +481,13 @@ func TestStore_AddObjects_DispatchesAfterAllWrites(t *testing.T) {
 	s := New()
 	a := newCM("a", "ns")
 	b := &manifest.RawObject{Kind: manifest.KindConfigMap, APIVersion: "example.test/v1", Name: "a", Namespace: "ns"}
-	c := &manifest.RawObject{Kind: "Deployment", APIVersion: "apps/v1", Name: "b", Namespace: "ns", Spec: map[string]any{"replicas": 1}}
+	c := &manifest.RawObject{
+		Kind:       "Deployment",
+		APIVersion: "apps/v1",
+		Name:       "b",
+		Namespace:  "ns",
+		Spec:       map[string]any{"replicas": 1},
+	}
 	idA, idB, idC := a.Named(), b.Named(), c.Named()
 	seen := map[manifest.NamedResource]int{}
 	s.AddListener(EventObjectAdded, func(id manifest.NamedResource, payload any) {
@@ -534,7 +580,9 @@ func TestStore_AdmissionResetsUnchangedReadiness(t *testing.T) {
 	assert.Equal(t, previous.Conditions[0].Status, metav1.ConditionTrue)
 }
 
-func TestStore_UpdateStatus_Idempotent(t *testing.T) { //nolint:tparallel // Subtests exercise one ordered transition history.
+func TestStore_UpdateStatus_Idempotent(
+	t *testing.T,
+) { //nolint:tparallel // Subtests exercise one ordered transition history.
 	t.Parallel()
 	s := New()
 	id := testutil.KustomizationID("flux-system", "apps")
@@ -562,13 +610,24 @@ func TestStore_UpdateStatus_Idempotent(t *testing.T) { //nolint:tparallel // Sub
 			s.UpdateStatus(id, StatusInfo{Status: tc.status, Reason: tc.reason, Message: "same message"})
 			info, ok := s.GetStatus(id)
 			if !ok || info.Status != tc.status || info.Reason != tc.want || len(events) != tc.count {
-				t.Fatalf("status=%+v present=%v events=%d, want reason=%s events=%d", info, ok, len(events), tc.want, tc.count)
+				t.Fatalf(
+					"status=%+v present=%v events=%d, want reason=%s events=%d",
+					info,
+					ok,
+					len(events),
+					tc.want,
+					tc.count,
+				)
 			}
 			if events[len(events)-1] != info {
 				t.Fatal("event lost status projection")
 			}
 			var replay StatusInfo
-			u := s.AddListener(EventStatusUpdated, func(_ manifest.NamedResource, payload any) { replay = payload.(StatusInfo) }, true)
+			u := s.AddListener(
+				EventStatusUpdated,
+				func(_ manifest.NamedResource, payload any) { replay = payload.(StatusInfo) },
+				true,
+			)
 			u()
 			if replay != info {
 				t.Fatalf("replay=%+v, want %+v", replay, info)
@@ -580,7 +639,9 @@ func TestStore_UpdateStatus_Idempotent(t *testing.T) { //nolint:tparallel // Sub
 
 func TestStatusInfo_Outcome(t *testing.T) {
 	t.Parallel()
-	failure := newDependencyFailure(&manifest.DependencyFailedError{Failed: []manifest.NamedResource{testutil.HelmReleaseID("", "dep")}})
+	failure := newDependencyFailure(
+		&manifest.DependencyFailedError{Failed: []manifest.NamedResource{testutil.HelmReleaseID("", "dep")}},
+	)
 	for _, tc := range []struct {
 		name        string
 		info        StatusInfo
@@ -693,66 +754,102 @@ func TestStore_ListObjects_ByKindIndex(t *testing.T) {
 	for _, core := range []bool{false, true} {
 		for _, insertForeignFirst := range []bool{false, true} {
 			for _, withdrawForeignFirst := range []bool{false, true} {
-				t.Run(fmt.Sprintf("core=%t/insertForeignFirst=%t/withdrawForeignFirst=%t", core, insertForeignFirst, withdrawForeignFirst), func(t *testing.T) {
-					t.Parallel()
-					s := New()
-					var typed manifest.BaseManifest = &manifest.Kustomization{Name: "a", Namespace: "ns1"}
-					if core {
-						typed = newCM("a", "ns1")
-					}
-					id := typed.Named()
-					foreign := &manifest.RawObject{APIVersion: "example.test/v1", Kind: id.Kind, Namespace: id.Namespace, Name: id.Name}
-					pair := []manifest.BaseManifest{typed, foreign}
-					if insertForeignFirst {
-						pair[0], pair[1] = pair[1], pair[0]
-					}
-					s.AddObjects(pair)
-					other := &manifest.Secret{Name: "s", Namespace: "ns1"}
-					s.AddObject(other)
-					for _, tt := range []struct {
-						name, group, kind string
-						want              []manifest.BaseManifest
-					}{
-						{"real", id.Group, id.Kind, []manifest.BaseManifest{typed}},
-						{"foreign", "example.test", id.Kind, []manifest.BaseManifest{foreign}},
-						{"other kind", "", manifest.KindSecret, []manifest.BaseManifest{other}},
-						{"group without kind", "example.test", "", []manifest.BaseManifest{}},
-					} {
-						got := s.ListObjects(tt.group, tt.kind)
-						t.Run(tt.name, func(t *testing.T) {
-							t.Parallel()
+				t.Run(
+					fmt.Sprintf(
+						"core=%t/insertForeignFirst=%t/withdrawForeignFirst=%t",
+						core,
+						insertForeignFirst,
+						withdrawForeignFirst,
+					),
+					func(t *testing.T) {
+						t.Parallel()
+						s := New()
+						var typed manifest.BaseManifest = &manifest.Kustomization{Name: "a", Namespace: "ns1"}
+						if core {
+							typed = newCM("a", "ns1")
+						}
+						id := typed.Named()
+						foreign := &manifest.RawObject{
+							APIVersion: "example.test/v1",
+							Kind:       id.Kind,
+							Namespace:  id.Namespace,
+							Name:       id.Name,
+						}
+						pair := []manifest.BaseManifest{typed, foreign}
+						if insertForeignFirst {
+							pair[0], pair[1] = pair[1], pair[0]
+						}
+						s.AddObjects(pair)
+						other := &manifest.Secret{Name: "s", Namespace: "ns1"}
+						s.AddObject(other)
+						for _, tt := range []struct {
+							name, group, kind string
+							want              []manifest.BaseManifest
+						}{
+							{"real", id.Group, id.Kind, []manifest.BaseManifest{typed}},
+							{"foreign", "example.test", id.Kind, []manifest.BaseManifest{foreign}},
+							{"other kind", "", manifest.KindSecret, []manifest.BaseManifest{other}},
+							{"group without kind", "example.test", "", []manifest.BaseManifest{}},
+						} {
+							got := s.ListObjects(tt.group, tt.kind)
+							t.Run(tt.name, func(t *testing.T) {
+								t.Parallel()
 
-							if diff := cmp.Diff(tt.want, got, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection")); diff != "" {
-								t.Fatalf("listed objects changed (-want +got): %s", diff)
-							}
-						})
-					}
-					inventory := []manifest.BaseManifest{typed, foreign, other}
-					slices.SortFunc(inventory, func(a, b manifest.BaseManifest) int { return a.Named().Compare(b.Named()) })
-					if diff := cmp.Diff(s.ListObjects("", ""), inventory, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection")); diff != "" {
-						t.Fatalf("stored objects changed (-want +got): %s", diff)
-					}
-					pair = []manifest.BaseManifest{typed, foreign}
-					if withdrawForeignFirst {
-						pair[0], pair[1] = pair[1], pair[0]
-					}
-					for i, obj := range pair {
-						assert.Equal(t, s.GetObject(obj.Named()), obj)
-						assert.Equal(t, s.DeleteObject(obj.Named()), true)
-						assert.Equal(t, s.GetObject(obj.Named()), nil)
-						assert.Equal(t, len(s.ListObjects(obj.Named().Group, id.Kind)), 0)
-						if i == 0 {
-							remaining := pair[1]
-							assert.Equal(t, s.GetObject(remaining.Named()), remaining)
-							if diff := cmp.Diff(s.ListObjects(remaining.Named().Group, id.Kind), []manifest.BaseManifest{remaining}, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection")); diff != "" {
-								t.Fatalf("stored objects changed (-want +got): %s", diff)
+								if diff := cmp.Diff(
+									tt.want,
+									got,
+									cmp.AllowUnexported(manifest.Kustomization{}),
+									cmpopts.IgnoreFields(manifest.Kustomization{}, "projection"),
+								); diff != "" {
+									t.Fatalf("listed objects changed (-want +got): %s", diff)
+								}
+							})
+						}
+						inventory := []manifest.BaseManifest{typed, foreign, other}
+						slices.SortFunc(
+							inventory,
+							func(a, b manifest.BaseManifest) int { return a.Named().Compare(b.Named()) },
+						)
+						if diff := cmp.Diff(
+							s.ListObjects("", ""),
+							inventory,
+							cmp.AllowUnexported(manifest.Kustomization{}),
+							cmpopts.IgnoreFields(manifest.Kustomization{}, "projection"),
+						); diff != "" {
+							t.Fatalf("stored objects changed (-want +got): %s", diff)
+						}
+						pair = []manifest.BaseManifest{typed, foreign}
+						if withdrawForeignFirst {
+							pair[0], pair[1] = pair[1], pair[0]
+						}
+						for i, obj := range pair {
+							assert.Equal(t, s.GetObject(obj.Named()), obj)
+							assert.Equal(t, s.DeleteObject(obj.Named()), true)
+							assert.Equal(t, s.GetObject(obj.Named()), nil)
+							assert.Equal(t, len(s.ListObjects(obj.Named().Group, id.Kind)), 0)
+							if i == 0 {
+								remaining := pair[1]
+								assert.Equal(t, s.GetObject(remaining.Named()), remaining)
+								if diff := cmp.Diff(
+									s.ListObjects(remaining.Named().Group, id.Kind),
+									[]manifest.BaseManifest{remaining},
+									cmp.AllowUnexported(manifest.Kustomization{}),
+									cmpopts.IgnoreFields(manifest.Kustomization{}, "projection"),
+								); diff != "" {
+									t.Fatalf("stored objects changed (-want +got): %s", diff)
+								}
 							}
 						}
-					}
-					if diff := cmp.Diff(s.ListObjects("", ""), []manifest.BaseManifest{other}, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection")); diff != "" {
-						t.Fatalf("stored objects changed (-want +got): %s", diff)
-					}
-				})
+						if diff := cmp.Diff(
+							s.ListObjects("", ""),
+							[]manifest.BaseManifest{other},
+							cmp.AllowUnexported(manifest.Kustomization{}),
+							cmpopts.IgnoreFields(manifest.Kustomization{}, "projection"),
+						); diff != "" {
+							t.Fatalf("stored objects changed (-want +got): %s", diff)
+						}
+					},
+				)
 			}
 		}
 	}
@@ -840,7 +937,8 @@ func TestStore_RecordEmitted_DistinctPointerDedup(t *testing.T) {
 	id := testutil.KustomizationID("flux-system", "apps")
 	s.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
 	makeArt := func() *Emission {
-		return &Emission{Complete: true,
+		return &Emission{
+			Complete: true,
 
 			Manifests: testutil.DocumentOccurrences([]map[string]any{
 				{
@@ -1093,7 +1191,12 @@ func TestStore_ListenerSnapshots(t *testing.T) {
 
 		for i := range numListeners {
 			if got := counts[i].Load(); got != wantPerListener {
-				t.Errorf("listener[%d] observed %d events, want %d (listener snapshot lost an event?)", i, got, wantPerListener)
+				t.Errorf(
+					"listener[%d] observed %d events, want %d (listener snapshot lost an event?)",
+					i,
+					got,
+					wantPerListener,
+				)
 			}
 		}
 	})
@@ -1246,7 +1349,9 @@ func TestStore_ShardedConcurrentDifferentKinds(t *testing.T) {
 				s.AddListener(kind, func(id manifest.NamedResource, _ any) {
 					count, _ := events[kind].LoadOrStore(id, new(atomic.Int64))
 					count.(*atomic.Int64).Add(1)
-					if kind == EventObjectAdded && strings.HasSuffix(id.Name, "-0") && !strings.HasPrefix(id.Name, "parent-") && id.Group != "example.test" {
+					if kind == EventObjectAdded && strings.HasSuffix(id.Name, "-0") &&
+						!strings.HasPrefix(id.Name, "parent-") &&
+						id.Group != "example.test" {
 						arrived <- struct{}{}
 						<-release
 					}
@@ -1261,7 +1366,12 @@ func TestStore_ShardedConcurrentDifferentKinds(t *testing.T) {
 						if w%2 != 0 {
 							typed = &manifest.HelmRelease{Name: name, Namespace: "ns"}
 						}
-						foreign := &manifest.RawObject{APIVersion: "example.test/v1", Kind: typed.Named().Kind, Namespace: "ns", Name: name}
+						foreign := &manifest.RawObject{
+							APIVersion: "example.test/v1",
+							Kind:       typed.Named().Kind,
+							Namespace:  "ns",
+							Name:       name,
+						}
 						objects := [2]manifest.BaseManifest{typed, foreign}
 						if i%2 != 0 {
 							objects[0], objects[1] = objects[1], objects[0]
@@ -1270,7 +1380,14 @@ func TestStore_ShardedConcurrentDifferentKinds(t *testing.T) {
 							id := obj.Named()
 							parent := id
 							parent.Name = "parent-" + id.Name
-							s.AddObject(&manifest.RawObject{APIVersion: parent.Group + "/v1", Kind: parent.Kind, Name: parent.Name, Namespace: parent.Namespace})
+							s.AddObject(
+								&manifest.RawObject{
+									APIVersion: parent.Group + "/v1",
+									Kind:       parent.Kind,
+									Name:       parent.Name,
+									Namespace:  parent.Namespace,
+								},
+							)
 							s.RecordEmitted(parent, &Emission{Children: []Child{{Obj: obj}}, Complete: true}, nil)
 							s.UpdateStatus(id, StatusInfo{Status: StatusReady, Reason: "", Message: id.Group})
 							s.SetArtifact(id, &SourceArtifact{URL: id.Group})
@@ -1282,7 +1399,11 @@ func TestStore_ShardedConcurrentDifferentKinds(t *testing.T) {
 							assert.Equal(t, ok, true)
 							assert.Equal(t, status.Status, StatusReady)
 							assert.Equal(t, status.Message, id.Group)
-							if diff := cmp.Diff(Artifact(&SourceArtifact{URL: id.Group}), s.GetArtifact(id, ArtifactContent), cmpopts.IgnoreFields(SourceArtifact{}, "material")); diff != "" {
+							if diff := cmp.Diff(
+								Artifact(&SourceArtifact{URL: id.Group}),
+								s.GetArtifact(id, ArtifactContent),
+								cmpopts.IgnoreFields(SourceArtifact{}, "material"),
+							); diff != "" {
 								t.Errorf("artifact mismatch (-want +got):\n%s", diff)
 							}
 							owners := testutil.Owners(s.Productions(id, nil))
@@ -1314,7 +1435,11 @@ func TestStore_ShardedConcurrentDifferentKinds(t *testing.T) {
 						status, ok := s.GetStatus(id)
 						assert.Equal(t, ok, true)
 						assert.Equal(t, status.Message, id.Group)
-						if diff := cmp.Diff(Artifact(&SourceArtifact{URL: id.Group}), s.GetArtifact(id, ArtifactContent), cmpopts.IgnoreFields(SourceArtifact{}, "material")); diff != "" {
+						if diff := cmp.Diff(
+							Artifact(&SourceArtifact{URL: id.Group}),
+							s.GetArtifact(id, ArtifactContent),
+							cmpopts.IgnoreFields(SourceArtifact{}, "material"),
+						); diff != "" {
 							t.Errorf("artifact mismatch (-want +got):\n%s", diff)
 						}
 						var observation Observation
@@ -1419,7 +1544,17 @@ func TestRecordEmitted_ReplacementAllocations(t *testing.T) {
 	versions := [2]Emission{{Complete: true}, {Complete: true}}
 	for version := range versions {
 		for i := range 100 {
-			versions[version].Children = append(versions[version].Children, Child{Obj: &manifest.RawObject{Kind: "Deployment", APIVersion: "apps/v1", Name: fmt.Sprintf("app-%d-%d", version, i), Namespace: "ns"}})
+			versions[version].Children = append(
+				versions[version].Children,
+				Child{
+					Obj: &manifest.RawObject{
+						Kind:       "Deployment",
+						APIVersion: "apps/v1",
+						Name:       fmt.Sprintf("app-%d-%d", version, i),
+						Namespace:  "ns",
+					},
+				},
+			)
 		}
 	}
 	s.RecordEmitted(owner.Named(), &versions[0], nil)

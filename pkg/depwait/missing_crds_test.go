@@ -26,7 +26,9 @@ func (e *crdPromotion) Promote(_ context.Context, _ *store.ReadSet, id manifest.
 	if !e.materialize {
 		return false, nil
 	}
-	e.store.AddObject(&manifest.RawObject{APIVersion: id.Group + "/v1", Kind: id.Kind, Namespace: id.Namespace, Name: id.Name})
+	e.store.AddObject(
+		&manifest.RawObject{APIVersion: id.Group + "/v1", Kind: id.Kind, Namespace: id.Namespace, Name: id.Name},
+	)
 	return true, nil
 }
 
@@ -38,7 +40,11 @@ func TestClassify_MissingCRDs(t *testing.T) {
 				t.Run(fmt.Sprintf("enabled_%t/drain_%d/%s", enabled, drain, state), func(t *testing.T) {
 					t.Parallel()
 					s := store.New()
-					ref := manifest.DependencyRef{Group: apix.GroupName, Kind: manifest.KindCustomResourceDefinition, Name: "widgets.example.com"}
+					ref := manifest.DependencyRef{
+						Group: apix.GroupName,
+						Kind:  manifest.KindCustomResourceDefinition,
+						Name:  "widgets.example.com",
+					}
 					want := schedule.Blocked
 					msg := ""
 					if drain >= manifest.DrainCascade {
@@ -70,7 +76,10 @@ func TestClassify_MissingCRDs(t *testing.T) {
 						if state == "failed status" {
 							status = store.StatusFailed
 						}
-						s.UpdateStatus(ref.NamedResource, store.StatusInfo{Status: status, Reason: "", Message: "state"})
+						s.UpdateStatus(
+							ref.NamedResource,
+							store.StatusInfo{Status: status, Reason: "", Message: "state"},
+						)
 						want = schedule.Terminal
 						msg = ""
 					case "promoted", "promotion miss":
@@ -79,7 +88,12 @@ func TestClassify_MissingCRDs(t *testing.T) {
 							want = schedule.Terminal
 							msg = ""
 						}
-					case "ConfigMap", "Secret", "Widget", "Kustomization", "HelmRelease", "CustomResourceDefinitionList":
+					case "ConfigMap",
+						"Secret",
+						"Widget",
+						"Kustomization",
+						"HelmRelease",
+						"CustomResourceDefinitionList":
 						ref.Kind = state
 						ref.Namespace = "apps"
 						want = schedule.Blocked
@@ -123,7 +137,11 @@ func TestClassify_MissingCRDs(t *testing.T) {
 
 func TestClassify_MissingCRDs_NoAllocations(t *testing.T) {
 	s := store.New()
-	ref := manifest.DependencyRef{Group: apix.GroupName, Kind: manifest.KindCustomResourceDefinition, Name: "widgets.example.com"}
+	ref := manifest.DependencyRef{
+		Group: apix.GroupName,
+		Kind:  manifest.KindCustomResourceDefinition,
+		Name:  "widgets.example.com",
+	}
 	for _, enabled := range []bool{false, true} {
 		w := &Waiter{Store: s, AllowMissingCRDs: enabled}
 		if got := testing.AllocsPerRun(100, func() { w.Classify(t.Context(), ref, manifest.DrainCascade) }); got != 0 {

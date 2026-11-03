@@ -295,7 +295,16 @@ func TestStaleValuePaths_MutableCapture(t *testing.T) {
 	}
 	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 	st := store.New()
-	hr := &manifest.HelmRelease{Chart: manifest.HelmChart{Name: ".", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "repo"}}}
+	hr := &manifest.HelmRelease{
+		Chart: manifest.HelmChart{
+			Name: ".",
+			Source: manifest.NamedResource{
+				Group: manifest.SourceDomain,
+				Kind:  manifest.KindGitRepository,
+				Name:  "repo",
+			},
+		},
+	}
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: input, Key: "misleading"})
 
 	assert.Diff(t, cli.StaleValuePaths(t.Context(), hr, vals("first", "second"), NewSources(st)), []string{"second"})

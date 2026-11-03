@@ -34,7 +34,12 @@ type operation struct {
 }
 
 // Fetch acquires content using one execution's captured credentials and declarations.
-func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.OCIRepository, reads *store.ReadSet, policy cache.Policy) (*store.SourceArtifact, error) {
+func (f *Fetcher) Fetch(
+	ctx context.Context,
+	repo *manifest.OCIRepository,
+	reads *store.ReadSet,
+	policy cache.Policy,
+) (*store.SourceArtifact, error) {
 	var mediaTypes []string
 	if mediaType := repo.LayerMediaType(); mediaType != "" {
 		mediaTypes = []string{mediaType}
@@ -44,13 +49,24 @@ func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.OCIRepository, reads
 }
 
 // FetchChart acquires chart layers using Helm's supported media types.
-func (f *Fetcher) FetchChart(ctx context.Context, repo *manifest.OCIRepository, reads *store.ReadSet, policy cache.Policy) (*store.SourceArtifact, error) {
-	operation := operation{Fetcher: f, reads: reads, secrets: source.SecretLookup(reads),
-		mediaTypes: []string{registry.ChartLayerMediaType, registry.LegacyChartLayerMediaType}}
+func (f *Fetcher) FetchChart(
+	ctx context.Context,
+	repo *manifest.OCIRepository,
+	reads *store.ReadSet,
+	policy cache.Policy,
+) (*store.SourceArtifact, error) {
+	operation := operation{
+		Fetcher: f, reads: reads, secrets: source.SecretLookup(reads),
+		mediaTypes: []string{registry.ChartLayerMediaType, registry.LegacyChartLayerMediaType},
+	}
 	return operation.fetchSource(ctx, repo, policy)
 }
 
-func (f *operation) fetchSource(ctx context.Context, repo *manifest.OCIRepository, policy cache.Policy) (*store.SourceArtifact, error) {
+func (f *operation) fetchSource(
+	ctx context.Context,
+	repo *manifest.OCIRepository,
+	policy cache.Policy,
+) (*store.SourceArtifact, error) {
 	f.produce = func(ctx context.Context, request registryAcquisition, policy cache.Policy) (*store.SourceArtifact, error) {
 		return f.fetchLayer(ctx, repo, request, policy)
 	}

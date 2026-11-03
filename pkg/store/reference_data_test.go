@@ -13,14 +13,22 @@ func TestReferenceFacts_ProjectsQualifiedNamespaceData(t *testing.T) {
 	bare := manifest.NamedResource{Kind: manifest.KindSecret, Name: "input"}
 	target := bare
 	target.Namespace = "apps"
-	proof := manifest.Production{Authored: bare, Source: manifest.BootstrapSourceID, Path: "input.yaml", File: "input.yaml"}
+	proof := manifest.Production{
+		Authored: bare,
+		Source:   manifest.BootstrapSourceID,
+		Path:     "input.yaml",
+		File:     "input.yaml",
+	}
 	data := manifest.NewSecret(bare, nil, map[string]any{"VALUE": "offline"})
 	unrelated := proof
 	unrelated.Source.Name = "other"
 	candidate := manifest.ReferenceData{Production: proof, OfflineData: data}
 	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-		bare:   {Productions: []manifest.Production{proof}, ReferenceData: []manifest.ReferenceData{candidate}},
-		target: {Productions: []manifest.Production{proof}, ReferenceData: []manifest.ReferenceData{{Production: unrelated, DeclaredKeys: []string{"WRONG"}}}},
+		bare: {Productions: []manifest.Production{proof}, ReferenceData: []manifest.ReferenceData{candidate}},
+		target: {
+			Productions:   []manifest.Production{proof},
+			ReferenceData: []manifest.ReferenceData{{Production: unrelated, DeclaredKeys: []string{"WRONG"}}},
+		},
 	}})
 	for _, facts := range []ReferenceFacts{st.ReferenceFacts(target, nil), func() ReferenceFacts {
 		var reads ReadSet
@@ -57,7 +65,12 @@ func TestReferenceFacts_SourceContextWithdrawal(t *testing.T) {
 			proof := manifest.Production{Owner: owner.Named(), Source: source, File: "generator.yaml"}
 			data := manifest.NewSecret(target, nil, map[string]any{"VALUE": "offline"})
 			st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-				target: {Productions: []manifest.Production{proof}, ReferenceData: []manifest.ReferenceData{{Production: proof, OfflineData: data, DeclaredKeys: []string{"VALUE"}}}},
+				target: {
+					Productions: []manifest.Production{proof},
+					ReferenceData: []manifest.ReferenceData{
+						{Production: proof, OfflineData: data, DeclaredKeys: []string{"VALUE"}},
+					},
+				},
 			}})
 			if len(st.ReferenceFacts(target, nil).ReferenceData) != 1 {
 				t.Fatal("candidate unavailable before withdrawal")
@@ -81,7 +94,16 @@ func TestReferenceFacts_SourceContextWithdrawal(t *testing.T) {
 				t.Fatalf("withdrawal retained lookup data: %+v", facts)
 			}
 			if mode == "replaced_source" {
-				declaration := &manifest.RawObject{Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1", Name: "current", Namespace: "apps", Spec: map[string]any{"target": map[string]any{"name": target.Name}, "data": []any{map[string]any{"secretKey": "CURRENT"}}}}
+				declaration := &manifest.RawObject{
+					Kind:       "ExternalSecret",
+					APIVersion: "external-secrets.io/v1",
+					Name:       "current",
+					Namespace:  "apps",
+					Spec: map[string]any{
+						"target": map[string]any{"name": target.Name},
+						"data":   []any{map[string]any{"secretKey": "CURRENT"}},
+					},
+				}
 				_, _, current := st.GetEmission(owner.Named())
 				defer current.Finish()
 				current.Complete, current.Children = true, []Child{{Obj: declaration}}
@@ -105,19 +127,32 @@ func TestReferenceFacts_CurrentDeclarationSupersedesIndexedSource(t *testing.T) 
 	owner := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
 	st.AddObject(owner)
 	target := manifest.NamedResource{Kind: manifest.KindSecret, Name: "input", Namespace: "apps"}
-	declaration := &manifest.RawObject{Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1", Name: "external", Namespace: "apps", Spec: map[string]any{
-		"target": map[string]any{"name": target.Name}, "data": []any{map[string]any{"secretKey": "CURRENT"}},
-	}}
+	declaration := &manifest.RawObject{
+		Kind:       "ExternalSecret",
+		APIVersion: "external-secrets.io/v1",
+		Name:       "external",
+		Namespace:  "apps",
+		Spec: map[string]any{
+			"target": map[string]any{"name": target.Name}, "data": []any{map[string]any{"secretKey": "CURRENT"}},
+		},
+	}
 	source := manifest.BootstrapSourceID
 	st.SetArtifact(source, &SourceArtifact{Content: "indexed"})
 	proof := manifest.Production{Owner: owner.Named(), Source: source, Declaration: declaration.Named()}
 	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-		target: {Productions: []manifest.Production{proof}, ReferenceData: []manifest.ReferenceData{{Production: proof, DeclaredKeys: []string{"INDEXED"}}}},
+		target: {
+			Productions:   []manifest.Production{proof},
+			ReferenceData: []manifest.ReferenceData{{Production: proof, DeclaredKeys: []string{"INDEXED"}}},
+		},
 	}})
 	var before ReadSet
 	before.Init(st, ownerID("consumer"), nil)
 	defer before.Close()
-	assert.Diff(t, before.ReferenceFacts(target, nil).ReferenceData, []manifest.ReferenceData{{Production: proof, DeclaredKeys: []string{"INDEXED"}}})
+	assert.Diff(
+		t,
+		before.ReferenceFacts(target, nil).ReferenceData,
+		[]manifest.ReferenceData{{Production: proof, DeclaredKeys: []string{"INDEXED"}}},
+	)
 	st.SetArtifact(source, &SourceArtifact{Content: "current"})
 	if before.Valid() {
 		t.Fatal("source replacement retained indexed evidence")

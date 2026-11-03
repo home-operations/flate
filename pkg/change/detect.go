@@ -96,9 +96,11 @@ func Qualify(ctx context.Context, changes *Set, before, after *store.Store) (*Se
 		if changes != nil {
 			previous = changes.sources[id]
 		}
-		if previous.changes != nil && previous.artifacts == evidence.artifacts && previous.declarations == evidence.declarations {
+		if previous.changes != nil && previous.artifacts == evidence.artifacts &&
+			previous.declarations == evidence.declarations {
 			delta = previous.changes
-		} else if id != manifest.BootstrapSourceID || delta == nil || previous.changes != nil {
+		} else if id != manifest.BootstrapSourceID || delta == nil ||
+			previous.changes != nil {
 			pair := readerPair{before: a, after: b}
 			for i, input := range evidence.artifacts {
 				exclusion, err := filepath.Rel(input.LocalPath, evidence.artifacts[1-i].LocalPath)
@@ -113,7 +115,9 @@ func Qualify(ctx context.Context, changes *Set, before, after *store.Store) (*Se
 			delta = compared[pair]
 			if delta == nil {
 				selected := id != manifest.BootstrapSourceID
-				equal := selected && a.Content != "" && a.Content == b.Content && a.Key != "" && a.Key == b.Key && a.Revision == b.Revision && a.Digest == b.Digest
+				equal := selected && a.Content != "" && a.Content == b.Content && a.Key != "" && a.Key == b.Key &&
+					a.Revision == b.Revision &&
+					a.Digest == b.Digest
 				if selected && !equal && a.ContentFingerprint != nil && b.ContentFingerprint != nil {
 					var fingerprints [2]string
 					for i, input := range evidence.artifacts {
@@ -123,7 +127,11 @@ func Qualify(ctx context.Context, changes *Set, before, after *store.Store) (*Se
 							if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 								return nil, err
 							}
-							return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("fingerprint source %s: %w", id, err), "")
+							return nil, manifest.NewError(
+								manifest.ErrInput,
+								fmt.Errorf("fingerprint source %s: %w", id, err),
+								"",
+							)
 						}
 					}
 					equal = fingerprints[0] != "" && fingerprints[0] == fingerprints[1]
@@ -366,7 +374,8 @@ func collectInput(ctx context.Context, input fs.FS, name string) (map[manifest.N
 		}
 		n, err := f.Read(p)
 		terminal = err
-		if err != nil && err != io.EOF { //nolint:errorlint // io.Reader requires an unwrapped EOF; preserve other read errors.
+		if err != nil &&
+			err != io.EOF { //nolint:errorlint // io.Reader requires an unwrapped EOF; preserve other read errors.
 			readErr = err
 		}
 		if err := ctx.Err(); err != nil {
@@ -400,7 +409,9 @@ func collectInput(ctx context.Context, input fs.FS, name string) (map[manifest.N
 	for _, occurrence := range docs {
 		doc := occurrence.Document
 		id := manifest.DocIdentity(doc)
-		if id.Kind != "" && id.Name != "" && manifest.DocAPIVersion(doc) != "" && !manifest.HasEnvsubstReference(id.Name) && !manifest.HasEnvsubstReference(id.Namespace) {
+		if id.Kind != "" && id.Name != "" && manifest.DocAPIVersion(doc) != "" &&
+			!manifest.HasEnvsubstReference(id.Name) &&
+			!manifest.HasEnvsubstReference(id.Namespace) {
 			if declared == nil {
 				declared = map[manifest.NamedResource]string{}
 			}
@@ -436,7 +447,11 @@ func (s *Set) WithReaders(
 		origins = bootstrap.artifacts
 	}
 	if len(s.sources) == 0 {
-		out := s.withReaders(indexes, &bindings, readerComparison{artifacts: origins, source: manifest.BootstrapSourceID, inputs: inputs})
+		out := s.withReaders(
+			indexes,
+			&bindings,
+			readerComparison{artifacts: origins, source: manifest.BootstrapSourceID, inputs: inputs},
+		)
 		out.declarations = bindings.declarations
 		return out, nil
 	}
@@ -497,7 +512,9 @@ func (s *Set) withReaders(indexes [2]*manifest.DiscoveryIndex, bindings *Set, ev
 		}
 		_, admitted, _ := bindings.ForSource(actual)
 		left, right := artifacts[side], admitted[side]
-		known := usable[side] && right != nil && right.FS != nil && right.Reads.Valid() && (left.InputAlias || right.InputAlias || origins[side] == roots[side]) && origins[side] == right.OriginPath(right.LocalPath)
+		known := usable[side] && right != nil && right.FS != nil && right.Reads.Valid() &&
+			(left.InputAlias || right.InputAlias || origins[side] == roots[side]) &&
+			origins[side] == right.OriginPath(right.LocalPath)
 		if qualified[side] == nil {
 			qualified[side] = map[manifest.NamedResource]bool{}
 		}
@@ -508,7 +525,10 @@ func (s *Set) withReaders(indexes [2]*manifest.DiscoveryIndex, bindings *Set, ev
 		if len(record.Productions) == 0 {
 			return qualifiedSource(side, manifest.BootstrapSourceID)
 		}
-		return slices.ContainsFunc(record.Productions, func(p manifest.Production) bool { return qualifiedSource(side, p.Source) })
+		return slices.ContainsFunc(
+			record.Productions,
+			func(p manifest.Production) bool { return qualifiedSource(side, p.Source) },
+		)
 	}
 	for key, comparison := range bindings.declarations {
 		if key.source == source {
@@ -593,7 +613,8 @@ func (s *Set) withReaders(indexes [2]*manifest.DiscoveryIndex, bindings *Set, ev
 				comparison.declared = [2]string{}
 				comparison.implicitNamespace = [2]bool{}
 				comparison.declared[side] = fingerprint
-				comparison.implicitNamespace[side] = record.Authored != (manifest.NamedResource{}) && record.Authored.Namespace == ""
+				comparison.implicitNamespace[side] = record.Authored != (manifest.NamedResource{}) &&
+					record.Authored.Namespace == ""
 				if present {
 					peerAuthored := peer.Authored
 					if peerAuthored == (manifest.NamedResource{}) {
@@ -603,7 +624,8 @@ func (s *Set) withReaders(indexes [2]*manifest.DiscoveryIndex, bindings *Set, ev
 					if comparison.declared[1-side] == "" {
 						continue
 					}
-					comparison.implicitNamespace[1-side] = peer.Authored != (manifest.NamedResource{}) && peer.Authored.Namespace == ""
+					comparison.implicitNamespace[1-side] = peer.Authored != (manifest.NamedResource{}) &&
+						peer.Authored.Namespace == ""
 				} else if !indexed {
 					observed := false
 					for _, declarations := range s.oneSided[1-side] {
@@ -723,7 +745,16 @@ func (s *Set) withReaders(indexes [2]*manifest.DiscoveryIndex, bindings *Set, ev
 					continue
 				}
 				if owner != id && owner.KindInfo().Render && !owner.ReportHidden() {
-					productions = append(productions, manifest.Production{Owner: owner, Declaration: owner, Authored: record.Authored, Source: source, File: record.File})
+					productions = append(
+						productions,
+						manifest.Production{
+							Owner:       owner,
+							Declaration: owner,
+							Authored:    record.Authored,
+							Source:      source,
+							File:        record.File,
+						},
+					)
 				}
 				comparison, known := bindings.declarations[comparisonKey{source: source, owner: owner, input: owner}]
 				known = known && comparison.objects[0] != nil && comparison.objects[1] != nil
@@ -732,7 +763,9 @@ func (s *Set) withReaders(indexes [2]*manifest.DiscoveryIndex, bindings *Set, ev
 						if alias == source || !qualifiedSource(0, alias) || !qualifiedSource(1, alias) {
 							continue
 						}
-						if paired, present := bindings.declarations[comparisonKey{source: alias, owner: owner, input: owner}]; present && paired.objects[0] != nil && paired.objects[1] != nil {
+						if paired, present := bindings.declarations[comparisonKey{source: alias, owner: owner, input: owner}]; present &&
+							paired.objects[0] != nil &&
+							paired.objects[1] != nil {
 							comparison, known = paired, true
 							break
 						}
@@ -760,7 +793,8 @@ func (s *Set) withReaders(indexes [2]*manifest.DiscoveryIndex, bindings *Set, ev
 					}
 				}
 				for _, file := range r.Inputs {
-					if changed, found := files[file]; found && (!known || comparison.changed) && (name == "" || changed < name) {
+					if changed, found := files[file]; found && (!known || comparison.changed) &&
+						(name == "" || changed < name) {
 						name = changed
 					}
 				}
@@ -781,7 +815,12 @@ func (s *Set) withReaders(indexes [2]*manifest.DiscoveryIndex, bindings *Set, ev
 			input.Declarations = slices.Compact(input.Declarations)
 			input.Productions = append(slices.Clone(input.Productions), productions...)
 			slices.SortFunc(input.Productions, func(a, b manifest.Production) int {
-				return cmp.Or(a.Owner.Compare(b.Owner), a.Authored.Compare(b.Authored), a.Source.Compare(b.Source), strings.Compare(a.File, b.File))
+				return cmp.Or(
+					a.Owner.Compare(b.Owner),
+					a.Authored.Compare(b.Authored),
+					a.Source.Compare(b.Source),
+					strings.Compare(a.File, b.File),
+				)
 			})
 			input.Productions = slices.Compact(input.Productions)
 			out.inputs[id] = input
@@ -817,7 +856,11 @@ type fileMeta struct {
 
 // Excluded directories MUST still be traversed so deeper .sourceignore re-includes
 // survive, matching github.com/fluxcd/pkg/sourceignore v0.19.0 LoadIgnorePatterns.
-func scanTree(ctx context.Context, input, opposite *store.SourceArtifact, digests map[string]string) (map[string]fileMeta, error) {
+func scanTree(
+	ctx context.Context,
+	input, opposite *store.SourceArtifact,
+	digests map[string]string,
+) (map[string]fileMeta, error) {
 	out := make(map[string]fileMeta)
 	scoped := input.FS
 	oppositeName, err := filepath.Rel(input.LocalPath, opposite.LocalPath)
@@ -1006,14 +1049,21 @@ func (s *Set) declaredChanged(source, id manifest.NamedResource) (changed, known
 
 // DeclarationChanged compares complete declared content and the current prepared document.
 // A nil document grants no authority over preparation or additional build inputs.
-func (s *Set) DeclarationChanged(side manifest.TreeSide, source, id manifest.NamedResource, document map[string]any) (changed, known bool) {
+func (s *Set) DeclarationChanged(
+	side manifest.TreeSide,
+	source, id manifest.NamedResource,
+	document map[string]any,
+) (changed, known bool) {
 	changed, known = s.declaredChanged(source, id)
 	if !known || changed || document == nil || side > manifest.TreeHead {
 		return changed, known
 	}
 	fact := s.declarations[comparisonKey{source: source, owner: id, input: id}]
 	// Namespace defaulting MUST NOT change identical authored content.
-	if _, namespace := manifest.DocMetadata(document); fact.implicitNamespace[side] && namespace != "" && namespace == id.Namespace {
+	if _, namespace := manifest.DocMetadata(
+		document,
+	); fact.implicitNamespace[side] && namespace != "" &&
+		namespace == id.Namespace {
 		document = maps.Clone(document)
 		metadata := maps.Clone(document["metadata"].(map[string]any))
 		delete(metadata, "namespace")
@@ -1029,7 +1079,11 @@ func (s *Set) DeclarationChanged(side manifest.TreeSide, source, id manifest.Nam
 // WithDeclarations freezes observed authoritative declaration and reference comparisons before dispatch.
 // Only completed producer output is prepared comparison authority; raw producer-owned input is excluded.
 // Missing preparation is unknown; the returned set retains no Store or captured read set.
-func (s *Set) WithDeclarations(ctx context.Context, before, after *store.Store, prepared [2]map[manifest.NamedResource]store.Child) (*Set, error) {
+func (s *Set) WithDeclarations(
+	ctx context.Context,
+	before, after *store.Store,
+	prepared [2]map[manifest.NamedResource]store.Child,
+) (*Set, error) {
 	if s == nil {
 		return nil, nil
 	}
@@ -1208,7 +1262,10 @@ func (s *Set) WithDeclarations(ctx context.Context, before, after *store.Store, 
 			if !ref.ContentInput() || ref.Selector != nil {
 				continue
 			}
-			peer := slices.IndexFunc(refs[1], func(other manifest.Reference) bool { return referencesEqual(ref, other) })
+			peer := slices.IndexFunc(
+				refs[1],
+				func(other manifest.Reference) bool { return referencesEqual(ref, other) },
+			)
 			if peer < 0 {
 				continue
 			}
@@ -1245,7 +1302,11 @@ func (s *Set) WithDeclarations(ctx context.Context, before, after *store.Store, 
 				}
 				changed = values[0] != values[1] || present[0] != present[1]
 			} else {
-				equal, err := manifest.OutputEqual(inputs[0].Obj, inputs[1].Obj, [2]map[string]any{inputs[0].Doc, inputs[1].Doc})
+				equal, err := manifest.OutputEqual(
+					inputs[0].Obj,
+					inputs[1].Obj,
+					[2]map[string]any{inputs[0].Doc, inputs[1].Doc},
+				)
 				if err != nil {
 					return nil, err
 				}
@@ -1254,7 +1315,11 @@ func (s *Set) WithDeclarations(ctx context.Context, before, after *store.Store, 
 			if sameInputs {
 				changed = false
 			}
-			out.declarations[comparisonKey{source: source, owner: id, input: ref.NamedResource, use: ref.Use, position: ref.Position}] = declarationComparison{objects: [2]manifest.BaseManifest{left.Obj, right.Obj}, references: [2]manifest.Reference{ref, refs[1][peer]}, changed: changed}
+			out.declarations[comparisonKey{source: source, owner: id, input: ref.NamedResource, use: ref.Use, position: ref.Position}] = declarationComparison{
+				objects:    [2]manifest.BaseManifest{left.Obj, right.Obj},
+				references: [2]manifest.Reference{ref, refs[1][peer]},
+				changed:    changed,
+			}
 		}
 	}
 	return out.freezeSources(), nil
@@ -1285,7 +1350,10 @@ func (s *Set) freezeSources() *Set {
 	return s
 }
 
-func freezeArtifacts(inputs [2]*store.SourceArtifact, snapshots map[*store.SourceArtifact]*store.SourceArtifact) [2]*store.SourceArtifact {
+func freezeArtifacts(
+	inputs [2]*store.SourceArtifact,
+	snapshots map[*store.SourceArtifact]*store.SourceArtifact,
+) [2]*store.SourceArtifact {
 	for side, input := range inputs {
 		if input == nil {
 			continue
@@ -1309,7 +1377,12 @@ func freezeArtifacts(inputs [2]*store.SourceArtifact, snapshots map[*store.Sourc
 
 // OutputChanged reads a frozen verdict only while the same local declaration and reference apply.
 // Source artifact applicability MUST be checked by the caller against ForSource first.
-func (s *Set) OutputChanged(side manifest.TreeSide, source manifest.NamedResource, ref manifest.Reference, current manifest.BaseManifest) (changed, known bool) {
+func (s *Set) OutputChanged(
+	side manifest.TreeSide,
+	source manifest.NamedResource,
+	ref manifest.Reference,
+	current manifest.BaseManifest,
+) (changed, known bool) {
 	if s == nil || current == nil || side > manifest.TreeHead {
 		return false, false
 	}
@@ -1325,7 +1398,11 @@ func (s *Set) OutputChanged(side manifest.TreeSide, source manifest.NamedResourc
 
 // OppositeDeclaration returns the opposite declaration while the local identity and declaration apply.
 // Source artifact applicability MUST be checked by the caller against ForSource first.
-func (s *Set) OppositeDeclaration(side manifest.TreeSide, source, id manifest.NamedResource, current manifest.BaseManifest) manifest.BaseManifest {
+func (s *Set) OppositeDeclaration(
+	side manifest.TreeSide,
+	source, id manifest.NamedResource,
+	current manifest.BaseManifest,
+) manifest.BaseManifest {
 	if s == nil || side > manifest.TreeHead {
 		return nil
 	}
@@ -1339,8 +1416,17 @@ func (s *Set) OppositeDeclaration(side manifest.TreeSide, source, id manifest.Na
 func referencesEqual(a, b manifest.Reference) bool {
 	left, right := a.DependencyRef, b.DependencyRef
 	left.ReadyExpr, right.ReadyExpr = nil, nil
-	if left != right || (a.ReadyExpr == nil) != (b.ReadyExpr == nil) || a.ReadyExpr != nil && *a.ReadyExpr != *b.ReadyExpr {
+	if left != right || (a.ReadyExpr == nil) != (b.ReadyExpr == nil) ||
+		a.ReadyExpr != nil && *a.ReadyExpr != *b.ReadyExpr {
 		return false
 	}
-	return a.Use == b.Use && a.Position == b.Position && a.Optional == b.Optional && a.Content == b.Content && a.Gate == b.Gate && a.ArtifactStages == b.ArtifactStages && a.Ordering == b.Ordering && a.ChartPath == b.ChartPath && a.Key == b.Key && a.NamespaceDefault == b.NamespaceDefault && a.Selector == b.Selector && slices.Equal(a.Files, b.Files)
+	return a.Use == b.Use && a.Position == b.Position && a.Optional == b.Optional && a.Content == b.Content &&
+		a.Gate == b.Gate &&
+		a.ArtifactStages == b.ArtifactStages &&
+		a.Ordering == b.Ordering &&
+		a.ChartPath == b.ChartPath &&
+		a.Key == b.Key &&
+		a.NamespaceDefault == b.NamespaceDefault &&
+		a.Selector == b.Selector &&
+		slices.Equal(a.Files, b.Files)
 }

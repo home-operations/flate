@@ -94,7 +94,11 @@ func renderPrepared(prepared diffprep.Prepared, opts Options) ([]byte, error) {
 				subjects = maps.Clone(subjects)
 				maps.Copy(subjects, prepared.Subjects[1])
 			}
-			names := output.PrepareNames([]string{""}, [][]manifest.NamedResource{output.LineSubjects(lines, encoder.Format)}, []map[manifest.NamedResource]manifest.DiagnosticIdentity{subjects})
+			names := output.PrepareNames(
+				[]string{""},
+				[][]manifest.NamedResource{output.LineSubjects(lines, encoder.Format)},
+				[]map[manifest.NamedResource]manifest.DiagnosticIdentity{subjects},
+			)
 			output.NameLines(lines, names[0])
 			err = encoder.Lines(lines)
 		}
@@ -128,5 +132,10 @@ func prepareDocs(docs []Doc) []diffprep.Doc {
 }
 
 func prepareOptions(opts Options) diffprep.Options {
-	return diffprep.Options{StripAttrs: opts.StripAttrs, StripFields: opts.StripFields, Normalize: opts.Normalize, Subjects: opts.subjects}
+	return diffprep.Options{
+		StripAttrs:  opts.StripAttrs,
+		StripFields: opts.StripFields,
+		Normalize:   opts.Normalize,
+		Subjects:    opts.subjects,
+	}
 }

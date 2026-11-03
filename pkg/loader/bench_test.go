@@ -177,15 +177,27 @@ func benchmarkRecordObject(b *testing.B, kind string) {
 					refs[i] = map[string]any{"kind": "ConfigMap", "name": fmt.Sprintf("vars-%d", i)}
 				}
 				api := "kustomize.toolkit.fluxcd.io/v1"
-				spec := map[string]any{"sourceRef": map[string]any{"kind": "GitRepository", "name": "repo"},
-					"postBuild": map[string]any{"substituteFrom": refs}}
+				spec := map[string]any{
+					"sourceRef": map[string]any{"kind": "GitRepository", "name": "repo"},
+					"postBuild": map[string]any{"substituteFrom": refs},
+				}
 				if kind == manifest.KindHelmRelease {
 					api = "helm.toolkit.fluxcd.io/v2"
-					spec = map[string]any{"chart": map[string]any{"spec": map[string]any{"chart": "app", "sourceRef": map[string]any{"kind": "HelmRepository", "name": "repo"}}}, "valuesFrom": refs}
+					spec = map[string]any{
+						"chart": map[string]any{
+							"spec": map[string]any{
+								"chart":     "app",
+								"sourceRef": map[string]any{"kind": "HelmRepository", "name": "repo"},
+							},
+						},
+						"valuesFrom": refs,
+					}
 				}
 				var err error
-				obj, _, _, err = manifest.ParseDoc(map[string]any{"apiVersion": api, "kind": kind,
-					"metadata": map[string]any{"name": "app", "namespace": "ns"}, "spec": spec}, manifest.ParseDocOptions{DefaultNamespace: ""})
+				obj, _, _, err = manifest.ParseDoc(map[string]any{
+					"apiVersion": api, "kind": kind,
+					"metadata": map[string]any{"name": "app", "namespace": "ns"}, "spec": spec,
+				}, manifest.ParseDocOptions{DefaultNamespace: ""})
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -254,7 +266,19 @@ func synthLargeRepo(b *testing.B, root string) {
 		}
 		testutil.WriteFile(b, root, base+"/kustomization.yaml",
 			"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n"+resources.String())
-		testutil.WriteFile(b, root, base+"/ks.yaml", testutil.KustomizationYAML("app-"+fmt.Sprintf("%d", i), "flux-system", "  interval: 10m\n  path: ./apps/app-"+fmt.Sprintf("%d", i)+"\n  prune: true\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n    namespace: flux-system\n"))
+		testutil.WriteFile(
+			b,
+			root,
+			base+"/ks.yaml",
+			testutil.KustomizationYAML(
+				"app-"+fmt.Sprintf("%d", i),
+				"flux-system",
+				"  interval: 10m\n  path: ./apps/app-"+fmt.Sprintf(
+					"%d",
+					i,
+				)+"\n  prune: true\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n    namespace: flux-system\n",
+			),
+		)
 		if i < nHR {
 			testutil.WriteFile(b, root, base+"/hr.yaml", fmt.Sprintf(
 				`apiVersion: helm.toolkit.fluxcd.io/v2
@@ -303,7 +327,9 @@ func synthDeepComponents(b *testing.B, root string, depth int) {
 	b.Helper()
 	// Top-level kustomization references level 0 as a component.
 	testutil.WriteFile(b, root, "kustomization.yaml", fmt.Sprintf(
-		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ./cm.yaml\ncomponents:\n  - ./components/level-%d\n", 0))
+		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ./cm.yaml\ncomponents:\n  - ./components/level-%d\n",
+		0,
+	))
 	testutil.WriteFile(b, root, "cm.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: root\n  namespace: flux-system\ndata:\n  k: v\n")
 
@@ -343,7 +369,12 @@ func BenchmarkProjectIdentity(b *testing.B) {
 				}
 			}
 			l := &Loader{}
-			if _, err := l.projectIdentity((&objects[0]).Named(), tc.view, tc.object.APIVersion, manifest.KindOf(&objects[0]).Namespaced()); err != nil {
+			if _, err := l.projectIdentity(
+				(&objects[0]).Named(),
+				tc.view,
+				tc.object.APIVersion,
+				manifest.KindOf(&objects[0]).Namespaced(),
+			); err != nil {
 				b.Fatal(err)
 			}
 			b.ReportAllocs()
@@ -352,7 +383,12 @@ func BenchmarkProjectIdentity(b *testing.B) {
 					l = &Loader{}
 				}
 				for i := range objects {
-					if _, err := l.projectIdentity((&objects[i]).Named(), tc.view, tc.object.APIVersion, manifest.KindOf(&objects[i]).Namespaced()); err != nil {
+					if _, err := l.projectIdentity(
+						(&objects[i]).Named(),
+						tc.view,
+						tc.object.APIVersion,
+						manifest.KindOf(&objects[i]).Namespaced(),
+					); err != nil {
 						b.Fatal(err)
 					}
 				}

@@ -34,27 +34,74 @@ func TestE2E_DiffKustomizeEscapedInputs(t *testing.T) {
 			root := t.TempDir()
 			repo := testutil.GitInit(t, root)
 			testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [owner.yaml]\n")
-			testutil.WriteFile(t, root, "flux/owner.yaml", testutil.KustomizationYAML("owner", "flux-system", "  path: ./deploy\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
+			testutil.WriteFile(
+				t,
+				root,
+				"flux/owner.yaml",
+				testutil.KustomizationYAML(
+					"owner",
+					"flux-system",
+					"  path: ./deploy\n  sourceRef: {kind: GitRepository, name: flux-system}\n",
+				),
+			)
 			if tc.mixed {
-				testutil.WriteFile(t, root, "deploy/sibling.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: sibling}\ndata: {value: unchanged}\n")
+				testutil.WriteFile(
+					t,
+					root,
+					"deploy/sibling.yaml",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: sibling}\ndata: {value: unchanged}\n",
+				)
 			}
 			resource, err := filepath.Rel(tc.overlay, "shared")
 			if err != nil {
 				t.Fatal(err)
 			}
-			testutil.WriteFile(t, root, tc.overlay+"/kustomization.yaml", "resources: ["+filepath.ToSlash(resource)+"]\n")
+			testutil.WriteFile(
+				t,
+				root,
+				tc.overlay+"/kustomization.yaml",
+				"resources: ["+filepath.ToSlash(resource)+"]\n",
+			)
 			testutil.WriteFile(t, root, "shared/kustomization.yaml", "resources: [cm.yaml]\n")
 			cm := "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: changed-input}\ndata: {value: before}\n"
 			testutil.WriteFile(t, root, "shared/cm.yaml", cm)
 			if tc.patch {
-				testutil.WriteFile(t, root, "shared/kustomization.yaml", "resources: [cm.yaml]\npatches: [{path: ../inputs/patch}]\n")
-				testutil.WriteFile(t, root, "inputs/patch", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: changed-input}\ndata: {value: before}\n")
+				testutil.WriteFile(
+					t,
+					root,
+					"shared/kustomization.yaml",
+					"resources: [cm.yaml]\npatches: [{path: ../inputs/patch}]\n",
+				)
+				testutil.WriteFile(
+					t,
+					root,
+					"inputs/patch",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: changed-input}\ndata: {value: before}\n",
+				)
 			}
 			testutil.WriteFile(t, root, "inputs/unrelated", "before")
-			testutil.GitCommitAll(t, repo, "fixture", &git.CommitOptions{Author: &object.Signature{Name: "fixture", Email: "fixture@example.test", When: time.Unix(0, 0)}})
+			testutil.GitCommitAll(
+				t,
+				repo,
+				"fixture",
+				&git.CommitOptions{
+					Author: &object.Signature{Name: "fixture", Email: "fixture@example.test", When: time.Unix(0, 0)},
+				},
+			)
 			orig := t.TempDir()
 			testutil.CopyTree(t, root, orig)
-			before, stderr := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(root, "flux"), "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
+			before, stderr := harness.RequireCLIOK(
+				t,
+				"build",
+				"all",
+				"--path",
+				filepath.Join(root, "flux"),
+				"--concurrency",
+				"2",
+				"--no-progress",
+				"--cache-dir",
+				t.TempDir(),
+			)
 			if !strings.Contains(before, "value: before") {
 				t.Fatalf("base full build lost input: %s\n%s", before, stderr)
 			}
@@ -62,7 +109,21 @@ func TestE2E_DiffKustomizeEscapedInputs(t *testing.T) {
 			baselines := [][]string{{"--base", "HEAD"}, {"--path-orig", filepath.Join(orig, "flux")}}
 			harness.MutateFile(t, filepath.Join(root, "inputs/unrelated"), "before", "after")
 			for _, baseline := range baselines {
-				args := append([]string{"diff", "all", "-o", "diff", "--path", filepath.Join(root, "flux"), "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir()}, baseline...)
+				args := append(
+					[]string{
+						"diff",
+						"all",
+						"-o",
+						"diff",
+						"--path",
+						filepath.Join(root, "flux"),
+						"--concurrency",
+						"2",
+						"--no-progress",
+						"--cache-dir",
+						t.TempDir(),
+					},
+					baseline...)
 				if out, stderr := harness.RequireCLIOK(t, args...); out != "" {
 					t.Fatalf("unrelated sibling selected the owner: %q\n%s", out, stderr)
 				}
@@ -72,14 +133,39 @@ func TestE2E_DiffKustomizeEscapedInputs(t *testing.T) {
 				file = "inputs/patch"
 			}
 			harness.MutateFile(t, filepath.Join(root, file), "value: before", "value: after")
-			after, stderr := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(root, "flux"), "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
+			after, stderr := harness.RequireCLIOK(
+				t,
+				"build",
+				"all",
+				"--path",
+				filepath.Join(root, "flux"),
+				"--concurrency",
+				"2",
+				"--no-progress",
+				"--cache-dir",
+				t.TempDir(),
+			)
 			if !strings.Contains(after, "value: after") {
 				t.Fatalf("candidate full build lost input: %s\n%s", after, stderr)
 			}
 			t.Logf("full build after:\n%s", after)
 			for _, baseline := range baselines {
 				t.Run(baseline[0], func(t *testing.T) {
-					args := append([]string{"diff", "all", "-o", "diff", "--path", filepath.Join(root, "flux"), "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir()}, baseline...)
+					args := append(
+						[]string{
+							"diff",
+							"all",
+							"-o",
+							"diff",
+							"--path",
+							filepath.Join(root, "flux"),
+							"--concurrency",
+							"2",
+							"--no-progress",
+							"--cache-dir",
+							t.TempDir(),
+						},
+						baseline...)
 					out, stderr := harness.RequireCLIOK(t, args...)
 					if strings.Count(out, "-  value: before") != 1 || strings.Count(out, "+  value: after") != 1 {
 						t.Fatalf("changed-only diff missed escaped input: %q\n%s", out, stderr)
@@ -99,10 +185,20 @@ func TestE2E_DiffKustomizeInputLifecycle(t *testing.T) {
 		t.Run(operation, func(t *testing.T) {
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [owner.yaml]\n")
-			testutil.WriteFile(t, root, "flux/owner.yaml", testutil.KustomizationYAML("owner", "flux-system", "  path: ./apps\n"))
+			testutil.WriteFile(
+				t,
+				root,
+				"flux/owner.yaml",
+				testutil.KustomizationYAML("owner", "flux-system", "  path: ./apps\n"),
+			)
 			body := "resources: [cm.yaml]\n"
 			patch := "patches: [{path: ../inputs/patch}]\n"
-			testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: changed-input}\ndata: {value: plain}\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"apps/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: changed-input}\ndata: {value: plain}\n",
+			)
 			patchBody := "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: changed-input}\ndata: {value: patched}\n"
 			if operation != "add" {
 				testutil.WriteFile(t, root, "inputs/patch", patchBody)
@@ -111,7 +207,18 @@ func TestE2E_DiffKustomizeInputLifecycle(t *testing.T) {
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", body)
 			orig := t.TempDir()
 			testutil.CopyTree(t, root, orig)
-			before, _ := harness.RequireCLIOK(t, "build", "all", "--path", orig, "--no-progress", "--concurrency", "2", "--cache-dir", t.TempDir())
+			before, _ := harness.RequireCLIOK(
+				t,
+				"build",
+				"all",
+				"--path",
+				orig,
+				"--no-progress",
+				"--concurrency",
+				"2",
+				"--cache-dir",
+				t.TempDir(),
+			)
 			wantBefore, wantAfter := "patched", "plain"
 			if operation == "add" {
 				wantBefore, wantAfter = "plain", "patched"
@@ -125,7 +232,21 @@ func TestE2E_DiffKustomizeInputLifecycle(t *testing.T) {
 					testutil.WriteFile(t, root, "apps/kustomization.yaml", strings.TrimSuffix(body, patch))
 				}
 			}
-			args := []string{"diff", "all", "-o", "diff", "--path", root, "--path-orig", orig, "--no-progress", "--concurrency", "2", "--cache-dir", t.TempDir()}
+			args := []string{
+				"diff",
+				"all",
+				"-o",
+				"diff",
+				"--path",
+				root,
+				"--path-orig",
+				orig,
+				"--no-progress",
+				"--concurrency",
+				"2",
+				"--cache-dir",
+				t.TempDir(),
+			}
 			out, stderr, code := harness.RunCLIBuffers(args...)
 			if operation == "dangling" {
 				if code != 1 || !strings.Contains(stderr, "patch") {
@@ -133,9 +254,31 @@ func TestE2E_DiffKustomizeInputLifecycle(t *testing.T) {
 				}
 				return
 			}
-			after, _ := harness.RequireCLIOK(t, "build", "all", "--path", root, "--no-progress", "--concurrency", "2", "--cache-dir", t.TempDir())
-			if code != 0 || !strings.Contains(before, "value: "+wantBefore) || !strings.Contains(after, "value: "+wantAfter) || !strings.Contains(out, wantBefore) || !strings.Contains(out, wantAfter) {
-				t.Fatalf("valid %s input comparison failed: code=%d before=%q after=%q diff=%q stderr=%s", operation, code, before, after, out, stderr)
+			after, _ := harness.RequireCLIOK(
+				t,
+				"build",
+				"all",
+				"--path",
+				root,
+				"--no-progress",
+				"--concurrency",
+				"2",
+				"--cache-dir",
+				t.TempDir(),
+			)
+			if code != 0 || !strings.Contains(before, "value: "+wantBefore) ||
+				!strings.Contains(after, "value: "+wantAfter) ||
+				!strings.Contains(out, wantBefore) ||
+				!strings.Contains(out, wantAfter) {
+				t.Fatalf(
+					"valid %s input comparison failed: code=%d before=%q after=%q diff=%q stderr=%s",
+					operation,
+					code,
+					before,
+					after,
+					out,
+					stderr,
+				)
 			}
 		})
 	}
@@ -145,10 +288,30 @@ func TestE2E_DiffSelectedKustomizeInputs(t *testing.T) {
 	for _, input := range []string{"builder", "patch", "unrelated"} {
 		t.Run(input, func(t *testing.T) {
 			root, orig := t.TempDir(), t.TempDir()
-			testutil.WriteFile(t, root, "kustomization.yaml", "resources: [cm.yaml]\nnameSuffix: -dev\npatches: [{path: patch.yaml}]\n")
-			testutil.WriteFile(t, root, "cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input}\ndata: {value: base}\n")
-			testutil.WriteFile(t, root, "patch.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input}\ndata: {value: before}\n")
-			testutil.WriteFile(t, root, "unrelated.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: excluded}\ndata: {value: before}\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"kustomization.yaml",
+				"resources: [cm.yaml]\nnameSuffix: -dev\npatches: [{path: patch.yaml}]\n",
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				"cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input}\ndata: {value: base}\n",
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				"patch.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input}\ndata: {value: before}\n",
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				"unrelated.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: excluded}\ndata: {value: before}\n",
+			)
 			testutil.CopyTree(t, root, orig)
 			switch input {
 			case "builder":
@@ -220,13 +383,37 @@ spec:
       sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
 `)
 			if tc.shape == "remote" {
-				testutil.WriteFile(t, root, "flux/hr.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: demo, namespace: apps}\nspec: {suspend: true, chartRef: {kind: OCIRepository, name: remote}}\n")
+				testutil.WriteFile(
+					t,
+					root,
+					"flux/hr.yaml",
+					"apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: demo, namespace: apps}\nspec: {suspend: true, chartRef: {kind: OCIRepository, name: remote}}\n",
+				)
 			}
-			testutil.WriteFile(t, root, "flux/unrelated.yaml", testutil.KustomizationYAML("unrelated", "flux-system", "  path: ./unrelated\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
+			testutil.WriteFile(
+				t,
+				root,
+				"flux/unrelated.yaml",
+				testutil.KustomizationYAML(
+					"unrelated",
+					"flux-system",
+					"  path: ./unrelated\n  sourceRef: {kind: GitRepository, name: flux-system}\n",
+				),
+			)
 			testutil.WriteFile(t, root, "unrelated/kustomization.yaml", "resources: [cm.yaml]\n")
-			testutil.WriteFile(t, root, "unrelated/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unrelated}\ndata: {value: fixed}\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"unrelated/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unrelated}\ndata: {value: fixed}\n",
+			)
 			template := "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: chart-input, namespace: apps}\ndata: {value: {{ .Values.value | quote }}}\n"
-			testutil.WriteFile(t, root, filepath.Join(location, "Chart.yaml"), "apiVersion: v2\nname: demo\nversion: 1.0.0\n")
+			testutil.WriteFile(
+				t,
+				root,
+				filepath.Join(location, "Chart.yaml"),
+				"apiVersion: v2\nname: demo\nversion: 1.0.0\n",
+			)
 			testutil.WriteFile(t, root, filepath.Join(location, "values.yaml"), "value: before\n")
 			testutil.WriteFile(t, root, filepath.Join(location, "templates/cm.yaml"), template)
 			extra := strings.Replace(template, "name: chart-input,", "name: chart-input-extra,", 1)
@@ -247,11 +434,15 @@ spec:
 				}
 				writeChartInputArchive(t, root, location, "before")
 			}
-			options := &git.CommitOptions{Author: &object.Signature{Name: "fixture", Email: "fixture@example.test", When: time.Unix(0, 0)}}
+			options := &git.CommitOptions{
+				Author: &object.Signature{Name: "fixture", Email: "fixture@example.test", When: time.Unix(0, 0)},
+			}
 			base := testutil.GitCommitAll(t, repo, "base", options)
 			testutil.CopyTree(t, root, orig)
 			flags := []string{"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir(), "--log-level", "debug"}
-			before, _ := harness.RequireCLIOK(t, append([]string{"build", "all", "--path", filepath.Join(orig, "flux")}, flags...)...)
+			before, _ := harness.RequireCLIOK(
+				t,
+				append([]string{"build", "all", "--path", filepath.Join(orig, "flux")}, flags...)...)
 			switch tc.shape {
 			case "template added":
 				testutil.WriteFile(t, root, filepath.Join(location, "templates/extra.yaml"), extra)
@@ -260,13 +451,23 @@ spec:
 					t.Fatal(err)
 				}
 			case "template", "root", "remote":
-				testutil.WriteFile(t, root, filepath.Join(location, "templates/cm.yaml"), strings.Replace(template, ".Values.value | quote", "\"after\" | quote", 1))
+				testutil.WriteFile(
+					t,
+					root,
+					filepath.Join(location, "templates/cm.yaml"),
+					strings.Replace(template, ".Values.value | quote", "\"after\" | quote", 1),
+				)
 			case "values":
 				testutil.WriteFile(t, root, filepath.Join(location, "values.yaml"), "value: after\n")
 			case "archive":
 				writeChartInputArchive(t, root, location, "after")
 			case "admit":
-				testutil.WriteFile(t, root, filepath.Join(location, ".helmignore"), strings.ReplaceAll(policy, "templates/cm.yaml\n", ""))
+				testutil.WriteFile(
+					t,
+					root,
+					filepath.Join(location, ".helmignore"),
+					strings.ReplaceAll(policy, "templates/cm.yaml\n", ""),
+				)
 			case "remove", "create":
 				testutil.WriteFile(t, root, filepath.Join(location, ".helmignore"), policy+"templates/cm.yaml\n")
 			case "delete":
@@ -281,17 +482,31 @@ spec:
 				testutil.GitCommitAll(t, repo, "change", options)
 				baseline = []string{"--base", base.String()}
 			}
-			after, _ := harness.RequireCLIOK(t, append([]string{"build", "all", "--path", filepath.Join(root, "flux")}, flags...)...)
+			after, _ := harness.RequireCLIOK(
+				t,
+				append([]string{"build", "all", "--path", filepath.Join(root, "flux")}, flags...)...)
 			args := append([]string{"diff", "all", "-o", "diff", "--path", filepath.Join(root, "flux")}, baseline...)
 			args = append(args, flags...)
 			out, stderr := harness.RequireCLIOK(t, args...)
 			if tc.shape == "excluded" || tc.shape == "unchanged" || tc.shape == "remote" {
 				if before != after || out != "" {
-					t.Fatalf("precision control changed output: before=%s after=%s diff=%s\n%s", before, after, out, stderr)
+					t.Fatalf(
+						"precision control changed output: before=%s after=%s diff=%s\n%s",
+						before,
+						after,
+						out,
+						stderr,
+					)
 				}
 			} else {
 				if before == after || !strings.Contains(out, "chart-input") {
-					t.Fatalf("chart input missed full-render difference: before=%s after=%s diff=%s\n%s", before, after, out, stderr)
+					t.Fatalf(
+						"chart input missed full-render difference: before=%s after=%s diff=%s\n%s",
+						before,
+						after,
+						out,
+						stderr,
+					)
 				}
 				if tc.shape == "template" || tc.shape == "values" || tc.shape == "archive" || tc.shape == "root" {
 					if !strings.Contains(out, "-  value: before") || !strings.Contains(out, "+  value: after") {
@@ -304,7 +519,10 @@ spec:
 						prefix = "-"
 					}
 					if strings.Count(out, "--- ") != 1 ||
-						!strings.HasPrefix(out, "--- ConfigMap apps/chart-input-extra\n+++ ConfigMap apps/chart-input-extra\n") ||
+						!strings.HasPrefix(
+							out,
+							"--- ConfigMap apps/chart-input-extra\n+++ ConfigMap apps/chart-input-extra\n",
+						) ||
 						!strings.Contains(out, prefix+"  name: chart-input-extra\n") {
 						t.Fatalf("chart file lifecycle changed more than its resource: %s\n%s", out, stderr)
 					}
@@ -350,23 +568,69 @@ func TestE2E_ChangedOnlyLocalChartInputs(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				root, orig := t.TempDir(), t.TempDir()
 				repo := testutil.GitInit(t, root)
-				testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [hr.yaml, control.yaml, unrelated.yaml]\n")
+				testutil.WriteFile(
+					t,
+					root,
+					"flux/kustomization.yaml",
+					"resources: [hr.yaml, control.yaml, unrelated.yaml]\n",
+				)
 				release := "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: demo, namespace: apps}\nspec:\n  interval: 10m\n  chart:\n    spec:\n      chart: charts/demo\n      sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"
 				testutil.WriteFile(t, root, "flux/hr.yaml", release)
-				testutil.WriteFile(t, root, "flux/control.yaml", strings.ReplaceAll(strings.ReplaceAll(release, "demo", "control"), "namespace: apps", "namespace: other"))
-				testutil.WriteFile(t, root, "flux/unrelated.yaml", testutil.KustomizationYAML("unrelated", "other", "  path: ./unrelated\n"))
+				testutil.WriteFile(
+					t,
+					root,
+					"flux/control.yaml",
+					strings.ReplaceAll(
+						strings.ReplaceAll(release, "demo", "control"),
+						"namespace: apps",
+						"namespace: other",
+					),
+				)
+				testutil.WriteFile(
+					t,
+					root,
+					"flux/unrelated.yaml",
+					testutil.KustomizationYAML("unrelated", "other", "  path: ./unrelated\n"),
+				)
 				testutil.WriteFile(t, root, "unrelated/kustomization.yaml", "resources: [cm.yaml]\n")
-				testutil.WriteFile(t, root, "unrelated/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unrelated}\n")
+				testutil.WriteFile(
+					t,
+					root,
+					"unrelated/cm.yaml",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unrelated}\n",
+				)
 				template := "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: surviving, namespace: apps}\ndata: {value: unchanged}\n"
 				for _, chart := range []string{"demo", "control"} {
-					testutil.WriteFile(t, root, "charts/"+chart+"/Chart.yaml", "apiVersion: v2\nname: "+chart+"\nversion: 1.0.0\n")
-					testutil.WriteFile(t, root, "charts/"+chart+"/templates/cm.yaml", strings.ReplaceAll(template, "surviving", chart+"-surviving"))
+					testutil.WriteFile(
+						t,
+						root,
+						"charts/"+chart+"/Chart.yaml",
+						"apiVersion: v2\nname: "+chart+"\nversion: 1.0.0\n",
+					)
+					testutil.WriteFile(
+						t,
+						root,
+						"charts/"+chart+"/templates/cm.yaml",
+						strings.ReplaceAll(template, "surviving", chart+"-surviving"),
+					)
 				}
 				if invalid {
-					testutil.WriteFile(t, root, "charts/demo/templates/cm.yaml", "{{ fail \"surviving template is invalid\" }}\n")
+					testutil.WriteFile(
+						t,
+						root,
+						"charts/demo/templates/cm.yaml",
+						"{{ fail \"surviving template is invalid\" }}\n",
+					)
 				}
-				testutil.WriteFile(t, root, "charts/demo/templates/extra.yaml", strings.ReplaceAll(template, "surviving", "deleted"))
-				options := &git.CommitOptions{Author: &object.Signature{Name: "fixture", Email: "fixture@example.test", When: time.Unix(0, 0)}}
+				testutil.WriteFile(
+					t,
+					root,
+					"charts/demo/templates/extra.yaml",
+					strings.ReplaceAll(template, "surviving", "deleted"),
+				)
+				options := &git.CommitOptions{
+					Author: &object.Signature{Name: "fixture", Email: "fixture@example.test", When: time.Unix(0, 0)},
+				}
 				base := testutil.GitCommitAll(t, repo, "base", options)
 				testutil.CopyTree(t, root, orig)
 				if err := os.Remove(filepath.Join(root, "charts/demo/templates/extra.yaml")); err != nil {
@@ -387,7 +651,16 @@ func TestE2E_ChangedOnlyLocalChartInputs(t *testing.T) {
 						if command == "get" {
 							args = []string{command, "hr", "-o", "name"}
 						}
-						args = append(args, "--path", filepath.Join(root, "flux"), "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
+						args = append(
+							args,
+							"--path",
+							filepath.Join(root, "flux"),
+							"--concurrency",
+							"2",
+							"--no-progress",
+							"--cache-dir",
+							t.TempDir(),
+						)
 						args = append(args, baseline...)
 						out, stderr, code := harness.RunCLIBuffers(args...)
 						wantCode, want := 0, "apps/demo"
@@ -407,7 +680,12 @@ func TestE2E_ChangedOnlyLocalChartInputs(t *testing.T) {
 							}
 						}
 						if code != wantCode || !strings.Contains(out, want) {
-							t.Errorf("deleted template lost its release: code=%d stdout=%q stderr=%s", code, out, stderr)
+							t.Errorf(
+								"deleted template lost its release: code=%d stdout=%q stderr=%s",
+								code,
+								out,
+								stderr,
+							)
 						}
 						for _, excluded := range []string{"deleted", "unrelated", "control"} {
 							if strings.Contains(out, excluded) {
@@ -415,8 +693,15 @@ func TestE2E_ChangedOnlyLocalChartInputs(t *testing.T) {
 							}
 						}
 						second, _, secondCode := harness.RunCLIBuffers(args...)
-						if secondCode != code || elapsed.ReplaceAllString(second, "") != elapsed.ReplaceAllString(out, "") {
-							t.Errorf("changed-only output differs between runs: %d/%q versus %d/%q", code, out, secondCode, second)
+						if secondCode != code ||
+							elapsed.ReplaceAllString(second, "") != elapsed.ReplaceAllString(out, "") {
+							t.Errorf(
+								"changed-only output differs between runs: %d/%q versus %d/%q",
+								code,
+								out,
+								secondCode,
+								second,
+							)
 						}
 					})
 				}
@@ -432,10 +717,15 @@ func writeChartInputArchive(t *testing.T, root, location, value string) {
 	tarball := tar.NewWriter(compressed)
 	files := []struct{ name, body string }{
 		{"child/Chart.yaml", "apiVersion: v2\nname: child\nversion: 1.0.0\n"},
-		{"child/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: chart-input, namespace: apps}\ndata: {value: " + value + "}\n"},
+		{
+			"child/templates/cm.yaml",
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: chart-input, namespace: apps}\ndata: {value: " + value + "}\n",
+		},
 	}
 	for _, file := range files {
-		if err := tarball.WriteHeader(&tar.Header{Name: file.name, Mode: 0o600, Size: int64(len(file.body))}); err != nil {
+		if err := tarball.WriteHeader(
+			&tar.Header{Name: file.name, Mode: 0o600, Size: int64(len(file.body))},
+		); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := io.WriteString(tarball, file.body); err != nil {

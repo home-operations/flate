@@ -35,12 +35,18 @@ func TestExpand_CapturesAndIdentity(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			spec := specification{PathPattern: tc.pattern, Artifacts: []output{{Name: tc.output, Copy: []operation{{From: "@repo/apps/{App}", To: "@artifact/{App}"}}}}}
+			spec := specification{
+				PathPattern: tc.pattern,
+				Artifacts: []output{
+					{Name: tc.output, Copy: []operation{{From: "@repo/apps/{App}", To: "@artifact/{App}"}}},
+				},
+			}
 			got, err := expand(t.Context(), spec, map[string]fs.FS{"repo": tc.input})
 			if (err != nil) != tc.invalid {
 				t.Fatalf("expand() = %v; invalid=%v", err, tc.invalid)
 			}
-			if tc.name == "invalid_capture" && !strings.Contains(err.Error(), "invalid or repeated pathPattern capture") {
+			if tc.name == "invalid_capture" &&
+				!strings.Contains(err.Error(), "invalid or repeated pathPattern capture") {
 				t.Fatalf("capture diagnostic = %v", err)
 			}
 			if !tc.invalid {
@@ -56,7 +62,14 @@ func TestExpand_Canceled(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := expand(ctx, specification{PathPattern: "@repo/{App}"}, map[string]fs.FS{"repo": fstest.MapFS{"app/file": {}}}); !errors.Is(err, context.Canceled) {
+	if _, err := expand(
+		ctx,
+		specification{PathPattern: "@repo/{App}"},
+		map[string]fs.FS{"repo": fstest.MapFS{"app/file": {}}},
+	); !errors.Is(
+		err,
+		context.Canceled,
+	) {
 		t.Fatalf("expand() = %v", err)
 	}
 }

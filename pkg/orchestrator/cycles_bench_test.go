@@ -114,7 +114,16 @@ func BenchmarkDependencyGraph_RegisterHealthyChain(b *testing.B) {
 func BenchmarkDependencyGraph_RegisterWhileCycleFailed(b *testing.B) {
 	for _, fan := range []int{0, 100, 1000} {
 		b.Run(fmt.Sprintf("fan=%d", fan), func(b *testing.B) {
-			a, c, leaf := testutil.KustomizationID("ns", "a"), testutil.KustomizationID("ns", "b"), testutil.KustomizationID("ns", "leaf")
+			a, c, leaf := testutil.KustomizationID(
+				"ns",
+				"a",
+			), testutil.KustomizationID(
+				"ns",
+				"b",
+			), testutil.KustomizationID(
+				"ns",
+				"leaf",
+			)
 			deps := []manifest.NamedResource{c}
 			for i := range fan {
 				deps = append(deps, testutil.KustomizationID("ns", fmt.Sprintf("fan-%04d", i)))

@@ -19,7 +19,12 @@ func TestSeedBootstrapSource_ExplicitURLsOverrideGitConfig(t *testing.T) {
 		t.Run(identity, func(t *testing.T) {
 			t.Parallel()
 			parent := discoveryRefFixture(t)
-			testutil.WriteFile(t, parent, ".git/config", "[remote \"origin\"]\nurl = https://github.com/parent/repo.git\n")
+			testutil.WriteFile(
+				t,
+				parent,
+				".git/config",
+				"[remote \"origin\"]\nurl = https://github.com/parent/repo.git\n",
+			)
 			root := filepath.Join(parent, "child")
 			testutil.WriteFile(t, root, "scan.yaml", "")
 			d := &Session{cfg: Config{Path: root, RepoRoot: root, Store: store.New()}}
@@ -38,11 +43,20 @@ func TestSeedBootstrapSource_ExplicitURLsOverrideGitConfig(t *testing.T) {
 				input, _, err := baseline.AdmitDirectory(t.Context(), root, root)
 				assert.Equal(t, err, nil)
 				d.cfg.Store.SetArtifact(manifest.BootstrapSourceID, input)
-				testutil.WriteFile(t, parent, ".git/config", "[remote \"origin\"]\nurl = https://github.com/replaced/repo.git\n")
+				testutil.WriteFile(
+					t,
+					parent,
+					".git/config",
+					"[remote \"origin\"]\nurl = https://github.com/replaced/repo.git\n",
+				)
 			}
 			_, err := d.resolveEntrySources(t.Context(), false)
 			assert.Equal(t, err, nil)
-			assert.Equal(t, d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact).LocalPath, wantRoot)
+			assert.Equal(
+				t,
+				d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact).LocalPath,
+				wantRoot,
+			)
 			assert.Diff(t, d.remotes, map[string]struct{}{want: {}})
 			artifact := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 			assert.Equal(t, artifact.LocalPath, wantRoot)
@@ -78,7 +92,11 @@ func TestSeedBootstrapSource_NoRepository(t *testing.T) {
 			_, err := d.resolveEntrySources(t.Context(), false)
 			assert.Equal(t, len(d.remotes), 0)
 			assert.Equal(t, err, nil)
-			assert.Equal(t, d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact).LocalPath, root)
+			assert.Equal(
+				t,
+				d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact).LocalPath,
+				root,
+			)
 			artifact := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 			assert.Equal(t, artifact.Kind, manifest.KindGitRepository)
 			assert.Equal(t, artifact.URL, "file://"+root)
@@ -154,7 +172,6 @@ func TestNormalizeGitURL_StripsQueryAndFragment(t *testing.T) {
 	} {
 		assert.Equal(t, normalizeGitURL(tc.input), tc.want)
 	}
-
 }
 
 func TestNormalizeGitURL_IPv6Host(t *testing.T) {

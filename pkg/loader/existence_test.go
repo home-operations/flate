@@ -26,15 +26,40 @@ func TestDiscovery_SkipsNonDiscoveryKinds(t *testing.T) {
 		kind, api, spec string
 		admitted        bool
 	}{
-		{manifest.KindKustomization, manifest.FluxKustomizeDomain + "/v1", "spec: {interval: 10m, path: ./apps, sourceRef: {kind: GitRepository, name: fixture}}", true},
+		{
+			manifest.KindKustomization,
+			manifest.FluxKustomizeDomain + "/v1",
+			"spec: {interval: 10m, path: ./apps, sourceRef: {kind: GitRepository, name: fixture}}",
+			true,
+		},
 		{manifest.KindResourceSet, manifest.FluxOperatorDomain + "/v1", "spec: {resources: []}", true},
-		{manifest.KindResourceSetInputProvider, manifest.FluxOperatorDomain + "/v1", "spec: {type: Static, defaultValues: {key: value}}", true},
+		{
+			manifest.KindResourceSetInputProvider,
+			manifest.FluxOperatorDomain + "/v1",
+			"spec: {type: Static, defaultValues: {key: value}}",
+			true,
+		},
 		{manifest.KindGitRepository, manifest.SourceDomain + "/v1", "spec: {url: https://example.test/repo.git}", true},
-		{manifest.KindHelmRelease, manifest.HelmReleaseDomain + "/v2", "spec: {chart: {spec: {chart: podinfo, sourceRef: {kind: HelmRepository, name: podinfo}}}}", false},
+		{
+			manifest.KindHelmRelease,
+			manifest.HelmReleaseDomain + "/v2",
+			"spec: {chart: {spec: {chart: podinfo, sourceRef: {kind: HelmRepository, name: podinfo}}}}",
+			false,
+		},
 		{manifest.KindConfigMap, "v1", "data: {FOO: bar}", false},
 	}
 	for _, tc := range cases {
-		testutil.WriteFile(t, dir, tc.kind+".yaml", fmt.Sprintf("apiVersion: %s\nkind: %s\nmetadata: {name: fixture, namespace: flux-system}\n%s\n", tc.api, tc.kind, tc.spec))
+		testutil.WriteFile(
+			t,
+			dir,
+			tc.kind+".yaml",
+			fmt.Sprintf(
+				"apiVersion: %s\nkind: %s\nmetadata: {name: fixture, namespace: flux-system}\n%s\n",
+				tc.api,
+				tc.kind,
+				tc.spec,
+			),
+		)
 	}
 	st := store.New()
 	l := New(st)
@@ -62,7 +87,14 @@ func TestDiscovery_SkipsNonDiscoveryKinds(t *testing.T) {
 		})
 	}
 	cached := l.documents.cache[filepath.Join(dir, manifest.KindGitRepository+".yaml")].objects
-	assert.Equal(t, slices.ContainsFunc(cached, func(child parsedObject) bool { return child.Obj.Named().Kind == manifest.KindGitRepository }), true)
+	assert.Equal(
+		t,
+		slices.ContainsFunc(
+			cached,
+			func(child parsedObject) bool { return child.Obj.Named().Kind == manifest.KindGitRepository },
+		),
+		true,
+	)
 }
 
 // TestDiscovery_PromoteMaterializesFromIndex covers the
@@ -93,7 +125,17 @@ data:
 	if st.GetObject(id) != nil {
 		t.Fatalf("precondition: CM should not be in store yet")
 	}
-	if promoted, err := Promote(t.Context(), l.Store, id, PromoteOptions{Record: productionForTest(l.Index.Records[id]), WipeSecrets: true, Admit: func(manifest.BaseManifest) (bool, error) { return true, nil }}); err != nil || !promoted {
+	if promoted, err := Promote(
+		t.Context(),
+		l.Store,
+		id,
+		PromoteOptions{
+			Record:      productionForTest(l.Index.Records[id]),
+			WipeSecrets: true,
+			Admit:       func(manifest.BaseManifest) (bool, error) { return true, nil },
+		},
+	); err != nil ||
+		!promoted {
 		t.Fatalf("Promote should return true on a known id")
 	}
 	if st.GetObject(id) == nil {
@@ -110,7 +152,17 @@ func TestPromote_UnknownIDReturnsFalse(t *testing.T) {
 	t.Parallel()
 	idx := loaderFixture(store.New(), nil)
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "ghost"}
-	if got, err := Promote(t.Context(), idx.Store, id, PromoteOptions{Record: productionForTest(idx.Index.Records[id]), WipeSecrets: true, Admit: func(manifest.BaseManifest) (bool, error) { return true, nil }}); err != nil || got {
+	if got, err := Promote(
+		t.Context(),
+		idx.Store,
+		id,
+		PromoteOptions{
+			Record:      productionForTest(idx.Index.Records[id]),
+			WipeSecrets: true,
+			Admit:       func(manifest.BaseManifest) (bool, error) { return true, nil },
+		},
+	); err != nil ||
+		got {
 		t.Errorf("Promote on unknown id should return false, got true")
 	}
 }
@@ -139,7 +191,17 @@ data:
 		t.Fatalf("remove: %v", err)
 	}
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "ephemeral"}
-	if got, err := Promote(t.Context(), l.Store, id, PromoteOptions{Record: productionForTest(l.Index.Records[id]), WipeSecrets: true, Admit: func(manifest.BaseManifest) (bool, error) { return true, nil }}); err != nil || got {
+	if got, err := Promote(
+		t.Context(),
+		l.Store,
+		id,
+		PromoteOptions{
+			Record:      productionForTest(l.Index.Records[id]),
+			WipeSecrets: true,
+			Admit:       func(manifest.BaseManifest) (bool, error) { return true, nil },
+		},
+	); err != nil ||
+		got {
 		t.Errorf("Promote on a removed file should return false, got true")
 	}
 	if st.GetObject(id) != nil {
@@ -170,7 +232,10 @@ sops: {encrypted_regex: "^(data|stringData)$", version: 3.9.0}
 			cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "app-config"}
 			secretID := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "app-secret"}
 			record := manifest.Production{Authored: cmID, Path: filepath.Join(dir, "bundle.yaml")}
-			opts := PromoteOptions{WipeSecrets: true, Admit: func(manifest.BaseManifest) (bool, error) { return true, nil }}
+			opts := PromoteOptions{
+				WipeSecrets: true,
+				Admit:       func(manifest.BaseManifest) (bool, error) { return true, nil },
+			}
 			if input == "built" {
 				record = manifest.Production{}
 				opts.Documents = builtObjectsForTest(t, bundle)
@@ -218,7 +283,11 @@ metadata: {name: excluded, namespace: apps}
 stringData: {value: fixture}
 `
 					testutil.WriteFile(t, dir, "bundle.yaml", bundle)
-					cm := &manifest.ConfigMap{Name: "selected", Namespace: "apps", Data: map[string]any{"source": "rendered"}}
+					cm := &manifest.ConfigMap{
+						Name:      "selected",
+						Namespace: "apps",
+						Data:      map[string]any{"source": "rendered"},
+					}
 					secret := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "excluded"}
 					st := store.New()
 					if tc.existing {
@@ -230,7 +299,10 @@ stringData: {value: fixture}
 						id = secret
 					}
 					record := manifest.Production{Authored: id, Path: filepath.Join(dir, "bundle.yaml")}
-					opts := PromoteOptions{WipeSecrets: true, Admit: func(obj manifest.BaseManifest) (bool, error) { return obj.Named() == cm.Named(), nil }}
+					opts := PromoteOptions{
+						WipeSecrets: true,
+						Admit:       func(obj manifest.BaseManifest) (bool, error) { return obj.Named() == cm.Named(), nil },
+					}
 					if input == "built" {
 						record = manifest.Production{}
 						opts.Documents = builtObjectsForTest(t, bundle)
@@ -319,7 +391,25 @@ spec:
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
-			testutil.WriteFile(t, dir, "bundle.yaml", strings.Replace(fmt.Sprintf(doc, tc.authored, "9.0.0"), manifest.HelmReleaseDomain, "foreign.example", 1)+"---\n"+fmt.Sprintf(doc, "other", "2.0.0")+"---\n"+fmt.Sprintf(doc, tc.authored, "1.0.0")+"---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: note}\n")
+			testutil.WriteFile(
+				t,
+				dir,
+				"bundle.yaml",
+				strings.Replace(
+					fmt.Sprintf(doc, tc.authored, "9.0.0"),
+					manifest.HelmReleaseDomain,
+					"foreign.example",
+					1,
+				)+"---\n"+fmt.Sprintf(
+					doc,
+					"other",
+					"2.0.0",
+				)+"---\n"+fmt.Sprintf(
+					doc,
+					tc.authored,
+					"1.0.0",
+				)+"---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: note}\n",
+			)
 			st := store.New()
 			admitForTest(st, dir)
 			id := testutil.HelmReleaseID(tc.namespace, "podinfo")
@@ -328,7 +418,16 @@ spec:
 				record.Authored = id
 				record.Authored.Namespace = tc.authored
 			}
-			if got, err := Promote(t.Context(), st, id, PromoteOptions{Record: productionForTest(record), Admit: func(manifest.BaseManifest) (bool, error) { return true, nil }}); err != nil || got != (tc.version != "") {
+			if got, err := Promote(
+				t.Context(),
+				st,
+				id,
+				PromoteOptions{
+					Record: productionForTest(record),
+					Admit:  func(manifest.BaseManifest) (bool, error) { return true, nil },
+				},
+			); err != nil ||
+				got != (tc.version != "") {
 				t.Fatalf("promoteForTest(t.Context(), %s) = %v, want %v", id, got, tc.version != "")
 			}
 			if got := st.GetObject(id).(*manifest.HelmRelease).Chart.Version; got != tc.version {
@@ -336,7 +435,16 @@ spec:
 			}
 			foreign := id
 			foreign.Group = "foreign.example"
-			if promoted, err := Promote(t.Context(), st, foreign, PromoteOptions{Record: productionForTest(record), Admit: func(manifest.BaseManifest) (bool, error) { return true, nil }}); err != nil || promoted {
+			if promoted, err := Promote(
+				t.Context(),
+				st,
+				foreign,
+				PromoteOptions{
+					Record: productionForTest(record),
+					Admit:  func(manifest.BaseManifest) (bool, error) { return true, nil },
+				},
+			); err != nil ||
+				promoted {
 				t.Fatal("foreign promotion borrowed the real HelmRelease")
 			}
 			sibling := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "note"}
@@ -367,12 +475,31 @@ func TestPromote_SourceView(t *testing.T) {
 			source := &manifest.GitRepository{Name: "source"}
 			st.AddObject(source)
 			repoRoot := t.TempDir()
-			st.SetArtifact(source.Named(), &store.SourceArtifact{LocalRoot: repoRoot, LocalPath: dir, Key: "pinned", Content: "pinned", FS: input})
-			foreign := &manifest.RawObject{APIVersion: "foreign.example/v1", Kind: manifest.KindGitRepository, Name: source.Name}
+			st.SetArtifact(
+				source.Named(),
+				&store.SourceArtifact{LocalRoot: repoRoot, LocalPath: dir, Key: "pinned", Content: "pinned", FS: input},
+			)
+			foreign := &manifest.RawObject{
+				APIVersion: "foreign.example/v1",
+				Kind:       manifest.KindGitRepository,
+				Name:       source.Name,
+			}
 			st.AddObject(foreign)
-			st.SetArtifact(foreign.Named(), &store.SourceArtifact{LocalPath: dir, FS: fstest.MapFS{"values.yaml": &fstest.MapFile{Data: []byte(fmt.Sprintf(doc, "foreign"))}}})
+			st.SetArtifact(
+				foreign.Named(),
+				&store.SourceArtifact{
+					LocalPath: dir,
+					FS:        fstest.MapFS{"values.yaml": &fstest.MapFile{Data: []byte(fmt.Sprintf(doc, "foreign"))}},
+				},
+			)
 			for _, version := range []string{"", manifest.SourceDomain + "/v1", "v1", "foreign.example/v1", "missing.example/v1"} {
-				ks := &manifest.Kustomization{SourceRef: kustomizev1.CrossNamespaceSourceReference{APIVersion: version, Kind: manifest.KindGitRepository, Name: source.Name}}
+				ks := &manifest.Kustomization{
+					SourceRef: kustomizev1.CrossNamespaceSourceReference{
+						APIVersion: version,
+						Kind:       manifest.KindGitRepository,
+						Name:       source.Name,
+					},
+				}
 				root, pinned, external := SourceView(st, ks.SourceID(), repoRoot)
 				admitted := version == "" || version == manifest.SourceDomain+"/v1"
 				wantRoot := repoRoot
@@ -382,14 +509,27 @@ func TestPromote_SourceView(t *testing.T) {
 				if root != wantRoot || pinned != admitted || external != (version == "foreign.example/v1") {
 					t.Fatalf("SourceView(%q) = %s, %t, %t", version, root, pinned, external)
 				}
-				if !admitted && st.GetArtifact(ks.SourceID(), store.ArtifactContent) != nil && version != "foreign.example/v1" {
+				if !admitted && st.GetArtifact(ks.SourceID(), store.ArtifactContent) != nil &&
+					version != "foreign.example/v1" {
 					t.Fatalf("missing source %s borrowed the real artifact", ks.SourceID())
 				}
 			}
 			id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "selected"}
-			record := manifest.DiscoveryRecord{Authored: id, Path: filepath.Join(dir, "values.yaml"), Productions: []manifest.Production{{Source: source.Named()}}}
+			record := manifest.DiscoveryRecord{
+				Authored:    id,
+				Path:        filepath.Join(dir, "values.yaml"),
+				Productions: []manifest.Production{{Source: source.Named()}},
+			}
 			record.Authored.Namespace = "authored"
-			got, err := Promote(t.Context(), st, id, PromoteOptions{Record: productionForTest(record), Admit: func(manifest.BaseManifest) (bool, error) { return true, nil }})
+			got, err := Promote(
+				t.Context(),
+				st,
+				id,
+				PromoteOptions{
+					Record: productionForTest(record),
+					Admit:  func(manifest.BaseManifest) (bool, error) { return true, nil },
+				},
+			)
 			if got != present || err != nil {
 				t.Fatalf("Promote = %v, %v, want availability %v", got, err, present)
 			}
@@ -420,13 +560,23 @@ func TestPromote_CapturedSourceReplacement(t *testing.T) {
 	root := t.TempDir()
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "selected", Namespace: "apps"}
 	makeFS := func(value string) fstest.MapFS {
-		return fstest.MapFS{"values.yaml": &fstest.MapFile{Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected, namespace: apps}\ndata: {value: " + value + "}\n")}}
+		return fstest.MapFS{
+			"values.yaml": &fstest.MapFile{
+				Data: []byte(
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected, namespace: apps}\ndata: {value: " + value + "}\n",
+				),
+			},
+		}
 	}
 	barrier := promotionBarrier{FS: makeFS("old"), opened: make(chan struct{}), release: make(chan struct{})}
 	st.SetArtifact(source.Named(), &store.SourceArtifact{Key: "old", LocalPath: root, FS: barrier})
 	var first store.ReadSet
 	first.Init(st, testutil.KustomizationID("apps", "consumer"), nil)
-	options := PromoteOptions{Record: manifest.Production{Source: source.Named(), Authored: id, Path: filepath.Join(root, "values.yaml")}, Reads: &first, Admit: func(manifest.BaseManifest) (bool, error) { return true, nil }}
+	options := PromoteOptions{
+		Record: manifest.Production{Source: source.Named(), Authored: id, Path: filepath.Join(root, "values.yaml")},
+		Reads:  &first,
+		Admit:  func(manifest.BaseManifest) (bool, error) { return true, nil },
+	}
 	var arrivals int
 	st.AddListener(store.EventObjectAdded, func(changed manifest.NamedResource, _ any) {
 		if changed == id {

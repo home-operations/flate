@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"log/slog"
 	"slices"
 	"strings"
@@ -16,6 +15,8 @@ import (
 	"testing/fstest"
 	"testing/synctest"
 	"time"
+
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	"github.com/google/go-cmp/cmp"
@@ -65,22 +66,47 @@ data: {key: value}
 	defer reader.Retire()
 	reader.GetArtifact(rs.Named(), store.ArtifactContent)
 	var statusEvents, artifactEvents atomic.Int64
-	unsubStatus := s.AddListener(store.EventStatusUpdated, func(manifest.NamedResource, any) { statusEvents.Add(1) }, false)
+	unsubStatus := s.AddListener(
+		store.EventStatusUpdated,
+		func(manifest.NamedResource, any) { statusEvents.Add(1) },
+		false,
+	)
 	defer unsubStatus()
-	unsubArtifact := s.AddListener(store.EventArtifactUpdated, func(manifest.NamedResource, any) { artifactEvents.Add(1) }, false)
+	unsubArtifact := s.AddListener(
+		store.EventArtifactUpdated,
+		func(manifest.NamedResource, any) { artifactEvents.Add(1) },
+		false,
+	)
 	defer unsubArtifact()
 	second := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
 	defer second.Assessment.Close()
 	after := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
-	if second.Assessment.Outcome() == schedule.Blocked || !second.Assessment.Valid() || !reader.Valid() || arrivals.Load() != 1 || statusEvents.Load() != 0 || artifactEvents.Load() != 0 || before.Fingerprint != after.Fingerprint || !cmp.Equal(before.Manifests, after.Manifests) {
-		t.Fatalf("dedup assessment=%+v reader valid=%t object/status/artifact events=%d/%d/%d", second.Assessment, reader.Valid(), arrivals.Load()-1, statusEvents.Load(), artifactEvents.Load())
+	if second.Assessment.Outcome() == schedule.Blocked || !second.Assessment.Valid() || !reader.Valid() ||
+		arrivals.Load() != 1 ||
+		statusEvents.Load() != 0 ||
+		artifactEvents.Load() != 0 ||
+		before.Fingerprint != after.Fingerprint ||
+		!cmp.Equal(before.Manifests, after.Manifests) {
+		t.Fatalf(
+			"dedup assessment=%+v reader valid=%t object/status/artifact events=%d/%d/%d",
+			second.Assessment,
+			reader.Valid(),
+			arrivals.Load()-1,
+			statusEvents.Load(),
+			artifactEvents.Load(),
+		)
 	}
 	s.UpdateStatus(rs.Named(), store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: ""})
 	skipped := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
 	defer skipped.Assessment.Close()
 	info, _ := s.GetStatus(rs.Named())
 	after = s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
-	if skipped.Assessment.Outcome() == schedule.Blocked || info.Outcome() != store.OutcomeSkipped || info.Message != "" || !reader.Valid() || arrivals.Load() != 1 || before.Fingerprint != after.Fingerprint || !cmp.Equal(before.Manifests, after.Manifests) {
+	if skipped.Assessment.Outcome() == schedule.Blocked || info.Outcome() != store.OutcomeSkipped ||
+		info.Message != "" ||
+		!reader.Valid() ||
+		arrivals.Load() != 1 ||
+		before.Fingerprint != after.Fingerprint ||
+		!cmp.Equal(before.Manifests, after.Manifests) {
 		t.Fatalf("typed skip lost its outcome: status=%+v arrivals=%d", info, arrivals.Load())
 	}
 }
@@ -96,13 +122,23 @@ func TestDAGDispatch_ResourceSetClassification(t *testing.T) {
 				c := resourceset.New(s, tasks, nil, true)
 				c.Configure(base.Options{})
 				c.StartLifecycle()
-				rs := &manifest.ResourceSet{Name: "matrix", Namespace: "ns", Inputs: []fluxopv1.ResourceSetInput{{}}, ResourcesTemplate: `apiVersion: v1
+				rs := &manifest.ResourceSet{
+					Name:      "matrix",
+					Namespace: "ns",
+					Inputs:    []fluxopv1.ResourceSetInput{{}},
+					ResourcesTemplate: `apiVersion: v1
 kind: ConfigMap
 metadata: {name: output}
 data: {key: fixed}
-`}
+`,
+				}
 				if selector {
-					rs.InputsFrom = []fluxopv1.InputProviderReference{{Kind: manifest.KindResourceSetInputProvider, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"role": "db"}}}}
+					rs.InputsFrom = []fluxopv1.InputProviderReference{
+						{
+							Kind:     manifest.KindResourceSetInputProvider,
+							Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"role": "db"}},
+						},
+					}
 				}
 				s.AddObject(rs)
 				d := dagDispatcher{&Orchestrator{store: s, rsc: c, controllers: base.Controllers{ResourceSet: c}}}
@@ -126,7 +162,14 @@ data: {key: fixed}
 				case "empty fingerprint":
 					s.RecordEmitted(rs.Named(), &store.Emission{Manifests: before.Manifests}, nil)
 				case "blocked gate", "failed gate":
-					fresh.DependsOn = []fluxopv1.Dependency{{APIVersion: manifest.FluxOperatorDomain + "/v1", Kind: manifest.KindResourceSet, Name: "gate", Namespace: "ns"}}
+					fresh.DependsOn = []fluxopv1.Dependency{
+						{
+							APIVersion: manifest.FluxOperatorDomain + "/v1",
+							Kind:       manifest.KindResourceSet,
+							Name:       "gate",
+							Namespace:  "ns",
+						},
+					}
 					for _, dep := range fresh.DependsOn {
 						manifest.KindOf(&manifest.RawObject{APIVersion: dep.APIVersion, Kind: dep.Kind}).Namespaced()
 					}
@@ -135,13 +178,24 @@ data: {key: fixed}
 					if name == "failed gate" {
 						gate := &manifest.ResourceSet{Name: "gate", Namespace: "ns"}
 						s.AddObject(gate)
-						s.UpdateStatus(gate.Named(), store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "gate failed"})
+						s.UpdateStatus(
+							gate.Named(),
+							store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "gate failed"},
+						)
 						wantUnresolved = false
 					}
 				case "preflight failure":
 					opts.PreflightFailure = func(manifest.NamedResource) (string, bool) { return "cycle", true }
 				case "filter skip":
-					opts.Loader = admissiontest.New(t, admissiontest.Config{Changes: change.NewSet(nil), Index: indexForTest(nil), Inventory: s, Root: ""})
+					opts.Loader = admissiontest.New(
+						t,
+						admissiontest.Config{
+							Changes:   change.NewSet(nil),
+							Index:     indexForTest(nil),
+							Inventory: s,
+							Root:      "",
+						},
+					)
 					admissiontest.Commit(t, opts.Loader, nil)
 					opts.Filter = opts.Loader.Options.Filter
 				case "vanished":
@@ -153,17 +207,35 @@ data: {key: fixed}
 				case "refresh suspended":
 					gate := &manifest.ResourceSet{Name: "gate", Namespace: "ns", Suspend: true}
 					s.AddObject(gate)
-					fresh.DependsOn = []fluxopv1.Dependency{{APIVersion: manifest.FluxOperatorDomain + "/v1", Kind: manifest.KindResourceSet, Name: "gate", Namespace: "ns"}}
+					fresh.DependsOn = []fluxopv1.Dependency{
+						{
+							APIVersion: manifest.FluxOperatorDomain + "/v1",
+							Kind:       manifest.KindResourceSet,
+							Name:       "gate",
+							Namespace:  "ns",
+						},
+					}
 					for _, dep := range fresh.DependsOn {
 						manifest.KindOf(&manifest.RawObject{APIVersion: dep.APIVersion, Kind: dep.Kind}).Namespaced()
 					}
 					s.AddObject(&fresh)
-					s.UpdateStatus(gate.Named(), store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSuspended, Message: "suspended"})
-					s.UpdateStatus(rs.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "queued"})
+					s.UpdateStatus(
+						gate.Named(),
+						store.StatusInfo{
+							Status:  store.StatusReady,
+							Reason:  store.ReasonSuspended,
+							Message: "suspended",
+						},
+					)
+					s.UpdateStatus(
+						rs.Named(),
+						store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "queued"},
+					)
 					var published atomic.Bool
 					unsub := s.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
 						info, ok := payload.(store.StatusInfo)
-						if id == rs.Named() && ok && info.String() == "resolving dependencies" && !published.Swap(true) {
+						if id == rs.Named() && ok && info.String() == "resolving dependencies" &&
+							!published.Swap(true) {
 							suspended := fresh
 							suspended.Suspend = true
 							s.AddObject(&suspended)
@@ -222,16 +294,31 @@ data: {key: fixed}
 				if name == "filter skip" {
 					info, ok := s.GetStatus(rs.Named())
 					_, _, retained := s.GetEmission(rs.Named())
-					if !ok || info.Outcome() != store.OutcomeUnchanged || info.Message != "unchanged" || len(retained.Children) != 0 || len(retained.Manifests) != 0 {
+					if !ok || info.Outcome() != store.OutcomeUnchanged || info.Message != "unchanged" ||
+						len(retained.Children) != 0 ||
+						len(retained.Manifests) != 0 {
 						t.Fatalf("filter retained invalid output: %+v", info)
 					}
 				}
 				if name == "suspended" || name == "refresh suspended" {
 					info, _ := s.GetStatus(rs.Named())
 					_, _, retained := s.GetEmission(rs.Named())
-					output := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: rs.Namespace, Name: "output"}
-					if info.Outcome() != store.OutcomeSuspended || len(retained.Manifests) != 0 || len(retained.Children) != 0 || s.GetObject(output) != nil || outputArrivals.Load() != 0 || outputWithdrawals.Load() != 1 {
-						t.Fatalf("suspension retained or replayed stale output: status=%+v arrivals=%d withdrawals=%d", info, outputArrivals.Load(), outputWithdrawals.Load())
+					output := manifest.NamedResource{
+						Kind:      manifest.KindConfigMap,
+						Namespace: rs.Namespace,
+						Name:      "output",
+					}
+					if info.Outcome() != store.OutcomeSuspended || len(retained.Manifests) != 0 ||
+						len(retained.Children) != 0 ||
+						s.GetObject(output) != nil ||
+						outputArrivals.Load() != 0 ||
+						outputWithdrawals.Load() != 1 {
+						t.Fatalf(
+							"suspension retained or replayed stale output: status=%+v arrivals=%d withdrawals=%d",
+							info,
+							outputArrivals.Load(),
+							outputWithdrawals.Load(),
+						)
 					}
 				}
 			})
@@ -244,23 +331,40 @@ data: {key: fixed}
 			tasks := task.NewBounded(2)
 			parent := &manifest.ResourceSet{Name: "a-owner", Namespace: "apps"}
 			peer := &manifest.ResourceSet{Name: "z-peer", Namespace: "apps"}
-			child := &manifest.ResourceSet{Name: "child", Namespace: "apps", ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output, namespace: apps}\n"}
+			child := &manifest.ResourceSet{
+				Name:              "child",
+				Namespace:         "apps",
+				ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output, namespace: apps}\n",
+			}
 			s.AddObjects([]manifest.BaseManifest{parent, peer, child})
 			proofs := []manifest.Production{{Owner: parent.Named()}, {Owner: peer.Named()}}
 			if mode == "self_owned" {
 				proofs = append(proofs, manifest.Production{Owner: child.Named()})
 			}
-			s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{child.Named(): {Productions: proofs}}})
+			s.SetDiscoveryIndex(
+				&manifest.DiscoveryIndex{
+					Records: map[manifest.NamedResource]manifest.DiscoveryRecord{child.Named(): {Productions: proofs}},
+				},
+			)
 			s.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			s.UpdateStatus(peer.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			switch mode {
 			case "pending_peer":
-				s.UpdateStatus(peer.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "materializing"})
+				s.UpdateStatus(
+					peer.Named(),
+					store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "materializing"},
+				)
 			case "failed_without_child":
-				s.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "owner failed"})
+				s.UpdateStatus(
+					parent.Named(),
+					store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "owner failed"},
+				)
 			case "accepted_pending_owner", "rooted":
 				s.RecordEmitted(parent.Named(), &store.Emission{Children: []store.Child{{Obj: child}}}, nil)
-				s.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "materializing peers"})
+				s.UpdateStatus(
+					parent.Named(),
+					store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "materializing peers"},
+				)
 				if mode == "rooted" {
 					s.AddObject(child)
 				}
@@ -268,27 +372,39 @@ data: {key: fixed}
 			c := resourceset.New(s, tasks, nil, true)
 			c.Configure(base.Options{})
 			c.StartLifecycle()
-			result := (dagDispatcher{&Orchestrator{store: s, rsc: c, controllers: base.Controllers{ResourceSet: c}}}).Dispatch(t.Context(), child.Named(), manifest.DrainNone)
+			result := (dagDispatcher{&Orchestrator{store: s, rsc: c, controllers: base.Controllers{ResourceSet: c}}}).Dispatch(
+				t.Context(),
+				child.Named(),
+				manifest.DrainNone,
+			)
 			defer result.Assessment.Close()
 			run := result.Assessment.(*base.Execution)
 			info, _ := s.GetStatus(child.Named())
 			switch mode {
 			case "pending_peer":
-				if run.Outcome() != schedule.Blocked || !slices.Equal(run.Blocked, []manifest.NamedResource{peer.Named()}) || s.GetArtifact(child.Named(), store.ArtifactContent) != nil {
-					t.Fatalf("pending materializer did not park exact peer: outcome=%v blocked=%v", run.Outcome(), run.Blocked)
+				if run.Outcome() != schedule.Blocked ||
+					!slices.Equal(run.Blocked, []manifest.NamedResource{peer.Named()}) ||
+					s.GetArtifact(child.Named(), store.ArtifactContent) != nil {
+					t.Fatalf(
+						"pending materializer did not park exact peer: outcome=%v blocked=%v",
+						run.Outcome(),
+						run.Blocked,
+					)
 				}
 			case "ready_without_child", "failed_without_child":
-				if run.Outcome() != schedule.DependencyFailed || !slices.Equal(info.BlockedBy(), []manifest.NamedResource{parent.Named(), peer.Named()}) || s.GetArtifact(child.Named(), store.ArtifactContent) != nil {
+				if run.Outcome() != schedule.DependencyFailed ||
+					!slices.Equal(info.BlockedBy(), []manifest.NamedResource{parent.Named(), peer.Named()}) ||
+					s.GetArtifact(child.Named(), store.ArtifactContent) != nil {
 					t.Fatalf("non-supplying owners lost provenance: %+v", info)
 				}
 			default:
-				if run.Outcome() != schedule.Terminal || info.Status != store.StatusReady || s.GetArtifact(child.Named(), store.ArtifactContent) == nil {
+				if run.Outcome() != schedule.Terminal || info.Status != store.StatusReady ||
+					s.GetArtifact(child.Named(), store.ArtifactContent) == nil {
 					t.Fatalf("effective declaration did not render: %+v", info)
 				}
 			}
 		})
 	}
-
 }
 
 func TestDAGDispatch_ConcurrentResourceSetUpdate(t *testing.T) {
@@ -300,11 +416,16 @@ func TestDAGDispatch_ConcurrentResourceSetUpdate(t *testing.T) {
 	c.Configure(base.Options{})
 	c.StartLifecycle()
 
-	rs := &manifest.ResourceSet{Name: "concurrent", Namespace: "ns", Inputs: []fluxopv1.ResourceSetInput{{}}, ResourcesTemplate: `apiVersion: v1
+	rs := &manifest.ResourceSet{
+		Name:      "concurrent",
+		Namespace: "ns",
+		Inputs:    []fluxopv1.ResourceSetInput{{}},
+		ResourcesTemplate: `apiVersion: v1
 kind: ConfigMap
 metadata: {name: output}
 data: {key: initial}
-`}
+`,
+	}
 	s.AddObject(rs)
 	d := dagDispatcher{&Orchestrator{store: s, rsc: c, controllers: base.Controllers{ResourceSet: c}}}
 	d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
@@ -327,13 +448,16 @@ data: {key: initial}
 	fresh.ResourcesTemplate = strings.ReplaceAll(rs.ResourcesTemplate, "initial", "changed")
 	s.AddObject(&fresh)
 	var dispatches atomic.Int64
-	dispatch := fixtureDispatcher{store: s, dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
-		result := d.Dispatch(ctx, id, level)
-		if dispatches.Add(1) == 1 && result.Assessment.Valid() {
-			t.Error("superseded declaration retained a valid assessment")
-		}
-		return result
-	}}
+	dispatch := fixtureDispatcher{
+		store: s,
+		dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+			result := d.Dispatch(ctx, id, level)
+			if dispatches.Add(1) == 1 && result.Assessment.Valid() {
+				t.Error("superseded declaration retained a valid assessment")
+			}
+			return result
+		},
+	}
 	scheduler := schedule.New(tasks, dispatch)
 	scheduler.Seed([]schedule.NodeID{rs.Named()})
 	done := make(chan error, 1)
@@ -345,7 +469,12 @@ data: {key: initial}
 	}
 	newest := fresh
 	newest.ResourcesTemplate = strings.ReplaceAll(fresh.ResourcesTemplate, "changed", "newest")
-	newest.InputsFrom = []fluxopv1.InputProviderReference{{Kind: manifest.KindResourceSetInputProvider, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"role": "db"}}}}
+	newest.InputsFrom = []fluxopv1.InputProviderReference{
+		{
+			Kind:     manifest.KindResourceSetInputProvider,
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"role": "db"}},
+		},
+	}
 	tasks.Go(ctx, "update", func(context.Context) {
 		s.AddObject(&newest)
 		close(release)
@@ -364,10 +493,14 @@ data: {key: initial}
 	settled := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
 	defer settled.Assessment.Close()
 	after := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
-	if settled.Assessment.Outcome() == schedule.Blocked || !settled.Assessment.Valid() || !reader.Valid() || before.Fingerprint != after.Fingerprint || !cmp.Equal(before.Manifests, after.Manifests) {
+	if settled.Assessment.Outcome() == schedule.Blocked || !settled.Assessment.Valid() || !reader.Valid() ||
+		before.Fingerprint != after.Fingerprint ||
+		!cmp.Equal(before.Manifests, after.Manifests) {
 		t.Fatalf("settled newest content did not deduplicate: %+v", settled.Assessment)
 	}
-	cm, ok := s.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "output"})
+	cm, ok := s.Get[*manifest.ConfigMap](
+		manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "output"},
+	)
 	if !ok || cm.Data["key"] != "newest" {
 		t.Fatalf("latest concurrent content was lost: %+v", cm)
 	}
@@ -380,16 +513,36 @@ func TestDAGDispatch_WithdrawalNotificationDrain(t *testing.T) {
 				synctest.Test(t, func(t *testing.T) {
 					s := store.New()
 					tasks := task.NewBounded(workers)
-					p, k, consumer := testutil.KustomizationID("flux-system", "publisher"), testutil.KustomizationID("flux-system", "child"), testutil.KustomizationID("flux-system", "consumer")
+					p, k, consumer := testutil.KustomizationID(
+						"flux-system",
+						"publisher",
+					), testutil.KustomizationID(
+						"flux-system",
+						"child",
+					), testutil.KustomizationID(
+						"flux-system",
+						"consumer",
+					)
 					s.AddObject(&manifest.Kustomization{Name: p.Name, Namespace: p.Namespace})
 					child := &manifest.Kustomization{Name: k.Name, Namespace: k.Namespace}
 					s.RecordEmitted(p, &store.Emission{Children: []store.Child{{Obj: child}}, Complete: true}, nil)
 					_, _, late := s.GetEmission(k)
-					doc := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "late", "namespace": "apps"}, "data": map[string]any{"value": "private"}}
+					doc := map[string]any{
+						"apiVersion": "v1",
+						"kind":       "ConfigMap",
+						"metadata":   map[string]any{"name": "late", "namespace": "apps"},
+						"data":       map[string]any{"value": "private"},
+					}
 					children, retained := parseChildrenForTest(k, []map[string]any{doc}, manifest.ParseDocOptions{})
 					late.Children, late.Manifests = children, testutil.DocumentOccurrences(retained)
 					late.Complete = true
-					publishRelease, entered, deliveryRelease := make(chan struct{}), make(chan struct{}), make(chan struct{})
+					publishRelease, entered, deliveryRelease := make(
+						chan struct{},
+					), make(
+						chan struct{},
+					), make(
+						chan struct{},
+					)
 					consumerStarted, woken := make(chan struct{}), make(chan struct{})
 					var calls atomic.Int64
 					publishLate := func() {
@@ -400,32 +553,44 @@ func TestDAGDispatch_WithdrawalNotificationDrain(t *testing.T) {
 					releaseDelivery := sync.OnceFunc(func() { close(deliveryRelease) })
 					defer releasePublication()
 					defer releaseDelivery()
-					dispatch := fixtureDispatcher{store: s, dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
-						if id == consumer {
-							execution := controllertest.NewExecution(base.New(s, tasks), id)
-							execution.Dispatch(ctx, level, execution, func(execution *base.Execution, ctx context.Context, _ *manifest.Kustomization, level manifest.DrainLevel) error {
-								if calls.Add(1) == 1 {
-									close(consumerStarted)
-									return execution.Require(ctx, []manifest.DependencyRef{{NamedResource: k}}, level)
-								}
-								if execution.Reads.GetObject(k) != nil {
-									t.Error("withdrawal wake observed child still live")
-								}
-								close(woken)
-								return nil
-							})
-							return schedule.Result{Assessment: execution}
-						}
-						tasks.YieldSlot(func() { <-publishRelease })
-						if lateFirst {
-							publishLate()
-						}
-						s.RecordEmitted(p, &store.Emission{Complete: true}, nil)
-						if !lateFirst {
-							publishLate()
-						}
-						return schedule.Result{}
-					}}
+					dispatch := fixtureDispatcher{
+						store: s,
+						dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+							if id == consumer {
+								execution := controllertest.NewExecution(base.New(s, tasks), id)
+								execution.Dispatch(
+									ctx,
+									level,
+									execution,
+									func(execution *base.Execution, ctx context.Context, _ *manifest.Kustomization, level manifest.DrainLevel) error {
+										if calls.Add(1) == 1 {
+											close(consumerStarted)
+											return execution.Require(
+												ctx,
+												[]manifest.DependencyRef{{NamedResource: k}},
+												level,
+											)
+										}
+										if execution.Reads.GetObject(k) != nil {
+											t.Error("withdrawal wake observed child still live")
+										}
+										close(woken)
+										return nil
+									},
+								)
+								return schedule.Result{Assessment: execution}
+							}
+							tasks.YieldSlot(func() { <-publishRelease })
+							if lateFirst {
+								publishLate()
+							}
+							s.RecordEmitted(p, &store.Emission{Complete: true}, nil)
+							if !lateFirst {
+								publishLate()
+							}
+							return schedule.Result{}
+						},
+					}
 					scheduler := schedule.New(tasks, dispatch)
 					o := &Orchestrator{store: s}
 					unsubscribe := o.watchDAG(scheduler)
@@ -462,7 +627,8 @@ func TestDAGDispatch_WithdrawalNotificationDrain(t *testing.T) {
 					default:
 						t.Fatal("withdrawal did not wake the captured consumer")
 					}
-					if calls.Load() != 2 || tasks.Failures() != 0 || s.GetObject(k) != nil || s.GetObject(late.Children[0].Obj.Named()) != nil {
+					if calls.Load() != 2 || tasks.Failures() != 0 || s.GetObject(k) != nil ||
+						s.GetObject(late.Children[0].Obj.Named()) != nil {
 						t.Fatal("withdrawal lost wake or late publication manufactured support")
 					}
 				})
@@ -476,19 +642,43 @@ func TestDAGDispatch_NeverEmittedCoverageWithdrawal(t *testing.T) {
 		t.Run(fmt.Sprint(workers), func(t *testing.T) {
 			s := store.New()
 			tasks := task.NewBounded(workers)
-			p, k := testutil.KustomizationID("flux-system", "publisher"), testutil.KustomizationID("flux-system", "never-emitted")
-			l := &manifest.ResourceSet{Name: "static", Namespace: "apps", Inputs: []fluxopv1.ResourceSetInput{{}}, ResourcesTemplate: `apiVersion: v1
+			p, k := testutil.KustomizationID(
+				"flux-system",
+				"publisher",
+			), testutil.KustomizationID(
+				"flux-system",
+				"never-emitted",
+			)
+			l := &manifest.ResourceSet{
+				Name:      "static",
+				Namespace: "apps",
+				Inputs:    []fluxopv1.ResourceSetInput{{}},
+				ResourcesTemplate: `apiVersion: v1
 kind: ConfigMap
 metadata: {name: withdrawn-output}
 data: {value: rendered}
-`}
-			provider := &manifest.ResourceSetInputProvider{Name: "dynamic", Namespace: l.Namespace, Type: fluxopv1.InputProviderGitHubBranch}
+`,
+			}
+			provider := &manifest.ResourceSetInputProvider{
+				Name:      "dynamic",
+				Namespace: l.Namespace,
+				Type:      fluxopv1.InputProviderGitHubBranch,
+			}
 			l.InputsFrom = []fluxopv1.InputProviderReference{{Name: provider.Name}}
-			s.AddObjects([]manifest.BaseManifest{&manifest.Kustomization{Name: p.Name, Namespace: p.Namespace}, l, provider})
+			s.AddObjects(
+				[]manifest.BaseManifest{&manifest.Kustomization{Name: p.Name, Namespace: p.Namespace}, l, provider},
+			)
 			s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 				l.Named(): {Productions: []manifest.Production{{Owner: k, Source: manifest.BootstrapSourceID}}},
 			}})
-			s.RecordEmitted(p, &store.Emission{Children: []store.Child{{Obj: &manifest.Kustomization{Name: k.Name, Namespace: k.Namespace}}}, Complete: true}, nil)
+			s.RecordEmitted(
+				p,
+				&store.Emission{
+					Children: []store.Child{{Obj: &manifest.Kustomization{Name: k.Name, Namespace: k.Namespace}}},
+					Complete: true,
+				},
+				nil,
+			)
 			s.SetArtifact(l.Named(), &store.SourceArtifact{Key: "static-l"})
 			s.UpdateStatus(l.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			if s.GetObject(l.Named()) != l || s.GetArtifact(l.Named(), store.ArtifactContent) == nil {
@@ -525,8 +715,14 @@ data: {value: rendered}
 				}
 			})
 			tasks.BlockTillDone()
-			output := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: l.Namespace, Name: "withdrawn-output"}
-			if tasks.Failures() != 0 || publications.Load() != 0 || s.GetObject(l.Named()) != nil || s.GetArtifact(l.Named(), store.ArtifactContent) != nil || s.GetObject(output) != nil {
+			output := manifest.NamedResource{
+				Kind:      manifest.KindConfigMap,
+				Namespace: l.Namespace,
+				Name:      "withdrawn-output",
+			}
+			if tasks.Failures() != 0 || publications.Load() != 0 || s.GetObject(l.Named()) != nil ||
+				s.GetArtifact(l.Named(), store.ArtifactContent) != nil ||
+				s.GetObject(output) != nil {
 				t.Fatalf("withdrawn body/artifact leaked: publications=%d", publications.Load())
 			}
 			s.AddObject(l)
@@ -547,7 +743,12 @@ type sharedRepositoryFetcher struct {
 	observe func(context.Context, manifest.BaseManifest, *store.ReadSet)
 }
 
-func (f *sharedRepositoryFetcher) Fetch(ctx context.Context, obj manifest.BaseManifest, reads *store.ReadSet, _ sourcecache.Policy) (*store.SourceArtifact, error) {
+func (f *sharedRepositoryFetcher) Fetch(
+	ctx context.Context,
+	obj manifest.BaseManifest,
+	reads *store.ReadSet,
+	_ sourcecache.Policy,
+) (*store.SourceArtifact, error) {
 	f.mu.Lock()
 	f.calls[obj.Named()]++
 	f.mu.Unlock()
@@ -555,8 +756,10 @@ func (f *sharedRepositoryFetcher) Fetch(ctx context.Context, obj manifest.BaseMa
 		f.observe(ctx, obj, reads)
 	}
 	return &store.SourceArtifact{Kind: manifest.KindHelmChart, Key: "chart", FS: fstest.MapFS{
-		"chart/Chart.yaml":               {Data: []byte("apiVersion: v2\nname: demo\nversion: 1.0.0\n")},
-		"chart/templates/configmap.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-output\n")},
+		"chart/Chart.yaml": {Data: []byte("apiVersion: v2\nname: demo\nversion: 1.0.0\n")},
+		"chart/templates/configmap.yaml": {
+			Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-output\n"),
+		},
 	}}, nil
 }
 
@@ -569,7 +772,9 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 					synctest.Test(t, func(t *testing.T) {
 						var logs bytes.Buffer
 						previous := slog.Default()
-						slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+						slog.SetDefault(
+							slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
+						)
 						defer slog.SetDefault(previous)
 						ctx, cancel := context.WithCancel(t.Context())
 						defer cancel()
@@ -580,7 +785,6 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 						}
 						defer func() {
 							o.stop()
-
 						}()
 						f := &sharedRepositoryFetcher{calls: map[manifest.NamedResource]int{}}
 						o.src.Fetchers[manifest.KindHelmRepository] = f
@@ -608,7 +812,25 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 						permits := []chan struct{}{make(chan struct{}), make(chan struct{}), make(chan struct{})}
 						var releaseConsumers []func()
 						for i := range 3 {
-							hr := &manifest.HelmRelease{Name: fmt.Sprintf("consumer-%d", i), Namespace: "apps", Chart: manifest.HelmChart{Name: "demo", Version: "1.0.0", Source: repo}, HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: "demo", Version: "1.0.0", SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: (repo).Kind, Name: (repo).Name, Namespace: (repo).Namespace, APIVersion: ""}}}}}
+							hr := &manifest.HelmRelease{
+								Name:      fmt.Sprintf("consumer-%d", i),
+								Namespace: "apps",
+								Chart:     manifest.HelmChart{Name: "demo", Version: "1.0.0", Source: repo},
+								HelmReleaseSpec: helmv2.HelmReleaseSpec{
+									Chart: &helmv2.HelmChartTemplate{
+										Spec: helmv2.HelmChartTemplateSpec{
+											Chart:   "demo",
+											Version: "1.0.0",
+											SourceRef: &helmv2.CrossNamespaceObjectReference{
+												Kind:       repo.Kind,
+												Name:       repo.Name,
+												Namespace:  repo.Namespace,
+												APIVersion: "",
+											},
+										},
+									},
+								},
+							}
 							s.AddObject(hr)
 							releases = append(releases, hr.Named())
 							releaseConsumers = append(releaseConsumers, sync.OnceFunc(func() { close(permits[i]) }))
@@ -629,13 +851,19 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 						signalAccepted := sync.OnceFunc(func() { close(accepted) })
 						publish := sync.OnceFunc(func() {
 							nextDoc := manifest.DeepCopyMap(doc)
-							nextDoc["metadata"].(map[string]any)["labels"] = map[string]any{"kustomize.toolkit.fluxcd.io/name": p.Name}
+							nextDoc["metadata"].(map[string]any)["labels"] = map[string]any{
+								"kustomize.toolkit.fluxcd.io/name": p.Name,
+							}
 							if scenario == "effective_input_change" {
 								nextDoc["spec"].(map[string]any)["url"] = "https://changed.example"
 							}
 							_, _, next := s.GetEmission(p)
 							defer next.Finish()
-							children, retained := parseChildrenForTest(p, []map[string]any{nextDoc}, manifest.ParseDocOptions{})
+							children, retained := parseChildrenForTest(
+								p,
+								[]map[string]any{nextDoc},
+								manifest.ParseDocOptions{},
+							)
 							next.Children, next.Manifests = children, testutil.DocumentOccurrences(retained)
 							next.Complete = true
 							controllertest.Emit(t.Context(), o.ksc.Controller, p, &next)
@@ -657,7 +885,14 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 						var firstFetch atomic.Bool
 						f.observe = func(ctx context.Context, obj manifest.BaseManifest, reads *store.ReadSet) {
 							chart := obj.(*manifest.HelmChartSource)
-							r, ok := reads.Get[*manifest.HelmRepository](manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: chart.Namespace, Name: chart.SourceRef.Name})
+							r, ok := reads.Get[*manifest.HelmRepository](
+								manifest.NamedResource{
+									Group:     manifest.SourceDomain,
+									Kind:      manifest.KindHelmRepository,
+									Namespace: chart.Namespace,
+									Name:      chart.SourceRef.Name,
+								},
+							)
 							if !ok {
 								t.Error("fetch did not capture its backing repository")
 								return
@@ -673,76 +908,80 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 						captured := make(chan *base.Execution, 1)
 						var firstRepository sync.Once
 						d := dagDispatcher{o}
-						dispatch := fixtureDispatcher{store: s, dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
-							if id == p {
-								o.tasks.YieldSlot(func() {
-									select {
-									case <-publishPermit:
-									case <-ctx.Done():
+						dispatch := fixtureDispatcher{
+							store: s,
+							dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+								if id == p {
+									o.tasks.YieldSlot(func() {
+										select {
+										case <-publishPermit:
+										case <-ctx.Done():
+										}
+									})
+									if ctx.Err() != nil {
+										return schedule.Result{}
 									}
-								})
-								if ctx.Err() != nil {
+									if scenario == "withdrawal_reanchor" {
+										_, _, empty := s.GetEmission(p)
+										defer empty.Finish()
+										empty.Children, empty.Manifests, empty.Complete = nil, nil, true
+										controllertest.Emit(t.Context(), o.ksc.Controller, p, &empty)
+										if s.GetDeclaration(repo) != nil {
+											t.Error("withdrawal retained repository authority")
+										}
+										releaseWithdrawal()
+									} else {
+										publish()
+									}
 									return schedule.Result{}
 								}
-								if scenario == "withdrawal_reanchor" {
-									_, _, empty := s.GetEmission(p)
-									defer empty.Finish()
-									empty.Children, empty.Manifests, empty.Complete = nil, nil, true
-									controllertest.Emit(t.Context(), o.ksc.Controller, p, &empty)
-									if s.GetDeclaration(repo) != nil {
-										t.Error("withdrawal retained repository authority")
+								for i, hr := range releases {
+									if id == hr {
+										o.tasks.YieldSlot(func() {
+											select {
+											case <-permits[i]:
+											case <-ctx.Done():
+											}
+										})
 									}
-									releaseWithdrawal()
-								} else {
+								}
+								hidden := id == repo && s.GetDeclaration(id) == nil
+								result := d.Dispatch(ctx, id, level)
+								if id == repo && scenario == "effective_input_change" {
+									firstRepository.Do(func() {
+										execution := result.Assessment.(*base.Execution)
+										r, ok := execution.Reads.Get[*manifest.HelmRepository](repo)
+										if !ok || r.URL != original.URL {
+											t.Error("initial assessment lost the original repository URL")
+										}
+										captured <- execution
+										o.tasks.YieldSlot(func() {
+											select {
+											case <-assessmentPermit:
+											case <-ctx.Done():
+											}
+										})
+									})
+								}
+								if hidden && scenario == "withdrawal_reanchor" {
+									o.tasks.YieldSlot(func() {
+										select {
+										case <-withdrawalObserved:
+										case <-ctx.Done():
+										}
+									})
+									if ctx.Err() != nil {
+										return result
+									}
 									publish()
 								}
-								return schedule.Result{}
-							}
-							for i, hr := range releases {
-								if id == hr {
-									o.tasks.YieldSlot(func() {
-										select {
-										case <-permits[i]:
-										case <-ctx.Done():
-										}
-									})
+								if id.Kind == manifest.KindHelmChart && result.Assessment.Valid() &&
+									result.Assessment.Outcome() == schedule.Terminal {
+									signalAccepted()
 								}
-							}
-							hidden := id == repo && s.GetDeclaration(id) == nil
-							result := d.Dispatch(ctx, id, level)
-							if id == repo && scenario == "effective_input_change" {
-								firstRepository.Do(func() {
-									execution := result.Assessment.(*base.Execution)
-									r, ok := execution.Reads.Get[*manifest.HelmRepository](repo)
-									if !ok || r.URL != original.URL {
-										t.Error("initial assessment lost the original repository URL")
-									}
-									captured <- execution
-									o.tasks.YieldSlot(func() {
-										select {
-										case <-assessmentPermit:
-										case <-ctx.Done():
-										}
-									})
-								})
-							}
-							if hidden && scenario == "withdrawal_reanchor" {
-								o.tasks.YieldSlot(func() {
-									select {
-									case <-withdrawalObserved:
-									case <-ctx.Done():
-									}
-								})
-								if ctx.Err() != nil {
-									return result
-								}
-								publish()
-							}
-							if id.Kind == manifest.KindHelmChart && result.Assessment.Valid() && result.Assessment.Outcome() == schedule.Terminal {
-								signalAccepted()
-							}
-							return result
-						}}
+								return result
+							},
+						}
 						sched := schedule.New(o.tasks, dispatch)
 						unwatch := o.watchDAG(sched)
 						defer unwatch()
@@ -838,9 +1077,20 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 						if !ok {
 							t.Fatal("final repository is absent")
 						}
-						finalChart := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: final.Namespace, Name: "apps-consumer-0"}
+						finalChart := manifest.NamedResource{
+							Group:     manifest.SourceDomain,
+							Kind:      manifest.KindHelmChart,
+							Namespace: final.Namespace,
+							Name:      "apps-consumer-0",
+						}
 						if first.id != finalChart || first.url != final.URL {
-							t.Errorf("captured chart acquisition=%s URL=%s, want %s URL=%s", first.id, first.url, finalChart, final.URL)
+							t.Errorf(
+								"captured chart acquisition=%s URL=%s, want %s URL=%s",
+								first.id,
+								first.url,
+								finalChart,
+								final.URL,
+							)
 						}
 						completions := map[manifest.NamedResource]int{}
 						for line := range bytes.SplitSeq(logs.Bytes(), []byte("\n")) {
@@ -875,7 +1125,10 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 							t.Errorf("final chart completions=%d, want 1", completions[finalChart])
 						}
 						for _, id := range releases {
-							if info, ok := s.GetStatus(id); !ok || info.Status != store.StatusReady || info.Message != "" {
+							if info, ok := s.GetStatus(
+								id,
+							); !ok || info.Status != store.StatusReady ||
+								info.Message != "" {
 								t.Errorf("consumer %s: %+v", id, info)
 							}
 							_, _, output := s.GetEmission(id)
@@ -903,22 +1156,40 @@ func TestDAGDispatch_DirtyTransitiveSubstitutionAfterDrain(t *testing.T) {
     substituteFrom: [{kind: ConfigMap, name: bridge-settings, optional: true}]
 `)
 	testutil.WriteFile(t, root, "consumer/kustomization.yaml", "resources: [../shared/consumer.yaml]\n")
-	testutil.WriteFile(t, root, "shared/consumer.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: consumer, namespace: flux-system}\ndata: {value: '${value}', mode: dirty}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"shared/consumer.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: consumer, namespace: flux-system}\ndata: {value: '${value}', mode: dirty}\n",
+	)
 	testutil.WriteFile(t, root, "bridge.yaml", ksYAML("bridge", "bridge", "")+`  postBuild:
     substituteFrom: [{kind: ConfigMap, name: hello, optional: true}]
 `)
 	testutil.WriteFile(t, root, "bridge/kustomization.yaml", "resources: [settings.yaml]\n")
-	testutil.WriteFile(t, root, "bridge/settings.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: bridge-settings, namespace: flux-system}\ndata: {value: '${value}'}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"bridge/settings.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: bridge-settings, namespace: flux-system}\ndata: {value: '${value}'}\n",
+	)
 	testutil.WriteFile(t, root, "pin.yaml", ksYAML("pin", "pin", ""))
 	testutil.WriteFile(t, root, "pin/kustomization.yaml", "resources: [hello.yaml]\n")
-	testutil.WriteFile(t, root, "pin/hello.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: flux-system}\ndata: {value: provisional}\n")
-	o, err := newTestOrchestrator(t, Tree{Path: root, RepoRoot: root, ExternalChanges: change.NewSet([]string{"shared/consumer.yaml"})}, Config{CacheDir: t.TempDir(), Concurrency: 2})
+	testutil.WriteFile(
+		t,
+		root,
+		"pin/hello.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: flux-system}\ndata: {value: provisional}\n",
+	)
+	o, err := newTestOrchestrator(
+		t,
+		Tree{Path: root, RepoRoot: root, ExternalChanges: change.NewSet([]string{"shared/consumer.yaml"})},
+		Config{CacheDir: t.TempDir(), Concurrency: 2},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		o.stop()
-
 	})
 	if err := o.bootstrap(t.Context()); err != nil {
 		t.Fatal(err)
@@ -931,29 +1202,59 @@ func TestDAGDispatch_DirtyTransitiveSubstitutionAfterDrain(t *testing.T) {
 	o.rsc.StartLifecycle()
 	consumer, pin := testutil.KustomizationID("flux-system", "consumer"), testutil.KustomizationID("flux-system", "pin")
 	var blocked, settled atomic.Bool
-	dispatch := fixtureDispatcher{store: o.store, dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
-		if id != pin {
-			result := (dagDispatcher{o}).Dispatch(ctx, id, level)
-			if id == consumer && result.Assessment.Outcome() == schedule.Blocked {
-				blocked.Store(true)
+	dispatch := fixtureDispatcher{
+		store: o.store,
+		dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+			if id != pin {
+				result := (dagDispatcher{o}).Dispatch(ctx, id, level)
+				if id == consumer && result.Assessment.Outcome() == schedule.Blocked {
+					blocked.Store(true)
+				}
+				return result
 			}
-			return result
-		}
-		run := controllertest.NewExecution(o.ksc.Controller, id)
-		run.Dispatch(ctx, level, run, func(run *base.Execution, _ context.Context, _ *manifest.Kustomization, level manifest.DrainLevel) error {
-			if level == manifest.DrainNone {
-				return &depwait.ErrBlocked{Deps: []manifest.NamedResource{consumer}}
-			}
-			if !blocked.Load() {
-				t.Error("producer settled before the transitive consumer parked")
-			}
-			settled.Store(true)
-			obj := &manifest.ConfigMap{Name: "hello", Namespace: "flux-system", Data: map[string]any{"value": "pinned"}}
-			run.Emit(t.Context(), id, &store.Emission{Children: []store.Child{{Obj: obj}}, Manifests: testutil.DocumentOccurrences([]map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "hello", "namespace": "flux-system"}, "data": obj.Data}}), Complete: true}, nil)
-			return nil
-		})
-		return schedule.Result{Assessment: run}
-	}}
+			run := controllertest.NewExecution(o.ksc.Controller, id)
+			run.Dispatch(
+				ctx,
+				level,
+				run,
+				func(run *base.Execution, _ context.Context, _ *manifest.Kustomization, level manifest.DrainLevel) error {
+					if level == manifest.DrainNone {
+						return &depwait.ErrBlocked{Deps: []manifest.NamedResource{consumer}}
+					}
+					if !blocked.Load() {
+						t.Error("producer settled before the transitive consumer parked")
+					}
+					settled.Store(true)
+					obj := &manifest.ConfigMap{
+						Name:      "hello",
+						Namespace: "flux-system",
+						Data:      map[string]any{"value": "pinned"},
+					}
+					run.Emit(
+						t.Context(),
+						id,
+						&store.Emission{
+							Children: []store.Child{{Obj: obj}},
+							Manifests: testutil.DocumentOccurrences(
+								[]map[string]any{
+									{
+										"apiVersion": "v1",
+										"kind":       "ConfigMap",
+										"metadata":   map[string]any{"name": "hello", "namespace": "flux-system"},
+										"data":       obj.Data,
+									},
+								},
+							),
+							Complete: true,
+						},
+						nil,
+					)
+					return nil
+				},
+			)
+			return schedule.Result{Assessment: run}
+		},
+	}
 	scheduler := schedule.New(o.tasks, dispatch)
 	unsubscribe := o.watchDAG(scheduler)
 	defer unsubscribe()
@@ -962,8 +1263,14 @@ func TestDAGDispatch_DirtyTransitiveSubstitutionAfterDrain(t *testing.T) {
 		t.Fatal(err)
 	}
 	output, ok := o.store.GetArtifact(consumer, store.ArtifactContent).(*store.Emission)
-	if !blocked.Load() || !settled.Load() || !ok || len(output.Manifests) != 1 || output.Manifests[0].Document["data"].(map[string]any)["value"] != "pinned" {
-		t.Fatalf("after-drain transitive output: blocked=%t settled=%t output=%+v", blocked.Load(), settled.Load(), output)
+	if !blocked.Load() || !settled.Load() || !ok || len(output.Manifests) != 1 ||
+		output.Manifests[0].Document["data"].(map[string]any)["value"] != "pinned" {
+		t.Fatalf(
+			"after-drain transitive output: blocked=%t settled=%t output=%+v",
+			blocked.Load(),
+			settled.Load(),
+			output,
+		)
 	}
 }
 
@@ -976,10 +1283,32 @@ func TestDAGDispatch_CanceledCommittedNotificationHarvest(t *testing.T) {
 		tasks := task.NewBounded(2)
 		publisher, child := testutil.KustomizationID("apps", "publisher"), testutil.KustomizationID("apps", "child")
 		s.AddObject(&manifest.Kustomization{Name: publisher.Name, Namespace: publisher.Namespace})
-		s.RecordEmitted(publisher, captureEmission(s, publisher, &store.Emission{Children: []store.Child{{Obj: &manifest.Kustomization{Name: child.Name, Namespace: child.Namespace}}}, Complete: true}), nil)
-		doc := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "withdrawn", "namespace": "apps"}}
+		s.RecordEmitted(
+			publisher,
+			captureEmission(
+				s,
+				publisher,
+				&store.Emission{
+					Children: []store.Child{
+						{Obj: &manifest.Kustomization{Name: child.Name, Namespace: child.Namespace}},
+					},
+					Complete: true,
+				},
+			),
+			nil,
+		)
+		doc := map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata":   map[string]any{"name": "withdrawn", "namespace": "apps"},
+		}
 		_, _, accepted := s.GetEmission(child)
-		children, retained := testutil.ParseChildren(base.New(s, tasks), s.GetObject(child), []map[string]any{doc}, manifest.ParseDocOptions{})
+		children, retained := testutil.ParseChildren(
+			base.New(s, tasks),
+			s.GetObject(child),
+			[]map[string]any{doc},
+			manifest.ParseDocOptions{},
+		)
 		accepted.Children, accepted.Manifests = children, testutil.DocumentOccurrences(retained)
 		accepted.Complete = true
 		s.RecordEmitted(child, &accepted, nil)
@@ -998,10 +1327,13 @@ func TestDAGDispatch_CanceledCommittedNotificationHarvest(t *testing.T) {
 			}
 		}, false)
 		defer unsubBarrier()
-		dispatch := fixtureDispatcher{store: s, dispatch: func(context.Context, schedule.NodeID, manifest.DrainLevel) schedule.Result {
-			s.RecordEmitted(publisher, captureEmission(s, publisher, &store.Emission{Complete: true}), nil)
-			return schedule.Result{}
-		}}
+		dispatch := fixtureDispatcher{
+			store: s,
+			dispatch: func(context.Context, schedule.NodeID, manifest.DrainLevel) schedule.Result {
+				s.RecordEmitted(publisher, captureEmission(s, publisher, &store.Emission{Complete: true}), nil)
+				return schedule.Result{}
+			},
+		}
 		scheduler := schedule.New(tasks, dispatch)
 		unsubscribe := o.watchDAG(scheduler)
 		defer unsubscribe()

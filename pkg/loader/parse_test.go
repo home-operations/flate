@@ -145,7 +145,8 @@ metadata: {namespace: apps}
 				if _, ok := cached.objects[1].Obj.(*manifest.RawObject); !ok {
 					t.Errorf("cached producer = %T, want raw object", cached.objects[1])
 				}
-				if cached.objects[0].Doc == nil || cached.objects[1].Doc != nil || cached.objects[len(cached.objects)-1].Doc == nil {
+				if cached.objects[0].Doc == nil || cached.objects[1].Doc != nil ||
+					cached.objects[len(cached.objects)-1].Doc == nil {
 					t.Fatal("only tracked objects should retain authoritative documents")
 				}
 				targets := manifest.ProducerTargets(cached.objects[1].Obj)
@@ -214,7 +215,8 @@ func TestParseFile_CompletedEmptyAndFailure(t *testing.T) {
 			assert.Equal(t, len(objects), 0)
 			after := reader.cache[file].objects
 			assert.Equal(t, len(after), len(before))
-			if name == "failed" && (len(after) != 1 || after[0].outcome.Ordinal != 0 || !errors.Is(after[0].outcome.Err, before[0].outcome.Err)) {
+			if name == "failed" &&
+				(len(after) != 1 || after[0].outcome.Ordinal != 0 || !errors.Is(after[0].outcome.Err, before[0].outcome.Err)) {
 				t.Fatalf("failure replaced: %+v", after)
 			}
 		})
@@ -236,7 +238,20 @@ func TestParseFile_ReadFailures(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			file := filepath.Join(root, "input.yaml")
-			input := &failingInputFS{FS: fstest.MapFS{"input.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: prefix}\n---\npartial: [" + strings.Repeat(" ", 1024))}}, cause: tc.cause, stream: tc.stream}
+			input := &failingInputFS{
+				FS: fstest.MapFS{
+					"input.yaml": {
+						Data: []byte(
+							"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: prefix}\n---\npartial: [" + strings.Repeat(
+								" ",
+								1024,
+							),
+						),
+					},
+				},
+				cause:  tc.cause,
+				stream: tc.stream,
+			}
 			reader := readerForTest(root)
 			reader.views[root] = input
 			objects, err := reader.fileObjects(file, manifest.ParseDocOptions{})
@@ -248,7 +263,11 @@ func TestParseFile_ReadFailures(t *testing.T) {
 			}
 			assert.Equal(t, len(objects), want)
 			failure := objects[len(objects)-1]
-			if failure.Obj != nil || failure.Doc != nil || failure.outcome.Document != nil || failure.outcome.Ordinal != want-1 || !errors.Is(failure.outcome.Err, tc.cause) || !errors.Is(failure.outcome.Err, manifest.ErrInput) || !errors.Is(failure.outcome.Err, manifest.ErrFlux) {
+			if failure.Obj != nil || failure.Doc != nil || failure.outcome.Document != nil ||
+				failure.outcome.Ordinal != want-1 ||
+				!errors.Is(failure.outcome.Err, tc.cause) ||
+				!errors.Is(failure.outcome.Err, manifest.ErrInput) ||
+				!errors.Is(failure.outcome.Err, manifest.ErrFlux) {
 				t.Fatalf("invalid retained failure: %+v", failure)
 			}
 			again, err := reader.fileObjects(file, manifest.ParseDocOptions{})
@@ -284,15 +303,21 @@ func TestParseFile_RunFailures(t *testing.T) {
 func TestParseFile_OpenRegularRejection(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	input, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: fstest.MapFS{
-		"pipe.yaml": {Mode: fs.ModeNamedPipe | 0o600},
-	}})
+	input, _, err := gittree.New(
+		t.Context(),
+		nil,
+		plumbing.ZeroHash,
+		gittree.ViewOptions{Mode: gittree.Source, Current: fstest.MapFS{
+			"pipe.yaml": {Mode: fs.ModeNamedPipe | 0o600},
+		}},
+	)
 	assert.NoError(t, err)
 	reader := readerForTest(root)
 	reader.views[root], reader.regular = input, true
 	objects, err := reader.fileObjects(filepath.Join(root, "pipe.yaml"), manifest.ParseDocOptions{})
 	assert.NoError(t, err)
-	if len(objects) != 1 || objects[0].Obj != nil || objects[0].Doc != nil || !errors.Is(objects[0].outcome.Err, fs.ErrNotExist) {
+	if len(objects) != 1 || objects[0].Obj != nil || objects[0].Doc != nil ||
+		!errors.Is(objects[0].outcome.Err, fs.ErrNotExist) {
 		t.Fatalf("OpenRegular rejection not retained: %+v", objects)
 	}
 }

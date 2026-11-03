@@ -209,7 +209,10 @@ func kustomizationFileIn(fsys filesys.FileSystem, dir string) (path string, ok b
 // findOrGenerateKustomization returns the existing kustomization file's bytes
 // (foundExisting=true) or, when none is present, synthesizes one from the YAML
 // manifests in dirPath via scanManifests. Mirrors the like-named flux function.
-func findOrGenerateKustomization(fsys filesys.FileSystem, dirPath string) (data []byte, kfile string, foundExisting bool, err error) {
+func findOrGenerateKustomization(
+	fsys filesys.FileSystem,
+	dirPath string,
+) (data []byte, kfile string, foundExisting bool, err error) {
 	if kpath, ok := kustomizationFileIn(fsys, dirPath); ok {
 		b, rerr := fsys.ReadFile(kpath)
 		return b, kpath, true, rerr
@@ -297,8 +300,12 @@ func scanManifests(fsys filesys.FileSystem, base string) ([]string, error) {
 			// misnamed kustomization file (e.g. "kustomzation.yaml"), which the
 			// scan then treats as a resource — say so plainly instead.
 			if kind := kustomizeConfigKind(contents); kind != "" {
-				return fmt.Errorf("%s: looks like a misnamed kustomization file (kind %s); rename it to %s or remove it",
-					path, kind, konfig.DefaultKustomizationFileName())
+				return fmt.Errorf(
+					"%s: looks like a misnamed kustomization file (kind %s); rename it to %s or remove it",
+					path,
+					kind,
+					konfig.DefaultKustomizationFileName(),
+				)
 			}
 			return fmt.Errorf("failed to decode Kubernetes YAML from %s: %w", path, err)
 		}

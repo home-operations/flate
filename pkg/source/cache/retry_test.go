@@ -64,19 +64,33 @@ func TestRetryable(t *testing.T) {
 		{"nil", nil, false},
 		{"skipped joined reset", errors.Join(manifest.ErrSourceSkipped, connReset()), false},
 		{"cancelled joined timeout", errors.Join(context.Canceled, timeoutErr{}), false},
-		{"local file joined reset", errors.Join(&fs.PathError{Op: "write", Path: "sink", Err: syscall.ECONNRESET}, connReset()), false},
+		{
+			"local file joined reset",
+			errors.Join(&fs.PathError{Op: "write", Path: "sink", Err: syscall.ECONNRESET}, connReset()),
+			false,
+		},
 		{"short write joined reset", errors.Join(io.ErrShortWrite, connReset()), false},
 		{"429", &fetcherr.ResponseError{StatusCode: 429}, true},
 		{"503", &fetcherr.ResponseError{StatusCode: 503}, true},
-		{"joined statuses", errors.Join(&fetcherr.ResponseError{StatusCode: 503}, &fetcherr.ResponseError{StatusCode: 404}, connReset()), false},
+		{
+			"joined statuses",
+			errors.Join(
+				&fetcherr.ResponseError{StatusCode: 503},
+				&fetcherr.ResponseError{StatusCode: 404},
+				connReset(),
+			),
+			false,
+		},
 		{"input joined timeout", errors.Join(manifest.ErrInput, timeoutErr{}), false},
 		{"missing secret joined reset", errors.Join(manifest.ErrMissingSecret, connReset()), false},
 		{"not found joined timeout", errors.Join(manifest.ErrObjectNotFound, timeoutErr{}), false},
 		{"terminal non-attempt", &TerminalError{Err: connReset()}, false},
 		{"terminal attempt", &TerminalError{Err: connReset(), Attempted: true}, false},
 		{"connection reset", connReset(), true},
-		{"connection refused",
-			&net.OpError{Op: "dial", Err: os.NewSyscallError("connect", syscall.ECONNREFUSED)}, true},
+		{
+			"connection refused",
+			&net.OpError{Op: "dial", Err: os.NewSyscallError("connect", syscall.ECONNREFUSED)}, true,
+		},
 		{"dial timeout", fmt.Errorf("dial: %w", timeoutErr{}), true},
 		{"unexpected eof", fmt.Errorf("copy layer: %w", io.ErrUnexpectedEOF), true},
 		// A typo'd host resolves to NXDOMAIN — a net.Error, but Timeout()
@@ -95,23 +109,41 @@ func TestRetryable(t *testing.T) {
 		{"http 404", errors.New("unexpected status: 404 Not Found"), false},
 		// Permanent classes are checked first, so they win even when a
 		// transient leaf (here a timeout net.Error) coexists in the chain.
-		{"permanent wins over transient leaf",
-			fmt.Errorf("%w: %w", context.DeadlineExceeded, timeoutErr{}), false},
+		{
+			"permanent wins over transient leaf",
+			fmt.Errorf("%w: %w", context.DeadlineExceeded, timeoutErr{}), false,
+		},
 	}
 	for _, tc := range []struct {
 		status int
 		want   bool
 	}{
-		{200, false}, {300, false}, {400, false}, {401, false}, {403, false}, {404, false},
-		{429, true}, {499, false}, {500, true}, {503, true}, {599, true}, {600, false},
+		{200, false},
+		{300, false},
+		{400, false},
+		{401, false},
+		{403, false},
+		{404, false},
+		{429, true},
+		{499, false},
+		{500, true},
+		{503, true},
+		{599, true},
+		{600, false},
 	} {
 		cause := &fetcherr.ResponseError{StatusCode: tc.status, Op: "GET"}
 		cases = append(cases, retryCase{fmt.Sprintf("status-%d", tc.status), fmt.Errorf("edge: %w", cause), tc.want})
 		if !tc.want {
 			for i, transient := range []error{&fetcherr.ResponseError{StatusCode: 503, Op: "GET"}, timeoutErr{}} {
-				cases = append(cases,
+				cases = append(
+					cases,
 					retryCase{fmt.Sprintf("terminal-%d/first/%d", tc.status, i), errors.Join(cause, transient), false},
-					retryCase{fmt.Sprintf("terminal-%d/last/%d", tc.status, i), errors.Join(transient, fmt.Errorf("nested: %w", cause)), false})
+					retryCase{
+						fmt.Sprintf("terminal-%d/last/%d", tc.status, i),
+						errors.Join(transient, fmt.Errorf("nested: %w", cause)),
+						false,
+					},
+				)
 			}
 		}
 	}
@@ -195,11 +227,16 @@ func TestAcquire_RetrySequence(t *testing.T) {
 						c := cachetest.New(t, root, New)
 						calls := 0
 						for i := range 2 {
-							_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "eligibility"}, Policy{Retry: fastRetry(3)}, func(_ context.Context, w ProducerInput) (ProducerResult, error) {
-								calls++
-								_, _ = io.WriteString(w, "partial")
-								return ProducerResult{}, tc.cause
-							})
+							_, _, _, err := c.Blob(
+								t.Context(),
+								BlobKey{Content: "eligibility"},
+								Policy{Retry: fastRetry(3)},
+								func(_ context.Context, w ProducerInput) (ProducerResult, error) {
+									calls++
+									_, _ = io.WriteString(w, "partial")
+									return ProducerResult{}, tc.cause
+								},
+							)
 							want := tc.attempts * (i + 1)
 							if disk && tc.record {
 								want = 1
@@ -214,8 +251,14 @@ func TestAcquire_RetrySequence(t *testing.T) {
 							}
 						}
 						if disk {
-							desc, err := c.store.Resolve(t.Context(), manifest.Fingerprint(struct{ Archive, Blob, Git any }{Blob: struct{ Content any }{"eligibility"}}))
-							if tc.record && (err != nil || desc.MediaType != ocispec.MediaTypeImageManifest) || !tc.record && !errors.Is(err, errdef.ErrNotFound) {
+							desc, err := c.store.Resolve(
+								t.Context(),
+								manifest.Fingerprint(
+									struct{ Archive, Blob, Git any }{Blob: struct{ Content any }{"eligibility"}},
+								),
+							)
+							if tc.record && (err != nil || desc.MediaType != ocispec.MediaTypeImageManifest) ||
+								!tc.record && !errors.Is(err, errdef.ErrNotFound) {
 								t.Fatalf("eligibility descriptor=%+v, error=%v", desc, err)
 							}
 							files, err := os.ReadDir(filepath.Join(c.root.Name(), ociDir))
@@ -250,18 +293,23 @@ func TestAcquire_RetrySequence(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				c := cachetest.New(t, "", New)
 				calls := 0
-				r, _, _, err := c.Blob(t.Context(), BlobKey{Content: "retry"}, Policy{Retry: fastRetry(tc.attempts)}, func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
-					calls++
-					if ctx.Err() != nil {
-						t.Error(ctx.Err())
-					}
-					if calls <= tc.failures {
-						_, _ = io.WriteString(w, "partial")
-						return ProducerResult{}, tc.failure
-					}
-					_, err := io.WriteString(w, "complete")
-					return ProducerResult{}, err
-				})
+				r, _, _, err := c.Blob(
+					t.Context(),
+					BlobKey{Content: "retry"},
+					Policy{Retry: fastRetry(tc.attempts)},
+					func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
+						calls++
+						if ctx.Err() != nil {
+							t.Error(ctx.Err())
+						}
+						if calls <= tc.failures {
+							_, _ = io.WriteString(w, "partial")
+							return ProducerResult{}, tc.failure
+						}
+						_, err := io.WriteString(w, "complete")
+						return ProducerResult{}, err
+					},
+				)
 				if calls != tc.want {
 					t.Fatalf("calls=%d, want %d", calls, tc.want)
 				}
@@ -300,7 +348,12 @@ func TestAcquire_NestedTerminal(t *testing.T) {
 						fail := func(context.Context, ProducerInput) (ProducerResult, error) {
 							return ProducerResult{}, connReset()
 						}
-						_, _, outerID, err := c.Blob(t.Context(), BlobKey{Content: "outer"}, Policy{}, producer(nil, ocispec.Descriptor{}))
+						_, _, outerID, err := c.Blob(
+							t.Context(),
+							BlobKey{Content: "outer"},
+							Policy{},
+							producer(nil, ocispec.Descriptor{}),
+						)
 						if err != nil {
 							t.Fatal(err)
 						}
@@ -309,13 +362,29 @@ func TestAcquire_NestedTerminal(t *testing.T) {
 							if id == "inner" && child != "due" {
 								continue
 							}
-							if _, _, _, err := c.Blob(t.Context(), BlobKey{Content: id}, Policy{}, fail); !errors.Is(err, syscall.ECONNRESET) {
+							if _, _, _, err := c.Blob(
+								t.Context(),
+								BlobKey{Content: id},
+								Policy{},
+								fail,
+							); !errors.Is(
+								err,
+								syscall.ECONNRESET,
+							) {
 								t.Fatal(err)
 							}
 						}
 						time.Sleep(750 * time.Millisecond)
 						if child == "fresh" {
-							if _, _, _, err := c.Blob(t.Context(), BlobKey{Content: "inner"}, Policy{}, fail); !errors.Is(err, syscall.ECONNRESET) {
+							if _, _, _, err := c.Blob(
+								t.Context(),
+								BlobKey{Content: "inner"},
+								Policy{},
+								fail,
+							); !errors.Is(
+								err,
+								syscall.ECONNRESET,
+							) {
 								t.Fatal(err)
 							}
 						}
@@ -331,14 +400,24 @@ func TestAcquire_NestedTerminal(t *testing.T) {
 						outer, inner := 0, 0
 						for range callers {
 							go func() {
-								_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "outer"}, Policy{Retry: fastRetry(5)}, func(ctx context.Context, _ ProducerInput) (ProducerResult, error) {
-									outer++
-									_, _, _, err := c.Blob(ctx, BlobKey{Content: "inner"}, Policy{Retry: fastRetry(7)}, func(context.Context, ProducerInput) (ProducerResult, error) {
-										inner++
-										return ProducerResult{}, connReset()
-									})
-									return ProducerResult{}, err
-								})
+								_, _, _, err := c.Blob(
+									t.Context(),
+									BlobKey{Content: "outer"},
+									Policy{Retry: fastRetry(5)},
+									func(ctx context.Context, _ ProducerInput) (ProducerResult, error) {
+										outer++
+										_, _, _, err := c.Blob(
+											ctx,
+											BlobKey{Content: "inner"},
+											Policy{Retry: fastRetry(7)},
+											func(context.Context, ProducerInput) (ProducerResult, error) {
+												inner++
+												return ProducerResult{}, connReset()
+											},
+										)
+										return ProducerResult{}, err
+									},
+								)
 								done <- err
 							}()
 						}
@@ -386,15 +465,27 @@ func TestAcquire_NestedTerminal(t *testing.T) {
 			cause := &net.OpError{Op: "dial", Net: "tcp", Err: os.ErrDeadlineExceeded}
 			terminal := &TerminalError{Err: cause, Attempted: attempted}
 			calls := 0
-			_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "outer"}, Policy{Retry: fastRetry(3)}, func(ctx context.Context, _ ProducerInput) (ProducerResult, error) {
-				calls++
-				_, _, _, err := c.Blob(ctx, BlobKey{Content: "inner"}, Policy{Retry: fastRetry(3)}, func(context.Context, ProducerInput) (ProducerResult, error) {
-					return ProducerResult{}, terminal
-				})
-				return ProducerResult{}, err
-			})
+			_, _, _, err := c.Blob(
+				t.Context(),
+				BlobKey{Content: "outer"},
+				Policy{Retry: fastRetry(3)},
+				func(ctx context.Context, _ ProducerInput) (ProducerResult, error) {
+					calls++
+					_, _, _, err := c.Blob(
+						ctx,
+						BlobKey{Content: "inner"},
+						Policy{Retry: fastRetry(3)},
+						func(context.Context, ProducerInput) (ProducerResult, error) {
+							return ProducerResult{}, terminal
+						},
+					)
+					return ProducerResult{}, err
+				},
+			)
 			got, ok := errors.AsType[*TerminalError](err)
-			if !ok || got != terminal || calls != 1 || err.Error() != cause.Error() || !errors.Is(err, manifest.ErrFlux) || !errors.Is(err, cause) {
+			if !ok || got != terminal || calls != 1 || err.Error() != cause.Error() ||
+				!errors.Is(err, manifest.ErrFlux) ||
+				!errors.Is(err, cause) {
 				t.Fatalf("terminal=%+v, error=%v, calls=%d", got, err, calls)
 			}
 		})
@@ -404,14 +495,24 @@ func TestAcquire_NestedTerminal(t *testing.T) {
 			t.Parallel()
 			c := cachetest.New(t, "", New)
 			outer, inner := 0, 0
-			_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "outer"}, Policy{Retry: fastRetry(3)}, func(ctx context.Context, _ ProducerInput) (ProducerResult, error) {
-				outer++
-				_, _, _, err := c.Blob(ctx, BlobKey{Content: "inner"}, Policy{Retry: fastRetry(attempts)}, func(context.Context, ProducerInput) (ProducerResult, error) {
-					inner++
-					return ProducerResult{}, connReset()
-				})
-				return ProducerResult{}, err
-			})
+			_, _, _, err := c.Blob(
+				t.Context(),
+				BlobKey{Content: "outer"},
+				Policy{Retry: fastRetry(3)},
+				func(ctx context.Context, _ ProducerInput) (ProducerResult, error) {
+					outer++
+					_, _, _, err := c.Blob(
+						ctx,
+						BlobKey{Content: "inner"},
+						Policy{Retry: fastRetry(attempts)},
+						func(context.Context, ProducerInput) (ProducerResult, error) {
+							inner++
+							return ProducerResult{}, connReset()
+						},
+					)
+					return ProducerResult{}, err
+				},
+			)
 			if outer != 1 || inner != attempts || !errors.Is(err, syscall.ECONNRESET) {
 				t.Fatalf("calls=%d/%d, error=%v", outer, inner, err)
 			}
@@ -433,14 +534,19 @@ func TestAcquire_RetryFreshArchive(t *testing.T) {
 			var payloadTar bytes.Buffer
 			testutil.WriteTar(t, &payloadTar, map[string]string{"file": "complete"}, 0o644)
 			payload := payloadTar.Bytes()
-			input, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: "partial"}, Policy{Retry: fastRetry(3)}, func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
-				calls++
-				if calls == 1 {
-					_, _ = w.Write(payload[:len(payload)/2])
-					return ProducerResult{}, connReset()
-				}
-				return producer(payload, ocispec.Descriptor{})(ctx, w)
-			})
+			input, _, _, err := c.Acquire(
+				t.Context(),
+				ArchiveKey{Content: "partial"},
+				Policy{Retry: fastRetry(3)},
+				func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
+					calls++
+					if calls == 1 {
+						_, _ = w.Write(payload[:len(payload)/2])
+						return ProducerResult{}, connReset()
+					}
+					return producer(payload, ocispec.Descriptor{})(ctx, w)
+				},
+			)
 			if err != nil || calls != 2 {
 				t.Fatalf("calls=%d, error=%v", calls, err)
 			}
@@ -470,14 +576,19 @@ func TestAcquire_PolicyIsolation(t *testing.T) {
 							if i == 0 {
 								attempts = 1
 							}
-							_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "shared"}, Policy{MaxAge: time.Hour, Retry: fastRetry(attempts)}, func(context.Context, ProducerInput) (ProducerResult, error) {
-								calls[i]++
-								if (i == 0 && !reverse || i == concurrency-1 && reverse) && calls[i] == 1 {
-									close(started)
-									<-release
-								}
-								return ProducerResult{}, connReset()
-							})
+							_, _, _, err := c.Blob(
+								t.Context(),
+								BlobKey{Content: "shared"},
+								Policy{MaxAge: time.Hour, Retry: fastRetry(attempts)},
+								func(context.Context, ProducerInput) (ProducerResult, error) {
+									calls[i]++
+									if (i == 0 && !reverse || i == concurrency-1 && reverse) && calls[i] == 1 {
+										close(started)
+										<-release
+									}
+									return ProducerResult{}, connReset()
+								},
+							)
 							done <- err
 						}()
 					}
@@ -496,10 +607,15 @@ func TestAcquire_PolicyIsolation(t *testing.T) {
 					cancelled := make(chan error, 1)
 					cancelCalls := 0
 					go func() {
-						_, _, _, err := c.Blob(cancelCtx, BlobKey{Content: "shared"}, Policy{Retry: fastRetry(3)}, func(context.Context, ProducerInput) (ProducerResult, error) {
-							cancelCalls++
-							return ProducerResult{}, nil
-						})
+						_, _, _, err := c.Blob(
+							cancelCtx,
+							BlobKey{Content: "shared"},
+							Policy{Retry: fastRetry(3)},
+							func(context.Context, ProducerInput) (ProducerResult, error) {
+								cancelCalls++
+								return ProducerResult{}, nil
+							},
+						)
 						cancelled <- err
 					}()
 					synctest.Wait()
@@ -535,14 +651,24 @@ func TestAcquire_BackoffReleasesKey(t *testing.T) {
 		done := make(chan error, 1)
 		calls := 0
 		go func() {
-			_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "shared"}, Policy{MaxAge: Forever, Retry: RetryConfig{Attempts: 3, MinWait: time.Hour, MaxWait: time.Hour}}, func(context.Context, ProducerInput) (ProducerResult, error) {
-				calls++
-				return ProducerResult{}, connReset()
-			})
+			_, _, _, err := c.Blob(
+				t.Context(),
+				BlobKey{Content: "shared"},
+				Policy{MaxAge: Forever, Retry: RetryConfig{Attempts: 3, MinWait: time.Hour, MaxWait: time.Hour}},
+				func(context.Context, ProducerInput) (ProducerResult, error) {
+					calls++
+					return ProducerResult{}, connReset()
+				},
+			)
 			done <- err
 		}()
 		synctest.Wait()
-		_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "shared"}, Policy{MaxAge: Forever}, producer([]byte("other fill"), ocispec.Descriptor{}))
+		_, _, _, err := c.Blob(
+			t.Context(),
+			BlobKey{Content: "shared"},
+			Policy{MaxAge: Forever},
+			producer([]byte("other fill"), ocispec.Descriptor{}),
+		)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -566,10 +692,15 @@ func TestAcquire_RetryCancellation(t *testing.T) {
 				calls := make([]int, concurrency)
 				for i := range concurrency {
 					go func() {
-						_, _, _, err := c.Blob(ctx, BlobKey{Content: fmt.Sprintf("cancel-%d", i)}, Policy{Retry: RetryConfig{Attempts: 3, MinWait: time.Hour}}, func(context.Context, ProducerInput) (ProducerResult, error) {
-							calls[i]++
-							return ProducerResult{}, connReset()
-						})
+						_, _, _, err := c.Blob(
+							ctx,
+							BlobKey{Content: fmt.Sprintf("cancel-%d", i)},
+							Policy{Retry: RetryConfig{Attempts: 3, MinWait: time.Hour}},
+							func(context.Context, ProducerInput) (ProducerResult, error) {
+								calls[i]++
+								return ProducerResult{}, connReset()
+							},
+						)
 						done <- err
 					}()
 				}
@@ -578,15 +709,22 @@ func TestAcquire_RetryCancellation(t *testing.T) {
 				for range concurrency {
 					err := <-done
 					terminal, ok := errors.AsType[*TerminalError](err)
-					if !ok || !terminal.Attempted || !errors.Is(err, context.Canceled) || !errors.Is(err, syscall.ECONNRESET) || !errors.Is(err, manifest.ErrFlux) {
+					if !ok || !terminal.Attempted || !errors.Is(err, context.Canceled) ||
+						!errors.Is(err, syscall.ECONNRESET) ||
+						!errors.Is(err, manifest.ErrFlux) {
 						t.Errorf("retry cancellation: %v", err)
 					}
 				}
 				for i := range concurrency {
-					_, _, _, err := c.Blob(ctx, BlobKey{Content: fmt.Sprintf("cancel-%d", i)}, Policy{Retry: fastRetry(3)}, func(context.Context, ProducerInput) (ProducerResult, error) {
-						calls[i]++
-						return ProducerResult{}, nil
-					})
+					_, _, _, err := c.Blob(
+						ctx,
+						BlobKey{Content: fmt.Sprintf("cancel-%d", i)},
+						Policy{Retry: fastRetry(3)},
+						func(context.Context, ProducerInput) (ProducerResult, error) {
+							calls[i]++
+							return ProducerResult{}, nil
+						},
+					)
 					if calls[i] != 1 || !errors.Is(err, context.Canceled) {
 						t.Errorf("pre-cancel calls=%d, error=%v", calls[i], err)
 					}
@@ -641,36 +779,46 @@ func TestGit_RetryDiscardsGeneration(t *testing.T) {
 			}
 			c := cachetest.New(t, root, New)
 			calls := 0
-			g, _, err := c.Git(t.Context(), GitKey{Content: "partial-git", RecurseSubmodules: true}, Policy{MaxAge: Forever, Retry: fastRetry(2)}, func(_ context.Context, _ storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
-				calls++
-				if _, err := worktree.Stat("partial"); !errors.Is(err, fs.ErrNotExist) {
-					t.Fatalf("attempt inherited partial worktree: %v", err)
-				}
-				if calls == 1 {
-					f, err := worktree.Create("partial")
-					if err != nil {
-						return plumbing.ZeroHash, err
+			g, _, err := c.Git(
+				t.Context(),
+				GitKey{Content: "partial-git", RecurseSubmodules: true},
+				Policy{MaxAge: Forever, Retry: fastRetry(2)},
+				func(_ context.Context, _ storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
+					calls++
+					if _, err := worktree.Stat("partial"); !errors.Is(err, fs.ErrNotExist) {
+						t.Fatalf("attempt inherited partial worktree: %v", err)
 					}
-					if err := f.Close(); err != nil {
-						return plumbing.ZeroHash, err
+					if calls == 1 {
+						f, err := worktree.Create("partial")
+						if err != nil {
+							return plumbing.ZeroHash, err
+						}
+						if err := f.Close(); err != nil {
+							return plumbing.ZeroHash, err
+						}
+						return plumbing.ZeroHash, connReset()
 					}
-					return plumbing.ZeroHash, connReset()
-				}
-				if disk {
-					entries, err := os.ReadDir(filepath.Dir(filepath.Join(c.root.Name(), gitObjectsPath(""))))
-					if err != nil || len(entries) != 1 {
-						t.Fatalf("failed generation remains: %v, %v", entries, err)
+					if disk {
+						entries, err := os.ReadDir(filepath.Dir(filepath.Join(c.root.Name(), gitObjectsPath(""))))
+						if err != nil || len(entries) != 1 {
+							t.Fatalf("failed generation remains: %v, %v", entries, err)
+						}
 					}
-				}
-				return plumbing.NewHash(strings.Repeat("1", 40)), nil
-			})
+					return plumbing.NewHash(strings.Repeat("1", 40)), nil
+				},
+			)
 			if err != nil || g == nil || calls != 2 {
 				t.Fatalf("generation=%v, calls=%d, error=%v", g, calls, err)
 			}
-			held, _, err := c.Git(t.Context(), GitKey{Content: "partial-git", RecurseSubmodules: true}, Policy{MaxAge: Forever}, func(context.Context, storage.Storer, billy.Filesystem) (plumbing.Hash, error) {
-				calls++
-				return plumbing.ZeroHash, nil
-			})
+			held, _, err := c.Git(
+				t.Context(),
+				GitKey{Content: "partial-git", RecurseSubmodules: true},
+				Policy{MaxAge: Forever},
+				func(context.Context, storage.Storer, billy.Filesystem) (plumbing.Hash, error) {
+					calls++
+					return plumbing.ZeroHash, nil
+				},
+			)
 			if err != nil || held != g || calls != 2 {
 				t.Fatalf("warm generation=%v, calls=%d, error=%v", held, calls, err)
 			}
@@ -695,14 +843,19 @@ func TestAcquire_ReaderFailureCancelsAttempt(t *testing.T) {
 					calls := make([]int, concurrency)
 					for i := range concurrency {
 						go func() {
-							_, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: fmt.Sprintf("invalid-%d", i)}, Policy{Retry: fastRetry(3)}, func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
-								calls[i]++
-								_, _ = w.Write(bytes.Repeat([]byte("x"), 512))
-								<-ctx.Done()
-								canceled <- struct{}{}
-								<-release
-								return ProducerResult{}, errors.Join(ctx.Err(), connReset())
-							})
+							_, _, _, err := c.Acquire(
+								t.Context(),
+								ArchiveKey{Content: fmt.Sprintf("invalid-%d", i)},
+								Policy{Retry: fastRetry(3)},
+								func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
+									calls[i]++
+									_, _ = w.Write(bytes.Repeat([]byte("x"), 512))
+									<-ctx.Done()
+									canceled <- struct{}{}
+									<-release
+									return ProducerResult{}, errors.Join(ctx.Err(), connReset())
+								},
+							)
 							done <- err
 						}()
 					}
@@ -742,13 +895,18 @@ func TestAcquire_BackoffResets(t *testing.T) {
 		for range 2 {
 			calls := 0
 			start := time.Now()
-			_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "reset"}, Policy{Retry: RetryConfig{Attempts: 3}}, func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
-				calls++
-				if calls == 1 {
-					return ProducerResult{}, connReset()
-				}
-				return producer(nil, ocispec.Descriptor{})(ctx, w)
-			})
+			_, _, _, err := c.Blob(
+				t.Context(),
+				BlobKey{Content: "reset"},
+				Policy{Retry: RetryConfig{Attempts: 3}},
+				func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
+					calls++
+					if calls == 1 {
+						return ProducerResult{}, connReset()
+					}
+					return producer(nil, ocispec.Descriptor{})(ctx, w)
+				},
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -790,17 +948,32 @@ func TestAcquire_CleanupFailureStopsRetry(t *testing.T) {
 						var err error
 						switch kind {
 						case "git":
-							_, _, err = c.Git(t.Context(), GitKey{Content: "cleanup"}, Policy{Retry: fastRetry(3)}, func(context.Context, storage.Storer, billy.Filesystem) (plumbing.Hash, error) {
-								return plumbing.ZeroHash, fail()
-							})
+							_, _, err = c.Git(
+								t.Context(),
+								GitKey{Content: "cleanup"},
+								Policy{Retry: fastRetry(3)},
+								func(context.Context, storage.Storer, billy.Filesystem) (plumbing.Hash, error) {
+									return plumbing.ZeroHash, fail()
+								},
+							)
 						case "archive":
-							_, _, _, err = c.Acquire(t.Context(), ArchiveKey{Content: "cleanup"}, Policy{Retry: fastRetry(3)}, func(context.Context, ProducerInput) (ProducerResult, error) {
-								return ProducerResult{}, fail()
-							})
+							_, _, _, err = c.Acquire(
+								t.Context(),
+								ArchiveKey{Content: "cleanup"},
+								Policy{Retry: fastRetry(3)},
+								func(context.Context, ProducerInput) (ProducerResult, error) {
+									return ProducerResult{}, fail()
+								},
+							)
 						case "blob":
-							_, _, _, err = c.Blob(t.Context(), BlobKey{Content: "cleanup"}, Policy{Retry: fastRetry(3)}, func(context.Context, ProducerInput) (ProducerResult, error) {
-								return ProducerResult{}, fail()
-							})
+							_, _, _, err = c.Blob(
+								t.Context(),
+								BlobKey{Content: "cleanup"},
+								Policy{Retry: fastRetry(3)},
+								func(context.Context, ProducerInput) (ProducerResult, error) {
+									return ProducerResult{}, fail()
+								},
+							)
 						}
 						done <- err
 					}()
@@ -812,7 +985,8 @@ func TestAcquire_CleanupFailureStopsRetry(t *testing.T) {
 				for range concurrency {
 					err := <-done
 					cacheErr, ok := errors.AsType[*CacheError](err)
-					if !ok || !errors.Is(err, failure) || !errors.Is(err, os.ErrClosed) || !errors.Is(err, manifest.ErrFlux) {
+					if !ok || !errors.Is(err, failure) || !errors.Is(err, os.ErrClosed) ||
+						!errors.Is(err, manifest.ErrFlux) {
 						t.Errorf("cleanup error=%v", err)
 						continue
 					}

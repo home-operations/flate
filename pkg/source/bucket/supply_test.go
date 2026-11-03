@@ -12,11 +12,27 @@ import (
 func TestFetcher_SuppliedCredentials(t *testing.T) {
 	t.Parallel()
 	b := &manifest.Bucket{Name: "bucket", Namespace: "apps", SecretRef: &manifest.LocalObjectReference{Name: "auth"}}
-	snapshot, err := store.NewSupplied([]store.SuppliedObject{{Object: &manifest.Secret{Name: "auth", Namespace: "apps", StringData: map[string]any{"accesskey": "filled", "secretkey": "filled"}}}})
+	snapshot, err := store.NewSupplied(
+		[]store.SuppliedObject{
+			{
+				Object: &manifest.Secret{
+					Name:       "auth",
+					Namespace:  "apps",
+					StringData: map[string]any{"accesskey": "filled", "secretkey": "filled"},
+				},
+			},
+		},
+	)
 	assert.NoError(t, err)
 	s := store.New()
 	s.SetSupplied(snapshot)
-	s.AddObject(&manifest.Secret{Name: "auth", Namespace: "apps", StringData: map[string]any{"accesskey": "repository", "secretkey": manifest.ValuePlaceholder("secretkey")}})
+	s.AddObject(
+		&manifest.Secret{
+			Name:       "auth",
+			Namespace:  "apps",
+			StringData: map[string]any{"accesskey": "repository", "secretkey": manifest.ValuePlaceholder("secretkey")},
+		},
+	)
 	var reads store.ReadSet
 	reads.Init(s, b.Named(), nil)
 	defer reads.Close()

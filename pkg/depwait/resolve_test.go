@@ -50,7 +50,13 @@ func TestResolve_SelectedData(t *testing.T) {
 			if tc.independent {
 				productions = append(productions, manifest.Production{Path: "static.yaml"})
 			}
-			st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{data.Named(): {Productions: productions}}})
+			st.SetDiscoveryIndex(
+				&manifest.DiscoveryIndex{
+					Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+						data.Named(): {Productions: productions},
+					},
+				},
+			)
 			if tc.accepted {
 				st.AddObject(&manifest.Kustomization{Name: supplier.Name, Namespace: supplier.Namespace})
 				st.RecordEmitted(supplier, &store.Emission{Children: []store.Child{{Obj: data}}, Complete: true}, nil)
@@ -61,7 +67,17 @@ func TestResolve_SelectedData(t *testing.T) {
 				st.UpdateStatus(supplier, store.StatusInfo{Status: status, Reason: "", Message: "successor"})
 			}
 			if tc.supplied {
-				supplied, err := store.NewSupplied([]store.SuppliedObject{{Object: &manifest.ConfigMap{Name: data.Name, Namespace: data.Namespace, Data: map[string]any{"VALUE": "supplied"}}}})
+				supplied, err := store.NewSupplied(
+					[]store.SuppliedObject{
+						{
+							Object: &manifest.ConfigMap{
+								Name:      data.Name,
+								Namespace: data.Namespace,
+								Data:      map[string]any{"VALUE": "supplied"},
+							},
+						},
+					},
+				)
 				assert.NoError(t, err)
 				st.SetSupplied(supplied)
 			}
@@ -71,7 +87,11 @@ func TestResolve_SelectedData(t *testing.T) {
 			provider := values.NewStoreProvider(&reads, false)
 			input := provider.Lookup(data.Named())
 			w := Waiter{Store: &reads, Parent: ks.Named()}
-			result := w.Available(t.Context(), DataDependency{NamedResource: data.Named(), Input: input, Optional: true}, manifest.DrainNone)
+			result := w.Available(
+				t.Context(),
+				DataDependency{NamedResource: data.Named(), Input: input, Optional: true},
+				manifest.DrainNone,
+			)
 			if tc.want == "" {
 				assert.Equal(t, result.Kind, schedule.Blocked)
 				assert.Equal(t, input.Data, manifest.Data(nil))
@@ -120,7 +140,9 @@ func TestClassify_RepeatedInputFrozenPolicy(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, value, "first")
 	data.Data["VALUE"] = "caller mutation"
-	st.AddObject(&manifest.ConfigMap{Name: data.Name, Namespace: data.Namespace, Data: map[string]any{"VALUE": "second"}})
+	st.AddObject(
+		&manifest.ConfigMap{Name: data.Name, Namespace: data.Namespace, Data: map[string]any{"VALUE": "second"}},
+	)
 	assert.Equal(t, provider.Data(data.Named()), captured)
 }
 
@@ -141,17 +163,36 @@ func TestResolve_CoveredPrediction(t *testing.T) {
 	st := store.New()
 	supplier := testutil.KustomizationID("apps", "supplier")
 	id := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "input"}
-	declaration := &manifest.RawObject{Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1", Name: "declaration", Namespace: "apps", Spec: map[string]any{"target": map[string]any{"name": id.Name}, "data": []any{map[string]any{"secretKey": "VALUE", "remoteRef": map[string]any{"key": "fixture"}}}}}
+	declaration := &manifest.RawObject{
+		Kind:       "ExternalSecret",
+		APIVersion: "external-secrets.io/v1",
+		Name:       "declaration",
+		Namespace:  "apps",
+		Spec: map[string]any{
+			"target": map[string]any{"name": id.Name},
+			"data":   []any{map[string]any{"secretKey": "VALUE", "remoteRef": map[string]any{"key": "fixture"}}},
+		},
+	}
 	st.AddObject(&manifest.Kustomization{Name: supplier.Name, Namespace: supplier.Namespace})
 	st.AddObject(declaration)
 	st.AddObject(&manifest.Secret{Name: id.Name, Namespace: id.Namespace})
-	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {Productions: []manifest.Production{{Owner: supplier, Declaration: declaration.Named()}}}}})
+	st.SetDiscoveryIndex(
+		&manifest.DiscoveryIndex{
+			Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				id: {Productions: []manifest.Production{{Owner: supplier, Declaration: declaration.Named()}}},
+			},
+		},
+	)
 	var before store.ReadSet
 	parent := testutil.KustomizationID("apps", "reader")
 	before.Init(st, parent, nil)
 	input := values.NewStoreProvider(&before, true).Lookup(id)
 	w := Waiter{Store: &before, Parent: parent}
-	result := w.Available(t.Context(), DataDependency{NamedResource: id, Input: input, Optional: true}, manifest.DrainNone)
+	result := w.Available(
+		t.Context(),
+		DataDependency{NamedResource: id, Input: input, Optional: true},
+		manifest.DrainNone,
+	)
 	assert.Equal(t, result.Kind, schedule.Blocked)
 	assert.Equal(t, input.Data, manifest.Data(nil))
 	st.RecordEmitted(supplier, &store.Emission{Children: []store.Child{{Obj: declaration}}, Complete: true}, nil)

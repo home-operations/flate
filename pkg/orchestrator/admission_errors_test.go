@@ -54,12 +54,22 @@ func TestRender_AdmissionErrorPrecedesOptionalPolicy(t *testing.T) {
 				declaration = "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: consumer, namespace: apps}\nspec:\n  interval: 10m\n  chart: {spec: {chart: charts/demo, sourceRef: {kind: GitRepository, name: charts}}}\n"
 			}
 			testutil.WriteFile(t, root, "flux/consumer.yaml", declaration)
-			testutil.WriteFile(t, root, "flux/charts.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: charts, namespace: apps}\nspec: {url: https://fixture.invalid/repo}\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"flux/charts.yaml",
+				"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: charts, namespace: apps}\nspec: {url: https://fixture.invalid/repo}\n",
+			)
 			field := "data"
 			if tc.kind == manifest.KindSecret {
 				field = "stringData"
 			}
-			testutil.WriteFile(t, root, "flux/input.yaml", "apiVersion: v1\nkind: "+tc.kind+"\nmetadata: {name: input, namespace: apps}\n"+field+": {values.yaml: '{}'}\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"flux/input.yaml",
+				"apiVersion: v1\nkind: "+tc.kind+"\nmetadata: {name: input, namespace: apps}\n"+field+": {values.yaml: '{}'}\n",
+			)
 			testutil.WriteFile(t, root, "payload/kustomization.yaml", "resources: []\n")
 			cause := errors.New("fixture exact hydration failed")
 			inputFS := &admissionErrorFS{FS: os.DirFS(root), cause: cause}
@@ -68,7 +78,20 @@ func TestRender_AdmissionErrorPrecedesOptionalPolicy(t *testing.T) {
 			if tc.allowMissing {
 				missingKinds = []string{manifest.KindSecret}
 			}
-			o, err := newTestOrchestrator(t, Tree{Path: filepath.Join(root, "flux"), RepoRoot: root, Input: input, SelfURLs: []string{"https://fixture.invalid/repo"}}, Config{Concurrency: 2, AllowMissingKinds: missingKinds, Selection: manifest.Selection{Roots: []manifest.NamedResource{consumer}}})
+			o, err := newTestOrchestrator(
+				t,
+				Tree{
+					Path:     filepath.Join(root, "flux"),
+					RepoRoot: root,
+					Input:    input,
+					SelfURLs: []string{"https://fixture.invalid/repo"},
+				},
+				Config{
+					Concurrency:       2,
+					AllowMissingKinds: missingKinds,
+					Selection:         manifest.Selection{Roots: []manifest.NamedResource{consumer}},
+				},
+			)
 			assert.NoError(t, err)
 			// Exact hydration requires a frozen census without prepared entry payloads.
 			assert.NoError(t, o.discover(t.Context()))
@@ -86,7 +109,11 @@ func TestRender_AdmissionErrorPrecedesOptionalPolicy(t *testing.T) {
 				object, controller = hr, o.hrc.Controller
 			} else {
 				ks := o.store.GetDeclaration(consumer).(*manifest.Kustomization).Clone()
-				ks.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: tc.kind, Name: "input", Optional: tc.optional}}}
+				ks.PostBuild = &kustomizev1.PostBuild{
+					SubstituteFrom: []manifest.SubstituteReference{
+						{Kind: tc.kind, Name: "input", Optional: tc.optional},
+					},
+				}
 				object = ks
 			}
 			o.store.AddObject(object)

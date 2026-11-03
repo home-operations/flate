@@ -145,7 +145,10 @@ func BenchmarkReadRegistration_FanIn10000(b *testing.B) {
 							if i == 0 {
 								start()
 							}
-							s.UpdateStatus(consumers[i], StatusInfo{Status: StatusPending, Reason: "", Message: "completion"})
+							s.UpdateStatus(
+								consumers[i],
+								StatusInfo{Status: StatusPending, Reason: "", Message: "completion"},
+							)
 							s.UpdateStatus(consumers[i], StatusInfo{Status: StatusReady, Reason: "", Message: ""})
 						}
 						tasks.YieldSlot(func() { <-written })
@@ -191,7 +194,13 @@ func registrationFixture(tb testing.TB, mode string) (*Store, []manifest.NamedRe
 	}
 	if mode != "absent" {
 		for _, id := range slices.Compact(slices.Clone(ids)) {
-			s.AddObject(&manifest.Secret{Name: id.Name, Namespace: id.Namespace, StringData: map[string]any{"value": "initial"}})
+			s.AddObject(
+				&manifest.Secret{
+					Name:       id.Name,
+					Namespace:  id.Namespace,
+					StringData: map[string]any{"value": "initial"},
+				},
+			)
 		}
 	}
 	versions := [2]*manifest.Secret{

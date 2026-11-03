@@ -42,7 +42,8 @@ func TestRun_BasePathDiagnostics(t *testing.T) {
 			if strings.Contains(tc.name, "path") && !strings.Contains(stderr, filepath.Join(root, "missing")) {
 				t.Fatalf("missing path context: %s", stderr)
 			}
-			if tc.name == "missing selected path" && !strings.Contains(stderr, "pass --path-orig=<dir> or --base=<rev>") {
+			if tc.name == "missing selected path" &&
+				!strings.Contains(stderr, "pass --path-orig=<dir> or --base=<rev>") {
 				t.Fatalf("missing next-step guidance: %s", stderr)
 			}
 			if tc.name == "non git" && !strings.Contains(stderr, "--path \""+root+"\"") {
@@ -57,11 +58,27 @@ func TestRun_BaseLinkExclusion(t *testing.T) {
 		t.Run(route, func(t *testing.T) {
 			root := writeFixture(t)
 			assert.NoError(t, os.Symlink("target-A", filepath.Join(root, "apps", "link.yaml")))
-			args := []string{"diff", "ks", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "diff"}
+			args := []string{
+				"diff",
+				"ks",
+				"--path",
+				root,
+				"--cache-dir",
+				t.TempDir(),
+				"--concurrency",
+				"2",
+				"-o",
+				"diff",
+			}
 			switch route {
 			case "base":
 				repo := testutil.GitInit(t, root)
-				pin := testutil.GitCommitAll(t, repo, "base", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}})
+				pin := testutil.GitCommitAll(
+					t,
+					repo,
+					"base",
+					&git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}},
+				)
 				args = append(args, "--base", pin.String())
 			case "path orig":
 				orig := writeFixture(t)
@@ -69,14 +86,21 @@ func TestRun_BaseLinkExclusion(t *testing.T) {
 				args = append(args, "--path-orig", orig)
 			case "referenced link":
 				testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml, link.yaml]\n")
-				testutil.WriteFile(t, root, "apps/target-B", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: decoy}\n")
+				testutil.WriteFile(
+					t,
+					root,
+					"apps/target-B",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: decoy}\n",
+				)
 				args = []string{"build", "ks", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2"}
 			}
 			assert.NoError(t, os.Remove(filepath.Join(root, "apps", "link.yaml")))
 			assert.NoError(t, os.Symlink("target-B", filepath.Join(root, "apps", "link.yaml")))
 			stdout, stderr, code := runCLI(t, args...)
 			if route == "referenced link" {
-				if code != 1 || !strings.Contains(stderr, "apps/link.yaml") || !strings.Contains(stderr, "permission denied") || strings.Contains(stdout, "name: decoy") {
+				if code != 1 || !strings.Contains(stderr, "apps/link.yaml") ||
+					!strings.Contains(stderr, "permission denied") ||
+					strings.Contains(stdout, "name: decoy") {
 					t.Fatalf("omitted reference: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 				}
 			} else if code != 0 || stdout != "" {
@@ -89,24 +113,69 @@ func TestRun_BaseLinkExclusion(t *testing.T) {
 func TestRun_BaseFailureIsolation(t *testing.T) {
 	root := writeFixture(t)
 	const url = "git://fixture.invalid/cluster"
-	testutil.WriteFile(t, root, "flux/source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: flux-system}\nspec: {url: "+url+"}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"flux/source.yaml",
+		"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: flux-system}\nspec: {url: "+url+"}\n",
+	)
 	for _, name := range []string{"apps", "same"} {
-		testutil.WriteFile(t, root, "flux/"+name+".yaml", testutil.KustomizationYAML(name, "flux-system", "  {path: ./"+name+", sourceRef: {kind: GitRepository, name: cluster}}\n"))
+		testutil.WriteFile(
+			t,
+			root,
+			"flux/"+name+".yaml",
+			testutil.KustomizationYAML(
+				name,
+				"flux-system",
+				"  {path: ./"+name+", sourceRef: {kind: GitRepository, name: cluster}}\n",
+			),
+		)
 	}
 	assert.NoError(t, os.Remove(filepath.Join(root, "flux", "cluster.yaml")))
 	testutil.WriteFile(t, root, "same/kustomization.yaml", "resources: [cm.yaml]\n")
-	testutil.WriteFile(t, root, "same/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: same}\ndata: {value: before}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"same/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: same}\ndata: {value: before}\n",
+	)
 	repo := testutil.GitInit(t, root)
 	_, err := repo.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{url}})
 	assert.NoError(t, err)
-	pin := testutil.GitCommitAll(t, repo, "base", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}})
-	testutil.WriteFile(t, root, "same/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: same}\ndata: {value: after}\n")
+	pin := testutil.GitCommitAll(
+		t,
+		repo,
+		"base",
+		&git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}},
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"same/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: same}\ndata: {value: after}\n",
+	)
 	assert.NoError(t, os.Rename(filepath.Join(root, "apps"), filepath.Join(root, "apps_real")))
 	assert.NoError(t, os.Symlink("apps_real", filepath.Join(root, "apps")))
-	stdout, stderr, code := runCLI(t, "diff", "ks", "--path", filepath.Join(root, "flux"), "--base", pin.String(), "--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "diff")
+	stdout, stderr, code := runCLI(
+		t,
+		"diff",
+		"ks",
+		"--path",
+		filepath.Join(root, "flux"),
+		"--base",
+		pin.String(),
+		"--cache-dir",
+		t.TempDir(),
+		"--concurrency",
+		"2",
+		"-o",
+		"diff",
+	)
 	if code != 1 || !strings.Contains(stderr, "Kustomization  flux-system/apps") || !strings.Contains(stderr, "diff suppressed") || strings.Contains(stdout, "diff suppressed") ||
-		strings.Contains(stdout, "greeting:") || strings.Contains(stdout, "name: hello") ||
-		!strings.Contains(stdout, "-  value: before") || !strings.Contains(stdout, "+  value: after") {
+		strings.Contains(stdout, "greeting:") ||
+		strings.Contains(stdout, "name: hello") ||
+		!strings.Contains(stdout, "-  value: before") ||
+		!strings.Contains(stdout, "+  value: after") {
 		t.Fatalf("failed producer lost isolation: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 	}
 }

@@ -12,12 +12,13 @@ import (
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
-	"github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/safepath"
-	"github.com/home-operations/flate/pkg/tree"
 	"helm.sh/helm/v4/pkg/chart/v2/loader"
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/yaml"
+
+	"github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/safepath"
+	"github.com/home-operations/flate/pkg/tree"
 )
 
 func sourcePath(value string) (string, string, error) {
@@ -30,6 +31,7 @@ func sourcePath(value string) (string, string, error) {
 	}
 	return alias[1:], pattern, nil
 }
+
 func destinationPath(value string) (string, error) {
 	destination, ok := strings.CutPrefix(value, "@artifact/")
 	if !ok {
@@ -253,20 +255,28 @@ func (e *evaluation) extract(ctx context.Context, builder *tree.Builder, selecti
 		Inputs    []inputIdentity
 		Selection archiveSelection
 	}{"artifactgenerator/extract/v1", e.identity, selection}}
-	extracted, _, _, err := e.owner.Acquire(ctx, key, cache.Policy{MaxAge: e.maxAge}, func(_ context.Context, target cache.ProducerInput) (cache.ProducerResult, error) {
-		file, err := input.FS.Open(selection.Path)
-		if err != nil {
+	extracted, _, _, err := e.owner.Acquire(
+		ctx,
+		key,
+		cache.Policy{MaxAge: e.maxAge},
+		func(_ context.Context, target cache.ProducerInput) (cache.ProducerResult, error) {
+			file, err := input.FS.Open(selection.Path)
+			if err != nil {
+				return cache.ProducerResult{}, err
+			}
+			defer func() { _ = file.Close() }()
+			compressed, err := gzip.NewReader(file)
+			if err != nil {
+				return cache.ProducerResult{}, err
+			}
+			defer func() { _ = compressed.Close() }()
+			_, err = io.Copy(
+				target,
+				compressed,
+			) //nolint:gosec // Cache validates tar members; Extract preserves Flux's unbounded trailing-data semantics.
 			return cache.ProducerResult{}, err
-		}
-		defer func() { _ = file.Close() }()
-		compressed, err := gzip.NewReader(file)
-		if err != nil {
-			return cache.ProducerResult{}, err
-		}
-		defer func() { _ = compressed.Close() }()
-		_, err = io.Copy(target, compressed) //nolint:gosec // Cache validates tar members; Extract preserves Flux's unbounded trailing-data semantics.
-		return cache.ProducerResult{}, err
-	})
+		},
+	)
 	if err != nil {
 		return err
 	}
@@ -291,7 +301,11 @@ func (e *evaluation) extract(ctx context.Context, builder *tree.Builder, selecti
 	})
 }
 
-func (e *evaluation) produce(ctx context.Context, req request, target cache.ProducerInput) (cache.ProducerResult, error) {
+func (e *evaluation) produce(
+	ctx context.Context,
+	req request,
+	target cache.ProducerInput,
+) (cache.ProducerResult, error) {
 	builder := tree.NewBuilder(nil)
 	for _, op := range req.Output.Copy {
 		if err := e.apply(ctx, builder, op); err != nil {

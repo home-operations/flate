@@ -46,7 +46,11 @@ func (f *operation) prepare(b *manifest.Bucket) (bucketAcquisition, error) {
 		return bucketAcquisition{}, err
 	}
 	if _, err := resolved.ProxyURL(&url.URL{Scheme: schemeFor(secure), Host: endpoint}); err != nil {
-		return bucketAcquisition{}, manifest.NewError(manifest.ErrInput, nil, "resolve bucket proxy: invalid proxy configuration")
+		return bucketAcquisition{}, manifest.NewError(
+			manifest.ErrInput,
+			nil,
+			"resolve bucket proxy: invalid proxy configuration",
+		)
 	}
 	var material any
 	if creds != nil {
@@ -55,9 +59,15 @@ func (f *operation) prepare(b *manifest.Bucket) (bucketAcquisition, error) {
 			material = value
 		}
 	}
-	if b.STS != nil || b.Provider != "" && b.Provider != sourcev1.BucketProviderGeneric && b.Provider != sourcev1.BucketProviderAmazon {
+	if b.STS != nil ||
+		b.Provider != "" && b.Provider != sourcev1.BucketProviderGeneric &&
+			b.Provider != sourcev1.BucketProviderAmazon {
 		if authErr == nil {
-			authErr = source.MissingSecretErr(manifest.DiagnosticFor(b.Named(), b), "", "provider authentication unavailable offline")
+			authErr = source.MissingSecretErr(
+				manifest.DiagnosticFor(b.Named(), b),
+				"",
+				"provider authentication unavailable offline",
+			)
 		}
 		return bucketAcquisition{}, authErr
 	}
@@ -82,11 +92,19 @@ func (r *bucketAcquisition) machineCredentials(ctx context.Context, providers []
 				if err != nil {
 					return err
 				}
-				config, shared = cmp.Or(config, filepath.Join(home, ".aws", "config")), cmp.Or(shared, filepath.Join(home, ".aws", "credentials"))
+				config, shared = cmp.Or(
+					config,
+					filepath.Join(home, ".aws", "config"),
+				), cmp.Or(
+					shared,
+					filepath.Join(home, ".aws", "credentials"),
+				)
 			}
 			configured := false
 			for _, path := range []string{config, shared} {
-				_, err := os.Stat(path) //nolint:gosec // Native AWS profiles accept user-selected paths; this only checks their presence.
+				_, err := os.Stat(
+					path,
+				) //nolint:gosec // Native AWS profiles accept user-selected paths; this only checks their presence.
 				if err != nil && !errors.Is(err, fs.ErrNotExist) {
 					return err
 				}
@@ -115,13 +133,19 @@ func (r *bucketAcquisition) machineCredentials(ctx context.Context, providers []
 			}
 			return err
 		}
-		if value.SignerType == credentials.SignatureAnonymous || value.AccessKeyID == "" && value.SecretAccessKey == "" {
+		if value.SignerType == credentials.SignatureAnonymous ||
+			value.AccessKeyID == "" && value.SecretAccessKey == "" {
 			continue
 		}
 		if value.AccessKeyID == "" || value.SecretAccessKey == "" {
 			return manifest.NewError(manifest.ErrInput, nil, "no usable machine AWS credentials")
 		}
-		r.options.Creds = credentials.NewStatic(value.AccessKeyID, value.SecretAccessKey, value.SessionToken, value.SignerType)
+		r.options.Creds = credentials.NewStatic(
+			value.AccessKeyID,
+			value.SecretAccessKey,
+			value.SessionToken,
+			value.SignerType,
+		)
 		r.material = r.resolved.Identity(value)
 		return nil
 	}
@@ -149,7 +173,11 @@ func (f *operation) resolveCredentials(b *manifest.Bucket) (*credentials.Credent
 		return nil, fmt.Errorf("secret %s/%s: %w", b.Namespace, b.SecretRef.Name, err)
 	}
 	if access == "" || secret == "" || manifest.HasValuePlaceholder(access) || manifest.HasValuePlaceholder(secret) {
-		return nil, source.MissingSecretErr(manifest.DiagnosticFor(b.Named(), b), b.SecretRef.Name, "missing accesskey/secretkey")
+		return nil, source.MissingSecretErr(
+			manifest.DiagnosticFor(b.Named(), b),
+			b.SecretRef.Name,
+			"missing accesskey/secretkey",
+		)
 	}
 	return credentials.NewStaticV4(access, secret, ""), nil
 }

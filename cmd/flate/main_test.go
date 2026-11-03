@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/KimMachineGun/automemlimit/memlimit"
+
 	"github.com/home-operations/flate/internal/assert"
 )
 

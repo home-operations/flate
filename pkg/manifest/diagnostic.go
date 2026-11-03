@@ -77,7 +77,11 @@ func (r DiagnosticReason) Clone() DiagnosticReason {
 
 // Compare orders semantic reasons by raw identity, message and nested causes.
 func (r DiagnosticReason) Compare(other DiagnosticReason) int {
-	return cmp.Or(r.Subject.ID.Compare(other.Subject.ID), cmp.Compare(r.Message, other.Message), slices.CompareFunc(r.Causes, other.Causes, DiagnosticReason.Compare))
+	return cmp.Or(
+		r.Subject.ID.Compare(other.Subject.ID),
+		cmp.Compare(r.Message, other.Message),
+		slices.CompareFunc(r.Causes, other.Causes, DiagnosticReason.Compare),
+	)
 }
 
 func (k *Kustomization) diagnostic(id NamedResource) DiagnosticIdentity {

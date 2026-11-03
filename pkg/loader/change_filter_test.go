@@ -61,7 +61,19 @@ func refObj(id manifest.NamedResource) manifest.BaseManifest {
 func TestFilter_ResolveDirectMatch(t *testing.T) {
 	t.Parallel()
 	hr := testutil.HelmReleaseID("ns", "x")
-	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"apps/x/helmrelease.yaml"}), index: filterFixture{files: map[manifest.NamedResource]string{hr: "apps/x/helmrelease.yaml"}, root: "", objects: filtertest.EmptyLister()}.index(), inventory: filtertest.EmptyLister(), root: ""})
+	f := newAdmission(
+		t,
+		admissionConfig{
+			changes: change.NewSet([]string{"apps/x/helmrelease.yaml"}),
+			index: filterFixture{
+				files:   map[manifest.NamedResource]string{hr: "apps/x/helmrelease.yaml"},
+				root:    "",
+				objects: filtertest.EmptyLister(),
+			}.index(),
+			inventory: filtertest.EmptyLister(),
+			root:      "",
+		},
+	)
 	if !f.ShouldReconcile(hr) {
 		t.Fatalf("expected direct-match keep; keep=%v", f.KeepNames())
 	}
@@ -83,12 +95,20 @@ func TestFilter_SharedComponentPropagatesToAllConsumers(t *testing.T) {
 	hrAtuin := testutil.HelmReleaseID("default", "atuin")
 	ksPlex, ksAtuin := plex.Named(), atuin.Named()
 
-	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"components/volsync/pvc.yaml"}), index: filterFixture{files: map[manifest.NamedResource]string{
-		ksPlex:  "apps/media/plex/app/ks.yaml",
-		hrPlex:  "apps/media/plex/app/helmrelease.yaml",
-		ksAtuin: "apps/default/atuin/app/ks.yaml",
-		hrAtuin: "apps/default/atuin/app/helmrelease.yaml",
-	}, root: "", objects: filtertest.MapLister{ksPlex: plex, ksAtuin: atuin}}.index(), inventory: filtertest.MapLister{ksPlex: plex, ksAtuin: atuin}, root: ""})
+	f := newAdmission(
+		t,
+		admissionConfig{
+			changes: change.NewSet([]string{"components/volsync/pvc.yaml"}),
+			index: filterFixture{files: map[manifest.NamedResource]string{
+				ksPlex:  "apps/media/plex/app/ks.yaml",
+				hrPlex:  "apps/media/plex/app/helmrelease.yaml",
+				ksAtuin: "apps/default/atuin/app/ks.yaml",
+				hrAtuin: "apps/default/atuin/app/helmrelease.yaml",
+			}, root: "", objects: filtertest.MapLister{ksPlex: plex, ksAtuin: atuin}}.index(),
+			inventory: filtertest.MapLister{ksPlex: plex, ksAtuin: atuin},
+			root:      "",
+		},
+	)
 
 	for _, id := range []manifest.NamedResource{ksPlex, ksAtuin, hrPlex, hrAtuin} {
 		if !f.ShouldReconcile(id) {
@@ -116,11 +136,19 @@ func TestFilter_AncestorKSAlsoKept(t *testing.T) {
 	hrPlex := testutil.HelmReleaseID("media", "plex")
 	metaID, plexID := meta.Named(), plex.Named()
 
-	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"apps/media/plex/app/helmrelease.yaml"}), index: filterFixture{files: map[manifest.NamedResource]string{
-		metaID: "flux/cluster/ks.yaml",
-		plexID: "apps/media/plex/app/ks.yaml",
-		hrPlex: "apps/media/plex/app/helmrelease.yaml",
-	}, root: "", objects: filtertest.MapLister{metaID: meta, plexID: plex}}.index(), inventory: filtertest.MapLister{metaID: meta, plexID: plex}, root: ""})
+	f := newAdmission(
+		t,
+		admissionConfig{
+			changes: change.NewSet([]string{"apps/media/plex/app/helmrelease.yaml"}),
+			index: filterFixture{files: map[manifest.NamedResource]string{
+				metaID: "flux/cluster/ks.yaml",
+				plexID: "apps/media/plex/app/ks.yaml",
+				hrPlex: "apps/media/plex/app/helmrelease.yaml",
+			}, root: "", objects: filtertest.MapLister{metaID: meta, plexID: plex}}.index(),
+			inventory: filtertest.MapLister{metaID: meta, plexID: plex},
+			root:      "",
+		},
+	)
 
 	for _, id := range []manifest.NamedResource{plexID, hrPlex, metaID} {
 		if !f.ShouldReconcile(id) {
@@ -152,11 +180,19 @@ func TestFilter_StructuralParentOfOwnerKSAlsoKept(t *testing.T) {
 	hrActual := testutil.HelmReleaseID("self-hosted", "actual")
 	parentID, leafID := parent.Named(), leaf.Named()
 
-	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"apps/base/self-hosted/actual/helmrelease.yaml"}), index: filterFixture{files: map[manifest.NamedResource]string{
-		parentID: "clusters/main/apps.yaml",
-		leafID:   "apps/main/self-hosted/actual.yaml",
-		hrActual: "apps/base/self-hosted/actual/helmrelease.yaml",
-	}, root: "", objects: filtertest.MapLister{parentID: parent, leafID: leaf}}.index(), inventory: filtertest.MapLister{parentID: parent, leafID: leaf}, root: ""})
+	f := newAdmission(
+		t,
+		admissionConfig{
+			changes: change.NewSet([]string{"apps/base/self-hosted/actual/helmrelease.yaml"}),
+			index: filterFixture{files: map[manifest.NamedResource]string{
+				parentID: "clusters/main/apps.yaml",
+				leafID:   "apps/main/self-hosted/actual.yaml",
+				hrActual: "apps/base/self-hosted/actual/helmrelease.yaml",
+			}, root: "", objects: filtertest.MapLister{parentID: parent, leafID: leaf}}.index(),
+			inventory: filtertest.MapLister{parentID: parent, leafID: leaf},
+			root:      "",
+		},
+	)
 
 	for _, id := range []manifest.NamedResource{hrActual, leafID, parentID} {
 		if !f.ShouldReconcile(id) {
@@ -171,7 +207,25 @@ func TestFilter_AncestorKSDoesNotPullInUnrelatedSiblings(t *testing.T) {
 	plex := &manifest.Kustomization{Name: "plex", Namespace: "media", Path: "apps/media/plex/app"}
 	atuin := &manifest.Kustomization{Name: "atuin", Namespace: "default", Path: "apps/default/atuin/app"}
 	source := &manifest.GitRepository{Name: "source", Namespace: "flux-system"}
-	release := &manifest.HelmRelease{Name: "plex", Namespace: "media", Chart: manifest.HelmChart{Name: "charts/plex", Source: source.Named()}, HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: "charts/plex", Version: "", SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: (source.Named()).Kind, Name: (source.Named()).Name, Namespace: (source.Named()).Namespace, APIVersion: ""}}}}}
+	release := &manifest.HelmRelease{
+		Name:      "plex",
+		Namespace: "media",
+		Chart:     manifest.HelmChart{Name: "charts/plex", Source: source.Named()},
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{
+			Chart: &helmv2.HelmChartTemplate{
+				Spec: helmv2.HelmChartTemplateSpec{
+					Chart:   "charts/plex",
+					Version: "",
+					SourceRef: &helmv2.CrossNamespaceObjectReference{
+						Kind:       source.Named().Kind,
+						Name:       source.Named().Name,
+						Namespace:  source.Named().Namespace,
+						APIVersion: "",
+					},
+				},
+			},
+		},
+	}
 	independent := &manifest.Kustomization{Name: "chart-independent", Namespace: "default", Path: "independent"}
 	hrAtuin := testutil.HelmReleaseID("default", "atuin")
 	objects := store.New()
@@ -188,8 +242,13 @@ func TestFilter_AncestorKSDoesNotPullInUnrelatedSiblings(t *testing.T) {
 				release.Named(): "apps/media/plex/app/helmrelease.yaml", source.Named(): "flux/source.yaml",
 				independent.Named(): "charts/plex/independent.yaml",
 			}, root: "/repo", objects: objects, refs: map[manifest.NamedResource][]manifest.NamedResource{release.Named(): {source.Named()}}}.index()
-			index.Readers["charts/plex/templates/cm.yaml"] = []manifest.FileReader{{Reader: release.Named(), Source: source.Named(), Exact: true}}
-			f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{file}), index: index, inventory: objects, root: ""})
+			index.Readers["charts/plex/templates/cm.yaml"] = []manifest.FileReader{
+				{Reader: release.Named(), Source: source.Named(), Exact: true},
+			}
+			f := newAdmission(
+				t,
+				admissionConfig{changes: change.NewSet([]string{file}), index: index, inventory: objects, root: ""},
+			)
 			for _, id := range []manifest.NamedResource{meta.Named(), plex.Named(), release.Named(), source.Named()} {
 				if !f.ShouldReconcile(id) {
 					t.Errorf("required resource %s omitted: %v", id, f.KeepNames())
@@ -237,12 +296,44 @@ func TestFilter_ExternalSourcedKSClaimsExcludedFromOwnership(t *testing.T) {
 	// Without the exclusion the root claim wins ancestor status — this
 	// pins the cascade the fix removes (and the root-prefix match that
 	// enables it).
-	f := newAdmission(t, admissionConfig{changes: change.NewSet(changed), index: filterFixture{files: sourceFiles, root: "", objects: lister, refs: nil, excluded: nil, readers: nil, changed: change.NewSet(changed)}.index(), inventory: lister, root: ""})
+	f := newAdmission(
+		t,
+		admissionConfig{
+			changes: change.NewSet(changed),
+			index: filterFixture{
+				files:    sourceFiles,
+				root:     "",
+				objects:  lister,
+				refs:     nil,
+				excluded: nil,
+				readers:  nil,
+				changed:  change.NewSet(changed),
+			}.index(),
+			inventory: lister,
+			root:      "",
+		},
+	)
 	if !f.ShouldReconcile(externalID) {
 		t.Fatalf("precondition: root-claiming KS should be an ancestor without exclusions; keep=%v", f.KeepNames())
 	}
 
-	f = newAdmission(t, admissionConfig{changes: change.NewSet(changed), index: filterFixture{files: sourceFiles, root: "", objects: lister, refs: nil, excluded: map[manifest.NamedResource]struct{}{externalID: {}}, readers: nil, changed: change.NewSet(changed)}.index(), inventory: lister, root: ""})
+	f = newAdmission(
+		t,
+		admissionConfig{
+			changes: change.NewSet(changed),
+			index: filterFixture{
+				files:    sourceFiles,
+				root:     "",
+				objects:  lister,
+				refs:     nil,
+				excluded: map[manifest.NamedResource]struct{}{externalID: {}},
+				readers:  nil,
+				changed:  change.NewSet(changed),
+			}.index(),
+			inventory: lister,
+			root:      "",
+		},
+	)
 	if !f.ShouldReconcile(plexID) {
 		t.Fatalf("owner of the changed file must be kept; keep=%v", f.KeepNames())
 	}
@@ -256,8 +347,12 @@ func TestFilter_PinnedOwnershipKeepsProducer(t *testing.T) {
 	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps", Path: "producers"}
 	child := &manifest.Kustomization{Name: "child", Namespace: "apps", Path: "producers/child"}
 	consumer := &manifest.Kustomization{
-		Name: "consumer", Namespace: "apps", Path: "consumers",
-		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "settings"}}},
+		Name:      "consumer",
+		Namespace: "apps",
+		Path:      "consumers",
+		PostBuild: &kustomizev1.PostBuild{
+			SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "settings"}},
+		},
 	}
 	cm := &manifest.ConfigMap{Name: "settings"}
 	files := map[manifest.NamedResource]string{
@@ -287,7 +382,8 @@ func TestFilter_PinnedOwnershipKeepsProducer(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{tt.changed}), index: filterFixture{files: files, objects: objs, changed: change.NewSet([]string{tt.changed}),
+			f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{tt.changed}), index: filterFixture{
+				files: files, objects: objs, changed: change.NewSet([]string{tt.changed}),
 				pinned: map[manifest.NamedResource]struct{}{producer.Named(): {}},
 				readers: func(file string) []manifest.FileReader {
 					if file == "shared/cm.yaml" || file == "../pinned/producers/cm.yaml" {
@@ -339,8 +435,13 @@ func TestFilter_ArtifactProducerIgnoresCheckoutRootClaim(t *testing.T) {
 	pinned := &manifest.Kustomization{Name: "pinned", Namespace: "apps", Path: "producers"}
 	cm := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}
 	file := "../artifact/producers/cm.yaml"
-	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"flux/unrelated.yaml"}), index: filterFixture{files: map[manifest.NamedResource]string{cm: file}, objects: filtertest.MapLister{root.Named(): root, pinned.Named(): pinned}, changed: change.NewSet([]string{"flux/unrelated.yaml"}),
-		root: t.TempDir(),
+	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"flux/unrelated.yaml"}), index: filterFixture{
+		files: map[manifest.NamedResource]string{
+			cm: file,
+		},
+		objects: filtertest.MapLister{root.Named(): root, pinned.Named(): pinned},
+		changed: change.NewSet([]string{"flux/unrelated.yaml"}),
+		root:    t.TempDir(),
 		readers: func(path string) []manifest.FileReader {
 			if path == file {
 				return []manifest.FileReader{{Reader: pinned.Named(), Source: manifest.BootstrapSourceID}}
@@ -366,7 +467,23 @@ func TestFilter_FileOwnerFallbackCatchesResourcesEscape(t *testing.T) {
 		return nil
 	}
 
-	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{baseFile}), index: filterFixture{files: map[manifest.NamedResource]string{appsID: "apps/homelab/kustomization.yaml"}, root: "", objects: filtertest.MapLister{appsID: apps}, refs: nil, excluded: nil, readers: fileOwners, changed: change.NewSet([]string{baseFile})}.index(), inventory: filtertest.MapLister{appsID: apps}, root: ""})
+	f := newAdmission(
+		t,
+		admissionConfig{
+			changes: change.NewSet([]string{baseFile}),
+			index: filterFixture{
+				files:    map[manifest.NamedResource]string{appsID: "apps/homelab/kustomization.yaml"},
+				root:     "",
+				objects:  filtertest.MapLister{appsID: apps},
+				refs:     nil,
+				excluded: nil,
+				readers:  fileOwners,
+				changed:  change.NewSet([]string{baseFile}),
+			}.index(),
+			inventory: filtertest.MapLister{appsID: apps},
+			root:      "",
+		},
+	)
 	if !f.ShouldReconcile(appsID) {
 		t.Fatalf("owner supplied by the fileOwners fallback must be kept; keep=%v", f.KeepNames())
 	}
@@ -385,7 +502,20 @@ func TestFilter_FileOwnerFallbackCatchesResourcesEscape(t *testing.T) {
 				return nil
 			}
 			changed := change.NewSet([]string{file})
-			f := newAdmission(t, admissionConfig{changes: changed, index: filterFixture{files: map[manifest.NamedResource]string{apps.Named(): "apps/homelab/kustomization.yaml"}, objects: objects, readers: fileOwners, changed: changed}.index(), inventory: objects, root: ""})
+			f := newAdmission(
+				t,
+				admissionConfig{
+					changes: changed,
+					index: filterFixture{
+						files:   map[manifest.NamedResource]string{apps.Named(): "apps/homelab/kustomization.yaml"},
+						objects: objects,
+						readers: fileOwners,
+						changed: changed,
+					}.index(),
+					inventory: objects,
+					root:      "",
+				},
+			)
 			want := file != "inputs/unrelated"
 			assert.Equal(t, f.ShouldReconcile(apps.Named()), want)
 			assert.Equal(t, f.ShouldReconcile(source.Named()), want)
@@ -412,10 +542,18 @@ func TestFilter_FileOwnerMergesWithPrefixClaim(t *testing.T) {
 		return nil
 	}
 
-	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{baseFile}), index: filterFixture{files: map[manifest.NamedResource]string{
-		postgresID: "apps/base/postgres/kustomization.yaml",
-		appsID:     "apps/homelab/kustomization.yaml",
-	}, root: "", objects: filtertest.MapLister{postgresID: postgres, appsID: apps}, refs: nil, excluded: nil, readers: fileOwners, changed: change.NewSet([]string{baseFile})}.index(), inventory: filtertest.MapLister{postgresID: postgres, appsID: apps}, root: ""})
+	f := newAdmission(
+		t,
+		admissionConfig{
+			changes: change.NewSet([]string{baseFile}),
+			index: filterFixture{files: map[manifest.NamedResource]string{
+				postgresID: "apps/base/postgres/kustomization.yaml",
+				appsID:     "apps/homelab/kustomization.yaml",
+			}, root: "", objects: filtertest.MapLister{postgresID: postgres, appsID: apps}, refs: nil, excluded: nil, readers: fileOwners, changed: change.NewSet([]string{baseFile})}.index(),
+			inventory: filtertest.MapLister{postgresID: postgres, appsID: apps},
+			root:      "",
+		},
+	)
 	if !f.ShouldReconcile(postgresID) {
 		t.Errorf("prefix claimant must still be kept; keep=%v", f.KeepNames())
 	}
@@ -432,7 +570,19 @@ func TestFilter_NoFileOwnerFallbackLeavesUnclaimedFileUnowned(t *testing.T) {
 	apps := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "apps/homelab"}
 	appsID := apps.Named()
 
-	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"apps/base/postgres/cluster.yaml"}), index: filterFixture{files: map[manifest.NamedResource]string{appsID: "apps/homelab/kustomization.yaml"}, root: "", objects: filtertest.MapLister{appsID: apps}}.index(), inventory: filtertest.MapLister{appsID: apps}, root: ""})
+	f := newAdmission(
+		t,
+		admissionConfig{
+			changes: change.NewSet([]string{"apps/base/postgres/cluster.yaml"}),
+			index: filterFixture{
+				files:   map[manifest.NamedResource]string{appsID: "apps/homelab/kustomization.yaml"},
+				root:    "",
+				objects: filtertest.MapLister{appsID: apps},
+			}.index(),
+			inventory: filtertest.MapLister{appsID: apps},
+			root:      "",
+		},
+	)
 	if len(f.KeepNames()) != 0 {
 		t.Errorf("expected empty keep set without a fileOwners fallback; keep=%v", f.KeepNames())
 	}
@@ -445,7 +595,19 @@ func TestFilter_KeepNamespaces(t *testing.T) {
 	ksB := &manifest.Kustomization{Name: "y", Namespace: "ns-b"}
 	ksCluster := &manifest.Kustomization{Name: "cluster-scope", Namespace: ""}
 	a, b, c := ksA.Named(), ksB.Named(), ksCluster.Named()
-	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"a.yaml", "b.yaml", "c.yaml"}), index: filterFixture{files: map[manifest.NamedResource]string{a: "a.yaml", b: "b.yaml", c: "c.yaml"}, root: "", objects: filtertest.MapLister{a: ksA, b: ksB, c: ksCluster}}.index(), inventory: filtertest.MapLister{a: ksA, b: ksB, c: ksCluster}, root: ""})
+	f := newAdmission(
+		t,
+		admissionConfig{
+			changes: change.NewSet([]string{"a.yaml", "b.yaml", "c.yaml"}),
+			index: filterFixture{
+				files:   map[manifest.NamedResource]string{a: "a.yaml", b: "b.yaml", c: "c.yaml"},
+				root:    "",
+				objects: filtertest.MapLister{a: ksA, b: ksB, c: ksCluster},
+			}.index(),
+			inventory: filtertest.MapLister{a: ksA, b: ksB, c: ksCluster},
+			root:      "",
+		},
+	)
 	ns := f.KeepNamespaces()
 	got := make([]string, 0, len(ns))
 	for k := range ns {
@@ -461,16 +623,37 @@ func TestFilter_KeepNamespaces(t *testing.T) {
 func TestFilter_TransitiveDepsKustomization(t *testing.T) {
 	t.Parallel()
 	ks := &manifest.Kustomization{
-		Name: "apps", Namespace: "flux-system",
-		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system"},
+		Name:      "apps",
+		Namespace: "flux-system",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{
+			Kind:      manifest.KindGitRepository,
+			Name:      "flux-system",
+			Namespace: "flux-system",
+		},
 		DependsOn: []kustomizev1.DependencyReference{{Namespace: "flux-system", Name: "repositories"}},
 	}
 	ksID := ks.Named()
-	gitID := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "flux-system"}
+	gitID := manifest.NamedResource{
+		Group:     "source.toolkit.fluxcd.io",
+		Kind:      manifest.KindGitRepository,
+		Namespace: "flux-system",
+		Name:      "flux-system",
+	}
 	depID := testutil.KustomizationID("flux-system", "repositories")
 
 	objects := filtertest.MapLister{ksID: ks, depID: refObj(depID)}
-	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"ks.yaml"}), index: filterFixture{files: map[manifest.NamedResource]string{ksID: "ks.yaml"}, objects: objects}.index(), inventory: objects, root: ""})
+	f := newAdmission(
+		t,
+		admissionConfig{
+			changes: change.NewSet([]string{"ks.yaml"}),
+			index: filterFixture{
+				files:   map[manifest.NamedResource]string{ksID: "ks.yaml"},
+				objects: objects,
+			}.index(),
+			inventory: objects,
+			root:      "",
+		},
+	)
 
 	assert.Equal(t, f.ShouldReconcile(gitID), true)
 	assert.Equal(t, f.ShouldReconcile(depID), false)
@@ -491,7 +674,18 @@ func TestFilter_ContentDependencies(t *testing.T) {
 		t.Run(tc.obj.Named().Kind, func(t *testing.T) {
 			t.Parallel()
 			objects := filtertest.MapLister{tc.obj.Named(): tc.obj}
-			f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"changed.yaml"}), index: filterFixture{files: map[manifest.NamedResource]string{tc.obj.Named(): "changed.yaml"}, objects: objects}.index(), inventory: objects, root: ""})
+			f := newAdmission(
+				t,
+				admissionConfig{
+					changes: change.NewSet([]string{"changed.yaml"}),
+					index: filterFixture{
+						files:   map[manifest.NamedResource]string{tc.obj.Named(): "changed.yaml"},
+						objects: objects,
+					}.index(),
+					inventory: objects,
+					root:      "",
+				},
+			)
 			for _, id := range tc.deps {
 				assert.Equal(t, f.ShouldReconcile(id), true)
 				if id.Group == "" {
@@ -501,7 +695,13 @@ func TestFilter_ContentDependencies(t *testing.T) {
 				}
 				assert.Equal(t, f.ShouldReconcile(id), false)
 			}
-			assert.Equal(t, f.ShouldReconcile(manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "unrelated"}), false)
+			assert.Equal(
+				t,
+				f.ShouldReconcile(
+					manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "unrelated"},
+				),
+				false,
+			)
 		})
 	}
 }
@@ -511,7 +711,11 @@ func TestFilter_DependsOnNotFollowed(t *testing.T) {
 	for _, mode := range []string{"present", "file_indexed", "bare_file_indexed", "generated", "absent", "selected"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
-			a := &manifest.Kustomization{Name: "a", Namespace: "apps", DependsOn: []kustomizev1.DependencyReference{{Name: "b"}}}
+			a := &manifest.Kustomization{
+				Name:      "a",
+				Namespace: "apps",
+				DependsOn: []kustomizev1.DependencyReference{{Name: "b"}},
+			}
 			b := &manifest.Kustomization{Name: "b", Namespace: "apps"}
 			producer := testutil.KustomizationID("apps", "producer")
 			st := store.New()
@@ -537,7 +741,10 @@ func TestFilter_DependsOnNotFollowed(t *testing.T) {
 			if mode == "selected" {
 				changes = append(changes, "b.yaml")
 			}
-			f := newAdmission(t, admissionConfig{changes: change.NewSet(changes), index: index, inventory: st, root: "/repo"})
+			f := newAdmission(
+				t,
+				admissionConfig{changes: change.NewSet(changes), index: index, inventory: st, root: "/repo"},
+			)
 			assert.Equal(t, f.keep[a.Named()], primary)
 			want := absent
 			switch mode {
@@ -548,7 +755,6 @@ func TestFilter_DependsOnNotFollowed(t *testing.T) {
 			}
 			assert.Equal(t, f.keep[b.Named()], want)
 			assert.Equal(t, f.ShouldReconcile(producer), mode == "generated" || mode == "selected")
-
 		})
 	}
 }
@@ -579,7 +785,18 @@ func TestFilter_AddExtendsKeepSetAtRuntime(t *testing.T) {
 			child := &manifest.Kustomization{Name: "leaf-app", Namespace: "database"}
 			sibling := testutil.KustomizationID("database", "sibling")
 			foreign := testutil.KustomizationID("other", child.Name)
-			f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"parent.yaml"}), index: filterFixture{files: map[manifest.NamedResource]string{parent: "parent.yaml", sibling: "sibling.yaml"}, objects: filtertest.EmptyLister()}.index(), inventory: filtertest.EmptyLister(), root: ""})
+			f := newAdmission(
+				t,
+				admissionConfig{
+					changes: change.NewSet([]string{"parent.yaml"}),
+					index: filterFixture{
+						files:   map[manifest.NamedResource]string{parent: "parent.yaml", sibling: "sibling.yaml"},
+						objects: filtertest.EmptyLister(),
+					}.index(),
+					inventory: filtertest.EmptyLister(),
+					root:      "",
+				},
+			)
 			assert.Equal(t, f.ShouldReconcile(parent), true)
 			tasks := task.NewBounded(workers)
 			captured, published := make(chan bool, workers), make(chan struct{})
@@ -627,12 +844,21 @@ func TestFilter_ShouldReconcileRequiresProvenNamespace(t *testing.T) {
 	effective := testutil.HelmReleaseID("media", "x")
 	st := store.New()
 	owner := testutil.KustomizationID("media", "parent")
-	proof := manifest.Production{Owner: owner, Authored: bare, File: "child.yaml", Path: "/repo/child.yaml", Source: manifest.BootstrapSourceID}
+	proof := manifest.Production{
+		Owner:    owner,
+		Authored: bare,
+		File:     "child.yaml",
+		Path:     "/repo/child.yaml",
+		Source:   manifest.BootstrapSourceID,
+	}
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		bare:      {File: "child.yaml", Productions: []manifest.Production{proof}},
 		effective: {Productions: []manifest.Production{proof}},
 	}}
-	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"child.yaml"}), index: index, inventory: st, root: "/repo"})
+	f := newAdmission(
+		t,
+		admissionConfig{changes: change.NewSet([]string{"child.yaml"}), index: index, inventory: st, root: "/repo"},
+	)
 	assert.Equal(t, f.ShouldReconcile(effective), true)
 	foreign := effective
 	foreign.Namespace = "unrelated"
@@ -667,18 +893,32 @@ func TestFilter_AddEmittedRejectsAncestorOnlyEmitter(t *testing.T) {
 	clusterApps := testutil.KustomizationID("flux-system", "cluster-apps")
 	siblingApp := testutil.KustomizationID("media", "plex-app")
 
-	leafKSObj := &manifest.Kustomization{Name: "reloader-app", Namespace: "kube-system",
-		Path: "kubernetes/apps/kube-system/reloader/app"}
-	clusterAppsObj := &manifest.Kustomization{Name: "cluster-apps", Namespace: "flux-system",
-		Path: "kubernetes/apps"}
-	siblingObj := &manifest.Kustomization{Name: "plex-app", Namespace: "media",
-		Path: "kubernetes/apps/media/plex/app"}
+	leafKSObj := &manifest.Kustomization{
+		Name: "reloader-app", Namespace: "kube-system",
+		Path: "kubernetes/apps/kube-system/reloader/app",
+	}
+	clusterAppsObj := &manifest.Kustomization{
+		Name: "cluster-apps", Namespace: "flux-system",
+		Path: "kubernetes/apps",
+	}
+	siblingObj := &manifest.Kustomization{
+		Name: "plex-app", Namespace: "media",
+		Path: "kubernetes/apps/media/plex/app",
+	}
 
-	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"kubernetes/apps/kube-system/reloader/app/ocirepository.yaml"}), index: filterFixture{files: map[manifest.NamedResource]string{
-		leafKS:      "kubernetes/apps/kube-system/reloader/app/ks.yaml",
-		clusterApps: "kubernetes/flux/cluster-apps.yaml",
-		siblingApp:  "kubernetes/apps/media/plex/ks.yaml",
-	}, root: "", objects: filtertest.MapLister{leafKS: leafKSObj, clusterApps: clusterAppsObj, siblingApp: siblingObj}}.index(), inventory: filtertest.MapLister{leafKS: leafKSObj, clusterApps: clusterAppsObj, siblingApp: siblingObj}, root: ""})
+	f := newAdmission(
+		t,
+		admissionConfig{
+			changes: change.NewSet([]string{"kubernetes/apps/kube-system/reloader/app/ocirepository.yaml"}),
+			index: filterFixture{files: map[manifest.NamedResource]string{
+				leafKS:      "kubernetes/apps/kube-system/reloader/app/ks.yaml",
+				clusterApps: "kubernetes/flux/cluster-apps.yaml",
+				siblingApp:  "kubernetes/apps/media/plex/ks.yaml",
+			}, root: "", objects: filtertest.MapLister{leafKS: leafKSObj, clusterApps: clusterAppsObj, siblingApp: siblingObj}}.index(),
+			inventory: filtertest.MapLister{leafKS: leafKSObj, clusterApps: clusterAppsObj, siblingApp: siblingObj},
+			root:      "",
+		},
+	)
 
 	if !f.ShouldReconcile(leafKS) {
 		t.Fatalf("leaf KS (owner of changed file) must be in keep; keep=%v", f.KeepNames())
@@ -687,14 +927,20 @@ func TestFilter_AddEmittedRejectsAncestorOnlyEmitter(t *testing.T) {
 		t.Fatalf("cluster-apps ancestor must be in keep (so its patches render); keep=%v", f.KeepNames())
 	}
 	if f.ShouldReconcile(siblingApp) {
-		t.Fatalf("precondition: sibling under same ancestor must NOT be in keep at resolve time; keep=%v", f.KeepNames())
+		t.Fatalf(
+			"precondition: sibling under same ancestor must NOT be in keep at resolve time; keep=%v",
+			f.KeepNames(),
+		)
 	}
 
 	// Simulate cluster-apps rendering and emitting the file-loaded
 	// sibling. AddEmitted must NOT keep-add it.
 	f.AddEmitted(clusterApps, store.Child{Obj: refObj(siblingApp)}, f.objs)
 	if f.ShouldReconcile(siblingApp) {
-		t.Errorf("AddEmitted(ancestor, sibling) over-extended keep set; sibling should remain SKIPPED; keep=%v", f.KeepNames())
+		t.Errorf(
+			"AddEmitted(ancestor, sibling) over-extended keep set; sibling should remain SKIPPED; keep=%v",
+			f.KeepNames(),
+		)
 	}
 
 	// Same path but with a render-only child (no sourceFiles entry):
@@ -733,28 +979,56 @@ func TestFilter_AddEmittedNoCascadeAcrossDeepAncestorChain(t *testing.T) {
 	reloaderSibling := testutil.KustomizationID("kube-system", "descheduler-app")
 
 	objs := filtertest.MapLister{
-		clusterApps: &manifest.Kustomization{Name: clusterApps.Name, Namespace: clusterApps.Namespace,
-			Path: "kubernetes/apps"},
-		kubeSystem: &manifest.Kustomization{Name: kubeSystem.Name, Namespace: kubeSystem.Namespace,
-			Path: "kubernetes/apps/kube-system"},
-		reloader: &manifest.Kustomization{Name: reloader.Name, Namespace: reloader.Namespace,
-			Path: "kubernetes/apps/kube-system/reloader"},
-		reloaderApp: &manifest.Kustomization{Name: reloaderApp.Name, Namespace: reloaderApp.Namespace,
-			Path: "kubernetes/apps/kube-system/reloader/app"},
-		mediaSibling:    &manifest.Kustomization{Name: mediaSibling.Name, Namespace: mediaSibling.Namespace, Path: "kubernetes/apps/media"},
-		spegelSibling:   &manifest.Kustomization{Name: spegelSibling.Name, Namespace: spegelSibling.Namespace, Path: "kubernetes/apps/kube-system/spegel"},
-		reloaderSibling: &manifest.Kustomization{Name: reloaderSibling.Name, Namespace: reloaderSibling.Namespace, Path: "kubernetes/apps/kube-system/descheduler/app"},
+		clusterApps: &manifest.Kustomization{
+			Name: clusterApps.Name, Namespace: clusterApps.Namespace,
+			Path: "kubernetes/apps",
+		},
+		kubeSystem: &manifest.Kustomization{
+			Name: kubeSystem.Name, Namespace: kubeSystem.Namespace,
+			Path: "kubernetes/apps/kube-system",
+		},
+		reloader: &manifest.Kustomization{
+			Name: reloader.Name, Namespace: reloader.Namespace,
+			Path: "kubernetes/apps/kube-system/reloader",
+		},
+		reloaderApp: &manifest.Kustomization{
+			Name: reloaderApp.Name, Namespace: reloaderApp.Namespace,
+			Path: "kubernetes/apps/kube-system/reloader/app",
+		},
+		mediaSibling: &manifest.Kustomization{
+			Name:      mediaSibling.Name,
+			Namespace: mediaSibling.Namespace,
+			Path:      "kubernetes/apps/media",
+		},
+		spegelSibling: &manifest.Kustomization{
+			Name:      spegelSibling.Name,
+			Namespace: spegelSibling.Namespace,
+			Path:      "kubernetes/apps/kube-system/spegel",
+		},
+		reloaderSibling: &manifest.Kustomization{
+			Name:      reloaderSibling.Name,
+			Namespace: reloaderSibling.Namespace,
+			Path:      "kubernetes/apps/kube-system/descheduler/app",
+		},
 	}
 
-	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"kubernetes/apps/kube-system/reloader/app/ocirepository.yaml"}), index: filterFixture{files: map[manifest.NamedResource]string{
-		clusterApps:     "kubernetes/flux/cluster-apps.yaml",
-		kubeSystem:      "kubernetes/flux/kube-system.yaml",
-		reloader:        "kubernetes/apps/kube-system/reloader/ks.yaml",
-		reloaderApp:     "kubernetes/apps/kube-system/reloader/app/ks.yaml",
-		mediaSibling:    "kubernetes/flux/media-apps.yaml",
-		spegelSibling:   "kubernetes/apps/kube-system/spegel/ks.yaml",
-		reloaderSibling: "kubernetes/apps/kube-system/descheduler/app/ks.yaml",
-	}, root: "", objects: objs}.index(), inventory: objs, root: ""})
+	f := newAdmission(
+		t,
+		admissionConfig{
+			changes: change.NewSet([]string{"kubernetes/apps/kube-system/reloader/app/ocirepository.yaml"}),
+			index: filterFixture{files: map[manifest.NamedResource]string{
+				clusterApps:     "kubernetes/flux/cluster-apps.yaml",
+				kubeSystem:      "kubernetes/flux/kube-system.yaml",
+				reloader:        "kubernetes/apps/kube-system/reloader/ks.yaml",
+				reloaderApp:     "kubernetes/apps/kube-system/reloader/app/ks.yaml",
+				mediaSibling:    "kubernetes/flux/media-apps.yaml",
+				spegelSibling:   "kubernetes/apps/kube-system/spegel/ks.yaml",
+				reloaderSibling: "kubernetes/apps/kube-system/descheduler/app/ks.yaml",
+			}, root: "", objects: objs}.index(),
+			inventory: objs,
+			root:      "",
+		},
+	)
 
 	// Precondition: the leaf and its ancestor chain are in keep.
 	for _, id := range []manifest.NamedResource{reloaderApp, reloader, kubeSystem, clusterApps} {
@@ -806,7 +1080,19 @@ func TestFilter_AddEmittedFromPrimaryParent(t *testing.T) {
 	parent := testutil.KustomizationID("flux-system", "database")
 	child := testutil.KustomizationID("database", "leaf-app")
 
-	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"apps/database/parent.yaml"}), index: filterFixture{files: map[manifest.NamedResource]string{parent: "apps/database/parent.yaml"}, root: "", objects: filtertest.EmptyLister()}.index(), inventory: filtertest.EmptyLister(), root: ""})
+	f := newAdmission(
+		t,
+		admissionConfig{
+			changes: change.NewSet([]string{"apps/database/parent.yaml"}),
+			index: filterFixture{
+				files:   map[manifest.NamedResource]string{parent: "apps/database/parent.yaml"},
+				root:    "",
+				objects: filtertest.EmptyLister(),
+			}.index(),
+			inventory: filtertest.EmptyLister(),
+			root:      "",
+		},
+	)
 	if !f.ShouldReconcile(parent) {
 		t.Fatalf("parent must be primary from direct file change; keep=%v", f.KeepNames())
 	}
@@ -824,7 +1110,15 @@ func TestAddEmitted_CapturedTransitiveReferences(t *testing.T) {
 	dependency.SecretRef = &manifest.LocalObjectReference{Name: "captured"}
 	st := store.New()
 	st.AddObject(dependency)
-	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"parent.yaml"}), index: filterFixture{files: map[manifest.NamedResource]string{parent: "parent.yaml"}}.index(), inventory: st, root: ""})
+	f := newAdmission(
+		t,
+		admissionConfig{
+			changes:   change.NewSet([]string{"parent.yaml"}),
+			index:     filterFixture{files: map[manifest.NamedResource]string{parent: "parent.yaml"}}.index(),
+			inventory: st,
+			root:      "",
+		},
+	)
 	var reads store.ReadSet
 	reads.Init(st, parent, nil)
 	defer reads.Retire()
@@ -835,8 +1129,16 @@ func TestAddEmitted_CapturedTransitiveReferences(t *testing.T) {
 	child := &manifest.Kustomization{Name: "child", Namespace: "apps"}
 	child.SourceRef.Kind, child.SourceRef.Name = manifest.KindGitRepository, dependency.Name
 	f.AddEmitted(parent, store.Child{Obj: child}, &reads)
-	assert.Equal(t, f.ShouldReconcile(manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "captured"}), true)
-	assert.Equal(t, f.ShouldReconcile(manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "newer"}), false)
+	assert.Equal(
+		t,
+		f.ShouldReconcile(manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "captured"}),
+		true,
+	)
+	assert.Equal(
+		t,
+		f.ShouldReconcile(manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "newer"}),
+		false,
+	)
 	assert.Equal(t, reads.Valid(), false)
 }
 
@@ -846,8 +1148,29 @@ func TestAddEmitted_StampedHelmReleasePullsChartSource(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			parent := testutil.KustomizationID("flux-system", "cluster-apps")
-			hr := &manifest.HelmRelease{Name: "sonarr", Namespace: "media", Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "app-template"}}, ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "app-template", Namespace: "flux-system"}}
-			chartSrc := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "app-template"}
+			hr := &manifest.HelmRelease{
+				Name:      "sonarr",
+				Namespace: "media",
+				Chart: manifest.HelmChart{
+					Source: manifest.NamedResource{
+						Group:     manifest.SourceDomain,
+						Kind:      manifest.KindOCIRepository,
+						Namespace: "flux-system",
+						Name:      "app-template",
+					},
+				},
+				ChartRef: &helmv2.CrossNamespaceSourceReference{
+					Kind:      manifest.KindOCIRepository,
+					Name:      "app-template",
+					Namespace: "flux-system",
+				},
+			}
+			chartSrc := manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindOCIRepository,
+				Namespace: "flux-system",
+				Name:      "app-template",
+			}
 			oldSource := chartSrc
 			oldSource.Name = "old-chart"
 			objects := filtertest.EmptyLister()
@@ -856,7 +1179,18 @@ func TestAddEmitted_StampedHelmReleasePullsChartSource(t *testing.T) {
 				old.Chart.Source.Name = oldSource.Name
 				objects[old.Named()] = &old
 			}
-			f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"apps/media/kustomization.yaml"}), index: filterFixture{files: map[manifest.NamedResource]string{parent: "apps/media/kustomization.yaml"}, objects: objects}.index(), inventory: objects, root: ""})
+			f := newAdmission(
+				t,
+				admissionConfig{
+					changes: change.NewSet([]string{"apps/media/kustomization.yaml"}),
+					index: filterFixture{
+						files:   map[manifest.NamedResource]string{parent: "apps/media/kustomization.yaml"},
+						objects: objects,
+					}.index(),
+					inventory: objects,
+					root:      "",
+				},
+			)
 			assert.Equal(t, f.ShouldReconcile(parent), true)
 			for _, id := range []manifest.NamedResource{hr.Named(), chartSrc, oldSource} {
 				assert.Equal(t, f.ShouldReconcile(id), false)
@@ -867,7 +1201,12 @@ func TestAddEmitted_StampedHelmReleasePullsChartSource(t *testing.T) {
 			assert.Equal(t, len(added), 2)
 			for _, id := range []manifest.NamedResource{hr.Named(), chartSrc} {
 				if !f.ShouldReconcile(id) || !slices.Contains(added, id) {
-					t.Errorf("current identity %s not selected and returned: added=%v, keep=%v", id, added, f.KeepNames())
+					t.Errorf(
+						"current identity %s not selected and returned: added=%v, keep=%v",
+						id,
+						added,
+						f.KeepNames(),
+					)
 				}
 			}
 			if f.ShouldReconcile(oldSource) || slices.Contains(added, oldSource) {
@@ -883,15 +1222,45 @@ func TestAddEmitted_KeptChildUsesIncomingReferences(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			parent := testutil.KustomizationID("apps", "parent")
-			child := &manifest.HelmRelease{Name: "app", Namespace: "apps", Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "new-chart"}}, ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "new-chart", Namespace: "apps"}}
+			child := &manifest.HelmRelease{
+				Name:      "app",
+				Namespace: "apps",
+				Chart: manifest.HelmChart{
+					Source: manifest.NamedResource{
+						Group:     manifest.SourceDomain,
+						Kind:      manifest.KindOCIRepository,
+						Namespace: "apps",
+						Name:      "new-chart",
+					},
+				},
+				ChartRef: &helmv2.CrossNamespaceSourceReference{
+					Kind:      manifest.KindOCIRepository,
+					Name:      "new-chart",
+					Namespace: "apps",
+				},
+			}
 			stale := *child
 			stale.Chart.Source.Name = "old-chart"
-			stale.ChartRef = &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "old-chart", Namespace: "apps"}
+			stale.ChartRef = &helmv2.CrossNamespaceSourceReference{
+				Kind:      manifest.KindOCIRepository,
+				Name:      "old-chart",
+				Namespace: "apps",
+			}
 			competitor := &manifest.Kustomization{Name: "competitor", Namespace: "apps"}
 			index := filterFixture{files: map[manifest.NamedResource]string{parent: "parent.yaml"}}.index()
-			index.Records[child.Named()] = manifest.DiscoveryRecord{Productions: []manifest.Production{{Owner: competitor.Named(), Source: manifest.BootstrapSourceID}}}
+			index.Records[child.Named()] = manifest.DiscoveryRecord{
+				Productions: []manifest.Production{{Owner: competitor.Named(), Source: manifest.BootstrapSourceID}},
+			}
 			objects := filtertest.MapLister{child.Named(): &stale, competitor.Named(): competitor}
-			f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"parent.yaml"}), index: index, inventory: objects, root: ""})
+			f := newAdmission(
+				t,
+				admissionConfig{
+					changes:   change.NewSet([]string{"parent.yaml"}),
+					index:     index,
+					inventory: objects,
+					root:      "",
+				},
+			)
 			if name == "primary" {
 				f.addUngated(child.Named())
 			} else {
@@ -930,15 +1299,39 @@ func TestAddEmitted_KeptChildUsesIncomingReferences(t *testing.T) {
 func TestAddEmitted_AlreadySelectedSourceRetained(t *testing.T) {
 	t.Parallel()
 	parent := testutil.KustomizationID("apps", "parent")
-	child := &manifest.HelmRelease{Name: "app", Namespace: "apps", Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "new-chart"}}, ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "new-chart", Namespace: "apps"}}
+	child := &manifest.HelmRelease{
+		Name:      "app",
+		Namespace: "apps",
+		Chart: manifest.HelmChart{
+			Source: manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindOCIRepository,
+				Namespace: "apps",
+				Name:      "new-chart",
+			},
+		},
+		ChartRef: &helmv2.CrossNamespaceSourceReference{
+			Kind:      manifest.KindOCIRepository,
+			Name:      "new-chart",
+			Namespace: "apps",
+		},
+	}
 	old := *child.Clone()
 	old.ChartRef.Name = "old-chart"
 	old.Chart = manifest.HelmChart{}
 	oldSource := old.ChartSource()
 	objects := filtertest.MapLister{old.Named(): &old}
-	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"parent.yaml", "old-chart.yaml"}), index: filterFixture{files: map[manifest.NamedResource]string{
-		parent: "parent.yaml", oldSource: "old-chart.yaml",
-	}, objects: objects}.index(), inventory: objects, root: ""})
+	f := newAdmission(
+		t,
+		admissionConfig{
+			changes: change.NewSet([]string{"parent.yaml", "old-chart.yaml"}),
+			index: filterFixture{files: map[manifest.NamedResource]string{
+				parent: "parent.yaml", oldSource: "old-chart.yaml",
+			}, objects: objects}.index(),
+			inventory: objects,
+			root:      "",
+		},
+	)
 	assert.Equal(t, f.ShouldReconcile(oldSource), true)
 	assert.Equal(t, f.ShouldReconcile(child.Named()), true)
 	assert.Equal(t, f.ShouldReconcile(child.ChartSource()), false)
@@ -957,12 +1350,39 @@ func TestAddEmitted_AlreadySelectedSourceRetained(t *testing.T) {
 func TestAddEmitted_ConcurrentReplacementReturnsEachIDOnce(t *testing.T) {
 	t.Parallel()
 	parent := testutil.KustomizationID("apps", "parent")
-	child := &manifest.HelmRelease{Name: "app", Namespace: "apps", Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "new-chart"}}, ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "new-chart", Namespace: "apps"}}
+	child := &manifest.HelmRelease{
+		Name:      "app",
+		Namespace: "apps",
+		Chart: manifest.HelmChart{
+			Source: manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindOCIRepository,
+				Namespace: "apps",
+				Name:      "new-chart",
+			},
+		},
+		ChartRef: &helmv2.CrossNamespaceSourceReference{
+			Kind:      manifest.KindOCIRepository,
+			Name:      "new-chart",
+			Namespace: "apps",
+		},
+	}
 	old := *child.Clone()
 	old.ChartRef.Name = "old-chart"
 	old.Chart = manifest.HelmChart{}
 	objects := filtertest.MapLister{old.Named(): &old}
-	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"parent.yaml"}), index: filterFixture{files: map[manifest.NamedResource]string{parent: "parent.yaml"}, objects: objects}.index(), inventory: objects, root: ""})
+	f := newAdmission(
+		t,
+		admissionConfig{
+			changes: change.NewSet([]string{"parent.yaml"}),
+			index: filterFixture{
+				files:   map[manifest.NamedResource]string{parent: "parent.yaml"},
+				objects: objects,
+			}.index(),
+			inventory: objects,
+			root:      "",
+		},
+	)
 	for _, id := range []manifest.NamedResource{child.Named(), child.ChartSource(), old.ChartSource()} {
 		assert.Equal(t, f.ShouldReconcile(id), false)
 	}
@@ -1006,8 +1426,18 @@ func TestAddEmitted_ConcurrentReplacementReturnsEachIDOnce(t *testing.T) {
 func TestFilter_KeepByNameDoesNotLeakAcrossNamespaces(t *testing.T) {
 	t.Parallel()
 	before, after := t.TempDir(), t.TempDir()
-	testutil.WriteFile(t, before, "changed.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: same}\n")
-	testutil.WriteFile(t, after, "changed.yaml", "apiVersion: foreign.example/v1\nkind: Kustomization\nmetadata: {name: same}\n")
+	testutil.WriteFile(
+		t,
+		before,
+		"changed.yaml",
+		"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: same}\n",
+	)
+	testutil.WriteFile(
+		t,
+		after,
+		"changed.yaml",
+		"apiVersion: foreign.example/v1\nkind: Kustomization\nmetadata: {name: same}\n",
+	)
 	changes, err := change.Detect(t.Context(), testInput(before), testInput(after))
 	assert.NoError(t, err)
 	assert.Diff(t, changes.Paths(), []string{"changed.yaml"})
@@ -1023,10 +1453,28 @@ func TestFilter_KeepByNameDoesNotLeakAcrossNamespaces(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			kept := manifest.NamedResource{Group: tc.group, Kind: manifest.KindKustomization, Namespace: tc.namespace, Name: "same"}
-			collider := manifest.NamedResource{Group: tc.otherGroup, Kind: kept.Kind, Namespace: tc.otherNamespace, Name: kept.Name}
+			kept := manifest.NamedResource{
+				Group:     tc.group,
+				Kind:      manifest.KindKustomization,
+				Namespace: tc.namespace,
+				Name:      "same",
+			}
+			collider := manifest.NamedResource{
+				Group:     tc.otherGroup,
+				Kind:      kept.Kind,
+				Namespace: tc.otherNamespace,
+				Name:      kept.Name,
+			}
 			files := map[manifest.NamedResource]string{kept: "changed.yaml", collider: "unchanged.yaml"}
-			f := newAdmission(t, admissionConfig{changes: changes, index: filterFixture{files: files}.index(), inventory: filtertest.EmptyLister(), root: ""})
+			f := newAdmission(
+				t,
+				admissionConfig{
+					changes:   changes,
+					index:     filterFixture{files: files}.index(),
+					inventory: filtertest.EmptyLister(),
+					root:      "",
+				},
+			)
 			assert.Equal(t, f.ShouldReconcile(kept), true)
 			assert.Equal(t, f.ShouldReconcile(collider), false)
 			projected := kept
@@ -1051,7 +1499,23 @@ func TestFilter_KeepByNameDoesNotLeakAcrossNamespaces(t *testing.T) {
 
 func TestFilter_TransitiveDepsHelmReleaseViaHelmChartCRD(t *testing.T) {
 	t.Parallel()
-	hr := &manifest.HelmRelease{Name: "demo", Namespace: "apps", Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "apps", Name: "demo-chart"}}, ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindHelmChart, Name: "demo-chart", Namespace: "apps"}}
+	hr := &manifest.HelmRelease{
+		Name:      "demo",
+		Namespace: "apps",
+		Chart: manifest.HelmChart{
+			Source: manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindHelmChart,
+				Namespace: "apps",
+				Name:      "demo-chart",
+			},
+		},
+		ChartRef: &helmv2.CrossNamespaceSourceReference{
+			Kind:      manifest.KindHelmChart,
+			Name:      "demo-chart",
+			Namespace: "apps",
+		},
+	}
 	hc := &manifest.HelmChartSource{
 		Name: "demo-chart", Namespace: "apps",
 		SourceRef: sourcev1.LocalHelmChartSourceReference{
@@ -1060,11 +1524,28 @@ func TestFilter_TransitiveDepsHelmReleaseViaHelmChartCRD(t *testing.T) {
 	}
 	hrID := hr.Named()
 	hcID := hc.Named()
-	ociID := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "backing-oci"}
+	ociID := manifest.NamedResource{
+		Group:     "source.toolkit.fluxcd.io",
+		Kind:      manifest.KindOCIRepository,
+		Namespace: "apps",
+		Name:      "backing-oci",
+	}
 
 	t.Run("initialization", func(t *testing.T) {
 		t.Parallel()
-		f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"hr.yaml"}), index: filterFixture{files: map[manifest.NamedResource]string{hrID: "hr.yaml"}, root: "", objects: filtertest.MapLister{hrID: hr, hcID: hc}}.index(), inventory: filtertest.MapLister{hrID: hr, hcID: hc}, root: ""})
+		f := newAdmission(
+			t,
+			admissionConfig{
+				changes: change.NewSet([]string{"hr.yaml"}),
+				index: filterFixture{
+					files:   map[manifest.NamedResource]string{hrID: "hr.yaml"},
+					root:    "",
+					objects: filtertest.MapLister{hrID: hr, hcID: hc},
+				}.index(),
+				inventory: filtertest.MapLister{hrID: hr, hcID: hc},
+				root:      "",
+			},
+		)
 		for _, id := range []manifest.NamedResource{hrID, hcID, ociID} {
 			if !f.ShouldReconcile(id) {
 				t.Errorf("transitive dependency %s not selected: keep=%v", id, f.KeepNames())
@@ -1075,7 +1556,18 @@ func TestFilter_TransitiveDepsHelmReleaseViaHelmChartCRD(t *testing.T) {
 		t.Parallel()
 		parent := testutil.KustomizationID("apps", "parent")
 		objects := filtertest.MapLister{hcID: hc}
-		f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"parent.yaml"}), index: filterFixture{files: map[manifest.NamedResource]string{parent: "parent.yaml"}, objects: objects}.index(), inventory: objects, root: ""})
+		f := newAdmission(
+			t,
+			admissionConfig{
+				changes: change.NewSet([]string{"parent.yaml"}),
+				index: filterFixture{
+					files:   map[manifest.NamedResource]string{parent: "parent.yaml"},
+					objects: objects,
+				}.index(),
+				inventory: objects,
+				root:      "",
+			},
+		)
 		for _, id := range []manifest.NamedResource{hrID, hcID, ociID} {
 			assert.Equal(t, f.ShouldReconcile(id), false)
 		}
@@ -1085,7 +1577,12 @@ func TestFilter_TransitiveDepsHelmReleaseViaHelmChartCRD(t *testing.T) {
 		assert.Equal(t, len(added), 3)
 		for _, id := range []manifest.NamedResource{hrID, hcID, ociID} {
 			if !f.ShouldReconcile(id) || !slices.Contains(added, id) {
-				t.Errorf("transitive dependency %s not selected and returned: added=%v, keep=%v", id, added, f.KeepNames())
+				t.Errorf(
+					"transitive dependency %s not selected and returned: added=%v, keep=%v",
+					id,
+					added,
+					f.KeepNames(),
+				)
 			}
 		}
 	})
@@ -1111,28 +1608,50 @@ func TestFilter_ReverseEdgeCentralizedOCIRepository(t *testing.T) {
 		hrFile  = "clusters/main/kubernetes/networking/envoy-gateway/app/helm-release.yaml"
 		sibFile = "clusters/main/kubernetes/networking/envoy-gateway/app/other-hr.yaml"
 	)
-	oci := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "envoy-gateway"}
+	oci := manifest.NamedResource{
+		Group:     "source.toolkit.fluxcd.io",
+		Kind:      manifest.KindOCIRepository,
+		Namespace: "flux-system",
+		Name:      "envoy-gateway",
+	}
 	hr := testutil.HelmReleaseID("envoy-gateway", "envoy-gateway")
 	// Sibling HR under the SAME owner KS that consumes a DIFFERENT source
 	// — it must stay out of keep (the owner KS is ancestor-only, so it
 	// can't cascade unrelated siblings in).
 	sibling := testutil.HelmReleaseID("envoy-gateway", "other")
-	otherOCI := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "something-else"}
-	reposKS := &manifest.Kustomization{Name: "repositories", Namespace: "flux-system",
-		Path: "repositories"}
-	appKS := &manifest.Kustomization{Name: "envoy-gateway", Namespace: "flux-system",
-		Path: "clusters/main/kubernetes/networking/envoy-gateway/app"}
+	otherOCI := manifest.NamedResource{
+		Group:     "source.toolkit.fluxcd.io",
+		Kind:      manifest.KindOCIRepository,
+		Namespace: "flux-system",
+		Name:      "something-else",
+	}
+	reposKS := &manifest.Kustomization{
+		Name: "repositories", Namespace: "flux-system",
+		Path: "repositories",
+	}
+	appKS := &manifest.Kustomization{
+		Name: "envoy-gateway", Namespace: "flux-system",
+		Path: "clusters/main/kubernetes/networking/envoy-gateway/app",
+	}
 
-	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{ociFile}), index: filterFixture{files: map[manifest.NamedResource]string{
-		oci:             ociFile,
-		hr:              hrFile,
-		sibling:         sibFile,
-		reposKS.Named(): "repositories/flux-entry.yaml",
-		appKS.Named():   "clusters/main/kubernetes/networking/envoy-gateway/ks.yaml",
-	}, root: "", objects: filtertest.MapLister{reposKS.Named(): reposKS, appKS.Named(): appKS}, refs: map[manifest.NamedResource][]manifest.NamedResource{
-		hr:      {oci},
-		sibling: {otherOCI},
-	}, excluded: nil, readers: nil, changed: change.NewSet([]string{ociFile})}.index(), inventory: filtertest.MapLister{reposKS.Named(): reposKS, appKS.Named(): appKS}, root: ""})
+	f := newAdmission(
+		t,
+		admissionConfig{
+			changes: change.NewSet([]string{ociFile}),
+			index: filterFixture{files: map[manifest.NamedResource]string{
+				oci:             ociFile,
+				hr:              hrFile,
+				sibling:         sibFile,
+				reposKS.Named(): "repositories/flux-entry.yaml",
+				appKS.Named():   "clusters/main/kubernetes/networking/envoy-gateway/ks.yaml",
+			}, root: "", objects: filtertest.MapLister{reposKS.Named(): reposKS, appKS.Named(): appKS}, refs: map[manifest.NamedResource][]manifest.NamedResource{
+				hr:      {oci},
+				sibling: {otherOCI},
+			}, excluded: nil, readers: nil, changed: change.NewSet([]string{ociFile})}.index(),
+			inventory: filtertest.MapLister{reposKS.Named(): reposKS, appKS.Named(): appKS},
+			root:      "",
+		},
+	)
 
 	if !f.ShouldReconcile(oci) {
 		t.Fatalf("changed OCIRepository must be in keep; keep=%v", f.KeepNames())
@@ -1161,8 +1680,18 @@ func TestFilter_ReverseEdgeCentralizedOCIRepository(t *testing.T) {
 func TestFilter_ReverseEdgeHelmChartKeepsEmitter(t *testing.T) {
 	t.Parallel()
 	const ociFile = "repositories/oci/source.yaml"
-	oci := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "source"}
-	chart := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "flux-system", Name: "chart"}
+	oci := manifest.NamedResource{
+		Group:     manifest.SourceDomain,
+		Kind:      manifest.KindOCIRepository,
+		Namespace: "flux-system",
+		Name:      "source",
+	}
+	chart := manifest.NamedResource{
+		Group:     manifest.SourceDomain,
+		Kind:      manifest.KindHelmChart,
+		Namespace: "flux-system",
+		Name:      "chart",
+	}
 	sibling := testutil.HelmReleaseID("apps", "other")
 	app := &manifest.Kustomization{Name: "app", Namespace: "flux-system", Path: "apps/app"}
 	meta := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "apps"}
@@ -1198,18 +1727,31 @@ func TestFilter_ReverseEdgeHelmChartKeepsEmitter(t *testing.T) {
 // app-template source.
 func TestFilter_ReverseEdgeNoCascadeFromChangedConsumer(t *testing.T) {
 	t.Parallel()
-	shared := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "app-template"}
+	shared := manifest.NamedResource{
+		Group:     "source.toolkit.fluxcd.io",
+		Kind:      manifest.KindOCIRepository,
+		Namespace: "flux-system",
+		Name:      "app-template",
+	}
 	aID := testutil.HelmReleaseID("apps", "a")
 	bID := testutil.HelmReleaseID("apps", "b")
 
-	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"apps/a/hr.yaml"}), index: filterFixture{files: map[manifest.NamedResource]string{
-		aID:    "apps/a/hr.yaml",
-		bID:    "apps/b/hr.yaml",
-		shared: "repositories/oci/app-template.yaml",
-	}, root: "", objects: filtertest.EmptyLister(), refs: map[manifest.NamedResource][]manifest.NamedResource{
-		aID: {shared},
-		bID: {shared},
-	}, excluded: nil, readers: nil, changed: change.NewSet([]string{"apps/a/hr.yaml"})}.index(), inventory: filtertest.EmptyLister(), root: ""})
+	f := newAdmission(
+		t,
+		admissionConfig{
+			changes: change.NewSet([]string{"apps/a/hr.yaml"}),
+			index: filterFixture{files: map[manifest.NamedResource]string{
+				aID:    "apps/a/hr.yaml",
+				bID:    "apps/b/hr.yaml",
+				shared: "repositories/oci/app-template.yaml",
+			}, root: "", objects: filtertest.EmptyLister(), refs: map[manifest.NamedResource][]manifest.NamedResource{
+				aID: {shared},
+				bID: {shared},
+			}, excluded: nil, readers: nil, changed: change.NewSet([]string{"apps/a/hr.yaml"})}.index(),
+			inventory: filtertest.EmptyLister(),
+			root:      "",
+		},
+	)
 
 	if !f.ShouldReconcile(aID) {
 		t.Fatalf("changed HR a must be in keep; keep=%v", f.KeepNames())
@@ -1230,23 +1772,39 @@ func TestFilter_ForwardEdgeChangedHRKeepsChartRefSource(t *testing.T) {
 	// them pre-inheritance); the shared chartRef OCIRepository lives elsewhere.
 	hr := testutil.HelmReleaseID("", "plex")
 	sibling := testutil.HelmReleaseID("", "other")
-	oci := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "app-template"}
+	oci := manifest.NamedResource{
+		Group:     "source.toolkit.fluxcd.io",
+		Kind:      manifest.KindOCIRepository,
+		Namespace: "flux-system",
+		Name:      "app-template",
+	}
 
-	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{hrFile}), index: filterFixture{files: // only plex's file changed
-	map[manifest.NamedResource]string{
-		hr:      hrFile,
-		sibling: sibFile,
-		oci:     ociFile,
-	}, root: "", objects: filtertest.EmptyLister(), refs: map[manifest.NamedResource][]manifest.NamedResource{
-		hr:      {oci},
-		sibling: {oci}, // shares the same chart source
-	}, excluded: nil, readers: nil, changed: change.NewSet([]string{hrFile})}.index(), inventory: filtertest.EmptyLister(), root: ""})
+	f := newAdmission(
+		t,
+		admissionConfig{
+			changes: change.NewSet([]string{hrFile}),
+			index: filterFixture{files: // only plex's file changed
+			map[manifest.NamedResource]string{
+				hr:      hrFile,
+				sibling: sibFile,
+				oci:     ociFile,
+			}, root: "", objects: filtertest.EmptyLister(), refs: map[manifest.NamedResource][]manifest.NamedResource{
+				hr:      {oci},
+				sibling: {oci}, // shares the same chart source
+			}, excluded: nil, readers: nil, changed: change.NewSet([]string{hrFile})}.index(),
+			inventory: filtertest.EmptyLister(),
+			root:      "",
+		},
+	)
 
 	if !f.ShouldReconcile(hr) {
 		t.Fatalf("changed HelmRelease must be in keep; keep=%v", f.KeepNames())
 	}
 	if !f.ShouldReconcile(oci) {
-		t.Fatalf("forward edge: the changed HR's chartRef OCIRepository must be in keep so its chart is fetched; keep=%v", f.KeepNames())
+		t.Fatalf(
+			"forward edge: the changed HR's chartRef OCIRepository must be in keep so its chart is fetched; keep=%v",
+			f.KeepNames(),
+		)
 	}
 	// Keeping the shared source via plex's forward edge must NOT reverse-
 	// cascade to a sibling HR that merely shares it (its file is unchanged).
@@ -1301,27 +1859,39 @@ func TestFilter_SubstituteFromConfigMapKeepsProducerKustomization(t *testing.T) 
 	// renderedSettings is the form the consumer KS waits on once
 	// kustomize's namespace directive has stamped flux-system onto
 	// the rendered CM.
-	renderedSettings := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "cluster-settings"}
+	renderedSettings := manifest.NamedResource{
+		Kind:      manifest.KindConfigMap,
+		Namespace: "flux-system",
+		Name:      "cluster-settings",
+	}
 
-	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"kubernetes/apps/communication/ntfy/app/helmrelease.yaml"}), index: filterFixture{files: map[manifest.NamedResource]string{
-		clusterApps:   "kubernetes/flux/cluster-apps.yaml",
-		clusterVars:   "kubernetes/flux/cluster-vars.yaml",
-		ntfy:          "kubernetes/apps/communication/ntfy/ks.yaml",
-		hr:            "kubernetes/apps/communication/ntfy/app/helmrelease.yaml",
-		rawSettingsID: "kubernetes/components/cluster-settings/cluster-settings.yaml",
-	}, root: "", objects: filtertest.MapLister{
-		clusterApps:   clusterAppsObj,
-		clusterVars:   clusterVarsObj,
-		ntfy:          ntfyObj,
-		hr:            hrObj,
-		rawSettingsID: rawSettings,
-	}}.index(), inventory: filtertest.MapLister{
-		clusterApps:   clusterAppsObj,
-		clusterVars:   clusterVarsObj,
-		ntfy:          ntfyObj,
-		hr:            hrObj,
-		rawSettingsID: rawSettings,
-	}, root: ""})
+	f := newAdmission(
+		t,
+		admissionConfig{
+			changes: change.NewSet([]string{"kubernetes/apps/communication/ntfy/app/helmrelease.yaml"}),
+			index: filterFixture{files: map[manifest.NamedResource]string{
+				clusterApps:   "kubernetes/flux/cluster-apps.yaml",
+				clusterVars:   "kubernetes/flux/cluster-vars.yaml",
+				ntfy:          "kubernetes/apps/communication/ntfy/ks.yaml",
+				hr:            "kubernetes/apps/communication/ntfy/app/helmrelease.yaml",
+				rawSettingsID: "kubernetes/components/cluster-settings/cluster-settings.yaml",
+			}, root: "", objects: filtertest.MapLister{
+				clusterApps:   clusterAppsObj,
+				clusterVars:   clusterVarsObj,
+				ntfy:          ntfyObj,
+				hr:            hrObj,
+				rawSettingsID: rawSettings,
+			}}.index(),
+			inventory: filtertest.MapLister{
+				clusterApps:   clusterAppsObj,
+				clusterVars:   clusterVarsObj,
+				ntfy:          ntfyObj,
+				hr:            hrObj,
+				rawSettingsID: rawSettings,
+			},
+			root: "",
+		},
+	)
 
 	// The leaf HR's file changed, so ntfy + the cluster-apps
 	// ancestor are pulled in; the rendered ConfigMap is a
@@ -1337,7 +1907,10 @@ func TestFilter_SubstituteFromConfigMapKeepsProducerKustomization(t *testing.T) 
 	sentinel := testutil.KustomizationID("unrelated", "sentinel")
 	f.AddEmitted(clusterVars, store.Child{Obj: refObj(sentinel)}, f.objs)
 	if f.ShouldReconcile(sentinel) {
-		t.Errorf("producer cluster-vars must be ancestor-only (NOT primary) — AddEmitted leaked sentinel into keep; keep=%v", f.KeepNames())
+		t.Errorf(
+			"producer cluster-vars must be ancestor-only (NOT primary) — AddEmitted leaked sentinel into keep; keep=%v",
+			f.KeepNames(),
+		)
 	}
 }
 
@@ -1368,11 +1941,19 @@ func TestFilter_AddEmittedKeepsSubstituteFromProducerDependencyOnly(t *testing.T
 	cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "", Name: "shared-settings"}
 	cmObj := &manifest.ConfigMap{Name: cmID.Name, Namespace: cmID.Namespace}
 
-	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"kubernetes/parent/parent.yaml"}), index: filterFixture{files: map[manifest.NamedResource]string{
-		parent:   "kubernetes/parent/parent.yaml",
-		producer: "kubernetes/apps/settings/ks.yaml",
-		cmID:     "kubernetes/apps/settings/cm.yaml",
-	}, root: "", objects: filtertest.MapLister{producer: producerObj, cmID: cmObj}}.index(), inventory: filtertest.MapLister{producer: producerObj, cmID: cmObj}, root: ""})
+	f := newAdmission(
+		t,
+		admissionConfig{
+			changes: change.NewSet([]string{"kubernetes/parent/parent.yaml"}),
+			index: filterFixture{files: map[manifest.NamedResource]string{
+				parent:   "kubernetes/parent/parent.yaml",
+				producer: "kubernetes/apps/settings/ks.yaml",
+				cmID:     "kubernetes/apps/settings/cm.yaml",
+			}, root: "", objects: filtertest.MapLister{producer: producerObj, cmID: cmObj}}.index(),
+			inventory: filtertest.MapLister{producer: producerObj, cmID: cmObj},
+			root:      "",
+		},
+	)
 
 	if !f.ShouldReconcile(parent) {
 		t.Fatalf("parent must be primary from direct file change; keep=%v", f.KeepNames())
@@ -1398,7 +1979,10 @@ func TestFilter_AddEmittedKeepsSubstituteFromProducerDependencyOnly(t *testing.T
 	sentinel := testutil.KustomizationID("unrelated", "sentinel")
 	f.AddEmitted(producer, store.Child{Obj: refObj(sentinel)}, f.objs)
 	if f.ShouldReconcile(sentinel) {
-		t.Errorf("producer must be dependency-only (NOT primary) — AddEmitted leaked sentinel into keep; keep=%v", f.KeepNames())
+		t.Errorf(
+			"producer must be dependency-only (NOT primary) — AddEmitted leaked sentinel into keep; keep=%v",
+			f.KeepNames(),
+		)
 	}
 }
 
@@ -1422,11 +2006,19 @@ func TestFilter_AddEmittedReturnsSubstituteFromProducer(t *testing.T) {
 	dataID := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "", Name: "shared-settings"}
 	dataObj := &manifest.Secret{Name: dataID.Name, Namespace: dataID.Namespace}
 
-	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"kubernetes/parent/parent.yaml"}), index: filterFixture{files: map[manifest.NamedResource]string{
-		parent:   "kubernetes/parent/parent.yaml",
-		producer: "kubernetes/apps/settings/ks.yaml",
-		dataID:   "kubernetes/apps/settings/secret.yaml",
-	}, root: "", objects: filtertest.MapLister{producer: producerObj, dataID: dataObj}}.index(), inventory: filtertest.MapLister{producer: producerObj, dataID: dataObj}, root: ""})
+	f := newAdmission(
+		t,
+		admissionConfig{
+			changes: change.NewSet([]string{"kubernetes/parent/parent.yaml"}),
+			index: filterFixture{files: map[manifest.NamedResource]string{
+				parent:   "kubernetes/parent/parent.yaml",
+				producer: "kubernetes/apps/settings/ks.yaml",
+				dataID:   "kubernetes/apps/settings/secret.yaml",
+			}, root: "", objects: filtertest.MapLister{producer: producerObj, dataID: dataObj}}.index(),
+			inventory: filtertest.MapLister{producer: producerObj, dataID: dataObj},
+			root:      "",
+		},
+	)
 
 	added := f.AddEmitted(parent, store.Child{Obj: childObj}, f.objs)
 
@@ -1441,7 +2033,12 @@ func TestFilter_AddEmittedReturnsSubstituteFromProducer(t *testing.T) {
 		}
 	}
 	sentinel := testutil.KustomizationID("unrelated", "sentinel")
-	if added := f.AddEmitted(producer, store.Child{Obj: refObj(sentinel)}, f.objs); len(added) != 0 || f.ShouldReconcile(sentinel) {
+	if added := f.AddEmitted(
+		producer,
+		store.Child{Obj: refObj(sentinel)},
+		f.objs,
+	); len(added) != 0 ||
+		f.ShouldReconcile(sentinel) {
 		t.Errorf("dependency-only producer must reject unrelated child; added=%v, keep=%v", added, f.KeepNames())
 	}
 }
@@ -1474,13 +2071,21 @@ func TestFilter_ChainedSubstituteFromProducers(t *testing.T) {
 	cmB := &manifest.Secret{Name: "cm-b", Namespace: ""}
 	cmBID := cmB.Named()
 
-	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"kubernetes/consumer/file.yaml"}), index: filterFixture{files: map[manifest.NamedResource]string{
-		a:     "kubernetes/consumer/ks.yaml",
-		b:     "kubernetes/b/ks.yaml",
-		c:     "kubernetes/c/ks.yaml",
-		cmAID: "kubernetes/b/cm-a.yaml",
-		cmBID: "kubernetes/c/cm-b.yaml",
-	}, root: "", objects: filtertest.MapLister{a: aObj, b: bObj, c: cObj, cmAID: cmA, cmBID: cmB}}.index(), inventory: filtertest.MapLister{a: aObj, b: bObj, c: cObj, cmAID: cmA, cmBID: cmB}, root: ""})
+	f := newAdmission(
+		t,
+		admissionConfig{
+			changes: change.NewSet([]string{"kubernetes/consumer/file.yaml"}),
+			index: filterFixture{files: map[manifest.NamedResource]string{
+				a:     "kubernetes/consumer/ks.yaml",
+				b:     "kubernetes/b/ks.yaml",
+				c:     "kubernetes/c/ks.yaml",
+				cmAID: "kubernetes/b/cm-a.yaml",
+				cmBID: "kubernetes/c/cm-b.yaml",
+			}, root: "", objects: filtertest.MapLister{a: aObj, b: bObj, c: cObj, cmAID: cmA, cmBID: cmB}}.index(),
+			inventory: filtertest.MapLister{a: aObj, b: bObj, c: cObj, cmAID: cmA, cmBID: cmB},
+			root:      "",
+		},
+	)
 
 	if !f.ShouldReconcile(a) {
 		t.Fatalf("consumer A must be in keep (file change); keep=%v", f.KeepNames())
@@ -1511,10 +2116,18 @@ func TestFilter_SelfProducerSkippedInResolve(t *testing.T) {
 	cmObj := &manifest.ConfigMap{Name: "self-settings", Namespace: ""}
 	cmID := cmObj.Named()
 
-	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"kubernetes/self/changed.yaml"}), index: filterFixture{files: map[manifest.NamedResource]string{
-		self: "kubernetes/self/ks.yaml",
-		cmID: "kubernetes/self/cm.yaml",
-	}, root: "", objects: filtertest.MapLister{self: selfObj, cmID: cmObj}}.index(), inventory: filtertest.MapLister{self: selfObj, cmID: cmObj}, root: ""})
+	f := newAdmission(
+		t,
+		admissionConfig{
+			changes: change.NewSet([]string{"kubernetes/self/changed.yaml"}),
+			index: filterFixture{files: map[manifest.NamedResource]string{
+				self: "kubernetes/self/ks.yaml",
+				cmID: "kubernetes/self/cm.yaml",
+			}, root: "", objects: filtertest.MapLister{self: selfObj, cmID: cmObj}}.index(),
+			inventory: filtertest.MapLister{self: selfObj, cmID: cmObj},
+			root:      "",
+		},
+	)
 
 	if !f.ShouldReconcile(self) {
 		t.Errorf("self KS must be in keep; keep=%v", f.KeepNames())
@@ -1522,7 +2135,9 @@ func TestFilter_SelfProducerSkippedInResolve(t *testing.T) {
 	// Sanity: no infinite loop happened (we made it here). Also
 	// confirm self only appears once in the producer index — not as
 	// its own ancestor via enqueueAncestor.
-	prods := f.productionOwners(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "self-settings"})
+	prods := f.productionOwners(
+		manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "self-settings"},
+	)
 	if !slices.Contains(prods, self) {
 		t.Errorf("producers index should still contain self for cm-by-name lookup; got=%v", prods)
 	}
@@ -1558,12 +2173,20 @@ func TestFilter_ProducerByNameDoesNotLeakAcrossNamespaces(t *testing.T) {
 	cmNS2 := &manifest.ConfigMap{Name: "shared", Namespace: "ns2"}
 	cmNS2ID := cmNS2.Named()
 
-	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"unrelated.yaml"}), index: filterFixture{files: map[manifest.NamedResource]string{
-		a:       "p1/ks.yaml",
-		b:       "p2/ks.yaml",
-		cmNS1ID: "p1/cm.yaml",
-		cmNS2ID: "p2/cm.yaml",
-	}, root: "", objects: filtertest.MapLister{a: aObj, b: bObj, cmNS1ID: cmNS1, cmNS2ID: cmNS2}}.index(), inventory: filtertest.MapLister{a: aObj, b: bObj, cmNS1ID: cmNS1, cmNS2ID: cmNS2}, root: ""})
+	f := newAdmission(
+		t,
+		admissionConfig{
+			changes: change.NewSet([]string{"unrelated.yaml"}),
+			index: filterFixture{files: map[manifest.NamedResource]string{
+				a:       "p1/ks.yaml",
+				b:       "p2/ks.yaml",
+				cmNS1ID: "p1/cm.yaml",
+				cmNS2ID: "p2/cm.yaml",
+			}, root: "", objects: filtertest.MapLister{a: aObj, b: bObj, cmNS1ID: cmNS1, cmNS2ID: cmNS2}}.index(),
+			inventory: filtertest.MapLister{a: aObj, b: bObj, cmNS1ID: cmNS1, cmNS2ID: cmNS2},
+			root:      "",
+		},
+	)
 
 	gotNS1 := f.productionOwners(cmNS1ID)
 	if !slices.Equal(gotNS1, []manifest.NamedResource{a}) {
@@ -1595,27 +2218,53 @@ func TestFilter_SubstitutionGeneratorProducers(t *testing.T) {
 			if tc.emptyName {
 				name = ""
 			}
-			consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps", Path: "app",
-				PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: tc.kind, Name: name, Optional: tc.optional}}}}
+			consumer := &manifest.Kustomization{
+				Name:      "consumer",
+				Namespace: "apps",
+				Path:      "app",
+				PostBuild: &kustomizev1.PostBuild{
+					SubstituteFrom: []manifest.SubstituteReference{{Kind: tc.kind, Name: name, Optional: tc.optional}},
+				},
+			}
 			producer := &manifest.Kustomization{Name: "producer", Namespace: "apps", Path: "data"}
 			data := manifest.NamedResource{Kind: tc.kind, Namespace: "apps", Name: name}
 			index := &manifest.DiscoveryIndex{
 				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 					consumer.Named(): {File: "flux/consumer.yaml"},
 					producer.Named(): {File: "flux/producer.yaml"},
-					data:             {File: "data/kustomization.yaml", Productions: testutil.ProductionEvidence([]manifest.NamedResource{producer.Named()})},
+					data: {
+						File:        "data/kustomization.yaml",
+						Productions: testutil.ProductionEvidence([]manifest.NamedResource{producer.Named()}),
+					},
 				},
 				Claims: map[string][]manifest.NamedResource{"app/": {consumer.Named()}, "data/": {producer.Named()}},
 			}
-			f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"app/cm.yaml"}), index: index, inventory: filtertest.MapLister{consumer.Named(): consumer, producer.Named(): producer}, root: ""})
+			f := newAdmission(
+				t,
+				admissionConfig{
+					changes:   change.NewSet([]string{"app/cm.yaml"}),
+					index:     index,
+					inventory: filtertest.MapLister{consumer.Named(): consumer, producer.Named(): producer},
+					root:      "",
+				},
+			)
 			for _, id := range []manifest.NamedResource{data, producer.Named()} {
 				if got := f.ShouldReconcile(id); got == tc.emptyName {
 					t.Errorf("%s retained = %t, empty reference name = %t", id, got, tc.emptyName)
 				}
 			}
 			sentinel := testutil.KustomizationID("apps", "unrelated")
-			if added := f.AddEmitted(producer.Named(), store.Child{Obj: refObj(sentinel)}, f.objs); len(added) != 0 || f.ShouldReconcile(sentinel) {
-				t.Errorf("dependency-only producer must reject unrelated child; added=%v, keep=%v", added, f.KeepNames())
+			if added := f.AddEmitted(
+				producer.Named(),
+				store.Child{Obj: refObj(sentinel)},
+				f.objs,
+			); len(added) != 0 ||
+				f.ShouldReconcile(sentinel) {
+				t.Errorf(
+					"dependency-only producer must reject unrelated child; added=%v, keep=%v",
+					added,
+					f.KeepNames(),
+				)
 			}
 		})
 	}
@@ -1625,16 +2274,46 @@ func TestFilter_SubstitutionGeneratorProducers(t *testing.T) {
 		indexes := [2]*manifest.DiscoveryIndex{}
 		roots := [2]string{t.TempDir(), t.TempDir()}
 		source := &manifest.GitRepository{Name: "selected", Namespace: "apps"}
-		producer := &manifest.Kustomization{Name: "producer", Namespace: "apps", Path: "data", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: source.Named().Kind, Name: source.Name}}
-		consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "settings"}, {Kind: manifest.KindSecret, Name: "secret"}}}}
+		producer := &manifest.Kustomization{
+			Name:      "producer",
+			Namespace: "apps",
+			Path:      "data",
+			SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: source.Named().Kind, Name: source.Name},
+		}
+		consumer := &manifest.Kustomization{
+			Name:      "consumer",
+			Namespace: "apps",
+			PostBuild: &kustomizev1.PostBuild{
+				SubstituteFrom: []manifest.SubstituteReference{
+					{Kind: manifest.KindConfigMap, Name: "settings"},
+					{Kind: manifest.KindSecret, Name: "secret"},
+				},
+			},
+		}
 		for i, st := range stores {
 			st.AddObjects([]manifest.BaseManifest{source, producer, consumer})
 			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: roots[i], FS: fstest.MapFS{}})
 			mounted := filepath.Join(roots[i], ".mount")
-			st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: mounted, LocalRoot: filepath.Join(roots[i], "subtree"), InputAlias: true, FS: fstest.MapFS{
-				"data/kustomization.yaml": {Data: []byte("namespace: apps\nresources: [producer.yaml]\nconfigMapGenerator:\n- name: settings\n  literals: [value=" + []string{"before", "after"}[i] + "]\n")},
-				"data/producer.yaml":      {Data: []byte("apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: generated}\nspec: {target: {name: secret}}\n")},
-			}})
+			st.SetArtifact(
+				source.Named(),
+				&store.SourceArtifact{
+					LocalPath:  mounted,
+					LocalRoot:  filepath.Join(roots[i], "subtree"),
+					InputAlias: true,
+					FS: fstest.MapFS{
+						"data/kustomization.yaml": {
+							Data: []byte(
+								"namespace: apps\nresources: [producer.yaml]\nconfigMapGenerator:\n- name: settings\n  literals: [value=" + []string{"before", "after"}[i] + "]\n",
+							),
+						},
+						"data/producer.yaml": {
+							Data: []byte(
+								"apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: generated}\nspec: {target: {name: secret}}\n",
+							),
+						},
+					},
+				},
+			)
 			l := New(st)
 			l.SourceRoot = roots[i]
 			_, err := l.Load(t.Context(), filepath.Join(mounted, "data"))
@@ -1659,13 +2338,21 @@ func TestFilter_SubstitutionGeneratorProducers(t *testing.T) {
 		changes, err := change.Qualify(t.Context(), change.NewSet(nil), stores[0], stores[1])
 		assert.NoError(t, err)
 		for i, st := range stores {
-			filter := newAdmission(t, admissionConfig{changes: changes, index: indexes[i], inventory: st, root: roots[i]})
+			filter := newAdmission(
+				t,
+				admissionConfig{changes: changes, index: indexes[i], inventory: st, root: roots[i]},
+			)
 			assert.Equal(t, filter.ShouldReconcile(consumer.Named()), true)
 			assert.Equal(t, filter.ShouldReconcile(producer.Named()), true)
-			assert.Equal(t, filter.ShouldReconcile(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}), true)
+			assert.Equal(
+				t,
+				filter.ShouldReconcile(
+					manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"},
+				),
+				true,
+			)
 		}
 	})
-
 }
 
 func TestFilter_SourceFileReaderKeepsEmitter(t *testing.T) {
@@ -1685,7 +2372,10 @@ func TestFilter_SourceFileReaderKeepsEmitter(t *testing.T) {
 		objects: objects,
 	}.index()
 	idx.Readers["config/prod.yaml"] = []manifest.FileReader{{Reader: release, Source: manifest.BootstrapSourceID}}
-	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"config/prod.yaml"}), index: idx, inventory: objects, root: ""})
+	f := newAdmission(
+		t,
+		admissionConfig{changes: change.NewSet([]string{"config/prod.yaml"}), index: idx, inventory: objects, root: ""},
+	)
 	for _, id := range []manifest.NamedResource{release, owner.Named(), parent.Named()} {
 		assert.Equal(t, f.ShouldReconcile(id), true)
 	}
@@ -1713,12 +2403,36 @@ func TestFilter_AcceptedChildren(t *testing.T) {
 			transformed.Suspend = true
 			emitter := &manifest.Kustomization{Name: "emitter", Namespace: "ns"}
 			st.AddObjects([]manifest.BaseManifest{parent, emitter})
-			st.RecordEmitted(parent.Named(), &store.Emission{Children: []store.Child{{Obj: child}, {Obj: sibling}, {Obj: transformed}}, Complete: true}, nil)
+			st.RecordEmitted(
+				parent.Named(),
+				&store.Emission{
+					Children: []store.Child{{Obj: child}, {Obj: sibling}, {Obj: transformed}},
+					Complete: true,
+				},
+				nil,
+			)
 			st.RecordEmitted(child.Named(), &store.Emission{Children: []store.Child{{Obj: leaf}}, Complete: true}, nil)
 			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-				parent.Named(): {File: "parent.yaml"}, emitter.Named(): {File: "emitter.yaml"},
-				sibling.Named():     {File: "sibling.yaml", Builder: "parent.yaml", BuilderOwner: parent.Named(), Declaration: sibling, Productions: []manifest.Production{{Owner: parent.Named(), Authored: sibling.Named(), File: "sibling.yaml"}}},
-				transformed.Named(): {File: "transformed.yaml", Builder: "parent.yaml", BuilderOwner: parent.Named(), Declaration: declaration, Productions: []manifest.Production{{Owner: parent.Named(), Authored: transformed.Named(), File: "transformed.yaml"}}},
+				parent.Named():  {File: "parent.yaml"},
+				emitter.Named(): {File: "emitter.yaml"},
+				sibling.Named(): {
+					File:         "sibling.yaml",
+					Builder:      "parent.yaml",
+					BuilderOwner: parent.Named(),
+					Declaration:  sibling,
+					Productions: []manifest.Production{
+						{Owner: parent.Named(), Authored: sibling.Named(), File: "sibling.yaml"},
+					},
+				},
+				transformed.Named(): {
+					File:         "transformed.yaml",
+					Builder:      "parent.yaml",
+					BuilderOwner: parent.Named(),
+					Declaration:  declaration,
+					Productions: []manifest.Production{
+						{Owner: parent.Named(), Authored: transformed.Named(), File: "transformed.yaml"},
+					},
+				},
 			}}
 			if phase == "file_indexed" {
 				for _, obj := range []manifest.BaseManifest{sibling, transformed} {
@@ -1734,7 +2448,10 @@ func TestFilter_AcceptedChildren(t *testing.T) {
 			case "declaration":
 				file = "sibling.yaml"
 			}
-			f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{file}), index: index, inventory: st, root: ""})
+			f := newAdmission(
+				t,
+				admissionConfig{changes: change.NewSet([]string{file}), index: index, inventory: st, root: ""},
+			)
 			switch phase {
 			case "runtime", "file_indexed":
 				f.AddEmitted(emitter.Named(), store.Child{Obj: parent}, f.objs)
@@ -1742,10 +2459,18 @@ func TestFilter_AcceptedChildren(t *testing.T) {
 				f.AddEmitted(parent.Named(), store.Child{Obj: child}, f.objs)
 			}
 			for _, obj := range []manifest.BaseManifest{child, leaf} {
-				assert.Equal(t, f.ShouldReconcile(obj.Named()), phase == "initial" || phase == "runtime" || phase == "file_indexed")
+				assert.Equal(
+					t,
+					f.ShouldReconcile(obj.Named()),
+					phase == "initial" || phase == "runtime" || phase == "file_indexed",
+				)
 			}
 			assert.Equal(t, f.ShouldReconcile(sibling.Named()), phase == "declaration")
-			assert.Equal(t, f.ShouldReconcile(transformed.Named()), phase == "initial" || phase == "runtime" || phase == "file_indexed")
+			assert.Equal(
+				t,
+				f.ShouldReconcile(transformed.Named()),
+				phase == "initial" || phase == "runtime" || phase == "file_indexed",
+			)
 		})
 	}
 }
@@ -1757,13 +2482,21 @@ func TestFilter_LateProducerIndexedDeclarations(t *testing.T) {
 		for _, route := range []string{"named", "selector"} {
 			t.Run(route, func(t *testing.T) {
 				t.Parallel()
-				provider := &manifest.ResourceSetInputProvider{Name: "tags", Namespace: "effective", Labels: map[string]string{"role": "images"},
-					Type: fluxopv1.InputProviderOCIArtifactTag, SecretRef: &manifest.LocalObjectReference{Name: "auth"}}
+				provider := &manifest.ResourceSetInputProvider{
+					Name: "tags", Namespace: "effective", Labels: map[string]string{"role": "images"},
+					Type: fluxopv1.InputProviderOCIArtifactTag, SecretRef: &manifest.LocalObjectReference{Name: "auth"},
+				}
 				secret := &manifest.Secret{Name: "auth", Namespace: "effective"}
 				producer := &manifest.Kustomization{Name: "credentials", Namespace: "effective"}
-				consumer := &manifest.ResourceSet{Name: "set", Namespace: "effective", InputsFrom: []fluxopv1.InputProviderReference{{Name: "tags"}}}
+				consumer := &manifest.ResourceSet{
+					Name:       "set",
+					Namespace:  "effective",
+					InputsFrom: []fluxopv1.InputProviderReference{{Name: "tags"}},
+				}
 				if route == "selector" {
-					consumer.InputsFrom = []fluxopv1.InputProviderReference{{Selector: &metav1.LabelSelector{MatchLabels: provider.Labels}}}
+					consumer.InputsFrom = []fluxopv1.InputProviderReference{
+						{Selector: &metav1.LabelSelector{MatchLabels: provider.Labels}},
+					}
 				}
 				sibling := &manifest.Kustomization{Name: "sibling", Namespace: "effective"}
 				st := store.New()
@@ -1771,13 +2504,24 @@ func TestFilter_LateProducerIndexedDeclarations(t *testing.T) {
 				index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 					consumer.Named(): {File: "consumer.yaml", Declaration: consumer},
 					provider.Named(): {File: "provider.yaml", Declaration: provider},
-					secret.Named(): {File: "credentials/secret.yaml", Declaration: secret,
-						Productions: []manifest.Production{{Owner: producer.Named(), File: "credentials/secret.yaml"}}},
+					secret.Named(): {
+						File: "credentials/secret.yaml", Declaration: secret,
+						Productions: []manifest.Production{{Owner: producer.Named(), File: "credentials/secret.yaml"}},
+					},
 					producer.Named(): {File: "producer.yaml", Declaration: producer},
 					sibling.Named():  {File: "sibling.yaml", Declaration: sibling},
 				}}
-				filter := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"credentials/secret.yaml"}), index: index, inventory: st})
-				filter.loader.locations = map[manifest.NamedResource]Occurrence{provider.Named(): compactOccurrence(provider, manifest.ProjectProducer(provider))}
+				filter := newAdmission(
+					t,
+					admissionConfig{
+						changes:   change.NewSet([]string{"credentials/secret.yaml"}),
+						index:     index,
+						inventory: st,
+					},
+				)
+				filter.loader.locations = map[manifest.NamedResource]Occurrence{
+					provider.Named(): compactOccurrence(provider, manifest.ProjectProducer(provider)),
+				}
 				filter.prepare(store.Child{}, nil, false)
 				for _, id := range []manifest.NamedResource{secret.Named(), provider.Named(), producer.Named(), consumer.Named()} {
 					assert.Equal(t, filter.ShouldReconcile(id), true)
@@ -1830,10 +2574,24 @@ func TestFilter_LateProducerIndexedDeclarations(t *testing.T) {
 				}
 				index.Records[declaration.Named()] = record
 			}
-			f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"emitter.yaml", "config.yaml"}), index: index, inventory: st})
+			f := newAdmission(
+				t,
+				admissionConfig{
+					changes:   change.NewSet([]string{"emitter.yaml", "config.yaml"}),
+					index:     index,
+					inventory: st,
+				},
+			)
 			f.AddEmitted(emitter.Named(), store.Child{Obj: parent}, st)
 			assert.Equal(t, f.ShouldReconcile(parent.Named()), true)
-			f.AddEmitted(parent.Named(), store.Child{Obj: child, Productions: []manifest.Production{{Owner: parent.Named(), File: "sibling.yaml"}}}, st)
+			f.AddEmitted(
+				parent.Named(),
+				store.Child{
+					Obj:         child,
+					Productions: []manifest.Production{{Owner: parent.Named(), File: "sibling.yaml"}},
+				},
+				st,
+			)
 			assert.Equal(t, f.ShouldReconcile(child.Named()), tc.want)
 		})
 	}
@@ -1858,8 +2616,19 @@ func TestFilter_ReverseContentInputs(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			objects := filtertest.MapLister{tc.obj.Named(): tc.obj}
-			index := filterFixture{files: map[manifest.NamedResource]string{tc.obj.Named(): "consumer.yaml", tc.dep: "input.yaml"}, objects: objects}.index()
-			f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"input.yaml"}), index: index, inventory: objects, root: ""})
+			index := filterFixture{
+				files:   map[manifest.NamedResource]string{tc.obj.Named(): "consumer.yaml", tc.dep: "input.yaml"},
+				objects: objects,
+			}.index()
+			f := newAdmission(
+				t,
+				admissionConfig{
+					changes:   change.NewSet([]string{"input.yaml"}),
+					index:     index,
+					inventory: objects,
+					root:      "",
+				},
+			)
 			assert.Equal(t, f.ShouldReconcile(tc.dep), true)
 			assert.Equal(t, f.ShouldReconcile(tc.obj.Named()), !tc.inactive)
 		})
@@ -1868,35 +2637,82 @@ func TestFilter_ReverseContentInputs(t *testing.T) {
 
 func TestFilter_ReferenceSnapshotUnchanged(t *testing.T) {
 	t.Parallel()
-	ks := &manifest.Kustomization{Name: "app", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "optional", Optional: true}}}}
-	source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "cluster"}
+	ks := &manifest.Kustomization{
+		Name:      "app",
+		Namespace: "apps",
+		PostBuild: &kustomizev1.PostBuild{
+			SubstituteFrom: []manifest.SubstituteReference{
+				{Kind: manifest.KindConfigMap, Name: "optional", Optional: true},
+			},
+		},
+	}
+	source := manifest.NamedResource{
+		Group:     manifest.SourceDomain,
+		Kind:      manifest.KindGitRepository,
+		Namespace: "apps",
+		Name:      "cluster",
+	}
 	untouched := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "sentinel"}
 	backing := []manifest.NamedResource{source, untouched, untouched, untouched}
 	want := slices.Clone(backing)
 	objects := filtertest.MapLister{ks.Named(): ks}
-	index := filterFixture{files: map[manifest.NamedResource]string{ks.Named(): "app.yaml", source: "source.yaml"}, refs: map[manifest.NamedResource][]manifest.NamedResource{ks.Named(): backing[:1]}, objects: objects}.index()
-	newAdmission(t, admissionConfig{changes: change.NewSet([]string{"source.yaml"}), index: index, inventory: objects, root: ""})
+	index := filterFixture{
+		files:   map[manifest.NamedResource]string{ks.Named(): "app.yaml", source: "source.yaml"},
+		refs:    map[manifest.NamedResource][]manifest.NamedResource{ks.Named(): backing[:1]},
+		objects: objects,
+	}.index()
+	newAdmission(
+		t,
+		admissionConfig{changes: change.NewSet([]string{"source.yaml"}), index: index, inventory: objects, root: ""},
+	)
 	assert.Diff(t, backing, want)
 }
 
 func TestFilter_ArtifactMaterializerDependencyOnly(t *testing.T) {
 	t.Parallel()
-	target := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: "app-api"}
-	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindExternalArtifact, Name: target.Name}}
-	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindExternalArtifact, Name: target.Name}}
+	target := manifest.NamedResource{
+		Group:     manifest.SourceDomain,
+		Kind:      manifest.KindExternalArtifact,
+		Namespace: "apps",
+		Name:      "app-api",
+	}
+	producer := &manifest.Kustomization{
+		Name:      "producer",
+		Namespace: "apps",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindExternalArtifact, Name: target.Name},
+	}
+	consumer := &manifest.Kustomization{
+		Name:      "consumer",
+		Namespace: "apps",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindExternalArtifact, Name: target.Name},
+	}
 	other := &manifest.Kustomization{Name: "other", Namespace: "apps"}
-	declaration := manifest.NamedResource{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Namespace: "apps", Name: "generator"}
+	declaration := manifest.NamedResource{
+		Group:     "source.extensions.fluxcd.io",
+		Kind:      "ArtifactGenerator",
+		Namespace: "apps",
+		Name:      "generator",
+	}
 	otherTarget := target
 	otherTarget.Name = "app-unrelated"
 	idx := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		consumer.Named(): {File: "consumer.yaml"},
 		producer.Named(): {File: "producer.yaml"},
 		other.Named():    {File: "other.yaml"},
-		target:           {Productions: []manifest.Production{{Owner: producer.Named(), Declaration: declaration}, {Owner: producer.Named(), Declaration: declaration}, {Owner: other.Named(), Path: "artifact.yaml", File: "artifact.yaml"}}},
-		otherTarget:      {Productions: []manifest.Production{{Owner: other.Named(), Declaration: declaration}}},
+		target: {
+			Productions: []manifest.Production{
+				{Owner: producer.Named(), Declaration: declaration},
+				{Owner: producer.Named(), Declaration: declaration},
+				{Owner: other.Named(), Path: "artifact.yaml", File: "artifact.yaml"},
+			},
+		},
+		otherTarget: {Productions: []manifest.Production{{Owner: other.Named(), Declaration: declaration}}},
 	}}
 	objects := filtertest.MapLister{consumer.Named(): consumer, producer.Named(): producer, other.Named(): other}
-	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"consumer.yaml"}), index: idx, inventory: objects, root: ""})
+	f := newAdmission(
+		t,
+		admissionConfig{changes: change.NewSet([]string{"consumer.yaml"}), index: idx, inventory: objects, root: ""},
+	)
 	if !f.ShouldReconcile(producer.Named()) || f.ShouldReconcile(other.Named()) || f.ShouldReconcile(otherTarget) {
 		t.Fatalf("production closure: %v", f.KeepNames())
 	}
@@ -1912,6 +2728,7 @@ func TestFilter_ArtifactMaterializerDependencyOnly(t *testing.T) {
 		t.Fatal("runtime content dependency lost its producer")
 	}
 }
+
 func TestFilter_DeclarationSourceChange(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -1929,10 +2746,24 @@ func TestFilter_DeclarationSourceChange(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: "generated"}
-			consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: source.Kind, Name: source.Name}}
+			source := manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindExternalArtifact,
+				Namespace: "apps",
+				Name:      "generated",
+			}
+			consumer := &manifest.Kustomization{
+				Name:      "consumer",
+				Namespace: "apps",
+				SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: source.Kind, Name: source.Name},
+			}
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
-			declaration := manifest.NamedResource{Group: "example.com", Kind: "Generator", Namespace: "apps", Name: "declaration"}
+			declaration := manifest.NamedResource{
+				Group:     "example.com",
+				Kind:      "Generator",
+				Namespace: "apps",
+				Name:      "declaration",
+			}
 			production := manifest.Production{Owner: owner.Named(), File: tc.file, Source: manifest.BootstrapSourceID}
 			if tc.declared {
 				production.Declaration = declaration
@@ -1949,7 +2780,15 @@ func TestFilter_DeclarationSourceChange(t *testing.T) {
 			objects := filtertest.MapLister{consumer.Named(): consumer, owner.Named(): owner}
 			assert.Diff(t, index.Records[consumer.Named()].Refs, []manifest.NamedResource{source})
 			assert.Diff(t, index.Records[target].Productions, []manifest.Production{production})
-			filter := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"generator.yaml"}), index: index, inventory: objects, root: ""})
+			filter := newAdmission(
+				t,
+				admissionConfig{
+					changes:   change.NewSet([]string{"generator.yaml"}),
+					index:     index,
+					inventory: objects,
+					root:      "",
+				},
+			)
 			assert.Equal(t, filter.ShouldReconcile(consumer.Named()), tc.want)
 			assert.Equal(t, filter.ShouldReconcile(owner.Named()), tc.want)
 		})
@@ -1975,17 +2814,37 @@ func TestFilter_ProducerInputClosure(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			input := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "input"}
-			declaration := manifest.NamedResource{Group: "example.test", Kind: "Producer", Namespace: "apps", Name: "declaration"}
+			input := manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindGitRepository,
+				Namespace: "apps",
+				Name:      "input",
+			}
+			declaration := manifest.NamedResource{
+				Group:     "example.test",
+				Kind:      "Producer",
+				Namespace: "apps",
+				Name:      "declaration",
+			}
 			owner := testutil.KustomizationID("apps", "owner")
-			output := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: "generated"}
+			output := manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindExternalArtifact,
+				Namespace: "apps",
+				Name:      "generated",
+			}
 			consumer := testutil.KustomizationID("apps", "consumer")
 			unrelated := testutil.KustomizationID("apps", "unrelated")
 			independent := declaration
 			independent.Name = "independent"
 			independentOutput := output
 			independentOutput.Name = "independent-output"
-			production := manifest.Production{Owner: owner, Declaration: declaration, Source: manifest.BootstrapSourceID, File: "declaration.yaml"}
+			production := manifest.Production{
+				Owner:       owner,
+				Declaration: declaration,
+				Source:      manifest.BootstrapSourceID,
+				File:        "declaration.yaml",
+			}
 			if tc.projected {
 				production.Authored = declaration
 				production.Authored.Namespace = ""
@@ -1998,14 +2857,23 @@ func TestFilter_ProducerInputClosure(t *testing.T) {
 				target.Namespace = "other"
 			}
 			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-				input:             {File: "input.yaml"},
-				declaration:       {File: "declaration.yaml", Refs: []manifest.NamedResource{input}},
-				owner:             {File: "owner.yaml"},
-				target:            {Productions: []manifest.Production{production}},
-				consumer:          {File: "consumer.yaml", Refs: []manifest.NamedResource{output}},
-				unrelated:         {File: "unrelated.yaml", Refs: []manifest.NamedResource{independentOutput}},
-				independent:       {File: "independent.yaml"},
-				independentOutput: {Productions: []manifest.Production{{Owner: independent, Declaration: independent, Source: manifest.BootstrapSourceID, File: "independent.yaml"}}},
+				input:       {File: "input.yaml"},
+				declaration: {File: "declaration.yaml", Refs: []manifest.NamedResource{input}},
+				owner:       {File: "owner.yaml"},
+				target:      {Productions: []manifest.Production{production}},
+				consumer:    {File: "consumer.yaml", Refs: []manifest.NamedResource{output}},
+				unrelated:   {File: "unrelated.yaml", Refs: []manifest.NamedResource{independentOutput}},
+				independent: {File: "independent.yaml"},
+				independentOutput: {
+					Productions: []manifest.Production{
+						{
+							Owner:       independent,
+							Declaration: independent,
+							Source:      manifest.BootstrapSourceID,
+							File:        "independent.yaml",
+						},
+					},
+				},
 			}}
 			r := index.Records[declaration]
 			r.Refs = append(r.Refs, independent)
@@ -2026,18 +2894,36 @@ func TestFilter_ProducerInputClosure(t *testing.T) {
 				nextOutput.Name = "next-output"
 				if tc.promotion {
 					seed := testutil.KustomizationID("apps", "seed")
-					index.Records[seed] = manifest.DiscoveryRecord{File: "seed.yaml", Refs: []manifest.NamedResource{declaration}}
-					index.Readers = map[string][]manifest.FileReader{"input.yaml": {{Reader: seed, Source: manifest.BootstrapSourceID}}}
+					index.Records[seed] = manifest.DiscoveryRecord{
+						File: "seed.yaml",
+						Refs: []manifest.NamedResource{declaration},
+					}
+					index.Readers = map[string][]manifest.FileReader{
+						"input.yaml": {{Reader: seed, Source: manifest.BootstrapSourceID}},
+					}
 					r := index.Records[declaration]
 					r.Refs = []manifest.NamedResource{nextOutput, independent}
 					index.Records[declaration] = r
-					index.Records[next] = manifest.DiscoveryRecord{File: "next.yaml", Refs: []manifest.NamedResource{input}}
+					index.Records[next] = manifest.DiscoveryRecord{
+						File: "next.yaml",
+						Refs: []manifest.NamedResource{input},
+					}
 				} else {
-					index.Records[next] = manifest.DiscoveryRecord{File: "next.yaml", Refs: []manifest.NamedResource{output}}
+					index.Records[next] = manifest.DiscoveryRecord{
+						File: "next.yaml",
+						Refs: []manifest.NamedResource{output},
+					}
 					leaf = testutil.KustomizationID("apps", "leaf")
-					index.Records[leaf] = manifest.DiscoveryRecord{File: "leaf.yaml", Refs: []manifest.NamedResource{nextOutput}}
+					index.Records[leaf] = manifest.DiscoveryRecord{
+						File: "leaf.yaml",
+						Refs: []manifest.NamedResource{nextOutput},
+					}
 				}
-				index.Records[nextOutput] = manifest.DiscoveryRecord{Productions: []manifest.Production{{Owner: owner, Declaration: next, Source: manifest.BootstrapSourceID, File: "next.yaml"}}}
+				index.Records[nextOutput] = manifest.DiscoveryRecord{
+					Productions: []manifest.Production{
+						{Owner: owner, Declaration: next, Source: manifest.BootstrapSourceID, File: "next.yaml"},
+					},
+				}
 				if tc.cycle {
 					r := index.Records[declaration]
 					r.Refs = append(r.Refs, nextOutput, nextOutput)
@@ -2053,7 +2939,15 @@ func TestFilter_ProducerInputClosure(t *testing.T) {
 					objects[id] = refObj(id)
 				}
 			}
-			filter := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"input.yaml"}), index: index, inventory: objects, root: ""})
+			filter := newAdmission(
+				t,
+				admissionConfig{
+					changes:   change.NewSet([]string{"input.yaml"}),
+					index:     index,
+					inventory: objects,
+					root:      "",
+				},
+			)
 			assert.Equal(t, filter.ShouldReconcile(consumer), tc.want)
 			assert.Equal(t, filter.ShouldReconcile(leaf), tc.want)
 			assert.Equal(t, filter.ShouldReconcile(unrelated), false)

@@ -96,25 +96,46 @@ data:
 					want = wantAll
 				}
 				for range 2 {
-					docs, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
+					docs, _, err := testutil.RenderMaps(
+						cli.Template(
+							t.Context(),
+							hr,
+							nil,
+							RenderOptions{
+								Options: opts,
+								Sources: localChartResolver(t, "chart-repo", "flux-system", dir),
+							},
+						),
+					)
 					assert.NoError(t, err)
 					assert.Diff(t, docs, want)
 				}
 				fresh := NewClient(cachetest.New(t, "", sourcecache.New))
-				cold, _, err := testutil.RenderMaps(fresh.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
+				cold, _, err := testutil.RenderMaps(
+					fresh.Template(
+						t.Context(),
+						hr,
+						nil,
+						RenderOptions{Options: opts, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)},
+					),
+				)
 				assert.NoError(t, err)
 				assert.Diff(t, cold, want)
 			})
 		}
 	}
-
 }
 
 func TestTemplate_ReleaseName(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
-	testutil.WriteFile(t, dir, "mychart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '{{ .Release.Name }}', namespace: '{{ .Release.Namespace }}'}\n")
+	testutil.WriteFile(
+		t,
+		dir,
+		"mychart/templates/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '{{ .Release.Name }}', namespace: '{{ .Release.Namespace }}'}\n",
+	)
 	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 	for _, tc := range []struct{ name, target, explicit, want string }{
 		{"metadata namespace only", "", "", "demo"},
@@ -127,7 +148,14 @@ func TestTemplate_ReleaseName(t *testing.T) {
 			hr := newHR()
 			hr.TargetNamespace, hr.HelmReleaseSpec.ReleaseName = tc.target, tc.explicit
 			for range 2 {
-				docs, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
+				docs, _, err := testutil.RenderMaps(
+					cli.Template(
+						t.Context(),
+						hr,
+						nil,
+						RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", dir)},
+					),
+				)
 				assert.NoError(t, err)
 				assert.Equal(t, len(docs), 1)
 				name, _ := manifest.DocMetadata(docs[0])
@@ -154,21 +182,36 @@ func TestTemplate_SelectedActionPolicy(t *testing.T) {
 				"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": "HelmRelease",
 				"metadata": map[string]any{"name": "demo", "namespace": "default"},
 				"spec": map[string]any{
-					"chart":   map[string]any{"spec": map[string]any{"chart": "mychart", "sourceRef": map[string]any{"kind": "GitRepository", "name": "chart-repo"}}},
-					"install": map[string]any{"crds": string(tc.install), "disableOpenAPIValidation": tc.installOpenAPI},
-					"upgrade": map[string]any{"crds": string(tc.upgrade), "disableOpenAPIValidation": tc.upgradeOpenAPI},
+					"chart": map[string]any{
+						"spec": map[string]any{
+							"chart":     "mychart",
+							"sourceRef": map[string]any{"kind": "GitRepository", "name": "chart-repo"},
+						},
+					},
+					"install": map[string]any{
+						"crds":                     string(tc.install),
+						"disableOpenAPIValidation": tc.installOpenAPI,
+					},
+					"upgrade": map[string]any{
+						"crds":                     string(tc.upgrade),
+						"disableOpenAPIValidation": tc.upgradeOpenAPI,
+					},
 				},
 			}, manifest.ParseDocOptions{})
 			assert.NoError(t, err)
 			hr := parsed.(*manifest.HelmRelease)
 			policy, openAPI := tc.install, tc.installOpenAPI
 
-			inst, _ := newInstallAction(new(action.Configuration), hr, Options{}, chartcommon.DefaultCapabilities.Copy())
+			inst, _ := newInstallAction(
+				new(action.Configuration),
+				hr,
+				Options{},
+				chartcommon.DefaultCapabilities.Copy(),
+			)
 			assert.Equal(t, inst.IncludeCRDs, policy != helmv2.Skip)
 			assert.Equal(t, inst.DisableOpenAPIValidation, openAPI)
 		})
 	}
-
 }
 
 func TestTemplate_MalformedCRDsPolicy(t *testing.T) {
@@ -185,7 +228,14 @@ func TestTemplate_MalformedCRDsPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, wantErr := testutil.RenderMaps(cli.Template(t.Context(), newHR(), nil, RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
+	_, _, wantErr := testutil.RenderMaps(
+		cli.Template(
+			t.Context(),
+			newHR(),
+			nil,
+			RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)},
+		),
+	)
 	if !errors.Is(wantErr, manifest.ErrInput) {
 		t.Fatalf("got %v, want malformed CRD input error", wantErr)
 	}
@@ -211,7 +261,14 @@ func TestTemplate_MalformedCRDsPolicy(t *testing.T) {
 			hr.Install = &helmv2.Install{CRDs: helmv2.CRDsPolicy(tc.policy)}
 			hr.Upgrade = &helmv2.Upgrade{CRDs: helmv2.Skip}
 
-			docs, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{SkipCRDs: tc.skip, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
+			docs, _, err := testutil.RenderMaps(
+				cli.Template(
+					t.Context(),
+					hr,
+					nil,
+					RenderOptions{SkipCRDs: tc.skip, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)},
+				),
+			)
 			if tc.policy != "Skip" {
 				if !errors.Is(err, manifest.ErrInput) {
 					t.Fatalf("got %v, want malformed CRD input error", err)
@@ -225,7 +282,6 @@ func TestTemplate_MalformedCRDsPolicy(t *testing.T) {
 			assert.Diff(t, docs, want)
 		})
 	}
-
 }
 
 func TestTemplate_MalformedSubchartCRDs(t *testing.T) {
@@ -238,12 +294,26 @@ func TestTemplate_MalformedSubchartCRDs(t *testing.T) {
 	testutil.WriteFile(t, dir, "mychart/charts/child/crds/bad.yaml", cm+"---\napiVersion: [\n")
 	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml", cm)
 	cli := NewClient(cachetest.New(t, "", sourcecache.New))
-	_, _, wantErr := testutil.RenderMaps(cli.Template(t.Context(), newHR(), nil, RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
+	_, _, wantErr := testutil.RenderMaps(
+		cli.Template(
+			t.Context(),
+			newHR(),
+			nil,
+			RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)},
+		),
+	)
 	if !errors.Is(wantErr, manifest.ErrInput) {
 		t.Fatalf("got %v, want malformed CRD input error", wantErr)
 	}
 	for range 2 {
-		_, _, err := testutil.RenderMaps(cli.Template(t.Context(), newHR(), nil, RenderOptions{SkipCRDs: true, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
+		_, _, err := testutil.RenderMaps(
+			cli.Template(
+				t.Context(),
+				newHR(),
+				nil,
+				RenderOptions{SkipCRDs: true, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)},
+			),
+		)
 		if !errors.Is(err, manifest.ErrInput) {
 			t.Fatalf("got %v, want malformed CRD input error", err)
 		}
@@ -292,8 +362,22 @@ dependencies:
 			hr.Upgrade = &helmv2.Upgrade{CRDs: helmv2.Skip}
 
 			values := map[string]any{"child": map[string]any{"enabled": tc.enabled}}
-			included, _, wantErr := testutil.RenderMaps(cli.Template(t.Context(), hr, values, RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
-			docs, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, values, RenderOptions{SkipCRDs: true, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
+			included, _, wantErr := testutil.RenderMaps(
+				cli.Template(
+					t.Context(),
+					hr,
+					values,
+					RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", dir)},
+				),
+			)
+			docs, _, err := testutil.RenderMaps(
+				cli.Template(
+					t.Context(),
+					hr,
+					values,
+					RenderOptions{SkipCRDs: true, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)},
+				),
+			)
 			if tc.enabled {
 				if !errors.Is(wantErr, manifest.ErrInput) || !errors.Is(err, manifest.ErrInput) {
 					t.Fatalf("included: %v, omitted: %v; want malformed CRD input errors", wantErr, err)
@@ -308,7 +392,6 @@ dependencies:
 			assert.Diff(t, docs, want)
 		})
 	}
-
 }
 
 func TestMergeChartValuesFiles_Cached(t *testing.T) {
@@ -378,11 +461,21 @@ func TestMergeChartValuesFiles_DifferentKeysDontShare(t *testing.T) {
 		},
 	}
 
-	a, err := cli.mergeChartValuesFiles(t.Context(), chartDescription{chart: chA, fingerprint: chartFixtureDescription(t, chA).fingerprint}, []string{"prod.yaml"}, false)
+	a, err := cli.mergeChartValuesFiles(
+		t.Context(),
+		chartDescription{chart: chA, fingerprint: chartFixtureDescription(t, chA).fingerprint},
+		[]string{"prod.yaml"},
+		false,
+	)
 	if err != nil {
 		t.Fatalf("chartA: %v", err)
 	}
-	b, err := cli.mergeChartValuesFiles(t.Context(), chartDescription{chart: chB, fingerprint: chartFixtureDescription(t, chB).fingerprint}, []string{"prod.yaml"}, false)
+	b, err := cli.mergeChartValuesFiles(
+		t.Context(),
+		chartDescription{chart: chB, fingerprint: chartFixtureDescription(t, chB).fingerprint},
+		[]string{"prod.yaml"},
+		false,
+	)
 	if err != nil {
 		t.Fatalf("chartB: %v", err)
 	}
@@ -539,8 +632,36 @@ func TestOCIChartContent_DistinctInputs(t *testing.T) {
 			first := chartDescription{chart: ch, fingerprint: chartFixtureDescription(t, ch).fingerprint, oci: &initial}
 			second := first
 			second.oci = &tc.next
-			assert.Equal(t, computeTemplateKey(first, nil, Options{}, minimalHR()) != computeTemplateKey(second, nil, Options{}, minimalHR()), true)
-			assert.Equal(t, chartValuesCacheKey(first, []string{"values.yaml"}, false, "") != chartValuesCacheKey(second, []string{"values.yaml"}, false, ""), true)
+			assert.Equal(
+				t,
+				computeTemplateKey(
+					first,
+					nil,
+					Options{},
+					minimalHR(),
+				) != computeTemplateKey(
+					second,
+					nil,
+					Options{},
+					minimalHR(),
+				),
+				true,
+			)
+			assert.Equal(
+				t,
+				chartValuesCacheKey(
+					first,
+					[]string{"values.yaml"},
+					false,
+					"",
+				) != chartValuesCacheKey(
+					second,
+					[]string{"values.yaml"},
+					false,
+					"",
+				),
+				true,
+			)
 		})
 	}
 }
@@ -568,7 +689,17 @@ data:
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			docs, _, err := testutil.RenderMaps(cli.Template(t.Context(), newHR(), nil, RenderOptions{KubeVersion: tc.version, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
+			docs, _, err := testutil.RenderMaps(
+				cli.Template(
+					t.Context(),
+					newHR(),
+					nil,
+					RenderOptions{
+						KubeVersion: tc.version,
+						Sources:     localChartResolver(t, "chart-repo", "flux-system", dir),
+					},
+				),
+			)
 			if tc.fail {
 				if err == nil {
 					t.Fatal("invalid override accepted")
@@ -588,7 +719,12 @@ func TestTemplate_ActionSchemaPolicy(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
 	testutil.WriteFile(t, dir, "mychart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo}\n")
-	testutil.WriteFile(t, dir, "mychart/values.schema.json", `{"type":"object","properties":{"name":{"type":"string","pattern":"^valid$"}},"required":["name"]}`)
+	testutil.WriteFile(
+		t,
+		dir,
+		"mychart/values.schema.json",
+		`{"type":"object","properties":{"name":{"type":"string","pattern":"^valid$"}},"required":["name"]}`,
+	)
 	for _, tc := range []struct {
 		name                                    string
 		install, upgrade, placeholder, wantSkip bool
@@ -619,11 +755,25 @@ func TestTemplate_ActionSchemaPolicy(t *testing.T) {
 			warm := hr.Clone()
 			warm.DisableSchemaValidation = true
 			warm.Upgrade = &helmv2.Upgrade{DisableSchemaValidation: true}
-			if _, _, err := testutil.RenderMaps(cli.Template(t.Context(), warm, values, RenderOptions{Options: opts, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})); err != nil {
+			if _, _, err := testutil.RenderMaps(
+				cli.Template(
+					t.Context(),
+					warm,
+					values,
+					RenderOptions{Options: opts, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)},
+				),
+			); err != nil {
 				t.Fatalf("warm cache: %v", err)
 			}
 			for range 2 {
-				_, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, values, RenderOptions{Options: opts, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
+				_, _, err := testutil.RenderMaps(
+					cli.Template(
+						t.Context(),
+						hr,
+						values,
+						RenderOptions{Options: opts, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)},
+					),
+				)
 				assert.Diff(t, hr.HelmReleaseSpec, original.HelmReleaseSpec)
 				assert.Equal(t, hr.DisableSchemaValidation, original.DisableSchemaValidation)
 				if tc.wantSkip {
@@ -635,7 +785,11 @@ func TestTemplate_ActionSchemaPolicy(t *testing.T) {
 				if err == nil {
 					t.Fatal("invalid schema accepted after warmed skipped render")
 				}
-				assert.Equal(t, err.Error(), "helm template: values don't meet the specifications of the schema(s) in the following chart(s):\nmychart:\n- at '/name': 'invalid' does not match pattern '^valid$'\n")
+				assert.Equal(
+					t,
+					err.Error(),
+					"helm template: values don't meet the specifications of the schema(s) in the following chart(s):\nmychart:\n- at '/name': 'invalid' does not match pattern '^valid$'\n",
+				)
 			}
 		})
 	}
@@ -771,7 +925,13 @@ items:
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			infos, oracleErr := resource.NewLocalBuilder().ContinueOnError().Unstructured().Flatten().Stream(strings.NewReader(tc.input), "").Do().Infos()
+			infos, oracleErr := resource.NewLocalBuilder().
+				ContinueOnError().
+				Unstructured().
+				Flatten().
+				Stream(strings.NewReader(tc.input), "").
+				Do().
+				Infos()
 			if (oracleErr != nil) != tc.wantError {
 				t.Fatalf("upstream error = %v, wantError = %t", oracleErr, tc.wantError)
 			}
@@ -788,9 +948,17 @@ items:
 			testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
 			testutil.WriteFile(t, dir, "mychart/templates/list.yaml", tc.input)
 			cli := NewClient(cachetest.New(t, "", sourcecache.New))
-			docs, _, err := testutil.RenderMaps(cli.Template(t.Context(), newHR(), nil, RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
+			docs, _, err := testutil.RenderMaps(
+				cli.Template(
+					t.Context(),
+					newHR(),
+					nil,
+					RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", dir)},
+				),
+			)
 			if oracleErr != nil {
-				if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || !strings.Contains(err.Error(), oracleErr.Error()) {
+				if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) ||
+					!strings.Contains(err.Error(), oracleErr.Error()) {
 					t.Fatalf("Template error = %v, want upstream: %v", err, oracleErr)
 				}
 				if docs != nil {
@@ -856,7 +1024,9 @@ metadata: {name: after}
 }
 
 func TestNormalizeLists_NoItems(t *testing.T) {
-	docs := testutil.DocumentOccurrences([]map[string]any{{"kind": "AllowList", "spec": map[string]any{"items": []any{"value"}}}, {"kind": "ConfigMap"}})
+	docs := testutil.DocumentOccurrences(
+		[]map[string]any{{"kind": "AllowList", "spec": map[string]any{"items": []any{"value"}}}, {"kind": "ConfigMap"}},
+	)
 	out := normalizeLists(docs)
 	assert.Equal(t, &out[0] == &docs[0], true)
 	allocations := testing.AllocsPerRun(100, func() {
@@ -879,7 +1049,9 @@ items:
 `)
 	hr := newHR()
 	hr.PostRenderers = []helmv2.PostRenderer{{Kustomize: &helmv2.Kustomize{}}}
-	out, _, err := NewClient(cachetest.New(t, "", sourcecache.New)).Template(t.Context(), hr, nil, RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
+	out, _, err := NewClient(
+		cachetest.New(t, "", sourcecache.New),
+	).Template(t.Context(), hr, nil, RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
 	assert.NoError(t, err)
 	var names []string
 	for _, doc := range out {
@@ -906,7 +1078,9 @@ items:
 	assert.NoError(t, err)
 	out := normalizeLists(docs)
 	failure := manifest.DocumentFailure(out)
-	if len(out) != 2 || out[0].Err != nil || out[1].Ordinal != 1 || out[1].Document == nil || !errors.Is(failure, manifest.ErrInput) || !errors.Is(failure, manifest.ErrFlux) {
+	if len(out) != 2 || out[0].Err != nil || out[1].Ordinal != 1 || out[1].Document == nil ||
+		!errors.Is(failure, manifest.ErrInput) ||
+		!errors.Is(failure, manifest.ErrFlux) {
 		t.Fatalf("invalid stream lost its outcome: %#v, %v", out, failure)
 	}
 	after, err := manifest.EncodeRender(docs)
@@ -918,14 +1092,22 @@ func TestTemplate_RetainsFailedStream(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
-	testutil.WriteFile(t, root, "mychart/templates/output.yaml", "null\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: invalid}\ndata: {key: first, key: duplicate}\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: sibling}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"mychart/templates/output.yaml",
+		"null\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: invalid}\ndata: {key: first, key: duplicate}\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: sibling}\n",
+	)
 	client := NewClient(cachetest.New(t, "", sourcecache.New))
 	input := RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", root)}
 	var diagnostic string
 	for _, phase := range []string{"cold", "repeat"} {
 		docs, receipt, err := client.Template(t.Context(), newHR(), nil, input)
 		assert.NoError(t, err)
-		if len(docs) != 2 || docs[0].Ordinal != 0 || docs[0].Err == nil || docs[0].Document != nil || docs[1].Ordinal != 1 || manifest.DocIdentity(docs[1].Document).Name != "sibling" || receipt != nil {
+		if len(docs) != 2 || docs[0].Ordinal != 0 || docs[0].Err == nil || docs[0].Document != nil ||
+			docs[1].Ordinal != 1 ||
+			manifest.DocIdentity(docs[1].Document).Name != "sibling" ||
+			receipt != nil {
 			t.Fatalf("%s lost outcomes or cached subset: %+v, %v", phase, docs, receipt)
 		}
 		if diagnostic == "" {

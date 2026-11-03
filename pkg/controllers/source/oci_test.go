@@ -30,9 +30,21 @@ func TestController_RenderedSecretWinsOverRegistryConfig(t *testing.T) {
 			const user, pass = "alice", "hunter2"
 			configBytes := []byte(`{}`)
 			configDigest := digest.FromBytes(configBytes)
-			layerBytes := testutil.TarGz(t, map[string]string{"app.yaml": "kind: ConfigMap\n"}, 0o644, gzip.DefaultCompression)
+			layerBytes := testutil.TarGz(
+				t,
+				map[string]string{"app.yaml": "kind: ConfigMap\n"},
+				0o644,
+				gzip.DefaultCompression,
+			)
 			layerDigest := digest.FromBytes(layerBytes)
-			manifestBytes := fmt.Appendf(nil, `{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.cncf.flux.config.v1+json","digest":%q,"size":%d},"layers":[{"mediaType":"application/vnd.cncf.flux.content.v1.tar+gzip","digest":%q,"size":%d}]}`, configDigest, len(configBytes), layerDigest, len(layerBytes))
+			manifestBytes := fmt.Appendf(
+				nil,
+				`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.cncf.flux.config.v1+json","digest":%q,"size":%d},"layers":[{"mediaType":"application/vnd.cncf.flux.content.v1.tar+gzip","digest":%q,"size":%d}]}`,
+				configDigest,
+				len(configBytes),
+				layerDigest,
+				len(layerBytes),
+			)
 			manifestDigest := digest.FromBytes(manifestBytes)
 			var requests, wrongCredentials atomic.Int64
 			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -90,7 +102,6 @@ func TestController_RenderedSecretWinsOverRegistryConfig(t *testing.T) {
 			c.Fetchers[manifest.KindOCIRepository] = src.Wrap(manifest.KindOCIRepository, f)
 			c.StartLifecycle()
 			t.Cleanup(func() {
-
 				ts.BlockTillDone()
 			})
 			repos := []*manifest.OCIRepository{
@@ -104,7 +115,8 @@ func TestController_RenderedSecretWinsOverRegistryConfig(t *testing.T) {
 				st.AddObject(repo)
 				ts.Go(t.Context(), repo.Name, func(ctx context.Context) {
 					deps := c.ReconcileNode(ctx, repo.Named(), 0).Blocked
-					if len(deps) != 1 || deps[0] != (manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "creds"}) {
+					if len(deps) != 1 ||
+						deps[0] != (manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "creds"}) {
 						t.Errorf("blocked dependencies = %v, want Secret ns/creds", deps)
 					}
 				})
@@ -127,12 +139,19 @@ func TestController_RenderedSecretWinsOverRegistryConfig(t *testing.T) {
 			}
 			ts.BlockTillDone()
 			for _, repo := range repos {
-				if info, _ := st.GetStatus(repo.Named()); info.Status != store.StatusReady || info.Outcome() == store.OutcomeSkipped || st.GetArtifact(repo.Named(), store.ArtifactContent) == nil {
+				if info, _ := st.GetStatus(
+					repo.Named(),
+				); info.Status != store.StatusReady || info.Outcome() == store.OutcomeSkipped ||
+					st.GetArtifact(repo.Named(), store.ArtifactContent) == nil {
 					t.Errorf("source %s status = %+v, want Ready with artifact", repo.Name, info)
 				}
 			}
 			if requests.Load() == 0 || wrongCredentials.Load() != 0 {
-				t.Errorf("requests = %d, wrong credentials = %d, want successful rendered-Secret authentication", requests.Load(), wrongCredentials.Load())
+				t.Errorf(
+					"requests = %d, wrong credentials = %d, want successful rendered-Secret authentication",
+					requests.Load(),
+					wrongCredentials.Load(),
+				)
 			}
 		})
 	}

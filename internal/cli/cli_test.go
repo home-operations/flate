@@ -16,6 +16,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+	"sigs.k8s.io/yaml"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/diff"
@@ -23,9 +27,6 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
-	"sigs.k8s.io/yaml"
 )
 
 // runCLI drives cli.Run inside the test binary and returns
@@ -87,7 +88,15 @@ func writeMultiNamespaceFixture(t *testing.T) string {
 		{name: "apps-a", namespace: "alpha", path: "apps-a"},
 		{name: "apps-b", namespace: "beta", path: "apps-b"},
 	} {
-		testutil.WriteFileAt(t, filepath.Join(k8s, "flux", tc.name+".yaml"), testutil.KustomizationYAML(tc.name, tc.namespace, "  interval: 10m\n  path: ./"+tc.path+"\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
+		testutil.WriteFileAt(
+			t,
+			filepath.Join(k8s, "flux", tc.name+".yaml"),
+			testutil.KustomizationYAML(
+				tc.name,
+				tc.namespace,
+				"  interval: 10m\n  path: ./"+tc.path+"\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+			),
+		)
 		testutil.WriteFileAt(t, filepath.Join(k8s, tc.path, "kustomization.yaml"), "resources:\n- cm.yaml\n")
 		testutil.WriteFileAt(t, filepath.Join(k8s, tc.path, "cm.yaml"), `---
 apiVersion: v1
@@ -122,8 +131,11 @@ func TestRun_GroupDefaultsToAll(t *testing.T) {
 			flags := []string{"-p", path, "--concurrency", "2"}
 			if group == "diff" {
 				orig := writeFixture(t)
-				testutil.WriteFileAt(t, filepath.Join(path, "apps", "cm.yaml"),
-					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {greeting: changed}\n")
+				testutil.WriteFileAt(
+					t,
+					filepath.Join(path, "apps", "cm.yaml"),
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {greeting: changed}\n",
+				)
 				flags = append(flags, "--path-orig", orig)
 			}
 			want, wantErr, wantCode := runCLI(t, append([]string{group, "all"}, flags...)...)
@@ -276,20 +288,36 @@ func TestRun_BuildAll_OnlyKinds(t *testing.T) {
 			}
 			path := writeFixture(t)
 			testutil.WriteFile(t, path, "apps/kustomization.yaml", "resources: [cm.yaml, crd.yaml]\n")
-			testutil.WriteFile(t, path, "apps/crd.yaml", "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata: {name: widgets.example.test}\nspec: {group: example.test, names: {kind: Widget, plural: widgets}, scope: Namespaced, versions: [{name: v1, served: true, storage: true, schema: {openAPIV3Schema: {type: object}}}]}\n")
-			args := append([]string{"build", "all", "--path", path, "--concurrency=2", "--only-kinds=CustomResourceDefinition"}, tc.args...)
+			testutil.WriteFile(
+				t,
+				path,
+				"apps/crd.yaml",
+				"apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata: {name: widgets.example.test}\nspec: {group: example.test, names: {kind: Widget, plural: widgets}, scope: Namespaced, versions: [{name: v1, served: true, storage: true, schema: {openAPIV3Schema: {type: object}}}]}\n",
+			)
+			args := append(
+				[]string{"build", "all", "--path", path, "--concurrency=2", "--only-kinds=CustomResourceDefinition"},
+				tc.args...)
 			out, diagnostic, code := runCLI(t, args...)
 			if code != 0 || strings.Contains(out, "kind: CustomResourceDefinition") != tc.want {
 				t.Fatalf("CRD selection: exit=%d want=%t stdout=%s stderr=%s", code, tc.want, out, diagnostic)
 			}
 		})
 	}
-
 }
 
 func TestRun_BuildAll_OnlyKinds_JSONEmptyArray(t *testing.T) {
 	path := writeFixture(t)
-	stdout, stderr, code := runCLI(t, "build", "all", "--path", path, "--only-kinds", "CustomResourceDefinition", "-o", "json")
+	stdout, stderr, code := runCLI(
+		t,
+		"build",
+		"all",
+		"--path",
+		path,
+		"--only-kinds",
+		"CustomResourceDefinition",
+		"-o",
+		"json",
+	)
 	if code != 0 {
 		t.Fatalf("build --only-kinds -o json exited %d: %s", code, stderr)
 	}
@@ -314,8 +342,11 @@ func TestRun_GetKS(t *testing.T) {
 			}
 			files := map[string]string{
 				"kustomization.yaml": "resources: [cluster.yaml]\n",
-				"cluster.yaml": testutil.KustomizationYAML("apps", "flux-system",
-					"  interval: 10m\n"+pathField+"  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"),
+				"cluster.yaml": testutil.KustomizationYAML(
+					"apps",
+					"flux-system",
+					"  interval: 10m\n"+pathField+"  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+				),
 				"apps/kustomization.yaml": "resources: [cm.yaml]\n",
 				"apps/cm.yaml":            "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\n",
 			}
@@ -326,7 +357,17 @@ func TestRun_GetKS(t *testing.T) {
 				t.Run(command, func(t *testing.T) {
 					for _, format := range []string{"table", "json", "yaml"} {
 						t.Run(format, func(t *testing.T) {
-							args := append(strings.Fields(command), "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2", "-o", format)
+							args := append(
+								strings.Fields(command),
+								"--path",
+								root,
+								"--cache-dir",
+								t.TempDir(),
+								"--concurrency",
+								"2",
+								"-o",
+								format,
+							)
 							stdout, stderr, code := runCLI(t, args...)
 							if code != 0 {
 								t.Fatalf("exit=%d stdout=%s stderr=%s", code, stdout, stderr)
@@ -336,15 +377,32 @@ func TestRun_GetKS(t *testing.T) {
 								if command != "get ks" {
 									name, width = "Kustomization/apps", 22
 								}
-								want := fmt.Sprintf("NAMESPACE      %-*sPATH\nflux-system    %-*s%s\n", width, "NAME", width, name, tc.wantPath)
+								want := fmt.Sprintf(
+									"NAMESPACE      %-*sPATH\nflux-system    %-*s%s\n",
+									width,
+									"NAME",
+									width,
+									name,
+									tc.wantPath,
+								)
 								assert.Equal(t, stdout, want)
 							} else {
 								groups := decodeGetDocuments(t, stdout, format, []string{""})
-								assert.Diff(t, groups[0].Documents, []map[string]any{{
-									"kind": "Kustomization", "name": "apps", "namespace": "flux-system", "path": tc.path,
-									"sourceRef": map[string]any{"kind": "GitRepository", "name": "flux-system", "namespace": "flux-system"},
-									"prune":     false, "wait": false,
-								}})
+								assert.Diff(t, groups[0].Documents, []map[string]any{
+									{
+										"kind":      "Kustomization",
+										"name":      "apps",
+										"namespace": "flux-system",
+										"path":      tc.path,
+										"sourceRef": map[string]any{
+											"kind":      "GitRepository",
+											"name":      "flux-system",
+											"namespace": "flux-system",
+										},
+										"prune": false,
+										"wait":  false,
+									},
+								})
 							}
 							for name, want := range files {
 								got, err := os.ReadFile(filepath.Join(root, name))
@@ -399,7 +457,12 @@ func TestRun_GetKS_NameFilter_NamespaceMismatchFails(t *testing.T) {
 // TestRun_GetKS_YAML exercises -o yaml on a list verb.
 func TestRun_GetKS_YAML(t *testing.T) {
 	path := writeFixture(t)
-	testutil.WriteFile(t, path, "nosrc.yaml", testutil.KustomizationYAML("nosrc", "flux-system", "  {path: ./apps, suspend: true}\n"))
+	testutil.WriteFile(
+		t,
+		path,
+		"nosrc.yaml",
+		testutil.KustomizationYAML("nosrc", "flux-system", "  {path: ./apps, suspend: true}\n"),
+	)
 	stdout, _, code := runCLI(t, "get", "ks", "--path", path, "-o", "yaml")
 	if code != 0 {
 		t.Fatalf("get ks -o yaml exited %d", code)
@@ -411,7 +474,8 @@ func TestRun_GetKS_YAML(t *testing.T) {
 	}
 	for _, output := range []string{"yaml", "json"} {
 		stdout, stderr, code := runCLI(t, "get", "ks", "nosrc", "--path", path, "-o", output)
-		if code != 0 || !strings.Contains(stdout, "flux-system") || strings.Contains(stdout, `namespace: ""`) || strings.Contains(stdout, `"namespace": ""`) {
+		if code != 0 || !strings.Contains(stdout, "flux-system") || strings.Contains(stdout, `namespace: ""`) ||
+			strings.Contains(stdout, `"namespace": ""`) {
 			t.Fatalf("absent sourceRef %s: exit=%d stdout=%s stderr=%s", output, code, stdout, stderr)
 		}
 	}
@@ -434,7 +498,8 @@ func TestRun_GetAll_Yaml(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("get all exited %d", code)
 	}
-	if !strings.Contains(stdout, "kind: Kustomization\n") || !strings.Contains(stdout, "name: apps\n") || strings.Contains(stdout, "kustomizations:") {
+	if !strings.Contains(stdout, "kind: Kustomization\n") || !strings.Contains(stdout, "name: apps\n") ||
+		strings.Contains(stdout, "kustomizations:") {
 		t.Errorf("object listing missing Kustomization:\n%s", stdout)
 	}
 }
@@ -449,7 +514,8 @@ func TestRun_GetAll_RespectsNamespace(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &documents); err != nil {
 		t.Fatalf("get all emitted invalid JSON: %v\n%s", err, stdout)
 	}
-	if len(documents) != 1 || documents[0]["kind"] != "Kustomization" || documents[0]["namespace"] != "alpha" || documents[0]["name"] != "apps-a" {
+	if len(documents) != 1 || documents[0]["kind"] != "Kustomization" || documents[0]["namespace"] != "alpha" ||
+		documents[0]["name"] != "apps-a" {
 		t.Errorf("namespace-scoped objects = %#v, want alpha/apps-a", documents)
 	}
 }
@@ -470,16 +536,28 @@ func writeUnreadableSecretFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	k8s := filepath.Join(root, "kubernetes")
-	testutil.WriteFileAt(t, filepath.Join(k8s, "flux", "cluster.yaml"), testutil.KustomizationYAML("apps", "flux-system", `  interval: 10m
+	testutil.WriteFileAt(
+		t,
+		filepath.Join(k8s, "flux", "cluster.yaml"),
+		testutil.KustomizationYAML("apps", "flux-system", `  interval: 10m
   path: ./apps
   sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
   postBuild:
     substituteFrom:
       - kind: Secret
         name: cluster-secrets
-`))
-	testutil.WriteFileAt(t, filepath.Join(k8s, "apps", "producer.yaml"), "apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: cluster-secrets, namespace: flux-system}\nspec: {target: {name: cluster-secrets}}\n")
-	testutil.WriteFileAt(t, filepath.Join(k8s, "apps", "kustomization.yaml"), "resources:\n- cm.yaml\n- producer.yaml\n")
+`),
+	)
+	testutil.WriteFileAt(
+		t,
+		filepath.Join(k8s, "apps", "producer.yaml"),
+		"apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: cluster-secrets, namespace: flux-system}\nspec: {target: {name: cluster-secrets}}\n",
+	)
+	testutil.WriteFileAt(
+		t,
+		filepath.Join(k8s, "apps", "kustomization.yaml"),
+		"resources:\n- cm.yaml\n- producer.yaml\n",
+	)
 	testutil.WriteFileAt(t, filepath.Join(k8s, "apps", "cm.yaml"), `---
 apiVersion: v1
 kind: ConfigMap
@@ -530,7 +608,10 @@ func TestRun_AdvisoryDestinations(t *testing.T) {
 			for _, level := range []string{"debug", "info", "warn", "error"} {
 				args := append(slices.Clone(command), "--path", k8s, "--concurrency=2", "--log-level", level)
 				stdout, stderr, code := runCLI(t, args...)
-				if code != 0 || strings.Count(stderr, "[UnresolvedSubstitution]") != 1 || strings.Count(stderr, advisory) != 1 || strings.Contains(stdout, advisory) || strings.Contains(stderr, "level=WARN") {
+				if code != 0 || strings.Count(stderr, "[UnresolvedSubstitution]") != 1 ||
+					strings.Count(stderr, advisory) != 1 ||
+					strings.Contains(stdout, advisory) ||
+					strings.Contains(stderr, "level=WARN") {
 					t.Fatalf("%s destination: exit=%d stdout=%s stderr=%s", level, code, stdout, stderr)
 				}
 			}
@@ -544,7 +625,12 @@ func TestRun_AdvisoryDestinations(t *testing.T) {
 
 func TestRun_TestAll(t *testing.T) {
 	path := writeFixture(t)
-	testutil.WriteFile(t, path, "flux/hidden.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: ExternalArtifact\nmetadata: {name: hidden, namespace: flux-system}\nstatus: {artifact: {url: 'file://"+path+"'}}\n")
+	testutil.WriteFile(
+		t,
+		path,
+		"flux/hidden.yaml",
+		"apiVersion: source.toolkit.fluxcd.io/v1\nkind: ExternalArtifact\nmetadata: {name: hidden, namespace: flux-system}\nstatus: {artifact: {url: 'file://"+path+"'}}\n",
+	)
 	stdout, _, code := runCLI(t, "test", "all", "--path", path)
 	assert.Equal(t, code, 1)
 	assert.Equal(t, strings.Contains(stdout, "✓") && strings.Contains(stdout, "passed"), true)
@@ -605,7 +691,10 @@ func TestRun_TestAll_JoinsVisibleFailuresWithRunError(t *testing.T) {
 		t.Errorf("stdout should include the failure verdict, got %q", stdout)
 	}
 	if strings.Contains(stderr, "failed") {
-		t.Errorf("failures + verdict are consolidated on stdout; stderr must not carry a second verdict, got %q", stderr)
+		t.Errorf(
+			"failures + verdict are consolidated on stdout; stderr must not carry a second verdict, got %q",
+			stderr,
+		)
 	}
 }
 
@@ -627,7 +716,18 @@ func TestRun_RenderPersistenceNoticeInvocationScope(t *testing.T) {
 	current := writeFixture(t)
 	orig := t.TempDir()
 	testutil.CopyTree(t, current, orig)
-	args := []string{"diff", "ks", "--path", current, "--path-orig", orig, "--cache-dir", t.TempDir(), "--concurrency", "2"}
+	args := []string{
+		"diff",
+		"ks",
+		"--path",
+		current,
+		"--path-orig",
+		orig,
+		"--cache-dir",
+		t.TempDir(),
+		"--concurrency",
+		"2",
+	}
 	renderPersistenceDisabledReason = ""
 	stdout, stderr, code := runCLI(t, args...)
 	if code != 0 {
@@ -641,7 +741,11 @@ func TestRun_RenderPersistenceNoticeInvocationScope(t *testing.T) {
 		got, gotErr, gotCode := runCLI(t, args...)
 		assert.Equal(t, gotCode, code)
 		assert.Equal(t, got, stdout)
-		assert.Equal(t, gotErr, strings.Replace(stderr, "warnings (2)\n", "warnings (3)\n    "+persistenceMessage+"\n", 1))
+		assert.Equal(
+			t,
+			gotErr,
+			strings.Replace(stderr, "warnings (2)\n", "warnings (3)\n    "+persistenceMessage+"\n", 1),
+		)
 	}
 }
 
@@ -883,7 +987,6 @@ func TestCompareDocs_OrdersByIdentity(t *testing.T) {
 		assert.Diff(t, emissionDocs(docs, &buildFlags{}), []map[string]any{core, second, first, foreign})
 		assert.Diff(t, docs, []map[string]any{foreign, second, core, first})
 	}
-
 }
 
 // TestEmissionDocs_OnlyKinds drops every non-CRD doc.
@@ -912,7 +1015,12 @@ func TestEmissionDocs_OnlyKinds(t *testing.T) {
 func TestEmissionDocs_EmptyOnNoCRDs(t *testing.T) {
 	t.Parallel()
 	docs := []map[string]any{{"kind": "ConfigMap"}, {"kind": "Secret"}}
-	if out := emissionDocs(docs, &buildFlags{onlyKinds: []string{manifest.KindCustomResourceDefinition}}); len(out) != 0 {
+	if out := emissionDocs(
+		docs,
+		&buildFlags{onlyKinds: []string{manifest.KindCustomResourceDefinition}},
+	); len(
+		out,
+	) != 0 {
 		t.Errorf("expected no docs for no-CRD input, got %+v", out)
 	}
 }
@@ -940,7 +1048,19 @@ func TestRun_Diff_OneSidedFailureSuppressed(t *testing.T) {
 
 			for _, format := range []string{"github", "json"} {
 				t.Run(format, func(t *testing.T) {
-					stdout, stderr, code := runCLI(t, "diff", "ks", "--path", current, "--path-orig", orig, "-o", format, "--concurrency", "2")
+					stdout, stderr, code := runCLI(
+						t,
+						"diff",
+						"ks",
+						"--path",
+						current,
+						"--path-orig",
+						orig,
+						"-o",
+						format,
+						"--concurrency",
+						"2",
+					)
 					assert.Equal(t, code, 1)
 					if format == "github" {
 						assert.Equal(t, stdout, "")
@@ -981,7 +1101,16 @@ func TestRun_Diff_OneSidedFailureSuppressed(t *testing.T) {
 func TestRun_ConventionalIgnore(t *testing.T) {
 	path := writeFixture(t)
 	testutil.WriteFile(t, path, "kustomization.yaml", "resources: [flux/cluster.yaml]\n")
-	testutil.WriteFile(t, path, "flux/extra.yaml", testutil.KustomizationYAML("apps-extra", "flux-system", "  interval: 10m\n  path: ./apps\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
+	testutil.WriteFile(
+		t,
+		path,
+		"flux/extra.yaml",
+		testutil.KustomizationYAML(
+			"apps-extra",
+			"flux-system",
+			"  interval: 10m\n  path: ./apps\n  sourceRef: {kind: GitRepository, name: flux-system}\n",
+		),
+	)
 	testutil.WriteFile(t, path, ".krmignore", "flux/extra.yaml\n")
 	stdout, stderr, code := runCLI(t, "get", "ks", "--path", path, "-o", "name")
 	if code != 0 || strings.Contains(stdout, "apps-extra") || !strings.Contains(stdout, "apps") {
@@ -991,8 +1120,28 @@ func TestRun_ConventionalIgnore(t *testing.T) {
 
 func TestRun_TestNamed_MatchingFailureFromOtherKind(t *testing.T) {
 	root := writeFixture(t)
-	testutil.WriteFile(t, root, "flux/ghost.yaml", testutil.KustomizationYAML("ghost", "flux-system", "  path: ./missing-ghost\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
-	stdout, stderr, code := runCLI(t, "test", "hr", "ghost", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2")
+	testutil.WriteFile(
+		t,
+		root,
+		"flux/ghost.yaml",
+		testutil.KustomizationYAML(
+			"ghost",
+			"flux-system",
+			"  path: ./missing-ghost\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+		),
+	)
+	stdout, stderr, code := runCLI(
+		t,
+		"test",
+		"hr",
+		"ghost",
+		"--path",
+		root,
+		"--cache-dir",
+		t.TempDir(),
+		"--concurrency",
+		"2",
+	)
 	if code != 1 || !strings.Contains(stderr, `no HelmRelease named "ghost"`) || stdout != "" {
 		t.Fatalf("other-kind diagnostic satisfied named roster: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 	}
@@ -1012,10 +1161,25 @@ func TestRun_GetHRChartVersions(t *testing.T) {
 			if chart == "" {
 				chart = "chartRef: {kind: OCIRepository, name: chart}"
 			}
-			testutil.WriteFile(t, root, "flux.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: app, namespace: apps}\nspec: {suspend: true, "+chart+"}\n---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: chart, namespace: apps}\nspec: {suspend: true, url: 'oci://example.test/app', ref: {"+tc.reference+"}}\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"flux.yaml",
+				"apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: app, namespace: apps}\nspec: {suspend: true, "+chart+"}\n---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: chart, namespace: apps}\nspec: {suspend: true, url: 'oci://example.test/app', ref: {"+tc.reference+"}}\n",
+			)
 			for _, command := range []string{"get hr", "get all", "get"} {
 				t.Run(command, func(t *testing.T) {
-					args := append(strings.Fields(command), "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "json")
+					args := append(
+						strings.Fields(command),
+						"--path",
+						root,
+						"--cache-dir",
+						t.TempDir(),
+						"--concurrency",
+						"2",
+						"-o",
+						"json",
+					)
 					stdout, stderr, code := runCLI(t, args...)
 					var rows []struct {
 						Version   string `json:"version"`
@@ -1024,8 +1188,18 @@ func TestRun_GetHRChartVersions(t *testing.T) {
 							Namespace string `json:"namespace"`
 						} `json:"sourceRef"`
 					}
-					if code != 0 || json.Unmarshal([]byte(stdout), &rows) != nil || len(rows) != 1 || rows[0].Version != tc.want || rows[0].Chart != tc.wantChart || rows[0].SourceRef.Namespace != "apps" {
-						t.Fatalf("chart version: exit=%d stdout=%s stderr=%s want=%s chart=%s", code, stdout, stderr, tc.want, tc.wantChart)
+					if code != 0 || json.Unmarshal([]byte(stdout), &rows) != nil || len(rows) != 1 ||
+						rows[0].Version != tc.want ||
+						rows[0].Chart != tc.wantChart ||
+						rows[0].SourceRef.Namespace != "apps" {
+						t.Fatalf(
+							"chart version: exit=%d stdout=%s stderr=%s want=%s chart=%s",
+							code,
+							stdout,
+							stderr,
+							tc.want,
+							tc.wantChart,
+						)
 					}
 				})
 			}
@@ -1093,7 +1267,16 @@ spec:
 `
 	testutil.WriteFile(t, current, "apps/cm.yaml", fixture)
 	cache := t.TempDir()
-	want := []string{"ghcr.io/example/a:1", "ghcr.io/example/cron:1", "ghcr.io/example/debug:3", "ghcr.io/example/declared:v1", "ghcr.io/example/env:v1", "ghcr.io/example/init:1", "ghcr.io/example/z:2", "nginx"}
+	want := []string{
+		"ghcr.io/example/a:1",
+		"ghcr.io/example/cron:1",
+		"ghcr.io/example/debug:3",
+		"ghcr.io/example/declared:v1",
+		"ghcr.io/example/env:v1",
+		"ghcr.io/example/init:1",
+		"ghcr.io/example/z:2",
+		"nginx",
+	}
 	for _, format := range []string{"name", "yaml", "json"} {
 		t.Run(format, func(t *testing.T) {
 			flags := []string{"--path", current, "--cache-dir", cache, "--concurrency", "2"}
@@ -1161,7 +1344,18 @@ spec:
 		{name: "reversed/including removals", current: current, orig: changed, includeRemoved: true, want: "ghcr.io/example/a:1\nghcr.io/example/a:2\nghcr.io/example/declared:v1\nghcr.io/example/declared:v2\nghcr.io/example/env:v1\nghcr.io/example/env:v2\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			args := []string{"diff", "images", "--path", tc.current, "--path-orig", tc.orig, "--cache-dir", cache, "--concurrency", "2"}
+			args := []string{
+				"diff",
+				"images",
+				"--path",
+				tc.current,
+				"--path-orig",
+				tc.orig,
+				"--cache-dir",
+				cache,
+				"--concurrency",
+				"2",
+			}
 			if tc.includeRemoved {
 				args = append(args, "--include-removed")
 			}
@@ -1217,7 +1411,16 @@ spec:
 
 func TestRun_Build_PartialRenderAndDocumentWriteFailure(t *testing.T) {
 	root := writeMultiNamespaceFixture(t)
-	testutil.WriteFile(t, root, "apps-a/stray.yaml", testutil.KustomizationYAML("stray", "alpha", "  path: ./missing-stray\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
+	testutil.WriteFile(
+		t,
+		root,
+		"apps-a/stray.yaml",
+		testutil.KustomizationYAML(
+			"stray",
+			"alpha",
+			"  path: ./missing-stray\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+		),
+	)
 	testutil.WriteFile(t, root, "apps-b/kustomization.yaml", "resources: [missing.yaml]\n")
 	args := []string{"build", "ks", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "json"}
 	full, stderr, code := runCLI(t, args...)
@@ -1311,7 +1514,11 @@ spec:
   values: {tag: after}
 `)
 	testutil.WriteFile(t, root, "charts/app/Chart.yaml", "apiVersion: v2\nname: app\nversion: 0.1.0\n")
-	testutil.WriteFile(t, root, "charts/app/templates/main.yaml", `{{- if or (ne .Capabilities.KubeVersion.Version "v1.31.2") (not (.Capabilities.APIVersions.Has "fixture.example/v1")) (or .Release.IsUpgrade (not .Release.IsInstall)) }}
+	testutil.WriteFile(
+		t,
+		root,
+		"charts/app/templates/main.yaml",
+		`{{- if or (ne .Capabilities.KubeVersion.Version "v1.31.2") (not (.Capabilities.APIVersions.Has "fixture.example/v1")) (or .Release.IsUpgrade (not .Release.IsInstall)) }}
 {{ fail "CLI Helm options did not reach rendering" }}
 {{- end }}
 apiVersion: apps/v1
@@ -1327,20 +1534,33 @@ spec:
   template:
     metadata: {labels: {app: main}}
     spec: {containers: [{name: main, image: "fixture/main:{{ .Values.tag }}"}]}
-`)
+`,
+	)
 	for _, name := range []string{"extra", "hook"} {
 		annotation := ""
 		if name == "hook" {
 			annotation = `, annotations: {helm.sh/hook: pre-install}`
 		}
-		testutil.WriteFile(t, root, "charts/app/templates/"+name+".yaml", "apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: "+name+annotation+"}\nspec: {selector: {matchLabels: {app: "+name+"}}, template: {metadata: {labels: {app: "+name+"}}, spec: {containers: [{name: "+name+", image: 'fixture/"+name+":{{ .Values.tag }}'}]}}}\n")
+		testutil.WriteFile(
+			t,
+			root,
+			"charts/app/templates/"+name+".yaml",
+			"apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: "+name+annotation+"}\nspec: {selector: {matchLabels: {app: "+name+"}}, template: {metadata: {labels: {app: "+name+"}}, spec: {containers: [{name: "+name+", image: 'fixture/"+name+":{{ .Values.tag }}'}]}}}\n",
+		)
 	}
 	original := t.TempDir()
 	testutil.CopyTree(t, root, original)
 	hr, err := os.ReadFile(filepath.Join(original, "cluster/hr.yaml"))
 	assert.NoError(t, err)
 	testutil.WriteFile(t, original, "cluster/hr.yaml", strings.ReplaceAll(string(hr), "tag: after", "tag: before"))
-	flags := []string{"--path", filepath.Join(root, "cluster"), "--concurrency=2", "--kube-version=1.31.2", "-a", "fixture.example/v1"}
+	flags := []string{
+		"--path",
+		filepath.Join(root, "cluster"),
+		"--concurrency=2",
+		"--kube-version=1.31.2",
+		"-a",
+		"fixture.example/v1",
+	}
 	for _, command := range []string{"build hr", "get all", "get hr", "get images", "test hr", "diff hr", "diff images"} {
 		t.Run(command, func(t *testing.T) {
 			args := append(strings.Fields(command), flags...)
@@ -1358,7 +1578,8 @@ spec:
 					}
 				}
 			}
-			if strings.HasSuffix(command, "images") && (!strings.Contains(out, "fixture/main") || !strings.Contains(out, "fixture/extra") || !strings.Contains(out, "fixture/hook")) {
+			if strings.HasSuffix(command, "images") &&
+				(!strings.Contains(out, "fixture/main") || !strings.Contains(out, "fixture/extra") || !strings.Contains(out, "fixture/hook")) {
 				t.Fatalf("image filtering lost Helm options: %s", out)
 			}
 		})
@@ -1383,7 +1604,8 @@ spec:
 			}
 			args = append(args, "--path", filepath.Join(local, "cluster"))
 			out, diagnostic, code := runCLI(t, args...)
-			if code != 0 || !strings.Contains(out, "name: main") || strings.Contains(out, "name: extra") != tc.extra || strings.Contains(out, "name: hook") != tc.hook {
+			if code != 0 || !strings.Contains(out, "name: main") || strings.Contains(out, "name: extra") != tc.extra ||
+				strings.Contains(out, "name: hook") != tc.hook {
 				t.Fatalf("template filtering: exit=%d stdout=%s stderr=%s", code, out, diagnostic)
 			}
 		})
@@ -1392,12 +1614,33 @@ spec:
 
 func TestRun_ConciseFailureDiagnostics(t *testing.T) {
 	current, orig := writeFixture(t), writeFixture(t)
-	testutil.WriteFile(t, current, "flux/cluster.yaml", testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n  sourceRef: {kind: GitRepository, name: flux-system}\n  postBuild: {substitute: {flate-campaign: value}}\n"))
+	testutil.WriteFile(
+		t,
+		current,
+		"flux/cluster.yaml",
+		testutil.KustomizationYAML(
+			"apps",
+			"flux-system",
+			"  path: ./apps\n  sourceRef: {kind: GitRepository, name: flux-system}\n  postBuild: {substitute: {flate-campaign: value}}\n",
+		),
+	)
 	for _, command := range []string{"test", "build", "diff"} {
 		t.Run(command, func(t *testing.T) {
 			var first string
 			for _, level := range []string{"error", "debug"} {
-				args := []string{command, "all", "--path", current, "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir(), "--log-level", level}
+				args := []string{
+					command,
+					"all",
+					"--path",
+					current,
+					"--concurrency",
+					"2",
+					"--no-progress",
+					"--cache-dir",
+					t.TempDir(),
+					"--log-level",
+					level,
+				}
 				if command == "diff" {
 					args = append(args, "--path-orig", orig)
 				}
@@ -1416,7 +1659,10 @@ func TestRun_ConciseFailureDiagnostics(t *testing.T) {
 						continue
 					}
 					found = true
-					if strings.Count(row, "flux-system/apps") != 1 || strings.Count(row, "invalid substitute variable flate-campaign") != 1 || strings.Contains(row, "flux error") || strings.Contains(row, "invalid substitute reference") {
+					if strings.Count(row, "flux-system/apps") != 1 ||
+						strings.Count(row, "invalid substitute variable flate-campaign") != 1 ||
+						strings.Contains(row, "flux error") ||
+						strings.Contains(row, "invalid substitute reference") {
 						t.Fatalf("failure row: %s", row)
 					}
 					if first != "" && row != first {
@@ -1440,7 +1686,20 @@ func TestRun_ConciseEntryFailureDiagnostics(t *testing.T) {
 	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [missing.yaml]\n")
 	var first string
 	for _, level := range []string{"error", "debug"} {
-		_, stderr, code := runCLI(t, "build", "all", "--path", root, "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir(), "--log-level", level)
+		_, stderr, code := runCLI(
+			t,
+			"build",
+			"all",
+			"--path",
+			root,
+			"--concurrency",
+			"2",
+			"--no-progress",
+			"--cache-dir",
+			t.TempDir(),
+			"--log-level",
+			level,
+		)
 		if code != 1 {
 			t.Fatalf("exit=%d stderr=%s", code, stderr)
 		}

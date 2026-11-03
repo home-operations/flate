@@ -22,7 +22,7 @@ type HelmChart struct {
 	// Name is the chart name within the source repository.
 	Name string `json:"name" yaml:"name"`
 	// Version is omitted from output for tidy diffs but kept in memory.
-	Version string        `json:"-" yaml:"-"`
+	Version string        `json:"-"      yaml:"-"`
 	Source  NamedResource `json:"source" yaml:"source"`
 }
 
@@ -35,7 +35,10 @@ func (h HelmChart) ChartLocation() (string, bool, error) {
 	case KindOCIRepository, KindHelmChart:
 		return "", true, nil
 	case KindHelmRepository, "":
-		return "", false, inputf("HelmRepository chart %s reached chart loading unmaterialized: render via the orchestrator", h.RepoFullName())
+		return "", false, inputf(
+			"HelmRepository chart %s reached chart loading unmaterialized: render via the orchestrator",
+			h.RepoFullName(),
+		)
 	default:
 		return "", false, inputf("unsupported chart repo kind %s", h.Source.Kind)
 	}
@@ -150,7 +153,10 @@ func (h *HelmRelease) equal(other *HelmRelease) bool {
 	}
 	return h.Name == other.Name && h.Namespace == other.Namespace && h.Chart == other.Chart &&
 		h.DisableSchemaValidation == other.DisableSchemaValidation && h.IgnoreMissingValuesFiles == other.IgnoreMissingValuesFiles &&
-		maps.Equal(h.Labels, other.Labels) && maps.Equal(h.Annotations, other.Annotations) && slices.Equal(h.ChartValuesFiles, other.ChartValuesFiles) &&
+		maps.Equal(
+			h.Labels,
+			other.Labels,
+		) && maps.Equal(h.Annotations, other.Annotations) && slices.Equal(h.ChartValuesFiles, other.ChartValuesFiles) &&
 		reflect.DeepEqual(&h.HelmReleaseSpec, &other.HelmReleaseSpec) && reflect.DeepEqual(h.Values, other.Values)
 }
 
@@ -159,7 +165,12 @@ func (h *HelmRelease) Suspended() bool { return h.Suspend }
 
 // Named identifies the release.
 func (h *HelmRelease) Named() NamedResource {
-	return NamedResource{Group: kindTable[kindHelmRelease].Group, Kind: KindHelmRelease, Namespace: h.Namespace, Name: h.Name}
+	return NamedResource{
+		Group:     kindTable[kindHelmRelease].Group,
+		Kind:      KindHelmRelease,
+		Namespace: h.Namespace,
+		Name:      h.Name,
+	}
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
@@ -280,7 +291,13 @@ func (h *HelmRelease) HistoryPolicy() HelmReleaseHistoryPolicy {
 
 // Equal reports whether two frozen policies admit the same accepted history.
 func (p HelmReleaseHistoryPolicy) Equal(other HelmReleaseHistoryPolicy) bool {
-	return p.DeclaredChart == other.DeclaredChart && equalChartTemplate(p.Template, other.Template) && p.Suspend == other.Suspend && p.PostRenderStrategy == other.PostRenderStrategy && slices.Equal(p.DependsOn, other.DependsOn) && slices.Equal(p.ValuesFrom, other.ValuesFrom) && slices.Equal(p.HealthCheckExprs, other.HealthCheckExprs) && maps.Equal(p.Annotations, other.Annotations)
+	return p.DeclaredChart == other.DeclaredChart && equalChartTemplate(p.Template, other.Template) &&
+		p.Suspend == other.Suspend &&
+		p.PostRenderStrategy == other.PostRenderStrategy &&
+		slices.Equal(p.DependsOn, other.DependsOn) &&
+		slices.Equal(p.ValuesFrom, other.ValuesFrom) &&
+		slices.Equal(p.HealthCheckExprs, other.HealthCheckExprs) &&
+		maps.Equal(p.Annotations, other.Annotations)
 }
 
 func parseHelmRelease(doc map[string]any) (*HelmRelease, error) {
@@ -353,7 +370,18 @@ func (h *HelmRelease) references(yield func(Reference) bool) {
 			} else if h.HelmReleaseSpec.Chart != nil && h.HelmReleaseSpec.Chart.Spec.SourceRef != nil {
 				namespaceDefault = h.HelmReleaseSpec.Chart.Spec.SourceRef.Namespace == ""
 			}
-			if !yield(Reference{NamespaceDefault: namespaceDefault, NamedResource: declared, Use: "chart", Content: true, Gate: stage, Artifact: artifact, ChartSource: artifact, ArtifactStages: GateArtifacts}) {
+			if !yield(
+				Reference{
+					NamespaceDefault: namespaceDefault,
+					NamedResource:    declared,
+					Use:              "chart",
+					Content:          true,
+					Gate:             stage,
+					Artifact:         artifact,
+					ChartSource:      artifact,
+					ArtifactStages:   GateArtifacts,
+				},
+			) {
 				return
 			}
 		}
@@ -364,7 +392,20 @@ func (h *HelmRelease) references(yield func(Reference) bool) {
 			if artifact {
 				stage = GateArtifacts
 			}
-			if !yield(Reference{NamespaceDefault: h.Chart.Source.Namespace == "", NamedResource: backing.Source, Use: "source", Content: true, Files: files, ChartPath: path, Gate: stage, Artifact: artifact, ChartSource: artifact, ArtifactStages: GateArtifacts}) {
+			if !yield(
+				Reference{
+					NamespaceDefault: h.Chart.Source.Namespace == "",
+					NamedResource:    backing.Source,
+					Use:              "source",
+					Content:          true,
+					Files:            files,
+					ChartPath:        path,
+					Gate:             stage,
+					Artifact:         artifact,
+					ChartSource:      artifact,
+					ArtifactStages:   GateArtifacts,
+				},
+			) {
 				return
 			}
 		}
@@ -376,8 +417,22 @@ func (h *HelmRelease) references(yield func(Reference) bool) {
 	for i := range h.DependsOn {
 		dep := &h.DependsOn[i]
 		if !yield(Reference{
-			NamedResource: Resolve(NamedResource{Group: kindTable[kindHelmRelease].Group, Kind: KindHelmRelease, Namespace: dep.Namespace, Name: dep.Name}, "", h.Namespace),
-			Use:           "dependsOn", Position: i, ReadyExpr: referenceExpression(&dep.ReadyExpr), Gate: GateInputs, Ordering: true, NamespaceDefault: dep.Namespace == "",
+			NamedResource: Resolve(
+				NamedResource{
+					Group:     kindTable[kindHelmRelease].Group,
+					Kind:      KindHelmRelease,
+					Namespace: dep.Namespace,
+					Name:      dep.Name,
+				},
+				"",
+				h.Namespace,
+			),
+			Use:              "dependsOn",
+			Position:         i,
+			ReadyExpr:        referenceExpression(&dep.ReadyExpr),
+			Gate:             GateInputs,
+			Ordering:         true,
+			NamespaceDefault: dep.Namespace == "",
 		}) {
 			return
 		}
@@ -385,8 +440,15 @@ func (h *HelmRelease) references(yield func(Reference) bool) {
 	for i := range h.ValuesFrom {
 		ref := &h.ValuesFrom[i]
 		if !yield(Reference{
-			Kind: ref.Kind, Name: ref.Name, Namespace: h.Namespace,
-			Use: "valuesFrom", Position: i, Optional: ref.Optional, Content: true, NamespaceDefault: true, Key: ref.GetValuesKey(),
+			Kind:             ref.Kind,
+			Name:             ref.Name,
+			Namespace:        h.Namespace,
+			Use:              "valuesFrom",
+			Position:         i,
+			Optional:         ref.Optional,
+			Content:          true,
+			NamespaceDefault: true,
+			Key:              ref.GetValuesKey(),
 		}) {
 			return
 		}

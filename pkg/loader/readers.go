@@ -18,7 +18,11 @@ func (l *Loader) recordReader(file, local string, reader manifest.FileReader) {
 	add := func(file string) {
 		readers := l.Index.Readers[file]
 		i, found := slices.BinarySearchFunc(readers, reader, func(a, b manifest.FileReader) int {
-			if order := cmp.Or(a.Reader.Compare(b.Reader), a.Source.Compare(b.Source), a.Declaration.Compare(b.Declaration)); order != 0 {
+			if order := cmp.Or(
+				a.Reader.Compare(b.Reader),
+				a.Source.Compare(b.Source),
+				a.Declaration.Compare(b.Declaration),
+			); order != 0 {
 				return order
 			}
 			if a.Materialize != b.Materialize {
@@ -45,7 +49,11 @@ func (l *Loader) recordReader(file, local string, reader manifest.FileReader) {
 	}
 }
 
-func (l *Loader) finalizeRecords(ctx context.Context, repoRoot string, emittedFiles map[string][]manifest.NamedResource) error {
+func (l *Loader) finalizeRecords(
+	ctx context.Context,
+	repoRoot string,
+	emittedFiles map[string][]manifest.NamedResource,
+) error {
 	controls := map[manifest.NamedResource][]string{}
 	if l.documents.compact && l.scopes != nil {
 		for _, contribution := range l.scopes.contributions {
@@ -137,14 +145,33 @@ func (l *Loader) finalizeRecords(ctx context.Context, repoRoot string, emittedFi
 					}
 				}
 				for _, source := range sources {
-					l.recordReader(record.File, "", manifest.FileReader{Reader: consumer, Source: source, Declaration: ref.NamedResource, Exact: true, Materialize: materialize})
+					l.recordReader(
+						record.File,
+						"",
+						manifest.FileReader{
+							Reader:      consumer,
+							Source:      source,
+							Declaration: ref.NamedResource,
+							Exact:       true,
+							Materialize: materialize,
+						},
+					)
 				}
 			}
 			for _, file := range record.Inputs {
 				if file == record.File {
 					continue
 				}
-				l.recordReader(file, "", manifest.FileReader{Reader: consumer, Source: manifest.BootstrapSourceID, Declaration: ref.NamedResource, Materialize: materialize})
+				l.recordReader(
+					file,
+					"",
+					manifest.FileReader{
+						Reader:      consumer,
+						Source:      manifest.BootstrapSourceID,
+						Declaration: ref.NamedResource,
+						Materialize: materialize,
+					},
+				)
 			}
 		}
 		if ref.Use == "chart" {
@@ -176,7 +203,11 @@ func (l *Loader) finalizeRecords(ctx context.Context, repoRoot string, emittedFi
 		}
 		add := func(name string) {
 			v.coordinate = path.Join(v.prefix, name)
-			l.recordReader(v.coordinate, v.localCoordinate(), manifest.FileReader{Reader: consumer, Source: ref.NamedResource, Exact: true, Materialize: materialize})
+			l.recordReader(
+				v.coordinate,
+				v.localCoordinate(),
+				manifest.FileReader{Reader: consumer, Source: ref.NamedResource, Exact: true, Materialize: materialize},
+			)
 		}
 		for _, name := range ref.Files {
 			clean := path.Clean(name)
@@ -190,7 +221,16 @@ func (l *Loader) finalizeRecords(ctx context.Context, repoRoot string, emittedFi
 				continue
 			}
 			v.coordinate = path.Join(v.prefix, clean)
-			l.recordReader(v.coordinate, v.localCoordinate(), manifest.FileReader{Reader: consumer, Source: ref.NamedResource, Exact: !ref.Subtree, Materialize: materialize})
+			l.recordReader(
+				v.coordinate,
+				v.localCoordinate(),
+				manifest.FileReader{
+					Reader:      consumer,
+					Source:      ref.NamedResource,
+					Exact:       !ref.Subtree,
+					Materialize: materialize,
+				},
+			)
 		}
 
 		if ref.ChartPath == "" {
@@ -261,7 +301,10 @@ func (l *Loader) finalizeRecords(ctx context.Context, repoRoot string, emittedFi
 				l.templateTargets = map[manifest.NamedResource][]manifest.ProducerTarget{}
 			}
 			targets := l.templateTargets[consumer]
-			if !slices.ContainsFunc(targets, func(known manifest.ProducerTarget) bool { return known.NamedResource == target.NamedResource }) {
+			if !slices.ContainsFunc(
+				targets,
+				func(known manifest.ProducerTarget) bool { return known.NamedResource == target.NamedResource },
+			) {
 				l.templateTargets[consumer] = append(targets, target)
 			}
 		}
@@ -331,11 +374,15 @@ func (l *Loader) finalizeRecords(ctx context.Context, repoRoot string, emittedFi
 			}
 		}
 		if r.File != "" {
-			if parents := emittedFiles[r.File]; kind.Structural && r.Parent == (manifest.NamedResource{}) && len(parents) == 1 && parents[0] != id {
+			if parents := emittedFiles[r.File]; kind.Structural && r.Parent == (manifest.NamedResource{}) &&
+				len(parents) == 1 &&
+				parents[0] != id {
 				r.Parent = parents[0]
 			}
 			if len(r.Productions) == 0 && r.Authored != (manifest.NamedResource{}) {
-				r.Productions = []manifest.Production{{Authored: r.Authored, Path: r.Path, File: r.File, Source: manifest.BootstrapSourceID}}
+				r.Productions = []manifest.Production{
+					{Authored: r.Authored, Path: r.Path, File: r.File, Source: manifest.BootstrapSourceID},
+				}
 			}
 		}
 		// Owner evidence MUST survive compaction while provisional origins are removed.
@@ -344,13 +391,16 @@ func (l *Loader) finalizeRecords(ctx context.Context, repoRoot string, emittedFi
 				return false
 			}
 			return slices.ContainsFunc(r.Productions, func(owner manifest.Production) bool {
-				return owner.Owner != (manifest.NamedResource{}) && (owner.Source == p.Source && owner.Authored == p.Authored && owner.Path == p.Path && owner.File == p.File ||
-					p.Source == manifest.BootstrapSourceID && p.Path == r.Path && !l.AdmitsRoot(l.CatalogObject(id), p.Path))
+				return owner.Owner != (manifest.NamedResource{}) &&
+					(owner.Source == p.Source && owner.Authored == p.Authored && owner.Path == p.Path && owner.File == p.File ||
+						p.Source == manifest.BootstrapSourceID && p.Path == r.Path && !l.AdmitsRoot(l.CatalogObject(id), p.Path))
 			})
 		})
 		if l.documents.compact && l.AdmitsRoot(l.CatalogObject(id), r.Path) {
 			for _, p := range r.Productions {
-				if p.Owner != (manifest.NamedResource{}) && p.Materializer(id) == (manifest.NamedResource{}) && p.Declaration == (manifest.NamedResource{}) && p.Authored != (manifest.NamedResource{}) {
+				if p.Owner != (manifest.NamedResource{}) && p.Materializer(id) == (manifest.NamedResource{}) &&
+					p.Declaration == (manifest.NamedResource{}) &&
+					p.Authored != (manifest.NamedResource{}) {
 					p.Owner = manifest.NamedResource{}
 					if !slices.Contains(r.Productions, p) {
 						r.Productions = append(r.Productions, p)
@@ -369,7 +419,8 @@ func (l *Loader) finalizeRecords(ctx context.Context, repoRoot string, emittedFi
 			}
 		}
 		r.StaticOutput = r.StaticOutput && !unresolvedPaths[id]
-		if l.documents.compact && kind.Parent && r.Parent == (manifest.NamedResource{}) && !l.AdmitsRoot(l.CatalogObject(id), r.Path) {
+		if l.documents.compact && kind.Parent && r.Parent == (manifest.NamedResource{}) &&
+			!l.AdmitsRoot(l.CatalogObject(id), r.Path) {
 			var owner manifest.NamedResource
 			multiple := false
 			for _, p := range r.Productions {

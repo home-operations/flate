@@ -2,8 +2,9 @@ package kustomization
 
 import (
 	"context"
-	"github.com/home-operations/flate/internal/testutil"
 	"testing"
+
+	"github.com/home-operations/flate/internal/testutil"
 
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 
@@ -107,7 +108,11 @@ func TestKustomizationFingerprint_SourceRootInputs(t *testing.T) {
 
 func TestKustomizationFingerprint_PreparedInline(t *testing.T) {
 	t.Parallel()
-	ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"VALUE": "first"}}}
+	ks := &manifest.Kustomization{
+		Name:      "consumer",
+		Namespace: "apps",
+		PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"VALUE": "first"}},
+	}
 	first, err := kustomize.Prepare(ks, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -133,14 +138,24 @@ func TestKustomizationFingerprint_PreparedSources(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
 			ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
-			ks.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: kind, Name: "external"}}}
+			ks.PostBuild = &kustomizev1.PostBuild{
+				SubstituteFrom: []manifest.SubstituteReference{{Kind: kind, Name: "external"}},
+			}
 			var fingerprints []string
 			for _, value := range []string{"first", "second", "first"} {
 				var source manifest.BaseManifest
 				if kind == manifest.KindConfigMap {
-					source = &manifest.ConfigMap{Name: "external", Namespace: "apps", Data: map[string]any{"VALUE": value}}
+					source = &manifest.ConfigMap{
+						Name:      "external",
+						Namespace: "apps",
+						Data:      map[string]any{"VALUE": value},
+					}
 				} else {
-					source = &manifest.Secret{Name: "external", Namespace: "apps", StringData: map[string]any{"VALUE": value}}
+					source = &manifest.Secret{
+						Name:       "external",
+						Namespace:  "apps",
+						StringData: map[string]any{"VALUE": value},
+					}
 				}
 				supplied, err := store.NewSupplied([]store.SuppliedObject{{Object: source}})
 				if err != nil {
@@ -177,7 +192,9 @@ func TestKustomizationFingerprint_NoSubstitutionOptions(t *testing.T) {
 	st.AddObject(&manifest.ConfigMap{Name: "external", Namespace: "apps", Data: map[string]any{"VALUE": "repository"}})
 	ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
 	ks.PostBuild = &kustomizev1.PostBuild{}
-	ks.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "external"}}}
+	ks.PostBuild = &kustomizev1.PostBuild{
+		SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "external"}},
+	}
 	ordinary, err := kustomize.Prepare(ks, values.NewStoreProvider(st, true))
 	if err != nil {
 		t.Fatal(err)
@@ -193,11 +210,18 @@ func TestKustomizationFingerprint_NoSubstitutionOptions(t *testing.T) {
 			t.Parallel()
 			c := New(st, task.NewBounded(2), nil, false)
 			c.Configure(tc.opts, sourcecache.RetryConfig{})
-			prepared, err := kustomize.Prepare(ks, values.NewStoreProvider(&c.newExecution(ks.Named()).run.Reads, c.WipeSecrets))
+			prepared, err := kustomize.Prepare(
+				ks,
+				values.NewStoreProvider(&c.newExecution(ks.Named()).run.Reads, c.WipeSecrets),
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := replayKey(t.Context(), prepared.Content("/repo", map[string]struct{}{"VALUE": {}}, true)); got != want || got == "" {
+			if got := replayKey(
+				t.Context(),
+				prepared.Content("/repo", map[string]struct{}{"VALUE": {}}, true),
+			); got != want ||
+				got == "" {
 				t.Fatalf("no-option fingerprint=%q, ordinary=%q", got, want)
 			}
 		})
@@ -220,7 +244,12 @@ func TestKustomizationFingerprint_ArtifactKey(t *testing.T) {
 		replayKey(
 			t.Context(),
 			ks.Content(
-				struct{ Path, Key, Revision, Digest string }{second.LocalPath, second.Key, second.Revision, second.Digest},
+				struct{ Path, Key, Revision, Digest string }{
+					second.LocalPath,
+					second.Key,
+					second.Revision,
+					second.Digest,
+				},
 				map[string]struct{}{"VALUE": {}},
 				true,
 			),
@@ -244,7 +273,13 @@ func TestKustomizationFingerprint_EffectivePresenceAndActivation(t *testing.T) {
 		t.Fatal("absent and present-empty effective entries collided")
 	}
 	empty := map[string]struct{}{}
-	if replayKey(t.Context(), ks.Content("/repo", empty, true)) == replayKey(t.Context(), ks.Content("/repo", empty, false)) {
+	if replayKey(
+		t.Context(),
+		ks.Content("/repo", empty, true),
+	) == replayKey(
+		t.Context(),
+		ks.Content("/repo", empty, false),
+	) {
 		t.Fatal("active zero-name bag lost activation")
 	}
 

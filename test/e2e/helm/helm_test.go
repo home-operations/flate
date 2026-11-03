@@ -135,7 +135,9 @@ func TestE2E_ChangedOnlyHRDependsOnUnchangedDep(t *testing.T) {
 func TestE2E_ChangedOnlyRenderEmittedDependency(t *testing.T) {
 	before, after := t.TempDir(), t.TempDir()
 	repo := testutil.GitInit(t, after)
-	_, err := repo.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{"https://example.test/cluster.git"}})
+	_, err := repo.CreateRemote(
+		&config.RemoteConfig{Name: "origin", URLs: []string{"https://example.test/cluster.git"}},
+	)
 	assert.NoError(t, err)
 	testutil.WriteFile(t, after, "flux/source.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
@@ -167,12 +169,17 @@ kind: ConfigMap
 metadata: {name: dependency-output, namespace: flux-system}
 data: {value: stable}
 `)
-	testutil.WriteFile(t, after, "flux/consumer.yaml", testutil.KustomizationYAML("consumer", "flux-system", `  path: ./apps/consumer
+	testutil.WriteFile(
+		t,
+		after,
+		"flux/consumer.yaml",
+		testutil.KustomizationYAML("consumer", "flux-system", `  path: ./apps/consumer
   sourceRef: {kind: GitRepository, name: cluster}
   dependsOn: [{name: rendered-dependency}]
   postBuild:
     substitute: {VALUE: before}
-`))
+`),
+	)
 	testutil.WriteFile(t, after, "apps/consumer/kustomization.yaml", "resources: [output.yaml]\n")
 	testutil.WriteFile(t, after, "apps/consumer/output.yaml", `apiVersion: v1
 kind: ConfigMap
@@ -206,7 +213,12 @@ data: {value: '${VALUE}'}
 		}
 		snapshots[i] = t.TempDir()
 		testutil.GitInit(t, snapshots[i])
-		testutil.WriteFile(t, snapshots[i], "flux/consumer.yaml", testutil.KustomizationYAML("consumer", "flux-system", "  path: ./apps/consumer\n"))
+		testutil.WriteFile(
+			t,
+			snapshots[i],
+			"flux/consumer.yaml",
+			testutil.KustomizationYAML("consumer", "flux-system", "  path: ./apps/consumer\n"),
+		)
 		testutil.WriteFile(t, snapshots[i], "apps/consumer/kustomization.yaml", "resources: [output.yaml]\n")
 		testutil.WriteFile(t, snapshots[i], "apps/consumer/output.yaml", consumer)
 	}
@@ -236,8 +248,10 @@ func TestE2E_HelmSourceRootValuesFiles(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := sourceValuesFixture(t, tc.files, tc.ignore, false)
 			testutil.GitInit(t, dir)
-			args := []string{"build", "hr", "--path", filepath.Join(dir, "cluster"),
-				"--concurrency", "2", "--cache-dir", t.TempDir()}
+			args := []string{
+				"build", "hr", "--path", filepath.Join(dir, "cluster"),
+				"--concurrency", "2", "--cache-dir", t.TempDir(),
+			}
 			out := harness.RunCLIStdout(t, args...)
 			if !strings.Contains(out, "greeting: production") {
 				t.Fatalf("source-root values missing:\n%s", out)
@@ -271,8 +285,10 @@ func TestE2E_HelmSourceRootValuesFilesChangedOnly(t *testing.T) {
 					assert.NoError(t, os.Remove(valuesPath))
 					want = "default"
 				}
-				args := []string{"build", "all", "--path", filepath.Join(dir, "cluster"), "--base", "HEAD",
-					"--concurrency", "2", "--cache-dir", t.TempDir()}
+				args := []string{
+					"build", "all", "--path", filepath.Join(dir, "cluster"), "--base", "HEAD",
+					"--concurrency", "2", "--cache-dir", t.TempDir(),
+				}
 				if operation == "strict delete" {
 					out, code := harness.RunCLIExpectErr(t, args...)
 					assert.Equal(t, code, 1)
@@ -294,7 +310,8 @@ func TestE2E_HelmSourceRootValuesFilesChangedOnly(t *testing.T) {
 				for _, kind := range []string{"Kustomization", "HelmRelease"} {
 					found := false
 					for line := range strings.SplitSeq(status, "\n") {
-						if strings.Contains(line, kind) && strings.Contains(line, "apps/demo") && strings.Contains(line, "✓") {
+						if strings.Contains(line, kind) && strings.Contains(line, "apps/demo") &&
+							strings.Contains(line, "✓") {
 							found = true
 						}
 					}
@@ -322,7 +339,17 @@ metadata: {name: '{{ .Release.Name }}-values', namespace: '{{ .Release.Namespace
 		})
 	}
 	cache := t.TempDir()
-	args := []string{"build", "all", "--path", filepath.Join(dir, "cluster"), "--concurrency", "2", "--no-progress", "--cache-dir", cache}
+	args := []string{
+		"build",
+		"all",
+		"--path",
+		filepath.Join(dir, "cluster"),
+		"--concurrency",
+		"2",
+		"--no-progress",
+		"--cache-dir",
+		cache,
+	}
 	baseline := harness.RunCLIStdout(t, args...)
 	if !strings.Contains(baseline, "name: demo-values") {
 		t.Fatalf("baseline identity missing:\n%s", baseline)
@@ -343,7 +370,8 @@ metadata: {name: '{{ .Release.Name }}-values', namespace: '{{ .Release.Namespace
 					t.Fatalf("missing %q:\n%s", want, out)
 				}
 			}
-			if strings.Contains(out, "name: demo-values") || strings.Contains(out, "name: sibling-values") == changedOnly {
+			if strings.Contains(out, "name: demo-values") ||
+				strings.Contains(out, "name: sibling-values") == changedOnly {
 				t.Fatalf("incorrect identity or sibling selection:\n%s", out)
 			}
 			assert.Equal(t, harness.RunCLIStdout(t, selected...), out)
@@ -354,7 +382,22 @@ metadata: {name: '{{ .Release.Name }}-values', namespace: '{{ .Release.Namespace
 		{before, dir, "demo-values", "target-demo-values", "apps", "target"},
 	} {
 		t.Run("diff/"+tc.added, func(t *testing.T) {
-			out, stderr := harness.RequireCLIOK(t, "diff", "all", "-o", "json", "--path", filepath.Join(tc.current, "cluster"), "--path-orig", filepath.Join(tc.original, "cluster"), "--concurrency", "2", "--no-progress", "--cache-dir", cache)
+			out, stderr := harness.RequireCLIOK(
+				t,
+				"diff",
+				"all",
+				"-o",
+				"json",
+				"--path",
+				filepath.Join(tc.current, "cluster"),
+				"--path-orig",
+				filepath.Join(tc.original, "cluster"),
+				"--concurrency",
+				"2",
+				"--no-progress",
+				"--cache-dir",
+				cache,
+			)
 			var result struct {
 				Changes []struct {
 					Kind, Name, Namespace, Status string
@@ -393,7 +436,12 @@ spec:
   chartRef: {kind: OCIRepository, name: automatic, namespace: flux-system}
 `)
 	testutil.WriteFile(t, dir, "demo/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 1.0.0\n")
-	testutil.WriteFile(t, dir, "demo/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: automatic}\n")
+	testutil.WriteFile(
+		t,
+		dir,
+		"demo/templates/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: automatic}\n",
+	)
 	source, err := os.ReadFile(filepath.Join(dir, "cluster", "source.yaml"))
 	assert.NoError(t, err)
 	testutil.WriteFile(t, dir, "cluster/source.yaml", strings.Replace(string(source),
@@ -466,7 +514,11 @@ spec:
   targetNamespace: apps
   sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
 `, name, name))
-		selection := "  chart:\n    spec:\n      " + strings.ReplaceAll(strings.TrimSpace(chartSpec), "\n", "\n      ") + "\n"
+		selection := "  chart:\n    spec:\n      " + strings.ReplaceAll(
+			strings.TrimSpace(chartSpec),
+			"\n",
+			"\n      ",
+		) + "\n"
 		if chartRef {
 			selection = "  chartRef: {kind: HelmChart, name: " + name + ", namespace: flux-system}\n"
 		}
@@ -477,13 +529,18 @@ spec:
   interval: 10m
 %s`, name, selection)
 		if chartRef {
-			testutil.WriteFile(t, dir, "cluster/"+name+"-chart.yaml", fmt.Sprintf(`apiVersion: source.toolkit.fluxcd.io/v1
+			testutil.WriteFile(
+				t,
+				dir,
+				"cluster/"+name+"-chart.yaml",
+				fmt.Sprintf(`apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmChart
 metadata: {name: %s, namespace: flux-system}
 spec:
   interval: 10m
   %s
-`, name, strings.ReplaceAll(strings.TrimSpace(chartSpec), "\n", "\n  ")))
+`, name, strings.ReplaceAll(strings.TrimSpace(chartSpec), "\n", "\n  ")),
+			)
 		}
 		testutil.WriteFile(t, dir, "apps/"+name+"/app/release.yaml", body)
 		testutil.WriteFile(t, dir, "apps/"+name+"/app/kustomization.yaml", "resources: [release.yaml]\n")
@@ -507,7 +564,12 @@ func initGitFixtureFrom(t *testing.T, src string) (clusterPath, repoRoot string)
 	dir := t.TempDir()
 	testutil.CopyTree(t, src, dir)
 	repo := testutil.GitInit(t, dir)
-	testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+	testutil.GitCommitAll(
+		t,
+		repo,
+		"init",
+		&gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}},
+	)
 	return filepath.Join(dir, "flux"), dir
 }
 
@@ -539,8 +601,23 @@ data: {greeting: '{{ .Values.greeting }}', version: '{{ .Values.releaseVersion }
 `)
 	var previousOut, previousErr string
 	for run := range 2 {
-		stdout, stderr := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(dir, "cluster"), "--concurrency", "2", "--cache-dir", t.TempDir(), "--no-progress", "--log-level", "warn")
-		if !strings.Contains(stdout, "name: consumer-output") || !strings.Contains(stdout, "greeting: desired-spec") || !strings.Contains(stdout, "version: v1") || strings.Contains(stderr, "readyExpr") {
+		stdout, stderr := harness.RequireCLIOK(
+			t,
+			"build",
+			"all",
+			"--path",
+			filepath.Join(dir, "cluster"),
+			"--concurrency",
+			"2",
+			"--cache-dir",
+			t.TempDir(),
+			"--no-progress",
+			"--log-level",
+			"warn",
+		)
+		if !strings.Contains(stdout, "name: consumer-output") || !strings.Contains(stdout, "greeting: desired-spec") ||
+			!strings.Contains(stdout, "version: v1") ||
+			strings.Contains(stderr, "readyExpr") {
 			t.Fatalf("Helm desired-spec readiness: stdout=%s stderr=%s", stdout, stderr)
 		}
 		if run == 1 && (stdout != previousOut || stderr != previousErr) {
@@ -552,7 +629,12 @@ data: {greeting: '{{ .Values.greeting }}', version: '{{ .Values.releaseVersion }
 
 func TestE2E_InvalidHelmList(t *testing.T) {
 	dir := simpleFixture(t)
-	testutil.WriteFile(t, dir, "charts/mychart/templates/configmap.yaml", "apiVersion: v1\nkind: ConfigMapList\nitems: [{apiVersion: v1, metadata: {name: invalid}}]\n")
+	testutil.WriteFile(
+		t,
+		dir,
+		"charts/mychart/templates/configmap.yaml",
+		"apiVersion: v1\nkind: ConfigMapList\nitems: [{apiVersion: v1, metadata: {name: invalid}}]\n",
+	)
 	for _, tc := range []struct {
 		name string
 		skip bool
@@ -561,13 +643,24 @@ func TestE2E_InvalidHelmList(t *testing.T) {
 		{name: "excluded", skip: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			args := []string{"build", "hr", "--path", filepath.Join(dir, "cluster"), "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir()}
+			args := []string{
+				"build",
+				"hr",
+				"--path",
+				filepath.Join(dir, "cluster"),
+				"--concurrency",
+				"2",
+				"--no-progress",
+				"--cache-dir",
+				t.TempDir(),
+			}
 			if tc.skip {
 				args = append(args, "--skip-kinds=ConfigMapList")
 			}
 			out, stderr, code := harness.RunCLIBuffers(args...)
 			diagnostic := harness.MustExtractLine(t, stderr, "Object 'Kind' is missing")
-			if code != 1 || strings.Count(stderr, "Object 'Kind' is missing") != 1 || strings.Count(diagnostic, "apps/demo") != 1 {
+			if code != 1 || strings.Count(stderr, "Object 'Kind' is missing") != 1 ||
+				strings.Count(diagnostic, "apps/demo") != 1 {
 				t.Fatalf("invalid list exit=%d stdout=%s stderr=%s", code, out, stderr)
 			}
 			for _, text := range []string{"name: invalid", "kind: ConfigMapList"} {
@@ -589,10 +682,30 @@ items:
 `
 	testutil.WriteFile(t, before, "charts/mychart/templates/configmap.yaml", body)
 	testutil.CopyTree(t, before, after)
-	testutil.WriteFile(t, after, "charts/mychart/templates/configmap.yaml", body+"- metadata: {name: added}\n  data: {value: extra}\n")
+	testutil.WriteFile(
+		t,
+		after,
+		"charts/mychart/templates/configmap.yaml",
+		body+"- metadata: {name: added}\n  data: {value: extra}\n",
+	)
 	for _, tc := range []struct{ current, original, status string }{{after, before, "added"}, {before, after, "removed"}} {
 		t.Run(tc.status, func(t *testing.T) {
-			out, stderr := harness.RequireCLIOK(t, "diff", "all", "-o", "json", "--path", filepath.Join(tc.current, "cluster"), "--path-orig", filepath.Join(tc.original, "cluster"), "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
+			out, stderr := harness.RequireCLIOK(
+				t,
+				"diff",
+				"all",
+				"-o",
+				"json",
+				"--path",
+				filepath.Join(tc.current, "cluster"),
+				"--path-orig",
+				filepath.Join(tc.original, "cluster"),
+				"--concurrency",
+				"2",
+				"--no-progress",
+				"--cache-dir",
+				t.TempDir(),
+			)
 			var result struct {
 				Changes []struct {
 					Name, Status string
@@ -607,7 +720,9 @@ items:
 				t.Fatalf("list diff = %s\n%s", out, stderr)
 			}
 			change := result.Changes[0]
-			if change.Name != "added" || change.Status != tc.status || change.Parent.Kind != "HelmRelease" || change.Parent.Name != "demo" || change.Parent.Namespace != "apps" {
+			if change.Name != "added" || change.Status != tc.status || change.Parent.Kind != "HelmRelease" ||
+				change.Parent.Name != "demo" ||
+				change.Parent.Namespace != "apps" {
 				t.Fatalf("list member lost pairing/parent: %s", out)
 			}
 		})
@@ -624,8 +739,17 @@ data: {greeting: {{ required "missing required value" .Values.greeting | quote }
 	parentPath := filepath.Join(dir, "apps/demo/ks.yaml")
 	parent, err := os.ReadFile(parentPath)
 	assert.NoError(t, err)
-	testutil.WriteFileAt(t, parentPath, string(parent)+"  postBuild: {substituteFrom: [{kind: Secret, name: unreadable}]}\n")
-	testutil.WriteFile(t, dir, "apps/demo/app/producer.yaml", "apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: unreadable, namespace: apps}\nspec: {target: {name: unreadable}}\n")
+	testutil.WriteFileAt(
+		t,
+		parentPath,
+		string(parent)+"  postBuild: {substituteFrom: [{kind: Secret, name: unreadable}]}\n",
+	)
+	testutil.WriteFile(
+		t,
+		dir,
+		"apps/demo/app/producer.yaml",
+		"apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: unreadable, namespace: apps}\nspec: {target: {name: unreadable}}\n",
+	)
 	testutil.WriteFile(t, dir, "apps/demo/app/kustomization.yaml", "resources: [release.yaml, producer.yaml]\n")
 	releasePath := filepath.Join(dir, "apps/demo/app/release.yaml")
 	release, err := os.ReadFile(releasePath)
@@ -641,16 +765,28 @@ data: {greeting: {{ required "missing required value" .Values.greeting | quote }
 	testutil.WriteFileAt(t, releasePath, string(release)+"  values: {greeting: \"\"}\n")
 	for _, mode := range []string{"full", "changed-only"} {
 		t.Run(mode, func(t *testing.T) {
-			args := []string{"build", "all", "--path", filepath.Join(dir, "cluster"),
-				"--allow-missing-kinds=Secret,ConfigMap", "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir()}
+			args := []string{
+				"build",
+				"all",
+				"--path",
+				filepath.Join(dir, "cluster"),
+				"--allow-missing-kinds=Secret,ConfigMap",
+				"--concurrency",
+				"2",
+				"--no-progress",
+				"--cache-dir",
+				t.TempDir(),
+			}
 			if mode == "changed-only" {
 				args = append(args, "--base", "HEAD")
 			}
 			stdout, stderr, code := harness.RunCLIBuffers(args...)
-			if code != 1 || !strings.Contains(stderr, "missing required value") || !strings.Contains(stderr, "apps/demo") {
+			if code != 1 || !strings.Contains(stderr, "missing required value") ||
+				!strings.Contains(stderr, "apps/demo") {
 				t.Fatalf("required chart failure: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 			}
-			if !strings.Contains(stderr, "[UnresolvedSubstitution]") || !strings.Contains(stderr, `substituteFrom Secret "unreadable"`) {
+			if !strings.Contains(stderr, "[UnresolvedSubstitution]") ||
+				!strings.Contains(stderr, `substituteFrom Secret "unreadable"`) {
 				t.Fatalf("parent omission warning missing: %s", stderr)
 			}
 			if strings.Contains(stdout, "name: demo-values") || strings.Contains(stdout, "..PLACEHOLDER_") {
@@ -666,13 +802,28 @@ data: {greeting: {{ required "missing required value" .Values.greeting | quote }
 		{original, dir, "orig"},
 	} {
 		t.Run("diff/"+tc.side, func(t *testing.T) {
-			stdout, stderr, code := harness.RunCLIBuffers("diff", "all", "--path", filepath.Join(tc.current, "cluster"),
-				"--path-orig", filepath.Join(tc.original, "cluster"), "-o", "json", "--allow-missing-kinds=Secret,ConfigMap",
-				"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
-			if code != 1 || !strings.Contains(stderr, "missing required value") || !strings.Contains(stderr, "diff suppressed") {
+			stdout, stderr, code := harness.RunCLIBuffers(
+				"diff",
+				"all",
+				"--path",
+				filepath.Join(tc.current, "cluster"),
+				"--path-orig",
+				filepath.Join(tc.original, "cluster"),
+				"-o",
+				"json",
+				"--allow-missing-kinds=Secret,ConfigMap",
+				"--concurrency",
+				"2",
+				"--no-progress",
+				"--cache-dir",
+				t.TempDir(),
+			)
+			if code != 1 || !strings.Contains(stderr, "missing required value") ||
+				!strings.Contains(stderr, "diff suppressed") {
 				t.Fatalf("failed-side chart diagnostic: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 			}
-			if !strings.Contains(stderr, "[UnresolvedSubstitution]") || !strings.Contains(stderr, `substituteFrom Secret "unreadable"`) {
+			if !strings.Contains(stderr, "[UnresolvedSubstitution]") ||
+				!strings.Contains(stderr, `substituteFrom Secret "unreadable"`) {
 				t.Fatalf("diff lost parent omission warning: %s", stderr)
 			}
 			if strings.Contains(stdout, "demo-values") || strings.Contains(stdout, "..PLACEHOLDER_") {
@@ -690,7 +841,9 @@ data: {greeting: {{ required "missing required value" .Values.greeting | quote }
 				t.Fatalf("missing failed-release suppression: %s", stdout)
 			}
 			note := result.Suppressed[0]
-			if note.Parent.Kind != "HelmRelease" || note.Parent.Name != "demo" || note.Parent.Namespace != "apps" || note.Side != tc.side || note.Count != 1 {
+			if note.Parent.Kind != "HelmRelease" || note.Parent.Name != "demo" || note.Parent.Namespace != "apps" ||
+				note.Side != tc.side ||
+				note.Count != 1 {
 				t.Fatalf("failed-release suppression changed: %s", stdout)
 			}
 		})
@@ -704,10 +857,27 @@ func TestE2E_MalformedChartFailsProducer(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := simpleFixture(t)
-			testutil.WriteFile(t, dir, "charts/mychart/templates/invalid.yaml", tc.body+"---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: chart-sibling}\n")
-			args := []string{"build", "hr", "--path", filepath.Join(dir, "cluster"), "--no-progress", "--concurrency", "2", "--cache-dir", t.TempDir()}
+			testutil.WriteFile(
+				t,
+				dir,
+				"charts/mychart/templates/invalid.yaml",
+				tc.body+"---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: chart-sibling}\n",
+			)
+			args := []string{
+				"build",
+				"hr",
+				"--path",
+				filepath.Join(dir, "cluster"),
+				"--no-progress",
+				"--concurrency",
+				"2",
+				"--cache-dir",
+				t.TempDir(),
+			}
 			stdout, stderr, code := harness.RunCLIBuffers(args...)
-			if code != 1 || (!strings.Contains(stderr, "HelmRelease") || !strings.Contains(stderr, "apps/demo")) || strings.Count(stderr, tc.symptom) != 1 || !strings.Contains(stdout, "chart-sibling") {
+			if code != 1 || (!strings.Contains(stderr, "HelmRelease") || !strings.Contains(stderr, "apps/demo")) ||
+				strings.Count(stderr, tc.symptom) != 1 ||
+				!strings.Contains(stdout, "chart-sibling") {
 				t.Fatalf("exit=%d\n%s\n%s", code, stdout, stderr)
 			}
 			nextOut, nextErr, nextCode := harness.RunCLIBuffers(args...)

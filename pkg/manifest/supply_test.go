@@ -39,7 +39,9 @@ func TestData_WithSupplied(t *testing.T) {
 			}
 			assert.Diff(t, tc.repository.Snapshot(), before)
 			assert.Diff(t, tc.supplied.Snapshot(), supplyBefore)
-			unchanged, overridden := tc.repository.WithSupplied(&ConfigMap{Data: map[string]any{"empty": "supplied", "real": "supplied", "malformed": "hidden"}})
+			unchanged, overridden := tc.repository.WithSupplied(
+				&ConfigMap{Data: map[string]any{"empty": "supplied", "real": "supplied", "malformed": "hidden"}},
+			)
 			if unchanged != tc.repository {
 				t.Fatal("no-op fill changed object identity")
 			}

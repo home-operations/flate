@@ -97,7 +97,13 @@ func ParseGitBase(raw string) (GitBase, bool) {
 	if repoPath == "" || first == ".." {
 		return GitBase{}, false
 	}
-	return GitBase{RepoURL: host + repoPath, SubPath: strings.TrimPrefix(subpath, "/"), Ref: ref, Timeout: timeout, Submodules: submodules}, true
+	return GitBase{
+		RepoURL:    host + repoPath,
+		SubPath:    strings.TrimPrefix(subpath, "/"),
+		Ref:        ref,
+		Timeout:    timeout,
+		Submodules: submodules,
+	}, true
 }
 
 func parseQuery(query string) (string, time.Duration, bool) {

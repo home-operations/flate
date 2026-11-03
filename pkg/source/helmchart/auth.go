@@ -31,20 +31,32 @@ func (f *operation) prepareHTTP(r *manifest.HelmRepository) (*httpRepository, er
 	var authErr error
 	if r.SecretRef != nil {
 		if secrets == nil {
-			return nil, manifest.NewError(manifest.ErrMissingSecret, nil, "references secretRef but no SecretGetter is wired")
+			return nil, manifest.NewError(
+				manifest.ErrMissingSecret,
+				nil,
+				"references secretRef but no SecretGetter is wired",
+			)
 		}
 		sec := secrets(r.Namespace, r.SecretRef.Name)
 		if sec == nil {
 			authErr = source.MissingSecretErr(manifest.DiagnosticFor(r.Named(), r), r.SecretRef.Name, "not found")
 		} else {
-			prepared.username, prepared.password, authErr = source.BasicAuthFromSecret(sec, manifest.DiagnosticFor(r.Named(), r), r.SecretRef.Name)
+			prepared.username, prepared.password, authErr = source.BasicAuthFromSecret(
+				sec,
+				manifest.DiagnosticFor(r.Named(), r),
+				r.SecretRef.Name,
+			)
 		}
 		if authErr != nil && !errors.Is(authErr, manifest.ErrMissingSecret) {
 			return nil, authErr
 		}
 	}
 	owner := manifest.DiagnosticFor(r.Named(), r)
-	resolved, err := source.ResolveTransport(secrets, owner, []source.TransportInput{{Reference: r.CertSecretRef, Use: source.TransportCert}})
+	resolved, err := source.ResolveTransport(
+		secrets,
+		owner,
+		[]source.TransportInput{{Reference: r.CertSecretRef, Use: source.TransportCert}},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -53,7 +65,9 @@ func (f *operation) prepareHTTP(r *manifest.HelmRepository) (*httpRepository, er
 		credentials = [2]string{prepared.username, prepared.password}
 	}
 	prepared.material = resolved.Identity(credentials)
-	tr, err := f.network.HTTPTransport(source.HTTPTransportConfig{Material: resolved, Credentials: credentials, DisableCompression: true})
+	tr, err := f.network.HTTPTransport(
+		source.HTTPTransportConfig{Material: resolved, Credentials: credentials, DisableCompression: true},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -68,13 +82,19 @@ func (r *httpRepository) localCredentials(ctx context.Context) error {
 	}
 	config, err := repo.LoadFile(cmp.Or(os.Getenv("HELM_REPOSITORY_CONFIG"), helmpath.ConfigPath("repositories.yaml")))
 	if errors.Is(err, os.ErrNotExist) {
-		return source.MissingSecretErr(manifest.DiagnosticFor(r.Named(), r.HelmRepository), "", "no local Helm repository login")
+		return source.MissingSecretErr(
+			manifest.DiagnosticFor(r.Named(), r.HelmRepository),
+			"",
+			"no local Helm repository login",
+		)
 	}
 	if err != nil {
 		return manifest.NewError(manifest.ErrInput, fmt.Errorf("load Helm repository login: %w", err), "")
 	}
 	for _, entry := range config.Repositories {
-		if entry == nil || entry.Username == "" || entry.Password == "" || manifest.HasValuePlaceholder(entry.Username) || manifest.HasValuePlaceholder(entry.Password) {
+		if entry == nil || entry.Username == "" || entry.Password == "" ||
+			manifest.HasValuePlaceholder(entry.Username) ||
+			manifest.HasValuePlaceholder(entry.Password) {
 			continue
 		}
 		if repositoryURLEqual(r.URL, entry.URL) {
@@ -82,7 +102,11 @@ func (r *httpRepository) localCredentials(ctx context.Context) error {
 			return nil
 		}
 	}
-	return source.MissingSecretErr(manifest.DiagnosticFor(r.Named(), r.HelmRepository), "", "no local Helm repository login")
+	return source.MissingSecretErr(
+		manifest.DiagnosticFor(r.Named(), r.HelmRepository),
+		"",
+		"no local Helm repository login",
+	)
 }
 
 // repositoryURLEqual follows Helm v4.3.1 internal/urlutil.Equal, target first.

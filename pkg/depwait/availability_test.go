@@ -52,14 +52,22 @@ func TestAvailable_OptionalMaterializerAbsence(t *testing.T) {
 			}
 			id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}
 			if tc.data {
-				input.Data = &manifest.ConfigMap{Name: id.Name, Namespace: id.Namespace, Data: map[string]any{"VALUE": "present"}}
+				input.Data = &manifest.ConfigMap{
+					Name:      id.Name,
+					Namespace: id.Namespace,
+					Data:      map[string]any{"VALUE": "present"},
+				}
 				s.AddObject(input.Data.(*manifest.ConfigMap))
 			}
 			var reads store.ReadSet
 			parent := testutil.KustomizationID("apps", "reader")
 			reads.Init(s, parent, nil)
 			w := Waiter{Store: &reads, Parent: parent}
-			got := w.Available(t.Context(), DataDependency{NamedResource: id, Input: input, Optional: tc.optional, AllowMissing: tc.allowed}, tc.level)
+			got := w.Available(
+				t.Context(),
+				DataDependency{NamedResource: id, Input: input, Optional: tc.optional, AllowMissing: tc.allowed},
+				tc.level,
+			)
 			if got.Kind != tc.want || got.Omit != tc.omit {
 				t.Fatalf("availability=%+v, want kind=%v omit=%t", got, tc.want, tc.omit)
 			}
@@ -82,8 +90,10 @@ func TestAvailable_RequiredMaterializerCycle(t *testing.T) {
 		name                            string
 		transitive, optional, unrelated bool
 	}{
-		{name: "direct"}, {name: "transitive", transitive: true},
-		{name: "optional", optional: true}, {name: "unrelated", unrelated: true},
+		{name: "direct"},
+		{name: "transitive", transitive: true},
+		{name: "optional", optional: true},
+		{name: "unrelated", unrelated: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -98,17 +108,25 @@ func TestAvailable_RequiredMaterializerCycle(t *testing.T) {
 				cause = testutil.KustomizationID("apps", "other")
 			}
 			st.AddObject(&manifest.Kustomization{Name: owner.Name, Namespace: owner.Namespace})
-			st.UpdateFailure(owner, &manifest.DependencyFailedError{Parent: owner, Failed: []manifest.NamedResource{cause}})
+			st.UpdateFailure(
+				owner,
+				&manifest.DependencyFailedError{Parent: owner, Failed: []manifest.NamedResource{cause}},
+			)
 			if tc.transitive {
-				st.UpdateFailure(cause, &manifest.DependencyFailedError{Parent: cause, Failed: []manifest.NamedResource{parent}})
+				st.UpdateFailure(
+					cause,
+					&manifest.DependencyFailedError{Parent: cause, Failed: []manifest.NamedResource{parent}},
+				)
 			}
 			id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "settings", Namespace: "apps"}
 			data := &manifest.ConfigMap{Name: id.Name, Namespace: id.Namespace, Data: map[string]any{"VALUE": "raw"}}
 			var reads store.ReadSet
 			reads.Init(st, parent, nil)
 			w := Waiter{Store: &reads, Parent: parent}
-			got := w.Available(t.Context(), DataDependency{NamedResource: id, Optional: tc.optional,
-				Input: values.Input{Data: data, Materializers: []manifest.NamedResource{owner}}}, manifest.DrainForce)
+			got := w.Available(t.Context(), DataDependency{
+				NamedResource: id, Optional: tc.optional,
+				Input: values.Input{Data: data, Materializers: []manifest.NamedResource{owner}},
+			}, manifest.DrainForce)
 			want := schedule.DependencyFailed
 			if tc.optional || tc.unrelated {
 				want = schedule.Terminal

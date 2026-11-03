@@ -28,7 +28,14 @@ func TestDiscoveryIndex_CommittedClaimsExcludeCheckoutRoot(t *testing.T) {
 			t.Parallel()
 			owners, ancestors := index.OwnersOfFile(tc.file)
 			if !slices.Equal(owners, tc.owners) || !slices.Equal(ancestors, tc.ancestors) {
-				t.Fatalf("ownership for %s = (%v, %v), want (%v, %v)", tc.file, owners, ancestors, tc.owners, tc.ancestors)
+				t.Fatalf(
+					"ownership for %s = (%v, %v), want (%v, %v)",
+					tc.file,
+					owners,
+					ancestors,
+					tc.owners,
+					tc.ancestors,
+				)
 			}
 		})
 	}
@@ -40,12 +47,25 @@ func TestDiscoveryIndex_ReadersOfFileReplay(t *testing.T) {
 	ancestor := NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Name: "ancestor"}
 	other := BootstrapSourceID
 	other.Name = "other"
-	named := FileReader{Reader: NamedResource{Name: "named"}, Source: BootstrapSourceID, Declaration: NamedResource{Kind: KindConfigMap, Name: "settings"}}
-	want := []FileReader{{Reader: exact, Source: BootstrapSourceID}, {Reader: exact, Source: other}, named, {Reader: ancestor, Source: BootstrapSourceID}, {Reader: ancestor, Source: other}}
+	named := FileReader{
+		Reader:      NamedResource{Name: "named"},
+		Source:      BootstrapSourceID,
+		Declaration: NamedResource{Kind: KindConfigMap, Name: "settings"},
+	}
+	want := []FileReader{
+		{Reader: exact, Source: BootstrapSourceID},
+		{Reader: exact, Source: other},
+		named,
+		{Reader: ancestor, Source: BootstrapSourceID},
+		{Reader: ancestor, Source: other},
+	}
 	index := &DiscoveryIndex{Readers: map[string][]FileReader{
 		"missing/nested/input.yaml": want[:3],
-		"missing":                   {{Reader: ancestor, Source: BootstrapSourceID}, {Reader: exact, Source: other, Exact: true}},
-		".":                         {{Reader: ancestor, Source: other}, {Reader: exact, Source: other, Exact: true}},
+		"missing": {
+			{Reader: ancestor, Source: BootstrapSourceID},
+			{Reader: exact, Source: other, Exact: true},
+		},
+		".": {{Reader: ancestor, Source: other}, {Reader: exact, Source: other, Exact: true}},
 	}}
 	readers := index.ReadersOfFile("missing/nested/input.yaml")
 	count := 0

@@ -10,8 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/minio/minio-go/v7"
+
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 type bucketWorkload struct {
@@ -28,7 +29,12 @@ func benchmarkBucket(tb testing.TB, s bucketWorkload) *minio.Client {
 		if r.URL.Query().Get("list-type") != "" {
 			_, _ = fmt.Fprint(w, "<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated>")
 			for i := range s.n {
-				_, _ = fmt.Fprintf(w, "<Contents><Key>file%03d</Key><Size>%d</Size><ETag>\"x\"</ETag></Contents>", i, s.bodySize)
+				_, _ = fmt.Fprintf(
+					w,
+					"<Contents><Key>file%03d</Key><Size>%d</Size><ETag>\"x\"</ETag></Contents>",
+					i,
+					s.bodySize,
+				)
 			}
 			_, _ = fmt.Fprint(w, "</ListBucketResult>")
 			return
@@ -64,7 +70,10 @@ func benchmarkBucket(tb testing.TB, s bucketWorkload) *minio.Client {
 		}
 	}))
 	tb.Cleanup(srv.Close)
-	client, err := minio.New(strings.TrimPrefix(srv.URL, "http://"), &minio.Options{Region: "us-east-1", BucketLookup: minio.BucketLookupPath})
+	client, err := minio.New(
+		strings.TrimPrefix(srv.URL, "http://"),
+		&minio.Options{Region: "us-east-1", BucketLookup: minio.BucketLookupPath},
+	)
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -78,8 +87,14 @@ var scenarios = map[string]bucketWorkload{
 		}
 		return 5 * time.Millisecond
 	}, bodySize: 1, chunk: 1},
-	"PacedBodies": {n: 16, ttfb: func(int) time.Duration { return 5 * time.Millisecond }, bodySize: 8 << 20, chunk: 64 << 10, pace: time.Millisecond},
-	"EvenSmall":   {n: 64, ttfb: func(int) time.Duration { return 10 * time.Millisecond }, bodySize: 1, chunk: 1},
+	"PacedBodies": {
+		n:        16,
+		ttfb:     func(int) time.Duration { return 5 * time.Millisecond },
+		bodySize: 8 << 20,
+		chunk:    64 << 10,
+		pace:     time.Millisecond,
+	},
+	"EvenSmall": {n: 64, ttfb: func(int) time.Duration { return 10 * time.Millisecond }, bodySize: 1, chunk: 1},
 }
 
 func BenchmarkWalkBucket(b *testing.B) {

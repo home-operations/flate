@@ -52,7 +52,12 @@ type ociChartContent struct {
 
 // CommonMetadata is stamped after the cached pre-stamp render. Unsupported
 // content returns an empty key, which MUST bypass lookup and publication.
-func computeTemplateKey(loaded chartDescription, releaseValues map[string]any, opts Options, hr *manifest.HelmRelease) string {
+func computeTemplateKey(
+	loaded chartDescription,
+	releaseValues map[string]any,
+	opts Options,
+	hr *manifest.HelmRelease,
+) string {
 	if loaded.fingerprint == "" {
 		return ""
 	}
@@ -131,11 +136,23 @@ type templateBinding struct {
 }
 
 func (a templateBinding) same(b templateBinding) bool {
-	if !a.Policy.Equal(b.Policy) || a.Source != b.Source || a.Kind != b.Kind || a.URL != b.URL || a.Path != b.Path || a.Root != b.Root || a.Key != b.Key || a.Revision != b.Revision || a.Digest != b.Digest || a.Alias != b.Alias || a.Wipe != b.Wipe || !a.Dependencies.Equal(b.Dependencies) {
+	if !a.Policy.Equal(b.Policy) || a.Source != b.Source || a.Kind != b.Kind || a.URL != b.URL || a.Path != b.Path ||
+		a.Root != b.Root ||
+		a.Key != b.Key ||
+		a.Revision != b.Revision ||
+		a.Digest != b.Digest ||
+		a.Alias != b.Alias ||
+		a.Wipe != b.Wipe ||
+		!a.Dependencies.Equal(b.Dependencies) {
 		return false
 	}
 	x, y := a.Options, b.Options
-	return x.DisableChartDigestTracking == y.DisableChartDigestTracking && x.SkipCRDs == y.SkipCRDs && x.SkipTests == y.SkipTests && x.KubeVersion == y.KubeVersion && x.APIVersions == y.APIVersions && x.EnableDNS == y.EnableDNS && slices.Equal(x.SkipKinds, y.SkipKinds)
+	return x.DisableChartDigestTracking == y.DisableChartDigestTracking && x.SkipCRDs == y.SkipCRDs &&
+		x.SkipTests == y.SkipTests &&
+		x.KubeVersion == y.KubeVersion &&
+		x.APIVersions == y.APIVersions &&
+		x.EnableDNS == y.EnableDNS &&
+		slices.Equal(x.SkipKinds, y.SkipKinds)
 }
 
 type renderFrame struct {
@@ -188,12 +205,14 @@ func (a *acceptedRender) equal(b *acceptedRender) bool {
 	}
 	for i, x := range a.Records {
 		y := b.Records[i]
-		if x.ID != y.ID || !x.Record.Equal(y.Record) || (x.Roots == nil) != (y.Roots == nil) || len(x.Roots) != len(y.Roots) {
+		if x.ID != y.ID || !x.Record.Equal(y.Record) || (x.Roots == nil) != (y.Roots == nil) ||
+			len(x.Roots) != len(y.Roots) {
 			return false
 		}
 		for j, root := range x.Roots {
 			other := y.Roots[j]
-			if root.Source != other.Source || (root.Paths == nil) != (other.Paths == nil) || !slices.Equal(root.Paths, other.Paths) {
+			if root.Source != other.Source || (root.Paths == nil) != (other.Paths == nil) ||
+				!slices.Equal(root.Paths, other.Paths) {
 				return false
 			}
 		}
@@ -215,7 +234,10 @@ func encodeFrame(header renderHeader, output []byte) ([]byte, error) {
 	}
 	frame := make([]byte, 12+len(data)+len(output))
 	copy(frame, frameDomain)
-	binary.BigEndian.PutUint32(frame[8:12], uint32(len(data))) //nolint:gosec // The header is bounded by frameHeaderLimit.
+	binary.BigEndian.PutUint32(
+		frame[8:12],
+		uint32(len(data)),
+	) //nolint:gosec // The header is bounded by frameHeaderLimit.
 	copy(frame[12:], data)
 	copy(frame[12+len(data):], output)
 	return frame, nil
@@ -248,7 +270,11 @@ func decodeFrame(data []byte) (renderFrame, error) {
 		return frame, nil
 	}
 	var accepted acceptedRender
-	if err := json.Unmarshal(tail, &accepted); err != nil || accepted.Version != 1 || !accepted.Complete || accepted.Raw != frame.raw {
+	if err := json.Unmarshal(
+		tail,
+		&accepted,
+	); err != nil || accepted.Version != 1 || !accepted.Complete ||
+		accepted.Raw != frame.raw {
 		return frame, nil
 	}
 	for i, item := range accepted.Records {
@@ -265,7 +291,11 @@ func decodeFrame(data []byte) (renderFrame, error) {
 	return frame, nil
 }
 
-func prepareAccepted(owner manifest.NamedResource, frame renderFrame, records iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]) (acceptedRender, error) {
+func prepareAccepted(
+	owner manifest.NamedResource,
+	frame renderFrame,
+	records iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord],
+) (acceptedRender, error) {
 	accepted := acceptedRender{Version: 1, Complete: true, Owner: owner, Raw: frame.raw}
 	for id, record := range records {
 		item := acceptedRecord{ID: id, Record: record}
@@ -276,7 +306,14 @@ func prepareAccepted(owner manifest.NamedResource, frame renderFrame, records it
 		item.Record.Refs = slices.Compact(item.Record.Refs)
 		item.Record.Productions = slices.Clone(record.Productions)
 		slices.SortFunc(item.Record.Productions, func(a, b manifest.Production) int {
-			return cmp.Or(a.Owner.Compare(b.Owner), a.Declaration.Compare(b.Declaration), a.Authored.Compare(b.Authored), a.Source.Compare(b.Source), cmp.Compare(a.Path, b.Path), cmp.Compare(a.File, b.File))
+			return cmp.Or(
+				a.Owner.Compare(b.Owner),
+				a.Declaration.Compare(b.Declaration),
+				a.Authored.Compare(b.Authored),
+				a.Source.Compare(b.Source),
+				cmp.Compare(a.Path, b.Path),
+				cmp.Compare(a.File, b.File),
+			)
 		})
 		item.Record.Productions = slices.Compact(item.Record.Productions)
 		for source, paths := range record.ContentRoots {
@@ -296,7 +333,9 @@ func prepareAccepted(owner manifest.NamedResource, frame renderFrame, records it
 	return accepted, nil
 }
 
-func (f renderFrame) history(owner manifest.NamedResource) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
+func (f renderFrame) history(
+	owner manifest.NamedResource,
+) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
 	if f.accepted == nil || f.accepted.Owner != owner {
 		return nil, false
 	}
@@ -395,7 +434,17 @@ func (c *Client) RecordRender(ctx context.Context, acceptance RenderAcceptance) 
 			content = manifest.Fingerprint(accepted)
 		}
 	}
-	return cache.RecordInventory(ctx, c.cache, cache.AcceptedInventory[renderPublication]{Key: frame.header.Key, Lookup: frame.lookup, Acceptance: content, History: cache.RenderHistory{Owner: owner, Sources: acceptance.Sources}, Content: renderPublication{frame: frame, accepted: accepted}})
+	return cache.RecordInventory(
+		ctx,
+		c.cache,
+		cache.AcceptedInventory[renderPublication]{
+			Key:        frame.header.Key,
+			Lookup:     frame.lookup,
+			Acceptance: content,
+			History:    cache.RenderHistory{Owner: owner, Sources: acceptance.Sources},
+			Content:    renderPublication{frame: frame, accepted: accepted},
+		},
+	)
 }
 
 func (c *Client) lookupRender(ctx context.Context, loaded *chartDescription, key string) (*renderRecord, error) {
@@ -415,7 +464,12 @@ func (c *Client) lookupRender(ctx context.Context, loaded *chartDescription, key
 		record = nil
 	}
 	if record == nil {
-		reader, _, lookup, err := c.cache.Blob(ctx, cache.BlobKey{Content: key, Render: cache.RenderAccepted}, cache.Policy{MaxAge: cache.Forever}, nil)
+		reader, _, lookup, err := c.cache.Blob(
+			ctx,
+			cache.BlobKey{Content: key, Render: cache.RenderAccepted},
+			cache.Policy{MaxAge: cache.Forever},
+			nil,
+		)
 		if errors.Is(err, errdef.ErrNotFound) {
 			return nil, nil
 		}
@@ -432,7 +486,13 @@ func (c *Client) lookupRender(ctx context.Context, loaded *chartDescription, key
 			return nil, nil
 		}
 		frame.lookup = lookup
-		record = &renderRecord{key: key, identity: identity, Output: frame.output, Analysis: frame.header.Analysis, frame: frame}
+		record = &renderRecord{
+			key:      key,
+			identity: identity,
+			Output:   frame.output,
+			Analysis: frame.header.Analysis,
+			frame:    frame,
+		}
 	}
 	if record.Analysis.RequiresLoader {
 		if err := c.decodeChart(ctx, loaded); err != nil {
@@ -448,7 +508,12 @@ func (c *Client) lookupRender(ctx context.Context, loaded *chartDescription, key
 }
 
 // PreviousRender returns complete accepted history without running an action or acquiring a chart.
-func (c *Client) PreviousRender(ctx context.Context, hr *manifest.HelmRelease, hrValues map[string]any, input RenderOptions) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
+func (c *Client) PreviousRender(
+	ctx context.Context,
+	hr *manifest.HelmRelease,
+	hrValues map[string]any,
+	input RenderOptions,
+) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
 	if ctx.Err() != nil || !c.cache.CanPersistRenders() {
 		return nil, false
 	}

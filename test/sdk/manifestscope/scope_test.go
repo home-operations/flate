@@ -43,12 +43,28 @@ func TestScopeStartup(t *testing.T) {
 	}
 	r := &resolver{memo: make(map[yaml.TypeMeta]bool)}
 	manifest.RegisterScopeResolver(r)
-	obj, _, _, err := manifest.ParseDoc(map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "cm"}}, manifest.ParseDocOptions{DefaultNamespace: "apps"})
+	obj, _, _, err := manifest.ParseDoc(
+		map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "cm"}},
+		manifest.ParseDocOptions{DefaultNamespace: "apps"},
+	)
 	if err != nil || obj.Named().Namespace != "apps" {
 		t.Fatalf("standalone namespace default = %v, %v", obj, err)
 	}
-	obj, _, _, err = manifest.ParseDoc(map[string]any{"apiVersion": manifest.FluxOperatorDomain + "/v1", "kind": manifest.KindResourceSet, "metadata": map[string]any{"name": "set", "namespace": "authored"},
-		"spec": map[string]any{"dependsOn": []any{map[string]any{"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRole", "name": "role", "namespace": "explicit"}}}}, manifest.ParseDocOptions{})
+	obj, _, _, err = manifest.ParseDoc(map[string]any{
+		"apiVersion": manifest.FluxOperatorDomain + "/v1",
+		"kind":       manifest.KindResourceSet,
+		"metadata":   map[string]any{"name": "set", "namespace": "authored"},
+		"spec": map[string]any{
+			"dependsOn": []any{
+				map[string]any{
+					"apiVersion": "rbac.authorization.k8s.io/v1",
+					"kind":       "ClusterRole",
+					"name":       "role",
+					"namespace":  "explicit",
+				},
+			},
+		},
+	}, manifest.ParseDocOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +74,9 @@ func TestScopeStartup(t *testing.T) {
 			t.Fatalf("cluster dependency namespace = %q", ref.Namespace)
 		}
 	}
-	direct := &manifest.ResourceSet{DependsOn: []fluxopv1.Dependency{{APIVersion: "direct.example/v1", Kind: "Widget", Name: "widget"}}}
+	direct := &manifest.ResourceSet{
+		DependsOn: []fluxopv1.Dependency{{APIVersion: "direct.example/v1", Kind: "Widget", Name: "widget"}},
+	}
 	if !panics(func() {
 		for range manifest.References(direct, manifest.ReferenceRelations) {
 			t.Error("unprepared dependency yielded a reference")

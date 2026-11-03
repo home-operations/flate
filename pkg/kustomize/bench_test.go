@@ -44,7 +44,10 @@ data:
 	for b.Loop() {
 		out, _, err := Render(ctx, cache, req, sourcecache.RetryConfig{})
 		if err == nil {
-			if recordErr := cache.RecordRender(ctx, acceptanceForEmission(req.Spec.Named(), accepted)); recordErr != nil {
+			if recordErr := cache.RecordRender(
+				ctx,
+				acceptanceForEmission(req.Spec.Named(), accepted),
+			); recordErr != nil {
 				b.Fatal(recordErr)
 			}
 		}
@@ -89,7 +92,12 @@ func BenchmarkRender_CacheHit(b *testing.B) {
 	if err == nil {
 		if recordErr := cache.RecordRender(
 			ctx,
-			RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt2, Records: emptyRenderInventory, Content: acceptedInput},
+			RenderAcceptance{
+				Owner:   demoSpec.Named(),
+				Receipt: receipt2,
+				Records: emptyRenderInventory,
+				Content: acceptedInput,
+			},
 		); recordErr !=
 			nil {
 			b.Fatal(recordErr)
@@ -102,7 +110,10 @@ func BenchmarkRender_CacheHit(b *testing.B) {
 	for b.Loop() {
 		out, _, err := Render(ctx, cache, req, sourcecache.RetryConfig{})
 		if err == nil {
-			if recordErr := cache.RecordRender(ctx, acceptanceForEmission(req.Spec.Named(), accepted)); recordErr != nil {
+			if recordErr := cache.RecordRender(
+				ctx,
+				acceptanceForEmission(req.Spec.Named(), accepted),
+			); recordErr != nil {
 				b.Fatal(recordErr)
 			}
 		}
@@ -172,7 +183,10 @@ data:
 	for b.Loop() {
 		out, _, err := Render(ctx, cache, req, sourcecache.RetryConfig{})
 		if err == nil {
-			if recordErr := cache.RecordRender(ctx, acceptanceForEmission(req.Spec.Named(), accepted)); recordErr != nil {
+			if recordErr := cache.RecordRender(
+				ctx,
+				acceptanceForEmission(req.Spec.Named(), accepted),
+			); recordErr != nil {
 				b.Fatal(recordErr)
 			}
 		}
@@ -224,7 +238,10 @@ func BenchmarkRender_MultiKSPerRoot(b *testing.B) {
 			i := int(ctr.Add(1)) % apps
 			out, _, err := Render(ctx, cache, requests[i], sourcecache.RetryConfig{})
 			if err == nil {
-				if recordErr := cache.RecordRender(ctx, acceptanceForEmission(rawSpec.Named(), accepted[i])); recordErr != nil {
+				if recordErr := cache.RecordRender(
+					ctx,
+					acceptanceForEmission(rawSpec.Named(), accepted[i]),
+				); recordErr != nil {
 					b.Fatal(recordErr)
 				}
 			}

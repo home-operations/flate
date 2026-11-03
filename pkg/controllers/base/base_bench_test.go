@@ -2,8 +2,9 @@ package base_test
 
 import (
 	"context"
-	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"testing"
+
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
@@ -14,7 +15,11 @@ import (
 
 func BenchmarkDispatchNodeReady(b *testing.B) {
 	st := store.New()
-	obj := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "app", Namespace: "apps"}
+	obj := &manifest.HelmRelease{
+		ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"},
+		Name:      "app",
+		Namespace: "apps",
+	}
 	st.AddObject(obj)
 	st.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 	c := base.New(st, nil)
@@ -56,15 +61,37 @@ func BenchmarkEmit_Children(b *testing.B) {
 			c := base.New(st, nil)
 			parent := manifest.NamedResource{Group: kind.Group, Kind: kind.Kind, Namespace: "apps", Name: "parent"}
 			docs := []map[string]any{
-				{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "config", "namespace": "apps"}, "data": map[string]any{"key": "value"}},
-				{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization", "metadata": map[string]any{"name": "child", "namespace": "apps"}, "spec": map[string]any{"path": "./child", "sourceRef": map[string]any{"kind": "GitRepository", "name": "repo"}}},
+				{
+					"apiVersion": "v1",
+					"kind":       "ConfigMap",
+					"metadata":   map[string]any{"name": "config", "namespace": "apps"},
+					"data":       map[string]any{"key": "value"},
+				},
+				{
+					"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+					"kind":       "Kustomization",
+					"metadata":   map[string]any{"name": "child", "namespace": "apps"},
+					"spec": map[string]any{
+						"path":      "./child",
+						"sourceRef": map[string]any{"kind": "GitRepository", "name": "repo"},
+					},
+				},
 			}
 			outcomes := testutil.DocumentOccurrences(docs)
 			b.ReportAllocs()
 			for b.Loop() {
-				owner := &manifest.RawObject{APIVersion: parent.KindInfo().APIVersion(), Kind: parent.Kind, Namespace: parent.Namespace, Name: parent.Name}
+				owner := &manifest.RawObject{
+					APIVersion: parent.KindInfo().APIVersion(),
+					Kind:       parent.Kind,
+					Namespace:  parent.Namespace,
+					Name:       parent.Name,
+				}
 				c.Store.AddObject(owner)
-				children, visible, failures := c.ParseChildren(owner, outcomes, manifest.ParseDocOptions{DefaultNamespace: parent.Namespace})
+				children, visible, failures := c.ParseChildren(
+					owner,
+					outcomes,
+					manifest.ParseDocOptions{DefaultNamespace: parent.Namespace},
+				)
 				_, _, next := st.GetEmission(parent)
 				next.Children, next.Manifests, next.Failures, next.Complete = children, visible, failures, true
 				controllertest.Emit(b.Context(), c, parent, &next)

@@ -2,11 +2,12 @@ package base
 
 import (
 	"context"
-	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"slices"
 	"sync"
 	"testing"
 	"testing/fstest"
+
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
@@ -30,16 +31,41 @@ func TestKeepEmitted_LatePromotionConverges(t *testing.T) {
 				tasks := task.NewBounded(2)
 				c := New(s, tasks)
 				parent := &manifest.Kustomization{Name: "dependency", Namespace: "apps"}
-				primary := &manifest.Kustomization{Name: "changed", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "settings"}}}}
+				primary := &manifest.Kustomization{
+					Name:      "changed",
+					Namespace: "apps",
+					PostBuild: &kustomizev1.PostBuild{
+						SubstituteFrom: []manifest.SubstituteReference{
+							{Kind: manifest.KindConfigMap, Name: "settings"},
+						},
+					},
+				}
 				settings := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}
 				source := &manifest.GitRepository{Name: "late-source", Namespace: "apps"}
-				child := &manifest.Kustomization{Name: "late-consumer", Namespace: "apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: source.Name}}
+				child := &manifest.Kustomization{
+					Name:      "late-consumer",
+					Namespace: "apps",
+					SourceRef: kustomizev1.CrossNamespaceSourceReference{
+						Kind: manifest.KindGitRepository,
+						Name: source.Name,
+					},
+				}
 				s.AddObjects([]manifest.BaseManifest{parent, primary})
 				index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 					primary.Named(): {File: "changed.yaml"},
-					settings:        {Productions: []manifest.Production{{Owner: parent.Named(), Source: manifest.BootstrapSourceID}}},
+					settings: {
+						Productions: []manifest.Production{{Owner: parent.Named(), Source: manifest.BootstrapSourceID}},
+					},
 				}}
-				filterLoader := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"changed.yaml"}), Index: index, Inventory: s, Root: ""})
+				filterLoader := admissiontest.New(
+					t,
+					admissiontest.Config{
+						Changes:   change.NewSet([]string{"changed.yaml"}),
+						Index:     index,
+						Inventory: s,
+						Root:      "",
+					},
+				)
 				admissiontest.Commit(t, filterLoader, nil)
 				filter := filterLoader.Options.Filter
 				c.Configure(Options{Filter: filter, Index: index, Loader: filterLoader})
@@ -54,14 +80,19 @@ func TestKeepEmitted_LatePromotionConverges(t *testing.T) {
 						execution := new(Execution)
 						execution.Init(c, id)
 						defer execution.Close()
-						execution.Dispatch(t.Context(), manifest.DrainNone, execution, func(execution *Execution, _ context.Context, obj *manifest.Kustomization, _ manifest.DrainLevel) error {
-							rendered = "late consumer reconciled\n"
-							_, _, next := execution.Reads.GetEmission(obj.Named())
-							defer next.Finish()
-							next.Complete = true
-							next.Manifests = testutil.DocumentOccurrences([]map[string]any{{"value": rendered}})
-							return execution.Emit(t.Context(), obj.Named(), &next, nil)
-						})
+						execution.Dispatch(
+							t.Context(),
+							manifest.DrainNone,
+							execution,
+							func(execution *Execution, _ context.Context, obj *manifest.Kustomization, _ manifest.DrainLevel) error {
+								rendered = "late consumer reconciled\n"
+								_, _, next := execution.Reads.GetEmission(obj.Named())
+								defer next.Finish()
+								next.Complete = true
+								next.Manifests = testutil.DocumentOccurrences([]map[string]any{{"value": rendered}})
+								return execution.Emit(t.Context(), obj.Named(), &next, nil)
+							},
+						)
 						return execution.Valid()
 					}
 					if !run() {
@@ -78,14 +109,31 @@ func TestKeepEmitted_LatePromotionConverges(t *testing.T) {
 					if !before {
 						<-promoted
 					}
-					s.RecordEmitted(parent.Named(), captureEmission(s, parent.Named(), &store.Emission{Children: []store.Child{{Obj: child}}, Complete: true}), nil)
+					s.RecordEmitted(
+						parent.Named(),
+						captureEmission(
+							s,
+							parent.Named(),
+							&store.Emission{Children: []store.Child{{Obj: child}}, Complete: true},
+						),
+						nil,
+					)
 				})
 				tasks.Go(t.Context(), "promotion", func(context.Context) {
 					if !before {
 						<-admitted
 					}
 					assert.Equal(t, s.GetObject(child.Named()) == nil, true)
-					c.emit(t.Context(), primary.Named(), captureEmission(s, primary.Named(), &store.Emission{Children: []store.Child{{Obj: source}}, Complete: true}), nil)
+					c.emit(
+						t.Context(),
+						primary.Named(),
+						captureEmission(
+							s,
+							primary.Named(),
+							&store.Emission{Children: []store.Child{{Obj: source}}, Complete: true},
+						),
+						nil,
+					)
 					close(promoted)
 				})
 				tasks.BlockTillDone()
@@ -98,7 +146,11 @@ func TestKeepEmitted_LatePromotionConverges(t *testing.T) {
 				if !ok {
 					t.Fatal("missing selected output")
 				}
-				assert.Diff(t, testutil.DocumentMaps(output.Manifests), []map[string]any{{"value": "late consumer reconciled\n"}})
+				assert.Diff(
+					t,
+					testutil.DocumentMaps(output.Manifests),
+					[]map[string]any{{"value": "late consumer reconciled\n"}},
+				)
 			}
 		})
 	}
@@ -113,9 +165,24 @@ func TestKeepEmitted_ConcurrentAdmissionRefiresOnce(t *testing.T) {
 	source := &manifest.OCIRepository{Name: "chart", Namespace: "apps"}
 	s.AddObject(source)
 	s.SetIncluded(source.Named(), false)
-	child := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: source.Name}, Name: "consumer", Namespace: "apps", Chart: manifest.HelmChart{Source: source.Named()}}
-	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent: {File: "parent.yaml"}}}
-	filterLoader := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"parent.yaml"}), Index: index, Inventory: s, Root: "/repo"})
+	child := &manifest.HelmRelease{
+		ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: source.Name},
+		Name:      "consumer",
+		Namespace: "apps",
+		Chart:     manifest.HelmChart{Source: source.Named()},
+	}
+	index := &manifest.DiscoveryIndex{
+		Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent: {File: "parent.yaml"}},
+	}
+	filterLoader := admissiontest.New(
+		t,
+		admissiontest.Config{
+			Changes:   change.NewSet([]string{"parent.yaml"}),
+			Index:     index,
+			Inventory: s,
+			Root:      "/repo",
+		},
+	)
 	admissiontest.Commit(t, filterLoader, nil)
 	filter := filterLoader.Options.Filter
 	c.Configure(Options{Filter: filter, Index: index, Loader: filterLoader})
@@ -155,9 +222,34 @@ func TestFingerprintDedup_IncomingSelectionEvidence(t *testing.T) {
 			parent := &manifest.Kustomization{Name: "dependency", Namespace: "apps"}
 			s.AddObject(parent)
 			index := &manifest.DiscoveryIndex{}
-			child := store.Child{Obj: &manifest.ConfigMap{Name: "settings", Namespace: "apps", Data: map[string]any{"VALUE": "incoming"}}, Productions: []manifest.Production{{Owner: parent.Named(), Source: manifest.BootstrapSourceID, File: "incoming.yaml"}}}
-			attempt := captureEmission(s, parent.Named(), &store.Emission{Fingerprint: manifest.Fingerprint("same"), Children: []store.Child{child}, Complete: true})
-			filterLoader := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"incoming.yaml"}), Index: index, Inventory: s, Root: "/repo"})
+			child := store.Child{
+				Obj: &manifest.ConfigMap{
+					Name:      "settings",
+					Namespace: "apps",
+					Data:      map[string]any{"VALUE": "incoming"},
+				},
+				Productions: []manifest.Production{
+					{Owner: parent.Named(), Source: manifest.BootstrapSourceID, File: "incoming.yaml"},
+				},
+			}
+			attempt := captureEmission(
+				s,
+				parent.Named(),
+				&store.Emission{
+					Fingerprint: manifest.Fingerprint("same"),
+					Children:    []store.Child{child},
+					Complete:    true,
+				},
+			)
+			filterLoader := admissiontest.New(
+				t,
+				admissiontest.Config{
+					Changes:   change.NewSet([]string{"incoming.yaml"}),
+					Index:     index,
+					Inventory: s,
+					Root:      "/repo",
+				},
+			)
 			admissiontest.Commit(t, filterLoader, nil)
 			filter := filterLoader.Options.Filter
 			if mode == "cached" {
@@ -214,7 +306,12 @@ func TestRequire_PromotesPresentRuntimeInput(t *testing.T) {
 	input := &manifest.HelmChartSource{Name: "generated", Namespace: "apps"}
 	st.AddObjects([]manifest.BaseManifest{consumer, input})
 	l := admissiontest.New(t, admissiontest.Config{Inventory: st})
-	_, retry := l.Options.Filter.AddEmitted([]manifest.NamedResource{consumer.Named()}, []manifest.NamedResource{consumer.Named()}, []manifest.NamedResource{consumer.Named()}, 0)
+	_, retry := l.Options.Filter.AddEmitted(
+		[]manifest.NamedResource{consumer.Named()},
+		[]manifest.NamedResource{consumer.Named()},
+		[]manifest.NamedResource{consumer.Named()},
+		0,
+	)
 	assert.Equal(t, retry, false)
 	st.SetIncluded(input.Named(), false)
 	c := New(st, task.NewBounded(2))
@@ -222,7 +319,11 @@ func TestRequire_PromotesPresentRuntimeInput(t *testing.T) {
 	var execution Execution
 	execution.Init(c, consumer.Named())
 	defer execution.Close()
-	err := execution.Require(t.Context(), []manifest.DependencyRef{{NamedResource: input.Named(), Artifact: true, ChartSource: true}}, manifest.DrainNone)
+	err := execution.Require(
+		t.Context(),
+		[]manifest.DependencyRef{{NamedResource: input.Named(), Artifact: true, ChartSource: true}},
+		manifest.DrainNone,
+	)
 	if err == nil {
 		t.Fatal("the input without acquired content did not block")
 	}
@@ -236,9 +337,17 @@ func TestKeepEmitted_RequiredDeclarationSurvivesAdmissionRetry(t *testing.T) {
 	root := t.TempDir()
 	st := store.New()
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"owner.yaml":             {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: owner, namespace: apps}\nspec: {path: ./app}\n")},
+		"owner.yaml": {
+			Data: []byte(
+				"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: owner, namespace: apps}\nspec: {path: ./app}\n",
+			),
+		},
 		"app/kustomization.yaml": {Data: []byte("resources: [cm.yaml]\n")},
-		"app/cm.yaml":            {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input, namespace: apps}\ndata: {value: test}\n")},
+		"app/cm.yaml": {
+			Data: []byte(
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input, namespace: apps}\ndata: {value: test}\n",
+			),
+		},
 	}})
 	l := loader.New(st)
 	l.SourceRoot = root
@@ -269,8 +378,16 @@ func TestKeepEmitted_DirtyInputDoesNotConsumeReaders(t *testing.T) {
 	root := t.TempDir()
 	st := store.New()
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"input.yaml":    {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input, namespace: apps}\ndata: {VALUE: stable}\n")},
-		"consumer.yaml": {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: apps}\nspec:\n  path: ./app\n  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: input}]\n")},
+		"input.yaml": {
+			Data: []byte(
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input, namespace: apps}\ndata: {VALUE: stable}\n",
+			),
+		},
+		"consumer.yaml": {
+			Data: []byte(
+				"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: apps}\nspec:\n  path: ./app\n  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: input}]\n",
+			),
+		},
 	}})
 	l := loader.New(st)
 	l.SourceRoot = root
@@ -281,9 +398,20 @@ func TestKeepEmitted_DirtyInputDoesNotConsumeReaders(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	input := &manifest.ConfigMap{Name: "input", Namespace: "apps", Data: map[string]any{"VALUE": "stable"}}
-	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "input"}}}}
+	consumer := &manifest.Kustomization{
+		Name:      "consumer",
+		Namespace: "apps",
+		PostBuild: &kustomizev1.PostBuild{
+			SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "input"}},
+		},
+	}
 	st.AddObjects([]manifest.BaseManifest{input, consumer})
-	_, retry := l.Options.Filter.AddEmitted([]manifest.NamedResource{input.Named()}, []manifest.NamedResource{input.Named()}, []manifest.NamedResource{input.Named()}, 0)
+	_, retry := l.Options.Filter.AddEmitted(
+		[]manifest.NamedResource{input.Named()},
+		[]manifest.NamedResource{input.Named()},
+		[]manifest.NamedResource{input.Named()},
+		0,
+	)
 	assert.Equal(t, retry, false)
 	c := New(st, nil)
 	c.Configure(Options{Loader: l, Filter: l.Options.Filter, Index: l.Index})
@@ -324,10 +452,15 @@ func TestDispatch_AdmissionDoesNotConsumeProducerInventory(t *testing.T) {
 	var execution Execution
 	execution.Init(c, child.Named())
 	defer execution.Close()
-	execution.Dispatch(t.Context(), manifest.DrainNone, struct{}{}, func(struct{}, context.Context, *manifest.ExternalArtifact, manifest.DrainLevel) error {
-		t.Error("excluded child reconciled")
-		return nil
-	})
+	execution.Dispatch(
+		t.Context(),
+		manifest.DrainNone,
+		struct{}{},
+		func(struct{}, context.Context, *manifest.ExternalArtifact, manifest.DrainLevel) error {
+			t.Error("excluded child reconciled")
+			return nil
+		},
+	)
 	assert.Equal(t, execution.Reads.Valid(), true)
 	_, _, next := publication.GetEmission(producer.Named())
 	defer next.Finish()

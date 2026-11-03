@@ -32,12 +32,21 @@ type operation struct {
 }
 
 // Fetch acquires content using one execution's captured credentials and declarations.
-func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket, reads *store.ReadSet, policy cache.Policy) (*store.SourceArtifact, error) {
+func (f *Fetcher) Fetch(
+	ctx context.Context,
+	b *manifest.Bucket,
+	reads *store.ReadSet,
+	policy cache.Policy,
+) (*store.SourceArtifact, error) {
 	operation := operation{Fetcher: f, reads: reads, secrets: source.SecretLookup(reads)}
 	return operation.fetchSource(ctx, b, policy)
 }
 
-func (f *operation) fetchSource(ctx context.Context, b *manifest.Bucket, policy cache.Policy) (*store.SourceArtifact, error) {
+func (f *operation) fetchSource(
+	ctx context.Context,
+	b *manifest.Bucket,
+	policy cache.Policy,
+) (*store.SourceArtifact, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -54,11 +63,18 @@ func (f *operation) fetchSource(ctx context.Context, b *manifest.Bucket, policy 
 	return f.fetch(ctx, request, policy)
 }
 
-func (f *operation) machineFetch(ctx context.Context, request bucketAcquisition, policy cache.Policy) (*store.SourceArtifact, error) {
+func (f *operation) machineFetch(
+	ctx context.Context,
+	request bucketAcquisition,
+	policy cache.Policy,
+) (*store.SourceArtifact, error) {
 	timeout := request.bucket.OperationTimeout()
 	policy.Timeout = &timeout
 	return source.AcquireMachine(ctx, policy, func(ctx context.Context) error {
-		if err := request.machineCredentials(ctx, []credentials.Provider{&credentials.EnvAWS{}, &credentials.FileAWSCredentials{}, &credentials.IAM{}}); err != nil {
+		if err := request.machineCredentials(
+			ctx,
+			[]credentials.Provider{&credentials.EnvAWS{}, &credentials.FileAWSCredentials{}, &credentials.IAM{}},
+		); err != nil {
 			return err
 		}
 		value, _ := request.options.Creds.GetWithContext(nil)
@@ -70,23 +86,40 @@ func (f *operation) machineFetch(ctx context.Context, request bucketAcquisition,
 	})
 }
 
-func (f *operation) fetch(ctx context.Context, request bucketAcquisition, policy cache.Policy) (*store.SourceArtifact, error) {
+func (f *operation) fetch(
+	ctx context.Context,
+	request bucketAcquisition,
+	policy cache.Policy,
+) (*store.SourceArtifact, error) {
 	b := request.bucket
 	ignore := ""
 	if b.Ignore != nil {
 		ignore = *b.Ignore
 	}
-	key := cache.ArchiveKey{Content: struct{ Source, Transport any }{b.Content(request.endpoint, request.options.Secure), request.material}, Ignore: ignore, Policy: "", Required: []string{"revision", "object-count"}}
+	key := cache.ArchiveKey{
+		Content: struct{ Source, Transport any }{
+			b.Content(request.endpoint, request.options.Secure),
+			request.material,
+		},
+		Ignore:   ignore,
+		Policy:   "",
+		Required: []string{"revision", "object-count"},
+	}
 	timeout := b.OperationTimeout()
 	policy.Timeout = &timeout
-	input, desc, id, err := f.Cache.Acquire(ctx, key, policy, func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-		client, err := minio.New(request.endpoint, &request.options)
-		if err != nil {
-			return cache.ProducerResult{}, fmt.Errorf("minio client: %w", err)
-		}
-		desc, err := walkBucket(ctx, client, b, w)
-		return cache.ProducerResult{Descriptor: desc}, err
-	})
+	input, desc, id, err := f.Cache.Acquire(
+		ctx,
+		key,
+		policy,
+		func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+			client, err := minio.New(request.endpoint, &request.options)
+			if err != nil {
+				return cache.ProducerResult{}, fmt.Errorf("minio client: %w", err)
+			}
+			desc, err := walkBucket(ctx, client, b, w)
+			return cache.ProducerResult{Descriptor: desc}, err
+		},
+	)
 	if err != nil {
 		return nil, err
 	}

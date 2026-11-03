@@ -4,16 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/go-git/go-git/v5/plumbing/protocol/packp"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/client"
-	"io/fs"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"os"
-	"testing"
-	"testing/synctest"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	gitlib "github.com/go-git/go-git/v5"
@@ -32,7 +32,11 @@ func TestFetcher_ContentIsolation(t *testing.T) {
 	c := cachetest.New(t, "", sourcecache.New)
 	f := &Fetcher{Cache: c}
 	base := &manifest.GitRepository{URL: "file://" + root, Reference: &sourcev1.GitRepositoryRef{Commit: commit}}
-	first, err := f.fetch(t.Context(), gitAcquisition{spec: base, options: gitlib.CloneOptions{URL: base.URL, NoCheckout: true}}, sourcecache.Policy{Retry: sourcecache.RetryConfig{}})
+	first, err := f.fetch(
+		t.Context(),
+		gitAcquisition{spec: base, options: gitlib.CloneOptions{URL: base.URL, NoCheckout: true}},
+		sourcecache.Policy{Retry: sourcecache.RetryConfig{}},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +72,11 @@ func TestFetcher_ContentIsolation(t *testing.T) {
 			r := *base
 			fetcher := &Fetcher{Cache: c}
 			tc.change(&r, fetcher)
-			art, err := fetcher.fetch(t.Context(), gitAcquisition{spec: &r, options: gitlib.CloneOptions{URL: r.URL, NoCheckout: true}}, sourcecache.Policy{Retry: sourcecache.RetryConfig{}})
+			art, err := fetcher.fetch(
+				t.Context(),
+				gitAcquisition{spec: &r, options: gitlib.CloneOptions{URL: r.URL, NoCheckout: true}},
+				sourcecache.Policy{Retry: sourcecache.RetryConfig{}},
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -86,7 +94,11 @@ func TestFetcher_ContentIsolation(t *testing.T) {
 				if _, err := fs.Stat(art.FS, "docs.tmp"); !os.IsNotExist(err) {
 					t.Fatalf("ignored checkout retained docs.tmp: %v", err)
 				}
-				plain, err := f.fetch(t.Context(), gitAcquisition{spec: base, options: gitlib.CloneOptions{URL: base.URL, NoCheckout: true}}, sourcecache.Policy{Retry: sourcecache.RetryConfig{}})
+				plain, err := f.fetch(
+					t.Context(),
+					gitAcquisition{spec: base, options: gitlib.CloneOptions{URL: base.URL, NoCheckout: true}},
+					sourcecache.Policy{Retry: sourcecache.RetryConfig{}},
+				)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -108,7 +120,10 @@ type timeoutSession struct {
 	observe func(context.Context)
 }
 
-func (tr timeoutTransport) NewUploadPackSession(*transport.Endpoint, transport.AuthMethod) (transport.UploadPackSession, error) {
+func (tr timeoutTransport) NewUploadPackSession(
+	*transport.Endpoint,
+	transport.AuthMethod,
+) (transport.UploadPackSession, error) {
 	return timeoutSession{observe: tr.observe}, nil
 }
 
@@ -175,7 +190,12 @@ func TestFetcher_AttemptTimeout(t *testing.T) {
 				})
 				root := t.TempDir()
 				f := &Fetcher{Cache: cachetest.New(t, root, sourcecache.New)}
-				r := &manifest.GitRepository{URL: "commands://" + src, RecurseSubmodules: true, Reference: &sourcev1.GitRepositoryRef{Name: "refs/heads/other"}, Timeout: &metav1.Duration{Duration: 5 * time.Second}}
+				r := &manifest.GitRepository{
+					URL:               "commands://" + src,
+					RecurseSubmodules: true,
+					Reference:         &sourcev1.GitRepositoryRef{Name: "refs/heads/other"},
+					Timeout:           &metav1.Duration{Duration: 5 * time.Second},
+				}
 				start := time.Now()
 				_, err := f.Fetch(t.Context(), r, (testInputs{}).readSet(r), sourcecache.Policy{MaxAge: time.Hour})
 				if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) != 5*time.Second || calls != 2 {
@@ -189,7 +209,12 @@ func TestFetcher_AttemptTimeout(t *testing.T) {
 				}
 				longer := *r
 				longer.Timeout = &metav1.Duration{Duration: 10 * time.Second}
-				artifact, err := f.Fetch(t.Context(), &longer, (testInputs{}).readSet(&longer), sourcecache.Policy{MaxAge: time.Hour})
+				artifact, err := f.Fetch(
+					t.Context(),
+					&longer,
+					(testInputs{}).readSet(&longer),
+					sourcecache.Policy{MaxAge: time.Hour},
+				)
 				if err != nil {
 					t.Fatalf("longer policy reused failure: %v", err)
 				}
@@ -204,7 +229,12 @@ func TestFetcher_AttemptTimeout(t *testing.T) {
 				shorter := longer
 				shorter.Timeout = &metav1.Duration{Duration: time.Nanosecond}
 				before := calls
-				warm, err := f.Fetch(t.Context(), &shorter, (testInputs{}).readSet(&shorter), sourcecache.Policy{MaxAge: time.Hour})
+				warm, err := f.Fetch(
+					t.Context(),
+					&shorter,
+					(testInputs{}).readSet(&shorter),
+					sourcecache.Policy{MaxAge: time.Hour},
+				)
 				if err != nil || calls != before || warm.Key != artifact.Key {
 					t.Fatalf("timeout changed content identity: calls=%d->%d error=%v", before, calls, err)
 				}

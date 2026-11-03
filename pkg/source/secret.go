@@ -67,8 +67,12 @@ func (e *MissingSecretError) RetryMachine(ctx context.Context, reads *store.Read
 		return nil, e
 	}
 	artifact, err := e.RetryAmbient(ctx)
-	if errors.Is(err, manifest.ErrMissingSecret) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-		if missing, ok := errors.AsType[*MissingSecretError](err); ok && missing.AnonymousDenied && e.Secret == (manifest.NamedResource{}) {
+	if errors.Is(err, manifest.ErrMissingSecret) && !errors.Is(err, context.Canceled) &&
+		!errors.Is(err, context.DeadlineExceeded) {
+		if missing, ok := errors.AsType[*MissingSecretError](
+			err,
+		); ok && missing.AnonymousDenied &&
+			e.Secret == (manifest.NamedResource{}) {
 			return artifact, err
 		}
 		return artifact, e
@@ -77,7 +81,12 @@ func (e *MissingSecretError) RetryMachine(ctx context.Context, reads *store.Read
 }
 
 // AcquireMachine selects credentials before acquisition and classifies machine failures.
-func AcquireMachine(ctx context.Context, policy cache.Policy, prepare func(context.Context) error, acquire func(context.Context, cache.Policy) (*store.SourceArtifact, error)) (*store.SourceArtifact, error) {
+func AcquireMachine(
+	ctx context.Context,
+	policy cache.Policy,
+	prepare func(context.Context) error,
+	acquire func(context.Context, cache.Policy) (*store.SourceArtifact, error),
+) (*store.SourceArtifact, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, manifest.NewError(manifest.ErrFlux, err, "")
 	}
@@ -113,14 +122,23 @@ func AcquireMachine(ctx context.Context, policy cache.Policy, prepare func(conte
 func MissingSecretErr(owner manifest.DiagnosticIdentity, secretRef, reason string) error {
 	missing := &MissingSecretError{Owner: owner.ID, Subject: owner, Detail: reason}
 	if secretRef != "" {
-		missing.Secret = manifest.NamedResource{Kind: manifest.KindSecret, Namespace: owner.ID.Namespace, Name: secretRef}
+		missing.Secret = manifest.NamedResource{
+			Kind:      manifest.KindSecret,
+			Namespace: owner.ID.Namespace,
+			Name:      secretRef,
+		}
 	}
 	return missing
 }
 
 // An unwired getter is configuration failure; missing material retains the
 // source and Secret identities for the existing whole-source skip policy.
-func resolveSecretRef(secrets SecretGetter, owner manifest.DiagnosticIdentity, field string, ref *manifest.LocalObjectReference) (*manifest.Secret, error) {
+func resolveSecretRef(
+	secrets SecretGetter,
+	owner manifest.DiagnosticIdentity,
+	field string,
+	ref *manifest.LocalObjectReference,
+) (*manifest.Secret, error) {
 	if secrets == nil {
 		return nil, fmt.Errorf("references %s but no source.SecretGetter is wired", field)
 	}
@@ -133,7 +151,11 @@ func resolveSecretRef(secrets SecretGetter, owner manifest.DiagnosticIdentity, f
 
 // BasicAuthFromSecret rejects malformed credentials and reports absent or wiped
 // credentials through MissingSecretError.
-func BasicAuthFromSecret(sec *manifest.Secret, owner manifest.DiagnosticIdentity, secretRef string) (username, password string, err error) {
+func BasicAuthFromSecret(
+	sec *manifest.Secret,
+	owner manifest.DiagnosticIdentity,
+	secretRef string,
+) (username, password string, err error) {
 	username, _, err = sec.Value("username")
 	if err != nil {
 		return "", "", fmt.Errorf("secret %s/%s: %w", owner.ID.Namespace, secretRef, err)
@@ -142,7 +164,8 @@ func BasicAuthFromSecret(sec *manifest.Secret, owner manifest.DiagnosticIdentity
 	if err != nil {
 		return "", "", fmt.Errorf("secret %s/%s: %w", owner.ID.Namespace, secretRef, err)
 	}
-	if username == "" || password == "" || manifest.HasValuePlaceholder(username) || manifest.HasValuePlaceholder(password) {
+	if username == "" || password == "" || manifest.HasValuePlaceholder(username) ||
+		manifest.HasValuePlaceholder(password) {
 		return "", "", MissingSecretErr(owner, secretRef, "missing username/password")
 	}
 	return username, password, nil

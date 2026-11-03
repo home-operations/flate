@@ -29,7 +29,10 @@ func TestReconcile_OCICascadeDiagnostic(t *testing.T) {
 			st.AddObject(ks)
 			st.UpdateStatus(ks.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: ""})
 			if failed {
-				st.UpdateStatus(ks.SourceID(), store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "fetch failed"})
+				st.UpdateStatus(
+					ks.SourceID(),
+					store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "fetch failed"},
+				)
 			}
 			c.Tasks.Go(t.Context(), "oci cascade", func(ctx context.Context) {
 				if blocked := c.ReconcileNode(ctx, ks.Named(), manifest.DrainCascade).Blocked; len(blocked) != 0 {
@@ -39,7 +42,8 @@ func TestReconcile_OCICascadeDiagnostic(t *testing.T) {
 			c.Tasks.BlockTillDone()
 			info, _ := st.GetStatus(ks.Named())
 			want := map[bool]string{false: "dependency not found", true: "fetch failed"}[failed]
-			if info.Status != store.StatusFailed || !strings.Contains(info.Message, ks.SourceID().String()) || !strings.Contains(info.Message, want) {
+			if info.Status != store.StatusFailed || !strings.Contains(info.Message, ks.SourceID().String()) ||
+				!strings.Contains(info.Message, want) {
 				t.Fatalf("OCI cascade status = %+v", info)
 			}
 			if st.GetArtifact(ks.Named(), store.ArtifactContent) != nil || c.Tasks.Failures() != 0 {
@@ -114,9 +118,14 @@ func TestResolveSourceRoot_ExplicitSourceRefUnchanged(t *testing.T) {
 
 	c := New(s, nil, nil, false)
 	ks := &manifest.Kustomization{
-		Name: "foo", Namespace: "flux-system",
+		Name:      "foo",
+		Namespace: "flux-system",
 		Path:      "./app",
-		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "external", Namespace: "flux-system"},
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{
+			Kind:      manifest.KindGitRepository,
+			Name:      "external",
+			Namespace: "flux-system",
+		},
 	}
 	got, _, err := kustomize.SourceInput(&c.newExecution(ks.Named()).run.Reads, ks)
 	if err != nil {
@@ -147,7 +156,12 @@ func TestKustomization_ContentOnlySource(t *testing.T) {
 	t.Parallel()
 	c, st, _ := newControllerWithFixture(t)
 	freezeSourceForTest(t, st)
-	ks := &manifest.Kustomization{Name: "consumer", Namespace: "flux-system", Path: "apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "flux-system"}}
+	ks := &manifest.Kustomization{
+		Name:      "consumer",
+		Namespace: "flux-system",
+		Path:      "apps",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "flux-system"},
+	}
 	st.AddObject(ks)
 	var closeFirst func()
 	c.Tasks.Go(t.Context(), "first", func(ctx context.Context) {

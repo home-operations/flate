@@ -20,7 +20,11 @@ func TestBuildChangeFilter_FluxExcludedWarning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	o, err := newTestOrchestrator(t, Tree{RepoRoot: after, Path: after, BaseInput: testDirectoryInput(t, before), Input: input}, Config{Concurrency: 2})
+	o, err := newTestOrchestrator(
+		t,
+		Tree{RepoRoot: after, Path: after, BaseInput: testDirectoryInput(t, before), Input: input},
+		Config{Concurrency: 2},
+	)
 	assert.NoError(t, err)
 	assert.NoError(t, o.bootstrap(t.Context()))
 	assert.Equal(t, o.filter.Enabled(), true)
@@ -102,8 +106,10 @@ data:
 	// roots directly. change.Detect runs root-to-root, so an edit in
 	// kubernetes/apps/foo — outside the scanned flux/ subdir — still
 	// enters the keep set, without any .git-ancestor "widen" heuristic.
-	o, err := newTestOrchestrator(t, Tree{Path: currCluster,
-		RepoRoot: currRoot, BaseInput: testDirectoryInput(t, origRoot)}, Config{WipeSecrets: true},
+	o, err := newTestOrchestrator(t, Tree{
+		Path:     currCluster,
+		RepoRoot: currRoot, BaseInput: testDirectoryInput(t, origRoot),
+	}, Config{WipeSecrets: true},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -121,6 +127,8 @@ data:
 	}
 	clusterApps := testutil.KustomizationID("flux-system", "cluster-apps")
 	if !f.ShouldReconcile(clusterApps) {
-		t.Errorf("cluster-apps owns the changed file (apps/foo/cm.yaml) but was filtered out of the keep set; diff did not widen to repo root")
+		t.Errorf(
+			"cluster-apps owns the changed file (apps/foo/cm.yaml) but was filtered out of the keep set; diff did not widen to repo root",
+		)
 	}
 }

@@ -158,7 +158,16 @@ data: {env: `+env+`}
 
 	envOf := func(t *testing.T, l *Loader) string {
 		t.Helper()
-		if promoted, err := Promote(t.Context(), l.Store, appID, PromoteOptions{Record: productionForTest(l.Index.Records[appID]), Admit: func(manifest.BaseManifest) (bool, error) { return true, nil }}); err != nil || !promoted {
+		if promoted, err := Promote(
+			t.Context(),
+			l.Store,
+			appID,
+			PromoteOptions{
+				Record: productionForTest(l.Index.Records[appID]),
+				Admit:  func(manifest.BaseManifest) (bool, error) { return true, nil },
+			},
+		); err != nil ||
+			!promoted {
 			t.Fatal("app-config was not indexed for promotion")
 		}
 		obj := l.Store.GetObject(appID)
@@ -234,7 +243,16 @@ data: {env: `+env+`}
 		if _, err := loadForTest(t.Context(), t, l, dir); err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if promoted, err := Promote(t.Context(), s, appID, PromoteOptions{Record: productionForTest(l.Index.Records[appID]), Admit: func(manifest.BaseManifest) (bool, error) { return true, nil }}); err != nil || !promoted {
+		if promoted, err := Promote(
+			t.Context(),
+			s,
+			appID,
+			PromoteOptions{
+				Record: productionForTest(l.Index.Records[appID]),
+				Admit:  func(manifest.BaseManifest) (bool, error) { return true, nil },
+			},
+		); err != nil ||
+			!promoted {
 			t.Fatal("app-config was not indexed for promotion")
 		}
 		cm, ok := s.GetObject(appID).(*manifest.ConfigMap)
@@ -288,7 +306,12 @@ func TestLoader_KrmignoreNormalization(t *testing.T) {
 			root := t.TempDir()
 			testutil.WriteFile(t, root, ".krmignore", tc.rules)
 			for _, name := range []string{"secret", "keep"} {
-				testutil.WriteFile(t, root, name+".yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+name+"}\n")
+				testutil.WriteFile(
+					t,
+					root,
+					name+".yaml",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+name+"}\n",
+				)
 			}
 			st := store.New()
 			l := New(st)
@@ -306,7 +329,8 @@ func TestLoader_KrmignoreNormalization(t *testing.T) {
 					t.Fatalf("%s indexed = %t, want %t", name, indexed, want)
 				}
 			}
-			if st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != nil || st.GetObject(manifest.BootstrapSourceID) != nil {
+			if st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != nil ||
+				st.GetObject(manifest.BootstrapSourceID) != nil {
 				t.Fatal("standalone load published bootstrap identity")
 			}
 		})

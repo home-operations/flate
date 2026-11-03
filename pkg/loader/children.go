@@ -12,7 +12,12 @@ type emissionProducer interface {
 // ParseChildren selects output and retains authoritative sanitized child documents.
 // Producer namespace policy overrides opts.DefaultNamespace; raw parents use that default.
 // The returned objects and maps MUST remain immutable after publication.
-func ParseChildren(parent manifest.BaseManifest, docs []manifest.DocOccurrence, opts manifest.ParseDocOptions, skipKinds []string) ([]store.Child, []manifest.DocOccurrence, []manifest.DocOccurrence) {
+func ParseChildren(
+	parent manifest.BaseManifest,
+	docs []manifest.DocOccurrence,
+	opts manifest.ParseDocOptions,
+	skipKinds []string,
+) ([]store.Child, []manifest.DocOccurrence, []manifest.DocOccurrence) {
 	var policy manifest.EmissionPolicy
 	if producer, ok := parent.(emissionProducer); ok {
 		policy = producer.EmissionPolicy()

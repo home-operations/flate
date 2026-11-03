@@ -74,8 +74,15 @@ spec:
 			"apiVersion": FluxOperatorDomain + "/v1", "kind": KindResourceSet,
 			"metadata": map[string]any{"name": "factory", "namespace": "apps"},
 			"spec": map[string]any{
-				"inputs":            []any{map[string]any{"path": "first", "settings": "accepted"}, map[string]any{"path": "second", "settings": "rejected"}},
-				"resourcesTemplate": strings.ReplaceAll(strings.ReplaceAll(doc, "./apps/child", "'<< inputs.path >>'"), "name: settings", "name: '<< inputs.settings >>'"),
+				"inputs": []any{
+					map[string]any{"path": "first", "settings": "accepted"},
+					map[string]any{"path": "second", "settings": "rejected"},
+				},
+				"resourcesTemplate": strings.ReplaceAll(
+					strings.ReplaceAll(doc, "./apps/child", "'<< inputs.path >>'"),
+					"name: settings",
+					"name: '<< inputs.settings >>'",
+				),
 			},
 		}, ParseDocOptions{})
 		assert.NoError(t, err)
@@ -146,7 +153,11 @@ func TestProducerProjections_ConcurrentContent(t *testing.T) {
 				other, err := projections.ProjectTemplate(t.Context(), []byte(content), "other")
 				assert.NoError(t, err)
 				assert.Equal(t, other.Targets[0].Namespace, "other")
-				changed, err := projections.ProjectTemplate(t.Context(), []byte(strings.ReplaceAll(content, "shared", "changed")), "apps")
+				changed, err := projections.ProjectTemplate(
+					t.Context(),
+					[]byte(strings.ReplaceAll(content, "shared", "changed")),
+					"apps",
+				)
 				assert.NoError(t, err)
 				assert.Equal(t, changed.Targets[0].Name, "changed")
 			}

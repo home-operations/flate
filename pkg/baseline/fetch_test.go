@@ -84,7 +84,10 @@ func TestAutoResolve_ExplicitBaseFetchedFromOrigin(t *testing.T) {
 				t.Errorf("Revision = %q, want %q", res.BaseInput.Revision, mainCommit.String())
 			}
 			if !strings.Contains(res.Source.Metadata["baseline-selection"], "fetched from origin") {
-				t.Errorf("Source = %q, want it to say the rev was fetched from origin", res.Source.Metadata["baseline-selection"])
+				t.Errorf(
+					"Source = %q, want it to say the rev was fetched from origin",
+					res.Source.Metadata["baseline-selection"],
+				)
 			}
 			// The checkout is read-only: the fetch lands nowhere near it.
 			if _, err := openHelper(t, dir).CommitObject(mainCommit); err == nil {
@@ -195,7 +198,10 @@ func historylessCheckout(t *testing.T, url, path, content string) string {
 
 func addOrigin(t *testing.T, dir, url string) {
 	t.Helper()
-	if _, err := openHelper(t, dir).CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{url}}); err != nil {
+	if _, err := openHelper(
+		t,
+		dir,
+	).CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{url}}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -288,8 +294,15 @@ func TestBaseRemote_FetchPolicy(t *testing.T) {
 			} else if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("fetch error = %v, want %v", err, tc.wantErr)
 			}
-			if len(fixture.requests) != tc.attempts || fixture.closed != tc.attempts || remote.full != tc.wantFull || caps.String() != originalCaps {
-				t.Fatalf("fetch lifecycle: requests=%d closed=%d full=%t capabilities=%q", len(fixture.requests), fixture.closed, remote.full, caps.String())
+			if len(fixture.requests) != tc.attempts || fixture.closed != tc.attempts || remote.full != tc.wantFull ||
+				caps.String() != originalCaps {
+				t.Fatalf(
+					"fetch lifecycle: requests=%d closed=%d full=%t capabilities=%q",
+					len(fixture.requests),
+					fixture.closed,
+					remote.full,
+					caps.String(),
+				)
 			}
 			for i, request := range fixture.requests {
 				bodyRequest := tc.bodies && tc.reachable && i == 0
@@ -301,8 +314,19 @@ func TestBaseRemote_FetchPolicy(t *testing.T) {
 					depth = packp.DepthCommits(1)
 				}
 				filtered := !tc.bodies && !tc.full && tc.filter && i == 0
-				if !slices.Equal(request.Wants, want) || request.Depth != depth || request.Capabilities.Supports(capability.Shallow) != (depth != 0) || request.Capabilities.Supports(capability.Filter) != filtered || request.Capabilities.Supports(capability.Sideband) || request.Capabilities.Supports(capability.Sideband64k) {
-					t.Fatalf("request %d: wants=%v depth=%v filter=%q caps=%q", i, request.Wants, request.Depth, request.Filter, request.Capabilities.String())
+				if !slices.Equal(request.Wants, want) || request.Depth != depth ||
+					request.Capabilities.Supports(capability.Shallow) != (depth != 0) ||
+					request.Capabilities.Supports(capability.Filter) != filtered ||
+					request.Capabilities.Supports(capability.Sideband) ||
+					request.Capabilities.Supports(capability.Sideband64k) {
+					t.Fatalf(
+						"request %d: wants=%v depth=%v filter=%q caps=%q",
+						i,
+						request.Wants,
+						request.Depth,
+						request.Filter,
+						request.Capabilities.String(),
+					)
 				}
 				wantFilter := packp.Filter("")
 				if filtered {
@@ -311,7 +335,8 @@ func TestBaseRemote_FetchPolicy(t *testing.T) {
 				if request.Filter != wantFilter {
 					t.Fatalf("request %d filter=%q, want %q", i, request.Filter, wantFilter)
 				}
-				if i > 0 && (request == fixture.requests[0] || request.Capabilities == fixture.requests[0].Capabilities) {
+				if i > 0 &&
+					(request == fixture.requests[0] || request.Capabilities == fixture.requests[0].Capabilities) {
 					t.Fatal("fallback reused a partial request")
 				}
 			}
@@ -350,7 +375,10 @@ type fetchPolicyTransport struct {
 	closed, responsesClosed int
 }
 
-func (f *fetchPolicyTransport) NewUploadPackSession(*transport.Endpoint, transport.AuthMethod) (transport.UploadPackSession, error) {
+func (f *fetchPolicyTransport) NewUploadPackSession(
+	*transport.Endpoint,
+	transport.AuthMethod,
+) (transport.UploadPackSession, error) {
 	return &fetchPolicySession{fixture: f}, nil
 }
 
@@ -359,7 +387,10 @@ type fetchPolicySession struct {
 	fixture *fetchPolicyTransport
 }
 
-func (s *fetchPolicySession) UploadPack(_ context.Context, request *packp.UploadPackRequest) (*packp.UploadPackResponse, error) {
+func (s *fetchPolicySession) UploadPack(
+	_ context.Context,
+	request *packp.UploadPackRequest,
+) (*packp.UploadPackResponse, error) {
 	f := s.fixture
 	attempt := len(f.requests)
 	f.requests = append(f.requests, request)
@@ -369,7 +400,10 @@ func (s *fetchPolicySession) UploadPack(_ context.Context, request *packp.Upload
 	if attempt < len(f.failures) && f.failures[attempt] != nil {
 		return nil, f.failures[attempt]
 	}
-	return packp.NewUploadPackResponseWithPackfile(request, &fetchPolicyPack{Reader: bytes.NewReader(f.pack), fixture: f}), nil
+	return packp.NewUploadPackResponseWithPackfile(
+		request,
+		&fetchPolicyPack{Reader: bytes.NewReader(f.pack), fixture: f},
+	), nil
 }
 
 func (s *fetchPolicySession) Close() error {
@@ -438,7 +472,8 @@ func TestAdopt_FetchedStorage(t *testing.T) {
 				}
 				return
 			}
-			if err != nil || repo == nil || r.remote.full != (tc.full || tc.upperMarker) || r.Hash != pin || r.remote.pin != pin {
+			if err != nil || repo == nil || r.remote.full != (tc.full || tc.upperMarker) || r.Hash != pin ||
+				r.remote.pin != pin {
 				t.Fatalf("adopt: repo=%v err=%v full=%t", repo, err, r.remote.full)
 			}
 			for _, obj := range []struct {
@@ -468,7 +503,8 @@ func TestAdopt_FetchedStorage(t *testing.T) {
 				}
 			}
 			written := fetchBlob(t, repo.Storer, "new fetched object")
-			if upper.HasEncodedObject(written) != nil || !errors.Is(lower.HasEncodedObject(written), plumbing.ErrObjectNotFound) {
+			if upper.HasEncodedObject(written) != nil ||
+				!errors.Is(lower.HasEncodedObject(written), plumbing.ErrObjectNotFound) {
 				t.Fatal("adopted writes did not retain fetched-upper ownership")
 			}
 		})
@@ -520,7 +556,11 @@ func TestResolveExplicit_FetchCancellation(t *testing.T) {
 			dir := historylessCheckout(t, scheme+"://origin/repo", "a.yaml", "current")
 			location, err := gitrepo.Locate(t.Context(), dir, "")
 			assert.NoError(t, err)
-			_, err = (selection{repo: location.Repository, owner: cachetest.New(t, "", sourcecache.New)}).resolveExplicit(t.Context(), location, "main")
+			_, err = (selection{repo: location.Repository, owner: cachetest.New(t, "", sourcecache.New)}).resolveExplicit(
+				t.Context(),
+				location,
+				"main",
+			)
 			assert.Equal(t, errors.Is(err, wrapped), true)
 			assert.Equal(t, errors.Is(err, tc.cause), true)
 			assert.Equal(t, errors.Is(err, manifest.ErrInput), tc.input)
@@ -534,6 +574,9 @@ type failureTransport struct {
 	err error
 }
 
-func (f *failureTransport) NewUploadPackSession(*transport.Endpoint, transport.AuthMethod) (transport.UploadPackSession, error) {
+func (f *failureTransport) NewUploadPackSession(
+	*transport.Endpoint,
+	transport.AuthMethod,
+) (transport.UploadPackSession, error) {
 	return nil, f.err
 }

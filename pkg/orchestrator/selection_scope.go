@@ -42,7 +42,10 @@ func (s *selectionSide) prepareFailures(roots []manifest.NamedResource, other *s
 	s.result.Causes = s.failureCauses(s.result.Failed, s.result.Blocked)
 }
 
-func (s *selectionSide) requiredClosure(roots []manifest.NamedResource, other *selectionSide) map[manifest.NamedResource]struct{} {
+func (s *selectionSide) requiredClosure(
+	roots []manifest.NamedResource,
+	other *selectionSide,
+) map[manifest.NamedResource]struct{} {
 	seen := make(map[manifest.NamedResource]struct{})
 	var work []manifest.NamedResource
 	add := func(id manifest.NamedResource) {
@@ -96,7 +99,8 @@ func (s *selectionSide) requiredClosure(roots []manifest.NamedResource, other *s
 			}
 		}
 	}
-	if id := s.run.entryBinding.Producer; id != (manifest.NamedResource{}) && s.run.filter.Enabled() && s.run.filter.ShouldReconcile(id) {
+	if id := s.run.entryBinding.Producer; id != (manifest.NamedResource{}) && s.run.filter.Enabled() &&
+		s.run.filter.ShouldReconcile(id) {
 		add(id)
 	}
 	if other != nil {
@@ -135,7 +139,10 @@ func (s *selectionSide) requiredClosure(roots []manifest.NamedResource, other *s
 	return seen
 }
 
-func rootsOf(id manifest.NamedResource, blocked map[manifest.NamedResource][]manifest.NamedResource) []manifest.NamedResource {
+func rootsOf(
+	id manifest.NamedResource,
+	blocked map[manifest.NamedResource][]manifest.NamedResource,
+) []manifest.NamedResource {
 	var out []manifest.NamedResource
 	seen := map[manifest.NamedResource]bool{id: true}
 	var walk func(manifest.NamedResource)
@@ -156,7 +163,9 @@ func rootsOf(id manifest.NamedResource, blocked map[manifest.NamedResource][]man
 	return out
 }
 
-func rootVictims(blocked map[manifest.NamedResource][]manifest.NamedResource) map[manifest.NamedResource][]manifest.NamedResource {
+func rootVictims(
+	blocked map[manifest.NamedResource][]manifest.NamedResource,
+) map[manifest.NamedResource][]manifest.NamedResource {
 	byRoot := make(map[manifest.NamedResource][]manifest.NamedResource)
 	for id := range blocked {
 		for _, root := range rootsOf(id, blocked) {
@@ -170,7 +179,10 @@ func rootVictims(blocked map[manifest.NamedResource][]manifest.NamedResource) ma
 	return byRoot
 }
 
-func (s *selectionSide) failureCauses(failed map[manifest.NamedResource]store.StatusInfo, blocked map[manifest.NamedResource][]manifest.NamedResource) map[manifest.NamedResource][]manifest.NamedResource {
+func (s *selectionSide) failureCauses(
+	failed map[manifest.NamedResource]store.StatusInfo,
+	blocked map[manifest.NamedResource][]manifest.NamedResource,
+) map[manifest.NamedResource][]manifest.NamedResource {
 	byRoot := rootVictims(blocked)
 	covered := make(map[manifest.NamedResource]bool)
 	for root, ids := range byRoot {
@@ -232,7 +244,11 @@ func (s *selectionSide) failureCauses(failed map[manifest.NamedResource]store.St
 	return byRoot
 }
 
-func (s *selectionSide) unrelatedFailures(raw *Result, unrelated map[manifest.NamedResource]store.StatusInfo, required map[manifest.NamedResource]struct{}) []manifest.Warning {
+func (s *selectionSide) unrelatedFailures(
+	raw *Result,
+	unrelated map[manifest.NamedResource]store.StatusInfo,
+	required map[manifest.NamedResource]struct{},
+) []manifest.Warning {
 	byRoot := rootVictims(raw.Blocked)
 	covered := make(map[manifest.NamedResource]bool)
 	var warnings []manifest.Warning
@@ -255,7 +271,17 @@ func (s *selectionSide) unrelatedFailures(raw *Result, unrelated map[manifest.Na
 		if _, ok := unrelated[id]; ok {
 			covered[id] = true
 			detail, related := children(byRoot[id])
-			warnings = append(warnings, manifest.Warning{Resource: id, Subject: s.result.Diagnostic(id), Related: related, Category: manifest.WarnUnrelatedFailure, Message: info.Message, Detail: detail})
+			warnings = append(
+				warnings,
+				manifest.Warning{
+					Resource: id,
+					Subject:  s.result.Diagnostic(id),
+					Related:  related,
+					Category: manifest.WarnUnrelatedFailure,
+					Message:  info.Message,
+					Detail:   detail,
+				},
+			)
 		}
 	}
 	for root, victims := range byRoot {
@@ -266,7 +292,17 @@ func (s *selectionSide) unrelatedFailures(raw *Result, unrelated map[manifest.Na
 			continue
 		}
 		if detail, related := children(victims); len(detail) > 0 {
-			warnings = append(warnings, manifest.Warning{Resource: root, Subject: s.result.Diagnostic(root), Related: related, Category: manifest.WarnUnrelatedFailure, Message: "not found; required by", Detail: detail})
+			warnings = append(
+				warnings,
+				manifest.Warning{
+					Resource: root,
+					Subject:  s.result.Diagnostic(root),
+					Related:  related,
+					Category: manifest.WarnUnrelatedFailure,
+					Message:  "not found; required by",
+					Detail:   detail,
+				},
+			)
 		}
 	}
 	for id, info := range unrelated {
@@ -280,7 +316,17 @@ func (s *selectionSide) unrelatedFailures(raw *Result, unrelated map[manifest.Na
 		for _, dep := range deps {
 			detail = append(detail, "blocked by "+s.result.Diagnostic(dep).String())
 		}
-		warnings = append(warnings, manifest.Warning{Resource: id, Subject: s.result.Diagnostic(id), Related: deps, Category: manifest.WarnUnrelatedFailure, Message: info.Message, Detail: detail})
+		warnings = append(
+			warnings,
+			manifest.Warning{
+				Resource: id,
+				Subject:  s.result.Diagnostic(id),
+				Related:  deps,
+				Category: manifest.WarnUnrelatedFailure,
+				Message:  info.Message,
+				Detail:   detail,
+			},
+		)
 	}
 	slices.SortFunc(warnings, func(a, b manifest.Warning) int { return a.Resource.Compare(b.Resource) })
 	return warnings
@@ -482,7 +528,11 @@ func selectionError(sides []selectionSide, runErr error) (error, error) {
 func joinSelectedErrors(orig, current error) error {
 	switch {
 	case orig != nil && current != nil:
-		return errors.Join(errors.New("both snapshots had reconcile failures"), fmt.Errorf("orig snapshot: %w", orig), fmt.Errorf("current snapshot: %w", current))
+		return errors.Join(
+			errors.New("both snapshots had reconcile failures"),
+			fmt.Errorf("orig snapshot: %w", orig),
+			fmt.Errorf("current snapshot: %w", current),
+		)
 	case orig != nil:
 		return fmt.Errorf("orig snapshot: %w", orig)
 	case current != nil:

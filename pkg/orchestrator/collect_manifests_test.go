@@ -29,17 +29,39 @@ func TestCollectManifests_SupportDeclarations(t *testing.T) {
 	owner := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 	st.AddObject(owner)
 	documents := []map[string]any{
-		{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization", "metadata": map[string]any{"name": "selected", "namespace": "apps"}},
-		{"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": "GitRepository", "metadata": map[string]any{"name": "support", "namespace": "apps"}, "spec": map[string]any{"url": "https://fixture.invalid/repo"}},
+		{
+			"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+			"kind":       "Kustomization",
+			"metadata":   map[string]any{"name": "selected", "namespace": "apps"},
+		},
+		{
+			"apiVersion": "source.toolkit.fluxcd.io/v1",
+			"kind":       "GitRepository",
+			"metadata":   map[string]any{"name": "support", "namespace": "apps"},
+			"spec":       map[string]any{"url": "https://fixture.invalid/repo"},
+		},
 		{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "sibling", "namespace": "apps"}},
 	}
 	children, documents := parseChildrenForTest(owner.Named(), documents, manifest.ParseDocOptions{})
-	st.RecordEmitted(owner.Named(), &store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(documents), Complete: true}, nil)
+	st.RecordEmitted(
+		owner.Named(),
+		&store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(documents), Complete: true},
+		nil,
+	)
 	filter := change.NewFilter()
-	_, retry := filter.AddEmitted([]manifest.NamedResource{owner.Named(), children[1].Obj.Named()}, []manifest.NamedResource{children[0].Obj.Named()}, nil, 0)
+	_, retry := filter.AddEmitted(
+		[]manifest.NamedResource{owner.Named(), children[1].Obj.Named()},
+		[]manifest.NamedResource{children[0].Obj.Named()},
+		nil,
+		0,
+	)
 	assert.Equal(t, retry, false)
 	o := &Orchestrator{store: st, filter: filter}
-	assert.Diff(t, outputByParent(o.collectManifests()), map[manifest.NamedResource][]map[string]any{owner.Named(): documents[:2]})
+	assert.Diff(
+		t,
+		outputByParent(o.collectManifests()),
+		map[manifest.NamedResource][]map[string]any{owner.Named(): documents[:2]},
+	)
 }
 
 func TestCollectManifests_FailedSuccessorRetainsCompleted(t *testing.T) {
@@ -114,7 +136,12 @@ func TestCollectManifests_FailedSuccessorRetainsCompleted(t *testing.T) {
 			st.AddObject(owner)
 			index.Records[owner.Named()] = manifest.DiscoveryRecord{Parent: parent}
 			_, _, completed := st.GetEmission(owner.Named())
-			doc := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "shared", "namespace": "apps"}, "data": map[string]any{"value": owner.Name}}
+			doc := map[string]any{
+				"apiVersion": "v1",
+				"kind":       "ConfigMap",
+				"metadata":   map[string]any{"name": "shared", "namespace": "apps"},
+				"data":       map[string]any{"value": owner.Name},
+			}
 			children, retained := parseChildrenForTest(owner.Named(), []map[string]any{doc}, manifest.ParseDocOptions{})
 			completed.Children, completed.Manifests = children, testutil.DocumentOccurrences(retained)
 			completed.Complete = true
@@ -128,18 +155,33 @@ func TestCollectManifests_FailedSuccessorRetainsCompleted(t *testing.T) {
 		successor.ResourcesTemplate = "invalid successor"
 		st.AddObject(&successor)
 		assert.Equal(t, st.GetArtifact(winner, store.ArtifactContent), store.Artifact(nil))
-		st.UpdateStatus(winner, store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "invalid ResourceSet template"})
+		st.UpdateStatus(
+			winner,
+			store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "invalid ResourceSet template"},
+		)
 		o := &Orchestrator{store: st, index: index}
-		assert.Diff(t, outputByParent(o.collectManifests()), map[manifest.NamedResource][]map[string]any{parent: winningDocs})
+		assert.Diff(
+			t,
+			outputByParent(o.collectManifests()),
+			map[manifest.NamedResource][]map[string]any{parent: winningDocs},
+		)
 		assert.Equal(t, st.GetObject(winningChild.Obj.Named()), winningChild.Obj)
 		assert.Equal(t, st.EmissionOwner(winningChild.Obj.Named()), winner)
-		assert.Diff(t, st.Warnings(), []manifest.Warning{{Resource: winningChild.Obj.Named(), Subject: manifest.DiagnosticFor(winningChild.Obj.Named(), nil), Related: []manifest.NamedResource{owners[0].Named(), winner, winner}, Category: manifest.WarnConflictingProducers, Count: 1,
-			Message: "conflicting producers; using " + winner.String(), Detail: []string{owners[0].Named().String(), winner.String()}}})
+		assert.Diff(t, st.Warnings(), []manifest.Warning{
+			{
+				Resource: winningChild.Obj.Named(),
+				Subject:  manifest.DiagnosticFor(winningChild.Obj.Named(), nil),
+				Related:  []manifest.NamedResource{owners[0].Named(), winner, winner},
+				Category: manifest.WarnConflictingProducers,
+				Count:    1,
+				Message:  "conflicting producers; using " + winner.String(),
+				Detail:   []string{owners[0].Named().String(), winner.String()},
+			},
+		})
 		info, ok := st.FailedResources()[winner]
 		assert.Equal(t, ok, true)
 		assert.Equal(t, info.Message, "invalid ResourceSet template")
 	})
-
 }
 
 func TestCollectManifests_MissingParent(t *testing.T) {
@@ -149,12 +191,23 @@ func TestCollectManifests_MissingParent(t *testing.T) {
 	parent := testutil.KustomizationID("apps", "missing")
 	rs := &manifest.ResourceSet{Name: "resources", Namespace: "apps"}
 	st.AddObject(rs)
-	doc := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "settings", "namespace": "apps"}}
+	doc := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata":   map[string]any{"name": "settings", "namespace": "apps"},
+	}
 	children, docs := testutil.ParseChildren(base.New(st, nil), rs, []map[string]any{doc}, manifest.ParseDocOptions{})
-	st.RecordEmitted(rs.Named(), &store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(docs), Complete: true}, nil)
-	o := &Orchestrator{store: st, index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-		rs.Named(): {Parent: parent},
-	}}}
+	st.RecordEmitted(
+		rs.Named(),
+		&store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(docs), Complete: true},
+		nil,
+	)
+	o := &Orchestrator{
+		store: st,
+		index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+			rs.Named(): {Parent: parent},
+		}},
+	}
 	if batches := o.collectManifests(); len(batches) != 0 {
 		t.Fatalf("missing parent contributed output: %+v", batches)
 	}
@@ -166,15 +219,34 @@ func TestRender_EntryApplicationConflictingProducers(t *testing.T) {
 		t.Helper()
 		root := t.TempDir()
 		const url = "https://example.test/entry/conflicts"
-		testutil.WriteFile(t, root, "entry/source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: self, namespace: apps}\nspec: {url: "+url+"}\n")
-		testutil.WriteFile(t, root, "entry/literal.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: literal, namespace: apps}\n")
-		testutil.WriteFile(t, root, "entry/workload.yaml", testutil.KustomizationYAML("workload", "apps", "  path: ./workload\n"))
+		testutil.WriteFile(
+			t,
+			root,
+			"entry/source.yaml",
+			"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: self, namespace: apps}\nspec: {url: "+url+"}\n",
+		)
+		testutil.WriteFile(
+			t,
+			root,
+			"entry/literal.yaml",
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: literal, namespace: apps}\n",
+		)
+		testutil.WriteFile(
+			t,
+			root,
+			"entry/workload.yaml",
+			testutil.KustomizationYAML("workload", "apps", "  path: ./workload\n"),
+		)
 		testutil.WriteFile(t, root, "workload/kustomization.yaml", "resources: []\n")
 		for _, producer := range []struct{ name, path string }{
 			{name: "a", path: "./entry"},
 			{name: "z", path: "./elsewhere"},
 		} {
-			testutil.WriteFile(t, root, "entry/"+producer.name+".yaml", fmt.Sprintf(`apiVersion: fluxcd.controlplane.io/v1
+			testutil.WriteFile(
+				t,
+				root,
+				"entry/"+producer.name+".yaml",
+				fmt.Sprintf(`apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSet
 metadata: {name: %s, namespace: apps}
 spec:
@@ -185,16 +257,30 @@ spec:
       metadata: {name: flux, namespace: apps}
       spec:
         sync: {name: self, kind: GitRepository, url: '%s', ref: main, path: %s}
-`, producer.name, url, producer.path))
+`, producer.name, url, producer.path),
+			)
 		}
-		o, err := newTestOrchestrator(t, Tree{Path: filepath.Join(root, "entry"), RepoRoot: root, SelfURLs: []string{url}}, Config{CacheDir: t.TempDir(), Concurrency: 2})
+		o, err := newTestOrchestrator(
+			t,
+			Tree{Path: filepath.Join(root, "entry"), RepoRoot: root, SelfURLs: []string{url}},
+			Config{CacheDir: t.TempDir(), Concurrency: 2},
+		)
 		assert.NoError(t, err)
 		assert.NoError(t, o.bootstrap(t.Context()))
 		assert.Equal(t, o.entryBinding.Producer, manifest.NamedResource{})
-		id := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: "FluxInstance", Namespace: "apps", Name: "flux"}
+		id := manifest.NamedResource{
+			Group:     manifest.FluxOperatorDomain,
+			Kind:      "FluxInstance",
+			Namespace: "apps",
+			Name:      "flux",
+		}
 		firstPublication := make(chan struct{})
 		var released sync.Once
-		o.controllers.ResourceSet = entryPublicationController{reconcileController: o.rsc, tasks: o.tasks, first: firstPublication}
+		o.controllers.ResourceSet = entryPublicationController{
+			reconcileController: o.rsc,
+			tasks:               o.tasks,
+			first:               firstPublication,
+		}
 		var mu sync.Mutex
 		var published []string
 		unsubscribe := o.store.AddListener(store.EventObjectAdded, func(added manifest.NamedResource, payload any) {
@@ -216,7 +302,12 @@ spec:
 		assert.NoError(t, err)
 		assert.Diff(t, published, []string{"./entry", "./elsewhere"})
 		assert.Equal(t, o.entryBinding.Producer, manifest.NamedResource{})
-		winner := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "apps", Name: "z"}
+		winner := manifest.NamedResource{
+			Group:     manifest.FluxOperatorDomain,
+			Kind:      manifest.KindResourceSet,
+			Namespace: "apps",
+			Name:      "z",
+		}
 		assert.Equal(t, o.store.EmissionOwner(id), winner)
 		obj := o.store.GetObject(id).(*manifest.RawObject)
 		application, valid := obj.EntryApplication()
@@ -256,7 +347,11 @@ type entryPublicationController struct {
 	first <-chan struct{}
 }
 
-func (c entryPublicationController) ReconcileNode(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
+func (c entryPublicationController) ReconcileNode(
+	ctx context.Context,
+	id manifest.NamedResource,
+	level manifest.DrainLevel,
+) *base.Execution {
 	if id.Name == "z" {
 		c.tasks.YieldSlot(func() {
 			select {
@@ -288,9 +383,26 @@ func TestCollectManifests_ConflictingProducers(t *testing.T) {
 					release[i] = make(chan struct{})
 					wg.Go(func() {
 						<-release[i]
-						doc := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "shared", "namespace": "apps"}, "data": map[string]any{"value": fmt.Sprint(i)}}
-						children, docs := parseChildrenForTest(owners[i], []map[string]any{doc}, manifest.ParseDocOptions{})
-						st.RecordEmitted(owners[i], &store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(docs), Complete: true}, nil)
+						doc := map[string]any{
+							"apiVersion": "v1",
+							"kind":       "ConfigMap",
+							"metadata":   map[string]any{"name": "shared", "namespace": "apps"},
+							"data":       map[string]any{"value": fmt.Sprint(i)},
+						}
+						children, docs := parseChildrenForTest(
+							owners[i],
+							[]map[string]any{doc},
+							manifest.ParseDocOptions{},
+						)
+						st.RecordEmitted(
+							owners[i],
+							&store.Emission{
+								Children:  children,
+								Manifests: testutil.DocumentOccurrences(docs),
+								Complete:  true,
+							},
+							nil,
+						)
 						done <- struct{}{}
 					})
 				}
@@ -315,7 +427,15 @@ func TestCollectManifests_ConflictingProducers(t *testing.T) {
 				}
 				for _, owner := range owners {
 					children, docs := parseChildrenForTest(owner, got[owners[workers-1]], manifest.ParseDocOptions{})
-					st.RecordEmitted(owner, &store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(docs), Complete: true}, nil)
+					st.RecordEmitted(
+						owner,
+						&store.Emission{
+							Children:  children,
+							Manifests: testutil.DocumentOccurrences(docs),
+							Complete:  true,
+						},
+						nil,
+					)
 				}
 				if got := outputByParent(o.collectManifests()); len(got) != workers {
 					t.Fatalf("equal ordinary producer groups changed: %v", got)
@@ -355,15 +475,38 @@ func TestCollectManifests_ParentlessResourceSetSharedChild(t *testing.T) {
 				var winningDocs []map[string]any
 				for _, id := range ids {
 					batch := []map[string]any{
-						{"apiVersion": "example.com/v1", "kind": "Widget", "metadata": map[string]any{"name": "shared", "namespace": "apps"}, "spec": map[string]any{"value": id.Name}},
-						{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "shared", "namespace": "apps"}, "data": map[string]any{"key": id.Name}},
-						{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": "shared", "namespace": "apps"}, "stringData": map[string]any{"key": id.Name}},
+						{
+							"apiVersion": "example.com/v1",
+							"kind":       "Widget",
+							"metadata":   map[string]any{"name": "shared", "namespace": "apps"},
+							"spec":       map[string]any{"value": id.Name},
+						},
+						{
+							"apiVersion": "v1",
+							"kind":       "ConfigMap",
+							"metadata":   map[string]any{"name": "shared", "namespace": "apps"},
+							"data":       map[string]any{"key": id.Name},
+						},
+						{
+							"apiVersion": "v1",
+							"kind":       "Secret",
+							"metadata":   map[string]any{"name": "shared", "namespace": "apps"},
+							"stringData": map[string]any{"key": id.Name},
+						},
 					}
 					children, docs := parseChildrenForTest(id, batch, manifest.ParseDocOptions{})
 					if len(children) != len(batch) || len(docs) != len(batch) {
 						t.Fatalf("%s must publish every child: %v, %v", id, children, docs)
 					}
-					st.RecordEmitted(id, &store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(docs), Complete: true}, nil)
+					st.RecordEmitted(
+						id,
+						&store.Emission{
+							Children:  children,
+							Manifests: testutil.DocumentOccurrences(docs),
+							Complete:  true,
+						},
+						nil,
+					)
 					if id == z.Named() {
 						winningDocs = docs
 					}
@@ -374,7 +517,9 @@ func TestCollectManifests_ParentlessResourceSetSharedChild(t *testing.T) {
 				}
 				assert.Diff(t, outputByParent(o.collectManifests()), want)
 				assert.Diff(t, outputByParent(o.collectManifests()), want)
-				cm, ok := st.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "shared"})
+				cm, ok := st.Get[*manifest.ConfigMap](
+					manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "shared"},
+				)
 				if !ok {
 					t.Fatal("missing shared ConfigMap")
 				}
@@ -401,23 +546,41 @@ func TestCollectManifests_ResourceSetConflictingProducers(t *testing.T) {
 
 				st := store.New()
 				owners := []*manifest.ResourceSet{{Name: "a", Namespace: "apps"}, {Name: "z", Namespace: "apps"}}
-				parents := []manifest.NamedResource{testutil.KustomizationID("apps", "parent-a"), testutil.KustomizationID("apps", "parent-z")}
+				parents := []manifest.NamedResource{
+					testutil.KustomizationID("apps", "parent-a"),
+					testutil.KustomizationID("apps", "parent-z"),
+				}
 				index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
 				emissions := make([]store.Emission, 2)
 				for i, owner := range owners {
 					st.AddObject(&manifest.Kustomization{Name: parents[i].Name, Namespace: parents[i].Namespace})
 					st.AddObject(owner)
 					index.Records[owner.Named()] = manifest.DiscoveryRecord{Parent: parents[i]}
-					doc := map[string]any{"apiVersion": "v1", "kind": kind,
-						"metadata": map[string]any{"name": "shared", "namespace": "apps", "annotations": map[string]any{"value": owner.Name}}}
+					doc := map[string]any{
+						"apiVersion": "v1",
+						"kind":       kind,
+						"metadata": map[string]any{
+							"name":        "shared",
+							"namespace":   "apps",
+							"annotations": map[string]any{"value": owner.Name},
+						},
+					}
 					if kind == manifest.KindConfigMap {
 						doc["data"] = map[string]any{"value": owner.Name}
 					}
 					if kind == manifest.KindSecret {
 						doc["stringData"] = map[string]any{"value": owner.Name}
 					}
-					children, docs := parseChildrenForTest(owner.Named(), []map[string]any{doc}, manifest.ParseDocOptions{})
-					emissions[i] = store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(docs), Complete: true}
+					children, docs := parseChildrenForTest(
+						owner.Named(),
+						[]map[string]any{doc},
+						manifest.ParseDocOptions{},
+					)
+					emissions[i] = store.Emission{
+						Children:  children,
+						Manifests: testutil.DocumentOccurrences(docs),
+						Complete:  true,
+					}
 				}
 				release, done := make(chan struct{}), make(chan struct{})
 				first, second := 0, 1
@@ -440,15 +603,27 @@ func TestCollectManifests_ResourceSetConflictingProducers(t *testing.T) {
 				id := emissions[1].Children[0].Obj.Named()
 				check := func(winner int) {
 					t.Helper()
-					want := map[manifest.NamedResource][]map[string]any{parents[winner]: testutil.DocumentMaps(emissions[winner].Manifests)}
+					want := map[manifest.NamedResource][]map[string]any{
+						parents[winner]: testutil.DocumentMaps(emissions[winner].Manifests),
+					}
 					assert.Diff(t, outputByParent(o.collectManifests()), want)
 					assert.Diff(t, outputByParent(o.collectManifests()), want)
 					assert.Equal(t, st.EmissionOwner(id), owners[winner].Named())
 					assert.Equal(t, st.GetObject(id), emissions[winner].Children[0].Obj)
 				}
 				check(1)
-				assert.Diff(t, st.Warnings(), []manifest.Warning{{Resource: id, Subject: manifest.DiagnosticFor(id, nil), Related: []manifest.NamedResource{owners[0].Named(), owners[1].Named(), owners[1].Named()}, Category: manifest.WarnConflictingProducers, Count: 1,
-					Message: "conflicting producers; using " + owners[1].Named().String(), Detail: []string{owners[0].Named().String(), owners[1].Named().String()}}})
+				assert.Diff(t, st.Warnings(), []manifest.Warning{
+					{
+						Resource: id,
+						Subject:  manifest.DiagnosticFor(id, nil),
+						Related:  []manifest.NamedResource{owners[0].Named(), owners[1].Named(), owners[1].Named()},
+						Category: manifest.WarnConflictingProducers,
+						Count:    1,
+						Message: "conflicting producers; using " + owners[1].Named().
+							String(),
+						Detail: []string{owners[0].Named().String(), owners[1].Named().String()},
+					},
+				})
 				st.RecordEmitted(owners[1].Named(), &store.Emission{Complete: true}, nil)
 				check(0)
 				assert.Equal(t, len(st.Warnings()), 0)
@@ -511,14 +686,32 @@ spec:
 			if len(children) != len(batch) {
 				t.Fatalf("parsed %d of %d mixed children", len(children), len(batch))
 			}
-			st.RecordEmitted(rs.Named(), &store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(docs), Complete: true}, nil)
+			st.RecordEmitted(
+				rs.Named(),
+				&store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(docs), Complete: true},
+				nil,
+			)
 			ks := testutil.KustomizationID("apps", "nested")
 			hr := testutil.HelmReleaseID("apps", "nested")
-			ksDocs := []map[string]any{{"apiVersion": "v1", "kind": "ServiceAccount", "metadata": map[string]any{"name": "from-ks", "namespace": "apps"}}}
-			hrDocs := []map[string]any{{"apiVersion": "v1", "kind": "ServiceAccount", "metadata": map[string]any{"name": "from-hr", "namespace": "apps"}}}
+			ksDocs := []map[string]any{
+				{
+					"apiVersion": "v1",
+					"kind":       "ServiceAccount",
+					"metadata":   map[string]any{"name": "from-ks", "namespace": "apps"},
+				},
+			}
+			hrDocs := []map[string]any{
+				{
+					"apiVersion": "v1",
+					"kind":       "ServiceAccount",
+					"metadata":   map[string]any{"name": "from-hr", "namespace": "apps"},
+				},
+			}
 			st.RecordEmitted(ks, &store.Emission{Manifests: testutil.DocumentOccurrences(ksDocs), Complete: true}, nil)
 			st.RecordEmitted(hr, &store.Emission{Manifests: testutil.DocumentOccurrences(hrDocs), Complete: true}, nil)
-			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{rs.Named(): {Parent: parent}}}
+			index := &manifest.DiscoveryIndex{
+				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{rs.Named(): {Parent: parent}},
+			}
 			_, _, before := st.GetEmission(rs.Named())
 			before.Finish()
 			for i, child := range before.Children {
@@ -527,7 +720,11 @@ spec:
 			for i, doc := range before.Manifests {
 				before.Manifests[i].Document = manifest.DeepCopyMap(doc.Document)
 			}
-			o := &Orchestrator{store: st, index: index, cfg: treeConfig{Config: Config{HelmOptions: helm.Options{SkipKinds: skip}}, Tree: Tree{}}}
+			o := &Orchestrator{
+				store: st,
+				index: index,
+				cfg:   treeConfig{Config: Config{HelmOptions: helm.Options{SkipKinds: skip}}, Tree: Tree{}},
+			}
 			parentDocs := docs[:4]
 			if len(skip) > 0 {
 				parentDocs = docs[:2]
@@ -539,7 +736,14 @@ spec:
 			})
 			_, _, after := st.GetEmission(rs.Named())
 			after.Finish()
-			if diff := cmp.Diff(after.Children, before.Children, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreUnexported(store.Child{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection"), cmpopts.IgnoreUnexported(manifest.HelmRelease{}, manifest.OCIRepository{}, manifest.HelmChartSource{})); diff != "" {
+			if diff := cmp.Diff(
+				after.Children,
+				before.Children,
+				cmp.AllowUnexported(manifest.Kustomization{}),
+				cmpopts.IgnoreUnexported(store.Child{}),
+				cmpopts.IgnoreFields(manifest.Kustomization{}, "projection"),
+				cmpopts.IgnoreUnexported(manifest.HelmRelease{}, manifest.OCIRepository{}, manifest.HelmChartSource{}),
+			); diff != "" {
 				t.Fatalf("retained children changed (-want +got): %s", diff)
 			}
 			assert.Diff(t, after.Manifests, before.Manifests)
@@ -580,7 +784,12 @@ func TestCollectManifests_ArtifactGenerators(t *testing.T) {
 			var generatorDocs []map[string]any
 			var generators []manifest.NamedResource
 			for _, name := range []string{"z", "a"} {
-				doc := map[string]any{"apiVersion": "source.extensions.fluxcd.io/v1beta1", "kind": "ArtifactGenerator", "metadata": map[string]any{"name": name, "namespace": "apps"}, "spec": map[string]any{}}
+				doc := map[string]any{
+					"apiVersion": "source.extensions.fluxcd.io/v1beta1",
+					"kind":       "ArtifactGenerator",
+					"metadata":   map[string]any{"name": name, "namespace": "apps"},
+					"spec":       map[string]any{},
+				}
 				obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
 				assert.NoError(t, err)
 				generators = append(generators, obj.Named())
@@ -593,25 +802,79 @@ func TestCollectManifests_ArtifactGenerators(t *testing.T) {
 				}
 			}
 			nested := testutil.KustomizationID("apps", "nested")
-			nestedDocs := []map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "nested-output", "namespace": "apps"}}}
+			nestedDocs := []map[string]any{
+				{
+					"apiVersion": "v1",
+					"kind":       "ConfigMap",
+					"metadata":   map[string]any{"name": "nested-output", "namespace": "apps"},
+				},
+			}
 			if tc.emitted {
 				st.AddObject(parent)
-				generatorDocs = append(generatorDocs, map[string]any{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": manifest.KindKustomization, "metadata": map[string]any{"name": nested.Name, "namespace": nested.Namespace}, "spec": map[string]any{}})
+				generatorDocs = append(
+					generatorDocs,
+					map[string]any{
+						"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+						"kind":       manifest.KindKustomization,
+						"metadata":   map[string]any{"name": nested.Name, "namespace": nested.Namespace},
+						"spec":       map[string]any{},
+					},
+				)
 				children, docs := parseChildrenForTest(parent.Named(), generatorDocs, manifest.ParseDocOptions{})
-				st.RecordEmitted(parent.Named(), &store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(docs), Complete: true}, nil)
-				st.RecordEmitted(nested, &store.Emission{Manifests: testutil.DocumentOccurrences(nestedDocs), Complete: true}, nil)
+				st.RecordEmitted(
+					parent.Named(),
+					&store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(docs), Complete: true},
+					nil,
+				)
+				st.RecordEmitted(
+					nested,
+					&store.Emission{Manifests: testutil.DocumentOccurrences(nestedDocs), Complete: true},
+					nil,
+				)
 			}
 			outputs := map[string][]map[string]any{}
-			shared := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: "shared"}
+			shared := manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindExternalArtifact,
+				Namespace: "apps",
+				Name:      "shared",
+			}
 			var byteWinner *store.SourceArtifact
 			for _, generator := range generators {
 				docs := []map[string]any{
-					{"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": manifest.KindExternalArtifact, "metadata": map[string]any{"name": "shared", "labels": map[string]any{"writer": generator.Name}}},
-					{"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": manifest.KindExternalArtifact, "metadata": map[string]any{"name": "own-" + generator.Name}},
+					{
+						"apiVersion": "source.toolkit.fluxcd.io/v1",
+						"kind":       manifest.KindExternalArtifact,
+						"metadata": map[string]any{
+							"name":   "shared",
+							"labels": map[string]any{"writer": generator.Name},
+						},
+					},
+					{
+						"apiVersion": "source.toolkit.fluxcd.io/v1",
+						"kind":       manifest.KindExternalArtifact,
+						"metadata":   map[string]any{"name": "own-" + generator.Name},
+					},
 				}
-				children, accepted := testutil.ParseChildren(parser, st.GetObject(generator), docs, manifest.ParseDocOptions{DefaultNamespace: generator.Namespace})
-				payload := &store.SourceArtifact{Key: generator.Name, FS: fstest.MapFS{"value": {Data: []byte(generator.Name)}}}
-				st.RecordEmitted(generator, &store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(accepted), Complete: true}, map[manifest.NamedResource]*store.SourceArtifact{shared: payload})
+				children, accepted := testutil.ParseChildren(
+					parser,
+					st.GetObject(generator),
+					docs,
+					manifest.ParseDocOptions{DefaultNamespace: generator.Namespace},
+				)
+				payload := &store.SourceArtifact{
+					Key: generator.Name,
+					FS:  fstest.MapFS{"value": {Data: []byte(generator.Name)}},
+				}
+				st.RecordEmitted(
+					generator,
+					&store.Emission{
+						Children:  children,
+						Manifests: testutil.DocumentOccurrences(accepted),
+						Complete:  true,
+					},
+					map[manifest.NamedResource]*store.SourceArtifact{shared: payload},
+				)
 				if generator.Name == "z" {
 					byteWinner = payload
 				}
@@ -624,8 +887,16 @@ func TestCollectManifests_ArtifactGenerators(t *testing.T) {
 				st.AddObject(rs)
 				rivalDoc := manifest.DeepCopyMap(outputs["z"][0])
 				rivalDoc["metadata"].(map[string]any)["labels"] = map[string]any{"writer": "rival"}
-				children, docs := parseChildrenForTest(rs.Named(), []map[string]any{rivalDoc}, manifest.ParseDocOptions{})
-				st.RecordEmitted(rs.Named(), &store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(docs), Complete: true}, nil)
+				children, docs := parseChildrenForTest(
+					rs.Named(),
+					[]map[string]any{rivalDoc},
+					manifest.ParseDocOptions{},
+				)
+				st.RecordEmitted(
+					rs.Named(),
+					&store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(docs), Complete: true},
+					nil,
+				)
 				_, declaration, attempt := st.GetEmission(shared)
 				attempt.Finish()
 				assert.Diff(t, declaration, rivalDoc)
@@ -640,7 +911,12 @@ func TestCollectManifests_ArtifactGenerators(t *testing.T) {
 			var generated []map[string]any
 			if !tc.skip {
 				for _, name := range []string{"a", "z"} {
-					id := manifest.NamedResource{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Namespace: "apps", Name: name}
+					id := manifest.NamedResource{
+						Group:     "source.extensions.fluxcd.io",
+						Kind:      "ArtifactGenerator",
+						Namespace: "apps",
+						Name:      name,
+					}
 					docs := outputs[name]
 					if name == "a" || tc.rival {
 						docs = docs[1:]
@@ -658,12 +934,16 @@ func TestCollectManifests_ArtifactGenerators(t *testing.T) {
 			entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".", manifest.NamedResource{})
 			st.AddObject(entry)
 			bare := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "bare"}}
-			children, docs, failures := base.New(st, nil).ParseChildren(entry, testutil.DocumentOccurrences([]map[string]any{bare}), manifest.ParseDocOptions{})
-			st.RecordEmitted(entry.Named(), &store.Emission{Children: children, Manifests: docs, Failures: failures, Complete: true}, nil)
+			children, docs, failures := base.New(st, nil).
+				ParseChildren(entry, testutil.DocumentOccurrences([]map[string]any{bare}), manifest.ParseDocOptions{})
+			st.RecordEmitted(
+				entry.Named(),
+				&store.Emission{Children: children, Manifests: docs, Failures: failures, Complete: true},
+				nil,
+			)
 			want[entry.Named()] = []map[string]any{bare}
 			o := &Orchestrator{store: st, index: index}
 			assert.Diff(t, outputByParent(o.collectManifests()), want)
-
 		})
 	}
 }
@@ -689,18 +969,46 @@ func TestCollectManifests_CoveredRetainedOutput(t *testing.T) {
 			raw := &manifest.HelmRelease{Name: "release", Namespace: "apps"}
 			st.AddObjects([]manifest.BaseManifest{parent, peer, raw})
 			st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-				raw.Named(): {Productions: []manifest.Production{{Owner: parent.Named(), Source: manifest.BootstrapSourceID}, {Owner: peer.Named(), Source: manifest.BootstrapSourceID}}},
+				raw.Named(): {
+					Productions: []manifest.Production{
+						{Owner: parent.Named(), Source: manifest.BootstrapSourceID},
+						{Owner: peer.Named(), Source: manifest.BootstrapSourceID},
+					},
+				},
 			}})
 			accepted := raw.Clone()
 			accepted.Chart.Name = "accepted"
-			st.RecordEmitted(parent.Named(), captureEmission(st, parent.Named(), &store.Emission{Children: []store.Child{{Obj: accepted}}}), nil)
-			doc := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "accepted-output"}}
-			st.RecordEmitted(raw.Named(), captureEmission(st, raw.Named(), &store.Emission{Manifests: testutil.DocumentOccurrences([]map[string]any{doc}), Complete: true}), nil)
+			st.RecordEmitted(
+				parent.Named(),
+				captureEmission(st, parent.Named(), &store.Emission{Children: []store.Child{{Obj: accepted}}}),
+				nil,
+			)
+			doc := map[string]any{
+				"apiVersion": "v1",
+				"kind":       "ConfigMap",
+				"metadata":   map[string]any{"name": "accepted-output"},
+			}
+			st.RecordEmitted(
+				raw.Named(),
+				captureEmission(
+					st,
+					raw.Named(),
+					&store.Emission{Manifests: testutil.DocumentOccurrences([]map[string]any{doc}), Complete: true},
+				),
+				nil,
+			)
 			if survivor {
-				st.RecordEmitted(peer.Named(), captureEmission(st, peer.Named(), &store.Emission{Children: []store.Child{{Obj: accepted}}}), nil)
+				st.RecordEmitted(
+					peer.Named(),
+					captureEmission(st, peer.Named(), &store.Emission{Children: []store.Child{{Obj: accepted}}}),
+					nil,
+				)
 			}
 			st.RecordEmitted(parent.Named(), captureEmission(st, parent.Named(), &store.Emission{Complete: true}), nil)
-			st.UpdateStatus(raw.Named(), store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "failed successor"})
+			st.UpdateStatus(
+				raw.Named(),
+				store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "failed successor"},
+			)
 			o := &Orchestrator{store: st}
 			docs := outputByParent(o.collectManifests())[raw.Named()]
 			if survivor && (len(docs) != 1 || docs[0]["kind"] != "ConfigMap") || !survivor && len(docs) != 0 {

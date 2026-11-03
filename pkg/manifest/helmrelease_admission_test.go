@@ -65,8 +65,10 @@ func TestParseHelmRelease_ChartTemplateAdmission(t *testing.T) {
 			t.Parallel()
 			var spec map[string]any
 			assert.NoError(t, yaml.Unmarshal([]byte(tc.spec), &spec))
-			doc := map[string]any{"apiVersion": HelmReleaseDomain + "/v2", "kind": KindHelmRelease,
-				"metadata": map[string]any{"name": "app", "namespace": "apps"}, "spec": spec}
+			doc := map[string]any{
+				"apiVersion": HelmReleaseDomain + "/v2", "kind": KindHelmRelease,
+				"metadata": map[string]any{"name": "app", "namespace": "apps"}, "spec": spec,
+			}
 			before := DeepCopyMap(doc)
 			obj, _, _, err := ParseDoc(doc, ParseDocOptions{})
 			assert.Diff(t, doc, before)

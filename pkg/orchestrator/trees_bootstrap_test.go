@@ -21,12 +21,28 @@ func (f failedPreparationFS) ReadDir(name string) ([]fs.DirEntry, error) {
 func TestRenderTrees_BootstrapWarnings(t *testing.T) {
 	t.Parallel()
 	roots := [2]string{t.TempDir(), t.TempDir()}
-	warning := manifest.Warning{Category: manifest.WarnBaselineStatusUnavailable, Message: "before preparation failure", Count: 1}
+	warning := manifest.Warning{
+		Category: manifest.WarnBaselineStatusUnavailable,
+		Message:  "before preparation failure",
+		Count:    1,
+	}
 	inputs := [2]*store.SourceArtifact{}
 	for side, root := range roots {
-		inputs[side] = &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: failedPreparationFS{fstest.MapFS{}}, Warnings: []manifest.Warning{warning}}
+		inputs[side] = &store.SourceArtifact{
+			LocalPath: root,
+			LocalRoot: root,
+			FS:        failedPreparationFS{fstest.MapFS{}},
+			Warnings:  []manifest.Warning{warning},
+		}
 	}
-	runs, err := orchestrator.RenderTrees(t.Context(), []orchestrator.Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, RepoRoot: roots[0], Input: inputs[0]}, {ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, RepoRoot: roots[1], Input: inputs[1]}}, orchestrator.Config{Concurrency: 2})
+	runs, err := orchestrator.RenderTrees(
+		t.Context(),
+		[]orchestrator.Tree{
+			{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, RepoRoot: roots[0], Input: inputs[0]},
+			{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, RepoRoot: roots[1], Input: inputs[1]},
+		},
+		orchestrator.Config{Concurrency: 2},
+	)
 	base, head := runs[0], runs[1]
 	if !errors.Is(err, fs.ErrPermission) {
 		t.Fatalf("preparation error: %v", err)

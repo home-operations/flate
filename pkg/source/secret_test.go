@@ -5,11 +5,12 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"github.com/home-operations/flate/pkg/source/cache"
 	"io/fs"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/home-operations/flate/pkg/source/cache"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/fetcherr"
@@ -44,7 +45,11 @@ func TestSecretLookup_References(t *testing.T) {
 	other.Namespace = "other"
 	s.AddObject(&other)
 	assert.Equal(t, secrets("other", "shared"), &other)
-	username, password, err := BasicAuthFromSecret(secrets("ns", "shared"), manifest.DiagnosticFor(owner, nil), "shared")
+	username, password, err := BasicAuthFromSecret(
+		secrets("ns", "shared"),
+		manifest.DiagnosticFor(owner, nil),
+		"shared",
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, username, "alice")
 	assert.Equal(t, password, "first")
@@ -70,7 +75,12 @@ func TestMissingSecretErr(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			owner := manifest.NamedResource{Group: "input.example", Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "r"}
+			owner := manifest.NamedResource{
+				Group:     "input.example",
+				Kind:      manifest.KindOCIRepository,
+				Namespace: "ns",
+				Name:      "r",
+			}
 			err := MissingSecretErr(manifest.DiagnosticFor(owner, nil), tc.secret, "not found")
 			if got := err.Error(); got != tc.want {
 				t.Errorf("Error() = %q, want %q", got, tc.want)
@@ -89,7 +99,12 @@ func TestMissingSecretErr(t *testing.T) {
 			if mse.Secret != wantSecret {
 				t.Errorf("recovered Secret = %v, want %v", mse.Secret, wantSecret)
 			}
-			wantOwner := manifest.NamedResource{Group: owner.Group, Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "r"}
+			wantOwner := manifest.NamedResource{
+				Group:     owner.Group,
+				Kind:      manifest.KindOCIRepository,
+				Namespace: "ns",
+				Name:      "r",
+			}
 			if mse.Owner != wantOwner || owner.Group != "input.example" {
 				t.Errorf("recovered Owner = %v, want %v; input = %v", mse.Owner, wantOwner, owner)
 			}
@@ -101,7 +116,12 @@ func TestBasicAuthFromSecret_UnavailableMaterial(t *testing.T) {
 	t.Parallel()
 	const cipher = "ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]"
 	encodedCipher := base64.StdEncoding.EncodeToString([]byte(cipher))
-	owner := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "ns", Name: "repo"}
+	owner := manifest.NamedResource{
+		Group:     manifest.SourceDomain,
+		Kind:      manifest.KindGitRepository,
+		Namespace: "ns",
+		Name:      "repo",
+	}
 	for _, tc := range []struct {
 		name               string
 		data, stringData   map[string]any
@@ -139,7 +159,13 @@ func TestBasicAuthFromSecret_UnavailableMaterial(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			doc := map[string]any{"apiVersion": "v1", "kind": manifest.KindSecret, "metadata": map[string]any{"name": "metadata-secret", "namespace": "elsewhere"}, "data": tc.data, "stringData": tc.stringData}
+			doc := map[string]any{
+				"apiVersion": "v1",
+				"kind":       manifest.KindSecret,
+				"metadata":   map[string]any{"name": "metadata-secret", "namespace": "elsewhere"},
+				"data":       tc.data,
+				"stringData": tc.stringData,
+			}
 			if tc.metadata {
 				doc["sops"] = map[string]any{"version": "3.13.3", "mac": "metadata"}
 			}
@@ -159,7 +185,8 @@ func TestBasicAuthFromSecret_UnavailableMaterial(t *testing.T) {
 				t.Fatal("credential failure returned partial credentials")
 			}
 			if tc.field != "" {
-				if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || errors.Is(err, manifest.ErrMissingSecret) {
+				if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) ||
+					errors.Is(err, manifest.ErrMissingSecret) {
 					t.Fatalf("expected hard input failure, got %v", err)
 				}
 				for _, context := range []string{"secret ns/creds", "[" + tc.field + "]"} {
@@ -187,14 +214,32 @@ func TestBasicAuthFromSecret_UnavailableMaterial(t *testing.T) {
 func TestSecretLookup_SuppliedAuthTLSAndProxy(t *testing.T) {
 	t.Parallel()
 	ca := testutil.SelfSignedCA(t)
-	supplied := &manifest.Secret{Name: "material", Namespace: "apps", StringData: map[string]any{"username": "supplied", "password": "filled", "ca.crt": ca, "address": "http://proxy.invalid"}}
+	supplied := &manifest.Secret{
+		Name:      "material",
+		Namespace: "apps",
+		StringData: map[string]any{
+			"username": "supplied",
+			"password": "filled",
+			"ca.crt":   ca,
+			"address":  "http://proxy.invalid",
+		},
+	}
 	snapshot, err := store.NewSupplied([]store.SuppliedObject{{Object: supplied}})
 	assert.NoError(t, err)
 	s := store.New()
 	s.SetSupplied(snapshot)
-	repository := &manifest.Secret{Name: supplied.Name, Namespace: supplied.Namespace, StringData: map[string]any{"username": "repository", "password": manifest.ValuePlaceholder("password")}}
+	repository := &manifest.Secret{
+		Name:       supplied.Name,
+		Namespace:  supplied.Namespace,
+		StringData: map[string]any{"username": "repository", "password": manifest.ValuePlaceholder("password")},
+	}
 	s.AddObject(repository)
-	owner := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "source"}
+	owner := manifest.NamedResource{
+		Group:     manifest.SourceDomain,
+		Kind:      manifest.KindGitRepository,
+		Namespace: "apps",
+		Name:      "source",
+	}
 	var reads store.ReadSet
 	reads.Init(s, owner, nil)
 	defer reads.Close()
@@ -205,11 +250,19 @@ func TestSecretLookup_SuppliedAuthTLSAndProxy(t *testing.T) {
 	assert.Equal(t, username, "repository")
 	assert.Equal(t, password, "filled")
 	ref := &manifest.LocalObjectReference{Name: supplied.Name}
-	material, err := ResolveTransport(lookup, manifest.DiagnosticFor(owner, nil), []TransportInput{{Reference: ref, Use: TransportSecret, OptionalTLS: true, CAFallback: true}, {Reference: ref, Use: TransportProxy}})
+	material, err := ResolveTransport(
+		lookup,
+		manifest.DiagnosticFor(owner, nil),
+		[]TransportInput{
+			{Reference: ref, Use: TransportSecret, OptionalTLS: true, CAFallback: true},
+			{Reference: ref, Use: TransportProxy},
+		},
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, material.Certificate()[2], ca)
 	assert.Diff(t, material.ProxyComponents(), [3]string{"http://proxy.invalid", "repository", "filled"})
-	if s.GetObject(supplied.Named()) != repository || repository.StringData["password"] != manifest.ValuePlaceholder("password") {
+	if s.GetObject(supplied.Named()) != repository ||
+		repository.StringData["password"] != manifest.ValuePlaceholder("password") {
 		t.Fatal("effective credential material entered canonical state")
 	}
 }
@@ -235,7 +288,9 @@ func TestAcquireMachine_Lifecycle(t *testing.T) {
 			}
 			prepared, acquired := 0, 0
 			var preparation context.Context
-			partial := &store.SourceArtifact{Warnings: []manifest.Warning{{Category: manifest.WarnSourceCredentialsUnavailable}}}
+			partial := &store.SourceArtifact{
+				Warnings: []manifest.Warning{{Category: manifest.WarnSourceCredentialsUnavailable}},
+			}
 			artifact, err := AcquireMachine(ctx, policy, func(ctx context.Context) error {
 				prepared++
 				preparation = ctx
@@ -248,7 +303,10 @@ func TestAcquireMachine_Lifecycle(t *testing.T) {
 				return nil
 			}, func(got context.Context, p cache.Policy) (*store.SourceArtifact, error) {
 				acquired++
-				if got != ctx || got.Err() != nil || preparation.Err() == nil || !p.Machine || p.Timeout != policy.Timeout || p.MaxAge != policy.MaxAge || p.Retry != policy.Retry {
+				if got != ctx || got.Err() != nil || preparation.Err() == nil || !p.Machine ||
+					p.Timeout != policy.Timeout ||
+					p.MaxAge != policy.MaxAge ||
+					p.Retry != policy.Retry {
 					t.Fatal("preparation cancellation or acquisition policy changed")
 				}
 				if phase == "acquire failure" {
@@ -270,7 +328,8 @@ func TestAcquireMachine_Lifecycle(t *testing.T) {
 					t.Fatalf("late success admitted acquisition: %v", err)
 				}
 			case "prepare failure", "acquire failure":
-				if !errors.Is(err, cause) || !errors.Is(err, manifest.ErrFlux) || strings.Contains(err.Error(), "canary") {
+				if !errors.Is(err, cause) || !errors.Is(err, manifest.ErrFlux) ||
+					strings.Contains(err.Error(), "canary") {
 					t.Fatalf("classification lost cause or exposed material: %v", err)
 				}
 				if phase == "prepare failure" && acquired != 0 || phase == "acquire failure" && artifact != partial {
@@ -301,7 +360,12 @@ func TestMissingSecretError_RetryMachine(t *testing.T) {
 					return nil, MissingSecretErr(manifest.DiagnosticFor(owner, nil), "", "unavailable")
 				}
 				if shape == "anonymous denied" || shape == "authored anonymous denied" {
-					return nil, &MissingSecretError{Owner: owner, Detail: "registry credentials unavailable", AnonymousDenied: true, Cause: denial}
+					return nil, &MissingSecretError{
+						Owner:           owner,
+						Detail:          "registry credentials unavailable",
+						AnonymousDenied: true,
+						Cause:           denial,
+					}
 				}
 				return &store.SourceArtifact{}, nil
 			}
@@ -311,8 +375,19 @@ func TestMissingSecretError_RetryMachine(t *testing.T) {
 			}
 			if shape == "producer" {
 				s := store.New()
-				declaration := &manifest.RawObject{APIVersion: "external-secrets.io/v1", Kind: "ExternalSecret", Name: "auth", Namespace: "ns"}
-				s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{missing.Secret: {Productions: []manifest.Production{{Declaration: declaration.Named()}}}}})
+				declaration := &manifest.RawObject{
+					APIVersion: "external-secrets.io/v1",
+					Kind:       "ExternalSecret",
+					Name:       "auth",
+					Namespace:  "ns",
+				}
+				s.SetDiscoveryIndex(
+					&manifest.DiscoveryIndex{
+						Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+							missing.Secret: {Productions: []manifest.Production{{Declaration: declaration.Named()}}},
+						},
+					},
+				)
 				reads = &store.ReadSet{}
 				reads.Init(s, owner, nil)
 				defer reads.Close()
@@ -331,12 +406,16 @@ func TestMissingSecretError_RetryMachine(t *testing.T) {
 			artifact, got := missing.RetryMachine(ctx, reads)
 			switch shape {
 			case "producer", "no callback", "unavailable", "authored anonymous denied":
-				if got != missing || artifact != nil || calls != map[string]int{"unavailable": 1, "authored anonymous denied": 1}[shape] { //nolint:errorlint // Unavailable retries MUST retain the original error identity.
+				if got != missing || artifact != nil ||
+					calls != map[string]int{"unavailable": 1, "authored anonymous denied": 1}[shape] { //nolint:errorlint // Unavailable retries MUST retain the original error identity.
 					t.Fatalf("missing identity or eligibility changed: %v calls=%d", got, calls)
 				}
 			case "anonymous denied":
 				unavailable, ok := errors.AsType[*MissingSecretError](got)
-				if !ok || !unavailable.AnonymousDenied || !errors.Is(got, denial) || !errors.Is(got, manifest.ErrMissingSecret) || artifact != nil || calls != 1 {
+				if !ok || !unavailable.AnonymousDenied || !errors.Is(got, denial) ||
+					!errors.Is(got, manifest.ErrMissingSecret) ||
+					artifact != nil ||
+					calls != 1 {
 					t.Fatalf("anonymous denial lost its proof or typed cause: %v calls=%d", got, calls)
 				}
 			case "canceled":

@@ -23,7 +23,12 @@ import (
 // name is an input expression, so discovery cannot supply a producer edge.
 func BenchmarkDirtyRerun_DynamicEmissionChain(b *testing.B) {
 	root := b.TempDir()
-	testutil.WriteFile(b, root, "kustomization.yaml", "resources: [source.yaml, consumer.yaml, release.yaml, sets.yaml]\n")
+	testutil.WriteFile(
+		b,
+		root,
+		"kustomization.yaml",
+		"resources: [source.yaml, consumer.yaml, release.yaml, sets.yaml]\n",
+	)
 	testutil.WriteFile(b, root, "source.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: flux-system, namespace: flux-system}
@@ -33,7 +38,12 @@ spec: {url: "https://example.test/cluster.git"}
     substituteFrom: [{kind: ConfigMap, name: late-settings, optional: true}]
 `)
 	testutil.WriteFile(b, root, "app/kustomization.yaml", "resources: [cm.yaml]\n")
-	testutil.WriteFile(b, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: ks-output, namespace: flux-system}\ndata: {value: '${VALUE:=early}'}\n")
+	testutil.WriteFile(
+		b,
+		root,
+		"app/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: ks-output, namespace: flux-system}\ndata: {value: '${VALUE:=early}'}\n",
+	)
 	testutil.WriteFile(b, root, "release.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata: {name: consumer, namespace: flux-system}
@@ -46,7 +56,12 @@ spec:
   valuesFrom: [{kind: ConfigMap, name: late-settings, valuesKey: HELM_VALUES, optional: true}]
 `)
 	testutil.WriteFile(b, root, "charts/app/Chart.yaml", "apiVersion: v2\nname: app\nversion: 0.1.0\n")
-	testutil.WriteFile(b, root, "charts/app/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hr-output, namespace: flux-system}\ndata: {value: {{ .Values.VALUE | quote }}}\n")
+	testutil.WriteFile(
+		b,
+		root,
+		"charts/app/templates/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hr-output, namespace: flux-system}\ndata: {value: {{ .Values.VALUE | quote }}}\n",
+	)
 	testutil.WriteFile(b, root, "sets.yaml", `apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSet
 metadata: {name: emitter, namespace: flux-system}
@@ -79,7 +94,13 @@ spec:
 `)
 	for _, workers := range []int{2, 16, runtime.NumCPU() * 4} {
 		b.Run(fmt.Sprintf("workers=%d", workers), func(b *testing.B) {
-			cfg := treeConfig{CacheDir: b.TempDir(), WipeSecrets: true, Concurrency: workers, Path: root, RepoRoot: root}
+			cfg := treeConfig{
+				CacheDir:    b.TempDir(),
+				WipeSecrets: true,
+				Concurrency: workers,
+				Path:        root,
+				RepoRoot:    root,
+			}
 			var renders int64
 			b.ReportAllocs()
 			for b.Loop() {
@@ -93,19 +114,30 @@ spec:
 				}
 				config, tree := cfg.Config, cfg.Tree
 				config.Cache, config.Network, config.HelmClient = owner, new(source.Network), helm.NewClient(owner)
-				config.chartFetcher = helmchart.New(&oci.Fetcher{Cache: config.Cache, Network: config.Network, RegistryConfig: config.RegistryConfig}, helmchart.Config{
-					Cache: config.Cache, Network: config.Network, Concurrency: config.Concurrency, DisableChartDigestTracking: config.HelmOptions.DisableChartDigestTracking})
+				config.chartFetcher = helmchart.New(
+					&oci.Fetcher{Cache: config.Cache, Network: config.Network, RegistryConfig: config.RegistryConfig},
+					helmchart.Config{
+						Cache:                      config.Cache,
+						Network:                    config.Network,
+						Concurrency:                config.Concurrency,
+						DisableChartDigestTracking: config.HelmOptions.DisableChartDigestTracking,
+					},
+				)
 				tree.Input, tree.Path = input, path
 				o := newOrchestrator(config, tree, task.NewBounded(config.Concurrency))
 				if err := o.bootstrap(b.Context()); err != nil {
 					b.Fatal(err)
 				}
 				var actualRenders atomic.Int64
-				unsubRender := o.store.AddListener(store.EventArtifactUpdated, func(_ manifest.NamedResource, payload any) {
-					if _, ok := payload.(*store.Emission); ok {
-						actualRenders.Add(1)
-					}
-				}, false)
+				unsubRender := o.store.AddListener(
+					store.EventArtifactUpdated,
+					func(_ manifest.NamedResource, payload any) {
+						if _, ok := payload.(*store.Emission); ok {
+							actualRenders.Add(1)
+						}
+					},
+					false,
+				)
 				err = o.run(b.Context())
 				o.stop()
 				config.Network.Close()
@@ -117,7 +149,13 @@ spec:
 				if failed := o.store.FailedResources(); len(failed) != 0 {
 					b.Fatalf("failed resources: %v", failed)
 				}
-				cm, ok := o.store.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "late-settings"})
+				cm, ok := o.store.Get[*manifest.ConfigMap](
+					manifest.NamedResource{
+						Kind:      manifest.KindConfigMap,
+						Namespace: "flux-system",
+						Name:      "late-settings",
+					},
+				)
 				if !ok || cm.Data["VALUE"] != "late" {
 					b.Fatal("late input was not emitted")
 				}

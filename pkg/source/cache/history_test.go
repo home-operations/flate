@@ -23,16 +23,36 @@ func TestProducersForPaths_SourcePaths(t *testing.T) {
 	}
 	root := t.TempDir()
 	cache := cachetest.New(t, root, New)
-	owner := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "emitter"}
-	source := manifest.SourceIdentity{Kind: manifest.KindGitRepository, URL: "https://fixture.invalid/one", Key: "family"}
-	history := &RenderHistory{Owner: owner, Sources: []manifest.SourceEvidence{{Source: source, Path: "apps/blue", Subtree: true}, {Source: source, Path: "shared/values.yaml"}}}
+	owner := manifest.NamedResource{
+		Group:     manifest.HelmReleaseDomain,
+		Kind:      manifest.KindHelmRelease,
+		Namespace: "apps",
+		Name:      "emitter",
+	}
+	source := manifest.SourceIdentity{
+		Kind: manifest.KindGitRepository,
+		URL:  "https://fixture.invalid/one",
+		Key:  "family",
+	}
+	history := &RenderHistory{
+		Owner: owner,
+		Sources: []manifest.SourceEvidence{
+			{Source: source, Path: "apps/blue", Subtree: true},
+			{Source: source, Path: "shared/values.yaml"},
+		},
+	}
 	metadata, err := history.record("accepted").metadata()
 	assert.NoError(t, err)
-	_, _, _, err = cache.Blob(t.Context(), BlobKey{Content: "history-producer", Render: RenderAccepted}, Policy{}, func(_ context.Context, output ProducerInput) (ProducerResult, error) {
-		_, err := io.WriteString(output, "accepted")
-		metadata[acceptedRenderAnnotation] = "accepted"
-		return ProducerResult{Annotations: metadata}, err
-	})
+	_, _, _, err = cache.Blob(
+		t.Context(),
+		BlobKey{Content: "history-producer", Render: RenderAccepted},
+		Policy{},
+		func(_ context.Context, output ProducerInput) (ProducerResult, error) {
+			_, err := io.WriteString(output, "accepted")
+			metadata[acceptedRenderAnnotation] = "accepted"
+			return ProducerResult{Annotations: metadata}, err
+		},
+	)
 	assert.NoError(t, err)
 	assert.NoError(t, cache.Close())
 	cache = cachetest.New(t, root, New)
@@ -52,7 +72,10 @@ func TestProducersForPaths_SourcePaths(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			owners, err := cache.ProducersForPaths(t.Context(), []manifest.SourceEvidence{{Source: tc.source, Path: tc.path}})
+			owners, err := cache.ProducersForPaths(
+				t.Context(),
+				[]manifest.SourceEvidence{{Source: tc.source, Path: tc.path}},
+			)
 			assert.NoError(t, err)
 			var want []manifest.NamedResource
 			if tc.found {
@@ -73,7 +96,8 @@ func TestProducersForPaths_Unavailable(t *testing.T) {
 			t.Parallel()
 			cache := cachetest.New(t, t.TempDir(), New)
 			source := manifest.SourceIdentity{Root: "/input"}
-			metadata, err := (RenderHistory{Owner: manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "emitter"}, Sources: []manifest.SourceEvidence{{Source: source, Path: "apps/blue", Subtree: true}}}).record("accepted").metadata()
+			metadata, err := (RenderHistory{Owner: manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "emitter"}, Sources: []manifest.SourceEvidence{{Source: source, Path: "apps/blue", Subtree: true}}}).record("accepted").
+				metadata()
 			assert.NoError(t, err)
 			if mode == "foreign build" {
 				metadata[historyAnnotation] = `{"Build":"foreign"}`
@@ -82,14 +106,20 @@ func TestProducersForPaths_Unavailable(t *testing.T) {
 				metadata[historyAnnotation] = "{"
 			}
 			if mode == "incomplete owner" {
-				metadata, err = (RenderHistory{Sources: []manifest.SourceEvidence{{Source: source, Path: "apps/blue", Subtree: true}}}).record("accepted").metadata()
+				metadata, err = (RenderHistory{Sources: []manifest.SourceEvidence{{Source: source, Path: "apps/blue", Subtree: true}}}).record("accepted").
+					metadata()
 				assert.NoError(t, err)
 			}
-			_, _, lookup, err := cache.Blob(t.Context(), BlobKey{Content: "history-producer", Render: RenderAccepted}, Policy{}, func(_ context.Context, output ProducerInput) (ProducerResult, error) {
-				_, err := io.WriteString(output, "accepted")
-				metadata[acceptedRenderAnnotation] = "accepted"
-				return ProducerResult{Annotations: metadata}, err
-			})
+			_, _, lookup, err := cache.Blob(
+				t.Context(),
+				BlobKey{Content: "history-producer", Render: RenderAccepted},
+				Policy{},
+				func(_ context.Context, output ProducerInput) (ProducerResult, error) {
+					_, err := io.WriteString(output, "accepted")
+					metadata[acceptedRenderAnnotation] = "accepted"
+					return ProducerResult{Annotations: metadata}, err
+				},
+			)
 			assert.NoError(t, err)
 			if mode == "missing" {
 				descriptor, err := cache.store.Resolve(t.Context(), lookup)
@@ -104,7 +134,10 @@ func TestProducersForPaths_Unavailable(t *testing.T) {
 			if mode == "canceled" {
 				cancel()
 			}
-			owners, err := cache.ProducersForPaths(ctx, []manifest.SourceEvidence{{Source: source, Path: "apps/blue/cm.yaml"}})
+			owners, err := cache.ProducersForPaths(
+				ctx,
+				[]manifest.SourceEvidence{{Source: source, Path: "apps/blue/cm.yaml"}},
+			)
 			assert.Equal(t, errors.Is(err, context.Canceled), mode == "canceled")
 			assert.Equal(t, len(owners), 0)
 			if mode != "canceled" {
@@ -124,8 +157,15 @@ func TestProducersForPaths_Acceptance(t *testing.T) {
 			t.Parallel()
 			cache := cachetest.New(t, t.TempDir(), New)
 			source := manifest.SourceIdentity{Root: "/input"}
-			owner := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Name: "emitter"}
-			history := &RenderHistory{Owner: owner, Sources: []manifest.SourceEvidence{{Source: source, Path: "apps/blue", Subtree: true}}}
+			owner := manifest.NamedResource{
+				Group: manifest.HelmReleaseDomain,
+				Kind:  manifest.KindHelmRelease,
+				Name:  "emitter",
+			}
+			history := &RenderHistory{
+				Owner:   owner,
+				Sources: []manifest.SourceEvidence{{Source: source, Path: "apps/blue", Subtree: true}},
+			}
 			key := BlobKey{Content: "history-producer", Render: RenderAccepted}
 			if mode == "pending" {
 				key.Render = RenderPending
@@ -136,22 +176,39 @@ func TestProducersForPaths_Acceptance(t *testing.T) {
 			metadata, err := history.record("first").metadata()
 			assert.NoError(t, err)
 			metadata[acceptedRenderAnnotation] = "first"
-			_, _, _, err = cache.Blob(t.Context(), key, Policy{}, func(_ context.Context, output ProducerInput) (ProducerResult, error) {
-				_, err := io.WriteString(output, "accepted")
-				return ProducerResult{Annotations: metadata}, err
-			})
+			_, _, _, err = cache.Blob(
+				t.Context(),
+				key,
+				Policy{},
+				func(_ context.Context, output ProducerInput) (ProducerResult, error) {
+					_, err := io.WriteString(output, "accepted")
+					return ProducerResult{Annotations: metadata}, err
+				},
+			)
 			assert.NoError(t, err)
 			if mode == "rejected" || mode == "replacement" {
-				err = RecordInventory(t.Context(), cache, AcceptedInventory[inventoryContent]{Key: "history-producer", Acceptance: "second", History: RenderHistory{Owner: owner, Sources: []manifest.SourceEvidence{}}, Content: inventoryContent(func(output io.Writer) (int64, error) {
-					if mode == "rejected" {
-						return 0, errors.New("rejected successor")
-					}
-					n, err := io.WriteString(output, "empty accepted inventory")
-					return int64(n), err
-				})})
+				err = RecordInventory(
+					t.Context(),
+					cache,
+					AcceptedInventory[inventoryContent]{
+						Key:        "history-producer",
+						Acceptance: "second",
+						History:    RenderHistory{Owner: owner, Sources: []manifest.SourceEvidence{}},
+						Content: inventoryContent(func(output io.Writer) (int64, error) {
+							if mode == "rejected" {
+								return 0, errors.New("rejected successor")
+							}
+							n, err := io.WriteString(output, "empty accepted inventory")
+							return int64(n), err
+						}),
+					},
+				)
 				assert.Equal(t, err != nil, mode == "rejected")
 			}
-			owners, err := cache.ProducersForPaths(t.Context(), []manifest.SourceEvidence{{Source: source, Path: "apps/blue/cm.yaml"}})
+			owners, err := cache.ProducersForPaths(
+				t.Context(),
+				[]manifest.SourceEvidence{{Source: source, Path: "apps/blue/cm.yaml"}},
+			)
 			assert.NoError(t, err)
 			var want []manifest.NamedResource
 			if mode == "accepted" || mode == "rejected" {
@@ -173,9 +230,21 @@ func TestProducersForPaths_Publication(t *testing.T) {
 			root := t.TempDir()
 			c := cachetest.New(t, root, New)
 			source := manifest.SourceIdentity{Root: "/input"}
-			owners := []manifest.NamedResource{{Kind: manifest.KindHelmRelease, Name: "a"}, {Kind: manifest.KindKustomization, Name: "b"}}
+			owners := []manifest.NamedResource{
+				{Kind: manifest.KindHelmRelease, Name: "a"},
+				{Kind: manifest.KindKustomization, Name: "b"},
+			}
 			publish := func(owner manifest.NamedResource, paths []manifest.SourceEvidence) error {
-				return RecordInventory(t.Context(), c, AcceptedInventory[*strings.Reader]{Key: owner.Name, Acceptance: owner.Name, History: RenderHistory{Owner: owner, Sources: paths}, Content: strings.NewReader(owner.Name)})
+				return RecordInventory(
+					t.Context(),
+					c,
+					AcceptedInventory[*strings.Reader]{
+						Key:        owner.Name,
+						Acceptance: owner.Name,
+						History:    RenderHistory{Owner: owner, Sources: paths},
+						Content:    strings.NewReader(owner.Name),
+					},
+				)
 			}
 			paths := []manifest.SourceEvidence{{Source: source, Path: "removed/old.yaml"}}
 			for _, owner := range owners {
@@ -196,7 +265,14 @@ func TestProducersForPaths_Publication(t *testing.T) {
 			}
 			assert.NoError(t, c.Close())
 			c = cachetest.New(t, root, New)
-			got, err := c.ProducersForPaths(t.Context(), []manifest.SourceEvidence{{Source: source, Path: "moved/new.yaml"}, {Source: source, Path: "removed/old.yaml"}, {Source: source, Path: "removed/old.yaml"}})
+			got, err := c.ProducersForPaths(
+				t.Context(),
+				[]manifest.SourceEvidence{
+					{Source: source, Path: "moved/new.yaml"},
+					{Source: source, Path: "removed/old.yaml"},
+					{Source: source, Path: "removed/old.yaml"},
+				},
+			)
 			assert.NoError(t, err)
 			want := owners
 			if mode == "empty replacement" {
@@ -220,8 +296,14 @@ func TestRecordInventory_ConcurrentReuse(t *testing.T) {
 	c := cachetest.New(t, root, New)
 	var writes atomic.Int64
 	inventory := AcceptedInventory[inventoryContent]{
-		Key: "shared", Acceptance: "accepted",
-		History: RenderHistory{Owner: manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "shared"}, Sources: []manifest.SourceEvidence{{Source: manifest.SourceIdentity{Root: "/input"}, Path: "apps/shared", Subtree: true}}},
+		Key:        "shared",
+		Acceptance: "accepted",
+		History: RenderHistory{
+			Owner: manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "shared"},
+			Sources: []manifest.SourceEvidence{
+				{Source: manifest.SourceIdentity{Root: "/input"}, Path: "apps/shared", Subtree: true},
+			},
+		},
 		Content: inventoryContent(func(output io.Writer) (int64, error) {
 			writes.Add(1)
 			n, err := io.WriteString(output, "accepted")
@@ -242,7 +324,10 @@ func TestRecordInventory_ConcurrentReuse(t *testing.T) {
 	c = cachetest.New(t, root, New)
 	assert.NoError(t, RecordInventory(t.Context(), c, inventory))
 	assert.Equal(t, writes.Load(), int64(1))
-	owners, err := c.ProducersForPaths(t.Context(), []manifest.SourceEvidence{{Source: manifest.SourceIdentity{Root: "/input"}, Path: "apps/shared/cm.yaml"}})
+	owners, err := c.ProducersForPaths(
+		t.Context(),
+		[]manifest.SourceEvidence{{Source: manifest.SourceIdentity{Root: "/input"}, Path: "apps/shared/cm.yaml"}},
+	)
 	assert.NoError(t, err)
 	assert.Diff(t, owners, []manifest.NamedResource{inventory.History.Owner})
 }
@@ -251,8 +336,14 @@ func TestRecordInventory_WithoutPersistence(t *testing.T) {
 	c := cachetest.New(t, "", New)
 	writes := 0
 	inventory := AcceptedInventory[inventoryContent]{
-		Key: "memory", Acceptance: "accepted",
-		History: RenderHistory{Owner: manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "memory"}, Sources: []manifest.SourceEvidence{{Source: manifest.SourceIdentity{Root: "/input"}, Path: "apps/shared", Subtree: true}}},
+		Key:        "memory",
+		Acceptance: "accepted",
+		History: RenderHistory{
+			Owner: manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "memory"},
+			Sources: []manifest.SourceEvidence{
+				{Source: manifest.SourceIdentity{Root: "/input"}, Path: "apps/shared", Subtree: true},
+			},
+		},
 		Content: inventoryContent(func(io.Writer) (int64, error) { writes++; return 0, nil }),
 	}
 	ctx := t.Context()
@@ -273,11 +364,19 @@ func TestRecordInventory_EquivalentHistoryOrder(t *testing.T) {
 	first := manifest.SourceEvidence{Source: source, Path: "apps/a", Subtree: true}
 	second := manifest.SourceEvidence{Source: source, Path: "apps/b", Subtree: true}
 	writes := 0
-	inventory := AcceptedInventory[inventoryContent]{Key: "equivalent", Acceptance: "accepted", History: RenderHistory{Owner: manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "equivalent"}, Sources: []manifest.SourceEvidence{second, first}}, Content: inventoryContent(func(output io.Writer) (int64, error) {
-		writes++
-		n, err := io.WriteString(output, "accepted")
-		return int64(n), err
-	})}
+	inventory := AcceptedInventory[inventoryContent]{
+		Key:        "equivalent",
+		Acceptance: "accepted",
+		History: RenderHistory{
+			Owner:   manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "equivalent"},
+			Sources: []manifest.SourceEvidence{second, first},
+		},
+		Content: inventoryContent(func(output io.Writer) (int64, error) {
+			writes++
+			n, err := io.WriteString(output, "accepted")
+			return int64(n), err
+		}),
+	}
 	assert.NoError(t, RecordInventory(t.Context(), c, inventory))
 	inventory.History.Sources = []manifest.SourceEvidence{first, second, second}
 	assert.NoError(t, RecordInventory(t.Context(), c, inventory))

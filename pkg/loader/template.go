@@ -60,7 +60,14 @@ func (l *Loader) projectTemplates() {
 					}
 				}
 				slices.SortFunc(contributors, func(a, b manifest.Production) int {
-					return cmp.Or(a.Owner.Compare(b.Owner), a.Declaration.Compare(b.Declaration), a.Authored.Compare(b.Authored), a.Source.Compare(b.Source), strings.Compare(a.Path, b.Path), strings.Compare(a.File, b.File))
+					return cmp.Or(
+						a.Owner.Compare(b.Owner),
+						a.Declaration.Compare(b.Declaration),
+						a.Authored.Compare(b.Authored),
+						a.Source.Compare(b.Source),
+						strings.Compare(a.Path, b.Path),
+						strings.Compare(a.File, b.File),
+					)
 				})
 			}
 			if known && previous.Parent != (manifest.NamedResource{}) && previous.Parent.Compare(owner) < 0 {

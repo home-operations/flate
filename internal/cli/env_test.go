@@ -197,7 +197,30 @@ func TestEnvKey(t *testing.T) {
 
 func TestRun_RemovedFlagsRejected(t *testing.T) {
 	for _, verb := range []string{"build", "test", "diff", "get"} {
-		flags := []string{"substitute", "no-hooks", "show-only", "force-generic-provider", "is-upgrade", "allow-missing-secrets", "allow-missing-crds", "stream", "skip-crds", "skip-secrets", "only-crds", "krmignore", "profile", "profile-out", "skip-schema-validation", "source-retry-attempts", "source-retry-min-wait", "source-retry-max-wait", "source-retry-jitter", "helm-template-cache-mb", "helm-render-cache-mb", "kustomize-render-cache-mb"}
+		flags := []string{
+			"substitute",
+			"no-hooks",
+			"show-only",
+			"force-generic-provider",
+			"is-upgrade",
+			"allow-missing-secrets",
+			"allow-missing-crds",
+			"stream",
+			"skip-crds",
+			"skip-secrets",
+			"only-crds",
+			"krmignore",
+			"profile",
+			"profile-out",
+			"skip-schema-validation",
+			"source-retry-attempts",
+			"source-retry-min-wait",
+			"source-retry-max-wait",
+			"source-retry-jitter",
+			"helm-template-cache-mb",
+			"helm-render-cache-mb",
+			"kustomize-render-cache-mb",
+		}
 		if verb != "build" {
 			flags = append(flags, "only-kinds")
 		}

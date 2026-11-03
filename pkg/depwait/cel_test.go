@@ -38,7 +38,10 @@ func TestReadyExpr_ProjectsObservedGeneration(t *testing.T) {
 			s := store.New()
 			dep := manifest.NamedResource{Group: tc.group, Kind: tc.kind, Namespace: "ns", Name: "infra"}
 			s.UpdateStatus(dep, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
-			expr := fmt.Sprintf(`dep.status.observedGeneration == dep.metadata.generation && dep.apiVersion == %q`, tc.version)
+			expr := fmt.Sprintf(
+				`dep.status.observedGeneration == dep.metadata.generation && dep.apiVersion == %q`,
+				tc.version,
+			)
 			ok, err := evaluateReadyExpr(expr, s, manifest.NamedResource{}, dep)
 			if err != nil || !ok {
 				t.Errorf("readiness projection: ok=%v err=%v, want true/nil", ok, err)
@@ -129,7 +132,12 @@ func TestReadyExpr_DesiredSpec(t *testing.T) {
 					if equal {
 						want = schedule.Terminal
 					}
-					if got := w.Classify(t.Context(), ref, manifest.DrainNone); got.Kind != want || got.Err != nil || got.Message != "" {
+					if got := w.Classify(
+						t.Context(),
+						ref,
+						manifest.DrainNone,
+					); got.Kind != want || got.Err != nil ||
+						got.Message != "" {
 						t.Errorf("desired-spec readiness: got %+v, want kind=%v without error or message", got, want)
 					}
 				})
@@ -145,12 +153,16 @@ func TestReadyExpr_ReplaceOverridesBuiltin(t *testing.T) {
 	t.Parallel()
 	s := store.New()
 	dep := testutil.KustomizationID("ns", "infra")
-	s.UpdateStatus(dep, store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "still rolling out"}) // built-in says Failed
+	s.UpdateStatus(
+		dep,
+		store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "still rolling out"},
+	) // built-in says Failed
 	s.SetCondition(dep, store.Condition{Type: "Healthy", Status: metav1.ConditionTrue, Reason: "MyCustomCheck"})
 
 	w := &Waiter{Store: s}
-	ref := manifest.DependencyRef{NamedResource: dep,
-		ReadyExpr: new(`dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")`),
+	ref := manifest.DependencyRef{
+		NamedResource: dep,
+		ReadyExpr:     new(`dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")`),
 	}
 	if got := w.Classify(t.Context(), ref, manifest.DrainNone); got.Kind != schedule.Terminal {
 		t.Errorf("replace ReadyExpr true over Failed built-in: got %+v, want schedule.Terminal", got)
@@ -213,7 +225,12 @@ func TestReadyExpr_TransientEvalErrorNotTerminal(t *testing.T) {
 	var observation store.Observation
 	obj, observation := s.Snapshot(dep, true)
 	conds := observation.Conditions
-	if ready, failMsg := w.tryReadyExpr(manifest.DependencyRef{NamedResource: dep, ReadyExpr: new(expr)}, obj, conds); ready || failMsg != "" {
+	if ready, failMsg := w.tryReadyExpr(
+		manifest.DependencyRef{NamedResource: dep, ReadyExpr: new(expr)},
+		obj,
+		conds,
+	); ready ||
+		failMsg != "" {
 		t.Fatalf("transient eval error: ready=%v failMsg=%q, want false/empty (not terminal)", ready, failMsg)
 	}
 	ref := manifest.DependencyRef{NamedResource: dep, ReadyExpr: new(expr)}
@@ -265,9 +282,17 @@ func TestReadyExpr_BindsSelfAndDep(t *testing.T) {
 	self := testutil.KustomizationID("ns", "parent")
 	dep := testutil.KustomizationID("ns", "child")
 	s.UpdateStatus(self, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
-	s.UpdateStatus(dep, store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: "changed diagnostic"})
+	s.UpdateStatus(
+		dep,
+		store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: "changed diagnostic"},
+	)
 
-	ok, err := evaluateReadyExpr(`self.metadata.namespace == dep.metadata.namespace && self.status.conditions.exists(c, c.type == "Ready" && c.reason == "Succeeded") && dep.status.conditions.exists(c, c.type == "Ready" && c.reason == "Skipped" && c.status == "True")`, s, self, dep)
+	ok, err := evaluateReadyExpr(
+		`self.metadata.namespace == dep.metadata.namespace && self.status.conditions.exists(c, c.type == "Ready" && c.reason == "Succeeded") && dep.status.conditions.exists(c, c.type == "Ready" && c.reason == "Skipped" && c.status == "True")`,
+		s,
+		self,
+		dep,
+	)
 	if err != nil || !ok {
 		t.Errorf("self/dep binding: ok=%v err=%v, want true/nil", ok, err)
 	}
@@ -314,10 +339,18 @@ func TestReadyExpr_BindsSelfAndDep(t *testing.T) {
 		dependency := &manifest.Kustomization{Name: "child", Namespace: "ns"}
 		s.AddObject(parent)
 		s.AddObject(dependency)
-		s.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "waiting on child"})
+		s.UpdateStatus(
+			parent.Named(),
+			store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "waiting on child"},
+		)
 		s.UpdateStatus(dependency.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 		pending, _ := s.GetStatus(parent.Named())
-		expr := fmt.Sprintf(`dep.status.conditions.exists(c, c.type == "Ready" && c.status == "True") && self.status.conditions.exists(c, c.type == "Ready" && c.status == %q && c.reason == %q && c.message == %q)`, metav1.ConditionUnknown, pending.Reason, pending.Message)
+		expr := fmt.Sprintf(
+			`dep.status.conditions.exists(c, c.type == "Ready" && c.status == "True") && self.status.conditions.exists(c, c.type == "Ready" && c.status == %q && c.reason == %q && c.message == %q)`,
+			metav1.ConditionUnknown,
+			pending.Reason,
+			pending.Message,
+		)
 		if ok, err := evaluateReadyExpr(expr, s, parent.Named(), dependency.Named()); err != nil || !ok {
 			t.Fatalf("ResourceSet self condition: ok=%v err=%v, want true/nil", ok, err)
 		}
@@ -382,7 +415,12 @@ func TestReadyExpr_SelfCapture(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			s := store.New()
-			self := &manifest.Kustomization{Name: "parent", Namespace: "ns", Labels: map[string]string{"tier": "data"}, Path: "./apps"}
+			self := &manifest.Kustomization{
+				Name:      "parent",
+				Namespace: "ns",
+				Labels:    map[string]string{"tier": "data"},
+				Path:      "./apps",
+			}
 			dep := &manifest.Kustomization{Name: "dep", Namespace: "ns", Labels: map[string]string{"field": "metadata"}}
 			if tc.same {
 				dep = self
@@ -403,7 +441,10 @@ func TestReadyExpr_SelfCapture(t *testing.T) {
 			if !reads.Valid() {
 				t.Fatal("fresh read set invalid")
 			}
-			s.UpdateStatus(self.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "rendering"})
+			s.UpdateStatus(
+				self.Named(),
+				store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "rendering"},
+			)
 			if got := reads.Valid(); got == tc.status {
 				t.Fatalf("valid after self status change = %v, want %v", got, !tc.status)
 			}
@@ -417,7 +458,12 @@ func TestReadyExpr_DeclarationChanges(t *testing.T) {
 		t.Run(field, func(t *testing.T) {
 			t.Parallel()
 			s := store.New()
-			self := &manifest.Kustomization{Name: "parent", Namespace: "ns", Labels: map[string]string{"tier": "data"}, Path: "./apps"}
+			self := &manifest.Kustomization{
+				Name:      "parent",
+				Namespace: "ns",
+				Labels:    map[string]string{"tier": "data"},
+				Path:      "./apps",
+			}
 			dep := &manifest.Kustomization{Name: "dep", Namespace: "ns"}
 			s.AddObject(self)
 			s.AddObject(dep)
@@ -461,7 +507,10 @@ func TestReadyExpr_DependencyConditions(t *testing.T) {
 	reads.Init(s, testutil.KustomizationID("ns", "parent"), nil)
 	defer reads.Retire()
 	w := Waiter{Store: &reads, Parent: testutil.KustomizationID("ns", "parent")}
-	ref := manifest.DependencyRef{NamedResource: dep.Named(), ReadyExpr: new(`dep.status.conditions.exists(c, c.status == 'True')`)}
+	ref := manifest.DependencyRef{
+		NamedResource: dep.Named(),
+		ReadyExpr:     new(`dep.status.conditions.exists(c, c.status == 'True')`),
+	}
 	if got := w.Classify(t.Context(), ref, manifest.DrainNone); got.Kind != schedule.Terminal {
 		t.Fatalf("dependency: %+v", got)
 	}
@@ -594,9 +643,17 @@ spec: {chartRef: {kind: OCIRepository, name: chart}, values: {version: old}}
 		t.Fatal("short circuit converted an unused object")
 	}
 	expr := `self.spec == dep.spec`
-	if ok, err := w.evaluateReadyExpr(expr, dep.Named(), captured, info.Conditions); ok || !errors.Is(err, manifest.ErrInput) {
+	if ok, err := w.evaluateReadyExpr(
+		expr,
+		dep.Named(),
+		captured,
+		info.Conditions,
+	); ok ||
+		!errors.Is(err, manifest.ErrInput) {
 		t.Fatalf("projection failure: ok=%v err=%v, want input error", ok, err)
-	} else if _, terminal := errors.AsType[*celCompileErr](err); terminal {
+	} else if _, terminal := errors.AsType[*celCompileErr](
+		err,
+	); terminal {
 		t.Fatalf("projection failure classified as compile error: %v", err)
 	}
 	if dep.calls != 1 {
@@ -628,7 +685,13 @@ func TestReadyExpr_AbsentSpec(t *testing.T) {
 			if statusOnly {
 				s.UpdateStatus(dep, store.StatusInfo{Status: store.StatusPending})
 			}
-			if ok, err := evaluateReadyExpr(`!has(dep.spec) && !has(dep.metadata.labels) && dep.metadata.namespace == ''`, s, dep, dep); err != nil || !ok {
+			if ok, err := evaluateReadyExpr(
+				`!has(dep.spec) && !has(dep.metadata.labels) && dep.metadata.namespace == ''`,
+				s,
+				dep,
+				dep,
+			); err != nil ||
+				!ok {
 				t.Fatalf("absent desired fields: ok=%v err=%v", ok, err)
 			}
 			w := Waiter{Store: s, Parent: dep}

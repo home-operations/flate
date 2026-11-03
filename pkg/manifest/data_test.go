@@ -12,7 +12,10 @@ import (
 
 func TestSecret_Value_ShadowedAndUnrequestedKeys(t *testing.T) {
 	t.Parallel()
-	s := &Secret{StringData: map[string]any{"VALUE": ""}, Data: map[string]any{"VALUE": "malformed!", "UNUSED": "malformed!"}}
+	s := &Secret{
+		StringData: map[string]any{"VALUE": ""},
+		Data:       map[string]any{"VALUE": "malformed!", "UNUSED": "malformed!"},
+	}
 	value, found, err := s.Value("VALUE")
 	if value != "" || !found || err != nil {
 		t.Fatalf("value=%q found=%t err=%v", value, found, err)
@@ -78,7 +81,11 @@ func TestParseDoc_AuthoritativeSanitation(t *testing.T) {
 				if tc.field == "binaryData" || (tc.kind == KindSecret && tc.field == "data") {
 					clearValue = base64.StdEncoding.EncodeToString([]byte(clearValue))
 				}
-				doc := map[string]any{"apiVersion": "v1", "kind": tc.kind, tc.field: map[string]any{"VALUE": raw, "CLEAR": clearValue}}
+				doc := map[string]any{
+					"apiVersion": "v1",
+					"kind":       tc.kind,
+					tc.field:     map[string]any{"VALUE": raw, "CLEAR": clearValue},
+				}
 				if tc.metadata {
 					doc["sops"] = map[string]any{"version": "3.13.3"}
 				}
@@ -86,7 +93,10 @@ func TestParseDoc_AuthoritativeSanitation(t *testing.T) {
 					doc["metadata"] = map[string]any{"name": "app"}
 				}
 				before := DeepCopyMap(doc)
-				obj, authoritative, changed, err := ParseDoc(doc, ParseDocOptions{WipeSecrets: true, DefaultNamespace: "apps"})
+				obj, authoritative, changed, err := ParseDoc(
+					doc,
+					ParseDocOptions{WipeSecrets: true, DefaultNamespace: "apps"},
+				)
 				assert.Equal(t, changed, tc.wiped || valid)
 				if valid {
 					assert.NoError(t, err)
@@ -111,7 +121,10 @@ func TestParseDoc_AuthoritativeSanitation(t *testing.T) {
 				assert.Diff(t, authoritative[tc.field].(map[string]any)["CLEAR"], any(clearValue))
 				_, disabled, _, _ := ParseDoc(doc, ParseDocOptions{DefaultNamespace: "apps"})
 				assert.Diff(t, disabled[tc.field], doc[tc.field])
-				_, replay, replayChanged, _ := ParseDoc(authoritative, ParseDocOptions{WipeSecrets: true, DefaultNamespace: "apps"})
+				_, replay, replayChanged, _ := ParseDoc(
+					authoritative,
+					ParseDocOptions{WipeSecrets: true, DefaultNamespace: "apps"},
+				)
 				if replayChanged {
 					t.Fatal("replay reported sanitation changes")
 				}
@@ -120,7 +133,11 @@ func TestParseDoc_AuthoritativeSanitation(t *testing.T) {
 				if changed {
 					retained := DeepCopyMap(authoritative)
 					ReleaseDoc(doc)
-					next, err := decodeDocMaps(strings.NewReader("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: next}\ndata: {VALUE: next}\n"))
+					next, err := decodeDocMaps(
+						strings.NewReader(
+							"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: next}\ndata: {VALUE: next}\n",
+						),
+					)
 					assert.NoError(t, err)
 					ReleaseDoc(next[0])
 					assert.Diff(t, authoritative, retained)
@@ -132,7 +149,11 @@ func TestParseDoc_AuthoritativeSanitation(t *testing.T) {
 
 func TestVarsMap_Newlines(t *testing.T) {
 	t.Parallel()
-	assert.Diff(t, VarsMap(map[string]string{"TEXT": "one\ntwo", "EMPTY": ""}), map[string]string{"TEXT": "onetwo", "EMPTY": ""})
+	assert.Diff(
+		t,
+		VarsMap(map[string]string{"TEXT": "one\ntwo", "EMPTY": ""}),
+		map[string]string{"TEXT": "onetwo", "EMPTY": ""},
+	)
 }
 
 func TestDataValue_FieldErrors(t *testing.T) {

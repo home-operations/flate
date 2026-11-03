@@ -14,6 +14,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	digest "github.com/opencontainers/go-digest"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/discovery"
@@ -21,7 +23,6 @@ import (
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/test/e2e/internal/harness"
-	digest "github.com/opencontainers/go-digest"
 )
 
 func TestE2E_ChildKustomizationIdentity(t *testing.T) {
@@ -33,10 +34,33 @@ func TestE2E_ChildKustomizationIdentity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
 			testutil.GitInit(t, root)
-			testutil.WriteFile(t, root, "flux/repo.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: flux-system, namespace: flux-system}\nspec: {url: 'https://example.invalid/cluster.git'}\n")
-			testutil.WriteFile(t, root, "flux/parent.yaml", testutil.KustomizationYAML("parent", "flux-system", "  path: ./apps\n")+tc.target+"  sourceRef: {kind: GitRepository, name: flux-system}\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"flux/repo.yaml",
+				"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: flux-system, namespace: flux-system}\nspec: {url: 'https://example.invalid/cluster.git'}\n",
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				"flux/parent.yaml",
+				testutil.KustomizationYAML(
+					"parent",
+					"flux-system",
+					"  path: ./apps\n",
+				)+tc.target+"  sourceRef: {kind: GitRepository, name: flux-system}\n",
+			)
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [child.yaml, raw.yaml]\n")
-			testutil.WriteFile(t, root, "apps/child.yaml", testutil.KustomizationYAML("child", strings.TrimPrefix(tc.authored, ", namespace: "), "  path: ./apps/child\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
+			testutil.WriteFile(
+				t,
+				root,
+				"apps/child.yaml",
+				testutil.KustomizationYAML(
+					"child",
+					strings.TrimPrefix(tc.authored, ", namespace: "),
+					"  path: ./apps/child\n  sourceRef: {kind: GitRepository, name: flux-system}\n",
+				),
+			)
 			rawVersions := []string{"example.test/v1", "other.test/v1"}
 			rawBodies := []string{
 				"apiVersion: example.test/v1\nkind: Kustomization\nmetadata: {name: child" + tc.authored + "}\nspec: {value: first}\n",
@@ -44,8 +68,21 @@ func TestE2E_ChildKustomizationIdentity(t *testing.T) {
 			}
 			testutil.WriteFile(t, root, "apps/raw.yaml", strings.Join(rawBodies, "---\n"))
 			testutil.WriteFile(t, root, "apps/child/kustomization.yaml", "resources: [cm.yaml]\n")
-			testutil.WriteFile(t, root, "apps/child/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: child-output}\n")
-			flags := []string{"--path", filepath.Join(root, "flux"), "--cache-dir", t.TempDir(), "--concurrency", "2", "--no-progress"}
+			testutil.WriteFile(
+				t,
+				root,
+				"apps/child/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: child-output}\n",
+			)
+			flags := []string{
+				"--path",
+				filepath.Join(root, "flux"),
+				"--cache-dir",
+				t.TempDir(),
+				"--concurrency",
+				"2",
+				"--no-progress",
+			}
 			wantCode, wantMaps := 0, 1
 			if tc.namespace == "" {
 				wantCode, wantMaps = 1, 0
@@ -68,8 +105,13 @@ func TestE2E_ChildKustomizationIdentity(t *testing.T) {
 					if obj.Namespace != tc.namespace {
 						t.Errorf("child identity namespace=%q want=%q", obj.Namespace, tc.namespace)
 					}
-					if obj.SourceRef.Kind != manifest.KindGitRepository || obj.SourceRef.Name != "flux-system" || obj.SourceRef.Namespace != tc.namespace {
-						t.Errorf("implicit source=%+v want GitRepository.source.toolkit.fluxcd.io/%s/flux-system", obj.SourceRef, tc.namespace)
+					if obj.SourceRef.Kind != manifest.KindGitRepository || obj.SourceRef.Name != "flux-system" ||
+						obj.SourceRef.Namespace != tc.namespace {
+						t.Errorf(
+							"implicit source=%+v want GitRepository.source.toolkit.fluxcd.io/%s/flux-system",
+							obj.SourceRef,
+							tc.namespace,
+						)
 					}
 				}
 			}
@@ -118,7 +160,8 @@ func TestE2E_ChildKustomizationIdentity(t *testing.T) {
 			if code != wantCode || strings.Contains(out+stderr, "blocked") != (wantCode == 1) {
 				t.Errorf("test exit=%d want=%d output=%s stderr=%s", code, wantCode, out, stderr)
 			}
-			if strings.Contains(out+stderr, "Kustomization.example.test") || strings.Contains(out+stderr, "Kustomization.other.test") {
+			if strings.Contains(out+stderr, "Kustomization.example.test") ||
+				strings.Contains(out+stderr, "Kustomization.other.test") {
 				t.Errorf("raw lookalikes entered test status: output=%s stderr=%s", out, stderr)
 			}
 			if wantCode == 1 && !strings.Contains(out+stderr, "blocked by flux-system (not found)") {
@@ -132,7 +175,8 @@ func TestE2E_ChildKustomizationIdentity(t *testing.T) {
 					t.Run(fmt.Sprintf("insert%d%d/remove%d", order[0], order[1], removed), func(t *testing.T) {
 						renderRaw := func() map[string]string {
 							t.Helper()
-							out, stderr, code := harness.RunCLIBuffers(append([]string{"build", "all", "-o", "yaml"}, flags...)...)
+							out, stderr, code := harness.RunCLIBuffers(
+								append([]string{"build", "all", "-o", "yaml"}, flags...)...)
 							if code != 0 {
 								t.Fatalf("build exit=%d stderr=%s", code, stderr)
 							}
@@ -145,7 +189,8 @@ func TestE2E_ChildKustomizationIdentity(t *testing.T) {
 								for _, doc := range docs {
 									version := manifest.DocAPIVersion(doc)
 									name, ns := manifest.DocMetadata(doc)
-									if manifest.DocKind(doc) != manifest.KindKustomization || name != "child" || version == "kustomize.toolkit.fluxcd.io/v1" {
+									if manifest.DocKind(doc) != manifest.KindKustomization || name != "child" ||
+										version == "kustomize.toolkit.fluxcd.io/v1" {
 										continue
 									}
 									if _, duplicate := raw[version]; duplicate || ns != tc.namespace {
@@ -166,13 +211,27 @@ func TestE2E_ChildKustomizationIdentity(t *testing.T) {
 						testutil.WriteFile(t, root, "apps/raw.yaml", rawBodies[remaining])
 						after := renderRaw()
 						if len(after) != 1 || after[version] != before[version] {
-							t.Fatalf("withdrawal changed surviving bytes or retained stale output: before=%v after=%v", before, after)
+							t.Fatalf(
+								"withdrawal changed surviving bytes or retained stale output: before=%v after=%v",
+								before,
+								after,
+							)
 						}
 						nextVersion := strings.TrimSuffix(version, "/v1") + "/v2"
-						testutil.WriteFile(t, root, "apps/raw.yaml", strings.Replace(rawBodies[remaining], version, nextVersion, 1))
+						testutil.WriteFile(
+							t,
+							root,
+							"apps/raw.yaml",
+							strings.Replace(rawBodies[remaining], version, nextVersion, 1),
+						)
 						versioned := renderRaw()
-						if len(versioned) != 1 || versioned[nextVersion] != strings.Replace(before[version], version, nextVersion, 1) {
-							t.Fatalf("version-only change split identity or changed content: before=%v after=%v", before, versioned)
+						if len(versioned) != 1 ||
+							versioned[nextVersion] != strings.Replace(before[version], version, nextVersion, 1) {
+							t.Fatalf(
+								"version-only change split identity or changed content: before=%v after=%v",
+								before,
+								versioned,
+							)
 						}
 					})
 				}
@@ -251,14 +310,51 @@ func runtimeOwnerNamespaceFixture(t *testing.T, namespace, value string) string 
 	t.Helper()
 	root := t.TempDir()
 	testutil.GitInit(t, root)
-	testutil.WriteFile(t, root, "flux/repo.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: flux-system, namespace: flux-system}\nspec: {url: 'https://example.invalid/cluster.git'}\n")
-	owner := testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n  targetNamespace: apps\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n")
-	testutil.WriteFile(t, root, "flux/owners.yaml", "apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: owners, namespace: flux-system}\nspec:\n  resourcesTemplate: |\n    "+strings.ReplaceAll(strings.TrimSpace(owner), "\n", "\n    ")+"\n")
-	testutil.WriteFile(t, root, "apps/ks.yaml", testutil.KustomizationYAML("demo", namespace, "  path: ./workload\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
+	testutil.WriteFile(
+		t,
+		root,
+		"flux/repo.yaml",
+		"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: flux-system, namespace: flux-system}\nspec: {url: 'https://example.invalid/cluster.git'}\n",
+	)
+	owner := testutil.KustomizationYAML(
+		"apps",
+		"flux-system",
+		"  path: ./apps\n  targetNamespace: apps\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"flux/owners.yaml",
+		"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: owners, namespace: flux-system}\nspec:\n  resourcesTemplate: |\n    "+strings.ReplaceAll(
+			strings.TrimSpace(owner),
+			"\n",
+			"\n    ",
+		)+"\n",
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"apps/ks.yaml",
+		testutil.KustomizationYAML(
+			"demo",
+			namespace,
+			"  path: ./workload\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+		),
+	)
 	testutil.WriteFile(t, root, "workload/kustomization.yaml", "namespace: apps\nresources: [hr.yaml]\n")
-	testutil.WriteFile(t, root, "workload/hr.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: demo}\nspec:\n  interval: 10m\n  chart:\n    spec:\n      chart: charts/demo\n      sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n  values: {value: "+value+"}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"workload/hr.yaml",
+		"apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: demo}\nspec:\n  interval: 10m\n  chart:\n    spec:\n      chart: charts/demo\n      sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n  values: {value: "+value+"}\n",
+	)
 	testutil.WriteFile(t, root, "charts/demo/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 1.0.0\n")
-	testutil.WriteFile(t, root, "charts/demo/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo-chart\n  namespace: {{ .Release.Namespace }}\ndata: {value: {{ .Values.value }}}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"charts/demo/templates/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo-chart\n  namespace: {{ .Release.Namespace }}\ndata: {value: {{ .Values.value }}}\n",
+	)
 	return root
 }
 
@@ -266,7 +362,15 @@ func TestE2E_NamespaceOrphans(t *testing.T) {
 	for _, scenario := range []string{"sibling", "explicit", "standalone", "shared"} {
 		t.Run(scenario, func(t *testing.T) {
 			root, cache, namespaces := namespaceOrphanFixture(t, scenario)
-			flags := []string{"--path", filepath.Join(root, "flux"), "--cache-dir", cache, "--concurrency", "2", "--no-progress"}
+			flags := []string{
+				"--path",
+				filepath.Join(root, "flux"),
+				"--cache-dir",
+				cache,
+				"--concurrency",
+				"2",
+				"--no-progress",
+			}
 			getArgs := append([]string{"get", "hr", "-o", "json"}, flags...)
 			hr, _ := harness.RequireCLIOK(t, getArgs...)
 			var releases []struct {
@@ -278,7 +382,8 @@ func TestE2E_NamespaceOrphans(t *testing.T) {
 			}
 			var got []string
 			for _, release := range releases {
-				if release.Name != "demo" || release.SourceRef.Name != release.Namespace+"-demo" || release.SourceRef.Namespace != namespaceOrphanSourceNamespace(scenario, release.Namespace) {
+				if release.Name != "demo" || release.SourceRef.Name != release.Namespace+"-demo" ||
+					release.SourceRef.Namespace != namespaceOrphanSourceNamespace(scenario, release.Namespace) {
 					t.Errorf("unexpected release/source: %+v", release)
 				}
 				got = append(got, release.Namespace)
@@ -316,7 +421,9 @@ func TestE2E_NamespaceOrphans(t *testing.T) {
 					}
 					counts[kind]++
 				}
-				if len(docs) != 3 || counts[manifest.KindHelmRelease] != 1 || counts[manifest.KindHelmRepository] != 1 || counts[manifest.KindConfigMap] != 1 {
+				if len(docs) != 3 || counts[manifest.KindHelmRelease] != 1 ||
+					counts[manifest.KindHelmRepository] != 1 ||
+					counts[manifest.KindConfigMap] != 1 {
 					t.Fatalf("standalone root declarations or workload missing: %s", build)
 				}
 			}
@@ -358,7 +465,11 @@ func TestE2E_NamespaceOrphans(t *testing.T) {
 							assert.Equal(t, ns == "" || ns == namespace, true)
 						}
 						result, _ := harness.RequireCLIOK(t, append([]string{"test"}, args...)...)
-						assert.Equal(t, strings.Contains(result, "failed") || strings.Contains(result, "blocked"), false)
+						assert.Equal(
+							t,
+							strings.Contains(result, "failed") || strings.Contains(result, "blocked"),
+							false,
+						)
 					}
 				}
 			}
@@ -366,14 +477,25 @@ func TestE2E_NamespaceOrphans(t *testing.T) {
 	}
 	t.Run("terminal replay", func(t *testing.T) {
 		root, cache, _ := namespaceOrphanFixture(t, "explicit")
-		flags := []string{"--path", filepath.Join(root, "flux"), "--cache-dir", cache, "--concurrency", "2", "--no-progress"}
+		flags := []string{
+			"--path",
+			filepath.Join(root, "flux"),
+			"--cache-dir",
+			cache,
+			"--concurrency",
+			"2",
+			"--no-progress",
+		}
 		out, _ := harness.RequireCLIOK(t, append([]string{"build", "all"}, flags...)...)
 		if !strings.Contains(out, "name: demo-chart") {
 			t.Fatalf("last-good chart did not render: %s", out)
 		}
 		repository := &manifest.HelmRepository{URL: "https://charts.example.invalid"}
 		chart := &manifest.HelmChartSource{Chart: "demo", Version: "0.1.0"}
-		key := sourcecache.BlobKey{Content: struct{ Repository, Chart, Transport any }{repository.Content(), chart.Content(), nil}, Required: []string{"chart-version", "chart-url"}}
+		key := sourcecache.BlobKey{
+			Content:  struct{ Repository, Chart, Transport any }{repository.Content(), chart.Content(), nil},
+			Required: []string{"chart-version", "chart-url"},
+		}
 		completed := time.Now()
 		// CLI signal handlers MUST stay outside the bubble. Seed a capped
 		// deadline at the real wall clock so CLI scheduling cannot expire it.
@@ -384,10 +506,21 @@ func TestE2E_NamespaceOrphans(t *testing.T) {
 				t.Fatal(err)
 			}
 			for attempt := range 12 {
-				_, _, _, err = c.Blob(t.Context(), key, sourcecache.Policy{}, func(context.Context, sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
-					return sourcecache.ProducerResult{}, &sourcecache.TerminalError{Err: syscall.ECONNRESET, Attempted: true}
-				})
-				if terminal, ok := errors.AsType[*sourcecache.TerminalError](err); !ok || !terminal.Attempted || !errors.Is(err, syscall.ECONNRESET) {
+				_, _, _, err = c.Blob(
+					t.Context(),
+					key,
+					sourcecache.Policy{},
+					func(context.Context, sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+						return sourcecache.ProducerResult{}, &sourcecache.TerminalError{
+							Err:       syscall.ECONNRESET,
+							Attempted: true,
+						}
+					},
+				)
+				if terminal, ok := errors.AsType[*sourcecache.TerminalError](
+					err,
+				); !ok || !terminal.Attempted ||
+					!errors.Is(err, syscall.ECONNRESET) {
 					t.Fatalf("seeded failure lost its classification: %v", err)
 				}
 				if attempt < 11 {
@@ -400,7 +533,9 @@ func TestE2E_NamespaceOrphans(t *testing.T) {
 		})
 		for _, command := range [][]string{{"build", "all"}, {"test", "all"}} {
 			out, stderr, code := harness.RunCLIBuffers(append(command, flags...)...)
-			if code != 1 || !strings.Contains(out+stderr, syscall.ECONNRESET.Error()) || strings.Contains(out, "name: demo-chart") || strings.Contains(out+stderr, "[OrphanedResource]") {
+			if code != 1 || !strings.Contains(out+stderr, syscall.ECONNRESET.Error()) ||
+				strings.Contains(out, "name: demo-chart") ||
+				strings.Contains(out+stderr, "[OrphanedResource]") {
 				t.Fatalf("terminal replay became success or warning: exit=%d stdout=%s stderr=%s", code, out, stderr)
 			}
 		}
@@ -408,18 +543,25 @@ func TestE2E_NamespaceOrphans(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, _, _, err = c.Blob(t.Context(), key, sourcecache.Policy{}, func(context.Context, sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
-			t.Fatal("fresh replay invoked producer")
-			return sourcecache.ProducerResult{}, nil
-		})
-		if terminal, ok := errors.AsType[*sourcecache.TerminalError](err); !ok || terminal.Attempted || !errors.Is(err, manifest.ErrFlux) || !errors.Is(err, syscall.ECONNRESET) {
+		_, _, _, err = c.Blob(
+			t.Context(),
+			key,
+			sourcecache.Policy{},
+			func(context.Context, sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+				t.Fatal("fresh replay invoked producer")
+				return sourcecache.ProducerResult{}, nil
+			},
+		)
+		if terminal, ok := errors.AsType[*sourcecache.TerminalError](
+			err,
+		); !ok || terminal.Attempted || !errors.Is(err, manifest.ErrFlux) ||
+			!errors.Is(err, syscall.ECONNRESET) {
 			t.Fatalf("fresh replay lost its non-attempt classification: %v", err)
 		}
 		if err := c.Close(); err != nil {
 			t.Fatal(err)
 		}
 	})
-
 }
 
 func TestE2E_NamespaceOrphans_FailingOwner(t *testing.T) {
@@ -427,15 +569,27 @@ func TestE2E_NamespaceOrphans_FailingOwner(t *testing.T) {
 		t.Run(fmt.Sprintf("concurrency%d", concurrency), func(t *testing.T) {
 			root, cache, _ := namespaceOrphanFixture(t, "failing")
 			st := store.New()
-			if _, err := discovery.Run(t.Context(), discovery.Config{Path: filepath.Join(root, "flux"), RepoRoot: root, Store: st, WipeSecrets: true}); err != nil {
+			if _, err := discovery.Run(
+				t.Context(),
+				discovery.Config{Path: filepath.Join(root, "flux"), RepoRoot: root, Store: st, WipeSecrets: true},
+			); err != nil {
 				t.Fatal(err)
 			}
 			if releases := st.ListObjects(manifest.HelmReleaseDomain, manifest.KindHelmRelease); len(releases) != 0 {
 				t.Fatalf("failed owner's raw releases admitted during discovery: %+v", releases)
 			}
-			flags := []string{"--path", filepath.Join(root, "flux"), "--cache-dir", cache, "--concurrency", fmt.Sprint(concurrency), "--no-progress"}
+			flags := []string{
+				"--path",
+				filepath.Join(root, "flux"),
+				"--cache-dir",
+				cache,
+				"--concurrency",
+				fmt.Sprint(concurrency),
+				"--no-progress",
+			}
 			out, stderr, code := harness.RunCLIBuffers(append([]string{"test", "all"}, flags...)...)
-			if code != 1 || !strings.Contains(out+stderr, "flux-system/owner") || !strings.Contains(out+stderr, "no matches") {
+			if code != 1 || !strings.Contains(out+stderr, "flux-system/owner") ||
+				!strings.Contains(out+stderr, "no matches") {
 				t.Errorf("owner build failure must remain visible: exit=%d stdout=%s stderr=%s", code, out, stderr)
 			}
 			out, stderr, code = harness.RunCLIBuffers(append([]string{"get", "hr", "-o", "json"}, flags...)...)
@@ -492,7 +646,12 @@ spec: {url: "https://charts.example.invalid", interval: 24h}
 `
 	if scenario == "shared" {
 		bundle, _, _ = strings.Cut(bundle, "\n---\n")
-		bundle = strings.Replace(bundle, "sourceRef: {kind: HelmRepository, name: demo}", "sourceRef: {kind: HelmRepository, name: demo, namespace: charts}", 1)
+		bundle = strings.Replace(
+			bundle,
+			"sourceRef: {kind: HelmRepository, name: demo}",
+			"sourceRef: {kind: HelmRepository, name: demo, namespace: charts}",
+			1,
+		)
 		testutil.WriteFile(t, root, "flux/repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmRepository
 metadata: {name: demo, namespace: charts}
@@ -521,7 +680,16 @@ spec: {url: "https://charts.example.invalid", interval: 24h}
 				path += "-" + ns
 				overlay = "namespace: " + ns + "\n" + overlay
 			}
-			testutil.WriteFile(t, root, "flux/"+owner+".yaml", testutil.KustomizationYAML(owner, "flux-system", " interval: 10m\n path: ./"+path+"\n sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
+			testutil.WriteFile(
+				t,
+				root,
+				"flux/"+owner+".yaml",
+				testutil.KustomizationYAML(
+					owner,
+					"flux-system",
+					" interval: 10m\n path: ./"+path+"\n sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+				),
+			)
 			testutil.WriteFile(t, root, path+"/kustomization.yaml", overlay)
 		}
 	}
@@ -535,10 +703,25 @@ spec: {url: "https://charts.example.invalid", interval: 24h}
 	}
 	repository := &manifest.HelmRepository{URL: "https://charts.example.invalid"}
 	chart := &manifest.HelmChartSource{Chart: "demo", Version: "0.1.0"}
-	_, _, _, err = c.Blob(t.Context(), sourcecache.BlobKey{Content: struct{ Repository, Chart, Transport any }{repository.Content(), chart.Content(), nil}, Required: []string{"chart-version", "chart-url"}}, sourcecache.Policy{MaxAge: time.Hour}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
-		_, err := w.Write(archive)
-		return sourcecache.ProducerResult{Digest: digest.FromBytes(archive), Size: int64(len(archive)), Annotations: map[string]string{"flate.chart-version": "0.1.0", "flate.chart-url": "https://charts.example.invalid/demo-0.1.0.tgz"}}, err
-	})
+	_, _, _, err = c.Blob(
+		t.Context(),
+		sourcecache.BlobKey{
+			Content:  struct{ Repository, Chart, Transport any }{repository.Content(), chart.Content(), nil},
+			Required: []string{"chart-version", "chart-url"},
+		},
+		sourcecache.Policy{MaxAge: time.Hour},
+		func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+			_, err := w.Write(archive)
+			return sourcecache.ProducerResult{
+				Digest: digest.FromBytes(archive),
+				Size:   int64(len(archive)),
+				Annotations: map[string]string{
+					"flate.chart-version": "0.1.0",
+					"flate.chart-url":     "https://charts.example.invalid/demo-0.1.0.tgz",
+				},
+			}, err
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -561,7 +744,17 @@ func TestE2E_RuntimeOwnerNamespace_ChangedOnly(t *testing.T) {
 				{"reverse", before, after, transition.value, "before"},
 			} {
 				t.Run(direction.name, func(t *testing.T) {
-					flags := []string{"--path", direction.current, "--path-orig", direction.original, "--cache-dir", "", "--concurrency", "2", "--no-progress"}
+					flags := []string{
+						"--path",
+						direction.current,
+						"--path-orig",
+						direction.original,
+						"--cache-dir",
+						"",
+						"--concurrency",
+						"2",
+						"--no-progress",
+					}
 					out := runtimeOwnerNamespaceOutput(t, append([]string{"build", "all"}, flags...)...)
 					docs, err := testutil.SplitDocs([]byte(out))
 					assert.NoError(t, err)

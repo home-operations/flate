@@ -189,7 +189,13 @@ type treeConfig struct {
 func newOrchestrator(cfg Config, tree Tree, ts *task.Service) *Orchestrator {
 	st := store.New()
 	st.SetSupplied(cfg.supplied)
-	o := &Orchestrator{cfg: treeConfig{Config: cfg, Tree: tree}, inputs: source.NewHTTPInputs(cfg.Cache, cfg.Network, ts), store: st, cache: cfg.Cache, tasks: ts}
+	o := &Orchestrator{
+		cfg:    treeConfig{Config: cfg, Tree: tree},
+		inputs: source.NewHTTPInputs(cfg.Cache, cfg.Network, ts),
+		store:  st,
+		cache:  cfg.Cache,
+		tasks:  ts,
+	}
 	o.cfg.Selection.Changed = cfg.Selection.Changed || tree.ExternalChanges != nil
 	if o.cfg.Selection.Changed || len(o.cfg.Selection.Roots) != 0 {
 		o.filter = change.NewFilter()
@@ -215,7 +221,13 @@ func newOrchestrator(cfg Config, tree Tree, ts *task.Service) *Orchestrator {
 	o.hrc = helmrelease.New(base.New(st, ts), cfg.HelmClient, cfg.HelmOptions, cfg.WipeSecrets)
 	o.rsc = resourcesetctrl.New(st, ts, cfg.Cache, cfg.WipeSecrets)
 	o.agc = artifactgenerator.New(st, ts, cfg.Cache)
-	o.controllers = base.Controllers{Kustomization: o.ksc, HelmRelease: o.hrc, ResourceSet: o.rsc, Source: o.src, ArtifactGenerator: o.agc}
+	o.controllers = base.Controllers{
+		Kustomization:     o.ksc,
+		HelmRelease:       o.hrc,
+		ResourceSet:       o.rsc,
+		Source:            o.src,
+		ArtifactGenerator: o.agc,
+	}
 	o.depGraph = newDependencyGraph()
 	return o
 }
@@ -237,7 +249,9 @@ func (o *Orchestrator) childrenByParent() map[manifest.NamedResource][]manifest.
 	children := map[manifest.NamedResource][]manifest.NamedResource{}
 	for _, obj := range o.store.ListObjects("", "") {
 		for _, p := range o.store.Productions(obj.Named(), o.index) {
-			if p.Owner != (manifest.NamedResource{}) && p.Owner != obj.Named() && p.Authored == (manifest.NamedResource{}) && p.Declaration == (manifest.NamedResource{}) {
+			if p.Owner != (manifest.NamedResource{}) && p.Owner != obj.Named() &&
+				p.Authored == (manifest.NamedResource{}) &&
+				p.Declaration == (manifest.NamedResource{}) {
 				children[p.Owner] = append(children[p.Owner], obj.Named())
 			}
 		}
@@ -261,15 +275,26 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 		Cache: o.cache, Depth: o.cfg.GitDepth,
 		RestrictSchemes: o.cfg.RestrictEgress,
 	}
-	o.ksc.Trees.SetGitBaseFetcher(func(ctx context.Context, request kustomize.GitBaseRequest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-		artifact, err := gitFetcher.FetchRemoteBase(ctx, git.RemoteBaseRequest{URL: request.URL, Ref: request.Ref, Timeout: request.Timeout, Submodules: request.Submodules}, sourcecache.Policy{MaxAge: request.MaxAge, Retry: retry})
-		if artifact != nil {
-			for _, warning := range artifact.Warnings {
-				o.store.AddWarning(warning)
+	o.ksc.Trees.SetGitBaseFetcher(
+		func(ctx context.Context, request kustomize.GitBaseRequest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+			artifact, err := gitFetcher.FetchRemoteBase(
+				ctx,
+				git.RemoteBaseRequest{
+					URL:        request.URL,
+					Ref:        request.Ref,
+					Timeout:    request.Timeout,
+					Submodules: request.Submodules,
+				},
+				sourcecache.Policy{MaxAge: request.MaxAge, Retry: retry},
+			)
+			if artifact != nil {
+				for _, warning := range artifact.Warnings {
+					o.store.AddWarning(warning)
+				}
 			}
-		}
-		return artifact, err
-	})
+			return artifact, err
+		},
+	)
 	if current, exists := o.src.Fetchers[manifest.KindGitRepository]; exists && current == nil {
 		o.src.Fetchers[manifest.KindGitRepository] = source.Wrap(manifest.KindGitRepository, gitFetcher)
 	}
@@ -316,7 +341,14 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 	o.admission = res.Admission
 	o.dependencySubstitutions = res.DependencySubstitutions
 	if o.entryBinding.Failure != nil && slog.Default().Enabled(ctx, slog.LevelDebug) {
-		slog.DebugContext(ctx, "orchestrator: entry failed", "id", o.diagnostic(o.entryBinding.Producer).String(), "err", manifest.ErrorDetails(o.entryBinding.Failure))
+		slog.DebugContext(
+			ctx,
+			"orchestrator: entry failed",
+			"id",
+			o.diagnostic(o.entryBinding.Producer).String(),
+			"err",
+			manifest.ErrorDetails(o.entryBinding.Failure),
+		)
 	}
 
 	return nil
@@ -325,7 +357,10 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 func (o *Orchestrator) completeBootstrap() {
 	o.failDependsOnCycles()
 	if o.loader != nil && o.entryBinding.Failure != nil {
-		o.store.UpdateStatus(o.entryBinding.Producer, store.StatusInfo{Status: store.StatusFailed, Message: o.entryBinding.Failure.Error()})
+		o.store.UpdateStatus(
+			o.entryBinding.Producer,
+			store.StatusInfo{Status: store.StatusFailed, Message: o.entryBinding.Failure.Error()},
+		)
 	}
 	ociFetcher := &oci.Fetcher{Cache: o.cache, Network: o.cfg.Network, RegistryConfig: o.cfg.RegistryConfig}
 	o.rsc.Inputs = ociFetcher

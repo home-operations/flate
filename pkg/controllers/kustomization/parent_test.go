@@ -30,30 +30,66 @@ func TestReconcile_OptionalMaterializerAbsence(t *testing.T) {
 			c, s, _ := newControllerWithFixture(t)
 			producer := &manifest.Kustomization{Name: "optional-owner", Namespace: "flux-system"}
 			s.AddObject(producer)
-			s.UpdateStatus(producer.Named(), store.StatusInfo{Status: tc.status, Reason: "", Message: "optional materializer unavailable"})
-			optional := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: producer.Namespace, Name: "optional"}
-			required := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: producer.Namespace, Name: "required"}
-			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{optional: {Productions: []manifest.Production{{Owner: producer.Named()}}}}}
+			s.UpdateStatus(
+				producer.Named(),
+				store.StatusInfo{Status: tc.status, Reason: "", Message: "optional materializer unavailable"},
+			)
+			optional := manifest.NamedResource{
+				Kind:      manifest.KindConfigMap,
+				Namespace: producer.Namespace,
+				Name:      "optional",
+			}
+			required := manifest.NamedResource{
+				Kind:      manifest.KindConfigMap,
+				Namespace: producer.Namespace,
+				Name:      "required",
+			}
+			index := &manifest.DiscoveryIndex{
+				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+					optional: {Productions: []manifest.Production{{Owner: producer.Named()}}},
+				},
+			}
 			c.Store.SetDiscoveryIndex(index)
-			ks := &manifest.Kustomization{Name: "reader", Namespace: producer.Namespace, Path: "./apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: optional.Kind, Name: optional.Name, Optional: true}}}}
+			ks := &manifest.Kustomization{
+				Name:      "reader",
+				Namespace: producer.Namespace,
+				Path:      "./apps",
+				PostBuild: &kustomizev1.PostBuild{
+					SubstituteFrom: []manifest.SubstituteReference{
+						{Kind: optional.Kind, Name: optional.Name, Optional: true},
+					},
+				},
+			}
 			if tc.required {
-				ks.PostBuild.SubstituteFrom = append(ks.PostBuild.SubstituteFrom, manifest.SubstituteReference{Kind: required.Kind, Name: required.Name})
+				ks.PostBuild.SubstituteFrom = append(
+					ks.PostBuild.SubstituteFrom,
+					manifest.SubstituteReference{Kind: required.Kind, Name: required.Name},
+				)
 			}
 			s.AddObject(ks)
 			var assessment *base.Execution
-			c.Tasks.Go(t.Context(), "reconcile", func(ctx context.Context) { assessment = c.ReconcileNode(ctx, ks.Named(), manifest.DrainNone) })
+			c.Tasks.Go(
+				t.Context(),
+				"reconcile",
+				func(ctx context.Context) { assessment = c.ReconcileNode(ctx, ks.Named(), manifest.DrainNone) },
+			)
 			c.Tasks.BlockTillDone()
 			defer assessment.Close()
 			if tc.status == store.StatusPending || tc.required {
 				if assessment.Outcome() != schedule.Blocked || s.GetArtifact(ks.Named(), store.ArtifactContent) != nil {
 					t.Fatal("reader did not wait for its unresolved input")
 				}
-				c.Tasks.Go(t.Context(), "settle", func(ctx context.Context) { assessment.Settle(ctx, manifest.DrainForce) })
+				c.Tasks.Go(
+					t.Context(),
+					"settle",
+					func(ctx context.Context) { assessment.Settle(ctx, manifest.DrainForce) },
+				)
 				c.Tasks.BlockTillDone()
 			}
 			info, _ := s.GetStatus(ks.Named())
 			if tc.required {
-				if info.Status != store.StatusFailed || !slices.Equal(info.BlockedBy(), []manifest.NamedResource{required}) {
+				if info.Status != store.StatusFailed ||
+					!slices.Equal(info.BlockedBy(), []manifest.NamedResource{required}) {
 					t.Fatalf("required diagnostic causes=%+v blocked=%v", info, info.BlockedBy())
 				}
 			} else {
@@ -83,17 +119,41 @@ func TestReconcile_OwnerDoesNotEraseReadyExpr(t *testing.T) {
 				DependsOn: []kustomizev1.DependencyReference{{Name: owner.Name, ReadyExpr: expr}},
 			}
 			s.AddObject(owner)
-			controllertest.Emit(t.Context(), c.Controller, owner.Named(), &store.Emission{Children: []store.Child{{Obj: child}}, Complete: true})
+			controllertest.Emit(
+				t.Context(),
+				c.Controller,
+				owner.Named(),
+				&store.Emission{Children: []store.Child{{Obj: child}}, Complete: true},
+			)
 			s.UpdateStatus(owner.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
-			info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: child.Named(), ReconcileNode: c.ReconcileNode})
+			info := controllertest.DispatchToFixpoint(
+				t.Context(),
+				t,
+				controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: child.Named(), ReconcileNode: c.ReconcileNode},
+			)
 			output, _ := s.GetArtifact(child.Named(), store.ArtifactContent).(*store.Emission)
-			rendered := s.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "hello"})
+			rendered := s.GetObject(
+				manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "hello"},
+			)
 			if expr == "false" {
-				if info.Status != store.StatusFailed || !info.IsDependencyFailure() || !slices.Equal(info.BlockedBy(), []manifest.NamedResource{owner.Named()}) || output != nil && len(output.Manifests) != 0 || rendered != nil {
-					t.Fatalf("false owner gate permitted output: status=%+v artifact=%+v rendered=%v", info, output, rendered)
+				if info.Status != store.StatusFailed || !info.IsDependencyFailure() ||
+					!slices.Equal(info.BlockedBy(), []manifest.NamedResource{owner.Named()}) ||
+					output != nil && len(output.Manifests) != 0 ||
+					rendered != nil {
+					t.Fatalf(
+						"false owner gate permitted output: status=%+v artifact=%+v rendered=%v",
+						info,
+						output,
+						rendered,
+					)
 				}
 			} else if info.Status != store.StatusReady || output == nil || len(output.Manifests) != 1 || rendered == nil {
-				t.Fatalf("true owner gate prevented output: status=%+v artifact=%+v rendered=%v", info, output, rendered)
+				t.Fatalf(
+					"true owner gate prevented output: status=%+v artifact=%+v rendered=%v",
+					info,
+					output,
+					rendered,
+				)
 			}
 		})
 	}

@@ -31,7 +31,7 @@ type SubstituteReference = kustomizev1.SubstituteReference
 // namespace and name. Empty Group means core; version is not identity.
 // Values are comparable and safe to use as map keys.
 type NamedResource struct {
-	Group     string `json:"group,omitempty"      yaml:"group,omitempty"`
+	Group     string `json:"group,omitempty"     yaml:"group,omitempty"`
 	Kind      string `json:"kind"                yaml:"kind"`
 	Namespace string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
 	Name      string `json:"name"                yaml:"name"`
@@ -48,7 +48,8 @@ func (n NamedResource) ReportHidden() bool {
 }
 
 func (n NamedResource) internalKustomization() bool {
-	return n.Group == FluxKustomizeDomain && n.Kind == KindKustomization && n.Namespace == internalKustomizationNamespace
+	return n.Group == FluxKustomizeDomain && n.Kind == KindKustomization &&
+		n.Namespace == internalKustomizationNamespace
 }
 
 // Resolve applies forced, authored and fallback namespace precedence without changing other fields.
@@ -202,7 +203,8 @@ func (r Reference) ContentInput() bool {
 
 // AffectedInput reports whether changed content can affect the consumer.
 func (r Reference) AffectedInput() bool {
-	return r.ContentInput() || r.Use == "source" || r.Use == "artifact" || r.Use == "chart" || r.Use == "valuesFrom" || r.Use == "inputsFrom"
+	return r.ContentInput() || r.Use == "source" || r.Use == "artifact" || r.Use == "chart" || r.Use == "valuesFrom" ||
+		r.Use == "inputsFrom"
 }
 
 // References yields dependencies in source-field order for the selected view without deduplication.
@@ -251,8 +253,10 @@ func MapDependsOn(obj BaseManifest, name, namespace func(string) string) BaseMan
 func credentialReferences(yield func(Reference) bool, namespace string, refs ...*LocalObjectReference) bool {
 	uses := [...]string{"secretRef", "certSecretRef", "proxySecretRef"}
 	for i, ref := range refs {
-		if ref != nil && !yield(Reference{NamedResource: Resolve(NamedResource{Kind: KindSecret, Name: ref.Name}, "", namespace),
-			Use: uses[i], Position: i, Content: true, NamespaceDefault: true, Acquisition: true}) {
+		if ref != nil && !yield(Reference{
+			NamedResource: Resolve(NamedResource{Kind: KindSecret, Name: ref.Name}, "", namespace),
+			Use:           uses[i], Position: i, Content: true, NamespaceDefault: true, Acquisition: true,
+		}) {
 			return false
 		}
 	}
@@ -359,7 +363,8 @@ func (r *RawObject) kind() KindInfo {
 }
 
 func (r *RawObject) isArtifactGenerator() bool {
-	return r.Kind == kindTable[kindArtifactGenerator].Kind && apiGroup(r.APIVersion) == kindTable[kindArtifactGenerator].Group
+	return r.Kind == kindTable[kindArtifactGenerator].Kind &&
+		apiGroup(r.APIVersion) == kindTable[kindArtifactGenerator].Group
 }
 
 func referenceExpression(expr *string) *string {

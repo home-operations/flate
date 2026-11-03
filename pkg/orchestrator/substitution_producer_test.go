@@ -22,67 +22,86 @@ func TestRender_SubstitutionProducerOrdering(t *testing.T) {
 	for _, kind := range []string{manifest.KindConfigMap, manifest.KindSecret} {
 		for _, changedOnly := range []bool{false, true} {
 			for _, producerFirst := range []bool{false, true} {
-				t.Run(fmt.Sprintf("%s/changed_%t/producer_first_%t", kind, changedOnly, producerFirst), func(t *testing.T) {
-					root := t.TempDir()
-					testutil.WriteSubstitutionProducerCluster(t, root, kind)
-					cfg := treeConfig{CacheDir: t.TempDir(), Concurrency: 2, Path: root, RepoRoot: root}
-					if changedOnly {
-						cfg.ExternalChanges = change.NewSet([]string{"app/cm.yaml"})
-					}
-					o, err := newTestOrchestrator(t, cfg.Tree, cfg.Config)
-					if err != nil {
-						t.Fatal(err)
-					}
-					t.Cleanup(func() {
-						o.stop()
-					})
-					ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-					defer cancel()
-					if err := o.bootstrap(ctx); err != nil {
-						t.Fatal(err)
-					}
-					reconcileEntryForTest(t, o)
-					o.configureControllers()
-					d := dagDispatcher{o}
-					producer, consumer := testutil.KustomizationID("flux-system", "producer"), testutil.KustomizationID("flux-system", "consumer")
-					release := make(chan struct{})
-					o.tasks.Go(ctx, "producer", func(ctx context.Context) {
-						select {
-						case <-release:
-							d.Dispatch(ctx, producer, manifest.DrainNone)
-						case <-ctx.Done():
+				t.Run(
+					fmt.Sprintf("%s/changed_%t/producer_first_%t", kind, changedOnly, producerFirst),
+					func(t *testing.T) {
+						root := t.TempDir()
+						testutil.WriteSubstitutionProducerCluster(t, root, kind)
+						cfg := treeConfig{CacheDir: t.TempDir(), Concurrency: 2, Path: root, RepoRoot: root}
+						if changedOnly {
+							cfg.ExternalChanges = change.NewSet([]string{"app/cm.yaml"})
 						}
-					})
-					if producerFirst {
-						close(release)
+						o, err := newTestOrchestrator(t, cfg.Tree, cfg.Config)
+						if err != nil {
+							t.Fatal(err)
+						}
+						t.Cleanup(func() {
+							o.stop()
+						})
+						ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+						defer cancel()
+						if err := o.bootstrap(ctx); err != nil {
+							t.Fatal(err)
+						}
+						reconcileEntryForTest(t, o)
+						o.configureControllers()
+						d := dagDispatcher{o}
+						producer, consumer := testutil.KustomizationID(
+							"flux-system",
+							"producer",
+						), testutil.KustomizationID(
+							"flux-system",
+							"consumer",
+						)
+						release := make(chan struct{})
+						o.tasks.Go(ctx, "producer", func(ctx context.Context) {
+							select {
+							case <-release:
+								d.Dispatch(ctx, producer, manifest.DrainNone)
+							case <-ctx.Done():
+							}
+						})
+						if producerFirst {
+							close(release)
+							o.tasks.BlockTillDone()
+						}
+						attempt := make(chan *base.Execution, 1)
+						o.tasks.Go(ctx, "consumer", func(ctx context.Context) {
+							result := d.Dispatch(ctx, consumer, manifest.DrainNone)
+							attempt <- result.Assessment.(*base.Execution)
+						})
+						var execution *base.Execution
+						select {
+						case execution = <-attempt:
+						case <-ctx.Done():
+							t.Fatal(ctx.Err())
+						}
+						if !producerFirst {
+							close(release)
+						}
 						o.tasks.BlockTillDone()
-					}
-					attempt := make(chan *base.Execution, 1)
-					o.tasks.Go(ctx, "consumer", func(ctx context.Context) {
-						result := d.Dispatch(ctx, consumer, manifest.DrainNone)
-						attempt <- result.Assessment.(*base.Execution)
-					})
-					var execution *base.Execution
-					select {
-					case execution = <-attempt:
-					case <-ctx.Done():
-						t.Fatal(ctx.Err())
-					}
-					if !producerFirst {
-						close(release)
-					}
-					o.tasks.BlockTillDone()
-					defer execution.Close()
-					if slices.Contains(execution.Blocked, producer) == producerFirst {
-						t.Fatalf("consumer blockers = %v, producer first = %t", execution.Blocked, producerFirst)
-					}
-					o.tasks.Go(ctx, "consumer", func(ctx context.Context) { d.Dispatch(ctx, consumer, manifest.DrainNone) })
-					o.tasks.BlockTillDone()
-					output, _ := o.store.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "output"})
-					if output == nil || output.Data["version"] != "4.6.2" {
-						t.Fatalf("consumer output = %+v, want rendered version 4.6.2", output)
-					}
-				})
+						defer execution.Close()
+						if slices.Contains(execution.Blocked, producer) == producerFirst {
+							t.Fatalf("consumer blockers = %v, producer first = %t", execution.Blocked, producerFirst)
+						}
+						o.tasks.Go(
+							ctx,
+							"consumer",
+							func(ctx context.Context) { d.Dispatch(ctx, consumer, manifest.DrainNone) },
+						)
+						o.tasks.BlockTillDone()
+						output, _ := o.store.Get[*manifest.ConfigMap](
+							manifest.NamedResource{
+								Kind:      manifest.KindConfigMap,
+								Namespace: "flux-system",
+								Name:      "output",
+							},
+						)
+						if output == nil || output.Data["version"] != "4.6.2" {
+							t.Fatalf("consumer output = %+v, want rendered version 4.6.2", output)
+						}
+					},
+				)
 			}
 		}
 	}
@@ -94,16 +113,34 @@ func TestRender_SubstitutionProducerFailureRejectsPredictions(t *testing.T) {
 			root := t.TempDir()
 			testutil.WriteSubstitutionProducerCluster(t, root, kind)
 			testutil.WriteFile(t, root, "data/version.env", "VERSION=4.6.2\n")
-			testutil.WriteFile(t, root, "data/kustomization.yaml", "namespace: flux-system\nresources: [missing.yaml]\ngeneratorOptions: {disableNameSuffixHash: true}\n"+map[string]string{manifest.KindConfigMap: "configMapGenerator", manifest.KindSecret: "secretGenerator"}[kind]+":\n- name: settings\n  envs: [version.env]\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"data/kustomization.yaml",
+				"namespace: flux-system\nresources: [missing.yaml]\ngeneratorOptions: {disableNameSuffixHash: true}\n"+map[string]string{manifest.KindConfigMap: "configMapGenerator", manifest.KindSecret: "secretGenerator"}[kind]+":\n- name: settings\n  envs: [version.env]\n",
+			)
 			o := newSubstitutionOrchestrator(t, treeConfig{Config: Config{}, Path: root})
 			res, err := o.render(t.Context())
-			consumer, producer := testutil.KustomizationID("flux-system", "consumer"), testutil.KustomizationID("flux-system", "producer")
+			consumer, producer := testutil.KustomizationID(
+				"flux-system",
+				"consumer",
+			), testutil.KustomizationID(
+				"flux-system",
+				"producer",
+			)
 			if err == nil || res.Failed[producer].Status != store.StatusFailed {
 				t.Fatalf("materializer failure missing: error=%v failures=%v", err, res.Failed)
 			}
 			target := manifest.NamedResource{Kind: kind, Namespace: consumer.Namespace, Name: "settings"}
-			if res.Failed[consumer].Status != store.StatusFailed || !slices.Equal(res.Blocked[consumer], []manifest.NamedResource{target}) || len(outputByParent(res.Manifests)[consumer]) != 0 {
-				t.Fatalf("unaccepted prediction supplied required content: failures=%v blocked=%v manifests=%v", res.Failed, res.Blocked, outputByParent(res.Manifests)[consumer])
+			if res.Failed[consumer].Status != store.StatusFailed ||
+				!slices.Equal(res.Blocked[consumer], []manifest.NamedResource{target}) ||
+				len(outputByParent(res.Manifests)[consumer]) != 0 {
+				t.Fatalf(
+					"unaccepted prediction supplied required content: failures=%v blocked=%v manifests=%v",
+					res.Failed,
+					res.Blocked,
+					outputByParent(res.Manifests)[consumer],
+				)
 			}
 		})
 	}
@@ -119,16 +156,43 @@ func TestRender_ResourceSetConflictingDataConsumers(t *testing.T) {
 
 				run := func(reverse bool) *Result {
 					root := t.TempDir()
-					testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux/parent.yaml, flux/consumer.yaml]\n")
-					testutil.WriteFile(t, root, "flux/parent.yaml", testutil.KustomizationYAML("parent", "apps", "  path: ./producers\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
-					testutil.WriteFile(t, root, "flux/consumer.yaml", testutil.KustomizationYAML("consumer", "apps", "  path: ./consumer\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n  postBuild: {substituteFrom: [{kind: "+kind+", name: shared}]}\n"))
+					testutil.WriteFile(
+						t,
+						root,
+						"kustomization.yaml",
+						"resources: [flux/parent.yaml, flux/consumer.yaml]\n",
+					)
+					testutil.WriteFile(
+						t,
+						root,
+						"flux/parent.yaml",
+						testutil.KustomizationYAML(
+							"parent",
+							"apps",
+							"  path: ./producers\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+						),
+					)
+					testutil.WriteFile(
+						t,
+						root,
+						"flux/consumer.yaml",
+						testutil.KustomizationYAML(
+							"consumer",
+							"apps",
+							"  path: ./consumer\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n  postBuild: {substituteFrom: [{kind: "+kind+", name: shared}]}\n",
+						),
+					)
 					testutil.WriteFile(t, root, "producers/kustomization.yaml", "resources: [a.yaml, z.yaml]\n")
 					for _, producer := range []struct{ name, value string }{{"a", "alpha"}, {"z", "zulu"}} {
 						value := producer.value
 						if kind == manifest.KindSecret {
 							value = base64.StdEncoding.EncodeToString([]byte(value))
 						}
-						testutil.WriteFile(t, root, "producers/"+producer.name+".yaml", fmt.Sprintf(`apiVersion: fluxcd.controlplane.io/v1
+						testutil.WriteFile(
+							t,
+							root,
+							"producers/"+producer.name+".yaml",
+							fmt.Sprintf(`apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSet
 metadata: {name: %s, namespace: apps}
 spec:
@@ -138,10 +202,16 @@ spec:
       kind: %s
       metadata: {name: shared, namespace: apps}
       data: {VALUE: %s}
-`, producer.name, kind, value))
+`, producer.name, kind, value),
+						)
 					}
 					testutil.WriteFile(t, root, "consumer/kustomization.yaml", "resources: [output.yaml]\n")
-					testutil.WriteFile(t, root, "consumer/output.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: consumer-output, namespace: apps}\ndata: {value: '${VALUE}'}\n")
+					testutil.WriteFile(
+						t,
+						root,
+						"consumer/output.yaml",
+						"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: consumer-output, namespace: apps}\ndata: {value: '${VALUE}'}\n",
+					)
 					cfg := treeConfig{CacheDir: t.TempDir(), Concurrency: 2, Path: root, RepoRoot: root}
 					if skip {
 						cfg.HelmOptions = helm.Options{SkipKinds: []string{kind}}
@@ -154,11 +224,25 @@ spec:
 					o.configureControllers()
 					d := dagDispatcher{o}
 					parent := testutil.KustomizationID("apps", "parent")
-					o.tasks.Go(t.Context(), "parent", func(ctx context.Context) { d.Dispatch(ctx, parent, manifest.DrainNone) })
+					o.tasks.Go(
+						t.Context(),
+						"parent",
+						func(ctx context.Context) { d.Dispatch(ctx, parent, manifest.DrainNone) },
+					)
 					o.tasks.BlockTillDone()
 					owners := []manifest.NamedResource{
-						{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "apps", Name: "a"},
-						{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "apps", Name: "z"},
+						{
+							Group:     manifest.FluxOperatorDomain,
+							Kind:      manifest.KindResourceSet,
+							Namespace: "apps",
+							Name:      "a",
+						},
+						{
+							Group:     manifest.FluxOperatorDomain,
+							Kind:      manifest.KindResourceSet,
+							Namespace: "apps",
+							Name:      "z",
+						},
 					}
 					order := slices.Clone(owners)
 					if reverse {
@@ -180,7 +264,11 @@ spec:
 					<-done
 					o.tasks.BlockTillDone()
 					consumer := testutil.KustomizationID("apps", "consumer")
-					o.tasks.Go(t.Context(), "consumer", func(ctx context.Context) { d.Dispatch(ctx, consumer, manifest.DrainNone) })
+					o.tasks.Go(
+						t.Context(),
+						"consumer",
+						func(ctx context.Context) { d.Dispatch(ctx, consumer, manifest.DrainNone) },
+					)
 					o.tasks.BlockTillDone()
 					if failures := o.store.FailedResources(); len(failures) != 0 {
 						t.Fatalf("render failed: %v", failures)
@@ -209,7 +297,13 @@ spec:
 						assert.NoError(t, err)
 						assert.Equal(t, found, true)
 					}
-					output, ok := o.store.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "consumer-output"})
+					output, ok := o.store.Get[*manifest.ConfigMap](
+						manifest.NamedResource{
+							Kind:      manifest.KindConfigMap,
+							Namespace: "apps",
+							Name:      "consumer-output",
+						},
+					)
 					if !ok {
 						t.Fatal("missing rendered consumer")
 					}

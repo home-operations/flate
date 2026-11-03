@@ -119,13 +119,44 @@ func TestFinalizeIndex_ChartInputs(t *testing.T) {
 			source := &manifest.GitRepository{Name: "source", Namespace: "apps"}
 			st.AddObject(source)
 			st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: observed})
-			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: observed})
-			release := &manifest.HelmRelease{Name: "demo", Namespace: "apps", Chart: manifest.HelmChart{Name: location, Source: source.Named()}, ChartValuesFiles: []string{"config/explicit.yaml"}, HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: location, Version: "", SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: (source.Named()).Kind, Name: (source.Named()).Name, Namespace: (source.Named()).Namespace, APIVersion: ""}, ValuesFiles: []string{"config/explicit.yaml"}}}}}
+			st.SetArtifact(
+				manifest.BootstrapSourceID,
+				&store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: observed},
+			)
+			release := &manifest.HelmRelease{
+				Name:             "demo",
+				Namespace:        "apps",
+				Chart:            manifest.HelmChart{Name: location, Source: source.Named()},
+				ChartValuesFiles: []string{"config/explicit.yaml"},
+				HelmReleaseSpec: helmv2.HelmReleaseSpec{
+					Chart: &helmv2.HelmChartTemplate{
+						Spec: helmv2.HelmChartTemplateSpec{
+							Chart:   location,
+							Version: "",
+							SourceRef: &helmv2.CrossNamespaceObjectReference{
+								Kind:       source.Named().Kind,
+								Name:       source.Named().Name,
+								Namespace:  source.Named().Namespace,
+								APIVersion: "",
+							},
+							ValuesFiles: []string{"config/explicit.yaml"},
+						},
+					},
+				},
+			}
 			second := release.Clone()
 			second.Name = "second"
 			sibling := &manifest.ConfigMap{Name: "independent", Namespace: "apps"}
 			st.AddObjects([]manifest.BaseManifest{release, second, sibling})
-			l := readerLoaderForFilter(st, map[manifest.NamedResource]string{release.Named(): "hr.yaml", second.Named(): "second.yaml", sibling.Named(): "independent.yaml", source.Named(): "source.yaml"})
+			l := readerLoaderForFilter(
+				st,
+				map[manifest.NamedResource]string{
+					release.Named(): "hr.yaml",
+					second.Named():  "second.yaml",
+					sibling.Named(): "independent.yaml",
+					source.Named():  "source.yaml",
+				},
+			)
 			for _, id := range []manifest.NamedResource{release.Named(), second.Named()} {
 				r := l.Index.Records[id]
 				r.Refs = []manifest.NamedResource{source.Named()}
@@ -156,12 +187,28 @@ func TestFinalizeIndex_ChartInputs(t *testing.T) {
 			}
 			for _, file := range want {
 				assert.Equal(t, len(ownersForFilter(l.Index, file)), 0)
-				filter := admissiontest.Filter(t, admissiontest.Config{Changes: change.NewSet([]string{file}), Index: l.Index, Inventory: st, Root: ""})
+				filter := admissiontest.Filter(
+					t,
+					admissiontest.Config{
+						Changes:   change.NewSet([]string{file}),
+						Index:     l.Index,
+						Inventory: st,
+						Root:      "",
+					},
+				)
 				assert.Equal(t, filter.ShouldReconcile(release.Named()), true)
 				assert.Equal(t, filter.ShouldReconcile(source.Named()), true)
 				assert.Equal(t, filter.ShouldReconcile(sibling.Named()), false)
 			}
-			filter := admissiontest.Filter(t, admissiontest.Config{Changes: change.NewSet([]string{path.Join(location, "excluded/invalid.yaml")}), Index: l.Index, Inventory: st, Root: ""})
+			filter := admissiontest.Filter(
+				t,
+				admissiontest.Config{
+					Changes:   change.NewSet([]string{path.Join(location, "excluded/invalid.yaml")}),
+					Index:     l.Index,
+					Inventory: st,
+					Root:      "",
+				},
+			)
 			assert.Equal(t, filter.ShouldReconcile(release.Named()), false)
 		})
 	}
@@ -171,15 +218,44 @@ func TestFinalizeIndex_TransitiveChartInputs(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	source := &manifest.GitRepository{Name: "source", Namespace: "apps"}
-	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps", Chart: ".", SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: manifest.KindGitRepository, Name: "source"}}
-	first := &manifest.HelmRelease{Name: "first", Namespace: "apps", Chart: manifest.HelmChart{Name: ".", Source: source.Named()}, ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindHelmChart, Name: "chart"}}
-	second := &manifest.HelmRelease{Name: "second", Namespace: "apps", Chart: manifest.HelmChart{Name: ".", Source: source.Named()}, ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindHelmChart, Name: "chart"}}
+	chart := &manifest.HelmChartSource{
+		Name:      "chart",
+		Namespace: "apps",
+		Chart:     ".",
+		SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: manifest.KindGitRepository, Name: "source"},
+	}
+	first := &manifest.HelmRelease{
+		Name:      "first",
+		Namespace: "apps",
+		Chart:     manifest.HelmChart{Name: ".", Source: source.Named()},
+		ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindHelmChart, Name: "chart"},
+	}
+	second := &manifest.HelmRelease{
+		Name:      "second",
+		Namespace: "apps",
+		Chart:     manifest.HelmChart{Name: ".", Source: source.Named()},
+		ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindHelmChart, Name: "chart"},
+	}
 	build := func() *loader.Loader {
 		t.Helper()
 		st := store.New()
 		st.AddObjects([]manifest.BaseManifest{source, chart, first, second})
-		st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{"Chart.yaml": {}, "templates/cm.yaml": {}}})
-		l := readerLoaderForFilter(st, map[manifest.NamedResource]string{first.Named(): "first.yaml", second.Named(): "second.yaml", chart.Named(): "chart.yaml"})
+		st.SetArtifact(
+			source.Named(),
+			&store.SourceArtifact{
+				LocalPath: root,
+				LocalRoot: root,
+				FS:        fstest.MapFS{"Chart.yaml": {}, "templates/cm.yaml": {}},
+			},
+		)
+		l := readerLoaderForFilter(
+			st,
+			map[manifest.NamedResource]string{
+				first.Named():  "first.yaml",
+				second.Named(): "second.yaml",
+				chart.Named():  "chart.yaml",
+			},
+		)
 		for id, r := range l.Index.Records {
 			r.Refs = []manifest.NamedResource{chart.Named()}
 			r.Inputs = []string{id.Name + ".input"}

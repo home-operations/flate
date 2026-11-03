@@ -68,11 +68,19 @@ spec:
 	sourceRoot := t.TempDir()
 	repo := testutil.GitInit(t, sourceRoot)
 	testutil.WriteFile(t, sourceRoot, "artifacts/networks-crd.yaml", crd)
-	testutil.WriteFile(t, sourceRoot, "artifacts/excluded.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: excluded}\n")
+	testutil.WriteFile(
+		t,
+		sourceRoot,
+		"artifacts/excluded.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: excluded}\n",
+	)
 	commit := testutil.GitCommitAll(t, repo, "source", &gogit.CommitOptions{
 		Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)},
 	})
-	assert.NoError(t, repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.7.7"), commit)))
+	assert.NoError(
+		t,
+		repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.7.7"), commit)),
+	)
 	installSourceRefTransport(t, repo.Storer)
 	want, err := testutil.DecodeDocs(strings.NewReader(crd))
 	assert.NoError(t, err)
@@ -102,8 +110,10 @@ spec:
 `+tc.ignore)
 			testutil.WriteFile(t, root, "flux/consumer.yaml", testutil.KustomizationYAML("multus-crd", "flux-system",
 				"  interval: 10m\n"+tc.path+"  sourceRef: {kind: GitRepository, name: upstream}\n"))
-			args := []string{"build", "ks", "multus-crd", "--path", filepath.Join(root, "flux"),
-				"--concurrency", "2", "--git-depth", "0", "--skip-kinds", "", "--cache-dir", t.TempDir()}
+			args := []string{
+				"build", "ks", "multus-crd", "--path", filepath.Join(root, "flux"),
+				"--concurrency", "2", "--git-depth", "0", "--skip-kinds", "", "--cache-dir", t.TempDir(),
+			}
 			out, _ := harness.RequireCLIOK(t, args...)
 			again, _ := harness.RequireCLIOK(t, args...)
 			assert.Equal(t, again, out)
@@ -123,17 +133,35 @@ func TestE2E_SourceRef_EmptyPathMatchesRoot(t *testing.T) {
 		t.Helper()
 		root := t.TempDir()
 		testutil.GitInit(t, root)
-		testutil.WriteFile(t, root, "flux/root.yaml", testutil.KustomizationYAML("root", "flux-system", "")+field+`  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+		testutil.WriteFile(
+			t,
+			root,
+			"flux/root.yaml",
+			testutil.KustomizationYAML(
+				"root",
+				"flux-system",
+				"",
+			)+field+`  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
   targetNamespace: apps
   postBuild: {substitute: {VALUE: source-root}}
-`)
+`,
+		)
 		testutil.WriteFile(t, root, "kustomization.yaml", "resources: [cm.yaml, child.yaml]\n")
 		testutil.WriteFile(t, root, "cm.yaml", `apiVersion: v1
 kind: ConfigMap
 metadata: {name: root-owned}
 data: {value: '${VALUE}'}
 `)
-		testutil.WriteFile(t, root, "child.yaml", testutil.KustomizationYAML("child", "apps", "  path: ./leaf\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
+		testutil.WriteFile(
+			t,
+			root,
+			"child.yaml",
+			testutil.KustomizationYAML(
+				"child",
+				"apps",
+				"  path: ./leaf\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+			),
+		)
 		testutil.WriteFile(t, root, "leaf/kustomization.yaml", "resources: [cm.yaml]\n")
 		testutil.WriteFile(t, root, "leaf/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: leaf-owned}\n")
 		st := store.New()
@@ -182,7 +210,14 @@ data: {value: '${VALUE}'}
 			}
 			for _, concurrency := range []string{"2", "8"} {
 				t.Run("concurrency_"+concurrency, func(t *testing.T) {
-					args := []string{"--path", filepath.Join(root, "flux"), "--concurrency", concurrency, "--cache-dir", t.TempDir()}
+					args := []string{
+						"--path",
+						filepath.Join(root, "flux"),
+						"--concurrency",
+						concurrency,
+						"--cache-dir",
+						t.TempDir(),
+					}
 					owned := harness.RunCLIStdout(t, append([]string{"build", "ks", "root"}, args...)...)
 					if !strings.Contains(owned, "name: root-owned") || !strings.Contains(owned, "value: source-root") ||
 						!strings.Contains(owned, "namespace: apps") {
@@ -230,13 +265,42 @@ spec:
       sourceRef: {kind: GitRepository, name: cluster}
 `)
 		testutil.WriteFile(t, root, "charts/demo/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 1.0.0\n")
-		testutil.WriteFile(t, root, "charts/demo/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: chart-rendered, namespace: apps}\ndata: {value: "+value+"}\n")
+		testutil.WriteFile(
+			t,
+			root,
+			"charts/demo/templates/cm.yaml",
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: chart-rendered, namespace: apps}\ndata: {value: "+value+"}\n",
+		)
 		testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
-		testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: owned, namespace: apps}\n")
+		testutil.WriteFile(
+			t,
+			root,
+			"apps/cm.yaml",
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: owned, namespace: apps}\n",
+		)
 		if i == 0 {
-			testutil.WriteFile(t, root, "flux/owner.yaml", testutil.KustomizationYAML("owner", "apps", "  path: ./apps\n  sourceRef: {kind: GitRepository, name: cluster}\n"))
+			testutil.WriteFile(
+				t,
+				root,
+				"flux/owner.yaml",
+				testutil.KustomizationYAML(
+					"owner",
+					"apps",
+					"  path: ./apps\n  sourceRef: {kind: GitRepository, name: cluster}\n",
+				),
+			)
 		}
-		out := harness.RunCLIStdout(t, "build", "all", "--path", filepath.Join(root, "flux"), "--concurrency", "2", "--cache-dir", t.TempDir())
+		out := harness.RunCLIStdout(
+			t,
+			"build",
+			"all",
+			"--path",
+			filepath.Join(root, "flux"),
+			"--concurrency",
+			"2",
+			"--cache-dir",
+			t.TempDir(),
+		)
 		if !strings.Contains(out, "name: chart-rendered") || !strings.Contains(out, "value: "+value) {
 			t.Fatalf("full render lost the local chart on %s side:\n%s", value, out)
 		}
@@ -249,12 +313,39 @@ spec:
 		{name: "reversed", value: "before", current: 0, before: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			out := harness.RunCLIStdout(t, "build", "all", "--path", filepath.Join(roots[tc.current], "flux"), "--path-orig", filepath.Join(roots[tc.before], "flux"), "--concurrency", "2", "--cache-dir", t.TempDir())
+			out := harness.RunCLIStdout(
+				t,
+				"build",
+				"all",
+				"--path",
+				filepath.Join(roots[tc.current], "flux"),
+				"--path-orig",
+				filepath.Join(roots[tc.before], "flux"),
+				"--concurrency",
+				"2",
+				"--cache-dir",
+				t.TempDir(),
+			)
 			if !strings.Contains(out, "name: chart-rendered") || !strings.Contains(out, "value: "+tc.value) {
 				t.Fatalf("changed-only render lost the local chart:\n%s", out)
 			}
-			out = harness.RunCLIStdout(t, "diff", "all", "--path", filepath.Join(roots[tc.current], "flux"), "--path-orig", filepath.Join(roots[tc.before], "flux"), "--concurrency", "2", "--cache-dir", t.TempDir(), "-o", "diff")
-			if !strings.Contains(out, "-  value: "+[]string{"before", "after"}[tc.before]) || !strings.Contains(out, "+  value: "+tc.value) {
+			out = harness.RunCLIStdout(
+				t,
+				"diff",
+				"all",
+				"--path",
+				filepath.Join(roots[tc.current], "flux"),
+				"--path-orig",
+				filepath.Join(roots[tc.before], "flux"),
+				"--concurrency",
+				"2",
+				"--cache-dir",
+				t.TempDir(),
+				"-o",
+				"diff",
+			)
+			if !strings.Contains(out, "-  value: "+[]string{"before", "after"}[tc.before]) ||
+				!strings.Contains(out, "+  value: "+tc.value) {
 				t.Fatalf("comparison lost one side's local chart:\n%s", out)
 			}
 		})
@@ -281,10 +372,29 @@ patches:
         path: /spec/sourceRef
         value: {kind: GitRepository, name: flux-system}
 `)
-			testutil.WriteFile(t, root, "flux/root.yaml", testutil.KustomizationYAML("root", "flux-system", "  interval: 1m\n  prune: true\n  path: ./flux\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
-			testutil.WriteFile(t, root, "flux/tmpl.yaml", testutil.KustomizationYAML("tmpl", "flux-system", "  {interval: 1m, prune: true}\n"))
+			testutil.WriteFile(
+				t,
+				root,
+				"flux/root.yaml",
+				testutil.KustomizationYAML(
+					"root",
+					"flux-system",
+					"  interval: 1m\n  prune: true\n  path: ./flux\n  sourceRef: {kind: GitRepository, name: flux-system}\n",
+				),
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				"flux/tmpl.yaml",
+				testutil.KustomizationYAML("tmpl", "flux-system", "  {interval: 1m, prune: true}\n"),
+			)
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
-			testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: apps-cm, namespace: apps}\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"apps/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: apps-cm, namespace: apps}\n",
+			)
 			testutil.WriteFile(t, root, "unrelated/broken.yaml", "invalid: [\n")
 			out, _ := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(root, "flux"),
 				"--concurrency", concurrency, "--cache-dir", t.TempDir())
@@ -330,15 +440,30 @@ func TestE2E_SourceRef_NonHEADTag(t *testing.T) {
 	assert.NoError(t, commit.Encode(encoded))
 	pinned, err := repo.Storer.SetEncodedObject(encoded)
 	assert.NoError(t, err)
-	assert.NoError(t, repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), pinned)))
+	assert.NoError(
+		t,
+		repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), pinned)),
+	)
 	for _, verb := range []string{"build", "test"} {
 		var previous string
 		for range 2 {
-			out, stderr := harness.RequireCLIOK(t, verb, "all", "--path", root+"/flux", "--concurrency=2", "--cache-dir", t.TempDir())
-			if strings.Count(stderr, "[SkippedSubmodule]") != 1 || !strings.Contains(stderr, "module") || !strings.Contains(stderr, "flux-system/cluster") || strings.Contains(out, "skipped submodule") {
+			out, stderr := harness.RequireCLIOK(
+				t,
+				verb,
+				"all",
+				"--path",
+				root+"/flux",
+				"--concurrency=2",
+				"--cache-dir",
+				t.TempDir(),
+			)
+			if strings.Count(stderr, "[SkippedSubmodule]") != 1 || !strings.Contains(stderr, "module") ||
+				!strings.Contains(stderr, "flux-system/cluster") ||
+				strings.Contains(out, "skipped submodule") {
 				t.Fatalf("submodule destination: stdout=%s stderr=%s", out, stderr)
 			}
-			if verb == "build" && (!strings.Contains(out, "value: v1.0.0") || strings.Contains(out, "value: v2.0.0")) || verb == "test" && !strings.Contains(out, "passed") {
+			if verb == "build" && (!strings.Contains(out, "value: v1.0.0") || strings.Contains(out, "value: v2.0.0")) ||
+				verb == "test" && !strings.Contains(out, "passed") {
 				t.Fatalf("pinned product: %s", out)
 			}
 			if previous != "" && stderr != previous {
@@ -369,8 +494,26 @@ func TestE2E_SourceRef_PinnedSourceDiscoveredAfterConsumer(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			testutil.WriteFile(t, root, "flux/"+tt.appsFile, testutil.KustomizationYAML("apps", "flux-system", "  interval: 10m\n  path: ./apps\n  sourceRef: {kind: GitRepository, name: pinned, namespace: flux-system}\n"))
-			testutil.WriteFile(t, root, "flux/"+tt.sourcesFile, testutil.KustomizationYAML(tt.sourcesName, "flux-system", "  interval: 10m\n  path: ./sources\n  sourceRef: {kind: GitRepository, name: "+tt.sourceRefName+", namespace: flux-system}\n"))
+			testutil.WriteFile(
+				t,
+				root,
+				"flux/"+tt.appsFile,
+				testutil.KustomizationYAML(
+					"apps",
+					"flux-system",
+					"  interval: 10m\n  path: ./apps\n  sourceRef: {kind: GitRepository, name: pinned, namespace: flux-system}\n",
+				),
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				"flux/"+tt.sourcesFile,
+				testutil.KustomizationYAML(
+					tt.sourcesName,
+					"flux-system",
+					"  interval: 10m\n  path: ./sources\n  sourceRef: {kind: GitRepository, name: "+tt.sourceRefName+", namespace: flux-system}\n",
+				),
+			)
 			testutil.WriteFile(t, root, "sources/kustomization.yaml", "resources: [repo.yaml]\n")
 			url, ref := stdcmp.Or(tt.sourceURL, "git://fixture.invalid/cluster"), "  ref: {tag: v1.0.0}\n"
 			if tt.noRef {
@@ -383,22 +526,49 @@ spec:
   interval: 10m
   url: `+url+"\n"+ref)
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml, deleted.yaml, extra.yaml]\n")
-			testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {value: pinned}\n")
-			testutil.WriteFile(t, root, "apps/deleted.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: deleted, namespace: apps}\ndata: {value: pinned-deleted}\n")
-			testutil.WriteFile(t, root, "apps/extra.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: extra, namespace: apps}\ndata: {value: pinned-extra}\n")
-			testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+			testutil.WriteFile(
+				t,
+				root,
+				"apps/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {value: pinned}\n",
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				"apps/deleted.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: deleted, namespace: apps}\ndata: {value: pinned-deleted}\n",
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				"apps/extra.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: extra, namespace: apps}\ndata: {value: pinned-extra}\n",
+			)
+			testutil.GitCommitAll(
+				t,
+				repo,
+				"init",
+				&gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}},
+			)
 			head, err := repo.Head()
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), head.Hash())); err != nil {
+			if err := repo.Storer.SetReference(
+				plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), head.Hash()),
+			); err != nil {
 				t.Fatal(err)
 			}
 			if err := os.Remove(filepath.Join(root, "apps/deleted.yaml")); err != nil {
 				t.Fatal(err)
 			}
 			harness.MutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: pinned", "value: newer")
-			testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+			testutil.GitCommitAll(
+				t,
+				repo,
+				"init",
+				&gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}},
+			)
 			harness.MutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: newer", "value: dirty")
 			testutil.WriteFile(t, root, "apps/extra.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: extra\n")
 			transport := installSourceRefTransport(t, repo.Storer)
@@ -421,8 +591,10 @@ spec:
 					var previous string
 					for _, concurrency := range []string{"2", "8"} {
 						t.Run("concurrency_"+concurrency, func(t *testing.T) {
-							args := []string{command, "all", "--path", filepath.Join(root, "flux"),
-								"--concurrency", concurrency, "--cache-dir", t.TempDir()}
+							args := []string{
+								command, "all", "--path", filepath.Join(root, "flux"),
+								"--concurrency", concurrency, "--cache-dir", t.TempDir(),
+							}
 							if command == "diff" {
 								args = append(args, "--base", "HEAD", "-o", "diff")
 							}
@@ -432,16 +604,31 @@ spec:
 								if command == "build" {
 									wantCode, wantReason = 1, "repository not found"
 								}
-								if code != wantCode || !strings.Contains(stderr, wantReason) || strings.Contains(stderr, "loader: decode") ||
-									transport.calls.Load() != 0 || (command == "diff" && out != "") {
-									t.Fatalf("external source must release the working-tree error: exit=%d transport=%d\n%s\nstderr:\n%s", code, transport.calls.Load(), out, stderr)
+								if code != wantCode || !strings.Contains(stderr, wantReason) ||
+									strings.Contains(stderr, "loader: decode") ||
+									transport.calls.Load() != 0 ||
+									(command == "diff" && out != "") {
+									t.Fatalf(
+										"external source must release the working-tree error: exit=%d transport=%d\n%s\nstderr:\n%s",
+										code,
+										transport.calls.Load(),
+										out,
+										stderr,
+									)
 								}
 								return
 							}
 							if wantError != "" {
 								wantReason := "kustomize build ./apps"
-								if code != 1 || !strings.Contains(stderr, wantReason) || transport.calls.Load() != 0 || (command == "diff" && out != "") {
-									t.Fatalf("unpinned Kustomization failure: exit=%d transport=%d\n%s\nstderr:\n%s", code, transport.calls.Load(), out, stderr)
+								if code != 1 || !strings.Contains(stderr, wantReason) || transport.calls.Load() != 0 ||
+									(command == "diff" && out != "") {
+									t.Fatalf(
+										"unpinned Kustomization failure: exit=%d transport=%d\n%s\nstderr:\n%s",
+										code,
+										transport.calls.Load(),
+										out,
+										stderr,
+									)
 								}
 								return
 							}
@@ -450,10 +637,19 @@ spec:
 									!strings.Contains(out, "value: pinned-deleted") || !strings.Contains(out, "value: pinned-extra") ||
 									strings.Contains(out, "value: dirty") || strings.Contains(out, "value: newer"))) ||
 								(command == "diff" && out != "") {
-								t.Fatalf("late source pin: exit=%d transport=%d\n%s\nstderr:\n%s", code, transport.calls.Load(), out, stderr)
+								t.Fatalf(
+									"late source pin: exit=%d transport=%d\n%s\nstderr:\n%s",
+									code,
+									transport.calls.Load(),
+									out,
+									stderr,
+								)
 							}
 							if concurrency == "8" && out != previous {
-								t.Fatalf("output differs across concurrency levels (-want +got):\n%s", cmp.Diff(previous, out))
+								t.Fatalf(
+									"output differs across concurrency levels (-want +got):\n%s",
+									cmp.Diff(previous, out),
+								)
 							}
 							previous = out
 						})
@@ -470,8 +666,9 @@ spec:
 			if err != nil {
 				t.Fatal(err)
 			}
-			artifact, ok := st.GetArtifact(manifest.NamedResource{Group: "source.toolkit.fluxcd.io",
-				Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "pinned",
+			artifact, ok := st.GetArtifact(manifest.NamedResource{
+				Group: "source.toolkit.fluxcd.io",
+				Kind:  manifest.KindGitRepository, Namespace: "flux-system", Name: "pinned",
 			}, store.ArtifactContent).(*store.SourceArtifact)
 			if !ok || artifact.LocalPath == root {
 				t.Fatalf("expected committed source artifact, got %+v", artifact)
@@ -481,7 +678,13 @@ spec:
 				record, indexed := res.Index.Lookup(id)
 				if !indexed || record.Path != filepath.Join(artifact.LocalPath, "apps", file.path) ||
 					filepath.Join(root, filepath.FromSlash(record.File)) != record.Path {
-					t.Fatalf("pinned discovery metadata for %s: indexed=%t path=%q source=%q", id, indexed, record.Path, record.File)
+					t.Fatalf(
+						"pinned discovery metadata for %s: indexed=%t path=%q source=%q",
+						id,
+						indexed,
+						record.Path,
+						record.File,
+					)
 				}
 			}
 		})
@@ -510,7 +713,16 @@ func TestE2E_SourceRef_HeldErrorScope(t *testing.T) {
 				t.Fatal(err)
 			}
 			writeConsumer := func(name, path, kind, sourceName string) {
-				testutil.WriteFile(t, root, "flux/"+name+".yaml", testutil.KustomizationYAML(name, "flux-system", "  interval: 10m\n  path: ./"+path+"\n  sourceRef: {kind: "+kind+", name: "+sourceName+"}\n"))
+				testutil.WriteFile(
+					t,
+					root,
+					"flux/"+name+".yaml",
+					testutil.KustomizationYAML(
+						name,
+						"flux-system",
+						"  interval: 10m\n  path: ./"+path+"\n  sourceRef: {kind: "+kind+", name: "+sourceName+"}\n",
+					),
+				)
 			}
 			heldPath, secondPath := "held", "second"
 			if tt.reversedPaths {
@@ -553,9 +765,19 @@ spec: {url: 'git://fixture.invalid/cluster', interval: 10m}
 			}
 			for _, path := range []string{heldPath, secondPath} {
 				testutil.WriteFile(t, root, path+"/kustomization.yaml", "resources: [extra.yaml]\n")
-				testutil.WriteFile(t, root, path+"/extra.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: extra}\n")
+				testutil.WriteFile(
+					t,
+					root,
+					path+"/extra.yaml",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: extra}\n",
+				)
 			}
-			testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+			testutil.GitCommitAll(
+				t,
+				repo,
+				"init",
+				&gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}},
+			)
 			testutil.WriteFile(t, root, heldPath+"/extra.yaml", "metadata: {name: held\n")
 			if tt.unreadable {
 				file := filepath.Join(root, secondPath+"/extra.yaml")
@@ -616,7 +838,9 @@ spec: {url: 'git://fixture.invalid/cluster', interval: 10m}
 				out, stderr, code := harness.RunCLIBuffers("build", "all", "--path", filepath.Join(root, "flux"),
 					"--concurrency", "2", "--cache-dir", t.TempDir())
 				if tt.unreadable {
-					if code != 1 || out != "" || !strings.HasSuffix(stderr, wantError) || strings.Count(stderr, "[RenderPersistenceDisabled]") > 1 || transport.calls.Load() != 0 {
+					if code != 1 || out != "" || !strings.HasSuffix(stderr, wantError) ||
+						strings.Count(stderr, "[RenderPersistenceDisabled]") > 1 ||
+						transport.calls.Load() != 0 {
 						t.Fatalf("unreadable file: exit=%d stdout=%q stderr=%s", code, out, stderr)
 					}
 				} else if code != 1 || !strings.Contains(stderr, "kustomize build ./"+heldPath) || !strings.Contains(stderr, "flux-system/b-second") {
@@ -648,14 +872,32 @@ func TestE2E_SourceRef_HeldErrorAcrossNamespaces(t *testing.T) {
 				if namespace == "beta" {
 					suspend = "  suspend: true\n"
 				}
-				testutil.WriteFile(t, root, "flux/"+namespace+".yaml", testutil.KustomizationYAML("apps", namespace, "  interval: 10m\n"+suspend+"  path: ./broken\n  sourceRef: {kind: GitRepository, name: cluster}\n"))
+				testutil.WriteFile(
+					t,
+					root,
+					"flux/"+namespace+".yaml",
+					testutil.KustomizationYAML(
+						"apps",
+						namespace,
+						"  interval: 10m\n"+suspend+"  path: ./broken\n  sourceRef: {kind: GitRepository, name: cluster}\n",
+					),
+				)
 			}
 			testutil.WriteFile(t, root, "flux/beta-repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: cluster, namespace: beta}
 spec: {interval: 10m, url: '`+tt.betaURL+`'}
 `)
-			testutil.WriteFile(t, root, "flux/sources.yaml", testutil.KustomizationYAML("z-sources", "alpha", "  interval: 10m\n  path: ./sources\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
+			testutil.WriteFile(
+				t,
+				root,
+				"flux/sources.yaml",
+				testutil.KustomizationYAML(
+					"z-sources",
+					"alpha",
+					"  interval: 10m\n  path: ./sources\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+				),
+			)
 			testutil.WriteFile(t, root, "sources/kustomization.yaml", "resources: [repo.yaml]\n")
 			testutil.WriteFile(t, root, "sources/repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
@@ -666,17 +908,34 @@ spec:
   ref: {tag: v1.0.0}
 `)
 			testutil.WriteFile(t, root, "broken/kustomization.yaml", "resources: [cm.yaml]\n")
-			testutil.WriteFile(t, root, "broken/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {value: pinned}\n")
-			testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+			testutil.WriteFile(
+				t,
+				root,
+				"broken/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {value: pinned}\n",
+			)
+			testutil.GitCommitAll(
+				t,
+				repo,
+				"init",
+				&gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}},
+			)
 			head, err := repo.Head()
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), head.Hash())); err != nil {
+			if err := repo.Storer.SetReference(
+				plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), head.Hash()),
+			); err != nil {
 				t.Fatal(err)
 			}
 			harness.MutateFile(t, filepath.Join(root, "broken/cm.yaml"), "value: pinned", "value: newer")
-			testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+			testutil.GitCommitAll(
+				t,
+				repo,
+				"init",
+				&gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}},
+			)
 			testutil.WriteFile(t, root, "broken/cm.yaml", "metadata: {name: broken\n")
 			l := loader.New(store.New())
 			l.SourceRoot = root
@@ -720,8 +979,9 @@ spec:
 					}
 				}
 			}
-			art, ok := st.GetArtifact(manifest.NamedResource{Group: "source.toolkit.fluxcd.io",
-				Kind: manifest.KindGitRepository, Namespace: "alpha", Name: "cluster",
+			art, ok := st.GetArtifact(manifest.NamedResource{
+				Group: "source.toolkit.fluxcd.io",
+				Kind:  manifest.KindGitRepository, Namespace: "alpha", Name: "cluster",
 			}, store.ArtifactContent).(*store.SourceArtifact)
 			if !ok || art.LocalRoot != root || art.LocalPath == root || art.Key == "" || art.FS == nil {
 				t.Fatalf("expected alpha's committed source artifact, got %+v", art)
@@ -731,10 +991,14 @@ spec:
 				t.Fatalf("alpha lost committed bytes: %q, %v", pinned, err)
 			}
 			if tt.workingTree {
-				betaArtifact, ok := st.GetArtifact(manifest.NamedResource{Group: "source.toolkit.fluxcd.io",
-					Kind: manifest.KindGitRepository, Namespace: "beta", Name: "cluster",
+				betaArtifact, ok := st.GetArtifact(manifest.NamedResource{
+					Group: "source.toolkit.fluxcd.io",
+					Kind:  manifest.KindGitRepository, Namespace: "beta", Name: "cluster",
 				}, store.ArtifactContent).(*store.SourceArtifact)
-				if !ok || betaArtifact.LocalRoot != root || betaArtifact.LocalPath == root || betaArtifact.LocalPath == art.LocalPath || betaArtifact.Key != "" || betaArtifact.FS == nil {
+				if !ok || betaArtifact.LocalRoot != root || betaArtifact.LocalPath == root ||
+					betaArtifact.LocalPath == art.LocalPath ||
+					betaArtifact.Key != "" ||
+					betaArtifact.FS == nil {
 					t.Fatalf("expected beta's working-tree artifact, got %+v", betaArtifact)
 				}
 				current, err := fs.ReadFile(betaArtifact.FS, "broken/cm.yaml")
@@ -765,7 +1029,16 @@ func TestE2E_SourceRef_HeldErrorRetainedByEmptyPath(t *testing.T) {
 		if path != "" {
 			pathField = "  path: " + path + "\n"
 		}
-		testutil.WriteFile(t, root, "flux/"+file, testutil.KustomizationYAML(name, "flux-system", "  interval: 10m\n"+pathField+"  sourceRef: {kind: GitRepository, name: "+sourceName+", namespace: flux-system}\n"))
+		testutil.WriteFile(
+			t,
+			root,
+			"flux/"+file,
+			testutil.KustomizationYAML(
+				name,
+				"flux-system",
+				"  interval: 10m\n"+pathField+"  sourceRef: {kind: GitRepository, name: "+sourceName+", namespace: flux-system}\n",
+			),
+		)
 	}
 	writeKS("a-x.yaml", "a-x", "./", "pinned")
 	writeKS("b-z.yaml", "b-z", "", "flux-system")
@@ -779,17 +1052,34 @@ spec:
   url: git://fixture.invalid/cluster
   ref: {tag: v1.0.0}
 `)
-	testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {value: pinned}\n")
-	testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+	testutil.WriteFile(
+		t,
+		root,
+		"apps/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {value: pinned}\n",
+	)
+	testutil.GitCommitAll(
+		t,
+		repo,
+		"init",
+		&gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}},
+	)
 	head, err := repo.Head()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), head.Hash())); err != nil {
+	if err := repo.Storer.SetReference(
+		plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), head.Hash()),
+	); err != nil {
 		t.Fatal(err)
 	}
 	harness.MutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: pinned", "value: newer")
-	testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+	testutil.GitCommitAll(
+		t,
+		repo,
+		"init",
+		&gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}},
+	)
 	testutil.WriteFile(t, root, "apps/cm.yaml", "metadata: {name: broken\n")
 	_, stderr, code := harness.RunCLIBuffers("build", "ks", "b-z", "--path", filepath.Join(root, "flux"),
 		"--concurrency", "2", "--cache-dir", t.TempDir())
@@ -820,11 +1110,29 @@ func TestE2E_SourceRef_HeldErrorSurvivesNamespaceInheritance(t *testing.T) {
 			for _, ks := range []struct{ name, path string }{
 				{"probe", "ok"}, {"entry", "entries"}, {"stage", "stage"},
 			} {
-				testutil.WriteFile(t, root, "flux/"+ks.name+".yaml", testutil.KustomizationYAML(ks.name, "flux-system", "  interval: 10m\n  path: ./"+ks.path+"\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
+				testutil.WriteFile(
+					t,
+					root,
+					"flux/"+ks.name+".yaml",
+					testutil.KustomizationYAML(
+						ks.name,
+						"flux-system",
+						"  interval: 10m\n  path: ./"+ks.path+"\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+					),
+				)
 			}
 			testutil.WriteFile(t, root, "entries/kustomization.yaml", "resources: [nested/child.yaml]\n")
 			testutil.WriteFile(t, root, "entries/nested/kustomization.yaml", "resources: [child.yaml]\n")
-			testutil.WriteFile(t, root, "entries/nested/child.yaml", testutil.KustomizationYAML("a-held", "", "  interval: 10m\n  suspend: true\n  path: ./held\n  sourceRef: {kind: GitRepository, name: unknown"+tt.namespace+"}\n"))
+			testutil.WriteFile(
+				t,
+				root,
+				"entries/nested/child.yaml",
+				testutil.KustomizationYAML(
+					"a-held",
+					"",
+					"  interval: 10m\n  suspend: true\n  path: ./held\n  sourceRef: {kind: GitRepository, name: unknown"+tt.namespace+"}\n",
+				),
+			)
 			testutil.WriteFile(t, root, "stage/kustomization.yaml", "resources: [sources.yaml]\n")
 			sourceTargetNamespace := ""
 			if tt.namespaceFreeSource {
@@ -833,10 +1141,28 @@ func TestE2E_SourceRef_HeldErrorSurvivesNamespaceInheritance(t *testing.T) {
 					sourceTargetNamespace = "  targetNamespace: shifted\n"
 				}
 			}
-			testutil.WriteFile(t, root, "stage/sources.yaml", testutil.KustomizationYAML("z-sources", "flux-system", "  interval: 10m\n  path: ./sources\n")+sourceTargetNamespace+`  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
-`)
+			testutil.WriteFile(
+				t,
+				root,
+				"stage/sources.yaml",
+				testutil.KustomizationYAML(
+					"z-sources",
+					"flux-system",
+					"  interval: 10m\n  path: ./sources\n",
+				)+sourceTargetNamespace+`  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`,
+			)
 			testutil.WriteFile(t, root, "sources/kustomization.yaml", "resources: [claim.yaml, repo.yaml]\n")
-			testutil.WriteFile(t, root, "sources/claim.yaml", testutil.KustomizationYAML("claim", "flux-system", "  interval: 10m\n  path: ./entries/nested\n  targetNamespace: shifted\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
+			testutil.WriteFile(
+				t,
+				root,
+				"sources/claim.yaml",
+				testutil.KustomizationYAML(
+					"claim",
+					"flux-system",
+					"  interval: 10m\n  path: ./entries/nested\n  targetNamespace: shifted\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+				),
+			)
 			sourceName, sourceMetadataNamespace := "pulse", ", namespace: flux-system"
 			if tt.pinned || tt.external {
 				sourceName, sourceMetadataNamespace = "unknown", ", namespace: shifted"
@@ -855,20 +1181,42 @@ spec:
   interval: 10m
   url: `+url+"\n"+ref)
 			testutil.WriteFile(t, root, "ok/kustomization.yaml", "resources: [cm.yaml]\n")
-			testutil.WriteFile(t, root, "ok/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: ok, namespace: apps}\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"ok/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: ok, namespace: apps}\n",
+			)
 			testutil.WriteFile(t, root, "held/kustomization.yaml", "resources: [broken.yaml]\n")
 			testutil.WriteFile(t, root, "held/broken.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: held}\n")
-			testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+			testutil.GitCommitAll(
+				t,
+				repo,
+				"init",
+				&gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}},
+			)
 			head, err := repo.Head()
 			if err != nil {
 				t.Fatal(err)
 			}
 			if tt.pinned {
 				testutil.WriteFile(t, root, "extra.txt", "second commit\n")
-				testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+				testutil.GitCommitAll(
+					t,
+					repo,
+					"init",
+					&gogit.CommitOptions{
+						Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)},
+					},
+				)
 			}
 			if !tt.external {
-				harness.MutateFile(t, filepath.Join(root, "sources/repo.yaml"), "{branch: master}", "{commit: "+head.Hash().String()+"}")
+				harness.MutateFile(
+					t,
+					filepath.Join(root, "sources/repo.yaml"),
+					"{branch: master}",
+					"{commit: "+head.Hash().String()+"}",
+				)
 			}
 			testutil.WriteFile(t, root, "held/broken.yaml", "metadata: {name: held\n")
 			l := loader.New(store.New())
@@ -890,8 +1238,14 @@ spec:
 			}
 			persistence := strings.Count(stderr, "[RenderPersistenceDisabled]")
 			if code != 0 || persistence > 1 ||
-				strings.Count(stderr, "[BootstrapAliases]") != aliases || strings.Count(stderr, "warnings (") != aliases+persistence ||
-				strings.Contains(stderr, "held/broken.yaml") || transport.calls.Load() != 0 || !strings.Contains(out, "name: ok") {
+				strings.Count(
+					stderr,
+					"[BootstrapAliases]",
+				) != aliases || strings.Count(stderr, "warnings (") != aliases+persistence ||
+				strings.Contains(
+					stderr,
+					"held/broken.yaml",
+				) || transport.calls.Load() != 0 || !strings.Contains(out, "name: ok") {
 				t.Fatalf("re-keyed held consumer: exit=%d transport=%d stdout=%q\nstderr (-want +got):\n%s",
 					code, transport.calls.Load(), out, cmp.Diff("", stderr))
 			}
@@ -915,7 +1269,11 @@ spec:
 			if tt.pinned {
 				art, ok := st.GetArtifact(sourceRef, store.ArtifactContent).(*store.SourceArtifact)
 				if discoveryError != nil || !ok || art.LocalRoot != root || art.LocalPath == root {
-					t.Fatalf("expected genuine inherited source pin without a held error: error=%v artifact=%+v", discoveryError, art)
+					t.Fatalf(
+						"expected genuine inherited source pin without a held error: error=%v artifact=%+v",
+						discoveryError,
+						art,
+					)
 				}
 			} else if discoveryError != nil {
 				t.Fatalf("incidental decode error failed discovery: %v", discoveryError)
@@ -971,11 +1329,34 @@ func TestE2E_SourceRef_PinnedTreeReplacesHeldConsumer(t *testing.T) {
 				{"z-pinned", "apps", "pinned"},
 				{"z-stage", "stage", "flux-system"},
 			} {
-				testutil.WriteFile(t, root, "flux/"+ks.name+".yaml", testutil.KustomizationYAML(ks.name, "flux-system", "  interval: 10m\n  path: ./"+ks.path+"\n  sourceRef: {kind: GitRepository, name: "+ks.source+"}\n"))
+				testutil.WriteFile(
+					t,
+					root,
+					"flux/"+ks.name+".yaml",
+					testutil.KustomizationYAML(
+						ks.name,
+						"flux-system",
+						"  interval: 10m\n  path: ./"+ks.path+"\n  sourceRef: {kind: GitRepository, name: "+ks.source+"}\n",
+					),
+				)
 			}
-			harness.MutateFile(t, filepath.Join(root, "flux/a-entry.yaml"), "interval: 10m", "interval: 10m\n  suspend: true")
+			harness.MutateFile(
+				t,
+				filepath.Join(root, "flux/a-entry.yaml"),
+				"interval: 10m",
+				"interval: 10m\n  suspend: true",
+			)
 			testutil.WriteFile(t, root, "stage/kustomization.yaml", "resources: [ks.yaml]\n")
-			testutil.WriteFile(t, root, "stage/ks.yaml", testutil.KustomizationYAML("z-sources", "flux-system", "  interval: 10m\n  path: ./sources\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
+			testutil.WriteFile(
+				t,
+				root,
+				"stage/ks.yaml",
+				testutil.KustomizationYAML(
+					"z-sources",
+					"flux-system",
+					"  interval: 10m\n  path: ./sources\n  sourceRef: {kind: GitRepository, name: flux-system}\n",
+				),
+			)
 			testutil.WriteFile(t, root, "sources/kustomization.yaml", "resources: [repo.yaml]\n")
 			testutil.WriteFile(t, root, "sources/repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
@@ -986,24 +1367,60 @@ spec:
   ref: {tag: v1.0.0}
 `)
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml, broken/held.yaml]\n")
-			testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {value: tagged}\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"apps/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {value: tagged}\n",
+			)
 			testutil.WriteFile(t, root, "apps/broken/held.yaml", tt.held)
 			testutil.WriteFile(t, root, "ok/kustomization.yaml", "resources: [cm.yaml]\n")
-			testutil.WriteFile(t, root, "ok/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: ok, namespace: apps}\ndata: {value: ok-consumer}\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"ok/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: ok, namespace: apps}\ndata: {value: ok-consumer}\n",
+			)
 			testutil.WriteFile(t, root, "apps/broken/kustomization.yaml", "resources: [held.yaml, extra.yaml]\n")
-			testutil.WriteFile(t, root, "apps/broken/extra.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: sibling, namespace: apps}\n")
-			testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+			testutil.WriteFile(
+				t,
+				root,
+				"apps/broken/extra.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: sibling, namespace: apps}\n",
+			)
+			testutil.GitCommitAll(
+				t,
+				repo,
+				"init",
+				&gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}},
+			)
 			head, err := repo.Head()
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), head.Hash())); err != nil {
+			if err := repo.Storer.SetReference(
+				plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), head.Hash()),
+			); err != nil {
 				t.Fatal(err)
 			}
 			harness.MutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: tagged", "value: newer")
-			testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+			testutil.GitCommitAll(
+				t,
+				repo,
+				"init",
+				&gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}},
+			)
 			heldSource := stdcmp.Or(tt.heldSource, "pinned")
-			testutil.WriteFile(t, root, "apps/broken/held.yaml", testutil.KustomizationYAML("a-held", "flux-system", "  interval: 10m\n  path: ./apps/broken\n  sourceRef: {kind: GitRepository, name: "+heldSource+"}\n"))
+			testutil.WriteFile(
+				t,
+				root,
+				"apps/broken/held.yaml",
+				testutil.KustomizationYAML(
+					"a-held",
+					"flux-system",
+					"  interval: 10m\n  path: ./apps/broken\n  sourceRef: {kind: GitRepository, name: "+heldSource+"}\n",
+				),
+			)
 			testutil.WriteFile(t, root, "apps/broken/extra.yaml", "metadata: {name: extra\n")
 			harness.MutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: newer", "value: dirty")
 			l := loader.New(store.New())
@@ -1022,7 +1439,10 @@ spec:
 					"--concurrency", concurrency, "--cache-dir", t.TempDir())
 				if code != 0 || strings.Contains(stderr, heldError.Error()) ||
 					!strings.Contains(out, "value: tagged") || !strings.Contains(out, tt.want) ||
-					strings.Contains(out, "value: dirty") || strings.Contains(out, "value: newer") || transport.calls.Load() != 0 {
+					strings.Contains(
+						out,
+						"value: dirty",
+					) || strings.Contains(out, "value: newer") || transport.calls.Load() != 0 {
 					t.Fatalf("discarded held consumer: concurrency=%s exit=%d transport=%d\n%s\nstderr:\n%s",
 						concurrency, code, transport.calls.Load(), out, stderr)
 				}
@@ -1037,7 +1457,8 @@ spec:
 				}
 				id := testutil.KustomizationID("flux-system", tt.survivorName)
 				ks, ok := st.Get[*manifest.Kustomization](id)
-				if !ok || ks.Path != tt.survivorPath || ks.SourceRef.Name != tt.survivorSource || ks.SourceRef.Namespace != "" {
+				if !ok || ks.Path != tt.survivorPath || ks.SourceRef.Name != tt.survivorSource ||
+					ks.SourceRef.Namespace != "" {
 					t.Fatalf("expected survivor with independently changed identity field, got %+v", ks)
 				}
 				if tt.survivorName != "a-held" {
@@ -1066,12 +1487,40 @@ func TestE2E_SourceRef_PinnedFollowedSourceInheritsNamespace(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			testutil.WriteFile(t, root, "flux/ks.yaml", testutil.KustomizationYAML("meta", "flux-system", "  interval: 10m\n  path: ./clusters\n  sourceRef: {kind: GitRepository, name: bootstrap, namespace: flux-system}\n"))
+			testutil.WriteFile(
+				t,
+				root,
+				"flux/ks.yaml",
+				testutil.KustomizationYAML(
+					"meta",
+					"flux-system",
+					"  interval: 10m\n  path: ./clusters\n  sourceRef: {kind: GitRepository, name: bootstrap, namespace: flux-system}\n",
+				),
+			)
 			if tt.sourceDir == "sub" {
-				testutil.WriteFile(t, root, "clusters/kustomization.yaml", "namespace: flux-system\nresources: [ks2.yaml]\n")
-				testutil.WriteFile(t, root, "clusters/ks2.yaml", testutil.KustomizationYAML("sub", "", "  interval: 10m\n  path: ./sub\n  sourceRef: {kind: GitRepository, name: bootstrap, namespace: flux-system}\n"))
+				testutil.WriteFile(
+					t,
+					root,
+					"clusters/kustomization.yaml",
+					"namespace: flux-system\nresources: [ks2.yaml]\n",
+				)
+				testutil.WriteFile(
+					t,
+					root,
+					"clusters/ks2.yaml",
+					testutil.KustomizationYAML(
+						"sub",
+						"",
+						"  interval: 10m\n  path: ./sub\n  sourceRef: {kind: GitRepository, name: bootstrap, namespace: flux-system}\n",
+					),
+				)
 			}
-			testutil.WriteFile(t, root, tt.sourceDir+"/kustomization.yaml", "namespace: flux-system\nresources: [repo.yaml, apps.yaml]\n")
+			testutil.WriteFile(
+				t,
+				root,
+				tt.sourceDir+"/kustomization.yaml",
+				"namespace: flux-system\nresources: [repo.yaml, apps.yaml]\n",
+			)
 			testutil.WriteFile(t, root, tt.sourceDir+"/repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: cluster}
@@ -1080,16 +1529,39 @@ spec:
   url: git://fixture.invalid/cluster
   ref: {tag: v1.0.0}
 `)
-			testutil.WriteFile(t, root, tt.sourceDir+"/apps.yaml", testutil.KustomizationYAML("apps", "", "  interval: 10m\n  path: ./apps\n  sourceRef: {kind: GitRepository, name: cluster"+tt.namespace+"}\n"))
+			testutil.WriteFile(
+				t,
+				root,
+				tt.sourceDir+"/apps.yaml",
+				testutil.KustomizationYAML(
+					"apps",
+					"",
+					"  interval: 10m\n  path: ./apps\n  sourceRef: {kind: GitRepository, name: cluster"+tt.namespace+"}\n",
+				),
+			)
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
 			for _, version := range []string{"v1.0.0", "v2.0.0"} {
-				testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata:\n  value: "+version+"\n")
-				testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+				testutil.WriteFile(
+					t,
+					root,
+					"apps/cm.yaml",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata:\n  value: "+version+"\n",
+				)
+				testutil.GitCommitAll(
+					t,
+					repo,
+					"init",
+					&gogit.CommitOptions{
+						Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)},
+					},
+				)
 				head, err := repo.Head()
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName(version), head.Hash())); err != nil {
+				if err := repo.Storer.SetReference(
+					plumbing.NewHashReference(plumbing.NewTagReferenceName(version), head.Hash()),
+				); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -1098,8 +1570,16 @@ spec:
 			for _, concurrency := range []string{"1", "2", "8"} {
 				out, stderr, code := harness.RunCLIBuffers("build", "all", "--path", filepath.Join(root, "flux"),
 					"--concurrency", concurrency, "--cache-dir", t.TempDir())
-				if code != 0 || !strings.Contains(out, "value: v1.0.0") || strings.Contains(out, "value: dirty") || transport.calls.Load() != 0 {
-					t.Fatalf("followed source pin: concurrency=%s exit=%d transport=%d\n%s\nstderr:\n%s", concurrency, code, transport.calls.Load(), out, stderr)
+				if code != 0 || !strings.Contains(out, "value: v1.0.0") || strings.Contains(out, "value: dirty") ||
+					transport.calls.Load() != 0 {
+					t.Fatalf(
+						"followed source pin: concurrency=%s exit=%d transport=%d\n%s\nstderr:\n%s",
+						concurrency,
+						code,
+						transport.calls.Load(),
+						out,
+						stderr,
+					)
 				}
 			}
 		})
@@ -1118,13 +1598,20 @@ func TestE2E_SourceRef_PinnedRootPreservesSource(t *testing.T) {
 		}
 		harness.MutateFile(t, filepath.Join(root, "flux/entry.yaml"), "path: ./apps", "path: ./")
 		testutil.WriteFile(t, root, "kustomization.yaml", "resources: [apps, flux/entry.yaml]\n")
-		testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+		testutil.GitCommitAll(
+			t,
+			repo,
+			"init",
+			&gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}},
+		)
 		if hash == older {
 			ref, err := repo.Head()
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), ref.Hash())); err != nil {
+			if err := repo.Storer.SetReference(
+				plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), ref.Hash()),
+			); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -1135,7 +1622,8 @@ func TestE2E_SourceRef_PinnedRootPreservesSource(t *testing.T) {
 		t.Run(scope, func(t *testing.T) {
 			out, _ := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(root, scope),
 				"--concurrency", "2", "--cache-dir", t.TempDir())
-			if !strings.Contains(out, "value: v1.0.0") || strings.Contains(out, "value: dirty") || strings.Contains(out, "value: v2.0.0") {
+			if !strings.Contains(out, "value: v1.0.0") || strings.Contains(out, "value: dirty") ||
+				strings.Contains(out, "value: v2.0.0") {
 				t.Fatalf("pinned root rendered the working tree:\n%s", out)
 			}
 			if transport.calls.Load() != 0 {
@@ -1151,14 +1639,19 @@ func TestE2E_SourceRef_PinnedPathIgnoresAddedDiscoveryObjects(t *testing.T) {
 	for _, root := range []string{original, current} {
 		testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux/entry.yaml, apps]\n")
 	}
-	testutil.WriteFile(t, current, "apps/added-ks.yaml", testutil.KustomizationYAML("added-ks", "flux-system", `  path: ./apps/phantom
+	testutil.WriteFile(
+		t,
+		current,
+		"apps/added-ks.yaml",
+		testutil.KustomizationYAML("added-ks", "flux-system", `  path: ./apps/phantom
   sourceRef: {kind: GitRepository, name: working, namespace: flux-system}
 `)+"---\n"+
-		`apiVersion: source.toolkit.fluxcd.io/v1
+			`apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: working, namespace: flux-system}
 spec: {url: 'git://fixture.invalid/cluster'}
-`)
+`,
+	)
 	testutil.WriteFile(t, current, "apps/added-rs.yaml", `apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSet
 metadata: {name: added-rs, namespace: flux-system}
@@ -1170,8 +1663,18 @@ spec:
     data: {value: phantom}
 `)
 	testutil.WriteFile(t, current, "apps/phantom/kustomization.yaml", "resources: [cm.yaml]\n")
-	testutil.WriteFile(t, current, "apps/phantom/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: added-ks-output, namespace: apps}\ndata: {value: phantom}\n")
-	harness.MutateFile(t, filepath.Join(current, "apps/kustomization.yaml"), "- cm.yaml\n", "- cm.yaml\n- added-ks.yaml\n- added-rs.yaml\n")
+	testutil.WriteFile(
+		t,
+		current,
+		"apps/phantom/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: added-ks-output, namespace: apps}\ndata: {value: phantom}\n",
+	)
+	harness.MutateFile(
+		t,
+		filepath.Join(current, "apps/kustomization.yaml"),
+		"- cm.yaml\n",
+		"- cm.yaml\n- added-ks.yaml\n- added-rs.yaml\n",
+	)
 	for _, scope := range []string{"flux", "."} {
 		t.Run(scope, func(t *testing.T) {
 			path := filepath.Join(current, scope)
@@ -1211,8 +1714,10 @@ spec:
 				})
 			}
 			for direction, paths := range [][2]string{{current, original}, {original, current}} {
-				args := []string{"diff", "all", "--path", filepath.Join(paths[0], scope),
-					"--path-orig", filepath.Join(paths[1], scope), "--concurrency", "2", "--cache-dir", t.TempDir()}
+				args := []string{
+					"diff", "all", "--path", filepath.Join(paths[0], scope),
+					"--path-orig", filepath.Join(paths[1], scope), "--concurrency", "2", "--cache-dir", t.TempDir(),
+				}
 				if scope == "flux" {
 					out, _ := harness.RequireCLIOK(t, append(args, "-o", "diff")...)
 					if out != "" {
@@ -1260,22 +1765,48 @@ spec:
 
 func TestE2E_SourceRef_PinnedPathRendersDeletedKustomization(t *testing.T) {
 	root, repo, _, _ := sourceRefFixture(t)
-	testutil.WriteFile(t, root, "apps/child.yaml", testutil.KustomizationYAML("child", "flux-system", "  path: ./leaf\n  sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}\n"))
+	testutil.WriteFile(
+		t,
+		root,
+		"apps/child.yaml",
+		testutil.KustomizationYAML(
+			"child",
+			"flux-system",
+			"  path: ./leaf\n  sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}\n",
+		),
+	)
 	harness.MutateFile(t, filepath.Join(root, "apps/kustomization.yaml"), "- cm.yaml\n", "- cm.yaml\n- child.yaml\n")
 	testutil.WriteFile(t, root, "leaf/kustomization.yaml", "resources: [cm.yaml]\n")
-	testutil.WriteFile(t, root, "leaf/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: child-output, namespace: apps}\ndata: {value: pinned-child}\n")
-	testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+	testutil.WriteFile(
+		t,
+		root,
+		"leaf/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: child-output, namespace: apps}\ndata: {value: pinned-child}\n",
+	)
+	testutil.GitCommitAll(
+		t,
+		repo,
+		"init",
+		&gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}},
+	)
 	head, err := repo.Head()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), head.Hash())); err != nil {
+	if err := repo.Storer.SetReference(
+		plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), head.Hash()),
+	); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Remove(filepath.Join(root, "apps/child.yaml")); err != nil {
 		t.Fatal(err)
 	}
-	testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+	testutil.GitCommitAll(
+		t,
+		repo,
+		"init",
+		&gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}},
+	)
 	out, _ := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(root, "flux"),
 		"--concurrency", "2", "--cache-dir", t.TempDir())
 	if !strings.Contains(out, "name: child-output") || !strings.Contains(out, "value: pinned-child") {
@@ -1316,12 +1847,19 @@ data:
   greeting: {{ .Values.greeting | quote }}
 `)
 		if hash == older {
-			testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+			testutil.GitCommitAll(
+				t,
+				repo,
+				"init",
+				&gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}},
+			)
 			ref, err := repo.Head()
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), ref.Hash())); err != nil {
+			if err := repo.Storer.SetReference(
+				plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), ref.Hash()),
+			); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -1333,7 +1871,12 @@ data:
 		t.Fatal(err)
 	}
 	testutil.WriteFile(t, root, "apps/added.yaml", strings.Replace(string(release), "name: existing", "name: added", 1))
-	harness.MutateFile(t, filepath.Join(root, "apps/kustomization.yaml"), "- release.yaml\n", "- release.yaml\n- added.yaml\n")
+	harness.MutateFile(
+		t,
+		filepath.Join(root, "apps/kustomization.yaml"),
+		"- release.yaml\n",
+		"- release.yaml\n- added.yaml\n",
+	)
 	out, _ := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(root, "flux"),
 		"--concurrency", "2", "--cache-dir", t.TempDir(), "-o", "json")
 	if loader.calls.Load() != 0 {
@@ -1357,7 +1900,8 @@ data:
 		}
 		ids[manifest.NamedResource{Group: group, Kind: doc.Kind, Namespace: doc.Metadata.Namespace, Name: doc.Metadata.Name}]++
 		if doc.Kind == manifest.KindHelmRelease && doc.Spec.Values["greeting"] != "pinned" ||
-			doc.Kind == manifest.KindConfigMap && doc.Metadata.Name == "existing-cm" && doc.Data["greeting"] != "pinned" ||
+			doc.Kind == manifest.KindConfigMap && doc.Metadata.Name == "existing-cm" &&
+				doc.Data["greeting"] != "pinned" ||
 			doc.Metadata.Name == "hello" && doc.Data["value"] != "v1.0.0" {
 			t.Fatalf("expected pinned content:\n%s", out)
 		}
@@ -1405,7 +1949,12 @@ kind: ConfigMap
 metadata: {name: hello, namespace: apps}
 data:
   value: `+version+"\n")
-		testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+		testutil.GitCommitAll(
+			t,
+			repo,
+			"init",
+			&gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}},
+		)
 		head, err := repo.Head()
 		if err != nil {
 			t.Fatal(err)
@@ -1458,7 +2007,8 @@ func TestE2E_SourceRef_NonHEADRendersPreserveCheckout(t *testing.T) {
 			}
 			out, _ := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(root, "flux"),
 				"--concurrency", "2", "--cache-dir", t.TempDir())
-			if !strings.Contains(out, "value: "+want) || kind != "head" && kind != "no-ref" && strings.Contains(out, "dirty") {
+			if !strings.Contains(out, "value: "+want) ||
+				kind != "head" && kind != "no-ref" && strings.Contains(out, "dirty") {
 				t.Fatalf("expected %s content:\n%s", want, out)
 			}
 			afterHead, err := repo.Head()
@@ -1485,8 +2035,25 @@ func TestE2E_PinnedDiff_BaseAndCurrentRefs(t *testing.T) {
 	setSourceRef(t, root, "tag: v2.0.0")
 	for _, concurrency := range []string{"2", "4"} {
 		t.Run("concurrency_"+concurrency, func(t *testing.T) {
-			out, stderr := harness.RequireCLIOK(t, "diff", "all", "--path", filepath.Join(root, "flux"), "--base", "HEAD",
-				"--concurrency", concurrency, "--cache-dir", t.TempDir(), "--git-depth", "0", "--log-level", "warn", "-o", "diff")
+			out, stderr := harness.RequireCLIOK(
+				t,
+				"diff",
+				"all",
+				"--path",
+				filepath.Join(root, "flux"),
+				"--base",
+				"HEAD",
+				"--concurrency",
+				concurrency,
+				"--cache-dir",
+				t.TempDir(),
+				"--git-depth",
+				"0",
+				"--log-level",
+				"warn",
+				"-o",
+				"diff",
+			)
 			assertSourceValueDiff(t, out, "v1.0.0", "v2.0.0")
 			if loader.calls.Load() != 0 || strings.Contains(stderr, "declared source ref cannot be satisfied locally") {
 				t.Fatalf("locally available side refs warned/fetched: calls=%d\n%s", loader.calls.Load(), stderr)
@@ -1509,17 +2076,52 @@ func TestE2E_PinnedDiff_StablePinIgnoresDirtyContent(t *testing.T) {
 	if err := os.RemoveAll(filepath.Join(exported, ".git")); err != nil {
 		t.Fatal(err)
 	}
-	fetched, _ := harness.RequireCLIOK(t, "build", "all", "--path", exported, "--concurrency", "2", "--cache-dir", t.TempDir(), "--git-depth", "0")
+	fetched, _ := harness.RequireCLIOK(
+		t,
+		"build",
+		"all",
+		"--path",
+		exported,
+		"--concurrency",
+		"2",
+		"--cache-dir",
+		t.TempDir(),
+		"--git-depth",
+		"0",
+	)
 	if fetched != local || loader.calls.Load() == 0 {
 		t.Fatalf("local/fetched pin bytes differ or no fetch occurred:\nlocal:\n%s\nfetched:\n%s", local, fetched)
 	}
 	for _, concurrency := range []string{"2", "4"} {
 		t.Run("concurrency_"+concurrency, func(t *testing.T) {
 			before := loader.calls.Load()
-			out, stderr := harness.RequireCLIOK(t, "diff", "all", "--path", filepath.Join(root, "flux"), "--base", "HEAD",
-				"--concurrency", concurrency, "--cache-dir", t.TempDir(), "--git-depth", "0", "--log-level", "warn", "-o", "diff")
-			if out != "" || loader.calls.Load() != before || strings.Contains(stderr, "declared source ref cannot be satisfied locally") {
-				t.Fatalf("stable local pin changed, warned or fetched with dirty working files: calls=%d\n%s\nstderr:\n%s", loader.calls.Load()-before, out, stderr)
+			out, stderr := harness.RequireCLIOK(
+				t,
+				"diff",
+				"all",
+				"--path",
+				filepath.Join(root, "flux"),
+				"--base",
+				"HEAD",
+				"--concurrency",
+				concurrency,
+				"--cache-dir",
+				t.TempDir(),
+				"--git-depth",
+				"0",
+				"--log-level",
+				"warn",
+				"-o",
+				"diff",
+			)
+			if out != "" || loader.calls.Load() != before ||
+				strings.Contains(stderr, "declared source ref cannot be satisfied locally") {
+				t.Fatalf(
+					"stable local pin changed, warned or fetched with dirty working files: calls=%d\n%s\nstderr:\n%s",
+					loader.calls.Load()-before,
+					out,
+					stderr,
+				)
 			}
 		})
 	}
@@ -1535,7 +2137,16 @@ func TestE2E_PinnedDiff_RootPin(t *testing.T) {
 		if err := wt.Checkout(&gogit.CheckoutOptions{Hash: hash}); err != nil {
 			t.Fatal(err)
 		}
-		testutil.WriteFile(t, current, "flux/entry.yaml", testutil.KustomizationYAML("apps", "flux-system", "  interval: 10m\n  path: ./\n  sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}\n"))
+		testutil.WriteFile(
+			t,
+			current,
+			"flux/entry.yaml",
+			testutil.KustomizationYAML(
+				"apps",
+				"flux-system",
+				"  interval: 10m\n  path: ./\n  sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}\n",
+			),
+		)
 		testutil.WriteFile(t, current, "flux/repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: cluster, namespace: flux-system}
@@ -1546,13 +2157,20 @@ spec:
   ignore: '/ignored.txt'
 `)
 		testutil.WriteFile(t, current, "kustomization.yaml", "resources: [apps, flux/entry.yaml, flux/repo.yaml]\n")
-		testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+		testutil.GitCommitAll(
+			t,
+			repo,
+			"init",
+			&gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}},
+		)
 		if hash == older {
 			ref, err := repo.Head()
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), ref.Hash())); err != nil {
+			if err := repo.Storer.SetReference(
+				plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), ref.Hash()),
+			); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -1562,7 +2180,17 @@ spec:
 	transport := installSourceRefTransport(t, repo.Storer)
 	harness.MutateFile(t, filepath.Join(current, "apps/cm.yaml"), "value: v2.0.0", "value: dirty")
 	for _, dir := range []string{original, current} {
-		full, _ := harness.RequireCLIOK(t, "build", "all", "--path", dir, "--concurrency", "2", "--cache-dir", t.TempDir())
+		full, _ := harness.RequireCLIOK(
+			t,
+			"build",
+			"all",
+			"--path",
+			dir,
+			"--concurrency",
+			"2",
+			"--cache-dir",
+			t.TempDir(),
+		)
 		docs, err := testutil.DecodeDocs(strings.NewReader(full))
 		assert.NoError(t, err)
 		pinned := 0
@@ -1581,7 +2209,11 @@ spec:
 				}
 				spec := doc["spec"].(map[string]any)
 				assert.Equal(t, spec["path"], "./")
-				assert.Diff(t, spec["sourceRef"], map[string]any{"kind": manifest.KindGitRepository, "name": "cluster", "namespace": "flux-system"})
+				assert.Diff(
+					t,
+					spec["sourceRef"],
+					map[string]any{"kind": manifest.KindGitRepository, "name": "cluster", "namespace": "flux-system"},
+				)
 			}
 			if manifest.DocKind(doc) != manifest.KindConfigMap || name != "hello" {
 				continue
@@ -1596,7 +2228,15 @@ spec:
 		}
 		assert.Equal(t, pinned, 1)
 		assert.Diff(t, declarations, map[string]int{"": 1, "apps": 1})
-		assert.Diff(t, ids, map[string]int{"ConfigMap/apps/hello": 1, "Kustomization/flux-system/apps": 2, "GitRepository/flux-system/cluster": 1})
+		assert.Diff(
+			t,
+			ids,
+			map[string]int{
+				"ConfigMap/apps/hello":              1,
+				"Kustomization/flux-system/apps":    2,
+				"GitRepository/flux-system/cluster": 1,
+			},
+		)
 	}
 	for _, stage := range []string{"dirty-only", "tag-change"} {
 		t.Run(stage, func(t *testing.T) {
@@ -1610,8 +2250,18 @@ spec:
 						{"reverse", original, current, "v2.0.0", "v1.0.0"},
 					} {
 						t.Run(side.name, func(t *testing.T) {
-							args := []string{"diff", "all", "--path", filepath.Join(side.current, scope),
-								"--path-orig", filepath.Join(side.original, scope), "--concurrency", "2", "--cache-dir", t.TempDir()}
+							args := []string{
+								"diff",
+								"all",
+								"--path",
+								filepath.Join(side.current, scope),
+								"--path-orig",
+								filepath.Join(side.original, scope),
+								"--concurrency",
+								"2",
+								"--cache-dir",
+								t.TempDir(),
+							}
 							out, _ := harness.RequireCLIOK(t, append(args, "-o", "diff")...)
 							if stage == "dirty-only" {
 								again, _ := harness.RequireCLIOK(t, append(args, "-o", "diff")...)
@@ -1647,10 +2297,21 @@ spec:
 										metadata := doc["metadata"].(map[string]any)
 										labels, _ := metadata["labels"].(map[string]any)
 										assert.Equal(t, labels[manifest.FluxKustomizeDomain+"/name"], "apps")
-										assert.Equal(t, labels[manifest.FluxKustomizeDomain+"/namespace"], "flux-system")
+										assert.Equal(
+											t,
+											labels[manifest.FluxKustomizeDomain+"/namespace"],
+											"flux-system",
+										)
 									}
 								}
-								assert.Diff(t, ids, map[string]int{"Kustomization/flux-system/apps": 1, "GitRepository/flux-system/cluster": 1})
+								assert.Diff(
+									t,
+									ids,
+									map[string]int{
+										"Kustomization/flux-system/apps":    1,
+										"GitRepository/flux-system/cluster": 1,
+									},
+								)
 							} else if stage == "dirty-only" {
 								if out != "" {
 									t.Fatalf("dirty content selected the pinned root:\n%s", out)
@@ -1691,9 +2352,22 @@ spec:
   url: git://fixture.invalid/cluster
 ---
 `+testutil.KustomizationYAML("producer", "apps", "  path: ./producer\n  sourceRef: {kind: GitRepository, name: working, namespace: flux-system}\n")+"---\n"+
-				testutil.KustomizationYAML("consumer", "apps", "  path: ./consumer\n  sourceRef: {kind: GitRepository, name: working, namespace: flux-system}\n  postBuild:\n    substituteFrom:\n    - {kind: ConfigMap, name: hello}\n    - {kind: "+tc.kind+", name: settings}\n")+"---\n"+
-				testutil.KustomizationYAML("sibling", "apps", "  path: ./sibling\n  sourceRef: {kind: GitRepository, name: working, namespace: flux-system}\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: stable-settings}]}\n"))
-			testutil.WriteFile(t, orig, "producer/kustomization.yaml", "namespace: apps\ngeneratorOptions: {disableNameSuffixHash: true}\n"+tc.generator)
+				testutil.KustomizationYAML(
+					"consumer",
+					"apps",
+					"  path: ./consumer\n  sourceRef: {kind: GitRepository, name: working, namespace: flux-system}\n  postBuild:\n    substituteFrom:\n    - {kind: ConfigMap, name: hello}\n    - {kind: "+tc.kind+", name: settings}\n",
+				)+"---\n"+
+				testutil.KustomizationYAML(
+					"sibling",
+					"apps",
+					"  path: ./sibling\n  sourceRef: {kind: GitRepository, name: working, namespace: flux-system}\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: stable-settings}]}\n",
+				))
+			testutil.WriteFile(
+				t,
+				orig,
+				"producer/kustomization.yaml",
+				"namespace: apps\ngeneratorOptions: {disableNameSuffixHash: true}\n"+tc.generator,
+			)
 			testutil.WriteFile(t, orig, filepath.Join("producer", tc.input), tc.before)
 			testutil.WriteFile(t, orig, "consumer/kustomization.yaml", "resources: [cm.yaml]\n")
 			testutil.WriteFile(t, orig, "consumer/cm.yaml", `apiVersion: v1
@@ -1704,35 +2378,92 @@ data:
   pinned: ${value}
 `)
 			testutil.WriteFile(t, orig, "sibling/kustomization.yaml", "resources: [cm.yaml]\n")
-			testutil.WriteFile(t, orig, "sibling/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: sibling, namespace: apps}\ndata: {value: '${STABLE}'}\n")
-			testutil.GitCommitAll(t, repo, "add generators and consumers", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+			testutil.WriteFile(
+				t,
+				orig,
+				"sibling/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: sibling, namespace: apps}\ndata: {value: '${STABLE}'}\n",
+			)
+			testutil.GitCommitAll(
+				t,
+				repo,
+				"add generators and consumers",
+				&gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}},
+			)
 			root := t.TempDir()
 			testutil.CopyTree(t, orig, root)
 			testutil.WriteFile(t, root, filepath.Join("producer", tc.input), tc.after)
 
 			var full [2]string
 			for side, dir := range []string{orig, root} {
-				args := []string{"build", "all", "--path", filepath.Join(dir, "flux"), "--concurrency", "2", "--cache-dir", t.TempDir(), "--no-progress", "--log-level", "warn", "-o", "json"}
+				args := []string{
+					"build",
+					"all",
+					"--path",
+					filepath.Join(dir, "flux"),
+					"--concurrency",
+					"2",
+					"--cache-dir",
+					t.TempDir(),
+					"--no-progress",
+					"--log-level",
+					"warn",
+					"-o",
+					"json",
+				}
 				out, warnings := harness.RequireCLIOK(t, args...)
 				again, againWarnings := harness.RequireCLIOK(t, args...)
 				assert.Equal(t, again, out)
 				assert.Equal(t, againWarnings, warnings)
-				t.Logf("full side=%d stdout=%x stderr=%x", side, sha256.Sum256([]byte(out)), sha256.Sum256([]byte(warnings)))
+				t.Logf(
+					"full side=%d stdout=%x stderr=%x",
+					side,
+					sha256.Sum256([]byte(out)),
+					sha256.Sum256([]byte(warnings)),
+				)
 				full[side] = out
 				consumer := generatorConsumer(t, out, "consumer")
-				if !strings.Contains(consumer, `"generated": "`+[]string{"before", "after"}[side]+`"`) || !strings.Contains(consumer, `"pinned": "v1.0.0"`) || strings.Contains(out, "v2.0.0") || strings.Contains(out, "${") {
+				if !strings.Contains(consumer, `"generated": "`+[]string{"before", "after"}[side]+`"`) ||
+					!strings.Contains(consumer, `"pinned": "v1.0.0"`) ||
+					strings.Contains(out, "v2.0.0") ||
+					strings.Contains(out, "${") {
 					t.Fatalf("expected changing generated and stable pinned consumer data:\n%s", out)
 				}
 			}
 			assert.Equal(t, generatorConsumer(t, full[1], "sibling"), generatorConsumer(t, full[0], "sibling"))
-			args := []string{"diff", "all", "--path", filepath.Join(root, "flux"), "--path-orig", filepath.Join(orig, "flux"), "--concurrency", "2", "--cache-dir", t.TempDir(), "--no-progress", "--log-level", "warn", "-o", "diff"}
+			args := []string{
+				"diff",
+				"all",
+				"--path",
+				filepath.Join(root, "flux"),
+				"--path-orig",
+				filepath.Join(orig, "flux"),
+				"--concurrency",
+				"2",
+				"--cache-dir",
+				t.TempDir(),
+				"--no-progress",
+				"--log-level",
+				"warn",
+				"-o",
+				"diff",
+			}
 			out, warnings := harness.RequireCLIOK(t, args...)
 			again, againWarnings := harness.RequireCLIOK(t, args...)
 			assert.Equal(t, again, out)
 			assert.Equal(t, againWarnings, warnings)
 			t.Logf("diff stdout=%x stderr=%x", sha256.Sum256([]byte(out)), sha256.Sum256([]byte(warnings)))
-			if strings.Count(out, "-  generated: before") != 1 || strings.Count(out, "+  generated: after") != 1 || !strings.Contains(out, "   pinned: v1.0.0") || !strings.Contains(out, "--- ConfigMap apps/consumer (consumer)") || strings.Contains(out, "sibling") || strings.Contains(out, "v2.0.0") || strings.Contains(out, "${") {
-				t.Fatalf("expected consumer diff with pinned substitution and no sibling change:\n%s\n%s", out, warnings)
+			if strings.Count(out, "-  generated: before") != 1 || strings.Count(out, "+  generated: after") != 1 ||
+				!strings.Contains(out, "   pinned: v1.0.0") ||
+				!strings.Contains(out, "--- ConfigMap apps/consumer (consumer)") ||
+				strings.Contains(out, "sibling") ||
+				strings.Contains(out, "v2.0.0") ||
+				strings.Contains(out, "${") {
+				t.Fatalf(
+					"expected consumer diff with pinned substitution and no sibling change:\n%s\n%s",
+					out,
+					warnings,
+				)
 			}
 			assert.Equal(t, transport.calls.Load(), int64(0))
 		})
@@ -1777,7 +2508,12 @@ data:
   value: ${value}
   mode: before
 `)
-		testutil.GitCommitAll(t, repo, "add consumers", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+		testutil.GitCommitAll(
+			t,
+			repo,
+			"add consumers",
+			&gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}},
+		)
 		if mode == "after" {
 			harness.MutateFile(t, filepath.Join(root, "shared/consumer.yaml"), "mode: before", "mode: after")
 		}
@@ -1785,10 +2521,32 @@ data:
 	}
 	var priorOut, priorWarnings string
 	for run := range 2 {
-		out, warnings := harness.RequireCLIOK(t, "diff", "all", "--path", filepath.Join(roots[1], "flux"), "--path-orig", filepath.Join(roots[0], "flux"),
-			"--concurrency", "2", "--cache-dir", t.TempDir(), "--log-level", "warn", "-o", "diff")
-		if strings.Count(out, "-  mode: before") != 1 || strings.Count(out, "+  mode: after") != 1 || strings.Count(out, "   value: v1.0.0") != 1 || strings.Contains(out, "dirty-pin") || strings.Contains(out, "${") {
-			t.Fatalf("expected dirty consumer changes with transitive pinned substitution on both sides:\n%s\n%s", out, warnings)
+		out, warnings := harness.RequireCLIOK(
+			t,
+			"diff",
+			"all",
+			"--path",
+			filepath.Join(roots[1], "flux"),
+			"--path-orig",
+			filepath.Join(roots[0], "flux"),
+			"--concurrency",
+			"2",
+			"--cache-dir",
+			t.TempDir(),
+			"--log-level",
+			"warn",
+			"-o",
+			"diff",
+		)
+		if strings.Count(out, "-  mode: before") != 1 || strings.Count(out, "+  mode: after") != 1 ||
+			strings.Count(out, "   value: v1.0.0") != 1 ||
+			strings.Contains(out, "dirty-pin") ||
+			strings.Contains(out, "${") {
+			t.Fatalf(
+				"expected dirty consumer changes with transitive pinned substitution on both sides:\n%s\n%s",
+				out,
+				warnings,
+			)
 		}
 		if run != 0 && (out != priorOut || warnings != priorWarnings) {
 			t.Fatalf("diff or warnings changed across runs:\n%s\n%s", out, warnings)
@@ -1818,12 +2576,21 @@ func testPinnedProducerDiff(t *testing.T, deleted bool) {
 			harness.MutateFile(t, filepath.Join(root, "apps/cm.yaml"), "name: hello, namespace: apps", "name: hello")
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", "namespace: apps\nresources:\n- cm.yaml\n")
 			if hash == older {
-				testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+				testutil.GitCommitAll(
+					t,
+					repo,
+					"init",
+					&gogit.CommitOptions{
+						Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)},
+					},
+				)
 				ref, err := repo.Head()
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), ref.Hash())); err != nil {
+				if err := repo.Storer.SetReference(
+					plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), ref.Hash()),
+				); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -1866,7 +2633,10 @@ data:
 	out, _ := harness.RequireCLIOK(t, "diff", "all", "--path", filepath.Join(roots[1], "flux"),
 		"--path-orig", filepath.Join(roots[0], "flux"), "--concurrency", "2", "--cache-dir", t.TempDir(), "-o", "diff")
 	if strings.Count(out, "-  mode: before") != 1 || strings.Count(out, "+  mode: after") != 1 ||
-		!strings.Contains(out, "   value: v1.0.0") || strings.Contains(out, "${value}") || strings.Contains(out, "v2.0.0") {
+		!strings.Contains(
+			out,
+			"   value: v1.0.0",
+		) || strings.Contains(out, "${value}") || strings.Contains(out, "v2.0.0") {
 		t.Fatalf("expected consumer diff with pinned substitution on both sides:\n%s", out)
 	}
 }
@@ -1881,12 +2651,16 @@ func TestE2E_SourceRef_PathOrigUsesOwnObjectStore(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.name == "identical-spec" {
-				t.Skip("changed-only selection ignores divergent source revisions with identical authored files; tracked in fl-5c42t")
+				t.Skip(
+					"changed-only selection ignores divergent source revisions with identical authored files; tracked in fl-5c42t",
+				)
 			}
 			current, _, _, _ := sourceRefFixture(t)
 			setSourceRef(t, current, tt.currentRef)
 			original, originalRepo, _, b := sourceRefFixture(t)
-			if err := originalRepo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), b)); err != nil {
+			if err := originalRepo.Storer.SetReference(
+				plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), b),
+			); err != nil {
 				t.Fatal(err)
 			}
 			for _, side := range []struct {
@@ -1902,8 +2676,25 @@ func TestE2E_SourceRef_PathOrigUsesOwnObjectStore(t *testing.T) {
 					t.Fatalf("expected %s from %s:\n%s", side.value, side.root, out)
 				}
 			}
-			out, _ := harness.RequireCLIOK(t, "diff", "all", "--path", filepath.Join(current, "flux"), "--path-orig", filepath.Join(original, "flux"),
-				"--concurrency", "2", "--cache-dir", t.TempDir(), "--git-depth", "0", "--log-level", "warn", "-o", "diff")
+			out, _ := harness.RequireCLIOK(
+				t,
+				"diff",
+				"all",
+				"--path",
+				filepath.Join(current, "flux"),
+				"--path-orig",
+				filepath.Join(original, "flux"),
+				"--concurrency",
+				"2",
+				"--cache-dir",
+				t.TempDir(),
+				"--git-depth",
+				"0",
+				"--log-level",
+				"warn",
+				"-o",
+				"diff",
+			)
 			assertSourceValueDiff(t, out, "v2.0.0", "v1.0.0")
 		})
 	}

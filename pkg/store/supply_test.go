@@ -58,7 +58,9 @@ func TestNewSupplied_Validation(t *testing.T) {
 		name   string
 		object manifest.BaseManifest
 	}{
-		{"nil", nil}, {"typed nil Secret", (*manifest.Secret)(nil)}, {"typed nil ConfigMap", (*manifest.ConfigMap)(nil)},
+		{"nil", nil},
+		{"typed nil Secret", (*manifest.Secret)(nil)},
+		{"typed nil ConfigMap", (*manifest.ConfigMap)(nil)},
 		{"unsupported type", &manifest.Kustomization{Name: "input", Namespace: "apps"}},
 		{"missing namespace", &manifest.ConfigMap{Name: "missing-namespace"}},
 		{"invalid base64", &manifest.Secret{Name: "input", Namespace: "apps", Data: map[string]any{"bad": "payload%%%"}}},
@@ -66,8 +68,14 @@ func TestNewSupplied_Validation(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := NewSupplied([]SuppliedObject{{Object: tc.object, Path: "input.yaml"}, {Object: &manifest.Secret{Name: "input", Namespace: "apps"}}})
-			if !errors.Is(err, manifest.ErrInput) || strings.Contains(err.Error(), "payload") || !strings.Contains(err.Error(), "input.yaml") {
+			_, err := NewSupplied(
+				[]SuppliedObject{
+					{Object: tc.object, Path: "input.yaml"},
+					{Object: &manifest.Secret{Name: "input", Namespace: "apps"}},
+				},
+			)
+			if !errors.Is(err, manifest.ErrInput) || strings.Contains(err.Error(), "payload") ||
+				!strings.Contains(err.Error(), "input.yaml") {
 				t.Fatalf("validation = %v", err)
 			}
 		})

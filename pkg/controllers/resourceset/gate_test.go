@@ -17,7 +17,11 @@ func TestReconcile_SharedAdmission(t *testing.T) {
 	s := store.New()
 	c := New(s, task.NewBounded(2), nil, false)
 	c.Configure(base.Options{})
-	rs := &manifest.ResourceSet{Name: "app", Namespace: "apps", ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\n"}
+	rs := &manifest.ResourceSet{
+		Name:              "app",
+		Namespace:         "apps",
+		ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\n",
+	}
 	s.AddObject(rs)
 	if err := c.newExecution(rs.Named()).reconcile(t.Context(), rs, manifest.DrainNone); err != nil {
 		t.Fatal(err)

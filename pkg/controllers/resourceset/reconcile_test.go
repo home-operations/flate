@@ -36,26 +36,42 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 			t.Cleanup(func() { release(); tasks.BlockTillDone() })
 			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 			st.AddObject(parent)
-			provider := &manifest.ResourceSetInputProvider{Name: "dynamic", Namespace: "apps", Type: fluxopv1.InputProviderGitHubBranch}
+			provider := &manifest.ResourceSetInputProvider{
+				Name:      "dynamic",
+				Namespace: "apps",
+				Type:      fluxopv1.InputProviderGitHubBranch,
+			}
 			st.AddObject(provider)
 			st.UpdateStatus(provider.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			docA := map[string]any{
 				"apiVersion": "fluxcd.controlplane.io/v1", "kind": manifest.KindResourceSet,
 				"metadata": map[string]any{"name": "binding", "namespace": "apps"},
 				"spec": map[string]any{
-					"inputs":            []any{map[string]any{"name": "from-a"}},
-					"inputsFrom":        []any{map[string]any{"kind": manifest.KindResourceSetInputProvider, "name": provider.Name}},
+					"inputs": []any{map[string]any{"name": "from-a"}},
+					"inputsFrom": []any{
+						map[string]any{"kind": manifest.KindResourceSetInputProvider, "name": provider.Name},
+					},
 					"resourcesTemplate": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: << inputs.name >>, namespace: apps}\n",
 				},
 			}
 			docB := manifest.DeepCopyMap(docA)
 			docB["spec"].(map[string]any)["inputs"].([]any)[0].(map[string]any)["name"] = "from-b"
 			publish := func(doc map[string]any) {
-				publishDocuments(c, parent.Named(), []map[string]any{doc}, manifest.ParseDocOptions{DefaultNamespace: "apps"})
+				publishDocuments(
+					c,
+					parent.Named(),
+					[]map[string]any{doc},
+					manifest.ParseDocOptions{DefaultNamespace: "apps"},
+				)
 			}
 			publish(docA)
 			st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
-			id := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "apps", Name: "binding"}
+			id := manifest.NamedResource{
+				Group:     manifest.FluxOperatorDomain,
+				Kind:      manifest.KindResourceSet,
+				Namespace: "apps",
+				Name:      "binding",
+			}
 			rs, ok := st.Get[*manifest.ResourceSet](id)
 			if !ok {
 				t.Fatal("parent did not emit input A")
@@ -66,7 +82,11 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 			}
 			if boundary == "capture" {
 				pause := sync.OnceFunc(func() { close(started); tasks.YieldSlot(func() { <-resume }) })
-				c.Configure(base.Options{PreflightFailure: func(manifest.NamedResource) (string, bool) { pause(); return "", false }})
+				c.Configure(
+					base.Options{
+						PreflightFailure: func(manifest.NamedResource) (string, bool) { pause(); return "", false },
+					},
+				)
 			} else {
 				c.Configure(base.Options{})
 			}
@@ -104,16 +124,20 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 					return
 				}
 				_, _, attempt := runState.run.Reads.GetEmission(id)
-				docs, warnings, err := renderProviders(rs, resourceset.StoreResolver(&runState.run.Reads), func(content any) (bool, error) {
-					fp, hit, err := runState.run.FingerprintDedup(t.Context(), id, content, &store.Emission{})
-					if hit || err != nil {
-						return hit, err
-					}
-					attempt.Fingerprint = fp
-					close(started)
-					tasks.YieldSlot(func() { <-resume })
-					return false, nil
-				})
+				docs, warnings, err := renderProviders(
+					rs,
+					resourceset.StoreResolver(&runState.run.Reads),
+					func(content any) (bool, error) {
+						fp, hit, err := runState.run.FingerprintDedup(t.Context(), id, content, &store.Emission{})
+						if hit || err != nil {
+							return hit, err
+						}
+						attempt.Fingerprint = fp
+						close(started)
+						tasks.YieldSlot(func() { <-resume })
+						return false, nil
+					},
+				)
 				defer attempt.Finish()
 				if err != nil {
 					t.Error(err)
@@ -122,7 +146,12 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 				for _, warning := range warnings {
 					runState.run.Reads.AddWarning(warning)
 				}
-				children, retained := testutil.ParseChildren(c, c.Store.GetObject(id), testutil.DocumentMaps(docs), manifest.ParseDocOptions{})
+				children, retained := testutil.ParseChildren(
+					c,
+					c.Store.GetObject(id),
+					testutil.DocumentMaps(docs),
+					manifest.ParseDocOptions{},
+				)
 				attempt.Children, attempt.Manifests = children, testutil.DocumentOccurrences(retained)
 				attempt.Complete = true
 				runState.run.Emit(t.Context(), id, &attempt, nil)
@@ -132,7 +161,8 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 				t.Fatalf("task failures = %d", tasks.Failures())
 			}
 			if boundary == "render" {
-				if runState.run.Reads.Valid() || accepted.Load() != nil || st.GetArtifact(id, store.ArtifactContent) != nil {
+				if runState.run.Reads.Valid() || accepted.Load() != nil ||
+					st.GetArtifact(id, store.ArtifactContent) != nil {
 					t.Fatal("replaced input A published stale output")
 				}
 			} else if emission := accepted.Load(); emission == nil || !hasRenderedDoc(emission, manifest.KindConfigMap, "from-b") {
@@ -147,7 +177,9 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 				t.Fatalf("replacement blocked: %v", run.Blocked)
 			}
 			emission := accepted.Load()
-			if emission == nil || !emission.Complete || emission.Fingerprint == wantFingerprint || !hasRenderedDoc(emission, manifest.KindConfigMap, "from-b") || hasRenderedDoc(emission, manifest.KindConfigMap, "from-a") {
+			if emission == nil || !emission.Complete || emission.Fingerprint == wantFingerprint ||
+				!hasRenderedDoc(emission, manifest.KindConfigMap, "from-b") ||
+				hasRenderedDoc(emission, manifest.KindConfigMap, "from-a") {
 				t.Fatalf("replacement B did not render: %+v", emission)
 			}
 			if string(rs.Inputs[0]["name"].Raw) != `"from-a"` {
@@ -181,8 +213,18 @@ func TestReconcile_ProviderInventorySettlement(t *testing.T) {
 			}
 			check := func(count int, status store.Status) *store.Emission {
 				t.Helper()
-				index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{rs.Named(): {File: "reader.yaml"}}}
-				filterLoader := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"reader.yaml"}), Index: index, Inventory: st, Root: ""})
+				index := &manifest.DiscoveryIndex{
+					Records: map[manifest.NamedResource]manifest.DiscoveryRecord{rs.Named(): {File: "reader.yaml"}},
+				}
+				filterLoader := admissiontest.New(
+					t,
+					admissiontest.Config{
+						Changes:   change.NewSet([]string{"reader.yaml"}),
+						Index:     index,
+						Inventory: st,
+						Root:      "",
+					},
+				)
 				admissiontest.Commit(t, filterLoader, nil)
 				filter := filterLoader.Options.Filter
 				_, _, before := st.GetEmission(rs.Named())
@@ -196,7 +238,11 @@ func TestReconcile_ProviderInventorySettlement(t *testing.T) {
 				c.Configure(base.Options{Filter: filter, Index: index, Loader: filterLoader})
 				c.StartLifecycle()
 
-				info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: tasks, Store: st, ID: rs.Named(), ReconcileNode: c.ReconcileNode})
+				info := controllertest.DispatchToFixpoint(
+					t.Context(),
+					t,
+					controllertest.Dispatch{Tasks: tasks, Store: st, ID: rs.Named(), ReconcileNode: c.ReconcileNode},
+				)
 				if info.Status != status {
 					t.Fatalf("status=%+v, want %s", info, status)
 				}
@@ -236,7 +282,8 @@ func TestReconcile_ProviderInventorySettlement(t *testing.T) {
 			broken.DefaultValues = fluxopv1.ResourceSetInput{"value": {Raw: []byte("invalid")}}
 			publish(&broken, b)
 			check(0, store.StatusFailed)
-			if failed, ok := st.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission); ok && (len(failed.Manifests) != 0 || len(failed.Children) != 0) {
+			if failed, ok := st.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission); ok &&
+				(len(failed.Manifests) != 0 || len(failed.Children) != 0) {
 				t.Fatal("failed successor exposed output with changed provider inputs")
 			}
 			publish(&changed, b)
@@ -244,7 +291,8 @@ func TestReconcile_ProviderInventorySettlement(t *testing.T) {
 			assert.Diff(t, recovered.Manifests, accepted.Manifests)
 			publish()
 			check(0, store.StatusReady)
-			if st.GetObject(a.Named()) != nil || st.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "a"}) != nil {
+			if st.GetObject(a.Named()) != nil ||
+				st.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "a"}) != nil {
 				t.Fatal("complete empty inventory retained a provider or output")
 			}
 			publish(&broken)

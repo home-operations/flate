@@ -36,7 +36,11 @@ func TestEncoder_TestVerdictGlyphAndElapsed(t *testing.T) {
 		t.Errorf("elapsed=0 should be omitted, not rendered:\n%s", out)
 	}
 	var singleton bytes.Buffer
-	if err := writeTestGroups(Encoder{Writer: &singleton}, []ReportGroup{{Cluster: "entry", Test: &pass}}, 1500*time.Millisecond); err != nil {
+	if err := writeTestGroups(
+		Encoder{Writer: &singleton},
+		[]ReportGroup{{Cluster: "entry", Test: &pass}},
+		1500*time.Millisecond,
+	); err != nil {
 		t.Fatal(err)
 	}
 	assert.Diff(t, singleton.String(), pb.String())
@@ -71,8 +75,12 @@ func TestEncoder_TestShowsSkippedByDefault(t *testing.T) {
 	passed := testutil.KustomizationID("ns", "changed")
 	skipped := testutil.KustomizationID("ns", "untouched")
 	rep := TestReport{
-		Cases:  []Case{{ID: passed, Outcome: OutcomePassed}, {ID: skipped, Outcome: OutcomeSkipped, Reason: "unchanged"}},
-		Passed: 1, Skipped: 1,
+		Cases: []Case{
+			{ID: passed, Outcome: OutcomePassed},
+			{ID: skipped, Outcome: OutcomeSkipped, Reason: "unchanged"},
+		},
+		Passed:  1,
+		Skipped: 1,
 	}
 
 	var b bytes.Buffer
@@ -98,12 +106,16 @@ func TestEncoder_TestShowsSkippedByDefault(t *testing.T) {
 func TestEncoder_TestFailedNeverHidden(t *testing.T) {
 	t.Parallel()
 	failed := testutil.KustomizationID("ns", "broken")
-	rep := TestReport{Cases: []Case{{ID: failed, Outcome: OutcomeFailed, Reason: "secret ns/auth not found"}}, Failed: 1}
+	rep := TestReport{
+		Cases:  []Case{{ID: failed, Outcome: OutcomeFailed, Reason: "secret ns/auth not found"}},
+		Failed: 1,
+	}
 	var b bytes.Buffer
 	if err := writeTestReport(Encoder{Writer: &b}, rep, 0); err != nil {
 		t.Fatalf("Test: %v", err)
 	}
-	if out := b.String(); !strings.Contains(out, "✗") || strings.Count(out, "ns/broken") != 1 || strings.Count(out, "secret ns/auth not found") != 1 {
+	if out := b.String(); !strings.Contains(out, "✗") || strings.Count(out, "ns/broken") != 1 ||
+		strings.Count(out, "secret ns/auth not found") != 1 {
 		t.Errorf("failed row must appear by default: %s", out)
 	}
 }
@@ -142,8 +154,11 @@ func TestEncoder_TestReturnsWriterError(t *testing.T) {
 	t.Parallel()
 	want := errors.New("write failed")
 	w := &verdictFailWriter{err: want}
-	rep := Report{Test: true,
-		Groups:   []ReportGroup{{Test: &TestReport{Cases: []Case{{ID: testutil.KustomizationID("ns", "apps")}}, Passed: 1}}},
+	rep := Report{
+		Test: true,
+		Groups: []ReportGroup{
+			{Test: &TestReport{Cases: []Case{{ID: testutil.KustomizationID("ns", "apps")}}, Passed: 1}},
+		},
 		Warnings: []Warning{{Warning: manifest.Warning{Message: "advisory"}}},
 	}
 	rep.Prepare(nil)
@@ -184,11 +199,50 @@ func TestEncoder_TestMultilineColor(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			color := tc.color
-			want := "\n  " + Fail(GlyphFail, color) + "  " + Dim("Kustomization", color) + "  ns/root  " + Dim("first", color) +
-				"\n         " + Dim("second", color) + "\n         " + Dim("third", color) +
-				"\n  " + Dim(GlyphBlocked, color) + "  " + Dim("HelmRelease  ", color) + "  ns/child  " + Dim("blocked by ns/root", color) +
-				"\n\n  " + Fail(GlyphFail, color) + " " + Pass("0 passed", color) + " · " + Fail("1 failed", color) +
-				" · " + Dim("1 blocked", color) + "   " + Dim("1.5s", color) + "\n"
+			want := "\n  " + Fail(
+				GlyphFail,
+				color,
+			) + "  " + Dim(
+				"Kustomization",
+				color,
+			) + "  ns/root  " + Dim(
+				"first",
+				color,
+			) +
+				"\n         " + Dim(
+				"second",
+				color,
+			) + "\n         " + Dim(
+				"third",
+				color,
+			) +
+				"\n  " + Dim(
+				GlyphBlocked,
+				color,
+			) + "  " + Dim(
+				"HelmRelease  ",
+				color,
+			) + "  ns/child  " + Dim(
+				"blocked by ns/root",
+				color,
+			) +
+				"\n\n  " + Fail(
+				GlyphFail,
+				color,
+			) + " " + Pass(
+				"0 passed",
+				color,
+			) + " · " + Fail(
+				"1 failed",
+				color,
+			) +
+				" · " + Dim(
+				"1 blocked",
+				color,
+			) + "   " + Dim(
+				"1.5s",
+				color,
+			) + "\n"
 			var b bytes.Buffer
 			if err := writeTestReport(Encoder{Writer: &b, Color: color}, r, 1500*time.Millisecond); err != nil {
 				t.Fatal(err)

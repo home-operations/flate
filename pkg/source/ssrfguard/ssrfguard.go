@@ -134,7 +134,10 @@ func (e *blockedError) Error() string {
 	if e.reason != "" {
 		return fmt.Sprintf("egress to %s blocked: %s", e.address, e.reason)
 	}
-	return fmt.Sprintf("egress to %s blocked by --restrict-egress (private/loopback/link-local/metadata address)", e.address)
+	return fmt.Sprintf(
+		"egress to %s blocked by --restrict-egress (private/loopback/link-local/metadata address)",
+		e.address,
+	)
 }
 
 // control is the net.Dialer.Control hook. When the guard is off it is a no-op

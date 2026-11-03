@@ -6,16 +6,21 @@ import (
 	"testing"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // startHelmRepoCounted is startHelmRepo with a SEPARATE index-fetch counter, so
 // a test can assert a warm run skips the live index.yaml fetch (not just the
 // chart download).
-func startHelmRepoCounted(t *testing.T, chartBytes []byte, indexDigest string) (srv *httptest.Server, indexHits, chartHits *int) {
+func startHelmRepoCounted(
+	t *testing.T,
+	chartBytes []byte,
+	indexDigest string,
+) (srv *httptest.Server, indexHits, chartHits *int) {
 	t.Helper()
 	ih, ch := 0, 0
 	mux := http.NewServeMux()
@@ -56,7 +61,12 @@ func TestResolveChart_DiskCacheSkipsIndexWarm(t *testing.T) {
 	cache := cachetest.New(t, root, sourcecache.New)
 
 	cold, coldInputs := fetcherWithCache(t, r, cache)
-	if _, err := cold.Fetch(t.Context(), helmChart("repo", "app-template", "1.0.0"), coldInputs.readSet(helmChart("repo", "app-template", "1.0.0")), sourcecache.Policy{}); err != nil {
+	if _, err := cold.Fetch(
+		t.Context(),
+		helmChart("repo", "app-template", "1.0.0"),
+		coldInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
+		sourcecache.Policy{},
+	); err != nil {
 		t.Fatalf("cold Fetch: %v", err)
 	}
 	if *indexHits != 1 || *chartHits != 1 {
@@ -64,7 +74,12 @@ func TestResolveChart_DiskCacheSkipsIndexWarm(t *testing.T) {
 	}
 
 	warm, warmInputs := fetcherWithCache(t, r, cache)
-	if _, err := warm.Fetch(t.Context(), helmChart("repo", "app-template", "1.0.0"), warmInputs.readSet(helmChart("repo", "app-template", "1.0.0")), sourcecache.Policy{}); err != nil {
+	if _, err := warm.Fetch(
+		t.Context(),
+		helmChart("repo", "app-template", "1.0.0"),
+		warmInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
+		sourcecache.Policy{},
+	); err != nil {
 		t.Fatalf("warm Fetch: %v", err)
 	}
 	if *indexHits != 1 {
@@ -86,7 +101,12 @@ func TestResolveChart_StaleIntervalRefetches(t *testing.T) {
 	cache := cachetest.New(t, root, sourcecache.New)
 	for i := range 2 {
 		f, fInputs := fetcherWithCache(t, r, cache)
-		if _, err := f.Fetch(t.Context(), helmChart("repo", "app-template", "1.0.0"), fInputs.readSet(helmChart("repo", "app-template", "1.0.0")), sourcecache.Policy{}); err != nil {
+		if _, err := f.Fetch(
+			t.Context(),
+			helmChart("repo", "app-template", "1.0.0"),
+			fInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
+			sourcecache.Policy{},
+		); err != nil {
 			t.Fatalf("Fetch %d: %v", i, err)
 		}
 	}
@@ -105,11 +125,21 @@ func TestResolveChart_DigestlessWarmSkipsIndex(t *testing.T) {
 	root := t.TempDir()
 	cache := cachetest.New(t, root, sourcecache.New)
 	cold, coldInputs := fetcherWithCache(t, r, cache)
-	if _, err := cold.Fetch(t.Context(), helmChart("repo", "app-template", "1.0.0"), coldInputs.readSet(helmChart("repo", "app-template", "1.0.0")), sourcecache.Policy{}); err != nil {
+	if _, err := cold.Fetch(
+		t.Context(),
+		helmChart("repo", "app-template", "1.0.0"),
+		coldInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
+		sourcecache.Policy{},
+	); err != nil {
 		t.Fatalf("cold Fetch: %v", err)
 	}
 	warm, warmInputs := fetcherWithCache(t, r, cache)
-	if _, err := warm.Fetch(t.Context(), helmChart("repo", "app-template", "1.0.0"), warmInputs.readSet(helmChart("repo", "app-template", "1.0.0")), sourcecache.Policy{}); err != nil {
+	if _, err := warm.Fetch(
+		t.Context(),
+		helmChart("repo", "app-template", "1.0.0"),
+		warmInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
+		sourcecache.Policy{},
+	); err != nil {
 		t.Fatalf("warm Fetch: %v", err)
 	}
 	if *indexHits != 1 {
@@ -130,7 +160,12 @@ func TestResolveChart_ExactVersionForever(t *testing.T) {
 	for range 2 {
 		f, fInputs := fetcherWithCache(t, repo, c)
 		f.disableChartDigestTracking = true
-		if _, err := f.Fetch(t.Context(), helmChart("repo", "app-template", "1.0.0"), fInputs.readSet(helmChart("repo", "app-template", "1.0.0")), sourcecache.Policy{}); err != nil {
+		if _, err := f.Fetch(
+			t.Context(),
+			helmChart("repo", "app-template", "1.0.0"),
+			fInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
+			sourcecache.Policy{},
+		); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -139,7 +174,12 @@ func TestResolveChart_ExactVersionForever(t *testing.T) {
 	}
 	f, fInputs := fetcherWithCache(t, repo, c)
 	f.disableChartDigestTracking = true
-	if _, err := f.Fetch(t.Context(), helmChart("repo", "app-template", "*"), fInputs.readSet(helmChart("repo", "app-template", "*")), sourcecache.Policy{}); err != nil {
+	if _, err := f.Fetch(
+		t.Context(),
+		helmChart("repo", "app-template", "*"),
+		fInputs.readSet(helmChart("repo", "app-template", "*")),
+		sourcecache.Policy{},
+	); err != nil {
 		t.Fatal(err)
 	}
 	if *indexes != 2 || *charts != 2 {

@@ -65,7 +65,10 @@ func TestCertFuncs_DeterministicAndValid(t *testing.T) {
 		t.Error("genCA cert is not marked IsCA")
 	}
 	if caCert.SignatureAlgorithm != x509.PureEd25519 {
-		t.Errorf("CA SignatureAlgorithm = %v, want PureEd25519 (a CustomReader-tainted algorithm would be nondeterministic)", caCert.SignatureAlgorithm)
+		t.Errorf(
+			"CA SignatureAlgorithm = %v, want PureEd25519 (a CustomReader-tainted algorithm would be nondeterministic)",
+			caCert.SignatureAlgorithm,
+		)
 	}
 	if !caCert.NotBefore.Equal(fixedTime) {
 		t.Errorf("CA NotBefore = %v, want fixedTime %v", caCert.NotBefore, fixedTime)
@@ -128,11 +131,22 @@ func TestCertFuncs_DeterministicAndValid(t *testing.T) {
 			cfg := tt.cfg
 			var got, want certificate
 			if tt.name == "genSignedCert" {
-				got, err = fm[tt.name].(func(string, []any, []any, int, certificate) (certificate, error))(cfg.cn, cfg.ips, cfg.alternateDNS, cfg.days, ca)
+				got, err = fm[tt.name].(func(string, []any, []any, int, certificate) (certificate, error))(
+					cfg.cn,
+					cfg.ips,
+					cfg.alternateDNS,
+					cfg.days,
+					ca,
+				)
 				assert.NoError(t, err)
 				want, err = genSignedCert(newStream(seed), cfg, ca)
 			} else {
-				got, err = fm[tt.name].(func(string, []any, []any, int) (certificate, error))(cfg.cn, cfg.ips, cfg.alternateDNS, cfg.days)
+				got, err = fm[tt.name].(func(string, []any, []any, int) (certificate, error))(
+					cfg.cn,
+					cfg.ips,
+					cfg.alternateDNS,
+					cfg.days,
+				)
 				assert.NoError(t, err)
 				want, err = genSelfSignedCert(newStream(seed), cfg)
 			}
@@ -148,9 +162,22 @@ func TestCertFuncs_DeterministicAndValid(t *testing.T) {
 				certFuncs(withKeyStream, withKeyFuncs)
 				withKey := withKeyFuncs[tt.name+"WithKey"]
 				if tt.name == "genSignedCert" {
-					got, err = withKey.(func(string, []any, []any, int, certificate, string) (certificate, error))(cfg.cn, cfg.ips, cfg.alternateDNS, cfg.days, ca, key)
+					got, err = withKey.(func(string, []any, []any, int, certificate, string) (certificate, error))(
+						cfg.cn,
+						cfg.ips,
+						cfg.alternateDNS,
+						cfg.days,
+						ca,
+						key,
+					)
 				} else {
-					got, err = withKey.(func(string, []any, []any, int, string) (certificate, error))(cfg.cn, cfg.ips, cfg.alternateDNS, cfg.days, key)
+					got, err = withKey.(func(string, []any, []any, int, string) (certificate, error))(
+						cfg.cn,
+						cfg.ips,
+						cfg.alternateDNS,
+						cfg.days,
+						key,
+					)
 				}
 				assert.NoError(t, err)
 				assert.Equal(t, got, want)

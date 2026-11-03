@@ -12,7 +12,12 @@ import (
 
 // RequireRefresh gates effective inputs against the execution's captured canonical declaration.
 // Prepared clones MUST remain distinct from the canonical snapshot that produced them.
-func (e *Execution) RequireRefresh[T manifest.BaseManifest](ctx context.Context, effective T, stage manifest.GateStage, level manifest.DrainLevel) (T, error) {
+func (e *Execution) RequireRefresh[T manifest.BaseManifest](
+	ctx context.Context,
+	effective T,
+	stage manifest.GateStage,
+	level manifest.DrainLevel,
+) (T, error) {
 	canonical, _ := e.Reads.Get[T](e.Reads.ID())
 	if err := e.Checkpoint(); err != nil {
 		return canonical, err
@@ -60,8 +65,10 @@ func (e *Execution) dependencies(obj manifest.BaseManifest, stage manifest.GateS
 	return deps
 }
 
-var errSuspended = errors.New("reconcile suspended")
-var errInputsChanged = errors.New("execution inputs changed")
+var (
+	errSuspended     = errors.New("reconcile suspended")
+	errInputsChanged = errors.New("execution inputs changed")
+)
 
 // Checkpoint validates captured inputs and admission before execution continues.
 func (e *Execution) Checkpoint() error {
@@ -82,14 +89,19 @@ type dataLookup interface {
 }
 
 // DataInputs captures authored values and substitution inputs through the shared gate.
-func (e *Execution) DataInputs(ctx context.Context, obj manifest.BaseManifest, provider dataLookup) ([]depwait.DataDependency, error) {
+func (e *Execution) DataInputs(
+	ctx context.Context,
+	obj manifest.BaseManifest,
+	provider dataLookup,
+) ([]depwait.DataDependency, error) {
 	if _, inputs := obj.ReferenceCapacity(); inputs == 0 {
 		return nil, nil
 	}
 	e.SetPendingUnlessReady(e.Reads.ID(), "resolving values inputs")
 	var inputs []depwait.DataDependency
 	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
-		if (ref.Use != "valuesFrom" && ref.Use != "substituteFrom") || ref.Name == "" || !ref.NamedResource.KindInfo().Data {
+		if (ref.Use != "valuesFrom" && ref.Use != "substituteFrom") || ref.Name == "" ||
+			!ref.NamedResource.KindInfo().Data {
 			continue
 		}
 		if err := e.promoteData(ctx, ref.NamedResource); err != nil {
@@ -103,7 +115,15 @@ func (e *Execution) DataInputs(ctx context.Context, obj manifest.BaseManifest, p
 				e.unresolved = append(e.unresolved, ref.NamedResource)
 			}
 		}
-		inputs = append(inputs, depwait.DataDependency{DependencyRef: ref.DependencyRef, Input: input, Optional: ref.Optional, AllowMissing: allowMissing})
+		inputs = append(
+			inputs,
+			depwait.DataDependency{
+				DependencyRef: ref.DependencyRef,
+				Input:         input,
+				Optional:      ref.Optional,
+				AllowMissing:  allowMissing,
+			},
+		)
 	}
 	return inputs, nil
 }

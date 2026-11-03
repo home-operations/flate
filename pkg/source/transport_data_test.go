@@ -67,9 +67,19 @@ func TestResolveTransport_ProxySnapshot(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, selected.Host, "first.invalid:8080")
 	getter := func(_, _ string) *manifest.Secret {
-		return &manifest.Secret{StringData: map[string]any{"address": "http://explicit.invalid", "username": "user", "password": "password"}}
+		return &manifest.Secret{
+			StringData: map[string]any{
+				"address":  "http://explicit.invalid",
+				"username": "user",
+				"password": "password",
+			},
+		}
 	}
-	explicit, err := ResolveTransport(getter, manifest.DiagnosticFor(owner, nil), []TransportInput{{Reference: &manifest.LocalObjectReference{Name: "proxy"}, Use: TransportProxy}})
+	explicit, err := ResolveTransport(
+		getter,
+		manifest.DiagnosticFor(owner, nil),
+		[]TransportInput{{Reference: &manifest.LocalObjectReference{Name: "proxy"}, Use: TransportProxy}},
+	)
 	assert.NoError(t, err)
 	selected, err = explicit.ProxyURL(&url.URL{Scheme: "http", Host: "other.invalid"})
 	assert.NoError(t, err)
@@ -94,14 +104,17 @@ func TestResolveTransport_InputOrder(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			getter := func(_, _ string) *manifest.Secret {
-				return &manifest.Secret{StringData: map[string]any{"ca.crt": "invalid", "address": "http://proxy.invalid/%"}}
+				return &manifest.Secret{
+					StringData: map[string]any{"ca.crt": "invalid", "address": "http://proxy.invalid/%"},
+				}
 			}
 			owner := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "ns", Name: "repo"}
 			ref := &manifest.LocalObjectReference{Name: "creds"}
 			_, err := ResolveTransport(getter, manifest.DiagnosticFor(owner, nil), []TransportInput{
 				{Reference: ref, Use: tc.first}, {Reference: ref, Use: tc.second},
 			})
-			if !errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), tc.wantLabel) || !strings.Contains(err.Error(), tc.wantError) {
+			if !errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), tc.wantLabel) ||
+				!strings.Contains(err.Error(), tc.wantError) {
 				t.Fatalf("wrong first input diagnostic: %v", err)
 			}
 		})
@@ -120,7 +133,6 @@ func TestResolveTransport_UnavailableMaterial(t *testing.T) {
 		missing                   bool
 		want                      string
 	}{
-
 		{name: "optional auth only", cert: true, optional: true, success: true, data: map[string]any{"username": "alice", "password": "p"}},
 		{name: "optional absent TLS", cert: true, optional: true, absent: true, success: true},
 		{name: "required absent TLS", cert: true, absent: true, missing: true, want: "not found"},
@@ -152,15 +164,29 @@ func TestResolveTransport_UnavailableMaterial(t *testing.T) {
 				if tc.absent {
 					return nil
 				}
-				return &manifest.Secret{Name: "metadata-secret", Namespace: "elsewhere", StringData: tc.data, Data: tc.encodedData}
+				return &manifest.Secret{
+					Name:       "metadata-secret",
+					Namespace:  "elsewhere",
+					StringData: tc.data,
+					Data:       tc.encodedData,
+				}
 			}
-			owner := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "repo"}
+			owner := manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindOCIRepository,
+				Namespace: "ns",
+				Name:      "repo",
+			}
 			ref := &manifest.LocalObjectReference{Name: "creds"}
 			use := TransportProxy
 			if tc.cert {
 				use = TransportCert
 			}
-			material, err := ResolveTransport(getter, manifest.DiagnosticFor(owner, nil), []TransportInput{{Reference: ref, Use: use, OptionalTLS: tc.optional}})
+			material, err := ResolveTransport(
+				getter,
+				manifest.DiagnosticFor(owner, nil),
+				[]TransportInput{{Reference: ref, Use: use, OptionalTLS: tc.optional}},
+			)
 			if tc.success {
 				assert.NoError(t, err)
 				if material.config != nil || material.Certificate() != [3]string{} {
@@ -175,17 +201,20 @@ func TestResolveTransport_UnavailableMaterial(t *testing.T) {
 				if !ok {
 					t.Fatalf("expected structured MissingSecretError: %v", err)
 				}
-				if missing.Owner != owner || missing.Secret != (manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "creds"}) {
+				if missing.Owner != owner ||
+					missing.Secret != (manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "creds"}) {
 					t.Fatalf("credential identities = %+v", missing)
 				}
 			}
-			if err == nil || errors.Is(err, manifest.ErrMissingSecret) != tc.missing || !strings.Contains(err.Error(), tc.want) {
+			if err == nil || errors.Is(err, manifest.ErrMissingSecret) != tc.missing ||
+				!strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("missing=%t, error=%v", tc.missing, err)
 			}
 			if !errors.Is(err, manifest.ErrFlux) || errors.Is(err, manifest.ErrInput) == tc.missing {
 				t.Fatalf("wrong error classification: %v", err)
 			}
-			if (tc.cert || tc.encodedData != nil || tc.name == "wiped username bad password scalar" || tc.name == "invalid address wiped password") && strings.Contains(err.Error(), "OCIRepository") {
+			if (tc.cert || tc.encodedData != nil || tc.name == "wiped username bad password scalar" || tc.name == "invalid address wiped password") &&
+				strings.Contains(err.Error(), "OCIRepository") {
 				t.Fatalf("repeated owner: %v", err)
 			}
 			if !strings.Contains(err.Error(), "ns/creds") {

@@ -42,7 +42,8 @@ func expand(ctx context.Context, spec specification, inputs map[string]fs.FS) ([
 			}
 			expression.WriteString(regexp.QuoteMeta(pattern[:i]))
 			name, rest, ok := strings.Cut(pattern[i+1:], "}")
-			if pattern[i] != '{' || !ok || !captureName.MatchString(name) || seen[name] || len(content.IsLabelKey(name)) != 0 {
+			if pattern[i] != '{' || !ok || !captureName.MatchString(name) || seen[name] ||
+				len(content.IsLabelKey(name)) != 0 {
 				return nil, fmt.Errorf("invalid or repeated pathPattern capture %q", name)
 			}
 			seen[name] = true

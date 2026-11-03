@@ -31,7 +31,11 @@ type gatePromotion struct {
 func TestFingerprintDedup_ChangedWorkBecomesPending(t *testing.T) {
 	t.Parallel()
 	s := store.New()
-	hr := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "release", Namespace: "apps"}
+	hr := &manifest.HelmRelease{
+		ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"},
+		Name:      "release",
+		Namespace: "apps",
+	}
 	s.AddObject(hr)
 	s.UpdateStatus(hr.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "completed"})
 	c := gateExecution(New(s, task.NewBounded(2)), hr.Named())
@@ -58,7 +62,10 @@ func TestEmit_ApplyingProgress(t *testing.T) {
 	publication := func(t *testing.T, want string) {
 		t.Helper()
 		if allocations := testing.AllocsPerRun(100, func() {
-			s.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "rendering"})
+			s.UpdateStatus(
+				parent.Named(),
+				store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "rendering"},
+			)
 			c.emit(t.Context(), parent.Named(), &next, nil)
 		}); allocations != 0 {
 			t.Fatalf("applying publication allocates %g times", allocations)
@@ -90,13 +97,38 @@ func TestRequireRefresh_PreparedSource(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			s := store.New()
-			repository := &manifest.HelmRepository{Name: "charts", Namespace: "apps", URL: "https://example.test/charts"}
+			repository := &manifest.HelmRepository{
+				Name:      "charts",
+				Namespace: "apps",
+				URL:       "https://example.test/charts",
+			}
 			s.AddObject(repository)
 			s.UpdateStatus(repository.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
-			canonical := &manifest.HelmRelease{Name: "release", Namespace: "apps", HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: "chart", Version: "1.0.0", SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: manifest.KindHelmRepository, Name: repository.Name}}}}, Chart: manifest.HelmChart{Name: "chart", Version: "1.0.0", Source: repository.Named()}}
+			canonical := &manifest.HelmRelease{
+				Name:      "release",
+				Namespace: "apps",
+				HelmReleaseSpec: helmv2.HelmReleaseSpec{
+					Chart: &helmv2.HelmChartTemplate{
+						Spec: helmv2.HelmChartTemplateSpec{
+							Chart:   "chart",
+							Version: "1.0.0",
+							SourceRef: &helmv2.CrossNamespaceObjectReference{
+								Kind: manifest.KindHelmRepository,
+								Name: repository.Name,
+							},
+						},
+					},
+				},
+				Chart: manifest.HelmChart{Name: "chart", Version: "1.0.0", Source: repository.Named()},
+			}
 			s.AddObject(canonical)
 			prepared := canonical.Clone()
-			source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "apps", Name: "apps-release"}
+			source := manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindHelmChart,
+				Namespace: "apps",
+				Name:      "apps-release",
+			}
 			prepared.Chart.Source = source
 			want := canonical
 			if replaced {
@@ -106,10 +138,14 @@ func TestRequireRefresh_PreparedSource(t *testing.T) {
 			}
 			c := gateExecution(New(s, task.NewBounded(2)), canonical.Named())
 			got, err := c.RequireRefresh(t.Context(), prepared, manifest.GateArtifacts, manifest.DrainNone)
-			if got != want || canonical.Chart.Source.Kind != manifest.KindHelmRepository || prepared.Chart.Source.Kind != manifest.KindHelmChart {
+			if got != want || canonical.Chart.Source.Kind != manifest.KindHelmRepository ||
+				prepared.Chart.Source.Kind != manifest.KindHelmChart {
 				t.Fatalf("canonical=%v prepared=%v returned=%v", canonical, prepared, got)
 			}
-			if blocked, ok := errors.AsType[*depwait.ErrBlocked](err); !ok || !slices.Equal(blocked.Deps, []manifest.NamedResource{source}) {
+			if blocked, ok := errors.AsType[*depwait.ErrBlocked](
+				err,
+			); !ok ||
+				!slices.Equal(blocked.Deps, []manifest.NamedResource{source}) {
 				t.Fatalf("prepared source gate=%v, want %s", err, source)
 			}
 		})
@@ -180,18 +216,30 @@ func TestRequireRefresh_ChangedCanonicalReferences(t *testing.T) {
 			t.Parallel()
 			s := store.New()
 			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
-			child := &manifest.Kustomization{Name: "child", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "stale"}}}}
+			child := &manifest.Kustomization{
+				Name:      "child",
+				Namespace: "apps",
+				PostBuild: &kustomizev1.PostBuild{
+					SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "stale"}},
+				},
+			}
 			fresh := child.Clone()
 			fresh.Suspend, fresh.TargetNamespace = suspended, "target"
 			fresh.PostBuild.SubstituteFrom[0].Name = "current"
 			s.AddObject(child)
-			index := parentIndexForTest(map[manifest.NamedResource]manifest.NamedResource{child.Named(): parent.Named()})
+			index := parentIndexForTest(
+				map[manifest.NamedResource]manifest.NamedResource{child.Named(): parent.Named()},
+			)
 			promotion := &gatePromotion{promote: func(id manifest.NamedResource) bool {
 				if id != parent.Named() {
 					return false
 				}
 				s.AddObject(parent)
-				s.RecordEmitted(parent.Named(), &store.Emission{Children: []store.Child{{Obj: fresh}}, Complete: true}, nil)
+				s.RecordEmitted(
+					parent.Named(),
+					&store.Emission{Children: []store.Child{{Obj: fresh}}, Complete: true},
+					nil,
+				)
 				s.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 				return true
 			}}
@@ -238,13 +286,30 @@ func TestEmit_LatePreflight(t *testing.T) {
 			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 			child := &manifest.ExternalArtifact{Name: "child", Namespace: "apps"}
 			s.AddObject(parent)
-			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}}}
-			filterLoader := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"parent.yaml"}), Index: index, Inventory: s, Root: ""})
+			index := &manifest.DiscoveryIndex{
+				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}},
+			}
+			filterLoader := admissiontest.New(
+				t,
+				admissiontest.Config{
+					Changes:   change.NewSet([]string{"parent.yaml"}),
+					Index:     index,
+					Inventory: s,
+					Root:      "",
+				},
+			)
 			admissiontest.Commit(t, filterLoader, nil)
 			filter := filterLoader.Options.Filter
 			var reject atomic.Bool
 			c := New(s, task.NewBounded(2))
-			c.Configure(Options{Filter: filter, Index: index, PreflightFailure: func(manifest.NamedResource) (string, bool) { return "cycle", reject.Load() }, Loader: filterLoader})
+			c.Configure(
+				Options{
+					Filter:           filter,
+					Index:            index,
+					PreflightFailure: func(manifest.NamedResource) (string, bool) { return "cycle", reject.Load() },
+					Loader:           filterLoader,
+				},
+			)
 			execution := gateExecution(c, parent.Named())
 			_, handled, err := execution.FingerprintDedup(t.Context(), parent.Named(), "new content", &store.Emission{})
 			if handled || err != nil {
@@ -259,7 +324,9 @@ func TestEmit_LatePreflight(t *testing.T) {
 			if err := execution.Emit(t.Context(), parent.Named(), &next, payloads); err == nil {
 				t.Fatalf("publication error=%v", err)
 			}
-			if s.GetObject(child.Named()) != nil || s.GetArtifact(child.Named(), store.ArtifactContent) != nil || s.GetArtifact(parent.Named(), store.ArtifactContent) != nil || filter.ShouldReconcile(child.Named()) {
+			if s.GetObject(child.Named()) != nil || s.GetArtifact(child.Named(), store.ArtifactContent) != nil ||
+				s.GetArtifact(parent.Named(), store.ArtifactContent) != nil ||
+				filter.ShouldReconcile(child.Named()) {
 				t.Fatal("rejected publication admitted children or expanded selection")
 			}
 		})
@@ -268,7 +335,15 @@ func TestEmit_LatePreflight(t *testing.T) {
 
 func TestStamp_CommonMetadataIntroducesHook(t *testing.T) {
 	t.Parallel()
-	h := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "owner", Namespace: "apps", CommonMetadata: &helmv2.CommonMetadata{Labels: map[string]string{manifest.HelmReleaseDomain + "/name": "common"}, Annotations: map[string]string{"helm.sh/hook": ""}}}
+	h := &manifest.HelmRelease{
+		ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"},
+		Name:      "owner",
+		Namespace: "apps",
+		CommonMetadata: &helmv2.CommonMetadata{
+			Labels:      map[string]string{manifest.HelmReleaseDomain + "/name": "common"},
+			Annotations: map[string]string{"helm.sh/hook": ""},
+		},
+	}
 	doc := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "hook"}}
 	h.EmissionPolicy().Stamp(testutil.DocumentOccurrences([]map[string]any{doc}))
 	metadata := doc["metadata"].(map[string]any)
@@ -294,7 +369,12 @@ func TestEmit_ProducerNamespacePolicy(t *testing.T) {
 				{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "data"}},
 				{"apiVersion": "v1", "kind": "Namespace", "metadata": map[string]any{"name": "cluster"}},
 			}
-			children, visible := testutil.ParseChildren(c, producer, docs, manifest.ParseDocOptions{DefaultNamespace: "wrong"})
+			children, visible := testutil.ParseChildren(
+				c,
+				producer,
+				docs,
+				manifest.ParseDocOptions{DefaultNamespace: "wrong"},
+			)
 			if len(children) != 2 || len(visible) != 2 {
 				t.Fatalf("children=%v, visible=%v", children, visible)
 			}
@@ -334,7 +414,11 @@ func TestEmit_KindExclusionPolicy(t *testing.T) {
 			s.AddObject(producer)
 			c := New(s, task.NewBounded(2))
 			c.Configure(Options{SkipKinds: []string{"ConfigMap", "Kustomization", "GitRepository"}})
-			docs, err := testutil.SplitDocs([]byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: data, namespace: apps}\n---\napiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: nested, namespace: apps}\nspec: {path: ., sourceRef: {kind: GitRepository, name: repo}}\n---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: repo, namespace: apps}\nspec: {url: https://example.test/repo}\n---\napiVersion: v1\nkind: ServiceAccount\nmetadata: {name: visible, namespace: apps}\n"))
+			docs, err := testutil.SplitDocs(
+				[]byte(
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: data, namespace: apps}\n---\napiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: nested, namespace: apps}\nspec: {path: ., sourceRef: {kind: GitRepository, name: repo}}\n---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: repo, namespace: apps}\nspec: {url: https://example.test/repo}\n---\napiVersion: v1\nkind: ServiceAccount\nmetadata: {name: visible, namespace: apps}\n",
+				),
+			)
 			assert.NoError(t, err)
 			children, visible := testutil.ParseChildren(c, producer, docs, manifest.ParseDocOptions{})
 			if len(visible) != 1 || manifest.DocKind(visible[0]) != "ServiceAccount" {
@@ -371,19 +455,35 @@ func TestRequireRefresh_FailedParentRetainsInputFailures(t *testing.T) {
 			t.Parallel()
 			s := store.New()
 			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
-			child := &manifest.Kustomization{Name: "child", Namespace: "apps", DependsOn: []kustomizev1.DependencyReference{{Name: "missing"}}}
+			child := &manifest.Kustomization{
+				Name:      "child",
+				Namespace: "apps",
+				DependsOn: []kustomizev1.DependencyReference{{Name: "missing"}},
+			}
 			s.AddObject(parent)
 			s.AddObject(child)
-			s.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "render failed"})
+			s.UpdateStatus(
+				parent.Named(),
+				store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "render failed"},
+			)
 			s.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{FS: fstest.MapFS{}})
 			c := New(s, task.NewBounded(2))
-			c.Configure(Options{Index: parentIndexForTest(map[manifest.NamedResource]manifest.NamedResource{child.Named(): parent.Named()})})
+			c.Configure(
+				Options{
+					Index: parentIndexForTest(
+						map[manifest.NamedResource]manifest.NamedResource{child.Named(): parent.Named()},
+					),
+				},
+			)
 			execution := gateExecution(c, child.Named())
 			_, err := execution.RequireRefresh(t.Context(), child, manifest.GateInputs, level)
 			missing := parent.Named()
 			missing.Name = "missing"
 			if level == manifest.DrainNone {
-				if blocked, ok := errors.AsType[*depwait.ErrBlocked](err); !ok || !slices.Equal(blocked.Deps, []manifest.NamedResource{missing}) {
+				if blocked, ok := errors.AsType[*depwait.ErrBlocked](
+					err,
+				); !ok ||
+					!slices.Equal(blocked.Deps, []manifest.NamedResource{missing}) {
 					t.Fatalf("gate=%v, want missing input blocked before terminal failure", err)
 				}
 			} else if failed, ok := errors.AsType[*manifest.DependencyFailedError](err); !ok || !slices.Equal(failed.Failed, []manifest.NamedResource{missing, parent.Named()}) {
@@ -428,7 +528,13 @@ func TestRequireRefresh_ArtifactReferences(t *testing.T) {
 			s.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusPending})
 			s.UpdateStatus(tc.dependency.Named(), store.StatusInfo{Status: store.StatusPending})
 			c := New(s, task.NewBounded(2))
-			c.Configure(Options{Index: parentIndexForTest(map[manifest.NamedResource]manifest.NamedResource{obj.Named(): parent.Named()})})
+			c.Configure(
+				Options{
+					Index: parentIndexForTest(
+						map[manifest.NamedResource]manifest.NamedResource{obj.Named(): parent.Named()},
+					),
+				},
+			)
 			if tc.parent {
 				first := gateExecution(c, obj.Named())
 				defer first.Close()
@@ -439,7 +545,12 @@ func TestRequireRefresh_ArtifactReferences(t *testing.T) {
 				}
 				s.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady})
 			}
-			c.emit(t.Context(), parent.Named(), &store.Emission{Children: []store.Child{{Obj: obj}}, Complete: true}, nil)
+			c.emit(
+				t.Context(),
+				parent.Named(),
+				&store.Emission{Children: []store.Child{{Obj: obj}}, Complete: true},
+				nil,
+			)
 			first := gateExecution(c, obj.Named())
 			defer first.Close()
 			canonical, err := first.RequireRefresh(t.Context(), obj, tc.stage, manifest.DrainNone)

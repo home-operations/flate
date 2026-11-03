@@ -35,7 +35,23 @@ func TestRun_FailureDetailsEvaluation(t *testing.T) {
 			detail := new(countedDetailError)
 			failure := manifest.NewError(manifest.ErrInput, detail, "output failed")
 			var stderr bytes.Buffer
-			code := Run([]string{"build", "all", "--path", path, "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir(), "--log-level", level}, failingWriter{err: failure}, &stderr)
+			code := Run(
+				[]string{
+					"build",
+					"all",
+					"--path",
+					path,
+					"--concurrency",
+					"2",
+					"--no-progress",
+					"--cache-dir",
+					t.TempDir(),
+					"--log-level",
+					level,
+				},
+				failingWriter{err: failure},
+				&stderr,
+			)
 			assert.Equal(t, code, 1)
 			assert.Equal(t, detail.calls > 0, level == "debug")
 			assert.Equal(t, strings.Contains(stderr.String(), "upstream diagnostic"), level == "debug")
@@ -44,9 +60,11 @@ func TestRun_FailureDetailsEvaluation(t *testing.T) {
 	}
 }
 
-const persistenceReason = "the binary was built from a dirty checkout"
-const persistenceMessage = "[RenderPersistenceDisabled] render persistence is disabled: " + persistenceReason + "; source caching remains available"
-const persistenceNotice = "\n  ⚠ warnings (1)\n    " + persistenceMessage + "\n"
+const (
+	persistenceReason  = "the binary was built from a dirty checkout"
+	persistenceMessage = "[RenderPersistenceDisabled] render persistence is disabled: " + persistenceReason + "; source caching remains available"
+	persistenceNotice  = "\n  ⚠ warnings (1)\n    " + persistenceMessage + "\n"
+)
 
 func preservePersistenceNoticeState(t *testing.T) {
 	t.Helper()

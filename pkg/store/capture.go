@@ -103,7 +103,11 @@ func (r *ReadSet) input(id manifest.NamedResource) *Input {
 	index := 0
 	if r.byID != nil {
 		var found bool
-		index, found = slices.BinarySearchFunc(*r.byID, id, func(input *Input, id manifest.NamedResource) int { return input.Ref.Compare(id) })
+		index, found = slices.BinarySearchFunc(
+			*r.byID,
+			id,
+			func(input *Input, id manifest.NamedResource) int { return input.Ref.Compare(id) },
+		)
 		if found {
 			r.last = (*r.byID)[index]
 			return r.last
@@ -129,7 +133,11 @@ func (r *ReadSet) input(id manifest.NamedResource) *Input {
 			}
 			if r.byID == nil && r.capacity >= 64 {
 				r.indexInputs(r.capacity)
-				index, _ = slices.BinarySearchFunc(*r.byID, id, func(input *Input, id manifest.NamedResource) int { return input.Ref.Compare(id) })
+				index, _ = slices.BinarySearchFunc(
+					*r.byID,
+					id,
+					func(input *Input, id manifest.NamedResource) int { return input.Ref.Compare(id) },
+				)
 			}
 		}
 		input, r.spare = r.spare, r.spare.next
@@ -236,7 +244,8 @@ func (r *ReadSet) sample(id manifest.NamedResource, slot *producerSlot, record *
 
 func (r *ReadSet) activateProducers() {
 	for input := r.inputs; input != nil; input = input.next {
-		if input.derived&8 != 0 && (!input.settled || input.watchProducer) && (input.cell(producerFacet) == nil || input.cell(producerFacet).head == nil) {
+		if input.derived&8 != 0 && (!input.settled || input.watchProducer) &&
+			(input.cell(producerFacet) == nil || input.cell(producerFacet).head == nil) {
 			r.observe(input, producerFacet, 0)
 		}
 	}
@@ -264,7 +273,11 @@ func (r *ReadSet) Capture(input *Input) manifest.BaseManifest {
 		input.next, r.inputs = r.inputs, input
 		input.derived |= 32
 		if r.byID != nil {
-			index, found := slices.BinarySearchFunc(*r.byID, input.Ref.NamedResource, func(captured *Input, id manifest.NamedResource) int { return captured.Ref.Compare(id) })
+			index, found := slices.BinarySearchFunc(
+				*r.byID,
+				input.Ref.NamedResource,
+				func(captured *Input, id manifest.NamedResource) int { return captured.Ref.Compare(id) },
+			)
 			if found {
 				(*r.byID)[index] = input
 			} else {
@@ -465,13 +478,21 @@ func (r *ReadSet) ReferenceFacts(id manifest.NamedResource, index *manifest.Disc
 			r.GetArtifact(production.Source, ArtifactContent)
 		}
 	}
-	return ReferenceFacts{Data: data, Accepted: input.view.accepted || input.view.owner != nil, Productions: productions, ReferenceData: candidates, Supplied: supplied, SupplyPath: path}
+	return ReferenceFacts{
+		Data:          data,
+		Accepted:      input.view.accepted || input.view.owner != nil,
+		Productions:   productions,
+		ReferenceData: candidates,
+		Supplied:      supplied,
+		SupplyPath:    path,
+	}
 }
 
 // Materializer selects and captures the runnable declaration supplying a production.
 func (r *ReadSet) Materializer(id manifest.NamedResource, production manifest.Production) manifest.NamedResource {
 	owner := production.Owner
-	if declaration := production.Declaration; declaration != (manifest.NamedResource{}) && manifest.KindOf(r.GetObject(declaration)).Runnable {
+	if declaration := production.Declaration; declaration != (manifest.NamedResource{}) &&
+		manifest.KindOf(r.GetObject(declaration)).Runnable {
 		owner = declaration
 		sh := r.store.shardFor(owner)
 		sh.mu.RLock()
@@ -496,7 +517,8 @@ func (r *ReadSet) UnsettledProducers(id manifest.NamedResource) []manifest.Named
 	var pending []manifest.NamedResource
 	for _, production := range productions {
 		owner := r.Materializer(id, production)
-		if owner != (manifest.NamedResource{}) && owner != id && !r.input(owner).settled && !slices.Contains(pending, owner) {
+		if owner != (manifest.NamedResource{}) && owner != id && !r.input(owner).settled &&
+			!slices.Contains(pending, owner) {
 			pending = append(pending, owner)
 		}
 	}
@@ -586,10 +608,26 @@ func (r *ReadSet) require(ref manifest.DependencyRef, materializer bool) {
 	}
 	for gate := &r.details(input).gates; ; gate = &(*gate).next {
 		if *gate == nil {
-			*gate = &readinessGate{expr: ref.ReadyExpr, artifact: ref.Artifact, artifactOnly: ref.ArtifactOnly, chartSource: ref.ChartSource, materializer: materializer}
+			*gate = &readinessGate{
+				expr:         ref.ReadyExpr,
+				artifact:     ref.Artifact,
+				artifactOnly: ref.ArtifactOnly,
+				chartSource:  ref.ChartSource,
+				materializer: materializer,
+			}
 			return
 		}
-		if sameReadinessGate(manifest.DependencyRef{NamedResource: ref.NamedResource, ReadyExpr: (*gate).expr, Artifact: (*gate).artifact, ArtifactOnly: (*gate).artifactOnly, ChartSource: (*gate).chartSource}, ref) && (*gate).materializer == materializer {
+		if sameReadinessGate(
+			manifest.DependencyRef{
+				NamedResource: ref.NamedResource,
+				ReadyExpr:     (*gate).expr,
+				Artifact:      (*gate).artifact,
+				ArtifactOnly:  (*gate).artifactOnly,
+				ChartSource:   (*gate).chartSource,
+			},
+			ref,
+		) &&
+			(*gate).materializer == materializer {
 			return
 		}
 	}
@@ -610,7 +648,16 @@ func (r *ReadSet) Gates() iter.Seq[Gate] {
 				continue
 			}
 			for gate := details.gates; gate != nil; gate = gate.next {
-				if !yield(Gate{NamedResource: input.Ref.NamedResource, ReadyExpr: gate.expr, Artifact: gate.artifact, ArtifactOnly: gate.artifactOnly, ChartSource: gate.chartSource, Materializer: gate.materializer}) {
+				if !yield(
+					Gate{
+						NamedResource: input.Ref.NamedResource,
+						ReadyExpr:     gate.expr,
+						Artifact:      gate.artifact,
+						ArtifactOnly:  gate.artifactOnly,
+						ChartSource:   gate.chartSource,
+						Materializer:  gate.materializer,
+					},
+				) {
 					return
 				}
 			}
@@ -787,7 +834,8 @@ func (r *ReadSet) Bind(emission *Emission) {
 	emission.Reads = r
 	emission.entriesOwned = true
 	if previous != nil {
-		shared := len(emission.Children) == len(previous.Children) && (len(emission.Children) == 0 || &emission.Children[0] == &previous.Children[0])
+		shared := len(emission.Children) == len(previous.Children) &&
+			(len(emission.Children) == 0 || &emission.Children[0] == &previous.Children[0])
 		emission.entriesOwned = !shared && !entriesMatch(emission.Children, previous.entries)
 	}
 	if emission.entriesOwned {
@@ -806,7 +854,8 @@ func (r *ReadSet) Matches(previous *ReadSet) bool {
 	for input := previous.inputs; input != nil; input = input.next {
 		id := input.Ref.NamedResource
 		details := input.details.Load()
-		if input.derived&1 != 0 && !reconcileEqual(Child{Obj: r.GetObject(id), Doc: r.input(id).view.child.Doc}, input.view.child) {
+		if input.derived&1 != 0 &&
+			!reconcileEqual(Child{Obj: r.GetObject(id), Doc: r.input(id).view.child.Doc}, input.view.child) {
 			return false
 		}
 		if input.declaration && (r.GetDeclaration(id) == nil) != (input.view.declaration() == nil) {
@@ -821,11 +870,15 @@ func (r *ReadSet) Matches(previous *ReadSet) bool {
 			}
 		} else if input.derived&16 != 0 {
 			status, ok := r.GetStatus(id)
-			if ok != input.hasStatus || status.Status != details.status.Status || status.Reason != details.status.Reason || !sameMessage(status.Message, status.applyingObjects, details.status.Message, details.status.applyingObjects) || !slices.Equal(status.BlockedBy(), details.status.BlockedBy()) {
+			if ok != input.hasStatus || status.Status != details.status.Status ||
+				status.Reason != details.status.Reason ||
+				!sameMessage(status.Message, status.applyingObjects, details.status.Message, details.status.applyingObjects) ||
+				!slices.Equal(status.BlockedBy(), details.status.BlockedBy()) {
 				return false
 			}
 		}
-		if input.derived&4 != 0 && !artifactReadEqual(details.artifact, r.GetArtifact(id, details.artifactRead), details.artifactRead) {
+		if input.derived&4 != 0 &&
+			!artifactReadEqual(details.artifact, r.GetArtifact(id, details.artifactRead), details.artifactRead) {
 			return false
 		}
 		if input.derived&64 != 0 {
@@ -835,7 +888,8 @@ func (r *ReadSet) Matches(previous *ReadSet) bool {
 		} else if details != nil && details.productions != nil {
 			r.UnsettledProducers(id)
 		}
-		if input.derived&128 != 0 && !slices.EqualFunc(details.objects, r.ListObjects(id.Group, id.Kind), manifest.Equal) {
+		if input.derived&128 != 0 &&
+			!slices.EqualFunc(details.objects, r.ListObjects(id.Group, id.Kind), manifest.Equal) {
 			return false
 		}
 	}

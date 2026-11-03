@@ -34,7 +34,11 @@ func TestSubstitutionProvider_ExactIdentity(t *testing.T) {
 			st := store.New()
 			var source manifest.BaseManifest = &manifest.ConfigMap{Name: tc.ref, Namespace: tc.namespace, Data: map[string]any{"VALUE": "supplied"}}
 			if tc.kind == manifest.KindSecret {
-				source = &manifest.Secret{Name: tc.ref, Namespace: tc.namespace, StringData: map[string]any{"VALUE": "supplied"}}
+				source = &manifest.Secret{
+					Name:       tc.ref,
+					Namespace:  tc.namespace,
+					StringData: map[string]any{"VALUE": "supplied"},
+				}
 			}
 			snapshot, err := store.NewSupplied([]store.SuppliedObject{{Object: source}})
 			assert.NoError(t, err)
@@ -43,7 +47,9 @@ func TestSubstitutionProvider_ExactIdentity(t *testing.T) {
 			c.Configure(Options{}, sourcecache.RetryConfig{})
 			execution := c.newExecution(testutil.KustomizationID("apps", "consumer"))
 			defer execution.run.Close()
-			input := execution.data.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "external"})
+			input := execution.data.Lookup(
+				manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "external"},
+			)
 			if (input.Data != nil) != tc.accepted {
 				t.Fatalf("input=%+v accepted=%t", input, tc.accepted)
 			}
@@ -54,10 +60,14 @@ func TestSubstitutionProvider_ExactIdentity(t *testing.T) {
 func TestSubstitutionProvider_AcceptedSourceAndFallback(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ external, late manifest.BaseManifest }{
-		{&manifest.ConfigMap{Name: "external", Namespace: "apps", Data: map[string]any{"VALUE": "supplied"}},
-			&manifest.ConfigMap{Name: "external", Namespace: "apps", Data: map[string]any{"VALUE": "late"}}},
-		{&manifest.Secret{Name: "external", Namespace: "apps", StringData: map[string]any{"VALUE": "supplied"}},
-			&manifest.Secret{Name: "external", Namespace: "apps", StringData: map[string]any{"VALUE": "late"}}},
+		{
+			&manifest.ConfigMap{Name: "external", Namespace: "apps", Data: map[string]any{"VALUE": "supplied"}},
+			&manifest.ConfigMap{Name: "external", Namespace: "apps", Data: map[string]any{"VALUE": "late"}},
+		},
+		{
+			&manifest.Secret{Name: "external", Namespace: "apps", StringData: map[string]any{"VALUE": "supplied"}},
+			&manifest.Secret{Name: "external", Namespace: "apps", StringData: map[string]any{"VALUE": "late"}},
+		},
 	} {
 		t.Run(tc.external.Named().Kind, func(t *testing.T) {
 			t.Parallel()
@@ -75,14 +85,19 @@ func TestSubstitutionProvider_AcceptedSourceAndFallback(t *testing.T) {
 			defer execution.run.Close()
 			provider := values.NewStoreProvider(&execution.run.Reads, c.WipeSecrets)
 			missing := manifest.NamedResource{Kind: external.Named().Kind, Namespace: "apps", Name: "absent"}
-			if provider.Data(external.Named()) != tc.late.(manifest.Data) || provider.Data(other.Named()) != other.(manifest.Data) || provider.Data(missing) != nil {
+			if provider.Data(external.Named()) != tc.late.(manifest.Data) ||
+				provider.Data(other.Named()) != other.(manifest.Data) ||
+				provider.Data(missing) != nil {
 				t.Fatal("provider lost repository precedence or exact identity")
 			}
 			if !provider.Lookup(external.Named()).Data.HasKeys() {
 				t.Fatal("readable supplied source reported unreadable")
 			}
 
-			if got, _, err := values.NewStoreProvider(st, true).Data(external.Named()).Value("VALUE"); err != nil || got != "late" {
+			if got, _, err := values.NewStoreProvider(st, true).
+				Data(external.Named()).
+				Value("VALUE"); err != nil ||
+				got != "late" {
 				t.Fatal("ordinary provider used supplied values")
 			}
 		})
@@ -119,7 +134,12 @@ func TestReconcile_StrictSubstitutionClassification(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [cm.yaml]\n")
-	testutil.WriteFile(t, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\ndata: {value: '${MISSING}'}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"app/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\ndata: {value: '${MISSING}'}\n",
+	)
 	st := store.New()
 	location, err := gitrepo.Locate(t.Context(), root, "")
 	assert.NoError(t, err)
@@ -132,7 +152,11 @@ func TestReconcile_StrictSubstitutionClassification(t *testing.T) {
 	t.Cleanup(trees.Close)
 	c := New(st, tasks, trees, false)
 	c.Configure(Options{StrictSubstitutions: true}, sourcecache.RetryConfig{})
-	docs, err := testutil.SplitDocs([]byte(testutil.KustomizationYAML("consumer", "apps", "  {path: app, postBuild: {substituteStrategy: Always}}\n")))
+	docs, err := testutil.SplitDocs(
+		[]byte(
+			testutil.KustomizationYAML("consumer", "apps", "  {path: app, postBuild: {substituteStrategy: Always}}\n"),
+		),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +166,11 @@ func TestReconcile_StrictSubstitutionClassification(t *testing.T) {
 	}
 	ks := obj.(*manifest.Kustomization)
 	st.AddObject(ks)
-	tasks.Go(t.Context(), "reconcile", func(ctx context.Context) { err = c.newExecution(ks.Named()).reconcile(ctx, ks, manifest.DrainNone) })
+	tasks.Go(
+		t.Context(),
+		"reconcile",
+		func(ctx context.Context) { err = c.newExecution(ks.Named()).reconcile(ctx, ks, manifest.DrainNone) },
+	)
 	tasks.BlockTillDone()
 	if !errors.Is(err, manifest.ErrFlux) || !errors.Is(err, manifest.ErrInvalidSubstituteReference) {
 		t.Fatalf("strict engine failure lost classification: %v", err)

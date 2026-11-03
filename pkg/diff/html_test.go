@@ -34,15 +34,23 @@ func renderHTMLString(t *testing.T, left, right []Doc) string {
 
 func TestRenderHTML_Changed(t *testing.T) {
 	t.Parallel()
-	from := htmlDoc(t, "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: web\n  namespace: apps\ndata:\n  replicas: \"2\"\n  level: info\n")
-	to := htmlDoc(t, "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: web\n  namespace: apps\ndata:\n  replicas: \"3\"\n  level: info\n")
+	from := htmlDoc(
+		t,
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: web\n  namespace: apps\ndata:\n  replicas: \"2\"\n  level: info\n",
+	)
+	to := htmlDoc(
+		t,
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: web\n  namespace: apps\ndata:\n  replicas: \"3\"\n  level: info\n",
+	)
 	for _, d := range []*Doc{&from, &to} {
 		d.Manifest["metadata"].(map[string]any)["name"] = "web<resource>"
 		d.Manifest["data"].(map[string]any)["payload"] = "<yaml>"
 		d.Parent.Name, d.Parent.Path = "web<parent>", "apps/<path>"
 	}
-	raw, warnings, err := RenderDocs([]Doc{from}, []Doc{to}, Options{Format: FormatHTML,
-		Suppressed: []Suppression{{Parent: from.Parent, Side: SideCurrent, Reason: "<suppression>"}}})
+	raw, warnings, err := RenderDocs([]Doc{from}, []Doc{to}, Options{
+		Format:     FormatHTML,
+		Suppressed: []Suppression{{Parent: from.Parent, Side: SideCurrent, Reason: "<suppression>"}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +118,10 @@ func TestRenderHTML_Changed(t *testing.T) {
 func TestRenderHTML_AddedAndRemoved(t *testing.T) {
 	t.Parallel()
 	added := htmlDoc(t, "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: added\n  namespace: apps\ndata:\n  k: v\n")
-	removed := htmlDoc(t, "apiVersion: v1\nkind: Service\nmetadata:\n  name: removed\n  namespace: apps\nspec:\n  ports:\n    - port: 80\n")
+	removed := htmlDoc(
+		t,
+		"apiVersion: v1\nkind: Service\nmetadata:\n  name: removed\n  namespace: apps\nspec:\n  ports:\n    - port: 80\n",
+	)
 	out := renderHTMLString(t, []Doc{removed}, []Doc{added})
 
 	for _, want := range []string{
@@ -205,7 +216,10 @@ func TestRenderHTML_PreparedSubjects(t *testing.T) {
 					shared.NamedResource: {ID: shared.NamedResource, Path: "current"},
 				}
 			}
-			before := [2]map[manifest.NamedResource]manifest.DiagnosticIdentity{maps.Clone(subjects[0]), maps.Clone(subjects[1])}
+			before := [2]map[manifest.NamedResource]manifest.DiagnosticIdentity{
+				maps.Clone(subjects[0]),
+				maps.Clone(subjects[1]),
+			}
 			left := []Doc{
 				cmDoc(shared, manifest.NamedResource{Name: "shared"}, "before", ""),
 				cmDoc(removed, manifest.NamedResource{Name: "removed"}, "before", ""),

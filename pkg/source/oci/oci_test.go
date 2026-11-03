@@ -7,8 +7,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/home-operations/flate/pkg/manifest"
 	"helm.sh/helm/v4/pkg/registry"
+
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 func TestPickSemverTag(t *testing.T) {
@@ -237,10 +238,30 @@ func TestResolveRef_SemverPrecedence(t *testing.T) {
 		want manifest.OCIRepositoryRef
 		list bool
 	}{
-		{"semver only resolves", manifest.OCIRepositoryRef{SemVer: ">=1.0"}, manifest.OCIRepositoryRef{Tag: "1.2.0"}, true},
-		{"semver wins over tag", manifest.OCIRepositoryRef{SemVer: ">=1.0", Tag: "1.0.0"}, manifest.OCIRepositoryRef{Tag: "1.2.0"}, true},
-		{"digest suppresses semver", manifest.OCIRepositoryRef{Digest: "sha256:abc", SemVer: ">=1.0"}, manifest.OCIRepositoryRef{Digest: "sha256:abc", SemVer: ">=1.0"}, false},
-		{"tag only does not resolve", manifest.OCIRepositoryRef{Tag: "1.0.0"}, manifest.OCIRepositoryRef{Tag: "1.0.0"}, false},
+		{
+			"semver only resolves",
+			manifest.OCIRepositoryRef{SemVer: ">=1.0"},
+			manifest.OCIRepositoryRef{Tag: "1.2.0"},
+			true,
+		},
+		{
+			"semver wins over tag",
+			manifest.OCIRepositoryRef{SemVer: ">=1.0", Tag: "1.0.0"},
+			manifest.OCIRepositoryRef{Tag: "1.2.0"},
+			true,
+		},
+		{
+			"digest suppresses semver",
+			manifest.OCIRepositoryRef{Digest: "sha256:abc", SemVer: ">=1.0"},
+			manifest.OCIRepositoryRef{Digest: "sha256:abc", SemVer: ">=1.0"},
+			false,
+		},
+		{
+			"tag only does not resolve",
+			manifest.OCIRepositoryRef{Tag: "1.0.0"},
+			manifest.OCIRepositoryRef{Tag: "1.0.0"},
+			false,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -257,7 +278,10 @@ func TestResolveRef_SemverPrecedence(t *testing.T) {
 			}))
 			t.Cleanup(srv.Close)
 			repo := &manifest.OCIRepository{URL: "oci://" + strings.TrimPrefix(srv.URL, "http://") + "/chart"}
-			request, err := (&operation{Fetcher: &Fetcher{Network: newTestNetwork(t)}}).newRepoClient(t.Context(), repo.RegistryAccess())
+			request, err := (&operation{Fetcher: &Fetcher{Network: newTestNetwork(t)}}).newRepoClient(
+				t.Context(),
+				repo.RegistryAccess(),
+			)
 			if err != nil {
 				t.Fatal(err)
 			}

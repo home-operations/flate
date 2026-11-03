@@ -48,7 +48,15 @@ func TestRenderTrees_OCIInputCredentialPolicy(t *testing.T) {
 				if tc.malformed {
 					credentials = `{"auths":`
 				}
-				testutil.WriteFile(t, root, "secret.yaml", fmt.Sprintf("apiVersion: v1\nkind: Secret\nmetadata: {name: registry-auth, namespace: apps}\nstringData:\n  .dockerconfigjson: %q\n", credentials))
+				testutil.WriteFile(
+					t,
+					root,
+					"secret.yaml",
+					fmt.Sprintf(
+						"apiVersion: v1\nkind: Secret\nmetadata: {name: registry-auth, namespace: apps}\nstringData:\n  .dockerconfigjson: %q\n",
+						credentials,
+					),
+				)
 			}
 			testutil.WriteFile(t, root, "kustomization.yaml", "resources: ["+members+"]\n")
 			ref := ""
@@ -86,12 +94,26 @@ spec:
 			if tc.allow {
 				cfg.AllowMissingKinds = []string{manifest.KindSecret}
 			}
-			rendered, err := RenderTrees(t.Context(), []Tree{{Path: root, RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, cfg)
+			rendered, err := RenderTrees(
+				t.Context(),
+				[]Tree{{Path: root, RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
+				cfg,
+			)
 			if (err != nil) != tc.failure || len(rendered) != 1 || rendered[0].Result == nil {
 				t.Fatalf("render error=%v, want failure=%t; trees=%v", err, tc.failure, rendered)
 			}
-			rsID := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "apps", Name: "consumer"}
-			providerID := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSetInputProvider, Namespace: "apps", Name: "b-registry"}
+			rsID := manifest.NamedResource{
+				Group:     manifest.FluxOperatorDomain,
+				Kind:      manifest.KindResourceSet,
+				Namespace: "apps",
+				Name:      "consumer",
+			}
+			providerID := manifest.NamedResource{
+				Group:     manifest.FluxOperatorDomain,
+				Kind:      manifest.KindResourceSetInputProvider,
+				Namespace: "apps",
+				Name:      "b-registry",
+			}
 			info, _ := rendered[0].Store().GetStatus(rsID)
 			wantStatus, wantDocs := store.StatusReady, 1
 			if tc.failure {
@@ -125,7 +147,8 @@ spec:
 				}
 			}
 			if tc.unavailable {
-				if len(unavailable) != 1 || unavailable[0].Resource != providerID || unavailable[0].Subject.ID != providerID {
+				if len(unavailable) != 1 || unavailable[0].Resource != providerID ||
+					unavailable[0].Subject.ID != providerID {
 					t.Fatalf("unavailable provider diagnostic=%+v", unavailable)
 				}
 			} else if len(unavailable) != 0 {

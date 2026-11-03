@@ -141,7 +141,12 @@ type remoteEntry struct {
 }
 
 func compareRemoteInputs(a, b remoteInput) int {
-	if order := cmp.Or(cmp.Compare(a.Operation, b.Operation), cmp.Compare(a.URL, b.URL), cmp.Compare(a.Ref, b.Ref), cmp.Compare(a.Timeout, b.Timeout)); order != 0 {
+	if order := cmp.Or(
+		cmp.Compare(a.Operation, b.Operation),
+		cmp.Compare(a.URL, b.URL),
+		cmp.Compare(a.Ref, b.Ref),
+		cmp.Compare(a.Timeout, b.Timeout),
+	); order != 0 {
 		return order
 	}
 	if a.Submodules == b.Submodules {
@@ -211,7 +216,12 @@ func (rs *readSet) snapshot() readSetSnapshot {
 	return snap
 }
 
-func (rs readSetSnapshot) stillValid(ctx context.Context, cache *TreeCache, input *treeFS, immutable bool) (bool, error) {
+func (rs readSetSnapshot) stillValid(
+	ctx context.Context,
+	cache *TreeCache,
+	input *treeFS,
+	immutable bool,
+) (bool, error) {
 	valid, err := rs.localsValid(ctx, input.lower, immutable)
 	if !valid || err != nil {
 		return valid, err

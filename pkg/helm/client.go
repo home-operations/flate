@@ -67,7 +67,11 @@ type chartDescription struct {
 	valuesPin     string
 }
 
-func (c *Client) describeChart(ctx context.Context, hr *manifest.HelmRelease, sources Sources) (chartDescription, error) {
+func (c *Client) describeChart(
+	ctx context.Context,
+	hr *manifest.HelmRelease,
+	sources Sources,
+) (chartDescription, error) {
 	if hr == nil {
 		return chartDescription{}, errors.New("nil HelmRelease")
 	}
@@ -81,7 +85,11 @@ func (c *Client) describeChart(ctx context.Context, hr *manifest.HelmRelease, so
 	}
 	art := sources.LocalSourceArtifact(hr.ChartSource(), read)
 	if art == nil || art.FS == nil {
-		return chartDescription{}, manifest.NewError(manifest.ErrObjectNotFound, nil, fmt.Sprintf("%s %s artifact content unavailable", hr.Chart.Source.Kind, hr.Chart.RepoFullName()))
+		return chartDescription{}, manifest.NewError(
+			manifest.ErrObjectNotFound,
+			nil,
+			fmt.Sprintf("%s %s artifact content unavailable", hr.Chart.Source.Kind, hr.Chart.RepoFullName()),
+		)
 	}
 	input, pin, err := source.OperationView(ctx, art.FS)
 	if err != nil {
@@ -180,7 +188,15 @@ func (c *Client) rememberDescription(d chartDescription, fresh *renderRecord) ch
 	if d.chart != nil {
 		d.captured = capturedChart{}
 	}
-	c.chartCache[d.key] = chartDescription{captured: d.captured, fingerprint: d.fingerprint, key: d.key, location: d.location, chart: d.chart, analysis: d.analysis, record: d.record}
+	c.chartCache[d.key] = chartDescription{
+		captured:    d.captured,
+		fingerprint: d.fingerprint,
+		key:         d.key,
+		location:    d.location,
+		chart:       d.chart,
+		analysis:    d.analysis,
+		record:      d.record,
+	}
 	c.chartMu.Unlock()
 	return d
 }
@@ -221,7 +237,11 @@ func (d chartDescription) analyze() *chartAnalysis {
 	if d.analysis != nil {
 		return d.analysis
 	}
-	analysis := &chartAnalysis{Templates: chartTemplateText(d.chart), Allowed: knownTopLevelKeys(d.chart), RequiresLoader: requiresChartLoader(d.chart)}
+	analysis := &chartAnalysis{
+		Templates:      chartTemplateText(d.chart),
+		Allowed:        knownTopLevelKeys(d.chart),
+		RequiresLoader: requiresChartLoader(d.chart),
+	}
 	if d.chart.Metadata != nil {
 		analysis.Version = d.chart.Metadata.Version
 	}

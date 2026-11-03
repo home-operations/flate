@@ -23,7 +23,10 @@ func (indexedOrderingDeps) Promote(context.Context, *store.ReadSet, manifest.Nam
 func parentIndexForTest(parents map[manifest.NamedResource]manifest.NamedResource) *manifest.DiscoveryIndex {
 	index := &manifest.DiscoveryIndex{Records: make(map[manifest.NamedResource]manifest.DiscoveryRecord, len(parents))}
 	for id, parent := range parents {
-		index.Records[id] = manifest.DiscoveryRecord{Parent: parent, Productions: []manifest.Production{{Owner: parent}}}
+		index.Records[id] = manifest.DiscoveryRecord{
+			Parent:      parent,
+			Productions: []manifest.Production{{Owner: parent}},
+		}
 	}
 	return index
 }
@@ -36,11 +39,19 @@ func (e *Execution) dependenciesForTest(obj manifest.BaseManifest) []manifest.De
 	inputs, _ := c.DataInputs(context.TODO(), obj, provider)
 	inputs = slices.DeleteFunc(inputs, func(input depwait.DataDependency) bool { return input.Optional })
 	for _, input := range inputs {
-		if !input.AllowMissing && !input.Input.Private && !input.Input.Generated && !slices.Contains(input.Input.Materializers, obj.Named()) {
+		if !input.AllowMissing && !input.Input.Private && !input.Input.Generated &&
+			!slices.Contains(input.Input.Materializers, obj.Named()) {
 			deps = append(deps, input.DependencyRef)
 		}
 	}
-	err := c.AwaitData(context.TODO(), DataWait{Inputs: inputs, Resume: func(context.Context, manifest.DrainLevel, []manifest.NamedResource) error { return nil }}, manifest.DrainNone)
+	err := c.AwaitData(
+		context.TODO(),
+		DataWait{
+			Inputs: inputs,
+			Resume: func(context.Context, manifest.DrainLevel, []manifest.NamedResource) error { return nil },
+		},
+		manifest.DrainNone,
+	)
 	if blocked, ok := errors.AsType[*depwait.ErrBlocked](err); ok {
 		for _, id := range blocked.Deps {
 			if !slices.ContainsFunc(deps, func(dep manifest.DependencyRef) bool { return dep.NamedResource == id }) {
@@ -80,7 +91,10 @@ func (e *Execution) authoredDependenciesForTest(obj manifest.BaseManifest) []man
 	deps := e.dependencies(obj, manifest.GateInputs)
 	for ref := range manifest.References(obj, manifest.ReferenceAll) {
 		if ref.Use == "" && ref.Artifact {
-			deps = slices.DeleteFunc(deps, func(dep manifest.DependencyRef) bool { return dep.NamedResource == ref.NamedResource && dep.Artifact })
+			deps = slices.DeleteFunc(
+				deps,
+				func(dep manifest.DependencyRef) bool { return dep.NamedResource == ref.NamedResource && dep.Artifact },
+			)
 		}
 	}
 	slices.SortStableFunc(deps, func(a, b manifest.DependencyRef) int {

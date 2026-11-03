@@ -15,10 +15,11 @@ import (
 	"weak"
 
 	"github.com/gofrs/flock"
-	"github.com/home-operations/flate/internal/keylock"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/content/oci"
+
+	"github.com/home-operations/flate/internal/keylock"
 )
 
 type storeSnapshot struct {
@@ -83,7 +84,11 @@ func New(ctx context.Context, root string) (*Cache, error) {
 			return o.cache, o.err
 		}
 	}
-	o := &owner{ready: make(chan struct{}), refs: 1, lock: flock.New(filepath.Join(disk.Name(), ociLock), flock.SetPermissions(0o600))}
+	o := &owner{
+		ready: make(chan struct{}),
+		refs:  1,
+		lock:  flock.New(filepath.Join(disk.Name(), ociLock), flock.SetPermissions(0o600)),
+	}
 	owners.stores[root] = o
 	snapshot := owners.indexes[root].Value()
 	owners.Unlock()
@@ -103,7 +108,8 @@ func New(ctx context.Context, root string) (*Cache, error) {
 		if snapshot != nil && snapshot.index != nil && !snapshot.failed.Load() {
 			data, readErr := disk.ReadFile(indexPath())
 			layout, layoutErr := disk.ReadFile(filepath.Join(ociDir, ocispec.ImageLayoutFile))
-			if readErr == nil && layoutErr == nil && bytes.Equal(data, snapshot.index) && bytes.Equal(layout, snapshot.layout) {
+			if readErr == nil && layoutErr == nil && bytes.Equal(data, snapshot.index) &&
+				bytes.Equal(layout, snapshot.layout) {
 				store = snapshot.store
 			}
 		}

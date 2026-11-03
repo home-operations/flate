@@ -3,10 +3,11 @@ package helmrelease
 import (
 	"errors"
 	"fmt"
-	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"os"
 	"slices"
 	"testing"
+
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -67,12 +68,45 @@ data:
 				Name: "app-creds", Namespace: "default",
 				Spec: map[string]any{"target": map[string]any{"name": "app-values"}},
 			})
-			hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "charts"}}, HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: "mychart", Version: "", SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: manifest.KindGitRepository, Name: "charts", Namespace: "flux-system", APIVersion: manifest.SourceDomain + "/v1"}}}, ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: "app-values"}}}}
+			hr := &manifest.HelmRelease{
+				Name:      "demo",
+				Namespace: "default",
+				Chart: manifest.HelmChart{
+					Name: "mychart",
+					Source: manifest.NamedResource{
+						Group:     manifest.SourceDomain,
+						Kind:      manifest.KindGitRepository,
+						Namespace: "flux-system",
+						Name:      "charts",
+					},
+				},
+				HelmReleaseSpec: helmv2.HelmReleaseSpec{
+					Chart: &helmv2.HelmChartTemplate{
+						Spec: helmv2.HelmChartTemplateSpec{
+							Chart:   "mychart",
+							Version: "",
+							SourceRef: &helmv2.CrossNamespaceObjectReference{
+								Kind:       manifest.KindGitRepository,
+								Name:       "charts",
+								Namespace:  "flux-system",
+								APIVersion: manifest.SourceDomain + "/v1",
+							},
+						},
+					},
+					ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: "app-values"}},
+				},
+			}
 			if tc.duplicate {
-				hr.ValuesFrom = append(hr.ValuesFrom, manifest.ValuesReference{Kind: manifest.KindSecret, Name: "app-values", ValuesKey: "other.yaml"})
+				hr.ValuesFrom = append(
+					hr.ValuesFrom,
+					manifest.ValuesReference{Kind: manifest.KindSecret, Name: "app-values", ValuesKey: "other.yaml"},
+				)
 			}
 			if tc.waitValues {
-				hr.ValuesFrom = append(hr.ValuesFrom, manifest.ValuesReference{Kind: manifest.KindConfigMap, Name: "chart-values"})
+				hr.ValuesFrom = append(
+					hr.ValuesFrom,
+					manifest.ValuesReference{Kind: manifest.KindConfigMap, Name: "chart-values"},
+				)
 			}
 			st.AddObject(hr)
 			if blocked := c.ReconcileNode(t.Context(), hr.Named(), manifest.DrainNone).Blocked; len(blocked) == 0 {
@@ -117,11 +151,33 @@ data:
 
 func TestResolvePreRenderValuesFrom_FailedChartRefTerminates(t *testing.T) {
 	t.Parallel()
-	c, s := newTestControllerWithOptions(t, base.Options{AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}})
+	c, s := newTestControllerWithOptions(
+		t,
+		base.Options{AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}},
+	)
 	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps"}
 	s.AddObject(chart)
-	s.UpdateStatus(chart.Named(), store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "chart unavailable"})
-	hr := &manifest.HelmRelease{Name: "app", Namespace: "apps", Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: chart.Namespace, Name: chart.Name}}, ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindHelmChart, Name: chart.Name, Namespace: chart.Namespace}}
+	s.UpdateStatus(
+		chart.Named(),
+		store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "chart unavailable"},
+	)
+	hr := &manifest.HelmRelease{
+		Name:      "app",
+		Namespace: "apps",
+		Chart: manifest.HelmChart{
+			Source: manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindHelmChart,
+				Namespace: chart.Namespace,
+				Name:      chart.Name,
+			},
+		},
+		ChartRef: &helmv2.CrossNamespaceSourceReference{
+			Kind:      manifest.KindHelmChart,
+			Name:      chart.Name,
+			Namespace: chart.Namespace,
+		},
+	}
 	s.AddObject(hr)
 	attempts := 0
 	unsub := s.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
@@ -131,7 +187,10 @@ func TestResolvePreRenderValuesFrom_FailedChartRefTerminates(t *testing.T) {
 				t.Fatal("retried a failed chartRef with no removable valuesFrom refs")
 			}
 			// Identical status writes suppress events, so reset the progress message.
-			s.UpdateStatus(id, store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "checking references"})
+			s.UpdateStatus(
+				id,
+				store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "checking references"},
+			)
 		}
 	}, false)
 	t.Cleanup(unsub)
@@ -150,22 +209,72 @@ func TestController_ValuesFromMixedProductionPrecedence(t *testing.T) {
 			t.Run(fmt.Sprintf("declarationFirst=%t/%s", declarationFirst, materializer), func(t *testing.T) {
 				c, s := newTestControllerWithOptions(t, base.Options{})
 				target := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "values"}
-				owner := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "a"}
+				owner := manifest.NamedResource{
+					Group:     manifest.FluxKustomizeDomain,
+					Kind:      manifest.KindKustomization,
+					Namespace: "apps",
+					Name:      "a",
+				}
 				if !declarationFirst {
 					owner.Name = "z"
 				}
 				if materializer == "pending" {
-					s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{target: {Productions: []manifest.Production{{Owner: owner, Authored: target, Path: "source/values.yaml", File: "values.yaml"}}}}})
+					s.SetDiscoveryIndex(
+						&manifest.DiscoveryIndex{
+							Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+								target: {
+									Productions: []manifest.Production{
+										{
+											Owner:    owner,
+											Authored: target,
+											Path:     "source/values.yaml",
+											File:     "values.yaml",
+										},
+									},
+								},
+							},
+						},
+					)
 				}
-				publishRawFixture(t, c, &manifest.RawObject{APIVersion: "external-secrets.io/v1", Kind: "ExternalSecret", Namespace: "apps", Name: "declaration", Spec: map[string]any{"target": map[string]any{"name": "values"}}})
+				publishRawFixture(
+					t,
+					c,
+					&manifest.RawObject{
+						APIVersion: "external-secrets.io/v1",
+						Kind:       "ExternalSecret",
+						Namespace:  "apps",
+						Name:       "declaration",
+						Spec:       map[string]any{"target": map[string]any{"name": "values"}},
+					},
+				)
 				if materializer == "actual" {
-					s.AddObject(&manifest.Secret{Name: target.Name, Namespace: target.Namespace, StringData: map[string]any{"values.yaml": "real"}})
+					s.AddObject(
+						&manifest.Secret{
+							Name:       target.Name,
+							Namespace:  target.Namespace,
+							StringData: map[string]any{"values.yaml": "real"},
+						},
+					)
 				}
-				execution := c.newExecution(manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "reader"})
-				s.UpdateStatus(testutil.KustomizationID("apps", "producer-root"), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
+				execution := c.newExecution(
+					manifest.NamedResource{
+						Group:     manifest.HelmReleaseDomain,
+						Kind:      manifest.KindHelmRelease,
+						Namespace: "apps",
+						Name:      "reader",
+					},
+				)
+				s.UpdateStatus(
+					testutil.KustomizationID("apps", "producer-root"),
+					store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""},
+				)
 				input := execution.data.Lookup(target)
 				w := depwait.Waiter{Store: &execution.run.Reads, Parent: execution.run.Reads.ID()}
-				result := w.Available(t.Context(), depwait.DataDependency{NamedResource: target, Input: input}, manifest.DrainNone)
+				result := w.Available(
+					t.Context(),
+					depwait.DataDependency{NamedResource: target, Input: input},
+					manifest.DrainNone,
+				)
 				hasProducer, omit := input.Generated, result.Omit
 				if omit != (materializer == "none") || omit && !hasProducer {
 					t.Fatalf("mixed evidence omitted=%t producer=%t", omit, hasProducer)
@@ -180,28 +289,72 @@ func TestController_PrepareRequiresDeclaration(t *testing.T) {
 	for _, state := range []string{"failed", "withdrawn", "suspended"} {
 		t.Run(state, func(t *testing.T) {
 			t.Parallel()
-			c, st := newTestControllerWithOptions(t, base.Options{AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}})
+			c, st := newTestControllerWithOptions(
+				t,
+				base.Options{AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}},
+			)
 			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
-			input := &manifest.HelmRelease{Name: "input", Namespace: "apps", Chart: manifest.HelmChart{Name: "chart", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Name: "absent"}}, HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: "chart", Version: "", SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: manifest.KindHelmRepository, Name: "absent", Namespace: "", APIVersion: manifest.SourceDomain + "/v1"}}}}}
+			input := &manifest.HelmRelease{
+				Name:      "input",
+				Namespace: "apps",
+				Chart: manifest.HelmChart{
+					Name: "chart",
+					Source: manifest.NamedResource{
+						Group: manifest.SourceDomain,
+						Kind:  manifest.KindHelmRepository,
+						Name:  "absent",
+					},
+				},
+				HelmReleaseSpec: helmv2.HelmReleaseSpec{
+					Chart: &helmv2.HelmChartTemplate{
+						Spec: helmv2.HelmChartTemplateSpec{
+							Chart:   "chart",
+							Version: "",
+							SourceRef: &helmv2.CrossNamespaceObjectReference{
+								Kind:       manifest.KindHelmRepository,
+								Name:       "absent",
+								Namespace:  "",
+								APIVersion: manifest.SourceDomain + "/v1",
+							},
+						},
+					},
+				},
+			}
 			st.AddObjects([]manifest.BaseManifest{parent, input})
-			st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{input.Named(): {Productions: []manifest.Production{{Owner: parent.Named()}}}}})
+			st.SetDiscoveryIndex(
+				&manifest.DiscoveryIndex{
+					Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+						input.Named(): {Productions: []manifest.Production{{Owner: parent.Named()}}},
+					},
+				},
+			)
 			switch state {
 			case "failed":
-				st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "materializer failed"})
+				st.UpdateStatus(
+					parent.Named(),
+					store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "materializer failed"},
+				)
 			case "withdrawn":
 				st.DeleteObject(input.Named())
 			case "suspended":
 				accepted := input.Clone()
 				accepted.Suspend = true
-				st.RecordEmitted(parent.Named(), captureEmission(st, parent.Named(), &store.Emission{Children: []store.Child{{Obj: accepted}}}), nil)
+				st.RecordEmitted(
+					parent.Named(),
+					captureEmission(st, parent.Named(), &store.Emission{Children: []store.Child{{Obj: accepted}}}),
+					nil,
+				)
 			}
 			run := c.ReconcileNode(t.Context(), input.Named(), manifest.DrainNone)
 
 			info, _ := st.GetStatus(input.Named())
-			if state == "suspended" && run.Outcome() == schedule.Blocked || st.GetArtifact(input.Named(), store.ArtifactContent) != nil || len(st.Warnings()) != 0 {
+			if state == "suspended" && run.Outcome() == schedule.Blocked ||
+				st.GetArtifact(input.Named(), store.ArtifactContent) != nil ||
+				len(st.Warnings()) != 0 {
 				t.Fatalf("declaration loss reached preparation: wait=%+v status=%+v", run.Blocked, info)
 			}
-			if state != "suspended" && !slices.Equal(info.BlockedBy(), []manifest.NamedResource{parent.Named()}) && !slices.Equal(run.Blocked, []manifest.NamedResource{parent.Named()}) {
+			if state != "suspended" && !slices.Equal(info.BlockedBy(), []manifest.NamedResource{parent.Named()}) &&
+				!slices.Equal(run.Blocked, []manifest.NamedResource{parent.Named()}) {
 				t.Fatalf("withdrawn declaration did not park: %+v", run.Blocked)
 			}
 			if state == "failed" && !info.IsDependencyFailure() {
@@ -210,7 +363,6 @@ func TestController_PrepareRequiresDeclaration(t *testing.T) {
 			if state == "suspended" && info.Outcome() != store.OutcomeSuspended {
 				t.Fatalf("effective suspension lost: %+v", info)
 			}
-
 		})
 	}
 }
@@ -228,16 +380,56 @@ func TestPreviousRender_OptionalExpectedInput(t *testing.T) {
 	testutil.WriteFile(t, dir, "chart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: child}\n")
 	source := &manifest.GitRepository{Name: "charts", Namespace: "apps"}
 	st.AddObject(source)
-	st.SetArtifact(source.Named(), &store.SourceArtifact{Kind: manifest.KindGitRepository, FS: os.DirFS(dir), LocalPath: dir})
+	st.SetArtifact(
+		source.Named(),
+		&store.SourceArtifact{Kind: manifest.KindGitRepository, FS: os.DirFS(dir), LocalPath: dir},
+	)
 	st.UpdateStatus(source.Named(), store.StatusInfo{Status: store.StatusReady})
-	hr := &manifest.HelmRelease{Name: "emitter", Namespace: "apps", Chart: manifest.HelmChart{Name: "chart", Source: source.Named()}, HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: "chart", Version: "", SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: (source.Named()).Kind, Name: (source.Named()).Name, Namespace: (source.Named()).Namespace, APIVersion: ""}}}, ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: "optional", Optional: true}}}}
+	hr := &manifest.HelmRelease{
+		Name:      "emitter",
+		Namespace: "apps",
+		Chart:     manifest.HelmChart{Name: "chart", Source: source.Named()},
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{
+			Chart: &helmv2.HelmChartTemplate{
+				Spec: helmv2.HelmChartTemplateSpec{
+					Chart:   "chart",
+					Version: "",
+					SourceRef: &helmv2.CrossNamespaceObjectReference{
+						Kind:       source.Named().Kind,
+						Name:       source.Named().Name,
+						Namespace:  source.Named().Namespace,
+						APIVersion: "",
+					},
+				},
+			},
+			ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: "optional", Optional: true}},
+		},
+	}
 	st.AddObject(hr)
-	seed, omitted, err := helm.Prepare(hr, helm.NewSources(st).Declaration, values.NewStoreProvider(st, false), c.Helm.ValuesCache())
+	seed, omitted, err := helm.Prepare(
+		hr,
+		helm.NewSources(st).Declaration,
+		values.NewStoreProvider(st, false),
+		c.Helm.ValuesCache(),
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, len(omitted), 0)
-	_, receipt, err := testutil.RenderMaps(c.Helm.Template(t.Context(), seed, seed.Values, helm.RenderOptions{Sources: helm.NewSources(st)}))
+	_, receipt, err := testutil.RenderMaps(
+		c.Helm.Template(t.Context(), seed, seed.Values, helm.RenderOptions{Sources: helm.NewSources(st)}),
+	)
 	assert.NoError(t, err)
-	assert.NoError(t, c.Helm.RecordRender(t.Context(), helm.RenderAcceptance{Owner: hr.Named(), Receipt: receipt, Sources: []manifest.SourceEvidence{}, Records: func(func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {}}))
+	assert.NoError(
+		t,
+		c.Helm.RecordRender(
+			t.Context(),
+			helm.RenderAcceptance{
+				Owner:   hr.Named(),
+				Receipt: receipt,
+				Sources: []manifest.SourceEvidence{},
+				Records: func(func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {},
+			},
+		),
+	)
 	probe := func() bool {
 		t.Helper()
 		reads := &store.ReadSet{}
@@ -254,7 +446,17 @@ func TestPreviousRender_OptionalExpectedInput(t *testing.T) {
 		return records != nil
 	}
 	assert.Equal(t, probe(), true)
-	publishRawFixture(t, c, &manifest.RawObject{APIVersion: "external-secrets.io/v1", Kind: "ExternalSecret", Name: "declaration", Namespace: "apps", Spec: map[string]any{"target": map[string]any{"name": "optional"}}})
+	publishRawFixture(
+		t,
+		c,
+		&manifest.RawObject{
+			APIVersion: "external-secrets.io/v1",
+			Kind:       "ExternalSecret",
+			Name:       "declaration",
+			Namespace:  "apps",
+			Spec:       map[string]any{"target": map[string]any{"name": "optional"}},
+		},
+	)
 	producer := testutil.KustomizationID("apps", "producer-root")
 	st.UpdateStatus(producer, store.StatusInfo{Status: store.StatusPending, Message: "waiting for input"})
 	status, _ := st.GetStatus(producer)
@@ -283,14 +485,44 @@ func TestController_AllowMissingKindsAdmission(t *testing.T) {
 			c, st := newTestControllerWithOptions(t, base.Options{AllowMissingKinds: []string{tc.allowed}})
 			dir := t.TempDir()
 			testutil.WriteFile(t, dir, "chart/Chart.yaml", "apiVersion: v2\nname: fixture\nversion: 1.0.0\n")
-			testutil.WriteFile(t, dir, "chart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: child}\n")
+			testutil.WriteFile(
+				t,
+				dir,
+				"chart/templates/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: child}\n",
+			)
 			src := &manifest.GitRepository{Name: "charts", Namespace: "apps"}
 			st.AddObject(src)
-			st.SetArtifact(src.Named(), &store.SourceArtifact{Kind: manifest.KindGitRepository, FS: os.DirFS(dir), LocalPath: dir})
+			st.SetArtifact(
+				src.Named(),
+				&store.SourceArtifact{Kind: manifest.KindGitRepository, FS: os.DirFS(dir), LocalPath: dir},
+			)
 			st.UpdateStatus(src.Named(), store.StatusInfo{Status: store.StatusReady})
-			hr := &manifest.HelmRelease{Name: "emitter", Namespace: "apps", Chart: manifest.HelmChart{Name: "chart", Source: src.Named()}, HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: "chart", SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: manifest.KindGitRepository, Name: src.Name, Namespace: src.Namespace, APIVersion: manifest.SourceDomain + "/v1"}}}, ValuesFrom: []manifest.ValuesReference{{Kind: tc.kind, Name: "missing"}}}}
+			hr := &manifest.HelmRelease{
+				Name:      "emitter",
+				Namespace: "apps",
+				Chart:     manifest.HelmChart{Name: "chart", Source: src.Named()},
+				HelmReleaseSpec: helmv2.HelmReleaseSpec{
+					Chart: &helmv2.HelmChartTemplate{
+						Spec: helmv2.HelmChartTemplateSpec{
+							Chart: "chart",
+							SourceRef: &helmv2.CrossNamespaceObjectReference{
+								Kind:       manifest.KindGitRepository,
+								Name:       src.Name,
+								Namespace:  src.Namespace,
+								APIVersion: manifest.SourceDomain + "/v1",
+							},
+						},
+					},
+					ValuesFrom: []manifest.ValuesReference{{Kind: tc.kind, Name: "missing"}},
+				},
+			}
 			st.AddObject(hr)
-			info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode})
+			info := controllertest.DispatchToFixpoint(
+				t.Context(),
+				t,
+				controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode},
+			)
 			if (info.Status == store.StatusReady) != tc.want {
 				t.Fatalf("kind selection: %+v", info)
 			}
@@ -313,18 +545,65 @@ func TestPreviousRender_AllowMissingKindsAdmission(t *testing.T) {
 			c.Helm = helm.NewClient(cachetest.New(t, t.TempDir(), sourcecache.New))
 			dir := t.TempDir()
 			testutil.WriteFile(t, dir, "chart/Chart.yaml", "apiVersion: v2\nname: fixture\nversion: 1.0.0\n")
-			testutil.WriteFile(t, dir, "chart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: child}\n")
+			testutil.WriteFile(
+				t,
+				dir,
+				"chart/templates/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: child}\n",
+			)
 			src := &manifest.GitRepository{Name: "charts", Namespace: "apps"}
 			st.AddObject(src)
-			st.SetArtifact(src.Named(), &store.SourceArtifact{Kind: manifest.KindGitRepository, FS: os.DirFS(dir), LocalPath: dir})
+			st.SetArtifact(
+				src.Named(),
+				&store.SourceArtifact{Kind: manifest.KindGitRepository, FS: os.DirFS(dir), LocalPath: dir},
+			)
 			st.UpdateStatus(src.Named(), store.StatusInfo{Status: store.StatusReady})
-			hr := &manifest.HelmRelease{Name: "emitter", Namespace: "apps", Chart: manifest.HelmChart{Name: "chart", Source: src.Named()}, HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: "chart", SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: manifest.KindGitRepository, Name: src.Name, Namespace: src.Namespace, APIVersion: manifest.SourceDomain + "/v1"}}}, ValuesFrom: []manifest.ValuesReference{{Kind: kind, Name: "missing"}}}}
+			hr := &manifest.HelmRelease{
+				Name:      "emitter",
+				Namespace: "apps",
+				Chart:     manifest.HelmChart{Name: "chart", Source: src.Named()},
+				HelmReleaseSpec: helmv2.HelmReleaseSpec{
+					Chart: &helmv2.HelmChartTemplate{
+						Spec: helmv2.HelmChartTemplateSpec{
+							Chart: "chart",
+							SourceRef: &helmv2.CrossNamespaceObjectReference{
+								Kind:       manifest.KindGitRepository,
+								Name:       src.Name,
+								Namespace:  src.Namespace,
+								APIVersion: manifest.SourceDomain + "/v1",
+							},
+						},
+					},
+					ValuesFrom: []manifest.ValuesReference{{Kind: kind, Name: "missing"}},
+				},
+			}
 			st.AddObject(hr)
-			seed, _, err := helm.Prepare(omitValues(hr, []manifest.NamedResource{{Kind: kind, Namespace: "apps", Name: "missing"}}), helm.NewSources(st).Declaration, values.NewStoreProvider(st, false), c.Helm.ValuesCache())
+			seed, _, err := helm.Prepare(
+				omitValues(hr, []manifest.NamedResource{{Kind: kind, Namespace: "apps", Name: "missing"}}),
+				helm.NewSources(st).Declaration,
+				values.NewStoreProvider(st, false),
+				c.Helm.ValuesCache(),
+			)
 			assert.NoError(t, err)
-			_, receipt, err := c.Helm.Template(t.Context(), seed, seed.Values, helm.RenderOptions{Sources: helm.NewSources(st)})
+			_, receipt, err := c.Helm.Template(
+				t.Context(),
+				seed,
+				seed.Values,
+				helm.RenderOptions{Sources: helm.NewSources(st)},
+			)
 			assert.NoError(t, err)
-			assert.NoError(t, c.Helm.RecordRender(t.Context(), helm.RenderAcceptance{Owner: hr.Named(), Receipt: receipt, Sources: []manifest.SourceEvidence{}, Records: func(func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {}}))
+			assert.NoError(
+				t,
+				c.Helm.RecordRender(
+					t.Context(),
+					helm.RenderAcceptance{
+						Owner:   hr.Named(),
+						Receipt: receipt,
+						Sources: []manifest.SourceEvidence{},
+						Records: func(func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {},
+					},
+				),
+			)
 			for _, selected := range []bool{true, false} {
 				c.AllowMissingKinds = nil
 				if selected {

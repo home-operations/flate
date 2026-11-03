@@ -29,17 +29,51 @@ func TestTemplate_HistoryPolicyProjection(t *testing.T) {
 	}
 	chartDir := t.TempDir()
 	testutil.WriteFile(t, chartDir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
-	testutil.WriteFile(t, chartDir, "mychart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: original}\n")
+	testutil.WriteFile(
+		t,
+		chartDir,
+		"mychart/templates/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: original}\n",
+	)
 	directory := t.TempDir()
 	renderer := NewClient(cachetest.New(t, directory, cache.New))
 	hr := newHR()
-	assert.NoError(t, json.Unmarshal([]byte(`{"chart":{"spec":{"chart":"mychart","sourceRef":{"kind":"GitRepository","name":"chart-repo","namespace":"flux-system"}}}}`), &hr.HelmReleaseSpec))
+	assert.NoError(
+		t,
+		json.Unmarshal(
+			[]byte(
+				`{"chart":{"spec":{"chart":"mychart","sourceRef":{"kind":"GitRepository","name":"chart-repo","namespace":"flux-system"}}}}`,
+			),
+			&hr.HelmReleaseSpec,
+		),
+	)
 	input := RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", chartDir)}
 	_, receipt, err := testutil.RenderMaps(renderer.Template(t.Context(), hr, nil, input))
 	assert.NoError(t, err)
-	child := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "child"}
-	records := map[manifest.NamedResource]manifest.DiscoveryRecord{child: {Refs: []manifest.NamedResource{manifest.BootstrapSourceID}, ContentRoots: map[manifest.NamedResource][]string{manifest.BootstrapSourceID: {"apps/blue"}}}}
-	assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{Owner: hr.Named(), Receipt: receipt, Sources: []manifest.SourceEvidence{}, Records: maps.All(records)}))
+	child := manifest.NamedResource{
+		Group:     manifest.FluxKustomizeDomain,
+		Kind:      manifest.KindKustomization,
+		Namespace: "apps",
+		Name:      "child",
+	}
+	records := map[manifest.NamedResource]manifest.DiscoveryRecord{
+		child: {
+			Refs:         []manifest.NamedResource{manifest.BootstrapSourceID},
+			ContentRoots: map[manifest.NamedResource][]string{manifest.BootstrapSourceID: {"apps/blue"}},
+		},
+	}
+	assert.NoError(
+		t,
+		renderer.RecordRender(
+			t.Context(),
+			RenderAcceptance{
+				Owner:   hr.Named(),
+				Receipt: receipt,
+				Sources: []manifest.SourceEvidence{},
+				Records: maps.All(records),
+			},
+		),
+	)
 	indexPath := filepath.Join(directory, "oci", "index.json")
 	index, err := os.ReadFile(indexPath)
 	assert.NoError(t, err)
@@ -170,10 +204,26 @@ func TestTemplate_HistoryPolicyProjection(t *testing.T) {
 	t.Run("metadata acceptance writes nothing", func(t *testing.T) {
 		t.Parallel()
 		changed := hr.Clone()
-		assert.NoError(t, json.Unmarshal([]byte(`{"commonMetadata":{"labels":{"rev":"changed"}}}`), &changed.HelmReleaseSpec))
-		_, next, err := testutil.RenderMaps(renderer.Template(t.Context(), changed, nil, RenderOptions{Sources: input.Sources}))
+		assert.NoError(
+			t,
+			json.Unmarshal([]byte(`{"commonMetadata":{"labels":{"rev":"changed"}}}`), &changed.HelmReleaseSpec),
+		)
+		_, next, err := testutil.RenderMaps(
+			renderer.Template(t.Context(), changed, nil, RenderOptions{Sources: input.Sources}),
+		)
 		assert.NoError(t, err)
-		assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{Owner: changed.Named(), Receipt: next, Sources: []manifest.SourceEvidence{}, Records: maps.All(records)}))
+		assert.NoError(
+			t,
+			renderer.RecordRender(
+				t.Context(),
+				RenderAcceptance{
+					Owner:   changed.Named(),
+					Receipt: next,
+					Sources: []manifest.SourceEvidence{},
+					Records: maps.All(records),
+				},
+			),
+		)
 		after, err := os.ReadFile(indexPath)
 		assert.NoError(t, err)
 		assert.Equal(t, bytes.Equal(index, after), true)
@@ -187,7 +237,12 @@ func TestTemplate_SelectedActionHistory(t *testing.T) {
 	}
 	chartDir := t.TempDir()
 	testutil.WriteFile(t, chartDir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
-	testutil.WriteFile(t, chartDir, "mychart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '{{ .Release.Name }}'}\n")
+	testutil.WriteFile(
+		t,
+		chartDir,
+		"mychart/templates/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '{{ .Release.Name }}'}\n",
+	)
 
 	t.Run("install", func(t *testing.T) {
 		t.Parallel()
@@ -198,7 +253,18 @@ func TestTemplate_SelectedActionHistory(t *testing.T) {
 		assert.NoError(t, err)
 		child := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "demo"}
 		records := map[manifest.NamedResource]manifest.DiscoveryRecord{child: {}}
-		assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{Owner: hr.Named(), Receipt: receipt, Sources: []manifest.SourceEvidence{}, Records: maps.All(records)}))
+		assert.NoError(
+			t,
+			renderer.RecordRender(
+				t.Context(),
+				RenderAcceptance{
+					Owner:   hr.Named(),
+					Receipt: receipt,
+					Sources: []manifest.SourceEvidence{},
+					Records: maps.All(records),
+				},
+			),
+		)
 		for _, tc := range []struct {
 			name                      string
 			policy                    helmv2.CRDsPolicy
@@ -237,7 +303,6 @@ func TestTemplate_SelectedActionHistory(t *testing.T) {
 			})
 		}
 	})
-
 }
 
 func TestPreviousRender_InlineOCITemplatePolicy(t *testing.T) {
@@ -247,10 +312,13 @@ func TestPreviousRender_InlineOCITemplatePolicy(t *testing.T) {
 	}
 	st, hr, dir := ociRenderFixture(t)
 	hr.ChartRef = nil
-	hr.HelmReleaseSpec.Chart = &helmv2.HelmChartTemplate{Kind: manifest.KindOCIRepository,
+	hr.HelmReleaseSpec.Chart = &helmv2.HelmChartTemplate{
+		Kind:       manifest.KindOCIRepository,
 		ObjectMeta: &helmv2.HelmChartTemplateObjectMeta{Labels: map[string]string{"label": "one"}},
 		Spec: helmv2.HelmChartTemplateSpec{OCIRepositorySpec: sourcev1.OCIRepositorySpec{
-			URL: "oci://example.test/podinfo", Reference: &sourcev1.OCIRepositoryRef{Tag: "6.15.0"}, Interval: &metav1.Duration{Duration: time.Minute},
+			URL:       "oci://example.test/podinfo",
+			Reference: &sourcev1.OCIRepositoryRef{Tag: "6.15.0"},
+			Interval:  &metav1.Duration{Duration: time.Minute},
 		}},
 	}
 	assert.NoError(t, hr.ResolveChartSource(nil))
@@ -258,12 +326,32 @@ func TestPreviousRender_InlineOCITemplatePolicy(t *testing.T) {
 	assert.NoError(t, err)
 	st.AddObject(generated[0])
 	const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
-	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: chartFixtureFS(hr, os.DirFS(dir)), LocalPath: dir, Digest: digest, Revision: "6.15.0@" + digest})
+	st.SetArtifact(
+		hr.ChartSource(),
+		&store.SourceArtifact{
+			Kind:      manifest.KindOCIRepository,
+			FS:        chartFixtureFS(hr, os.DirFS(dir)),
+			LocalPath: dir,
+			Digest:    digest,
+			Revision:  "6.15.0@" + digest,
+		},
+	)
 	renderer := NewClient(cachetest.New(t, t.TempDir(), cache.New))
 	input := RenderOptions{Sources: NewSources(st)}
 	_, receipt, err := renderer.Template(t.Context(), hr, nil, input)
 	assert.NoError(t, err)
-	assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{Owner: hr.Named(), Receipt: receipt, Sources: []manifest.SourceEvidence{}, Records: emptyRenderInventory}))
+	assert.NoError(
+		t,
+		renderer.RecordRender(
+			t.Context(),
+			RenderAcceptance{
+				Owner:   hr.Named(),
+				Receipt: receipt,
+				Sources: []manifest.SourceEvidence{},
+				Records: emptyRenderInventory,
+			},
+		),
+	)
 	if _, complete := renderer.PreviousRender(t.Context(), hr.Clone(), nil, input); !complete {
 		t.Fatal("unchanged inline declaration lost accepted history")
 	}
@@ -303,11 +391,23 @@ func TestPreviousRender_InlineOCITemplatePolicy(t *testing.T) {
 			unavailable.AddObject(generated[0])
 			info := store.StatusInfo{Status: store.StatusFailed, Message: "acquisition failed"}
 			if skipped {
-				info = store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: "source unavailable"}
+				info = store.StatusInfo{
+					Status:  store.StatusReady,
+					Reason:  store.ReasonSkipped,
+					Message: "source unavailable",
+				}
 			}
 			unavailable.UpdateStatus(hr.ChartSource(), info)
-			unavailable.SetArtifact(hr.ChartSource(), &store.SourceArtifact{Kind: manifest.KindOCIRepository, Key: "unavailable"})
-			if _, complete := renderer.PreviousRender(t.Context(), hr, nil, RenderOptions{Sources: NewSources(unavailable)}); complete {
+			unavailable.SetArtifact(
+				hr.ChartSource(),
+				&store.SourceArtifact{Kind: manifest.KindOCIRepository, Key: "unavailable"},
+			)
+			if _, complete := renderer.PreviousRender(
+				t.Context(),
+				hr,
+				nil,
+				RenderOptions{Sources: NewSources(unavailable)},
+			); complete {
 				t.Fatal("unavailable acquisition supplied accepted history")
 			}
 		})

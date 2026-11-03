@@ -105,7 +105,11 @@ func TestLabelsEqual_Representations(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, LabelsEqual(tc.a, tc.b, tc.documents, tc.excluded), tc.forward)
-			assert.Equal(t, LabelsEqual(tc.b, tc.a, [2]map[string]any{tc.documents[1], tc.documents[0]}, tc.excluded), tc.reverse)
+			assert.Equal(
+				t,
+				LabelsEqual(tc.b, tc.a, [2]map[string]any{tc.documents[1], tc.documents[0]}, tc.excluded),
+				tc.reverse,
+			)
 		})
 	}
 	assert.Diff(t, raw.Spec, document(map[string]any{"app": "same"}))
@@ -159,7 +163,10 @@ func TestMapEqualExcept_JSONValues(t *testing.T) {
 
 func TestEqual_Allocations(t *testing.T) {
 	document := func() map[string]any {
-		return map[string]any{"metadata": map[string]any{"labels": map[string]any{"app": "same", "owner": "producer"}}, "items": []any{map[string]any{"value": int64(1)}}}
+		return map[string]any{
+			"metadata": map[string]any{"labels": map[string]any{"app": "same", "owner": "producer"}},
+			"items":    []any{map[string]any{"value": int64(1)}},
+		}
 	}
 	a, b := &RawObject{Kind: "Widget", Spec: document()}, &RawObject{Kind: "Widget", Spec: document()}
 	documents := [2]map[string]any{document(), document()}

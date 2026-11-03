@@ -31,7 +31,11 @@ import (
 func TestExecution_Success(t *testing.T) {
 	t.Parallel()
 	s := store.New()
-	hr := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "app", Namespace: "ns"}
+	hr := &manifest.HelmRelease{
+		ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"},
+		Name:      "app",
+		Namespace: "ns",
+	}
 	s.AddObject(hr)
 	id := hr.Named()
 
@@ -55,22 +59,40 @@ func TestExecution_RetiredSuccessfulOutput(t *testing.T) {
 	s := store.New()
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 	s.AddObject(parent)
-	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}}}
+	index := &manifest.DiscoveryIndex{
+		Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}},
+	}
 	c := base.New(s, nil)
-	admissionLoader1 := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"parent.yaml"}), Index: index, Inventory: s, Root: ""})
+	admissionLoader1 := admissiontest.New(
+		t,
+		admissiontest.Config{Changes: change.NewSet([]string{"parent.yaml"}), Index: index, Inventory: s, Root: ""},
+	)
 	admissiontest.Commit(t, admissionLoader1, nil)
 	c.Configure(base.Options{Filter: admissionLoader1.Options.Filter, Index: index, Loader: admissionLoader1})
 
 	publish := func(value string) *base.Execution {
 		execution := controllertest.NewExecution(c, parent.Named())
-		execution.Dispatch(t.Context(), manifest.DrainNone, execution, func(execution *base.Execution, _ context.Context, _ *manifest.Kustomization, _ manifest.DrainLevel) error {
-			_, _, next := execution.Reads.GetEmission(parent.Named())
-			defer next.Finish()
-			next.Children = []store.Child{{Obj: &manifest.ConfigMap{Name: "settings", Namespace: "apps", Data: map[string]any{"VALUE": value}}}}
-			next.Complete = true
-			execution.Emit(t.Context(), parent.Named(), &next, nil)
-			return nil
-		})
+		execution.Dispatch(
+			t.Context(),
+			manifest.DrainNone,
+			execution,
+			func(execution *base.Execution, _ context.Context, _ *manifest.Kustomization, _ manifest.DrainLevel) error {
+				_, _, next := execution.Reads.GetEmission(parent.Named())
+				defer next.Finish()
+				next.Children = []store.Child{
+					{
+						Obj: &manifest.ConfigMap{
+							Name:      "settings",
+							Namespace: "apps",
+							Data:      map[string]any{"VALUE": value},
+						},
+					},
+				}
+				next.Complete = true
+				execution.Emit(t.Context(), parent.Named(), &next, nil)
+				return nil
+			},
+		)
 		return execution
 	}
 	first := publish("first")
@@ -108,26 +130,44 @@ func TestExecution_PreflightWithdrawsPublishedOutput(t *testing.T) {
 			st.AddObject(obj)
 			var attempts, renders atomic.Int64
 			var latest *base.Execution
-			d := controllertest.Dispatch{Tasks: tasks, Store: st, ID: id, ReconcileNode: func(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
-				attempts.Add(1)
-				execution := controllertest.NewExecution(c, id)
-				latest = execution
-				execution.Dispatch(ctx, level, execution, func(execution *base.Execution, _ context.Context, _ manifest.BaseManifest, _ manifest.DrainLevel) error {
-					renders.Add(1)
-					if source {
-						st.SetArtifact(id, &store.SourceArtifact{Reads: &execution.Reads, Key: "content", LocalPath: "source"})
-					} else {
-						_, _, next := execution.Reads.GetEmission(id)
-						defer next.Finish()
-						next.Children = []store.Child{{Obj: child}}
-						next.Complete = true
-						execution.Emit(t.Context(), id, &next, nil)
-					}
-					return nil
-				})
-				return execution
-			}}
-			if info := controllertest.DispatchToFixpoint(t.Context(), t, d); info.Status != store.StatusReady || attempts.Load() != 1 || renders.Load() != 1 {
+			d := controllertest.Dispatch{
+				Tasks: tasks,
+				Store: st,
+				ID:    id,
+				ReconcileNode: func(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
+					attempts.Add(1)
+					execution := controllertest.NewExecution(c, id)
+					latest = execution
+					execution.Dispatch(
+						ctx,
+						level,
+						execution,
+						func(execution *base.Execution, _ context.Context, _ manifest.BaseManifest, _ manifest.DrainLevel) error {
+							renders.Add(1)
+							if source {
+								st.SetArtifact(
+									id,
+									&store.SourceArtifact{Reads: &execution.Reads, Key: "content", LocalPath: "source"},
+								)
+							} else {
+								_, _, next := execution.Reads.GetEmission(id)
+								defer next.Finish()
+								next.Children = []store.Child{{Obj: child}}
+								next.Complete = true
+								execution.Emit(t.Context(), id, &next, nil)
+							}
+							return nil
+						},
+					)
+					return execution
+				},
+			}
+			if info := controllertest.DispatchToFixpoint(
+				t.Context(),
+				t,
+				d,
+			); info.Status != store.StatusReady || attempts.Load() != 1 ||
+				renders.Load() != 1 {
 				t.Fatalf("initial status=%+v attempts=%d renders=%d", info, attempts.Load(), renders.Load())
 			}
 			if st.GetArtifact(id, store.ArtifactContent) == nil || !source && st.GetObject(child.Named()) == nil {
@@ -137,8 +177,18 @@ func TestExecution_PreflightWithdrawsPublishedOutput(t *testing.T) {
 			st.SetPreflight(id, cycle)
 			attempts.Store(0)
 			info := controllertest.DispatchToFixpoint(t.Context(), t, d)
-			if info.Status != store.StatusFailed || info.Message != cycle || !latest.Valid() || latest.Outcome() != schedule.Terminal || attempts.Load() != 1 || renders.Load() != 1 {
-				t.Errorf("cycle status=%+v valid=%t outcome=%v attempts=%d renders=%d, want terminal failure in one attempt without rendering", info, latest.Valid(), latest.Outcome(), attempts.Load(), renders.Load())
+			if info.Status != store.StatusFailed || info.Message != cycle || !latest.Valid() ||
+				latest.Outcome() != schedule.Terminal ||
+				attempts.Load() != 1 ||
+				renders.Load() != 1 {
+				t.Errorf(
+					"cycle status=%+v valid=%t outcome=%v attempts=%d renders=%d, want terminal failure in one attempt without rendering",
+					info,
+					latest.Valid(),
+					latest.Outcome(),
+					attempts.Load(),
+					renders.Load(),
+				)
 			}
 			if source {
 				if artifact := st.GetArtifact(id, store.ArtifactContent); artifact != nil {
@@ -149,15 +199,23 @@ func TestExecution_PreflightWithdrawsPublishedOutput(t *testing.T) {
 					t.Error("stale emitted child remained visible")
 				}
 				output, ok := st.GetArtifact(id, store.ArtifactContent).(*store.Emission)
-				if !ok || !output.Complete || output.OutputReads != &latest.Reads || !output.OutputReads.Valid() || len(output.Children) != 0 {
+				if !ok || !output.Complete || output.OutputReads != &latest.Reads || !output.OutputReads.Valid() ||
+					len(output.Children) != 0 {
 					t.Errorf("withdrawal did not publish a complete current inventory: %+v", output)
 				}
 			}
 			st.SetPreflight(id, "")
 			attempts.Store(0)
 			info = controllertest.DispatchToFixpoint(t.Context(), t, d)
-			if info.Status != store.StatusReady || info.Message != "" || !latest.Valid() || attempts.Load() != 1 || renders.Load() != 2 {
-				t.Fatalf("recovered status=%+v valid=%t attempts=%d renders=%d", info, latest.Valid(), attempts.Load(), renders.Load())
+			if info.Status != store.StatusReady || info.Message != "" || !latest.Valid() || attempts.Load() != 1 ||
+				renders.Load() != 2 {
+				t.Fatalf(
+					"recovered status=%+v valid=%t attempts=%d renders=%d",
+					info,
+					latest.Valid(),
+					attempts.Load(),
+					renders.Load(),
+				)
 			}
 			if st.GetArtifact(id, store.ArtifactContent) == nil || !source && st.GetObject(child.Named()) == nil {
 				t.Fatal("recovery did not republish output")
@@ -186,7 +244,11 @@ func TestExecution_Failure(t *testing.T) {
 				log.SetFlags(flags)
 			})
 			s := store.New()
-			hr := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "app", Namespace: "ns"}
+			hr := &manifest.HelmRelease{
+				ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"},
+				Name:      "app",
+				Namespace: "ns",
+			}
 			s.AddObject(hr)
 			id := hr.Named()
 			detail := new(countedDetailError)
@@ -216,7 +278,11 @@ func TestExecution_Failure(t *testing.T) {
 func TestExecution_Panic(t *testing.T) {
 	t.Parallel()
 	s := store.New()
-	hr := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "app", Namespace: "ns"}
+	hr := &manifest.HelmRelease{
+		ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"},
+		Name:      "app",
+		Namespace: "ns",
+	}
 	s.AddObject(hr)
 	id := hr.Named()
 
@@ -291,7 +357,11 @@ func TestExecution_PreservesInformativeReadyMessage(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			s := store.New()
-			hr := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "app", Namespace: "ns"}
+			hr := &manifest.HelmRelease{
+				ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"},
+				Name:      "app",
+				Namespace: "ns",
+			}
 			s.AddObject(hr)
 			id := hr.Named()
 			s.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: tc.reason, Message: tc.message})
@@ -319,18 +389,33 @@ func TestExecution_PreservesInformativeReadyMessage(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			s := store.New()
-			hr := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "app", Namespace: "ns"}
+			hr := &manifest.HelmRelease{
+				ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"},
+				Name:      "app",
+				Namespace: "ns",
+			}
 			s.AddObject(hr)
 			c := base.New(s, nil)
 			src := &manifest.OCIRepository{Name: "source", Namespace: "ns"}
 			s.AddObject(src)
 			s.SetArtifact(src.Named(), &store.SourceArtifact{FS: fstest.MapFS{}})
-			s.UpdateStatus(src.Named(), store.StatusInfo{Status: store.StatusReady, Reason: tc.reason, Message: tc.message})
+			s.UpdateStatus(
+				src.Named(),
+				store.StatusInfo{Status: store.StatusReady, Reason: tc.reason, Message: tc.message},
+			)
 			execution := controllertest.NewExecution(c, hr.Named())
-			execution.Dispatch(t.Context(), manifest.DrainNone, execution,
+			execution.Dispatch(
+				t.Context(),
+				manifest.DrainNone,
+				execution,
 				func(execution *base.Execution, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
-					return execution.Require(t.Context(), []manifest.DependencyRef{{NamedResource: src.Named(), Artifact: true}}, manifest.DrainNone)
-				})
+					return execution.Require(
+						t.Context(),
+						[]manifest.DependencyRef{{NamedResource: src.Named(), Artifact: true}},
+						manifest.DrainNone,
+					)
+				},
+			)
 			got, _ := s.GetStatus(hr.Named())
 			want := store.OutcomePassed
 			if tc.reason == store.ReasonSkipped {
@@ -345,7 +430,10 @@ func TestExecution_PreservesInformativeReadyMessage(t *testing.T) {
 		t.Run(fmt.Sprintf("direct/%q", message), func(t *testing.T) {
 			t.Parallel()
 			s := store.New()
-			hr := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "app"}
+			hr := &manifest.HelmRelease{
+				ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"},
+				Name:     "app",
+			}
 			s.AddObject(hr)
 			controllertest.NewExecution(base.New(s, nil), hr.Named()).Dispatch(t.Context(), manifest.DrainNone, t,
 				func(_ *testing.T, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
@@ -362,13 +450,20 @@ func TestExecution_PreservesInformativeReadyMessage(t *testing.T) {
 func TestExecution_PreservesExternalFailure(t *testing.T) {
 	t.Parallel()
 	s := store.New()
-	hr := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "app", Namespace: "ns"}
+	hr := &manifest.HelmRelease{
+		ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"},
+		Name:      "app",
+		Namespace: "ns",
+	}
 	s.AddObject(hr)
 	id := hr.Named()
 
 	controllertest.NewExecution(base.New(s, nil), id).Dispatch(t.Context(), manifest.DrainNone, t,
 		func(_ *testing.T, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
-			s.UpdateStatus(id, store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "dependency cycle detected"})
+			s.UpdateStatus(
+				id,
+				store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "dependency cycle detected"},
+			)
 			return nil
 		},
 	)
@@ -401,21 +496,34 @@ func TestExecution_Dispatch(t *testing.T) {
 		controllertest.NewExecution(c, id).Dispatch(t.Context(), manifest.DrainNone, &ran, reconcile)
 	}
 
-	susHR := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "suspended", Namespace: "ns", Suspend: true}
+	susHR := &manifest.HelmRelease{
+		ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"},
+		Name:      "suspended",
+		Namespace: "ns",
+		Suspend:   true,
+	}
 	s.AddObject(susHR)
 	dispatch(susHR.Named())
 	if info, _ := s.GetStatus(susHR.Named()); info.Outcome() != store.OutcomeSuspended || info.Message != "suspended" {
 		t.Errorf("suspended HR status = %+v; want Ready/suspended via preGate", info)
 	}
 
-	pfHR := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "preflightfail", Namespace: "ns"}
+	pfHR := &manifest.HelmRelease{
+		ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"},
+		Name:      "preflightfail",
+		Namespace: "ns",
+	}
 	s.AddObject(pfHR)
 	dispatch(pfHR.Named())
 	if info, _ := s.GetStatus(pfHR.Named()); info.Status != store.StatusFailed {
 		t.Errorf("preflight-failed HR status = %+v; want Failed", info)
 	}
 
-	hr := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "app", Namespace: "ns"}
+	hr := &manifest.HelmRelease{
+		ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"},
+		Name:      "app",
+		Namespace: "ns",
+	}
 	s.AddObject(hr)
 	dispatch(hr.Named())
 	if info, _ := s.GetStatus(hr.Named()); info.Status != store.StatusReady {
@@ -460,9 +568,17 @@ func TestExecution_Dispatch(t *testing.T) {
 			c := base.New(st, nil)
 			opts := base.Options{}
 			if tc.filtered {
-				admissionLoader1 := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"other.yaml"}), Index: &manifest.DiscoveryIndex{
-					Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "consumer.yaml"}},
-				}, Inventory: st, Root: ""})
+				admissionLoader1 := admissiontest.New(
+					t,
+					admissiontest.Config{
+						Changes: change.NewSet([]string{"other.yaml"}),
+						Index: &manifest.DiscoveryIndex{
+							Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "consumer.yaml"}},
+						},
+						Inventory: st,
+						Root:      "",
+					},
+				)
 				admissiontest.Commit(t, admissionLoader1, nil)
 				opts.Filter, opts.Loader = admissionLoader1.Options.Filter, admissionLoader1
 			}
@@ -472,10 +588,11 @@ func TestExecution_Dispatch(t *testing.T) {
 			c.Configure(opts)
 			c.StartLifecycle()
 			ran := false
-			controllertest.NewExecution(c, id).Dispatch(t.Context(), manifest.DrainNone, t, func(_ *testing.T, _ context.Context, _ manifest.BaseManifest, _ manifest.DrainLevel) error {
-				ran = true
-				return nil
-			})
+			controllertest.NewExecution(c, id).
+				Dispatch(t.Context(), manifest.DrainNone, t, func(_ *testing.T, _ context.Context, _ manifest.BaseManifest, _ manifest.DrainLevel) error {
+					ran = true
+					return nil
+				})
 			info, _ := st.GetStatus(id)
 			if ran != tc.run || info.Outcome() != tc.outcome || info.Message != tc.message {
 				t.Fatalf("ran=%t status=%+v, want ran=%t Ready/%s", ran, info, tc.run, tc.message)
@@ -487,7 +604,11 @@ func TestExecution_Dispatch(t *testing.T) {
 			t.Run(fmt.Sprintf("lifetime/data=%t/failure=%t", pendingData, failure), func(t *testing.T) {
 				t.Parallel()
 				st := store.New()
-				obj := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "consumer", Namespace: "apps"}
+				obj := &manifest.HelmRelease{
+					ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"},
+					Name:      "consumer",
+					Namespace: "apps",
+				}
 				gate := testutil.KustomizationID("apps", "gate")
 				st.AddObject(obj)
 				st.UpdateStatus(gate, store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "working"})
@@ -516,23 +637,28 @@ func TestExecution_Dispatch(t *testing.T) {
 				retained := func() weak.Pointer[state] {
 					s := &state{run: run, obj: obj, data: pendingData, failure: failure}
 					ref := weak.Make(s)
-					run.Dispatch(t.Context(), manifest.DrainNone, s, func(s *state, ctx context.Context, got *manifest.HelmRelease, level manifest.DrainLevel) error {
-						reconciles.Add(1)
-						if s.data {
-							return s.run.AwaitData(ctx, base.DataWait{
-								Inputs: []depwait.DataDependency{{
-									Kind: manifest.KindConfigMap, Namespace: "apps", Name: "values",
-									Input:    values.Input{Materializers: []manifest.NamedResource{gate}},
-									Optional: true,
-								}},
-								Resume: func(context.Context, manifest.DrainLevel, []manifest.NamedResource) error { return finish(s, got) },
-							}, level)
-						}
-						if level == manifest.DrainNone {
-							return &depwait.ErrBlocked{Deps: []manifest.NamedResource{gate}}
-						}
-						return finish(s, got)
-					})
+					run.Dispatch(
+						t.Context(),
+						manifest.DrainNone,
+						s,
+						func(s *state, ctx context.Context, got *manifest.HelmRelease, level manifest.DrainLevel) error {
+							reconciles.Add(1)
+							if s.data {
+								return s.run.AwaitData(ctx, base.DataWait{
+									Inputs: []depwait.DataDependency{{
+										Kind: manifest.KindConfigMap, Namespace: "apps", Name: "values",
+										Input:    values.Input{Materializers: []manifest.NamedResource{gate}},
+										Optional: true,
+									}},
+									Resume: func(context.Context, manifest.DrainLevel, []manifest.NamedResource) error { return finish(s, got) },
+								}, level)
+							}
+							if level == manifest.DrainNone {
+								return &depwait.ErrBlocked{Deps: []manifest.NamedResource{gate}}
+							}
+							return finish(s, got)
+						},
+					)
 					return ref
 				}()
 				runtime.GC()
@@ -548,14 +674,17 @@ func TestExecution_Dispatch(t *testing.T) {
 					t.Fatalf("reconciles=%d, want %d", reconciles.Load(), wantReconciles)
 				}
 				info, _ := st.GetStatus(obj.Named())
-				if calls.Load() != 1 || run.Outcome() != schedule.Terminal || !run.Valid() || (info.Status == store.StatusFailed) != failure {
+				if calls.Load() != 1 || run.Outcome() != schedule.Terminal || !run.Valid() ||
+					(info.Status == store.StatusFailed) != failure {
 					t.Fatalf("settled execution calls=%d outcome=%v status=%+v", calls.Load(), run.Outcome(), info)
 				}
 				runtime.GC()
 				if retained.Value() != nil {
 					t.Fatal("terminal execution retained reconcile state")
 				}
-				if output, ok := st.GetArtifact(obj.Named(), store.ArtifactContent).(*store.Emission); !ok || output.OutputReads != &run.Reads || !output.OutputReads.Valid() {
+				if output, ok := st.GetArtifact(obj.Named(), store.ArtifactContent).(*store.Emission); !ok ||
+					output.OutputReads != &run.Reads ||
+					!output.OutputReads.Valid() {
 					t.Fatal("terminal cleanup released accepted output reads")
 				}
 				runtime.KeepAlive(st)
@@ -570,7 +699,11 @@ func TestExecution_Dispatch(t *testing.T) {
 			st := store.New()
 			tasks := task.NewBounded(2)
 			parent := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
-			predicted := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "consumer", Namespace: "apps"}
+			predicted := &manifest.HelmRelease{
+				ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"},
+				Name:      "consumer",
+				Namespace: "apps",
+			}
 			predicted.Chart.Name = "predicted"
 			accepted := predicted.Clone()
 			accepted.Chart.Name = "accepted"
@@ -594,7 +727,13 @@ func TestExecution_Dispatch(t *testing.T) {
 				first.Dispatch(ctx, manifest.DrainNone, t, reconcile)
 				if bodies.Load() != 0 || first.Outcome() != schedule.Blocked || !first.Valid() ||
 					len(first.Blocked) != 1 || first.Blocked[0] != parent.Named() {
-					t.Errorf("covered prediction: bodies=%d outcome=%v blocked=%v valid=%t", bodies.Load(), first.Outcome(), first.Blocked, first.Valid())
+					t.Errorf(
+						"covered prediction: bodies=%d outcome=%v blocked=%v valid=%t",
+						bodies.Load(),
+						first.Outcome(),
+						first.Blocked,
+						first.Valid(),
+					)
 				}
 				close(parked)
 			})
@@ -614,7 +753,13 @@ func TestExecution_Dispatch(t *testing.T) {
 				invalidated = invalidated || id == predicted.Named()
 			}
 			if tasks.Failures() != 0 || !invalidated || first.Valid() || bodies.Load() != 0 {
-				t.Fatalf("publication: failures=%d invalidated=%t valid=%t bodies=%d", tasks.Failures(), invalidated, first.Valid(), bodies.Load())
+				t.Fatalf(
+					"publication: failures=%d invalidated=%t valid=%t bodies=%d",
+					tasks.Failures(),
+					invalidated,
+					first.Valid(),
+					bodies.Load(),
+				)
 			}
 			var fresh *base.Execution
 			tasks.Go(t.Context(), "redispatch", func(ctx context.Context) {
@@ -646,24 +791,36 @@ func TestFingerprintDedup(t *testing.T) {
 	s.AddObject(ks)
 	id := ks.Named()
 	docs := []map[string]any{{"kind": "ConfigMap"}}
-	fp, handled, err := controllertest.NewExecution(c, id).FingerprintDedup(t.Context(), id, []string{"one"}, &store.Emission{})
+	fp, handled, err := controllertest.NewExecution(c, id).
+		FingerprintDedup(t.Context(), id, []string{"one"}, &store.Emission{})
 	if fp == "" || handled || err != nil {
 		t.Fatalf("first key = %q, handled=%v, err=%v", fp, handled, err)
 	}
-	s.RecordEmitted(id, &store.Emission{Manifests: testutil.DocumentOccurrences(docs), Fingerprint: fp, Complete: true}, nil)
-	if _, handled, err := controllertest.NewExecution(c, id).FingerprintDedup(t.Context(), id, "other", &store.Emission{}); handled || err != nil {
+	s.RecordEmitted(
+		id,
+		&store.Emission{Manifests: testutil.DocumentOccurrences(docs), Fingerprint: fp, Complete: true},
+		nil,
+	)
+	if _, handled, err := controllertest.NewExecution(c, id).
+		FingerprintDedup(t.Context(), id, "other", &store.Emission{}); handled ||
+		err != nil {
 		t.Errorf("mismatch: handled=%v err=%v; want false,nil", handled, err)
 	}
 	foreign := id
 	foreign.Group = "other.example"
-	if _, handled, err := controllertest.NewExecution(c, foreign).FingerprintDedup(t.Context(), foreign, []string{"one"}, &store.Emission{}); handled || err != nil {
+	if _, handled, err := controllertest.NewExecution(c, foreign).
+		FingerprintDedup(t.Context(), foreign, []string{"one"}, &store.Emission{}); handled ||
+		err != nil {
 		t.Fatalf("foreign group: handled=%v err=%v; want false,nil", handled, err)
 	}
-	if got, handled, err := controllertest.NewExecution(c, id).FingerprintDedup(t.Context(), id, []string{"one"}, &store.Emission{}); !handled || err != nil || got != fp {
+	if got, handled, err := controllertest.NewExecution(c, id).
+		FingerprintDedup(t.Context(), id, []string{"one"}, &store.Emission{}); !handled || err != nil ||
+		got != fp {
 		t.Errorf("match: key=%q handled=%v err=%v; want %q,true,nil", got, handled, err, fp)
 	}
 	none := testutil.KustomizationID("ns", "none")
-	if _, handled, _ := controllertest.NewExecution(c, none).FingerprintDedup(t.Context(), none, []string{"one"}, &store.Emission{}); handled {
+	if _, handled, _ := controllertest.NewExecution(c, none).
+		FingerprintDedup(t.Context(), none, []string{"one"}, &store.Emission{}); handled {
 		t.Error("no-artifact id: handled=true; want false")
 	}
 	for _, tc := range []struct {
@@ -673,7 +830,8 @@ func TestFingerprintDedup(t *testing.T) {
 		{"nil content", nil}, {"unmarshalable content", []any{make(chan int)}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, handled, err := controllertest.NewExecution(c, id).FingerprintDedup(t.Context(), id, tc.content, &store.Emission{})
+			got, handled, err := controllertest.NewExecution(c, id).
+				FingerprintDedup(t.Context(), id, tc.content, &store.Emission{})
 			if got != "" || handled || err != nil {
 				t.Fatalf("invalid content key=%q, handled=%v, err=%v", got, handled, err)
 			}
@@ -682,10 +840,13 @@ func TestFingerprintDedup(t *testing.T) {
 	emptyStore := store.New()
 	emptyStore.AddObject(ks)
 	emptyStore.RecordEmitted(id, &store.Emission{Manifests: testutil.DocumentOccurrences(docs)}, nil)
-	if _, handled, _ := controllertest.NewExecution(base.New(emptyStore, nil), id).FingerprintDedup(t.Context(), id, []string{"one"}, &store.Emission{}); handled {
+	if _, handled, _ := controllertest.NewExecution(base.New(emptyStore, nil), id).
+		FingerprintDedup(t.Context(), id, []string{"one"}, &store.Emission{}); handled {
 		t.Error("empty stored fingerprint replayed")
 	}
-	if fp, handled, err := controllertest.NewExecution(c, id).FingerprintDedup(t.Context(), id, []any{make(chan int)}, &store.Emission{}); fp != "" || handled || err != nil {
+	if fp, handled, err := controllertest.NewExecution(c, id).
+		FingerprintDedup(t.Context(), id, []any{make(chan int)}, &store.Emission{}); fp != "" || handled ||
+		err != nil {
 		t.Fatalf("invalid content replayed an empty stored key: key=%q, handled=%v, err=%v", fp, handled, err)
 	}
 }
@@ -699,8 +860,11 @@ func TestFingerprintDedup_PreflightError(t *testing.T) {
 	id := ks.Named()
 	fp, _, _ := controllertest.NewExecution(c, id).FingerprintDedup(t.Context(), id, []string{"one"}, &store.Emission{})
 	s.RecordEmitted(id, &store.Emission{Fingerprint: fp, Complete: true}, nil)
-	c.Configure(base.Options{PreflightFailure: func(manifest.NamedResource) (string, bool) { return "cycle detected", true }})
-	_, handled, err := controllertest.NewExecution(c, id).FingerprintDedup(t.Context(), id, []string{"one"}, &store.Emission{})
+	c.Configure(
+		base.Options{PreflightFailure: func(manifest.NamedResource) (string, bool) { return "cycle detected", true }},
+	)
+	_, handled, err := controllertest.NewExecution(c, id).
+		FingerprintDedup(t.Context(), id, []string{"one"}, &store.Emission{})
 	if !handled || err == nil {
 		t.Errorf("preflight error: handled=%v err=%v; want true, non-nil", handled, err)
 	}
@@ -762,7 +926,11 @@ func TestExecution_PendingProgressKeepsConditionStamp(t *testing.T) {
 func TestExecution_GateReplacement(t *testing.T) {
 	t.Parallel()
 	st := store.New()
-	hr := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "reader", Namespace: "apps"}
+	hr := &manifest.HelmRelease{
+		ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"},
+		Name:      "reader",
+		Namespace: "apps",
+	}
 	hr.Chart.Name = "before"
 	st.AddObject(hr)
 	c := base.New(st, task.NewBounded(2))
@@ -776,27 +944,37 @@ func TestExecution_GateReplacement(t *testing.T) {
 		}
 	}, false)
 	defer unsub()
-	first.Dispatch(t.Context(), manifest.DrainNone, first, func(first *base.Execution, _ context.Context, obj *manifest.HelmRelease, _ manifest.DrainLevel) error {
-		if obj.Chart.Name != "before" {
-			t.Fatalf("predecessor changed: %+v", obj)
-		}
-		c.SetPendingUnlessReady(obj.Named(), "gate replacement")
-		_, err := first.RequireRefresh(t.Context(), obj, manifest.GateParents, manifest.DrainNone)
-		return err
-	})
+	first.Dispatch(
+		t.Context(),
+		manifest.DrainNone,
+		first,
+		func(first *base.Execution, _ context.Context, obj *manifest.HelmRelease, _ manifest.DrainLevel) error {
+			if obj.Chart.Name != "before" {
+				t.Fatalf("predecessor changed: %+v", obj)
+			}
+			c.SetPendingUnlessReady(obj.Named(), "gate replacement")
+			_, err := first.RequireRefresh(t.Context(), obj, manifest.GateParents, manifest.DrainNone)
+			return err
+		},
+	)
 	if first.Valid() || st.GetArtifact(hr.Named(), store.ArtifactContent) != nil {
 		t.Fatal("stale gate replacement admitted output")
 	}
 	second := controllertest.NewExecution(c, hr.Named())
 	defer second.Close()
 	called := false
-	second.Dispatch(t.Context(), manifest.DrainNone, second, func(_ *base.Execution, _ context.Context, obj *manifest.HelmRelease, _ manifest.DrainLevel) error {
-		called = true
-		if obj.Chart.Name != "after" {
-			t.Fatalf("successor retained stale declaration: %+v", obj)
-		}
-		return nil
-	})
+	second.Dispatch(
+		t.Context(),
+		manifest.DrainNone,
+		second,
+		func(_ *base.Execution, _ context.Context, obj *manifest.HelmRelease, _ manifest.DrainLevel) error {
+			called = true
+			if obj.Chart.Name != "after" {
+				t.Fatalf("successor retained stale declaration: %+v", obj)
+			}
+			return nil
+		},
+	)
 	if !called || !second.Valid() {
 		t.Fatal("replacement declaration did not reconcile")
 	}
@@ -821,13 +999,21 @@ func TestExecution_RetainsReadinessOutcome(t *testing.T) {
 			st.AddObject(object)
 			execution := controllertest.NewExecution(base.New(st, nil), object.Named())
 			defer execution.Close()
-			execution.Dispatch(t.Context(), manifest.DrainNone, execution, func(_ *base.Execution, _ context.Context, _ *manifest.Kustomization, _ manifest.DrainLevel) error {
-				return tc.err
-			})
+			execution.Dispatch(
+				t.Context(),
+				manifest.DrainNone,
+				execution,
+				func(_ *base.Execution, _ context.Context, _ *manifest.Kustomization, _ manifest.DrainLevel) error {
+					return tc.err
+				},
+			)
 			if execution.Outcome() != tc.want {
 				t.Fatalf("outcome=%v, want %v", execution.Outcome(), tc.want)
 			}
-			st.UpdateStatus(object.Named(), store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: "external update"})
+			st.UpdateStatus(
+				object.Named(),
+				store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: "external update"},
+			)
 			if execution.Outcome() != tc.want {
 				t.Fatalf("status update replaced retained outcome: %v", execution.Outcome())
 			}
@@ -847,7 +1033,9 @@ func TestFingerprintDedup_InputReplacement(t *testing.T) {
 			_, _, prior := st.GetEmission(input.Named())
 			defer prior.Finish()
 			prior.Fingerprint, prior.Complete = manifest.Fingerprint("A"), true
-			prior.Manifests = testutil.DocumentOccurrences([]map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "A"}}})
+			prior.Manifests = testutil.DocumentOccurrences(
+				[]map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "A"}}},
+			)
 			st.RecordEmitted(input.Named(), &prior, nil)
 			run := controllertest.NewExecution(c, input.Named())
 			run.Reads.GetDeclaration(input.Named())
@@ -897,7 +1085,8 @@ func TestFingerprintDedup_InputReplacement(t *testing.T) {
 				t.Fatalf("stale A accepted: key=%q handled=%t err=%v", fp, handled, err)
 			}
 			if path != "absent" && path != "suspended" {
-				fp, handled, err = controllertest.NewExecution(c, replacement.Named()).FingerprintDedup(t.Context(), replacement.Named(), "B", &store.Emission{})
+				fp, handled, err = controllertest.NewExecution(c, replacement.Named()).
+					FingerprintDedup(t.Context(), replacement.Named(), "B", &store.Emission{})
 				if fp != manifest.Fingerprint("B") || handled || err != nil {
 					t.Fatalf("replacement B cannot prepare: %q %t %v", fp, handled, err)
 				}
@@ -912,7 +1101,11 @@ func TestDispatchNode_EffectiveSuspension(t *testing.T) {
 	tasks := task.NewBounded(2)
 	c := base.New(st, tasks)
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
-	input := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "child", Namespace: "apps"}
+	input := &manifest.HelmRelease{
+		ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"},
+		Name:      "child",
+		Namespace: "apps",
+	}
 	st.AddObjects([]manifest.BaseManifest{parent, input})
 	publish := func(obj *manifest.HelmRelease) {
 		t.Helper()
@@ -934,10 +1127,15 @@ func TestDispatchNode_EffectiveSuspension(t *testing.T) {
 	var bodies atomic.Int64
 	tasks.Go(t.Context(), "dispatch", func(ctx context.Context) {
 		run := controllertest.NewExecution(c, input.Named())
-		run.Dispatch(ctx, manifest.DrainNone, struct{}{}, func(_ struct{}, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
-			bodies.Add(1)
-			return nil
-		})
+		run.Dispatch(
+			ctx,
+			manifest.DrainNone,
+			struct{}{},
+			func(_ struct{}, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
+				bodies.Add(1)
+				return nil
+			},
+		)
 	})
 	tasks.Go(t.Context(), "replace", func(context.Context) {
 		tasks.YieldSlot(func() { <-entered })
@@ -976,8 +1174,18 @@ func TestFingerprintDedup_CompleteOnly(t *testing.T) {
 				parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 				child := &manifest.Kustomization{Name: "child", Namespace: "apps"}
 				s.AddObject(parent)
-				index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}}}
-				filterLoader := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"parent.yaml"}), Index: index, Inventory: s, Root: ""})
+				index := &manifest.DiscoveryIndex{
+					Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}},
+				}
+				filterLoader := admissiontest.New(
+					t,
+					admissiontest.Config{
+						Changes:   change.NewSet([]string{"parent.yaml"}),
+						Index:     index,
+						Inventory: s,
+						Root:      "",
+					},
+				)
 				admissiontest.Commit(t, filterLoader, nil)
 				filter := filterLoader.Options.Filter
 				c.Configure(base.Options{Filter: filter, Index: index, Loader: filterLoader})
@@ -989,7 +1197,8 @@ func TestFingerprintDedup_CompleteOnly(t *testing.T) {
 					s.RecordEmitted(parent.Named(), &next, nil)
 				} else {
 					s.RecordEmitted(parent.Named(), &next, nil)
-					if !complete && s.GetArtifact(parent.Named(), store.ArtifactContent).(*store.Emission).Fingerprint != "" {
+					if !complete &&
+						s.GetArtifact(parent.Named(), store.ArtifactContent).(*store.Emission).Fingerprint != "" {
 						t.Fatal("incomplete successor retained a successful fingerprint")
 					}
 					changed := parent.Clone()
@@ -1002,7 +1211,8 @@ func TestFingerprintDedup_CompleteOnly(t *testing.T) {
 				if filter.ShouldReconcile(child.Named()) {
 					t.Fatal("fixture child already selected before replay")
 				}
-				fp, handled, err := controllertest.NewExecution(c, parent.Named()).FingerprintDedup(t.Context(), parent.Named(), "same", &store.Emission{})
+				fp, handled, err := controllertest.NewExecution(c, parent.Named()).
+					FingerprintDedup(t.Context(), parent.Named(), "same", &store.Emission{})
 				if fp != fingerprint || handled != complete || err != nil {
 					t.Fatalf("replay key=%q handled=%t err=%v, want %q,%t,nil", fp, handled, err, fingerprint, complete)
 				}

@@ -36,7 +36,14 @@ func TestOptionalInput_CrossSourcePreparedStores(t *testing.T) {
 	supplier := (&manifest.GitRepository{Name: "supplier", Namespace: "flux-system"}).Named()
 	for side, root := range roots {
 		stores[side] = store.New()
-		result, err := discovery.Run(t.Context(), discovery.Config{Path: filepath.Join(root, "flux"), Store: stores[side], Selection: manifest.Selection{Changed: true}})
+		result, err := discovery.Run(
+			t.Context(),
+			discovery.Config{
+				Path:      filepath.Join(root, "flux"),
+				Store:     stores[side],
+				Selection: manifest.Selection{Changed: true},
+			},
+		)
 		assert.NoError(t, err)
 		indexes[side] = result.Index
 		selected[side], _ = stores[side].GetArtifact(supplier, store.ArtifactContent).(*store.SourceArtifact)
@@ -44,7 +51,11 @@ func TestOptionalInput_CrossSourcePreparedStores(t *testing.T) {
 			t.Fatalf("side %d did not prepare a distinct committed supplier: %+v", side, input)
 		}
 	}
-	bootstrap, err := change.Detect(t.Context(), stores[0].GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact), stores[1].GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact))
+	bootstrap, err := change.Detect(
+		t.Context(),
+		stores[0].GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact),
+		stores[1].GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact),
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, bootstrap.Len(), 0)
 	delta, err := change.Detect(t.Context(), selected[0], selected[1])
@@ -70,14 +81,32 @@ func TestOptionalInput_CrossSourcePreparedStores(t *testing.T) {
 		[2]map[manifest.NamedResource]inputprojection.Projection{},
 	)
 	assert.NoError(t, err)
-	assert.Equal(t, admissiontest.Filter(t, admissiontest.Config{Changes: delta, Index: nil, Inventory: probe, Root: selected[0].LocalPath}).ShouldReconcile(input), true)
-	assert.Equal(t, admissiontest.Filter(t, admissiontest.Config{Changes: bootstrap, Index: nil, Inventory: probe, Root: selected[0].LocalPath}).ShouldReconcile(input), false)
+	assert.Equal(
+		t,
+		admissiontest.Filter(t, admissiontest.Config{Changes: delta, Index: nil, Inventory: probe, Root: selected[0].LocalPath}).
+			ShouldReconcile(input),
+		true,
+	)
+	assert.Equal(
+		t,
+		admissiontest.Filter(t, admissiontest.Config{Changes: bootstrap, Index: nil, Inventory: probe, Root: selected[0].LocalPath}).
+			ShouldReconcile(input),
+		false,
+	)
 	changes, err := change.Qualify(t.Context(), bootstrap, stores[0], stores[1])
 	assert.NoError(t, err)
-	changes, err = changes.WithReaders(t.Context(), indexes[0], indexes[1], [2]map[manifest.NamedResource]inputprojection.Projection{})
+	changes, err = changes.WithReaders(
+		t.Context(),
+		indexes[0],
+		indexes[1],
+		[2]map[manifest.NamedResource]inputprojection.Projection{},
+	)
 	assert.NoError(t, err)
 	for side, st := range stores {
-		filter := admissiontest.Filter(t, admissiontest.Config{Changes: changes, Index: indexes[side], Inventory: st, Root: roots[side]})
+		filter := admissiontest.Filter(
+			t,
+			admissiontest.Config{Changes: changes, Index: indexes[side], Inventory: st, Root: roots[side]},
+		)
 		assert.Equal(t, filter.ShouldReconcile(testutil.KustomizationID("flux-system", "app")), true)
 	}
 }
@@ -156,7 +185,10 @@ data: {VALUE: available}
 			}
 			empty, err := change.Detect(t.Context(), inputs.Source, inputs.Source)
 			assert.NoError(t, err)
-			unchanged := admissiontest.Filter(t, admissiontest.Config{Changes: empty, Index: discovered.Index, Inventory: st, Root: ""})
+			unchanged := admissiontest.Filter(
+				t,
+				admissiontest.Config{Changes: empty, Index: discovered.Index, Inventory: st, Root: ""},
+			)
 			if unchanged.ShouldReconcile(app) || unchanged.ShouldReconcile(cluster) {
 				t.Fatal("unchanged input selects app or cluster")
 			}
@@ -192,7 +224,16 @@ spec:
   postBuild:
     substituteFrom: [{kind: `+kind+`, name: optional, optional: true}]
 `)
-	testutil.WriteFile(t, root, "flux/stable.yaml", testutil.KustomizationYAML("stable", "flux-system", "  path: ./apps/stable\n  sourceRef: {kind: GitRepository, name: cluster}\n  dependsOn: [{name: app}]\n"))
+	testutil.WriteFile(
+		t,
+		root,
+		"flux/stable.yaml",
+		testutil.KustomizationYAML(
+			"stable",
+			"flux-system",
+			"  path: ./apps/stable\n  sourceRef: {kind: GitRepository, name: cluster}\n  dependsOn: [{name: app}]\n",
+		),
+	)
 	testutil.WriteFile(t, root, "apps/app/kustomization.yaml", "resources: [output.yaml]\n")
 	testutil.WriteFile(t, root, "apps/app/output.yaml", `apiVersion: v1
 kind: ConfigMap
@@ -222,7 +263,12 @@ func TestFilter_OptionalInputChanges(t *testing.T) {
 			before, after := t.TempDir(), t.TempDir()
 			writeOptionalInputCluster(t, before, tc.kind)
 			writeOptionalInputCluster(t, after, tc.kind)
-			body := fmt.Sprintf("apiVersion: v1\nkind: %s\nmetadata: {name: %s, namespace: %q}\ndata: {VALUE: b2xk}\n", tc.kind, tc.beforeName, tc.namespace)
+			body := fmt.Sprintf(
+				"apiVersion: v1\nkind: %s\nmetadata: {name: %s, namespace: %q}\ndata: {VALUE: b2xk}\n",
+				tc.kind,
+				tc.beforeName,
+				tc.namespace,
+			)
 			if tc.operation != "appear" {
 				testutil.WriteFile(t, before, "flux/optional.yaml", body)
 			}
@@ -233,22 +279,38 @@ func TestFilter_OptionalInputChanges(t *testing.T) {
 			assert.NoError(t, err)
 			changes, err := change.Detect(t.Context(), inputs.BaseInput, inputs.Source)
 			assert.NoError(t, err)
-			filters, loaders := optionalInputFilters(t, [2]*store.SourceArtifact{inputs.BaseInput, inputs.Source}, changes)
+			filters, loaders := optionalInputFilters(
+				t,
+				[2]*store.SourceArtifact{inputs.BaseInput, inputs.Source},
+				changes,
+			)
 			f, l := filters[1], loaders[1]
 			index := l.Index
 			app := testutil.KustomizationID("flux-system", "app")
-			cluster := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}
+			cluster := manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindGitRepository,
+				Namespace: "flux-system",
+				Name:      "cluster",
+			}
 			for _, id := range []manifest.NamedResource{app, cluster} {
 				assert.Equal(t, f.ShouldReconcile(id), tc.want)
 			}
 			if tc.operation == "remove" {
 				for _, name := range []string{"optional", "unrelated"} {
-					_, present := index.Lookup(manifest.NamedResource{Kind: tc.kind, Namespace: tc.namespace, Name: name})
+					_, present := index.Lookup(
+						manifest.NamedResource{Kind: tc.kind, Namespace: tc.namespace, Name: name},
+					)
 					assert.Equal(t, present, false)
 				}
 			}
 			child := &manifest.Kustomization{Name: "emitted", Namespace: "flux-system"}
-			proposal, err := l.Prepare(t.Context(), store.Child{Obj: child, Productions: []manifest.Production{{Owner: app}}}, nil, nil)
+			proposal, err := l.Prepare(
+				t.Context(),
+				store.Child{Obj: child, Productions: []manifest.Production{{Owner: app}}},
+				nil,
+				nil,
+			)
 			assert.NoError(t, err)
 			admissiontest.Commit(t, l, proposal)
 			assert.Equal(t, f.ShouldReconcile(child.Named()), tc.want)
@@ -274,13 +336,40 @@ func TestOptionalInput_PairedSides(t *testing.T) {
 			inputPath, namespace := "flux/optional.yaml", "flux-system"
 			for _, root := range []string{before, after} {
 				writeOptionalInputCluster(t, root, manifest.KindConfigMap)
-				testutil.WriteFile(t, root, "flux/other.yaml", testutil.KustomizationYAML("other", "other", "  path: ./apps/other\n  sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}\n  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: optional, optional: true}]\n"))
+				testutil.WriteFile(
+					t,
+					root,
+					"flux/other.yaml",
+					testutil.KustomizationYAML(
+						"other",
+						"other",
+						"  path: ./apps/other\n  sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}\n  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: optional, optional: true}]\n",
+					),
+				)
 				if tc.projected {
-					testutil.WriteFile(t, root, "flux/inputs.yaml", testutil.KustomizationYAML("inputs", "flux-system", "  path: ./inputs\n  targetNamespace: flux-system\n  sourceRef: {kind: GitRepository, name: cluster}\n"))
+					testutil.WriteFile(
+						t,
+						root,
+						"flux/inputs.yaml",
+						testutil.KustomizationYAML(
+							"inputs",
+							"flux-system",
+							"  path: ./inputs\n  targetNamespace: flux-system\n  sourceRef: {kind: GitRepository, name: cluster}\n",
+						),
+					)
 					inputPath, namespace = "inputs/optional.yaml", ""
 				}
 			}
-			testutil.WriteFile(t, after, inputPath, fmt.Sprintf("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: %s, namespace: %q}\ndata: {VALUE: after}\n", tc.inputName, namespace))
+			testutil.WriteFile(
+				t,
+				after,
+				inputPath,
+				fmt.Sprintf(
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: %s, namespace: %q}\ndata: {VALUE: after}\n",
+					tc.inputName,
+					namespace,
+				),
+			)
 			inputs, err := baseline.ResolvePaths(t.Context(), after, before)
 			assert.NoError(t, err)
 			for direction, pair := range [][2]*store.SourceArtifact{{inputs.BaseInput, inputs.Source}, {inputs.Source, inputs.BaseInput}} {
@@ -288,14 +377,25 @@ func TestOptionalInput_PairedSides(t *testing.T) {
 				if tc.committed {
 					root := t.TempDir()
 					writeOptionalInputCluster(t, root, manifest.KindConfigMap)
-					testutil.WriteFile(t, root, "flux/other.yaml", testutil.KustomizationYAML("other", "other", "  path: ./apps/other\n  sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}\n  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: optional, optional: true}]\n"))
+					testutil.WriteFile(
+						t,
+						root,
+						"flux/other.yaml",
+						testutil.KustomizationYAML(
+							"other",
+							"other",
+							"  path: ./apps/other\n  sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}\n  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: optional, optional: true}]\n",
+						),
+					)
 					body, err := fs.ReadFile(inputs.Source.FS, inputPath)
 					assert.NoError(t, err)
 					if direction == 1 {
 						testutil.WriteFile(t, root, inputPath, string(body))
 					}
 					repo := testutil.GitInit(t, root)
-					options := &git.CommitOptions{Author: &object.Signature{Name: "test", Email: "test@example.test", When: time.Unix(0, 0)}}
+					options := &git.CommitOptions{
+						Author: &object.Signature{Name: "test", Email: "test@example.test", When: time.Unix(0, 0)},
+					}
 					base := testutil.GitCommitAll(t, repo, "base", options)
 					if direction == 0 {
 						testutil.WriteFile(t, root, inputPath, string(body))
@@ -303,7 +403,12 @@ func TestOptionalInput_PairedSides(t *testing.T) {
 						assert.NoError(t, os.Remove(filepath.Join(root, inputPath)))
 					}
 					testutil.GitCommitAll(t, repo, "input change", options)
-					resolved, err := baseline.AutoResolve(t.Context(), root, base.String(), cachetest.New(t, "", sourcecache.New))
+					resolved, err := baseline.AutoResolve(
+						t.Context(),
+						root,
+						base.String(),
+						cachetest.New(t, "", sourcecache.New),
+					)
 					assert.NoError(t, err)
 					changes, pair = resolved.Changes, [2]*store.SourceArtifact{resolved.BaseInput, resolved.Source}
 				} else {
@@ -312,9 +417,24 @@ func TestOptionalInput_PairedSides(t *testing.T) {
 				}
 				filters, _ := optionalInputFilters(t, pair, changes)
 				for _, f := range filters {
-					assert.Equal(t, f.ShouldReconcile(testutil.KustomizationID("flux-system", "app")), tc.inputName == "optional")
+					assert.Equal(
+						t,
+						f.ShouldReconcile(testutil.KustomizationID("flux-system", "app")),
+						tc.inputName == "optional",
+					)
 					assert.Equal(t, f.ShouldReconcile(testutil.KustomizationID("other", "other")), false)
-					assert.Equal(t, f.ShouldReconcile(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}), tc.inputName == "optional")
+					assert.Equal(
+						t,
+						f.ShouldReconcile(
+							manifest.NamedResource{
+								Group:     manifest.SourceDomain,
+								Kind:      manifest.KindGitRepository,
+								Namespace: "flux-system",
+								Name:      "cluster",
+							},
+						),
+						tc.inputName == "optional",
+					)
 				}
 			}
 		})
@@ -329,10 +449,28 @@ func TestFilter_OrderingOnlySiblingExcluded(t *testing.T) {
 		body, err := fs.ReadFile(os.DirFS(root), "flux/cluster.yaml")
 		assert.NoError(t, err)
 		testutil.WriteFile(t, root, "flux/cluster.yaml", string(body)+"  dependsOn: [{name: sibling}]\n")
-		testutil.WriteFile(t, root, "flux/sibling.yaml", testutil.KustomizationYAML("sibling", "flux-system", "  path: ./apps/sibling\n  sourceRef: {kind: GitRepository, name: cluster}\n"))
+		testutil.WriteFile(
+			t,
+			root,
+			"flux/sibling.yaml",
+			testutil.KustomizationYAML(
+				"sibling",
+				"flux-system",
+				"  path: ./apps/sibling\n  sourceRef: {kind: GitRepository, name: cluster}\n",
+			),
+		)
 		testutil.WriteFile(t, root, "apps/sibling/kustomization.yaml", "resources: []\n")
 	}
-	testutil.WriteFile(t, after, "flux/sibling.yaml", testutil.KustomizationYAML("sibling", "flux-system", "  path: ./apps/sibling\n  prune: true\n  sourceRef: {kind: GitRepository, name: cluster}\n"))
+	testutil.WriteFile(
+		t,
+		after,
+		"flux/sibling.yaml",
+		testutil.KustomizationYAML(
+			"sibling",
+			"flux-system",
+			"  path: ./apps/sibling\n  prune: true\n  sourceRef: {kind: GitRepository, name: cluster}\n",
+		),
+	)
 	inputs, err := baseline.ResolvePaths(t.Context(), after, before)
 	assert.NoError(t, err)
 	changes, err := change.Detect(t.Context(), inputs.BaseInput, inputs.Source)
@@ -340,11 +478,26 @@ func TestFilter_OrderingOnlySiblingExcluded(t *testing.T) {
 	filters, _ := optionalInputFilters(t, [2]*store.SourceArtifact{inputs.BaseInput, inputs.Source}, changes)
 	f := filters[1]
 	assert.Equal(t, f.ShouldReconcile(testutil.KustomizationID("flux-system", "sibling")), true)
-	assert.Equal(t, f.ShouldReconcile(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}), true)
+	assert.Equal(
+		t,
+		f.ShouldReconcile(
+			manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindGitRepository,
+				Namespace: "flux-system",
+				Name:      "cluster",
+			},
+		),
+		true,
+	)
 	assert.Equal(t, f.ShouldReconcile(testutil.KustomizationID("flux-system", "app")), false)
 }
 
-func optionalInputFilters(t *testing.T, inputs [2]*store.SourceArtifact, changes *change.Set) ([2]*change.Filter, [2]*loader.Loader) {
+func optionalInputFilters(
+	t *testing.T,
+	inputs [2]*store.SourceArtifact,
+	changes *change.Set,
+) ([2]*change.Filter, [2]*loader.Loader) {
 	t.Helper()
 	var stores [2]*store.Store
 	var indexes [2]*manifest.DiscoveryIndex
@@ -353,15 +506,36 @@ func optionalInputFilters(t *testing.T, inputs [2]*store.SourceArtifact, changes
 	for side, input := range inputs {
 		st := store.New()
 		stores[side] = st
-		result, err := discovery.Run(t.Context(), discovery.Config{Input: input, Store: st, SelfURLs: []string{"https://example.test/cluster.git"}, Selection: manifest.Selection{Changed: true}})
+		result, err := discovery.Run(
+			t.Context(),
+			discovery.Config{
+				Input:     input,
+				Store:     st,
+				SelfURLs:  []string{"https://example.test/cluster.git"},
+				Selection: manifest.Selection{Changed: true},
+			},
+		)
 		assert.NoError(t, err)
 		indexes[side] = result.Index
 	}
 	var err error
-	changes, err = changes.WithReaders(t.Context(), indexes[0], indexes[1], [2]map[manifest.NamedResource]inputprojection.Projection{})
+	changes, err = changes.WithReaders(
+		t.Context(),
+		indexes[0],
+		indexes[1],
+		[2]map[manifest.NamedResource]inputprojection.Projection{},
+	)
 	assert.NoError(t, err)
 	for side, input := range inputs {
-		l := admissiontest.New(t, admissiontest.Config{Changes: changes, Index: indexes[side], Inventory: stores[side], Root: input.LocalPath})
+		l := admissiontest.New(
+			t,
+			admissiontest.Config{
+				Changes:   changes,
+				Index:     indexes[side],
+				Inventory: stores[side],
+				Root:      input.LocalPath,
+			},
+		)
 		admissiontest.Commit(t, l, nil)
 		filters[side], loaders[side] = l.Options.Filter, l
 	}

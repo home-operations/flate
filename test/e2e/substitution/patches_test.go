@@ -105,19 +105,58 @@ data:
 func TestE2E_SubstitutionPrecedence(t *testing.T) {
 	root, external := t.TempDir(), t.TempDir()
 	testutil.GitInit(t, root)
-	testutil.WriteFile(t, root, "flux/consumer.yaml", testutil.KustomizationYAML("consumer", "apps", "  path: ./app\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: settings}]}\n"))
-	testutil.WriteFile(t, root, "flux/settings.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: repository}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"flux/consumer.yaml",
+		testutil.KustomizationYAML(
+			"consumer",
+			"apps",
+			"  path: ./app\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: settings}]}\n",
+		),
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"flux/settings.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: repository}\n",
+	)
 	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [cm.yaml]\n")
-	testutil.WriteFile(t, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: rendered}\ndata: {value: '${VALUE}'}\n")
-	testutil.WriteFile(t, external, "settings.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: private-value}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"app/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: rendered}\ndata: {value: '${VALUE}'}\n",
+	)
+	testutil.WriteFile(
+		t,
+		external,
+		"settings.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: private-value}\n",
+	)
 	for _, verb := range []string{"build", "test"} {
 		t.Run(verb, func(t *testing.T) {
 			for range 2 {
-				stdout, stderr := harness.RequireCLIOK(t, verb, "all", "--path", filepath.Join(root, "flux"), "--supply", filepath.Join(external, "settings.yaml"), "--concurrency=2", "--log-level=info")
-				if strings.Count(stderr, "[SuppliedPrecedence]") != 1 || !strings.Contains(stderr, "ConfigMap/apps/settings: VALUE") || strings.Contains(stdout, "repository data takes precedence") || strings.Contains(stdout+stderr, "private-value") || strings.Contains(stderr, "level=WARN") {
+				stdout, stderr := harness.RequireCLIOK(
+					t,
+					verb,
+					"all",
+					"--path",
+					filepath.Join(root, "flux"),
+					"--supply",
+					filepath.Join(external, "settings.yaml"),
+					"--concurrency=2",
+					"--log-level=info",
+				)
+				if strings.Count(stderr, "[SuppliedPrecedence]") != 1 ||
+					!strings.Contains(stderr, "ConfigMap/apps/settings: VALUE") ||
+					strings.Contains(stdout, "repository data takes precedence") ||
+					strings.Contains(stdout+stderr, "private-value") ||
+					strings.Contains(stderr, "level=WARN") {
 					t.Fatalf("precedence destination: stdout=%s stderr=%s", stdout, stderr)
 				}
-				if verb == "build" && !strings.Contains(stdout, "value: repository") || verb == "test" && !strings.Contains(stdout, "passed") {
+				if verb == "build" && !strings.Contains(stdout, "value: repository") ||
+					verb == "test" && !strings.Contains(stdout, "passed") {
 					t.Fatalf("precedence product: %s", stdout)
 				}
 			}
@@ -188,7 +227,16 @@ data:
 				testutil.WriteFile(t, root, file.path, file.body)
 			}
 			if applied {
-				testutil.WriteFile(t, root, "cluster/vars-ks.yaml", testutil.KustomizationYAML("vars", "flux-system", "  path: ./cluster/vars\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
+				testutil.WriteFile(
+					t,
+					root,
+					"cluster/vars-ks.yaml",
+					testutil.KustomizationYAML(
+						"vars",
+						"flux-system",
+						"  path: ./cluster/vars\n  sourceRef: {kind: GitRepository, name: flux-system}\n",
+					),
+				)
 			}
 			wantValues := []string{"a: base-value", "b: null"}
 			if applied {
@@ -196,7 +244,17 @@ data:
 			}
 			var previous string
 			for range 2 {
-				out := harness.RunCLIStdout(t, "build", "ks", "app", "--path", filepath.Join(root, "cluster"), "--concurrency", "2", "--no-progress")
+				out := harness.RunCLIStdout(
+					t,
+					"build",
+					"ks",
+					"app",
+					"--path",
+					filepath.Join(root, "cluster"),
+					"--concurrency",
+					"2",
+					"--no-progress",
+				)
 				for _, want := range wantValues {
 					if !strings.Contains(out, want) {
 						t.Fatalf("missing %q in app output:\n%s", want, out)

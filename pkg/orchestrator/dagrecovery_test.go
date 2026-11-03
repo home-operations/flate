@@ -22,7 +22,12 @@ import (
 
 type emptySourceFetcher struct{}
 
-func (emptySourceFetcher) Fetch(context.Context, manifest.BaseManifest, *store.ReadSet, sourcecache.Policy) (*store.SourceArtifact, error) {
+func (emptySourceFetcher) Fetch(
+	context.Context,
+	manifest.BaseManifest,
+	*store.ReadSet,
+	sourcecache.Policy,
+) (*store.SourceArtifact, error) {
 	return nil, nil
 }
 
@@ -31,7 +36,11 @@ type fixtureDispatcher struct {
 	dispatch func(context.Context, schedule.NodeID, manifest.DrainLevel) schedule.Result
 }
 
-func (d fixtureDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+func (d fixtureDispatcher) Dispatch(
+	ctx context.Context,
+	id schedule.NodeID,
+	level manifest.DrainLevel,
+) schedule.Result {
 	return d.dispatch(ctx, id, level)
 }
 
@@ -46,7 +55,11 @@ func TestDAG_SourceWithoutFetcherIsNotSeeded(t *testing.T) {
 	}{{false, 0}, {true, 1}} {
 		t.Run(fmt.Sprint(tc.fetcher), func(t *testing.T) {
 			dir := t.TempDir()
-			o, err := newTestOrchestrator(t, Tree{Path: dir, RepoRoot: dir}, Config{CacheDir: t.TempDir(), Concurrency: 2})
+			o, err := newTestOrchestrator(
+				t,
+				Tree{Path: dir, RepoRoot: dir},
+				Config{CacheDir: t.TempDir(), Concurrency: 2},
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -61,33 +74,47 @@ func TestDAG_SourceWithoutFetcherIsNotSeeded(t *testing.T) {
 			o.store.AddObject(obj)
 			assert.Equal(t, slices.Contains(o.seedNodes(), obj.Named()), tc.fetcher)
 			obj = &manifest.ExternalArtifact{Name: "arriving", Namespace: "apps"}
-			producer, consumer := testutil.KustomizationID("flux-system", "producer"), testutil.KustomizationID("flux-system", "consumer")
+			producer, consumer := testutil.KustomizationID(
+				"flux-system",
+				"producer",
+			), testutil.KustomizationID(
+				"flux-system",
+				"consumer",
+			)
 			o.store.AddObject(&manifest.Kustomization{Name: consumer.Name, Namespace: consumer.Namespace})
 			attempted := make(chan struct{})
 			var dispatched atomic.Int64
 			var completed atomic.Bool
-			d := fixtureDispatcher{store: o.store, dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
-				switch id {
-				case producer:
-					o.tasks.YieldSlot(func() { <-attempted })
-					o.store.AddObject(obj)
-				case consumer:
-					execution := controllertest.NewExecution(base.New(o.store, o.tasks), id)
-					execution.Dispatch(ctx, level, execution, func(execution *base.Execution, _ context.Context, _ *manifest.Kustomization, _ manifest.DrainLevel) error {
-						if execution.Reads.GetObject(obj.Named()) == nil {
-							close(attempted)
-							return &depwait.ErrBlocked{Deps: []manifest.NamedResource{obj.Named()}}
-						}
-						completed.Store(true)
-						return nil
-					})
-					return schedule.Result{Assessment: execution}
-				case obj.Named():
-					dispatched.Add(1)
-					return dagDispatcher{o}.Dispatch(ctx, id, level)
-				}
-				return schedule.Result{}
-			}}
+			d := fixtureDispatcher{
+				store: o.store,
+				dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+					switch id {
+					case producer:
+						o.tasks.YieldSlot(func() { <-attempted })
+						o.store.AddObject(obj)
+					case consumer:
+						execution := controllertest.NewExecution(base.New(o.store, o.tasks), id)
+						execution.Dispatch(
+							ctx,
+							level,
+							execution,
+							func(execution *base.Execution, _ context.Context, _ *manifest.Kustomization, _ manifest.DrainLevel) error {
+								if execution.Reads.GetObject(obj.Named()) == nil {
+									close(attempted)
+									return &depwait.ErrBlocked{Deps: []manifest.NamedResource{obj.Named()}}
+								}
+								completed.Store(true)
+								return nil
+							},
+						)
+						return schedule.Result{Assessment: execution}
+					case obj.Named():
+						dispatched.Add(1)
+						return dagDispatcher{o}.Dispatch(ctx, id, level)
+					}
+					return schedule.Result{}
+				},
+			}
 			sched := schedule.New(o.tasks, d)
 			unsubscribe := o.watchDAG(sched)
 			defer unsubscribe()
@@ -109,8 +136,17 @@ func TestDAGDispatcher_RecoveredAndPrimaryFailures(t *testing.T) {
 			dir := t.TempDir()
 			testutil.WriteFile(t, dir, "flux/consumer.yaml", ksYAML("consumer", "consumer", "ghost"))
 			testutil.WriteFile(t, dir, "consumer/kustomization.yaml", "resources:\n- cm.yaml\n")
-			testutil.WriteFile(t, dir, "consumer/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: consumer}\ndata: {k: v}\n")
-			o, err := newTestOrchestrator(t, Tree{Path: dir, RepoRoot: dir}, Config{WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: workers})
+			testutil.WriteFile(
+				t,
+				dir,
+				"consumer/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: consumer}\ndata: {k: v}\n",
+			)
+			o, err := newTestOrchestrator(
+				t,
+				Tree{Path: dir, RepoRoot: dir},
+				Config{WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: workers},
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -120,36 +156,70 @@ func TestDAGDispatcher_RecoveredAndPrimaryFailures(t *testing.T) {
 			reconcileEntryForTest(t, o)
 			o.configureControllers()
 			d := dagDispatcher{o}
-			victim, ghost := testutil.KustomizationID("flux-system", "consumer"), testutil.KustomizationID("flux-system", "ghost")
+			victim, ghost := testutil.KustomizationID(
+				"flux-system",
+				"consumer",
+			), testutil.KustomizationID(
+				"flux-system",
+				"ghost",
+			)
 			var result schedule.Result
-			o.tasks.Go(t.Context(), "dispatch fixture", func(ctx context.Context) { result = d.Dispatch(ctx, victim, manifest.DrainCascade) })
+			o.tasks.Go(
+				t.Context(),
+				"dispatch fixture",
+				func(ctx context.Context) { result = d.Dispatch(ctx, victim, manifest.DrainCascade) },
+			)
 			o.tasks.BlockTillDone()
 			info, _ := o.store.GetStatus(victim)
-			if result.Assessment.Outcome() == schedule.Blocked || !info.IsDependencyFailure() || !slices.Equal(info.BlockedBy(), []manifest.NamedResource{ghost}) {
+			if result.Assessment.Outcome() == schedule.Blocked || !info.IsDependencyFailure() ||
+				!slices.Equal(info.BlockedBy(), []manifest.NamedResource{ghost}) {
 				t.Fatalf("derived failure = %+v, want ghost blocker", info)
 			}
 			o.store.AddObject(&manifest.Kustomization{Name: ghost.Name, Namespace: ghost.Namespace})
 			o.store.UpdateStatus(ghost, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
-			o.tasks.Go(t.Context(), "dispatch fixture", func(ctx context.Context) { result = d.Dispatch(ctx, victim, manifest.DrainNone) })
+			o.tasks.Go(
+				t.Context(),
+				"dispatch fixture",
+				func(ctx context.Context) { result = d.Dispatch(ctx, victim, manifest.DrainNone) },
+			)
 			o.tasks.BlockTillDone()
 			info, _ = o.store.GetStatus(victim)
-			if result.Assessment.Outcome() == schedule.Blocked || info.Status != store.StatusReady || len(info.BlockedBy()) != 0 || len(o.store.FailedResources()) != 0 {
-				t.Fatalf("recovery status=%+v blockers=%v failures=%v", info, info.BlockedBy(), o.store.FailedResources())
+			if result.Assessment.Outcome() == schedule.Blocked || info.Status != store.StatusReady ||
+				len(info.BlockedBy()) != 0 ||
+				len(o.store.FailedResources()) != 0 {
+				t.Fatalf(
+					"recovery status=%+v blockers=%v failures=%v",
+					info,
+					info.BlockedBy(),
+					o.store.FailedResources(),
+				)
 			}
 			ks, _ := o.store.Get[*manifest.Kustomization](victim)
 			ks = ks.Clone()
 			ks.Path = "./missing-directory"
 			o.store.AddObject(ks)
-			o.store.UpdateFailure(victim, &manifest.DependencyFailedError{Parent: victim, Failed: []manifest.NamedResource{ghost}})
-			o.tasks.Go(t.Context(), "dispatch fixture", func(ctx context.Context) { result = d.Dispatch(ctx, victim, manifest.DrainNone) })
+			o.store.UpdateFailure(
+				victim,
+				&manifest.DependencyFailedError{Parent: victim, Failed: []manifest.NamedResource{ghost}},
+			)
+			o.tasks.Go(
+				t.Context(),
+				"dispatch fixture",
+				func(ctx context.Context) { result = d.Dispatch(ctx, victim, manifest.DrainNone) },
+			)
 			o.tasks.BlockTillDone()
 			info, _ = o.store.GetStatus(victim)
-			if result.Assessment.Outcome() == schedule.Blocked || info.Status != store.StatusFailed || len(info.BlockedBy()) != 0 {
+			if result.Assessment.Outcome() == schedule.Blocked || info.Status != store.StatusFailed ||
+				len(info.BlockedBy()) != 0 {
 				t.Fatalf("primary failure misclassified: status=%+v blockers=%v", info, info.BlockedBy())
 			}
 			t.Run("released pin recovery", func(t *testing.T) {
 				t.Parallel()
-				o, err := newTestOrchestrator(t, Tree{Path: dir, RepoRoot: dir}, Config{WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: workers})
+				o, err := newTestOrchestrator(
+					t,
+					Tree{Path: dir, RepoRoot: dir},
+					Config{WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: workers},
+				)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -159,46 +229,56 @@ func TestDAGDispatcher_RecoveredAndPrimaryFailures(t *testing.T) {
 				consumer := ks.Clone()
 				consumer.Name, consumer.Path, consumer.DependsOn = "released-consumer", "./consumer", nil
 				consumer.SourceRef.Kind, consumer.SourceRef.Name = manifest.KindOCIRepository, "app"
-				repo := &manifest.OCIRepository{Name: "app", Namespace: consumer.Namespace, URL: "oci://fixture.invalid/app"}
+				repo := &manifest.OCIRepository{
+					Name:      "app",
+					Namespace: consumer.Namespace,
+					URL:       "oci://fixture.invalid/app",
+				}
 				fetcher := &generatedOCIFetcher{root: dir}
 				o.src.Fetchers[manifest.KindOCIRepository] = fetcher
 				o.src.StartLifecycle()
 				o.ksc.StartLifecycle()
 				o.store.AddObject(repo)
 				o.store.AddObject(consumer)
-				o.store.SetArtifact(repo.Named(), &store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: dir, Key: "fixture"})
+				o.store.SetArtifact(
+					repo.Named(),
+					&store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: dir, Key: "fixture"},
+				)
 				o.store.UpdateStatus(repo.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 				attempted, acquired := make(chan struct{}), make(chan struct{})
-				dispatch := fixtureDispatcher{store: o.store, dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
-					assert.Equal(t, level, manifest.DrainNone)
-					if id == repo.Named() {
-						o.tasks.YieldSlot(func() {
-							select {
-							case <-attempted:
-							case <-ctx.Done():
-							}
-						})
+				dispatch := fixtureDispatcher{
+					store: o.store,
+					dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+						assert.Equal(t, level, manifest.DrainNone)
+						if id == repo.Named() {
+							o.tasks.YieldSlot(func() {
+								select {
+								case <-attempted:
+								case <-ctx.Done():
+								}
+							})
+							result := d.Dispatch(ctx, id, level)
+							info, _ := o.store.GetStatus(id)
+							assert.Equal(t, info.Status, store.StatusReady)
+							assert.Equal(t, fetcher.fetched.Load(), true)
+							close(acquired)
+							return result
+						}
 						result := d.Dispatch(ctx, id, level)
-						info, _ := o.store.GetStatus(id)
-						assert.Equal(t, info.Status, store.StatusReady)
-						assert.Equal(t, fetcher.fetched.Load(), true)
-						close(acquired)
+						if result.Assessment.Outcome() == schedule.Blocked {
+							assert.Diff(t, result.Assessment.(*base.Execution).Blocked, []schedule.NodeID{repo.Named()})
+							close(attempted)
+							// Ready must precede the consumer's first blocked-edge registration.
+							o.tasks.YieldSlot(func() {
+								select {
+								case <-acquired:
+								case <-ctx.Done():
+								}
+							})
+						}
 						return result
-					}
-					result := d.Dispatch(ctx, id, level)
-					if result.Assessment.Outcome() == schedule.Blocked {
-						assert.Diff(t, result.Assessment.(*base.Execution).Blocked, []schedule.NodeID{repo.Named()})
-						close(attempted)
-						// Ready must precede the consumer's first blocked-edge registration.
-						o.tasks.YieldSlot(func() {
-							select {
-							case <-acquired:
-							case <-ctx.Done():
-							}
-						})
-					}
-					return result
-				}}
+					},
+				}
 				sched := schedule.New(o.tasks, dispatch)
 				unsubscribe := o.watchDAG(sched)
 				defer unsubscribe()
@@ -230,7 +310,11 @@ func TestDAG_RedispatchErrorPropagates(t *testing.T) {
 	testutil.WriteFile(t, dir, "flux/app.yaml", ksYAML("app", "app", ""))
 	testutil.WriteFile(t, dir, "app/kustomization.yaml", "resources:\n- cm.yaml\n")
 	testutil.WriteFile(t, dir, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: app}\ndata: {k: v}\n")
-	o, err := newTestOrchestrator(t, Tree{Path: dir, RepoRoot: dir}, Config{WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: 2})
+	o, err := newTestOrchestrator(
+		t,
+		Tree{Path: dir, RepoRoot: dir},
+		Config{WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: 2},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +348,8 @@ func TestSourceFetchers_ExistenceOnlyDisabled(t *testing.T) {
 	t.Cleanup(func() { o.stop() })
 	repo := &manifest.HelmRepository{Name: "repo", Namespace: "ns", URL: "https://charts.example"}
 	o.store.AddObject(repo)
-	if f, registered := o.src.Fetchers[manifest.KindHelmRepository]; !registered || f != nil || !o.schedulable(repo) || !slices.Contains(o.seedNodes(), repo.Named()) {
+	if f, registered := o.src.Fetchers[manifest.KindHelmRepository]; !registered || f != nil || !o.schedulable(repo) ||
+		!slices.Contains(o.seedNodes(), repo.Named()) {
 		t.Fatal("default nil reservation did not enable scheduling")
 	}
 	delete(o.src.Fetchers, manifest.KindHelmRepository)

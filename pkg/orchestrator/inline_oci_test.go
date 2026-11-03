@@ -14,15 +14,16 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/opencontainers/go-digest"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"sigs.k8s.io/yaml"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
-	"github.com/opencontainers/go-digest"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"sigs.k8s.io/yaml"
 )
 
 type inlineChartRegistry struct {
@@ -43,9 +44,15 @@ func newInlineChartRegistry(t *testing.T, files []map[string]string, auth bool) 
 	}
 	for i, files := range files {
 		chart := testutil.TarGz(t, files, 0o644, gzip.DefaultCompression)
-		image := ocispec.Manifest{SchemaVersion: 2, MediaType: ocispec.MediaTypeImageManifest,
-			Config: descriptor([]byte(`{}`), "application/vnd.cncf.helm.config.v1+json"),
-			Layers: []ocispec.Descriptor{descriptor([]byte("unrelated provenance layer"), "application/vnd.cncf.helm.chart.provenance.v1.prov"), descriptor(chart, "application/vnd.cncf.helm.chart.content.v1.tar+gzip")}}
+		image := ocispec.Manifest{
+			SchemaVersion: 2,
+			MediaType:     ocispec.MediaTypeImageManifest,
+			Config:        descriptor([]byte(`{}`), "application/vnd.cncf.helm.config.v1+json"),
+			Layers: []ocispec.Descriptor{
+				descriptor([]byte("unrelated provenance layer"), "application/vnd.cncf.helm.chart.provenance.v1.prov"),
+				descriptor(chart, "application/vnd.cncf.helm.chart.content.v1.tar+gzip"),
+			},
+		}
 		body, err := json.Marshal(image)
 		assert.NoError(t, err)
 		hash := digest.FromBytes(body).String()
@@ -138,8 +145,12 @@ func TestRender_InlineOCIRegistryParity(t *testing.T) {
 		name                                 string
 		digest, extract, auth, disable, fail bool
 	}{
-		{name: "tag"}, {name: "digest", digest: true}, {name: "extract", extract: true},
-		{name: "credentials", auth: true}, {name: "tracking_disabled", disable: true}, {name: "registry_failure", fail: true},
+		{name: "tag"},
+		{name: "digest", digest: true},
+		{name: "extract", extract: true},
+		{name: "credentials", auth: true},
+		{name: "tracking_disabled", disable: true},
+		{name: "registry_failure", fail: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			registry := newInlineChartRegistry(t, []map[string]string{inlineChartFiles(t)}, tc.auth)
@@ -148,7 +159,10 @@ func TestRender_InlineOCIRegistryParity(t *testing.T) {
 				fields["ref"] = map[string]any{"digest": registry.digest}
 			}
 			if tc.extract {
-				fields["layerSelector"] = map[string]any{"mediaType": "application/vnd.cncf.helm.chart.content.v1.tar+gzip", "operation": "extract"}
+				fields["layerSelector"] = map[string]any{
+					"mediaType": "application/vnd.cncf.helm.chart.content.v1.tar+gzip",
+					"operation": "extract",
+				}
 			}
 			if tc.auth {
 				fields["secretRef"] = map[string]any{"name": "pull"}
@@ -166,9 +180,17 @@ func TestRender_InlineOCIRegistryParity(t *testing.T) {
 				if entry == "chartRef" {
 					sourceSpec := manifest.DeepCopyMap(template)
 					if sourceSpec["layerSelector"] == nil {
-						sourceSpec["layerSelector"] = map[string]any{"mediaType": "application/vnd.cncf.helm.chart.content.v1.tar+gzip", "operation": "copy"}
+						sourceSpec["layerSelector"] = map[string]any{
+							"mediaType": "application/vnd.cncf.helm.chart.content.v1.tar+gzip",
+							"operation": "copy",
+						}
 					}
-					source := map[string]any{"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": "OCIRepository", "metadata": map[string]any{"name": "chart", "namespace": "apps"}, "spec": sourceSpec}
+					source := map[string]any{
+						"apiVersion": "source.toolkit.fluxcd.io/v1",
+						"kind":       "OCIRepository",
+						"metadata":   map[string]any{"name": "chart", "namespace": "apps"},
+						"spec":       sourceSpec,
+					}
 					body, err := yaml.Marshal(source)
 					assert.NoError(t, err)
 					testutil.WriteFile(t, root, "apps/source.yaml", string(body))
@@ -179,9 +201,21 @@ func TestRender_InlineOCIRegistryParity(t *testing.T) {
 				if tc.auth {
 					resources += ", pull.yaml"
 					host := strings.TrimSuffix(strings.TrimPrefix(registry.url, "oci://"), "/demo")
-					credentials, err := json.Marshal(map[string]any{"auths": map[string]any{host: map[string]any{"username": "fixture", "password": "fixture-password"}}})
+					credentials, err := json.Marshal(
+						map[string]any{
+							"auths": map[string]any{
+								host: map[string]any{"username": "fixture", "password": "fixture-password"},
+							},
+						},
+					)
 					assert.NoError(t, err)
-					secret := map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": "pull", "namespace": "apps"}, "type": "kubernetes.io/dockerconfigjson", "stringData": map[string]any{".dockerconfigjson": string(credentials)}}
+					secret := map[string]any{
+						"apiVersion": "v1",
+						"kind":       "Secret",
+						"metadata":   map[string]any{"name": "pull", "namespace": "apps"},
+						"type":       "kubernetes.io/dockerconfigjson",
+						"stringData": map[string]any{".dockerconfigjson": string(credentials)},
+					}
 					secretBody, err := yaml.Marshal(secret)
 					assert.NoError(t, err)
 					testutil.WriteFile(t, root, "apps/pull.yaml", string(secretBody))
@@ -190,12 +224,22 @@ func TestRender_InlineOCIRegistryParity(t *testing.T) {
 				body, err := yaml.Marshal(doc)
 				assert.NoError(t, err)
 				testutil.WriteFile(t, root, "apps/release.yaml", string(body))
-				cfg := Config{Concurrency: 2, CacheDir: t.TempDir(), HelmOptions: helm.Options{DisableChartDigestTracking: tc.disable}, SourceRetry: sourcecache.RetryConfig{Attempts: 1}}
+				cfg := Config{
+					Concurrency: 2,
+					CacheDir:    t.TempDir(),
+					HelmOptions: helm.Options{DisableChartDigestTracking: tc.disable},
+					SourceRetry: sourcecache.RetryConfig{Attempts: 1},
+				}
 				o, err := newTestOrchestrator(t, Tree{Path: filepath.Join(root, "cluster"), RepoRoot: root}, cfg)
 				assert.NoError(t, err)
 				result, renderErr := o.render(t.Context())
 				id := testutil.HelmReleaseID("apps", "demo")
-				sourceID := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "apps-demo"}
+				sourceID := manifest.NamedResource{
+					Group:     manifest.SourceDomain,
+					Kind:      manifest.KindOCIRepository,
+					Namespace: "apps",
+					Name:      "apps-demo",
+				}
 				if entry == "chartRef" {
 					sourceID.Name = "chart"
 				}
@@ -242,11 +286,20 @@ func TestRenderTrees_InlineOCIIndependentGenerations(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			first := inlineChartFiles(t)
 			second := maps.Clone(first)
-			second["demo/templates/configmap.yaml"] = strings.Replace(second["demo/templates/configmap.yaml"], "payload: first", "payload: second", 1)
+			second["demo/templates/configmap.yaml"] = strings.Replace(
+				second["demo/templates/configmap.yaml"],
+				"payload: first",
+				"payload: second",
+				1,
+			)
 			registry := newInlineChartRegistry(t, []map[string]string{first, second}, false)
 			var trees []Tree
 			for i, side := range []manifest.TreeSide{manifest.TreeBase, manifest.TreeHead} {
-				root, doc := inlineChartRepository(t, registry.url, map[string]any{"ref": map[string]any{"tag": "0.1.0"}})
+				root, doc := inlineChartRepository(
+					t,
+					registry.url,
+					map[string]any{"ref": map[string]any{"tag": "0.1.0"}},
+				)
 				sibling := manifest.DeepCopyMap(doc)
 				sibling["metadata"].(map[string]any)["name"] = "sibling"
 				siblingSpec := sibling["spec"].(map[string]any)
@@ -264,16 +317,33 @@ func TestRenderTrees_InlineOCIIndependentGenerations(t *testing.T) {
 				case "digest":
 					sourceSpec["ref"] = map[string]any{"digest": registry.digests[i]}
 				case "layer_selector":
-					sourceSpec["layerSelector"] = map[string]any{"mediaType": "application/vnd.cncf.helm.chart.content.v1.tar+gzip", "operation": []string{"copy", "extract"}[i]}
+					sourceSpec["layerSelector"] = map[string]any{
+						"mediaType": "application/vnd.cncf.helm.chart.content.v1.tar+gzip",
+						"operation": []string{"copy", "extract"}[i],
+					}
 				case "helm_chart":
-					repository := map[string]any{"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": "HelmRepository", "metadata": map[string]any{"name": "repository", "namespace": "apps"}, "spec": map[string]any{"url": strings.TrimSuffix(registry.url, "/demo"), "type": "oci", "insecure": true}}
+					repository := map[string]any{
+						"apiVersion": "source.toolkit.fluxcd.io/v1",
+						"kind":       "HelmRepository",
+						"metadata":   map[string]any{"name": "repository", "namespace": "apps"},
+						"spec": map[string]any{
+							"url":      strings.TrimSuffix(registry.url, "/demo"),
+							"type":     "oci",
+							"insecure": true,
+						},
+					}
 					body, err = yaml.Marshal(repository)
 					assert.NoError(t, err)
 					testutil.WriteFile(t, root, "apps/source.yaml", string(body))
 					testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [release.yaml, source.yaml]\n")
 					if side == manifest.TreeBase {
 						chart["kind"] = manifest.KindHelmChart
-						chart["spec"] = map[string]any{"chart": "demo", "version": "0.1.0", "interval": "1m", "sourceRef": map[string]any{"kind": "HelmRepository", "name": "repository"}}
+						chart["spec"] = map[string]any{
+							"chart":     "demo",
+							"version":   "0.1.0",
+							"interval":  "1m",
+							"sourceRef": map[string]any{"kind": "HelmRepository", "name": "repository"},
+						}
 					}
 				}
 				if side == manifest.TreeHead {
@@ -287,12 +357,25 @@ func TestRenderTrees_InlineOCIIndependentGenerations(t *testing.T) {
 					case "interval":
 						sourceSpec["interval"] = "2m"
 					case "chart_ref":
-						sourceSpec["layerSelector"] = map[string]any{"mediaType": "application/vnd.cncf.helm.chart.content.v1.tar+gzip", "operation": "copy"}
-						source := map[string]any{"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": "OCIRepository", "metadata": map[string]any{"name": "chart", "namespace": "apps"}, "spec": sourceSpec}
+						sourceSpec["layerSelector"] = map[string]any{
+							"mediaType": "application/vnd.cncf.helm.chart.content.v1.tar+gzip",
+							"operation": "copy",
+						}
+						source := map[string]any{
+							"apiVersion": "source.toolkit.fluxcd.io/v1",
+							"kind":       "OCIRepository",
+							"metadata":   map[string]any{"name": "chart", "namespace": "apps"},
+							"spec":       sourceSpec,
+						}
 						body, err = yaml.Marshal(source)
 						assert.NoError(t, err)
 						testutil.WriteFile(t, root, "apps/source.yaml", string(body))
-						testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [release.yaml, source.yaml]\n")
+						testutil.WriteFile(
+							t,
+							root,
+							"apps/kustomization.yaml",
+							"resources: [release.yaml, source.yaml]\n",
+						)
 						delete(spec, "chart")
 						spec["chartRef"] = map[string]any{"kind": "OCIRepository", "name": "chart"}
 					}
@@ -300,13 +383,29 @@ func TestRenderTrees_InlineOCIIndependentGenerations(t *testing.T) {
 				body, err = yaml.Marshal(doc)
 				assert.NoError(t, err)
 				testutil.WriteFile(t, root, "apps/release.yaml", string(body))
-				trees = append(trees, Tree{ID: manifest.TreeID{Cluster: ".", Side: side}, Path: filepath.Join(root, "cluster"), RepoRoot: root})
+				trees = append(
+					trees,
+					Tree{
+						ID:       manifest.TreeID{Cluster: ".", Side: side},
+						Path:     filepath.Join(root, "cluster"),
+						RepoRoot: root,
+					},
+				)
 			}
 			id := testutil.HelmReleaseID("apps", "demo")
-			sourceID := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "apps-demo"}
+			sourceID := manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindOCIRepository,
+				Namespace: "apps",
+				Name:      "apps-demo",
+			}
 			var expected [2][]map[string]any
 			for round := range 2 {
-				runs, err := RenderTrees(t.Context(), trees, Config{Concurrency: 2, CacheDir: t.TempDir(), SourceRetry: sourcecache.RetryConfig{Attempts: 1}})
+				runs, err := RenderTrees(
+					t.Context(),
+					trees,
+					Config{Concurrency: 2, CacheDir: t.TempDir(), SourceRetry: sourcecache.RetryConfig{Attempts: 1}},
+				)
 				if (err != nil) != (mode == "failed_head") {
 					t.Fatalf("paired render error=%v", err)
 				}
@@ -317,7 +416,8 @@ func TestRenderTrees_InlineOCIIndependentGenerations(t *testing.T) {
 						t.Fatal("template declaration selected unchanged sibling")
 					}
 					if mode == "no_op" {
-						if len(outputByParent(run.Result.Manifests)[id]) != 0 || run.Store().GetObject(sourceID) != nil {
+						if len(outputByParent(run.Result.Manifests)[id]) != 0 ||
+							run.Store().GetObject(sourceID) != nil {
 							t.Fatal("unchanged template published generated or rendered output")
 						}
 						continue
@@ -345,7 +445,9 @@ func TestRenderTrees_InlineOCIIndependentGenerations(t *testing.T) {
 						content = i
 					}
 					artifact, ok := run.Store().GetArtifact(currentSource, store.ArtifactContent).(*store.SourceArtifact)
-					if !ok || currentSource.Kind == manifest.KindOCIRepository && artifact.Digest != registry.digests[content] {
+					if !ok ||
+						currentSource.Kind == manifest.KindOCIRepository &&
+							artifact.Digest != registry.digests[content] {
 						t.Fatalf("side %d borrowed another generation: %+v", i, artifact)
 					}
 					docs := outputByParent(run.Result.Manifests)[id]

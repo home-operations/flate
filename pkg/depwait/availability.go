@@ -42,15 +42,23 @@ func (w *Waiter) Available(ctx context.Context, dep DataDependency, level manife
 		if cl.Err != nil {
 			return availability{Err: cl.Err}
 		}
-		if cl.Kind == schedule.Blocked || cl.Kind == schedule.Terminal && level < manifest.DrainForce && slices.Contains(pending, producer) {
+		if cl.Kind == schedule.Blocked ||
+			cl.Kind == schedule.Terminal && level < manifest.DrainForce && slices.Contains(pending, producer) {
 			blocked = append(blocked, producer)
 		}
 		if cl.Kind == schedule.DependencyFailed && !dep.Optional && !dep.AllowMissing && !dep.Input.AllowsAbsence() {
-			if status, _ := w.Store.GetStatus(producer); status.Status != store.StatusFailed || w.blocksParent(producer) {
+			if status, _ := w.Store.GetStatus(
+				producer,
+			); status.Status != store.StatusFailed ||
+				w.blocksParent(producer) {
 				if status.Status == store.StatusFailed {
 					cl.Message, cl.Causes = "not ready", nil
 				}
-				return availability{Kind: cl.Kind, Reason: cl.DiagnosticReason(producer), Failed: []manifest.NamedResource{producer}}
+				return availability{
+					Kind:   cl.Kind,
+					Reason: cl.DiagnosticReason(producer),
+					Failed: []manifest.NamedResource{producer},
+				}
 			}
 		}
 	}
@@ -65,7 +73,13 @@ func (w *Waiter) Available(ctx context.Context, dep DataDependency, level manife
 		if allowed {
 			return availability{Kind: schedule.Terminal, Omit: true}
 		}
-		return availability{Kind: schedule.DependencyFailed, Reason: manifest.DiagnosticReason{Subject: manifest.DiagnosticFor(dep.NamedResource, w.Store.GetObject(dep.NamedResource)), Message: "dependency not found"}}
+		return availability{
+			Kind: schedule.DependencyFailed,
+			Reason: manifest.DiagnosticReason{
+				Subject: manifest.DiagnosticFor(dep.NamedResource, w.Store.GetObject(dep.NamedResource)),
+				Message: "dependency not found",
+			},
+		}
 	}
 	if allowed && !dep.Input.Offline {
 		return availability{Kind: schedule.Terminal, Omit: true}
@@ -75,13 +89,23 @@ func (w *Waiter) Available(ctx context.Context, dep DataDependency, level manife
 		return availability{Err: cl.Err}
 	}
 	if cl.Kind == schedule.Blocked {
-		return availability{Kind: cl.Kind, Reason: cl.DiagnosticReason(dep.NamedResource), Blocked: []manifest.NamedResource{dep.NamedResource}}
+		return availability{
+			Kind:    cl.Kind,
+			Reason:  cl.DiagnosticReason(dep.NamedResource),
+			Blocked: []manifest.NamedResource{dep.NamedResource},
+		}
 	}
 	if allowed {
 		return availability{Kind: schedule.Terminal, Omit: true}
 	}
 	if cl.Kind == schedule.Terminal {
-		return availability{Kind: schedule.DependencyFailed, Reason: manifest.DiagnosticReason{Subject: manifest.DiagnosticFor(dep.NamedResource, w.Store.GetObject(dep.NamedResource)), Message: "dependency not found"}}
+		return availability{
+			Kind: schedule.DependencyFailed,
+			Reason: manifest.DiagnosticReason{
+				Subject: manifest.DiagnosticFor(dep.NamedResource, w.Store.GetObject(dep.NamedResource)),
+				Message: "dependency not found",
+			},
+		}
 	}
 	return availability{Kind: cl.Kind, Reason: cl.DiagnosticReason(dep.NamedResource)}
 }

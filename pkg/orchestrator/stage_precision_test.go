@@ -134,7 +134,14 @@ func TestRenderTrees_HelmStagePrecision(t *testing.T) {
 				cacheDir := t.TempDir()
 				for run := range 2 {
 					runs, helm, builds := stagePrecisionRun(t, trees, cacheDir, run)
-					t.Logf("STAGE_COUNT shape=%s field=%s run=%d parent=%d helm=%d", shape.name, field, run, builds["./"+shape.path], helm)
+					t.Logf(
+						"STAGE_COUNT shape=%s field=%s run=%d parent=%d helm=%d",
+						shape.name,
+						field,
+						run,
+						builds["./"+shape.path],
+						helm,
+					)
 					assert.Equal(t, helm, 0)
 					assert.Diff(t, string(stagePrecisionDiff(t, runs)), string(want))
 				}
@@ -195,7 +202,12 @@ func TestRenderTrees_EffectiveGlobalVariable(t *testing.T) {
 	cacheDir := t.TempDir()
 	for run := range 2 {
 		runs, _, builds := stagePrecisionRun(t, trees, cacheDir, run)
-		t.Logf("STAGE_COUNT shape=angelnu field=NFS_MUSIC run=%d effective=%d unrelated=%d", run, builds["./music"], builds["./unrelated"])
+		t.Logf(
+			"STAGE_COUNT shape=angelnu field=NFS_MUSIC run=%d effective=%d unrelated=%d",
+			run,
+			builds["./music"],
+			builds["./unrelated"],
+		)
 		assert.Equal(t, builds["./unrelated"], 0)
 		if run == 0 {
 			assert.Equal(t, builds["./music"], 2)
@@ -303,7 +315,11 @@ func TestRenderTrees_EffectiveGeneratedVariable(t *testing.T) {
 					t,
 					root,
 					"flux/reader.yaml",
-					substitutionKS("reader", "app", "  postBuild: {substituteFrom: [{kind: ConfigMap, name: settings}]}\n"+tc.fluxPatch),
+					substitutionKS(
+						"reader",
+						"app",
+						"  postBuild: {substituteFrom: [{kind: ConfigMap, name: settings}]}\n"+tc.fluxPatch,
+					),
 				)
 				testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [payload.yaml]\n"+tc.packageBody)
 				testutil.WriteFile(

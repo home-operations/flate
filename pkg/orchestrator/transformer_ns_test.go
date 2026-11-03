@@ -52,7 +52,16 @@ resources:
 	// Leaf Flux KS — no targetNamespace in the file; it is supplied by
 	// the overlay's transformer. No other KS covers its path, so flate
 	// has no structural parent to gate its first render on.
-	testutil.WriteFile(t, dir, "apps/myapp/myapp/ks.yaml", testutil.KustomizationYAML("myapp", "flux-system", "  path: ./apps/myapp/myapp/app\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n    namespace: flux-system\n"))
+	testutil.WriteFile(
+		t,
+		dir,
+		"apps/myapp/myapp/ks.yaml",
+		testutil.KustomizationYAML(
+			"myapp",
+			"flux-system",
+			"  path: ./apps/myapp/myapp/app\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n    namespace: flux-system\n",
+		),
+	)
 	testutil.WriteFile(t, dir, "apps/myapp/myapp/app/kustomization.yaml", "resources:\n  - ./helmrelease.yaml\n")
 	// Namespace-less, suspended HR — suspend keeps the controller from
 	// reaching for a chart, so the test asserts the rendered namespace
@@ -68,7 +77,11 @@ spec:
     name: myapp
 `)
 
-	renderedSingleton1, err := RenderTrees(t.Context(), []Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true, Concurrency: 4})
+	renderedSingleton1, err := RenderTrees(
+		t.Context(),
+		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
+		Config{WipeSecrets: true, Concurrency: 4},
+	)
 	if len(renderedSingleton1) != 1 {
 		t.Fatalf("missing render: %v", err)
 	}
@@ -106,10 +119,32 @@ spec:
 		}
 	}
 
-	testutil.WriteFile(t, dir, "apps/shared/kustomization.yaml", "namespace: other\nresources: [../myapp/myapp/ks.yaml]\npatches:\n- target: {kind: Kustomization}\n  patch: |-\n    - op: add\n      path: /spec/targetNamespace\n      value: other\n")
-	testutil.WriteFile(t, dir, "cluster/ks.yaml", testutil.KustomizationYAML("cluster-a", "flux-system", "  {path: ./apps/myapp}\n")+"---\n"+testutil.KustomizationYAML("cluster-b", "flux-system", "  {path: ./apps/shared}\n"))
+	testutil.WriteFile(
+		t,
+		dir,
+		"apps/shared/kustomization.yaml",
+		"namespace: other\nresources: [../myapp/myapp/ks.yaml]\npatches:\n- target: {kind: Kustomization}\n  patch: |-\n    - op: add\n      path: /spec/targetNamespace\n      value: other\n",
+	)
+	testutil.WriteFile(
+		t,
+		dir,
+		"cluster/ks.yaml",
+		testutil.KustomizationYAML(
+			"cluster-a",
+			"flux-system",
+			"  {path: ./apps/myapp}\n",
+		)+"---\n"+testutil.KustomizationYAML(
+			"cluster-b",
+			"flux-system",
+			"  {path: ./apps/shared}\n",
+		),
+	)
 	path := dir + "/cluster"
-	renderedSingleton2, err := RenderTrees(t.Context(), []Tree{{Path: path, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true, Concurrency: 4})
+	renderedSingleton2, err := RenderTrees(
+		t.Context(),
+		[]Tree{{Path: path, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
+		Config{WipeSecrets: true, Concurrency: 4},
+	)
 	if len(renderedSingleton2) != 1 {
 		t.Fatalf("missing render: %v", err)
 	}
@@ -132,7 +167,16 @@ spec:
 	}
 
 	t.Run("changed_only_second_source", func(t *testing.T) {
-		testutil.WriteFile(t, dir, "apps/myapp/myapp/ks.yaml", testutil.KustomizationYAML("myapp", "flux-system", "  path: ./apps/myapp/myapp/app\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n"))
+		testutil.WriteFile(
+			t,
+			dir,
+			"apps/myapp/myapp/ks.yaml",
+			testutil.KustomizationYAML(
+				"myapp",
+				"flux-system",
+				"  path: ./apps/myapp/myapp/app\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n",
+			),
+		)
 		for _, ns := range []string{"myns", "other"} {
 			testutil.WriteFile(t, dir, "cluster/source-"+ns+".yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
@@ -142,9 +186,11 @@ spec:
 `)
 		}
 		const dirty = "cluster/source-other.yaml"
-		o, err := newTestOrchestrator(t, Tree{Path: path, RepoRoot: dir,
+		o, err := newTestOrchestrator(t, Tree{
+			Path: path, RepoRoot: dir,
 			SelfURLs:        []string{"https://fixture.invalid/cluster"},
-			ExternalChanges: change.NewSet([]string{dirty})}, Config{WipeSecrets: true, Concurrency: 4},
+			ExternalChanges: change.NewSet([]string{dirty}),
+		}, Config{WipeSecrets: true, Concurrency: 4},
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -153,7 +199,12 @@ spec:
 			t.Fatalf("Bootstrap: %v", err)
 		}
 		for _, ns := range []string{"myns", "other"} {
-			source := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: ns, Name: "flux-system"}
+			source := manifest.NamedResource{
+				Group:     "source.toolkit.fluxcd.io",
+				Kind:      manifest.KindGitRepository,
+				Namespace: ns,
+				Name:      "flux-system",
+			}
 			record, ok := o.index.Lookup(source)
 			if !ok || record.File != "cluster/source-"+ns+".yaml" {
 				t.Fatalf("source fixture %s: indexed=%t record=%+v", source, ok, record)
@@ -165,14 +216,28 @@ spec:
 			}
 			id := testutil.KustomizationID(ns, "myapp")
 			record, ok = o.index.Lookup(id)
-			t.Logf("consumer %s: indexed=%t File=%s Authored=%s Refs=%v", id, ok, record.File, record.Authored, record.Refs)
+			t.Logf(
+				"consumer %s: indexed=%t File=%s Authored=%s Refs=%v",
+				id,
+				ok,
+				record.File,
+				record.Authored,
+				record.Refs,
+			)
 			authored := testutil.KustomizationID("flux-system", "myapp")
-			if !ok || record.File != "apps/myapp/myapp/ks.yaml" || record.Authored != authored || !slices.Equal(record.Refs, []manifest.NamedResource{source}) {
+			if !ok || record.File != "apps/myapp/myapp/ks.yaml" || record.Authored != authored ||
+				!slices.Equal(record.Refs, []manifest.NamedResource{source}) {
 				t.Errorf("projected consumer %s: indexed=%t record=%+v", id, ok, record)
 			}
 		}
 		other := testutil.KustomizationID("other", "myapp")
-		t.Logf("dirty=%s ShouldReconcile(%s)=%t keep=%v", dirty, other, o.filter.ShouldReconcile(other), o.filter.KeepNames())
+		t.Logf(
+			"dirty=%s ShouldReconcile(%s)=%t keep=%v",
+			dirty,
+			other,
+			o.filter.ShouldReconcile(other),
+			o.filter.KeepNames(),
+		)
 		if !o.filter.Enabled() || !o.filter.ShouldReconcile(other) {
 			t.Errorf("second-source change did not select %s", other)
 		}

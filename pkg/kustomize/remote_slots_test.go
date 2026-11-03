@@ -3,7 +3,6 @@ package kustomize
 import (
 	"context"
 	"fmt"
-	"github.com/home-operations/flate/internal/testutil"
 	"io"
 	"net/http"
 	"reflect"
@@ -12,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
+
+	"github.com/home-operations/flate/internal/testutil"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -27,7 +28,11 @@ func TestRender_RemoteValidationSlots(t *testing.T) {
 				tasks := task.NewBounded(2)
 				owner := cachetest.New(t, "", sourcecache.New)
 				first, second := make(chan struct{}), make(chan struct{})
-				releaseFirst, releaseSecond := sync.OnceFunc(func() { close(first) }), sync.OnceFunc(func() { close(second) })
+				releaseFirst, releaseSecond := sync.OnceFunc(
+					func() { close(first) },
+				), sync.OnceFunc(
+					func() { close(second) },
+				)
 				defer releaseFirst()
 				defer releaseSecond()
 				entered := make(chan string, 16)
@@ -54,7 +59,11 @@ func TestRender_RemoteValidationSlots(t *testing.T) {
 							body = "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: shared}\n"
 						}
 						if !exercise.Load() {
-							return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+							return &http.Response{
+								StatusCode: http.StatusOK,
+								Header:     make(http.Header),
+								Body:       io.NopCloser(strings.NewReader(body)),
+							}, nil
 						}
 						start(r.URL.Path)
 						wait := first
@@ -67,14 +76,21 @@ func TestRender_RemoteValidationSlots(t *testing.T) {
 							close:  func() error { active.Add(-1); return nil },
 						}}, nil
 					}))
-					c.SetGitBaseFetcher(func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-						if exercise.Load() {
-							start("git")
-							defer active.Add(-1)
-							<-second
-						}
-						return &store.SourceArtifact{FS: gitInput, Key: "git-key", Content: "git-key-generation", Revision: "one"}, nil
-					})
+					c.SetGitBaseFetcher(
+						func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+							if exercise.Load() {
+								start("git")
+								defer active.Add(-1)
+								<-second
+							}
+							return &store.SourceArtifact{
+								FS:       gitInput,
+								Key:      "git-key",
+								Content:  "git-key-generation",
+								Revision: "one",
+							}, nil
+						},
+					)
 					return c
 				}
 				c := newCache()
@@ -134,10 +150,18 @@ func TestRender_RemoteValidationSlots(t *testing.T) {
 							path = "/b"
 						}
 						input := memoryTree(t, map[string]string{
-							"kustomization.yaml": fmt.Sprintf("resources:\n- https://example.invalid%s\n- git::https://example.invalid/base.git//app?ref=main\n- https://example.invalid/shared\n", path),
+							"kustomization.yaml": fmt.Sprintf(
+								"resources:\n- https://example.invalid%s\n- git::https://example.invalid/base.git//app?ref=main\n- https://example.invalid/shared\n",
+								path,
+							),
 						})
 						out, _, err := testutil.RenderMaps(Render(t.Context(), c, RenderRequest{
-							Source: &store.SourceArtifact{FS: input}, Spec: demoSpec, HeldSlot: held, Label: fmt.Sprintf("/source-%d", index),
+							Source: &store.SourceArtifact{
+								FS: input,
+							},
+							Spec:     demoSpec,
+							HeldSlot: held,
+							Label:    fmt.Sprintf("/source-%d", index),
 						}, sourcecache.RetryConfig{}))
 						results <- result{out: out, err: err}
 					}

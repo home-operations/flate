@@ -16,10 +16,24 @@ import (
 
 func BenchmarkCollectHRDeps(b *testing.B) {
 	id := testutil.HelmReleaseID("apps", "target")
-	hr := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", DependsOn: []helmv2.DependencyReference{{Name: id.Name, Namespace: id.Namespace}}}
+	hr := &manifest.HelmRelease{
+		Name:      "consumer",
+		Namespace: "apps",
+		DependsOn: []helmv2.DependencyReference{{Name: id.Name, Namespace: id.Namespace}},
+	}
 	st := store.New()
 	c := gateExecution(New(st, nil), manifest.NamedResource{})
-	admissionLoader1 := admissiontest.New(b, admissiontest.Config{Changes: change.NewSet([]string{"target.yaml"}), Index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "target.yaml"}}}, Inventory: st, Root: ""})
+	admissionLoader1 := admissiontest.New(
+		b,
+		admissiontest.Config{
+			Changes: change.NewSet([]string{"target.yaml"}),
+			Index: &manifest.DiscoveryIndex{
+				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "target.yaml"}},
+			},
+			Inventory: st,
+			Root:      "",
+		},
+	)
 	admissiontest.Commit(b, admissionLoader1, nil)
 	c.Configure(Options{Filter: admissionLoader1.Options.Filter, Loader: admissionLoader1})
 	b.ReportAllocs()
@@ -46,7 +60,11 @@ func TestController_CollectHRDepsOrderingFilter(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			target := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "target", Namespace: "apps"}
+			target := &manifest.HelmRelease{
+				ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"},
+				Name:      "target",
+				Namespace: "apps",
+			}
 			var changes *change.Set
 			if tc.active {
 				files := []string{"consumer.yaml"}
@@ -55,13 +73,39 @@ func TestController_CollectHRDepsOrderingFilter(t *testing.T) {
 				}
 				changes = change.NewSet(files)
 			}
-			hr := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "consumer", Namespace: "apps", DependsOn: []helmv2.DependencyReference{{Name: target.Name, Namespace: target.Namespace, ReadyExpr: "dep.spec.suspend == false"}}}
-			filterLoader := admissiontest.New(t, admissiontest.Config{Changes: changes, Index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{hr.Named(): {File: "consumer.yaml"}, target.Named(): {File: "target.yaml"}}}, Inventory: store.New(), Root: ""})
+			hr := &manifest.HelmRelease{
+				ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"},
+				Name:      "consumer",
+				Namespace: "apps",
+				DependsOn: []helmv2.DependencyReference{
+					{Name: target.Name, Namespace: target.Namespace, ReadyExpr: "dep.spec.suspend == false"},
+				},
+			}
+			filterLoader := admissiontest.New(
+				t,
+				admissiontest.Config{
+					Changes: changes,
+					Index: &manifest.DiscoveryIndex{
+						Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+							hr.Named():     {File: "consumer.yaml"},
+							target.Named(): {File: "target.yaml"},
+						},
+					},
+					Inventory: store.New(),
+					Root:      "",
+				},
+			)
 			admissiontest.Commit(t, filterLoader, nil)
 			filter := filterLoader.Options.Filter
 			st := store.New()
 			c := gateExecution(New(st, task.NewBounded(2)), manifest.NamedResource{})
-			c.Configure(Options{Filter: filter, Existence: indexedOrderingDeps{target.Named(): tc.indexed}, Loader: filterLoader})
+			c.Configure(
+				Options{
+					Filter:    filter,
+					Existence: indexedOrderingDeps{target.Named(): tc.indexed},
+					Loader:    filterLoader,
+				},
+			)
 			if tc.present {
 				st.AddObject(target)
 				st.UpdateStatus(target.Named(), store.StatusInfo{Status: tc.status, Reason: "", Message: "fixture"})
@@ -69,7 +113,9 @@ func TestController_CollectHRDepsOrderingFilter(t *testing.T) {
 			size := len(filter.KeepNames())
 			var want []manifest.DependencyRef
 			if tc.retain {
-				want = []manifest.DependencyRef{{NamedResource: target.Named(), ReadyExpr: new("dep.spec.suspend == false")}}
+				want = []manifest.DependencyRef{
+					{NamedResource: target.Named(), ReadyExpr: new("dep.spec.suspend == false")},
+				}
 			}
 			assert.Diff(t, sortedDependencies(c.dependencies(hr, manifest.GateInputs)), sortedDependencies(want))
 			if len(filter.KeepNames()) != size || len(hr.DependsOn) != 1 {
@@ -81,10 +127,27 @@ func TestController_CollectHRDepsOrderingFilter(t *testing.T) {
 
 func TestController_CollectHRDepsClone(t *testing.T) {
 	c := gateExecution(New(store.New(), task.NewBounded(2)), manifest.NamedResource{})
-	hr := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "demo", Namespace: "default", DependsOn: []helmv2.DependencyReference{{Namespace: "default", Name: "other"}, {Name: "second"}, {Name: "third"}}}
+	hr := &manifest.HelmRelease{
+		ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"},
+		Name:      "demo",
+		Namespace: "default",
+		DependsOn: []helmv2.DependencyReference{
+			{Namespace: "default", Name: "other"},
+			{Name: "second"},
+			{Name: "third"},
+		},
+	}
 	assert.Equal(t, testing.AllocsPerRun(100, func() { c.dependencies(hr, manifest.GateInputs) }), float64(1))
 	got := c.dependencies(hr, manifest.GateInputs)
-	assert.Diff(t, got, []manifest.DependencyRef{{NamedResource: testutil.HelmReleaseID("default", "other")}, {NamedResource: testutil.HelmReleaseID("default", "second")}, {NamedResource: testutil.HelmReleaseID("default", "third")}})
+	assert.Diff(
+		t,
+		got,
+		[]manifest.DependencyRef{
+			{NamedResource: testutil.HelmReleaseID("default", "other")},
+			{NamedResource: testutil.HelmReleaseID("default", "second")},
+			{NamedResource: testutil.HelmReleaseID("default", "third")},
+		},
+	)
 	got[0].Name = "mutated"
 	assert.Equal(t, hr.DependsOn[0].Name, "other")
 }
@@ -92,8 +155,11 @@ func TestController_CollectHRDepsClone(t *testing.T) {
 func TestDependencies_HelmRelease_ArtifactStages(t *testing.T) {
 	t.Parallel()
 	hr := &manifest.HelmRelease{
-		Name: "consumer", Namespace: "apps",
-		Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Name: "chart"}},
+		Name:      "consumer",
+		Namespace: "apps",
+		Chart: manifest.HelmChart{
+			Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Name: "chart"},
+		},
 	}
 	hr.ChartRef = &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindHelmChart, Name: "chart"}
 	for _, tc := range []struct {
@@ -122,12 +188,21 @@ func TestDependencies_HelmRelease_DeclarationAvailabilityUsesCommonGate(t *testi
 	st := store.New()
 	c := New(st, nil)
 	parent := &manifest.Kustomization{Name: "publisher", Namespace: "apps"}
-	child := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "child", Namespace: "apps"}
+	child := &manifest.HelmRelease{
+		ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"},
+		Name:      "child",
+		Namespace: "apps",
+	}
 	st.AddObjects([]manifest.BaseManifest{parent, child})
 	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-		child.Named(): {Productions: []manifest.Production{{Owner: parent.Named(), Source: manifest.BootstrapSourceID}}},
+		child.Named(): {
+			Productions: []manifest.Production{{Owner: parent.Named(), Source: manifest.BootstrapSourceID}},
+		},
 	}})
-	st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "materializing peers"})
+	st.UpdateStatus(
+		parent.Named(),
+		store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "materializing peers"},
+	)
 	_, _, next := st.GetEmission(parent.Named())
 	defer next.Finish()
 	next.Children = []store.Child{{Obj: child}}

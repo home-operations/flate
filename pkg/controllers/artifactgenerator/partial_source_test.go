@@ -51,20 +51,44 @@ func partialSourcePublication(t *testing.T) []map[string]any {
 			if i != 0 {
 				name = fmt.Sprintf("unrelated-%02d", i)
 			}
-			outputs = append(outputs, map[string]any{"name": name, "copy": []any{map[string]any{"from": "@repo/app/", "to": "@artifact/app/"}}})
+			outputs = append(
+				outputs,
+				map[string]any{
+					"name": name,
+					"copy": []any{map[string]any{"from": "@repo/app/", "to": "@artifact/app/"}},
+				},
+			)
 		}
 		generator, generatorDoc := generatorForTest(t, outputs)
 		st.AddObject(generator, generatorDoc)
-		consumerDoc := map[string]any{"apiVersion": manifest.FluxKustomizeDomain + "/v1", "kind": manifest.KindKustomization, "metadata": map[string]any{"name": "consumer", "namespace": "apps"}, "spec": map[string]any{"interval": "1m", "path": "./app", "sourceRef": map[string]any{"kind": manifest.KindExternalArtifact, "name": "input"}}}
+		consumerDoc := map[string]any{
+			"apiVersion": manifest.FluxKustomizeDomain + "/v1",
+			"kind":       manifest.KindKustomization,
+			"metadata":   map[string]any{"name": "consumer", "namespace": "apps"},
+			"spec": map[string]any{
+				"interval":  "1m",
+				"path":      "./app",
+				"sourceRef": map[string]any{"kind": manifest.KindExternalArtifact, "name": "input"},
+			},
+		}
 		consumer, authoritative, _, err := manifest.ParseDoc(consumerDoc, manifest.ParseDocOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
 		st.AddObject(consumer, authoritative)
-		repo := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "repo"}
+		repo := manifest.NamedResource{
+			Group:     manifest.SourceDomain,
+			Kind:      manifest.KindGitRepository,
+			Namespace: "apps",
+			Name:      "repo",
+		}
 		st.SetArtifact(repo, &store.SourceArtifact{Key: "stable", Content: "stable", FS: fstest.MapFS{
 			"app/kustomization.yaml": {Data: []byte("resources: [cm.yaml]\n")},
-			"app/cm.yaml":            {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: rendered, namespace: apps}\ndata: {value: stable}\n")},
+			"app/cm.yaml": {
+				Data: []byte(
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: rendered, namespace: apps}\ndata: {value: stable}\n",
+				),
+			},
 		}})
 		gen := New(st, bodies, owner)
 		gen.StartLifecycle()
@@ -83,7 +107,11 @@ func partialSourcePublication(t *testing.T) []map[string]any {
 		var captures, publications atomic.Int64
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
-		defer st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) { s.OnArrival(id, id.KindInfo().Runnable) }, false)()
+		defer st.AddListener(
+			store.EventObjectAdded,
+			func(id manifest.NamedResource, _ any) { s.OnArrival(id, id.KindInfo().Runnable) },
+			false,
+		)()
 		for _, event := range []store.EventKind{store.EventStatusUpdated, store.EventArtifactUpdated} {
 			defer st.AddListener(event, func(manifest.NamedResource, any) { s.OnPublication() }, false)()
 		}
@@ -130,13 +158,23 @@ func partialSourcePublication(t *testing.T) []map[string]any {
 		if firstComplete || <-committed {
 			t.Fatal("generator completed before its first partial publication")
 		}
-		input := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: "input"}
+		input := manifest.NamedResource{
+			Group:     manifest.SourceDomain,
+			Kind:      manifest.KindExternalArtifact,
+			Namespace: "apps",
+			Name:      "input",
+		}
 		var runErr error
 		for publication := 2; publication <= unrelated+1; publication++ {
 			synctest.Wait()
 			select {
 			case runErr = <-done:
-				t.Fatalf("convergent generator exhausted consumer budget: captures=%d unrelated=%d error=%v", captures.Load(), publication-1, runErr)
+				t.Fatalf(
+					"convergent generator exhausted consumer budget: captures=%d unrelated=%d error=%v",
+					captures.Load(),
+					publication-1,
+					runErr,
+				)
 			default:
 			}
 			paused := false
@@ -148,7 +186,13 @@ func partialSourcePublication(t *testing.T) []map[string]any {
 				if status.Status != store.StatusReady {
 					cancel()
 					runErr = <-done
-					t.Fatalf("consumer neither captured nor accepted: captures=%d publications=%d status=%+v error=%v", captures.Load(), publications.Load(), status, runErr)
+					t.Fatalf(
+						"consumer neither captured nor accepted: captures=%d publications=%d status=%+v error=%v",
+						captures.Load(),
+						publications.Load(),
+						status,
+						runErr,
+					)
 				}
 			}
 			before := st.GetArtifact(input, store.ArtifactContent)
@@ -169,7 +213,10 @@ func partialSourcePublication(t *testing.T) []map[string]any {
 		}
 		status, _ := st.GetStatus(consumer.Named())
 		inventory, ok := st.GetArtifact(consumer.Named(), store.ArtifactContent).(*store.Emission)
-		if !ok || !inventory.Complete || len(inventory.Manifests) != 1 || inventory.Manifests[0].Document["data"].(map[string]any)["value"] != "stable" || status.Status != store.StatusReady || !s.Results()[consumer.Named()].Assessment.Valid() {
+		if !ok || !inventory.Complete || len(inventory.Manifests) != 1 ||
+			inventory.Manifests[0].Document["data"].(map[string]any)["value"] != "stable" ||
+			status.Status != store.StatusReady ||
+			!s.Results()[consumer.Named()].Assessment.Valid() {
 			t.Fatalf("unaccepted stable consumer: status=%+v inventory=%+v", status, inventory)
 		}
 		assert.Equal(t, captures.Load(), int64(1))

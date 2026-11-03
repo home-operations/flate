@@ -13,7 +13,11 @@ func BenchmarkClassify_Dependency(b *testing.B) {
 	for _, state := range []string{"absent CRD", "present CRD", "ready ConfigMap", "pending Kustomization", "ready Kustomization", "CEL dep only", "CEL same identity", "CEL distinct self"} {
 		b.Run(state, func(b *testing.B) {
 			s := store.New()
-			id := manifest.NamedResource{Group: apix.GroupName, Kind: manifest.KindCustomResourceDefinition, Name: "widgets.example.com"}
+			id := manifest.NamedResource{
+				Group: apix.GroupName,
+				Kind:  manifest.KindCustomResourceDefinition,
+				Name:  "widgets.example.com",
+			}
 			switch state {
 			case "present CRD":
 				s.AddObject(&manifest.RawObject{APIVersion: id.Group + "/v1", Kind: id.Kind, Name: id.Name})
@@ -28,7 +32,12 @@ func BenchmarkClassify_Dependency(b *testing.B) {
 				id.Namespace = "ns"
 				s.UpdateStatus(id, store.StatusInfo{Status: store.StatusPending, Reason: "", Message: ""})
 			case "ready Kustomization", "CEL dep only", "CEL same identity", "CEL distinct self":
-				id = manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Name: "dependency", Namespace: "ns"}
+				id = manifest.NamedResource{
+					Group:     manifest.FluxKustomizeDomain,
+					Kind:      manifest.KindKustomization,
+					Name:      "dependency",
+					Namespace: "ns",
+				}
 				s.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
 				s.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			}
@@ -36,7 +45,9 @@ func BenchmarkClassify_Dependency(b *testing.B) {
 			dep := manifest.DependencyRef{NamedResource: id}
 			switch state {
 			case "CEL dep only", "CEL same identity", "CEL distinct self":
-				dep.ReadyExpr = new(`dep.metadata.name == "dependency" && dep.status.conditions.exists(c, c.type == "Ready" && c.status == "True")`)
+				dep.ReadyExpr = new(
+					`dep.metadata.name == "dependency" && dep.status.conditions.exists(c, c.type == "Ready" && c.status == "True")`,
+				)
 				if state != "CEL dep only" {
 					w.Parent = id
 					if state == "CEL distinct self" {

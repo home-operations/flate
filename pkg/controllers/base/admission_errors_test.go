@@ -51,7 +51,12 @@ func TestDataInputs_AdmissionErrorPrecedesMissingPolicy(t *testing.T) {
 			if tc.allowMissing {
 				missingKinds = []string{manifest.KindSecret}
 			}
-			c.Configure(Options{Existence: admissionFailure{manifest.NewError(manifest.ErrInput, cause, "")}, AllowMissingKinds: missingKinds})
+			c.Configure(
+				Options{
+					Existence:         admissionFailure{manifest.NewError(manifest.ErrInput, cause, "")},
+					AllowMissingKinds: missingKinds,
+				},
+			)
 			var execution Execution
 			execution.Init(c, tc.object.Named())
 			defer execution.Close()
@@ -82,11 +87,27 @@ func TestAwaitData_AdmissionErrorPreventsResume(t *testing.T) {
 			defer execution.Close()
 			input := values.Input{Offline: true}
 			if materializer {
-				input.Materializers = []manifest.NamedResource{{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "producer"}}
+				input.Materializers = []manifest.NamedResource{
+					{
+						Group:     manifest.FluxKustomizeDomain,
+						Kind:      manifest.KindKustomization,
+						Namespace: "apps",
+						Name:      "producer",
+					},
+				}
 			}
 			resumed := false
 			err := execution.AwaitData(t.Context(), DataWait{
-				Inputs: []depwait.DataDependency{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input", Input: input, Optional: true, AllowMissing: true}},
+				Inputs: []depwait.DataDependency{
+					{
+						Kind:         manifest.KindConfigMap,
+						Namespace:    "apps",
+						Name:         "input",
+						Input:        input,
+						Optional:     true,
+						AllowMissing: true,
+					},
+				},
 				Resume: func(context.Context, manifest.DrainLevel, []manifest.NamedResource) error { resumed = true; return nil },
 			}, manifest.DrainForce)
 			assert.Equal(t, errors.Is(err, cause), true)

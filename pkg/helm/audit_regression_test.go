@@ -29,7 +29,16 @@ func TestComputeTemplateKey_UnmarshalableInput(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, computeTemplateKey(chartDescription{fingerprint: chartFixtureDescription(t, tc.chart).fingerprint, chart: tc.chart}, tc.values, Options{}, minimalHR()), "")
+			assert.Equal(
+				t,
+				computeTemplateKey(
+					chartDescription{fingerprint: chartFixtureDescription(t, tc.chart).fingerprint, chart: tc.chart},
+					tc.values,
+					Options{},
+					minimalHR(),
+				),
+				"",
+			)
 		})
 	}
 }
@@ -47,7 +56,12 @@ func TestMergeChartValuesFiles_EmptyArchiveFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	values, err := cli.mergeChartValuesFiles(t.Context(), chartDescription{chart: loaded}, []string{"empty.yaml"}, false)
+	values, err := cli.mergeChartValuesFiles(
+		t.Context(),
+		chartDescription{chart: loaded},
+		[]string{"empty.yaml"},
+		false,
+	)
 	if err != nil {
 		t.Fatalf("empty file treated as missing: %v", err)
 	}
@@ -72,7 +86,9 @@ func TestTemplate_UnmarshalableValuesSkipCache(t *testing.T) {
 	values := map[string]any{"unused": func() {}}
 	opts := Options{}
 	assert.Equal(t, computeTemplateKey(loaded, values, opts, hr), "")
-	out, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, values, RenderOptions{Options: opts, Sources: cliSources}))
+	out, _, err := testutil.RenderMaps(
+		cli.Template(t.Context(), hr, values, RenderOptions{Options: opts, Sources: cliSources}),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

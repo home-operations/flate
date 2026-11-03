@@ -10,7 +10,8 @@ import (
 	bcryptlib "golang.org/x/crypto/bcrypt"
 )
 
-var bcryptEncoding = base64.NewEncoding("./ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789").WithPadding(base64.NoPadding)
+var bcryptEncoding = base64.NewEncoding("./ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789").
+	WithPadding(base64.NoPadding)
 
 // bcrypt emits a bcrypt-shaped offline placeholder, not a password hash.
 // The seeded salt and input digest avoid the expensive bcrypt cost loop.
@@ -47,6 +48,8 @@ func encryptAES(s *stream, password, plaintext string) (string, error) {
 	for i := len(plaintext); i < len(content); i++ {
 		content[i] = byte(padding)
 	}
-	cipher.NewCBCEncrypter(block, iv).CryptBlocks(content, content) //nolint:gosec // G407: offline placeholders deliberately use a seeded IV.
+	cipher.NewCBCEncrypter(block, iv).
+		CryptBlocks(content, content)
+		//nolint:gosec // G407: offline placeholders deliberately use a seeded IV.
 	return base64.StdEncoding.EncodeToString(ciphertext), nil
 }

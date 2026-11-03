@@ -22,8 +22,18 @@ func TestFetcher_NoArtifact(t *testing.T) {
 			if predicted {
 				owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
 				s.AddObject(owner)
-				generator := &manifest.RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Name: "generator", Namespace: "apps", Spec: map[string]any{"artifacts": []any{map[string]any{"name": ea.Name}}}}
-				s.RecordEmitted(owner.Named(), &store.Emission{Children: []store.Child{{Obj: generator}}, Complete: true}, nil)
+				generator := &manifest.RawObject{
+					APIVersion: "source.extensions.fluxcd.io/v1beta1",
+					Kind:       "ArtifactGenerator",
+					Name:       "generator",
+					Namespace:  "apps",
+					Spec:       map[string]any{"artifacts": []any{map[string]any{"name": ea.Name}}},
+				}
+				s.RecordEmitted(
+					owner.Named(),
+					&store.Emission{Children: []store.Child{{Obj: generator}}, Complete: true},
+					nil,
+				)
 				if len(s.Productions(ea.Named(), nil)) != 1 {
 					t.Fatal("missing producer evidence")
 				}
@@ -32,7 +42,8 @@ func TestFetcher_NoArtifact(t *testing.T) {
 				t.Fatal("prediction supplied source content")
 			}
 			_, err := f.Fetch(t.Context(), ea, testReadSet(ea), sourcecache.Policy{})
-			if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || err.Error() != "no generated content" {
+			if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) ||
+				err.Error() != "no generated content" {
 				t.Fatalf("missing-content error = %v", err)
 			}
 		})

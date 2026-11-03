@@ -59,7 +59,11 @@ spec:
 `)
 	var previous string
 	for run := range 2 {
-		rendered, err := RenderTrees(t.Context(), []Tree{{Path: root, RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{Concurrency: 2, CacheDir: t.TempDir()})
+		rendered, err := RenderTrees(
+			t.Context(),
+			[]Tree{{Path: root, RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
+			Config{Concurrency: 2, CacheDir: t.TempDir()},
+		)
 		assert.NoError(t, err)
 		if len(rendered) != 1 {
 			t.Fatalf("rendered %d trees", len(rendered))
@@ -122,9 +126,23 @@ func TestRenderTrees_ChangedOnlyAndDiff_OCIInputs(t *testing.T) {
 					t.Parallel()
 					dirs := [2]string{t.TempDir(), t.TempDir()}
 					for side, root := range dirs {
-						testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux/producer.yaml, flux/consumer.yaml, flux/sibling.yaml]\n")
+						testutil.WriteFile(
+							t,
+							root,
+							"kustomization.yaml",
+							"resources: [flux/producer.yaml, flux/consumer.yaml, flux/sibling.yaml]\n",
+						)
 						for _, name := range []string{"producer", "consumer", "sibling"} {
-							testutil.WriteFile(t, root, "flux/"+name+".yaml", testutil.KustomizationYAML(name, "apps", "  path: ./"+name+"\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
+							testutil.WriteFile(
+								t,
+								root,
+								"flux/"+name+".yaml",
+								testutil.KustomizationYAML(
+									name,
+									"apps",
+									"  path: ./"+name+"\n  sourceRef: {kind: GitRepository, name: flux-system}\n",
+								),
+							)
 						}
 						target, password := "registry-auth", "before"
 						ref := "  secretRef: {name: registry-auth}\n"
@@ -139,29 +157,94 @@ func TestRenderTrees_ChangedOnlyAndDiff_OCIInputs(t *testing.T) {
 								ref = "  secretRef: {name: new-auth}\n"
 							}
 						}
-						auth := fmt.Sprintf(`{"auths":{%q:{"username":"user","password":%q}}}`, strings.TrimPrefix(server.URL, "https://"), password)
+						auth := fmt.Sprintf(
+							`{"auths":{%q:{"username":"user","password":%q}}}`,
+							strings.TrimPrefix(server.URL, "https://"),
+							password,
+						)
 						testutil.WriteFile(t, root, "producer/docker.json", auth)
-						testutil.WriteFile(t, root, "producer/kustomization.yaml", fmt.Sprintf("namespace: apps\ngeneratorOptions: {disableNameSuffixHash: true}\nsecretGenerator:\n- name: %s\n  type: kubernetes.io/dockerconfigjson\n  files: [.dockerconfigjson=docker.json]\n", target))
-						testutil.WriteFile(t, root, "consumer/kustomization.yaml", "resources: [provider.yaml, set.yaml]\n")
-						testutil.WriteFile(t, root, "consumer/provider.yaml", fmt.Sprintf("apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSetInputProvider\nmetadata: {name: images, namespace: apps, labels: {role: images}}\nspec:\n  type: OCIArtifactTag\n  url: oci://%s/images\n  insecure: true\n%s", strings.TrimPrefix(server.URL, "https://"), ref))
+						testutil.WriteFile(
+							t,
+							root,
+							"producer/kustomization.yaml",
+							fmt.Sprintf(
+								"namespace: apps\ngeneratorOptions: {disableNameSuffixHash: true}\nsecretGenerator:\n- name: %s\n  type: kubernetes.io/dockerconfigjson\n  files: [.dockerconfigjson=docker.json]\n",
+								target,
+							),
+						)
+						testutil.WriteFile(
+							t,
+							root,
+							"consumer/kustomization.yaml",
+							"resources: [provider.yaml, set.yaml]\n",
+						)
+						testutil.WriteFile(
+							t,
+							root,
+							"consumer/provider.yaml",
+							fmt.Sprintf(
+								"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSetInputProvider\nmetadata: {name: images, namespace: apps, labels: {role: images}}\nspec:\n  type: OCIArtifactTag\n  url: oci://%s/images\n  insecure: true\n%s",
+								strings.TrimPrefix(server.URL, "https://"),
+								ref,
+							),
+						)
 						inputRef := "{name: images}"
 						if route == "selector" {
 							inputRef = "{selector: {matchLabels: {role: images}}}"
 						}
-						testutil.WriteFile(t, root, "consumer/set.yaml", "apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: matrix, namespace: apps}\nspec:\n  inputsFrom: ["+inputRef+"]\n  resourcesTemplate: |\n    apiVersion: v1\n    kind: ConfigMap\n    metadata: {name: '<< inputs.tag >>', namespace: apps}\n")
+						testutil.WriteFile(
+							t,
+							root,
+							"consumer/set.yaml",
+							"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: matrix, namespace: apps}\nspec:\n  inputsFrom: ["+inputRef+"]\n  resourcesTemplate: |\n    apiVersion: v1\n    kind: ConfigMap\n    metadata: {name: '<< inputs.tag >>', namespace: apps}\n",
+						)
 						testutil.WriteFile(t, root, "sibling/kustomization.yaml", "resources: [result.yaml]\n")
-						testutil.WriteFile(t, root, "sibling/result.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: untouched}\n")
+						testutil.WriteFile(
+							t,
+							root,
+							"sibling/result.yaml",
+							"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: untouched}\n",
+						)
 					}
-					rendered, err := RenderTrees(t.Context(), []Tree{{Path: dirs[0], RepoRoot: dirs[0], ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}}, {Path: dirs[1], RepoRoot: dirs[1], ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{Concurrency: 2})
+					rendered, err := RenderTrees(
+						t.Context(),
+						[]Tree{
+							{
+								Path:     dirs[0],
+								RepoRoot: dirs[0],
+								ID:       manifest.TreeID{Cluster: ".", Side: manifest.TreeBase},
+							},
+							{
+								Path:     dirs[1],
+								RepoRoot: dirs[1],
+								ID:       manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
+							},
+						},
+						Config{Concurrency: 2},
+					)
 					assert.NoError(t, err)
 					assert.Equal(t, len(rendered), 2)
 					for _, side := range rendered {
 						producer := testutil.KustomizationID("apps", "producer")
 						consumer := testutil.KustomizationID("apps", "consumer")
 						sibling := testutil.KustomizationID("apps", "sibling")
-						provider := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSetInputProvider, Namespace: "apps", Name: "images"}
-						set := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "apps", Name: "matrix"}
-						assert.Equal(t, side.filter.ShouldReconcile(producer), scenario != "delete" || side.ID.Side == manifest.TreeBase)
+						provider := manifest.NamedResource{
+							Group:     manifest.FluxOperatorDomain,
+							Kind:      manifest.KindResourceSetInputProvider,
+							Namespace: "apps",
+							Name:      "images",
+						}
+						set := manifest.NamedResource{
+							Group:     manifest.FluxOperatorDomain,
+							Kind:      manifest.KindResourceSet,
+							Namespace: "apps",
+							Name:      "matrix",
+						}
+						assert.Equal(
+							t,
+							side.filter.ShouldReconcile(producer),
+							scenario != "delete" || side.ID.Side == manifest.TreeBase,
+						)
 						assert.Equal(t, side.filter.ShouldReconcile(consumer), true)
 						assert.Equal(t, side.filter.ShouldReconcile(sibling), false)
 						assert.Equal(t, side.filter.ShouldReconcile(provider), true)

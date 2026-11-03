@@ -69,8 +69,23 @@ spec:
       metadata: {name: from-rs}
 `)
 	testutil.WriteFile(t, root, "chart/Chart.yaml", "apiVersion: v2\nname: metadata\nversion: 1.0.0\n")
-	testutil.WriteFile(t, root, "chart/templates/config.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: from-hr}\n")
-	args := []string{"build", "all", "--path", filepath.Join(root, "entry"), "--cache-dir", t.TempDir(), "--concurrency=2", "--no-progress", "--skip-kinds="}
+	testutil.WriteFile(
+		t,
+		root,
+		"chart/templates/config.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: from-hr}\n",
+	)
+	args := []string{
+		"build",
+		"all",
+		"--path",
+		filepath.Join(root, "entry"),
+		"--cache-dir",
+		t.TempDir(),
+		"--concurrency=2",
+		"--no-progress",
+		"--skip-kinds=",
+	}
 	first, _ := harness.RequireCLIOK(t, args...)
 	second, _ := harness.RequireCLIOK(t, args...)
 	assert.Equal(t, second, first)

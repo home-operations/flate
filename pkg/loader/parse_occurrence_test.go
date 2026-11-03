@@ -44,9 +44,18 @@ items:
 	}
 	root := t.TempDir()
 	reader := documentReader{compact: true}
-	reader.setSources(map[string]*store.SourceArtifact{root: {LocalPath: root, FS: fstest.MapFS{"input.yaml": {Data: []byte(input)}}}})
+	reader.setSources(
+		map[string]*store.SourceArtifact{
+			root: {LocalPath: root, FS: fstest.MapFS{"input.yaml": {Data: []byte(input)}}},
+		},
+	)
 	var expanded []parsedObject
-	err = reader.decodeFileObjects(filepath.Join(root, "input.yaml"), manifest.ParseDocOptions{}, true, func(child parsedObject) { expanded = append(expanded, child) })
+	err = reader.decodeFileObjects(
+		filepath.Join(root, "input.yaml"),
+		manifest.ParseDocOptions{},
+		true,
+		func(child parsedObject) { expanded = append(expanded, child) },
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

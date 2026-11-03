@@ -33,7 +33,12 @@ func TestBuildKSClaims_PathsAndComponents(t *testing.T) {
 		for _, input := range []string{"authored", "decoded"} {
 			t.Run(input+"/"+tc.name, func(t *testing.T) {
 				t.Parallel()
-				ks := &Kustomization{Name: "root", Path: tc.path, SourceRef: kustomizev1.CrossNamespaceSourceReference{Name: tc.source}, Components: []string{tc.component}}
+				ks := &Kustomization{
+					Name:       "root",
+					Path:       tc.path,
+					SourceRef:  kustomizev1.CrossNamespaceSourceReference{Name: tc.source},
+					Components: []string{tc.component},
+				}
 				var components map[NamedResource][]string
 				if input == "decoded" {
 					ks.Components = nil

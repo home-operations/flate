@@ -11,13 +11,16 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/home-operations/flate/pkg/manifest"
 	"oras.land/oras-go/v2/errdef"
+
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
-const historyAnnotation = "flate.admission-history"
-const historyIdentityAnnotation = "flate.admission-history-key"
-const acceptedRenderAnnotation = "flate.accepted-render"
+const (
+	historyAnnotation         = "flate.admission-history"
+	historyIdentityAnnotation = "flate.admission-history-key"
+	acceptedRenderAnnotation  = "flate.accepted-render"
+)
 
 // AcceptedInventory publishes one complete inventory and its source evidence.
 type AcceptedInventory[T io.WriterTo] struct {
@@ -40,7 +43,8 @@ func RecordInventory[T io.WriterTo](ctx context.Context, c *Cache, inventory Acc
 	if snapshot := c.snapshot.Load(); snapshot != nil {
 		history = snapshot.histories[inventory.Key]
 	}
-	if lookupErr == nil && descriptor.Annotations[acceptedRenderAnnotation] == inventory.Acceptance && history.matches(inventory.History, inventory.Acceptance) {
+	if lookupErr == nil && descriptor.Annotations[acceptedRenderAnnotation] == inventory.Acceptance &&
+		history.matches(inventory.History, inventory.Acceptance) {
 		identity := ""
 		if history != nil {
 			identity = history.identity
@@ -56,34 +60,45 @@ func RecordInventory[T io.WriterTo](ctx context.Context, c *Cache, inventory Acc
 		history.identity = acceptance
 	}
 	producer := blobProducer{content: inventory.Key, render: RenderAccepted}
-	_, _, err = c.acquire(ctx, acquireKey{producer: producer, id: inventory.Lookup, render: true}, Policy{MaxAge: Forever, Retry: RetryConfig{Attempts: 1}}, acquisitionCallbacks{
-		validate: func(_ context.Context, e *entry) (bool, error) {
-			if e.descriptor.Annotations[acceptedRenderAnnotation] != inventory.Acceptance || e.descriptor.Annotations[historyIdentityAnnotation] != acceptance {
-				return false, nil
-			}
-			_, err := c.root.Stat(e.fs.(fileFS).backingPath)
-			return err == nil, err
-		},
-		produce: func(ctx context.Context, c *Cache, staged *payload) (*entry, error) {
-			result, err := producer.produce(ctx, c, staged, func(_ context.Context, output ProducerInput) (ProducerResult, error) {
-				metadata, err := history.metadata()
-				if err != nil {
-					return ProducerResult{}, err
+	_, _, err = c.acquire(
+		ctx,
+		acquireKey{producer: producer, id: inventory.Lookup, render: true},
+		Policy{MaxAge: Forever, Retry: RetryConfig{Attempts: 1}},
+		acquisitionCallbacks{
+			validate: func(_ context.Context, e *entry) (bool, error) {
+				if e.descriptor.Annotations[acceptedRenderAnnotation] != inventory.Acceptance ||
+					e.descriptor.Annotations[historyIdentityAnnotation] != acceptance {
+					return false, nil
 				}
-				if metadata == nil {
-					metadata = make(map[string]string, 2)
+				_, err := c.root.Stat(e.fs.(fileFS).backingPath)
+				return err == nil, err
+			},
+			produce: func(ctx context.Context, c *Cache, staged *payload) (*entry, error) {
+				result, err := producer.produce(
+					ctx,
+					c,
+					staged,
+					func(_ context.Context, output ProducerInput) (ProducerResult, error) {
+						metadata, err := history.metadata()
+						if err != nil {
+							return ProducerResult{}, err
+						}
+						if metadata == nil {
+							metadata = make(map[string]string, 2)
+						}
+						metadata[acceptedRenderAnnotation] = inventory.Acceptance
+						metadata[historyIdentityAnnotation] = acceptance
+						_, err = inventory.Content.WriteTo(output)
+						return ProducerResult{Annotations: metadata}, err
+					},
+				)
+				if result != nil {
+					result.inventoryKey, result.history = inventory.Key, history
 				}
-				metadata[acceptedRenderAnnotation] = inventory.Acceptance
-				metadata[historyIdentityAnnotation] = acceptance
-				_, err = inventory.Content.WriteTo(output)
-				return ProducerResult{Annotations: metadata}, err
-			})
-			if result != nil {
-				result.inventoryKey, result.history = inventory.Key, history
-			}
-			return result, err
+				return result, err
+			},
 		},
-	})
+	)
 	return err
 }
 
@@ -181,7 +196,11 @@ func (r *historyRecord) matches(h RenderHistory, acceptance string) bool {
 		if source == "" {
 			return false
 		}
-		i, found := slices.BinarySearchFunc(r.Sources, source, func(paths historyPaths, source string) int { return strings.Compare(paths.Source, source) })
+		i, found := slices.BinarySearchFunc(
+			r.Sources,
+			source,
+			func(paths historyPaths, source string) int { return strings.Compare(paths.Source, source) },
+		)
 		if !found || !slices.Contains(r.Sources[i].Paths, historyPath{Path: file, Subtree: evidence.Subtree}) {
 			return false
 		}
@@ -189,7 +208,8 @@ func (r *historyRecord) matches(h RenderHistory, acceptance string) bool {
 	for _, source := range r.Sources {
 		for _, file := range source.Paths {
 			if !slices.ContainsFunc(h.Sources, func(evidence manifest.SourceEvidence) bool {
-				return r.identities[evidence.Source] == source.Source && path.Clean(evidence.Path) == file.Path && evidence.Subtree == file.Subtree
+				return r.identities[evidence.Source] == source.Source && path.Clean(evidence.Path) == file.Path &&
+					evidence.Subtree == file.Subtree
 			}) {
 				return false
 			}
@@ -200,7 +220,10 @@ func (r *historyRecord) matches(h RenderHistory, acceptance string) bool {
 
 // ProducersForPaths returns producers whose accepted source paths reach the supplied changes.
 // The result is positive admission evidence, never proof that an inventory remains complete.
-func (c *Cache) ProducersForPaths(ctx context.Context, query []manifest.SourceEvidence) ([]manifest.NamedResource, error) {
+func (c *Cache) ProducersForPaths(
+	ctx context.Context,
+	query []manifest.SourceEvidence,
+) ([]manifest.NamedResource, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, &CacheError{err}
 	}
@@ -261,7 +284,10 @@ func (c *Cache) ProducersForPaths(ctx context.Context, query []manifest.SourceEv
 		}
 		seen[identity] = struct{}{}
 		var record historyRecord
-		if json.Unmarshal([]byte(data), &record) != nil || record.Build != processIdentity || record.Owner.Name == "" || record.Owner.Kind == "" || record.Acceptance == "" || record.Acceptance != descriptor.Annotations[acceptedRenderAnnotation] {
+		if json.Unmarshal([]byte(data), &record) != nil || record.Build != processIdentity || record.Owner.Name == "" ||
+			record.Owner.Kind == "" ||
+			record.Acceptance == "" ||
+			record.Acceptance != descriptor.Annotations[acceptedRenderAnnotation] {
 			continue
 		}
 		matched := false
@@ -271,7 +297,8 @@ func (c *Cache) ProducersForPaths(ctx context.Context, query []manifest.SourceEv
 					if !fs.ValidPath(root.Path) {
 						continue
 					}
-					matched = matched || file == root.Path || root.Subtree && (root.Path == "." || strings.HasPrefix(file, root.Path+"/"))
+					matched = matched || file == root.Path ||
+						root.Subtree && (root.Path == "." || strings.HasPrefix(file, root.Path+"/"))
 				}
 			}
 		}

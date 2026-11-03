@@ -17,7 +17,12 @@ func (h *hookFS) Open(name string) (fs.File, error) { return h.open(name) }
 func TestSetArtifact_PayloadComparedByKey(t *testing.T) {
 	t.Parallel()
 	s := New()
-	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "n", Name: "a"}
+	id := manifest.NamedResource{
+		Group:     manifest.SourceDomain,
+		Kind:      manifest.KindGitRepository,
+		Namespace: "n",
+		Name:      "a",
+	}
 	events := 0
 	var ids []manifest.NamedResource
 	s.AddListener(EventArtifactUpdated, func(eventID manifest.NamedResource, _ any) {
@@ -25,7 +30,13 @@ func TestSetArtifact_PayloadComparedByKey(t *testing.T) {
 		ids = append(ids, eventID)
 	}, false)
 	mk := func(key string) *SourceArtifact {
-		return &SourceArtifact{LocalPath: "label", Key: key, Content: key, FS: &hookFS{open: func(string) (fs.File, error) { return nil, fs.ErrNotExist }}, ContentFingerprint: func(context.Context, fs.FS) (string, error) { t.Fatal("dedup reads content"); return "", nil }}
+		return &SourceArtifact{
+			LocalPath:          "label",
+			Key:                key,
+			Content:            key,
+			FS:                 &hookFS{open: func(string) (fs.File, error) { return nil, fs.ErrNotExist }},
+			ContentFingerprint: func(context.Context, fs.FS) (string, error) { t.Fatal("dedup reads content"); return "", nil },
+		}
 	}
 	s.SetArtifact(id, mk("pin"))
 	s.SetArtifact(id, mk("pin"))
@@ -103,7 +114,12 @@ func TestSetArtifact_PayloadComparedByKey(t *testing.T) {
 func TestSetArtifact_DroppedPayloadReplacesEqualKey(t *testing.T) {
 	t.Parallel()
 	s := New()
-	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "n", Name: "a"}
+	id := manifest.NamedResource{
+		Group:     manifest.SourceDomain,
+		Kind:      manifest.KindGitRepository,
+		Namespace: "n",
+		Name:      "a",
+	}
 	events := 0
 	s.AddListener(EventArtifactUpdated, func(_ manifest.NamedResource, _ any) { events++ }, false)
 	s.SetArtifact(id, &SourceArtifact{LocalPath: "label", Key: "pin", Content: "pin", FS: &hookFS{}})
@@ -122,7 +138,14 @@ func TestSourceArtifact_HistoryIdentity(t *testing.T) {
 	for _, mode := range []string{"generation", "alias", "foreign", "unavailable", "stale"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
-			input := &SourceArtifact{Kind: id.Kind, URL: "https://fixture.invalid/repo", Key: "family", Content: "before", LocalPath: "/snapshot", FS: fstest.MapFS{}}
+			input := &SourceArtifact{
+				Kind:      id.Kind,
+				URL:       "https://fixture.invalid/repo",
+				Key:       "family",
+				Content:   "before",
+				LocalPath: "/snapshot",
+				FS:        fstest.MapFS{},
+			}
 			next := *input
 			next.Content, next.LocalPath = "after", "/other-snapshot"
 			if mode == "alias" {

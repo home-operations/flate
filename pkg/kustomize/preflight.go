@@ -136,7 +136,11 @@ func (w *inputWalk) directory(ctx context.Context, dir string, scope walkScope) 
 // A plugin directory needs its own control view: the same directory may also
 // emit ordinary resource data. Snapshot the whole tree to preserve parent paths;
 // only a view containing rewritten remote inputs replaces the declared edge.
-func (w *inputWalk) pluginDirectory(ctx context.Context, dir, owner string, scope walkScope) (string, inputResult, error) {
+func (w *inputWalk) pluginDirectory(
+	ctx context.Context,
+	dir, owner string,
+	scope walkScope,
+) (string, inputResult, error) {
 	canonical, _, err := w.fs.CleanedAbs(dir)
 	if err != nil {
 		return "", inputResult{}, err
@@ -200,7 +204,11 @@ func (w *inputWalk) location(loc controlLocation) controlLocation {
 	return loc
 }
 
-func (w *inputWalk) references(ctx context.Context, loc walkScope, refs []kustomizeinput.Reference) (inputResult, error) {
+func (w *inputWalk) references(
+	ctx context.Context,
+	loc walkScope,
+	refs []kustomizeinput.Reference,
+) (inputResult, error) {
 	var result inputResult
 	for _, ref := range refs {
 		next := loc
@@ -226,7 +234,14 @@ func (w *inputWalk) references(ctx context.Context, loc walkScope, refs []kustom
 			c, err = w.fileOperand(ctx, next, &node)
 		}
 		if err != nil {
-			return inputResult{}, fmt.Errorf("%s %s %q (line %d): %w", loc.file, ref.FieldPath(), ref.Path, ref.Node.Line, err)
+			return inputResult{}, fmt.Errorf(
+				"%s %s %q (line %d): %w",
+				loc.file,
+				ref.FieldPath(),
+				ref.Path,
+				ref.Node.Line,
+				err,
+			)
 		}
 		if c.rewritten {
 			ref.Rewrite(node.Value)
@@ -245,7 +260,12 @@ func (w *inputWalk) fileOperand(ctx context.Context, loc walkScope, node *yaml.N
 	return result, err
 }
 
-func (w *inputWalk) resourceOperand(ctx context.Context, loc walkScope, node *yaml.Node, role kustomizeinput.Role) (inputResult, error) {
+func (w *inputWalk) resourceOperand(
+	ctx context.Context,
+	loc walkScope,
+	node *yaml.Node,
+	role kustomizeinput.Role,
+) (inputResult, error) {
 	path, err := w.resourcePath(ctx, loc, node.Value, role)
 	if err != nil {
 		return inputResult{}, err
@@ -344,7 +364,12 @@ func (w *inputWalk) filePath(ctx context.Context, loc walkScope, raw string) (in
 	return inputPath{file: file, replacement: file, descriptor: descriptor}, err
 }
 
-func (w *inputWalk) resourcePath(ctx context.Context, loc walkScope, raw string, role kustomizeinput.Role) (inputPath, error) {
+func (w *inputWalk) resourcePath(
+	ctx context.Context,
+	loc walkScope,
+	raw string,
+	role kustomizeinput.Role,
+) (inputPath, error) {
 	spec, git := kustomizeinput.ParseGitBase(raw)
 	var file inputPath
 	var fileErr error
@@ -367,21 +392,39 @@ func (w *inputWalk) resourcePath(ctx context.Context, loc walkScope, raw string,
 	if git {
 		dest, err := w.fetchGitBase(ctx, spec, loc)
 		if err != nil && fileErr != nil {
-			if _, parseErr := kio.FromBytes(body); file.file != "" && parseErr != nil && !errors.Is(err, context.DeadlineExceeded) {
+			if _, parseErr := kio.FromBytes(
+				body,
+			); file.file != "" && parseErr != nil &&
+				!errors.Is(err, context.DeadlineExceeded) {
 				// Build owns malformed-resource diagnostics after a directory load fails.
 				return file, nil
 			}
 			return inputPath{}, fmt.Errorf("accumulation err='%s': %w", fileErr.Error(), err)
 		}
-		return inputPath{file: filepath.Join(loc.root, dest), replacement: dest, directory: true,
-			descriptor: remoteInput{Operation: remoteGit, URL: spec.RepoURL, Ref: spec.Ref, Timeout: spec.Timeout, Submodules: spec.Submodules}}, err
+		return inputPath{
+			file:        filepath.Join(loc.root, dest),
+			replacement: dest,
+			directory:   true,
+			descriptor: remoteInput{
+				Operation:  remoteGit,
+				URL:        spec.RepoURL,
+				Ref:        spec.Ref,
+				Timeout:    spec.Timeout,
+				Submodules: spec.Submodules,
+			},
+		}, err
 	}
 	path, err := w.filePath(ctx, loc, raw)
 	path.directory = err == nil && path.replacement == "" && w.fs.IsDir(path.file)
 	return path, err
 }
 
-func (w *inputWalk) pluginFile(ctx context.Context, loc walkScope, node *yaml.Node, path inputPath) (inputResult, error) {
+func (w *inputWalk) pluginFile(
+	ctx context.Context,
+	loc walkScope,
+	node *yaml.Node,
+	path inputPath,
+) (inputResult, error) {
 	loc.controlLocation = controlLocation{file: path.file, root: loc.root, remote: path.replacement != ""}
 	if path.descriptor.URL != "" {
 		loc.parents = append(loc.parents, path.descriptor)
@@ -405,7 +448,12 @@ func (w *inputWalk) pluginFile(ctx context.Context, loc walkScope, node *yaml.No
 	return result, err
 }
 
-func (w *inputWalk) plugins(ctx context.Context, loc walkScope, body []byte, resources []*resource.Resource) ([]byte, inputResult, error) {
+func (w *inputWalk) plugins(
+	ctx context.Context,
+	loc walkScope,
+	body []byte,
+	resources []*resource.Resource,
+) ([]byte, inputResult, error) {
 	key := w.location(loc.controlLocation)
 	key.field, key.indices = manifest.Fingerprint(body), [2]int{}
 	if prior, ok := w.visited[key]; ok {
@@ -419,7 +467,11 @@ func (w *inputWalk) plugins(ctx context.Context, loc walkScope, body []byte, res
 			if !loc.remote {
 				return body, inputResult{}, nil
 			}
-			return nil, inputResult{}, manifest.NewError(manifest.ErrInput, fmt.Errorf("plugin %s: %w", loc.file, err), "")
+			return nil, inputResult{}, manifest.NewError(
+				manifest.ErrInput,
+				fmt.Errorf("plugin %s: %w", loc.file, err),
+				"",
+			)
 		}
 	}
 	w.visited[key] = controlObservation{parent: loc.observation}
@@ -433,7 +485,11 @@ func (w *inputWalk) plugins(ctx context.Context, loc walkScope, body []byte, res
 			if !loc.remote {
 				return body, inputResult{}, nil
 			}
-			return nil, inputResult{}, manifest.NewError(manifest.ErrInput, fmt.Errorf("plugin %s: %w", loc.file, err), "")
+			return nil, inputResult{}, manifest.NewError(
+				manifest.ErrInput,
+				fmt.Errorf("plugin %s: %w", loc.file, err),
+				"",
+			)
 		}
 		refs, _ := kustomizeinput.Plugin(doc)
 		c, err := w.references(ctx, loc, refs)

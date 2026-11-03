@@ -60,7 +60,20 @@ func TestAdmit_UnchangedInputs(t *testing.T) {
 
 func TestAdmitsRoot_PlainDiscoveryShortcut(t *testing.T) {
 	root := t.TempDir()
-	testutil.WriteFile(t, root, "peers.yaml", testutil.KustomizationYAML("one", "apps", "  path: .\n")+"---\n"+testutil.KustomizationYAML("two", "apps", "  path: .\n"))
+	testutil.WriteFile(
+		t,
+		root,
+		"peers.yaml",
+		testutil.KustomizationYAML(
+			"one",
+			"apps",
+			"  path: .\n",
+		)+"---\n"+testutil.KustomizationYAML(
+			"two",
+			"apps",
+			"  path: .\n",
+		),
+	)
 	l := New(store.New())
 	l.SourceRoot = root
 	_, err := l.Load(t.Context(), root)
@@ -107,7 +120,12 @@ spec:
 		_, err := l.Load(t.Context(), filepath.Join(root, "flux"))
 		assert.NoError(t, err)
 		child := testutil.KustomizationID("apps", "child")
-		owner := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "apps", Name: "factory"}
+		owner := manifest.NamedResource{
+			Group:     manifest.FluxOperatorDomain,
+			Kind:      manifest.KindResourceSet,
+			Namespace: "apps",
+			Name:      "factory",
+		}
 		for range 2 {
 			l.Admit(root)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
@@ -138,19 +156,61 @@ spec:
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				root := t.TempDir()
-				testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [local.yaml, external.yaml, source.yaml]\n")
-				testutil.WriteFile(t, root, "flux/local.yaml", testutil.KustomizationYAML(tc.localName, "flux-system", "  path: ./apps\n  targetNamespace: media\n"))
-				testutil.WriteFile(t, root, "flux/external.yaml", testutil.KustomizationYAML(tc.externalName, "flux-system", "  path: ./apps\n  sourceRef: {kind: GitRepository, name: external}\n"))
-				testutil.WriteFile(t, root, "flux/source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: external, namespace: flux-system}\nspec: {url: https://fixture.invalid/external}\n")
+				testutil.WriteFile(
+					t,
+					root,
+					"flux/kustomization.yaml",
+					"resources: [local.yaml, external.yaml, source.yaml]\n",
+				)
+				testutil.WriteFile(
+					t,
+					root,
+					"flux/local.yaml",
+					testutil.KustomizationYAML(
+						tc.localName,
+						"flux-system",
+						"  path: ./apps\n  targetNamespace: media\n",
+					),
+				)
+				testutil.WriteFile(
+					t,
+					root,
+					"flux/external.yaml",
+					testutil.KustomizationYAML(
+						tc.externalName,
+						"flux-system",
+						"  path: ./apps\n  sourceRef: {kind: GitRepository, name: external}\n",
+					),
+				)
+				testutil.WriteFile(
+					t,
+					root,
+					"flux/source.yaml",
+					"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: external, namespace: flux-system}\nspec: {url: https://fixture.invalid/external}\n",
+				)
 				testutil.WriteFile(t, root, "apps/kustomization.yaml", "namespace: inner\nresources: [child.yaml]\n")
-				testutil.WriteFile(t, root, "apps/child.yaml", testutil.KustomizationYAML("child", "flux-system", "  path: ./payload\n  dependsOn: [{name: prerequisite}]\n"))
+				testutil.WriteFile(
+					t,
+					root,
+					"apps/child.yaml",
+					testutil.KustomizationYAML(
+						"child",
+						"flux-system",
+						"  path: ./payload\n  dependsOn: [{name: prerequisite}]\n",
+					),
+				)
 				testutil.WriteFile(t, root, "payload/kustomization.yaml", "resources: []\n")
 				l := New(store.New())
 				l.SourceRoot = root
 				_, err := l.Load(t.Context(), root)
 				assert.NoError(t, err)
 				l.Admit(root)
-				ext := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "external"}
+				ext := manifest.NamedResource{
+					Group:     manifest.SourceDomain,
+					Kind:      manifest.KindGitRepository,
+					Namespace: "flux-system",
+					Name:      "external",
+				}
 				_, _, external := SourceView(l.Store, ext, root)
 				if !external {
 					t.Fatal("foreign source was not classified external")
@@ -184,7 +244,10 @@ spec:
 						refs = append(refs, ref.NamedResource)
 					}
 					slices.SortFunc(refs, manifest.NamedResource.Compare)
-					wantRefs := []manifest.NamedResource{testutil.KustomizationID("media", "prerequisite"), manifest.BootstrapSourceID}
+					wantRefs := []manifest.NamedResource{
+						testutil.KustomizationID("media", "prerequisite"),
+						manifest.BootstrapSourceID,
+					}
 					slices.SortFunc(wantRefs, manifest.NamedResource.Compare)
 					assert.Diff(t, refs, wantRefs)
 					return obj
@@ -223,12 +286,36 @@ spec:
 			}
 			testutil.WriteFile(t, root, entry+"/kustomization.yaml", resources+"]\n")
 			if tc.local {
-				testutil.WriteFile(t, root, entry+"/local.yaml", testutil.KustomizationYAML(tc.localName, "flux-system", "  path: ./"+entry+"\n"))
+				testutil.WriteFile(
+					t,
+					root,
+					entry+"/local.yaml",
+					testutil.KustomizationYAML(tc.localName, "flux-system", "  path: ./"+entry+"\n"),
+				)
 			}
-			testutil.WriteFile(t, root, entry+"/external.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: external, namespace: flux-system}\nspec: {url: https://fixture.invalid/external}\n---\n"+testutil.KustomizationYAML(tc.externalName, "flux-system", "  path: ./"+tc.target+"\n  sourceRef: {kind: GitRepository, name: external}\n"))
+			testutil.WriteFile(
+				t,
+				root,
+				entry+"/external.yaml",
+				"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: external, namespace: flux-system}\nspec: {url: https://fixture.invalid/external}\n---\n"+testutil.KustomizationYAML(
+					tc.externalName,
+					"flux-system",
+					"  path: ./"+tc.target+"\n  sourceRef: {kind: GitRepository, name: external}\n",
+				),
+			)
 			testutil.WriteFile(t, root, "kube/deploy/app/kustomization.yaml", "resources: [ks.yaml]\n")
-			testutil.WriteFile(t, root, "kube/deploy/app/ks.yaml", testutil.KustomizationYAML("app", "flux-system", "  path: ./payload\n"))
-			testutil.WriteFile(t, root, "kube/deploy/app/disabled.yaml", testutil.KustomizationYAML("disabled", "flux-system", "  path: ./excluded\n"))
+			testutil.WriteFile(
+				t,
+				root,
+				"kube/deploy/app/ks.yaml",
+				testutil.KustomizationYAML("app", "flux-system", "  path: ./payload\n"),
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				"kube/deploy/app/disabled.yaml",
+				testutil.KustomizationYAML("disabled", "flux-system", "  path: ./excluded\n"),
+			)
 			testutil.WriteFile(t, root, "payload/kustomization.yaml", "resources: []\n")
 			testutil.WriteFile(t, root, "excluded/kustomization.yaml", "resources: []\n")
 			l := New(store.New())
@@ -236,7 +323,12 @@ spec:
 			_, err := l.Load(t.Context(), root)
 			assert.NoError(t, err)
 			l.Admit(root)
-			ext := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "external"}
+			ext := manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindGitRepository,
+				Namespace: "flux-system",
+				Name:      "external",
+			}
 			_, _, external := SourceView(l.Store, ext, root)
 			assert.Equal(t, external, true)
 			assert.Equal(t, slices.Contains(l.scopes.roots, entry), tc.listed)
@@ -256,7 +348,11 @@ spec:
 					file = "disabled.yaml"
 				}
 				assert.Equal(t, record.File, "kube/deploy/app/"+file)
-				assert.Equal(t, l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, record.Path), name == "app" && tc.listed)
+				assert.Equal(
+					t,
+					l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, record.Path),
+					name == "app" && tc.listed,
+				)
 				assert.Equal(t, l.Store.GetObject(id) != nil, name == "app" && tc.listed)
 			}
 		})
@@ -273,11 +369,35 @@ spec:
 			t.Parallel()
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [owner.yaml, source.yaml]\n")
-			testutil.WriteFile(t, root, "flux/owner.yaml", testutil.KustomizationYAML("owner", "flux-system", "  path: ./apps\n  components: [component]\n"+tc.source))
-			testutil.WriteFile(t, root, "flux/source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: external, namespace: flux-system}\nspec: {url: https://fixture.invalid/external}\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"flux/owner.yaml",
+				testutil.KustomizationYAML(
+					"owner",
+					"flux-system",
+					"  path: ./apps\n  components: [component]\n"+tc.source,
+				),
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				"flux/source.yaml",
+				"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: external, namespace: flux-system}\nspec: {url: https://fixture.invalid/external}\n",
+			)
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", "namespace: projected\nresources: []\n")
-			testutil.WriteFile(t, root, "apps/component/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [child.yaml]\n")
-			testutil.WriteFile(t, root, "apps/component/child.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: child, namespace: authored}\ndata: {value: component}\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"apps/component/kustomization.yaml",
+				"apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [child.yaml]\n",
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				"apps/component/child.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: child, namespace: authored}\ndata: {value: component}\n",
+			)
 			l := New(store.New())
 			l.SourceRoot = root
 			_, err := l.Load(t.Context(), root)
@@ -304,9 +424,28 @@ spec:
 	t.Run("projection_compatibility", func(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()
-		testutil.WriteFile(t, root, "app/kustomization.yaml", "namespace: apps\nresources: [sibling.yaml, source.yaml, ns.yaml]\nreplacements:\n"+nsReplacementRule)
-		testutil.WriteFile(t, root, "app/sibling.yaml", testutil.KustomizationYAML("sibling", "flux-system", "  path: ./leaf\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: settings}, {kind: Secret, name: credentials}, {kind: ConfigMap, name: optional, optional: true}]}\n"))
-		testutil.WriteFile(t, root, "app/source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: source}\nspec: {url: https://fixture.invalid/repo}\n")
+		testutil.WriteFile(
+			t,
+			root,
+			"app/kustomization.yaml",
+			"namespace: apps\nresources: [sibling.yaml, source.yaml, ns.yaml]\nreplacements:\n"+nsReplacementRule,
+		)
+		testutil.WriteFile(
+			t,
+			root,
+			"app/sibling.yaml",
+			testutil.KustomizationYAML(
+				"sibling",
+				"flux-system",
+				"  path: ./leaf\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: settings}, {kind: Secret, name: credentials}, {kind: ConfigMap, name: optional, optional: true}]}\n",
+			),
+		)
+		testutil.WriteFile(
+			t,
+			root,
+			"app/source.yaml",
+			"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: source}\nspec: {url: https://fixture.invalid/repo}\n",
+		)
 		testutil.WriteFile(t, root, "app/ns.yaml", "apiVersion: v1\nkind: Namespace\nmetadata: {name: apps}\n")
 		l := New(store.New())
 		l.SourceRoot = root
@@ -320,11 +459,23 @@ spec:
 			t.Fatalf("initial projection = %+v, published=%v", candidate, l.Store.GetObject(id))
 		}
 		refs := l.Index.Records[id].Refs
-		assert.Diff(t, refs, []manifest.NamedResource{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}, {Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"}})
+		assert.Diff(
+			t,
+			refs,
+			[]manifest.NamedResource{
+				{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"},
+				{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"},
+			},
+		)
 		file := filepath.Join(root, "app/sibling.yaml")
 		authored := l.authoredObject(file, testutil.KustomizationID("flux-system", "sibling")).Obj.(*manifest.Kustomization)
 		snapshot := authored.Clone()
-		sourceID := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "source"}
+		sourceID := manifest.NamedResource{
+			Group:     manifest.SourceDomain,
+			Kind:      manifest.KindGitRepository,
+			Namespace: "apps",
+			Name:      "source",
+		}
 		source, ok := l.candidates[sourceID].Obj.(*manifest.GitRepository)
 		if !ok || l.Store.GetObject(sourceID) != source {
 			t.Fatal("projected source missing from candidate or store")
@@ -376,7 +527,12 @@ spec:
 		t.Parallel()
 		root := t.TempDir()
 		for _, side := range []string{"left", "right"} {
-			testutil.WriteFile(t, root, side+".yaml", testutil.KustomizationYAML("same", "apps", "  path: ./"+side+"\n"))
+			testutil.WriteFile(
+				t,
+				root,
+				side+".yaml",
+				testutil.KustomizationYAML("same", "apps", "  path: ./"+side+"\n"),
+			)
 		}
 		l := New(store.New())
 		l.SourceRoot = root
@@ -398,8 +554,18 @@ spec:
 		t.Parallel()
 		root := t.TempDir()
 		for _, side := range []string{"one", "two"} {
-			testutil.WriteFile(t, root, side+"/kustomization.yaml", "namespace: "+side+"\nnamePrefix: pre-\nnameSuffix: -post\nresources: [objects.yaml]\n")
-			testutil.WriteFile(t, root, side+"/objects.yaml", "apiVersion: v1\nkind: Namespace\nmetadata: {name: _}\n---\napiVersion: foreign.example/v2\nkind: Namespace\nmetadata: {name: _}\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: values}\n")
+			testutil.WriteFile(
+				t,
+				root,
+				side+"/kustomization.yaml",
+				"namespace: "+side+"\nnamePrefix: pre-\nnameSuffix: -post\nresources: [objects.yaml]\n",
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				side+"/objects.yaml",
+				"apiVersion: v1\nkind: Namespace\nmetadata: {name: _}\n---\napiVersion: foreign.example/v2\nkind: Namespace\nmetadata: {name: _}\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: values}\n",
+			)
 		}
 		l := New(store.New())
 		l.SourceRoot = root
@@ -415,7 +581,15 @@ spec:
 					t.Fatal("projection mutated an authored object")
 				}
 			}
-			assert.Diff(t, ids, []manifest.NamedResource{{Kind: "Namespace", Name: side}, {Group: "foreign.example", Kind: "Namespace", Namespace: side, Name: "_"}, {Kind: manifest.KindConfigMap, Namespace: side, Name: "pre-values-post"}})
+			assert.Diff(
+				t,
+				ids,
+				[]manifest.NamedResource{
+					{Kind: "Namespace", Name: side},
+					{Group: "foreign.example", Kind: "Namespace", Namespace: side, Name: "_"},
+					{Kind: manifest.KindConfigMap, Namespace: side, Name: "pre-values-post"},
+				},
+			)
 		}
 		l.Admit(root)
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
@@ -430,7 +604,20 @@ spec:
 		t.Parallel()
 		root := t.TempDir()
 		testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: []\n")
-		testutil.WriteFile(t, root, "app/siblings.yaml", testutil.KustomizationYAML("excluded", "apps", "  path: ./leaf\n")+"---\n"+testutil.KustomizationYAML("self", "apps", "  path: ./app\n"))
+		testutil.WriteFile(
+			t,
+			root,
+			"app/siblings.yaml",
+			testutil.KustomizationYAML(
+				"excluded",
+				"apps",
+				"  path: ./leaf\n",
+			)+"---\n"+testutil.KustomizationYAML(
+				"self",
+				"apps",
+				"  path: ./app\n",
+			),
+		)
 		l := New(store.New())
 		l.SourceRoot = root
 		_, err := l.Load(t.Context(), root)
@@ -438,7 +625,8 @@ spec:
 		l.Admit(root)
 		for _, name := range []string{"self", "excluded"} {
 			id := testutil.KustomizationID("apps", name)
-			if l.Store.GetObject(id) != nil || l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, filepath.Join(root, "app/siblings.yaml")) {
+			if l.Store.GetObject(id) != nil ||
+				l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, filepath.Join(root, "app/siblings.yaml")) {
 				t.Fatalf("omitted declaration became runnable: %s", id)
 			}
 			if _, ok := l.Index.Lookup(id); !ok {
@@ -447,7 +635,13 @@ spec:
 		}
 		l.Admit(root)
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
-		if l.AdmitsRoot(l.IndexedObject(testutil.KustomizationID("apps", "self"), l.Index.Records[testutil.KustomizationID("apps", "self")]).Obj, filepath.Join(root, "app/siblings.yaml")) {
+		if l.AdmitsRoot(
+			l.IndexedObject(
+				testutil.KustomizationID("apps", "self"),
+				l.Index.Records[testutil.KustomizationID("apps", "self")],
+			).Obj,
+			filepath.Join(root, "app/siblings.yaml"),
+		) {
 			t.Fatal("finalization lost denial")
 		}
 	})
@@ -455,8 +649,22 @@ spec:
 		t.Parallel()
 		root := t.TempDir()
 		testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: []\n")
-		testutil.WriteFile(t, root, "apps/disabled.yaml", testutil.KustomizationYAML("disabled", "apps", "  path: ./target\n  sourceRef: {kind: GitRepository, name: missing}\n"))
-		testutil.WriteFile(t, root, "target/child.yaml", testutil.KustomizationYAML("child", "apps", "  path: ./leaf\n"))
+		testutil.WriteFile(
+			t,
+			root,
+			"apps/disabled.yaml",
+			testutil.KustomizationYAML(
+				"disabled",
+				"apps",
+				"  path: ./target\n  sourceRef: {kind: GitRepository, name: missing}\n",
+			),
+		)
+		testutil.WriteFile(
+			t,
+			root,
+			"target/child.yaml",
+			testutil.KustomizationYAML("child", "apps", "  path: ./leaf\n"),
+		)
 		l := New(store.New())
 		l.SourceRoot = root
 		_, err := l.Load(t.Context(), root)
@@ -464,7 +672,8 @@ spec:
 		l.Admit(root)
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 		child := testutil.KustomizationID("apps", "child")
-		if l.Store.GetObject(child) != nil || l.AdmitsRoot(l.IndexedObject(child, l.Index.Records[child]).Obj, filepath.Join(root, "target/child.yaml")) {
+		if l.Store.GetObject(child) != nil ||
+			l.AdmitsRoot(l.IndexedObject(child, l.Index.Records[child]).Obj, filepath.Join(root, "target/child.yaml")) {
 			t.Fatal("inactive unresolved owner enabled builder-free descendant")
 		}
 	})
@@ -473,7 +682,12 @@ spec:
 		root := t.TempDir()
 		testutil.WriteFile(t, root, "direct.yaml", testutil.KustomizationYAML("direct", "apps", "  path: ./leaf\n"))
 		testutil.WriteFile(t, root, "disabled/kustomization.yaml", "resources: []\n")
-		testutil.WriteFile(t, root, "disabled/owner.yaml", testutil.KustomizationYAML("disabled", "apps", "  path: .\n"))
+		testutil.WriteFile(
+			t,
+			root,
+			"disabled/owner.yaml",
+			testutil.KustomizationYAML("disabled", "apps", "  path: .\n"),
+		)
 		l := New(store.New())
 		l.SourceRoot = root
 		_, err := l.Load(t.Context(), root)
@@ -481,7 +695,8 @@ spec:
 		l.Admit(root)
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 		id := testutil.KustomizationID("apps", "direct")
-		if l.Store.GetObject(id) == nil || !l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, filepath.Join(root, "direct.yaml")) {
+		if l.Store.GetObject(id) == nil ||
+			!l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, filepath.Join(root, "direct.yaml")) {
 			t.Fatal("inactive broad claim disabled the plain entry's direct manifest")
 		}
 	})
@@ -489,9 +704,23 @@ spec:
 		t.Parallel()
 		root := t.TempDir()
 		testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: []\n")
-		testutil.WriteFile(t, root, "flux/disabled.yaml", testutil.KustomizationYAML("disabled", "apps", "  path: ./target\n  sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}\n"))
+		testutil.WriteFile(
+			t,
+			root,
+			"flux/disabled.yaml",
+			testutil.KustomizationYAML(
+				"disabled",
+				"apps",
+				"  path: ./target\n  sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}\n",
+			),
+		)
 		testutil.WriteFile(t, root, "target/kustomization.yaml", "resources: [../outside/source.yaml]\n")
-		testutil.WriteFile(t, root, "outside/source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: inactive-source, namespace: apps}\nspec: {url: https://fixture.invalid/unused}\n")
+		testutil.WriteFile(
+			t,
+			root,
+			"outside/source.yaml",
+			"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: inactive-source, namespace: apps}\nspec: {url: https://fixture.invalid/unused}\n",
+		)
 		st := store.New()
 		l := New(st)
 		l.SourceRoot = root
@@ -499,15 +728,24 @@ spec:
 		source := &manifest.GitRepository{Name: "cluster", Namespace: "flux-system"}
 		st.AddObject(source)
 		mount := filepath.Join(t.TempDir(), "alias")
-		st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: mount, LocalRoot: root, InputAlias: true, FS: os.DirFS(root)})
+		st.SetArtifact(
+			source.Named(),
+			&store.SourceArtifact{LocalPath: mount, LocalRoot: root, InputAlias: true, FS: os.DirFS(root)},
+		)
 		for _, dir := range []string{root, filepath.Join(mount, "target")} {
 			_, err := l.Load(t.Context(), dir)
 			assert.NoError(t, err)
 		}
 		l.Admit(root)
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
-		id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "inactive-source"}
-		if st.GetObject(id) != nil || l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, filepath.Join(root, "outside/source.yaml")) {
+		id := manifest.NamedResource{
+			Group:     manifest.SourceDomain,
+			Kind:      manifest.KindGitRepository,
+			Namespace: "apps",
+			Name:      "inactive-source",
+		}
+		if st.GetObject(id) != nil ||
+			l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, filepath.Join(root, "outside/source.yaml")) {
 			t.Fatal("inactive alias enabled its physical resource outside the path claim")
 		}
 		for child := range l.Sources(t.Context()) {
@@ -522,8 +760,12 @@ spec:
 			t.Parallel()
 			root := t.TempDir()
 			files := map[string]string{
-				"apps/kustomization.yaml":      "resources: []\n",
-				"apps/disabled.yaml":           testutil.KustomizationYAML("disabled", "apps", "  path: ./target\n  components: [../component]\n"),
+				"apps/kustomization.yaml": "resources: []\n",
+				"apps/disabled.yaml": testutil.KustomizationYAML(
+					"disabled",
+					"apps",
+					"  path: ./target\n  components: [../component]\n",
+				),
 				"target/kustomization.yaml":    "resources: [nested.yaml, source.yaml]\nconfigMapGenerator:\n- name: inactive-generated\n  literals: [VALUE=unused]\n",
 				"target/nested.yaml":           testutil.KustomizationYAML("nested", "apps", "  path: ./nested\n"),
 				"target/source.yaml":           "apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: inactive-source, namespace: apps}\nspec: {url: oci://fixture.invalid/unused}\n",
@@ -560,7 +802,11 @@ spec:
 			id := testutil.KustomizationID("apps", "disabled")
 			file := filepath.Join(root, "apps/disabled.yaml")
 			if l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, file) != included {
-				t.Fatalf("finalized admission=%t want %t", l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, file), included)
+				t.Fatalf(
+					"finalized admission=%t want %t",
+					l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, file),
+					included,
+				)
 			}
 			if _, indexed := l.Index.Lookup(id); !indexed {
 				t.Fatal("inactive owner evidence was discarded")
@@ -578,11 +824,14 @@ spec:
 				if len(l.Kustomizations()) != 3 {
 					t.Fatal("independent edge did not enable nested cycle")
 				}
-				if _, ok := lookupDataForTest[*manifest.ConfigMap](t, l.Store, manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "inactive-generated"}); !ok {
+				if _, ok := lookupDataForTest[*manifest.ConfigMap](
+					t,
+					l.Store,
+					manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "inactive-generated"},
+				); !ok {
 					t.Fatal("independent edge did not enable generator")
 				}
 			}
-
 		})
 	}
 
@@ -717,24 +966,62 @@ spec:
 				input, err := gittree.AdmitDirectory(t.Context(), location)
 				assert.NoError(t, err)
 				l.Store.SetArtifact(manifest.BootstrapSourceID, input)
-				view, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: input.FS})
+				view, _, err := gittree.New(
+					t.Context(),
+					nil,
+					plumbing.ZeroHash,
+					gittree.ViewOptions{Mode: gittree.Source, Current: input.FS},
+				)
 				assert.NoError(t, err)
-				id := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}
-				l.Store.AddObject(&manifest.GitRepository{Name: id.Name, Namespace: id.Namespace, URL: "file://" + root})
-				l.Store.SetArtifact(id, &store.SourceArtifact{Kind: id.Kind, LocalRoot: root, LocalPath: filepath.Join(filepath.Dir(root), ".flate-sources", "alias", id.Namespace, id.Name), InputAlias: true, FS: view})
+				id := manifest.NamedResource{
+					Group:     "source.toolkit.fluxcd.io",
+					Kind:      manifest.KindGitRepository,
+					Namespace: "flux-system",
+					Name:      "cluster",
+				}
+				l.Store.AddObject(
+					&manifest.GitRepository{Name: id.Name, Namespace: id.Namespace, URL: "file://" + root},
+				)
+				l.Store.SetArtifact(
+					id,
+					&store.SourceArtifact{
+						Kind:       id.Kind,
+						LocalRoot:  root,
+						LocalPath:  filepath.Join(filepath.Dir(root), ".flate-sources", "alias", id.Namespace, id.Name),
+						InputAlias: true,
+						FS:         view,
+					},
+				)
 			}
 			if tc.name == "self_claim_transformer_fallback" {
 				for _, namespace := range []string{"flux-system", "myns"} {
 					source := &manifest.GitRepository{Name: "cluster", Namespace: namespace}
 					l.Store.AddObject(source)
-					l.Store.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: os.DirFS(root)})
+					l.Store.SetArtifact(
+						source.Named(),
+						&store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: os.DirFS(root)},
+					)
 				}
 			}
 			if tc.pinned {
 				artifact := t.TempDir()
 				testutil.WriteFile(t, artifact, "apps/kustomization.yaml", "resources: [hr.yaml]\n")
 				testutil.WriteFile(t, artifact, "apps/hr.yaml", hrDoc)
-				l.Store.SetArtifact(manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}, &store.SourceArtifact{LocalRoot: root, Key: "pinned", Content: "pinned", FS: os.DirFS(artifact), LocalPath: artifact})
+				l.Store.SetArtifact(
+					manifest.NamedResource{
+						Group:     "source.toolkit.fluxcd.io",
+						Kind:      manifest.KindGitRepository,
+						Namespace: "flux-system",
+						Name:      "cluster",
+					},
+					&store.SourceArtifact{
+						LocalRoot: root,
+						Key:       "pinned",
+						Content:   "pinned",
+						FS:        os.DirFS(artifact),
+						LocalPath: artifact,
+					},
+				)
 				l.documents = readerForTest(root)
 				l.documents.views[artifact] = os.DirFS(artifact)
 				l.documents.read(filepath.Join(artifact, "apps"))
@@ -750,7 +1037,10 @@ spec:
 					}
 					source := &manifest.GitRepository{Name: "cluster", Namespace: "flux-system"}
 					l.Store.AddObject(source)
-					l.Store.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: os.DirFS(root)})
+					l.Store.SetArtifact(
+						source.Named(),
+						&store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: os.DirFS(root)},
+					)
 				}
 			}
 			l.Admit(root)
@@ -785,10 +1075,20 @@ spec:
 			}
 			l.Admit(root)
 			if original != nil {
-				if diff := cmp.Diff(original, snapshot, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection")); diff != "" {
+				if diff := cmp.Diff(
+					original,
+					snapshot,
+					cmp.AllowUnexported(manifest.Kustomization{}),
+					cmpopts.IgnoreFields(manifest.Kustomization{}, "projection"),
+				); diff != "" {
 					t.Fatalf("authored object mutated (-want +got): %s", diff)
 				}
-				if diff := cmp.Diff(l.authoredObject(raw.Path, raw.Authored).Obj, snapshot, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection")); diff != "" {
+				if diff := cmp.Diff(
+					l.authoredObject(raw.Path, raw.Authored).Obj,
+					snapshot,
+					cmp.AllowUnexported(manifest.Kustomization{}),
+					cmpopts.IgnoreFields(manifest.Kustomization{}, "projection"),
+				); diff != "" {
 					t.Fatalf("authored object mutated (-want +got): %s", diff)
 				}
 				assert.Diff(t, l.recordNamespaces(raw, "myns"), tc.wantKS)
@@ -801,7 +1101,14 @@ spec:
 				}
 				for _, ns := range tc.wantKS {
 					id := testutil.KustomizationID(ns, "myapp")
-					want[id] = []manifest.NamedResource{{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: ns, Name: "cluster"}}
+					want[id] = []manifest.NamedResource{
+						{
+							Group:     "source.toolkit.fluxcd.io",
+							Kind:      manifest.KindGitRepository,
+							Namespace: ns,
+							Name:      "cluster",
+						},
+					}
 				}
 				assert.Diff(t, got, want)
 			}
@@ -824,7 +1131,7 @@ spec:
 				}
 				r, _ := l.Index.Lookup(testutil.HelmReleaseID("apps", "app"))
 				readers := l.Index.Readers[r.File]
-				if len(readers) != 1 || readers[0].Reader != (testutil.KustomizationID("flux-system", "pinned")) {
+				if len(readers) != 1 || readers[0].Reader != testutil.KustomizationID("flux-system", "pinned") {
 					t.Fatalf("committed source file %q readers = %v", r.File, readers)
 				}
 			}
@@ -879,14 +1186,32 @@ spec:
 	t.Run("subtree_availability", func(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()
-		testutil.WriteFile(t, root, "flux/ks.yaml", testutil.KustomizationYAML("parent", "flux-system", "  {path: ./apps, targetNamespace: media, sourceRef: {kind: OCIRepository, name: source}}\n"))
+		testutil.WriteFile(
+			t,
+			root,
+			"flux/ks.yaml",
+			testutil.KustomizationYAML(
+				"parent",
+				"flux-system",
+				"  {path: ./apps, targetNamespace: media, sourceRef: {kind: OCIRepository, name: source}}\n",
+			),
+		)
 		testutil.WriteFile(t, root, "kubernetes/apps/kustomization.yaml", "resources: [child.yaml, explicit.yaml]\n")
 		for _, name := range []string{"child", "explicit"} {
 			namespace := ""
 			if name == "explicit" {
 				namespace = "control"
 			}
-			testutil.WriteFile(t, root, "kubernetes/apps/"+name+".yaml", testutil.KustomizationYAML(name, namespace, "  {path: ./output, sourceRef: {kind: OCIRepository, name: source, namespace: flux-system}}\n"))
+			testutil.WriteFile(
+				t,
+				root,
+				"kubernetes/apps/"+name+".yaml",
+				testutil.KustomizationYAML(
+					name,
+					namespace,
+					"  {path: ./output, sourceRef: {kind: OCIRepository, name: source, namespace: flux-system}}\n",
+				),
+			)
 		}
 		st := store.New()
 		l := loaderFixture(st, nil)
@@ -920,7 +1245,16 @@ spec:
 		assert.NoError(t, err)
 		st.AddObject(source)
 		mount := filepath.Join(filepath.Dir(root), ".flate-sources", "subtree", "flux-system", "source")
-		st.SetArtifact(source.Named(), &store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalRoot: filepath.Join(root, "kubernetes"), LocalPath: mount, InputAlias: true, FS: view})
+		st.SetArtifact(
+			source.Named(),
+			&store.SourceArtifact{
+				Kind:       manifest.KindOCIRepository,
+				LocalRoot:  filepath.Join(root, "kubernetes"),
+				LocalPath:  mount,
+				InputAlias: true,
+				FS:         view,
+			},
+		)
 		if got, _, external := SourceView(st, owner.SourceID(), root); external || got != mount {
 			t.Fatalf("available source = %s, external=%t", got, external)
 		}
@@ -945,7 +1279,9 @@ spec:
 		for _, name := range []string{"child", "explicit"} {
 			id := testutil.KustomizationID("media", name)
 			record, ok := l.Index.Lookup(id)
-			if !ok || candidateForTest(t, l, id) == nil || st.GetObject(id) == nil || record.File != raw[name].File || record.Path != filepath.Join(mount, "apps", name+".yaml") || record.Path != raw[name].Path {
+			if !ok || candidateForTest(t, l, id) == nil || st.GetObject(id) == nil || record.File != raw[name].File ||
+				record.Path != filepath.Join(mount, "apps", name+".yaml") ||
+				record.Path != raw[name].Path {
 				t.Fatalf("projected %s record=%+v, raw=%+v", id, record, raw[name])
 			}
 		}
@@ -955,10 +1291,16 @@ spec:
 		for _, name := range []string{"child", "explicit"} {
 			id := testutil.KustomizationID("media", name)
 			record, ok := l.Index.Lookup(id)
-			if !ok || record.Parent != owner.Named() || record.File != "kubernetes/apps/"+name+".yaml" || record.Path != raw[name].Path {
+			if !ok || record.Parent != owner.Named() || record.File != "kubernetes/apps/"+name+".yaml" ||
+				record.Path != raw[name].Path {
 				t.Fatalf("finalized %s record=%+v", id, record)
 			}
-			if readers := slices.Collect(l.Index.ReadersOfFile(record.File)); !slices.ContainsFunc(readers, func(r manifest.FileReader) bool { return r.Reader == owner.Named() }) {
+			if readers := slices.Collect(
+				l.Index.ReadersOfFile(record.File),
+			); !slices.ContainsFunc(
+				readers,
+				func(r manifest.FileReader) bool { return r.Reader == owner.Named() },
+			) {
 				t.Fatalf("subtree readers = %v", readers)
 			}
 		}
@@ -968,7 +1310,12 @@ spec:
 		t.Parallel()
 		root := t.TempDir()
 		writeFile(t, root, "apps/kustomization.yaml", "namespace: immich\nresources: [ks.yaml]\n")
-		writeFile(t, root, "apps/ks.yaml", testutil.KustomizationYAML("immich-db", "pg", "  {path: ./output, targetNamespace: pg}\n"))
+		writeFile(
+			t,
+			root,
+			"apps/ks.yaml",
+			testutil.KustomizationYAML("immich-db", "pg", "  {path: ./output, targetNamespace: pg}\n"),
+		)
 		l := loaderFixture(store.New(), nil)
 		l.SourceRoot = root
 		if _, err := loadForTest(t.Context(), t, l, filepath.Join(root, "apps")); err != nil {
@@ -1008,7 +1355,12 @@ func TestAdmit_SourceKinds(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "kustomization.yaml", "namespace: apps\nresources: [source.yaml]\n")
-			testutil.WriteFile(t, root, "source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: "+tc.kind+"\nmetadata: {name: source}\nspec: "+tc.spec+"\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"source.yaml",
+				"apiVersion: source.toolkit.fluxcd.io/v1\nkind: "+tc.kind+"\nmetadata: {name: source}\nspec: "+tc.spec+"\n",
+			)
 			l := loaderFixture(store.New(), nil)
 			l.SourceRoot = root
 			if _, err := l.Load(t.Context(), root); err != nil {
@@ -1080,7 +1432,9 @@ spec: {chart: app, sourceRef: {kind: HelmRepository, name: repo}}
 			_, err := l.Load(t.Context(), filepath.Join(root, "apps"))
 			assert.NoError(t, err)
 			l.Admit(root)
-			l.Store.AddObject(&manifest.Kustomization{Name: "owner", Namespace: "owner", Path: "./apps", TargetNamespace: "media"})
+			l.Store.AddObject(
+				&manifest.Kustomization{Name: "owner", Namespace: "owner", Path: "./apps", TargetNamespace: "media"},
+			)
 			l.Admit(root)
 			for _, id := range []manifest.NamedResource{
 				{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "media", Name: "apps"},
@@ -1200,7 +1554,9 @@ func TestRecordNamespaces_PrefixEligibility(t *testing.T) {
 			l := New(store.New())
 			l.ensureScopes()
 			for _, id := range []manifest.NamedResource{root, outer, alpha, zeta, projected} {
-				l.Store.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace, TargetNamespace: id.Name})
+				l.Store.AddObject(
+					&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace, TargetNamespace: id.Name},
+				)
 			}
 			l.Index.Records[projected] = manifest.DiscoveryRecord{Authored: self}
 			l.Index.Claims = tc.claims
@@ -1214,10 +1570,20 @@ func TestAdmit_BootstrapSiblingNamespaceProjection(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [sibling.yaml]\ntransformers: [transformers]\n")
-	testutil.WriteFile(t, root, "app/transformers/kustomization.yaml", "namespace: apps\nresources: [../../transformers]\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"app/transformers/kustomization.yaml",
+		"namespace: apps\nresources: [../../transformers]\n",
+	)
 	testutil.WriteFile(t, root, "transformers/kustomization.yaml", "resources: [transformer.yaml]\n")
 	testutil.WriteFile(t, root, "transformers/transformer.yaml", namespaceTransformer)
-	testutil.WriteFile(t, root, "app/sibling.yaml", testutil.KustomizationYAML("sibling", "flux-system", "  path: ./leaf\n"))
+	testutil.WriteFile(
+		t,
+		root,
+		"app/sibling.yaml",
+		testutil.KustomizationYAML("sibling", "flux-system", "  path: ./leaf\n"),
+	)
 	testutil.WriteFile(t, root, "leaf/kustomization.yaml", "resources: [cm.yaml]\n")
 	testutil.WriteFile(t, root, "leaf/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: leaf}\n")
 	l := New(store.New())
@@ -1298,7 +1664,10 @@ func TestAdmit_ExcludedBootstrapSibling(t *testing.T) {
 	if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := l.Index.Lookup(sibling); !ok || l.Store.GetObject(sibling) != nil || l.AdmitsRoot(l.IndexedObject(sibling, l.Index.Records[sibling]).Obj, filepath.Join(root, "app/sibling.yaml")) {
+	if _, ok := l.Index.Lookup(
+		sibling,
+	); !ok || l.Store.GetObject(sibling) != nil ||
+		l.AdmitsRoot(l.IndexedObject(sibling, l.Index.Records[sibling]).Obj, filepath.Join(root, "app/sibling.yaml")) {
 		t.Fatal("inactive declaration lost evidence or became runnable")
 	}
 }
@@ -1355,9 +1724,20 @@ func TestRecordNamespaces_IndexedOwner(t *testing.T) {
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "system", TargetNamespace: "apps"}
 			occurrence := compactOccurrence(owner, manifest.ProjectProducer(owner))
 			l.locations = map[manifest.NamedResource]Occurrence{owner.Named(): occurrence}
-			l.Index.Records[owner.Named()] = manifest.DiscoveryRecord{Authored: owner.Named(), Path: "/input/flux/owner.yaml"}
+			l.Index.Records[owner.Named()] = manifest.DiscoveryRecord{
+				Authored: owner.Named(),
+				Path:     "/input/flux/owner.yaml",
+			}
 			l.Index.Claims = map[string][]manifest.NamedResource{"app/": {owner.Named()}}
-			record := manifest.DiscoveryRecord{Authored: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Name: "chart"}, Path: "/input/app/source.yaml", File: "app/source.yaml"}
+			record := manifest.DiscoveryRecord{
+				Authored: manifest.NamedResource{
+					Group: manifest.SourceDomain,
+					Kind:  manifest.KindOCIRepository,
+					Name:  "chart",
+				},
+				Path: "/input/app/source.yaml",
+				File: "app/source.yaml",
+			}
 			if name == "visit" {
 				l.scopes.visits[record.Path] = []graphVisit{{role: kustomizeinput.Resource}}
 			}

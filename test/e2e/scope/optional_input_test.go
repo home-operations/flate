@@ -21,7 +21,9 @@ func TestE2E_CrossSourceOptionalInputRemoval(t *testing.T) {
 	flags := []string{"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir(), "--log-level", "debug"}
 	var rendered [2]string
 	for side, root := range roots {
-		full, _ := harness.RequireCLIOK(t, append([]string{"build", "all", "--path", filepath.Join(root, "flux")}, flags...)...)
+		full, _ := harness.RequireCLIOK(
+			t,
+			append([]string{"build", "all", "--path", filepath.Join(root, "flux")}, flags...)...)
 		want := []string{"available", "fallback"}[side]
 		docs, err := testutil.DecodeDocs(strings.NewReader(full))
 		if err != nil {
@@ -32,7 +34,8 @@ func TestE2E_CrossSourceOptionalInputRemoval(t *testing.T) {
 			name, _ := manifest.DocMetadata(doc)
 			input = input || manifest.DocKind(doc) == manifest.KindConfigMap && name == "optional"
 		}
-		if !strings.Contains(full, "value: "+want) || !strings.Contains(full, "sentinel: active") || input != (side == 0) {
+		if !strings.Contains(full, "value: "+want) || !strings.Contains(full, "sentinel: active") ||
+			input != (side == 0) {
 			t.Fatalf("side %d full render lost consumer substitution or supplying input: %s", side, full)
 		}
 		rendered[side] = t.TempDir()
@@ -42,7 +45,12 @@ func TestE2E_CrossSourceOptionalInputRemoval(t *testing.T) {
 			if name == "app" {
 				directory = "apps/app"
 			}
-			testutil.WriteFile(t, rendered[side], "flux/"+name+".yaml", testutil.KustomizationYAML(name, "flux-system", "  path: ./"+directory+"\n"))
+			testutil.WriteFile(
+				t,
+				rendered[side],
+				"flux/"+name+".yaml",
+				testutil.KustomizationYAML(name, "flux-system", "  path: ./"+directory+"\n"),
+			)
 			output := ""
 			for doc := range strings.SplitSeq(full, "---\n") {
 				if strings.Contains(doc, "kustomize.toolkit.fluxcd.io/name: "+name+"\n") {
@@ -57,18 +65,48 @@ func TestE2E_CrossSourceOptionalInputRemoval(t *testing.T) {
 			testutil.WriteFile(t, rendered[side], directory+"/kustomization.yaml", resources)
 		}
 	}
-	oracleArgs := append([]string{"diff", "all", "--path", filepath.Join(rendered[1], "flux"), "--path-orig", filepath.Join(rendered[0], "flux"), "-o", "diff"}, flags...)
+	oracleArgs := append(
+		[]string{
+			"diff",
+			"all",
+			"--path",
+			filepath.Join(rendered[1], "flux"),
+			"--path-orig",
+			filepath.Join(rendered[0], "flux"),
+			"-o",
+			"diff",
+		},
+		flags...)
 	oracle, _ := harness.RequireCLIOK(t, oracleArgs...)
-	args := append([]string{"diff", "all", "--path", filepath.Join(roots[1], "flux"), "--path-orig", filepath.Join(roots[0], "flux"), "-o", "diff"}, flags...)
+	args := append(
+		[]string{
+			"diff",
+			"all",
+			"--path",
+			filepath.Join(roots[1], "flux"),
+			"--path-orig",
+			filepath.Join(roots[0], "flux"),
+			"-o",
+			"diff",
+		},
+		flags...)
 	var previous string
 	for run := range 2 {
 		scoped, stderr := harness.RequireCLIOK(t, args...)
-		if scoped != oracle || !strings.Contains(scoped, "-  value: available") || !strings.Contains(scoped, "+  value: fallback") || !strings.Contains(scoped, "name: optional") {
-			t.Fatalf("cross-source removal differs from full-render oracle: scoped=%s\nfull=%s\nstderr=%s", scoped, oracle, stderr)
+		if scoped != oracle || !strings.Contains(scoped, "-  value: available") ||
+			!strings.Contains(scoped, "+  value: fallback") ||
+			!strings.Contains(scoped, "name: optional") {
+			t.Fatalf(
+				"cross-source removal differs from full-render oracle: scoped=%s\nfull=%s\nstderr=%s",
+				scoped,
+				oracle,
+				stderr,
+			)
 		}
 		selected := 0
 		for line := range strings.SplitSeq(stderr, "\n") {
-			if strings.Contains(line, "changed-only keep set") && strings.Contains(line, "Kustomization.kustomize.toolkit.fluxcd.io/flux-system/app") {
+			if strings.Contains(line, "changed-only keep set") &&
+				strings.Contains(line, "Kustomization.kustomize.toolkit.fluxcd.io/flux-system/app") {
 				selected++
 			}
 		}
@@ -87,16 +125,35 @@ func TestE2E_OptionalInputChangedOnly(t *testing.T) {
 		t.Run(route, func(t *testing.T) {
 			root, before := t.TempDir(), t.TempDir()
 			repo := writeOptionalInputCLICluster(t, root, true)
-			options := &git.CommitOptions{Author: &object.Signature{Name: "test", Email: "test@example.test", When: time.Unix(0, 0)}}
+			options := &git.CommitOptions{
+				Author: &object.Signature{Name: "test", Email: "test@example.test", When: time.Unix(0, 0)},
+			}
 			base := testutil.GitCommitAll(t, repo, "base", options)
 			testutil.CopyTree(t, root, before)
-			testutil.WriteFile(t, root, "flux/optional.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: optional, namespace: flux-system}\ndata: {VALUE: available}\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"flux/optional.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: optional, namespace: flux-system}\ndata: {VALUE: available}\n",
+			)
 			baseline := []string{"--path-orig", filepath.Join(before, "flux")}
 			if route == "committed" {
 				testutil.GitCommitAll(t, repo, "input appears", options)
 				baseline = []string{"--base", base.String()}
 			}
-			args := []string{"build", "all", "--path", filepath.Join(root, "flux"), "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir(), "--log-level", "debug"}
+			args := []string{
+				"build",
+				"all",
+				"--path",
+				filepath.Join(root, "flux"),
+				"--concurrency",
+				"2",
+				"--no-progress",
+				"--cache-dir",
+				t.TempDir(),
+				"--log-level",
+				"debug",
+			}
 			full, _ := harness.RequireCLIOK(t, args...)
 			scopedArgs := append(args, baseline...)
 			scoped, stderr := harness.RequireCLIOK(t, scopedArgs...)
@@ -132,11 +189,34 @@ func TestE2E_OptionalInputDiffSides(t *testing.T) {
 						t.Fatal(err)
 					}
 					testutil.WriteFile(t, root, "flux/cluster.yaml", string(cluster)+"  dependsOn: [{name: inputs}]\n")
-					testutil.WriteFile(t, root, "flux/inputs.yaml", testutil.KustomizationYAML("inputs", "flux-system", "  path: ./inputs\n  targetNamespace: flux-system\n  sourceRef: {kind: GitRepository, name: cluster}\n"))
+					testutil.WriteFile(
+						t,
+						root,
+						"flux/inputs.yaml",
+						testutil.KustomizationYAML(
+							"inputs",
+							"flux-system",
+							"  path: ./inputs\n  targetNamespace: flux-system\n  sourceRef: {kind: GitRepository, name: cluster}\n",
+						),
+					)
 					testutil.WriteFile(t, root, "inputs/kustomization.yaml", "resources: []\n")
-					testutil.WriteFile(t, root, "flux/other.yaml", testutil.KustomizationYAML("other", "other", "  path: ./apps/other\n  sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}\n  postBuild:\n    substitute: {SENTINEL: active}\n    substituteFrom: [{kind: ConfigMap, name: optional, optional: true}]\n"))
+					testutil.WriteFile(
+						t,
+						root,
+						"flux/other.yaml",
+						testutil.KustomizationYAML(
+							"other",
+							"other",
+							"  path: ./apps/other\n  sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}\n  postBuild:\n    substitute: {SENTINEL: active}\n    substituteFrom: [{kind: ConfigMap, name: optional, optional: true}]\n",
+						),
+					)
 					testutil.WriteFile(t, root, "apps/other/kustomization.yaml", "resources: [output.yaml]\n")
-					testutil.WriteFile(t, root, "apps/other/output.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unaffected, namespace: other}\ndata: {value: '${VALUE:-fallback}'}\n")
+					testutil.WriteFile(
+						t,
+						root,
+						"apps/other/output.yaml",
+						"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unaffected, namespace: other}\ndata: {value: '${VALUE:-fallback}'}\n",
+					)
 				}
 			}
 			present := after
@@ -149,9 +229,25 @@ func TestE2E_OptionalInputDiffSides(t *testing.T) {
 				inputPath, namespace = "inputs/optional.yaml", ""
 				testutil.WriteFile(t, present, "inputs/kustomization.yaml", "resources: [optional.yaml]\n")
 			}
-			testutil.WriteFile(t, present, inputPath, "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: optional"+namespace+"}\ndata: {VALUE: available}\n")
+			testutil.WriteFile(
+				t,
+				present,
+				inputPath,
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: optional"+namespace+"}\ndata: {VALUE: available}\n",
+			)
 			flags := []string{"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir()}
-			args := append([]string{"diff", "all", "--path", filepath.Join(after, "flux"), "--path-orig", filepath.Join(before, "flux"), "-o", "diff"}, flags...)
+			args := append(
+				[]string{
+					"diff",
+					"all",
+					"--path",
+					filepath.Join(after, "flux"),
+					"--path-orig",
+					filepath.Join(before, "flux"),
+					"-o",
+					"diff",
+				},
+				flags...)
 			if operation == "required removal" {
 				_, stderr, code := harness.RunCLIBuffers(args...)
 				if code != 1 || !strings.Contains(stderr, "optional") {
@@ -165,7 +261,12 @@ func TestE2E_OptionalInputDiffSides(t *testing.T) {
 				full, _ := harness.RequireCLIOK(t, buildArgs...)
 				rendered[i] = t.TempDir()
 				testutil.GitInit(t, rendered[i])
-				testutil.WriteFile(t, rendered[i], "flux/app.yaml", testutil.KustomizationYAML("app", "flux-system", "  path: ./apps/app\n"))
+				testutil.WriteFile(
+					t,
+					rendered[i],
+					"flux/app.yaml",
+					testutil.KustomizationYAML("app", "flux-system", "  path: ./apps/app\n"),
+				)
 				testutil.WriteFile(t, rendered[i], "apps/app/kustomization.yaml", "resources: [output.yaml]\n")
 				appOutput, inputOutput, rootOutput := "", "", ""
 				for doc := range strings.SplitSeq(full, "---\n") {
@@ -182,7 +283,12 @@ func TestE2E_OptionalInputDiffSides(t *testing.T) {
 				}
 				testutil.WriteFile(t, rendered[i], "apps/app/output.yaml", appOutput)
 				if strings.HasPrefix(operation, "projected") {
-					testutil.WriteFile(t, rendered[i], "flux/inputs.yaml", testutil.KustomizationYAML("inputs", "flux-system", "  path: ./inputs\n"))
+					testutil.WriteFile(
+						t,
+						rendered[i],
+						"flux/inputs.yaml",
+						testutil.KustomizationYAML("inputs", "flux-system", "  path: ./inputs\n"),
+					)
 					testutil.WriteFile(t, rendered[i], "inputs/kustomization.yaml", "resources: []\n")
 					if inputOutput != "" {
 						testutil.WriteFile(t, rendered[i], "inputs/kustomization.yaml", "resources: [output.yaml]\n")
@@ -193,10 +299,22 @@ func TestE2E_OptionalInputDiffSides(t *testing.T) {
 					t.Fatalf("current full build did not apply substitution/fallback: %s", full)
 				}
 			}
-			fullArgs := append([]string{"diff", "all", "--path", filepath.Join(rendered[1], "flux"), "--path-orig", filepath.Join(rendered[0], "flux"), "-o", "diff"}, flags...)
+			fullArgs := append(
+				[]string{
+					"diff",
+					"all",
+					"--path",
+					filepath.Join(rendered[1], "flux"),
+					"--path-orig",
+					filepath.Join(rendered[0], "flux"),
+					"-o",
+					"diff",
+				},
+				flags...)
 			fullDiff, _ := harness.RequireCLIOK(t, fullArgs...)
 			scoped, stderr := harness.RequireCLIOK(t, args...)
-			if scoped != fullDiff || !strings.Contains(scoped, "-  value: "+oldValue) || !strings.Contains(scoped, "+  value: "+newValue) {
+			if scoped != fullDiff || !strings.Contains(scoped, "-  value: "+oldValue) ||
+				!strings.Contains(scoped, "+  value: "+newValue) {
 				t.Fatalf("paired diff mismatch: scoped=%s\nfull=%s\nstderr=%s", scoped, fullDiff, stderr)
 			}
 			second, _ := harness.RequireCLIOK(t, args...)
@@ -210,7 +328,9 @@ func TestE2E_OptionalInputDiffSides(t *testing.T) {
 func writeOptionalInputCLICluster(t *testing.T, root string, optional bool) *git.Repository {
 	t.Helper()
 	repo := testutil.GitInit(t, root)
-	if _, err := repo.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{"https://example.test/cluster.git"}}); err != nil {
+	if _, err := repo.CreateRemote(
+		&config.RemoteConfig{Name: "origin", URLs: []string{"https://example.test/cluster.git"}},
+	); err != nil {
 		t.Fatal(err)
 	}
 	optionalValue := "true"

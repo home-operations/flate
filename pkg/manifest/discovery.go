@@ -62,10 +62,12 @@ type DiscoveryRecord struct {
 
 // Equal compares the record facts retained by accepted renders.
 func (r DiscoveryRecord) Equal(other DiscoveryRecord) bool {
-	if r.Application != other.Application || r.Authored != other.Authored || r.Path != other.Path || r.File != other.File {
+	if r.Application != other.Application || r.Authored != other.Authored || r.Path != other.Path ||
+		r.File != other.File {
 		return false
 	}
-	if r.Parent != other.Parent || r.Builder != other.Builder || r.Pinned != other.Pinned || r.StaticOutput != other.StaticOutput {
+	if r.Parent != other.Parent || r.Builder != other.Builder || r.Pinned != other.Pinned ||
+		r.StaticOutput != other.StaticOutput {
 		return false
 	}
 	if (r.Inputs == nil) != (other.Inputs == nil) || !slices.Equal(r.Inputs, other.Inputs) {

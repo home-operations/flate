@@ -38,7 +38,8 @@ func TestBindOutput_Usage(t *testing.T) {
 			var target string
 			fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
 			bindOutput(fs, &target, tc.outputs...)
-			if target != string(tc.outputs[0]) || fs.Lookup("output").DefValue != target || fs.Lookup("output").Shorthand != "o" {
+			if target != string(tc.outputs[0]) || fs.Lookup("output").DefValue != target ||
+				fs.Lookup("output").Shorthand != "o" {
 				t.Fatalf("incorrect output binding: %s %#v", target, fs.Lookup("output"))
 			}
 			if got := fs.Lookup("output").Usage; got != tc.want {
@@ -90,7 +91,9 @@ func TestOutputFlags_CommandFormats(t *testing.T) {
 			}
 			formats := strings.Split(tc.formats, ", ")
 			usage, _, _ := strings.Cut(flag.Usage, " [env: ")
-			if usage != "Set output format: "+tc.formats || !strings.Contains(flag.Usage, envKey("output")) || flag.DefValue != formats[0] || flag.Shorthand != "o" {
+			if usage != "Set output format: "+tc.formats || !strings.Contains(flag.Usage, envKey("output")) ||
+				flag.DefValue != formats[0] ||
+				flag.Shorthand != "o" {
 				t.Fatalf("incorrect output binding: %#v", flag)
 			}
 			for _, format := range formats {
@@ -98,7 +101,10 @@ func TestOutputFlags_CommandFormats(t *testing.T) {
 					t.Errorf("rejects advertised format %s: %v", format, err)
 				}
 			}
-			if err := cmd.ParseFlags([]string{"-o", "unsupported"}); err == nil || !strings.Contains(err.Error(), "must be one of: "+tc.formats) {
+			if err := cmd.ParseFlags(
+				[]string{"-o", "unsupported"},
+			); err == nil ||
+				!strings.Contains(err.Error(), "must be one of: "+tc.formats) {
 				t.Errorf("invalid output accepted: %v", err)
 			}
 		})
@@ -110,7 +116,8 @@ func TestOutputFlags_TestRejectsBeforeRender(t *testing.T) {
 		t.Run(command, func(t *testing.T) {
 			args := append(strings.Fields(command), "--path", t.TempDir()+"/missing", "-o", "yaml")
 			out, diagnostic, code := runCLI(t, args...)
-			if code != 1 || out != "" || !strings.Contains(diagnostic, "unknown shorthand flag: 'o'") || strings.Contains(diagnostic, "does not exist") {
+			if code != 1 || out != "" || !strings.Contains(diagnostic, "unknown shorthand flag: 'o'") ||
+				strings.Contains(diagnostic, "does not exist") {
 				t.Fatalf("output rejection happened after render: exit=%d stdout=%s stderr=%s", code, out, diagnostic)
 			}
 		})

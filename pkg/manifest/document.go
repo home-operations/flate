@@ -31,7 +31,12 @@ func (e *ExternalArtifact) RenderDocument() (map[string]any, error) {
 		}
 		spec["sourceRef"] = source
 	}
-	doc := map[string]any{"apiVersion": sourceAPIVersion, "kind": KindExternalArtifact, "metadata": metadata, "spec": spec}
+	doc := map[string]any{
+		"apiVersion": sourceAPIVersion,
+		"kind":       KindExternalArtifact,
+		"metadata":   metadata,
+		"spec":       spec,
+	}
 	return doc, nil
 }
 

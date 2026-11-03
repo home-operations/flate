@@ -189,7 +189,8 @@ func TestDetect_MissingInputsWrapInput(t *testing.T) {
 	t.Parallel()
 	for _, input := range []*store.SourceArtifact{nil, {}} {
 		_, err := Detect(t.Context(), input, &store.SourceArtifact{FS: fstest.MapFS{}})
-		if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || err.Error() != "both admitted inputs required" {
+		if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) ||
+			err.Error() != "both admitted inputs required" {
 			t.Fatalf("missing input error=%v", err)
 		}
 	}
@@ -219,7 +220,15 @@ func TestDetect_LastBodyCancellation(t *testing.T) {
 						after.cancel = cancel
 					}
 					set, err := Detect(ctx, &store.SourceArtifact{FS: before}, &store.SourceArtifact{FS: after})
-					t.Logf("before: opened=%d closed=%d reads after cancel=%d; after: opened=%d closed=%d reads after cancel=%d", before.opened.Load(), before.closed.Load(), before.postCancel.Load(), after.opened.Load(), after.closed.Load(), after.postCancel.Load())
+					t.Logf(
+						"before: opened=%d closed=%d reads after cancel=%d; after: opened=%d closed=%d reads after cancel=%d",
+						before.opened.Load(),
+						before.closed.Load(),
+						before.postCancel.Load(),
+						after.opened.Load(),
+						after.closed.Load(),
+						after.postCancel.Load(),
+					)
 					if !errors.Is(err, context.Canceled) || set != nil {
 						t.Errorf("cancelled last body=%v,%v", set, err)
 					}
@@ -314,12 +323,23 @@ func TestDetect_HashLimit(t *testing.T) {
 				}
 				done := make(chan result, 1)
 				go func() {
-					set, err := Detect(ctx, &store.SourceArtifact{FS: &hashInput{FS: before, reads: reads, before: true}}, &store.SourceArtifact{FS: &hashInput{FS: after, reads: reads}})
+					set, err := Detect(
+						ctx,
+						&store.SourceArtifact{FS: &hashInput{FS: before, reads: reads, before: true}},
+						&store.SourceArtifact{FS: &hashInput{FS: after, reads: reads}},
+					)
 					done <- result{set, err}
 				}()
 				synctest.Wait()
-				if reads.active.Load() != 8 || reads.maximum.Load() != 8 || reads.before.Load() != 8 || reads.started.Load() != 8 {
-					t.Fatalf("blocked jobs: active=%d peak=%d before=%d reads=%d, want eight overlapping jobs", reads.active.Load(), reads.maximum.Load(), reads.before.Load(), reads.started.Load())
+				if reads.active.Load() != 8 || reads.maximum.Load() != 8 || reads.before.Load() != 8 ||
+					reads.started.Load() != 8 {
+					t.Fatalf(
+						"blocked jobs: active=%d peak=%d before=%d reads=%d, want eight overlapping jobs",
+						reads.active.Load(),
+						reads.maximum.Load(),
+						reads.before.Load(),
+						reads.started.Load(),
+					)
 				}
 				switch scenario {
 				case "canceled":
@@ -334,23 +354,48 @@ func TestDetect_HashLimit(t *testing.T) {
 				default:
 				}
 				if scenario == "read error" && (reads.active.Load() != 7 || reads.before.Load() != 8) {
-					t.Fatalf("failed submission started extra jobs: active=%d before=%d", reads.active.Load(), reads.before.Load())
+					t.Fatalf(
+						"failed submission started extra jobs: active=%d before=%d",
+						reads.active.Load(),
+						reads.before.Load(),
+					)
 				}
 				close(reads.release)
 				released = true
 				got := <-done
 				if scenario == "canceled" {
-					t.Logf("read starts=%d reads after cancel=%d before opens=%d after opens=%d closes=%d", reads.started.Load(), reads.postCancel.Load(), reads.before.Load(), reads.opened.Load()-reads.before.Load(), reads.closed.Load())
+					t.Logf(
+						"read starts=%d reads after cancel=%d before opens=%d after opens=%d closes=%d",
+						reads.started.Load(),
+						reads.postCancel.Load(),
+						reads.before.Load(),
+						reads.opened.Load()-reads.before.Load(),
+						reads.closed.Load(),
+					)
 					if reads.postCancel.Load() != 0 || reads.opened.Load() != reads.before.Load() {
 						t.Error("hash work started after cancellation")
 					}
 				}
 				if reads.active.Load() != 0 || reads.opened.Load() != reads.closed.Load() || reads.maximum.Load() > 8 {
-					t.Fatalf("readers not drained: active=%d opened=%d closed=%d peak=%d", reads.active.Load(), reads.opened.Load(), reads.closed.Load(), reads.maximum.Load())
+					t.Fatalf(
+						"readers not drained: active=%d opened=%d closed=%d peak=%d",
+						reads.active.Load(),
+						reads.opened.Load(),
+						reads.closed.Load(),
+						reads.maximum.Load(),
+					)
 				}
 				if scenario == "changed" {
-					if got.err != nil || got.set == nil || !slices.Equal(got.set.Paths(), want) || reads.before.Load() != 17 || reads.opened.Load() != 34 {
-						t.Fatalf("hash results: set=%v error=%v before=%d opened=%d", got.set, got.err, reads.before.Load(), reads.opened.Load())
+					if got.err != nil || got.set == nil || !slices.Equal(got.set.Paths(), want) ||
+						reads.before.Load() != 17 ||
+						reads.opened.Load() != 34 {
+						t.Fatalf(
+							"hash results: set=%v error=%v before=%d opened=%d",
+							got.set,
+							got.err,
+							reads.before.Load(),
+							reads.opened.Load(),
+						)
 					}
 				} else {
 					cause := readErr
@@ -358,7 +403,12 @@ func TestDetect_HashLimit(t *testing.T) {
 						cause = context.Canceled
 					}
 					if !errors.Is(got.err, cause) || got.set != nil || reads.before.Load() != 8 {
-						t.Fatalf("failed hash results: set=%v error=%v before=%d", got.set, got.err, reads.before.Load())
+						t.Fatalf(
+							"failed hash results: set=%v error=%v before=%d",
+							got.set,
+							got.err,
+							reads.before.Load(),
+						)
 					}
 				}
 			})
@@ -471,7 +521,11 @@ func TestDetect_OneSidedInputEvidence(t *testing.T) {
 			if tc.after {
 				side = 1
 			}
-			assert.Diff(t, slices.SortedFunc(maps.Keys(set.oneSided[side][tc.file]), manifest.NamedResource.Compare), tc.want)
+			assert.Diff(
+				t,
+				slices.SortedFunc(maps.Keys(set.oneSided[side][tc.file]), manifest.NamedResource.Compare),
+				tc.want,
+			)
 			assert.Equal(t, len(maps.Collect(set.Inputs(manifest.NamedResource{}))), 0)
 		})
 	}
@@ -482,7 +536,11 @@ func TestSet_WithReaders(t *testing.T) {
 	for _, scenario := range []string{"move", "changed", "added", "removed", "partial", "ambiguous content"} {
 		t.Run("declaration "+scenario, func(t *testing.T) {
 			t.Parallel()
-			declaration := &manifest.ConfigMap{Name: "settings", Namespace: "apps", Data: map[string]any{"value": "same"}}
+			declaration := &manifest.ConfigMap{
+				Name:      "settings",
+				Namespace: "apps",
+				Data:      map[string]any{"value": "same"},
+			}
 			reader := testutil.HelmReleaseID("apps", "reader")
 			var indexes [2]*manifest.DiscoveryIndex
 			inputs := [2]*store.SourceArtifact{}
@@ -498,7 +556,10 @@ func TestSet_WithReaders(t *testing.T) {
 					Records: map[manifest.NamedResource]manifest.DiscoveryRecord{object.Named(): {File: file}},
 					Readers: map[string][]manifest.FileReader{file: {
 						{Reader: reader, Source: manifest.BootstrapSourceID, Declaration: object.Named(), Exact: true},
-						{Reader: testutil.KustomizationID("apps", []string{"old-owner", "new-owner"}[side]), Source: manifest.BootstrapSourceID},
+						{
+							Reader: testutil.KustomizationID("apps", []string{"old-owner", "new-owner"}[side]),
+							Source: manifest.BootstrapSourceID,
+						},
 					}},
 					CompleteSources: map[manifest.NamedResource]bool{manifest.BootstrapSourceID: true},
 				}
@@ -511,7 +572,9 @@ func TestSet_WithReaders(t *testing.T) {
 					indexes[side].CompleteSources = nil
 				}
 				if scenario == "ambiguous content" && side == 1 {
-					files[file].Data = append(files[file].Data, []byte("---\n"+strings.ReplaceAll(body, "same", "conflicting"))...)
+					files[file].Data = append(
+						files[file].Data,
+						[]byte("---\n"+strings.ReplaceAll(body, "same", "conflicting"))...)
 				}
 				inputs[side] = &store.SourceArtifact{FS: files}
 			}
@@ -524,7 +587,12 @@ func TestSet_WithReaders(t *testing.T) {
 				[2]map[manifest.NamedResource]inputprojection.Projection{},
 			)
 			assert.NoError(t, err)
-			changed, known := resolved.DeclarationChanged(manifest.TreeBase, manifest.BootstrapSourceID, declaration.Named(), nil)
+			changed, known := resolved.DeclarationChanged(
+				manifest.TreeBase,
+				manifest.BootstrapSourceID,
+				declaration.Named(),
+				nil,
+			)
 			assert.Equal(t, known, scenario != "partial" && scenario != "ambiguous content")
 			if known {
 				assert.Equal(t, changed, scenario != "move")
@@ -607,7 +675,10 @@ func TestSet_WithReadersBuildInputs(t *testing.T) {
 	inputs := [2]*store.SourceArtifact{}
 	indexes := [2]*manifest.DiscoveryIndex{}
 	for side := range inputs {
-		inputs[side] = &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{"control.yaml": {Data: fmt.Appendf(nil, "resources: [side-%d.yaml]\n", side)}}}
+		inputs[side] = &store.SourceArtifact{
+			LocalPath: t.TempDir(),
+			FS:        fstest.MapFS{"control.yaml": {Data: fmt.Appendf(nil, "resources: [side-%d.yaml]\n", side)}},
+		}
 		indexes[side] = &manifest.DiscoveryIndex{
 			Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 				child.Named(): {File: "child.yaml", Inputs: []string{"control.yaml"}},
@@ -618,7 +689,12 @@ func TestSet_WithReadersBuildInputs(t *testing.T) {
 	}
 	changes, err := Detect(t.Context(), inputs[0], inputs[1])
 	assert.NoError(t, err)
-	qualified, err := changes.WithReaders(t.Context(), indexes[0], indexes[1], [2]map[manifest.NamedResource]inputprojection.Projection{})
+	qualified, err := changes.WithReaders(
+		t.Context(),
+		indexes[0],
+		indexes[1],
+		[2]map[manifest.NamedResource]inputprojection.Projection{},
+	)
 	assert.NoError(t, err)
 	changed, known := qualified.DeclarationChanged(manifest.TreeHead, manifest.BootstrapSourceID, child.Named(), nil)
 	assert.Equal(t, known, false)
@@ -650,10 +726,28 @@ func TestSet_WithReadersUnindexedDeclarationMove(t *testing.T) {
 			defer manifest.ReleaseDoc(docs[0].Document)
 			authored := manifest.DocIdentity(docs[0].Document)
 			id := manifest.Resolve(authored, "", "flux-system")
-			reader := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "reader"}
+			reader := manifest.NamedResource{
+				Group:     manifest.HelmReleaseDomain,
+				Kind:      manifest.KindHelmRelease,
+				Namespace: "apps",
+				Name:      "reader",
+			}
 			indexes := [2]*manifest.DiscoveryIndex{
-				{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}, CompleteSources: map[manifest.NamedResource]bool{manifest.BootstrapSourceID: scenario != "partial"}},
-				{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {Authored: authored, File: "entry/source.yaml"}}, CompleteSources: map[manifest.NamedResource]bool{manifest.BootstrapSourceID: true}, Readers: map[string][]manifest.FileReader{"entry/source.yaml": {{Reader: reader, Source: manifest.BootstrapSourceID, Declaration: id, Exact: true}}}},
+				{
+					Records:         map[manifest.NamedResource]manifest.DiscoveryRecord{},
+					CompleteSources: map[manifest.NamedResource]bool{manifest.BootstrapSourceID: scenario != "partial"},
+				},
+				{
+					Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+						id: {Authored: authored, File: "entry/source.yaml"},
+					},
+					CompleteSources: map[manifest.NamedResource]bool{manifest.BootstrapSourceID: true},
+					Readers: map[string][]manifest.FileReader{
+						"entry/source.yaml": {
+							{Reader: reader, Source: manifest.BootstrapSourceID, Declaration: id, Exact: true},
+						},
+					},
+				},
 			}
 			changes, err := Detect(t.Context(), inputs[0], inputs[1])
 			assert.NoError(t, err)
@@ -696,12 +790,30 @@ func TestSet_WithReadersPreservesDeclarationOwners(t *testing.T) {
 	driver := testutil.KustomizationID("apps", "driver")
 	child := testutil.KustomizationID("apps", "child")
 	foreign := testutil.KustomizationID("apps", "foreign")
-	other := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "sources", Name: "other"}
+	other := manifest.NamedResource{
+		Group:     manifest.SourceDomain,
+		Kind:      manifest.KindGitRepository,
+		Namespace: "sources",
+		Name:      "other",
+	}
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-		root:    {File: "entry/root.yaml", Path: "/tree/entry/root.yaml"},
-		driver:  {File: "app/driver.yaml", Parent: root, Productions: []manifest.Production{{Owner: root, Source: manifest.BootstrapSourceID}}},
-		child:   {Authored: child, File: "declarations/child.yaml", Parent: driver, Productions: []manifest.Production{{Owner: driver, Source: manifest.BootstrapSourceID}}},
-		foreign: {File: "entry/root.yaml", Path: "/other/entry/root.yaml", Productions: []manifest.Production{{Source: other}}},
+		root: {File: "entry/root.yaml", Path: "/tree/entry/root.yaml"},
+		driver: {
+			File:        "app/driver.yaml",
+			Parent:      root,
+			Productions: []manifest.Production{{Owner: root, Source: manifest.BootstrapSourceID}},
+		},
+		child: {
+			Authored:    child,
+			File:        "declarations/child.yaml",
+			Parent:      driver,
+			Productions: []manifest.Production{{Owner: driver, Source: manifest.BootstrapSourceID}},
+		},
+		foreign: {
+			File:        "entry/root.yaml",
+			Path:        "/other/entry/root.yaml",
+			Productions: []manifest.Production{{Source: other}},
+		},
 	}, Readers: map[string][]manifest.FileReader{
 		"leaf/kustomization.yaml": {{Reader: child, Source: manifest.BootstrapSourceID}},
 	}}
@@ -722,7 +834,26 @@ func TestSet_WithReadersPreservesDeclarationOwners(t *testing.T) {
 				[2]map[manifest.NamedResource]inputprojection.Projection{},
 			)
 			assert.NoError(t, err)
-			want := InputChange{File: "entry/root.yaml", Declarations: []string{"app/driver.yaml", "declarations/child.yaml", "entry/root.yaml"}, Productions: []manifest.Production{{Owner: driver, Declaration: driver, Authored: child, Source: manifest.BootstrapSourceID, File: "declarations/child.yaml"}, {Owner: root, Declaration: root, Authored: child, Source: manifest.BootstrapSourceID, File: "declarations/child.yaml"}}}
+			want := InputChange{
+				File:         "entry/root.yaml",
+				Declarations: []string{"app/driver.yaml", "declarations/child.yaml", "entry/root.yaml"},
+				Productions: []manifest.Production{
+					{
+						Owner:       driver,
+						Declaration: driver,
+						Authored:    child,
+						Source:      manifest.BootstrapSourceID,
+						File:        "declarations/child.yaml",
+					},
+					{
+						Owner:       root,
+						Declaration: root,
+						Authored:    child,
+						Source:      manifest.BootstrapSourceID,
+						File:        "declarations/child.yaml",
+					},
+				},
+			}
 			assert.Diff(t, resolved.inputs[child], want)
 			_, admitted := resolved.inputs[foreign]
 			assert.Equal(t, admitted, false)
@@ -746,18 +877,50 @@ func TestSet_WithReadersPreservesDeclarationOwners(t *testing.T) {
 		indexes := [2]*manifest.DiscoveryIndex{}
 		prepared := [2]map[manifest.NamedResource]store.Child{}
 		for side, file := range []string{"old.yaml", "new.yaml"} {
-			doc := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "settings", "namespace": "apps"}, "data": map[string]any{"value": "same"}}
+			doc := map[string]any{
+				"apiVersion": "v1",
+				"kind":       "ConfigMap",
+				"metadata":   map[string]any{"name": "settings", "namespace": "apps"},
+				"data":       map[string]any{"value": "same"},
+			}
 			object, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
 			assert.NoError(t, err)
-			artifacts[side] = &store.SourceArtifact{FS: fstest.MapFS{file: {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {value: same}\n")}}}
-			indexes[side] = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: file, Productions: []manifest.Production{{Source: manifest.BootstrapSourceID, File: file}}}}, Readers: map[string][]manifest.FileReader{file: {{Reader: reader, Source: manifest.BootstrapSourceID, Declaration: id, Exact: true}, {Reader: root, Source: manifest.BootstrapSourceID, Exact: true}}}, CompleteSources: map[manifest.NamedResource]bool{manifest.BootstrapSourceID: true}}
+			artifacts[side] = &store.SourceArtifact{
+				FS: fstest.MapFS{
+					file: {
+						Data: []byte(
+							"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {value: same}\n",
+						),
+					},
+				},
+			}
+			indexes[side] = &manifest.DiscoveryIndex{
+				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+					id: {
+						File:        file,
+						Productions: []manifest.Production{{Source: manifest.BootstrapSourceID, File: file}},
+					},
+				},
+				Readers: map[string][]manifest.FileReader{
+					file: {
+						{Reader: reader, Source: manifest.BootstrapSourceID, Declaration: id, Exact: true},
+						{Reader: root, Source: manifest.BootstrapSourceID, Exact: true},
+					},
+				},
+				CompleteSources: map[manifest.NamedResource]bool{manifest.BootstrapSourceID: true},
+			}
 			stores[side].SetArtifact(manifest.BootstrapSourceID, artifacts[side])
 			stores[side].SetDiscoveryIndex(indexes[side])
 			prepared[side] = map[manifest.NamedResource]store.Child{id: {Obj: object, Doc: doc}}
 		}
 		set, err := Detect(t.Context(), artifacts[0], artifacts[1])
 		assert.NoError(t, err)
-		set, err = set.WithReaders(t.Context(), indexes[0], indexes[1], [2]map[manifest.NamedResource]inputprojection.Projection{})
+		set, err = set.WithReaders(
+			t.Context(),
+			indexes[0],
+			indexes[1],
+			[2]map[manifest.NamedResource]inputprojection.Projection{},
+		)
 		assert.NoError(t, err)
 		_, direct := set.inputs[root]
 		_, named := set.inputs[reader]
@@ -765,14 +928,18 @@ func TestSet_WithReadersPreservesDeclarationOwners(t *testing.T) {
 		assert.Equal(t, named, false)
 		set, err = set.WithDeclarations(t.Context(), stores[0], stores[1], prepared)
 		assert.NoError(t, err)
-		set, err = set.WithReaders(t.Context(), indexes[0], indexes[1], [2]map[manifest.NamedResource]inputprojection.Projection{})
+		set, err = set.WithReaders(
+			t.Context(),
+			indexes[0],
+			indexes[1],
+			[2]map[manifest.NamedResource]inputprojection.Projection{},
+		)
 		assert.NoError(t, err)
 		_, direct = set.inputs[root]
 		_, named = set.inputs[reader]
 		assert.Equal(t, direct, true)
 		assert.Equal(t, named, false)
 	})
-
 }
 
 func TestDetect_OneSidedInputIgnorePolicies(t *testing.T) {
@@ -797,7 +964,11 @@ func TestDetect_OneSidedInputIgnorePolicies(t *testing.T) {
 				if ignored == "after" {
 					side, name = 0, "before"
 				}
-				assert.Diff(t, slices.SortedFunc(maps.Keys(set.oneSided[side]["input.yaml"]), manifest.NamedResource.Compare), []manifest.NamedResource{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: name}})
+				assert.Diff(
+					t,
+					slices.SortedFunc(maps.Keys(set.oneSided[side]["input.yaml"]), manifest.NamedResource.Compare),
+					[]manifest.NamedResource{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: name}},
+				)
 			}
 			assert.Equal(t, len(maps.Collect(set.Inputs(manifest.NamedResource{}))), 0)
 		})
@@ -810,9 +981,17 @@ func TestDetect_OneSidedInputReadFailure(t *testing.T) {
 		t.Run(operation, func(t *testing.T) {
 			t.Parallel()
 			cause := errors.New("evidence unavailable")
-			input := &evidenceFailureFS{FS: fstest.MapFS{"input.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: optional}\n")}}, operation: operation, cause: cause}
+			input := &evidenceFailureFS{
+				FS: fstest.MapFS{
+					"input.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: optional}\n")},
+				},
+				operation: operation,
+				cause:     cause,
+			}
 			set, err := Detect(t.Context(), &store.SourceArtifact{FS: input}, &store.SourceArtifact{FS: fstest.MapFS{}})
-			if set != nil || !errors.Is(err, cause) || !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || !strings.Contains(err.Error(), "input.yaml") {
+			if set != nil || !errors.Is(err, cause) || !errors.Is(err, manifest.ErrInput) ||
+				!errors.Is(err, manifest.ErrFlux) ||
+				!strings.Contains(err.Error(), "input.yaml") {
 				t.Fatalf("read failure set=%v err=%v", set, err)
 			}
 			if operation == "read" {
@@ -861,7 +1040,14 @@ func TestDetect_OneSidedInputCancellation(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	input := &cancellingInput{FS: fstest.MapFS{"file.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: optional}\n")}}, cancel: cancel, cancelled: func() bool { return ctx.Err() != nil }, dataEOF: true}
+	input := &cancellingInput{
+		FS: fstest.MapFS{
+			"file.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: optional}\n")},
+		},
+		cancel:    cancel,
+		cancelled: func() bool { return ctx.Err() != nil },
+		dataEOF:   true,
+	}
 	set, err := Detect(ctx, &store.SourceArtifact{FS: input}, &store.SourceArtifact{FS: fstest.MapFS{}})
 	if set != nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation set=%v err=%v", set, err)
@@ -976,12 +1162,17 @@ func TestCollectInputs_ReadResults(t *testing.T) {
 			err := set.CollectInputs(checked, input, "input.yaml", false)
 			if tc.wantErr == nil {
 				assert.NoError(t, err)
-				assert.Diff(t, slices.SortedFunc(maps.Keys(set.oneSided[1]["input.yaml"]), manifest.NamedResource.Compare), []manifest.NamedResource{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"}})
+				assert.Diff(
+					t,
+					slices.SortedFunc(maps.Keys(set.oneSided[1]["input.yaml"]), manifest.NamedResource.Compare),
+					[]manifest.NamedResource{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"}},
+				)
 			} else {
 				if !errors.Is(err, tc.wantErr) || len(set.inputs) != 0 {
 					t.Fatalf("collected inputs=%v error=%v", set.inputs, err)
 				}
-				if !tc.cancel && (!errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || !strings.Contains(err.Error(), "input.yaml")) {
+				if !tc.cancel &&
+					(!errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || !strings.Contains(err.Error(), "input.yaml")) {
 					t.Fatalf("read failure classification=%v", err)
 				}
 			}
@@ -1079,8 +1270,20 @@ func TestDetect_SelectedFileEvidence(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			files := [2]fstest.MapFS{
-				{"same": {Data: []byte("same")}, "changed": {Data: []byte("old")}, "gone": {Data: []byte("gone")}, ".sourceignore": {Data: []byte("ignored\n")}, "ignored": {Data: []byte("old")}},
-				{"same": {Data: []byte("same")}, "changed": {Data: []byte("new")}, "added": {Data: []byte("new")}, ".sourceignore": {Data: []byte("ignored\n")}, "ignored": {Data: []byte("new")}},
+				{
+					"same":          {Data: []byte("same")},
+					"changed":       {Data: []byte("old")},
+					"gone":          {Data: []byte("gone")},
+					".sourceignore": {Data: []byte("ignored\n")},
+					"ignored":       {Data: []byte("old")},
+				},
+				{
+					"same":          {Data: []byte("same")},
+					"changed":       {Data: []byte("new")},
+					"added":         {Data: []byte("new")},
+					".sourceignore": {Data: []byte("ignored\n")},
+					"ignored":       {Data: []byte("new")},
+				},
 			}
 			want := []string{"added", "changed", "gone"}
 			roots := [2]string{"/before", "/after"}
@@ -1089,7 +1292,10 @@ func TestDetect_SelectedFileEvidence(t *testing.T) {
 				want = []string{"added"}
 			}
 			if mode == "nested" || mode == "nested_file" {
-				files = [2]fstest.MapFS{{"same": {Data: []byte("same")}, "peer/hidden": {Data: []byte("excluded")}}, {"same": {Data: []byte("same")}}}
+				files = [2]fstest.MapFS{
+					{"same": {Data: []byte("same")}, "peer/hidden": {Data: []byte("excluded")}},
+					{"same": {Data: []byte("same")}},
+				}
 				if mode == "nested_file" {
 					files[0] = fstest.MapFS{"same": {Data: []byte("same")}, "peer": {Data: []byte("excluded")}}
 				}
@@ -1100,11 +1306,20 @@ func TestDetect_SelectedFileEvidence(t *testing.T) {
 			var readers [2]*digestReadFS
 			for i := range inputs {
 				readers[i] = &digestReadFS{FS: files[i]}
-				input, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: readers[i]})
+				input, _, err := gittree.New(
+					t.Context(),
+					nil,
+					plumbing.ZeroHash,
+					gittree.ViewOptions{Mode: gittree.Direct, Current: readers[i]},
+				)
 				if err != nil {
 					t.Fatal(err)
 				}
-				inputs[i] = &store.SourceArtifact{FS: input, LocalPath: roots[i], ContentFingerprint: gittree.ContentFingerprint}
+				inputs[i] = &store.SourceArtifact{
+					FS:                 input,
+					LocalPath:          roots[i],
+					ContentFingerprint: gittree.ContentFingerprint,
+				}
 				if mode != "neither" && (mode != "before" || i != 1) && (mode != "after" || i != 0) {
 					if _, err := gittree.ContentFingerprint(t.Context(), input); err != nil {
 						t.Fatal(err)
@@ -1158,7 +1373,11 @@ func TestDetect_SparseDirectoryBodies(t *testing.T) {
 	assert.Diff(t, changes.Paths(), []string{"app/input.yaml"})
 	assert.Equal(t, left.opens.Load(), int64(25))
 	assert.Equal(t, right.opens.Load(), int64(25))
-	t.Logf("directory control: before/after regular body opens=%d/%d; metadata equality supplies no Git identity proof", left.opens.Load(), right.opens.Load())
+	t.Logf(
+		"directory control: before/after regular body opens=%d/%d; metadata equality supplies no Git identity proof",
+		left.opens.Load(),
+		right.opens.Load(),
+	)
 }
 
 type directoryBodyFS struct {
@@ -1186,8 +1405,16 @@ func TestSet_WithReadersChangedDeclarations(t *testing.T) {
 	stable := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "stable"}
 	for side := range inputs {
 		readers[side] = &digestReadFS{FS: fstest.MapFS{
-			"changed.yaml": {Data: fmt.Appendf(nil, "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: changed}\ndata: {value: side-%d}\n", side)},
-			"stable.yaml":  {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: stable}\ndata: {value: same}\n")},
+			"changed.yaml": {
+				Data: fmt.Appendf(
+					nil,
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: changed}\ndata: {value: side-%d}\n",
+					side,
+				),
+			},
+			"stable.yaml": {
+				Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: stable}\ndata: {value: same}\n"),
+			},
 		}}
 		inputs[side] = &store.SourceArtifact{FS: readers[side]}
 		indexes[side] = &manifest.DiscoveryIndex{
@@ -1207,7 +1434,12 @@ func TestSet_WithReadersChangedDeclarations(t *testing.T) {
 		record.Declared = declared[changed]
 		indexes[side].Records[changed] = record
 	}
-	qualified, err := changes.WithReaders(t.Context(), indexes[0], indexes[1], [2]map[manifest.NamedResource]inputprojection.Projection{})
+	qualified, err := changes.WithReaders(
+		t.Context(),
+		indexes[0],
+		indexes[1],
+		[2]map[manifest.NamedResource]inputprojection.Projection{},
+	)
 	assert.NoError(t, err)
 	for _, reader := range readers {
 		assert.Equal(t, reader.opens.Load(), int64(1))
@@ -1218,7 +1450,12 @@ func TestSet_WithReadersChangedDeclarations(t *testing.T) {
 	assert.Equal(t, known, false)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err = changes.WithReaders(ctx, indexes[0], indexes[1], [2]map[manifest.NamedResource]inputprojection.Projection{})
+	_, err = changes.WithReaders(
+		ctx,
+		indexes[0],
+		indexes[1],
+		[2]map[manifest.NamedResource]inputprojection.Projection{},
+	)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("WithReaders error = %v, want canceled", err)
 	}
@@ -1284,32 +1521,101 @@ func TestSet_WithReadersRequalification(t *testing.T) {
 	oldReader := testutil.KustomizationID("apps", "old")
 	newReader := testutil.KustomizationID("apps", "new")
 	set := NewSet([]string{"removed.yaml"})
-	assert.NoError(t, set.CollectInputs(t.Context(), fstest.MapFS{"removed.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings}\n")}}, "removed.yaml", true))
-	visible := manifest.InputVisibility{Source: manifest.BootstrapSourceID, Root: ".", Complete: true, Inputs: map[manifest.NamedResource][]string{input: {"removed.yaml"}}}
+	assert.NoError(
+		t,
+		set.CollectInputs(
+			t.Context(),
+			fstest.MapFS{
+				"removed.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings}\n")},
+			},
+			"removed.yaml",
+			true,
+		),
+	)
+	visible := manifest.InputVisibility{
+		Source:   manifest.BootstrapSourceID,
+		Root:     ".",
+		Complete: true,
+		Inputs:   map[manifest.NamedResource][]string{input: {"removed.yaml"}},
+	}
 	empty := manifest.InputVisibility{Source: manifest.BootstrapSourceID, Root: ".", Complete: true}
-	before := &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{visible}, Readers: map[string][]manifest.FileReader{"removed.yaml": {{Reader: oldReader, Source: manifest.BootstrapSourceID}}}}
+	before := &manifest.DiscoveryIndex{
+		Visibility: []manifest.InputVisibility{visible},
+		Readers: map[string][]manifest.FileReader{
+			"removed.yaml": {{Reader: oldReader, Source: manifest.BootstrapSourceID}},
+		},
+	}
 	after := &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{empty}}
-	first, err := set.WithReaders(t.Context(), before, after, [2]map[manifest.NamedResource]inputprojection.Projection{})
+	first, err := set.WithReaders(
+		t.Context(),
+		before,
+		after,
+		[2]map[manifest.NamedResource]inputprojection.Projection{},
+	)
 	assert.NoError(t, err)
-	assert.Diff(t, maps.Collect(first.Inputs(manifest.NamedResource{})), map[manifest.NamedResource]InputChange{input: {File: "removed.yaml"}, oldReader: {File: "removed.yaml"}})
-	next := &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{visible}, Readers: map[string][]manifest.FileReader{"removed.yaml": {{Reader: newReader, Source: manifest.BootstrapSourceID}}}}
-	second, err := first.WithReaders(t.Context(), next, next, [2]map[manifest.NamedResource]inputprojection.Projection{})
+	assert.Diff(
+		t,
+		maps.Collect(first.Inputs(manifest.NamedResource{})),
+		map[manifest.NamedResource]InputChange{input: {File: "removed.yaml"}, oldReader: {File: "removed.yaml"}},
+	)
+	next := &manifest.DiscoveryIndex{
+		Visibility: []manifest.InputVisibility{visible},
+		Readers: map[string][]manifest.FileReader{
+			"removed.yaml": {{Reader: newReader, Source: manifest.BootstrapSourceID}},
+		},
+	}
+	second, err := first.WithReaders(
+		t.Context(),
+		next,
+		next,
+		[2]map[manifest.NamedResource]inputprojection.Projection{},
+	)
 	assert.NoError(t, err)
-	assert.Diff(t, maps.Collect(second.Inputs(manifest.NamedResource{})), map[manifest.NamedResource]InputChange{newReader: {File: "removed.yaml"}})
+	assert.Diff(
+		t,
+		maps.Collect(second.Inputs(manifest.NamedResource{})),
+		map[manifest.NamedResource]InputChange{newReader: {File: "removed.yaml"}},
+	)
 	fresh, err := set.WithReaders(t.Context(), next, next, [2]map[manifest.NamedResource]inputprojection.Projection{})
 	assert.NoError(t, err)
-	assert.Diff(t, maps.Collect(second.Inputs(manifest.NamedResource{})), maps.Collect(fresh.Inputs(manifest.NamedResource{})))
-	repeated, err := second.WithReaders(t.Context(), next, next, [2]map[manifest.NamedResource]inputprojection.Projection{})
+	assert.Diff(
+		t,
+		maps.Collect(second.Inputs(manifest.NamedResource{})),
+		maps.Collect(fresh.Inputs(manifest.NamedResource{})),
+	)
+	repeated, err := second.WithReaders(
+		t.Context(),
+		next,
+		next,
+		[2]map[manifest.NamedResource]inputprojection.Projection{},
+	)
 	assert.NoError(t, err)
-	assert.Diff(t, maps.Collect(repeated.Inputs(manifest.NamedResource{})), maps.Collect(second.Inputs(manifest.NamedResource{})))
-	assert.Diff(t, maps.Collect(first.Inputs(manifest.NamedResource{})), map[manifest.NamedResource]InputChange{input: {File: "removed.yaml"}, oldReader: {File: "removed.yaml"}})
+	assert.Diff(
+		t,
+		maps.Collect(repeated.Inputs(manifest.NamedResource{})),
+		maps.Collect(second.Inputs(manifest.NamedResource{})),
+	)
+	assert.Diff(
+		t,
+		maps.Collect(first.Inputs(manifest.NamedResource{})),
+		map[manifest.NamedResource]InputChange{input: {File: "removed.yaml"}, oldReader: {File: "removed.yaml"}},
+	)
 	assert.Equal(t, before.Readers["removed.yaml"][0].Reader, oldReader)
 	assert.Diff(t, before.Visibility[0].Inputs[input], []string{"removed.yaml"})
 	frozen, err := first.WithDeclarations(t.Context(), nil, nil, [2]map[manifest.NamedResource]store.Child{})
 	assert.NoError(t, err)
-	qualified, err := frozen.WithReaders(t.Context(), next, next, [2]map[manifest.NamedResource]inputprojection.Projection{})
+	qualified, err := frozen.WithReaders(
+		t.Context(),
+		next,
+		next,
+		[2]map[manifest.NamedResource]inputprojection.Projection{},
+	)
 	assert.NoError(t, err)
-	assert.Diff(t, maps.Collect(qualified.Inputs(manifest.NamedResource{})), maps.Collect(second.Inputs(manifest.NamedResource{})))
+	assert.Diff(
+		t,
+		maps.Collect(qualified.Inputs(manifest.NamedResource{})),
+		maps.Collect(second.Inputs(manifest.NamedResource{})),
+	)
 }
 
 func TestSet_InputVisibilityDuplicateSourcePolicy(t *testing.T) {
@@ -1329,9 +1635,24 @@ func TestSet_InputVisibilityDuplicateSourcePolicy(t *testing.T) {
 				}
 				after[".sourceignore"] = &fstest.MapFile{Data: []byte(ignore)}
 				left := []manifest.InputVisibility{
-					{Source: manifest.BootstrapSourceID, Root: "a", Complete: true, Inputs: map[manifest.NamedResource][]string{id: {"a/input.yaml"}}},
-					{Source: manifest.BootstrapSourceID, Root: "b", Complete: true, Inputs: map[manifest.NamedResource][]string{id: {"b/input.yaml"}}},
-					{Source: foreign, Root: ".", Complete: true, Inputs: map[manifest.NamedResource][]string{id: {"foreign.yaml"}}},
+					{
+						Source:   manifest.BootstrapSourceID,
+						Root:     "a",
+						Complete: true,
+						Inputs:   map[manifest.NamedResource][]string{id: {"a/input.yaml"}},
+					},
+					{
+						Source:   manifest.BootstrapSourceID,
+						Root:     "b",
+						Complete: true,
+						Inputs:   map[manifest.NamedResource][]string{id: {"b/input.yaml"}},
+					},
+					{
+						Source:   foreign,
+						Root:     ".",
+						Complete: true,
+						Inputs:   map[manifest.NamedResource][]string{id: {"foreign.yaml"}},
+					},
 				}
 				right := slices.Clone(left)
 				right[0].Inputs = nil
@@ -1370,29 +1691,63 @@ func TestQualify_ReplacesBootstrapInputFacts(t *testing.T) {
 		stores[side] = store.New()
 		files := fstest.MapFS{".sourceignore": {}}
 		if side == 0 {
-			files["input.yaml"] = &fstest.MapFile{Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\n")}
+			files["input.yaml"] = &fstest.MapFile{
+				Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\n"),
+			}
 		}
 		stores[side].SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: files})
 	}
 	raw, err := Qualify(t.Context(), nil, stores[0], stores[1])
 	assert.NoError(t, err)
-	before := &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{{Source: manifest.BootstrapSourceID, Root: ".", Complete: true, Inputs: map[manifest.NamedResource][]string{id: {"input.yaml"}}}}}
-	after := &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{{Source: manifest.BootstrapSourceID, Root: ".", Complete: true}}}
-	first, err := raw.WithReaders(t.Context(), before, after, [2]map[manifest.NamedResource]inputprojection.Projection{})
+	before := &manifest.DiscoveryIndex{
+		Visibility: []manifest.InputVisibility{
+			{
+				Source:   manifest.BootstrapSourceID,
+				Root:     ".",
+				Complete: true,
+				Inputs:   map[manifest.NamedResource][]string{id: {"input.yaml"}},
+			},
+		},
+	}
+	after := &manifest.DiscoveryIndex{
+		Visibility: []manifest.InputVisibility{{Source: manifest.BootstrapSourceID, Root: ".", Complete: true}},
+	}
+	first, err := raw.WithReaders(
+		t.Context(),
+		before,
+		after,
+		[2]map[manifest.NamedResource]inputprojection.Projection{},
+	)
 	assert.NoError(t, err)
-	assert.Diff(t, maps.Collect(first.Inputs(manifest.NamedResource{})), map[manifest.NamedResource]InputChange{id: {File: "input.yaml", Unbound: true}})
+	assert.Diff(
+		t,
+		maps.Collect(first.Inputs(manifest.NamedResource{})),
+		map[manifest.NamedResource]InputChange{id: {File: "input.yaml", Unbound: true}},
+	)
 	reused, err := Qualify(t.Context(), first, stores[0], stores[1])
 	assert.NoError(t, err)
-	current, err := reused.WithReaders(t.Context(), after, after, [2]map[manifest.NamedResource]inputprojection.Projection{})
+	current, err := reused.WithReaders(
+		t.Context(),
+		after,
+		after,
+		[2]map[manifest.NamedResource]inputprojection.Projection{},
+	)
 	assert.NoError(t, err)
 	assert.Diff(t, maps.Collect(current.Inputs(manifest.NamedResource{})), map[manifest.NamedResource]InputChange{})
 	for _, st := range stores {
-		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{"unchanged.txt": {Data: []byte("same")}}})
+		st.SetArtifact(
+			manifest.BootstrapSourceID,
+			&store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{"unchanged.txt": {Data: []byte("same")}}},
+		)
 	}
 	replaced, err := Qualify(t.Context(), first, stores[0], stores[1])
 	assert.NoError(t, err)
 	assert.Equal(t, replaced.Len(), 0)
 	assert.Equal(t, len(replaced.oneSided[0])+len(replaced.oneSided[1]), 0)
 	assert.Equal(t, len(maps.Collect(replaced.Inputs(manifest.NamedResource{}))), 0)
-	assert.Diff(t, maps.Collect(first.Inputs(manifest.NamedResource{})), map[manifest.NamedResource]InputChange{id: {File: "input.yaml", Unbound: true}})
+	assert.Diff(
+		t,
+		maps.Collect(first.Inputs(manifest.NamedResource{})),
+		map[manifest.NamedResource]InputChange{id: {File: "input.yaml", Unbound: true}},
+	)
 }

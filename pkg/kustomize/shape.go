@@ -8,6 +8,7 @@ import (
 	sigsyaml "sigs.k8s.io/yaml"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/values"
@@ -16,7 +17,8 @@ import (
 // Shape applies producer metadata and effective substitutions to private decoded documents.
 func Shape(ks *manifest.Kustomization, docs []manifest.DocOccurrence, strict bool) error {
 	ks.EmissionPolicy().Stamp(docs)
-	if (ks.PostBuild == nil || len(ks.PostBuild.Substitute) == 0) && ks.SubstituteStrategy() != kustomizev1.SubstituteStrategyAlways {
+	if (ks.PostBuild == nil || len(ks.PostBuild.Substitute) == 0) &&
+		ks.SubstituteStrategy() != kustomizev1.SubstituteStrategyAlways {
 		return nil
 	}
 	var vars map[string]string
@@ -74,7 +76,8 @@ type renderContent struct {
 func (r RenderRequest) Content(docs []manifest.DocOccurrence) any {
 	ks := r.Spec
 	ks.EmissionPolicy().Stamp(docs)
-	active := ks.PostBuild != nil && len(ks.PostBuild.Substitute) > 0 || ks.SubstituteStrategy() == kustomizev1.SubstituteStrategyAlways
+	active := ks.PostBuild != nil && len(ks.PostBuild.Substitute) > 0 ||
+		ks.SubstituteStrategy() == kustomizev1.SubstituteStrategyAlways
 	names := values.SubstitutionNames(docs, active)
 	if names == nil {
 		names = make(map[string]struct{}, len(ks.PostBuild.Substitute))

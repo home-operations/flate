@@ -64,7 +64,12 @@ func (w *traversal) walk(ctx context.Context, v graphVisit, yield func(graphVisi
 	}
 	switch w.policy {
 	case traversalScope:
-		if _, ok := kustpath.Resolve("", v.dir, kustpath.Root); !ok || !safepath.Contains(v.root, abs) || w.documents.mountedRoot(abs) != w.documents.mountedRoot(v.root) {
+		if _, ok := kustpath.Resolve(
+			"",
+			v.dir,
+			kustpath.Root,
+		); !ok || !safepath.Contains(v.root, abs) ||
+			w.documents.mountedRoot(abs) != w.documents.mountedRoot(v.root) {
 			return true
 		}
 		v.file, v.coordinate, v.document = abs, path.Join(v.prefix, v.dir), nil
@@ -147,7 +152,9 @@ func (w *traversal) walk(ctx context.Context, v graphVisit, yield func(graphVisi
 				w.count += n
 				if err != nil {
 					w.loader.Store.AddWarning(manifest.Warning{
-						Category: manifest.WarnInputParseFailed, Message: "kustomization file failed to parse", Detail: []string{file, err.Error()},
+						Category: manifest.WarnInputParseFailed,
+						Message:  "kustomization file failed to parse",
+						Detail:   []string{file, err.Error()},
 					})
 				}
 			}
@@ -218,7 +225,14 @@ func (w *traversal) walk(ctx context.Context, v graphVisit, yield func(graphVisi
 				if readErr == nil && parseErr == nil {
 					for _, resource := range resources {
 						refs, known := kustomizeinput.Plugin(resource.YNode())
-						plugins = append(plugins, pluginInputs{references: refs, known: known, metadataOnly: kustomizeinput.MetadataOnly(resource.YNode())})
+						plugins = append(
+							plugins,
+							pluginInputs{
+								references:   refs,
+								known:        known,
+								metadataOnly: kustomizeinput.MetadataOnly(resource.YNode()),
+							},
+						)
 					}
 				}
 				cached.plugins = &plugins
@@ -256,9 +270,14 @@ func (w *traversal) walk(ctx context.Context, v graphVisit, yield func(graphVisi
 			}
 		}
 	}
-	if !w.documents.references(abs, d, w.policy == traversalAdmission, func(ref kustomizeinput.Reference, target string) bool {
-		return w.reference(ctx, v, traversalReference{Reference: ref, target: target}, yield)
-	}) {
+	if !w.documents.references(
+		abs,
+		d,
+		w.policy == traversalAdmission,
+		func(ref kustomizeinput.Reference, target string) bool {
+			return w.reference(ctx, v, traversalReference{Reference: ref, target: target}, yield)
+		},
+	) {
 		return false
 	}
 	if w.policy == traversalAdmission && v.role != kustomizeinput.Component && !w.build {
@@ -267,7 +286,12 @@ func (w *traversal) walk(ctx context.Context, v graphVisit, yield func(graphVisi
 	return w.proceed(ctx)
 }
 
-func (r documentReader) references(dir string, body *types.Kustomization, resolve bool, yield func(kustomizeinput.Reference, string) bool) bool {
+func (r documentReader) references(
+	dir string,
+	body *types.Kustomization,
+	resolve bool,
+	yield func(kustomizeinput.Reference, string) bool,
+) bool {
 	doc := r.cache[dir]
 	record := !doc.edgesKnown && doc.traversed && body != nil && r.mountedRoot(dir) == r.mountedRoot(r.bootstrap)
 	for ref := range kustomizeinput.Kustomization(body) {
@@ -320,7 +344,9 @@ func (w *traversal) admitFile(ctx context.Context, root, file string, component 
 		}
 		if err := w.loader.recordDataFile(ctx, file); err != nil {
 			w.loader.Store.AddWarning(manifest.Warning{
-				Category: manifest.WarnInputParseFailed, Message: "component data file failed to parse", Detail: []string{file, err.Error()},
+				Category: manifest.WarnInputParseFailed,
+				Message:  "component data file failed to parse",
+				Detail:   []string{file, err.Error()},
 			})
 		}
 		return true
@@ -341,7 +367,12 @@ type traversalReference struct {
 	target string
 }
 
-func (w *traversal) reference(ctx context.Context, v graphVisit, ref traversalReference, yield func(graphVisit) bool) bool {
+func (w *traversal) reference(
+	ctx context.Context,
+	v graphVisit,
+	ref traversalReference,
+	yield func(graphVisit) bool,
+) bool {
 	if !w.proceed(ctx) {
 		return false
 	}
@@ -377,7 +408,9 @@ func (w *traversal) reference(ctx context.Context, v graphVisit, ref traversalRe
 		}
 		child.file, child.deferMaterialization = resolved, false
 	case traversalProof:
-		if ref.Role != kustomizeinput.Resource && (ref.Role != kustomizeinput.Configuration || !strings.HasPrefix(ref.Field, ".transformers")) || ref.Inline {
+		if ref.Role != kustomizeinput.Resource &&
+			(ref.Role != kustomizeinput.Configuration || !strings.HasPrefix(ref.Field, ".transformers")) ||
+			ref.Inline {
 			return true
 		}
 		target, ok := kustomizeinput.Local(v.root, v.dir, ref.Path)
@@ -391,11 +424,21 @@ func (w *traversal) reference(ctx context.Context, v graphVisit, ref traversalRe
 	case traversalScope:
 		if ref.Role == kustomizeinput.Configuration {
 			child.role, child.pluginRoot = kustomizeinput.Configuration, v.dir
-			child.checkMetadata = v.role == kustomizeinput.Configuration && strings.HasPrefix(ref.Field, ".transformers")
+			child.checkMetadata = v.role == kustomizeinput.Configuration &&
+				strings.HasPrefix(ref.Field, ".transformers")
 			if ref.Inline {
 				for _, resource := range ref.Resources {
 					refs, known := kustomizeinput.Plugin(resource.YNode())
-					if !w.configuration(ctx, child, pluginInputs{references: refs, known: known, metadataOnly: kustomizeinput.MetadataOnly(resource.YNode())}, yield) {
+					if !w.configuration(
+						ctx,
+						child,
+						pluginInputs{
+							references:   refs,
+							known:        known,
+							metadataOnly: kustomizeinput.MetadataOnly(resource.YNode()),
+						},
+						yield,
+					) {
 						return false
 					}
 				}
@@ -407,7 +450,8 @@ func (w *traversal) reference(ctx context.Context, v graphVisit, ref traversalRe
 			child.role = kustomizeinput.Resource
 		}
 		resolved, ok := kustpath.Resolve(filepath.Join(v.root, v.dir), ref.Path, kustpath.Dependency)
-		if !ok || !safepath.Contains(v.root, resolved) || w.documents.mountedRoot(resolved) != w.documents.mountedRoot(v.root) {
+		if !ok || !safepath.Contains(v.root, resolved) ||
+			w.documents.mountedRoot(resolved) != w.documents.mountedRoot(v.root) {
 			if child.role == kustomizeinput.Configuration {
 				return w.uncertain(v, ref.FieldPath()+": configuration reference cannot be inspected locally", yield)
 			}
@@ -430,7 +474,12 @@ func (w *traversal) reference(ctx context.Context, v graphVisit, ref traversalRe
 	return more
 }
 
-func (w *traversal) configuration(ctx context.Context, v graphVisit, config pluginInputs, yield func(graphVisit) bool) bool {
+func (w *traversal) configuration(
+	ctx context.Context,
+	v graphVisit,
+	config pluginInputs,
+	yield func(graphVisit) bool,
+) bool {
 	if !config.known {
 		if !w.uncertain(v, "unknown plugin configuration may read additional files", yield) {
 			return false
@@ -499,7 +548,11 @@ func (w *traversal) scanBootstrapFluxKS(ctx context.Context, root, dir, kpath st
 	input, name := w.documents.input(dir)
 	entries, err := fs.ReadDir(input, name)
 	if err != nil {
-		warning := manifest.Warning{Category: manifest.WarnInputReadFailed, Message: "bootstrap-sibling readdir failed", Detail: []string{dir, err.Error()}}
+		warning := manifest.Warning{
+			Category: manifest.WarnInputReadFailed,
+			Message:  "bootstrap-sibling readdir failed",
+			Detail:   []string{dir, err.Error()},
+		}
 		if w.files != nil {
 			*w.files = append(*w.files, fileAdmission{kind: admissionWarning, warning: warning})
 		}
@@ -532,7 +585,11 @@ func (w *traversal) scanBootstrapFluxKS(ctx context.Context, root, dir, kpath st
 			objs, err = reader.fileObjects(abs, opts)
 		}
 		if err != nil {
-			warning := manifest.Warning{Category: manifest.WarnInputParseFailed, Message: "bootstrap-sibling parse failed", Detail: []string{abs, err.Error()}}
+			warning := manifest.Warning{
+				Category: manifest.WarnInputParseFailed,
+				Message:  "bootstrap-sibling parse failed",
+				Detail:   []string{abs, err.Error()},
+			}
 			if w.files != nil {
 				*w.files = append(*w.files, fileAdmission{kind: admissionWarning, warning: warning})
 			}
@@ -555,7 +612,10 @@ func (w *traversal) scanBootstrapFluxKS(ctx context.Context, root, dir, kpath st
 				continue
 			}
 			if w.files != nil && child.fact != nil {
-				*w.files = append(*w.files, fileAdmission{file: abs, kind: admissionBootstrap, coordinate: child.fact.Declaration})
+				*w.files = append(
+					*w.files,
+					fileAdmission{file: abs, kind: admissionBootstrap, coordinate: child.fact.Declaration},
+				)
 			}
 			if !w.loader.acceptObject(obj.Named()) {
 				continue

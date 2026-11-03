@@ -16,14 +16,46 @@ func TestPrepare_ChartReferenceNamespace(t *testing.T) {
 		namespace := tc.namespace
 		t.Run("authored_"+namespace, func(t *testing.T) {
 			t.Parallel()
-			hr := &manifest.HelmRelease{Namespace: "authored", Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: namespace, Name: "source"}}}
+			hr := &manifest.HelmRelease{
+				Namespace: "authored",
+				Chart: manifest.HelmChart{
+					Source: manifest.NamedResource{
+						Group:     manifest.SourceDomain,
+						Kind:      manifest.KindHelmChart,
+						Namespace: namespace,
+						Name:      "source",
+					},
+				},
+			}
 			hr.Values = map[string]any{"key": "original"}
-			hr.ChartRef = &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindHelmChart, Namespace: namespace, Name: "source"}
+			hr.ChartRef = &helmv2.CrossNamespaceSourceReference{
+				Kind:      manifest.KindHelmChart,
+				Namespace: namespace,
+				Name:      "source",
+			}
 			projected := hr.WithNamespace("effective").(*manifest.HelmRelease)
 			want := tc.want
 			got, _, err := Prepare(projected, func(id manifest.NamedResource) manifest.BaseManifest {
-				assert.Equal(t, id, manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: want, Name: "source"})
-				return &manifest.HelmChartSource{Namespace: "sources", Chart: "resolved-name", ValuesFiles: []string{"custom.yaml"}, IgnoreMissingValuesFiles: true, SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: manifest.KindHelmRepository, Name: "resolved"}}
+				assert.Equal(
+					t,
+					id,
+					manifest.NamedResource{
+						Group:     manifest.SourceDomain,
+						Kind:      manifest.KindHelmChart,
+						Namespace: want,
+						Name:      "source",
+					},
+				)
+				return &manifest.HelmChartSource{
+					Namespace:                "sources",
+					Chart:                    "resolved-name",
+					ValuesFiles:              []string{"custom.yaml"},
+					IgnoreMissingValuesFiles: true,
+					SourceRef: sourcev1.LocalHelmChartSourceReference{
+						Kind: manifest.KindHelmRepository,
+						Name: "resolved",
+					},
+				}
 			}, nil, nil)
 			if err != nil {
 				t.Fatal(err)

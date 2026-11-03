@@ -75,7 +75,12 @@ func WithoutOwnershipLabels(document map[string]any) map[string]any {
 
 // EmissionPolicy returns Kustomization overlays and target-namespace admission.
 func (k *Kustomization) EmissionPolicy() EmissionPolicy {
-	p := EmissionPolicy{OwnerKeys: ownershipKeys[0], OwnerValues: [2]string{k.Name, k.Namespace}, Owner: k.Name != "" && !k.hasDiagnostic, Namespace: k.TargetNamespace}
+	p := EmissionPolicy{
+		OwnerKeys:   ownershipKeys[0],
+		OwnerValues: [2]string{k.Name, k.Namespace},
+		Owner:       k.Name != "" && !k.hasDiagnostic,
+		Namespace:   k.TargetNamespace,
+	}
 	p.DocumentScope = k.hasDiagnostic
 	if k.CommonMetadata != nil {
 		p.Labels, p.Annotations = k.CommonMetadata.Labels, k.CommonMetadata.Annotations
@@ -86,9 +91,11 @@ func (k *Kustomization) EmissionPolicy() EmissionPolicy {
 
 // EmissionPolicy returns HelmRelease overlays, hook exclusions and child admission.
 func (h *HelmRelease) EmissionPolicy() EmissionPolicy {
-	p := EmissionPolicy{OwnerKeys: ownershipKeys[1], OwnerValues: [2]string{h.Name, h.Namespace}, Owner: true,
+	p := EmissionPolicy{
+		OwnerKeys: ownershipKeys[1], OwnerValues: [2]string{h.Name, h.Namespace}, Owner: true,
 		CommonFirst: true, HookAnnotation: "helm.sh/hook", CommonExcludedKind: KindCustomResourceDefinition,
-		PreserveEmptyOwnerNamespace: true, Namespace: h.ReleaseNamespace(), ExcludeChildren: true}
+		PreserveEmptyOwnerNamespace: true, Namespace: h.ReleaseNamespace(), ExcludeChildren: true,
+	}
 	if h.CommonMetadata != nil {
 		p.Labels, p.Annotations = h.CommonMetadata.Labels, h.CommonMetadata.Annotations
 	}
@@ -97,8 +104,10 @@ func (h *HelmRelease) EmissionPolicy() EmissionPolicy {
 
 // EmissionPolicy returns ResourceSet overlays and internal-only namespace admission.
 func (r *ResourceSet) EmissionPolicy() EmissionPolicy {
-	p := EmissionPolicy{OwnerKeys: ownershipKeys[2], OwnerValues: [2]string{r.Name, r.Namespace}, Owner: true,
-		PreserveEmptyOwnerNamespace: true, Namespace: r.Namespace, InternalNamespace: true}
+	p := EmissionPolicy{
+		OwnerKeys: ownershipKeys[2], OwnerValues: [2]string{r.Name, r.Namespace}, Owner: true,
+		PreserveEmptyOwnerNamespace: true, Namespace: r.Namespace, InternalNamespace: true,
+	}
 	if r.CommonMetadata != nil {
 		p.Labels, p.Annotations = r.CommonMetadata.Labels, r.CommonMetadata.Annotations
 	}
@@ -158,7 +167,12 @@ func (p EmissionPolicy) Stamp(docs []DocOccurrence) {
 }
 
 // SelectOutput reports whether this producer's batch or document matches requested output scope.
-func (p EmissionPolicy) SelectOutput(doc map[string]any, roots []NamedResource, namespaces map[string]struct{}, labels map[string]string) bool {
+func (p EmissionPolicy) SelectOutput(
+	doc map[string]any,
+	roots []NamedResource,
+	namespaces map[string]struct{},
+	labels map[string]string,
+) bool {
 	if !p.DocumentScope {
 		return true
 	}

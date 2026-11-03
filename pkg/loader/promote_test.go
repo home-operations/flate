@@ -116,7 +116,11 @@ spec:
 		}
 	}
 	independentError := retainedErrorsForTest(l)[independentFile]
-	selected := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Name: "selected"}
+	selected := manifest.NamedResource{
+		Group: manifest.FluxOperatorDomain,
+		Kind:  manifest.KindResourceSet,
+		Name:  "selected",
+	}
 	if _, exists := l.Index.Lookup(selected); exists {
 		t.Fatal("invalid selected resource produced a raw record")
 	}
@@ -133,7 +137,10 @@ spec:
 		t.Fatal(err)
 	}
 	docs := builtObjectsForTest(t, string(data))
-	l.RegisterBuilt(BuiltInput{Root: entry, Source: manifest.BootstrapSourceID, Owner: testutil.KustomizationID("apps", "entry")}, docs)
+	l.RegisterBuilt(
+		BuiltInput{Root: entry, Source: manifest.BootstrapSourceID, Owner: testutil.KustomizationID("apps", "entry")},
+		docs,
+	)
 	if err := retainedErrorsForTest(l)[selectedFile]; err != nil {
 		t.Fatalf("selected raw error survived successful built registration: %v", err)
 	}
@@ -151,7 +158,13 @@ spec:
 		record, ok := l.Index.Lookup(obj.Named())
 		return ok && record.Parent == testutil.KustomizationID("apps", "entry"), nil
 	}
-	if promoted, err := Promote(t.Context(), st, docs[0].Obj.Named(), PromoteOptions{Documents: docs, Admit: admit}); err != nil || !promoted {
+	if promoted, err := Promote(
+		t.Context(),
+		st,
+		docs[0].Obj.Named(),
+		PromoteOptions{Documents: docs, Admit: admit},
+	); err != nil ||
+		!promoted {
 		t.Fatal("built promotion failed")
 	}
 	selected.Namespace, selected.Name = "apps", "selected-dev"
@@ -166,8 +179,12 @@ spec:
 	st.AddObject(extra)
 	view := filepath.Join(root, "source-view")
 	st.SetArtifact(extra.Named(), &store.SourceArtifact{LocalPath: view, FS: fstest.MapFS{
-		"extra.yaml":     {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: extra, namespace: apps}\n")},
-		"collision.yaml": {Data: []byte("apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: podinfo-dev, namespace: apps}\nspec:\n  interval: 1h\n  chart: {spec: {chart: podinfo, version: 0.0.0, sourceRef: {kind: HelmRepository, name: charts}}}\n")},
+		"extra.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: extra, namespace: apps}\n")},
+		"collision.yaml": {
+			Data: []byte(
+				"apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: podinfo-dev, namespace: apps}\nspec:\n  interval: 1h\n  chart: {spec: {chart: podinfo, version: 0.0.0, sourceRef: {kind: HelmRepository, name: charts}}}\n",
+			),
+		},
 	}})
 	if _, err := l.Load(t.Context(), view); err != nil {
 		t.Fatal(err)
@@ -179,7 +196,8 @@ spec:
 	if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 		t.Fatal(err)
 	}
-	if retainedErrorsForTest(l)[selectedFile] != nil || !errors.Is(retainedErrorsForTest(l)[independentFile], independentError) {
+	if retainedErrorsForTest(l)[selectedFile] != nil ||
+		!errors.Is(retainedErrorsForTest(l)[independentFile], independentError) {
 		t.Fatalf("admission and finalization changed replacement errors: %v", retainedErrorsForTest(l))
 	}
 	admitForTest(st, root)
@@ -196,7 +214,8 @@ spec:
 	if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 		t.Fatal(err)
 	}
-	if retainedErrorsForTest(l)[selectedFile] != nil || !errors.Is(retainedErrorsForTest(l)[independentFile], independentError) {
+	if retainedErrorsForTest(l)[selectedFile] != nil ||
+		!errors.Is(retainedErrorsForTest(l)[independentFile], independentError) {
 		t.Fatalf("remount and finalization changed replacement errors: %v", retainedErrorsForTest(l))
 	}
 	var generated manifest.NamedResource
@@ -204,10 +223,12 @@ spec:
 		obj := child.Obj
 		id := obj.Named()
 		record, exists := l.Index.Lookup(id)
-		if !exists || record.Path != "" || record.Authored != (manifest.NamedResource{}) || record.File != "entry/kustomization.yaml" {
+		if !exists || record.Path != "" || record.Authored != (manifest.NamedResource{}) ||
+			record.File != "entry/kustomization.yaml" {
 			t.Fatalf("built record %s lost authoritative evidence: %+v", id, record)
 		}
-		if st.GetObject(id) != obj || candidateForTest(t, l, id) != obj || l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, "") {
+		if st.GetObject(id) != obj || candidateForTest(t, l, id) != obj ||
+			l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, "") {
 			t.Errorf("built identity %s did not survive admission and source mounts", id)
 		}
 		for _, file := range []string{"entry/kustomization.yaml", "entry/bundle.yaml", "entry/version.yaml", "entry/value.txt", selectedFile} {
@@ -255,7 +276,10 @@ spec:
 		assert.NoError(t, err)
 		sources = append(sources, source)
 	}
-	if !slices.ContainsFunc(sources, func(child store.Child) bool { return child.Obj.Named().Name == "source-dev" && child.Doc != nil }) {
+	if !slices.ContainsFunc(
+		sources,
+		func(child store.Child) bool { return child.Obj.Named().Name == "source-dev" && child.Doc != nil },
+	) {
 		t.Fatal("built source is unavailable to discovery")
 	}
 }
@@ -265,7 +289,12 @@ func TestRegisterBuilt_SharedInputs(t *testing.T) {
 	t.Run("typed", func(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()
-		testutil.WriteFile(t, root, "kustomization.yaml", "resources: [release.yaml]\nconfigMapGenerator: [{name: generated, files: [value.txt]}]\n")
+		testutil.WriteFile(
+			t,
+			root,
+			"kustomization.yaml",
+			"resources: [release.yaml]\nconfigMapGenerator: [{name: generated, files: [value.txt]}]\n",
+		)
 		release := `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata: {name: retained, namespace: apps}
@@ -281,15 +310,32 @@ spec:
 		if _, err := l.Load(t.Context(), root); err != nil {
 			t.Fatal(err)
 		}
-		docs := builtObjectsForTest(t, release+"---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: generated-hash, namespace: apps}\ndata: {value.txt: input}\n")
-		l.RegisterBuilt(BuiltInput{Root: root, Source: manifest.BootstrapSourceID, Owner: testutil.KustomizationID("apps", "entry")}, docs)
+		docs := builtObjectsForTest(
+			t,
+			release+"---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: generated-hash, namespace: apps}\ndata: {value.txt: input}\n",
+		)
+		l.RegisterBuilt(
+			BuiltInput{
+				Root:   root,
+				Source: manifest.BootstrapSourceID,
+				Owner:  testutil.KustomizationID("apps", "entry"),
+			},
+			docs,
+		)
 		hr, _ := l.Index.Lookup(docs[0].Obj.Named())
 		generated, _ := l.Index.Lookup(docs[1].Obj.Named())
 		assert.Equal(t, hr.File, "release.yaml")
 		assert.Diff(t, hr.Inputs, []string{"kustomization.yaml", "value.txt"})
 		assert.Equal(t, generated.File, "kustomization.yaml")
 		assert.Diff(t, generated.Inputs, []string{"kustomization.yaml", "release.yaml", "value.txt"})
-		assert.Diff(t, hr.Refs, []manifest.NamedResource{{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "apps", Name: "apps-retained"}, {Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: "apps", Name: "charts"}})
+		assert.Diff(
+			t,
+			hr.Refs,
+			[]manifest.NamedResource{
+				{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "apps", Name: "apps-retained"},
+				{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: "apps", Name: "charts"},
+			},
+		)
 	})
 	for _, tc := range []struct {
 		name   string
@@ -303,7 +349,12 @@ spec:
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
-			testutil.WriteFile(t, root, "kustomization.yaml", "resources: [generator.yaml]\nconfigMapGenerator: [{name: generated, files: [value.txt]}]\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"kustomization.yaml",
+				"resources: [generator.yaml]\nconfigMapGenerator: [{name: generated, files: [value.txt]}]\n",
+			)
 			generator := `apiVersion: source.extensions.fluxcd.io/v1beta1
 kind: ArtifactGenerator
 metadata: {name: generator, namespace: apps}
@@ -319,9 +370,19 @@ spec:
 			if _, err := l.Load(t.Context(), root); err != nil {
 				t.Fatal(err)
 			}
-			docs := builtObjectsForTest(t, strings.Replace(generator, "artifacts: [{name: app}]", "artifacts: [{name: "+tc.value+"}]", 1))
+			docs := builtObjectsForTest(
+				t,
+				strings.Replace(generator, "artifacts: [{name: app}]", "artifacts: [{name: "+tc.value+"}]", 1),
+			)
 			raw := docs[0].Obj.(*manifest.RawObject)
-			l.RegisterBuilt(BuiltInput{Root: root, Source: manifest.BootstrapSourceID, Owner: testutil.KustomizationID("apps", "entry")}, docs)
+			l.RegisterBuilt(
+				BuiltInput{
+					Root:   root,
+					Source: manifest.BootstrapSourceID,
+					Owner:  testutil.KustomizationID("apps", "entry"),
+				},
+				docs,
+			)
 			record, ok := l.Index.Lookup(raw.Named())
 			assert.Equal(t, ok, true)
 			assert.Equal(t, record.File, tc.file)
@@ -344,8 +405,13 @@ func TestRegisterBuilt_RemoteGenerator(t *testing.T) {
 	if _, err := l.Load(t.Context(), root); err != nil {
 		t.Fatal(err)
 	}
-	docs := []store.Child{{Obj: &manifest.ConfigMap{Name: "remote-with-hash", Data: map[string]any{"VALUE": "fetched"}}}}
-	l.RegisterBuilt(BuiltInput{Root: root, Source: manifest.BootstrapSourceID, Owner: testutil.KustomizationID("apps", "entry")}, docs)
+	docs := []store.Child{
+		{Obj: &manifest.ConfigMap{Name: "remote-with-hash", Data: map[string]any{"VALUE": "fetched"}}},
+	}
+	l.RegisterBuilt(
+		BuiltInput{Root: root, Source: manifest.BootstrapSourceID, Owner: testutil.KustomizationID("apps", "entry")},
+		docs,
+	)
 	l.Admit(root)
 	if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 		t.Fatalf("finalization fetched an already built remote generator: %v", err)
@@ -390,7 +456,11 @@ spec:
 	if err := retainedErrorsForTest(l)[selectedFile]; !errors.Is(err, manifest.ErrInput) {
 		t.Fatalf("absolute raw error = %v, want ErrInput", err)
 	}
-	selected := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Name: "selected"}
+	selected := manifest.NamedResource{
+		Group: manifest.FluxOperatorDomain,
+		Kind:  manifest.KindResourceSet,
+		Name:  "selected",
+	}
 	if _, exists := l.Index.Lookup(selected); exists {
 		t.Fatal("invalid selected resource produced a raw record")
 	}
@@ -405,10 +475,14 @@ spec:
 		t.Fatal(err)
 	}
 	docs := builtObjectsForTest(t, string(data))
-	if len(docs) != 1 || docs[0].Obj.Named() != (manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "retained"}) {
+	if len(docs) != 1 ||
+		docs[0].Obj.Named() != (manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "retained"}) {
 		t.Fatalf("deletion patch did not leave only the retained ConfigMap: %v", docs)
 	}
-	l.RegisterBuilt(BuiltInput{Root: root, Source: manifest.BootstrapSourceID, Owner: testutil.KustomizationID("apps", "entry")}, docs)
+	l.RegisterBuilt(
+		BuiltInput{Root: root, Source: manifest.BootstrapSourceID, Owner: testutil.KustomizationID("apps", "entry")},
+		docs,
+	)
 	if err := retainedErrorsForTest(l)[selectedFile]; err != nil {
 		t.Fatalf("deleted resource raw error survived successful built registration: %v", err)
 	}
@@ -416,7 +490,13 @@ spec:
 		record, ok := l.Index.Lookup(obj.Named())
 		return ok && record.Parent == testutil.KustomizationID("apps", "entry"), nil
 	}
-	if promoted, err := Promote(t.Context(), st, docs[0].Obj.Named(), PromoteOptions{Documents: docs, Admit: admit}); err != nil || !promoted {
+	if promoted, err := Promote(
+		t.Context(),
+		st,
+		docs[0].Obj.Named(),
+		PromoteOptions{Documents: docs, Admit: admit},
+	); err != nil ||
+		!promoted {
 		t.Fatal("retained built promotion failed")
 	}
 	l.Admit(root)
@@ -437,7 +517,12 @@ func TestRegisterBuilt_StandaloneRoots(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()
 		testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: []\n")
-		testutil.WriteFile(t, root, "apps/disabled.yaml", testutil.KustomizationYAML("disabled", "apps", "  path: ./target\n"))
+		testutil.WriteFile(
+			t,
+			root,
+			"apps/disabled.yaml",
+			testutil.KustomizationYAML("disabled", "apps", "  path: ./target\n"),
+		)
 		testutil.WriteFile(t, root, "target/kustomization.yaml", "resources: [cm.yaml]\n")
 		testutil.WriteFile(t, root, "target/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: raw}\n")
 		l := New(store.New())
@@ -445,7 +530,14 @@ func TestRegisterBuilt_StandaloneRoots(t *testing.T) {
 		_, err := l.Load(t.Context(), root)
 		assert.NoError(t, err)
 		obj := &manifest.ConfigMap{Name: "injected", Namespace: "apps"}
-		l.RegisterBuilt(BuiltInput{Root: filepath.Join(root, "target"), Source: manifest.BootstrapSourceID, Owner: testutil.KustomizationID("apps", "entry")}, []store.Child{{Obj: obj}})
+		l.RegisterBuilt(
+			BuiltInput{
+				Root:   filepath.Join(root, "target"),
+				Source: manifest.BootstrapSourceID,
+				Owner:  testutil.KustomizationID("apps", "entry"),
+			},
+			[]store.Child{{Obj: obj}},
+		)
 		if _, indexed := l.Index.Lookup(obj.Named()); indexed || l.Store.GetObject(obj.Named()) != nil {
 			t.Fatal("inactive package published authoritative output")
 		}
@@ -476,13 +568,24 @@ func TestRegisterBuilt_StandaloneRoots(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	l.RegisterBuilt(BuiltInput{Root: entry, Source: manifest.BootstrapSourceID, Owner: testutil.KustomizationID("apps", "entry")}, nil)
+	l.RegisterBuilt(
+		BuiltInput{Root: entry, Source: manifest.BootstrapSourceID, Owner: testutil.KustomizationID("apps", "entry")},
+		nil,
+	)
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "shared"}
 	if _, ok := l.Index.Lookup(id); ok || l.PromotionDocuments(id) != nil {
 		t.Fatal("empty output retained raw resource evidence")
 	}
-	l.RegisterBuilt(BuiltInput{Root: filepath.Join(root, "entry/independent"), Source: manifest.BootstrapSourceID, Owner: testutil.KustomizationID("apps", "entry")}, nil)
-	if l.documents.cache[entry].built == nil || l.documents.cache[filepath.Join(root, "entry/independent")].built == nil {
+	l.RegisterBuilt(
+		BuiltInput{
+			Root:   filepath.Join(root, "entry/independent"),
+			Source: manifest.BootstrapSourceID,
+			Owner:  testutil.KustomizationID("apps", "entry"),
+		},
+		nil,
+	)
+	if l.documents.cache[entry].built == nil ||
+		l.documents.cache[filepath.Join(root, "entry/independent")].built == nil {
 		t.Fatal("empty builds did not retain completion evidence")
 	}
 	for _, tc := range []struct {
@@ -530,7 +633,10 @@ func TestRegisterBuilt_StandaloneRoots(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tc.reader {
-				if !slices.ContainsFunc(l.Index.Readers["entry/kustomization.yaml"], func(r manifest.FileReader) bool { return r.Reader == owner.Named() }) {
+				if !slices.ContainsFunc(
+					l.Index.Readers["entry/kustomization.yaml"],
+					func(r manifest.FileReader) bool { return r.Reader == owner.Named() },
+				) {
 					t.Fatalf("nested generator lost its read edge: %v", l.Index.Readers)
 				}
 				for prefix, owners := range l.Index.Claims {
@@ -546,14 +652,40 @@ func TestRegisterBuilt_StandaloneRoots(t *testing.T) {
 func TestPromote_ContentOnlyBinding(t *testing.T) {
 	t.Parallel()
 	st := store.New()
-	source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "source"}
+	source := manifest.NamedResource{
+		Group:     manifest.SourceDomain,
+		Kind:      manifest.KindGitRepository,
+		Namespace: "apps",
+		Name:      "source",
+	}
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}
-	artifact := &store.SourceArtifact{Key: "source", Content: "generation", LocalPath: "/input", FS: fstest.MapFS{"settings.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {value: selected}\n")}}}
+	artifact := &store.SourceArtifact{
+		Key:       "source",
+		Content:   "generation",
+		LocalPath: "/input",
+		FS: fstest.MapFS{
+			"settings.yaml": {
+				Data: []byte(
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {value: selected}\n",
+				),
+			},
+		},
+	}
 	st.SetArtifact(source, artifact)
 	var reads store.ReadSet
 	reads.Init(st, testutil.KustomizationID("apps", "reader"), nil)
 	defer reads.Close()
-	if promoted, err := Promote(t.Context(), st, id, PromoteOptions{Record: manifest.Production{Source: source, Path: "/input/settings.yaml"}, Reads: &reads, Admit: func(manifest.BaseManifest) (bool, error) { return true, nil }}); err != nil || !promoted {
+	if promoted, err := Promote(
+		t.Context(),
+		st,
+		id,
+		PromoteOptions{
+			Record: manifest.Production{Source: source, Path: "/input/settings.yaml"},
+			Reads:  &reads,
+			Admit:  func(manifest.BaseManifest) (bool, error) { return true, nil },
+		},
+	); err != nil ||
+		!promoted {
 		t.Fatal("source document was not promoted")
 	}
 	var consumer store.ReadSet

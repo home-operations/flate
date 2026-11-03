@@ -50,7 +50,8 @@ func NewInput(facts store.ReferenceFacts, owner manifest.NamedResource) Input {
 	self, independent := false, false
 	for _, production := range facts.Productions {
 		self = self || production.Owner == owner && owner != (manifest.NamedResource{})
-		if production.Owner != (manifest.NamedResource{}) && production.Owner != owner && !slices.Contains(input.Materializers, production.Owner) {
+		if production.Owner != (manifest.NamedResource{}) && production.Owner != owner &&
+			!slices.Contains(input.Materializers, production.Owner) {
 			input.Materializers = append(input.Materializers, production.Owner)
 		}
 		if production.Declaration == (manifest.NamedResource{}) {
@@ -144,7 +145,9 @@ func (p *StoreProvider) Lookup(id manifest.NamedResource) Input {
 			input.Data, overridden = input.Data.WithSupplied(facts.Supplied)
 			if len(overridden) > 0 {
 				if reads, ok := p.s.(*store.ReadSet); ok {
-					reads.RecordSuppliedOverride(store.SuppliedOverride{Resource: id, SupplyPath: facts.SupplyPath, Keys: overridden})
+					reads.RecordSuppliedOverride(
+						store.SuppliedOverride{Resource: id, SupplyPath: facts.SupplyPath, Keys: overridden},
+					)
 				}
 			}
 		}
@@ -220,7 +223,11 @@ func (c *Cache) put(key string, parsed map[string]any) {
 // nil and pay the (small) per-ref yaml.Unmarshal cost. Orchestrators
 // supply a Cache constructed at startup so refs shared across HRs
 // (a common pattern for platform-wide values CMs) parse exactly once.
-func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider, cache *Cache) ([]manifest.NamedResource, error) {
+func ExpandValueReferences(
+	hr *manifest.HelmRelease,
+	provider Provider,
+	cache *Cache,
+) ([]manifest.NamedResource, error) {
 	if hr == nil || len(hr.ValuesFrom) == 0 {
 		return nil, nil
 	}
@@ -322,7 +329,11 @@ func (e *missingValueRefError) Unwrap() error {
 	return manifest.ErrObjectNotFound
 }
 
-func (c *Cache) updateHelmReleaseValues(ref manifest.ValuesReference, found string, values map[string]any) (bool, error) {
+func (c *Cache) updateHelmReleaseValues(
+	ref manifest.ValuesReference,
+	found string,
+	values map[string]any,
+) (bool, error) {
 	parsed, ok := c.lookup(found)
 	if !ok {
 		var decoded map[string]any
@@ -331,7 +342,11 @@ func (c *Cache) updateHelmReleaseValues(ref manifest.ValuesReference, found stri
 			if manifest.HasValuePlaceholder(found) {
 				return true, nil
 			}
-			return false, manifest.NewError(manifest.ErrInput, fmt.Errorf("expected '%s' values key %q to be valid YAML: %w", ref.Name, ref.GetValuesKey(), err), "")
+			return false, manifest.NewError(
+				manifest.ErrInput,
+				fmt.Errorf("expected '%s' values key %q to be valid YAML: %w", ref.Name, ref.GetValuesKey(), err),
+				"",
+			)
 		}
 		if decoded == nil {
 			return false, nil
@@ -391,7 +406,11 @@ func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, p Provider) 
 		return nil
 	}
 	if len(ks.PostBuild.SubstituteFrom) > 0 && ks.Namespace == "" {
-		return manifest.NewError(manifest.ErrInvalidSubstituteReference, nil, "Kustomization with substituteFrom has no namespace")
+		return manifest.NewError(
+			manifest.ErrInvalidSubstituteReference,
+			nil,
+			"Kustomization with substituteFrom has no namespace",
+		)
 	}
 
 	// Flux gives inline substitutions precedence over references.
@@ -448,7 +467,11 @@ func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, p Provider) 
 		if len(invalid) > 1 {
 			noun = "variables"
 		}
-		return manifest.NewError(manifest.ErrInvalidSubstituteReference, fmt.Errorf("substitute var name(s) %v invalid (must match %s)", invalid, varsubRegex.String()), "invalid substitute "+noun+" "+strings.Join(invalid, ", "))
+		return manifest.NewError(
+			manifest.ErrInvalidSubstituteReference,
+			fmt.Errorf("substitute var name(s) %v invalid (must match %s)", invalid, varsubRegex.String()),
+			"invalid substitute "+noun+" "+strings.Join(invalid, ", "),
+		)
 	}
 	ks.PostBuild.Substitute = values
 	return nil

@@ -64,7 +64,12 @@ type modelPath struct {
 }
 
 func compareModelPath(a, b modelPath) int {
-	return cmp.Or(cmp.Compare(a.source.binding, b.source.binding), cmp.Compare(a.source.revision, b.source.revision), cmp.Compare(a.source.root, b.source.root), cmp.Compare(a.path, b.path))
+	return cmp.Or(
+		cmp.Compare(a.source.binding, b.source.binding),
+		cmp.Compare(a.source.revision, b.source.revision),
+		cmp.Compare(a.source.root, b.source.root),
+		cmp.Compare(a.path, b.path),
+	)
 }
 
 type modelFile struct {
@@ -250,8 +255,10 @@ type modelComparison struct {
 }
 
 func selectModel(w modelWorld, evaluation modelEvaluation, affected, deleted modelSet) modelSelection {
-	selection := modelSelection{affected: make(modelSet), support: make(modelSet),
-		unavailable: make(modelSet), deleted: maps.Clone(deleted), allowed: maps.Clone(w.uncertainty)}
+	selection := modelSelection{
+		affected: make(modelSet), support: make(modelSet),
+		unavailable: make(modelSet), deleted: maps.Clone(deleted), allowed: maps.Clone(w.uncertainty),
+	}
 	for id, state := range evaluation.status {
 		if state.failure != "" {
 			selection.unavailable[id] = true
@@ -318,7 +325,10 @@ func compareModelWorlds(before, after modelWorld) modelComparison {
 			deleted[id] = true
 		}
 	}
-	return modelComparison{before: selectModel(before, old, affected, deleted), after: selectModel(after, current, affected, deleted)}
+	return modelComparison{
+		before: selectModel(before, old, affected, deleted),
+		after:  selectModel(after, current, affected, deleted),
+	}
 }
 
 func compareModelSelection(want modelSelection, got modelSet) error {
@@ -384,7 +394,12 @@ func compareModelObservation(want, got modelObservation) error {
 	})
 	for _, id := range keys {
 		if len(oldDocs[id]) != len(newDocs[id]) {
-			return fmt.Errorf("object membership/multiplicity %s: want %d, got %d", id.modelID, len(oldDocs[id]), len(newDocs[id]))
+			return fmt.Errorf(
+				"object membership/multiplicity %s: want %d, got %d",
+				id.modelID,
+				len(oldDocs[id]),
+				len(newDocs[id]),
+			)
 		}
 	}
 	if want.errorClass != got.errorClass {
@@ -465,7 +480,8 @@ func equalModelYAML(a, b *yaml.Node) bool {
 		for i := 0; i < len(a.Content); i += 2 {
 			match := -1
 			for j := 0; j < len(b.Content); j += 2 {
-				if !used[j/2] && equalModelYAML(a.Content[i], b.Content[j]) && equalModelYAML(a.Content[i+1], b.Content[j+1]) {
+				if !used[j/2] && equalModelYAML(a.Content[i], b.Content[j]) &&
+					equalModelYAML(a.Content[i+1], b.Content[j+1]) {
 					match = j / 2
 					break
 				}
@@ -503,8 +519,10 @@ type modelCase struct {
 }
 
 func cloneModelWorld(w modelWorld) modelWorld {
-	clone := modelWorld{files: make(map[modelPath]modelFile), producers: make(map[modelID]modelProducer),
-		uncertainty: maps.Clone(w.uncertainty), static: slices.Clone(w.static)}
+	clone := modelWorld{
+		files: make(map[modelPath]modelFile), producers: make(map[modelID]modelProducer),
+		uncertainty: maps.Clone(w.uncertainty), static: slices.Clone(w.static),
+	}
 	for key, file := range w.files {
 		file.body = slices.Clone(file.body)
 		clone.files[key] = file
@@ -538,7 +556,11 @@ func applyModelOperations(before modelWorld, operations []modelOperation) (model
 				unsupported["body-limit"]++
 				continue
 			}
-			after.files[operation.file] = modelFile{body: slices.Clone(operation.body), included: operation.included, directory: operation.directory}
+			after.files[operation.file] = modelFile{
+				body:      slices.Clone(operation.body),
+				included:  operation.included,
+				directory: operation.directory,
+			}
 		case "producer":
 			if _, exists := after.producers[operation.producer]; !exists && len(after.producers) >= 12 {
 				unsupported["producer-limit"]++
@@ -596,7 +618,16 @@ func modelWorldOperations(before, after modelWorld) []modelOperation {
 		content, exists := after.files[file]
 		old, had := before.files[file]
 		if exists && (!had || !reflect.DeepEqual(content, old)) {
-			operations = append(operations, modelOperation{kind: "write", file: file, body: slices.Clone(content.body), included: content.included, directory: content.directory})
+			operations = append(
+				operations,
+				modelOperation{
+					kind:      "write",
+					file:      file,
+					body:      slices.Clone(content.body),
+					included:  content.included,
+					directory: content.directory,
+				},
+			)
 		}
 	}
 	ids := modelProducerIDs(before)
@@ -682,7 +713,12 @@ func checkModelBounds(c modelCase) error {
 			}
 		}
 		if len(sources) > 2 || len(namespaces) > 3 || documents > 48 {
-			return fmt.Errorf("expansion bounds: sources=%d namespaces=%d documents=%d", len(sources), len(namespaces), documents)
+			return fmt.Errorf(
+				"expansion bounds: sources=%d namespaces=%d documents=%d",
+				len(sources),
+				len(namespaces),
+				documents,
+			)
 		}
 	}
 	return nil
@@ -745,8 +781,16 @@ func TestIndependentModel_Witnesses(t *testing.T) {
 			wantSupport := modelSet{renderModelSourceID(source): true}
 			selection := compareModelWorlds(fixture.before, fixture.after)
 			for _, side := range []modelSelection{selection.before, selection.after} {
-				if !maps.Equal(side.affected, wantAffected) || !maps.Equal(side.support, wantSupport) || len(side.unavailable) != 0 || len(side.deleted) != 0 {
-					t.Fatalf("witness membership changed: affected=%v support=%v unavailable=%v deleted=%v", modelIDs(side.affected), modelIDs(side.support), modelIDs(side.unavailable), modelIDs(side.deleted))
+				if !maps.Equal(side.affected, wantAffected) || !maps.Equal(side.support, wantSupport) ||
+					len(side.unavailable) != 0 ||
+					len(side.deleted) != 0 {
+					t.Fatalf(
+						"witness membership changed: affected=%v support=%v unavailable=%v deleted=%v",
+						modelIDs(side.affected),
+						modelIDs(side.support),
+						modelIDs(side.unavailable),
+						modelIDs(side.deleted),
+					)
 				}
 			}
 			if tc.kind == "Kustomization" {
@@ -766,25 +810,46 @@ func TestIndependentModel(t *testing.T) {
 	t.Parallel()
 	source := modelSource{binding: "cluster", revision: "working", root: "repo"}
 	id := func(name string) modelID {
-		return modelID{source: source, group: "kustomize.toolkit.fluxcd.io", kind: "Kustomization", namespace: "apps", name: name}
+		return modelID{
+			source:    source,
+			group:     "kustomize.toolkit.fluxcd.io",
+			kind:      "Kustomization",
+			namespace: "apps",
+			name:      name,
+		}
 	}
-	provider, consumer, parent, sibling, sourceProvider := id("provider"), id("consumer"), id("parent"), id("sibling"), id("source")
+	provider, consumer, parent, sibling, sourceProvider := id(
+		"provider",
+	), id(
+		"consumer",
+	), id(
+		"parent",
+	), id(
+		"sibling",
+	), id(
+		"source",
+	)
 	file := modelPath{source: source, path: "inputs/data"}
-	world := modelWorld{files: map[modelPath]modelFile{file: {body: []byte("old"), included: true}},
+	world := modelWorld{
+		files: map[modelPath]modelFile{file: {body: []byte("old"), included: true}},
 		producers: map[modelID]modelProducer{
 			provider:       {reads: []modelRead{{file: file}}},
 			consumer:       {content: []modelID{provider}, sources: []modelID{sourceProvider}, emitter: &parent},
 			parent:         {},
 			sourceProvider: {},
 			sibling:        {ordering: []modelID{provider}, emitter: &parent},
-		}}
+		},
+	}
 	tests := []struct {
 		name  string
 		check func(*testing.T)
 	}{
 		{"content-and-support-without-siblings", func(t *testing.T) {
 			t.Helper()
-			after, _ := applyModelOperations(world, []modelOperation{{kind: "write", file: file, body: []byte("new"), included: true}})
+			after, _ := applyModelOperations(
+				world,
+				[]modelOperation{{kind: "write", file: file, body: []byte("new"), included: true}},
+			)
 			result := compareModelWorlds(world, after)
 			for _, side := range []modelSelection{result.before, result.after} {
 				if !maps.Equal(side.affected, modelSet{provider: true, consumer: true}) ||
@@ -802,20 +867,31 @@ func TestIndependentModel(t *testing.T) {
 		{"omitted-consumer", func(t *testing.T) {
 			t.Helper()
 			want := modelSelection{affected: modelSet{provider: true, consumer: true}}
-			if err := compareModelSelection(want, modelSet{provider: true}); err == nil || !strings.Contains(err.Error(), "missing=") {
+			if err := compareModelSelection(
+				want,
+				modelSet{provider: true},
+			); err == nil ||
+				!strings.Contains(err.Error(), "missing=") {
 				t.Fatalf("omitted consumer accepted: %v", err)
 			}
 		}},
 		{"extra-consumer", func(t *testing.T) {
 			t.Helper()
 			want := modelSelection{affected: modelSet{provider: true}}
-			if err := compareModelSelection(want, modelSet{provider: true, sibling: true}); err == nil || !strings.Contains(err.Error(), "unexpected=") {
+			if err := compareModelSelection(
+				want,
+				modelSet{provider: true, sibling: true},
+			); err == nil ||
+				!strings.Contains(err.Error(), "unexpected=") {
 				t.Fatalf("extra consumer accepted: %v", err)
 			}
 		}},
 		{"individually-declared-uncertainty", func(t *testing.T) {
 			t.Helper()
-			want := modelSelection{affected: modelSet{provider: true}, allowed: map[modelID]string{sibling: "shared unclassified input"}}
+			want := modelSelection{
+				affected: modelSet{provider: true},
+				allowed:  map[modelID]string{sibling: "shared unclassified input"},
+			}
 			if err := compareModelSelection(want, modelSet{provider: true, sibling: true}); err != nil {
 				t.Fatal(err)
 			}
@@ -850,17 +926,30 @@ func TestIndependentModel(t *testing.T) {
 			after := cloneModelWorld(before)
 			after.files[modelPath{source: source, path: "same/path"}] = modelFile{body: []byte("new"), included: true}
 			result := compareModelWorlds(before, after)
-			if !maps.Equal(result.before.affected, modelSet{provider: true}) || !maps.Equal(result.after.affected, modelSet{provider: true}) {
-				t.Fatalf("coordinates collapsed: before=%v after=%v", modelIDs(result.before.affected), modelIDs(result.after.affected))
+			if !maps.Equal(result.before.affected, modelSet{provider: true}) ||
+				!maps.Equal(result.after.affected, modelSet{provider: true}) {
+				t.Fatalf(
+					"coordinates collapsed: before=%v after=%v",
+					modelIDs(result.before.affected),
+					modelIDs(result.after.affected),
+				)
 			}
 		}},
 		{"lost-old-side", func(t *testing.T) {
 			t.Helper()
 			before := modelWorld{producers: map[modelID]modelProducer{provider: {}}}
-			after, _ := applyModelOperations(before, []modelOperation{{kind: "delete-producer", producer: provider}, {kind: "producer", producer: consumer, definition: before.producers[provider]}})
+			after, _ := applyModelOperations(
+				before,
+				[]modelOperation{
+					{kind: "delete-producer", producer: provider},
+					{kind: "producer", producer: consumer, definition: before.producers[provider]},
+				},
+			)
 			result := compareModelWorlds(before, after)
-			if !maps.Equal(result.before.affected, modelSet{provider: true}) || !maps.Equal(result.after.affected, modelSet{consumer: true}) ||
-				!result.before.deleted[provider] || !result.after.deleted[provider] {
+			if !maps.Equal(result.before.affected, modelSet{provider: true}) ||
+				!maps.Equal(result.after.affected, modelSet{consumer: true}) ||
+				!result.before.deleted[provider] ||
+				!result.after.deleted[provider] {
 				t.Fatalf("lost old side/tombstone: %+v", result)
 			}
 		}},
@@ -873,20 +962,35 @@ func TestIndependentModel(t *testing.T) {
 			before.producers[provider] = p
 			after, _ := applyModelOperations(before, []modelOperation{{kind: "write", file: file, included: true}})
 			result := compareModelWorlds(before, after)
-			if !maps.Equal(result.before.affected, modelSet{provider: true, consumer: true}) || len(result.before.unavailable) != 0 {
+			if !maps.Equal(result.before.affected, modelSet{provider: true, consumer: true}) ||
+				len(result.before.unavailable) != 0 {
 				t.Fatalf("optional absence/appearance: %+v", result.before)
 			}
 		}},
 		{"positive-and-negative-listings", func(t *testing.T) {
 			t.Helper()
 			before := modelWorld{files: make(map[modelPath]modelFile), producers: map[modelID]modelProducer{
-				provider: {reads: []modelRead{{file: modelPath{source: source, path: "inputs"}, listing: true, optional: true}}},
+				provider: {
+					reads: []modelRead{
+						{file: modelPath{source: source, path: "inputs"}, listing: true, optional: true},
+					},
+				},
 			}}
-			after, _ := applyModelOperations(before, []modelOperation{{kind: "write", file: file, body: []byte("a"), included: true}})
-			if result := compareModelWorlds(before, after); !result.after.affected[provider] || len(result.before.unavailable) != 0 {
+			after, _ := applyModelOperations(
+				before,
+				[]modelOperation{{kind: "write", file: file, body: []byte("a"), included: true}},
+			)
+			if result := compareModelWorlds(
+				before,
+				after,
+			); !result.after.affected[provider] ||
+				len(result.before.unavailable) != 0 {
 				t.Fatalf("negative listing ignored: %+v", result)
 			}
-			changed, _ := applyModelOperations(after, []modelOperation{{kind: "write", file: file, body: []byte("b"), included: true}})
+			changed, _ := applyModelOperations(
+				after,
+				[]modelOperation{{kind: "write", file: file, body: []byte("b"), included: true}},
+			)
 			if result := compareModelWorlds(after, changed); len(result.after.affected) != 0 {
 				t.Fatalf("listing consumed body bytes it did not read: %+v", result)
 			}
@@ -894,12 +998,17 @@ func TestIndependentModel(t *testing.T) {
 		{"empty-directory-listing", func(t *testing.T) {
 			t.Helper()
 			directory := modelPath{source: source, path: "empty"}
-			before := modelWorld{files: map[modelPath]modelFile{directory: {included: true, directory: true}},
-				producers: map[modelID]modelProducer{provider: {reads: []modelRead{{file: directory, listing: true, optional: true}}}}}
+			before := modelWorld{
+				files: map[modelPath]modelFile{directory: {included: true, directory: true}},
+				producers: map[modelID]modelProducer{
+					provider: {reads: []modelRead{{file: directory, listing: true, optional: true}}},
+				},
+			}
 			after := cloneModelWorld(before)
 			delete(after.files, directory)
 			result := compareModelWorlds(before, after)
-			if !maps.Equal(result.before.affected, modelSet{provider: true}) || !maps.Equal(result.after.affected, modelSet{provider: true}) {
+			if !maps.Equal(result.before.affected, modelSet{provider: true}) ||
+				!maps.Equal(result.after.affected, modelSet{provider: true}) {
 				t.Fatal("empty directory disappearance lost")
 			}
 			if len(result.before.unavailable)+len(result.after.unavailable) != 0 {
@@ -910,7 +1019,10 @@ func TestIndependentModel(t *testing.T) {
 			t.Helper()
 			ignored := cloneModelWorld(world)
 			ignored.files[file] = modelFile{body: []byte("old"), included: false}
-			dirty, _ := applyModelOperations(ignored, []modelOperation{{kind: "write", file: file, body: []byte("new"), included: false}})
+			dirty, _ := applyModelOperations(
+				ignored,
+				[]modelOperation{{kind: "write", file: file, body: []byte("new"), included: false}},
+			)
 			if result := compareModelWorlds(ignored, dirty); len(result.after.affected) != 0 {
 				t.Fatalf("ignored bytes selected consumers: %+v", result)
 			}
@@ -936,9 +1048,17 @@ func TestIndependentModel(t *testing.T) {
 		{"deleted-object-identity", func(t *testing.T) {
 			t.Helper()
 			object := modelID{source: source, kind: "ConfigMap", namespace: "apps", name: "removed"}
-			before := modelWorld{producers: map[modelID]modelProducer{provider: {documents: []modelDocument{{id: modelObjectID{modelID: object, version: "v1"}}}}}}
+			before := modelWorld{
+				producers: map[modelID]modelProducer{
+					provider: {documents: []modelDocument{{id: modelObjectID{modelID: object, version: "v1"}}}},
+				},
+			}
 			after := modelWorld{producers: map[modelID]modelProducer{provider: {}}}
-			if result := compareModelWorlds(before, after); !result.before.deleted[object] || !result.after.deleted[object] {
+			if result := compareModelWorlds(
+				before,
+				after,
+			); !result.before.deleted[object] ||
+				!result.after.deleted[object] {
 				t.Fatalf("object tombstone lost: %+v", result)
 			}
 		}},
@@ -994,11 +1114,28 @@ func TestModelComparator_DeletedDocuments(t *testing.T) {
 
 func TestModelComparator(t *testing.T) {
 	t.Parallel()
-	producer := modelID{source: modelSource{binding: "cluster", revision: "pinned", root: "repo"}, group: "kustomize.toolkit.fluxcd.io", kind: "Kustomization", namespace: "apps", name: "app"}
-	object := modelObjectID{source: producer.source, kind: "ConfigMap", namespace: "apps", name: "data", version: "v1", namespacePresent: true}
+	producer := modelID{
+		source:    modelSource{binding: "cluster", revision: "pinned", root: "repo"},
+		group:     "kustomize.toolkit.fluxcd.io",
+		kind:      "Kustomization",
+		namespace: "apps",
+		name:      "app",
+	}
+	object := modelObjectID{
+		source:           producer.source,
+		kind:             "ConfigMap",
+		namespace:        "apps",
+		name:             "data",
+		version:          "v1",
+		namespacePresent: true,
+	}
 	observation := func() modelObservation {
-		return modelObservation{producers: map[modelID]modelStatus{producer: {terminal: true}},
-			documents: []modelDocument{{id: object, raw: []byte("data: {value: 1, list: [a, b], date: '2024-01-01'}\n")}}}
+		return modelObservation{
+			producers: map[modelID]modelStatus{producer: {terminal: true}},
+			documents: []modelDocument{
+				{id: object, raw: []byte("data: {value: 1, list: [a, b], date: '2024-01-01'}\n")},
+			},
+		}
 	}
 	tests := []struct {
 		name string
@@ -1023,18 +1160,38 @@ func TestModelComparator(t *testing.T) {
 			doc.id.name = "extra"
 			got.documents = append(got.documents, doc)
 		}, "object membership"},
-		{"duplicate-deletion", func(want, _ *modelObservation) { want.documents = append(want.documents, want.documents[0]) }, "multiplicity"},
-		{"duplicate-addition", func(_, got *modelObservation) { got.documents = append(got.documents, got.documents[0]) }, "multiplicity"},
+		{
+			"duplicate-deletion",
+			func(want, _ *modelObservation) { want.documents = append(want.documents, want.documents[0]) },
+			"multiplicity",
+		},
+		{
+			"duplicate-addition",
+			func(_, got *modelObservation) { got.documents = append(got.documents, got.documents[0]) },
+			"multiplicity",
+		},
 		{"duplicate-substitution", func(want, got *modelObservation) {
 			want.documents = append(want.documents, want.documents[0])
 			doc := got.documents[0]
 			doc.raw = []byte("data: {different: true}\n")
 			got.documents = append(got.documents, doc)
 		}, "document value"},
-		{"source-coordinate", func(_, got *modelObservation) { doc := &got.documents[0]; doc.id.source.revision = "working" }, "membership"},
-		{"group-coordinate", func(_, got *modelObservation) { got.documents[0].id.group = "other.example" }, "membership"},
+		{
+			"source-coordinate",
+			func(_, got *modelObservation) { doc := &got.documents[0]; doc.id.source.revision = "working" },
+			"membership",
+		},
+		{
+			"group-coordinate",
+			func(_, got *modelObservation) { got.documents[0].id.group = "other.example" },
+			"membership",
+		},
 		{"version", func(_, got *modelObservation) { got.documents[0].id.version = "v2" }, "membership"},
-		{"namespace-presence", func(_, got *modelObservation) { got.documents[0].id.namespacePresent = false }, "membership"},
+		{
+			"namespace-presence",
+			func(_, got *modelObservation) { got.documents[0].id.namespacePresent = false },
+			"membership",
+		},
 		{"scalar-type", func(_, got *modelObservation) {
 			got.documents[0].raw = []byte("data: {value: '1', list: [a, b], date: '2024-01-01'}\n")
 		}, "document value"},
@@ -1058,21 +1215,36 @@ func TestModelComparator(t *testing.T) {
 		}, "document value"},
 		{"typed-sdk-date", func(want, got *modelObservation) {
 			want.documents[0] = modelDocument{id: object, sdk: map[string]any{"date": "2024-01-01"}}
-			got.documents[0] = modelDocument{id: object, sdk: map[string]any{"date": time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}}
+			got.documents[0] = modelDocument{
+				id:  object,
+				sdk: map[string]any{"date": time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)},
+			}
 		}, "document value"},
-		{"errors-with-partial-output", func(want, _ *modelObservation) { want.errorClass = "input" }, "error classification"},
+		{
+			"errors-with-partial-output",
+			func(want, _ *modelObservation) { want.errorClass = "input" },
+			"error classification",
+		},
 		{"failure", func(want, _ *modelObservation) {
 			want.producers[producer] = modelStatus{terminal: true, failure: "failed"}
 		}, "producer state"},
 		{"blocker", func(want, got *modelObservation) {
-			want.producers[producer] = modelStatus{terminal: true, failure: "blocked", blockers: modelSet{object.modelID: true}}
+			want.producers[producer] = modelStatus{
+				terminal: true,
+				failure:  "blocked",
+				blockers: modelSet{object.modelID: true},
+			}
 			got.producers[producer] = modelStatus{terminal: true, failure: "blocked"}
 		}, "producer state"},
 		{"empty-producer-unfinished", func(want, got *modelObservation) {
 			want.documents, got.documents = nil, nil
 			got.producers[producer] = modelStatus{}
 		}, "producer state"},
-		{"deletions", func(want, _ *modelObservation) { want.deleted = map[modelObjectID]int{object: 1} }, "deleted identities"},
+		{
+			"deletions",
+			func(want, _ *modelObservation) { want.deleted = map[modelObjectID]int{object: 1} },
+			"deleted identities",
+		},
 		{"malformed-YAML", func(_, got *modelObservation) { got.documents[0].raw = []byte("value: [") }, "decode YAML"},
 	}
 	for _, tc := range tests {

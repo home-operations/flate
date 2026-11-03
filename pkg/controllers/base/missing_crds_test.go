@@ -17,8 +17,15 @@ import (
 func TestConfigure_MissingCRDs(t *testing.T) {
 	t.Parallel()
 	c := base.New(store.New(), task.NewBounded(2))
-	id := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "ns", Name: "app"}
-	deps := []manifest.DependencyRef{{Group: apix.GroupName, Kind: manifest.KindCustomResourceDefinition, Name: "widgets.example.com"}}
+	id := manifest.NamedResource{
+		Group:     manifest.FluxOperatorDomain,
+		Kind:      manifest.KindResourceSet,
+		Namespace: "ns",
+		Name:      "app",
+	}
+	deps := []manifest.DependencyRef{
+		{Group: apix.GroupName, Kind: manifest.KindCustomResourceDefinition, Name: "widgets.example.com"},
+	}
 	err := controllertest.NewExecution(c, id).Require(t.Context(), deps, manifest.DrainCascade)
 	assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 	c.Configure(base.Options{AllowMissingKinds: []string{manifest.KindCustomResourceDefinition}})
@@ -28,7 +35,11 @@ func TestConfigure_MissingCRDs(t *testing.T) {
 		if recover() == nil {
 			t.Error("Configure after start must panic")
 		}
-		assert.Equal(t, controllertest.NewExecution(c, id).Require(t.Context(), deps, manifest.DrainCascade) == nil, true)
+		assert.Equal(
+			t,
+			controllertest.NewExecution(c, id).Require(t.Context(), deps, manifest.DrainCascade) == nil,
+			true,
+		)
 	}()
 	c.Configure(base.Options{})
 }

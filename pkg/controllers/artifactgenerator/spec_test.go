@@ -105,7 +105,8 @@ func TestArtifactGenerator_Validation(t *testing.T) {
 			if (err == nil) != tc.valid {
 				t.Fatalf("decodeSpec() = %v; valid=%v", err, tc.valid)
 			}
-			if (tc.name == "from_required" || tc.name == "to_required") && !strings.Contains(err.Error(), "copy operation outside API bounds") {
+			if (tc.name == "from_required" || tc.name == "to_required") &&
+				!strings.Contains(err.Error(), "copy operation outside API bounds") {
 				t.Fatalf("required path diagnostic = %v", err)
 			}
 		})

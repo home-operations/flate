@@ -76,7 +76,13 @@ func TestFetcher_ArchiveIsolationAndWarmHits(t *testing.T) {
 						}
 					}
 					sequence := sequences[namespace]
-					files := map[string]string{"dir/file.yaml": "first", "dir/drop.yaml": "drop", ".sourceignore": "dir/drop.yaml\n", "image.png": "image", ".git/config": "git"}
+					files := map[string]string{
+						"dir/file.yaml": "first",
+						"dir/drop.yaml": "drop",
+						".sourceignore": "dir/drop.yaml\n",
+						"image.png":     "image",
+						".git/config":   "git",
+					}
 					if namespace == "second" {
 						files["dir/file.yaml"] = "other"
 					}
@@ -96,7 +102,13 @@ func TestFetcher_ArchiveIsolationAndWarmHits(t *testing.T) {
 						_, _ = fmt.Fprint(w, `<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated>`)
 						for _, name := range names {
 							data := files[name]
-							_, _ = fmt.Fprintf(w, `<Contents><Key>prefix/%s</Key><Size>%d</Size><ETag>"%x"</ETag></Contents>`, name, len(data), sha256.Sum256([]byte(data)))
+							_, _ = fmt.Fprintf(
+								w,
+								`<Contents><Key>prefix/%s</Key><Size>%d</Size><ETag>"%x"</ETag></Contents>`,
+								name,
+								len(data),
+								sha256.Sum256([]byte(data)),
+							)
 						}
 						_, _ = fmt.Fprint(w, `</ListBucketResult>`)
 						return
@@ -139,12 +151,33 @@ func TestFetcher_ArchiveIsolationAndWarmHits(t *testing.T) {
 				var wg sync.WaitGroup
 				for _, namespace := range []string{"first", "second"} {
 					wg.Go(func() {
-						b := &manifest.Bucket{Name: "source", Namespace: namespace, BucketName: "data", Prefix: "prefix/", Provider: sourcev1.BucketProviderAmazon,
-							Endpoint: srv.URL, Insecure: true, Region: "us-east-1", Interval: metav1.Duration{Duration: time.Hour},
-							SecretRef: &manifest.LocalObjectReference{Name: "creds"}}
+						b := &manifest.Bucket{
+							Name:       "source",
+							Namespace:  namespace,
+							BucketName: "data",
+							Prefix:     "prefix/",
+							Provider:   sourcev1.BucketProviderAmazon,
+							Endpoint:   srv.URL,
+							Insecure:   true,
+							Region:     "us-east-1",
+							Interval:   metav1.Duration{Duration: time.Hour},
+							SecretRef:  &manifest.LocalObjectReference{Name: "creds"},
+						}
 						var family string
 						for range 2 {
-							art, err := f.Fetch(t.Context(), b, fInputs.readSet(b), cache.Policy{MaxAge: b.SourceInterval(), Retry: cache.RetryConfig{Attempts: attempts, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}})
+							art, err := f.Fetch(
+								t.Context(),
+								b,
+								fInputs.readSet(b),
+								cache.Policy{
+									MaxAge: b.SourceInterval(),
+									Retry: cache.RetryConfig{
+										Attempts: attempts,
+										MinWait:  time.Nanosecond,
+										MaxWait:  time.Nanosecond,
+									},
+								},
+							)
 							if attempts == 1 {
 								if err == nil || art != nil {
 									t.Errorf("%s retry-off artifact=%v, error=%v", namespace, art, err)
@@ -199,9 +232,29 @@ func TestFetcher_ArchiveIsolationAndWarmHits(t *testing.T) {
 				defer cancel()
 				done := make(chan error, 1)
 				go func() {
-					b := &manifest.Bucket{Name: "source", Namespace: "canceled", BucketName: "data", Prefix: "prefix/",
-						Endpoint: srv.URL, Insecure: true, Region: "us-east-1", SecretRef: &manifest.LocalObjectReference{Name: "creds"}}
-					_, err := f.Fetch(ctx, b, fInputs.readSet(b), cache.Policy{MaxAge: b.SourceInterval(), Retry: cache.RetryConfig{Attempts: attempts, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}})
+					b := &manifest.Bucket{
+						Name:       "source",
+						Namespace:  "canceled",
+						BucketName: "data",
+						Prefix:     "prefix/",
+						Endpoint:   srv.URL,
+						Insecure:   true,
+						Region:     "us-east-1",
+						SecretRef:  &manifest.LocalObjectReference{Name: "creds"},
+					}
+					_, err := f.Fetch(
+						ctx,
+						b,
+						fInputs.readSet(b),
+						cache.Policy{
+							MaxAge: b.SourceInterval(),
+							Retry: cache.RetryConfig{
+								Attempts: attempts,
+								MinWait:  time.Nanosecond,
+								MaxWait:  time.Nanosecond,
+							},
+						},
+					)
 					done <- err
 				}()
 				select {
@@ -242,7 +295,10 @@ func TestFetcher_TransientStatusRecovery(t *testing.T) {
 					_, _ = fmt.Fprintf(w, "<Error><Code>%s</Code><Message>%s</Message></Error>", tc.code, tc.message)
 					return
 				}
-				_, _ = io.WriteString(w, `<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated></ListBucketResult>`)
+				_, _ = io.WriteString(
+					w,
+					`<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated></ListBucketResult>`,
+				)
 			}))
 			t.Cleanup(srv.Close)
 			c := cachetest.New(t, "", cache.New)
@@ -258,8 +314,11 @@ func TestFetcher_TransientStatusRecovery(t *testing.T) {
 				cause, ok := errors.AsType[minio.ErrorResponse](err)
 				response, typed := errors.AsType[*fetcherr.ResponseError](err)
 				if !ok || !typed || response.StatusCode != tc.status || response.Op != http.MethodGet || !errors.Is(response.Err, cause) ||
-					cause.StatusCode != tc.status || cause.Code != tc.code || cause.Message != tc.message ||
-					!errors.Is(err, manifest.ErrMissingSecret) || err.Error() != "machine credential acquisition failed" || calls.Load() != 1 {
+					cause.StatusCode != tc.status || cause.Code != tc.code ||
+					cause.Message != tc.message ||
+					!errors.Is(err, manifest.ErrMissingSecret) ||
+					err.Error() != "machine credential acquisition failed" ||
+					calls.Load() != 1 {
 					t.Fatalf("permanent failure: %v, cause=%+v, requests=%d", err, cause, calls.Load())
 				}
 				return
@@ -283,7 +342,10 @@ func TestFetcher_TimeoutRecovery(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Query().Get("list-type") != "" {
 					listings.Add(1)
-					_, _ = io.WriteString(w, `<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated><Contents><Key>hello.txt</Key><Size>2</Size><ETag>"a"</ETag></Contents></ListBucketResult>`)
+					_, _ = io.WriteString(
+						w,
+						`<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated><Contents><Key>hello.txt</Key><Size>2</Size><ETag>"a"</ETag></Contents></ListBucketResult>`,
+					)
 					return
 				}
 				objects.Add(1)
@@ -349,7 +411,10 @@ func TestFetcher_TerminalStatusReplay(t *testing.T) {
 				calls.Add(1)
 				w.Header().Set("Content-Type", "application/xml")
 				w.WriteHeader(status)
-				_, _ = io.WriteString(w, `<Error><Code>SlowDown</Code><Message>temporary failure fixture-secret</Message></Error>`)
+				_, _ = io.WriteString(
+					w,
+					`<Error><Code>SlowDown</Code><Message>temporary failure fixture-secret</Message></Error>`,
+				)
 			}))
 			t.Cleanup(srv.Close)
 			root := t.TempDir()
@@ -364,10 +429,17 @@ func TestFetcher_TerminalStatusReplay(t *testing.T) {
 				Endpoint: srv.URL, Insecure: true, Region: "us-east-1",
 			}
 			retry := cache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond}
-			_, err = f.Fetch(t.Context(), b, (testInputs{}).readSet(b), cache.Policy{MaxAge: b.SourceInterval(), Retry: retry})
+			_, err = f.Fetch(
+				t.Context(),
+				b,
+				(testInputs{}).readSet(b),
+				cache.Policy{MaxAge: b.SourceInterval(), Retry: retry},
+			)
 			terminal, ok := errors.AsType[*cache.TerminalError](err)
 			cause, typed := errors.AsType[*fetcherr.ResponseError](err)
-			if !ok || !terminal.Attempted || !typed || cause.StatusCode != status || cause.Op != http.MethodGet || cause.Error() != "temporary failure fixture-secret" || calls.Load() != 3 {
+			if !ok || !terminal.Attempted || !typed || cause.StatusCode != status || cause.Op != http.MethodGet ||
+				cause.Error() != "temporary failure fixture-secret" ||
+				calls.Load() != 3 {
 				t.Fatalf("terminal failure: %v, requests=%d", err, calls.Load())
 			}
 			if err := c.Close(); err != nil {
@@ -384,7 +456,9 @@ func TestFetcher_TerminalStatusReplay(t *testing.T) {
 					t.Fatalf("persisted outcome index: %s, %v", data, err)
 				}
 				desc := index.Manifests[0]
-				data, err = os.ReadFile(filepath.Join(root, "oci", "blobs", desc.Digest.Algorithm().String(), desc.Digest.Encoded()))
+				data, err = os.ReadFile(
+					filepath.Join(root, "oci", "blobs", desc.Digest.Algorithm().String(), desc.Digest.Encoded()),
+				)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -392,14 +466,23 @@ func TestFetcher_TerminalStatusReplay(t *testing.T) {
 				if err := json.Unmarshal(data, &m); err != nil || m.ArtifactType != "application/vnd.flate.failure.v1" {
 					t.Fatalf("persisted outcome manifest: %s, %v", data, err)
 				}
-				data, err = os.ReadFile(filepath.Join(root, "oci", "blobs", m.Config.Digest.Algorithm().String(), m.Config.Digest.Encoded()))
+				data, err = os.ReadFile(
+					filepath.Join(
+						root,
+						"oci",
+						"blobs",
+						m.Config.Digest.Algorithm().String(),
+						m.Config.Digest.Encoded(),
+					),
+				)
 				if err != nil {
 					t.Fatal(err)
 				}
 				return desc, data
 			}
 			initial, record := readRecord()
-			if strings.Contains(string(record), "fixture-secret") || strings.Contains(string(record), "temporary failure") {
+			if strings.Contains(string(record), "fixture-secret") ||
+				strings.Contains(string(record), "temporary failure") {
 				t.Fatalf("persisted upstream diagnostic: %s", record)
 			}
 			var timing struct {
@@ -416,17 +499,27 @@ func TestFetcher_TerminalStatusReplay(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = reopened.Close() })
 			f.Cache = reopened
-			_, err = f.Fetch(t.Context(), b, (testInputs{}).readSet(b), cache.Policy{MaxAge: b.SourceInterval(), Retry: retry})
+			_, err = f.Fetch(
+				t.Context(),
+				b,
+				(testInputs{}).readSet(b),
+				cache.Policy{MaxAge: b.SourceInterval(), Retry: retry},
+			)
 			terminal, ok = errors.AsType[*cache.TerminalError](err)
 			cause, typed = errors.AsType[*fetcherr.ResponseError](err)
-			if !ok || terminal.Attempted || !typed || cause.StatusCode != status || cause.Op != http.MethodGet || cause.Err != nil || cause.Message != "" || calls.Load() != 3 {
+			if !ok || terminal.Attempted || !typed || cause.StatusCode != status || cause.Op != http.MethodGet ||
+				cause.Err != nil ||
+				cause.Message != "" ||
+				calls.Load() != 3 {
 				t.Fatalf("replayed failure: %v, requests=%d", err, calls.Load())
 			}
 			if !time.Now().Before(deadline) {
 				t.Fatal("replay did not finish before the recorded deadline")
 			}
 			unchanged, replayed := readRecord()
-			if unchanged.Digest != initial.Digest || unchanged.Annotations[ocispec.AnnotationRefName] != initial.Annotations[ocispec.AnnotationRefName] || string(replayed) != string(record) {
+			if unchanged.Digest != initial.Digest ||
+				unchanged.Annotations[ocispec.AnnotationRefName] != initial.Annotations[ocispec.AnnotationRefName] ||
+				string(replayed) != string(record) {
 				t.Fatalf("replay changed persisted record or deadline: %s -> %s", record, replayed)
 			}
 		})
@@ -434,10 +527,8 @@ func TestFetcher_TerminalStatusReplay(t *testing.T) {
 }
 
 func TestFetcher_NetworkRoutes(t *testing.T) {
-
 	for _, route := range []string{"list", "object"} {
 		t.Run(route, func(t *testing.T) {
-
 			var network source.Network
 			var lists, objects, dials atomic.Int32
 			var cause error
@@ -476,7 +567,10 @@ func TestFetcher_NetworkRoutes(t *testing.T) {
 				if err := latch(); err != nil {
 					t.Error(err)
 				}
-				_, _ = io.WriteString(w, `<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated><Contents><Key>app.yaml</Key><Size>1</Size><ETag>"a"</ETag></Contents></ListBucketResult>`)
+				_, _ = io.WriteString(
+					w,
+					`<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated><Contents><Key>app.yaml</Key><Size>1</Size><ETag>"a"</ETag></Contents></ListBucketResult>`,
+				)
 			}))
 			t.Cleanup(srv.Close)
 			target = strings.Replace(srv.URL, "127.0.0.1", "example.com", 1)
@@ -487,14 +581,43 @@ func TestFetcher_NetworkRoutes(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			_, err := f.Fetch(t.Context(), &manifest.Bucket{Name: "network", Namespace: "test", BucketName: "data", Endpoint: target, Insecure: true, Region: "us-east-1"}, (testInputs{}).readSet(&manifest.Bucket{Name: "network", Namespace: "test", BucketName: "data", Endpoint: target, Insecure: true, Region: "us-east-1"}), cache.Policy{Retry: cache.RetryConfig{Attempts: 3, MinWait: time.Hour}})
+			_, err := f.Fetch(
+				t.Context(),
+				&manifest.Bucket{
+					Name:       "network",
+					Namespace:  "test",
+					BucketName: "data",
+					Endpoint:   target,
+					Insecure:   true,
+					Region:     "us-east-1",
+				},
+				(testInputs{}).readSet(
+					&manifest.Bucket{
+						Name:       "network",
+						Namespace:  "test",
+						BucketName: "data",
+						Endpoint:   target,
+						Insecure:   true,
+						Region:     "us-east-1",
+					},
+				),
+				cache.Policy{Retry: cache.RetryConfig{Attempts: 3, MinWait: time.Hour}},
+			)
 			terminal, ok := errors.AsType[*cache.TerminalError](err)
 			wantLists := int32(0)
 			if route == "object" {
 				wantLists = 1
 			}
-			if !ok || terminal.Attempted || !errors.Is(err, cause) || dials.Load() == 0 || lists.Load() != wantLists || objects.Load() != 0 {
-				t.Fatalf("error=%v terminal=%+v dials=%d lists=%d objects=%d", err, terminal, dials.Load(), lists.Load(), objects.Load())
+			if !ok || terminal.Attempted || !errors.Is(err, cause) || dials.Load() == 0 || lists.Load() != wantLists ||
+				objects.Load() != 0 {
+				t.Fatalf(
+					"error=%v terminal=%+v dials=%d lists=%d objects=%d",
+					err,
+					terminal,
+					dials.Load(),
+					lists.Load(),
+					objects.Load(),
+				)
 			}
 		})
 	}

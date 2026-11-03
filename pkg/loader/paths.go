@@ -97,7 +97,8 @@ func (l *Loader) resolvePaths(ctx context.Context) error {
 			for _, ref := range child.PostBuild.SubstituteFrom {
 				inputID := manifest.NamedResource{Kind: ref.Kind, Name: ref.Name, Namespace: child.Namespace}
 				input := provider.Lookup(inputID)
-				known = known && input.Data != nil && len(input.Materializers) == 0 && l.ReferenceFacts(inputID, nil).Supplied == nil
+				known = known && input.Data != nil && len(input.Materializers) == 0 &&
+					l.ReferenceFacts(inputID, nil).Supplied == nil
 				if input.Data != nil {
 					bindings[inputID] = input.Data
 				}
@@ -137,8 +138,11 @@ func (l *Loader) resolvePaths(ctx context.Context) error {
 					packageDoc := l.documents.cache[filepath.Dir(location)]
 					body := packageDoc.body
 					if packageDoc.file == location && body != nil {
-						hasVars := len(body.Vars) != 0 //nolint:staticcheck // Kustomize vars can synthesize expansion syntax.
-						unproved := len(body.Replacements) != 0 || hasVars || body.NamePrefix != "" || body.NameSuffix != ""
+						hasVars := len(
+							body.Vars,
+						) != 0 //nolint:staticcheck // Kustomize vars can synthesize expansion syntax.
+						unproved := len(body.Replacements) != 0 || hasVars || body.NamePrefix != "" ||
+							body.NameSuffix != ""
 						if unproved {
 							known = false
 						}
@@ -166,20 +170,25 @@ func (l *Loader) resolvePaths(ctx context.Context) error {
 			for _, value := range prepared.PostBuild.Substitute {
 				known = known && !manifest.HasValuePlaceholder(value)
 			}
-			active := len(prepared.PostBuild.Substitute) != 0 || prepared.SubstituteStrategy() == kustomizev1.SubstituteStrategyAlways
+			active := len(prepared.PostBuild.Substitute) != 0 ||
+				prepared.SubstituteStrategy() == kustomizev1.SubstituteStrategyAlways
 			names := values.SubstitutionNames(documents, active)
 			if known && names != nil {
 				if projections == nil {
 					projections = map[manifest.NamedResource]inputprojection.Projection{}
 				}
-				projections[id] = inputprojection.Projection{Content: prepared.Content(nil, names, active), Inputs: bindings}
+				projections[id] = inputprojection.Projection{
+					Content: prepared.Content(nil, names, active),
+					Inputs:  bindings,
+				}
 			}
 		}
 		l.Index.Records[id] = record
 		if !manifest.HasEnvsubstReference(child.Path) {
 			continue
 		}
-		if child.Labels[manifest.SubstituteAnnotationKey] == kustomizev1.DisabledValue || child.Annotations[manifest.SubstituteAnnotationKey] == kustomizev1.DisabledValue {
+		if child.Labels[manifest.SubstituteAnnotationKey] == kustomizev1.DisabledValue ||
+			child.Annotations[manifest.SubstituteAnnotationKey] == kustomizev1.DisabledValue {
 			continue
 		}
 		owner := record.Parent
@@ -215,7 +224,9 @@ func (l *Loader) resolvePaths(ctx context.Context) error {
 			}
 			projected := *child
 			projected.Path = path
-			record.ContentRoots = map[manifest.NamedResource][]string{source: slices.Collect(manifest.RenderRoots(&projected))}
+			record.ContentRoots = map[manifest.NamedResource][]string{
+				source: slices.Collect(manifest.RenderRoots(&projected)),
+			}
 		} else {
 			source = parent.SourceID()
 			if source.Name == "" || source.Kind == "" {

@@ -52,8 +52,17 @@ func benchmarkTemplateAppTemplateChart(b *testing.B, acquired bool) {
 	cliSources := benchChartResolver(b, chartDir, input)
 
 	hr := &manifest.HelmRelease{
-		Name: "demo", Namespace: "default",
-		Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "chart-repo", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}},
+		Name:      "demo",
+		Namespace: "default",
+		Chart: manifest.HelmChart{
+			Name: "mychart",
+			Source: manifest.NamedResource{
+				Name:      "chart-repo",
+				Namespace: "flux-system",
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindGitRepository,
+			},
+		},
 	}
 	values := map[string]any{"greeting": "hello"}
 	ctx := context.Background()
@@ -63,7 +72,10 @@ func benchmarkTemplateAppTemplateChart(b *testing.B, acquired bool) {
 	for b.Loop() {
 		out, receipt1, err := cli.Template(ctx, hr, values, RenderOptions{Options: Options{}, Sources: cliSources})
 		if err == nil {
-			if recordErr := cli.RecordRender(ctx, RenderAcceptance{Owner: (hr).Named(), Receipt: receipt1, Records: emptyRenderInventory}); recordErr != nil {
+			if recordErr := cli.RecordRender(
+				ctx,
+				RenderAcceptance{Owner: hr.Named(), Receipt: receipt1, Records: emptyRenderInventory},
+			); recordErr != nil {
 				b.Fatal(recordErr)
 			}
 		}
@@ -83,8 +95,17 @@ func BenchmarkTemplate_AppTemplateChartMemory(b *testing.B) {
 	cliSources := benchChartResolver(b, chartDir, os.DirFS(chartDir))
 
 	hr := &manifest.HelmRelease{
-		Name: "demo", Namespace: "default",
-		Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "chart-repo", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}},
+		Name:      "demo",
+		Namespace: "default",
+		Chart: manifest.HelmChart{
+			Name: "mychart",
+			Source: manifest.NamedResource{
+				Name:      "chart-repo",
+				Namespace: "flux-system",
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindGitRepository,
+			},
+		},
 	}
 	values := map[string]any{"greeting": "hello"}
 	ctx := context.Background()
@@ -94,7 +115,10 @@ func BenchmarkTemplate_AppTemplateChartMemory(b *testing.B) {
 	for b.Loop() {
 		out, receipt2, err := cli.Template(ctx, hr, values, RenderOptions{Options: Options{}, Sources: cliSources})
 		if err == nil {
-			if recordErr := cli.RecordRender(ctx, RenderAcceptance{Owner: (hr).Named(), Receipt: receipt2, Records: emptyRenderInventory}); recordErr != nil {
+			if recordErr := cli.RecordRender(
+				ctx,
+				RenderAcceptance{Owner: hr.Named(), Receipt: receipt2, Records: emptyRenderInventory},
+			); recordErr != nil {
 				b.Fatal(recordErr)
 			}
 		}
@@ -111,7 +135,12 @@ func BenchmarkTemplate_AppTemplateChartMemory(b *testing.B) {
 func BenchmarkTemplate_Cold(b *testing.B) {
 	dir := b.TempDir()
 	testutil.WriteFile(b, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
-	testutil.WriteFile(b, dir, "mychart/templates/cm.yaml", "{{ range $i := until 64 }}\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: 'example-{{ $i }}'}\ndata:\n  marker: {{ $.Values.marker | quote }}\n  payload: {{ $.Values.payload | quote }}\n{{ end }}\n")
+	testutil.WriteFile(
+		b,
+		dir,
+		"mychart/templates/cm.yaml",
+		"{{ range $i := until 64 }}\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: 'example-{{ $i }}'}\ndata:\n  marker: {{ $.Values.marker | quote }}\n  payload: {{ $.Values.payload | quote }}\n{{ end }}\n",
+	)
 	sources := benchChartResolver(b, dir, os.DirFS(dir))
 	hr := newHR()
 	values := map[string]any{"marker": "fresh", "payload": strings.Repeat("x", 1024)}
@@ -146,7 +175,10 @@ func BenchmarkTemplate_SourceValues(b *testing.B) {
 	} {
 		b.Run(tc.name, func(b *testing.B) {
 			if tc.disk && !renderPersistenceEligible(b) {
-				b.Fatalf("persisted benchmark requires a clean VCS-stamped build: %s", sourcecache.RenderPersistenceDisabledReason())
+				b.Fatalf(
+					"persisted benchmark requires a clean VCS-stamped build: %s",
+					sourcecache.RenderPersistenceDisabledReason(),
+				)
 			}
 			dir := stageBenchChartDir(b)
 			testutil.WriteFile(b, dir, "config/prod.yaml", "greeting: pinned\nreplicas: 3\n")
@@ -160,9 +192,17 @@ func BenchmarkTemplate_SourceValues(b *testing.B) {
 			cliSources := benchChartResolver(b, dir, input)
 			hr := newHR()
 			hr.ChartValuesFiles = []string{"config/prod.yaml"}
-			first, receipt3, err := cli.Template(b.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+			first, receipt3, err := cli.Template(
+				b.Context(),
+				hr,
+				nil,
+				RenderOptions{Options: Options{}, Sources: cliSources},
+			)
 			if err == nil {
-				if recordErr := cli.RecordRender(b.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt3, Records: emptyRenderInventory}); recordErr != nil {
+				if recordErr := cli.RecordRender(
+					b.Context(),
+					RenderAcceptance{Owner: hr.Named(), Receipt: receipt3, Records: emptyRenderInventory},
+				); recordErr != nil {
 					b.Fatal(recordErr)
 				}
 			}
@@ -170,12 +210,21 @@ func BenchmarkTemplate_SourceValues(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			if len(first) == 0 || !hasRenderField(first[0].Document, "greeting", "pinned") || !hasRenderField(first[0].Document, "replicas", "3") {
+			if len(first) == 0 || !hasRenderField(first[0].Document, "greeting", "pinned") ||
+				!hasRenderField(first[0].Document, "replicas", "3") {
 				b.Fatal(first)
 			}
-			second, receipt4, err := cli.Template(b.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+			second, receipt4, err := cli.Template(
+				b.Context(),
+				hr,
+				nil,
+				RenderOptions{Options: Options{}, Sources: cliSources},
+			)
 			if err == nil {
-				if recordErr := cli.RecordRender(b.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt4, Records: emptyRenderInventory}); recordErr != nil {
+				if recordErr := cli.RecordRender(
+					b.Context(),
+					RenderAcceptance{Owner: hr.Named(), Receipt: receipt4, Records: emptyRenderInventory},
+				); recordErr != nil {
 					b.Fatal(recordErr)
 				}
 			}
@@ -195,16 +244,33 @@ func BenchmarkTemplate_SourceValues(b *testing.B) {
 				witness := manifest.DeepCopyMap(first[0].Document)
 				witness["cacheWitness"] = "selected source values persisted hit"
 				output := encodedRender(b, []map[string]any{witness})
-				_, _, _, err := owner.Blob(b.Context(), sourcecache.BlobKey{Content: loaded.record.key, Render: sourcecache.RenderAccepted}, sourcecache.Policy{}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
-					err := writeTestRecord(w, sourcecache.BlobKey{Content: loaded.record.key, Render: sourcecache.RenderAccepted}, renderRecord{Output: output, Analysis: loaded.record.Analysis})
-					return sourcecache.ProducerResult{}, err
-				})
+				_, _, _, err := owner.Blob(
+					b.Context(),
+					sourcecache.BlobKey{Content: loaded.record.key, Render: sourcecache.RenderAccepted},
+					sourcecache.Policy{},
+					func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+						err := writeTestRecord(
+							w,
+							sourcecache.BlobKey{Content: loaded.record.key, Render: sourcecache.RenderAccepted},
+							renderRecord{Output: output, Analysis: loaded.record.Analysis},
+						)
+						return sourcecache.ProducerResult{}, err
+					},
+				)
 				if err != nil {
 					b.Fatal(err)
 				}
-				out, receipt5, err := cli.Template(b.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+				out, receipt5, err := cli.Template(
+					b.Context(),
+					hr,
+					nil,
+					RenderOptions{Options: Options{}, Sources: cliSources},
+				)
 				if err == nil {
-					if recordErr := cli.RecordRender(b.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt5, Records: emptyRenderInventory}); recordErr != nil {
+					if recordErr := cli.RecordRender(
+						b.Context(),
+						RenderAcceptance{Owner: hr.Named(), Receipt: receipt5, Records: emptyRenderInventory},
+					); recordErr != nil {
 						b.Fatal(recordErr)
 					}
 				}
@@ -216,9 +282,17 @@ func BenchmarkTemplate_SourceValues(b *testing.B) {
 			}
 			b.ReportAllocs()
 			for b.Loop() {
-				_, receipt6, err := cli.Template(b.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+				_, receipt6, err := cli.Template(
+					b.Context(),
+					hr,
+					nil,
+					RenderOptions{Options: Options{}, Sources: cliSources},
+				)
 				if err == nil {
-					if recordErr := cli.RecordRender(b.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt6, Records: emptyRenderInventory}); recordErr != nil {
+					if recordErr := cli.RecordRender(
+						b.Context(),
+						RenderAcceptance{Owner: hr.Named(), Receipt: receipt6, Records: emptyRenderInventory},
+					); recordErr != nil {
 						b.Fatal(recordErr)
 					}
 				}
@@ -262,9 +336,17 @@ spec:
 				hr.Install = &helmv2.Install{CRDs: helmv2.CRDsPolicy(policy)}
 				b.ReportAllocs()
 				for b.Loop() {
-					_, receipt7, err := cli.Template(b.Context(), hr, nil, RenderOptions{SkipCRDs: true, Sources: cliSources})
+					_, receipt7, err := cli.Template(
+						b.Context(),
+						hr,
+						nil,
+						RenderOptions{SkipCRDs: true, Sources: cliSources},
+					)
 					if err == nil {
-						if recordErr := cli.RecordRender(b.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt7, Records: emptyRenderInventory}); recordErr != nil {
+						if recordErr := cli.RecordRender(
+							b.Context(),
+							RenderAcceptance{Owner: hr.Named(), Receipt: receipt7, Records: emptyRenderInventory},
+						); recordErr != nil {
 							b.Fatal(recordErr)
 						}
 					}
@@ -299,14 +381,26 @@ func benchmarkTemplateCommonMetadataVariants(b *testing.B, acquired bool) {
 	cliSources := benchChartResolver(b, chartDir, input)
 
 	hr := &manifest.HelmRelease{
-		Name: "demo", Namespace: "default",
-		Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "chart-repo", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}},
+		Name:      "demo",
+		Namespace: "default",
+		Chart: manifest.HelmChart{
+			Name: "mychart",
+			Source: manifest.NamedResource{
+				Name:      "chart-repo",
+				Namespace: "flux-system",
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindGitRepository,
+			},
+		},
 	}
 	values := map[string]any{"greeting": "hello"}
 	ctx := context.Background()
 	_, receipt8, err := cli.Template(ctx, hr, values, RenderOptions{Options: Options{}, Sources: cliSources})
 	if err == nil {
-		if recordErr := cli.RecordRender(ctx, RenderAcceptance{Owner: (hr).Named(), Receipt: receipt8, Records: emptyRenderInventory}); recordErr != nil {
+		if recordErr := cli.RecordRender(
+			ctx,
+			RenderAcceptance{Owner: hr.Named(), Receipt: receipt8, Records: emptyRenderInventory},
+		); recordErr != nil {
 			b.Fatal(recordErr)
 		}
 	}
@@ -323,7 +417,10 @@ func benchmarkTemplateCommonMetadataVariants(b *testing.B, acquired bool) {
 		hr.CommonMetadata = &helmv2.CommonMetadata{Labels: map[string]string{"rev": fmt.Sprintf("%d", i)}}
 		out, receipt9, err := cli.Template(ctx, hr, values, RenderOptions{Options: Options{}, Sources: cliSources})
 		if err == nil {
-			if recordErr := cli.RecordRender(ctx, RenderAcceptance{Owner: (hr).Named(), Receipt: receipt9, Records: emptyRenderInventory}); recordErr != nil {
+			if recordErr := cli.RecordRender(
+				ctx,
+				RenderAcceptance{Owner: hr.Named(), Receipt: receipt9, Records: emptyRenderInventory},
+			); recordErr != nil {
 				b.Fatal(recordErr)
 			}
 		}
@@ -357,8 +454,17 @@ func benchmarkLoadChartCached(b *testing.B, acquired bool) {
 	cliSources := benchChartResolver(b, chartDir, input)
 
 	hr := &manifest.HelmRelease{
-		Name: "demo", Namespace: "default",
-		Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "chart-repo", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}},
+		Name:      "demo",
+		Namespace: "default",
+		Chart: manifest.HelmChart{
+			Name: "mychart",
+			Source: manifest.NamedResource{
+				Name:      "chart-repo",
+				Namespace: "flux-system",
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindGitRepository,
+			},
+		},
 	}
 	ctx := context.Background()
 	if _, err := loadDecodedChart(ctx, cli, hr, cliSources); err != nil {

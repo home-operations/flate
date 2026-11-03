@@ -26,18 +26,41 @@ func TestE2E_SubstitutionProducerRendering(t *testing.T) {
 			t.Run(kind+"/"+mode, func(t *testing.T) {
 				root := t.TempDir()
 				testutil.WriteSubstitutionProducerCluster(t, root, kind)
-				testutil.WriteFile(t, root, "flux/unrelated.yaml", testutil.KustomizationYAML("unrelated", "flux-system", "  path: ./unrelated\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
+				testutil.WriteFile(
+					t,
+					root,
+					"flux/unrelated.yaml",
+					testutil.KustomizationYAML(
+						"unrelated",
+						"flux-system",
+						"  path: ./unrelated\n  sourceRef: {kind: GitRepository, name: flux-system}\n",
+					),
+				)
 				testutil.WriteFile(t, root, "unrelated/kustomization.yaml", "resources: [deployment.yaml]\n")
-				testutil.WriteFile(t, root, "unrelated/deployment.yaml", "apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: unrelated-workload}\n")
+				testutil.WriteFile(
+					t,
+					root,
+					"unrelated/deployment.yaml",
+					"apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: unrelated-workload}\n",
+				)
 				consumer, err := os.ReadFile(filepath.Join(root, "flux/consumer.yaml"))
 				if err != nil {
 					t.Fatal(err)
 				}
 				postBuild := "  postBuild: {substituteFrom: [{kind: " + kind + ", name: settings}]}\n"
 				if mode == "inherited" {
-					testutil.WriteFile(t, root, "children/consumer.yaml", strings.Replace(string(consumer), postBuild, "", 1))
+					testutil.WriteFile(
+						t,
+						root,
+						"children/consumer.yaml",
+						strings.Replace(string(consumer), postBuild, "", 1),
+					)
 					testutil.WriteFile(t, root, "children/kustomization.yaml", "resources: [consumer.yaml]\n")
-					testutil.WriteFile(t, root, "flux/consumer.yaml", testutil.KustomizationYAML("parent", "flux-system", `  path: ./children
+					testutil.WriteFile(
+						t,
+						root,
+						"flux/consumer.yaml",
+						testutil.KustomizationYAML("parent", "flux-system", `  path: ./children
   sourceRef: {kind: GitRepository, name: flux-system}
   dependsOn: [{name: producer}]
   postBuild: {substituteFrom: [{kind: `+kind+`, name: settings, optional: true}]}
@@ -48,10 +71,15 @@ func TestE2E_SubstitutionProducerRendering(t *testing.T) {
       kind: Kustomization
       metadata: {name: ignored}
       spec:
-        postBuild: {substituteFrom: [{kind: `+kind+", name: settings, optional: true}]}\n"))
+        postBuild: {substituteFrom: [{kind: `+kind+", name: settings, optional: true}]}\n"),
+					)
 				} else {
-					testutil.WriteFile(t, root, "flux/consumer.yaml", strings.Replace(string(consumer), postBuild,
-						"  dependsOn: [{name: producer}]\n  postBuild: {substituteFrom: [{kind: "+kind+", name: settings, optional: true}]}\n", 1))
+					testutil.WriteFile(t, root, "flux/consumer.yaml", strings.Replace(
+						string(consumer),
+						postBuild,
+						"  dependsOn: [{name: producer}]\n  postBuild: {substituteFrom: [{kind: "+kind+", name: settings, optional: true}]}\n",
+						1,
+					))
 				}
 				const deployment = `apiVersion: apps/v1
 kind: Deployment
@@ -74,11 +102,23 @@ spec:
 					testutil.CopyTree(t, root, original)
 				}
 				repo := testutil.GitInit(t, root)
-				testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+				testutil.GitCommitAll(
+					t,
+					repo,
+					"init",
+					&gogit.CommitOptions{
+						Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)},
+					},
+				)
 				if mode == "diff" {
 					testutil.WriteFile(t, root, "app/cm.yaml", strings.Replace(deployment, "-old", "-new", 1))
 				} else {
-					testutil.WriteFile(t, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output, labels: {changed: consumer}}\ndata: {version: '${VERSION:=empty}'}\n")
+					testutil.WriteFile(
+						t,
+						root,
+						"app/cm.yaml",
+						"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output, labels: {changed: consumer}}\ndata: {version: '${VERSION:=empty}'}\n",
+					)
 				}
 				wt, err := repo.Worktree()
 				if err != nil {
@@ -91,7 +131,17 @@ spec:
 				if _, dirty := status["app/cm.yaml"]; len(status) != 1 || !dirty {
 					t.Fatalf("consumer-only change: %v", status)
 				}
-				args := []string{"build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2", "--no-progress"}
+				args := []string{
+					"build",
+					"all",
+					"--path",
+					root,
+					"--cache-dir",
+					t.TempDir(),
+					"--concurrency",
+					"2",
+					"--no-progress",
+				}
 				switch mode {
 				case "full":
 				case "env":
@@ -110,7 +160,8 @@ spec:
 					t.Fatalf("unchanged workload retained: stdout=%s stderr=%s", stdout, stderr)
 				}
 				if mode == "diff" {
-					if code != 0 || !strings.Contains(stdout, "image: example.invalid/app:4.6.2-old") || !strings.Contains(stdout, "image: example.invalid/app:4.6.2-new") {
+					if code != 0 || !strings.Contains(stdout, "image: example.invalid/app:4.6.2-old") ||
+						!strings.Contains(stdout, "image: example.invalid/app:4.6.2-new") {
 						t.Fatalf("diff substitution: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 					}
 				} else if code != 0 || !strings.Contains(stdout, "version: 4.6.2") || strings.Contains(stdout, "version: discovered") {
@@ -128,7 +179,17 @@ func TestE2E_SubstitutionProducerCycle(t *testing.T) {
 	for _, workers := range []string{"1", "2", "8"} {
 		t.Run("concurrency_"+workers, func(t *testing.T) {
 			for range 2 {
-				stdout, stderr, code := harness.RunCLIBuffers("build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", workers, "--no-progress")
+				stdout, stderr, code := harness.RunCLIBuffers(
+					"build",
+					"all",
+					"--path",
+					root,
+					"--cache-dir",
+					t.TempDir(),
+					"--concurrency",
+					workers,
+					"--no-progress",
+				)
 				if code != 1 || stderr != want {
 					t.Fatalf("substitution cycle: exit=%d stdout=%q stderr=%q", code, stdout, stderr)
 				}
@@ -138,7 +199,8 @@ func TestE2E_SubstitutionProducerCycle(t *testing.T) {
 				}
 				for _, doc := range docs {
 					name, namespace := manifest.DocMetadata(doc)
-					if manifest.DocKind(doc) != "Kustomization" || namespace != "flux-system" || name != "a" && name != "b" {
+					if manifest.DocKind(doc) != "Kustomization" || namespace != "flux-system" ||
+						name != "a" && name != "b" {
 						t.Fatalf("cycle emitted workload output: %s", stdout)
 					}
 				}
@@ -161,15 +223,55 @@ func TestE2E_SubstitutionProducerTransformedNamespace(t *testing.T) {
 						{"producer", "data", ""},
 						{"consumer", "app", "  postBuild: {substituteFrom: [{kind: " + kind + ", name: settings}]}\n"},
 					} {
-						testutil.WriteFile(t, dir, "flux/"+ks.name+".yaml", testutil.KustomizationYAML(ks.name, "flux-system", "  path: ./"+ks.path+"\n"+ks.postBuild))
+						testutil.WriteFile(
+							t,
+							dir,
+							"flux/"+ks.name+".yaml",
+							testutil.KustomizationYAML(ks.name, "flux-system", "  path: ./"+ks.path+"\n"+ks.postBuild),
+						)
 					}
-					testutil.WriteFile(t, dir, "data/kustomization.yaml", "namespace: flux-system\nresources: [settings.yaml]\n")
-					testutil.WriteFile(t, dir, "data/settings.yaml", "apiVersion: v1\nkind: "+kind+"\nmetadata: {name: settings, namespace: original}\ndata: {VERSION: "+version+"}\n")
-					testutil.WriteFile(t, dir, "app/kustomization.yaml", "namespace: flux-system\nresources: [cm.yaml]\n")
-					testutil.WriteFile(t, dir, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\ndata: {version: '${VERSION:=empty}'}\n")
+					testutil.WriteFile(
+						t,
+						dir,
+						"data/kustomization.yaml",
+						"namespace: flux-system\nresources: [settings.yaml]\n",
+					)
+					testutil.WriteFile(
+						t,
+						dir,
+						"data/settings.yaml",
+						"apiVersion: v1\nkind: "+kind+"\nmetadata: {name: settings, namespace: original}\ndata: {VERSION: "+version+"}\n",
+					)
+					testutil.WriteFile(
+						t,
+						dir,
+						"app/kustomization.yaml",
+						"namespace: flux-system\nresources: [cm.yaml]\n",
+					)
+					testutil.WriteFile(
+						t,
+						dir,
+						"app/cm.yaml",
+						"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\ndata: {version: '${VERSION:=empty}'}\n",
+					)
 				}
-				testutil.WriteFile(t, original, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\ndata: {version: old}\n")
-				args := []string{"build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2", "--no-progress"}
+				testutil.WriteFile(
+					t,
+					original,
+					"app/cm.yaml",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\ndata: {version: old}\n",
+				)
+				args := []string{
+					"build",
+					"all",
+					"--path",
+					root,
+					"--cache-dir",
+					t.TempDir(),
+					"--concurrency",
+					"2",
+					"--no-progress",
+				}
 				if mode == "changed" {
 					args = append(args, "--path-orig", original)
 				}
@@ -186,16 +288,34 @@ func TestE2E_SubstitutionCycleDownstream(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteSubstitutionCycleCluster(t, root)
 	testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [a.yaml, b.yaml, consumer.yaml]\n")
-	testutil.WriteFile(t, root, "flux/consumer.yaml", testutil.KustomizationYAML("consumer", "flux-system", "  path: ./app\n  dependsOn: [{name: a}]\n"))
+	testutil.WriteFile(
+		t,
+		root,
+		"flux/consumer.yaml",
+		testutil.KustomizationYAML("consumer", "flux-system", "  path: ./app\n  dependsOn: [{name: a}]\n"),
+	)
 	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [cm.yaml]\n")
 	testutil.WriteFile(t, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\n")
 	var want string
 	for _, workers := range []string{"2", "8"} {
 		t.Run("concurrency_"+workers, func(t *testing.T) {
 			for range 2 {
-				stdout, stderr, code := harness.RunCLIBuffers("build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", workers, "--no-progress")
+				stdout, stderr, code := harness.RunCLIBuffers(
+					"build",
+					"all",
+					"--path",
+					root,
+					"--cache-dir",
+					t.TempDir(),
+					"--concurrency",
+					workers,
+					"--no-progress",
+				)
 				if code != 1 || strings.Contains(stderr, "flux-system/consumer  dependency cycle:") ||
-					!strings.Contains(stderr, "blocks flux-system/consumer") || !strings.Contains(stderr, "2 failed · 1 blocked") {
+					!strings.Contains(
+						stderr,
+						"blocks flux-system/consumer",
+					) || !strings.Contains(stderr, "2 failed · 1 blocked") {
 					t.Fatalf("downstream cycle: exit=%d stdout=%q stderr=%q", code, stdout, stderr)
 				}
 				docs, err := testutil.DecodeDocs(strings.NewReader(stdout))
@@ -204,7 +324,8 @@ func TestE2E_SubstitutionCycleDownstream(t *testing.T) {
 				}
 				for _, doc := range docs {
 					name, namespace := manifest.DocMetadata(doc)
-					if manifest.DocKind(doc) != "Kustomization" || namespace != "flux-system" || name != "a" && name != "b" && name != "consumer" {
+					if manifest.DocKind(doc) != "Kustomization" || namespace != "flux-system" ||
+						name != "a" && name != "b" && name != "consumer" {
 						t.Fatalf("blocked consumer emitted workload output: %s", stdout)
 					}
 				}
@@ -221,14 +342,26 @@ func TestE2E_DependencyCycleWarnings(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux/a.yaml, flux/b.yaml]\n")
 	for _, pair := range []struct{ name, peer string }{{"a", "b"}, {"b", "a"}} {
-		testutil.WriteFile(t, root, "flux/"+pair.name+".yaml", testutil.KustomizationYAML(pair.name, "flux-system", "  path: ./"+pair.name+"\n  dependsOn: [{name: "+pair.peer+"}]\n"))
+		testutil.WriteFile(
+			t,
+			root,
+			"flux/"+pair.name+".yaml",
+			testutil.KustomizationYAML(
+				pair.name,
+				"flux-system",
+				"  path: ./"+pair.name+"\n  dependsOn: [{name: "+pair.peer+"}]\n",
+			),
+		)
 	}
 	for _, verb := range []string{"build", "test"} {
 		t.Run(verb, func(t *testing.T) {
 			var previous string
 			for range 2 {
 				stdout, stderr, code := harness.RunCLIBuffers(verb, "all", "--path", root, "--concurrency=2")
-				if code != 1 || strings.Count(stderr, "[DependencyCycle]") != 1 || !strings.Contains(stdout+stderr, "dependency cycle") || !strings.Contains(stdout+stderr, "2 failed") || strings.Contains(stdout, "warnings (") {
+				if code != 1 || strings.Count(stderr, "[DependencyCycle]") != 1 ||
+					!strings.Contains(stdout+stderr, "dependency cycle") ||
+					!strings.Contains(stdout+stderr, "2 failed") ||
+					strings.Contains(stdout, "warnings (") {
 					t.Fatalf("cycle: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 				}
 				if verb == "build" {
@@ -238,7 +371,8 @@ func TestE2E_DependencyCycleWarnings(t *testing.T) {
 					}
 					for _, doc := range docs {
 						name, namespace := manifest.DocMetadata(doc)
-						if manifest.DocKind(doc) != "Kustomization" || namespace != "flux-system" || name != "a" && name != "b" {
+						if manifest.DocKind(doc) != "Kustomization" || namespace != "flux-system" ||
+							name != "a" && name != "b" {
 							t.Fatalf("cycle emitted workload output: %s", stdout)
 						}
 					}
@@ -274,15 +408,42 @@ func TestE2E_LiteralKustomizationPath(t *testing.T) {
 				before, after = after, before
 			}
 			if selected != root {
-				testutil.WriteFile(t, root, "flux/unrelated.yaml", testutil.KustomizationYAML("unrelated", "apps", "  path: ./unrelated\n"))
+				testutil.WriteFile(
+					t,
+					root,
+					"flux/unrelated.yaml",
+					testutil.KustomizationYAML("unrelated", "apps", "  path: ./unrelated\n"),
+				)
 				testutil.WriteFile(t, root, "unrelated/kustomization.yaml", "resources: [cm.yaml]\n")
-				testutil.WriteFile(t, root, "unrelated/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unrelated, namespace: apps}\n")
+				testutil.WriteFile(
+					t,
+					root,
+					"unrelated/cm.yaml",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unrelated, namespace: apps}\n",
+				)
 				testutil.WriteFile(t, root, "apps/${ENV:=prod}/cm.yaml", fmt.Sprintf(cm, before))
 				repo := testutil.GitInit(t, root)
-				testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+				testutil.GitCommitAll(
+					t,
+					repo,
+					"init",
+					&gogit.CommitOptions{
+						Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)},
+					},
+				)
 			}
 			testutil.WriteFile(t, root, "apps/${ENV:=prod}/cm.yaml", fmt.Sprintf(cm, after))
-			args := []string{"build", "all", "--path", selected, "--cache-dir", t.TempDir(), "--concurrency", "2", "--no-progress"}
+			args := []string{
+				"build",
+				"all",
+				"--path",
+				selected,
+				"--cache-dir",
+				t.TempDir(),
+				"--concurrency",
+				"2",
+				"--no-progress",
+			}
 			if selected != root {
 				args = append(args, "--base", "HEAD")
 			}
@@ -293,7 +454,8 @@ func TestE2E_LiteralKustomizationPath(t *testing.T) {
 			var previous string
 			for run := range 2 {
 				stdout, stderr, code := harness.RunCLIBuffers(args...)
-				if code != 0 || !strings.Contains(stdout, "correct") || !strings.Contains(stdout, "apps") || !strings.Contains(stdout, "literal") {
+				if code != 0 || !strings.Contains(stdout, "correct") || !strings.Contains(stdout, "apps") ||
+					!strings.Contains(stdout, "literal") {
 					t.Fatalf("literal path: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 				}
 				if args[0] == "build" {
@@ -310,7 +472,8 @@ func TestE2E_LiteralKustomizationPath(t *testing.T) {
 				} else if strings.Contains(stdout, "unrelated") {
 					t.Fatalf("unchanged sibling changed: %s", stdout)
 				}
-				if args[0] == "build" && (!strings.Contains(stdout, "name: correct") || !strings.Contains(stdout, "namespace: apps") || !strings.Contains(stdout, "answer: literal")) {
+				if args[0] == "build" &&
+					(!strings.Contains(stdout, "name: correct") || !strings.Contains(stdout, "namespace: apps") || !strings.Contains(stdout, "answer: literal")) {
 					t.Fatalf("missing intended ConfigMap: stdout=%s stderr=%s", stdout, stderr)
 				}
 				if strings.HasSuffix(mode, "diff") && !strings.Contains(stdout, "before") {

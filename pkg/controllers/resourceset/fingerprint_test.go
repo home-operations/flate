@@ -12,19 +12,21 @@ import (
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
 	"github.com/home-operations/flate/pkg/store"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestResourceSetFingerprint_SelectorInputs(t *testing.T) {
 	t.Parallel()
 	rs := &manifest.ResourceSet{
-		Name: "matrix", Namespace: "apps",
+		Name:      "matrix",
+		Namespace: "apps",
 		InputsFrom: []fluxopv1.InputProviderReference{{
 			Kind:     manifest.KindResourceSetInputProvider,
 			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"role": "db"}},
@@ -75,10 +77,14 @@ func TestResourceSetFingerprint_SelectorInputs(t *testing.T) {
 				providers[0].Status.ExportedInputs = []fluxopv1.ResourceSetInput{a.DefaultValues}
 			}
 			calls := 0
-			got, key, err := renderWithAdmission(&candidate, func(fluxopv1.InputProviderReference, manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
-				calls++
-				return providers, nil
-			}, fp)
+			got, key, err := renderWithAdmission(
+				&candidate,
+				func(fluxopv1.InputProviderReference, manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
+					calls++
+					return providers, nil
+				},
+				fp,
+			)
 			assert.NoError(t, err)
 			assert.Equal(t, calls, len(candidate.InputsFrom))
 			assert.Equal(t, len(got), 2)
@@ -91,10 +97,16 @@ func TestResourceSetFingerprint_SelectorInputs(t *testing.T) {
 	t.Run("resolver error cannot replay", func(t *testing.T) {
 		t.Parallel()
 		failure := errors.New("captured provider unavailable")
-		docs, key, err := renderWithAdmission(rs, func(fluxopv1.InputProviderReference, manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
-			return nil, failure
-		}, fp)
-		if !errors.Is(err, failure) || !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || key != "" || docs != nil {
+		docs, key, err := renderWithAdmission(
+			rs,
+			func(fluxopv1.InputProviderReference, manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
+				return nil, failure
+			},
+			fp,
+		)
+		if !errors.Is(err, failure) || !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) ||
+			key != "" ||
+			docs != nil {
 			t.Fatalf("resolver error became a hit: docs=%v key=%q error=%v", docs, key, err)
 		}
 	})
@@ -121,10 +133,14 @@ func TestResourceSetFingerprint_SelectorInputs(t *testing.T) {
 		t.Parallel()
 		reversed := []*manifest.ResourceSetInputProvider{b, nil, a, a}
 		calls := 0
-		got, key, err := renderWithAdmission(rs, func(fluxopv1.InputProviderReference, manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
-			calls++
-			return reversed, nil
-		}, "")
+		got, key, err := renderWithAdmission(
+			rs,
+			func(fluxopv1.InputProviderReference, manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
+				calls++
+				return reversed, nil
+			},
+			"",
+		)
 		assert.NoError(t, err)
 		assert.Equal(t, calls, 1)
 		assert.Equal(t, key, fp)
@@ -134,16 +150,24 @@ func TestResourceSetFingerprint_SelectorInputs(t *testing.T) {
 		overlapped.InputsFrom = slices.Clone(rs.InputsFrom)
 		overlapped.InputsFrom = append(overlapped.InputsFrom, fluxopv1.InputProviderReference{Name: "a"})
 		calls = 0
-		got, key, err = renderWithAdmission(&overlapped, func(fluxopv1.InputProviderReference, manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
-			calls++
-			return reversed, nil
-		}, "")
+		got, key, err = renderWithAdmission(
+			&overlapped,
+			func(fluxopv1.InputProviderReference, manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
+				calls++
+				return reversed, nil
+			},
+			"",
+		)
 		assert.NoError(t, err)
 		assert.Equal(t, calls, 2)
 		assert.Diff(t, got, docs)
-		hit, replayKey, err := renderWithAdmission(&overlapped, func(fluxopv1.InputProviderReference, manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
-			return []*manifest.ResourceSetInputProvider{a, b, nil}, nil
-		}, key)
+		hit, replayKey, err := renderWithAdmission(
+			&overlapped,
+			func(fluxopv1.InputProviderReference, manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
+				return []*manifest.ResourceSetInputProvider{a, b, nil}, nil
+			},
+			key,
+		)
 		assert.NoError(t, err)
 		assert.Equal(t, replayKey, key)
 		if hit != nil {
@@ -151,7 +175,9 @@ func TestResourceSetFingerprint_SelectorInputs(t *testing.T) {
 		}
 	})
 
-	invalid := &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{Key: "role", Operator: "invalid"}}}
+	invalid := &metav1.LabelSelector{
+		MatchExpressions: []metav1.LabelSelectorRequirement{{Key: "role", Operator: "invalid"}},
+	}
 	for _, tc := range []struct {
 		name   string
 		refs   []fluxopv1.InputProviderReference
@@ -223,7 +249,9 @@ func TestResourceSetFingerprint_CapturedInputs(t *testing.T) {
 	rs.ResourcesTemplate = "<< $_ := set inputs.nested \"value\" \"template\" >>apiVersion: v1\nkind: ConfigMap\nmetadata: {name: captured}\ndata: {value: '<< inputs.value >>'}"
 	s.AddObject(rs)
 	p := staticRSIP("provider", "ns", map[string]string{"color": "blue"}, map[string]string{"value": "spec"})
-	p.Status.ExportedInputs = []fluxopv1.ResourceSetInput{{"value": {Raw: []byte(`"status-a"`)}, "nested": {Raw: []byte(`{"value":"stored"}`)}}}
+	p.Status.ExportedInputs = []fluxopv1.ResourceSetInput{
+		{"value": {Raw: []byte(`"status-a"`)}, "nested": {Raw: []byte(`{"value":"stored"}`)}},
+	}
 	s.AddObject(p)
 	resolve := resourceset.StoreResolver(s)
 	docs, fingerprint, err := renderWithAdmission(rs, resolve, "")
@@ -236,7 +264,9 @@ func TestResourceSetFingerprint_CapturedInputs(t *testing.T) {
 	assert.Equal(t, key, fingerprint)
 	assert.Equal(t, len(hit), 0)
 	fresh := *p
-	fresh.Status.ExportedInputs = []fluxopv1.ResourceSetInput{{"value": {Raw: []byte(`"status-b"`)}, "nested": {Raw: []byte(`{"value":"stored"}`)}}}
+	fresh.Status.ExportedInputs = []fluxopv1.ResourceSetInput{
+		{"value": {Raw: []byte(`"status-b"`)}, "nested": {Raw: []byte(`{"value":"stored"}`)}},
+	}
 	s.AddObject(&fresh)
 	docs, current, err := renderWithAdmission(rs, resolve, fingerprint)
 	assert.NoError(t, err)
@@ -247,7 +277,11 @@ func TestResourceSetFingerprint_CapturedInputs(t *testing.T) {
 	}
 }
 
-func renderWithAdmission(rs *manifest.ResourceSet, resolve resourceset.ProviderResolver, previous string) ([]map[string]any, string, error) {
+func renderWithAdmission(
+	rs *manifest.ResourceSet,
+	resolve resourceset.ProviderResolver,
+	previous string,
+) ([]map[string]any, string, error) {
 	s := store.New()
 	s.AddObject(rs)
 	s.RecordEmitted(rs.Named(), &store.Emission{Fingerprint: previous, Complete: true}, nil)
@@ -264,7 +298,11 @@ func renderWithAdmission(rs *manifest.ResourceSet, resolve resourceset.ProviderR
 	return testutil.DocumentMaps(docs), fp, err
 }
 
-func renderProviders(rs *manifest.ResourceSet, resolve resourceset.ProviderResolver, admit func(any) (bool, error)) ([]manifest.DocOccurrence, []manifest.Warning, error) {
+func renderProviders(
+	rs *manifest.ResourceSet,
+	resolve resourceset.ProviderResolver,
+	admit func(any) (bool, error),
+) ([]manifest.DocOccurrence, []manifest.Warning, error) {
 	inputs, err := resourceset.CollectProviders(rs, resolve)
 	if err != nil {
 		return nil, nil, err

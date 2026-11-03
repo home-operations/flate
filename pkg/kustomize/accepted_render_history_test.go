@@ -58,7 +58,10 @@ func TestRenderFlux_AcceptedHistory(t *testing.T) {
 
 func newAcceptedHistoryCase(t *testing.T) *acceptedHistoryCase {
 	t.Helper()
-	root := testutil.WriteTree(t, map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("original")})
+	root := testutil.WriteTree(
+		t,
+		map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("original")},
+	)
 	cacheDir := t.TempDir()
 	cache := newTestTreeCache(t, cacheDir)
 	spec := &manifest.Kustomization{Name: "emitter", Path: "."}
@@ -401,10 +404,12 @@ func (h *acceptedHistoryCase) remoteObservations(t *testing.T, fresh *TreeCache)
 		Records: maps.All(records),
 		Content: acceptedInput,
 	}))
-	fresh.SetGitBaseFetcher(func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-		t.Fatal("history acquired a remote")
-		return nil, nil
-	})
+	fresh.SetGitBaseFetcher(
+		func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+			t.Fatal("history acquired a remote")
+			return nil, nil
+		},
+	)
 	if _, complete := previousHistory(t.Context(), fresh, req, owner); complete {
 		t.Fatal("remote observations supplied history")
 	}

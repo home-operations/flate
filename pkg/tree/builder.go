@@ -29,7 +29,8 @@ func NewBuilder(lower fs.FS) *Builder {
 	b := &Builder{
 		nodes:   make(map[string]*node),
 		lower:   indexed,
-		removed: make(map[string]struct{})}
+		removed: make(map[string]struct{}),
+	}
 	if lower == nil || (isTree && indexed == nil) {
 		b.nodes["."] = &node{name: ".", mode: fs.ModeDir | 0o755}
 	} else if indexed == nil || indexed.input != nil {
@@ -203,7 +204,11 @@ func (b *Builder) Mount(name string, input fs.FS) error {
 	if err != nil {
 		return err
 	}
-	n := &node{name: path.Base(p), mode: info.Mode(), foreign: &foreignNode{source: input, path: ".", info: info, mount: p, upper: true}}
+	n := &node{
+		name:    path.Base(p),
+		mode:    info.Mode(),
+		foreign: &foreignNode{source: input, path: ".", info: info, mount: p, upper: true},
+	}
 	if err := b.put(p, n); err != nil {
 		return err
 	}

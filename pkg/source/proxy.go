@@ -13,7 +13,11 @@ type proxyConfig struct {
 	Password string
 }
 
-func resolveProxy(secrets SecretGetter, owner manifest.DiagnosticIdentity, ref *manifest.LocalObjectReference) (*proxyConfig, *url.URL, error) {
+func resolveProxy(
+	secrets SecretGetter,
+	owner manifest.DiagnosticIdentity,
+	ref *manifest.LocalObjectReference,
+) (*proxyConfig, *url.URL, error) {
 	if ref == nil {
 		return nil, nil, nil
 	}
@@ -36,7 +40,11 @@ func resolveProxy(secrets SecretGetter, owner manifest.DiagnosticIdentity, ref *
 		var err error
 		selected, err = url.Parse(proxy.Address)
 		if err != nil {
-			return nil, nil, manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("proxySecretRef %s/%s: invalid proxy address", owner.ID.Namespace, ref.Name))
+			return nil, nil, manifest.NewError(
+				manifest.ErrInput,
+				nil,
+				fmt.Sprintf("proxySecretRef %s/%s: invalid proxy address", owner.ID.Namespace, ref.Name),
+			)
 		}
 		if proxy.Username != "" {
 			selected.User = url.UserPassword(proxy.Username, proxy.Password)
@@ -49,7 +57,11 @@ func resolveProxy(secrets SecretGetter, owner manifest.DiagnosticIdentity, ref *
 	}
 	if material[0] == "" {
 		if material[1] != "" || material[2] != "" {
-			return nil, nil, manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("proxy secret %s/%s missing required 'address' key", owner.ID.Namespace, ref.Name))
+			return nil, nil, manifest.NewError(
+				manifest.ErrInput,
+				nil,
+				fmt.Sprintf("proxy secret %s/%s missing required 'address' key", owner.ID.Namespace, ref.Name),
+			)
 		}
 		return nil, nil, MissingSecretErr(owner, ref.Name, "missing required 'address' key")
 	}

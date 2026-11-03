@@ -79,7 +79,10 @@ func TestAutoResolve_LazyBaseReads(t *testing.T) {
 			case "committed_deletion":
 				_, err := wt.Remove("file")
 				assert.NoError(t, err)
-				_, err = wt.Commit("delete", &git.CommitOptions{Author: &object.Signature{Name: "test", Email: "test@example.com"}})
+				_, err = wt.Commit(
+					"delete",
+					&git.CommitOptions{Author: &object.Signature{Name: "test", Email: "test@example.com"}},
+				)
 				assert.NoError(t, err)
 			case "executable_directory":
 				assert.NoError(t, os.Chmod(filepath.Join(root, "file"), 0o755))
@@ -114,7 +117,11 @@ func TestAutoResolve_LazyBaseReads(t *testing.T) {
 				assert.NoError(t, err)
 				entries, err := treeEntries(t.Context(), tree)
 				assert.NoError(t, err)
-				s := selection{repo: repo, current: input.FS.(*gittree.FS), base: &resolution{Repo: &git.Repository{Storer: memory.NewStorage()}}}
+				s := selection{
+					repo:    repo,
+					current: input.FS.(*gittree.FS),
+					base:    &resolution{Repo: &git.Repository{Storer: memory.NewStorage()}},
+				}
 				candidates, _, err := s.candidates(t.Context(), tree, entries)
 				assert.NoError(t, err)
 				dirty, present := candidates["file"]
@@ -126,12 +133,17 @@ func TestAutoResolve_LazyBaseReads(t *testing.T) {
 			}
 			res, err := AutoResolve(t.Context(), root, pin.String(), cachetest.New(t, "", sourcecache.New))
 			if tc.name == "malformed_index" {
-				if res == nil || len(res.Source.Warnings) != 1 || res.Source.Warnings[0].Category != manifest.WarnBaselineStatusUnavailable || len(res.BaseInput.Warnings) != 0 {
+				if res == nil || len(res.Source.Warnings) != 1 ||
+					res.Source.Warnings[0].Category != manifest.WarnBaselineStatusUnavailable ||
+					len(res.BaseInput.Warnings) != 0 {
 					t.Fatalf("current-only status evidence = %+v", res)
 				}
 			}
 			assert.NoError(t, err)
-			if res.BaseInput.Content != res.BaseInput.Key || res.Source.Content != "" || res.BaseInput.Key == "" || res.Source.Key != "" || res.BaseInput.Revision != pin.String() || res.BaseInput.LocalRoot != root {
+			if res.BaseInput.Content != res.BaseInput.Key || res.Source.Content != "" || res.BaseInput.Key == "" ||
+				res.Source.Key != "" ||
+				res.BaseInput.Revision != pin.String() ||
+				res.BaseInput.LocalRoot != root {
 				t.Fatalf("baseline identity = %+v; current identity = %+v", res.BaseInput, res.Source)
 			}
 			var want []string
@@ -159,7 +171,12 @@ func TestAutoResolve_LazyBaseReads(t *testing.T) {
 				if tc.changed && tc.name != "executable_directory" {
 					testutil.WriteFile(t, root, "file", "live-mutated")
 				}
-				view, pin, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: res.BaseInput.FS})
+				view, pin, err := gittree.New(
+					t.Context(),
+					nil,
+					plumbing.ZeroHash,
+					gittree.ViewOptions{Mode: gittree.Direct, Current: res.BaseInput.FS},
+				)
 				assert.NoError(t, err)
 				assert.Equal(t, pin, res.BaseInput.Key)
 				data, err := fs.ReadFile(view, "unchanged.yaml")
@@ -177,7 +194,12 @@ func TestAutoResolve_LazyBaseReads(t *testing.T) {
 				assert.Equal(t, errors.Is(repo.Storer.HasEncodedObject(hash), plumbing.ErrObjectNotFound), true)
 			}
 			testutil.WriteFile(t, root, ".sourceignore", "file\n")
-			view, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: res.BaseInput.FS})
+			view, _, err := gittree.New(
+				t.Context(),
+				nil,
+				plumbing.ZeroHash,
+				gittree.ViewOptions{Mode: gittree.Source, Current: res.BaseInput.FS},
+			)
 			assert.NoError(t, err)
 			_, err = fs.Stat(view, "file")
 			assert.NoError(t, err)
@@ -268,7 +290,12 @@ func TestAutoResolve_IgnoreMembershipFlips(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			initRepoWithFile(t, root, "apps/a.yaml", "bystander")
-			pin := writeAndCommit(t, root, "apps/b.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: optional, namespace: flux-system}\ndata: {VALUE: unchanged}\n")
+			pin := writeAndCommit(
+				t,
+				root,
+				"apps/b.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: optional, namespace: flux-system}\ndata: {VALUE: unchanged}\n",
+			)
 			if behavior == "reinclude" {
 				pin = writeAndCommit(t, root, ".sourceignore", "apps/b.yaml\n")
 				assert.NoError(t, os.Remove(filepath.Join(root, ".sourceignore")))
@@ -281,9 +308,15 @@ func TestAutoResolve_IgnoreMembershipFlips(t *testing.T) {
 			testutil.WriteFile(t, root, ".sourceignore", "*.yaml\n")
 			var indexes [2]*manifest.DiscoveryIndex
 			for side := range indexes {
-				observation := manifest.InputVisibility{Source: manifest.BootstrapSourceID, Root: "apps", Complete: true}
+				observation := manifest.InputVisibility{
+					Source:   manifest.BootstrapSourceID,
+					Root:     "apps",
+					Complete: true,
+				}
 				if behavior == "exclude" && side == 0 || behavior == "reinclude" && side == 1 {
-					observation.Inputs = map[manifest.NamedResource][]string{{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "optional"}: {"apps/b.yaml"}}
+					observation.Inputs = map[manifest.NamedResource][]string{
+						{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "optional"}: {"apps/b.yaml"},
+					}
 				}
 				indexes[side] = &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{observation}}
 			}
@@ -295,24 +328,42 @@ func TestAutoResolve_IgnoreMembershipFlips(t *testing.T) {
 			)
 			assert.NoError(t, err)
 			for side, input := range []*store.SourceArtifact{res.BaseInput, res.Source} {
-				_, directIdentity, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: input.FS})
+				_, directIdentity, err := gittree.New(
+					t.Context(),
+					nil,
+					plumbing.ZeroHash,
+					gittree.ViewOptions{Mode: gittree.Direct, Current: input.FS},
+				)
 				assert.NoError(t, err)
 				assert.Equal(t, input.Content, directIdentity)
 				if (input.Content != "") != (side == 0) {
 					t.Fatal("diff sides lost committed versus mutable authority")
 				}
-				view, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: input.FS, Sparse: []string{"./apps"}})
+				view, _, err := gittree.New(
+					t.Context(),
+					nil,
+					plumbing.ZeroHash,
+					gittree.ViewOptions{Mode: gittree.Source, Current: input.FS, Sparse: []string{"./apps"}},
+				)
 				assert.NoError(t, err)
 				_, err = fs.Stat(view, "apps/b.yaml")
 				wantVisible := behavior == "exclude" && side == 0 || behavior == "reinclude" && side == 1
 				assert.Equal(t, err == nil, wantVisible)
 				app := testutil.KustomizationID("flux-system", "app")
 				index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-					app: {File: "flux/app.yaml", Refs: []manifest.NamedResource{{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "optional"}}},
+					app: {
+						File: "flux/app.yaml",
+						Refs: []manifest.NamedResource{
+							{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "optional"},
+						},
+					},
 				}}
 				objects := store.New()
 				objects.SetArtifact(manifest.BootstrapSourceID, input)
-				filter := admissiontest.Filter(t, admissiontest.Config{Changes: changes, Index: index, Inventory: objects, Root: input.LocalPath})
+				filter := admissiontest.Filter(
+					t,
+					admissiontest.Config{Changes: changes, Index: index, Inventory: objects, Root: input.LocalPath},
+				)
 				if !filter.ShouldReconcile(app) {
 					t.Errorf("side %d ignore %s did not select optional input consumer", side, behavior)
 				}
@@ -332,9 +383,15 @@ func TestAutoResolve_TwoSidedInput(t *testing.T) {
 	assert.Diff(t, res.Changes.Paths(), []string{"input.yaml"})
 	app := testutil.KustomizationID("flux-system", "app")
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-		app: {File: "flux/app.yaml", Refs: []manifest.NamedResource{{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "optional"}}},
+		app: {
+			File: "flux/app.yaml",
+			Refs: []manifest.NamedResource{{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "optional"}},
+		},
 	}}
-	filter := admissiontest.Filter(t, admissiontest.Config{Changes: res.Changes, Index: index, Inventory: nil, Root: ""})
+	filter := admissiontest.Filter(
+		t,
+		admissiontest.Config{Changes: res.Changes, Index: index, Inventory: nil, Root: ""},
+	)
 	if filter.ShouldReconcile(app) {
 		t.Fatal("two-sided input supplied an absent input identity")
 	}
@@ -353,24 +410,44 @@ func TestSelection_OneSidedInputOrder(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			before, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: fstest.MapFS{
-				".sourceignore": {Data: []byte("*.yaml\n")}, "input.yaml": {}, "z.yaml": {},
-			}})
+			before, _, err := gittree.New(
+				t.Context(),
+				nil,
+				plumbing.ZeroHash,
+				gittree.ViewOptions{Mode: gittree.Direct, Current: fstest.MapFS{
+					".sourceignore": {Data: []byte("*.yaml\n")}, "input.yaml": {}, "z.yaml": {},
+				}},
+			)
 			assert.NoError(t, err)
-			after, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: fstest.MapFS{
-				".sourceignore": {}, "input.yaml": {}, "z.yaml": {},
-			}})
+			after, _, err := gittree.New(
+				t.Context(),
+				nil,
+				plumbing.ZeroHash,
+				gittree.ViewOptions{Mode: gittree.Direct, Current: fstest.MapFS{
+					".sourceignore": {}, "input.yaml": {}, "z.yaml": {},
+				}},
+			)
 			assert.NoError(t, err)
 			var reads []string
 			input := &inputFailureFS{FS: after, fail: func(name string) error {
 				reads = append(reads, name)
 				return tc.readErr
 			}}
-			current, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: input})
+			current, _, err := gittree.New(
+				t.Context(),
+				nil,
+				plumbing.ZeroHash,
+				gittree.ViewOptions{Mode: gittree.Direct, Current: input},
+			)
 			assert.NoError(t, err)
-			changes, err := (selection{current: current}).filterChanges(t.Context(), before, tc.routing, map[string]object.TreeEntry{
-				".sourceignore": {}, "input.yaml": {}, "z.yaml": {},
-			})
+			changes, err := (selection{current: current}).filterChanges(
+				t.Context(),
+				before,
+				tc.routing,
+				map[string]object.TreeEntry{
+					".sourceignore": {}, "input.yaml": {}, "z.yaml": {},
+				},
+			)
 			assert.Diff(t, reads, tc.want)
 			if errors.Is(tc.readErr, io.EOF) {
 				assert.NoError(t, err)
@@ -384,20 +461,40 @@ func TestSelection_OneSidedInputOrder(t *testing.T) {
 
 func TestSelection_NoOneSidedInputCancellation(t *testing.T) {
 	t.Parallel()
-	before, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: fstest.MapFS{
-		"input.yaml": {Data: []byte("before")},
-	}})
+	before, _, err := gittree.New(
+		t.Context(),
+		nil,
+		plumbing.ZeroHash,
+		gittree.ViewOptions{Mode: gittree.Direct, Current: fstest.MapFS{
+			"input.yaml": {Data: []byte("before")},
+		}},
+	)
 	assert.NoError(t, err)
-	after, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: fstest.MapFS{
-		"input.yaml": {Data: []byte("after")},
-	}})
+	after, _, err := gittree.New(
+		t.Context(),
+		nil,
+		plumbing.ZeroHash,
+		gittree.ViewOptions{Mode: gittree.Direct, Current: fstest.MapFS{
+			"input.yaml": {Data: []byte("after")},
+		}},
+	)
 	assert.NoError(t, err)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	input := &inputCancelFS{FS: after, cancel: cancel}
-	current, _, err := gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: input})
+	current, _, err := gittree.New(
+		ctx,
+		nil,
+		plumbing.ZeroHash,
+		gittree.ViewOptions{Mode: gittree.Direct, Current: input},
+	)
 	assert.NoError(t, err)
-	changes, err := (selection{current: current}).filterChanges(ctx, before, []string{"input.yaml"}, map[string]object.TreeEntry{"input.yaml": {}})
+	changes, err := (selection{current: current}).filterChanges(
+		ctx,
+		before,
+		[]string{"input.yaml"},
+		map[string]object.TreeEntry{"input.yaml": {}},
+	)
 	assert.Equal(t, ctx.Err(), context.Canceled)
 	if changes != nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled two-sided selection published changes: changes=%v err=%v", changes, err)
@@ -469,17 +566,34 @@ func TestSelection_SharedIndexInitialization(t *testing.T) {
 				repo: repo, base: &resolution{Repo: repo, Hash: pin}, current: input.FS.(*gittree.FS),
 			})
 			assert.Diff(t, shared.probes, []plumbing.Hash{plumbing.ZeroHash})
-			assert.Diff(t, warnings, []manifest.Warning{{Category: manifest.WarnBaselineStatusUnavailable,
-				Message: "Git status unavailable; comparing checkout conservatively", Count: 1, Detail: []string{statusErr.Error()}}})
+			assert.Diff(t, warnings, []manifest.Warning{
+				{
+					Category: manifest.WarnBaselineStatusUnavailable,
+					Message:  "Git status unavailable; comparing checkout conservatively",
+					Count:    1,
+					Detail:   []string{statusErr.Error()},
+				},
+			})
 			if errors.Is(tc.err, cause) {
 				if !errors.Is(err, cause) || base != nil || changes != nil || identity != "" {
-					t.Fatalf("shared index failure published inputs or lost its cause: base=%v changes=%v identity=%q err=%v", base, changes, identity, err)
+					t.Fatalf(
+						"shared index failure published inputs or lost its cause: base=%v changes=%v identity=%q err=%v",
+						base,
+						changes,
+						identity,
+						err,
+					)
 				}
 				return
 			}
 			assert.NoError(t, err)
 			if base == nil || changes == nil || identity == "" {
-				t.Fatalf("shared index initialization did not publish inputs: base=%v changes=%v identity=%q", base, changes, identity)
+				t.Fatalf(
+					"shared index initialization did not publish inputs: base=%v changes=%v identity=%q",
+					base,
+					changes,
+					identity,
+				)
 			}
 			assert.Diff(t, changes.Paths(), []string{"value.txt"})
 			before, err := fs.ReadFile(base, "value.txt")
@@ -523,7 +637,10 @@ func TestAutoResolve_StatusWarningSurvivesFailure(t *testing.T) {
 	if !errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "missing objects") {
 		t.Fatalf("original body failure lost: %v", err)
 	}
-	if result == nil || result.Source == nil || result.Source.FS != nil || result.BaseInput != nil || len(result.Source.Warnings) != 1 || result.Source.Warnings[0].Category != manifest.WarnBaselineStatusUnavailable || result.Source.Warnings[0].Resource != (manifest.NamedResource{}) {
+	if result == nil || result.Source == nil || result.Source.FS != nil || result.BaseInput != nil ||
+		len(result.Source.Warnings) != 1 ||
+		result.Source.Warnings[0].Category != manifest.WarnBaselineStatusUnavailable ||
+		result.Source.Warnings[0].Resource != (manifest.NamedResource{}) {
 		t.Fatalf("warning-only baseline = %+v", result)
 	}
 }
@@ -549,18 +666,31 @@ func TestCollectInputs_BaselineFailure(t *testing.T) {
 				}
 				return fs.ErrPermission
 			}}
-			current, _, err := gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: failing, Location: location})
+			current, _, err := gittree.New(
+				ctx,
+				nil,
+				plumbing.ZeroHash,
+				gittree.ViewOptions{Mode: gittree.Direct, Current: failing, Location: location},
+			)
 			assert.NoError(t, err)
 			repo := openHelper(t, root)
 			base, changes, identity, warnings, err := selectChanges(ctx, selection{
-				repo: repo, base: &resolution{Repo: repo, Hash: pin}, current: current, owner: cachetest.New(t, "", sourcecache.New),
+				repo:    repo,
+				base:    &resolution{Repo: repo, Hash: pin},
+				current: current,
+				owner:   cachetest.New(t, "", sourcecache.New),
 			})
 			want := fs.ErrPermission
 			if canceled {
 				want = context.Canceled
 			}
 			if !errors.Is(err, want) || changes != nil || identity != "" {
-				t.Fatalf("input failure published a change set or lost its cause: changes=%v identity=%q err=%v", changes, identity, err)
+				t.Fatalf(
+					"input failure published a change set or lost its cause: changes=%v identity=%q err=%v",
+					changes,
+					identity,
+					err,
+				)
 			}
 			if base == nil || len(warnings) != 1 || warnings[0].Category != manifest.WarnBaselineStatusUnavailable {
 				t.Fatalf("input failure lost baseline warnings: base=%v warnings=%v", base, warnings)
@@ -614,7 +744,9 @@ func TestAutoResolve_SubmoduleWarningAttribution(t *testing.T) {
 	result, err := AutoResolve(t.Context(), root, "base-with-module", cachetest.New(t, "", sourcecache.New))
 	assert.NoError(t, err)
 	warnings := result.BaseInput.Warnings
-	if len(warnings) != 1 || warnings[0].Category != manifest.WarnSkippedSubmodule || warnings[0].Resource != manifest.BootstrapSourceID || len(result.Source.Warnings) != 0 {
+	if len(warnings) != 1 || warnings[0].Category != manifest.WarnSkippedSubmodule ||
+		warnings[0].Resource != manifest.BootstrapSourceID ||
+		len(result.Source.Warnings) != 0 {
 		t.Fatalf("baseline source evidence = %+v, current=%+v", warnings, result.Source.Warnings)
 	}
 	raw := result.BaseInput.FS.(*gittree.FS).Warnings
@@ -636,7 +768,9 @@ func TestAutoResolve_SparseGitMemory(t *testing.T) {
 		t.Run(size.name, func(t *testing.T) {
 			t.Parallel()
 			if size.name == "exact" && os.Getenv("FLATE_E8_SLOW") != "1" {
-				t.Skip("MEM-SPARSE not-run: env FLATE_E8_SLOW=1 go test ./pkg/baseline -run '^TestAutoResolve_SparseGitMemory/exact$' -count=1 -v")
+				t.Skip(
+					"MEM-SPARSE not-run: env FLATE_E8_SLOW=1 go test ./pkg/baseline -run '^TestAutoResolve_SparseGitMemory/exact$' -count=1 -v",
+				)
 			}
 			fixture := testutil.NewSparseGit(t, size.files, size.bytes)
 			owner := cachetest.New(t, "", sourcecache.New)
@@ -667,12 +801,22 @@ func TestAutoResolve_SparseGitMemory(t *testing.T) {
 			assert.NoError(t, err)
 			_, err = wt.Add("disjoint/growth.txt")
 			assert.NoError(t, err)
-			_, err = wt.Commit("disjoint growth", &git.CommitOptions{Author: &object.Signature{Name: "fixture", Email: "fixture@example.test"}})
+			_, err = wt.Commit(
+				"disjoint growth",
+				&git.CommitOptions{Author: &object.Signature{Name: "fixture", Email: "fixture@example.test"}},
+			)
 			assert.NoError(t, err)
 			grown, err := AutoResolve(t.Context(), filepath.Join(fixture.Root, "flux"), fixture.Base.String(), owner)
 			assert.NoError(t, err)
 			assert.Diff(t, grown.Changes.Paths(), []string{"app/input.yaml", "disjoint/growth.txt"})
-			t.Logf("MEM-SPARSE public AutoResolve: committed-files=%d unchanged-blob-bytes=%d base=%s head=%s blob=%s; admission Reader counters unavailable on public route", size.files, size.bytes, fixture.Base, fixture.Head, fixture.Large)
+			t.Logf(
+				"MEM-SPARSE public AutoResolve: committed-files=%d unchanged-blob-bytes=%d base=%s head=%s blob=%s; admission Reader counters unavailable on public route",
+				size.files,
+				size.bytes,
+				fixture.Base,
+				fixture.Head,
+				fixture.Large,
+			)
 		})
 	}
 }
@@ -689,7 +833,12 @@ func TestAutoResolve_SparseHistoricalBodyUnavailable(t *testing.T) {
 	assert.Equal(t, entry.Hash, fixture.Large)
 	oid := fixture.Large.String()
 	assert.NoError(t, os.Remove(filepath.Join(fixture.Root, ".git/objects", oid[:2], oid[2:])))
-	res, err := AutoResolve(t.Context(), filepath.Join(fixture.Root, "flux"), fixture.Base.String(), cachetest.New(t, "", sourcecache.New))
+	res, err := AutoResolve(
+		t.Context(),
+		filepath.Join(fixture.Root, "flux"),
+		fixture.Base.String(),
+		cachetest.New(t, "", sourcecache.New),
+	)
 	assert.NoError(t, err)
 	assert.Diff(t, res.Changes.Paths(), []string{"app/input.yaml"})
 	for _, input := range []*store.SourceArtifact{res.BaseInput, res.Source} {
@@ -713,7 +862,9 @@ func TestSelection_SparseGitBodies(t *testing.T) {
 		t.Run(size.name, func(t *testing.T) {
 			t.Parallel()
 			if size.name == "exact" && os.Getenv("FLATE_E8_SLOW") != "1" {
-				t.Skip("MEM-SPARSE not-run: env FLATE_E8_SLOW=1 go test ./pkg/baseline -run '^TestSelection_SparseGitBodies/exact$' -count=1 -v")
+				t.Skip(
+					"MEM-SPARSE not-run: env FLATE_E8_SLOW=1 go test ./pkg/baseline -run '^TestSelection_SparseGitBodies/exact$' -count=1 -v",
+				)
 			}
 			fixture := testutil.NewSparseGit(t, size.files, size.bytes)
 			location, err := gitrepo.Locate(t.Context(), fixture.Root, "")
@@ -739,34 +890,58 @@ func TestSelection_SparseGitBodies(t *testing.T) {
 				t.Fatal("blob Reader calibration failed")
 			}
 			reads.Reset()
-			s := selection{repo: &observed, base: &resolution{Repo: &observed, Hash: fixture.Base}, current: input.FS.(*gittree.FS)}
+			s := selection{
+				repo:    &observed,
+				base:    &resolution{Repo: &observed, Hash: fixture.Base},
+				current: input.FS.(*gittree.FS),
+			}
 			baseTree, entries, err := s.baseEntries(t.Context())
 			assert.NoError(t, err)
 			if reads.Metadata.Load() == 0 || reads.Bodies.Load() != 0 {
 				t.Fatal("metadata traversal opened a blob Reader")
 			}
-			t.Logf("baseEntries metadata=%d bodies=%d large=%d", reads.Metadata.Load(), reads.Bodies.Load(), reads.Large.Load())
+			t.Logf(
+				"baseEntries metadata=%d bodies=%d large=%d",
+				reads.Metadata.Load(),
+				reads.Bodies.Load(),
+				reads.Large.Load(),
+			)
 			reads.Reset()
 			candidates, warnings, err := s.candidates(t.Context(), baseTree, entries)
 			assert.NoError(t, err)
 			assert.Equal(t, len(warnings), 0)
 			assert.Diff(t, candidates, map[string]bool{"app/input.yaml": false})
 			assert.Equal(t, reads.Bodies.Load(), int64(0))
-			t.Logf("candidates metadata=%d bodies=%d large=%d; checkout hashing is outside these counters", reads.Metadata.Load(), reads.Bodies.Load(), reads.Large.Load())
+			t.Logf(
+				"candidates metadata=%d bodies=%d large=%d; checkout hashing is outside these counters",
+				reads.Metadata.Load(),
+				reads.Bodies.Load(),
+				reads.Large.Load(),
+			)
 			reads.Reset()
 			assert.NoError(t, s.acquireBodies(t.Context(), entries, candidates))
 			paths, err := s.compareCandidates(t.Context(), candidates, entries)
 			assert.NoError(t, err)
 			assert.Diff(t, paths, []string{"app/input.yaml"})
 			assert.Equal(t, reads.Bodies.Load(), int64(0))
-			t.Logf("committed comparison metadata=%d bodies=%d large=%d", reads.Metadata.Load(), reads.Bodies.Load(), reads.Large.Load())
+			t.Logf(
+				"committed comparison metadata=%d bodies=%d large=%d",
+				reads.Metadata.Load(),
+				reads.Bodies.Load(),
+				reads.Large.Load(),
+			)
 			reads.Reset()
 			paths, err = s.compareCandidates(t.Context(), map[string]bool{"app/input.yaml": true}, entries)
 			assert.NoError(t, err)
 			assert.Diff(t, paths, []string{"app/input.yaml"})
 			assert.Equal(t, reads.Bodies.Load(), int64(1))
 			assert.Equal(t, reads.Large.Load(), int64(0))
-			t.Logf("dirty comparison metadata=%d bodies=%d large=%d; selectChanges/public admission not wrapped", reads.Metadata.Load(), reads.Bodies.Load(), reads.Large.Load())
+			t.Logf(
+				"dirty comparison metadata=%d bodies=%d large=%d; selectChanges/public admission not wrapped",
+				reads.Metadata.Load(),
+				reads.Bodies.Load(),
+				reads.Large.Load(),
+			)
 		})
 	}
 }

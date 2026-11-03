@@ -5,8 +5,6 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"github.com/home-operations/flate/internal/testutil"
-	"golang.org/x/net/http/httpproxy"
 	"io"
 	"net"
 	"net/http"
@@ -20,6 +18,10 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"golang.org/x/net/http/httpproxy"
+
+	"github.com/home-operations/flate/internal/testutil"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
@@ -53,7 +55,9 @@ func TestNetwork_AdmissionWave(t *testing.T) {
 	for _, concurrency := range []int{2, 4} {
 		t.Run(fmt.Sprint(concurrency), func(t *testing.T) {
 			t.Parallel()
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "ok") }))
+			srv := httptest.NewServer(
+				http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "ok") }),
+			)
 			t.Cleanup(srv.Close)
 			var n Network
 			tr := NewHTTPTransport(TransportMaterial{})
@@ -120,7 +124,10 @@ func TestNetwork_AdmissionWave(t *testing.T) {
 			done := make(chan error, concurrency)
 			for range concurrency {
 				go func() {
-					ctx := httptrace.WithClientTrace(t.Context(), &httptrace.ClientTrace{GetConn: func(string) { entered <- struct{}{}; <-release }})
+					ctx := httptrace.WithClientTrace(
+						t.Context(),
+						&httptrace.ClientTrace{GetConn: func(string) { entered <- struct{}{}; <-release }},
+					)
 					done <- networkGet(ctx, client, "http://late.test")
 				}()
 			}
@@ -214,7 +221,15 @@ func TestNetwork_AttemptLiveness(t *testing.T) {
 				t.Parallel()
 				synctest.Test(t, func(t *testing.T) {
 					var n Network
-					entered, release, finished := make(chan struct{}, concurrency), make(chan struct{}), make(chan struct{}, concurrency)
+					entered, release, finished := make(
+						chan struct{},
+						concurrency,
+					), make(
+						chan struct{},
+					), make(
+						chan struct{},
+						concurrency,
+					)
 					calls := 0
 					observed := errors.New("live attempt reached dial")
 					tr := NewHTTPTransport(TransportMaterial{})
@@ -433,7 +448,17 @@ func TestNetwork_TransportReuse(t *testing.T) {
 				t.Parallel()
 				var n Network
 				t.Cleanup(n.Close)
-				first, err := n.HTTPTransport(HTTPTransportConfig{Material: TransportMaterial{proxyURL: &url.URL{Scheme: "http", Host: "proxy.invalid", User: url.UserPassword("user", "first")}}})
+				first, err := n.HTTPTransport(
+					HTTPTransportConfig{
+						Material: TransportMaterial{
+							proxyURL: &url.URL{
+								Scheme: "http",
+								Host:   "proxy.invalid",
+								User:   url.UserPassword("user", "first"),
+							},
+						},
+					},
+				)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -526,7 +551,10 @@ func TestNetwork_TransportReuse(t *testing.T) {
 		}
 		srv.EnableHTTP2 = true
 		srv.StartTLS()
-		material := TransportMaterial{config: srv.Client().Transport.(*http.Transport).TLSClientConfig.Clone(), environment: &httpproxy.Config{}}
+		material := TransportMaterial{
+			config:      srv.Client().Transport.(*http.Transport).TLSClientConfig.Clone(),
+			environment: &httpproxy.Config{},
+		}
 		material.config.NextProtos = []string{"h2", "http/1.1"}
 		t.Cleanup(srv.Close)
 		start := make(chan struct{})

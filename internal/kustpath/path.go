@@ -37,7 +37,8 @@ func Resolve(base, ref string, policy Policy) (string, bool) {
 	if policy == Claim {
 		absolute = path.IsAbs(ref)
 	}
-	if policy != Root && (ref == "" || policy != File && policy != Dependency && (absolute || strings.Contains(ref, "://"))) {
+	if policy != Root &&
+		(ref == "" || policy != File && policy != Dependency && (absolute || strings.Contains(ref, "://"))) {
 		return "", false
 	}
 	if (policy == File || policy == Dependency) && absolute {

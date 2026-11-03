@@ -149,7 +149,11 @@ func (r *documentReader) setSources(mounted map[string]*store.SourceArtifact) []
 			if file == root || strings.HasPrefix(file, root+string(filepath.Separator)) {
 				cached := r.cache[file]
 				if cached.selected || cached.built != nil {
-					r.cache[file] = document{selected: cached.selected, built: cached.built, builtInput: cached.builtInput}
+					r.cache[file] = document{
+						selected:   cached.selected,
+						built:      cached.built,
+						builtInput: cached.builtInput,
+					}
 				} else {
 					delete(r.cache, file)
 				}
@@ -186,7 +190,8 @@ func (l *Loader) refreshSources() {
 		l.documents.projections = &l.projections
 	}
 	l.documents.parsed = nil
-	if inputs := l.Options.ParsedInputs; inputs != nil && inputs.wipeSecrets == l.Options.WipeSecrets && inputs.compact == l.documents.compact {
+	if inputs := l.Options.ParsedInputs; inputs != nil && inputs.wipeSecrets == l.Options.WipeSecrets &&
+		inputs.compact == l.documents.compact {
 		l.documents.parsed = inputs
 	}
 	changed := l.documents.mountSources(l.Store, l.Index)
@@ -224,7 +229,6 @@ func (l *Loader) mountSources() {
 				l.Store.DeleteObject(id)
 			}
 		}
-
 	}
 	l.documents.changed = l.documents.changed[:0]
 }
@@ -268,7 +272,8 @@ func (r documentReader) mountedRoot(file string) string {
 func (r *documentReader) read(dir string) (*types.Kustomization, string) {
 	r.restore(dir)
 	cached, seen := r.cache[dir]
-	if seen && (cached.body != nil || cached.searched || cached.pathState == pathFile || cached.pathState == pathMissing) {
+	if seen &&
+		(cached.body != nil || cached.searched || cached.pathState == pathFile || cached.pathState == pathMissing) {
 		return cached.body, cached.file
 	}
 	if cached.objects != nil {
@@ -303,7 +308,8 @@ func (r *documentReader) read(dir string) (*types.Kustomization, string) {
 			return nil, file
 		}
 		//nolint:staticcheck // Kustomize still accepts these deprecated input fields.
-		fix := k.Kind == types.ComponentKind && k.APIVersion == "" || len(k.Bases)+len(k.ImageTags)+len(k.HelmChartInflationGenerator) != 0
+		fix := k.Kind == types.ComponentKind && k.APIVersion == "" ||
+			len(k.Bases)+len(k.ImageTags)+len(k.HelmChartInflationGenerator) != 0
 		for _, g := range k.ConfigMapGenerator {
 			fix = fix || g.EnvSource != ""
 		}

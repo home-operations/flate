@@ -8,6 +8,7 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -38,7 +39,8 @@ func TestSubstitute_StrictOperators(t *testing.T) {
 				t.Fatalf("error=%v", err)
 			}
 			if tc.fail {
-				if !strings.Contains(err.Error(), "variable not set (strict mode)") || !strings.Contains(err.Error(), "VALUE") {
+				if !strings.Contains(err.Error(), "variable not set (strict mode)") ||
+					!strings.Contains(err.Error(), "VALUE") {
 					t.Fatalf("engine diagnostic changed: %v", err)
 				}
 			} else if string(got) != tc.want {
@@ -88,7 +90,12 @@ func TestPrepare_LayersAndImmutability(t *testing.T) {
 	if got := prepared.Namespace; got != projected.Namespace {
 		t.Fatalf("prepared namespace = %v, want %s", got, projected.Namespace)
 	}
-	if d := cmp.Diff(snapshot, original, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection")); d != "" {
+	if d := cmp.Diff(
+		snapshot,
+		original,
+		cmp.AllowUnexported(manifest.Kustomization{}),
+		cmpopts.IgnoreFields(manifest.Kustomization{}, "projection"),
+	); d != "" {
 		t.Fatalf("stored input mutated (-want +got): %s", d)
 	}
 	for _, tc := range []struct {
@@ -114,7 +121,8 @@ func TestPrepare_LayersAndImmutability(t *testing.T) {
 	bad := original.Clone()
 	bad.PostBuild.Substitute = map[string]string{"z-invalid": "private", "a-invalid": "private"}
 	invalid, err := Prepare(bad, provider)
-	if invalid != nil || !errors.Is(err, manifest.ErrInvalidSubstituteReference) || err.Error() != "invalid substitute variables a-invalid, z-invalid" {
+	if invalid != nil || !errors.Is(err, manifest.ErrInvalidSubstituteReference) ||
+		err.Error() != "invalid substitute variables a-invalid, z-invalid" {
 		t.Fatalf("invalid keys not classified/sorted: %v", err)
 	}
 }
@@ -123,11 +131,17 @@ func TestPrepare_EntrySubstitutionContext(t *testing.T) {
 	t.Parallel()
 	owner := testutil.KustomizationID("flux-system", "sync")
 	entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "clusters/test", owner).WithNamespace("sources").(*manifest.Kustomization)
-	entry.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "vars"}}}
+	entry.PostBuild = &kustomizev1.PostBuild{
+		SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "vars"}},
+	}
 	st := store.New()
-	st.AddObject(&manifest.ConfigMap{Name: "vars", Namespace: "sources", Data: map[string]any{"INVALID": []any{"nested"}}})
+	st.AddObject(
+		&manifest.ConfigMap{Name: "vars", Namespace: "sources", Data: map[string]any{"INVALID": []any{"nested"}}},
+	)
 	_, err := Prepare(entry, values.NewStoreProvider(st, true))
-	if err == nil || strings.Contains(err.Error(), owner.String()) || strings.Contains(err.Error(), `entry path "clusters/test"`) || strings.Contains(err.Error(), entry.Named().String()) {
+	if err == nil || strings.Contains(err.Error(), owner.String()) ||
+		strings.Contains(err.Error(), `entry path "clusters/test"`) ||
+		strings.Contains(err.Error(), entry.Named().String()) {
 		t.Fatalf("substituteFrom repeated its owner: %v", err)
 	}
 	entry.PostBuild = &kustomizev1.PostBuild{Substitute: map[string]string{"ENABLED": "yes"}}
@@ -137,7 +151,8 @@ func TestPrepare_EntrySubstitutionContext(t *testing.T) {
 	}
 	documents := []manifest.DocOccurrence{{Document: map[string]any{"data": map[string]any{"value": "${MISSING}"}}}}
 	err = Shape(prepared, documents, true)
-	if !errors.Is(err, manifest.ErrInvalidSubstituteReference) || strings.Contains(err.Error(), owner.String()) || strings.Contains(err.Error(), entry.Named().String()) {
+	if !errors.Is(err, manifest.ErrInvalidSubstituteReference) || strings.Contains(err.Error(), owner.String()) ||
+		strings.Contains(err.Error(), entry.Named().String()) {
 		t.Fatalf("shape lost copied provenance or sentinel: %v", err)
 	}
 }

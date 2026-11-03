@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -25,11 +24,14 @@ import (
 	"testing/synctest"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/minio/minio-go/v7"
+
 	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
-	"github.com/minio/minio-go/v7"
 )
 
 func delayedBucket(tb testing.TB) (*minio.Client, *atomic.Int32) {
@@ -64,7 +66,10 @@ func delayedBucket(tb testing.TB) (*minio.Client, *atomic.Int32) {
 		_, _ = io.WriteString(w, "x")
 	}))
 	tb.Cleanup(srv.Close)
-	client, err := minio.New(strings.TrimPrefix(srv.URL, "http://"), &minio.Options{Region: "us-east-1", BucketLookup: minio.BucketLookupPath})
+	client, err := minio.New(
+		strings.TrimPrefix(srv.URL, "http://"),
+		&minio.Options{Region: "us-east-1", BucketLookup: minio.BucketLookupPath},
+	)
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -118,7 +123,12 @@ func TestWalkBucket_ChunkBound(t *testing.T) {
 		if r.URL.Query().Get("list-type") != "" {
 			_, _ = fmt.Fprint(w, "<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated>")
 			for i := range 16 {
-				_, _ = fmt.Fprintf(w, "<Contents><Key>file%02d</Key><Size>%d</Size><ETag>\"x\"</ETag></Contents>", i, size)
+				_, _ = fmt.Fprintf(
+					w,
+					"<Contents><Key>file%02d</Key><Size>%d</Size><ETag>\"x\"</ETag></Contents>",
+					i,
+					size,
+				)
 			}
 			_, _ = fmt.Fprint(w, "</ListBucketResult>")
 			return
@@ -137,7 +147,10 @@ func TestWalkBucket_ChunkBound(t *testing.T) {
 		completed <- struct{}{}
 	}))
 	defer srv.Close()
-	client, err := minio.New(strings.TrimPrefix(srv.URL, "http://"), &minio.Options{Region: "us-east-1", BucketLookup: minio.BucketLookupPath})
+	client, err := minio.New(
+		strings.TrimPrefix(srv.URL, "http://"),
+		&minio.Options{Region: "us-east-1", BucketLookup: minio.BucketLookupPath},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +200,10 @@ func TestWalkBucket_Faults(t *testing.T) {
 			{"client_boundary", 499},
 			{"server_boundary", 599},
 			{"terminal", 600},
-			{"hostile", 0}, {"short", 0}, {"long", 0}, {"hang", 0},
+			{"hostile", 0},
+			{"short", 0},
+			{"long", 0},
+			{"hang", 0},
 		} {
 			if route == "list" && tc.status == 0 {
 				continue
@@ -195,10 +211,14 @@ func TestWalkBucket_Faults(t *testing.T) {
 			t.Run(route+"/"+tc.name, func(t *testing.T) {
 				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					listing := r.URL.Query().Get("list-type") != ""
-					if tc.status != 0 && (listing && route == "list" || !listing && strings.HasSuffix(r.URL.Path, "file05")) {
+					if tc.status != 0 &&
+						(listing && route == "list" || !listing && strings.HasSuffix(r.URL.Path, "file05")) {
 						w.Header().Set("Content-Type", "application/xml")
 						w.WriteHeader(tc.status)
-						_, _ = io.WriteString(w, `<Error><Code>Fault</Code><Message>bucket status failure</Message></Error>`)
+						_, _ = io.WriteString(
+							w,
+							`<Error><Code>Fault</Code><Message>bucket status failure</Message></Error>`,
+						)
 						return
 					}
 					if listing {
@@ -208,7 +228,11 @@ func TestWalkBucket_Faults(t *testing.T) {
 							if tc.name == "hostile" && i == 3 {
 								key = "../escape"
 							}
-							_, _ = fmt.Fprintf(w, "<Contents><Key>%s</Key><Size>4</Size><ETag>\"x\"</ETag></Contents>", key)
+							_, _ = fmt.Fprintf(
+								w,
+								"<Contents><Key>%s</Key><Size>4</Size><ETag>\"x\"</ETag></Contents>",
+								key,
+							)
 						}
 						_, _ = fmt.Fprint(w, "</ListBucketResult>")
 						return
@@ -234,7 +258,10 @@ func TestWalkBucket_Faults(t *testing.T) {
 					_, _ = io.WriteString(w, "abcd")
 				}))
 				defer srv.Close()
-				client, err := minio.New(strings.TrimPrefix(srv.URL, "http://"), &minio.Options{Region: "us-east-1", BucketLookup: minio.BucketLookupPath, MaxRetries: 1})
+				client, err := minio.New(
+					strings.TrimPrefix(srv.URL, "http://"),
+					&minio.Options{Region: "us-east-1", BucketLookup: minio.BucketLookupPath, MaxRetries: 1},
+				)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -249,12 +276,15 @@ func TestWalkBucket_Faults(t *testing.T) {
 				}
 				if tc.status != 0 {
 					response, ok := errors.AsType[*fetcherr.ResponseError](err)
-					if !ok || response.StatusCode != tc.status || response.Op != http.MethodGet || err.Error() != "bucket status failure" {
+					if !ok || response.StatusCode != tc.status || response.Op != http.MethodGet ||
+						err.Error() != "bucket status failure" {
 						t.Fatalf("HTTP fault: %v, response=%+v, want GET status %d", err, response, tc.status)
 					}
 					if tc.name == "forbidden" || tc.name == "missing" {
 						cause, ok := errors.AsType[minio.ErrorResponse](err)
-						if !ok || cause.StatusCode != tc.status || cause.Message != "bucket status failure" || !errors.Is(response.Err, cause) || err.Error() != cause.Error() {
+						if !ok || cause.StatusCode != tc.status || cause.Message != "bucket status failure" ||
+							!errors.Is(response.Err, cause) ||
+							err.Error() != cause.Error() {
 							t.Fatalf("terminal MinIO cause: %v, response=%+v, cause=%+v", err, response, cause)
 						}
 					}
@@ -308,7 +338,11 @@ func TestWalkBucket_ArchiveNames(t *testing.T) {
 					if got := r.URL.Query().Get("prefix"); got != tc.prefix {
 						t.Errorf("listing prefix=%q, want %q", got, tc.prefix)
 					}
-					_, _ = fmt.Fprintf(w, `<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated><EncodingType>url</EncodingType><Contents><Key>%s</Key><Size>1</Size><ETag>"x"</ETag></Contents></ListBucketResult>`, url.QueryEscape(tc.key))
+					_, _ = fmt.Fprintf(
+						w,
+						`<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated><EncodingType>url</EncodingType><Contents><Key>%s</Key><Size>1</Size><ETag>"x"</ETag></Contents></ListBucketResult>`,
+						url.QueryEscape(tc.key),
+					)
 					return
 				}
 				gets.Add(1)
@@ -318,7 +352,10 @@ func TestWalkBucket_ArchiveNames(t *testing.T) {
 				_, _ = io.WriteString(w, "x")
 			}))
 			defer srv.Close()
-			client, err := minio.New(strings.TrimPrefix(srv.URL, "http://"), &minio.Options{Region: "us-east-1", BucketLookup: minio.BucketLookupPath})
+			client, err := minio.New(
+				strings.TrimPrefix(srv.URL, "http://"),
+				&minio.Options{Region: "us-east-1", BucketLookup: minio.BucketLookupPath},
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -326,7 +363,12 @@ func TestWalkBucket_ArchiveNames(t *testing.T) {
 			_, err = walkBucket(t.Context(), client, &manifest.Bucket{BucketName: "data", Prefix: tc.prefix}, &data)
 			if tc.invalid {
 				if !errors.Is(err, fs.ErrInvalid) || gets.Load() != 0 || data.Len() != 0 {
-					t.Fatalf("err=%v gets=%d bytes=%d, want invalid name before reads or headers", err, gets.Load(), data.Len())
+					t.Fatalf(
+						"err=%v gets=%d bytes=%d, want invalid name before reads or headers",
+						err,
+						gets.Load(),
+						data.Len(),
+					)
 				}
 				return
 			}
@@ -361,14 +403,26 @@ func TestWalkBucket_RejectsNegativeListedSize(t *testing.T) {
 			gets.Add(1)
 			return
 		}
-		_, _ = io.WriteString(w, "<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated><Contents><Key>big</Key><Size>-1</Size><ETag>\"x\"</ETag></Contents></ListBucketResult>")
+		_, _ = io.WriteString(
+			w,
+			"<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated><Contents><Key>big</Key><Size>-1</Size><ETag>\"x\"</ETag></Contents></ListBucketResult>",
+		)
 	}))
 	t.Cleanup(srv.Close)
-	client, err := minio.New(strings.TrimPrefix(srv.URL, "http://"), &minio.Options{Region: "us-east-1", BucketLookup: minio.BucketLookupPath})
+	client, err := minio.New(
+		strings.TrimPrefix(srv.URL, "http://"),
+		&minio.Options{Region: "us-east-1", BucketLookup: minio.BucketLookupPath},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := walkBucket(t.Context(), client, &manifest.Bucket{BucketName: "data"}, io.Discard); err == nil || err.Error() != `bucket object "big" has negative size` || gets.Load() != 0 {
+	if _, err := walkBucket(
+		t.Context(),
+		client,
+		&manifest.Bucket{BucketName: "data"},
+		io.Discard,
+	); err == nil || err.Error() != `bucket object "big" has negative size` ||
+		gets.Load() != 0 {
 		t.Fatalf("err=%v gets=%d, want a listing-time error and no download", err, gets.Load())
 	}
 }
@@ -420,21 +474,42 @@ func TestWalkBucket_LargeListedSize(t *testing.T) {
 						var listing strings.Builder
 						listing.WriteString("<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated>")
 						for i := range 2 {
-							fmt.Fprintf(&listing, "<Contents><Key>big%d</Key><Size>%d</Size><ETag>\"v1\"</ETag></Contents>", i, size)
+							fmt.Fprintf(
+								&listing,
+								"<Contents><Key>big%d</Key><Size>%d</Size><ETag>\"v1\"</ETag></Contents>",
+								i,
+								size,
+							)
 						}
 						listing.WriteString("</ListBucketResult>")
-						return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(listing.String())), Request: req}, nil
+						return &http.Response{
+							StatusCode: http.StatusOK,
+							Header:     make(http.Header),
+							Body:       io.NopCloser(strings.NewReader(listing.String())),
+							Request:    req,
+						}, nil
 					}
 					if req.Header.Get("If-Match") != `"v1"` {
 						t.Errorf("large object ETag: %q", req.Header.Get("If-Match"))
 					}
-					response := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Request: req, ContentLength: size}
+					response := &http.Response{
+						StatusCode:    http.StatusOK,
+						Header:        make(http.Header),
+						Request:       req,
+						ContentLength: size,
+					}
 					response.Header.Set("ETag", `"v1"`)
 					response.Header.Set("Last-Modified", time.Unix(0, 0).UTC().Format(http.TimeFormat))
 					probe := req.Header.Get("Range") == "bytes=0-0"
 					if ranges {
 						var start, end int64
-						if n, err := fmt.Sscanf(req.Header.Get("Range"), "bytes=%d-%d", &start, &end); n != 2 || err != nil || end-start+1 > chunkBytes {
+						if n, err := fmt.Sscanf(
+							req.Header.Get("Range"),
+							"bytes=%d-%d",
+							&start,
+							&end,
+						); n != 2 || err != nil ||
+							end-start+1 > chunkBytes {
 							t.Errorf("large object range: %q", req.Header.Get("Range"))
 						}
 						response.StatusCode = http.StatusPartialContent
@@ -602,7 +677,12 @@ func TestWalkBucket_Ranges(t *testing.T) {
 				if r.URL.Query().Get("list-type") != "" {
 					_, _ = fmt.Fprint(w, "<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated>")
 					for i, size := range slices.Backward(sizes) {
-						_, _ = fmt.Fprintf(w, `<Contents><Key>prefix/file%02d</Key><Size>%d</Size><ETag>"v1"</ETag></Contents>`, i, size)
+						_, _ = fmt.Fprintf(
+							w,
+							`<Contents><Key>prefix/file%02d</Key><Size>%d</Size><ETag>"v1"</ETag></Contents>`,
+							i,
+							size,
+						)
 					}
 					_, _ = fmt.Fprint(w, "</ListBucketResult>")
 					return
@@ -633,7 +713,13 @@ func TestWalkBucket_Ranges(t *testing.T) {
 				start, end := int64(0), sizes[i]-1
 				status := http.StatusOK
 				if sizes[i] > 0 && !strings.HasPrefix(behavior, "ignore") {
-					if n, err := fmt.Sscanf(r.Header.Get("Range"), "bytes=%d-%d", &start, &end); n != 2 || err != nil || end-start+1 > part {
+					if n, err := fmt.Sscanf(
+						r.Header.Get("Range"),
+						"bytes=%d-%d",
+						&start,
+						&end,
+					); n != 2 || err != nil ||
+						end-start+1 > part {
 						t.Errorf("invalid chunk range: %q", r.Header.Get("Range"))
 						http.Error(w, "bad range", http.StatusBadRequest)
 						return
@@ -672,7 +758,8 @@ func TestWalkBucket_Ranges(t *testing.T) {
 					<-copyCtx.Done()
 					return
 				}
-				if i == 1 && (behavior == "ignore_cancel" && r.Header.Get("Range") == "" || behavior == "cancel" && start == part) {
+				if i == 1 &&
+					(behavior == "ignore_cancel" && r.Header.Get("Range") == "" || behavior == "cancel" && start == part) {
 					if got := r.Header.Get("Range"); got != wantRange {
 						t.Errorf("cancel Range=%q, want %q", got, wantRange)
 					}
@@ -723,7 +810,9 @@ func TestWalkBucket_Ranges(t *testing.T) {
 				transport := srv.Client().Transport
 				opts.Transport = bucketRoundTrip(func(req *http.Request) (*http.Response, error) {
 					resp, err := transport.RoundTrip(req)
-					if err == nil && req.Method == http.MethodGet && req.URL.Path == "/data/prefix/file01" && req.Header.Get("Range") == wantRange && resp.StatusCode == wantStatus {
+					if err == nil && req.Method == http.MethodGet && req.URL.Path == "/data/prefix/file01" &&
+						req.Header.Get("Range") == wantRange &&
+						resp.StatusCode == wantStatus {
 						resp.Body = bucketReadBody{ReadCloser: resp.Body, notify: notifyRead}
 					}
 					return resp, err
@@ -744,19 +833,25 @@ func TestWalkBucket_Ranges(t *testing.T) {
 			desc, err := walkBucket(ctx, client, &manifest.Bucket{BucketName: "data", Prefix: "prefix/"}, archive)
 			if probeStatus != 0 {
 				response, ok := errors.AsType[*fetcherr.ResponseError](err)
-				if !ok || response.StatusCode != probeStatus || response.Op != http.MethodGet || err.Error() != "range probe failure" || gets.Load() != 1 {
+				if !ok || response.StatusCode != probeStatus || response.Op != http.MethodGet ||
+					err.Error() != "range probe failure" ||
+					gets.Load() != 1 {
 					t.Fatalf("probe failure: %v, response=%+v, requests=%d", err, response, gets.Load())
 				}
 				if behavior == "probe_forbidden" {
 					cause, ok := errors.AsType[minio.ErrorResponse](err)
-					if !ok || cause.StatusCode != probeStatus || !errors.Is(response.Err, cause) || err.Error() != cause.Error() {
+					if !ok || cause.StatusCode != probeStatus || !errors.Is(response.Err, cause) ||
+						err.Error() != cause.Error() {
 						t.Fatalf("probe MinIO cause: %v, response=%+v, cause=%+v", err, response, cause)
 					}
 				}
 				return
 			}
 			if fault != 0 {
-				if response, ok := errors.AsType[*fetcherr.ResponseError](err); !ok || response.StatusCode != fault || response.Op != http.MethodGet {
+				if response, ok := errors.AsType[*fetcherr.ResponseError](
+					err,
+				); !ok || response.StatusCode != fault ||
+					response.Op != http.MethodGet {
 					t.Fatalf("streamed sibling failure: %v, want status %d", err, fault)
 				}
 				if behavior != "ignore_server" {
@@ -779,10 +874,16 @@ func TestWalkBucket_Ranges(t *testing.T) {
 						t.Fatalf("context identity: %v", err)
 					}
 				case "changed":
-					if response, ok := errors.AsType[*fetcherr.ResponseError](err); !ok || response.StatusCode != http.StatusPreconditionFailed || response.Op != http.MethodGet {
+					if response, ok := errors.AsType[*fetcherr.ResponseError](
+						err,
+					); !ok || response.StatusCode != http.StatusPreconditionFailed ||
+						response.Op != http.MethodGet {
 						t.Fatalf("ETag mismatch status: %v", err)
 					}
-					if response, ok := errors.AsType[minio.ErrorResponse](err); !ok || response.StatusCode != http.StatusPreconditionFailed {
+					if response, ok := errors.AsType[minio.ErrorResponse](
+						err,
+					); !ok ||
+						response.StatusCode != http.StatusPreconditionFailed {
 						t.Fatalf("ETag mismatch: %v", err)
 					}
 				case "wrong_range":
@@ -835,7 +936,9 @@ func TestWalkBucket_Ranges(t *testing.T) {
 			h := sha256.New()
 			tw := tar.NewWriter(h)
 			for i, size := range sizes {
-				if err := tw.WriteHeader(&tar.Header{Name: fmt.Sprintf("file%02d", i), Mode: 0o600, Size: size}); err != nil {
+				if err := tw.WriteHeader(
+					&tar.Header{Name: fmt.Sprintf("file%02d", i), Mode: 0o600, Size: size},
+				); err != nil {
 					t.Fatal(err)
 				}
 				for offset := int64(0); offset < size; offset += 1 << 20 {
@@ -848,7 +951,10 @@ func TestWalkBucket_Ranges(t *testing.T) {
 			if got, want := fmt.Sprintf("%x", sha256.Sum256(data.Bytes())), fmt.Sprintf("%x", h.Sum(nil)); got != want {
 				t.Fatalf("tar digest=%s, want %s", got, want)
 			}
-			revision := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("prefix/file00 v1\nprefix/file01 v1\nprefix/file02 v1\n")))
+			revision := fmt.Sprintf(
+				"sha256:%x",
+				sha256.Sum256([]byte("prefix/file00 v1\nprefix/file01 v1\nprefix/file02 v1\n")),
+			)
 			if desc.Annotations["flate.revision"] != revision || desc.Annotations["flate.object-count"] != "3" {
 				t.Fatalf("metadata=%v, want revision=%s count=3", desc.Annotations, revision)
 			}
@@ -909,9 +1015,19 @@ func TestWalkBucket_SourceTimeout(t *testing.T) {
 				calls := 0
 				f := timeoutBucketFetcher(t, func(req *http.Request) (*http.Response, error) {
 					calls++
-					return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: bucketTimeoutBody{req.Context()}, Request: req}, nil
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Header:     make(http.Header),
+						Body:       bucketTimeoutBody{req.Context()},
+						Request:    req,
+					}, nil
 				})
-				b := &manifest.Bucket{BucketName: "data", Endpoint: "https://bucket.invalid", Region: "us-east-1", Timeout: tc.timeout}
+				b := &manifest.Bucket{
+					BucketName: "data",
+					Endpoint:   "https://bucket.invalid",
+					Region:     "us-east-1",
+					Timeout:    tc.timeout,
+				}
 				ctx := t.Context()
 				if tc.caller > 0 {
 					var cancel context.CancelFunc
@@ -920,8 +1036,16 @@ func TestWalkBucket_SourceTimeout(t *testing.T) {
 				}
 				start := time.Now()
 				artifact, err := f.Fetch(ctx, b, (testInputs{}).readSet(b), cache.Policy{})
-				if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, manifest.ErrFlux) || artifact != nil || calls != 1 || time.Since(start) != tc.want {
-					t.Fatalf("source deadline: artifact=%v calls=%d elapsed=%v error=%v", artifact, calls, time.Since(start), err)
+				if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, manifest.ErrFlux) || artifact != nil ||
+					calls != 1 ||
+					time.Since(start) != tc.want {
+					t.Fatalf(
+						"source deadline: artifact=%v calls=%d elapsed=%v error=%v",
+						artifact,
+						calls,
+						time.Since(start),
+						err,
+					)
 				}
 			})
 		})
@@ -950,14 +1074,22 @@ func TestWalkBucket_PhaseTimeouts(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				start := time.Now()
-				b := &manifest.Bucket{BucketName: "data", Endpoint: "https://bucket.invalid", Region: "us-east-1", Timeout: &metav1.Duration{Duration: 5 * time.Second}}
+				b := &manifest.Bucket{
+					BucketName: "data",
+					Endpoint:   "https://bucket.invalid",
+					Region:     "us-east-1",
+					Timeout:    &metav1.Duration{Duration: 5 * time.Second},
+				}
 				f := timeoutBucketFetcher(t, func(req *http.Request) (*http.Response, error) {
 					listing := req.URL.Query().Get("list-type") != ""
 					data := "x"
 					if listing {
 						data = "<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated>"
 						for i := range tc.objects {
-							data += fmt.Sprintf("<Contents><Key>file%02d</Key><Size>1</Size><ETag>\"x\"</ETag></Contents>", i)
+							data += fmt.Sprintf(
+								"<Contents><Key>file%02d</Key><Size>1</Size><ETag>\"x\"</ETag></Contents>",
+								i,
+							)
 						}
 						data += "</ListBucketResult>"
 					}
@@ -972,8 +1104,18 @@ func TestWalkBucket_PhaseTimeouts(t *testing.T) {
 					if listing && tc.name == "listing body" || !listing && tc.name == "download body" {
 						body = bucketTimeoutBody{req.Context()}
 					}
-					header := http.Header{"Content-Length": {strconv.Itoa(len(data))}, "Etag": {"\"x\""}, "Last-Modified": {"Mon, 02 Jan 2006 15:04:05 GMT"}}
-					return &http.Response{StatusCode: http.StatusOK, Header: header, Body: body, ContentLength: int64(len(data)), Request: req}, nil
+					header := http.Header{
+						"Content-Length": {strconv.Itoa(len(data))},
+						"Etag":           {"\"x\""},
+						"Last-Modified":  {"Mon, 02 Jan 2006 15:04:05 GMT"},
+					}
+					return &http.Response{
+						StatusCode:    http.StatusOK,
+						Header:        header,
+						Body:          body,
+						ContentLength: int64(len(data)),
+						Request:       req,
+					}, nil
 				})
 				artifact, err := f.Fetch(t.Context(), b, (testInputs{}).readSet(b), cache.Policy{})
 				if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) != 5*time.Second {

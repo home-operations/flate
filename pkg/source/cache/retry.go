@@ -60,12 +60,19 @@ func (e *TerminalError) Unwrap() []error { return []error{manifest.ErrFlux, e.Er
 
 type attemptCeilingKey struct{}
 
-func (c *Cache) acquire(ctx context.Context, key acquireKey, policy Policy, callbacks acquisitionCallbacks) (*entry, string, error) {
+func (c *Cache) acquire(
+	ctx context.Context,
+	key acquireKey,
+	policy Policy,
+	callbacks acquisitionCallbacks,
+) (*entry, string, error) {
 	if key.id == "" {
 		key.id = key.producer.identity()
 	}
 	if key.id == "" {
-		return nil, "", &CacheError{manifest.NewError(manifest.ErrInput, nil, "acquisition content cannot be fingerprinted")}
+		return nil, "", &CacheError{
+			manifest.NewError(manifest.ErrInput, nil, "acquisition content cannot be fingerprinted"),
+		}
 	}
 	policy.Retry.Attempts = max(1, policy.Retry.Attempts)
 	if ceiling, _ := ctx.Value(attemptCeilingKey{}).(bool); ceiling {
@@ -89,7 +96,17 @@ func (c *Cache) acquire(ctx context.Context, key acquireKey, policy Policy, call
 			return nil, "", err
 		}
 		delay := policy.Retry.backoff(attempt - 1)
-		slog.Debug("cache: acquisition failed, retrying", "key", key.id, "attempt", attempt, "delay", delay, "error", err)
+		slog.Debug(
+			"cache: acquisition failed, retrying",
+			"key",
+			key.id,
+			"attempt",
+			attempt,
+			"delay",
+			delay,
+			"error",
+			err,
+		)
 		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
@@ -154,5 +171,6 @@ func retryable(err error) bool {
 	if network, ok := errors.AsType[net.Error](err); ok && network.Timeout() {
 		return true
 	}
-	return errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, io.ErrUnexpectedEOF)
+	return errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, io.ErrUnexpectedEOF)
 }

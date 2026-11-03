@@ -20,14 +20,23 @@ func TestFilter_SharedFileReaderNamespace(t *testing.T) {
 	unrelated := &manifest.Kustomization{Name: "foreign-namespace", Namespace: "flux-system"}
 	unrelated.TargetNamespace = "other"
 	unknown := &manifest.Kustomization{Name: "unknown-namespace", Namespace: "flux-system"}
-	consumer := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: target.Name}}}
+	consumer := &manifest.HelmRelease{
+		Name:       "consumer",
+		Namespace:  "apps",
+		ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: target.Name}},
+	}
 	st.AddObjects([]manifest.BaseManifest{owner, reader, unrelated, unknown, consumer})
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		consumer.Named(): {File: "consumer.yaml"},
-		target: {Productions: []manifest.Production{{Owner: owner.Named(), Source: manifest.BootstrapSourceID,
-			Path: "/repo/common/secret.yaml", File: "common/secret.yaml"}}},
+		target: {Productions: []manifest.Production{{
+			Owner: owner.Named(), Source: manifest.BootstrapSourceID,
+			Path: "/repo/common/secret.yaml", File: "common/secret.yaml",
+		}}},
 	}, Readers: map[string][]manifest.FileReader{"common/secret.yaml": {{Reader: reader.Named(), Source: manifest.BootstrapSourceID}, {Reader: unrelated.Named(), Source: manifest.BootstrapSourceID}, {Reader: unknown.Named(), Source: manifest.BootstrapSourceID}}}}
-	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"consumer.yaml"}), index: index, inventory: st, root: "/repo"})
+	f := newAdmission(
+		t,
+		admissionConfig{changes: change.NewSet([]string{"consumer.yaml"}), index: index, inventory: st, root: "/repo"},
+	)
 	for _, id := range []manifest.NamedResource{consumer.Named(), target, owner.Named(), reader.Named(), unknown.Named()} {
 		assert.Equal(t, f.ShouldReconcile(id), true)
 	}

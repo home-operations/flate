@@ -60,12 +60,21 @@ func renderModelSource(w modelWorld) modelSource {
 }
 
 func renderModelSourceID(source modelSource) modelID {
-	return modelID{source: source, group: "source.toolkit.fluxcd.io", kind: "GitRepository", namespace: "flux-system", name: source.binding}
+	return modelID{
+		source:    source,
+		group:     "source.toolkit.fluxcd.io",
+		kind:      "GitRepository",
+		namespace: "flux-system",
+		name:      source.binding,
+	}
 }
 
 func newRenderModelWorld(binding string) modelWorld {
 	source := modelSource{binding: binding, revision: "working", root: "repo"}
-	return modelWorld{files: map[modelPath]modelFile{{source: source, path: "flux"}: {included: true, directory: true}}, producers: map[modelID]modelProducer{renderModelSourceID(source): {alias: true}}}
+	return modelWorld{
+		files:     map[modelPath]modelFile{{source: source, path: "flux"}: {included: true, directory: true}},
+		producers: map[modelID]modelProducer{renderModelSourceID(source): {alias: true}},
+	}
 }
 
 func putRenderModelFile(w modelWorld, name, body string) modelPath {
@@ -76,13 +85,40 @@ func putRenderModelFile(w modelWorld, name, body string) modelPath {
 
 func addRenderModelKS(w modelWorld, name, namespace, directory string) modelID {
 	source := renderModelSource(w)
-	id := modelID{source: source, group: "kustomize.toolkit.fluxcd.io", kind: "Kustomization", namespace: namespace, name: name}
-	declaration := testutil.KustomizationYAML(name, namespace, "  path: ./"+directory+"\n  sourceRef: {kind: GitRepository, name: "+source.binding+", namespace: flux-system}\n")
+	id := modelID{
+		source:    source,
+		group:     "kustomize.toolkit.fluxcd.io",
+		kind:      "Kustomization",
+		namespace: namespace,
+		name:      name,
+	}
+	declaration := testutil.KustomizationYAML(
+		name,
+		namespace,
+		"  path: ./"+directory+"\n  sourceRef: {kind: GitRepository, name: "+source.binding+", namespace: flux-system}\n",
+	)
 	putRenderModelFile(w, "flux/"+name+"-"+namespace+".yaml", declaration)
 	input := putRenderModelFile(w, directory+"/kustomization.yaml", "resources: [cm.yaml]\n")
-	body := putRenderModelFile(w, directory+"/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+name+"-output}\ndata: {value: old}\n")
-	w.producers[id] = modelProducer{declaration: []byte(declaration), reads: []modelRead{{file: input}, {file: body}}, sources: []modelID{renderModelSourceID(source)},
-		documents: []modelDocument{{id: modelObjectID{modelID: modelID{source: source, kind: "ConfigMap", name: name + "-output"}, version: "v1"}}}}
+	body := putRenderModelFile(
+		w,
+		directory+"/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+name+"-output}\ndata: {value: old}\n",
+	)
+	w.producers[id] = modelProducer{
+		declaration: []byte(
+			declaration,
+		),
+		reads:   []modelRead{{file: input}, {file: body}},
+		sources: []modelID{renderModelSourceID(source)},
+		documents: []modelDocument{
+			{
+				id: modelObjectID{
+					modelID: modelID{source: source, kind: "ConfigMap", name: name + "-output"},
+					version: "v1",
+				},
+			},
+		},
+	}
 	return id
 }
 
@@ -140,7 +176,14 @@ func decodeRenderModelCase(data []byte) renderModelCase {
 	app := addRenderModelKS(before, "app", "flux-system", "apps/app")
 	stable := addRenderModelKS(before, "stable", "flux-system", "apps/stable")
 	file := modelPath{source: app.source, path: "apps/app/cm.yaml"}
-	operations := []modelOperation{{kind: "write", file: file, body: bytes.Replace(before.files[file].body, []byte("old"), []byte("new"), 1), included: true}}
+	operations := []modelOperation{
+		{
+			kind:     "write",
+			file:     file,
+			body:     bytes.Replace(before.files[file].body, []byte("old"), []byte("new"), 1),
+			included: true,
+		},
+	}
 	result := renderModelCase{scan: "flux"}
 	switch seed {
 	case 0:
@@ -150,9 +193,16 @@ func decodeRenderModelCase(data []byte) renderModelCase {
 		before.producers[app] = child
 		delete(before.files, modelPath{source: app.source, path: "flux/app-flux-system.yaml"})
 		putRenderModelFile(before, "parents/kustomization.yaml", "namespace: flux-system\nresources: [child.yaml]\n")
-		putRenderModelFile(before, "parents/child.yaml", strings.Replace(string(child.declaration), "  namespace: flux-system\n", "", 1))
+		putRenderModelFile(
+			before,
+			"parents/child.yaml",
+			strings.Replace(string(child.declaration), "  namespace: flux-system\n", "", 1),
+		)
 		p := before.producers[parent]
-		p.reads = []modelRead{{file: modelPath{source: app.source, path: "parents/kustomization.yaml"}}, {file: modelPath{source: app.source, path: "parents/child.yaml"}}}
+		p.reads = []modelRead{
+			{file: modelPath{source: app.source, path: "parents/kustomization.yaml"}},
+			{file: modelPath{source: app.source, path: "parents/child.yaml"}},
+		}
 		p.documents = []modelDocument{{id: modelObjectID{modelID: app, version: "v1", namespacePresent: true}}}
 		before.producers[parent] = p
 		delete(before.files, modelPath{source: app.source, path: "parents/cm.yaml"})
@@ -160,7 +210,11 @@ func decodeRenderModelCase(data []byte) renderModelCase {
 		result.committed = true
 		putRenderModelFile(before, "unrelated.txt", "committed\n")
 	case 2:
-		shared := putRenderModelFile(before, "shared/component/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\ncommonAnnotations: {shared: old}\n")
+		shared := putRenderModelFile(
+			before,
+			"shared/component/kustomization.yaml",
+			"apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\ncommonAnnotations: {shared: old}\n",
+		)
 		for _, id := range []modelID{app, stable} {
 			p := before.producers[id]
 			input := p.reads[0].file
@@ -168,29 +222,69 @@ func decodeRenderModelCase(data []byte) renderModelCase {
 			p.reads = append(p.reads, modelRead{file: shared})
 			before.producers[id] = p
 		}
-		operations = []modelOperation{{kind: "write", file: shared, body: bytes.Replace(before.files[shared].body, []byte("old"), []byte("new"), 1), included: true}}
+		operations = []modelOperation{
+			{
+				kind:     "write",
+				file:     shared,
+				body:     bytes.Replace(before.files[shared].body, []byte("old"), []byte("new"), 1),
+				included: true,
+			},
+		}
 	case 3:
 		result.committed = variant == 1
 		optional := modelPath{source: app.source, path: "flux/optional.yaml"}
-		changeRenderModelDeclaration(before, app, "  path:", "  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: optional, optional: true}]\n  path:")
+		changeRenderModelDeclaration(
+			before,
+			app,
+			"  path:",
+			"  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: optional, optional: true}]\n  path:",
+		)
 		p := before.producers[app]
 		p.reads = append(p.reads, modelRead{file: optional, optional: true})
 		before.producers[app] = p
-		putRenderModelFile(before, file.path, "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: app-output}\ndata: {value: '${VALUE:=old}'}\n")
+		putRenderModelFile(
+			before,
+			file.path,
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: app-output}\ndata: {value: '${VALUE:=old}'}\n",
+		)
 		changeRenderModelDeclaration(before, stable, "  path:", "  dependsOn: [{name: app}]\n  path:")
 		s := before.producers[stable]
 		s.ordering = []modelID{app}
 		before.producers[stable] = s
-		operations = []modelOperation{{kind: "write", file: optional, body: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: optional, namespace: flux-system}\ndata: {VALUE: new}\n"), included: true}}
+		operations = []modelOperation{
+			{
+				kind: "write",
+				file: optional,
+				body: []byte(
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: optional, namespace: flux-system}\ndata: {VALUE: new}\n",
+				),
+				included: true,
+			},
+		}
 	case 4:
 		result.committed = true
 		p := before.producers[app]
 		p.reads = append(p.reads, modelRead{file: modelPath{source: app.source, path: "apps/app/removed.yaml"}})
-		p.documents = append(p.documents, modelDocument{id: modelObjectID{modelID: modelID{source: app.source, kind: "ConfigMap", name: "removed"}, version: "v1"}})
+		p.documents = append(
+			p.documents,
+			modelDocument{
+				id: modelObjectID{
+					modelID: modelID{source: app.source, kind: "ConfigMap", name: "removed"},
+					version: "v1",
+				},
+			},
+		)
 		before.producers[app] = p
-		putRenderModelFile(before, "apps/app/removed.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: removed}\n")
+		putRenderModelFile(
+			before,
+			"apps/app/removed.yaml",
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: removed}\n",
+		)
 		putRenderModelFile(before, "apps/app/kustomization.yaml", "resources: [cm.yaml, removed.yaml]\n")
-		operations = append(operations, modelOperation{kind: "delete-file", file: modelPath{source: app.source, path: "apps/app/removed.yaml"}})
+		operations = append(
+			operations,
+			modelOperation{kind: "delete-file", file: modelPath{source: app.source, path: "apps/app/removed.yaml"}},
+		)
 	case 5:
 		p := before.producers[app]
 		missing := modelPath{source: app.source, path: "apps/app/missing.yaml"}
@@ -198,7 +292,14 @@ func decodeRenderModelCase(data []byte) renderModelCase {
 		p.documents = nil
 		before.producers[app] = p
 		putRenderModelFile(before, "apps/app/kustomization.yaml", "resources: [missing.yaml]\n")
-		operations = []modelOperation{{kind: "write", file: missing, body: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: recovered}\n"), included: true}}
+		operations = []modelOperation{
+			{
+				kind:     "write",
+				file:     missing,
+				body:     []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: recovered}\n"),
+				included: true,
+			},
+		}
 	case 6:
 		putRenderModelFile(before, "apps/app/kustomization.yaml", "resources: []\n")
 		delete(before.files, file)
@@ -206,7 +307,9 @@ func decodeRenderModelCase(data []byte) renderModelCase {
 		p.reads, p.documents = p.reads[:1], nil
 		before.producers[app] = p
 		input := modelPath{source: app.source, path: "apps/app/kustomization.yaml"}
-		operations = []modelOperation{{kind: "write", file: input, body: []byte("resources: []\n# changed empty producer\n"), included: true}}
+		operations = []modelOperation{
+			{kind: "write", file: input, body: []byte("resources: []\n# changed empty producer\n"), included: true},
+		}
 	}
 	result.before = before
 	result.operations = operations
@@ -219,7 +322,14 @@ func decodeRenderModelCase(data []byte) renderModelCase {
 	}
 	if seed == 5 {
 		p := result.after.producers[app]
-		p.documents = []modelDocument{{id: modelObjectID{modelID: modelID{source: app.source, kind: "ConfigMap", name: "recovered"}, version: "v1"}}}
+		p.documents = []modelDocument{
+			{
+				id: modelObjectID{
+					modelID: modelID{source: app.source, kind: "ConfigMap", name: "recovered"},
+					version: "v1",
+				},
+			},
+		}
 		result.after.producers[app] = p
 	}
 	if variant == 1 && seed == 1 {
@@ -282,7 +392,13 @@ func extendRenderModel(f *renderModelCase, seed int, variant byte) {
 		return
 	}
 	source := renderModelSource(f.before)
-	app := modelID{source: source, group: "kustomize.toolkit.fluxcd.io", kind: "Kustomization", namespace: "flux-system", name: "app"}
+	app := modelID{
+		source:    source,
+		group:     "kustomize.toolkit.fluxcd.io",
+		kind:      "Kustomization",
+		namespace: "flux-system",
+		name:      "app",
+	}
 	if variant == 14 || variant == 15 {
 		other := newRenderModelWorld("other")
 		pinned := addRenderModelKS(other, "pinned", "flux-system", "apps/app")
@@ -303,22 +419,51 @@ func extendRenderModel(f *renderModelCase, seed int, variant byte) {
 				p.reads[i].file.source = coordinate
 			}
 			p.sources = []modelID{renderModelSourceID(coordinate)}
-			p.documents = []modelDocument{{id: modelObjectID{modelID: modelID{source: coordinate, kind: "ConfigMap", name: "pinned-output"}, version: "v1"}, sdk: map[string]any{
-				"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "pinned-output", "labels": map[string]any{"kustomize.toolkit.fluxcd.io/name": "pinned", "kustomize.toolkit.fluxcd.io/namespace": "flux-system"}}, "data": map[string]any{"value": "pin"},
-			}}}
+			p.documents = []modelDocument{
+				{
+					id: modelObjectID{
+						modelID: modelID{source: coordinate, kind: "ConfigMap", name: "pinned-output"},
+						version: "v1",
+					},
+					sdk: map[string]any{
+						"apiVersion": "v1",
+						"kind":       "ConfigMap",
+						"metadata": map[string]any{
+							"name": "pinned-output",
+							"labels": map[string]any{
+								"kustomize.toolkit.fluxcd.io/name":      "pinned",
+								"kustomize.toolkit.fluxcd.io/namespace": "flux-system",
+							},
+						},
+						"data": map[string]any{"value": "pin"},
+					},
+				},
+			}
 			id := pinned
 			id.source = coordinate
 			w.producers[id] = p
-			declaration := putRenderModelFile(w, "flux/source-other.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: other, namespace: flux-system}\nspec: {url: 'file:///model-other', ref: {commit: before}}\n")
+			declaration := putRenderModelFile(
+				w,
+				"flux/source-other.yaml",
+				"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: other, namespace: flux-system}\nspec: {url: 'file:///model-other', ref: {commit: before}}\n",
+			)
 			w.producers[renderModelSourceID(coordinate)] = modelProducer{reads: []modelRead{{file: declaration}}}
 		}
 		if variant == 15 {
 			file := modelPath{source: source, path: "apps/app/cm.yaml"}
 			f.after.files[file] = f.before.files[file]
 			input := modelPath{source: coordinate, path: "apps/app/cm.yaml"}
-			writeRenderModelFile(f, input, bytes.ReplaceAll(f.after.files[input].body, []byte("value: pin"), []byte("value: new")))
+			writeRenderModelFile(
+				f,
+				input,
+				bytes.ReplaceAll(f.after.files[input].body, []byte("value: pin"), []byte("value: new")),
+			)
 			declaration := modelPath{source: source, path: "flux/source-other.yaml"}
-			writeRenderModelFile(f, declaration, bytes.ReplaceAll(f.after.files[declaration].body, []byte("commit: before"), []byte("commit: after")))
+			writeRenderModelFile(
+				f,
+				declaration,
+				bytes.ReplaceAll(f.after.files[declaration].body, []byte("commit: before"), []byte("commit: after")),
+			)
 			id := pinned
 			id.source = coordinate
 			p := f.after.producers[id]
@@ -342,15 +487,41 @@ func extendRenderModel(f *renderModelCase, seed int, variant byte) {
 			putRenderModelFile(w, "flux/app-flux-system.yaml", declaration)
 			chart := putRenderModelFile(w, "charts/app/Chart.yaml", "apiVersion: v2\nname: app\nversion: 1.0.0\n")
 			values := putRenderModelFile(w, "charts/app/values.yaml", "value: old\n")
-			template := putRenderModelFile(w, "charts/app/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: app-output, namespace: flux-system}\ndata: {value: {{ .Values.value | quote }}}\n")
-			w.producers[hr] = modelProducer{declaration: []byte(declaration), reads: []modelRead{{file: chart}, {file: values}, {file: template}}, sources: []modelID{renderModelSourceID(source)}, documents: []modelDocument{{id: modelObjectID{modelID: modelID{source: source, kind: "ConfigMap", namespace: "flux-system", name: "app-output"}, version: "v1", namespacePresent: true}}}}
+			template := putRenderModelFile(
+				w,
+				"charts/app/templates/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: app-output, namespace: flux-system}\ndata: {value: {{ .Values.value | quote }}}\n",
+			)
+			w.producers[hr] = modelProducer{
+				declaration: []byte(declaration),
+				reads:       []modelRead{{file: chart}, {file: values}, {file: template}},
+				sources:     []modelID{renderModelSourceID(source)},
+				documents: []modelDocument{
+					{
+						id: modelObjectID{
+							modelID: modelID{
+								source:    source,
+								kind:      "ConfigMap",
+								namespace: "flux-system",
+								name:      "app-output",
+							},
+							version:          "v1",
+							namespacePresent: true,
+						},
+					},
+				},
+			}
 		}
 		hr := app
 		hr.kind, hr.group = "HelmRelease", "helm.toolkit.fluxcd.io"
 		switch variant {
 		case 5:
 			file := modelPath{source: source, path: "charts/app/templates/cm.yaml"}
-			writeRenderModelFile(f, file, bytes.Replace(f.before.files[file].body, []byte(".Values.value"), []byte(".Values.value | upper"), 1))
+			writeRenderModelFile(
+				f,
+				file,
+				bytes.Replace(f.before.files[file].body, []byte(".Values.value"), []byte(".Values.value | upper"), 1),
+			)
 		case 6:
 			file := modelPath{source: source, path: "charts/app/values.yaml"}
 			writeRenderModelFile(f, file, []byte("value: new\n"))
@@ -364,7 +535,11 @@ func extendRenderModel(f *renderModelCase, seed int, variant byte) {
 			changeRenderModelDeclaration(f.after, hr, "value: old", "value: new")
 		case 8:
 			for _, w := range []modelWorld{f.before, f.after} {
-				file := putRenderModelFile(w, "flux/values.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: values, namespace: flux-system}\ndata:\n  values.yaml: |\n    value: old\n")
+				file := putRenderModelFile(
+					w,
+					"flux/values.yaml",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: values, namespace: flux-system}\ndata:\n  values.yaml: |\n    value: old\n",
+				)
 				p := w.producers[hr]
 				p.reads = append(p.reads, modelRead{file: file})
 				p.declaration = append(p.declaration, []byte("  valuesFrom: [{kind: ConfigMap, name: values}]\n")...)
@@ -372,15 +547,37 @@ func extendRenderModel(f *renderModelCase, seed int, variant byte) {
 				putRenderModelFile(w, "flux/app-flux-system.yaml", string(p.declaration))
 			}
 			file := modelPath{source: source, path: "flux/values.yaml"}
-			writeRenderModelFile(f, file, bytes.Replace(f.before.files[file].body, []byte("value: old"), []byte("value: new"), 1))
+			writeRenderModelFile(
+				f,
+				file,
+				bytes.Replace(f.before.files[file].body, []byte("value: old"), []byte("value: new"), 1),
+			)
 		case 9:
 			file := modelPath{source: source, path: "charts/app/charts/child-1.0.0.tgz"}
 			for _, w := range []modelWorld{f.before, f.after} {
 				p := w.producers[hr]
-				putRenderModelFile(w, "charts/app/Chart.yaml", "apiVersion: v2\nname: app\nversion: 1.0.0\ndependencies: [{name: child, version: 1.0.0, repository: 'file://charts/child'}]\n")
+				putRenderModelFile(
+					w,
+					"charts/app/Chart.yaml",
+					"apiVersion: v2\nname: app\nversion: 1.0.0\ndependencies: [{name: child, version: 1.0.0, repository: 'file://charts/child'}]\n",
+				)
 				w.files[file] = modelFile{body: renderModelSubchart("old"), included: true}
 				p.reads = append(p.reads, modelRead{file: file})
-				p.documents = append(p.documents, modelDocument{id: modelObjectID{modelID: modelID{source: source, kind: "ConfigMap", namespace: "flux-system", name: "child-output"}, version: "v1", namespacePresent: true}})
+				p.documents = append(
+					p.documents,
+					modelDocument{
+						id: modelObjectID{
+							modelID: modelID{
+								source:    source,
+								kind:      "ConfigMap",
+								namespace: "flux-system",
+								name:      "child-output",
+							},
+							version:          "v1",
+							namespacePresent: true,
+						},
+					},
+				)
 				w.producers[hr] = p
 			}
 			writeRenderModelFile(f, file, renderModelSubchart("new"))
@@ -390,46 +587,109 @@ func extendRenderModel(f *renderModelCase, seed int, variant byte) {
 	switch variant {
 	case 16:
 		file := modelPath{source: source, path: "apps/app/cm.yaml"}
-		writeRenderModelFile(f, file, bytes.Replace(f.after.files[file].body, []byte("apiVersion: v1"), []byte("apiVersion: example.test/v1"), 1))
+		writeRenderModelFile(
+			f,
+			file,
+			bytes.Replace(f.after.files[file].body, []byte("apiVersion: v1"), []byte("apiVersion: example.test/v1"), 1),
+		)
 		p := f.after.producers[app]
 		p.documents = slices.Clone(p.documents)
 		p.documents[0].id.group = "example.test"
 		f.after.producers[app] = p
 	case 17:
 		for _, w := range []modelWorld{f.before, f.after} {
-			file := putRenderModelFile(w, "apps/app/foreign.yaml", "apiVersion: example.test/v1\nkind: ConfigMap\nmetadata: {name: app-output}\nspec: {value: foreign}\n")
+			file := putRenderModelFile(
+				w,
+				"apps/app/foreign.yaml",
+				"apiVersion: example.test/v1\nkind: ConfigMap\nmetadata: {name: app-output}\nspec: {value: foreign}\n",
+			)
 			putRenderModelFile(w, "apps/app/kustomization.yaml", "resources: [cm.yaml, foreign.yaml]\n")
 			p := w.producers[app]
 			p.reads = append(p.reads, modelRead{file: file})
-			p.documents = append(p.documents, modelDocument{id: modelObjectID{modelID: modelID{source: source, group: "example.test", kind: "ConfigMap", name: "app-output"}, version: "v1"}})
+			p.documents = append(
+				p.documents,
+				modelDocument{
+					id: modelObjectID{
+						modelID: modelID{source: source, group: "example.test", kind: "ConfigMap", name: "app-output"},
+						version: "v1",
+					},
+				},
+			)
 			w.producers[app] = p
 		}
 	case 18:
 		for _, w := range []modelWorld{f.before, f.after} {
 			data := addRenderModelKS(w, "z-data", "flux-system", "data")
-			putRenderModelFile(w, "data/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: generated-values, namespace: flux-system}\ndata: {VALUE: old}\n")
+			putRenderModelFile(
+				w,
+				"data/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: generated-values, namespace: flux-system}\ndata: {VALUE: old}\n",
+			)
 			d := w.producers[data]
-			d.documents = []modelDocument{{id: modelObjectID{modelID: modelID{source: source, kind: "ConfigMap", namespace: "flux-system", name: "generated-values"}, version: "v1", namespacePresent: true}}}
+			d.documents = []modelDocument{
+				{
+					id: modelObjectID{
+						modelID: modelID{
+							source:    source,
+							kind:      "ConfigMap",
+							namespace: "flux-system",
+							name:      "generated-values",
+						},
+						version:          "v1",
+						namespacePresent: true,
+					},
+				},
+			}
 			w.producers[data] = d
 			p := w.producers[app]
 			p.content = []modelID{data}
-			p.declaration = bytes.Replace(p.declaration, []byte("  path:"), []byte("  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: generated-values}]\n  path:"), 1)
+			p.declaration = bytes.Replace(
+				p.declaration,
+				[]byte("  path:"),
+				[]byte("  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: generated-values}]\n  path:"),
+				1,
+			)
 			w.producers[app] = p
-			putRenderModelFile(w, "parents/child.yaml", strings.Replace(string(p.declaration), "  namespace: flux-system\n", "", 1))
-			putRenderModelFile(w, "apps/app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: app-output}\ndata: {value: '${VALUE}'}\n")
+			putRenderModelFile(
+				w,
+				"parents/child.yaml",
+				strings.Replace(string(p.declaration), "  namespace: flux-system\n", "", 1),
+			)
+			putRenderModelFile(
+				w,
+				"apps/app/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: app-output}\ndata: {value: '${VALUE}'}\n",
+			)
 		}
 		file := modelPath{source: source, path: "data/cm.yaml"}
-		writeRenderModelFile(f, file, bytes.ReplaceAll(f.after.files[file].body, []byte("VALUE: old"), []byte("VALUE: new")))
+		writeRenderModelFile(
+			f,
+			file,
+			bytes.ReplaceAll(f.after.files[file].body, []byte("VALUE: old"), []byte("VALUE: new")),
+		)
 	case 19:
 		for _, w := range []modelWorld{f.before, f.after} {
-			changeRenderModelDeclaration(w, app, "  path:", "  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: absent, optional: true}]\n  path:")
+			changeRenderModelDeclaration(
+				w,
+				app,
+				"  path:",
+				"  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: absent, optional: true}]\n  path:",
+			)
 			p := w.producers[app]
-			p.reads = append(p.reads, modelRead{file: modelPath{source: source, path: "flux/absent.yaml"}, optional: true})
+			p.reads = append(
+				p.reads,
+				modelRead{file: modelPath{source: source, path: "flux/absent.yaml"}, optional: true},
+			)
 			w.producers[app] = p
 		}
 	case 20:
 		for _, w := range []modelWorld{f.before, f.after} {
-			changeRenderModelDeclaration(w, app, "  path:", "  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: absent}]\n  path:")
+			changeRenderModelDeclaration(
+				w,
+				app,
+				"  path:",
+				"  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: absent}]\n  path:",
+			)
 			p := w.producers[app]
 			p.reads = append(p.reads, modelRead{file: modelPath{source: source, path: "flux/absent.yaml"}})
 			p.content = []modelID{{source: source, kind: "ConfigMap", namespace: "flux-system", name: "absent"}}
@@ -443,7 +703,11 @@ func extendRenderModel(f *renderModelCase, seed int, variant byte) {
 		parent := modelID{source: source, group: app.group, kind: app.kind, namespace: app.namespace, name: "parent"}
 		for _, w := range []modelWorld{f.before, f.after} {
 			p := w.producers[app]
-			p.declaration = bytes.ReplaceAll(p.declaration, []byte("name: cluster, namespace: flux-system"), []byte("name: late, namespace: flux-system"))
+			p.declaration = bytes.ReplaceAll(
+				p.declaration,
+				[]byte("name: cluster, namespace: flux-system"),
+				[]byte("name: late, namespace: flux-system"),
+			)
 			p.reads = slices.Clone(p.reads)
 			for i := range p.reads {
 				file := p.reads[i].file
@@ -459,14 +723,29 @@ func extendRenderModel(f *renderModelCase, seed int, variant byte) {
 			id.source = other
 			delete(w.producers, app)
 			w.producers[id] = p
-			putRenderModelFile(w, "parents/child.yaml", strings.Replace(string(p.declaration), "  namespace: flux-system\n", "", 1))
-			putRenderModelFile(w, "parents/kustomization.yaml", "namespace: flux-system\nresources: [child.yaml, source.yaml]\n")
-			declaration := putRenderModelFile(w, "parents/source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: late, namespace: flux-system}\nspec: {url: 'git://fixture.invalid/cluster'}\n")
+			putRenderModelFile(
+				w,
+				"parents/child.yaml",
+				strings.Replace(string(p.declaration), "  namespace: flux-system\n", "", 1),
+			)
+			putRenderModelFile(
+				w,
+				"parents/kustomization.yaml",
+				"namespace: flux-system\nresources: [child.yaml, source.yaml]\n",
+			)
+			declaration := putRenderModelFile(
+				w,
+				"parents/source.yaml",
+				"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: late, namespace: flux-system}\nspec: {url: 'git://fixture.invalid/cluster'}\n",
+			)
 			pp := w.producers[parent]
 			pp.reads = append(pp.reads, modelRead{file: declaration})
 			object := renderModelSourceID(other)
 			object.source = source
-			pp.documents = append(pp.documents, modelDocument{id: modelObjectID{modelID: object, version: "v1", namespacePresent: true}})
+			pp.documents = append(
+				pp.documents,
+				modelDocument{id: modelObjectID{modelID: object, version: "v1", namespacePresent: true}},
+			)
 			w.producers[parent] = pp
 			w.producers[renderModelSourceID(other)] = modelProducer{emitter: &parent}
 		}
@@ -474,7 +753,11 @@ func extendRenderModel(f *renderModelCase, seed int, variant byte) {
 		other := source
 		other.binding = "other"
 		p := f.after.producers[app]
-		p.declaration = bytes.ReplaceAll(p.declaration, []byte("name: cluster, namespace: flux-system"), []byte("name: other, namespace: flux-system"))
+		p.declaration = bytes.ReplaceAll(
+			p.declaration,
+			[]byte("name: cluster, namespace: flux-system"),
+			[]byte("name: other, namespace: flux-system"),
+		)
 		p.reads = slices.Clone(p.reads)
 		for i := range p.reads {
 			file := p.reads[i].file
@@ -509,8 +792,16 @@ func extendRenderModel(f *renderModelCase, seed int, variant byte) {
 	case 26:
 		for i, w := range []modelWorld{f.before, f.after} {
 			value := []string{"old", "new"}[i]
-			putRenderModelFile(w, "parents/kustomization.yaml", "namespace: flux-system\nresources: [child.yaml]\npatches:\n- target: {kind: Kustomization, name: app}\n  patch: |-\n    - op: add\n      path: /spec/postBuild\n      value:\n        substitute: {EXTRA: "+value+"}\n")
-			putRenderModelFile(w, "apps/app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: app-output}\ndata: {value: '${EXTRA}'}\n")
+			putRenderModelFile(
+				w,
+				"parents/kustomization.yaml",
+				"namespace: flux-system\nresources: [child.yaml]\npatches:\n- target: {kind: Kustomization, name: app}\n  patch: |-\n    - op: add\n      path: /spec/postBuild\n      value:\n        substitute: {EXTRA: "+value+"}\n",
+			)
+			putRenderModelFile(
+				w,
+				"apps/app/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: app-output}\ndata: {value: '${EXTRA}'}\n",
+			)
 			p := w.producers[app]
 			p.declaration = append(p.declaration, []byte("  postBuild: {substitute: {EXTRA: "+value+"}}\n")...)
 			w.producers[app] = p
@@ -523,9 +814,18 @@ func extendRenderModel(f *renderModelCase, seed int, variant byte) {
 	case 29:
 		parent := modelID{source: source, group: app.group, kind: app.kind, namespace: app.namespace, name: "parent"}
 		file := modelPath{source: source, path: "parents/kustomization.yaml"}
-		writeRenderModelFile(f, file, bytes.Replace(f.after.files[file].body, []byte("namespace: flux-system"), []byte("namespace: ns-1"), 1))
+		writeRenderModelFile(
+			f,
+			file,
+			bytes.Replace(f.after.files[file].body, []byte("namespace: flux-system"), []byte("namespace: ns-1"), 1),
+		)
 		p := f.after.producers[app]
-		p.declaration = bytes.Replace(p.declaration, []byte("  namespace: flux-system\n"), []byte("  namespace: ns-1\n"), 1)
+		p.declaration = bytes.Replace(
+			p.declaration,
+			[]byte("  namespace: flux-system\n"),
+			[]byte("  namespace: ns-1\n"),
+			1,
+		)
 		f.after.producers[app] = p
 		next := app
 		next.namespace = "ns-1"
@@ -537,11 +837,19 @@ func extendRenderModel(f *renderModelCase, seed int, variant byte) {
 	case 21:
 		id := app
 		id.group, id.kind = "fluxcd.controlplane.io", "ResourceSet"
-		crd := modelID{source: source, group: "apiextensions.k8s.io", kind: "CustomResourceDefinition", name: "widgets.example.test"}
+		crd := modelID{
+			source: source,
+			group:  "apiextensions.k8s.io",
+			kind:   "CustomResourceDefinition",
+			name:   "widgets.example.test",
+		}
 		for i, w := range []modelWorld{f.before, f.after} {
 			delete(w.producers, app)
 			delete(w.files, modelPath{source: source, path: "flux/app-flux-system.yaml"})
-			declaration := fmt.Sprintf("apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: app, namespace: flux-system, annotations: {revision: '%d'}}\nspec:\n  dependsOn: [{apiVersion: apiextensions.k8s.io/v1, kind: CustomResourceDefinition, name: widgets.example.test}]\n  resources: []\n", i)
+			declaration := fmt.Sprintf(
+				"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: app, namespace: flux-system, annotations: {revision: '%d'}}\nspec:\n  dependsOn: [{apiVersion: apiextensions.k8s.io/v1, kind: CustomResourceDefinition, name: widgets.example.test}]\n  resources: []\n",
+				i,
+			)
 			putRenderModelFile(w, "flux/rs.yaml", declaration)
 			w.producers[id] = modelProducer{declaration: []byte(declaration), ordering: []modelID{crd}}
 		}
@@ -550,7 +858,11 @@ func extendRenderModel(f *renderModelCase, seed int, variant byte) {
 			p := w.producers[app]
 			delete(w.files, p.reads[1].file)
 			input := putRenderModelFile(w, "apps/app/value.txt", "old\n")
-			putRenderModelFile(w, "apps/app/kustomization.yaml", "generatorOptions: {disableNameSuffixHash: true}\nconfigMapGenerator:\n- name: app-output\n  files: [value.txt]\n")
+			putRenderModelFile(
+				w,
+				"apps/app/kustomization.yaml",
+				"generatorOptions: {disableNameSuffixHash: true}\nconfigMapGenerator:\n- name: app-output\n  files: [value.txt]\n",
+			)
 			p.reads[1].file = input
 			w.producers[app] = p
 		}
@@ -560,12 +872,24 @@ func extendRenderModel(f *renderModelCase, seed int, variant byte) {
 	case 11:
 		for _, w := range []modelWorld{f.before, f.after} {
 			p := w.producers[app]
-			patch := putRenderModelFile(w, "shared/patch.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: app-output}\ndata: {patched: old}\n")
-			putRenderModelFile(w, "apps/app/kustomization.yaml", "resources: [cm.yaml]\npatches: [{path: ../../shared/patch.yaml}]\n")
+			patch := putRenderModelFile(
+				w,
+				"shared/patch.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: app-output}\ndata: {patched: old}\n",
+			)
+			putRenderModelFile(
+				w,
+				"apps/app/kustomization.yaml",
+				"resources: [cm.yaml]\npatches: [{path: ../../shared/patch.yaml}]\n",
+			)
 			p.reads = append(p.reads, modelRead{file: patch})
 			w.producers[app] = p
 		}
-		writeRenderModelFile(f, modelPath{source: source, path: "shared/patch.yaml"}, []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: app-output}\ndata: {patched: new}\n"))
+		writeRenderModelFile(
+			f,
+			modelPath{source: source, path: "shared/patch.yaml"},
+			[]byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: app-output}\ndata: {patched: new}\n"),
+		)
 	case 12:
 		for _, w := range []modelWorld{f.before, f.after} {
 			p := w.producers[app]
@@ -587,7 +911,13 @@ func extendRenderModel(f *renderModelCase, seed int, variant byte) {
 			p.emitter = nil
 			f.after.producers[app] = p
 			putRenderModelFile(f.after, "flux/app-flux-system.yaml", string(p.declaration))
-			parent := modelID{source: source, group: app.group, kind: app.kind, namespace: app.namespace, name: "parent"}
+			parent := modelID{
+				source:    source,
+				group:     app.group,
+				kind:      app.kind,
+				namespace: app.namespace,
+				name:      "parent",
+			}
 			delete(f.after.producers, parent)
 			delete(f.after.files, modelPath{source: source, path: "flux/parent-flux-system.yaml"})
 			delete(f.after.files, modelPath{source: source, path: "parents/kustomization.yaml"})
@@ -630,11 +960,13 @@ func mutateRenderModel(f *renderModelCase, opcode, target, value byte) {
 		p := f.after.producers[id]
 		kind := opcode % 9
 		chartEdit := id.kind == "HelmRelease" && (kind == 0 || kind == 1 || kind == 2 || kind == 7 || kind == 8)
-		if id.kind != "Kustomization" && !chartEdit || id.source != renderModelSource(f.after) || p.emitter != nil || len(p.reads) == 0 {
+		if id.kind != "Kustomization" && !chartEdit || id.source != renderModelSource(f.after) || p.emitter != nil ||
+			len(p.reads) == 0 {
 			return true
 		}
 		for _, consumer := range f.after.producers {
-			if slices.Contains(consumer.content, id) || slices.Contains(consumer.ordering, id) || consumer.emitter != nil && *consumer.emitter == id {
+			if slices.Contains(consumer.content, id) || slices.Contains(consumer.ordering, id) ||
+				consumer.emitter != nil && *consumer.emitter == id {
 				return true
 			}
 		}
@@ -651,7 +983,8 @@ func mutateRenderModel(f *renderModelCase, opcode, target, value byte) {
 	case 0:
 		for _, read := range p.reads {
 			file, ok := f.after.files[read.file]
-			if !ok || !utf8.Valid(file.body) || !bytes.Contains(file.body, []byte("old")) && !bytes.Contains(file.body, []byte("new")) {
+			if !ok || !utf8.Valid(file.body) ||
+				!bytes.Contains(file.body, []byte("old")) && !bytes.Contains(file.body, []byte("new")) {
 				continue
 			}
 			body := bytes.ReplaceAll(file.body, []byte("old"), fmt.Appendf(nil, "v%02x", value))
@@ -677,7 +1010,11 @@ func mutateRenderModel(f *renderModelCase, opcode, target, value byte) {
 			f.after.files[next] = file
 			p.reads[i+1].file = next
 			f.after.producers[id] = p
-			writeRenderModelFile(f, input, bytes.ReplaceAll(f.after.files[input].body, []byte("cm.yaml"), []byte(path.Base(next.path))))
+			writeRenderModelFile(
+				f,
+				input,
+				bytes.ReplaceAll(f.after.files[input].body, []byte("cm.yaml"), []byte(path.Base(next.path))),
+			)
 			break
 		}
 	case 3, 4:
@@ -691,10 +1028,24 @@ func mutateRenderModel(f *renderModelCase, opcode, target, value byte) {
 			return
 		}
 		for _, dep := range p.ordering {
-			p.declaration = bytes.ReplaceAll(p.declaration, []byte("[{name: "+dep.name+"}]"), []byte("[{name: "+dep.name+", namespace: "+dep.namespace+"}]"))
+			p.declaration = bytes.ReplaceAll(
+				p.declaration,
+				[]byte("[{name: "+dep.name+"}]"),
+				[]byte("[{name: "+dep.name+", namespace: "+dep.namespace+"}]"),
+			)
 		}
-		p.declaration = bytes.Replace(p.declaration, []byte("  name: "+id.name+"\n"), []byte("  name: "+next.name+"\n"), 1)
-		p.declaration = bytes.Replace(p.declaration, []byte("  namespace: "+id.namespace+"\n"), []byte("  namespace: "+next.namespace+"\n"), 1)
+		p.declaration = bytes.Replace(
+			p.declaration,
+			[]byte("  name: "+id.name+"\n"),
+			[]byte("  name: "+next.name+"\n"),
+			1,
+		)
+		p.declaration = bytes.Replace(
+			p.declaration,
+			[]byte("  namespace: "+id.namespace+"\n"),
+			[]byte("  namespace: "+next.namespace+"\n"),
+			1,
+		)
 		for i, dep := range p.content {
 			if dep.namespace == id.namespace && (dep.kind == "ConfigMap" || dep.kind == "Secret") {
 				p.content[i].namespace = next.namespace
@@ -703,14 +1054,26 @@ func mutateRenderModel(f *renderModelCase, opcode, target, value byte) {
 		delete(f.after.files, declarationFile)
 		f.after.producers[id] = p
 		rekeyRenderModel(f.after, id, next)
-		writeRenderModelFile(f, modelPath{source: id.source, path: "flux/" + next.name + "-" + next.namespace + ".yaml"}, slices.Clone(p.declaration))
+		writeRenderModelFile(
+			f,
+			modelPath{source: id.source, path: "flux/" + next.name + "-" + next.namespace + ".yaml"},
+			slices.Clone(p.declaration),
+		)
 		for other, dependency := range f.after.producers {
 			if !slices.Contains(dependency.ordering, next) {
 				continue
 			}
-			dependency.declaration = bytes.ReplaceAll(dependency.declaration, []byte("[{name: "+id.name+"}]"), []byte("[{name: "+next.name+", namespace: "+next.namespace+"}]"))
+			dependency.declaration = bytes.ReplaceAll(
+				dependency.declaration,
+				[]byte("[{name: "+id.name+"}]"),
+				[]byte("[{name: "+next.name+", namespace: "+next.namespace+"}]"),
+			)
 			f.after.producers[other] = dependency
-			writeRenderModelFile(f, modelPath{source: other.source, path: "flux/" + other.name + "-" + other.namespace + ".yaml"}, slices.Clone(dependency.declaration))
+			writeRenderModelFile(
+				f,
+				modelPath{source: other.source, path: "flux/" + other.name + "-" + other.namespace + ".yaml"},
+				slices.Clone(dependency.declaration),
+			)
 		}
 	case 5:
 		if len(p.reads) != 2 || path.Base(p.reads[1].file.path) != "cm.yaml" {
@@ -837,7 +1200,14 @@ func renderModelDocument(source modelSource, doc map[string]any) modelDocument {
 		group, version = "", api
 	}
 	kind, _ := doc["kind"].(string)
-	return modelDocument{id: modelObjectID{modelID: modelID{source: source, group: group, kind: kind, namespace: namespace, name: name}, version: version, namespacePresent: nsPresent}, sdk: doc}
+	return modelDocument{
+		id: modelObjectID{
+			modelID:          modelID{source: source, group: group, kind: kind, namespace: namespace, name: name},
+			version:          version,
+			namespacePresent: nsPresent,
+		},
+		sdk: doc,
+	}
 }
 
 func renderModelUniverse(w modelWorld) (modelSet, error) {
@@ -905,11 +1275,17 @@ func observeRenderModelEntry(w modelWorld, side Rendered, selected bool) error {
 	status, ok := side.store.GetStatus(id)
 	emission, complete := side.store.GetArtifact(id, store.ArtifactContent).(*store.Emission)
 	if !ok || status.Outcome() != store.OutcomePassed || !complete || !emission.Complete {
-		return fmt.Errorf("entry lacks successful complete emission: status=%+v artifact=%T", status, side.store.GetArtifact(id, store.ArtifactContent))
+		return fmt.Errorf(
+			"entry lacks successful complete emission: status=%+v artifact=%T",
+			status,
+			side.store.GetArtifact(id, store.ArtifactContent),
+		)
 	}
 	prefix := strings.TrimSuffix(side.entryBinding.Path, "/") + "/"
 	for file, content := range w.files {
-		if file.source != renderModelSource(w) || !content.included || content.directory || !strings.HasPrefix(file.path, prefix) || !strings.HasSuffix(file.path, ".yaml") {
+		if file.source != renderModelSource(w) || !content.included || content.directory ||
+			!strings.HasPrefix(file.path, prefix) ||
+			!strings.HasSuffix(file.path, ".yaml") {
 			continue
 		}
 		decoder := yaml.NewDecoder(bytes.NewReader(content.body))
@@ -1005,7 +1381,12 @@ func observeRenderModel(w modelWorld, side Rendered, selected bool) (modelObserv
 		if state.failure == "" && !obj.Suspended() {
 			artifact := side.store.GetArtifact(id, store.ArtifactContent)
 			if artifact == nil || info.Outcome() != store.OutcomePassed {
-				return out, admitted, fmt.Errorf("admitted producer lacks terminal artifact: %s status=%+v artifact=%T", key, info, artifact)
+				return out, admitted, fmt.Errorf(
+					"admitted producer lacks terminal artifact: %s status=%+v artifact=%T",
+					key,
+					info,
+					artifact,
+				)
 			}
 			if emission, ok := artifact.(*store.Emission); ok && !emission.Complete {
 				return out, admitted, fmt.Errorf("producer inventory incomplete: %s", key)
@@ -1014,7 +1395,8 @@ func observeRenderModel(w modelWorld, side Rendered, selected bool) (modelObserv
 		out.producers[key] = state
 	}
 	for _, batch := range side.Result.Manifests {
-		if batch.Parent != nil && batch.Parent.Named() == side.entryBinding.Producer && batch.Parent.Named().ReportHidden() {
+		if batch.Parent != nil && batch.Parent.Named() == side.entryBinding.Producer &&
+			batch.Parent.Named().ReportHidden() {
 			continue
 		}
 		source := renderModelSource(w)
@@ -1055,7 +1437,10 @@ func expectedRenderModel(w modelWorld, selection *modelSelection) modelObservati
 
 func checkRenderModelMembership(want, got modelObservation) error {
 	for i := range got.documents {
-		if !slices.ContainsFunc(want.documents, func(d modelDocument) bool { return d.id == got.documents[i].id && d.sdk != nil }) {
+		if !slices.ContainsFunc(
+			want.documents,
+			func(d modelDocument) bool { return d.id == got.documents[i].id && d.sdk != nil },
+		) {
 			got.documents[i].sdk = nil
 		}
 	}
@@ -1125,15 +1510,28 @@ func materializeRenderModelSources(t *testing.T, fixture renderModelCase) (model
 				for name, file := range files {
 					testutil.WriteFile(t, root, name, string(file.body))
 				}
-				revision = testutil.GitCommitAll(t, repo, "source snapshot", &gogit.CommitOptions{Author: &object.Signature{Name: "fixture", Email: "fixture@example.test", When: time.Unix(0, 0)}}).String()
+				revision = testutil.GitCommitAll(t, repo, "source snapshot", &gogit.CommitOptions{Author: &object.Signature{Name: "fixture", Email: "fixture@example.test", When: time.Unix(0, 0)}}).
+					String()
 				previous = files
 			}
 			file := modelPath{source: primary, path: "flux/source-" + coordinate.binding + ".yaml"}
 			declaration := world.files[file]
-			declaration.body = []byte(fmt.Sprintf("apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: %s, namespace: flux-system}\nspec: {url: 'file://%s', ref: {commit: %s}}\n", coordinate.binding, filepath.ToSlash(root), revision))
+			declaration.body = []byte(
+				fmt.Sprintf(
+					"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: %s, namespace: flux-system}\nspec: {url: 'file://%s', ref: {commit: %s}}\n",
+					coordinate.binding,
+					filepath.ToSlash(root),
+					revision,
+				),
+			)
 			world.files[file] = declaration
 		}
-		testutil.WriteFile(t, root, "apps/app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: dirty-decoy}\ndata: {value: dirty}\n")
+		testutil.WriteFile(
+			t,
+			root,
+			"apps/app/cm.yaml",
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: dirty-decoy}\ndata: {value: dirty}\n",
+		)
 	}
 	return before, after
 }
@@ -1161,7 +1559,15 @@ func checkRenderModel(t *testing.T, fixture renderModelCase) ([]byte, error) {
 	if beforeScan == "" {
 		beforeScan = fixture.scan
 	}
-	baseTree, headTree := Tree{RepoRoot: beforeRoot, Path: filepath.Join(beforeRoot, beforeScan), SelfURLs: fixture.selfURLs}, Tree{RepoRoot: afterRoot, Path: filepath.Join(afterRoot, fixture.scan), SelfURLs: fixture.selfURLs}
+	baseTree, headTree := Tree{
+		RepoRoot: beforeRoot,
+		Path:     filepath.Join(beforeRoot, beforeScan),
+		SelfURLs: fixture.selfURLs,
+	}, Tree{
+		RepoRoot: afterRoot,
+		Path:     filepath.Join(afterRoot, fixture.scan),
+		SelfURLs: fixture.selfURLs,
+	}
 	if fixture.committed {
 		repo := testutil.GitInit(t, afterRoot)
 		for file := range serializedAfter.files {
@@ -1175,7 +1581,12 @@ func checkRenderModel(t *testing.T, fixture renderModelCase) ([]byte, error) {
 			}
 		}
 		writeRenderModelWorld(t, afterRoot, serializedBefore)
-		hash := testutil.GitCommitAll(t, repo, "before", &gogit.CommitOptions{Author: &object.Signature{Name: "fixture", Email: "fixture@example.test"}})
+		hash := testutil.GitCommitAll(
+			t,
+			repo,
+			"before",
+			&gogit.CommitOptions{Author: &object.Signature{Name: "fixture", Email: "fixture@example.test"}},
+		)
 		for file := range serializedBefore.files {
 			if file.source != renderModelSource(serializedBefore) {
 				continue
@@ -1187,7 +1598,12 @@ func checkRenderModel(t *testing.T, fixture renderModelCase) ([]byte, error) {
 			}
 		}
 		writeRenderModelWorld(t, afterRoot, serializedAfter)
-		base, resolveErr := baseline.AutoResolve(t.Context(), filepath.Join(afterRoot, fixture.scan), hash.String(), owner)
+		base, resolveErr := baseline.AutoResolve(
+			t.Context(),
+			filepath.Join(afterRoot, fixture.scan),
+			hash.String(),
+			owner,
+		)
 		if resolveErr != nil {
 			return nil, resolveErr
 		}
@@ -1201,11 +1617,28 @@ func checkRenderModel(t *testing.T, fixture renderModelCase) ([]byte, error) {
 		scan string
 		out  *Rendered
 	}{{beforeRoot, beforeScan, &fullBefore}, {afterRoot, fixture.scan, &fullAfter}} {
-		runs, renderErr := RenderTrees(t.Context(), []Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: filepath.Join(side.root, side.scan), RepoRoot: side.root, SelfURLs: fixture.selfURLs}}, cfg.Config)
+		runs, renderErr := RenderTrees(
+			t.Context(),
+			[]Tree{
+				{
+					ID:       manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
+					Path:     filepath.Join(side.root, side.scan),
+					RepoRoot: side.root,
+					SelfURLs: fixture.selfURLs,
+				},
+			},
+			cfg.Config,
+		)
 		*side.out = runs[0]
 		side.out.Err = renderErr
 	}
-	baseTree.ID, headTree.ID = manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}
+	baseTree.ID, headTree.ID = manifest.TreeID{
+		Cluster: ".",
+		Side:    manifest.TreeBase,
+	}, manifest.TreeID{
+		Cluster: ".",
+		Side:    manifest.TreeHead,
+	}
 	baseTree.Input, baseTree.BaseInput, baseTree.ExternalChanges = cfg.BaseInput, cfg.Input, cfg.ExternalChanges
 	headTree.Input, headTree.BaseInput, headTree.ExternalChanges = cfg.Input, cfg.BaseInput, cfg.ExternalChanges
 	runs, pairErr := RenderTrees(t.Context(), []Tree{baseTree, headTree}, cfg.Config)
@@ -1225,8 +1658,20 @@ func checkRenderModel(t *testing.T, fixture renderModelCase) ([]byte, error) {
 	} {
 		full, _, fullErr := observeRenderModel(side.world, side.full, false)
 		changed, admitted, changedErr := observeRenderModel(side.world, side.changed, true)
-		fmt.Fprintf(&evidence, "%s expected affected=%v support=%v unavailable=%v deleted=%v actual=%v full-error=%v changed-error=%v full-observation-error=%v changed-observation-error=%v\n",
-			side.name, modelIDs(side.want.affected), modelIDs(side.want.support), modelIDs(side.want.unavailable), modelIDs(side.want.deleted), modelIDs(admitted), side.full.Err, side.changed.Err, fullErr, changedErr)
+		fmt.Fprintf(
+			&evidence,
+			"%s expected affected=%v support=%v unavailable=%v deleted=%v actual=%v full-error=%v changed-error=%v full-observation-error=%v changed-observation-error=%v\n",
+			side.name,
+			modelIDs(side.want.affected),
+			modelIDs(side.want.support),
+			modelIDs(side.want.unavailable),
+			modelIDs(side.want.deleted),
+			modelIDs(admitted),
+			side.full.Err,
+			side.changed.Err,
+			fullErr,
+			changedErr,
+		)
 		if fullErr != nil || changedErr != nil {
 			problems = append(problems, fmt.Errorf("observe %s: %w", side.name, errors.Join(fullErr, changedErr)))
 			continue
@@ -1239,9 +1684,22 @@ func checkRenderModel(t *testing.T, fixture renderModelCase) ([]byte, error) {
 		}
 		for _, id := range modelIDs(admitted) {
 			info, _ := side.changed.store.GetStatus(namedRenderModelID(id))
-			fmt.Fprintf(&evidence, "%s %s status=%+v artifact=%T\n", side.name, id, info, side.changed.store.GetArtifact(namedRenderModelID(id), store.ArtifactContent))
+			fmt.Fprintf(
+				&evidence,
+				"%s %s status=%+v artifact=%T\n",
+				side.name,
+				id,
+				info,
+				side.changed.store.GetArtifact(namedRenderModelID(id), store.ArtifactContent),
+			)
 		}
-		fmt.Fprintf(&evidence, "%s full-documents=%+v changed-documents=%+v\n", side.name, full.documents, changed.documents)
+		fmt.Fprintf(
+			&evidence,
+			"%s full-documents=%+v changed-documents=%+v\n",
+			side.name,
+			full.documents,
+			changed.documents,
+		)
 		work := side.want
 		if err := compareModelSelection(work, admitted); err != nil {
 			problems = append(problems, fmt.Errorf("changed-%s: %w", side.name, err))
@@ -1254,7 +1712,8 @@ func checkRenderModel(t *testing.T, fixture renderModelCase) ([]byte, error) {
 			}
 		}
 		for _, id := range modelIDs(side.want.deleted) {
-			if side.name == "after" && slices.ContainsFunc(changed.documents, func(d modelDocument) bool { return d.id.modelID == id }) {
+			if side.name == "after" &&
+				slices.ContainsFunc(changed.documents, func(d modelDocument) bool { return d.id.modelID == id }) {
 				return nil, fmt.Errorf("deleted object remains: %s", id)
 			}
 		}
@@ -1296,14 +1755,29 @@ func checkRenderModel(t *testing.T, fixture renderModelCase) ([]byte, error) {
 func failRenderModel(t *testing.T, input []byte, fixture renderModelCase, err error) {
 	t.Helper()
 	var diagnostic strings.Builder
-	fmt.Fprintf(&diagnostic, "input=%x\noperations=%+v\nunsupported=%v\nerror=%v\n", input, fixture.operations, fixture.unsupported, err)
+	fmt.Fprintf(
+		&diagnostic,
+		"input=%x\noperations=%+v\nunsupported=%v\nerror=%v\n",
+		input,
+		fixture.operations,
+		fixture.unsupported,
+		err,
+	)
 	selection := compareModelWorlds(fixture.before, fixture.after)
 	for _, side := range []struct {
 		name  string
 		world modelWorld
 		want  modelSelection
 	}{{"before", fixture.before, selection.before}, {"after", fixture.after, selection.after}} {
-		fmt.Fprintf(&diagnostic, "%s expected affected=%v support=%v unavailable=%v deleted=%v\n", side.name, modelIDs(side.want.affected), modelIDs(side.want.support), modelIDs(side.want.unavailable), modelIDs(side.want.deleted))
+		fmt.Fprintf(
+			&diagnostic,
+			"%s expected affected=%v support=%v unavailable=%v deleted=%v\n",
+			side.name,
+			modelIDs(side.want.affected),
+			modelIDs(side.want.support),
+			modelIDs(side.want.unavailable),
+			modelIDs(side.want.deleted),
+		)
 		ids := slices.Collect(maps.Keys(side.world.producers))
 		slices.SortFunc(ids, compareModelID)
 		fmt.Fprintf(&diagnostic, "%s producers=%v\n", side.name, ids)
@@ -1330,7 +1804,18 @@ func failRenderModel(t *testing.T, input []byte, fixture renderModelCase, err er
 			reproduction, marshalErr := json.MarshalIndent(map[string][]string{
 				"mkdir_argv":        {"mkdir", "-p", corpusDir},
 				"install_seed_argv": {"cp", filepath.Join(dir, "seed"), filepath.Join(corpusDir, seedName)},
-				"test_argv":         {"mise", "exec", "--", "go", "test", "-race", "./pkg/orchestrator", "-run", "^FuzzRenderTrees_IndependentModel$/" + seedName + "$", "-count=1"},
+				"test_argv": {
+					"mise",
+					"exec",
+					"--",
+					"go",
+					"test",
+					"-race",
+					"./pkg/orchestrator",
+					"-run",
+					"^FuzzRenderTrees_IndependentModel$/" + seedName + "$",
+					"-count=1",
+				},
 			}, "", "  ")
 			if marshalErr != nil {
 				t.Fatal(marshalErr)
@@ -1364,15 +1849,33 @@ func renderModelInputs() []renderModelInput {
 		name          string
 		seed, variant byte
 	}{
-		{"generator-input", 1, 4}, {"chart-template", 1, 5}, {"chart-template-directory", 1, 133}, {"chart-values", 1, 6},
-		{"inline-values", 1, 7}, {"referenced-values", 1, 8}, {"chart-dependency", 1, 9},
-		{"shared-owner-removal", 2, 10}, {"ancestor-patch", 1, 11},
-		{"ignore-membership", 4, 12}, {"orphan-transition", 0, 13},
-		{"alias-pinned-dirty-collision", 1, 14}, {"second-source-content", 1, 15},
-		{"group-move", 1, 16}, {"group-collision", 1, 17}, {"late-data-support", 0, 18},
-		{"optional-absent", 1, 19}, {"required-absent", 1, 20}, {"missing-crd", 1, 21}, {"late-source-support", 0, 22},
-		{"source-binding-move", 1, 23}, {"root-move", 1, 24}, {"owner-move", 0, 25}, {"ancestor-injected-patch", 0, 26},
-		{"two-sided-add", 4, 27}, {"ignore-removal", 4, 28}, {"emitted-namespace-move", 0, 29},
+		{"generator-input", 1, 4},
+		{"chart-template", 1, 5},
+		{"chart-template-directory", 1, 133},
+		{"chart-values", 1, 6},
+		{"inline-values", 1, 7},
+		{"referenced-values", 1, 8},
+		{"chart-dependency", 1, 9},
+		{"shared-owner-removal", 2, 10},
+		{"ancestor-patch", 1, 11},
+		{"ignore-membership", 4, 12},
+		{"orphan-transition", 0, 13},
+		{"alias-pinned-dirty-collision", 1, 14},
+		{"second-source-content", 1, 15},
+		{"group-move", 1, 16},
+		{"group-collision", 1, 17},
+		{"late-data-support", 0, 18},
+		{"optional-absent", 1, 19},
+		{"required-absent", 1, 20},
+		{"missing-crd", 1, 21},
+		{"late-source-support", 0, 22},
+		{"source-binding-move", 1, 23},
+		{"root-move", 1, 24},
+		{"owner-move", 0, 25},
+		{"ancestor-injected-patch", 0, 26},
+		{"two-sided-add", 4, 27},
+		{"ignore-removal", 4, 28},
+		{"emitted-namespace-move", 0, 29},
 	} {
 		cases = append(cases, renderModelInput{feature.name, []byte{feature.seed, feature.variant}})
 	}
@@ -1380,9 +1883,15 @@ func renderModelInputs() []renderModelInput {
 		name   string
 		opcode byte
 	}{
-		{"same-size-edit", 0}, {"comment-only", 1}, {"rename-input", 2},
-		{"name-move", 3}, {"namespace-move", 4}, {"path-move", 5},
-		{"suspension", 6}, {"unrelated-dirty-file", 7}, {"owner-removal", 8},
+		{"same-size-edit", 0},
+		{"comment-only", 1},
+		{"rename-input", 2},
+		{"name-move", 3},
+		{"namespace-move", 4},
+		{"path-move", 5},
+		{"suspension", 6},
+		{"unrelated-dirty-file", 7},
+		{"owner-removal", 8},
 	} {
 		cases = append(cases, renderModelInput{mutation.name, []byte{1, 0, mutation.opcode, 0, 1}})
 	}
@@ -1473,7 +1982,10 @@ func TestIndependentModel_ObservationRejects(t *testing.T) {
 			world := newRenderModelWorld("cluster")
 			id := addRenderModelKS(world, "app", "flux-system", "apps/app")
 			obj := &manifest.Kustomization{Name: "app", Namespace: "flux-system"}
-			side := Rendered{Orchestrator: &Orchestrator{store: store.New(), tasks: task.NewBounded(2)}, Result: &Result{}}
+			side := Rendered{
+				Orchestrator: &Orchestrator{store: store.New(), tasks: task.NewBounded(2)},
+				Result:       &Result{},
+			}
 			side.store.AddObject(obj)
 			side.store.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady})
 			if tc.name != "missing-artifact" && tc.name != "incomplete-emission" && tc.name != "unselected-output" {
@@ -1493,21 +2005,40 @@ func TestIndependentModel_ObservationRejects(t *testing.T) {
 				side.store.AddObject(&manifest.Kustomization{Name: "extra", Namespace: "flux-system"})
 			case "unselected-emission", "unselected-output":
 				selected = true
-				side.loader = admissiontest.New(t, admissiontest.Config{Changes: change.NewSet(nil), Index: nil, Inventory: nil, Root: ""})
+				side.loader = admissiontest.New(
+					t,
+					admissiontest.Config{Changes: change.NewSet(nil), Index: nil, Inventory: nil, Root: ""},
+				)
 				admissiontest.Commit(t, side.loader, nil)
 				side.filter = side.loader.Options.Filter
 				if tc.name == "unselected-output" {
-					side.Result.Manifests = []manifest.DocumentBatch{{Parent: obj, Documents: []map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "extra"}}}}}
+					side.Result.Manifests = []manifest.DocumentBatch{
+						{
+							Parent: obj,
+							Documents: []map[string]any{
+								{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "extra"}},
+							},
+						},
+					}
 				}
 			case "ownerless-extra-document":
-				side.Result.Manifests = []manifest.DocumentBatch{{Documents: []map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "extra"}}}}}
+				side.Result.Manifests = []manifest.DocumentBatch{
+					{
+						Documents: []map[string]any{
+							{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "extra"}},
+						},
+					},
+				}
 			}
 			got, _, err := observeRenderModel(world, side, selected)
 			if tc.name == "ownerless-extra-document" {
 				if err != nil {
 					t.Fatal(err)
 				}
-				err = compareModelObservation(modelObservation{producers: map[modelID]modelStatus{id: {terminal: true}}}, got)
+				err = compareModelObservation(
+					modelObservation{producers: map[modelID]modelStatus{id: {terminal: true}}},
+					got,
+				)
 			}
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("%s accepted: want=%q got=%v", tc.name, tc.want, err)
@@ -1525,7 +2056,14 @@ func TestIndependentModel_BaselineUnavailable(t *testing.T) {
 			root := t.TempDir()
 			repo := testutil.GitInit(t, root)
 			writeRenderModelWorld(t, root, fixture.before)
-			base := testutil.GitCommitAll(t, repo, "before", &gogit.CommitOptions{Author: &object.Signature{Name: "fixture", Email: "fixture@example.test", When: time.Unix(0, 0)}})
+			base := testutil.GitCommitAll(
+				t,
+				repo,
+				"before",
+				&gogit.CommitOptions{
+					Author: &object.Signature{Name: "fixture", Email: "fixture@example.test", When: time.Unix(0, 0)},
+				},
+			)
 			selected := base.String()
 			if mode == "shallow" {
 				if err := repo.Storer.SetShallow([]plumbing.Hash{base}); err != nil {
@@ -1555,7 +2093,8 @@ func TestIndependentModel_BaselineUnavailable(t *testing.T) {
 			if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
 				t.Fatalf("unavailable %s baseline accepted: result=%+v err=%v", mode, result, err)
 			}
-			if result != nil && (result.BaseInput != nil && result.BaseInput.FS != nil || result.Source != nil && result.Source.FS != nil) {
+			if result != nil &&
+				(result.BaseInput != nil && result.BaseInput.FS != nil || result.Source != nil && result.Source.FS != nil) {
 				t.Fatalf("unavailable %s returned usable render inputs: %+v", mode, result)
 			}
 			t.Logf("%s: baseline admission unavailable, no changed render claimed: %v", mode, err)
@@ -1643,13 +2182,26 @@ func TestRenderTrees_IndependentModel_Metamorphic(t *testing.T) {
 			control := decodeRenderModelCase(encoded)
 			switch name {
 			case "disjoint-growth":
-				want, got := compareModelWorlds(fixture.before, fixture.after), compareModelWorlds(control.before, control.after)
+				want, got := compareModelWorlds(
+					fixture.before,
+					fixture.after,
+				), compareModelWorlds(
+					control.before,
+					control.after,
+				)
 				if !reflect.DeepEqual(want, got) {
 					t.Fatalf("disjoint growth changed expected membership: want=%+v got=%+v", want, got)
 				}
 			case "reverse-edit":
-				want, got := compareModelWorlds(fixture.before, fixture.after), compareModelWorlds(control.before, control.after)
-				if !maps.Equal(want.before.affected, got.after.affected) || !maps.Equal(want.after.affected, got.before.affected) {
+				want, got := compareModelWorlds(
+					fixture.before,
+					fixture.after,
+				), compareModelWorlds(
+					control.before,
+					control.after,
+				)
+				if !maps.Equal(want.before.affected, got.after.affected) ||
+					!maps.Equal(want.after.affected, got.before.affected) {
 					t.Fatal("reversing an edit changed its symmetric affected membership")
 				}
 			}
@@ -1681,12 +2233,36 @@ func TestRenderTrees_EntryApplicationIntervalReceipt(t *testing.T) {
 	const url = "https://example.test/entry/repo"
 	for _, dir := range []string{root, original} {
 		testutil.GitInit(t, dir)
-		testutil.WriteFile(t, dir, "entry/source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: self, namespace: apps}\nspec: {url: "+url+"}\n")
-		testutil.WriteFile(t, dir, "entry/generator.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: generator, namespace: apps}\nspec:\n  interval: 10m\n  chart:\n    spec:\n      chart: charts/bootstrap\n      sourceRef: {kind: GitRepository, name: self, namespace: apps}\n")
+		testutil.WriteFile(
+			t,
+			dir,
+			"entry/source.yaml",
+			"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: self, namespace: apps}\nspec: {url: "+url+"}\n",
+		)
+		testutil.WriteFile(
+			t,
+			dir,
+			"entry/generator.yaml",
+			"apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: generator, namespace: apps}\nspec:\n  interval: 10m\n  chart:\n    spec:\n      chart: charts/bootstrap\n      sourceRef: {kind: GitRepository, name: self, namespace: apps}\n",
+		)
 		testutil.WriteFile(t, dir, "charts/bootstrap/Chart.yaml", "apiVersion: v2\nname: bootstrap\nversion: 1.0.0\n")
 		application := "apiVersion: fluxcd.controlplane.io/v1\nkind: FluxInstance\nmetadata: {name: flux, namespace: apps}\nspec:\n  sync: {name: self, kind: GitRepository, url: " + url + ", ref: main, path: ./entry}\n"
-		testutil.WriteFile(t, dir, "charts/bootstrap/templates/application.yaml", "{{ print "+fmt.Sprintf("%q", application)+" }}")
-		testutil.WriteFile(t, dir, "entry/child.yaml", testutil.KustomizationYAML("child", "apps", "  interval: 1h\n  path: ./workload\n  sourceRef: {kind: GitRepository, name: self}\n"))
+		testutil.WriteFile(
+			t,
+			dir,
+			"charts/bootstrap/templates/application.yaml",
+			"{{ print "+fmt.Sprintf("%q", application)+" }}",
+		)
+		testutil.WriteFile(
+			t,
+			dir,
+			"entry/child.yaml",
+			testutil.KustomizationYAML(
+				"child",
+				"apps",
+				"  interval: 1h\n  path: ./workload\n  sourceRef: {kind: GitRepository, name: self}\n",
+			),
+		)
 		testutil.WriteFile(t, dir, "workload/kustomization.yaml", "resources: []\n")
 	}
 	before := testDirectoryInput(t, original)
@@ -1702,7 +2278,16 @@ func TestRenderTrees_EntryApplicationIntervalReceipt(t *testing.T) {
 	if !prime.cache.CanPersistRenders() {
 		t.Skip("warm receipt witness requires a clean VCS-stamped build")
 	}
-	testutil.WriteFile(t, root, "entry/child.yaml", testutil.KustomizationYAML("child", "apps", "  interval: 2h\n  path: ./workload\n  sourceRef: {kind: GitRepository, name: self}\n"))
+	testutil.WriteFile(
+		t,
+		root,
+		"entry/child.yaml",
+		testutil.KustomizationYAML(
+			"child",
+			"apps",
+			"  interval: 2h\n  path: ./workload\n  sourceRef: {kind: GitRepository, name: self}\n",
+		),
+	)
 	current := tree
 	current.BaseInput, current.ExternalChanges = before, change.NewSet([]string{"entry/child.yaml"})
 	warm, err := newTestOrchestrator(t, current, cfg)
@@ -1713,13 +2298,21 @@ func TestRenderTrees_EntryApplicationIntervalReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := testutil.HelmReleaseID("apps", "generator")
-	calls, admitted := map[manifest.NamedResource]*atomic.Int64{id: {}}, map[manifest.NamedResource]*atomic.Int64{id: {}}
+	calls, admitted := map[manifest.NamedResource]*atomic.Int64{
+		id: {},
+	}, map[manifest.NamedResource]*atomic.Int64{
+		id: {},
+	}
 	warm.controllers.HelmRelease = countedNodeController{warm.hrc, calls, admitted}
 	if err := warm.run(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if admitted[id].Load() != 0 || warm.store.GetArtifact(id, store.ArtifactContent) != nil {
-		t.Fatalf("warm interval edit rendered the applier producer: calls=%d admitted=%d", calls[id].Load(), admitted[id].Load())
+		t.Fatalf(
+			"warm interval edit rendered the applier producer: calls=%d admitted=%d",
+			calls[id].Load(),
+			admitted[id].Load(),
+		)
 	}
 	check := func(run *Orchestrator) {
 		t.Helper()
@@ -1748,7 +2341,15 @@ func TestRenderTrees_EntryApplicationIntervalReceipt(t *testing.T) {
 	}
 	check(full)
 	t.Logf("warm applier producer: calls=%d admitted=%d", calls[id].Load(), admitted[id].Load())
-	testutil.WriteFile(t, root, "charts/bootstrap/templates/application.yaml", "{{ print "+fmt.Sprintf("%q", "apiVersion: fluxcd.controlplane.io/v1\nkind: FluxInstance\nmetadata: {name: flux, namespace: apps}\nspec:\n  sync: {name: self, kind: GitRepository, url: "+url+", ref: main, path: ./elsewhere}\n")+" }}")
+	testutil.WriteFile(
+		t,
+		root,
+		"charts/bootstrap/templates/application.yaml",
+		"{{ print "+fmt.Sprintf(
+			"%q",
+			"apiVersion: fluxcd.controlplane.io/v1\nkind: FluxInstance\nmetadata: {name: flux, namespace: apps}\nspec:\n  sync: {name: self, kind: GitRepository, url: "+url+", ref: main, path: ./elsewhere}\n",
+		)+" }}",
+	)
 	invalidated, err := newTestOrchestrator(t, current, cfg)
 	if err != nil {
 		t.Fatal(err)

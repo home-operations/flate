@@ -71,8 +71,15 @@ func newTestOrchestrator(tb testing.TB, tree Tree, cfg Config) (*Orchestrator, e
 		cfg.HelmClient = helm.NewClient(cfg.Cache)
 	}
 	ssrfguard.Restrict(cfg.RestrictEgress)
-	cfg.chartFetcher = helmchart.New(&oci.Fetcher{Cache: cfg.Cache, Network: cfg.Network, RegistryConfig: cfg.RegistryConfig}, helmchart.Config{
-		Cache: cfg.Cache, Network: cfg.Network, Concurrency: cfg.Concurrency, DisableChartDigestTracking: cfg.HelmOptions.DisableChartDigestTracking})
+	cfg.chartFetcher = helmchart.New(
+		&oci.Fetcher{Cache: cfg.Cache, Network: cfg.Network, RegistryConfig: cfg.RegistryConfig},
+		helmchart.Config{
+			Cache:                      cfg.Cache,
+			Network:                    cfg.Network,
+			Concurrency:                cfg.Concurrency,
+			DisableChartDigestTracking: cfg.HelmOptions.DisableChartDigestTracking,
+		},
+	)
 	o := newOrchestrator(cfg, tree, task.NewBounded(cfg.Concurrency))
 	tb.Cleanup(func() {
 		o.stop()

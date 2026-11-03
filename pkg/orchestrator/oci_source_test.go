@@ -24,7 +24,12 @@ type generatedOCIFetcher struct {
 	wantRetry sourcecache.RetryConfig
 }
 
-func (f *generatedOCIFetcher) Fetch(ctx context.Context, obj manifest.BaseManifest, reads *store.ReadSet, policy sourcecache.Policy) (*store.SourceArtifact, error) {
+func (f *generatedOCIFetcher) Fetch(
+	ctx context.Context,
+	obj manifest.BaseManifest,
+	reads *store.ReadSet,
+	policy sourcecache.Policy,
+) (*store.SourceArtifact, error) {
 	f.calls.Add(1)
 	if reads == nil {
 		return nil, fmt.Errorf("missing captured inputs")
@@ -62,7 +67,16 @@ func TestRender_DeferredOCIArtifactRoot(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root, artifact := t.TempDir(), t.TempDir()
-			testutil.WriteFile(t, root, "flux/ks.yaml", testutil.KustomizationYAML("consumer", "flux-system", "  path: ./payload\n  sourceRef: {kind: OCIRepository, name: app}\n"))
+			testutil.WriteFile(
+				t,
+				root,
+				"flux/ks.yaml",
+				testutil.KustomizationYAML(
+					"consumer",
+					"flux-system",
+					"  path: ./payload\n  sourceRef: {kind: OCIRepository, name: app}\n",
+				),
+			)
 			if tc.producer {
 				testutil.WriteFile(t, root, "flux/rs.yaml", `apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSet
@@ -77,9 +91,18 @@ spec:
 `)
 			}
 			testutil.WriteFile(t, artifact, "payload/kustomization.yaml", "resources: [cm.yaml]\n")
-			testutil.WriteFile(t, artifact, "payload/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: artifact-output}\n")
+			testutil.WriteFile(
+				t,
+				artifact,
+				"payload/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: artifact-output}\n",
+			)
 			retry := sourcecache.RetryConfig{Attempts: 2}
-			o, err := newTestOrchestrator(t, Tree{Path: root + "/flux", RepoRoot: root}, Config{SourceRetry: retry, CacheDir: t.TempDir(), Concurrency: 2})
+			o, err := newTestOrchestrator(
+				t,
+				Tree{Path: root + "/flux", RepoRoot: root},
+				Config{SourceRetry: retry, CacheDir: t.TempDir(), Concurrency: 2},
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -95,19 +118,33 @@ spec:
 			}
 			status, _ := o.Store().GetStatus(id)
 			if tc.fetchErr != nil {
-				if !f.fetched.Load() || status.Status != store.StatusFailed || !strings.Contains(status.Message, "fixture fetch failed") || strings.Contains(status.Message, "unknown OCI artifact root") {
+				if !f.fetched.Load() || status.Status != store.StatusFailed ||
+					!strings.Contains(status.Message, "fixture fetch failed") ||
+					strings.Contains(status.Message, "unknown OCI artifact root") {
 					t.Fatalf("fetched=%t status=%+v", f.fetched.Load(), status)
 				}
 			} else if tc.producer {
-				if !f.fetched.Load() || status.Status != store.StatusReady || len(outputByParent(res.Manifests)[id]) != 1 {
-					t.Fatalf("fetched=%t status=%+v manifests=%v", f.fetched.Load(), status, outputByParent(res.Manifests)[id])
+				if !f.fetched.Load() || status.Status != store.StatusReady ||
+					len(outputByParent(res.Manifests)[id]) != 1 {
+					t.Fatalf(
+						"fetched=%t status=%+v manifests=%v",
+						f.fetched.Load(),
+						status,
+						outputByParent(res.Manifests)[id],
+					)
 				}
 				if name, _ := manifest.DocMetadata(outputByParent(res.Manifests)[id][0]); name != "artifact-output" {
 					t.Fatalf("rendered %q from the working tree instead of the OCI artifact", name)
 				}
 			} else {
-				missing := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "app"}
-				if f.fetched.Load() || status.Status != store.StatusFailed || !slices.Contains(status.BlockedBy(), missing) {
+				missing := manifest.NamedResource{
+					Group:     manifest.SourceDomain,
+					Kind:      manifest.KindOCIRepository,
+					Namespace: "flux-system",
+					Name:      "app",
+				}
+				if f.fetched.Load() || status.Status != store.StatusFailed ||
+					!slices.Contains(status.BlockedBy(), missing) {
 					t.Fatalf("fetched=%t status=%+v", f.fetched.Load(), status)
 				}
 				if len(outputByParent(res.Manifests)[id]) != 0 {

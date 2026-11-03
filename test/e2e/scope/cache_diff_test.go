@@ -33,7 +33,11 @@ func TestE2E_Diff_InTreeCache(t *testing.T) {
 							t.Fatal(err)
 						}
 					}
-					cluster := testutil.KustomizationYAML("apps", "flux-system", "  interval: 10m\n  path: ./apps\n  sourceRef: {kind: GitRepository, name: "+sourceName+", namespace: flux-system}\n")
+					cluster := testutil.KustomizationYAML(
+						"apps",
+						"flux-system",
+						"  interval: 10m\n  path: ./apps\n  sourceRef: {kind: GitRepository, name: "+sourceName+", namespace: flux-system}\n",
+					)
 					if source == "self" {
 						cluster = `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
@@ -56,7 +60,14 @@ metadata: {name: hello, namespace: apps}
 data:
   greeting: hola
 `)
-					testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+					testutil.GitCommitAll(
+						t,
+						repo,
+						"init",
+						&gogit.CommitOptions{
+							Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)},
+						},
+					)
 					head, err := repo.Head()
 					if err != nil {
 						t.Fatal(err)
@@ -66,11 +77,21 @@ data:
 						t.Fatal(err)
 					}
 					if state == "changed" {
-						harness.MutateFile(t, filepath.Join(repoRoot, "apps", "cm.yaml"), "greeting: hola", "greeting: hi")
+						harness.MutateFile(
+							t,
+							filepath.Join(repoRoot, "apps", "cm.yaml"),
+							"greeting: hola",
+							"greeting: hi",
+						)
 					}
 					switch state {
 					case "suspended_current":
-						harness.MutateFile(t, filepath.Join(repoRoot, "flux", "cluster.yaml"), "  path: ./apps", "  suspend: true\n  path: ./apps")
+						harness.MutateFile(
+							t,
+							filepath.Join(repoRoot, "flux", "cluster.yaml"),
+							"  path: ./apps",
+							"  suspend: true\n  path: ./apps",
+						)
 					case "suspended_orig":
 						harness.MutateFile(t, filepath.Join(repoRoot, "flux", "cluster.yaml"), "  suspend: true\n", "")
 					}
@@ -96,26 +117,43 @@ data:
 							}
 							for _, warmth := range warmths {
 								t.Run(warmth, func(t *testing.T) {
-									args := []string{"diff", "all", "--base", "cache-base", "--concurrency", "2",
-										"-o", "diff", "--cache-dir", layout.path, "--path", "flux"}
+									args := []string{
+										"diff", "all", "--base", "cache-base", "--concurrency", "2",
+										"-o", "diff", "--cache-dir", layout.path, "--path", "flux",
+									}
 									out, stderr := harness.RequireCLIOK(t, args...)
 									if state == "unchanged" && out != "" {
 										t.Errorf("unchanged stdout must be empty:\n%s\nstderr:\n%s", out, stderr)
 									}
 									if state == "changed" && (!strings.Contains(out, "-  greeting: hola") ||
 										!strings.Contains(out, "+  greeting: hi")) {
-										t.Errorf("expected greeting removal and addition:\n%s\nstderr:\n%s", out, stderr)
+										t.Errorf(
+											"expected greeting removal and addition:\n%s\nstderr:\n%s",
+											out,
+											stderr,
+										)
 									}
 									if side, suspended := strings.CutPrefix(state, "suspended_"); suspended {
-										if !strings.Contains(stderr, "suspended on "+side) || !strings.Contains(stderr, "diff suppressed") || !strings.Contains(out, "suspend: true") || strings.Contains(out, "greeting:") {
-											t.Fatalf("suspension must disclose withheld output without pruning: stdout=%q stderr=%q", out, stderr)
+										if !strings.Contains(stderr, "suspended on "+side) ||
+											!strings.Contains(stderr, "diff suppressed") ||
+											!strings.Contains(out, "suspend: true") ||
+											strings.Contains(out, "greeting:") {
+											t.Fatalf(
+												"suspension must disclose withheld output without pruning: stdout=%q stderr=%q",
+												out,
+												stderr,
+											)
 										}
 									}
 									if layout.name == "external" && warmth == "fresh" {
 										control = out
 									}
 									if out != control {
-										t.Errorf("stdout differs from external cache:\nwant:\n%s\ngot:\n%s", control, out)
+										t.Errorf(
+											"stdout differs from external cache:\nwant:\n%s\ngot:\n%s",
+											control,
+											out,
+										)
 									}
 									if _, err := os.Stat(layout.path); err != nil {
 										t.Fatalf("cache was not populated: %v", err)

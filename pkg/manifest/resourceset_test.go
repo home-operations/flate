@@ -34,7 +34,8 @@ func TestResourceSetInputProvider_InputPlan(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			provider := &ResourceSetInputProvider{Name: "tags", Namespace: "authored", Type: tc.providerType,
+			provider := &ResourceSetInputProvider{
+				Name: "tags", Namespace: "authored", Type: tc.providerType,
 				URL: "oci://registry.test/app", SecretRef: &LocalObjectReference{Name: "auth"},
 				CertSecretRef: &LocalObjectReference{Name: "cert"}, Insecure: true,
 				DefaultValues: fluxopv1.ResourceSetInput{"name": {Raw: []byte(`"app"`)}},
@@ -70,7 +71,10 @@ func TestResourceSetInputProvider_InputPlanOwnsMaps(t *testing.T) {
 	for _, status := range []bool{false, true} {
 		t.Run(fmt.Sprintf("status_%t", status), func(t *testing.T) {
 			t.Parallel()
-			values := fluxopv1.ResourceSetInput{"id": {Raw: []byte(`"authored"`)}, "nested": {Raw: []byte(`{"name":"app"}`)}}
+			values := fluxopv1.ResourceSetInput{
+				"id":     {Raw: []byte(`"authored"`)},
+				"nested": {Raw: []byte(`{"name":"app"}`)},
+			}
 			provider := &ResourceSetInputProvider{Type: fluxopv1.InputProviderStatic, DefaultValues: values}
 			if status {
 				provider.Type = fluxopv1.InputProviderOCIArtifactTag
@@ -177,9 +181,15 @@ func TestResourceSetInputProvider_TagInputs(t *testing.T) {
 	assert.NoError(t, err)
 	decoded, err := decodeResourceSetInputs([]fluxopv1.ResourceSetInput{input})
 	assert.NoError(t, err)
-	assert.Diff(t, decoded, []map[string]any{{
-		"id": "93520228", "tag": "v1.0.0", "digest": "sha256:resolved", "name": "app", "nested": map[string]any{"enabled": true},
-	}})
+	assert.Diff(t, decoded, []map[string]any{
+		{
+			"id":     "93520228",
+			"tag":    "v1.0.0",
+			"digest": "sha256:resolved",
+			"name":   "app",
+			"nested": map[string]any{"enabled": true},
+		},
+	})
 	input["nested"].Raw[0] = '['
 	assert.Equal(t, string(provider.DefaultValues["nested"].Raw), `{"enabled":true}`)
 	provider.DefaultValues = fluxopv1.ResourceSetInput{"bad": &apix.JSON{Raw: []byte(`invalid`)}}

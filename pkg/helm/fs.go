@@ -49,25 +49,45 @@ func captureChart(ctx context.Context, input fs.FS, name string, archiveShape bo
 	info, err := fs.Stat(input, name)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return capturedChart{}, true, manifest.NewError(manifest.ErrInput, fmt.Errorf("chart not found at %s: %w", name, err), "")
+			return capturedChart{}, true, manifest.NewError(
+				manifest.ErrInput,
+				fmt.Errorf("chart not found at %s: %w", name, err),
+				"",
+			)
 		}
-		return capturedChart{}, false, manifest.NewError(manifest.ErrInput, fmt.Errorf("stat chart %s: %w", name, err), "")
+		return capturedChart{}, false, manifest.NewError(
+			manifest.ErrInput,
+			fmt.Errorf("stat chart %s: %w", name, err),
+			"",
+		)
 	}
 	if info.IsDir() {
 		input, err = fs.Sub(input, name)
 		if err != nil {
-			return capturedChart{}, false, manifest.NewError(manifest.ErrInput, fmt.Errorf("chart directory %s: %w", name, err), "")
+			return capturedChart{}, false, manifest.NewError(
+				manifest.ErrInput,
+				fmt.Errorf("chart directory %s: %w", name, err),
+				"",
+			)
 		}
 		files, err := chartFilesInFS(ctx, input, archiveShape)
 		return capturedChart{files: files}, false, err
 	}
 	r, err := input.Open(name)
 	if err != nil {
-		return capturedChart{}, false, manifest.NewError(manifest.ErrInput, fmt.Errorf("open chart %s: %w", name, err), "")
+		return capturedChart{}, false, manifest.NewError(
+			manifest.ErrInput,
+			fmt.Errorf("open chart %s: %w", name, err),
+			"",
+		)
 	}
 	data, readErr := io.ReadAll(r)
 	if err := errors.Join(readErr, r.Close()); err != nil {
-		return capturedChart{}, false, manifest.NewError(manifest.ErrInput, fmt.Errorf("read chart %s: %w", name, err), "")
+		return capturedChart{}, false, manifest.NewError(
+			manifest.ErrInput,
+			fmt.Errorf("read chart %s: %w", name, err),
+			"",
+		)
 	}
 	return capturedChart{archive: data}, false, nil
 }
@@ -95,7 +115,8 @@ func chartFilesInFS(ctx context.Context, input fs.FS, archiveShape bool) ([]*arc
 			if strings.HasPrefix(relative, "..") {
 				return errors.New("chart illegally references parent directory")
 			}
-			if len(relative) >= 3 && relative[1:3] == ":/" && (relative[0] >= 'a' && relative[0] <= 'z' || relative[0] >= 'A' && relative[0] <= 'Z') {
+			if len(relative) >= 3 && relative[1:3] == ":/" &&
+				(relative[0] >= 'a' && relative[0] <= 'z' || relative[0] >= 'A' && relative[0] <= 'Z') {
 				return errors.New("chart contains illegally named files")
 			}
 			if base == "Chart.yaml" {
@@ -118,7 +139,11 @@ func chartFilesInFS(ctx context.Context, input fs.FS, archiveShape bool) ([]*arc
 		if remaining < 0 || archiveShape && remaining == 0 {
 			return fmt.Errorf("chart exceeds maximum decompressed size")
 		}
-		file := &archive.BufferedFile{Name: rooted, ModTime: info.ModTime(), Data: bytes.TrimPrefix(data, []byte{0xef, 0xbb, 0xbf})}
+		file := &archive.BufferedFile{
+			Name:    rooted,
+			ModTime: info.ModTime(),
+			Data:    bytes.TrimPrefix(data, []byte{0xef, 0xbb, 0xbf}),
+		}
 		files = append(files, file)
 		return nil
 	}

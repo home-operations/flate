@@ -41,11 +41,27 @@ data:
 	cliSources := localChartResolver(t, "chart-repo", "flux-system", dir)
 
 	hr := &manifest.HelmRelease{
-		Name: "demo", Namespace: "default",
-		Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "chart-repo", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}},
+		Name:      "demo",
+		Namespace: "default",
+		Chart: manifest.HelmChart{
+			Name: "mychart",
+			Source: manifest.NamedResource{
+				Name:      "chart-repo",
+				Namespace: "flux-system",
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindGitRepository,
+			},
+		},
 	}
 
-	out, _, err := testutil.RenderMaps(cli.Template(context.Background(), hr, map[string]any{"greeting": "hello"}, RenderOptions{Options: Options{}, Sources: cliSources}))
+	out, _, err := testutil.RenderMaps(
+		cli.Template(
+			context.Background(),
+			hr,
+			map[string]any{"greeting": "hello"},
+			RenderOptions{Options: Options{}, Sources: cliSources},
+		),
+	)
 	if err != nil {
 		t.Fatalf("Template: %v", err)
 	}
@@ -63,17 +79,35 @@ func TestTemplate_DoesNotMutateInputValues(t *testing.T) {
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml",
 		"apiVersion: v2\nname: mychart\nversion: 0.1.0\ndescription: t\n")
 	testutil.WriteFile(t, dir, "mychart/values.yaml", "image:\n  tag: default\n")
-	testutil.WriteFile(t, dir, "mychart/first.yaml", "image:\n  tag: first\n  repository: file-repo\n  pullPolicy: Always\n")
+	testutil.WriteFile(
+		t,
+		dir,
+		"mychart/first.yaml",
+		"image:\n  tag: first\n  repository: file-repo\n  pullPolicy: Always\n",
+	)
 	testutil.WriteFile(t, dir, "mychart/second.yaml", "image:\n  tag: second\n  repository: nginx-file\n")
-	testutil.WriteFile(t, dir, "mychart/templates/cm.yaml",
-		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\ndata:\n  tag: {{ .Values.image.tag }}\n  repository: {{ .Values.image.repository }}\n  pullPolicy: {{ .Values.image.pullPolicy }}\n")
+	testutil.WriteFile(
+		t,
+		dir,
+		"mychart/templates/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\ndata:\n  tag: {{ .Values.image.tag }}\n  repository: {{ .Values.image.repository }}\n  pullPolicy: {{ .Values.image.pullPolicy }}\n",
+	)
 
 	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 	cliSources := localChartResolver(t, "chart-repo", "flux-system", dir)
 
 	hr := &manifest.HelmRelease{
-		Name: "demo", Namespace: "default",
-		Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "chart-repo", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}},
+		Name:      "demo",
+		Namespace: "default",
+		Chart: manifest.HelmChart{
+			Name: "mychart",
+			Source: manifest.NamedResource{
+				Name:      "chart-repo",
+				Namespace: "flux-system",
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindGitRepository,
+			},
+		},
 	}
 	vals := map[string]any{
 		"image": map[string]any{"tag": "v1", "repository": "nginx"},
@@ -94,7 +128,9 @@ func TestTemplate_DoesNotMutateInputValues(t *testing.T) {
 			ready.Done()
 			<-start
 			var err error
-			outputs[i], _, err = testutil.RenderMaps(cli.Template(t.Context(), hr, vals, RenderOptions{Options: Options{}, Sources: cliSources}))
+			outputs[i], _, err = testutil.RenderMaps(
+				cli.Template(t.Context(), hr, vals, RenderOptions{Options: Options{}, Sources: cliSources}),
+			)
 			if err != nil {
 				t.Error(err)
 			}
@@ -118,7 +154,9 @@ func TestTemplate_DoesNotMutateInputValues(t *testing.T) {
 	for key, value := range cli.chartValuesCache {
 		cachedBefore[key] = manifest.DeepCopyMap(value.merged)
 	}
-	repeated, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, vals, RenderOptions{Options: Options{}, Sources: cliSources}))
+	repeated, _, err := testutil.RenderMaps(
+		cli.Template(t.Context(), hr, vals, RenderOptions{Options: Options{}, Sources: cliSources}),
+	)
 	assert.NoError(t, err)
 	assert.Diff(t, repeated, outputs[0])
 	assert.Equal(t, len(cli.chartValuesCache), len(cachedBefore))
@@ -141,10 +179,18 @@ func helmChartDirectory(t *testing.T) string {
 		"apiVersion: v2\nname: mychart\nversion: 0.1.0\ndescription: t\n")
 	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\ndata:\n  k: v\n")
-	testutil.WriteFile(t, dir, "mychart/templates/pre-install-hook.yaml",
-		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-pre\n  annotations:\n    \"helm.sh/hook\": pre-install\ndata:\n  k: v\n")
-	testutil.WriteFile(t, dir, "mychart/templates/test-hook.yaml",
-		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-test\n  annotations:\n    \"helm.sh/hook\": test\ndata:\n  k: v\n")
+	testutil.WriteFile(
+		t,
+		dir,
+		"mychart/templates/pre-install-hook.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-pre\n  annotations:\n    \"helm.sh/hook\": pre-install\ndata:\n  k: v\n",
+	)
+	testutil.WriteFile(
+		t,
+		dir,
+		"mychart/templates/test-hook.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-test\n  annotations:\n    \"helm.sh/hook\": test\ndata:\n  k: v\n",
+	)
 
 	return dir
 }
@@ -165,8 +211,17 @@ func localChartResolver(t *testing.T, name, namespace, dir string) Sources {
 
 func newHR() *manifest.HelmRelease {
 	return &manifest.HelmRelease{
-		Name: "demo", Namespace: "default",
-		Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "chart-repo", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}},
+		Name:      "demo",
+		Namespace: "default",
+		Chart: manifest.HelmChart{
+			Name: "mychart",
+			Source: manifest.NamedResource{
+				Name:      "chart-repo",
+				Namespace: "flux-system",
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindGitRepository,
+			},
+		},
 	}
 }
 
@@ -175,7 +230,9 @@ func TestTemplate_TestHooksSkippedByDefault(t *testing.T) {
 	cli, cliSources := helmChartFixture(t)
 	hr := newHR()
 
-	out, _, err := testutil.RenderMaps(cli.Template(context.Background(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}))
+	out, _, err := testutil.RenderMaps(
+		cli.Template(context.Background(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}),
+	)
 	if err != nil {
 		t.Fatalf("Template: %v", err)
 	}
@@ -214,7 +271,9 @@ func TestTemplate_TestEnableIncludesTestHook(t *testing.T) {
 			t.Parallel()
 			hr := newHR()
 			hr.Test = &helmv2.Test{Enable: true}
-			out, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{SkipTests: tc.skip, Sources: cliSources}))
+			out, _, err := testutil.RenderMaps(
+				cli.Template(t.Context(), hr, nil, RenderOptions{SkipTests: tc.skip, Sources: cliSources}),
+			)
 			assert.NoError(t, err)
 			assert.Diff(t, templateResources(t, out), tc.want)
 		})
@@ -424,7 +483,9 @@ metadata:
 			if tc.renderedChart {
 				cli, cliSources := helmChartFixture(t)
 				hr.Install = &helmv2.Install{DisableHooks: true}
-				docs, _, err = testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Sources: cliSources}))
+				docs, _, err = testutil.RenderMaps(
+					cli.Template(t.Context(), hr, nil, RenderOptions{Sources: cliSources}),
+				)
 				assert.NoError(t, err)
 			}
 			want, err := testutil.SplitDocs([]byte(tc.want))
@@ -454,7 +515,12 @@ func TestMergeChartValuesFiles(t *testing.T) {
 			"first.yaml":  "a: first-only\nb: from-first\n",
 			"second.yaml": "b: from-second\nc: second-only\n",
 		})
-		got, err := cli.mergeChartValuesFiles(t.Context(), chartDescription{chart: c}, []string{"first.yaml", "second.yaml"}, false)
+		got, err := cli.mergeChartValuesFiles(
+			t.Context(),
+			chartDescription{chart: c},
+			[]string{"first.yaml", "second.yaml"},
+			false,
+		)
 		if err != nil {
 			t.Fatalf("merge: %v", err)
 		}
@@ -466,7 +532,12 @@ func TestMergeChartValuesFiles(t *testing.T) {
 	t.Run("MissingFileIgnored", func(t *testing.T) {
 		t.Parallel()
 		c := chartWith(map[string]string{"a.yaml": "k: v\n"})
-		got, err := cli.mergeChartValuesFiles(t.Context(), chartDescription{chart: c}, []string{"a.yaml", "missing.yaml"}, true)
+		got, err := cli.mergeChartValuesFiles(
+			t.Context(),
+			chartDescription{chart: c},
+			[]string{"a.yaml", "missing.yaml"},
+			true,
+		)
 		if err != nil {
 			t.Fatalf("merge: %v", err)
 		}

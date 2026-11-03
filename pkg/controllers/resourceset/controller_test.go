@@ -36,13 +36,16 @@ func newController(t *testing.T) (*Controller, *store.Store) {
 	c.Configure(base.Options{})
 	c.StartLifecycle()
 	t.Cleanup(func() {
-
 		tasks.BlockTillDone()
 	})
 	return c, s
 }
 
-func staticRSIP(name, ns string, labels map[string]string, defaults map[string]string) *manifest.ResourceSetInputProvider {
+func staticRSIP(
+	name, ns string,
+	labels map[string]string,
+	defaults map[string]string,
+) *manifest.ResourceSetInputProvider {
 	vals := fluxopv1.ResourceSetInput{}
 	for k, v := range defaults {
 		raw := apiextensionsv1.JSON{Raw: []byte(`"` + v + `"`)}
@@ -99,7 +102,12 @@ metadata: {name: << inputs.user >>, namespace: flux-system}
 	if len(blocked) != 1 {
 		t.Fatalf("first dispatch blocked = %v, want [rsip] (parked on the named RSIP)", blocked)
 	}
-	want := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSetInputProvider, Namespace: "flux-system", Name: "rsip"}
+	want := manifest.NamedResource{
+		Group:     manifest.FluxOperatorDomain,
+		Kind:      manifest.KindResourceSetInputProvider,
+		Namespace: "flux-system",
+		Name:      "rsip",
+	}
 	if blocked[0] != want {
 		t.Fatalf("blocked on %v, want %v", blocked[0], want)
 	}
@@ -107,7 +115,11 @@ metadata: {name: << inputs.user >>, namespace: flux-system}
 	// RSIP arrives → re-dispatch renders the Widget from its inputs.
 	s.AddObject(staticRSIP("rsip", "flux-system", nil, map[string]string{"user": "alice"}))
 	s.UpdateStatus(want, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
-	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode})
+	info := controllertest.DispatchToFixpoint(
+		t.Context(),
+		t,
+		controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode},
+	)
 	if info.Status != store.StatusReady {
 		t.Fatalf("status = %+v, want Ready", info)
 	}
@@ -130,7 +142,14 @@ func TestReconcile_SelectorInputsFrom_LateRSIP(t *testing.T) {
 
 	rs := selectorFixture("acl", "blue")
 	s.AddObject(rs)
-	if _, err := c.newExecution(rs.Named()).run.RequireRefresh(t.Context(), rs, manifest.GateInputs, manifest.DrainNone); err != nil {
+	if _, err := c.newExecution(
+		rs.Named(),
+	).run.RequireRefresh(
+		t.Context(),
+		rs,
+		manifest.GateInputs,
+		manifest.DrainNone,
+	); err != nil {
 		t.Fatal("selector-only input must not require an ID gate")
 	}
 	provider := staticRSIP("rsip", "ns", map[string]string{"color": "blue"}, nil)
@@ -182,13 +201,23 @@ func TestReconcile_SelectorInputs_InvalidSelector(t *testing.T) {
 	t.Parallel()
 	c, s := newController(t)
 	rs := selectorFixture("invalid", "blue")
-	rs.InputsFrom = []fluxopv1.InputProviderReference{{Selector: &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{Key: "color", Operator: "invalid"}}}}}
+	rs.InputsFrom = []fluxopv1.InputProviderReference{
+		{
+			Selector: &metav1.LabelSelector{
+				MatchExpressions: []metav1.LabelSelectorRequirement{{Key: "color", Operator: "invalid"}},
+			},
+		},
+	}
 	s.AddObject(rs)
 	resolve := resourceset.StoreResolver(s)
 	if _, fp, err := renderWithAdmission(rs, resolve, "previous"); err == nil || fp != "" {
 		t.Fatalf("invalid selector fingerprint=%q error=%v", fp, err)
 	}
-	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusFailed {
+	if info := controllertest.DispatchToFixpoint(
+		t.Context(),
+		t,
+		controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode},
+	); info.Status != store.StatusFailed {
 		t.Fatalf("status=%+v, want Failed", info)
 	}
 	if artifact := s.GetArtifact(rs.Named(), store.ArtifactContent); artifact != nil {
@@ -236,7 +265,11 @@ spec: {}
 	}
 	s.AddObject(rs)
 
-	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode})
+	info := controllertest.DispatchToFixpoint(
+		t.Context(),
+		t,
+		controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode},
+	)
 	if info.Status != store.StatusReady {
 		t.Fatalf("status = %+v, want Ready", info)
 	}
@@ -276,17 +309,30 @@ spec: {}
 		if ns != authored {
 			t.Fatalf("rendered namespace = %q, want authored absence", ns)
 		}
-		if s.GetObject(manifest.NamedResource{Group: schema.FromAPIVersionAndKind(manifest.DocAPIVersion(doc.Document), manifest.DocKind(doc.Document)).Group, Kind: manifest.DocKind(doc.Document), Namespace: want, Name: name}) == nil {
+		if s.GetObject(
+			manifest.NamedResource{
+				Group: schema.FromAPIVersionAndKind(
+					manifest.DocAPIVersion(doc.Document),
+					manifest.DocKind(doc.Document),
+				).Group,
+				Kind:      manifest.DocKind(doc.Document),
+				Namespace: want,
+				Name:      name,
+			},
+		) == nil {
 			t.Fatalf("missing effective child %s/%s", want, name)
 		}
 	}
-	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
+	if info := controllertest.DispatchToFixpoint(
+		t.Context(),
+		t,
+		controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode},
+	); info.Status != store.StatusReady {
 		t.Fatalf("repeat reconcile: %+v", info)
 	}
 	if delta := cmp.Diff(before, testutil.DocumentMaps(art.Manifests)); delta != "" {
 		t.Fatalf("replay mutated output (-want +got):\n%s", delta)
 	}
-
 }
 
 func TestReconcile_RenderError_MarksFailed(t *testing.T) {
@@ -302,13 +348,21 @@ func TestReconcile_RenderError_MarksFailed(t *testing.T) {
 			provider := staticRSIP("input", rs.Namespace, nil, map[string]string{"value": "valid"})
 			switch fault {
 			case "provider export":
-				rs.InputsFrom = []fluxopv1.InputProviderReference{{Kind: manifest.KindResourceSetInputProvider, Selector: &metav1.LabelSelector{}}}
+				rs.InputsFrom = []fluxopv1.InputProviderReference{
+					{Kind: manifest.KindResourceSetInputProvider, Selector: &metav1.LabelSelector{}},
+				}
 			case "provider resolution":
-				rs.InputsFrom = []fluxopv1.InputProviderReference{{Kind: manifest.KindResourceSetInputProvider, Name: provider.Name}}
+				rs.InputsFrom = []fluxopv1.InputProviderReference{
+					{Kind: manifest.KindResourceSetInputProvider, Name: provider.Name},
+				}
 				s.AddObject(provider)
 			}
 			s.AddObject(rs)
-			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
+			if info := controllertest.DispatchToFixpoint(
+				t.Context(),
+				t,
+				controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode},
+			); info.Status != store.StatusReady {
 				t.Fatalf("initial render: %+v", info)
 			}
 			artifact := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
@@ -330,19 +384,34 @@ func TestReconcile_RenderError_MarksFailed(t *testing.T) {
 				s.AddObject(&changed)
 			case "provider resolution":
 				changed := *rs
-				changed.InputsFrom = []fluxopv1.InputProviderReference{{Kind: manifest.KindResourceSetInputProvider, Name: "missing"}}
+				changed.InputsFrom = []fluxopv1.InputProviderReference{
+					{Kind: manifest.KindResourceSetInputProvider, Name: "missing"},
+				}
 				s.AddObject(&changed)
 			}
-			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusFailed {
+			if info := controllertest.DispatchToFixpoint(
+				t.Context(),
+				t,
+				controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode},
+			); info.Status != store.StatusFailed {
 				t.Fatalf("status = %+v, want Failed", info)
 			}
 			if fault == "typed child" {
 				failed := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 				_, replayed := failed.Replay(artifact.Fingerprint)
-				if failed.Complete || failed.Footprint() != nil || replayed || len(failed.Failures) != 1 || len(failed.Manifests) != 2 || !hasRenderedDoc(failed, "ConfigMap", "output") {
+				if failed.Complete || failed.Footprint() != nil || replayed || len(failed.Failures) != 1 ||
+					len(failed.Manifests) != 2 ||
+					!hasRenderedDoc(failed, "ConfigMap", "output") {
 					t.Fatalf("invalid child retained successful publication: %+v", failed)
 				}
-				if s.GetObject(manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: rs.Namespace, Name: "invalid"}) != nil {
+				if s.GetObject(
+					manifest.NamedResource{
+						Group:     manifest.HelmReleaseDomain,
+						Kind:      manifest.KindHelmRelease,
+						Namespace: rs.Namespace,
+						Name:      "invalid",
+					},
+				) != nil {
 					t.Fatal("invalid generated child was admitted")
 				}
 			}
@@ -360,11 +429,20 @@ func TestReconcile_NamedOnlyRetainsNamedGate(t *testing.T) {
 	s.AddObject(rs)
 	execution := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone)
 	defer execution.Close()
-	want := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSetInputProvider, Namespace: "flux-system", Name: "rsip"}
+	want := manifest.NamedResource{
+		Group:     manifest.FluxOperatorDomain,
+		Kind:      manifest.KindResourceSetInputProvider,
+		Namespace: "flux-system",
+		Name:      "rsip",
+	}
 	if !slices.Equal(execution.Blocked, []manifest.NamedResource{want}) {
 		t.Fatalf("named-only dependencies = %v, want [%s]", execution.Blocked, want)
 	}
-	unknown := c.ReconcileNode(t.Context(), manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Name: "ghost"}, manifest.DrainNone)
+	unknown := c.ReconcileNode(
+		t.Context(),
+		manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Name: "ghost"},
+		manifest.DrainNone,
+	)
 	defer unknown.Close()
 	if unknown.Outcome() == schedule.Blocked {
 		t.Fatalf("absent declaration has dependencies: %v", unknown.Blocked)
@@ -378,7 +456,11 @@ func TestReconcile_AlreadyReady_NoTransientPending(t *testing.T) {
 kind: ConfigMap
 metadata: {name: output}`}
 	s.AddObject(rs)
-	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
+	if info := controllertest.DispatchToFixpoint(
+		t.Context(),
+		t,
+		controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode},
+	); info.Status != store.StatusReady {
 		t.Fatalf("first status = %+v, want Ready", info)
 	}
 	artifact := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
@@ -396,7 +478,8 @@ metadata: {name: output}`}
 	if info, _ := s.GetStatus(rs.Named()); info.Status != store.StatusReady {
 		t.Errorf("final status = %+v, want Ready", info)
 	}
-	if current := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission); current.Fingerprint != artifact.Fingerprint || !authority.Valid() {
+	if current := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission); current.Fingerprint != artifact.Fingerprint ||
+		!authority.Valid() {
 		t.Error("no-op reconcile replaced artifact")
 	}
 }
@@ -408,9 +491,17 @@ func TestReconcile_DisabledUsesSuspensionGate(t *testing.T) {
 			t.Parallel()
 			c, s := newController(t)
 			doc := map[string]any{
-				"apiVersion": fluxopv1.GroupVersion.String(), "kind": manifest.KindResourceSet,
-				"metadata": map[string]any{"name": "disabled", "namespace": "default", "annotations": map[string]any{fluxopv1.ReconcileAnnotation: value}},
-				"spec":     map[string]any{"inputsFrom": []any{map[string]any{"name": "missing"}}, "resourcesTemplate": "<< inputs.missing >>"},
+				"apiVersion": fluxopv1.GroupVersion.String(),
+				"kind":       manifest.KindResourceSet,
+				"metadata": map[string]any{
+					"name":        "disabled",
+					"namespace":   "default",
+					"annotations": map[string]any{fluxopv1.ReconcileAnnotation: value},
+				},
+				"spec": map[string]any{
+					"inputsFrom":        []any{map[string]any{"name": "missing"}},
+					"resourcesTemplate": "<< inputs.missing >>",
+				},
 			}
 			obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{DefaultNamespace: ""})
 			if err != nil {
@@ -454,24 +545,44 @@ func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
 				"apiVersion": fluxopv1.GroupVersion.String(), "kind": manifest.KindResourceSet,
 				"metadata": map[string]any{"name": "fleet", "namespace": "flux-system"},
 				"spec": map[string]any{
-					"inputsFrom":        []any{map[string]any{"kind": manifest.KindResourceSetInputProvider, "name": provider.Name}},
-					"resourcesTemplate": "apiVersion: example.com/v1\nkind: Widget\nmetadata: {name: stale-output}\n" + "---\n" + testutil.KustomizationYAML("rs-refresh-child", "", "  {path: ./child, sourceRef: {kind: GitRepository, name: flux-system}}\n"),
+					"inputsFrom": []any{
+						map[string]any{"kind": manifest.KindResourceSetInputProvider, "name": provider.Name},
+					},
+					"resourcesTemplate": "apiVersion: example.com/v1\nkind: Widget\nmetadata: {name: stale-output}\n" + "---\n" + testutil.KustomizationYAML(
+						"rs-refresh-child",
+						"",
+						"  {path: ./child, sourceRef: {kind: GitRepository, name: flux-system}}\n",
+					),
 				},
 			}
-			children, _ := publishDocuments(c, parent.Named(), []map[string]any{doc}, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: parent.Named().Namespace})
+			children, _ := publishDocuments(
+				c,
+				parent.Named(),
+				[]map[string]any{doc},
+				manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: parent.Named().Namespace},
+			)
 			if len(children) != 1 {
 				t.Fatalf("initial publication: %v", children)
 			}
 			rs := children[0].Obj.(*manifest.ResourceSet)
-			original, _, _, err := manifest.ParseDoc(manifest.DeepCopyMap(doc), manifest.ParseDocOptions{DefaultNamespace: ""})
+			original, _, _, err := manifest.ParseDoc(
+				manifest.DeepCopyMap(doc),
+				manifest.ParseDocOptions{DefaultNamespace: ""},
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
 			st.UpdateStatus(rs.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: ""})
 			replacement := manifest.DeepCopyMap(doc)
-			replacement["spec"].(map[string]any)["resourcesTemplate"] = "apiVersion: example.com/v1\nkind: Widget\nmetadata: {name: << inputs.user >>}\n" + "---\n" + testutil.KustomizationYAML("rs-refresh-child", "", "  {path: ./child, sourceRef: {kind: GitRepository, name: flux-system}}\n")
+			replacement["spec"].(map[string]any)["resourcesTemplate"] = "apiVersion: example.com/v1\nkind: Widget\nmetadata: {name: << inputs.user >>}\n" + "---\n" + testutil.KustomizationYAML(
+				"rs-refresh-child",
+				"",
+				"  {path: ./child, sourceRef: {kind: GitRepository, name: flux-system}}\n",
+			)
 			if suspended {
-				replacement["metadata"].(map[string]any)["annotations"] = map[string]any{fluxopv1.ReconcileAnnotation: fluxopv1.DisabledValue}
+				replacement["metadata"].(map[string]any)["annotations"] = map[string]any{
+					fluxopv1.ReconcileAnnotation: fluxopv1.DisabledValue,
+				}
 			}
 			var observations atomic.Int64
 			var fired, published atomic.Bool
@@ -484,16 +595,31 @@ func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
 				if fired.Swap(true) {
 					return
 				}
-				publishDocuments(c, parent.Named(), []map[string]any{replacement}, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: parent.Named().Namespace})
+				publishDocuments(
+					c,
+					parent.Named(),
+					[]map[string]any{replacement},
+					manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: parent.Named().Namespace},
+				)
 				published.Store(true)
 			}, false)
 			t.Cleanup(unsub)
-			controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: tasks, Store: st, ID: rs.Named(), ReconcileNode: c.ReconcileNode})
+			controllertest.DispatchToFixpoint(
+				t.Context(),
+				t,
+				controllertest.Dispatch{Tasks: tasks, Store: st, ID: rs.Named(), ReconcileNode: c.ReconcileNode},
+			)
 			if observations.Load() < 1 || !published.Load() || tasks.Failures() != 0 {
-				t.Fatalf("observations=%d published=%t panics=%d", observations.Load(), published.Load(), tasks.Failures())
+				t.Fatalf(
+					"observations=%d published=%t panics=%d",
+					observations.Load(),
+					published.Load(),
+					tasks.Failures(),
+				)
 			}
 			fresh, ok := st.Get[*manifest.ResourceSet](rs.Named())
-			if !ok || fresh == rs || fresh.Suspend != suspended || fresh.ResourcesTemplate != replacement["spec"].(map[string]any)["resourcesTemplate"] {
+			if !ok || fresh == rs || fresh.Suspend != suspended ||
+				fresh.ResourcesTemplate != replacement["spec"].(map[string]any)["resourcesTemplate"] {
 				t.Fatalf("canonical replacement = %+v", fresh)
 			}
 			if diff := cmp.Diff(original, rs); diff != "" {
@@ -511,10 +637,21 @@ func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
 				}
 				_, _, inventory := st.GetEmission(rs.Named())
 				if art != nil || st.GetObject(child) != nil || deliveries.Load() != 0 || len(inventory.Children) != 0 {
-					t.Errorf("disabled replacement rendered: artifact=%+v child=%v raw deliveries=%d", art, st.GetObject(child), deliveries.Load())
+					t.Errorf(
+						"disabled replacement rendered: artifact=%+v child=%v raw deliveries=%d",
+						art,
+						st.GetObject(child),
+						deliveries.Load(),
+					)
 				}
 			} else if info.Status != store.StatusReady || !hasRenderedDoc(art, "Widget", "rs-refresh-output") || st.GetObject(child) == nil {
-				t.Fatalf("active replacement output: status=%+v artifact=%+v child=%v raw deliveries=%d", info, art, st.GetObject(child), deliveries.Load())
+				t.Fatalf(
+					"active replacement output: status=%+v artifact=%+v child=%v raw deliveries=%d",
+					info,
+					art,
+					st.GetObject(child),
+					deliveries.Load(),
+				)
 			}
 		})
 	}
@@ -539,10 +676,19 @@ func TestReconcile_InputsFromPreservesAuthoredKind(t *testing.T) {
 	rs := obj.(*manifest.ResourceSet)
 	s.AddObject(rs)
 	want := manifest.NamedResource{Kind: "Unsupported", Namespace: "apps", Name: provider.Name}
-	if blocked := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone).Blocked; len(blocked) != 1 || blocked[0] != want {
+	if blocked := c.ReconcileNode(
+		t.Context(),
+		rs.Named(),
+		manifest.DrainNone,
+	).Blocked; len(blocked) != 1 ||
+		blocked[0] != want {
 		t.Fatalf("blocked = %v, want [%s]", blocked, want)
 	}
-	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusFailed {
+	if info := controllertest.DispatchToFixpoint(
+		t.Context(),
+		t,
+		controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode},
+	); info.Status != store.StatusFailed {
 		t.Fatalf("status = %+v, want Failed", info)
 	}
 	if art := s.GetArtifact(rs.Named(), store.ArtifactContent); art != nil {
@@ -559,10 +705,20 @@ func TestReconcile_WarningsBeforeExit(t *testing.T) {
 		t.Run(fmt.Sprintf("hit=%t", hit), func(t *testing.T) {
 			t.Parallel()
 			c, s := newController(t)
-			provider := &manifest.ResourceSetInputProvider{Name: "dynamic", Namespace: "apps", Type: fluxopv1.InputProviderGitHubBranch}
-			rs := &manifest.ResourceSet{Name: "reader", Namespace: "apps",
-				Inputs: []fluxopv1.ResourceSetInput{{"name": {Raw: []byte(`"inline"`)}}}, InputsFrom: []fluxopv1.InputProviderReference{{Name: provider.Name}},
-				ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\n"}
+			provider := &manifest.ResourceSetInputProvider{
+				Name:      "dynamic",
+				Namespace: "apps",
+				Type:      fluxopv1.InputProviderGitHubBranch,
+			}
+			rs := &manifest.ResourceSet{
+				Name:      "reader",
+				Namespace: "apps",
+				Inputs: []fluxopv1.ResourceSetInput{
+					{"name": {Raw: []byte(`"inline"`)}},
+				},
+				InputsFrom:        []fluxopv1.InputProviderReference{{Name: provider.Name}},
+				ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\n",
+			}
 			if !hit {
 				rs.ResourcesTemplate = "<< invalid template"
 			}
@@ -570,19 +726,29 @@ func TestReconcile_WarningsBeforeExit(t *testing.T) {
 			s.UpdateStatus(provider.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			if hit {
 				_, _, err := renderProviders(rs, resourceset.StoreResolver(s), func(content any) (bool, error) {
-					s.RecordEmitted(rs.Named(), &store.Emission{Fingerprint: manifest.Fingerprint(content), Complete: true}, nil)
+					s.RecordEmitted(
+						rs.Named(),
+						&store.Emission{Fingerprint: manifest.Fingerprint(content), Complete: true},
+						nil,
+					)
 					return true, nil
 				})
 				if err != nil {
 					t.Fatal(err)
 				}
 			}
-			info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode})
+			info := controllertest.DispatchToFixpoint(
+				t.Context(),
+				t,
+				controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode},
+			)
 			if (info.Status == store.StatusReady) != hit {
 				t.Fatalf("reconcile status = %+v, hit=%t", info, hit)
 			}
 			warnings := s.Warnings()
-			if len(warnings) != 1 || warnings[0].Category != manifest.WarnOfflineInputProvider || warnings[0].Resource != rs.Named() || warnings[0].Count != 1 {
+			if len(warnings) != 1 || warnings[0].Category != manifest.WarnOfflineInputProvider ||
+				warnings[0].Resource != rs.Named() ||
+				warnings[0].Count != 1 {
 				t.Fatalf("early return lost warnings: %+v", warnings)
 			}
 		})

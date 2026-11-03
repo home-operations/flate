@@ -35,5 +35,13 @@ func SourceInput(reads sourceReader, ks *manifest.Kustomization) (*store.SourceA
 	if sa, ok := art.(*store.SourceArtifact); ok {
 		return sa, srcID == manifest.BootstrapSourceID || sa.InputAlias || sa.Content == "", nil
 	}
-	return nil, false, manifest.NewError(manifest.ErrFlux, nil, fmt.Sprintf("unsupported source artifact type %T for %s", art, manifest.DiagnosticFor(srcID, reads.GetObject(srcID))))
+	return nil, false, manifest.NewError(
+		manifest.ErrFlux,
+		nil,
+		fmt.Sprintf(
+			"unsupported source artifact type %T for %s",
+			art,
+			manifest.DiagnosticFor(srcID, reads.GetObject(srcID)),
+		),
+	)
 }

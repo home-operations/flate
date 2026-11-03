@@ -36,7 +36,15 @@ func TestReportOwnership_LocalPartition(t *testing.T) {
 			t.Parallel()
 			st := store.New()
 			source := &manifest.GitRepository{Name: "external", Namespace: "apps"}
-			external := &manifest.Kustomization{Name: "external", Namespace: "apps", Path: "apps/deeper", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: source.Name}}
+			external := &manifest.Kustomization{
+				Name:      "external",
+				Namespace: "apps",
+				Path:      "apps/deeper",
+				SourceRef: kustomizev1.CrossNamespaceSourceReference{
+					Kind: manifest.KindGitRepository,
+					Name: source.Name,
+				},
+			}
 			local := &manifest.Kustomization{Name: "local", Namespace: "apps", Path: "elsewhere"}
 			child := &manifest.HelmRelease{Name: "child", Namespace: "apps"}
 			st.AddObjects([]manifest.BaseManifest{source, child})
@@ -44,7 +52,11 @@ func TestReportOwnership_LocalPartition(t *testing.T) {
 			entry := testutil.KustomizationID("apps", "entry")
 			for _, owner := range []*manifest.Kustomization{external, local} {
 				if tc.indexed {
-					index.Records[owner.Named()] = manifest.DiscoveryRecord{File: "entry.yaml", Parent: entry, Declaration: owner}
+					index.Records[owner.Named()] = manifest.DiscoveryRecord{
+						File:        "entry.yaml",
+						Parent:      entry,
+						Declaration: owner,
+					}
 				} else {
 					st.AddObject(owner)
 					st.UpdateStatus(owner.Named(), store.StatusInfo{Status: store.StatusReady})
@@ -55,7 +67,14 @@ func TestReportOwnership_LocalPartition(t *testing.T) {
 			o := &Orchestrator{store: st, index: index}
 			all := o.reportingClaims()
 			localClaims := o.reportOwnership(all)
-			assert.Diff(t, all, []manifest.KSClaim{{ID: external.Named(), Prefix: "apps/deeper/"}, {ID: local.Named(), Prefix: "elsewhere/"}})
+			assert.Diff(
+				t,
+				all,
+				[]manifest.KSClaim{
+					{ID: external.Named(), Prefix: "apps/deeper/"},
+					{ID: local.Named(), Prefix: "elsewhere/"},
+				},
+			)
 			assert.Diff(t, localClaims, []manifest.KSClaim{{ID: local.Named(), Prefix: "elsewhere/"}})
 			_, owned := manifest.StrictParent(all, "apps/deeper/invalid.yaml", manifest.NamedResource{}, nil)
 			assert.Equal(t, owned, true)
@@ -106,7 +125,10 @@ func TestReportOwnership_FreshPasses(t *testing.T) {
 				parent.Path = "unrelated"
 			}
 			if strings.HasPrefix(tc.name, "source ") {
-				parent.SourceRef = kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: source.Name}
+				parent.SourceRef = kustomizev1.CrossNamespaceSourceReference{
+					Kind: manifest.KindGitRepository,
+					Name: source.Name,
+				}
 				st.AddObject(source)
 				if tc.name != "source publication" {
 					st.SetArtifact(source.Named(), local)
@@ -117,9 +139,13 @@ func TestReportOwnership_FreshPasses(t *testing.T) {
 				st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady})
 			}
 			st.AddObject(child)
-			index := indexForTest(map[manifest.NamedResource]string{parent.Named(): "parent.yaml", child.Named(): base + "/child.yaml"})
+			index := indexForTest(
+				map[manifest.NamedResource]string{parent.Named(): "parent.yaml", child.Named(): base + "/child.yaml"},
+			)
 			index.Claims = map[string][]manifest.NamedResource{"startup/": {parent.Named()}}
-			index.Readers = map[string][]manifest.FileReader{"unrelated.yaml": {{Reader: child.Named(), Source: manifest.BootstrapSourceID}}}
+			index.Readers = map[string][]manifest.FileReader{
+				"unrelated.yaml": {{Reader: child.Named(), Source: manifest.BootstrapSourceID}},
+			}
 			records := maps.Clone(index.Records)
 			claims := map[string][]manifest.NamedResource{"startup/": slices.Clone(index.Claims["startup/"])}
 			readers := map[string][]manifest.FileReader{"unrelated.yaml": slices.Clone(index.Readers["unrelated.yaml"])}
@@ -140,13 +166,21 @@ func TestReportOwnership_FreshPasses(t *testing.T) {
 					case "source publication":
 						st.SetArtifact(source.Named(), local)
 					case "source replacement":
-						st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}})
+						st.SetArtifact(
+							source.Named(),
+							&store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}},
+						)
 					case "source withdrawal":
 						st.SetArtifact(source.Named(), nil)
 					case "source contents replacement":
-						st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{
-							"apps/kustomization.yaml": &fstest.MapFile{Data: []byte("components:\n- ../components\n")},
-						}})
+						st.SetArtifact(
+							source.Named(),
+							&store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{
+								"apps/kustomization.yaml": &fstest.MapFile{
+									Data: []byte("components:\n- ../components\n"),
+								},
+							}},
+						)
 					}
 				}
 				st.UpdateStatus(child.Named(), store.StatusInfo{Status: store.StatusFailed, Message: "unwired"})
@@ -191,7 +225,12 @@ func TestClassifyCompleted_ZeroClaims(t *testing.T) {
 func TestAggregateFailures_Deterministic(t *testing.T) {
 	t.Parallel()
 	a, b := testutil.KustomizationID("apps", "a"), testutil.KustomizationID("apps", "b")
-	o := &Orchestrator{store: store.New(), index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{a: {File: "a.yaml"}}}}
+	o := &Orchestrator{
+		store: store.New(),
+		index: &manifest.DiscoveryIndex{
+			Records: map[manifest.NamedResource]manifest.DiscoveryRecord{a: {File: "a.yaml"}},
+		},
+	}
 	var previous string
 	for _, ids := range [][]manifest.NamedResource{{b, a}, {a, b}} {
 		failed := make(map[manifest.NamedResource]store.StatusInfo)
@@ -199,7 +238,9 @@ func TestAggregateFailures_Deterministic(t *testing.T) {
 			failed[id] = store.StatusInfo{Status: store.StatusFailed, Message: "invalid input"}
 		}
 		got := o.aggregateFailures(failed)
-		if !errors.Is(got, manifest.ErrFlux) || strings.Count(got.Error(), a.String()) != 1 || strings.Count(got.Error(), b.String()) != 1 || strings.Count(got.Error(), "invalid input") != 2 {
+		if !errors.Is(got, manifest.ErrFlux) || strings.Count(got.Error(), a.String()) != 1 ||
+			strings.Count(got.Error(), b.String()) != 1 ||
+			strings.Count(got.Error(), "invalid input") != 2 {
 			t.Fatalf("aggregate lost identities or causes: %v", got)
 		}
 		if previous != "" {
@@ -217,8 +258,18 @@ func TestFinalize_ProjectedDeclarationCount(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(previous) })
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [ks.yaml]\n")
-	testutil.WriteFile(t, root, "ks.yaml", testutil.KustomizationYAML("parent", "flux-system", "  path: ./app\n  targetNamespace: apps\n"))
-	testutil.WriteFile(t, root, "app/hr.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: child}\nspec: {suspend: true, chartRef: {kind: OCIRepository, name: missing}}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"ks.yaml",
+		testutil.KustomizationYAML("parent", "flux-system", "  path: ./app\n  targetNamespace: apps\n"),
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"app/hr.yaml",
+		"apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: child}\nspec: {suspend: true, chartRef: {kind: OCIRepository, name: missing}}\n",
+	)
 	o, err := newTestOrchestrator(t, Tree{Path: root, RepoRoot: root}, Config{Concurrency: 2})
 	assert.NoError(t, err)
 	_, err = o.render(t.Context())
@@ -256,9 +307,15 @@ func TestFinalize_DispatchPanic(t *testing.T) {
 			st, tasks := store.New(), task.NewBounded(workers)
 			id := testutil.KustomizationID("apps", "panic")
 			st.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
-			s := schedule.New(tasks, fixtureDispatcher{store: st, dispatch: func(context.Context, schedule.NodeID, manifest.DrainLevel) schedule.Result {
-				panic("dispatch panic")
-			}})
+			s := schedule.New(
+				tasks,
+				fixtureDispatcher{
+					store: st,
+					dispatch: func(context.Context, schedule.NodeID, manifest.DrainLevel) schedule.Result {
+						panic("dispatch panic")
+					},
+				},
+			)
 			s.Seed([]schedule.NodeID{id})
 			assert.NoError(t, s.Run(t.Context()))
 			tasks.BlockTillDone()

@@ -43,18 +43,55 @@ func TestDAG_KeepBeforeLateDataPublication(t *testing.T) {
 			data := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "settings", Namespace: "tenant"}
 			st.AddObjects([]manifest.BaseManifest{parent, provider, sibling})
 			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-				parent.Named(): {File: "parent.yaml"}, provider.Named(): {File: "provider.yaml"}, sibling.Named(): {File: "sibling.yaml"},
-				data: {Productions: []manifest.Production{{Owner: provider.Named(), Authored: data, File: "settings.yaml", Source: manifest.BootstrapSourceID}}},
+				parent.Named(): {
+					File: "parent.yaml",
+				},
+				provider.Named(): {File: "provider.yaml"},
+				sibling.Named():  {File: "sibling.yaml"},
+				data: {
+					Productions: []manifest.Production{
+						{
+							Owner:    provider.Named(),
+							Authored: data,
+							File:     "settings.yaml",
+							Source:   manifest.BootstrapSourceID,
+						},
+					},
+				},
 			}}
 			st.SetDiscoveryIndex(index)
-			filterLoader := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"parent.yaml"}), Index: index, Inventory: st, Root: ""})
+			filterLoader := admissiontest.New(
+				t,
+				admissiontest.Config{
+					Changes:   change.NewSet([]string{"parent.yaml"}),
+					Index:     index,
+					Inventory: st,
+					Root:      "",
+				},
+			)
 			admissiontest.Commit(t, filterLoader, nil)
 			filter := filterLoader.Options.Filter
 			c := base.New(st, tasks)
 			c.Configure(base.Options{Filter: filter, Loader: filterLoader, Index: index})
 			c.StartLifecycle()
-			childDocs := []map[string]any{{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization", "metadata": map[string]any{"name": child.Name}, "spec": map[string]any{"path": "./child", "postBuild": map[string]any{"substituteFrom": []any{map[string]any{"kind": manifest.KindConfigMap, "name": data.Name}}}}}}
-			children, retained, failures := c.ParseChildren(parent, testutil.DocumentOccurrences(childDocs), manifest.ParseDocOptions{})
+			childDocs := []map[string]any{
+				{
+					"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+					"kind":       "Kustomization",
+					"metadata":   map[string]any{"name": child.Name},
+					"spec": map[string]any{
+						"path": "./child",
+						"postBuild": map[string]any{
+							"substituteFrom": []any{map[string]any{"kind": manifest.KindConfigMap, "name": data.Name}},
+						},
+					},
+				},
+			}
+			children, retained, failures := c.ParseChildren(
+				parent,
+				testutil.DocumentOccurrences(childDocs),
+				manifest.ParseDocOptions{},
+			)
 			assert.Equal(t, len(failures), 0)
 			assert.Equal(t, len(children), 1)
 			assert.Equal(t, children[0].Obj.Named(), child)
@@ -67,37 +104,61 @@ func TestDAG_KeepBeforeLateDataPublication(t *testing.T) {
 				}
 			}, false)
 			defer unsubArrival()
-			d := fixtureDispatcher{store: st, dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
-				if id == provider.Named() {
-					tasks.YieldSlot(func() { <-release })
-				}
-				e := controllertest.NewExecution(c, id)
-				e.Dispatch(ctx, level, e, func(e *base.Execution, _ context.Context, _ *manifest.Kustomization, _ manifest.DrainLevel) error {
-					_, _, next := e.Reads.GetEmission(id)
-					defer next.Finish()
-					switch id {
-					case parent.Named():
-						next.Children, next.Manifests = children, retained
-					case provider.Named():
-						next.Children = []store.Child{{Obj: &manifest.ConfigMap{Name: data.Name, Namespace: data.Namespace, Data: map[string]any{"VALUE": "ready"}}}}
-					case child:
-						childRuns.Add(1)
-						obj := e.Reads.GetObject(data)
-						if obj == nil {
-							return &depwait.ErrBlocked{Deps: []manifest.NamedResource{data}}
-						}
-						next.Children = []store.Child{{Obj: &manifest.ConfigMap{Name: "output", Namespace: data.Namespace, Data: map[string]any{"VALUE": obj.(*manifest.ConfigMap).Data["VALUE"]}}}}
-					case sibling.Named():
-						siblingRuns.Add(1)
+			d := fixtureDispatcher{
+				store: st,
+				dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+					if id == provider.Named() {
+						tasks.YieldSlot(func() { <-release })
 					}
-					next.Complete = true
-					return e.Emit(t.Context(), id, &next, nil)
-				})
-				if id == child && e.Outcome() == schedule.Blocked {
-					blocked <- slices.Clone(e.Blocked)
-				}
-				return schedule.Result{Assessment: e}
-			}}
+					e := controllertest.NewExecution(c, id)
+					e.Dispatch(
+						ctx,
+						level,
+						e,
+						func(e *base.Execution, _ context.Context, _ *manifest.Kustomization, _ manifest.DrainLevel) error {
+							_, _, next := e.Reads.GetEmission(id)
+							defer next.Finish()
+							switch id {
+							case parent.Named():
+								next.Children, next.Manifests = children, retained
+							case provider.Named():
+								next.Children = []store.Child{
+									{
+										Obj: &manifest.ConfigMap{
+											Name:      data.Name,
+											Namespace: data.Namespace,
+											Data:      map[string]any{"VALUE": "ready"},
+										},
+									},
+								}
+							case child:
+								childRuns.Add(1)
+								obj := e.Reads.GetObject(data)
+								if obj == nil {
+									return &depwait.ErrBlocked{Deps: []manifest.NamedResource{data}}
+								}
+								next.Children = []store.Child{
+									{
+										Obj: &manifest.ConfigMap{
+											Name:      "output",
+											Namespace: data.Namespace,
+											Data:      map[string]any{"VALUE": obj.(*manifest.ConfigMap).Data["VALUE"]},
+										},
+									},
+								}
+							case sibling.Named():
+								siblingRuns.Add(1)
+							}
+							next.Complete = true
+							return e.Emit(t.Context(), id, &next, nil)
+						},
+					)
+					if id == child && e.Outcome() == schedule.Blocked {
+						blocked <- slices.Clone(e.Blocked)
+					}
+					return schedule.Result{Assessment: e}
+				},
+			}
 			o := &Orchestrator{store: st}
 			s := schedule.New(tasks, d)
 			unsubscribe := o.watchDAG(s)
@@ -171,7 +232,12 @@ func renderScalePublications(t *testing.T, workers, producers int) []byte {
 	for n := range 10 {
 		name := fmt.Sprintf("object-%02d", n)
 		fmt.Fprintf(&resources, "- %s.yaml\n", name)
-		testutil.WriteFile(t, root, "shared/"+name+".yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+name+", namespace: apps}\ndata: {value: shared}\n")
+		testutil.WriteFile(
+			t,
+			root,
+			"shared/"+name+".yaml",
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+name+", namespace: apps}\ndata: {value: shared}\n",
+		)
 	}
 	testutil.WriteFile(t, root, "shared/kustomization.yaml", "resources:\n"+resources.String())
 	ids := make([]manifest.NamedResource, producers)
@@ -193,10 +259,28 @@ func renderScalePublications(t *testing.T, workers, producers int) []byte {
 		default:
 			roots[ids[n]] = true
 		}
-		testutil.WriteFile(t, root, "apps/"+name+"/kustomization.yaml", "resources: [../../shared]\nnamePrefix: "+name+"-\n")
-		testutil.WriteFile(t, root, "flux/"+name+".yaml", testutil.KustomizationYAML(name, "flux-system", "  path: ./apps/"+name+"\n"+deps.String()+"  sourceRef: {kind: GitRepository, name: flux-system}\n"))
+		testutil.WriteFile(
+			t,
+			root,
+			"apps/"+name+"/kustomization.yaml",
+			"resources: [../../shared]\nnamePrefix: "+name+"-\n",
+		)
+		testutil.WriteFile(
+			t,
+			root,
+			"flux/"+name+".yaml",
+			testutil.KustomizationYAML(
+				name,
+				"flux-system",
+				"  path: ./apps/"+name+"\n"+deps.String()+"  sourceRef: {kind: GitRepository, name: flux-system}\n",
+			),
+		)
 	}
-	o, err := newTestOrchestrator(t, Tree{Path: filepath.Join(root, "flux"), RepoRoot: root}, Config{Concurrency: workers})
+	o, err := newTestOrchestrator(
+		t,
+		Tree{Path: filepath.Join(root, "flux"), RepoRoot: root},
+		Config{Concurrency: workers},
+	)
 	assert.NoError(t, err)
 	defer o.stop()
 	assert.NoError(t, o.bootstrap(t.Context()))
@@ -207,21 +291,24 @@ func renderScalePublications(t *testing.T, workers, producers int) []byte {
 	firstWave := min(workers, len(roots))
 	started, release := make(chan struct{}, firstWave), make(chan struct{})
 	var active, overBound, rootStarts, publications atomic.Int64
-	d := fixtureDispatcher{store: o.store, dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
-		// Input acquisition yields its slot; only admission holds it continuously.
-		func() {
-			current := active.Add(1)
-			defer active.Add(-1)
-			if current > int64(workers) {
-				overBound.Add(1)
-			}
-			if roots[id] && rootStarts.Add(1) <= int64(firstWave) {
-				started <- struct{}{}
-				<-release
-			}
-		}()
-		return (dagDispatcher{o}).Dispatch(ctx, id, level)
-	}}
+	d := fixtureDispatcher{
+		store: o.store,
+		dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+			// Input acquisition yields its slot; only admission holds it continuously.
+			func() {
+				current := active.Add(1)
+				defer active.Add(-1)
+				if current > int64(workers) {
+					overBound.Add(1)
+				}
+				if roots[id] && rootStarts.Add(1) <= int64(firstWave) {
+					started <- struct{}{}
+					<-release
+				}
+			}()
+			return (dagDispatcher{o}).Dispatch(ctx, id, level)
+		},
+	}
 	s := schedule.New(o.tasks, d)
 	unsubscribe := o.watchDAG(s)
 	defer unsubscribe()
@@ -261,7 +348,11 @@ func renderScalePublications(t *testing.T, workers, producers int) []byte {
 		assert.Equal(t, ok, true)
 		assert.Equal(t, status.Status, store.StatusReady)
 		for n := range 10 {
-			child := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: fmt.Sprintf("%s-object-%02d", id.Name, n), Namespace: "apps"}
+			child := manifest.NamedResource{
+				Kind:      manifest.KindConfigMap,
+				Name:      fmt.Sprintf("%s-object-%02d", id.Name, n),
+				Namespace: "apps",
+			}
 			assert.Equal(t, o.store.GetObject(child) != nil, true)
 		}
 	}
@@ -281,145 +372,264 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 				if workers == 8 && (!changedOnly || !retained) {
 					continue
 				}
-				t.Run(fmt.Sprintf("changed_%t/retained_%t/workers_%d", changedOnly, retained, workers), func(t *testing.T) {
-					root := t.TempDir()
-					gate, child := testutil.KustomizationID("flux-system", "gate"), testutil.KustomizationID("flux-system", "child")
-					testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux/gate.yaml, unused/child.yaml, flux/dependent.yaml, flux/independent.yaml]\n")
-					testutil.WriteFile(t, root, "unused/kustomization.yaml", "resources: [child.yaml]\n")
-					testutil.WriteFile(t, root, "flux/gate.yaml", strings.Replace(ksYAML("gate", "unused", ""), "spec:\n", "spec:\n  suspend: true\n", 1))
-					for _, name := range []string{"child", "dependent", "independent"} {
-						dep := ""
-						switch name {
-						case "child":
-							dep = "gate"
-						case "dependent":
-							dep = "child"
+				t.Run(
+					fmt.Sprintf("changed_%t/retained_%t/workers_%d", changedOnly, retained, workers),
+					func(t *testing.T) {
+						root := t.TempDir()
+						gate, child := testutil.KustomizationID(
+							"flux-system",
+							"gate",
+						), testutil.KustomizationID(
+							"flux-system",
+							"child",
+						)
+						testutil.WriteFile(
+							t,
+							root,
+							"kustomization.yaml",
+							"resources: [flux/gate.yaml, unused/child.yaml, flux/dependent.yaml, flux/independent.yaml]\n",
+						)
+						testutil.WriteFile(t, root, "unused/kustomization.yaml", "resources: [child.yaml]\n")
+						testutil.WriteFile(
+							t,
+							root,
+							"flux/gate.yaml",
+							strings.Replace(ksYAML("gate", "unused", ""), "spec:\n", "spec:\n  suspend: true\n", 1),
+						)
+						for _, name := range []string{"child", "dependent", "independent"} {
+							dep := ""
+							switch name {
+							case "child":
+								dep = "gate"
+							case "dependent":
+								dep = "child"
+							}
+							file := "flux/" + name + ".yaml"
+							if name == "child" {
+								file = "unused/child.yaml"
+							}
+							testutil.WriteFile(t, root, file, ksYAML(name, name, dep))
+							testutil.WriteFile(t, root, name+"/kustomization.yaml", "resources: [cm.yaml]\n")
+							testutil.WriteFile(
+								t,
+								root,
+								name+"/cm.yaml",
+								"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+name+"}\ndata: {value: active}\n",
+							)
 						}
-						file := "flux/" + name + ".yaml"
-						if name == "child" {
-							file = "unused/child.yaml"
+						cfg := treeConfig{CacheDir: t.TempDir(), Concurrency: workers, Path: root, RepoRoot: root}
+						if changedOnly {
+							cfg.ExternalChanges = change.NewSet(
+								[]string{
+									"flux/gate.yaml",
+									"unused/child.yaml",
+									"dependent/cm.yaml",
+									"independent/cm.yaml",
+								},
+							)
 						}
-						testutil.WriteFile(t, root, file, ksYAML(name, name, dep))
-						testutil.WriteFile(t, root, name+"/kustomization.yaml", "resources: [cm.yaml]\n")
-						testutil.WriteFile(t, root, name+"/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+name+"}\ndata: {value: active}\n")
-					}
-					cfg := treeConfig{CacheDir: t.TempDir(), Concurrency: workers, Path: root, RepoRoot: root}
-					if changedOnly {
-						cfg.ExternalChanges = change.NewSet([]string{"flux/gate.yaml", "unused/child.yaml", "dependent/cm.yaml", "independent/cm.yaml"})
-					}
-					o, err := newTestOrchestrator(t, cfg.Tree, cfg.Config)
-					if err != nil {
-						t.Fatal(err)
-					}
-					t.Cleanup(func() {
-						o.stop()
-					})
-					if err := o.bootstrap(t.Context()); err != nil {
-						t.Fatal(err)
-					}
-					if changedOnly && o.store.GetObject(child) != nil {
-						t.Fatal("producer-owned child hydrated before publication")
-					}
-					reconcileEntryForTest(t, o)
-					original, ok := o.store.Get[*manifest.Kustomization](child)
-					if !ok || original.Suspend {
-						t.Fatal("active child missing")
-					}
-					o.store.UpdateStatus(gate, store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSuspended, Message: "suspended"})
-					o.store.UpdateStatus(child, store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "queued"})
-					o.configureControllers()
-					assert.NoError(t, controllertest.Emit(t.Context(), o.ksc.Controller, gate, &store.Emission{Children: []store.Child{{Obj: original}}, Complete: true}))
-					var result schedule.Result
-					o.tasks.Go(t.Context(), "dependent", func(ctx context.Context) {
-						result = (dagDispatcher{o}).Dispatch(ctx, testutil.KustomizationID("flux-system", "dependent"), manifest.DrainNone)
-					})
-					o.tasks.BlockTillDone()
-					if result.Assessment.Outcome() != schedule.Blocked || !slices.Contains(result.Assessment.(*base.Execution).Blocked, child) {
-						t.Fatalf("dependent must first wait on child: %+v", result.Assessment)
-					}
-					retainedID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: child.Namespace, Name: "retained"}
-					var artifact *store.Emission
-					if retained {
-						doc := map[string]any{"apiVersion": "v1", "kind": manifest.KindConfigMap, "metadata": map[string]any{"name": retainedID.Name, "namespace": retainedID.Namespace}, "data": map[string]any{"value": "prior"}}
-						publishDocuments(o.ksc.Controller, child, []map[string]any{doc}, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: child.Namespace})
-						artifact = o.store.GetArtifact(child, store.ArtifactContent).(*store.Emission)
-					}
-					var publication, arrivals atomic.Int64
-					unsub := o.store.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
-						info, ok := payload.(store.StatusInfo)
-						if id != child || !ok || info.String() != "resolving dependencies" || !publication.CompareAndSwap(0, 1) {
-							return
-						}
-						docs, err := testutil.DecodeDocs(strings.NewReader(strings.Replace(ksYAML("child", "child", "gate"), "spec:\n", "spec:\n  suspend: true\n", 1)))
+						o, err := newTestOrchestrator(t, cfg.Tree, cfg.Config)
 						if err != nil {
-							t.Error(err)
-							return
+							t.Fatal(err)
 						}
-						children, retained := parseChildrenForTest(gate, docs, manifest.ParseDocOptions{DefaultNamespace: gate.Namespace})
-						for _, emitted := range children {
-							if o.filter != nil {
-								if _, err := o.ksc.KeepEmitted(t.Context(), gate, emitted, nil); err != nil {
+						t.Cleanup(func() {
+							o.stop()
+						})
+						if err := o.bootstrap(t.Context()); err != nil {
+							t.Fatal(err)
+						}
+						if changedOnly && o.store.GetObject(child) != nil {
+							t.Fatal("producer-owned child hydrated before publication")
+						}
+						reconcileEntryForTest(t, o)
+						original, ok := o.store.Get[*manifest.Kustomization](child)
+						if !ok || original.Suspend {
+							t.Fatal("active child missing")
+						}
+						o.store.UpdateStatus(
+							gate,
+							store.StatusInfo{
+								Status:  store.StatusReady,
+								Reason:  store.ReasonSuspended,
+								Message: "suspended",
+							},
+						)
+						o.store.UpdateStatus(
+							child,
+							store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "queued"},
+						)
+						o.configureControllers()
+						assert.NoError(
+							t,
+							controllertest.Emit(
+								t.Context(),
+								o.ksc.Controller,
+								gate,
+								&store.Emission{Children: []store.Child{{Obj: original}}, Complete: true},
+							),
+						)
+						var result schedule.Result
+						o.tasks.Go(t.Context(), "dependent", func(ctx context.Context) {
+							result = (dagDispatcher{o}).Dispatch(
+								ctx,
+								testutil.KustomizationID("flux-system", "dependent"),
+								manifest.DrainNone,
+							)
+						})
+						o.tasks.BlockTillDone()
+						if result.Assessment.Outcome() != schedule.Blocked ||
+							!slices.Contains(result.Assessment.(*base.Execution).Blocked, child) {
+							t.Fatalf("dependent must first wait on child: %+v", result.Assessment)
+						}
+						retainedID := manifest.NamedResource{
+							Kind:      manifest.KindConfigMap,
+							Namespace: child.Namespace,
+							Name:      "retained",
+						}
+						var artifact *store.Emission
+						if retained {
+							doc := map[string]any{
+								"apiVersion": "v1",
+								"kind":       manifest.KindConfigMap,
+								"metadata": map[string]any{
+									"name":      retainedID.Name,
+									"namespace": retainedID.Namespace,
+								},
+								"data": map[string]any{"value": "prior"},
+							}
+							publishDocuments(
+								o.ksc.Controller,
+								child,
+								[]map[string]any{doc},
+								manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: child.Namespace},
+							)
+							artifact = o.store.GetArtifact(child, store.ArtifactContent).(*store.Emission)
+						}
+						var publication, arrivals atomic.Int64
+						unsub := o.store.AddListener(
+							store.EventStatusUpdated,
+							func(id manifest.NamedResource, payload any) {
+								info, ok := payload.(store.StatusInfo)
+								if id != child || !ok || info.String() != "resolving dependencies" ||
+									!publication.CompareAndSwap(0, 1) {
+									return
+								}
+								docs, err := testutil.DecodeDocs(
+									strings.NewReader(
+										strings.Replace(
+											ksYAML("child", "child", "gate"),
+											"spec:\n",
+											"spec:\n  suspend: true\n",
+											1,
+										),
+									),
+								)
+								if err != nil {
 									t.Error(err)
 									return
 								}
+								children, retained := parseChildrenForTest(
+									gate,
+									docs,
+									manifest.ParseDocOptions{DefaultNamespace: gate.Namespace},
+								)
+								for _, emitted := range children {
+									if o.filter != nil {
+										if _, err := o.ksc.KeepEmitted(t.Context(), gate, emitted, nil); err != nil {
+											t.Error(err)
+											return
+										}
+									}
+								}
+								_, _, next := o.store.GetEmission(gate)
+								defer next.Finish()
+								next.Children, next.Manifests, next.Complete = children, testutil.DocumentOccurrences(
+									retained,
+								), true
+								o.store.RecordEmitted(gate, &next, nil)
+							},
+							false,
+						)
+						t.Cleanup(unsub)
+						unsubArrivals := o.store.AddListener(
+							store.EventObjectAdded,
+							func(id manifest.NamedResource, _ any) {
+								if id == child {
+									owners := testutil.Owners(o.store.Productions(child, nil))
+									if !slices.Contains(owners, gate) ||
+										changedOnly && !o.filter.ShouldReconcile(child) {
+										t.Errorf("child arrived before evidence/selection: %v", owners)
+									}
+								}
+								if id == retainedID ||
+									id == (manifest.NamedResource{Kind: manifest.KindConfigMap, Name: child.Name}) {
+									arrivals.Add(1)
+								}
+							},
+							false,
+						)
+						t.Cleanup(unsubArrivals)
+						res, err := o.collectResult(o.run(t.Context()))
+						if err != nil || len(res.Failed) != 0 || len(res.Blocked) != 0 || o.tasks.Failures() != 0 {
+							t.Fatalf(
+								"scheduler failed to drain: error=%v failures=%v blocked=%v",
+								err,
+								res.Failed,
+								res.Blocked,
+							)
+						}
+						info, _ := o.store.GetStatus(child)
+						fresh, _ := o.store.Get[*manifest.Kustomization](child)
+						if publication.Load() != 1 || arrivals.Load() != 0 ||
+							info.Outcome() != store.OutcomeSuspended ||
+							!fresh.Suspend ||
+							original.Suspend {
+							t.Fatalf(
+								"late suspension: publications=%d arrivals=%d status=%+v original=%+v fresh=%+v",
+								publication.Load(),
+								arrivals.Load(),
+								info,
+								original,
+								fresh,
+							)
+						}
+						if owners := testutil.Owners(o.store.Productions(child, nil)); !slices.Contains(owners, gate) {
+							t.Fatalf("missing independent contributor: %v", owners)
+						}
+						if !slices.ContainsFunc(
+							slices.Collect(o.index.ReadersOfFile("child/cm.yaml")),
+							func(r manifest.FileReader) bool { return r.Reader == child },
+						) {
+							t.Fatal("suspension lost the child's file read tracking")
+						}
+						_, _, inventory := o.store.GetEmission(child)
+						if retained {
+							if len(artifact.Manifests) != 1 ||
+								o.store.GetArtifact(child, store.ArtifactContent) != nil ||
+								o.store.GetObject(retainedID) == nil ||
+								len(inventory.Children) != 1 {
+								t.Fatal("suspension pruned retained artifact or emission")
+							}
+						} else if o.store.GetArtifact(child, store.ArtifactContent) != nil || len(inventory.Children) != 0 {
+							t.Fatal("suspended child produced output")
+						}
+						for _, name := range []string{"dependent", "independent"} {
+							id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: name}
+							if o.store.GetObject(id) == nil ||
+								len(outputByParent(res.Manifests)[testutil.KustomizationID("flux-system", name)]) != 1 {
+								t.Fatalf("active output missing: %s", id)
 							}
 						}
-						_, _, next := o.store.GetEmission(gate)
-						defer next.Finish()
-						next.Children, next.Manifests, next.Complete = children, testutil.DocumentOccurrences(retained), true
-						o.store.RecordEmitted(gate, &next, nil)
-					}, false)
-					t.Cleanup(unsub)
-					unsubArrivals := o.store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
-						if id == child {
-							owners := testutil.Owners(o.store.Productions(child, nil))
-							if !slices.Contains(owners, gate) || changedOnly && !o.filter.ShouldReconcile(child) {
-								t.Errorf("child arrived before evidence/selection: %v", owners)
-							}
+						output, err := json.Marshal(canonicalBatches(res))
+						if err != nil {
+							t.Fatal(err)
 						}
-						if id == retainedID || id == (manifest.NamedResource{Kind: manifest.KindConfigMap, Name: child.Name}) {
-							arrivals.Add(1)
+						if previous != nil && !bytes.Equal(previous, output) {
+							t.Fatal("output bytes differ across worker counts")
 						}
-					}, false)
-					t.Cleanup(unsubArrivals)
-					res, err := o.collectResult(o.run(t.Context()))
-					if err != nil || len(res.Failed) != 0 || len(res.Blocked) != 0 || o.tasks.Failures() != 0 {
-						t.Fatalf("scheduler failed to drain: error=%v failures=%v blocked=%v", err, res.Failed, res.Blocked)
-					}
-					info, _ := o.store.GetStatus(child)
-					fresh, _ := o.store.Get[*manifest.Kustomization](child)
-					if publication.Load() != 1 || arrivals.Load() != 0 || info.Outcome() != store.OutcomeSuspended || !fresh.Suspend || original.Suspend {
-						t.Fatalf("late suspension: publications=%d arrivals=%d status=%+v original=%+v fresh=%+v", publication.Load(), arrivals.Load(), info, original, fresh)
-					}
-					if owners := testutil.Owners(o.store.Productions(child, nil)); !slices.Contains(owners, gate) {
-						t.Fatalf("missing independent contributor: %v", owners)
-					}
-					if !slices.ContainsFunc(slices.Collect(o.index.ReadersOfFile("child/cm.yaml")), func(r manifest.FileReader) bool { return r.Reader == child }) {
-						t.Fatal("suspension lost the child's file read tracking")
-					}
-					_, _, inventory := o.store.GetEmission(child)
-					if retained {
-						if len(artifact.Manifests) != 1 || o.store.GetArtifact(child, store.ArtifactContent) != nil || o.store.GetObject(retainedID) == nil || len(inventory.Children) != 1 {
-							t.Fatal("suspension pruned retained artifact or emission")
-						}
-					} else if o.store.GetArtifact(child, store.ArtifactContent) != nil || len(inventory.Children) != 0 {
-						t.Fatal("suspended child produced output")
-					}
-					for _, name := range []string{"dependent", "independent"} {
-						id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: name}
-						if o.store.GetObject(id) == nil || len(outputByParent(res.Manifests)[testutil.KustomizationID("flux-system", name)]) != 1 {
-							t.Fatalf("active output missing: %s", id)
-						}
-					}
-					output, err := json.Marshal(canonicalBatches(res))
-					if err != nil {
-						t.Fatal(err)
-					}
-					if previous != nil && !bytes.Equal(previous, output) {
-						t.Fatal("output bytes differ across worker counts")
-					}
-					previous = output
-				})
+						previous = output
+					},
+				)
 			}
 		}
 	}
@@ -461,9 +671,23 @@ data:
 	// A chart may emit Flux resources; replaying its own unchanged HR
 	// must not request another reconcile while that HR is running.
 	testutil.WriteFile(t, dir, "charts/app/templates/hr.yaml", hr)
-	testutil.WriteFile(t, dir, "charts/app/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: greeting, namespace: flux-system}\ndata:\n  greeting: {{ .Values.greeting | quote }}\n")
-	testutil.WriteFile(t, dir, "charts/app/templates/bare.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: bare}\ndata: {value: retained}\n")
-	o, err := newTestOrchestrator(t, Tree{Path: dir, RepoRoot: dir}, Config{WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: 2})
+	testutil.WriteFile(
+		t,
+		dir,
+		"charts/app/templates/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: greeting, namespace: flux-system}\ndata:\n  greeting: {{ .Values.greeting | quote }}\n",
+	)
+	testutil.WriteFile(
+		t,
+		dir,
+		"charts/app/templates/bare.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: bare}\ndata: {value: retained}\n",
+	)
+	o, err := newTestOrchestrator(
+		t,
+		Tree{Path: dir, RepoRoot: dir},
+		Config{WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: 2},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -482,7 +706,9 @@ data:
 			t.Fatalf("%s status = (%+v, %v), want Ready", id, info, ok)
 		}
 	}
-	cm, ok := o.Store().Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "greeting"})
+	cm, ok := o.Store().Get[*manifest.ConfigMap](
+		manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "greeting"},
+	)
 	if !ok || cm.Data["greeting"] != "hello" {
 		t.Fatalf("shared values were not rendered: %+v", cm)
 	}
@@ -515,12 +741,24 @@ data:
 		t.Fatal("bare chart child lost release namespace identity")
 	}
 	o.store.DeleteObject(bare)
-	publishDocuments(o.ksc.Controller, testutil.KustomizationID("flux-system", "apps"), testutil.DocumentMaps(ksArt.Manifests), manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: "flux-system"})
-	_, replay := publishDocuments(o.hrc.Controller, hrID, testutil.DocumentMaps(hrArt.Manifests), manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: hrID.Namespace})
+	publishDocuments(
+		o.ksc.Controller,
+		testutil.KustomizationID("flux-system", "apps"),
+		testutil.DocumentMaps(ksArt.Manifests),
+		manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: "flux-system"},
+	)
+	_, replay := publishDocuments(
+		o.hrc.Controller,
+		hrID,
+		testutil.DocumentMaps(hrArt.Manifests),
+		manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: hrID.Namespace},
+	)
 	if o.store.GetObject(bare) == nil {
 		t.Fatal("replay lost release namespace identity")
 	}
-	next, err := testutil.DecodeDocs(strings.NewReader("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: next, namespace: other}\n"))
+	next, err := testutil.DecodeDocs(
+		strings.NewReader("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: next, namespace: other}\n"),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -539,7 +777,6 @@ data:
 	if ns != "flux-system" {
 		t.Fatalf("replay release namespace %q", ns)
 	}
-
 }
 
 func ksYAML(name, path, dependsOn string) string {
@@ -567,9 +804,19 @@ func TestDAG_RenderEmittedDependencyResolves(t *testing.T) {
 	testutil.WriteFile(t, dir, "flux/consumer.yaml", ksYAML("consumer", "consumer", "produced"))
 	testutil.WriteFile(t, dir, "producer/kustomization.yaml", "resources:\n- "+srv.URL+"/produced.yaml\n")
 	testutil.WriteFile(t, dir, "consumer/kustomization.yaml", "resources:\n- cm.yaml\n")
-	testutil.WriteFile(t, dir, "consumer/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: consumer}\ndata: {k: v}\n")
+	testutil.WriteFile(
+		t,
+		dir,
+		"consumer/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: consumer}\ndata: {k: v}\n",
+	)
 	testutil.WriteFile(t, dir, "produced/kustomization.yaml", "resources:\n- cm.yaml\n")
-	testutil.WriteFile(t, dir, "produced/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: produced}\ndata: {k: v}\n")
+	testutil.WriteFile(
+		t,
+		dir,
+		"produced/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: produced}\ndata: {k: v}\n",
+	)
 
 	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{WipeSecrets: true, Concurrency: 4})
 	if err != nil {
@@ -603,7 +850,12 @@ func TestDAG_DanglingDependencyCascadesAndTerminates(t *testing.T) {
 	testutil.WriteFile(t, dir, "flux/leaf.yaml", ksYAML("leaf", "leaf", "ghost"))
 	testutil.WriteFile(t, dir, "flux/mid.yaml", ksYAML("mid", "mid", "leaf"))
 	testutil.WriteFile(t, dir, "leaf/kustomization.yaml", "resources:\n- cm.yaml\n")
-	testutil.WriteFile(t, dir, "leaf/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: leaf}\ndata: {k: v}\n")
+	testutil.WriteFile(
+		t,
+		dir,
+		"leaf/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: leaf}\ndata: {k: v}\n",
+	)
 	testutil.WriteFile(t, dir, "mid/kustomization.yaml", "resources:\n- cm.yaml\n")
 	testutil.WriteFile(t, dir, "mid/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: mid}\ndata: {k: v}\n")
 
@@ -682,13 +934,22 @@ spec:
     << end >>
 `, i, ref, i)
 	}
-	manifests := strings.Replace(sets.String(), "    - apiVersion: fluxcd.controlplane.io/v1\n      kind: ResourceSetInputProvider\n      selector:", "    - selector:", 1)
+	manifests := strings.Replace(
+		sets.String(),
+		"    - apiVersion: fluxcd.controlplane.io/v1\n      kind: ResourceSetInputProvider\n      selector:",
+		"    - selector:",
+		1,
+	)
 	testutil.WriteFile(t, dir, "apps/sets.yaml", manifests)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	var previous []byte
 	for range 2 {
-		renderedSingleton1, err := RenderTrees(ctx, []Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: 2})
+		renderedSingleton1, err := RenderTrees(
+			ctx,
+			[]Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
+			Config{WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: 2},
+		)
 		if len(renderedSingleton1) != 1 {
 			t.Fatalf("missing render: %v", err)
 		}
@@ -698,12 +959,19 @@ spec:
 			t.Fatalf("selector chain failed: error=%v failures=%v", err, res.Failed)
 		}
 		for i := range depth + 1 {
-			nid := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSetInputProvider, Namespace: "flux-system", Name: fmt.Sprintf("provider-%02d", i)}
+			nid := manifest.NamedResource{
+				Group:     "fluxcd.controlplane.io",
+				Kind:      manifest.KindResourceSetInputProvider,
+				Namespace: "flux-system",
+				Name:      fmt.Sprintf("provider-%02d", i),
+			}
 			if _, ok := o.Store().Get[*manifest.ResourceSetInputProvider](nid); !ok {
 				t.Fatalf("missing chain output %s", nid)
 			}
 		}
-		if count := len(o.Store().ListObjects(manifest.FluxOperatorDomain, manifest.KindResourceSetInputProvider)); count != depth+1 {
+		if count := len(
+			o.Store().ListObjects(manifest.FluxOperatorDomain, manifest.KindResourceSetInputProvider),
+		); count != depth+1 {
 			t.Fatalf("provider count=%d, want %d", count, depth+1)
 		}
 		proofs := 0
@@ -735,13 +1003,22 @@ func TestDAG_SeedAdmissionPreservesSourceReaders(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		o.stop()
-
 	})
 	source := &manifest.GitRepository{Name: "ignored", Namespace: "flux-system"}
 	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "flux-system"}
 	o.store.AddObjects([]manifest.BaseManifest{source, consumer})
-	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{consumer.Named(): {File: "consumer.yaml"}}}
-	o.loader = admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"consumer.yaml"}), Index: index, Inventory: o.store, Root: root})
+	index := &manifest.DiscoveryIndex{
+		Records: map[manifest.NamedResource]manifest.DiscoveryRecord{consumer.Named(): {File: "consumer.yaml"}},
+	}
+	o.loader = admissiontest.New(
+		t,
+		admissiontest.Config{
+			Changes:   change.NewSet([]string{"consumer.yaml"}),
+			Index:     index,
+			Inventory: o.store,
+			Root:      root,
+		},
+	)
 	admissiontest.Commit(t, o.loader, nil)
 	o.filter = o.loader.Options.Filter
 	o.configureControllers()

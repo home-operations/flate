@@ -39,7 +39,12 @@ var effectiveSubstitutionCases = []struct {
 		second:     map[string]string{"USED": "kept", "OTHER": "second"},
 		same:       true,
 	},
-	{name: "used", expression: "${USED}", first: map[string]string{"USED": "first"}, second: map[string]string{"USED": "second"}},
+	{
+		name:       "used",
+		expression: "${USED}",
+		first:      map[string]string{"USED": "first"},
+		second:     map[string]string{"USED": "second"},
+	},
 	{
 		name:       "absent default",
 		expression: "${MISSING:=fallback}",
@@ -71,7 +76,12 @@ var effectiveSubstitutionCases = []struct {
 		first:      map[string]string{"OTHER": "first"},
 		second:     map[string]string{"OTHER": "second"},
 	},
-	{name: "activation", expression: "${MISSING:=fallback}", first: map[string]string{}, second: map[string]string{"OTHER": "enabled"}},
+	{
+		name:       "activation",
+		expression: "${MISSING:=fallback}",
+		first:      map[string]string{},
+		second:     map[string]string{"OTHER": "enabled"},
+	},
 	{
 		name:       "inline override",
 		expression: "${USED}",
@@ -148,9 +158,14 @@ func TestReconcile_EffectiveSubstitutions(t *testing.T) {
 				t,
 				root,
 				"apps/cm.yaml",
-				fmt.Sprintf("apiVersion: v1\nkind: ConfigMap\nmetadata: %s\ndata: {greeting: %q}\n", metadata, tc.expression),
+				fmt.Sprintf(
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: %s\ndata: {greeting: %q}\n",
+					metadata,
+					tc.expression,
+				),
 			)
-			ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps",
+			ks := &manifest.Kustomization{
+				Name: "apps", Namespace: "flux-system", Path: "./apps",
 				SourceRef: kustomizev1.CrossNamespaceSourceReference{
 					Kind:      manifest.KindGitRepository,
 					Name:      "flux-system",
@@ -180,7 +195,8 @@ func TestReconcile_EffectiveSubstitutions(t *testing.T) {
 						ex := c.ReconcileNode(ctx, id, level)
 						replayed = ex.Reused
 						return ex
-					}})
+					},
+				})
 				if info.Status != store.StatusReady {
 					t.Fatalf("run %d: %+v", i, info)
 				}
@@ -209,10 +225,19 @@ func TestReconcile_EffectiveSubstitutions(t *testing.T) {
 				full := controllertest.DispatchToFixpoint(
 					t.Context(),
 					t,
-					controllertest.Dispatch{Tasks: fresh.Tasks, Store: freshStore, ID: ks.Named(), ReconcileNode: fresh.ReconcileNode},
+					controllertest.Dispatch{
+						Tasks:         fresh.Tasks,
+						Store:         freshStore,
+						ID:            ks.Named(),
+						ReconcileNode: fresh.ReconcileNode,
+					},
 				)
 				assert.Equal(t, full.Status, store.StatusReady)
-				assert.Diff(t, current.Manifests, freshStore.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission).Manifests)
+				assert.Diff(
+					t,
+					current.Manifests,
+					freshStore.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission).Manifests,
+				)
 			}
 		})
 	}
@@ -271,14 +296,22 @@ func TestReconcile_EffectiveSubstitutionDiagnostics(t *testing.T) {
 				t,
 				root,
 				"apps/cm.yaml",
-				fmt.Sprintf("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello}\ndata: {greeting: %q}\n", expression),
+				fmt.Sprintf(
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello}\ndata: {greeting: %q}\n",
+					expression,
+				),
 			)
 			kind := manifest.KindConfigMap
 			if tc.bad != nil {
 				kind = tc.bad.Named().Kind
 			}
-			ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps",
-				PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: kind, Name: "vars"}}},
+			ks := &manifest.Kustomization{
+				Name:      "apps",
+				Namespace: "flux-system",
+				Path:      "./apps",
+				PostBuild: &kustomizev1.PostBuild{
+					SubstituteFrom: []manifest.SubstituteReference{{Kind: kind, Name: "vars"}},
+				},
 			}
 			s.AddObject(ks)
 			var good manifest.BaseManifest = &manifest.ConfigMap{
@@ -287,7 +320,11 @@ func TestReconcile_EffectiveSubstitutionDiagnostics(t *testing.T) {
 				Data:      map[string]any{"USED": "kept", "MISSING": "present"},
 			}
 			if kind == manifest.KindSecret {
-				good = &manifest.Secret{Name: "vars", Namespace: ks.Namespace, StringData: map[string]any{"USED": "kept"}}
+				good = &manifest.Secret{
+					Name:       "vars",
+					Namespace:  ks.Namespace,
+					StringData: map[string]any{"USED": "kept"},
+				}
 			}
 			s.AddObject(good)
 			s.UpdateStatus(good.Named(), store.StatusInfo{Status: store.StatusReady})
@@ -314,7 +351,8 @@ func TestReconcile_EffectiveSubstitutionDiagnostics(t *testing.T) {
 					ex := c.ReconcileNode(ctx, id, level)
 					reused = ex.Reused
 					return ex
-				}})
+				},
+			})
 			assert.Equal(t, reused, false)
 			assert.Equal(t, info.Status, store.StatusFailed)
 		})
@@ -324,10 +362,20 @@ func TestReconcile_EffectiveSubstitutionDiagnostics(t *testing.T) {
 func TestReconcile_StampedSubstitutionExclusion(t *testing.T) {
 	t.Parallel()
 	c, s, root := newControllerWithFixture(t)
-	testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello}\ndata: {greeting: '${ARR[@]}'}\n")
-	ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps",
-		CommonMetadata: &kustomizev1.CommonMetadata{Annotations: map[string]string{"kustomize.toolkit.fluxcd.io/substitute": "disabled"}},
-		PostBuild:      &kustomizev1.PostBuild{Substitute: map[string]string{"OTHER": "active"}},
+	testutil.WriteFile(
+		t,
+		root,
+		"apps/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello}\ndata: {greeting: '${ARR[@]}'}\n",
+	)
+	ks := &manifest.Kustomization{
+		Name:      "apps",
+		Namespace: "flux-system",
+		Path:      "./apps",
+		CommonMetadata: &kustomizev1.CommonMetadata{
+			Annotations: map[string]string{"kustomize.toolkit.fluxcd.io/substitute": "disabled"},
+		},
+		PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"OTHER": "active"}},
 	}
 	s.AddObject(ks)
 	info := controllertest.DispatchToFixpoint(
@@ -359,7 +407,8 @@ func TestRender_SuspendedSkipsRender(t *testing.T) {
 	counted := *initial
 	counted.FS = guard
 	st.SetArtifact(manifest.BootstrapSourceID, &counted)
-	ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps", Suspend: true,
+	ks := &manifest.Kustomization{
+		Name: "apps", Namespace: "flux-system", Path: "./apps", Suspend: true,
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{
 			Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
 		},
@@ -464,7 +513,8 @@ func TestReconcile_ImmutableRootChangedRemoteLiteral(t *testing.T) {
 			ex := second.ReconcileNode(ctx, id, level)
 			reused = ex.Reused
 			return ex
-		}})
+		},
+	})
 	assert.Equal(t, info.Status, store.StatusReady)
 	after := st.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission)
 	assert.Equal(t, reused, false)

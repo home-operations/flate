@@ -18,7 +18,15 @@ var (
 func hrDocs(n int) []Doc {
 	out := make([]Doc, 0, n)
 	for i := range n {
-		out = append(out, cmDoc(hrParent, manifest.NamedResource{Name: "cm-" + string(rune('a'+i)), Namespace: "monitoring"}, "v", ""))
+		out = append(
+			out,
+			cmDoc(
+				hrParent,
+				manifest.NamedResource{Name: "cm-" + string(rune('a'+i)), Namespace: "monitoring"},
+				"v",
+				"",
+			),
+		)
 	}
 	return out
 }
@@ -30,7 +38,10 @@ func TestSuppression_String(t *testing.T) {
 	if got := s.String(); got != want {
 		t.Errorf("String() = %q, want %q", got, want)
 	}
-	if got := (Suppression{Parent: ksParent, Side: SideOrig, Count: 1, Reason: "x"}).String(); !strings.Contains(got, "1 object not") {
+	if got := (Suppression{Parent: ksParent, Side: SideOrig, Count: 1, Reason: "x"}).String(); !strings.Contains(
+		got,
+		"1 object not",
+	) {
 		t.Errorf("singular noun expected, got %q", got)
 	}
 	for _, tc := range []struct {
@@ -49,7 +60,6 @@ func TestSuppression_String(t *testing.T) {
 			}
 		})
 	}
-
 }
 
 func TestSuppression_StringBothAndEmpty(t *testing.T) {
@@ -58,12 +68,23 @@ func TestSuppression_StringBothAndEmpty(t *testing.T) {
 		note Suppression
 		want string
 	}{
-		{Suppression{Parent: hrParent, Side: SideBoth, Count: 1, Reason: "failed on both sides: orig: old;\n current: new"},
-			"1 object withheld; diff suppressed (failed on both sides: orig: old; current: new)"},
-		{Suppression{Parent: hrParent, Side: SideBoth, Reason: "suspended on orig; suspended on current"},
-			"0 objects withheld; diff suppressed (suspended on orig; suspended on current)"},
-		{Suppression{Parent: hrParent, Side: SideCurrent, Reason: "suspended on current"},
-			"0 objects not rendered on the current side; diff suppressed (suspended on current)"},
+		{
+			Suppression{
+				Parent: hrParent,
+				Side:   SideBoth,
+				Count:  1,
+				Reason: "failed on both sides: orig: old;\n current: new",
+			},
+			"1 object withheld; diff suppressed (failed on both sides: orig: old; current: new)",
+		},
+		{
+			Suppression{Parent: hrParent, Side: SideBoth, Reason: "suspended on orig; suspended on current"},
+			"0 objects withheld; diff suppressed (suspended on orig; suspended on current)",
+		},
+		{
+			Suppression{Parent: hrParent, Side: SideCurrent, Reason: "suspended on current"},
+			"0 objects not rendered on the current side; diff suppressed (suspended on current)",
+		},
 	}
 	for _, tc := range cases {
 		if got := tc.note.String(); got != tc.want {
@@ -76,8 +97,14 @@ func TestRenderDocs_SuppressionHeader(t *testing.T) {
 	t.Parallel()
 	parent := ksParent
 	parent.Path = "apps/<path>"
-	l := []Doc{cmDoc(parent, manifest.NamedResource{Name: "keep", Namespace: "apps"}, "old", ""), cmDoc(parent, manifest.NamedResource{Name: "other", Namespace: "apps"}, "before", "")}
-	r := []Doc{cmDoc(parent, manifest.NamedResource{Name: "keep", Namespace: "apps"}, "new", ""), cmDoc(parent, manifest.NamedResource{Name: "other", Namespace: "apps"}, "after", "")}
+	l := []Doc{
+		cmDoc(parent, manifest.NamedResource{Name: "keep", Namespace: "apps"}, "old", ""),
+		cmDoc(parent, manifest.NamedResource{Name: "other", Namespace: "apps"}, "before", ""),
+	}
+	r := []Doc{
+		cmDoc(parent, manifest.NamedResource{Name: "keep", Namespace: "apps"}, "new", ""),
+		cmDoc(parent, manifest.NamedResource{Name: "other", Namespace: "apps"}, "after", ""),
+	}
 	suppressed := []Suppression{
 		{Parent: hrParent, Side: SideCurrent, Count: 2, Reason: "chart not ready"},
 		{Parent: ksParent, Side: SideOrig, Count: 1, Reason: "suspended on orig"},

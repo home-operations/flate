@@ -21,6 +21,7 @@ func decodeDocMaps(r io.Reader) ([]map[string]any, error) {
 }
 
 func splitDocMaps(data []byte) ([]map[string]any, error) { return decodeDocMaps(bytes.NewReader(data)) }
+
 func encodeRenderMaps(docs []map[string]any) ([]byte, error) {
 	outcomes := make([]DocOccurrence, len(docs))
 	for i, doc := range docs {
@@ -28,6 +29,7 @@ func encodeRenderMaps(docs []map[string]any) ([]byte, error) {
 	}
 	return EncodeRender(outcomes)
 }
+
 func decodeRenderMaps(data []byte) ([]map[string]any, error) {
 	docs, err := DecodeRender(data)
 	if err != nil {

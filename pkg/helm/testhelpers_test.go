@@ -11,6 +11,7 @@ import (
 	"testing/fstest"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
@@ -38,9 +39,17 @@ data:
 	src := &manifest.OCIRepository{Name: "podinfo", Namespace: "apps", URL: "oci://example.test/podinfo"}
 	st.AddObject(src)
 	hr := &manifest.HelmRelease{
-		Name: "podinfo", Namespace: "apps",
-		ChartRef:         &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: src.Name},
-		Chart:            manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: src.Namespace, Name: src.Name}},
+		Name:      "podinfo",
+		Namespace: "apps",
+		ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: src.Name},
+		Chart: manifest.HelmChart{
+			Source: manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindOCIRepository,
+				Namespace: src.Namespace,
+				Name:      src.Name,
+			},
+		},
 		ChartValuesFiles: []string{"prod.yaml"},
 	}
 	st.AddObject(hr)
@@ -67,10 +76,15 @@ func acquireChartFS(tb testing.TB, owner *cache.Cache, input fs.FS) fs.FS {
 	var buf bytes.Buffer
 	testutil.WriteTar(tb, &buf, files, 0o600)
 	data := buf.Bytes()
-	acquired, _, _, err := owner.Acquire(tb.Context(), cache.ArchiveKey{Content: tb.Name()}, cache.Policy{MaxAge: cache.Forever}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-		_, err := w.Write(data)
-		return cache.ProducerResult{}, err
-	})
+	acquired, _, _, err := owner.Acquire(
+		tb.Context(),
+		cache.ArchiveKey{Content: tb.Name()},
+		cache.Policy{MaxAge: cache.Forever},
+		func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+			_, err := w.Write(data)
+			return cache.ProducerResult{}, err
+		},
+	)
 	if err != nil {
 		tb.Fatal(err)
 	}

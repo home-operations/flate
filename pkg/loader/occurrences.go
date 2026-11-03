@@ -65,7 +65,10 @@ type occurrenceFacts struct {
 }
 
 func (f *occurrenceFacts) opaque(targets []manifest.ProducerTarget) bool {
-	return f != nil && f.policy != nil && f.structural == nil && !f.hasPath && len(f.authoredTargets) == 0 && len(targets) == 0 && len(f.templateInputs) == 0 && len(f.templateObjects) == 0
+	return f != nil && f.policy != nil && f.structural == nil && !f.hasPath && len(f.authoredTargets) == 0 &&
+		len(targets) == 0 &&
+		len(f.templateInputs) == 0 &&
+		len(f.templateObjects) == 0
 }
 
 // SourcePath returns the source and path in the occurrence's effective namespace.
@@ -86,9 +89,17 @@ func (o Occurrence) SourcePath() (manifest.NamedResource, string, bool) {
 func compactOccurrence(obj manifest.BaseManifest, projection manifest.TemplateProjection) Occurrence {
 	source, path, hasPath := obj.SourcePath()
 	targets := manifest.ProducerTargets(obj)
-	facts := &occurrenceFacts{source: source, path: path, hasPath: hasPath,
-		namespaced: manifest.KindOf(obj).Namespaced(), tracked: manifest.KindOf(obj).Tracked,
-		targets: targets, authoredTargets: targets, needsCandidates: manifest.ProducerNeedsCandidates(obj), roots: slices.Collect(manifest.RenderRoots(obj))}
+	facts := &occurrenceFacts{
+		source:          source,
+		path:            path,
+		hasPath:         hasPath,
+		namespaced:      manifest.KindOf(obj).Namespaced(),
+		tracked:         manifest.KindOf(obj).Tracked,
+		targets:         targets,
+		authoredTargets: targets,
+		needsCandidates: manifest.ProducerNeedsCandidates(obj),
+		roots:           slices.Collect(manifest.RenderRoots(obj)),
+	}
 
 	facts.templateInputs = projection.Inputs
 	facts.templateObjects = projection.Objects
@@ -109,7 +120,11 @@ func compactOccurrence(obj manifest.BaseManifest, projection manifest.TemplatePr
 		EmissionPolicy() manifest.EmissionPolicy
 	}); ok {
 		policy := producer.EmissionPolicy()
-		facts.policy = &manifest.EmissionPolicy{Namespace: policy.Namespace, InternalNamespace: policy.InternalNamespace, ExcludeChildren: policy.ExcludeChildren}
+		facts.policy = &manifest.EmissionPolicy{
+			Namespace:         policy.Namespace,
+			InternalNamespace: policy.InternalNamespace,
+			ExcludeChildren:   policy.ExcludeChildren,
+		}
 	}
 	if labeled, ok := facts.catalog.(interface{ GetLabels() map[string]string }); ok {
 		facts.labels, facts.labeled = labeled.GetLabels(), true
@@ -157,9 +172,14 @@ func (l *Loader) OccurrenceClaims(repoRoot string, occurrences []Occurrence) []m
 			ks = &projected
 		}
 		var claimBuf [1]ownerClaims
-		built := l.documents.buildClaims(repoRoot, []*manifest.Kustomization{ks}, func(id manifest.NamedResource) sourceScope {
-			return l.scopes.sources[l.scopeSource(l.sourceState(id, repoRoot))]
-		}, claimBuf[:0])
+		built := l.documents.buildClaims(
+			repoRoot,
+			[]*manifest.Kustomization{ks},
+			func(id manifest.NamedResource) sourceScope {
+				return l.scopes.sources[l.scopeSource(l.sourceState(id, repoRoot))]
+			},
+			claimBuf[:0],
+		)
 		claims = append(claims, built[0])
 	}
 	out, _ := projectClaims(len(claims), func(i int) ownerClaims { return claims[i] })
@@ -172,7 +192,10 @@ func (l *Loader) PathObjects() []Occurrence {
 	objects := make([]Occurrence, 0, len(stored))
 	l.eachKustomization(stored, func(child store.Child) {
 		if !l.inactiveKustomization(child.Obj.Named()) {
-			objects = append(objects, Occurrence{Identity: child.Obj.Named(), Authored: child.Obj.Named(), object: child.Obj})
+			objects = append(
+				objects,
+				Occurrence{Identity: child.Obj.Named(), Authored: child.Obj.Named(), object: child.Obj},
+			)
 		}
 	})
 	if l.scopes == nil || !l.scopes.complete {
@@ -235,7 +258,8 @@ func (l *Loader) Packages(ctx context.Context) ([]PackageEvidence, error) {
 			relative, _ := filepath.Rel(l.SourceRoot, dir)
 			scans[dir] = filepath.ToSlash(relative)
 		}
-		if doc.traversed && doc.body != nil && !isKustomizeComponent(doc.body) && l.documents.mountedRoot(dir) == l.SourceRoot {
+		if doc.traversed && doc.body != nil && !isKustomizeComponent(doc.body) &&
+			l.documents.mountedRoot(dir) == l.SourceRoot {
 			packages[dir] = struct{}{}
 		}
 	}
@@ -258,7 +282,8 @@ func (l *Loader) Packages(ctx context.Context) ([]PackageEvidence, error) {
 		}
 		relative, _ := filepath.Rel(l.SourceRoot, file)
 		for _, child := range doc.objects {
-			if child.Obj != nil && child.outcome.Err == nil && !covered[OccurrenceID{Source: l.SourceRoot, File: filepath.ToSlash(relative), Document: child.outcome.Ordinal}] {
+			if child.Obj != nil && child.outcome.Err == nil &&
+				!covered[OccurrenceID{Source: l.SourceRoot, File: filepath.ToSlash(relative), Document: child.outcome.Ordinal}] {
 				packages[filepath.Dir(file)] = struct{}{}
 				break
 			}
@@ -278,7 +303,8 @@ func (l *Loader) Packages(ctx context.Context) ([]PackageEvidence, error) {
 			}
 			relative, _ := filepath.Rel(l.SourceRoot, dir)
 			objects = slices.DeleteFunc(objects, func(o Occurrence) bool {
-				return o.Declaration.Source != l.SourceRoot || filepath.ToSlash(filepath.Dir(o.Declaration.File)) != filepath.ToSlash(relative)
+				return o.Declaration.Source != l.SourceRoot ||
+					filepath.ToSlash(filepath.Dir(o.Declaration.File)) != filepath.ToSlash(relative)
 			})
 			e = PackageEvidence{Path: filepath.ToSlash(relative), Occurrences: objects}
 		}
@@ -302,7 +328,15 @@ func (l *Loader) Occurrences(ctx context.Context, dir, namespace string) ([]Occu
 		return nil, nil
 	}
 	relative, _ := filepath.Rel(root, dir)
-	visits := l.scopeWalk(graphVisit{root: root, dir: filepath.ToSlash(relative), namespace: namespace, fallback: namespace, role: kustomizeinput.Resource})
+	visits := l.scopeWalk(
+		graphVisit{
+			root:      root,
+			dir:       filepath.ToSlash(relative),
+			namespace: namespace,
+			fallback:  namespace,
+			role:      kustomizeinput.Resource,
+		},
+	)
 	var out []Occurrence
 	for _, v := range visits {
 		if v.role != kustomizeinput.Resource || v.document != nil || !v.readable || v.deferDecode {
@@ -330,7 +364,16 @@ func (l *Loader) Occurrences(ctx context.Context, dir, namespace string) ([]Occu
 					continue
 				}
 			} else {
-				o = Occurrence{Declaration: OccurrenceID{Source: source, File: filepath.ToSlash(file), Document: child.outcome.Ordinal}, Authored: child.Obj.Named(), Identity: child.Obj.Named(), object: child.Obj}
+				o = Occurrence{
+					Declaration: OccurrenceID{
+						Source:   source,
+						File:     filepath.ToSlash(file),
+						Document: child.outcome.Ordinal,
+					},
+					Authored: child.Obj.Named(),
+					Identity: child.Obj.Named(),
+					object:   child.Obj,
+				}
 				namespaced = manifest.KindOf(child.Obj).Namespaced()
 			}
 			id, err := l.projectIdentity(o.Authored, v, child.version, namespaced)
@@ -349,7 +392,12 @@ type identityProjection struct {
 	version, namespace, prefix, suffix string
 }
 
-func (l *Loader) projectIdentity(id manifest.NamedResource, v graphVisit, version string, namespaced bool) (manifest.NamedResource, error) {
+func (l *Loader) projectIdentity(
+	id manifest.NamedResource,
+	v graphVisit,
+	version string,
+	namespaced bool,
+) (manifest.NamedResource, error) {
 	projection := 0
 	if namespaced {
 		id = manifest.Resolve(id, v.namespace, v.fallback)
@@ -359,7 +407,13 @@ func (l *Loader) projectIdentity(id manifest.NamedResource, v graphVisit, versio
 		return id, nil
 	}
 	l.ensureScopes()
-	key := identityProjection{identity: id, version: version, namespace: v.namespace, prefix: v.namePrefix, suffix: v.nameSuffix}
+	key := identityProjection{
+		identity:  id,
+		version:   version,
+		namespace: v.namespace,
+		prefix:    v.namePrefix,
+		suffix:    v.nameSuffix,
+	}
 	if projected, ok := l.scopes.projections[projection][key]; ok {
 		return projected, nil
 	}
@@ -369,7 +423,10 @@ func (l *Loader) projectIdentity(id manifest.NamedResource, v graphVisit, versio
 		return id, manifest.NewError(manifest.ErrFlux, fmt.Errorf("project identity: %w", err), "")
 	}
 	if v.namespace != "" {
-		ns := namespace.Filter{Namespace: v.namespace, FsSlice: types.FsSlice{{Version: "v1", Kind: "Namespace", Path: types.MetadataNamePath}}}
+		ns := namespace.Filter{
+			Namespace: v.namespace,
+			FsSlice:   types.FsSlice{{Version: "v1", Kind: "Namespace", Path: types.MetadataNamePath}},
+		}
 		if err := r.ApplyFilter(ns); err != nil {
 			return id, manifest.NewError(manifest.ErrFlux, fmt.Errorf("project namespace: %w", err), "")
 		}
@@ -410,7 +467,9 @@ func (l *Loader) AdmitsOccurrence(occurrence Occurrence) bool {
 			if child.outcome.Err != nil || child.Obj == nil && child.fact == nil {
 				continue
 			}
-			if child.fact != nil && child.fact.Declaration == occurrence.Declaration || child.fact == nil && child.Obj.Named() == record.Authored && child.outcome.Ordinal == occurrence.Declaration.Document {
+			if child.fact != nil && child.fact.Declaration == occurrence.Declaration ||
+				child.fact == nil && child.Obj.Named() == record.Authored &&
+					child.outcome.Ordinal == occurrence.Declaration.Document {
 				return l.AdmitsRoot(l.CatalogObject(id), record.Path)
 			}
 		}
@@ -452,14 +511,22 @@ func (l *Loader) EntryFailure(ctx context.Context, repoRoot string) error {
 		}
 		for _, child := range l.documents.cache[file].objects {
 			if child.outcome.Err != nil {
-				return fmt.Errorf("entry %s: %w (invalid YAML)", l.fileCoordinate(l.documents.localPath(file)), manifest.DocumentFailure([]manifest.DocOccurrence{child.outcome}))
+				return fmt.Errorf(
+					"entry %s: %w (invalid YAML)",
+					l.fileCoordinate(l.documents.localPath(file)),
+					manifest.DocumentFailure([]manifest.DocOccurrence{child.outcome}),
+				)
 			}
 		}
 	}
 	return nil
 }
 
-func (l *Loader) exactObject(ctx context.Context, occurrence Occurrence, input *store.SourceArtifact) (store.Child, error) {
+func (l *Loader) exactObject(
+	ctx context.Context,
+	occurrence Occurrence,
+	input *store.SourceArtifact,
+) (store.Child, error) {
 	if err := ctx.Err(); err != nil {
 		return store.Child{}, err
 	}
@@ -477,7 +544,11 @@ func (l *Loader) exactObject(ctx context.Context, occurrence Occurrence, input *
 	file := filepath.Join(occurrence.Declaration.Source, filepath.FromSlash(occurrence.Declaration.File))
 	parsed, err := reader.fileObjects(file, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets})
 	if err != nil {
-		return store.Child{}, manifest.NewError(manifest.ErrInput, fmt.Errorf("hydrate %s: %w", occurrence.Identity, err), "")
+		return store.Child{}, manifest.NewError(
+			manifest.ErrInput,
+			fmt.Errorf("hydrate %s: %w", occurrence.Identity, err),
+			"",
+		)
 	}
 	if err := ctx.Err(); err != nil {
 		return store.Child{}, err
@@ -485,7 +556,15 @@ func (l *Loader) exactObject(ctx context.Context, occurrence Occurrence, input *
 	var children []store.Child
 	for _, child := range parsed {
 		if child.outcome.Err != nil {
-			return store.Child{}, manifest.NewError(manifest.ErrInput, fmt.Errorf("hydrate %s: %w", occurrence.Identity, manifest.DocumentFailure([]manifest.DocOccurrence{child.outcome})), "")
+			return store.Child{}, manifest.NewError(
+				manifest.ErrInput,
+				fmt.Errorf(
+					"hydrate %s: %w",
+					occurrence.Identity,
+					manifest.DocumentFailure([]manifest.DocOccurrence{child.outcome}),
+				),
+				"",
+			)
 		}
 		if child.Obj != nil && manifest.KindOf(child.Obj).Tracked {
 			children = append(children, child.Child)

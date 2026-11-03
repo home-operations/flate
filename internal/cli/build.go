@@ -65,7 +65,9 @@ func buildCmd(cmd *cobra.Command, kinds ...string) *cobra.Command {
 				groups[i] = output.DocumentGroup{Cluster: group.cluster, Documents: collectRendered(group.sides[0], b)}
 			}
 			return selectedPayload{write: func() error {
-				return (output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}).DocumentGroups(groups)
+				return (output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}).DocumentGroups(
+					groups,
+				)
 			}}
 		})
 	}

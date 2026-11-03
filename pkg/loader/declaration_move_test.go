@@ -37,14 +37,25 @@ func TestWithReaders_ReusesCompleteDeclarations(t *testing.T) {
 			var loaders [2]*Loader
 			var stores [2]*store.Store
 			var inputs [2]*declarationReadFS
-			id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "chart"}
+			id := manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindOCIRepository,
+				Namespace: "apps",
+				Name:      "chart",
+			}
 			for side := range loaders {
 				value := 0
 				if changed {
 					value = side
 				}
 				input := &declarationReadFS{FS: fstest.MapFS{
-					"entry/source.yaml": {Data: fmt.Appendf(nil, "apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: chart, namespace: apps}\nspec: {url: oci://fixture.invalid/chart, undiscovered: %d}\n", value)},
+					"entry/source.yaml": {
+						Data: fmt.Appendf(
+							nil,
+							"apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: chart, namespace: apps}\nspec: {url: oci://fixture.invalid/chart, undiscovered: %d}\n",
+							value,
+						),
+					},
 				}}
 				root := fmt.Sprintf("/virtual/declaration-reuse/%d", side)
 				st := store.New()
@@ -58,7 +69,12 @@ func TestWithReaders_ReusesCompleteDeclarations(t *testing.T) {
 				assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 				loaders[side], stores[side], inputs[side] = l, st, input
 			}
-			changes, err := change.Qualify(t.Context(), change.NewSet([]string{"entry/source.yaml"}), stores[0], stores[1])
+			changes, err := change.Qualify(
+				t.Context(),
+				change.NewSet([]string{"entry/source.yaml"}),
+				stores[0],
+				stores[1],
+			)
 			assert.NoError(t, err)
 			for _, input := range inputs {
 				input.opens.Store(0)
@@ -68,7 +84,10 @@ func TestWithReaders_ReusesCompleteDeclarations(t *testing.T) {
 					t.Context(),
 					loaders[0].Index,
 					loaders[1].Index,
-					[2]map[manifest.NamedResource]inputprojection.Projection{loaders[0].InputContent, loaders[1].InputContent},
+					[2]map[manifest.NamedResource]inputprojection.Projection{
+						loaders[0].InputContent,
+						loaders[1].InputContent,
+					},
 				)
 				assert.NoError(t, err)
 				for _, input := range inputs {
@@ -88,7 +107,24 @@ func declarationMovePair(t *testing.T, scenario string, reverse bool) ([2]*Loade
 	var inputs [2]*store.SourceArtifact
 	for side := range loaders {
 		root := t.TempDir()
-		testutil.WriteFile(t, root, "flux/owners.yaml", testutil.KustomizationYAML("old-owner", "apps", "  path: ./old\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n")+"---\n"+testutil.KustomizationYAML("new-owner", "apps", "  path: ./new\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n")+"---\n"+testutil.KustomizationYAML("reader-owner", "apps", "  path: ./reader\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
+		testutil.WriteFile(
+			t,
+			root,
+			"flux/owners.yaml",
+			testutil.KustomizationYAML(
+				"old-owner",
+				"apps",
+				"  path: ./old\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+			)+"---\n"+testutil.KustomizationYAML(
+				"new-owner",
+				"apps",
+				"  path: ./new\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+			)+"---\n"+testutil.KustomizationYAML(
+				"reader-owner",
+				"apps",
+				"  path: ./reader\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+			),
+		)
 		for i, owner := range []string{"old", "new"} {
 			resources := "resources: []\n"
 			if side == i && (scenario != "added" || side != 0) && (scenario != "removed" || side != 1) {
@@ -100,13 +136,23 @@ func declarationMovePair(t *testing.T, scenario string, reverse bool) ([2]*Loade
 				if side == 1 && scenario == "namespace" {
 					namespace = "other"
 				}
-				body := fmt.Sprintf("apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: chart, namespace: %s}\nspec: {url: oci://fixture.invalid/chart, ref: {tag: %s}}\n", namespace, tag)
+				body := fmt.Sprintf(
+					"apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: chart, namespace: %s}\nspec: {url: oci://fixture.invalid/chart, ref: {tag: %s}}\n",
+					namespace,
+					tag,
+				)
 				if scenario == "mixed" {
-					body += fmt.Sprintf("---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {values.yaml: 'value: side-%d'}\n", side)
+					body += fmt.Sprintf(
+						"---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {values.yaml: 'value: side-%d'}\n",
+						side,
+					)
 				}
 				testutil.WriteFile(t, root, owner+"/source.yaml", body)
 				if scenario == "build_input" {
-					resources += fmt.Sprintf("patches:\n- target: {kind: OCIRepository, name: chart}\n  patch: '[{\"op\":\"add\",\"path\":\"/spec/interval\",\"value\":\"%dh\"}]'\n", side+1)
+					resources += fmt.Sprintf(
+						"patches:\n- target: {kind: OCIRepository, name: chart}\n  patch: '[{\"op\":\"add\",\"path\":\"/spec/interval\",\"value\":\"%dh\"}]'\n",
+						side+1,
+					)
 				}
 			}
 			testutil.WriteFile(t, root, owner+"/kustomization.yaml", resources)
@@ -114,7 +160,11 @@ func declarationMovePair(t *testing.T, scenario string, reverse bool) ([2]*Loade
 		testutil.WriteFile(t, root, "reader/kustomization.yaml", "resources: [release.yaml]\n")
 		body := "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: reader, namespace: apps}\nspec: {interval: 1h, chartRef: {kind: OCIRepository, name: chart}}\n"
 		if scenario == "mixed" {
-			body += "---\n" + strings.ReplaceAll(strings.ReplaceAll(body, "name: reader", "name: data-reader"), "interval: 1h,", "interval: 1h, valuesFrom: [{kind: ConfigMap, name: settings}],")
+			body += "---\n" + strings.ReplaceAll(
+				strings.ReplaceAll(body, "name: reader", "name: data-reader"),
+				"interval: 1h,",
+				"interval: 1h, valuesFrom: [{kind: ConfigMap, name: settings}],",
+			)
 		}
 		testutil.WriteFile(t, root, "reader/release.yaml", body)
 		st := store.New()
@@ -134,7 +184,12 @@ func declarationMovePair(t *testing.T, scenario string, reverse bool) ([2]*Loade
 		loaders[side] = l
 	}
 	if scenario == "source" {
-		id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "chart"}
+		id := manifest.NamedResource{
+			Group:     manifest.SourceDomain,
+			Kind:      manifest.KindOCIRepository,
+			Namespace: "apps",
+			Name:      "chart",
+		}
 		record := loaders[1].Index.Records[id]
 		for i := range record.Productions {
 			record.Productions[i].Source.Name = "foreign"
@@ -184,8 +239,25 @@ func TestAdmission_UnchangedDeclarationMove(t *testing.T) {
 							renderers = append(renderers, id)
 						}
 					}
-					assert.Diff(t, renderers, []manifest.NamedResource{testutil.KustomizationID("apps", "new-owner"), testutil.KustomizationID("apps", "old-owner")})
-					changed, known := changes.DeclarationChanged(l.side, manifest.BootstrapSourceID, manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "chart"}, nil)
+					assert.Diff(
+						t,
+						renderers,
+						[]manifest.NamedResource{
+							testutil.KustomizationID("apps", "new-owner"),
+							testutil.KustomizationID("apps", "old-owner"),
+						},
+					)
+					changed, known := changes.DeclarationChanged(
+						l.side,
+						manifest.BootstrapSourceID,
+						manifest.NamedResource{
+							Group:     manifest.SourceDomain,
+							Kind:      manifest.KindOCIRepository,
+							Namespace: "apps",
+							Name:      "chart",
+						},
+						nil,
+					)
 					assert.Equal(t, known && !changed, true)
 				}
 			}
@@ -202,9 +274,18 @@ func TestAdmission_DeclarationMoveChanges(t *testing.T) {
 			for _, l := range loaders {
 				proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
 				assert.NoError(t, err)
-				assert.Equal(t, slices.Contains(proposal.Needed, testutil.HelmReleaseID("apps", "reader")), scenario != "mixed" && scenario != "build_input")
+				assert.Equal(
+					t,
+					slices.Contains(proposal.Needed, testutil.HelmReleaseID("apps", "reader")),
+					scenario != "mixed" && scenario != "build_input",
+				)
 				if scenario == "build_input" {
-					id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "chart"}
+					id := manifest.NamedResource{
+						Group:     manifest.SourceDomain,
+						Kind:      manifest.KindOCIRepository,
+						Namespace: "apps",
+						Name:      "chart",
+					}
 					occurrence, ok := l.occurrence(id)
 					assert.Equal(t, ok, true)
 					input := l.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
@@ -216,7 +297,11 @@ func TestAdmission_DeclarationMoveChanges(t *testing.T) {
 					assert.Equal(t, slices.Contains(proposal.Dirty, testutil.HelmReleaseID("apps", "reader")), true)
 				}
 				if scenario == "mixed" {
-					assert.Equal(t, slices.Contains(proposal.Needed, testutil.HelmReleaseID("apps", "data-reader")), true)
+					assert.Equal(
+						t,
+						slices.Contains(proposal.Needed, testutil.HelmReleaseID("apps", "data-reader")),
+						true,
+					)
 				}
 			}
 		})

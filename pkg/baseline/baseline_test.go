@@ -370,7 +370,10 @@ func TestAutoResolve_DetachedHEAD(t *testing.T) {
 	}
 
 	if res.Source.Metadata["baseline-selection"] != "merge-base with origin/HEAD" {
-		t.Errorf("Source = %q, want 'merge-base with origin/HEAD' (detached HEAD should skip @{u})", res.Source.Metadata["baseline-selection"])
+		t.Errorf(
+			"Source = %q, want 'merge-base with origin/HEAD' (detached HEAD should skip @{u})",
+			res.Source.Metadata["baseline-selection"],
+		)
 	}
 }
 
@@ -467,7 +470,11 @@ func TestAutoResolve_PathOrigMappedToSubdir(t *testing.T) {
 	assert.Equal(t, result.ScanPath, cluster)
 	assert.Equal(t, result.BaseScanPath, filepath.Join(result.BaseInput.LocalPath, "kubernetes", "flux", "cluster"))
 	assert.Equal(t, result.BaseInput.FS.(*gittree.FS).Location(), result.Source.FS.(*gittree.FS).Location())
-	if data, err := fs.ReadFile(result.BaseInput.FS, "kubernetes/flux/cluster/cluster.yaml"); err != nil || string(data) != "x" {
+	if data, err := fs.ReadFile(
+		result.BaseInput.FS,
+		"kubernetes/flux/cluster/cluster.yaml",
+	); err != nil ||
+		string(data) != "x" {
 		t.Fatalf("baseline file: %q %v", data, err)
 	}
 }
@@ -674,7 +681,15 @@ func TestResolve_RetainedConfiguration(t *testing.T) {
 			var explicit string
 			if route == "upstream" {
 				setRef(t, repo, plumbing.NewRemoteReferenceName("upstream", "trunk"), base)
-				configureBranch(t, repo, &config.Branch{Name: head.Name().Short(), Remote: "upstream", Merge: plumbing.NewBranchReferenceName("trunk")})
+				configureBranch(
+					t,
+					repo,
+					&config.Branch{
+						Name:   head.Name().Short(),
+						Remote: "upstream",
+						Merge:  plumbing.NewBranchReferenceName("trunk"),
+					},
+				)
 				writeAndCommit(t, root, "a.yaml", "head")
 			} else {
 				remote := t.TempDir()
@@ -687,7 +702,11 @@ func TestResolve_RetainedConfiguration(t *testing.T) {
 			assert.NoError(t, err)
 			location := input.FS.(*gittree.FS).Location()
 			assert.NoError(t, os.Remove(filepath.Join(root, ".git", "config")))
-			resolved, err := (selection{repo: location.Repository, owner: cachetest.New(t, "", sourcecache.New)}).resolve(t.Context(), location, explicit)
+			resolved, err := (selection{repo: location.Repository, owner: cachetest.New(t, "", sourcecache.New)}).resolve(
+				t.Context(),
+				location,
+				explicit,
+			)
 			assert.NoError(t, err)
 			assert.Equal(t, resolved.Hash, base)
 			if route == "upstream" {
@@ -771,7 +790,12 @@ func TestResolve_InputErrors(t *testing.T) {
 			if tc.name == "HEAD lookup" {
 				storer = &headErrorStorage{Storer: storer, err: tc.cause}
 			} else {
-				assert.NoError(t, storer.SetReference(plumbing.NewHashReference(plumbing.HEAD, plumbing.NewHash(strings.Repeat("a", 40)))))
+				assert.NoError(
+					t,
+					storer.SetReference(
+						plumbing.NewHashReference(plumbing.HEAD, plumbing.NewHash(strings.Repeat("a", 40))),
+					),
+				)
 			}
 			_, err := (selection{repo: &git.Repository{Storer: storer}}).resolve(t.Context(), &gitrepo.Location{}, "")
 			assert.Equal(t, errors.Is(err, manifest.ErrInput), true)

@@ -15,7 +15,12 @@ func BenchmarkPlan_RepeatedIdentity(b *testing.B) {
 			root := b.TempDir()
 			for _, dir := range []string{"alpha", "omega"} {
 				testutil.WriteFile(b, root, dir+"/kustomization.yaml", tc.projection+"resources: [objects.yaml]\n")
-				testutil.WriteFile(b, root, dir+"/objects.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: same}\ndata: {key: equal}\n---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: "+dir+"}\nspec: {url: oci://fixture.invalid/chart}\n")
+				testutil.WriteFile(
+					b,
+					root,
+					dir+"/objects.yaml",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: same}\ndata: {key: equal}\n---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: "+dir+"}\nspec: {url: oci://fixture.invalid/chart}\n",
+				)
 			}
 			b.ReportAllocs()
 			for b.Loop() {

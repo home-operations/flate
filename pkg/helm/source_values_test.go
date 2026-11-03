@@ -17,6 +17,7 @@ import (
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -43,7 +44,12 @@ func TestTemplate_SourceRootValuesFiles(t *testing.T) {
 				testutil.WriteFile(t, root, "config/prod.yaml", "marker: shared-production\n")
 				testutil.WriteFile(t, root, "prod.yaml", "marker: root-production\n")
 				testutil.WriteFile(t, root, "values.yaml", "marker: root-default\n")
-				testutil.WriteFile(t, root, "charts/demo/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\ndata:\n  marker: {{ .Values.marker | quote }}\n  kept: {{ .Values.kept | quote }}\n")
+				testutil.WriteFile(
+					t,
+					root,
+					"charts/demo/templates/cm.yaml",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\ndata:\n  marker: {{ .Values.marker | quote }}\n  kept: {{ .Values.kept | quote }}\n",
+				)
 				sub, err := fs.Sub(os.DirFS(root), "charts/demo")
 				assert.NoError(t, err)
 				testutil.WriteFile(t, root, "packaged.tgz", string(chartArchive(t, sub)))
@@ -58,7 +64,20 @@ func TestTemplate_SourceRootValuesFiles(t *testing.T) {
 				}
 				cli := NewClient(owner)
 				st := store.New()
-				hr := &manifest.HelmRelease{Name: "demo", Namespace: "apps", Chart: manifest.HelmChart{Name: "charts/demo", Source: manifest.NamedResource{Kind: kind, Group: manifest.SourceDomain, Name: "repo", Namespace: "apps"}}, IgnoreMissingValuesFiles: ignore}
+				hr := &manifest.HelmRelease{
+					Name:      "demo",
+					Namespace: "apps",
+					Chart: manifest.HelmChart{
+						Name: "charts/demo",
+						Source: manifest.NamedResource{
+							Kind:      kind,
+							Group:     manifest.SourceDomain,
+							Name:      "repo",
+							Namespace: "apps",
+						},
+					},
+					IgnoreMissingValuesFiles: ignore,
+				}
 				st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: input})
 				cliSources := NewSources(st)
 				for _, tc := range []struct {
@@ -88,15 +107,35 @@ func TestTemplate_SourceRootValuesFiles(t *testing.T) {
 							selected.Chart.Name = "packaged.tgz"
 						}
 						if tc.name == "standalone" {
-							selected.ChartRef = &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindHelmChart, Name: "standalone"}
+							selected.ChartRef = &helmv2.CrossNamespaceSourceReference{
+								Kind: manifest.KindHelmChart,
+								Name: "standalone",
+							}
 							selected.Chart.Source.Kind, selected.Chart.Source.Name = manifest.KindHelmChart, "standalone"
 							var err error
 							selected, _, err = Prepare(selected, func(id manifest.NamedResource) manifest.BaseManifest {
-								return &manifest.HelmChartSource{Name: id.Name, Namespace: id.Namespace, Chart: "charts/demo", SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: kind, Name: "repo"}, ValuesFiles: tc.files, IgnoreMissingValuesFiles: ignore}
+								return &manifest.HelmChartSource{
+									Name:      id.Name,
+									Namespace: id.Namespace,
+									Chart:     "charts/demo",
+									SourceRef: sourcev1.LocalHelmChartSourceReference{
+										Kind: kind,
+										Name: "repo",
+									},
+									ValuesFiles:              tc.files,
+									IgnoreMissingValuesFiles: ignore,
+								}
 							}, nil, nil)
 							assert.NoError(t, err)
 						}
-						first, _, err := testutil.RenderMaps(cli.Template(t.Context(), selected, tc.overrides, RenderOptions{Options: Options{}, Sources: cliSources}))
+						first, _, err := testutil.RenderMaps(
+							cli.Template(
+								t.Context(),
+								selected,
+								tc.overrides,
+								RenderOptions{Options: Options{}, Sources: cliSources},
+							),
+						)
 						if !ignore && (tc.name == "missing" || tc.name == "no chart fallback") {
 							if !errors.Is(err, fs.ErrNotExist) || !errors.Is(err, manifest.ErrInput) {
 								t.Fatalf("missing source values: %v", err)
@@ -109,7 +148,14 @@ func TestTemplate_SourceRootValuesFiles(t *testing.T) {
 						if !hasRenderField(first, "marker", tc.want) || !hasRenderField(first, "kept", "default") {
 							t.Fatal(first)
 						}
-						second, _, err := testutil.RenderMaps(cli.Template(t.Context(), selected, tc.overrides, RenderOptions{Options: Options{}, Sources: cliSources}))
+						second, _, err := testutil.RenderMaps(
+							cli.Template(
+								t.Context(),
+								selected,
+								tc.overrides,
+								RenderOptions{Options: Options{}, Sources: cliSources},
+							),
+						)
 						assert.NoError(t, err)
 						assert.Diff(t, second, first)
 					})
@@ -126,22 +172,43 @@ func TestTemplate_ArchiveValuesFiles(t *testing.T) {
 			t.Parallel()
 			owner := cachetest.New(t, "", cache.New)
 			input := fstest.MapFS{
-				"charts/demo/Chart.yaml":        {Data: []byte("apiVersion: v2\nname: demo\nversion: 1.0.0\n")},
-				"charts/demo/values.yaml":       {Data: []byte("marker: default\n")},
-				"charts/demo/prod.yaml":         {Data: []byte("marker: archive\n")},
-				"charts/demo/templates/cm.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\ndata:\n  marker: {{ .Values.marker | quote }}\n")},
-				"prod.yaml":                     {Data: []byte("marker: outside\n")},
+				"charts/demo/Chart.yaml":  {Data: []byte("apiVersion: v2\nname: demo\nversion: 1.0.0\n")},
+				"charts/demo/values.yaml": {Data: []byte("marker: default\n")},
+				"charts/demo/prod.yaml":   {Data: []byte("marker: archive\n")},
+				"charts/demo/templates/cm.yaml": {
+					Data: []byte(
+						"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\ndata:\n  marker: {{ .Values.marker | quote }}\n",
+					),
+				},
+				"prod.yaml": {Data: []byte("marker: outside\n")},
 			}
-			hr := &manifest.HelmRelease{Name: "demo", Namespace: "apps", Chart: manifest.HelmChart{Name: "charts/demo", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Name: "repo", Namespace: "apps"}}}
+			hr := &manifest.HelmRelease{
+				Name:      "demo",
+				Namespace: "apps",
+				Chart: manifest.HelmChart{
+					Name: "charts/demo",
+					Source: manifest.NamedResource{
+						Group:     manifest.SourceDomain,
+						Kind:      kind,
+						Name:      "repo",
+						Namespace: "apps",
+					},
+				},
+			}
 			var artifact fs.FS = input
 			if kind != manifest.KindExternalArtifact {
 				sub, err := fs.Sub(input, "charts/demo")
 				assert.NoError(t, err)
 				payload := chartArchive(t, sub)
-				r, _, _, err := owner.Blob(t.Context(), cache.BlobKey{Content: payload}, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-					_, err := w.Write(payload)
-					return cache.ProducerResult{}, err
-				})
+				r, _, _, err := owner.Blob(
+					t.Context(),
+					cache.BlobKey{Content: payload},
+					cache.Policy{},
+					func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+						_, err := w.Write(payload)
+						return cache.ProducerResult{}, err
+					},
+				)
 				assert.NoError(t, err)
 				artifact = cache.NameBlob("chart.tgz", r)
 			}
@@ -162,7 +229,14 @@ func TestTemplate_ArchiveValuesFiles(t *testing.T) {
 					t.Parallel()
 					selected := hr.Clone()
 					selected.ChartValuesFiles = tc.files
-					out, _, err := testutil.RenderMaps(cli.Template(t.Context(), selected, nil, RenderOptions{Options: Options{}, Sources: cliSources}))
+					out, _, err := testutil.RenderMaps(
+						cli.Template(
+							t.Context(),
+							selected,
+							nil,
+							RenderOptions{Options: Options{}, Sources: cliSources},
+						),
+					)
 					assert.NoError(t, err)
 					if !hasRenderField(out, "marker", tc.want) {
 						t.Fatal(out)
@@ -184,6 +258,7 @@ func (f valuesFaultFile) Read(p []byte) (int, error) {
 	}
 	return f.File.Read(p)
 }
+
 func (f valuesFaultFile) Stat() (fs.FileInfo, error) {
 	if f.statErr != nil {
 		return nil, f.statErr
@@ -206,13 +281,22 @@ func TestTemplate_ValuesFilesFailures(t *testing.T) {
 	w := tar.NewWriter(&archive)
 	assert.NoError(t, w.WriteHeader(&tar.Header{Name: "link", Typeflag: tar.TypeSymlink, Linkname: "../absent"}))
 	assert.NoError(t, w.Close())
-	bucket, _, _, err := owner.Acquire(t.Context(), cache.ArchiveKey{Content: "denied-values"}, cache.Policy{}, func(_ context.Context, out cache.ProducerInput) (cache.ProducerResult, error) {
-		_, err := out.Write(archive.Bytes())
-		return cache.ProducerResult{}, err
-	})
+	bucket, _, _, err := owner.Acquire(
+		t.Context(),
+		cache.ArchiveKey{Content: "denied-values"},
+		cache.Policy{},
+		func(_ context.Context, out cache.ProducerInput) (cache.ProducerResult, error) {
+			_, err := out.Write(archive.Bytes())
+			return cache.ProducerResult{}, err
+		},
+	)
 	assert.NoError(t, err)
 	fault := errors.New("values read failure")
-	base := fstest.MapFS{"file": {Data: []byte("marker: value\n")}, "bad": {Data: []byte("key: : invalid\n")}, "directory": {Mode: fs.ModeDir}}
+	base := fstest.MapFS{
+		"file":      {Data: []byte("marker: value\n")},
+		"bad":       {Data: []byte("key: : invalid\n")},
+		"directory": {Mode: fs.ModeDir},
+	}
 	invalid := chartOpenFS{FS: base, open: func(name string) (fs.File, error) {
 		t.Errorf("unsafe values path reached filesystem: %q", name)
 		return nil, fs.ErrPermission
@@ -262,8 +346,19 @@ func TestTemplate_ValuesFilesFailures(t *testing.T) {
 					t.Parallel()
 					cli := NewClient(owner)
 					ch := minimalChart()
-					_, err := cli.mergeChartValuesFiles(t.Context(), chartDescription{chart: ch, fingerprint: chartFixtureDescription(t, ch).fingerprint, valuesFS: tc.input}, []string{tc.path}, ignore)
-					if err == nil || !errors.Is(err, tc.want) || !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || !strings.Contains(err.Error(), fmt.Sprintf("%q", tc.path)) {
+					_, err := cli.mergeChartValuesFiles(
+						t.Context(),
+						chartDescription{
+							chart:       ch,
+							fingerprint: chartFixtureDescription(t, ch).fingerprint,
+							valuesFS:    tc.input,
+						},
+						[]string{tc.path},
+						ignore,
+					)
+					if err == nil || !errors.Is(err, tc.want) || !errors.Is(err, manifest.ErrInput) ||
+						!errors.Is(err, manifest.ErrFlux) ||
+						!strings.Contains(err.Error(), fmt.Sprintf("%q", tc.path)) {
 						t.Fatalf("values error = %v; want %v and filename %q", err, tc.want, tc.path)
 					}
 					for _, entry := range cli.chartValuesCache {
@@ -330,7 +425,12 @@ func TestObserveValuesFiles_PinnedReuse(t *testing.T) {
 			repeated, err := cli.mergeChartValuesFiles(t.Context(), d, normalized, false)
 			assert.NoError(t, err)
 			assert.Equal(t, repeated["nested"].(map[string]any)["value"], any("shared"))
-			reversed, err := cli.mergeChartValuesFiles(t.Context(), d, []string{"config/prod.yaml", "config/other.yaml"}, false)
+			reversed, err := cli.mergeChartValuesFiles(
+				t.Context(),
+				d,
+				[]string{"config/prod.yaml", "config/other.yaml"},
+				false,
+			)
 			assert.NoError(t, err)
 			assert.Equal(t, reversed["marker"], any("other"))
 			for _, invalid := range []string{"", ".", "../config/prod.yaml", "/config/prod.yaml", "config/prod.yaml\x00"} {
@@ -546,7 +646,9 @@ func TestObserveValuesFiles_AcquiredChanges(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Equal(t, merged["marker"], any(marker))
 		}
-		first, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}))
+		first, _, err := testutil.RenderMaps(
+			cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}),
+		)
 		assert.NoError(t, err)
 		want := marker
 		if want == "" {

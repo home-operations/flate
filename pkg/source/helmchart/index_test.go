@@ -15,13 +15,14 @@ import (
 	"testing/synctest"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/opencontainers/go-digest"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	repo "helm.sh/helm/v4/pkg/repo/v1"
+
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/opencontainers/go-digest"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	repo "helm.sh/helm/v4/pkg/repo/v1"
 )
 
 func TestFetchIndex_WithoutTemporaryStorage(t *testing.T) {
@@ -36,9 +37,15 @@ func TestFetchIndex_WithoutTemporaryStorage(t *testing.T) {
 				owner := cachetest.New(t, cacheRoot, sourcecache.New)
 				cfg := Config{Cache: owner, Concurrency: 512}
 				f := New(nil, cfg)
-				r := &httpRepository{HelmRepository: httpRepo("https://charts.test/owner"), client: &http.Client{Transport: chartTransport(func(*http.Request) (*http.Response, error) {
-					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(helmRepoIndex("")))}, nil
-				})}}
+				r := &httpRepository{
+					HelmRepository: httpRepo("https://charts.test/owner"),
+					client: &http.Client{Transport: chartTransport(func(*http.Request) (*http.Response, error) {
+						return &http.Response{
+							StatusCode: http.StatusOK,
+							Body:       io.NopCloser(strings.NewReader(helmRepoIndex(""))),
+						}, nil
+					})},
+				}
 				if restored {
 					if _, err := f.fetchIndex(t.Context(), r, sourcecache.Policy{}); err != nil {
 						t.Fatal(err)
@@ -73,15 +80,31 @@ func TestFetchIndex_Diagnostics(t *testing.T) {
 				t.Run(fmt.Sprintf("restored=%t", restored), func(t *testing.T) {
 					for range 2 {
 						owner := cachetest.New(t, t.TempDir(), sourcecache.New)
-						r := &httpRepository{HelmRepository: httpRepo("https://charts.test/diagnostics"), client: &http.Client{Transport: chartTransport(func(*http.Request) (*http.Response, error) {
-							return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(tc.data))}, nil
-						})}}
+						r := &httpRepository{
+							HelmRepository: httpRepo("https://charts.test/diagnostics"),
+							client: &http.Client{Transport: chartTransport(func(*http.Request) (*http.Response, error) {
+								return &http.Response{
+									StatusCode: http.StatusOK,
+									Body:       io.NopCloser(strings.NewReader(tc.data)),
+								}, nil
+							})},
+						}
 						if restored {
-							key := sourcecache.BlobKey{Content: struct{ Repository, Transport any }{r.Content(), r.material}}
-							_, _, _, err := owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: sourcecache.Forever}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
-								_, err := io.WriteString(w, tc.data)
-								return sourcecache.ProducerResult{Digest: digest.FromString(tc.data), Size: int64(len(tc.data))}, err
-							})
+							key := sourcecache.BlobKey{
+								Content: struct{ Repository, Transport any }{r.Content(), r.material},
+							}
+							_, _, _, err := owner.Blob(
+								t.Context(),
+								key,
+								sourcecache.Policy{MaxAge: sourcecache.Forever},
+								func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+									_, err := io.WriteString(w, tc.data)
+									return sourcecache.ProducerResult{
+										Digest: digest.FromString(tc.data),
+										Size:   int64(len(tc.data)),
+									}, err
+								},
+							)
 							if err != nil {
 								t.Fatal(err)
 							}
@@ -89,10 +112,15 @@ func TestFetchIndex_Diagnostics(t *testing.T) {
 						var output bytes.Buffer
 						saved := slog.Default()
 						slog.SetDefault(slog.New(slog.NewTextHandler(&output, nil)))
-						idx, err := New(nil, Config{Cache: owner, Concurrency: 512}).fetchIndex(t.Context(), r, sourcecache.Policy{})
+						idx, err := New(
+							nil,
+							Config{Cache: owner, Concurrency: 512},
+						).fetchIndex(t.Context(), r, sourcecache.Policy{})
 						slog.SetDefault(saved)
 						if tc.invalid {
-							if !errors.Is(err, manifest.ErrFlux) || !strings.Contains(err.Error(), "parse https://charts.test/diagnostics/index.yaml") || strings.Contains(err.Error(), "flate-index-") {
+							if !errors.Is(err, manifest.ErrFlux) ||
+								!strings.Contains(err.Error(), "parse https://charts.test/diagnostics/index.yaml") ||
+								strings.Contains(err.Error(), "flate-index-") {
 								t.Fatalf("parse diagnostic: %v", err)
 							}
 							if previous != "" && err.Error() != previous {
@@ -153,11 +181,16 @@ entries:
 			testutil.WriteFile(t, root, "index.yaml", tc.data)
 			want, wantErr := repo.LoadIndexFile(filepath.Join(root, "index.yaml"))
 			f := New(nil, Config{Concurrency: 256})
-			got, _, gotErr := f.loadIndex(t.Context(), "https://charts.test/index.yaml", func(w io.Writer) (ocispec.Descriptor, error) {
-				_, err := io.WriteString(w, tc.data)
-				return ocispec.Descriptor{Digest: digest.FromString(tc.data), Size: int64(len(tc.data))}, err
-			})
-			if (wantErr == nil) != (gotErr == nil) || tc.err != nil && (!errors.Is(wantErr, tc.err) || !errors.Is(gotErr, tc.err)) {
+			got, _, gotErr := f.loadIndex(
+				t.Context(),
+				"https://charts.test/index.yaml",
+				func(w io.Writer) (ocispec.Descriptor, error) {
+					_, err := io.WriteString(w, tc.data)
+					return ocispec.Descriptor{Digest: digest.FromString(tc.data), Size: int64(len(tc.data))}, err
+				},
+			)
+			if (wantErr == nil) != (gotErr == nil) ||
+				tc.err != nil && (!errors.Is(wantErr, tc.err) || !errors.Is(gotErr, tc.err)) {
 				t.Fatalf("upstream=%v FS=%v, want %v", wantErr, gotErr, tc.err)
 			}
 			if wantErr == nil {
@@ -232,7 +265,12 @@ func TestFetchIndex_DecodeBudget(t *testing.T) {
 				done := make(chan error, len(repositories))
 				for i, r := range repositories {
 					go func() {
-						_, err := f.fetchHTTPChart(ctx, r, helmChart(r.Name, "app-template", fmt.Sprintf("%d.0.0", i+1)), sourcecache.Policy{})
+						_, err := f.fetchHTTPChart(
+							ctx,
+							r,
+							helmChart(r.Name, "app-template", fmt.Sprintf("%d.0.0", i+1)),
+							sourcecache.Policy{},
+						)
 						done <- err
 					}()
 				}
@@ -265,14 +303,23 @@ func TestFetchIndex_DecodeBudget(t *testing.T) {
 				if tc.canceled {
 					close(transfer)
 					for i, r := range repositories {
-						if _, err := f.fetchHTTPChart(t.Context(), r, helmChart(r.Name, "app-template", fmt.Sprintf("%d.0.0", i+1)), sourcecache.Policy{}); err != nil {
+						if _, err := f.fetchHTTPChart(
+							t.Context(),
+							r,
+							helmChart(r.Name, "app-template", fmt.Sprintf("%d.0.0", i+1)),
+							sourcecache.Policy{},
+						); err != nil {
 							t.Fatal(err)
 						}
 					}
 				} else {
 					synctest.Wait()
 					if !tc.restored && (calls.Load() != 2 || len(f.indexDecodes) != 2) {
-						t.Errorf("two permits did not admit two indexes: calls=%d permits=%d", calls.Load(), len(f.indexDecodes))
+						t.Errorf(
+							"two permits did not admit two indexes: calls=%d permits=%d",
+							calls.Load(),
+							len(f.indexDecodes),
+						)
 					}
 					close(transfer)
 					for range repositories {

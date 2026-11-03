@@ -47,7 +47,10 @@ func newTestController(t *testing.T, l *loader.Loader) (*Controller, *store.Stor
 	return newTestControllerWithOptions(t, opts)
 }
 
-func newTestControllerWithParentOf(t *testing.T, parentOf map[manifest.NamedResource]manifest.NamedResource) (*Controller, *store.Store) {
+func newTestControllerWithParentOf(
+	t *testing.T,
+	parentOf map[manifest.NamedResource]manifest.NamedResource,
+) (*Controller, *store.Store) {
 	t.Helper()
 	return newTestControllerWithOptions(t, base.Options{Index: parentIndexForTest(parentOf)})
 }
@@ -69,7 +72,6 @@ func newTestControllerWithOptions(t *testing.T, opts base.Options) (*Controller,
 	c.Configure(opts)
 	c.StartLifecycle()
 	t.Cleanup(func() {
-
 		ts.BlockTillDone()
 	})
 	return c, st
@@ -101,7 +103,11 @@ type chartSourceDispatcher struct {
 	dispatch func(context.Context, schedule.NodeID, manifest.DrainLevel) schedule.Result
 }
 
-func (d chartSourceDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+func (d chartSourceDispatcher) Dispatch(
+	ctx context.Context,
+	id schedule.NodeID,
+	level manifest.DrainLevel,
+) schedule.Result {
 	return d.dispatch(ctx, id, level)
 }
 
@@ -127,17 +133,44 @@ func TestReconcile_SharedChartSourceCompletes(t *testing.T) {
 					c, st := newTestController(t, nil)
 					tasks := task.NewBounded(workers)
 					c.Tasks = tasks
-					repository := &manifest.HelmRepository{Name: "bitnami", Namespace: "flux-system", URL: "https://charts.example/bitnami"}
+					repository := &manifest.HelmRepository{
+						Name:      "bitnami",
+						Namespace: "flux-system",
+						URL:       "https://charts.example/bitnami",
+					}
 					st.AddObject(repository)
-					st.UpdateStatus(repository.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
+					st.UpdateStatus(
+						repository.Named(),
+						store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""},
+					)
 					consumers := make([]*manifest.HelmRelease, 40)
 					for i := range consumers {
 						consumers[i] = &manifest.HelmRelease{Name: fmt.Sprintf("redis-%02d", i), Namespace: "apps"}
 					}
-					source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "flux-system", Name: "shared"}
-					st.AddObject(&manifest.HelmChartSource{Name: source.Name, Namespace: source.Namespace, Chart: "redis", Version: "1.0.0", SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: manifest.KindHelmRepository, Name: repository.Name}})
+					source := manifest.NamedResource{
+						Group:     manifest.SourceDomain,
+						Kind:      manifest.KindHelmChart,
+						Namespace: "flux-system",
+						Name:      "shared",
+					}
+					st.AddObject(
+						&manifest.HelmChartSource{
+							Name:      source.Name,
+							Namespace: source.Namespace,
+							Chart:     "redis",
+							Version:   "1.0.0",
+							SourceRef: sourcev1.LocalHelmChartSourceReference{
+								Kind: manifest.KindHelmRepository,
+								Name: repository.Name,
+							},
+						},
+					)
 					for _, hr := range consumers {
-						hr.ChartRef = &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindHelmChart, Name: source.Name, Namespace: source.Namespace}
+						hr.ChartRef = &helmv2.CrossNamespaceSourceReference{
+							Kind:      manifest.KindHelmChart,
+							Name:      source.Name,
+							Namespace: source.Namespace,
+						}
 						st.AddObject(hr)
 					}
 					sourceStarted := make(chan struct{})
@@ -145,30 +178,51 @@ func TestReconcile_SharedChartSourceCompletes(t *testing.T) {
 					releaseSource := sync.OnceFunc(func() { close(sourceRelease) })
 					defer releaseSource()
 					parked := make(chan manifest.NamedResource, len(consumers))
-					dispatch := chartSourceDispatcher{store: st, dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
-						if id == source {
-							close(sourceStarted)
-							tasks.YieldSlot(func() { <-sourceRelease })
-							if tc.status == store.StatusReady {
-								st.SetArtifact(id, &store.SourceArtifact{FS: fstest.MapFS{
-									"chart/Chart.yaml":              &fstest.MapFile{Data: []byte("apiVersion: v2\nname: redis\nversion: 1.0.0\n")},
-									"chart/templates/output.yaml":   &fstest.MapFile{Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '{{ .Release.Name }}'}\ndata: {value: complete}\n")},
-									"chart/templates/authored.yaml": &fstest.MapFile{Data: []byte("apiVersion: source.toolkit.fluxcd.io/v1\nkind: HelmChart\nmetadata: {name: 'authored-{{ .Release.Name }}', namespace: flux-system}\nspec: {chart: redis, version: 1.0.0, interval: 1m, sourceRef: {kind: HelmRepository, name: bitnami}}\n")},
-								}})
+					dispatch := chartSourceDispatcher{
+						store: st,
+						dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+							if id == source {
+								close(sourceStarted)
+								tasks.YieldSlot(func() { <-sourceRelease })
+								if tc.status == store.StatusReady {
+									st.SetArtifact(id, &store.SourceArtifact{FS: fstest.MapFS{
+										"chart/Chart.yaml": &fstest.MapFile{
+											Data: []byte("apiVersion: v2\nname: redis\nversion: 1.0.0\n"),
+										},
+										"chart/templates/output.yaml": &fstest.MapFile{
+											Data: []byte(
+												"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '{{ .Release.Name }}'}\ndata: {value: complete}\n",
+											),
+										},
+										"chart/templates/authored.yaml": &fstest.MapFile{
+											Data: []byte(
+												"apiVersion: source.toolkit.fluxcd.io/v1\nkind: HelmChart\nmetadata: {name: 'authored-{{ .Release.Name }}', namespace: flux-system}\nspec: {chart: redis, version: 1.0.0, interval: 1m, sourceRef: {kind: HelmRepository, name: bitnami}}\n",
+											),
+										},
+									}})
+								}
+								st.UpdateStatus(
+									id,
+									store.StatusInfo{Status: tc.status, Reason: "", Message: "source finished"},
+								)
+								return schedule.Result{}
 							}
-							st.UpdateStatus(id, store.StatusInfo{Status: tc.status, Reason: "", Message: "source finished"})
-							return schedule.Result{}
-						}
-						ex := c.newExecution(id)
-						ex.run.Dispatch(ctx, level, ex, func(ex *execution, ctx context.Context, hr *manifest.HelmRelease, level manifest.DrainLevel) error {
-							_, err := ex.run.RequireRefresh(ctx, hr, manifest.GateArtifacts, level)
-							if _, ok := errors.AsType[*depwait.ErrBlocked](err); ok {
-								parked <- id
-							}
-							return err
-						})
-						return schedule.Result{Assessment: &ex.run}
-					}}
+							ex := c.newExecution(id)
+							ex.run.Dispatch(
+								ctx,
+								level,
+								ex,
+								func(ex *execution, ctx context.Context, hr *manifest.HelmRelease, level manifest.DrainLevel) error {
+									_, err := ex.run.RequireRefresh(ctx, hr, manifest.GateArtifacts, level)
+									if _, ok := errors.AsType[*depwait.ErrBlocked](err); ok {
+										parked <- id
+									}
+									return err
+								},
+							)
+							return schedule.Result{Assessment: &ex.run}
+						},
+					}
 
 					s := schedule.New(tasks, dispatch)
 					unsub := st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
@@ -197,24 +251,37 @@ func TestReconcile_SharedChartSourceCompletes(t *testing.T) {
 					for _, hr := range consumers {
 						_, _, partial := st.GetEmission(hr.Named())
 						if len(partial.Children) != 0 || len(partial.Manifests) != 0 {
-							t.Fatalf("synthetic child lost incomplete inventory semantics for %s: children=%+v manifests=%v", hr.Named(), partial.Children, partial.Manifests)
+							t.Fatalf(
+								"synthetic child lost incomplete inventory semantics for %s: children=%+v manifests=%v",
+								hr.Named(),
+								partial.Children,
+								partial.Manifests,
+							)
 						}
 					}
 					releaseSource()
 					if err := <-done; err != nil {
 						t.Fatal(err)
 					}
-					if info, ok := st.GetStatus(source); !ok || info.Status != tc.status || info.Message != "source finished" {
+					if info, ok := st.GetStatus(
+						source,
+					); !ok || info.Status != tc.status ||
+						info.Message != "source finished" {
 						t.Errorf("source status = %+v (ok=%v), want preserved %v", info, ok, tc.status)
 					}
 					for _, hr := range consumers {
 						if tc.status == store.StatusReady {
 							var renders int
-							stopRender := st.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
-								if info, ok := payload.(store.StatusInfo); id == hr.Named() && ok && info.Message == "rendering" {
-									renders++
-								}
-							}, false)
+							stopRender := st.AddListener(
+								store.EventStatusUpdated,
+								func(id manifest.NamedResource, payload any) {
+									if info, ok := payload.(store.StatusInfo); id == hr.Named() && ok &&
+										info.Message == "rendering" {
+										renders++
+									}
+								},
+								false,
+							)
 							initialRun := c.ReconcileNode(t.Context(), hr.Named(), manifest.DrainNone)
 							if initialRun.Outcome() == schedule.Blocked {
 								t.Fatal(initialRun.Blocked)
@@ -224,17 +291,29 @@ func TestReconcile_SharedChartSourceCompletes(t *testing.T) {
 							reader.Init(st, manifest.NamedResource{Kind: "Observer", Name: hr.Name}, nil)
 							reader.GetArtifact(hr.Named(), store.ArtifactContent)
 							var arrivals, artifacts, statuses int
-							stopObjects := st.AddListener(store.EventObjectAdded, func(manifest.NamedResource, any) { arrivals++ }, false)
-							stopArtifacts := st.AddListener(store.EventArtifactUpdated, func(id manifest.NamedResource, _ any) {
-								if id == hr.Named() {
-									artifacts++
-								}
-							}, false)
-							stopStatus := st.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, _ any) {
-								if id == hr.Named() {
-									statuses++
-								}
-							}, false)
+							stopObjects := st.AddListener(
+								store.EventObjectAdded,
+								func(manifest.NamedResource, any) { arrivals++ },
+								false,
+							)
+							stopArtifacts := st.AddListener(
+								store.EventArtifactUpdated,
+								func(id manifest.NamedResource, _ any) {
+									if id == hr.Named() {
+										artifacts++
+									}
+								},
+								false,
+							)
+							stopStatus := st.AddListener(
+								store.EventStatusUpdated,
+								func(id manifest.NamedResource, _ any) {
+									if id == hr.Named() {
+										statuses++
+									}
+								},
+								false,
+							)
 							rerun := c.ReconcileNode(t.Context(), hr.Named(), manifest.DrainNone)
 							initialRun.Retire()
 							stopObjects()
@@ -245,14 +324,28 @@ func TestReconcile_SharedChartSourceCompletes(t *testing.T) {
 							valid := reader.Valid()
 							reader.Retire()
 							defer rerun.Close()
-							if rerun.Outcome() == schedule.Blocked || !valid || arrivals != 0 || artifacts != 0 || statuses != 0 || renders != 1 {
-								t.Fatalf("equal H rerun: unresolved=%t authority=%t object/artifact/status events=%d/%d/%d renders=%d", rerun.Outcome() == schedule.Blocked, valid, arrivals, artifacts, statuses, renders)
+							if rerun.Outcome() == schedule.Blocked || !valid || arrivals != 0 || artifacts != 0 ||
+								statuses != 0 ||
+								renders != 1 {
+								t.Fatalf(
+									"equal H rerun: unresolved=%t authority=%t object/artifact/status events=%d/%d/%d renders=%d",
+									rerun.Outcome() == schedule.Blocked,
+									valid,
+									arrivals,
+									artifacts,
+									statuses,
+									renders,
+								)
 							}
-							if !after.Complete || before.Fingerprint != after.Fingerprint || !cmp.Equal(before.Manifests, after.Manifests) {
+							if !after.Complete || before.Fingerprint != after.Fingerprint ||
+								!cmp.Equal(before.Manifests, after.Manifests) {
 								t.Fatal("equal H rerun changed accepted content or completeness")
 							}
 						} else {
-							st.UpdateFailure(hr.Named(), manifest.NewError(manifest.ErrInput, nil, "H failed after partial work"))
+							st.UpdateFailure(
+								hr.Named(),
+								manifest.NewError(manifest.ErrInput, nil, "H failed after partial work"),
+							)
 						}
 						_, _, retained := st.GetEmission(hr.Named())
 						wantDocs := 0
@@ -291,7 +384,11 @@ func TestReconcile_SharedChartSourceCompletes(t *testing.T) {
 	}
 }
 
-func (c *Controller) reconcileNodeForTest(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
+func (c *Controller) reconcileNodeForTest(
+	ctx context.Context,
+	id manifest.NamedResource,
+	level manifest.DrainLevel,
+) *base.Execution {
 	if chart, ok := c.Store.GetObject(id).(*manifest.HelmChartSource); ok && chart.ExistenceOnly() {
 		return sourcecontroller.New(c.Store, c.Tasks).ReconcileNode(ctx, id, level)
 	}
@@ -311,7 +408,17 @@ func TestController_ShortCircuitsToReady(t *testing.T) {
 			t.Parallel()
 			var filterLoader *loader.Loader
 			if !tc.suspend {
-				filterLoader = admissiontest.New(t, admissiontest.Config{Changes: change.NewSet(nil), Index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}, Inventory: filtertest.MapLister{}, Root: ""})
+				filterLoader = admissiontest.New(
+					t,
+					admissiontest.Config{
+						Changes: change.NewSet(nil),
+						Index: &manifest.DiscoveryIndex{
+							Records: map[manifest.NamedResource]manifest.DiscoveryRecord{},
+						},
+						Inventory: filtertest.MapLister{},
+						Root:      "",
+					},
+				)
 				admissiontest.Commit(t, filterLoader, nil)
 			}
 			c, st := newTestController(t, filterLoader)
@@ -343,7 +450,10 @@ data:
   fallback: {{ .Values.missing | default "fallback" | quote }}
 `)
 
-	c, st := newTestControllerWithOptions(t, base.Options{AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}})
+	c, st := newTestControllerWithOptions(
+		t,
+		base.Options{AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}},
+	)
 	src := &manifest.GitRepository{Name: "charts", Namespace: "flux-system"}
 	st.AddObject(src)
 	st.SetArtifact(src.Named(), &store.SourceArtifact{
@@ -364,11 +474,39 @@ data:
 			"target": map[string]any{"name": "app-values"},
 		},
 	})
-	hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "charts"}}, HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: "mychart", Version: "", SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: manifest.KindGitRepository, Name: "charts", Namespace: "flux-system", APIVersion: manifest.SourceDomain + "/v1"}}}, Interval: metav1Duration(time.Hour), ValuesFrom: []manifest.ValuesReference{
-		{Kind: manifest.KindConfigMap, Name: "present-values"},
-		{Kind: manifest.KindSecret, Name: "app-values"},
-		{Kind: manifest.KindConfigMap, Name: "runtime-values"},
-	}}}
+	hr := &manifest.HelmRelease{
+		Name:      "demo",
+		Namespace: "default",
+		Chart: manifest.HelmChart{
+			Name: "mychart",
+			Source: manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindGitRepository,
+				Namespace: "flux-system",
+				Name:      "charts",
+			},
+		},
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{
+			Chart: &helmv2.HelmChartTemplate{
+				Spec: helmv2.HelmChartTemplateSpec{
+					Chart:   "mychart",
+					Version: "",
+					SourceRef: &helmv2.CrossNamespaceObjectReference{
+						Kind:       manifest.KindGitRepository,
+						Name:       "charts",
+						Namespace:  "flux-system",
+						APIVersion: manifest.SourceDomain + "/v1",
+					},
+				},
+			},
+			Interval: metav1Duration(time.Hour),
+			ValuesFrom: []manifest.ValuesReference{
+				{Kind: manifest.KindConfigMap, Name: "present-values"},
+				{Kind: manifest.KindSecret, Name: "app-values"},
+				{Kind: manifest.KindConfigMap, Name: "runtime-values"},
+			},
+		},
+	}
 	st.AddObject(hr)
 
 	info := reconcileFixture(t, c, hr.Named())
@@ -389,8 +527,20 @@ data:
 		t.Fatalf("rendered fallback = %q, want fallback", got)
 	}
 	assert.Diff(t, st.Warnings(), []manifest.Warning{
-		{Resource: hr.Named(), Subject: manifest.DiagnosticFor(hr.Named(), hr), Category: manifest.WarnOmittedValues, Message: "required valuesFrom ConfigMap/default/runtime-values omitted from offline render", Count: 1},
-		{Resource: hr.Named(), Subject: manifest.DiagnosticFor(hr.Named(), hr), Category: manifest.WarnOmittedValues, Message: "required valuesFrom Secret/default/app-values omitted from offline render", Count: 1},
+		{
+			Resource: hr.Named(),
+			Subject:  manifest.DiagnosticFor(hr.Named(), hr),
+			Category: manifest.WarnOmittedValues,
+			Message:  "required valuesFrom ConfigMap/default/runtime-values omitted from offline render",
+			Count:    1,
+		},
+		{
+			Resource: hr.Named(),
+			Subject:  manifest.DiagnosticFor(hr.Named(), hr),
+			Category: manifest.WarnOmittedValues,
+			Message:  "required valuesFrom Secret/default/app-values omitted from offline render",
+			Count:    1,
+		},
 	})
 	warnings := st.Warnings()
 	hr = hr.Clone()
@@ -407,9 +557,27 @@ data:
 	st.AddObject(hr)
 	assert.Equal(t, reconcileFixture(t, c, hr.Named()).Status, store.StatusReady)
 	assert.Diff(t, st.Warnings(), []manifest.Warning{
-		{Resource: hr.Named(), Subject: manifest.DiagnosticFor(hr.Named(), hr), Category: manifest.WarnOmittedValues, Message: "required valuesFrom ConfigMap/default/runtime-values omitted from offline render", Count: 1},
-		{Resource: hr.Named(), Subject: manifest.DiagnosticFor(hr.Named(), hr), Category: manifest.WarnOmittedValues, Message: "required valuesFrom Secret/default/another-values omitted from offline render", Count: 1},
-		{Resource: hr.Named(), Subject: manifest.DiagnosticFor(hr.Named(), hr), Category: manifest.WarnOmittedValues, Message: "required valuesFrom Secret/default/app-values omitted from offline render", Count: 1},
+		{
+			Resource: hr.Named(),
+			Subject:  manifest.DiagnosticFor(hr.Named(), hr),
+			Category: manifest.WarnOmittedValues,
+			Message:  "required valuesFrom ConfigMap/default/runtime-values omitted from offline render",
+			Count:    1,
+		},
+		{
+			Resource: hr.Named(),
+			Subject:  manifest.DiagnosticFor(hr.Named(), hr),
+			Category: manifest.WarnOmittedValues,
+			Message:  "required valuesFrom Secret/default/another-values omitted from offline render",
+			Count:    1,
+		},
+		{
+			Resource: hr.Named(),
+			Subject:  manifest.DiagnosticFor(hr.Named(), hr),
+			Category: manifest.WarnOmittedValues,
+			Message:  "required valuesFrom Secret/default/app-values omitted from offline render",
+			Count:    1,
+		},
 	})
 	invalid := hr.Clone()
 	invalid.Name = "invalid"
@@ -420,7 +588,8 @@ data:
 		t.Fatalf("permitted values omission hid required chart failure: %+v", info)
 	}
 	if !slices.ContainsFunc(st.Warnings(), func(w manifest.Warning) bool {
-		return w.Resource == invalid.Named() && w.Category == manifest.WarnOmittedValues && strings.Contains(w.Message, "Secret/default/app-values")
+		return w.Resource == invalid.Named() && w.Category == manifest.WarnOmittedValues &&
+			strings.Contains(w.Message, "Secret/default/app-values")
 	}) {
 		t.Fatalf("failed chart lost its omission warning: %+v", st.Warnings())
 	}
@@ -428,17 +597,38 @@ data:
 
 func TestController_ValuesOmissionPreservesRequiredChartFailure(t *testing.T) {
 	t.Parallel()
-	c, st := newTestControllerWithOptions(t, base.Options{AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}})
+	c, st := newTestControllerWithOptions(
+		t,
+		base.Options{AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}},
+	)
 	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps"}
 	st.AddObject(chart)
 	st.UpdateStatus(chart.Named(), store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "chart failed"})
-	hr := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "apps", Name: chart.Name}}, ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindHelmChart, Name: chart.Name, Namespace: "apps"}, ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: "values"}}}
+	hr := &manifest.HelmRelease{
+		Name:      "consumer",
+		Namespace: "apps",
+		Chart: manifest.HelmChart{
+			Source: manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindHelmChart,
+				Namespace: "apps",
+				Name:      chart.Name,
+			},
+		},
+		ChartRef: &helmv2.CrossNamespaceSourceReference{
+			Kind:      manifest.KindHelmChart,
+			Name:      chart.Name,
+			Namespace: "apps",
+		},
+		ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: "values"}},
+	}
 	st.AddObject(hr)
 	values := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "values"}
 	for _, level := range []manifest.DrainLevel{manifest.DrainNone, manifest.DrainCascade} {
 		err := c.newExecution(hr.Named()).reconcile(t.Context(), hr, level)
 		failed, ok := errors.AsType[*manifest.DependencyFailedError](err)
-		if !ok || !slices.Equal(failed.Failed, []manifest.NamedResource{chart.Named()}) || failed.Reasons[chart.Named()].Message != "chart failed" {
+		if !ok || !slices.Equal(failed.Failed, []manifest.NamedResource{chart.Named()}) ||
+			failed.Reasons[chart.Named()].Message != "chart failed" {
 			t.Fatalf("required chart failure changed: %v", err)
 		}
 	}
@@ -483,10 +673,38 @@ data:
 		Name: "app-creds", Namespace: "default",
 		Spec: map[string]any{"target": map[string]any{"name": "app-values"}},
 	})
-	hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "charts"}}, HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: "mychart", Version: "", SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: manifest.KindGitRepository, Name: "charts", Namespace: "flux-system", APIVersion: manifest.SourceDomain + "/v1"}}}, Interval: metav1Duration(time.Hour), ValuesFrom: []manifest.ValuesReference{
-		{Kind: manifest.KindConfigMap, Name: "present-values"},
-		{Kind: manifest.KindSecret, Name: "app-values"},
-	}}}
+	hr := &manifest.HelmRelease{
+		Name:      "demo",
+		Namespace: "default",
+		Chart: manifest.HelmChart{
+			Name: "mychart",
+			Source: manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindGitRepository,
+				Namespace: "flux-system",
+				Name:      "charts",
+			},
+		},
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{
+			Chart: &helmv2.HelmChartTemplate{
+				Spec: helmv2.HelmChartTemplateSpec{
+					Chart:   "mychart",
+					Version: "",
+					SourceRef: &helmv2.CrossNamespaceObjectReference{
+						Kind:       manifest.KindGitRepository,
+						Name:       "charts",
+						Namespace:  "flux-system",
+						APIVersion: manifest.SourceDomain + "/v1",
+					},
+				},
+			},
+			Interval: metav1Duration(time.Hour),
+			ValuesFrom: []manifest.ValuesReference{
+				{Kind: manifest.KindConfigMap, Name: "present-values"},
+				{Kind: manifest.KindSecret, Name: "app-values"},
+			},
+		},
+	}
 	st.AddObject(hr)
 
 	info := reconcileFixture(t, c, hr.Named())
@@ -512,7 +730,8 @@ data:
 		t.Fatalf("permitted values omission hid required chart failure: %+v", info)
 	}
 	if !slices.ContainsFunc(st.Warnings(), func(w manifest.Warning) bool {
-		return w.Resource == invalid.Named() && w.Category == manifest.WarnOmittedValues && strings.Contains(w.Message, "Secret/default/app-values")
+		return w.Resource == invalid.Named() && w.Category == manifest.WarnOmittedValues &&
+			strings.Contains(w.Message, "Secret/default/app-values")
 	}) {
 		t.Fatalf("failed chart lost its omission warning: %+v", st.Warnings())
 	}
@@ -535,7 +754,35 @@ func TestController_MissingValuesFromNoProducerFailsWithoutFlag(t *testing.T) {
 		Kind: manifest.KindGitRepository, URL: "file://" + dir, FS: os.DirFS(dir), LocalPath: dir,
 	})
 	st.UpdateStatus(src.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
-	hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "charts"}}, HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: "mychart", Version: "", SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: manifest.KindGitRepository, Name: "charts", Namespace: "flux-system", APIVersion: manifest.SourceDomain + "/v1"}}}, Interval: metav1Duration(time.Hour), ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: "no-producer"}}}}
+	hr := &manifest.HelmRelease{
+		Name:      "demo",
+		Namespace: "default",
+		Chart: manifest.HelmChart{
+			Name: "mychart",
+			Source: manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindGitRepository,
+				Namespace: "flux-system",
+				Name:      "charts",
+			},
+		},
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{
+			Chart: &helmv2.HelmChartTemplate{
+				Spec: helmv2.HelmChartTemplateSpec{
+					Chart:   "mychart",
+					Version: "",
+					SourceRef: &helmv2.CrossNamespaceObjectReference{
+						Kind:       manifest.KindGitRepository,
+						Name:       "charts",
+						Namespace:  "flux-system",
+						APIVersion: manifest.SourceDomain + "/v1",
+					},
+				},
+			},
+			Interval:   metav1Duration(time.Hour),
+			ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: "no-producer"}},
+		},
+	}
 	st.AddObject(hr)
 
 	info := reconcileFixture(t, c, hr.Named())
@@ -579,7 +826,35 @@ func TestController_HelmChartSourceResolvedViaResolver(t *testing.T) {
 // and helm.Template runs twice for one logical release.
 func TestHelmReleaseFingerprint_StableAcrossLabelStamping(t *testing.T) {
 	t.Parallel()
-	base := &manifest.HelmRelease{Name: "demo", Namespace: "default", Chart: manifest.HelmChart{Name: "podinfo", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: "flux-system", Name: "podinfo"}}, Values: map[string]any{"replicas": 2}, HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: "podinfo", Version: "", SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: manifest.KindHelmRepository, Name: "podinfo", Namespace: "flux-system", APIVersion: manifest.SourceDomain + "/v1"}}}, Interval: metav1Duration(time.Hour)}}
+	base := &manifest.HelmRelease{
+		Name:      "demo",
+		Namespace: "default",
+		Chart: manifest.HelmChart{
+			Name: "podinfo",
+			Source: manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindHelmRepository,
+				Namespace: "flux-system",
+				Name:      "podinfo",
+			},
+		},
+		Values: map[string]any{"replicas": 2},
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{
+			Chart: &helmv2.HelmChartTemplate{
+				Spec: helmv2.HelmChartTemplateSpec{
+					Chart:   "podinfo",
+					Version: "",
+					SourceRef: &helmv2.CrossNamespaceObjectReference{
+						Kind:       manifest.KindHelmRepository,
+						Name:       "podinfo",
+						Namespace:  "flux-system",
+						APIVersion: manifest.SourceDomain + "/v1",
+					},
+				},
+			},
+			Interval: metav1Duration(time.Hour),
+		},
+	}
 	stamped := base.Clone()
 	stamped.Labels = map[string]string{
 		"kustomize.toolkit.fluxcd.io/name":      "parent-ks",
@@ -647,7 +922,9 @@ func TestHelmReleaseFingerprint_SourceIdentity(t *testing.T) {
 			t.Parallel()
 			changed := *art
 			tc.edit(&changed)
-			if same := replayKey(hr.Content(struct{ Digest, Revision string }{changed.Digest, changed.Revision}, nil)) == fp; same != tc.wantSame {
+			if same := replayKey(
+				hr.Content(struct{ Digest, Revision string }{changed.Digest, changed.Revision}, nil),
+			) == fp; same != tc.wantSame {
 				t.Fatalf("fingerprint unchanged = %v, want %v", same, tc.wantSame)
 			}
 		})
@@ -685,7 +962,34 @@ func TestController_AlreadyReady_NoTransientPending(t *testing.T) {
 	})
 	st.UpdateStatus(src.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 
-	hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "charts"}}, HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: "mychart", Version: "", SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: manifest.KindGitRepository, Name: "charts", Namespace: "flux-system", APIVersion: manifest.SourceDomain + "/v1"}}}, Interval: metav1Duration(time.Hour)}}
+	hr := &manifest.HelmRelease{
+		Name:      "demo",
+		Namespace: "default",
+		Chart: manifest.HelmChart{
+			Name: "mychart",
+			Source: manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindGitRepository,
+				Namespace: "flux-system",
+				Name:      "charts",
+			},
+		},
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{
+			Chart: &helmv2.HelmChartTemplate{
+				Spec: helmv2.HelmChartTemplateSpec{
+					Chart:   "mychart",
+					Version: "",
+					SourceRef: &helmv2.CrossNamespaceObjectReference{
+						Kind:       manifest.KindGitRepository,
+						Name:       "charts",
+						Namespace:  "flux-system",
+						APIVersion: manifest.SourceDomain + "/v1",
+					},
+				},
+			},
+			Interval: metav1Duration(time.Hour),
+		},
+	}
 	st.AddObject(hr)
 	if info := reconcileFixture(t, c, hr.Named()); info.Status != store.StatusReady {
 		t.Fatalf("status = %+v, want StatusReady", info)
@@ -719,7 +1023,9 @@ func TestController_AlreadyReady_NoTransientPending(t *testing.T) {
 	pending := sawPending
 	mu.Unlock()
 	if pending {
-		t.Error("no-op re-reconcile of an already-Ready HelmRelease transiently downgraded it to Pending (the quiescence-race window)")
+		t.Error(
+			"no-op re-reconcile of an already-Ready HelmRelease transiently downgraded it to Pending (the quiescence-race window)",
+		)
 	}
 	if info, _ := st.GetStatus(hr.Named()); info.Status != store.StatusReady {
 		t.Errorf("HR not Ready after no-op re-run: %+v", info)
@@ -731,12 +1037,24 @@ func TestController_ChartAndValuesPrerequisites(t *testing.T) {
 	t.Run("source identity", func(t *testing.T) {
 		t.Parallel()
 		c, st := newTestController(t, nil)
-		chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps", SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: manifest.KindHelmRepository, Name: "repository"}}
+		chart := &manifest.HelmChartSource{
+			Name:      "chart",
+			Namespace: "apps",
+			SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: manifest.KindHelmRepository, Name: "repository"},
+		}
 		st.AddObject(chart)
 		st.SetArtifact(chart.Named(), &store.SourceArtifact{FS: fstest.MapFS{}})
 		st.UpdateStatus(chart.Named(), store.StatusInfo{Status: store.StatusReady})
 		for _, apiVersion := range []string{manifest.SourceDomain + "/v1", "v1", "example.test/v1"} {
-			release := &manifest.HelmRelease{Name: "release", Namespace: "apps", ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindHelmChart, Name: chart.Name, APIVersion: apiVersion}}
+			release := &manifest.HelmRelease{
+				Name:      "release",
+				Namespace: "apps",
+				ChartRef: &helmv2.CrossNamespaceSourceReference{
+					Kind:       manifest.KindHelmChart,
+					Name:       chart.Name,
+					APIVersion: apiVersion,
+				},
+			}
 			err := c.newExecution(release.Named()).requireChartForTest(t.Context(), release, manifest.DrainForce)
 			if apiVersion == manifest.SourceDomain+"/v1" {
 				assert.NoError(t, err)
@@ -747,47 +1065,111 @@ func TestController_ChartAndValuesPrerequisites(t *testing.T) {
 	})
 
 	c, st := newTestController(t, nil)
-	hr := &manifest.HelmRelease{Name: "app", Namespace: "apps", ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}}
+	hr := &manifest.HelmRelease{
+		Name:      "app",
+		Namespace: "apps",
+		ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"},
+	}
 	st.AddObject(&manifest.OCIRepository{Name: "chart", Namespace: "apps"})
-	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Name: "chart", Namespace: "apps"}
+	id := manifest.NamedResource{
+		Group:     manifest.SourceDomain,
+		Kind:      manifest.KindOCIRepository,
+		Name:      "chart",
+		Namespace: "apps",
+	}
 	st.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "released"})
 	st.SetArtifact(id, &store.SourceArtifact{Key: "pin"})
-	if blocked, ok := errors.AsType[*depwait.ErrBlocked](c.newExecution((hr).Named()).requireChartForTest(t.Context(), hr, manifest.DrainNone)); !ok || len(blocked.Deps) != 1 || blocked.Deps[0] != id {
+	if blocked, ok := errors.AsType[*depwait.ErrBlocked](
+		c.newExecution(hr.Named()).requireChartForTest(t.Context(), hr, manifest.DrainNone),
+	); !ok || len(blocked.Deps) != 1 ||
+		blocked.Deps[0] != id {
 		t.Fatalf("released source did not block on acquisition: %v", blocked)
 	}
-	if err := c.newExecution((hr).Named()).requireChartForTest(t.Context(), hr, manifest.DrainForce); !errors.Is(err, manifest.ErrObjectNotFound) {
+	if err := c.newExecution(hr.Named()).
+		requireChartForTest(t.Context(), hr, manifest.DrainForce); !errors.Is(
+		err,
+		manifest.ErrObjectNotFound,
+	) {
 		t.Fatalf("released source at fixpoint: %v", err)
 	}
-	st.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: "missing credentials"})
-	assert.Equal(t, errors.Is(c.newExecution((hr).Named()).requireChartForTest(t.Context(), hr, manifest.DrainNone), manifest.ErrSourceSkipped), true)
+	st.UpdateStatus(
+		id,
+		store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: "missing credentials"},
+	)
+	assert.Equal(
+		t,
+		errors.Is(
+			c.newExecution(hr.Named()).requireChartForTest(t.Context(), hr, manifest.DrainNone),
+			manifest.ErrSourceSkipped,
+		),
+		true,
+	)
 	st.SetArtifact(id, &store.SourceArtifact{Key: "pin", FS: fstest.MapFS{}})
 	st.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "reacquired"})
-	assert.Equal(t, c.newExecution((hr).Named()).requireChartForTest(t.Context(), hr, manifest.DrainNone), nil)
-	st.UpdateStatus(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Name: "chart", Namespace: "apps"}, store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "fetching"})
-	_, blocked := errors.AsType[*depwait.ErrBlocked](c.newExecution((hr).Named()).requireChartForTest(t.Context(), hr, manifest.DrainNone))
+	assert.Equal(t, c.newExecution(hr.Named()).requireChartForTest(t.Context(), hr, manifest.DrainNone), nil)
+	st.UpdateStatus(
+		manifest.NamedResource{
+			Group:     manifest.SourceDomain,
+			Kind:      manifest.KindOCIRepository,
+			Name:      "chart",
+			Namespace: "apps",
+		},
+		store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "fetching"},
+	)
+	_, blocked := errors.AsType[*depwait.ErrBlocked](
+		c.newExecution(hr.Named()).requireChartForTest(t.Context(), hr, manifest.DrainNone),
+	)
 	assert.Equal(t, blocked, true)
 	hr.ChartRef.Kind = manifest.KindHelmChart
-	hr.ValuesFrom = []manifest.ValuesReference{{Kind: manifest.KindConfigMap, Name: "optional", Optional: true}, {Kind: manifest.KindSecret, Name: "required"}}
+	hr.ValuesFrom = []manifest.ValuesReference{
+		{Kind: manifest.KindConfigMap, Name: "optional", Optional: true},
+		{Kind: manifest.KindSecret, Name: "required"},
+	}
 	st.AddObject(hr.Clone())
 	err := c.newExecution(hr.Named()).reconcile(t.Context(), hr, manifest.DrainNone)
 	blockedChart, ok := errors.AsType[*depwait.ErrBlocked](err)
 	if !ok {
 		t.Fatalf("pre-render gate=%v", err)
 	}
-	assert.Diff(t, blockedChart.Deps, []manifest.NamedResource{{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "apps", Name: "chart"}})
-	st.AddObject(&manifest.HelmChartSource{Name: "chart", Namespace: "apps", SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: manifest.KindHelmRepository, Name: "repository"}})
-	st.UpdateStatus(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Name: "chart", Namespace: "apps"}, store.StatusInfo{Status: store.StatusReady})
+	assert.Diff(
+		t,
+		blockedChart.Deps,
+		[]manifest.NamedResource{
+			{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "apps", Name: "chart"},
+		},
+	)
+	st.AddObject(
+		&manifest.HelmChartSource{
+			Name:      "chart",
+			Namespace: "apps",
+			SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: manifest.KindHelmRepository, Name: "repository"},
+		},
+	)
+	st.UpdateStatus(
+		manifest.NamedResource{
+			Group:     manifest.SourceDomain,
+			Kind:      manifest.KindHelmChart,
+			Name:      "chart",
+			Namespace: "apps",
+		},
+		store.StatusInfo{Status: store.StatusReady},
+	)
 	err = c.newExecution(hr.Named()).reconcile(t.Context(), hr, manifest.DrainNone)
 	blockedValues, ok := errors.AsType[*depwait.ErrBlocked](err)
 	if !ok {
 		t.Fatalf("values gate=%v", err)
 	}
-	assert.Diff(t, blockedValues.Deps, []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "apps", Name: "required"}})
+	assert.Diff(
+		t,
+		blockedValues.Deps,
+		[]manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "apps", Name: "required"}},
+	)
 }
 
 func replayKey(content any) string {
 	c := base.New(store.New(), nil)
-	fp, _, _ := controllertest.NewExecution(c, manifest.NamedResource{}).FingerprintDedup(context.TODO(), manifest.NamedResource{}, content, &store.Emission{})
+	fp, _, _ := controllertest.NewExecution(c, manifest.NamedResource{}).
+		FingerprintDedup(context.TODO(), manifest.NamedResource{}, content, &store.Emission{})
 	return fp
 }
 
@@ -810,7 +1192,11 @@ func TestRawProducerIndex_StoreListener(t *testing.T) {
 	}
 }
 
-func (c *execution) requireChartForTest(ctx context.Context, hr *manifest.HelmRelease, level manifest.DrainLevel) error {
+func (c *execution) requireChartForTest(
+	ctx context.Context,
+	hr *manifest.HelmRelease,
+	level manifest.DrainLevel,
+) error {
 	c.Store.AddObject(hr)
 	_, err := c.run.RequireRefresh(ctx, hr, manifest.GateArtifacts, level)
 	return err
@@ -822,7 +1208,32 @@ func TestGeneratedObjects_RequiresCapturedInput(t *testing.T) {
 		t.Run(state, func(t *testing.T) {
 			t.Parallel()
 			c, st := newTestController(t, nil)
-			input := &manifest.HelmRelease{Name: "input", Namespace: "apps", Chart: manifest.HelmChart{Name: "chart", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Name: "absent"}}, HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: "chart", Version: "", SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: manifest.KindHelmRepository, Name: "absent", Namespace: "", APIVersion: manifest.SourceDomain + "/v1"}}}}}
+			input := &manifest.HelmRelease{
+				Name:      "input",
+				Namespace: "apps",
+				Chart: manifest.HelmChart{
+					Name: "chart",
+					Source: manifest.NamedResource{
+						Group: manifest.SourceDomain,
+						Kind:  manifest.KindHelmRepository,
+						Name:  "absent",
+					},
+				},
+				HelmReleaseSpec: helmv2.HelmReleaseSpec{
+					Chart: &helmv2.HelmChartTemplate{
+						Spec: helmv2.HelmChartTemplateSpec{
+							Chart:   "chart",
+							Version: "",
+							SourceRef: &helmv2.CrossNamespaceObjectReference{
+								Kind:       manifest.KindHelmRepository,
+								Name:       "absent",
+								Namespace:  "",
+								APIVersion: manifest.SourceDomain + "/v1",
+							},
+						},
+					},
+				},
+			}
 			st.AddObject(input)
 			run := c.newExecution(input.Named())
 			run.run.Reads.GetDeclaration(input.Named())
@@ -836,14 +1247,18 @@ func TestGeneratedObjects_RequiresCapturedInput(t *testing.T) {
 				st.AddObject(replacement)
 			}
 			var entered bool
-			run.run.Dispatch(t.Context(), manifest.DrainNone, struct{}{}, func(_ struct{}, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
-				entered = true
-				return nil
-			})
+			run.run.Dispatch(
+				t.Context(),
+				manifest.DrainNone,
+				struct{}{},
+				func(_ struct{}, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
+					entered = true
+					return nil
+				},
+			)
 			if entered || run.run.Valid() || st.GetArtifact(input.Named(), store.ArtifactContent) != nil {
 				t.Fatalf("stale synthesis reached body: entered=%t valid=%t", entered, run.run.Valid())
 			}
-
 		})
 	}
 }

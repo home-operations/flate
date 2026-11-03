@@ -50,7 +50,14 @@ func TestFetcher_ResolveTransport(t *testing.T) {
 			t.Cleanup(srv.Close)
 			fInputs := testInputs{}
 			f := &Fetcher{Network: newTestNetwork(t)}
-			b := &manifest.Bucket{Name: "b", Namespace: "ns", Endpoint: srv.URL, BucketName: "fixture", Region: "us-east-1", Insecure: !cert}
+			b := &manifest.Bucket{
+				Name:       "b",
+				Namespace:  "ns",
+				Endpoint:   srv.URL,
+				BucketName: "fixture",
+				Region:     "us-east-1",
+				Insecure:   !cert,
+			}
 			if cert {
 				b.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
 				ca := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}))
@@ -106,7 +113,12 @@ func TestFetcher_SecretReferences(t *testing.T) {
 					if tc.data == nil && tc.rawData == nil {
 						return nil
 					}
-					sec := &manifest.Secret{Name: "metadata-secret", Namespace: "elsewhere", StringData: tc.data, Data: tc.rawData}
+					sec := &manifest.Secret{
+						Name:       "metadata-secret",
+						Namespace:  "elsewhere",
+						StringData: tc.data,
+						Data:       tc.rawData,
+					}
 					if tc.encoded {
 						sec.StringData, sec.Data = nil, map[string]any{}
 						for k, v := range tc.data {
@@ -116,7 +128,13 @@ func TestFetcher_SecretReferences(t *testing.T) {
 					return sec
 				}
 			}
-			b := &manifest.Bucket{Name: "b", Namespace: "ns", BucketName: "fixture", Endpoint: "127.0.0.1:1", Insecure: true}
+			b := &manifest.Bucket{
+				Name:       "b",
+				Namespace:  "ns",
+				BucketName: "fixture",
+				Endpoint:   "127.0.0.1:1",
+				Insecure:   true,
+			}
 			ref := &manifest.LocalObjectReference{Name: tc.secret}
 			var err error
 			switch tc.ref {
@@ -142,7 +160,8 @@ func TestFetcher_SecretReferences(t *testing.T) {
 				b.ProxySecretRef = ref
 				_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(b)}).prepare(b)
 			}
-			if err == nil || errors.Is(err, manifest.ErrMissingSecret) != tc.missing || !strings.Contains(err.Error(), tc.wantError) {
+			if err == nil || errors.Is(err, manifest.ErrMissingSecret) != tc.missing ||
+				!strings.Contains(err.Error(), tc.wantError) {
 				t.Fatalf("missing=%t, error=%v, want %q", tc.missing, err, tc.wantError)
 			}
 			if tc.field != "" {
@@ -166,7 +185,11 @@ func TestFetcher_SecretReferences(t *testing.T) {
 				owner := b.Named()
 
 				assert.Equal(t, missing.Owner, owner)
-				assert.Equal(t, missing.Secret, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: tc.secret})
+				assert.Equal(
+					t,
+					missing.Secret,
+					manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: tc.secret},
+				)
 				if tc.ref != "auth" && tc.data == nil {
 					assert.Equal(t, err.Error(), "secret ns/missing not found")
 				}
@@ -184,7 +207,12 @@ func TestFetcher_SecretReferences(t *testing.T) {
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
-				b := &manifest.Bucket{Name: "b", Namespace: "ns", Endpoint: "https://bucket.invalid", BucketName: "fixture"}
+				b := &manifest.Bucket{
+					Name:       "b",
+					Namespace:  "ns",
+					Endpoint:   "https://bucket.invalid",
+					BucketName: "fixture",
+				}
 				if tc.auth {
 					b.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
 				}
@@ -212,7 +240,6 @@ func TestFetcher_SecretReferences(t *testing.T) {
 }
 
 func TestFetcher_NetworkSuppressionSkipsBackoff(t *testing.T) {
-
 	var network source.Network
 	var calls atomic.Int32
 	testutil.StubDNS(t, func(context.Context, string) error { calls.Add(1); return os.ErrDeadlineExceeded })
@@ -231,9 +258,31 @@ func TestFetcher_NetworkSuppressionSkipsBackoff(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		c := cachetest.New(t, "", cache.New)
 		start := time.Now()
-		_, err = (&Fetcher{Cache: c, Network: &network}).Fetch(t.Context(), &manifest.Bucket{Name: "network", Namespace: "test", BucketName: "data", Endpoint: "bucket.test", Insecure: true, Region: "us-east-1"}, (testInputs{}).readSet(&manifest.Bucket{Name: "network", Namespace: "test", BucketName: "data", Endpoint: "bucket.test", Insecure: true, Region: "us-east-1"}), cache.Policy{Retry: cache.RetryConfig{Attempts: 3, MinWait: time.Hour}})
+		_, err = (&Fetcher{Cache: c, Network: &network}).Fetch(
+			t.Context(),
+			&manifest.Bucket{
+				Name:       "network",
+				Namespace:  "test",
+				BucketName: "data",
+				Endpoint:   "bucket.test",
+				Insecure:   true,
+				Region:     "us-east-1",
+			},
+			(testInputs{}).readSet(
+				&manifest.Bucket{
+					Name:       "network",
+					Namespace:  "test",
+					BucketName: "data",
+					Endpoint:   "bucket.test",
+					Insecure:   true,
+					Region:     "us-east-1",
+				},
+			),
+			cache.Policy{Retry: cache.RetryConfig{Attempts: 3, MinWait: time.Hour}},
+		)
 		terminal, ok = errors.AsType[*cache.TerminalError](err)
-		if !ok || terminal.Attempted || !errors.Is(err, cause) || calls.Load() != before || time.Since(start) > minio.DefaultRetryUnit {
+		if !ok || terminal.Attempted || !errors.Is(err, cause) || calls.Load() != before ||
+			time.Since(start) > minio.DefaultRetryUnit {
 			t.Fatalf("suppression: %v calls=%d elapsed=%v", err, calls.Load(), time.Since(start))
 		}
 	})
@@ -245,7 +294,12 @@ func TestFetcher_ResolveTransport_SnapshotRotation(t *testing.T) {
 	var proxyPassword atomic.Value
 	proxyPassword.Store("first")
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.IsAbs() && r.Header.Get("Proxy-Authorization") != "Basic "+base64.StdEncoding.EncodeToString([]byte("proxy:"+proxyPassword.Load().(string))) {
+		if r.URL.IsAbs() &&
+			r.Header.Get(
+				"Proxy-Authorization",
+			) != "Basic "+base64.StdEncoding.EncodeToString(
+				[]byte("proxy:"+proxyPassword.Load().(string)),
+			) {
 			t.Error("transport used a different proxy snapshot")
 			w.WriteHeader(http.StatusProxyAuthRequired)
 			return
@@ -258,7 +312,10 @@ func TestFetcher_ResolveTransport_SnapshotRotation(t *testing.T) {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
-		_, _ = io.WriteString(w, `<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated></ListBucketResult>`)
+		_, _ = io.WriteString(
+			w,
+			`<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated></ListBucketResult>`,
+		)
 	})
 	srv := httptest.NewUnstartedServer(handler)
 	_ = srv.Listener.Close()
@@ -275,8 +332,18 @@ func TestFetcher_ResolveTransport_SnapshotRotation(t *testing.T) {
 	t.Setenv("NO_PROXY", "")
 	t.Setenv("no_proxy", "")
 	root := t.TempDir()
-	b := &manifest.Bucket{Name: "snapshot", Namespace: "ns", Endpoint: srv.URL, Insecure: true, Region: "us-east-1", BucketName: "data",
-		SecretRef: &manifest.LocalObjectReference{Name: "creds"}, CertSecretRef: &manifest.LocalObjectReference{Name: "creds"}}
+	b := &manifest.Bucket{
+		Name:       "snapshot",
+		Namespace:  "ns",
+		Endpoint:   srv.URL,
+		Insecure:   true,
+		Region:     "us-east-1",
+		BucketName: "data",
+		SecretRef: &manifest.LocalObjectReference{
+			Name: "creds",
+		},
+		CertSecretRef: &manifest.LocalObjectReference{Name: "creds"},
+	}
 	b.Interval.Duration = time.Hour
 	password, ca := "first", testutil.SelfSignedCA(t)
 	var previous string
@@ -300,11 +367,18 @@ func TestFetcher_ResolveTransport_SnapshotRotation(t *testing.T) {
 			c := cachetest.New(t, root, cache.New)
 			fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
 				lookups.Add(1)
-				return &manifest.Secret{StringData: map[string]any{"accesskey": "access", "secretkey": password, "ca.crt": ca}}
+				return &manifest.Secret{
+					StringData: map[string]any{"accesskey": "access", "secretkey": password, "ca.crt": ca},
+				}
 			}}
 			f := &Fetcher{Network: newTestNetwork(t), Cache: c}
 			before := requests.Load()
-			art, err := f.Fetch(t.Context(), b, fInputs.readSet(b), cache.Policy{MaxAge: b.SourceInterval(), Retry: cache.RetryConfig{Attempts: 3}})
+			art, err := f.Fetch(
+				t.Context(),
+				b,
+				fInputs.readSet(b),
+				cache.Policy{MaxAge: b.SourceInterval(), Retry: cache.RetryConfig{Attempts: 3}},
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -313,13 +387,24 @@ func TestFetcher_ResolveTransport_SnapshotRotation(t *testing.T) {
 			}
 			previous = art.Key
 			before = requests.Load()
-			if _, err := f.Fetch(t.Context(), b, fInputs.readSet(b), cache.Policy{MaxAge: b.SourceInterval()}); err != nil || requests.Load() != before {
+			if _, err := f.Fetch(
+				t.Context(),
+				b,
+				fInputs.readSet(b),
+				cache.Policy{MaxAge: b.SourceInterval()},
+			); err != nil ||
+				requests.Load() != before {
 				t.Fatalf("warm snapshot missed: %v", err)
 			}
 			fail.Store(true)
 			failed := *b
 			failed.Interval.Duration = 0
-			_, err = f.Fetch(t.Context(), &failed, fInputs.readSet(&failed), cache.Policy{MaxAge: failed.SourceInterval()})
+			_, err = f.Fetch(
+				t.Context(),
+				&failed,
+				fInputs.readSet(&failed),
+				cache.Policy{MaxAge: failed.SourceInterval()},
+			)
 			terminal, ok := errors.AsType[*cache.TerminalError](err)
 			if !ok || !terminal.Attempted {
 				t.Fatalf("failed snapshot: %v", err)
@@ -337,14 +422,22 @@ func TestFetcher_ProviderTransportValidation(t *testing.T) {
 	for _, use := range []string{"cert", "proxy"} {
 		t.Run(use, func(t *testing.T) {
 			t.Parallel()
-			repo := &manifest.Bucket{Name: "provider", Namespace: "apps", Endpoint: "s3.amazonaws.com", BucketName: "fixture", Provider: "aws"}
+			repo := &manifest.Bucket{
+				Name:       "provider",
+				Namespace:  "apps",
+				Endpoint:   "s3.amazonaws.com",
+				BucketName: "fixture",
+				Provider:   "aws",
+			}
 			if use == "cert" {
 				repo.CertSecretRef = &manifest.LocalObjectReference{Name: "transport"}
 			} else {
 				repo.ProxySecretRef = &manifest.LocalObjectReference{Name: "transport"}
 			}
 			inputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
-				return &manifest.Secret{StringData: map[string]any{"ca.crt": "invalid", "address": "http://proxy.invalid/%"}}
+				return &manifest.Secret{
+					StringData: map[string]any{"ca.crt": "invalid", "address": "http://proxy.invalid/%"},
+				}
 			}}
 			fetcher := &Fetcher{Network: newTestNetwork(t)}
 			_, err := fetcher.Fetch(t.Context(), repo, inputs.readSet(repo), cache.Policy{})
@@ -370,7 +463,14 @@ func TestFetcher_ProviderCredentials(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			repo := &manifest.Bucket{Name: "provider", Namespace: "apps", Endpoint: "s3.amazonaws.com", BucketName: "fixture", Provider: tc.provider, SecretRef: &manifest.LocalObjectReference{Name: "auth"}}
+			repo := &manifest.Bucket{
+				Name:       "provider",
+				Namespace:  "apps",
+				Endpoint:   "s3.amazonaws.com",
+				BucketName: "fixture",
+				Provider:   tc.provider,
+				SecretRef:  &manifest.LocalObjectReference{Name: "auth"},
+			}
 			if tc.sts {
 				repo.STS = &sourcev1.BucketSTSSpec{Provider: "aws", Endpoint: "https://sts.fixture.invalid"}
 			}

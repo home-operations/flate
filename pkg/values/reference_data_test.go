@@ -24,13 +24,30 @@ func TestStoreProvider_IndexOnlyDeclaredKeys(t *testing.T) {
 			t.Parallel()
 			st := store.New()
 			target := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "input"}
-			declaration := manifest.NamedResource{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "apps", Name: "external"}
+			declaration := manifest.NamedResource{
+				Group:     "external-secrets.io",
+				Kind:      "ExternalSecret",
+				Namespace: "apps",
+				Name:      "external",
+			}
 			proof := manifest.Production{Declaration: declaration, Source: manifest.BootstrapSourceID}
 			st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-				target: {Productions: []manifest.Production{proof}, ReferenceData: []manifest.ReferenceData{{Production: proof, DeclaredKeys: tc.keys}}},
+				target: {
+					Productions:   []manifest.Production{proof},
+					ReferenceData: []manifest.ReferenceData{{Production: proof, DeclaredKeys: tc.keys}},
+				},
 			}})
 			var reads store.ReadSet
-			reads.Init(st, manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "consumer"}, nil)
+			reads.Init(
+				st,
+				manifest.NamedResource{
+					Group:     manifest.FluxKustomizeDomain,
+					Kind:      manifest.KindKustomization,
+					Namespace: "apps",
+					Name:      "consumer",
+				},
+				nil,
+			)
 			defer reads.Close()
 			input := NewStoreProvider(&reads, tc.wipe).Lookup(target)
 			if tc.wipe && len(tc.keys) != 0 {
@@ -46,8 +63,16 @@ func TestStoreProvider_IndexOnlyDeclaredKeys(t *testing.T) {
 			if st.GetObject(target) != nil || st.GetObject(declaration) != nil {
 				t.Fatal("lookup published an object")
 			}
-			st.AddObject(&manifest.RawObject{Kind: declaration.Kind, APIVersion: "external-secrets.io/v1", Name: declaration.Name, Namespace: declaration.Namespace,
-				Spec: map[string]any{"target": map[string]any{"name": target.Name}, "data": []any{map[string]any{"secretKey": "CURRENT"}}}})
+			st.AddObject(&manifest.RawObject{
+				Kind:       declaration.Kind,
+				APIVersion: "external-secrets.io/v1",
+				Name:       declaration.Name,
+				Namespace:  declaration.Namespace,
+				Spec: map[string]any{
+					"target": map[string]any{"name": target.Name},
+					"data":   []any{map[string]any{"secretKey": "CURRENT"}},
+				},
+			})
 			if reads.Valid() {
 				t.Fatal("declaration arrival did not invalidate indexed keys")
 			}
@@ -74,7 +99,13 @@ func TestStoreProvider_OfflineCandidatePrecedenceAndWithdrawal(t *testing.T) {
 	one := manifest.NewSecret(target, nil, map[string]any{"FIRST": "first"})
 	two := manifest.NewSecret(target, nil, map[string]any{"SECOND": "second"})
 	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-		target: {Productions: []manifest.Production{p, q}, ReferenceData: []manifest.ReferenceData{{Production: p, OfflineData: one}, {Production: q, OfflineData: two}}},
+		target: {
+			Productions: []manifest.Production{p, q},
+			ReferenceData: []manifest.ReferenceData{
+				{Production: p, OfflineData: one},
+				{Production: q, OfflineData: two},
+			},
+		},
 	}})
 	supplied := manifest.NewSecret(target, nil, map[string]any{"FIRST": "supplied", "EXTRA": "extra"})
 	snapshot, err := store.NewSupplied([]store.SuppliedObject{{Object: supplied, Path: "input.yaml"}})
@@ -108,13 +139,30 @@ func TestStoreProvider_OfflineSourceAndRealDataInvalidateCapture(t *testing.T) {
 	t.Parallel()
 	st := store.New()
 	target := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input"}
-	proof := manifest.Production{Source: manifest.BootstrapSourceID, Path: "input.yaml", File: "input.yaml", Authored: target}
+	proof := manifest.Production{
+		Source:   manifest.BootstrapSourceID,
+		Path:     "input.yaml",
+		File:     "input.yaml",
+		Authored: target,
+	}
 	offline := manifest.NewConfigMap(target, map[string]any{"VALUE": "offline"})
 	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-		target: {Productions: []manifest.Production{proof}, ReferenceData: []manifest.ReferenceData{{Production: proof, OfflineData: offline}}},
+		target: {
+			Productions:   []manifest.Production{proof},
+			ReferenceData: []manifest.ReferenceData{{Production: proof, OfflineData: offline}},
+		},
 	}})
 	var reads store.ReadSet
-	reads.Init(st, manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "consumer"}, nil)
+	reads.Init(
+		st,
+		manifest.NamedResource{
+			Group:     manifest.FluxKustomizeDomain,
+			Kind:      manifest.KindKustomization,
+			Namespace: "apps",
+			Name:      "consumer",
+		},
+		nil,
+	)
 	defer reads.Close()
 	provider := NewStoreProvider(&reads, true)
 	if provider.Data(target) != offline {
@@ -150,14 +198,38 @@ func TestStoreProvider_PendingIndexedKeysAwaitPublication(t *testing.T) {
 	owner := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
 	st.AddObject(owner)
 	target := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "input"}
-	declaration := &manifest.RawObject{Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1", Name: "external", Namespace: "apps",
-		Spec: map[string]any{"target": map[string]any{"name": target.Name}, "data": []any{map[string]any{"secretKey": "CURRENT"}}}}
-	proof := manifest.Production{Owner: owner.Named(), Declaration: declaration.Named(), Source: manifest.BootstrapSourceID}
+	declaration := &manifest.RawObject{
+		Kind:       "ExternalSecret",
+		APIVersion: "external-secrets.io/v1",
+		Name:       "external",
+		Namespace:  "apps",
+		Spec: map[string]any{
+			"target": map[string]any{"name": target.Name},
+			"data":   []any{map[string]any{"secretKey": "CURRENT"}},
+		},
+	}
+	proof := manifest.Production{
+		Owner:       owner.Named(),
+		Declaration: declaration.Named(),
+		Source:      manifest.BootstrapSourceID,
+	}
 	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-		target: {Productions: []manifest.Production{proof}, ReferenceData: []manifest.ReferenceData{{Production: proof, DeclaredKeys: []string{"INDEXED"}}}},
+		target: {
+			Productions:   []manifest.Production{proof},
+			ReferenceData: []manifest.ReferenceData{{Production: proof, DeclaredKeys: []string{"INDEXED"}}},
+		},
 	}})
 	var reads store.ReadSet
-	reads.Init(st, manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Name: "consumer", Namespace: "apps"}, nil)
+	reads.Init(
+		st,
+		manifest.NamedResource{
+			Group:     manifest.FluxKustomizeDomain,
+			Kind:      manifest.KindKustomization,
+			Name:      "consumer",
+			Namespace: "apps",
+		},
+		nil,
+	)
 	defer reads.Close()
 	input := NewStoreProvider(&reads, true).Lookup(target)
 	if input.Data != nil || !input.Generated {
@@ -188,12 +260,23 @@ func TestStoreProvider_CompetingKeysRemainSeparate(t *testing.T) {
 	t.Parallel()
 	st := store.New()
 	target := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "input"}
-	first := manifest.Production{Declaration: manifest.NamedResource{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "apps", Name: "z-first"}}
+	first := manifest.Production{
+		Declaration: manifest.NamedResource{
+			Group:     "external-secrets.io",
+			Kind:      "ExternalSecret",
+			Namespace: "apps",
+			Name:      "z-first",
+		},
+	}
 	second := first
 	second.Declaration.Name = "a-second"
 	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		target: {Productions: []manifest.Production{first, second}, ReferenceData: []manifest.ReferenceData{
-			{Production: first, DeclaredKeys: []string{"FIRST"}}, {Production: second, DeclaredKeys: []string{"SECOND"}},
+			{
+				Production:   first,
+				DeclaredKeys: []string{"FIRST"},
+			},
+			{Production: second, DeclaredKeys: []string{"SECOND"}},
 		}},
 	}})
 	data := NewStoreProvider(st, true).Data(target)

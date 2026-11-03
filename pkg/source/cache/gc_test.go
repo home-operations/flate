@@ -19,13 +19,14 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/storage"
 	"github.com/google/go-cmp/cmp"
-	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/internal/testutil/cachetest"
-	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/content"
 	"oras.land/oras-go/v2/content/oci"
+
+	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 func sweepGit(t *testing.T, c *Cache, key string) (*GitGeneration, ocispec.Descriptor, string) {
@@ -33,7 +34,8 @@ func sweepGit(t *testing.T, c *Cache, key string) (*GitGeneration, ocispec.Descr
 	g, id, err := c.Git(t.Context(), GitKey{Content: key, RecurseSubmodules: true}, Policy{MaxAge: 0},
 		func(context.Context,
 
-			storage.Storer, billy.Filesystem) (plumbing.Hash, error) {
+			storage.Storer, billy.Filesystem,
+		) (plumbing.Hash, error) {
 			return plumbing.ZeroHash, nil
 		})
 	if err != nil {
@@ -102,13 +104,22 @@ func TestSweep_GitGenerations(t *testing.T) {
 				}
 			}
 			if scenario == "bad-graph" {
-				_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "a-expired"}, Policy{MaxAge: 0}, producer([]byte("stale"), ocispec.Descriptor{}))
+				_, _, _, err := c.Blob(
+					t.Context(),
+					BlobKey{Content: "a-expired"},
+					Policy{MaxAge: 0},
+					producer([]byte("stale"), ocispec.Descriptor{}),
+				)
 				if err != nil {
 					t.Fatal(err)
 				}
 
 				stale := time.Now().Add(-24 * time.Hour)
-				if err := os.Chtimes(filepath.Join(c.root.Name(), blobPath(digest.FromString("stale"))), stale, stale); err != nil {
+				if err := os.Chtimes(
+					filepath.Join(c.root.Name(), blobPath(digest.FromString("stale"))),
+					stale,
+					stale,
+				); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -145,9 +156,16 @@ func TestSweep_GitGenerations(t *testing.T) {
 			}
 			outsideBefore := sweepSnapshot(t, outside)
 			before := sweepSnapshot(t, root)
-			res, err := Sweep(t.Context(), root, SweepOpts{MaxAge: time.Hour, DryRun: scenario == "dry-run" || strings.HasSuffix(scenario, "-dry-run")})
+			res, err := Sweep(
+				t.Context(),
+				root,
+				SweepOpts{MaxAge: time.Hour, DryRun: scenario == "dry-run" || strings.HasSuffix(scenario, "-dry-run")},
+			)
 			if strings.HasPrefix(scenario, "escaping-") {
-				if _, ok := errors.AsType[*CacheError](err); !ok || !errors.Is(err, manifest.ErrFlux) || len(res.Errors) != 0 {
+				if _, ok := errors.AsType[*CacheError](
+					err,
+				); !ok || !errors.Is(err, manifest.ErrFlux) ||
+					len(res.Errors) != 0 {
 					t.Fatalf("escape failed after selection: %+v, %v", res, err)
 				}
 				if _, ok := errors.AsType[*os.PathError](err); !ok {
@@ -201,7 +219,9 @@ func TestSweep_GitGenerations(t *testing.T) {
 				t.Fatal(err)
 			}
 			path := generationPath(orphan.id)
-			if !slices.Equal(selection.generations, []string{path}) || !slices.Equal(selection.result.Removed, []string{filepath.Join(c.root.Name(), path)}) || len(selection.tags) != 0 {
+			if !slices.Equal(selection.generations, []string{path}) ||
+				!slices.Equal(selection.result.Removed, []string{filepath.Join(c.root.Name(), path)}) ||
+				len(selection.tags) != 0 {
 				t.Fatalf("selected relative orphan: %+v", selection)
 			}
 			outside := t.TempDir()
@@ -253,7 +273,12 @@ func TestSweep_CoalescedAccessRetention(t *testing.T) {
 		root := t.TempDir()
 		c := cachetest.New(t, root, New)
 		key := BlobKey{Content: "coalesced-access"}
-		_, _, id, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, producer([]byte("payload"), ocispec.Descriptor{}))
+		_, _, id, err := c.Blob(
+			t.Context(),
+			key,
+			Policy{MaxAge: Forever},
+			producer([]byte("payload"), ocispec.Descriptor{}),
+		)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -302,7 +327,12 @@ func TestSweep_AgeUsesPayloadLastUse(t *testing.T) {
 					if err := c.store.Tag(t.Context(), desc, key); err != nil {
 						t.Fatal(err)
 					}
-					if _, _, err := c.Git(t.Context(), GitKey{Content: id, RecurseSubmodules: true}, Policy{MaxAge: Forever}, nil); err != nil {
+					if _, _, err := c.Git(
+						t.Context(),
+						GitKey{Content: id, RecurseSubmodules: true},
+						Policy{MaxAge: Forever},
+						nil,
+					); err != nil {
 						t.Fatal(err)
 					}
 				} else {
@@ -489,7 +519,12 @@ func TestSweep_AbsentRootAndUnrelatedDirectories(t *testing.T) {
 		}
 	}
 	before := sweepSnapshot(t, root)
-	if res, err := Sweep(t.Context(), root, SweepOpts{MaxAge: time.Hour}); err != nil || len(res.Removed) > 0 || len(res.Errors) > 0 {
+	if res, err := Sweep(
+		t.Context(),
+		root,
+		SweepOpts{MaxAge: time.Hour},
+	); err != nil || len(res.Removed) > 0 ||
+		len(res.Errors) > 0 {
 		t.Fatalf("unrelated sweep: %+v, %v", res, err)
 	}
 	after := sweepSnapshot(t, root)

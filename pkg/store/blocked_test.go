@@ -22,7 +22,8 @@ func TestUpdateFailure_SnapshotIsolation(t *testing.T) {
 	err := fmt.Errorf("reconcile: %w", &manifest.DependencyFailedError{Parent: id, Failed: deps})
 	st.UpdateFailure(id, err)
 	info, ok := st.GetStatus(id)
-	if !ok || info.Status != StatusFailed || info.Reason != ReasonFailed || info.String() != err.Error() || !info.IsDependencyFailure() {
+	if !ok || info.Status != StatusFailed || info.Reason != ReasonFailed || info.String() != err.Error() ||
+		!info.IsDependencyFailure() {
 		t.Fatalf("failure snapshot = %+v, present = %v", info, ok)
 	}
 	if allocs := testing.AllocsPerRun(100, func() {
@@ -65,18 +66,28 @@ func TestUpdateFailure_Transitions(t *testing.T) {
 		message string
 		failed  bool
 	}{
-		{"primary error", func(st *Store) { st.UpdateFailure(id, manifest.ErrInput) },
-			StatusFailed, metav1.ConditionFalse, ReasonFailed, manifest.ErrInput.Error(), false},
-		{"empty dependency error", func(st *Store) { st.UpdateFailure(id, empty) },
-			StatusFailed, metav1.ConditionFalse, ReasonFailed, empty.Error(), false},
-		{"primary status", func(st *Store) { st.UpdateStatus(id, StatusInfo{Status: StatusFailed, Reason: "", Message: "primary"}) },
-			StatusFailed, metav1.ConditionFalse, ReasonFailed, "primary", false},
-		{"ready", func(st *Store) { st.UpdateStatus(id, StatusInfo{Status: StatusReady, Reason: "", Message: "done"}) },
-			StatusReady, metav1.ConditionTrue, ReasonSucceeded, "done", false},
-		{"pending", func(st *Store) {
-			st.UpdateStatus(id, StatusInfo{Status: StatusPending, Reason: "", Message: "retrying"})
+		{
+			"primary error", func(st *Store) { st.UpdateFailure(id, manifest.ErrInput) },
+			StatusFailed, metav1.ConditionFalse, ReasonFailed, manifest.ErrInput.Error(), false,
 		},
-			StatusPending, metav1.ConditionUnknown, ReasonReconciling, "retrying", false},
+		{
+			"empty dependency error", func(st *Store) { st.UpdateFailure(id, empty) },
+			StatusFailed, metav1.ConditionFalse, ReasonFailed, empty.Error(), false,
+		},
+		{
+			"primary status", func(st *Store) { st.UpdateStatus(id, StatusInfo{Status: StatusFailed, Reason: "", Message: "primary"}) },
+			StatusFailed, metav1.ConditionFalse, ReasonFailed, "primary", false,
+		},
+		{
+			"ready", func(st *Store) { st.UpdateStatus(id, StatusInfo{Status: StatusReady, Reason: "", Message: "done"}) },
+			StatusReady, metav1.ConditionTrue, ReasonSucceeded, "done", false,
+		},
+		{
+			"pending", func(st *Store) {
+				st.UpdateStatus(id, StatusInfo{Status: StatusPending, Reason: "", Message: "retrying"})
+			},
+			StatusPending, metav1.ConditionUnknown, ReasonReconciling, "retrying", false,
+		},
 		{"Ready condition", func(st *Store) {
 			st.SetCondition(id, readyCondition(StatusFailed, "", "primary"))
 		}, StatusFailed, metav1.ConditionFalse, ReasonFailed, "primary", false},
@@ -93,7 +104,9 @@ func TestUpdateFailure_Transitions(t *testing.T) {
 
 			tc.write(st)
 			info, ok := st.GetStatus(id)
-			if !ok || info.Status != tc.status || info.Reason != StatusReason(tc.reason) || info.String() != tc.message || info.IsDependencyFailure() != tc.failed {
+			if !ok || info.Status != tc.status || info.Reason != StatusReason(tc.reason) ||
+				info.String() != tc.message ||
+				info.IsDependencyFailure() != tc.failed {
 				t.Fatalf("transition snapshot = %+v, present = %v", info, ok)
 			}
 			if tc.failed {
@@ -191,7 +204,16 @@ func TestUpdateFailure_StatusEvents(t *testing.T) {
 	write(b, a)
 	write(a, b)
 	initial, _ := st.GetStatus(id)
-	st.UpdateFailure(id, &manifest.DependencyFailedError{Parent: id, Failed: []manifest.NamedResource{a, b}, Reasons: map[manifest.NamedResource]manifest.DiagnosticReason{a: {Subject: manifest.DiagnosticFor(a, nil), Message: "nested propagation"}}})
+	st.UpdateFailure(
+		id,
+		&manifest.DependencyFailedError{
+			Parent: id,
+			Failed: []manifest.NamedResource{a, b},
+			Reasons: map[manifest.NamedResource]manifest.DiagnosticReason{
+				a: {Subject: manifest.DiagnosticFor(a, nil), Message: "nested propagation"},
+			},
+		},
+	)
 	if current, _ := st.GetStatus(id); current != initial {
 		t.Fatal("unchanged blockers replaced the first diagnostic")
 	}
@@ -206,7 +228,8 @@ func TestUpdateFailure_StatusEvents(t *testing.T) {
 	st.AddListener(EventStatusUpdated, func(_ manifest.NamedResource, payload any) {
 		replay = payload.(StatusInfo)
 	}, true)
-	if replay.Reason != ReasonFailed || !replay.IsDependencyFailure() || !slices.Equal(replay.BlockedBy(), []manifest.NamedResource{b}) {
+	if replay.Reason != ReasonFailed || !replay.IsDependencyFailure() ||
+		!slices.Equal(replay.BlockedBy(), []manifest.NamedResource{b}) {
 		t.Fatalf("replay snapshot = %+v", replay)
 	}
 	st.UpdateStatus(id, StatusInfo{Status: StatusFailed, Reason: "", Message: "dependencies failed"})
@@ -227,8 +250,21 @@ func TestUpdateFailure_ConcurrentSnapshotsAndEvents(t *testing.T) {
 	errs := make([]*manifest.DependencyFailedError, 2)
 	for i := range errs {
 		dep := testutil.HelmReleaseID("", fmt.Sprintf("dep-%d", i))
-		subject := manifest.DiagnosticIdentity{ID: dep, Resource: testutil.KustomizationID("flux-system", "sync"), Path: "clusters/test"}
-		errs[i] = &manifest.DependencyFailedError{Parent: id, Failed: []manifest.NamedResource{dep}, Reasons: map[manifest.NamedResource]manifest.DiagnosticReason{dep: {Subject: subject, Causes: []manifest.DiagnosticReason{{Subject: subject, Message: "nested failure"}}}}}
+		subject := manifest.DiagnosticIdentity{
+			ID:       dep,
+			Resource: testutil.KustomizationID("flux-system", "sync"),
+			Path:     "clusters/test",
+		}
+		errs[i] = &manifest.DependencyFailedError{
+			Parent: id,
+			Failed: []manifest.NamedResource{dep},
+			Reasons: map[manifest.NamedResource]manifest.DiagnosticReason{
+				dep: {
+					Subject: subject,
+					Causes:  []manifest.DiagnosticReason{{Subject: subject, Message: "nested failure"}},
+				},
+			},
+		}
 	}
 	check := func(info StatusInfo) {
 		if info.Status != StatusFailed {
@@ -249,7 +285,10 @@ func TestUpdateFailure_ConcurrentSnapshotsAndEvents(t *testing.T) {
 					return
 				}
 				reason.Causes[0].Causes[0].Message = "caller mutation"
-				if strings.Contains(info.DependencyReason(manifest.DiagnosticFor(id, obj)).String(), "caller mutation") {
+				if strings.Contains(
+					info.DependencyReason(manifest.DiagnosticFor(id, obj)).String(),
+					"caller mutation",
+				) {
 					t.Error("concurrent snapshot exposed retained slices")
 				}
 				return
@@ -283,7 +322,8 @@ func TestUpdateFailure_ConcurrentSnapshotsAndEvents(t *testing.T) {
 	snapshot := initial.StatusInfo
 	conditions := initial.Conditions
 	check(snapshot)
-	if observed != obj || len(conditions) != 1 || conditions[0].Message != snapshot.Message || conditions[0].Reason != string(snapshot.Reason) {
+	if observed != obj || len(conditions) != 1 || conditions[0].Message != snapshot.Message ||
+		conditions[0].Reason != string(snapshot.Reason) {
 		t.Fatalf("incoherent object/status/conditions: %v/%+v/%+v", observed, snapshot, conditions)
 	}
 	for _, info := range st.FailedResources() {
@@ -299,7 +339,8 @@ func TestUpdateFailure_ConcurrentSnapshotsAndEvents(t *testing.T) {
 	snapshot = updated.StatusInfo
 	conditions = updated.Conditions
 	check(snapshot)
-	if len(conditions) != 1 || conditions[0].Status != metav1.ConditionUnknown || conditions[0].Message != snapshot.Message {
+	if len(conditions) != 1 || conditions[0].Status != metav1.ConditionUnknown ||
+		conditions[0].Message != snapshot.Message {
 		t.Fatalf("refire snapshot mismatch: %+v/%+v", snapshot, conditions)
 	}
 	close(release)
@@ -309,7 +350,12 @@ func TestUpdateFailure_ConcurrentSnapshotsAndEvents(t *testing.T) {
 func TestUpdateFailure_NestedSyntheticSnapshots(t *testing.T) {
 	t.Parallel()
 	s := New()
-	applier := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: "FluxInstance", Namespace: "flux-system", Name: "sync"}
+	applier := manifest.NamedResource{
+		Group:     "fluxcd.controlplane.io",
+		Kind:      "FluxInstance",
+		Namespace: "flux-system",
+		Name:      "sync",
+	}
 	root := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "clusters/test", applier)
 	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "sources"}
 	repo := chart.OCIRepository(&manifest.HelmRepository{URL: "oci://registry.example/charts"})
@@ -325,13 +371,30 @@ func TestUpdateFailure_NestedSyntheticSnapshots(t *testing.T) {
 	}, false)()
 	s.UpdateFailure(root.Named(), manifest.NewError(manifest.ErrInput, nil, "invalid package"))
 	rootInfo, _ := s.GetStatus(root.Named())
-	inner := &manifest.DependencyFailedError{Parent: repo.Named(), Subject: manifest.DiagnosticFor(repo.Named(), repo), Failed: []manifest.NamedResource{root.Named()}, Reasons: map[manifest.NamedResource]manifest.DiagnosticReason{root.Named(): rootInfo.DependencyReason(manifest.DiagnosticFor(root.Named(), root))}}
+	inner := &manifest.DependencyFailedError{
+		Parent:  repo.Named(),
+		Subject: manifest.DiagnosticFor(repo.Named(), repo),
+		Failed:  []manifest.NamedResource{root.Named()},
+		Reasons: map[manifest.NamedResource]manifest.DiagnosticReason{
+			root.Named(): rootInfo.DependencyReason(manifest.DiagnosticFor(root.Named(), root)),
+		},
+	}
 	s.UpdateFailure(repo.Named(), inner)
 	middle, _ := s.GetStatus(repo.Named())
-	outer := &manifest.DependencyFailedError{Parent: consumer.Named(), Failed: []manifest.NamedResource{repo.Named()}, Reasons: map[manifest.NamedResource]manifest.DiagnosticReason{repo.Named(): middle.DependencyReason(manifest.DiagnosticFor(repo.Named(), repo))}}
+	outer := &manifest.DependencyFailedError{
+		Parent: consumer.Named(),
+		Failed: []manifest.NamedResource{repo.Named()},
+		Reasons: map[manifest.NamedResource]manifest.DiagnosticReason{
+			repo.Named(): middle.DependencyReason(manifest.DiagnosticFor(repo.Named(), repo)),
+		},
+	}
 	s.UpdateFailure(consumer.Named(), outer)
 	snapshot, _ := s.GetStatus(consumer.Named())
-	if !strings.Contains(snapshot.String(), chart.Named().String()) || !strings.Contains(snapshot.String(), applier.String()) || !strings.Contains(snapshot.String(), `entry path "clusters/test"`) || strings.Contains(snapshot.String(), root.Named().String()) || strings.Contains(snapshot.String(), repo.Named().String()) {
+	if !strings.Contains(snapshot.String(), chart.Named().String()) ||
+		!strings.Contains(snapshot.String(), applier.String()) ||
+		!strings.Contains(snapshot.String(), `entry path "clusters/test"`) ||
+		strings.Contains(snapshot.String(), root.Named().String()) ||
+		strings.Contains(snapshot.String(), repo.Named().String()) {
 		t.Fatalf("nested labels lost context: %s", snapshot.String())
 	}
 	if !slices.Equal(snapshot.BlockedBy(), []manifest.NamedResource{repo.Named()}) {

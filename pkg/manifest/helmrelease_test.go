@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+
 	"github.com/home-operations/flate/internal/assert"
 )
 
@@ -17,7 +18,12 @@ func TestHelmChart_DisplayNames(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			source := NamedResource{Group: SourceDomain, Kind: KindHelmRepository, Namespace: tc.namespace, Name: "charts"}
+			source := NamedResource{
+				Group:     SourceDomain,
+				Kind:      KindHelmRepository,
+				Namespace: tc.namespace,
+				Name:      "charts",
+			}
 			hr := &HelmRelease{Name: "release", Namespace: "apps", Chart: HelmChart{Name: "podinfo", Source: source}}
 			identity := hr.Named()
 
@@ -47,7 +53,11 @@ func TestHelmRelease_TracksDigest(t *testing.T) {
 			t.Parallel()
 			hr := &HelmRelease{Chart: HelmChart{Source: NamedResource{Group: SourceDomain, Kind: tc.repoKind}}}
 			if tc.refKind != "" {
-				hr.ChartRef = &helmv2.CrossNamespaceSourceReference{APIVersion: tc.apiVersion, Kind: tc.refKind, Name: "chart"}
+				hr.ChartRef = &helmv2.CrossNamespaceSourceReference{
+					APIVersion: tc.apiVersion,
+					Kind:       tc.refKind,
+					Name:       "chart",
+				}
 			}
 			assert.Equal(t, hr.TracksDigest(), tc.want)
 		})

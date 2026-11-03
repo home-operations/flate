@@ -36,7 +36,11 @@ func (s Selection) matches(id NamedResource, named bool) bool {
 	}
 	if all {
 		for kind := range Kinds() {
-			if kind.Render && !slices.ContainsFunc(s.Roots, func(root NamedResource) bool { return root.Group == kind.Group && root.Kind == kind.Kind }) {
+			if kind.Render &&
+				!slices.ContainsFunc(
+					s.Roots,
+					func(root NamedResource) bool { return root.Group == kind.Group && root.Kind == kind.Kind },
+				) {
 				all = false
 				break
 			}

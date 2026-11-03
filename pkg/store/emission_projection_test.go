@@ -22,8 +22,13 @@ func projectionSource(t *testing.T, s *Store, name string) manifest.NamedResourc
 
 func projectionOwner(s *Store, name string, source manifest.NamedResource) *manifest.Kustomization {
 	owner := &manifest.Kustomization{
-		Name: name, Namespace: "apps",
-		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: source.Kind, Name: source.Name, Namespace: source.Namespace},
+		Name:      name,
+		Namespace: "apps",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{
+			Kind:      source.Kind,
+			Name:      source.Name,
+			Namespace: source.Namespace,
+		},
 	}
 	s.AddObject(owner)
 	return owner
@@ -52,7 +57,13 @@ func TestStore_IncomingProductionsIdentity(t *testing.T) {
 			if mode == "explicit_namespace" {
 				bare.Namespace = "other"
 			}
-			proof := manifest.Production{Owner: fileOwner.Named(), Source: source, Authored: bare, Path: "/source/input.yaml", File: "input.yaml"}
+			proof := manifest.Production{
+				Owner:    fileOwner.Named(),
+				Source:   source,
+				Authored: bare,
+				Path:     "/source/input.yaml",
+				File:     "input.yaml",
+			}
 			if mode == "source" {
 				proof.Source = other
 			}
@@ -61,8 +72,15 @@ func TestStore_IncomingProductionsIdentity(t *testing.T) {
 				proof.Authored.Namespace = ""
 			}
 			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-				bare:              {Authored: bare, Path: proof.Path, File: proof.File, Productions: []manifest.Production{proof}},
-				ownerID("marker"): {Productions: []manifest.Production{{Owner: renderer.Named(), Source: rendererSource}}},
+				bare: {
+					Authored:    bare,
+					Path:        proof.Path,
+					File:        proof.File,
+					Productions: []manifest.Production{proof},
+				},
+				ownerID("marker"): {
+					Productions: []manifest.Production{{Owner: renderer.Named(), Source: rendererSource}},
+				},
 			}}
 			s.SetDiscoveryIndex(index)
 			incoming.Productions = []manifest.Production{{Owner: renderer.Named(), Source: source}}
@@ -97,17 +115,36 @@ func TestStore_IncomingProductionsIgnoresStoredChild(t *testing.T) {
 	owner := projectionOwner(s, "owner", source)
 	stored := &manifest.ConfigMap{Name: "input", Namespace: "apps", Data: map[string]any{"value": "stale"}}
 	s.AddObject(stored)
-	proof := manifest.Production{Owner: owner.Named(), Source: source, Authored: stored.Named(), Path: "/source/stale.yaml", File: "stale.yaml"}
+	proof := manifest.Production{
+		Owner:    owner.Named(),
+		Source:   source,
+		Authored: stored.Named(),
+		Path:     "/source/stale.yaml",
+		File:     "stale.yaml",
+	}
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-		stored.Named(): {Authored: stored.Named(), Path: proof.Path, File: proof.File, Productions: []manifest.Production{proof}},
+		stored.Named(): {
+			Authored:    stored.Named(),
+			Path:        proof.Path,
+			File:        proof.File,
+			Productions: []manifest.Production{proof},
+		},
 	}}
 	s.SetDiscoveryIndex(index)
 	for _, mode := range []string{"unknown_evidence", "own_evidence"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
-			incoming := Child{Obj: &manifest.ConfigMap{Name: stored.Name, Namespace: stored.Namespace, Data: map[string]any{"value": "incoming"}}}
+			incoming := Child{
+				Obj: &manifest.ConfigMap{
+					Name:      stored.Name,
+					Namespace: stored.Namespace,
+					Data:      map[string]any{"value": "incoming"},
+				},
+			}
 			if mode == "own_evidence" {
-				incoming.Productions = []manifest.Production{{Owner: owner.Named(), Source: source, File: "incoming.yaml"}}
+				incoming.Productions = []manifest.Production{
+					{Owner: owner.Named(), Source: source, File: "incoming.yaml"},
+				}
 			}
 			assert.Diff(t, s.IncomingProductions(incoming, index), incoming.Productions)
 			assert.Equal(t, s.GetObject(stored.Named()), manifest.BaseManifest(stored))
@@ -125,16 +162,32 @@ func TestStore_IncomingProductionsSuppressesRawBridge(t *testing.T) {
 			renderer := projectionOwner(s, "renderer", source)
 			fileOwner := projectionOwner(s, "file-owner", source)
 			ancestor := projectionOwner(s, "ancestor", source)
-			incoming := Child{Obj: &manifest.ConfigMap{Name: "input", Namespace: "apps"}, Productions: []manifest.Production{{Owner: renderer.Named(), Source: source}}}
+			incoming := Child{
+				Obj:         &manifest.ConfigMap{Name: "input", Namespace: "apps"},
+				Productions: []manifest.Production{{Owner: renderer.Named(), Source: source}},
+			}
 			bare := incoming.Obj.Named()
 			bare.Namespace = ""
-			proof := manifest.Production{Owner: fileOwner.Named(), Source: source, Authored: bare, Path: "/source/input.yaml", File: "input.yaml"}
+			proof := manifest.Production{
+				Owner:    fileOwner.Named(),
+				Source:   source,
+				Authored: bare,
+				Path:     "/source/input.yaml",
+				File:     "input.yaml",
+			}
 			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-				bare:              {Authored: bare, Path: proof.Path, File: proof.File, Productions: []manifest.Production{proof}},
+				bare: {
+					Authored:    bare,
+					Path:        proof.Path,
+					File:        proof.File,
+					Productions: []manifest.Production{proof},
+				},
 				ownerID("marker"): {Productions: []manifest.Production{{Owner: renderer.Named(), Source: source}}},
 			}}
 			if mode == "hidden" {
-				index.Records[fileOwner.Named()] = manifest.DiscoveryRecord{Productions: []manifest.Production{{Owner: ancestor.Named(), Source: source}}}
+				index.Records[fileOwner.Named()] = manifest.DiscoveryRecord{
+					Productions: []manifest.Production{{Owner: ancestor.Named(), Source: source}},
+				}
 			}
 			s.SetDiscoveryIndex(index)
 			want := append(slices.Clone(incoming.Productions), proof)
@@ -168,13 +221,26 @@ func TestIncomingProductions_RegisteredEvidence(t *testing.T) {
 			s.AddObject(stale)
 			raw := stale.Named()
 			raw.Namespace = ""
-			proof := manifest.Production{Owner: fileOwner.Named(), Source: source, Authored: raw, File: "input.yaml", Path: "/selected/input.yaml"}
+			proof := manifest.Production{
+				Owner:    fileOwner.Named(),
+				Source:   source,
+				Authored: raw,
+				File:     "input.yaml",
+				Path:     "/selected/input.yaml",
+			}
 			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 				raw:              {Productions: []manifest.Production{proof}},
 				producer.Named(): {Productions: []manifest.Production{{Owner: producer.Named(), Source: source}}},
 			}}
 			s.SetDiscoveryIndex(index)
-			incoming := Child{Obj: &manifest.ConfigMap{Name: stale.Name, Namespace: stale.Namespace, Data: map[string]any{"value": "incoming"}}, Productions: []manifest.Production{{Owner: producer.Named(), Source: source}}}
+			incoming := Child{
+				Obj: &manifest.ConfigMap{
+					Name:      stale.Name,
+					Namespace: stale.Namespace,
+					Data:      map[string]any{"value": "incoming"},
+				},
+				Productions: []manifest.Production{{Owner: producer.Named(), Source: source}},
+			}
 			var reads ReadSet
 			reads.Init(s, producer.Named(), nil)
 			defer reads.Retire()
@@ -209,14 +275,24 @@ func TestIncomingProductions_RegisteredEvidence(t *testing.T) {
 			payload := &SourceArtifact{Content: "stable", FS: fstest.MapFS{}}
 			raw := child.Obj.Named()
 			raw.Namespace = ""
-			proof := manifest.Production{Owner: contributor.Named(), Source: source, Authored: raw, File: "input.yaml", Path: "/selected/input.yaml"}
+			proof := manifest.Production{
+				Owner:    contributor.Named(),
+				Source:   source,
+				Authored: raw,
+				File:     "input.yaml",
+				Path:     "/selected/input.yaml",
+			}
 			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 				raw:                 {Productions: []manifest.Production{proof}},
 				contributor.Named(): {Productions: []manifest.Production{{Owner: contributor.Named(), Source: source}}},
 			}}
 			s.SetDiscoveryIndex(index)
 			publish := func(fingerprint string) {
-				s.RecordEmitted(contributor.Named(), &Emission{Children: []Child{child}, Complete: true, Fingerprint: fingerprint}, map[manifest.NamedResource]*SourceArtifact{child.Obj.Named(): payload})
+				s.RecordEmitted(
+					contributor.Named(),
+					&Emission{Children: []Child{child}, Complete: true, Fingerprint: fingerprint},
+					map[manifest.NamedResource]*SourceArtifact{child.Obj.Named(): payload},
+				)
 			}
 			publish("first")
 			var reads ReadSet
@@ -226,7 +302,10 @@ func TestIncomingProductions_RegisteredEvidence(t *testing.T) {
 				assert.Equal(t, reads.GetArtifact(child.Obj.Named(), ArtifactContent), Artifact(payload))
 			}
 			if mode != "content_only" {
-				incoming := Child{Obj: child.Obj, Productions: []manifest.Production{{Owner: producer.Named(), Source: source}}}
+				incoming := Child{
+					Obj:         child.Obj,
+					Productions: []manifest.Production{{Owner: producer.Named(), Source: source}},
+				}
 				assert.Diff(t, reads.IncomingProductions(incoming, index), incoming.Productions)
 			}
 			assert.Equal(t, reads.Valid(), true)
@@ -240,7 +319,6 @@ func TestIncomingProductions_RegisteredEvidence(t *testing.T) {
 			assert.Equal(t, reads.Valid(), mode == "content_only")
 		})
 	}
-
 }
 
 func TestChildFootprint_MatchesEmission(t *testing.T) {
@@ -255,20 +333,52 @@ func TestChildFootprint_MatchesEmission(t *testing.T) {
 				owner = manifest.NewEntryKustomization(source, ".", manifest.NamedResource{})
 				s.AddObject(owner)
 			}
-			generator := Child{Obj: &manifest.RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Name: "generator", Namespace: "apps", Spec: map[string]any{"pathPattern": "@repo/{app}", "artifacts": []any{map[string]any{"name": "app-{app}"}}}}}
-			consumer := Child{Obj: &manifest.Kustomization{Name: "consumer", Namespace: "apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindExternalArtifact, Name: "app-api"}}}
-			consumer.Obj.(*manifest.Kustomization).PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "settings"}}}
+			generator := Child{
+				Obj: &manifest.RawObject{
+					APIVersion: "source.extensions.fluxcd.io/v1beta1",
+					Kind:       "ArtifactGenerator",
+					Name:       "generator",
+					Namespace:  "apps",
+					Spec: map[string]any{
+						"pathPattern": "@repo/{app}",
+						"artifacts":   []any{map[string]any{"name": "app-{app}"}},
+					},
+				},
+			}
+			consumer := Child{
+				Obj: &manifest.Kustomization{
+					Name:      "consumer",
+					Namespace: "apps",
+					SourceRef: kustomizev1.CrossNamespaceSourceReference{
+						Kind: manifest.KindExternalArtifact,
+						Name: "app-api",
+					},
+				},
+			}
+			consumer.Obj.(*manifest.Kustomization).PostBuild = &kustomizev1.PostBuild{
+				SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "settings"}},
+			}
 			settings := (&manifest.ConfigMap{Name: "settings", Namespace: "apps"}).Named()
 			target := consumer.Obj.(*manifest.Kustomization).SourceID()
-			production := manifest.Production{Owner: owner.Named(), Source: source, File: "consumer.yaml", Path: "/content/consumer.yaml"}
+			production := manifest.Production{
+				Owner:  owner.Named(),
+				Source: source,
+				File:   "consumer.yaml",
+				Path:   "/content/consumer.yaml",
+			}
 			decl := manifest.Production{Owner: owner.Named(), Declaration: generator.Obj.Named(), Source: source}
 			if mode == "foreign" {
 				production.Source.Name, decl.Source.Name = "other", "other"
 			}
 			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-				settings:             {Productions: []manifest.Production{{Source: source, File: "settings.yaml"}}},
-				consumer.Obj.Named(): {File: production.File, Path: production.Path, Refs: []manifest.NamedResource{target}, Productions: []manifest.Production{production}},
-				target:               {Productions: []manifest.Production{decl}},
+				settings: {Productions: []manifest.Production{{Source: source, File: "settings.yaml"}}},
+				consumer.Obj.Named(): {
+					File:        production.File,
+					Path:        production.Path,
+					Refs:        []manifest.NamedResource{target},
+					Productions: []manifest.Production{production},
+				},
+				target: {Productions: []manifest.Production{decl}},
 			}}
 			if mode == "static" || mode == "entry" {
 				index.Records[owner.Named()] = manifest.DiscoveryRecord{StaticOutput: true}
@@ -301,7 +411,11 @@ func TestChildFootprint_MatchesEmission(t *testing.T) {
 			}
 			before := maps.Collect(prospective)
 			_, predicted := before[target]
-			assert.Equal(t, predicted, mode == "index" || mode == "previous" || mode == "retained" || mode == "static" || mode == "entry")
+			assert.Equal(
+				t,
+				predicted,
+				mode == "index" || mode == "previous" || mode == "retained" || mode == "static" || mode == "entry",
+			)
 			assert.Equal(t, s.GetArtifact(owner.Named(), ArtifactContent), prior)
 			assert.Equal(t, s.index.Load() == nil, true)
 			assert.Diff(t, index.Records[target].Productions, []manifest.Production{decl})
@@ -324,7 +438,10 @@ func TestChildFootprint_MatchesEmission(t *testing.T) {
 			} else {
 				assert.Diff(t, next.SourcePaths(), sources)
 			}
-			input := manifest.SourceEvidence{Source: s.GetArtifact(source, ArtifactContent).(*SourceArtifact).HistoryIdentity(source), Path: "settings.yaml"}
+			input := manifest.SourceEvidence{
+				Source: s.GetArtifact(source, ArtifactContent).(*SourceArtifact).HistoryIdentity(source),
+				Path:   "settings.yaml",
+			}
 			assert.Equal(t, slices.Contains(sources, input), mode == "retained" || mode == "superseded")
 		})
 	}

@@ -27,7 +27,12 @@ func TestBootstrap_RemoteGeneratorSharedAcquisition(t *testing.T) {
 	defer server.Close()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux.yaml]\n")
-	testutil.WriteFile(t, root, "flux.yaml", testutil.KustomizationYAML("owner", "apps", "  path: ./apps\n  interval: 5m\n"))
+	testutil.WriteFile(
+		t,
+		root,
+		"flux.yaml",
+		testutil.KustomizationYAML("owner", "apps", "  path: ./apps\n  interval: 5m\n"),
+	)
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", fmt.Sprintf(`namespace: apps
 configMapGenerator:
 - name: env
@@ -40,7 +45,11 @@ secretGenerator:
 generatorOptions:
   disableNameSuffixHash: true
 `, server.URL))
-	o, err := newTestOrchestrator(t, Tree{Path: root, RepoRoot: root}, Config{CacheDir: t.TempDir(), Concurrency: 2, SourceRetry: sourcecache.RetryConfig{Attempts: 2}})
+	o, err := newTestOrchestrator(
+		t,
+		Tree{Path: root, RepoRoot: root},
+		Config{CacheDir: t.TempDir(), Concurrency: 2, SourceRetry: sourcecache.RetryConfig{Attempts: 2}},
+	)
 	assert.NoError(t, err)
 	defer func() { o.stop() }()
 	assert.NoError(t, o.bootstrap(t.Context()))
@@ -63,7 +72,11 @@ generatorOptions:
 	if !ok {
 		t.Fatal("bootstrap owner missing")
 	}
-	req := kustomize.RenderRequest{Source: o.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact), SubPath: "apps", Spec: ks}
+	req := kustomize.RenderRequest{
+		Source:  o.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact),
+		SubPath: "apps",
+		Spec:    ks,
+	}
 	first, _, err := testutil.RenderMaps(kustomize.Render(t.Context(), o.ksc.Trees, req, o.cfg.SourceRetry))
 	assert.NoError(t, err)
 	second, _, err := testutil.RenderMaps(kustomize.Render(t.Context(), o.ksc.Trees, req, o.cfg.SourceRetry))

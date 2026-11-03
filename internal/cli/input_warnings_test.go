@@ -11,13 +11,40 @@ import (
 func TestRun_TestAll_IncompleteInputCoverage(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [owner.yaml]\n")
-	testutil.WriteFile(t, root, "flux/owner.yaml", testutil.KustomizationYAML("owner", "apps", "  path: ./apps\n  interval: 5m\n"))
+	testutil.WriteFile(
+		t,
+		root,
+		"flux/owner.yaml",
+		testutil.KustomizationYAML("owner", "apps", "  path: ./apps\n  interval: 5m\n"),
+	)
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\ntransformers: [../cfg]\n")
 	testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: data}\n")
-	testutil.WriteFile(t, root, "cfg/kustomization.yaml", "resources: [ns.yaml]\nimages: [{name: unused, newTag: latest}]\n")
-	testutil.WriteFile(t, root, "cfg/ns.yaml", "apiVersion: builtin\nkind: NamespaceTransformer\nmetadata: {name: namespace}\nnamespace: apps\n")
-	stdout, stderr, code := runCLI(t, "test", "all", "--path", root, "--no-progress", "--concurrency", "2", "--cache-dir", t.TempDir())
-	if code != 0 || !strings.Contains(stdout, "✓") || !strings.Contains(stdout, "1 passed") || strings.Contains(stdout, "failed") {
+	testutil.WriteFile(
+		t,
+		root,
+		"cfg/kustomization.yaml",
+		"resources: [ns.yaml]\nimages: [{name: unused, newTag: latest}]\n",
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"cfg/ns.yaml",
+		"apiVersion: builtin\nkind: NamespaceTransformer\nmetadata: {name: namespace}\nnamespace: apps\n",
+	)
+	stdout, stderr, code := runCLI(
+		t,
+		"test",
+		"all",
+		"--path",
+		root,
+		"--no-progress",
+		"--concurrency",
+		"2",
+		"--cache-dir",
+		t.TempDir(),
+	)
+	if code != 0 || !strings.Contains(stdout, "✓") || !strings.Contains(stdout, "1 passed") ||
+		strings.Contains(stdout, "failed") {
 		t.Fatalf("full test failed: code=%d stdout=%s stderr=%s", code, stdout, stderr)
 	}
 	if strings.Contains(stdout+stderr, "input coverage is incomplete") {
@@ -50,27 +77,36 @@ func TestRun_ChangedOnly_IncompleteInputCoverage(t *testing.T) {
 					t.Errorf("diagnostic %q at wrong destination: stdout=%s stderr=%s", diagnostic, stdout, stderr)
 				}
 			}
-			if strings.Contains(stdout+stderr, "orig snapshot:") || strings.Contains(stdout+stderr, "current snapshot:") {
+			if strings.Contains(stdout+stderr, "orig snapshot:") ||
+				strings.Contains(stdout+stderr, "current snapshot:") {
 				t.Errorf("single run has comparison labels: stdout=%s stderr=%s", stdout, stderr)
 			}
 			if verb == "build" {
 				docs, err := testutil.SplitDocs([]byte(stdout))
 				assert.NoError(t, err)
-				assert.Diff(t, docs, []map[string]any{{
-					"apiVersion": "v1", "kind": "ConfigMap",
-					"metadata": map[string]any{
-						"name": "unchanged",
-						"labels": map[string]any{
-							"kustomize.toolkit.fluxcd.io/name":      "selected",
-							"kustomize.toolkit.fluxcd.io/namespace": "infra",
+				assert.Diff(t, docs, []map[string]any{
+					{
+						"apiVersion": "v1", "kind": "ConfigMap",
+						"metadata": map[string]any{
+							"name": "unchanged",
+							"labels": map[string]any{
+								"kustomize.toolkit.fluxcd.io/name":      "selected",
+								"kustomize.toolkit.fluxcd.io/namespace": "infra",
+							},
+						},
+						"data": map[string]any{"value": "unchanged"},
+					},
+					{
+						"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+						"kind":       "Kustomization",
+						"metadata":   map[string]any{"name": "selected", "namespace": "infra"},
+						"spec": map[string]any{
+							"interval":  "5m",
+							"path":      "./infra",
+							"postBuild": map[string]any{"substitute": map[string]any{"TRIGGER": "selected"}},
 						},
 					},
-					"data": map[string]any{"value": "unchanged"},
-				}, {
-					"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization",
-					"metadata": map[string]any{"name": "selected", "namespace": "infra"},
-					"spec":     map[string]any{"interval": "5m", "path": "./infra", "postBuild": map[string]any{"substitute": map[string]any{"TRIGGER": "selected"}}},
-				}})
+				})
 				return
 			}
 			roster, _, _ := strings.Cut(strings.TrimSpace(stdout), "\n\n")
@@ -87,7 +123,12 @@ func TestRun_BuildAll_FullTreeIncompleteInputCoverage(t *testing.T) {
 	stdout, stderr, code := runCLI(t, "build", "all", "--path", root,
 		"--no-progress", "--concurrency", "2", "--cache-dir", t.TempDir())
 	if code != 0 || strings.Contains(stdout+stderr, "input coverage is incomplete") {
-		t.Fatalf("full build failed or reported changed-only uncertainty: code=%d stdout=%s stderr=%s", code, stdout, stderr)
+		t.Fatalf(
+			"full build failed or reported changed-only uncertainty: code=%d stdout=%s stderr=%s",
+			code,
+			stdout,
+			stderr,
+		)
 	}
 	docs, err := testutil.SplitDocs([]byte(stdout))
 	assert.NoError(t, err)
@@ -111,8 +152,10 @@ func testComparisonInputWarnings(t *testing.T, verb string) {
 	orig, current := writeInputWarningsFixture(t, "5m"), writeInputWarningsFixture(t, "10m")
 	for _, namespace := range []string{"", "infra"} {
 		t.Run("namespace="+namespace, func(t *testing.T) {
-			args := []string{"diff", verb, "--path", current, "--path-orig", orig,
-				"--no-progress", "--concurrency", "2", "--cache-dir", t.TempDir()}
+			args := []string{
+				"diff", verb, "--path", current, "--path-orig", orig,
+				"--no-progress", "--concurrency", "2", "--cache-dir", t.TempDir(),
+			}
 			if namespace != "" {
 				args = append(args, "--namespace", namespace)
 			}
@@ -133,7 +176,8 @@ func testComparisonInputWarnings(t *testing.T, verb string) {
 			}
 			origStart := strings.Index(stderr, "orig snapshot:")
 			currentStart := strings.Index(stderr, "current snapshot:")
-			if origStart < 0 || currentStart <= origStart || strings.Count(stderr, "orig snapshot:") != 1 || strings.Count(stderr, "current snapshot:") != 1 {
+			if origStart < 0 || currentStart <= origStart || strings.Count(stderr, "orig snapshot:") != 1 ||
+				strings.Count(stderr, "current snapshot:") != 1 {
 				t.Fatalf("expected distinct orig then current warning sections: %s", stderr)
 			}
 			for _, side := range []struct {
@@ -143,7 +187,8 @@ func testComparisonInputWarnings(t *testing.T, verb string) {
 				if strings.Count(side.block, message) != 1 || !strings.Contains(side.block, want) {
 					t.Fatalf("expected one attributed %s warning: %s", side.name, side.block)
 				}
-				if !strings.Contains(side.block, "configuration transformations may rewrite plugin file operands") || !strings.Contains(side.block, "flate build all without --base or --path-orig") {
+				if !strings.Contains(side.block, "configuration transformations may rewrite plugin file operands") ||
+					!strings.Contains(side.block, "flate build all without --base or --path-orig") {
 					t.Fatalf("missing actionable %s warning details: %s", side.name, side.block)
 				}
 			}
@@ -156,14 +201,39 @@ func writeInputWarningsFixture(t *testing.T, interval string) string {
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux/affected.yaml, flux/selected.yaml]\n")
 	testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [affected.yaml, selected.yaml]\n")
-	testutil.WriteFile(t, root, "flux/affected.yaml", testutil.KustomizationYAML("affected", "apps", "  path: ./apps\n  interval: 5m\n"))
-	testutil.WriteFile(t, root, "flux/selected.yaml", testutil.KustomizationYAML("selected", "infra", "  path: ./infra\n  interval: "+interval+"\n"))
+	testutil.WriteFile(
+		t,
+		root,
+		"flux/affected.yaml",
+		testutil.KustomizationYAML("affected", "apps", "  path: ./apps\n  interval: 5m\n"),
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"flux/selected.yaml",
+		testutil.KustomizationYAML("selected", "infra", "  path: ./infra\n  interval: "+interval+"\n"),
+	)
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", "generators: [../config]\n")
-	testutil.WriteFile(t, root, "config/kustomization.yaml", "resources: [plugin.yaml]\npatches: [{target: {kind: ConfigMapGenerator}, patch: '[{\"op\":\"replace\",\"path\":\"/files/0\",\"value\":\"hidden.txt\"}]' }]\n")
-	testutil.WriteFile(t, root, "config/plugin.yaml", "apiVersion: builtin\nkind: ConfigMapGenerator\nmetadata: {name: stable}\nfiles: [value.txt]\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"config/kustomization.yaml",
+		"resources: [plugin.yaml]\npatches: [{target: {kind: ConfigMapGenerator}, patch: '[{\"op\":\"replace\",\"path\":\"/files/0\",\"value\":\"hidden.txt\"}]' }]\n",
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"config/plugin.yaml",
+		"apiVersion: builtin\nkind: ConfigMapGenerator\nmetadata: {name: stable}\nfiles: [value.txt]\n",
+	)
 	testutil.WriteFile(t, root, "apps/value.txt", "stable")
 	testutil.WriteFile(t, root, "apps/hidden.txt", "stable")
 	testutil.WriteFile(t, root, "infra/kustomization.yaml", "resources: [cm.yaml]\n")
-	testutil.WriteFile(t, root, "infra/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unchanged}\ndata: {value: unchanged}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"infra/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unchanged}\ndata: {value: unchanged}\n",
+	)
 	return root
 }

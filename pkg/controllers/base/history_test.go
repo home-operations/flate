@@ -24,17 +24,35 @@ func TestKeepEmitted_MatchesHistoryBeforePublication(t *testing.T) {
 			root := t.TempDir()
 			source := &manifest.GitRepository{Name: "content", Namespace: "apps"}
 			owner := testutil.KustomizationID("apps", "emitter")
-			child := &manifest.Kustomization{Name: "child", Namespace: "apps", Path: "apps/red", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: source.Named().Kind, Name: source.Name}}
+			child := &manifest.Kustomization{
+				Name:      "child",
+				Namespace: "apps",
+				Path:      "apps/red",
+				SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: source.Named().Kind, Name: source.Name},
+			}
 			var selections [2][]string
 			for side := range 2 {
 				st := store.New()
 				st.AddObject(source)
-				art := &store.SourceArtifact{FS: fstest.MapFS{"apps/red/file": {Data: []byte("changed")}}, LocalPath: root}
+				art := &store.SourceArtifact{
+					FS:        fstest.MapFS{"apps/red/file": {Data: []byte("changed")}},
+					LocalPath: root,
+				}
 				if mode == "pinned" {
 					art.LocalPath, art.LocalRoot, art.Key, art.Content = "/selected", root, "commit", "generation"
 				}
 				st.SetArtifact(source.Named(), art)
-				l := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"apps/red/file"}), Index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}, Inventory: st, Root: root})
+				l := admissiontest.New(
+					t,
+					admissiontest.Config{
+						Changes: change.NewSet([]string{"apps/red/file"}),
+						Index: &manifest.DiscoveryIndex{
+							Records: map[manifest.NamedResource]manifest.DiscoveryRecord{},
+						},
+						Inventory: st,
+						Root:      root,
+					},
+				)
 				filter := l.Options.Filter
 				production := manifest.Production{Owner: owner, Source: manifest.BootstrapSourceID}
 				if side == 0 {
@@ -42,14 +60,26 @@ func TestKeepEmitted_MatchesHistoryBeforePublication(t *testing.T) {
 						Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
 						Complete bool
 					}{owner: {Records: func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
-						yield(child.Named(), manifest.DiscoveryRecord{Refs: []manifest.NamedResource{source.Named()}, ContentRoots: map[manifest.NamedResource][]string{source.Named(): {child.Path}}, Productions: []manifest.Production{production}})
+						yield(
+							child.Named(),
+							manifest.DiscoveryRecord{
+								Refs:         []manifest.NamedResource{source.Named()},
+								ContentRoots: map[manifest.NamedResource][]string{source.Named(): {child.Path}},
+								Productions:  []manifest.Production{production},
+							},
+						)
 					}, Complete: true}})
 					assert.NoError(t, err)
 					admissiontest.Commit(t, l, proposal)
 				} else {
 					controller := New(st, task.NewBounded(2))
 					controller.Configure(Options{Filter: filter, Loader: l})
-					kept1, admissionErr1 := controller.KeepEmitted(t.Context(), owner, store.Child{Obj: child, Productions: []manifest.Production{production}}, nil)
+					kept1, admissionErr1 := controller.KeepEmitted(
+						t.Context(),
+						owner,
+						store.Child{Obj: child, Productions: []manifest.Production{production}},
+						nil,
+					)
 					if admissionErr1 != nil {
 						t.Fatal(admissionErr1)
 					}
@@ -73,17 +103,34 @@ func TestKeepEmitted_OverridesHistoricalReferences(t *testing.T) {
 	newSource := &manifest.GitRepository{Name: "new", Namespace: "apps"}
 	st.AddObjects([]manifest.BaseManifest{oldSource, newSource})
 	for _, source := range []*manifest.GitRepository{oldSource, newSource} {
-		st.SetArtifact(source.Named(), &store.SourceArtifact{FS: fstest.MapFS{"apps/red/file": {Data: []byte("value")}}, LocalPath: root})
+		st.SetArtifact(
+			source.Named(),
+			&store.SourceArtifact{FS: fstest.MapFS{"apps/red/file": {Data: []byte("value")}}, LocalPath: root},
+		)
 	}
-	child := &manifest.Kustomization{Name: "child", Namespace: "apps", Path: "apps/red", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: newSource.Named().Kind, Name: newSource.Name}}
+	child := &manifest.Kustomization{
+		Name:      "child",
+		Namespace: "apps",
+		Path:      "apps/red",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: newSource.Named().Kind, Name: newSource.Name},
+	}
 	owner := testutil.KustomizationID("apps", "emitter")
-	l := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"apps/red/file"}), Index: nil, Inventory: st, Root: root})
+	l := admissiontest.New(
+		t,
+		admissiontest.Config{Changes: change.NewSet([]string{"apps/red/file"}), Index: nil, Inventory: st, Root: root},
+	)
 	filter := l.Options.Filter
 	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, map[manifest.NamedResource]struct {
 		Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
 		Complete bool
 	}{owner: {Records: func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
-		yield(child.Named(), manifest.DiscoveryRecord{Refs: []manifest.NamedResource{oldSource.Named()}, ContentRoots: map[manifest.NamedResource][]string{oldSource.Named(): {"elsewhere"}}})
+		yield(
+			child.Named(),
+			manifest.DiscoveryRecord{
+				Refs:         []manifest.NamedResource{oldSource.Named()},
+				ContentRoots: map[manifest.NamedResource][]string{oldSource.Named(): {"elsewhere"}},
+			},
+		)
 	}}})
 	assert.NoError(t, err)
 	admissiontest.Commit(t, l, proposal)

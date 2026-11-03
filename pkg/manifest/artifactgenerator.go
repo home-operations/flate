@@ -14,7 +14,12 @@ import (
 // ExternalArtifact constructs a declaration after evaluation resolves its output metadata.
 func (r *RawObject) ExternalArtifact(metadata metav1.ObjectMeta) *ExternalArtifact {
 	return NewExternalArtifact(sourcev1.ExternalArtifact{ObjectMeta: metadata, Spec: sourcev1.ExternalArtifactSpec{
-		SourceRef: &meta.NamespacedObjectKindReference{APIVersion: r.APIVersion, Kind: r.Kind, Name: r.Name, Namespace: r.Namespace},
+		SourceRef: &meta.NamespacedObjectKindReference{
+			APIVersion: r.APIVersion,
+			Kind:       r.Kind,
+			Name:       r.Name,
+			Namespace:  r.Namespace,
+		},
 	}})
 }
 
@@ -43,7 +48,10 @@ func (r *RawObject) artifactTargets(candidates []NamedResource) []ProducerTarget
 			continue
 		}
 		if !strings.ContainsAny(name, "{}") {
-			targets = append(targets, ProducerTarget{Group: SourceDomain, Kind: KindExternalArtifact, Namespace: r.Namespace, Name: name})
+			targets = append(
+				targets,
+				ProducerTarget{Group: SourceDomain, Kind: KindExternalArtifact, Namespace: r.Namespace, Name: name},
+			)
 			continue
 		}
 		if len(captures) == 0 {
@@ -55,7 +63,9 @@ func (r *RawObject) artifactTargets(candidates []NamedResource) []ProducerTarget
 		}
 		bound := make([]string, len(captures))
 		for _, candidate := range candidates {
-			if candidate.Group != SourceDomain || candidate.Kind != KindExternalArtifact || candidate.Namespace != r.Namespace || len(apivalidation.NameIsDNSSubdomain(candidate.Name, false)) != 0 {
+			if candidate.Group != SourceDomain || candidate.Kind != KindExternalArtifact ||
+				candidate.Namespace != r.Namespace ||
+				len(apivalidation.NameIsDNSSubdomain(candidate.Name, false)) != 0 {
 				continue
 			}
 			clear(bound)
@@ -174,8 +184,23 @@ func (r *RawObject) references(yield func(Reference) bool) {
 		kind, _ := fields["kind"].(string)
 		name, _ := fields["name"].(string)
 		namespace, _ := fields["namespace"].(string)
-		id := Resolve(NamedResource{Group: referenceGroup(kind, ""), Kind: kind, Name: name, Namespace: namespace}, "", r.Namespace)
-		if !yield(Reference{NamedResource: id, Use: "artifact", Position: i, Content: true, Gate: GateArtifacts, Artifact: true, ArtifactOnly: true, ArtifactStages: GateArtifacts}) {
+		id := Resolve(
+			NamedResource{Group: referenceGroup(kind, ""), Kind: kind, Name: name, Namespace: namespace},
+			"",
+			r.Namespace,
+		)
+		if !yield(
+			Reference{
+				NamedResource:  id,
+				Use:            "artifact",
+				Position:       i,
+				Content:        true,
+				Gate:           GateArtifacts,
+				Artifact:       true,
+				ArtifactOnly:   true,
+				ArtifactStages: GateArtifacts,
+			},
+		) {
 			return
 		}
 	}

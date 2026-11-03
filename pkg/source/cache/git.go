@@ -17,8 +17,9 @@ import (
 	"github.com/go-git/go-git/v5/storage"
 	"github.com/go-git/go-git/v5/storage/filesystem"
 	"github.com/google/uuid"
-	"github.com/home-operations/flate/pkg/manifest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 // GitKey identifies a Git family, its normalized requested ref and recursion policy.
@@ -48,18 +49,33 @@ func (p gitProducer) identity() string {
 
 // Git acquires a private generation through the common freshness and publication path.
 // Its acquisition identity is empty on failure.
-func (c *Cache) Git(ctx context.Context, key GitKey, policy Policy, produce func(context.Context, storage.Storer, billy.Filesystem) (plumbing.Hash, error)) (*GitGeneration, string, error) {
+func (c *Cache) Git(
+	ctx context.Context,
+	key GitKey,
+	policy Policy,
+	produce func(context.Context, storage.Storer, billy.Filesystem) (plumbing.Hash, error),
+) (*GitGeneration, string, error) {
 	producer := gitProducer{key: key}
-	e, id, err := c.acquire(ctx, acquireKey{producer: producer}, policy, acquisitionCallbacks{produce: func(ctx context.Context, c *Cache, staged *payload) (*entry, error) {
-		return producer.produce(ctx, c, staged, produce)
-	}})
+	e, id, err := c.acquire(
+		ctx,
+		acquireKey{producer: producer},
+		policy,
+		acquisitionCallbacks{produce: func(ctx context.Context, c *Cache, staged *payload) (*entry, error) {
+			return producer.produce(ctx, c, staged, produce)
+		}},
+	)
 	if err != nil {
 		return nil, "", err
 	}
 	return e.git, id, nil
 }
 
-func (p gitProducer) produce(ctx context.Context, c *Cache, staged *payload, fetch func(context.Context, storage.Storer, billy.Filesystem) (plumbing.Hash, error)) (*entry, error) {
+func (p gitProducer) produce(
+	ctx context.Context,
+	c *Cache,
+	staged *payload,
+	fetch func(context.Context, storage.Storer, billy.Filesystem) (plumbing.Hash, error),
+) (*entry, error) {
 	g := &GitGeneration{id: uuid.NewString()}
 	e := &entry{git: g}
 	if c.store == nil {
@@ -122,7 +138,11 @@ func (p gitProducer) restore(_ context.Context, c *Cache, desc ocispec.Descripto
 	if err != nil || parsed.String() != id || !plumbing.IsHash(revision) || a[prefix+"git-ref"] != p.key.Ref {
 		return nil
 	}
-	g := &GitGeneration{id: id, Commit: plumbing.NewHash(revision), Backing: osfs.New(filepath.Join(c.root.Name(), gitObjectsPath(id)))}
+	g := &GitGeneration{
+		id:      id,
+		Commit:  plumbing.NewHash(revision),
+		Backing: osfs.New(filepath.Join(c.root.Name(), gitObjectsPath(id))),
+	}
 	if _, err := c.root.Stat(gitObjectDataPath(id)); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil

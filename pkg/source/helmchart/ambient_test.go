@@ -125,7 +125,14 @@ func helmPipe(t *testing.T, handle func(*http.Request) (*http.Response, error)) 
 }
 
 func helmReply(r *http.Request, status int, data []byte) *http.Response {
-	return &http.Response{StatusCode: status, Status: fmt.Sprintf("%d credential-canary", status), Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(data)), ContentLength: int64(len(data)), Request: r}
+	return &http.Response{
+		StatusCode:    status,
+		Status:        fmt.Sprintf("%d credential-canary", status),
+		Header:        make(http.Header),
+		Body:          io.NopCloser(bytes.NewReader(data)),
+		ContentLength: int64(len(data)),
+		Request:       r,
+	}
 }
 
 func TestFetcher_LocalHelmContinuationEligibility(t *testing.T) {
@@ -159,8 +166,15 @@ func TestFetcher_LocalHelmContinuationEligibility(t *testing.T) {
 			hc := helmChart(r.Name, "app-template", "1.0.0")
 			artifact, err := f.Fetch(t.Context(), hc, inputs.readSet(hc), cache.Policy{})
 			missing, ok := errors.AsType[*source.MissingSecretError](err)
-			if err == nil || artifact != nil || (ok && missing.RetryAmbient != nil) != tc.wantAmbient || errors.Is(err, manifest.ErrInput) != tc.wantInput || strings.Contains(err.Error(), "canary") {
-				t.Fatalf("ambient=%t input=%t: %v", ok && missing.RetryAmbient != nil, errors.Is(err, manifest.ErrInput), err)
+			if err == nil || artifact != nil || (ok && missing.RetryAmbient != nil) != tc.wantAmbient ||
+				errors.Is(err, manifest.ErrInput) != tc.wantInput ||
+				strings.Contains(err.Error(), "canary") {
+				t.Fatalf(
+					"ambient=%t input=%t: %v",
+					ok && missing.RetryAmbient != nil,
+					errors.Is(err, manifest.ErrInput),
+					err,
+				)
 			}
 		})
 	}
@@ -169,7 +183,12 @@ func TestFetcher_LocalHelmContinuationEligibility(t *testing.T) {
 func TestFetcher_LocalHelmFiles(t *testing.T) {
 	for _, state := range []string{"missing", "directory", "malformed", "no usable match"} {
 		t.Run(state, func(t *testing.T) {
-			path := helmLogin(t, nil, &repo.Entry{URL: "https://other.invalid", Username: "credential-canary", Password: "password-canary"}, &repo.Entry{URL: "https://charts.invalid", Username: "incomplete-canary"})
+			path := helmLogin(
+				t,
+				nil,
+				&repo.Entry{URL: "https://other.invalid", Username: "credential-canary", Password: "password-canary"},
+				&repo.Entry{URL: "https://charts.invalid", Username: "incomplete-canary"},
+			)
 			switch state {
 			case "missing":
 				assert.NoError(t, os.Remove(path))
@@ -190,7 +209,10 @@ func TestFetcher_LocalHelmFiles(t *testing.T) {
 			}
 			artifact, err := missing.RetryAmbient(t.Context())
 			unavailable := state == "missing" || state == "no usable match"
-			if err == nil || artifact != nil || errors.Is(err, manifest.ErrInput) == unavailable || !errors.Is(err, manifest.ErrFlux) || errors.Is(err, manifest.ErrMissingSecret) != unavailable || strings.Contains(err.Error(), "canary") {
+			if err == nil || artifact != nil || errors.Is(err, manifest.ErrInput) == unavailable ||
+				!errors.Is(err, manifest.ErrFlux) ||
+				errors.Is(err, manifest.ErrMissingSecret) != unavailable ||
+				strings.Contains(err.Error(), "canary") {
 				t.Fatalf("local configuration produced content or lost the acquisition cause: %v", err)
 			}
 		})
@@ -228,11 +250,23 @@ func TestFetcher_LocalHelmContinuation(t *testing.T) {
 			switch tier {
 			case "machine":
 				username = "machine-canary"
-				path = helmLogin(t, nil,
+				path = helmLogin(
+					t,
+					nil,
 					&repo.Entry{URL: r.URL, Username: "incomplete-canary"},
 					&repo.Entry{URL: r.URL, Username: manifest.ValuePlaceholder("username"), Password: "ignored"},
-					&repo.Entry{URL: r.URL + "/./", Username: username, Password: "password-canary", CAFile: "/invalid-ca", CertFile: "/invalid-cert", KeyFile: "/invalid-key", InsecureSkipTLSVerify: true, PassCredentialsAll: true},
-					&repo.Entry{URL: r.URL, Username: "later-canary", Password: "ignored"})
+					&repo.Entry{
+						URL:                   r.URL + "/./",
+						Username:              username,
+						Password:              "password-canary",
+						CAFile:                "/invalid-ca",
+						CertFile:              "/invalid-cert",
+						KeyFile:               "/invalid-key",
+						InsecureSkipTLSVerify: true,
+						PassCredentialsAll:    true,
+					},
+					&repo.Entry{URL: r.URL, Username: "later-canary", Password: "ignored"},
+				)
 				customPath := filepath.Join(filepath.Dir(path), "custom-repositories.yaml")
 				assert.NoError(t, os.Rename(path, customPath))
 				path = customPath
@@ -241,7 +275,11 @@ func TestFetcher_LocalHelmContinuation(t *testing.T) {
 				r.SecretRef = nil
 				username = ""
 			default:
-				secret := &manifest.Secret{Name: "auth", Namespace: r.Namespace, StringData: map[string]any{"username": username, "password": "password-canary"}}
+				secret := &manifest.Secret{
+					Name:       "auth",
+					Namespace:  r.Namespace,
+					StringData: map[string]any{"username": username, "password": "password-canary"},
+				}
 				if tier == "partial supply" {
 					secret.StringData["password"] = manifest.ValuePlaceholder("password")
 				}
@@ -249,7 +287,17 @@ func TestFetcher_LocalHelmContinuation(t *testing.T) {
 					st.AddObject(secret)
 				}
 				if tier == "supply" || tier == "partial supply" {
-					supplied, err := store.NewSupplied([]store.SuppliedObject{{Object: &manifest.Secret{Name: "auth", Namespace: r.Namespace, StringData: map[string]any{"username": "supply", "password": "password-canary"}}}})
+					supplied, err := store.NewSupplied(
+						[]store.SuppliedObject{
+							{
+								Object: &manifest.Secret{
+									Name:       "auth",
+									Namespace:  r.Namespace,
+									StringData: map[string]any{"username": "supply", "password": "password-canary"},
+								},
+							},
+						},
+					)
 					assert.NoError(t, err)
 					st.SetSupplied(supplied)
 					if tier == "supply" {
@@ -268,7 +316,10 @@ func TestFetcher_LocalHelmContinuation(t *testing.T) {
 			artifact, err := f.Fetch(t.Context(), hc, &reads, cache.Policy{})
 			if rejected {
 				response, ok := errors.AsType[*fetcherr.ResponseError](err)
-				if artifact != nil || !ok || response.StatusCode != http.StatusUnauthorized || !errors.Is(err, manifest.ErrMissingSecret) || requests.Load() != before+1 || strings.Contains(err.Error(), "canary") {
+				if artifact != nil || !ok || response.StatusCode != http.StatusUnauthorized ||
+					!errors.Is(err, manifest.ErrMissingSecret) ||
+					requests.Load() != before+1 ||
+					strings.Contains(err.Error(), "canary") {
 					t.Fatalf("explicit rejection advanced credential tiers or leaked payload: %v", err)
 				}
 				return
@@ -283,7 +334,8 @@ func TestFetcher_LocalHelmContinuation(t *testing.T) {
 				assert.Equal(t, errors.Is(prepErr, manifest.ErrMissingSecret), true)
 				transport, transportErr := f.network.HTTPTransport(source.HTTPTransportConfig{DisableCompression: true})
 				assert.NoError(t, transportErr)
-				if prepared.material != nil || prepared.client.Transport != transport || prepared.username != "" || prepared.password != "" {
+				if prepared.material != nil || prepared.client.Transport != transport || prepared.username != "" ||
+					prepared.password != "" {
 					t.Fatal("machine values entered captured identity or transport")
 				}
 				retry = missing.RetryAmbient
@@ -299,13 +351,17 @@ func TestFetcher_LocalHelmContinuation(t *testing.T) {
 			if tier != "machine" {
 				return
 			}
-			if strings.Contains(fmt.Sprint(artifact.Key, artifact.Content, artifact.Metadata, artifact.Warnings), "canary") {
+			if strings.Contains(
+				fmt.Sprint(artifact.Key, artifact.Content, artifact.Metadata, artifact.Warnings),
+				"canary",
+			) {
 				t.Fatal("local Helm values entered identity or output")
 			}
 			before = requests.Load()
 			warm, err := retry(t.Context())
 			assert.NoError(t, err)
-			if warm.Key != artifact.Key || warm.Content != artifact.Content || len(warm.Warnings) != 0 || requests.Load() != before {
+			if warm.Key != artifact.Key || warm.Content != artifact.Content || len(warm.Warnings) != 0 ||
+				requests.Load() != before {
 				t.Fatal("warm cache consulted credentials, changed identity or manufactured an advisory")
 			}
 
@@ -357,13 +413,25 @@ func TestFetcher_LocalHelmAuthenticatedRequests(t *testing.T) {
 				r := httpRepo("https://charts.invalid")
 				r.SecretRef = &manifest.LocalObjectReference{Name: "auth"}
 				r.PassCredentials = pass
-				helmLogin(t, &repo.Entry{URL: r.URL, Username: "machine-canary", Password: "password-canary", PassCredentialsAll: true})
+				helmLogin(
+					t,
+					&repo.Entry{
+						URL:                r.URL,
+						Username:           "machine-canary",
+						Password:           "password-canary",
+						PassCredentialsAll: true,
+					},
+				)
 				var indexRequests, signedCharts atomic.Int32
 				helmPipe(t, func(req *http.Request) (*http.Response, error) {
 					_, _, signed := req.BasicAuth()
 					if req.Host == "charts.invalid" {
 						indexRequests.Add(1)
-						index := strings.ReplaceAll(helmRepoIndex(chartDigest(chart)), "app-template-1.0.0.tgz", "https://other.invalid/app-template-1.0.0.tgz")
+						index := strings.ReplaceAll(
+							helmRepoIndex(chartDigest(chart)),
+							"app-template-1.0.0.tgz",
+							"https://other.invalid/app-template-1.0.0.tgz",
+						)
 						return helmReply(req, http.StatusOK, []byte(index)), nil
 					}
 					if signed {
@@ -374,7 +442,9 @@ func TestFetcher_LocalHelmAuthenticatedRequests(t *testing.T) {
 				f, inputs := newHTTPFetcher(t, r)
 				hc := helmChart(r.Name, "app-template", "1.0.0")
 				if warmIndex {
-					prepared, err := (&operation{Fetcher: f, secrets: source.SecretLookup(inputs.readSet(hc))}).prepareHTTP(r)
+					prepared, err := (&operation{Fetcher: f, secrets: source.SecretLookup(inputs.readSet(hc))}).prepareHTTP(
+						r,
+					)
 					assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), true)
 					_, err = f.fetchIndex(t.Context(), prepared, cache.Policy{Retry: cache.RetryConfig{}})
 					assert.NoError(t, err)
@@ -386,8 +456,14 @@ func TestFetcher_LocalHelmAuthenticatedRequests(t *testing.T) {
 				}
 				artifact, err := missing.RetryAmbient(t.Context())
 				assert.NoError(t, err)
-				if len(artifact.Warnings) != 0 || (signedCharts.Load() == 1) != pass || indexRequests.Load() != map[bool]int32{false: 1, true: 2}[warmIndex] {
-					t.Fatalf("warnings=%d signed charts=%d index=%d", len(artifact.Warnings), signedCharts.Load(), indexRequests.Load())
+				if len(artifact.Warnings) != 0 || (signedCharts.Load() == 1) != pass ||
+					indexRequests.Load() != map[bool]int32{false: 1, true: 2}[warmIndex] {
+					t.Fatalf(
+						"warnings=%d signed charts=%d index=%d",
+						len(artifact.Warnings),
+						signedCharts.Load(),
+						indexRequests.Load(),
+					)
 				}
 			})
 		}
@@ -404,7 +480,11 @@ func TestFetcher_LocalHelmAcquisitionFailures(t *testing.T) {
 		t.Run(stage, func(t *testing.T) {
 			r := httpRepo("https://charts.invalid")
 			r.SecretRef = &manifest.LocalObjectReference{Name: "auth"}
-			helmLogin(t, &repo.Entry{URL: r.URL, Username: "machine-canary", Password: "password-canary"}, &repo.Entry{URL: r.URL, Username: "later-canary", Password: "ignored"})
+			helmLogin(
+				t,
+				&repo.Entry{URL: r.URL, Username: "machine-canary", Password: "password-canary"},
+				&repo.Entry{URL: r.URL, Username: "later-canary", Password: "ignored"},
+			)
 			root := t.TempDir()
 			c := cachetest.New(t, root, cache.New)
 			ctx, cancel := context.WithCancel(t.Context())
@@ -442,7 +522,9 @@ func TestFetcher_LocalHelmAcquisitionFailures(t *testing.T) {
 			f := New(nil, Config{Cache: c, Network: newTestNetwork(t)})
 			inputs := testInputs{repos: func(string, string) *manifest.HelmRepository { return r }}
 			hc := helmChart(r.Name, "app-template", "1.0.0")
-			policy := cache.Policy{Retry: cache.RetryConfig{Attempts: 2, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}}
+			policy := cache.Policy{
+				Retry: cache.RetryConfig{Attempts: 2, MinWait: time.Nanosecond, MaxWait: time.Nanosecond},
+			}
 			_, err := f.Fetch(ctx, hc, inputs.readSet(hc), policy)
 			missing, ok := errors.AsType[*source.MissingSecretError](err)
 			if !ok || missing.RetryAmbient == nil {
@@ -482,7 +564,8 @@ func TestFetcher_LocalHelmAcquisitionFailures(t *testing.T) {
 			if stage == "retry index" {
 				terminal, ok := errors.AsType[*cache.TerminalError](err)
 				response, typed := errors.AsType[*fetcherr.ResponseError](err)
-				if !ok || !terminal.Attempted || !typed || response.StatusCode != http.StatusServiceUnavailable || requests.Load() != 2 {
+				if !ok || !terminal.Attempted || !typed || response.StatusCode != http.StatusServiceUnavailable ||
+					requests.Load() != 2 {
 					t.Fatalf("nested retry budget/cause: requests=%d %v", requests.Load(), err)
 				}
 				assert.NoError(t, c.Close())
@@ -496,7 +579,8 @@ func TestFetcher_LocalHelmAcquisitionFailures(t *testing.T) {
 				_, err = pending.RetryMachine(ctx, nil)
 				terminal, ok = errors.AsType[*cache.TerminalError](err)
 				response, typed = errors.AsType[*fetcherr.ResponseError](err)
-				if !ok || terminal.Attempted || !typed || response.StatusCode != http.StatusServiceUnavailable || requests.Load() != 2 {
+				if !ok || terminal.Attempted || !typed || response.StatusCode != http.StatusServiceUnavailable ||
+					requests.Load() != 2 {
 					t.Fatalf("nested replay lost cause or repeated HTTP: requests=%d %v", requests.Load(), err)
 				}
 			}

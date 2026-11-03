@@ -25,12 +25,40 @@ func TestPreviousEntry_ApplicationInputs(t *testing.T) {
 	}
 	spec := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".", manifest.NamedResource{})
 	request := RenderRequest{Source: localSource(t, root), Spec: spec, SubPath: "."}
-	application := map[string]any{"apiVersion": "fluxcd.controlplane.io/v1", "kind": "FluxInstance", "metadata": map[string]any{"name": "applier"}}
-	evidence := EntryEvidence{Records: emptyRenderInventory, Application: application, Owner: manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Name: "generator"}}
-	chart := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "chart"}
-	artifact := &store.SourceArtifact{Kind: chart.Kind, Content: manifest.Fingerprint("first chart"), FS: fstest.MapFS{}, Revision: "same-tag", Key: "same-family"}
+	application := map[string]any{
+		"apiVersion": "fluxcd.controlplane.io/v1",
+		"kind":       "FluxInstance",
+		"metadata":   map[string]any{"name": "applier"},
+	}
+	evidence := EntryEvidence{
+		Records:     emptyRenderInventory,
+		Application: application,
+		Owner: manifest.NamedResource{
+			Group: manifest.HelmReleaseDomain,
+			Kind:  manifest.KindHelmRelease,
+			Name:  "generator",
+		},
+	}
+	chart := manifest.NamedResource{
+		Group:     manifest.SourceDomain,
+		Kind:      manifest.KindOCIRepository,
+		Namespace: "apps",
+		Name:      "chart",
+	}
+	artifact := &store.SourceArtifact{
+		Kind:     chart.Kind,
+		Content:  manifest.Fingerprint("first chart"),
+		FS:       fstest.MapFS{},
+		Revision: "same-tag",
+		Key:      "same-family",
+	}
 	evidence.Inputs = []EntryInput{{Resource: chart, Artifact: artifact}}
-	entry, err := cache.ApplicationReceipt(t.Context(), request.Source, evidence, []string{"generator.yaml", "optional.yaml"})
+	entry, err := cache.ApplicationReceipt(
+		t.Context(),
+		request.Source,
+		evidence,
+		[]string{"generator.yaml", "optional.yaml"},
+	)
 	assert.NoError(t, err)
 	docs, receipt, err := Render(t.Context(), cache, request, sourcecache.RetryConfig{})
 	assert.NoError(t, err)

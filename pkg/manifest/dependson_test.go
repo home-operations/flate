@@ -14,7 +14,13 @@ func TestParseDoc_DependsOnNames(t *testing.T) {
 	for _, name := range []string{"", "${PREFIX:-}"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			doc := mustYAML(t, fmt.Sprintf("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer}\nspec:\n  dependsOn: [{name: %q}]\n", name))
+			doc := mustYAML(
+				t,
+				fmt.Sprintf(
+					"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer}\nspec:\n  dependsOn: [{name: %q}]\n",
+					name,
+				),
+			)
 			_, _, _, err := ParseDoc(doc, ParseDocOptions{})
 			if (err != nil) != (name == "") {
 				t.Fatalf("authored dependency %q: err=%v", name, err)
@@ -67,20 +73,35 @@ spec:
 			if got == original {
 				t.Fatal("changed dependency did not clone")
 			}
-			if diff := cmp.Diff(want, got, cmp.AllowUnexported(Kustomization{}), cmpopts.IgnoreFields(Kustomization{}, "projection")); diff != "" {
+			if diff := cmp.Diff(
+				want,
+				got,
+				cmp.AllowUnexported(Kustomization{}),
+				cmpopts.IgnoreFields(Kustomization{}, "projection"),
+			); diff != "" {
 				t.Fatalf("transformed fields (-want +got):\n%s", diff)
 			}
-			if diff := cmp.Diff(before, original, cmp.AllowUnexported(Kustomization{}), cmpopts.IgnoreFields(Kustomization{}, "projection")); diff != "" {
+			if diff := cmp.Diff(
+				before,
+				original,
+				cmp.AllowUnexported(Kustomization{}),
+				cmpopts.IgnoreFields(Kustomization{}, "projection"),
+			); diff != "" {
 				t.Fatalf("authored object mutated (-want +got):\n%s", diff)
 			}
 			for ref := range References(got, ReferenceRelations) {
-				if ref.Use == "dependsOn" && ref.Position == 1 && (ref.Namespace != "apps" || got.DependsOn[1].Namespace != "") {
+				if ref.Use == "dependsOn" && ref.Position == 1 &&
+					(ref.Namespace != "apps" || got.DependsOn[1].Namespace != "") {
 					t.Fatal("omitted namespace lost inheritance")
 				}
 			}
 		})
 	}
-	if got := MapDependsOn(original, identity, func(s string) string { return strings.ReplaceAll(s, "${NS}", "infra") }); got == original {
+	if got := MapDependsOn(
+		original,
+		identity,
+		func(s string) string { return strings.ReplaceAll(s, "${NS}", "infra") },
+	); got == original {
 		t.Fatal("namespace-only change did not clone")
 	}
 }

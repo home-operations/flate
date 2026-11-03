@@ -21,7 +21,10 @@ func normalizeChartTemplate(spec *helmv2.HelmReleaseSpec) error {
 		return inputf("exactly one of spec.chart or spec.chartRef must be set")
 	}
 	if ref := spec.ChartRef; ref != nil {
-		if !slices.Contains([]string{KindHelmChart, KindOCIRepository, KindExternalArtifact}, ref.Kind) || ref.Name == "" || utf8.RuneCountInString(ref.Name) > 253 || utf8.RuneCountInString(ref.Namespace) > 63 {
+		if !slices.Contains([]string{KindHelmChart, KindOCIRepository, KindExternalArtifact}, ref.Kind) ||
+			ref.Name == "" ||
+			utf8.RuneCountInString(ref.Name) > 253 ||
+			utf8.RuneCountInString(ref.Namespace) > 63 {
 			return inputf("invalid spec.chartRef kind, name or namespace")
 		}
 		return nil
@@ -36,7 +39,9 @@ func normalizeChartTemplate(spec *helmv2.HelmReleaseSpec) error {
 		if !strings.HasPrefix(s.URL, sourcev1.OCIRepositoryPrefix) {
 			return inputf("spec.chart.spec.url must start with oci://")
 		}
-		if s.Chart != "" || s.SourceRef != nil || len(s.ValuesFiles) != 0 || s.IgnoreMissingValuesFiles || s.Version != "" && s.Version != "*" || s.ReconcileStrategy != "" && s.ReconcileStrategy != sourcev1.ReconcileStrategyChartVersion {
+		if s.Chart != "" || s.SourceRef != nil || len(s.ValuesFiles) != 0 || s.IgnoreMissingValuesFiles ||
+			s.Version != "" && s.Version != "*" ||
+			s.ReconcileStrategy != "" && s.ReconcileStrategy != sourcev1.ReconcileStrategyChartVersion {
 			return inputf("spec.chart.spec contains HelmChart-only fields for an OCIRepository template")
 		}
 	} else {
@@ -47,17 +52,32 @@ func normalizeChartTemplate(spec *helmv2.HelmReleaseSpec) error {
 			return inputf("spec.chart.spec.chart must contain 1 to 2048 characters")
 		}
 		ref := s.SourceRef
-		if ref == nil || !slices.Contains([]string{KindHelmRepository, KindGitRepository, KindBucket}, ref.Kind) || ref.Name == "" || utf8.RuneCountInString(ref.Name) > 253 || utf8.RuneCountInString(ref.Namespace) > 63 {
+		if ref == nil || !slices.Contains([]string{KindHelmRepository, KindGitRepository, KindBucket}, ref.Kind) ||
+			ref.Name == "" ||
+			utf8.RuneCountInString(ref.Name) > 253 ||
+			utf8.RuneCountInString(ref.Namespace) > 63 {
 			return inputf("invalid spec.chart.spec.sourceRef kind, name or namespace")
 		}
 	}
-	if s.ReconcileStrategy != "" && s.ReconcileStrategy != sourcev1.ReconcileStrategyChartVersion && s.ReconcileStrategy != sourcev1.ReconcileStrategyRevision {
+	if s.ReconcileStrategy != "" && s.ReconcileStrategy != sourcev1.ReconcileStrategyChartVersion &&
+		s.ReconcileStrategy != sourcev1.ReconcileStrategyRevision {
 		return inputf("invalid spec.chart.spec.reconcileStrategy")
 	}
-	if s.Provider != "" && !slices.Contains([]string{sourcev1.GenericOCIProvider, sourcev1.AmazonOCIProvider, sourcev1.AzureOCIProvider, sourcev1.GoogleOCIProvider}, s.Provider) {
+	if s.Provider != "" &&
+		!slices.Contains(
+			[]string{
+				sourcev1.GenericOCIProvider,
+				sourcev1.AmazonOCIProvider,
+				sourcev1.AzureOCIProvider,
+				sourcev1.GoogleOCIProvider,
+			},
+			s.Provider,
+		) {
 		return inputf("invalid spec.chart.spec.provider")
 	}
-	if selector := s.LayerSelector; selector != nil && selector.Operation != "" && selector.Operation != sourcev1.OCILayerCopy && selector.Operation != sourcev1.OCILayerExtract {
+	if selector := s.LayerSelector; selector != nil && selector.Operation != "" &&
+		selector.Operation != sourcev1.OCILayerCopy &&
+		selector.Operation != sourcev1.OCILayerExtract {
 		return inputf("invalid spec.chart.spec.layerSelector.operation")
 	}
 	if s.Verify != nil && s.Verify.Provider != "" && s.Verify.Provider != "cosign" && s.Verify.Provider != "notation" {

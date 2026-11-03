@@ -17,23 +17,32 @@ import (
 	chartcommon "helm.sh/helm/v4/pkg/chart/common"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 
+	"oras.land/oras-go/v2/errdef"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
-	"oras.land/oras-go/v2/errdef"
 )
 
 func TestDescriptionProjection(t *testing.T) {
 	t.Parallel()
 	files := fstest.MapFS{
-		"Chart.yaml":                         {Data: []byte("apiVersion: v2\nname: test\nversion: 1.0.0\ndependencies: [{name: child, alias: childAlias, version: 1.0.0, condition: feature.enabled}]\n")},
-		"values.yaml":                        {Data: []byte("used: first\n")},
-		"templates/cm.yaml":                  {Data: []byte("{{ .Values.used }}")},
-		"values.schema.json":                 {Data: []byte(`{"type":"object"}`)},
-		"charts/child/Chart.yaml":            {Data: []byte("apiVersion: v2\nname: child\nversion: 1.0.0\ndependencies: [{name: grand, version: 1.0.0, tags: [group]}]\n")},
+		"Chart.yaml": {
+			Data: []byte(
+				"apiVersion: v2\nname: test\nversion: 1.0.0\ndependencies: [{name: child, alias: childAlias, version: 1.0.0, condition: feature.enabled}]\n",
+			),
+		},
+		"values.yaml":        {Data: []byte("used: first\n")},
+		"templates/cm.yaml":  {Data: []byte("{{ .Values.used }}")},
+		"values.schema.json": {Data: []byte(`{"type":"object"}`)},
+		"charts/child/Chart.yaml": {
+			Data: []byte(
+				"apiVersion: v2\nname: child\nversion: 1.0.0\ndependencies: [{name: grand, version: 1.0.0, tags: [group]}]\n",
+			),
+		},
 		"charts/child/templates/unused.yaml": {Data: []byte("{{ .Values.nested }}")},
 	}
 	initial, _, err := captureChart(t.Context(), files, ".", false)
@@ -58,15 +67,33 @@ func TestDescriptionProjection(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, strings.Contains(chartTemplateText(ch), ".Values.nested"), true)
 	assert.Equal(t, requiresChartLoader(ch), false)
-	analysis := &chartAnalysis{Version: ch.Metadata.Version, Templates: chartTemplateText(ch), Allowed: knownTopLevelKeys(ch), RequiresLoader: requiresChartLoader(ch)}
-	assert.Diff(t, analysis.Allowed, map[string]struct{}{"child": {}, "childAlias": {}, "feature": {}, "global": {}, "tags": {}})
+	analysis := &chartAnalysis{
+		Version:        ch.Metadata.Version,
+		Templates:      chartTemplateText(ch),
+		Allowed:        knownTopLevelKeys(ch),
+		RequiresLoader: requiresChartLoader(ch),
+	}
+	assert.Diff(
+		t,
+		analysis.Allowed,
+		map[string]struct{}{"child": {}, "childAlias": {}, "feature": {}, "global": {}, "tags": {}},
+	)
 	data, err := json.Marshal(renderRecord{Output: []byte("rendered"), Analysis: analysis})
 	assert.NoError(t, err)
 	var restored renderRecord
 	assert.NoError(t, json.Unmarshal(data, &restored))
 	assert.Diff(t, restored.Output, []byte("rendered"))
 	assert.Diff(t, restored.Analysis, analysis)
-	values := map[string]any{"used": 1, "nested": 1, "child": 1, "childAlias": 1, "feature": 1, "global": 1, "tags": 1, "unused": 1}
+	values := map[string]any{
+		"used":       1,
+		"nested":     1,
+		"child":      1,
+		"childAlias": 1,
+		"feature":    1,
+		"global":     1,
+		"tags":       1,
+		"unused":     1,
+	}
 	assert.Diff(t, analysis.unreferencedValuePaths(values), []string{"unused"})
 	assert.Diff(t, restored.Analysis.unreferencedValuePaths(values), []string{"unused"})
 	for _, nested := range []bool{false, true} {
@@ -74,7 +101,10 @@ func TestDescriptionProjection(t *testing.T) {
 			t.Parallel()
 			ch, err := initial.load()
 			assert.NoError(t, err)
-			ch.Templates = append(ch.Templates, &chartcommon.File{Data: []byte(strings.Repeat("unused analysis payload\n", 1<<14))})
+			ch.Templates = append(
+				ch.Templates,
+				&chartcommon.File{Data: []byte(strings.Repeat("unused analysis payload\n", 1<<14))},
+			)
 			target := ch
 			if nested {
 				target = ch.Dependencies()[0]
@@ -113,9 +143,14 @@ func TestDescription_SourceObservation(t *testing.T) {
 	hr.ChartValuesFiles = []string{"config/prod.yaml", "config/../config/prod.yaml"}
 	cli := NewClient(cachetest.New(t, "", cache.New))
 	cliSources := NewSources(st)
-	out, receipt1, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}))
+	out, receipt1, err := testutil.RenderMaps(
+		cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}),
+	)
 	if err == nil {
-		if recordErr := cli.RecordRender(t.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt1, Records: emptyRenderInventory}); recordErr != nil {
+		if recordErr := cli.RecordRender(
+			t.Context(),
+			RenderAcceptance{Owner: hr.Named(), Receipt: receipt1, Records: emptyRenderInventory},
+		); recordErr != nil {
 			t.Fatal(recordErr)
 		}
 	}
@@ -144,9 +179,14 @@ func TestDescription_HitHydration(t *testing.T) {
 			for i := range 2 {
 				cli := NewClient(cachetest.New(t, root, cache.New))
 				cliSources := NewSources(st)
-				out, receipt2, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}))
+				out, receipt2, err := testutil.RenderMaps(
+					cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}),
+				)
 				if err == nil {
-					if recordErr := cli.RecordRender(t.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt2, Records: emptyRenderInventory}); recordErr != nil {
+					if recordErr := cli.RecordRender(
+						t.Context(),
+						RenderAcceptance{Owner: hr.Named(), Receipt: receipt2, Records: emptyRenderInventory},
+					); recordErr != nil {
 						t.Fatal(recordErr)
 					}
 				}
@@ -164,12 +204,21 @@ func TestDescription_HitHydration(t *testing.T) {
 						t.Fatal("decoded generation lost analysis or retained captured input")
 					}
 				}
-				assert.Diff(t, cli.StaleValuePaths(t.Context(), hr, map[string]any{"marker": 1, "unused": 1}, cliSources), []string{"unused"})
+				assert.Diff(
+					t,
+					cli.StaleValuePaths(t.Context(), hr, map[string]any{"marker": 1, "unused": 1}, cliSources),
+					[]string{"unused"},
+				)
 				{
 					var receipt3 *manifest.RenderReceipt
-					_, receipt3, err = testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}))
+					_, receipt3, err = testutil.RenderMaps(
+						cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}),
+					)
 					if err == nil {
-						if recordErr := cli.RecordRender(t.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt3, Records: emptyRenderInventory}); recordErr != nil {
+						if recordErr := cli.RecordRender(
+							t.Context(),
+							RenderAcceptance{Owner: hr.Named(), Receipt: receipt3, Records: emptyRenderInventory},
+						); recordErr != nil {
 							t.Fatal(recordErr)
 						}
 					}
@@ -178,9 +227,14 @@ func TestDescription_HitHydration(t *testing.T) {
 					hit, err := cli.describeChart(t.Context(), hr, cliSources)
 					assert.NoError(t, err)
 					var receipt4 *manifest.RenderReceipt
-					_, receipt4, err = testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}))
+					_, receipt4, err = testutil.RenderMaps(
+						cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}),
+					)
 					if err == nil {
-						if recordErr := cli.RecordRender(t.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt4, Records: emptyRenderInventory}); recordErr != nil {
+						if recordErr := cli.RecordRender(
+							t.Context(),
+							RenderAcceptance{Owner: hr.Named(), Receipt: receipt4, Records: emptyRenderInventory},
+						); recordErr != nil {
 							t.Fatal(recordErr)
 						}
 					}
@@ -188,7 +242,8 @@ func TestDescription_HitHydration(t *testing.T) {
 					assert.NoError(t, err)
 					repeated, err := cli.describeChart(t.Context(), hr, cliSources)
 					assert.NoError(t, err)
-					if hit.record == nil || hit.record != repeated.record || hit.record.Analysis != repeated.record.Analysis {
+					if hit.record == nil || hit.record != repeated.record ||
+						hit.record.Analysis != repeated.record.Analysis {
 						t.Fatal("same record did not share its immutable typed projection")
 					}
 					if hit.analysis != hit.record.Analysis {
@@ -215,7 +270,10 @@ func TestDescription_HydrationKeepsDecoded(t *testing.T) {
 			if packaged {
 				input, err := fs.Sub(os.DirFS(root), "charts/demo")
 				assert.NoError(t, err)
-				st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: fstest.MapFS{"chart.tgz": {Data: chartArchive(t, input)}}})
+				st.SetArtifact(
+					hr.ChartSource(),
+					&store.SourceArtifact{FS: fstest.MapFS{"chart.tgz": {Data: chartArchive(t, input)}}},
+				)
 				hr = hr.Clone()
 				hr.Chart.Name = "chart.tgz"
 			}
@@ -225,7 +283,14 @@ func TestDescription_HydrationKeepsDecoded(t *testing.T) {
 			assert.NoError(t, err)
 			ch, err := d.captured.load()
 			assert.NoError(t, err)
-			fresh := &renderRecord{Output: []byte("hit"), Analysis: &chartAnalysis{Version: ch.Metadata.Version, Templates: chartTemplateText(ch), Allowed: knownTopLevelKeys(ch)}}
+			fresh := &renderRecord{
+				Output: []byte("hit"),
+				Analysis: &chartAnalysis{
+					Version:   ch.Metadata.Version,
+					Templates: chartTemplateText(ch),
+					Allowed:   knownTopLevelKeys(ch),
+				},
+			}
 			start := make(chan struct{})
 			var wg sync.WaitGroup
 			decoded := d
@@ -238,7 +303,14 @@ func TestDescription_HydrationKeepsDecoded(t *testing.T) {
 			if decoded.captured.files != nil || decoded.captured.archive != nil {
 				t.Fatal("decode retained captured input")
 			}
-			late := &renderRecord{Output: []byte("late"), Analysis: &chartAnalysis{Version: ch.Metadata.Version, Templates: chartTemplateText(ch), Allowed: knownTopLevelKeys(ch)}}
+			late := &renderRecord{
+				Output: []byte("late"),
+				Analysis: &chartAnalysis{
+					Version:   ch.Metadata.Version,
+					Templates: chartTemplateText(ch),
+					Allowed:   knownTopLevelKeys(ch),
+				},
+			}
 			cli.rememberDescription(d, late)
 			cli.rememberDescription(d, nil)
 			current, err := cli.describeChart(t.Context(), hr, cliSources)
@@ -267,7 +339,14 @@ func TestReview_ByteIdentity(t *testing.T) {
 		t.Skip("requires clean stamped persistence; item 2 must execute the output guard mutation")
 	}
 	root, st, hr := sourceValuesCacheFixture(t)
-	testutil.WriteFile(t, root, "charts/demo/crds/raw.yaml", "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata: {name: fixture}\n# raw: "+string([]byte{0xff})+"\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"charts/demo/crds/raw.yaml",
+		"apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata: {name: fixture}\n# raw: "+string(
+			[]byte{0xff},
+		)+"\n",
+	)
 	assertDescriptionIneligible(t, st, hr, false)
 }
 
@@ -282,12 +361,22 @@ func TestReview_TemplateBytesIneligible(t *testing.T) {
 			root, st, hr := sourceValuesCacheFixture(t)
 			location := "charts/demo"
 			if nested {
-				testutil.WriteFile(t, root, "charts/demo/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 1.0.0\ndependencies: [{name: child, version: 1.0.0, condition: child.enabled}]\n")
+				testutil.WriteFile(
+					t,
+					root,
+					"charts/demo/Chart.yaml",
+					"apiVersion: v2\nname: demo\nversion: 1.0.0\ndependencies: [{name: child, version: 1.0.0, condition: child.enabled}]\n",
+				)
 				testutil.WriteFile(t, root, "charts/demo/values.yaml", "marker: default\nchild: {enabled: false}\n")
 				location += "/charts/child"
 				testutil.WriteFile(t, root, location+"/Chart.yaml", "apiVersion: v2\nname: child\nversion: 1.0.0\n")
 			}
-			testutil.WriteFile(t, root, location+"/templates/_unused.tpl", "{{/* unused .Values "+string([]byte{0xff})+" */}}")
+			testutil.WriteFile(
+				t,
+				root,
+				location+"/templates/_unused.tpl",
+				"{{/* unused .Values "+string([]byte{0xff})+" */}}",
+			)
 			assertDescriptionIneligible(t, st, hr, true)
 		})
 	}
@@ -301,9 +390,14 @@ func assertDescriptionIneligible(t *testing.T, st *store.Store, hr *manifest.Hel
 		owner := cachetest.New(t, root, cache.New)
 		cli := NewClient(owner)
 		cliSources := NewSources(st)
-		out, receipt5, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}))
+		out, receipt5, err := testutil.RenderMaps(
+			cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}),
+		)
 		if err == nil {
-			if recordErr := cli.RecordRender(t.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt5, Records: emptyRenderInventory}); recordErr != nil {
+			if recordErr := cli.RecordRender(
+				t.Context(),
+				RenderAcceptance{Owner: hr.Named(), Receipt: receipt5, Records: emptyRenderInventory},
+			); recordErr != nil {
 				t.Fatal(recordErr)
 			}
 		}
@@ -327,9 +421,16 @@ func assertDescriptionIneligible(t *testing.T, st *store.Store, hr *manifest.Hel
 		}
 		d.values, d.valuesErr = cli.observeValuesFiles(t.Context(), d, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
 		assert.NoError(t, d.valuesErr)
-		_, _, _, err = owner.Blob(t.Context(), cache.BlobKey{Content: computeTemplateKey(d, map[string]any{}, Options{}, hr), Render: cache.RenderAccepted}, cache.Policy{MaxAge: cache.Forever}, nil)
+		_, _, _, err = owner.Blob(
+			t.Context(),
+			cache.BlobKey{
+				Content: computeTemplateKey(d, map[string]any{}, Options{}, hr),
+				Render:  cache.RenderAccepted,
+			},
+			cache.Policy{MaxAge: cache.Forever},
+			nil,
+		)
 		if err == nil {
-
 			t.Fatal("invalid UTF-8 was published")
 		}
 		if !errors.Is(err, errdef.ErrNotFound) {
@@ -345,7 +446,12 @@ func TestReview_NestedWarnings(t *testing.T) {
 	for _, name := range []string{"requirements.yaml", "requirements.lock"} {
 		t.Run(name, func(t *testing.T) {
 			root, st, hr := sourceValuesCacheFixture(t)
-			testutil.WriteFile(t, root, "charts/demo/charts/child/Chart.yaml", "apiVersion: v2\nname: child\nversion: 1.0.0\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"charts/demo/charts/child/Chart.yaml",
+				"apiVersion: v2\nname: child\nversion: 1.0.0\n",
+			)
 			testutil.WriteFile(t, root, "charts/demo/charts/child/"+name, "dependencies: []\n")
 			cacheRoot := t.TempDir()
 			var diagnostics bytes.Buffer
@@ -358,9 +464,14 @@ func TestReview_NestedWarnings(t *testing.T) {
 				cliSources := NewSources(st)
 				var receipt6 *manifest.RenderReceipt
 				var err error
-				_, receipt6, err = testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}))
+				_, receipt6, err = testutil.RenderMaps(
+					cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}),
+				)
 				if err == nil {
-					if recordErr := cli.RecordRender(t.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt6, Records: emptyRenderInventory}); recordErr != nil {
+					if recordErr := cli.RecordRender(
+						t.Context(),
+						RenderAcceptance{Owner: hr.Named(), Receipt: receipt6, Records: emptyRenderInventory},
+					); recordErr != nil {
 						t.Fatal(recordErr)
 					}
 				}
@@ -376,9 +487,14 @@ func TestReview_NestedWarnings(t *testing.T) {
 				}
 				diagnostics.Reset()
 				var receipt7 *manifest.RenderReceipt
-				_, receipt7, err = testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}))
+				_, receipt7, err = testutil.RenderMaps(
+					cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}),
+				)
 				if err == nil {
-					if recordErr := cli.RecordRender(t.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt7, Records: emptyRenderInventory}); recordErr != nil {
+					if recordErr := cli.RecordRender(
+						t.Context(),
+						RenderAcceptance{Owner: hr.Named(), Receipt: receipt7, Records: emptyRenderInventory},
+					); recordErr != nil {
 						t.Fatal(recordErr)
 					}
 				}
@@ -403,9 +519,14 @@ func TestReview_ErrorPrecedence(t *testing.T) {
 		cliSources := NewSources(st)
 		var receipt8 *manifest.RenderReceipt
 		var err error
-		_, receipt8, err = testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{KubeVersion: "invalid", Sources: cliSources}))
+		_, receipt8, err = testutil.RenderMaps(
+			cli.Template(t.Context(), hr, nil, RenderOptions{KubeVersion: "invalid", Sources: cliSources}),
+		)
 		if err == nil {
-			if recordErr := cli.RecordRender(t.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt8, Records: emptyRenderInventory}); recordErr != nil {
+			if recordErr := cli.RecordRender(
+				t.Context(),
+				RenderAcceptance{Owner: hr.Named(), Receipt: receipt8, Records: emptyRenderInventory},
+			); recordErr != nil {
 				t.Fatal(recordErr)
 			}
 		}
@@ -415,25 +536,45 @@ func TestReview_ErrorPrecedence(t *testing.T) {
 		}
 	})
 	for _, disabled := range []bool{false, true} {
-		t.Run("OCI before capability/disabled="+map[bool]string{false: "false", true: "true"}[disabled], func(t *testing.T) {
-			t.Parallel()
-			st, hr, dir := ociRenderFixture(t)
-			st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: chartFixtureFS(hr, os.DirFS(dir)), Revision: "invalid"})
-			cli := NewClient(cachetest.New(t, "", cache.New))
-			cliSources := NewSources(st)
-			var receipt9 *manifest.RenderReceipt
-			var err error
-			_, receipt9, err = testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{KubeVersion: "invalid", DisableChartDigestTracking: disabled, Sources: cliSources}))
-			if err == nil {
-				if recordErr := cli.RecordRender(t.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt9, Records: emptyRenderInventory}); recordErr != nil {
-					t.Fatal(recordErr)
+		t.Run(
+			"OCI before capability/disabled="+map[bool]string{false: "false", true: "true"}[disabled],
+			func(t *testing.T) {
+				t.Parallel()
+				st, hr, dir := ociRenderFixture(t)
+				st.SetArtifact(
+					hr.ChartSource(),
+					&store.SourceArtifact{FS: chartFixtureFS(hr, os.DirFS(dir)), Revision: "invalid"},
+				)
+				cli := NewClient(cachetest.New(t, "", cache.New))
+				cliSources := NewSources(st)
+				var receipt9 *manifest.RenderReceipt
+				var err error
+				_, receipt9, err = testutil.RenderMaps(
+					cli.Template(
+						t.Context(),
+						hr,
+						nil,
+						RenderOptions{
+							KubeVersion:                "invalid",
+							DisableChartDigestTracking: disabled,
+							Sources:                    cliSources,
+						},
+					),
+				)
+				if err == nil {
+					if recordErr := cli.RecordRender(
+						t.Context(),
+						RenderAcceptance{Owner: hr.Named(), Receipt: receipt9, Records: emptyRenderInventory},
+					); recordErr != nil {
+						t.Fatal(recordErr)
+					}
 				}
-			}
 
-			if !errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "track oci chart version") {
-				t.Fatalf("OCI validation lost precedence: %v", err)
-			}
-		})
+				if !errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "track oci chart version") {
+					t.Fatalf("OCI validation lost precedence: %v", err)
+				}
+			},
+		)
 	}
 	for _, failure := range []string{"chart lookup", "chart malformed", "OCI tracked", "OCI disabled", "packaged malformed", "packaged missing"} {
 		t.Run(failure+" before persisted fault", func(t *testing.T) {
@@ -443,7 +584,11 @@ func TestReview_ErrorPrecedence(t *testing.T) {
 			}
 			st, original, dir := ociRenderFixture(t)
 			hr := original.Clone()
-			art := &store.SourceArtifact{FS: chartFixtureFS(original, os.DirFS(dir)), LocalPath: dir, Revision: "6.15.0@sha256:0123456789abcdef"}
+			art := &store.SourceArtifact{
+				FS:        chartFixtureFS(original, os.DirFS(dir)),
+				LocalPath: dir,
+				Revision:  "6.15.0@sha256:0123456789abcdef",
+			}
 			opts := Options{}
 			want := "load chart " + dir
 			switch failure {
@@ -473,15 +618,32 @@ func TestReview_ErrorPrecedence(t *testing.T) {
 			d, err := cli.describeChart(t.Context(), hr, cliSources)
 			assert.NoError(t, err)
 			if hr.TracksDigest() {
-				d.oci = &ociChartContent{Digest: art.Digest, Revision: art.Revision, DisableTracking: opts.DisableChartDigestTracking}
+				d.oci = &ociChartContent{
+					Digest:          art.Digest,
+					Revision:        art.Revision,
+					DisableTracking: opts.DisableChartDigestTracking,
+				}
 			}
-			d.values, d.valuesErr = cli.observeValuesFiles(t.Context(), d, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
+			d.values, d.valuesErr = cli.observeValuesFiles(
+				t.Context(),
+				d,
+				hr.ChartValuesFiles,
+				hr.IgnoreMissingValuesFiles,
+			)
 			assert.NoError(t, d.valuesErr)
-			key := cache.BlobKey{Content: computeTemplateKey(d, map[string]any{}, opts, hr), Render: cache.RenderAccepted}
-			_, _, _, err = owner.Blob(t.Context(), key, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-				_, err := io.WriteString(w, "{")
-				return cache.ProducerResult{}, err
-			})
+			key := cache.BlobKey{
+				Content: computeTemplateKey(d, map[string]any{}, opts, hr),
+				Render:  cache.RenderAccepted,
+			}
+			_, _, _, err = owner.Blob(
+				t.Context(),
+				key,
+				cache.Policy{},
+				func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+					_, err := io.WriteString(w, "{")
+					return cache.ProducerResult{}, err
+				},
+			)
 			assert.NoError(t, err)
 
 			if failure == "chart lookup" {
@@ -489,7 +651,10 @@ func TestReview_ErrorPrecedence(t *testing.T) {
 			}
 			r, _, _, err := owner.Blob(t.Context(), key, cache.Policy{MaxAge: cache.Forever}, nil)
 			if failure == "chart lookup" {
-				if _, ok := errors.AsType[*cache.CacheError](err); !ok || !errors.Is(err, manifest.ErrFlux) || errors.Is(err, errdef.ErrNotFound) {
+				if _, ok := errors.AsType[*cache.CacheError](
+					err,
+				); !ok || !errors.Is(err, manifest.ErrFlux) ||
+					errors.Is(err, errdef.ErrNotFound) {
 					t.Fatalf("fixture did not reach lookup fault: %v", err)
 				}
 			} else {
@@ -503,14 +668,20 @@ func TestReview_ErrorPrecedence(t *testing.T) {
 				}
 			}
 			var receipt10 *manifest.RenderReceipt
-			_, receipt10, err = testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources}))
+			_, receipt10, err = testutil.RenderMaps(
+				cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources}),
+			)
 			if err == nil {
-				if recordErr := cli.RecordRender(t.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt10, Records: emptyRenderInventory}); recordErr != nil {
+				if recordErr := cli.RecordRender(
+					t.Context(),
+					RenderAcceptance{Owner: hr.Named(), Receipt: receipt10, Records: emptyRenderInventory},
+				); recordErr != nil {
 					t.Fatal(recordErr)
 				}
 			}
 
-			if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || !strings.Contains(err.Error(), want) {
+			if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) ||
+				!strings.Contains(err.Error(), want) {
 				t.Fatalf("preparation lost precedence over persisted fault: %v", err)
 			}
 			if strings.HasPrefix(failure, "chart") {
@@ -543,10 +714,18 @@ func TestReview_ErrorPrecedenceDiagnostics(t *testing.T) {
 		assert.NoError(t, err)
 		d.values, d.valuesErr = cli.observeValuesFiles(t.Context(), d, hr.ChartValuesFiles, true)
 		assert.NoError(t, d.valuesErr)
-		_, _, _, err = owner.Blob(t.Context(), cache.BlobKey{Content: computeTemplateKey(d, map[string]any{}, Options{}, hr), Render: cache.RenderAccepted}, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-			_, err := io.WriteString(w, "{")
-			return cache.ProducerResult{}, err
-		})
+		_, _, _, err = owner.Blob(
+			t.Context(),
+			cache.BlobKey{
+				Content: computeTemplateKey(d, map[string]any{}, Options{}, hr),
+				Render:  cache.RenderAccepted,
+			},
+			cache.Policy{},
+			func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+				_, err := io.WriteString(w, "{")
+				return cache.ProducerResult{}, err
+			},
+		)
 		assert.NoError(t, err)
 
 		cli = NewClient(owner)
@@ -555,14 +734,20 @@ func TestReview_ErrorPrecedenceDiagnostics(t *testing.T) {
 		log.SetOutput(&diagnostics)
 		defer log.SetOutput(previous)
 		var receipt11 *manifest.RenderReceipt
-		_, receipt11, err = testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}))
+		_, receipt11, err = testutil.RenderMaps(
+			cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}),
+		)
 		if err == nil {
-			if recordErr := cli.RecordRender(t.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt11, Records: emptyRenderInventory}); recordErr != nil {
+			if recordErr := cli.RecordRender(
+				t.Context(),
+				RenderAcceptance{Owner: hr.Named(), Receipt: receipt11, Records: emptyRenderInventory},
+			); recordErr != nil {
 				t.Fatal(recordErr)
 			}
 		}
 
-		if err == nil || !strings.Contains(err.Error(), "action must wait") || !strings.Contains(diagnostics.String(), "Warning:") {
+		if err == nil || !strings.Contains(err.Error(), "action must wait") ||
+			!strings.Contains(diagnostics.String(), "Warning:") {
 			t.Fatalf("malformed raw frame prevented ordinary rendering: %v", err)
 		}
 	})
@@ -576,21 +761,35 @@ func TestDescription_CurrentChartLocation(t *testing.T) {
 	}
 	st := store.New()
 	hr := minimalHR()
-	hr.Chart = manifest.HelmChart{Name: "first", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "repo", Namespace: "default"}}
+	hr.Chart = manifest.HelmChart{
+		Name: "first",
+		Source: manifest.NamedResource{
+			Group:     manifest.SourceDomain,
+			Kind:      manifest.KindGitRepository,
+			Name:      "repo",
+			Namespace: "default",
+		},
+	}
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: input})
 	cli := NewClient(cachetest.New(t, "", cache.New))
 	cliSources := NewSources(st)
 	for _, location := range []string{"first", "second"} {
 		request := hr.Clone()
 		request.Chart.Name = location
-		_, receipt12, err := testutil.RenderMaps(cli.Template(t.Context(), request, nil, RenderOptions{Options: Options{}, Sources: cliSources}))
+		_, receipt12, err := testutil.RenderMaps(
+			cli.Template(t.Context(), request, nil, RenderOptions{Options: Options{}, Sources: cliSources}),
+		)
 		if err == nil {
-			if recordErr := cli.RecordRender(t.Context(), RenderAcceptance{Owner: (request).Named(), Receipt: receipt12, Records: emptyRenderInventory}); recordErr != nil {
+			if recordErr := cli.RecordRender(
+				t.Context(),
+				RenderAcceptance{Owner: request.Named(), Receipt: receipt12, Records: emptyRenderInventory},
+			); recordErr != nil {
 				t.Fatal(recordErr)
 			}
 		}
 
-		if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || !strings.Contains(err.Error(), "load chart "+location+":") {
+		if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) ||
+			!strings.Contains(err.Error(), "load chart "+location+":") {
 			t.Fatalf("location %q: got %v", location, err)
 		}
 	}

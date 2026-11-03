@@ -36,39 +36,55 @@ spec:
     namespace: flux-system
 `))
 
-	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/media/ks.yaml"), testutil.KustomizationYAML("media-apps", "flux-system", `  interval: 10m
+	testutil.WriteFileAt(
+		t,
+		filepath.Join(dir, "kubernetes/apps/media/ks.yaml"),
+		testutil.KustomizationYAML("media-apps", "flux-system", `  interval: 10m
   path: ./kubernetes/apps/media
   prune: true
   sourceRef:
     kind: GitRepository
     name: flux-system
     namespace: flux-system
-`))
-	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/db/ks.yaml"), testutil.KustomizationYAML("db-apps", "flux-system", `  interval: 10m
+`),
+	)
+	testutil.WriteFileAt(
+		t,
+		filepath.Join(dir, "kubernetes/apps/db/ks.yaml"),
+		testutil.KustomizationYAML("db-apps", "flux-system", `  interval: 10m
   path: ./kubernetes/apps/db
   prune: true
   sourceRef:
     kind: GitRepository
     name: flux-system
     namespace: flux-system
-`))
+`),
+	)
 
-	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/media/plex/ks.yaml"), testutil.KustomizationYAML("plex", "media", `  interval: 10m
+	testutil.WriteFileAt(
+		t,
+		filepath.Join(dir, "kubernetes/apps/media/plex/ks.yaml"),
+		testutil.KustomizationYAML("plex", "media", `  interval: 10m
   path: ./kubernetes/apps/media/plex/app
   prune: true
   sourceRef:
     kind: GitRepository
     name: flux-system
     namespace: flux-system
-`))
-	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/db/postgres/ks.yaml"), testutil.KustomizationYAML("postgres", "db", `  interval: 10m
+`),
+	)
+	testutil.WriteFileAt(
+		t,
+		filepath.Join(dir, "kubernetes/apps/db/postgres/ks.yaml"),
+		testutil.KustomizationYAML("postgres", "db", `  interval: 10m
   path: ./kubernetes/apps/db/postgres/app
   prune: true
   sourceRef:
     kind: GitRepository
     name: flux-system
     namespace: flux-system
-`))
+`),
+	)
 
 	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/media/plex/app/kustomization.yaml"),
 		"resources: [./cm.yaml]\n")
@@ -94,10 +110,17 @@ data:
   unchanged: "true"
 `)
 
-	runs, err := orchestrator.RenderTrees(t.Context(), []orchestrator.Tree{{
-		ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: filepath.Join(dir, "kubernetes/flux"), RepoRoot: dir,
-		ExternalChanges: change.NewSet([]string{"kubernetes/apps/media/plex/app/cm.yaml"}),
-	}}, orchestrator.Config{WipeSecrets: true, Concurrency: 2})
+	runs, err := orchestrator.RenderTrees(t.Context(), []orchestrator.Tree{
+		{
+			ID: manifest.TreeID{
+				Cluster: ".",
+				Side:    manifest.TreeHead,
+			},
+			Path:            filepath.Join(dir, "kubernetes/flux"),
+			RepoRoot:        dir,
+			ExternalChanges: change.NewSet([]string{"kubernetes/apps/media/plex/app/cm.yaml"}),
+		},
+	}, orchestrator.Config{WipeSecrets: true, Concurrency: 2})
 	if err != nil {
 		t.Fatal(err)
 	}

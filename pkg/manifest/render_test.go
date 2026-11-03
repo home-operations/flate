@@ -69,7 +69,10 @@ order: second
 
 func TestRenderCodec_EmptyAndErrors(t *testing.T) {
 	t.Parallel()
-	if data, err := EncodeRender([]DocOccurrence{{Ordinal: -1, Document: map[string]any{}}}); data != nil || !errors.Is(err, ErrFlux) {
+	if data, err := EncodeRender(
+		[]DocOccurrence{{Ordinal: -1, Document: map[string]any{}}},
+	); data != nil ||
+		!errors.Is(err, ErrFlux) {
 		t.Fatalf("negative ordinal encode: %v, %v", data, err)
 	}
 	for _, docs := range [][]map[string]any{nil, {}} {
@@ -83,10 +86,16 @@ func TestRenderCodec_EmptyAndErrors(t *testing.T) {
 		assert.Equal(t, len(got), 0)
 	}
 	for _, value := range []any{
-		make(chan int), []any{make(chan int)}, map[any]any{make(chan int): nil},
-		map[any]any{1: make(chan int)}, time.Date(2001, 1, 1, 0, 0, 0, 0, time.FixedZone("invalid", 86400*30)),
+		make(chan int),
+		[]any{make(chan int)},
+		map[any]any{make(chan int): nil},
+		map[any]any{1: make(chan int)},
+		time.Date(2001, 1, 1, 0, 0, 0, 0, time.FixedZone("invalid", 86400*30)),
 	} {
-		if data, err := encodeRenderMaps([]map[string]any{{"unsupported": value}}); data != nil || !errors.Is(err, ErrFlux) {
+		if data, err := encodeRenderMaps(
+			[]map[string]any{{"unsupported": value}},
+		); data != nil ||
+			!errors.Is(err, ErrFlux) {
 			t.Fatalf("unsupported encode: %v, %v", data, err)
 		}
 	}
@@ -182,7 +191,15 @@ func TestRenderCodec_AllocationBound(t *testing.T) {
 			runtime.ReadMemStats(&after)
 			allocated := after.TotalAlloc - before.TotalAlloc
 			limit := uint64(256*len(payload) + 64*1024)
-			t.Logf("input=%d allocated=%d ratio=%.2f depth=%d count=%d ceiling=%d", len(payload), allocated, float64(allocated)/float64(len(payload)), depth, count, limit)
+			t.Logf(
+				"input=%d allocated=%d ratio=%.2f depth=%d count=%d ceiling=%d",
+				len(payload),
+				allocated,
+				float64(allocated)/float64(len(payload)),
+				depth,
+				count,
+				limit,
+			)
 			if docs != nil || !errors.Is(err, ErrFlux) {
 				t.Fatalf("malformed payload: %v, %v", docs, err)
 			}
@@ -238,7 +255,10 @@ func TestRenderCodec_FirstError(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			data := append(append([]byte{2, 0}, tc.first...), 0, renderInt)
-			if docs, err := decodeRenderMaps(data); docs != nil || !errors.Is(err, ErrFlux) || !strings.Contains(err.Error(), tc.want) {
+			if docs, err := decodeRenderMaps(
+				data,
+			); docs != nil || !errors.Is(err, ErrFlux) ||
+				!strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("document failure: %v, %v; want %q", docs, err, tc.want)
 			}
 		})

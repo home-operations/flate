@@ -2,11 +2,12 @@ package orchestrator
 
 import (
 	"fmt"
-	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
 	"path/filepath"
 	"slices"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -21,13 +22,33 @@ import (
 func TestRenderTrees_SharedHelmContext(t *testing.T) {
 	root := t.TempDir()
 	const selfURL = "https://fixture.invalid/cluster.git"
-	testutil.WriteFile(t, root, "shared/source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: flux-system, namespace: flux-system}\nspec: {url: "+selfURL+"}\n")
-	testutil.WriteFile(t, root, "shared/app.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: shared-app, namespace: apps}\ndata: {shared: content}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"shared/source.yaml",
+		"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: flux-system, namespace: flux-system}\nspec: {url: "+selfURL+"}\n",
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"shared/app.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: shared-app, namespace: apps}\ndata: {shared: content}\n",
+	)
 	testutil.WriteFile(t, root, "charts/shared/Chart.yaml", "apiVersion: v2\nname: shared\nversion: 1.0.0\n")
 	testutil.WriteFile(t, root, "charts/shared/values.yaml", "value: default\n")
-	testutil.WriteFile(t, root, "charts/shared/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: chart-output, namespace: apps}\ndata: {value: {{ .Values.value | quote }}}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"charts/shared/templates/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: chart-output, namespace: apps}\ndata: {value: {{ .Values.value | quote }}}\n",
+	)
 	for i, entry := range []string{"alpha", "omega"} {
-		testutil.WriteFile(t, root, entry+"/kustomization.yaml", "resources: [release.yaml, ../shared/source.yaml, ../shared/app.yaml]\n")
+		testutil.WriteFile(
+			t,
+			root,
+			entry+"/kustomization.yaml",
+			"resources: [release.yaml, ../shared/source.yaml, ../shared/app.yaml]\n",
+		)
 		testutil.WriteFile(t, root, entry+"/release.yaml", fmt.Sprintf(`apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata: {name: workload, namespace: apps}
@@ -42,13 +63,31 @@ spec:
 	owner := cachetest.New(t, "", sourcecache.New)
 	cfg := Config{Cache: owner, Network: new(source.Network), HelmClient: helm.NewClient(owner), Concurrency: 2}
 	t.Cleanup(cfg.Network.Close)
-	runs, err := RenderTrees(t.Context(), []Tree{{ID: manifest.TreeID{Cluster: "alpha", Side: manifest.TreeHead}, RepoRoot: root, Path: filepath.Join(root, "alpha"), SelfURLs: []string{selfURL}}, {ID: manifest.TreeID{Cluster: "omega", Side: manifest.TreeHead}, RepoRoot: root, Path: filepath.Join(root, "omega"), SelfURLs: []string{selfURL}}}, cfg)
+	runs, err := RenderTrees(
+		t.Context(),
+		[]Tree{
+			{
+				ID:       manifest.TreeID{Cluster: "alpha", Side: manifest.TreeHead},
+				RepoRoot: root,
+				Path:     filepath.Join(root, "alpha"),
+				SelfURLs: []string{selfURL},
+			},
+			{
+				ID:       manifest.TreeID{Cluster: "omega", Side: manifest.TreeHead},
+				RepoRoot: root,
+				Path:     filepath.Join(root, "omega"),
+				SelfURLs: []string{selfURL},
+			},
+		},
+		cfg,
+	)
 	assert.NoError(t, err)
 	if len(runs) != 2 {
 		t.Fatalf("collection lost clusters: %+v", runs)
 	}
 	charts := source.Wrap(manifest.KindHelmChart, runs[0].cfg.chartFetcher)
-	if runs[0].cfg.chartFetcher == nil || runs[0].src.Fetchers[manifest.KindHelmChart] != charts || runs[1].src.Fetchers[manifest.KindHelmChart] != charts {
+	if runs[0].cfg.chartFetcher == nil || runs[0].src.Fetchers[manifest.KindHelmChart] != charts ||
+		runs[1].src.Fetchers[manifest.KindHelmChart] != charts {
 		t.Fatal("clusters did not share the invocation's chart acquisition and decode budget")
 	}
 	id := testutil.HelmReleaseID("apps", "workload")
@@ -59,12 +98,27 @@ spec:
 		assert.Equal(t, run.cache == cfg.Cache, true)
 		assert.Equal(t, run.cfg.Network == cfg.Network, true)
 		assert.Equal(t, run.hrc.Helm == cfg.HelmClient, true)
-		explicit, err := RenderTrees(t.Context(), []Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: filepath.Join(root, entry), RepoRoot: root, SelfURLs: []string{selfURL}}}, cfg)
+		explicit, err := RenderTrees(
+			t.Context(),
+			[]Tree{
+				{
+					ID:       manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
+					Path:     filepath.Join(root, entry),
+					RepoRoot: root,
+					SelfURLs: []string{selfURL},
+				},
+			},
+			cfg,
+		)
 		assert.NoError(t, err)
 		if len(explicit) != 1 {
 			t.Fatalf("entry lost completed result: %+v", explicit)
 		}
-		if delta := cmp.Diff(run.Result, explicit[0].Result, cmpopts.IgnoreUnexported(manifest.Kustomization{}, manifest.HelmRelease{})); delta != "" {
+		if delta := cmp.Diff(
+			run.Result,
+			explicit[0].Result,
+			cmpopts.IgnoreUnexported(manifest.Kustomization{}, manifest.HelmRelease{}),
+		); delta != "" {
 			t.Fatal(delta)
 		}
 		for _, obj := range explicit[0].Store().ListObjects("", "") {
@@ -77,7 +131,10 @@ spec:
 		if len(docs) != 1 || docs[0]["data"].(map[string]any)["value"] != []string{"first", "second"}[i] {
 			t.Fatalf("cluster %s lost Helm values: %v", entry, docs)
 		}
-		stale := slices.DeleteFunc(slices.Clone(run.Result.Warnings), func(w manifest.Warning) bool { return w.Category != manifest.WarnStaleValues })
+		stale := slices.DeleteFunc(
+			slices.Clone(run.Result.Warnings),
+			func(w manifest.Warning) bool { return w.Category != manifest.WarnStaleValues },
+		)
 		if len(stale) != 1 || stale[0].Resource != id || stale[0].Count != 1 {
 			t.Fatalf("cluster %s lost warning ownership: %+v", entry, run.Result.Warnings)
 		}
@@ -104,11 +161,23 @@ func TestRenderTrees_ClusterSecretAndDependencyIsolation(t *testing.T) {
 	for _, entry := range []string{"alpha", "omega"} {
 		testutil.WriteFile(t, root, entry+"/kustomization.yaml", "resources: [objects.yaml]\n")
 		objects := testutil.KustomizationYAML("shared", "apps", "  path: ./shared/app\n") + "---\n" +
-			testutil.KustomizationYAML("read-secret", "apps", "  path: ./shared/secret\n  postBuild: {substituteFrom: [{kind: Secret, name: credentials}]}\n") + "---\n" +
-			testutil.KustomizationYAML("wait-ready", "apps", "  path: ./shared/dependent\n  dependsOn: [{name: ready}]\n")
+			testutil.KustomizationYAML(
+				"read-secret",
+				"apps",
+				"  path: ./shared/secret\n  postBuild: {substituteFrom: [{kind: Secret, name: credentials}]}\n",
+			) + "---\n" +
+			testutil.KustomizationYAML(
+				"wait-ready",
+				"apps",
+				"  path: ./shared/dependent\n  dependsOn: [{name: ready}]\n",
+			)
 		if entry == "omega" {
 			objects += "---\napiVersion: v1\nkind: Secret\nmetadata: {name: credentials, namespace: apps}\nstringData: {TOKEN: omega-only}\n---\n" +
-				testutil.KustomizationYAML("ready", "apps", "  path: ./shared/ready\n")
+				testutil.KustomizationYAML(
+					"ready",
+					"apps",
+					"  path: ./shared/ready\n",
+				)
 		}
 		testutil.WriteFile(t, root, entry+"/objects.yaml", objects)
 	}
@@ -118,24 +187,59 @@ func TestRenderTrees_ClusterSecretAndDependencyIsolation(t *testing.T) {
 		if name == "secret" {
 			value = "${TOKEN}"
 		}
-		testutil.WriteFile(t, root, "shared/"+name+"/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+name+"-output, namespace: apps}\ndata: {value: '"+value+"'}\n")
+		testutil.WriteFile(
+			t,
+			root,
+			"shared/"+name+"/cm.yaml",
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+name+"-output, namespace: apps}\ndata: {value: '"+value+"'}\n",
+		)
 	}
 	testutil.WriteFile(t, root, "shared/ready/kustomization.yaml", "resources: []\n")
-	runs, err := RenderTrees(t.Context(), []Tree{{ID: manifest.TreeID{Cluster: "alpha", Side: manifest.TreeHead}, RepoRoot: root, Path: filepath.Join(root, "alpha")}, {ID: manifest.TreeID{Cluster: "omega", Side: manifest.TreeHead}, RepoRoot: root, Path: filepath.Join(root, "omega")}}, Config{Concurrency: 2})
+	runs, err := RenderTrees(
+		t.Context(),
+		[]Tree{
+			{
+				ID:       manifest.TreeID{Cluster: "alpha", Side: manifest.TreeHead},
+				RepoRoot: root,
+				Path:     filepath.Join(root, "alpha"),
+			},
+			{
+				ID:       manifest.TreeID{Cluster: "omega", Side: manifest.TreeHead},
+				RepoRoot: root,
+				Path:     filepath.Join(root, "omega"),
+			},
+		},
+		Config{Concurrency: 2},
+	)
 	if err == nil || len(runs) != 2 || runs[0].Orchestrator == nil || runs[1].Orchestrator == nil {
 		t.Fatalf("collection lost isolated partial results: %+v %v", runs, err)
 	}
 	assert.Equal(t, runs[0].ID.Cluster, manifest.ClusterID("alpha"))
 	assert.Equal(t, runs[1].ID.Cluster, manifest.ClusterID("omega"))
 	secret := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "credentials"}
-	ready, readSecret, waitReady := testutil.KustomizationID("apps", "ready"), testutil.KustomizationID("apps", "read-secret"), testutil.KustomizationID("apps", "wait-ready")
-	if runs[0].Store().GetObject(secret) != nil || runs[0].Store().GetObject(ready) != nil || !slices.Contains(runs[0].Result.Blocked[waitReady], ready) {
-		t.Fatalf("another cluster satisfied missing inputs: failed=%v blocked=%v", runs[0].Result.Failed, runs[0].Result.Blocked)
+	ready, readSecret, waitReady := testutil.KustomizationID(
+		"apps",
+		"ready",
+	), testutil.KustomizationID(
+		"apps",
+		"read-secret",
+	), testutil.KustomizationID(
+		"apps",
+		"wait-ready",
+	)
+	if runs[0].Store().GetObject(secret) != nil || runs[0].Store().GetObject(ready) != nil ||
+		!slices.Contains(runs[0].Result.Blocked[waitReady], ready) {
+		t.Fatalf(
+			"another cluster satisfied missing inputs: failed=%v blocked=%v",
+			runs[0].Result.Failed,
+			runs[0].Result.Blocked,
+		)
 	}
 	if len(outputByParent(runs[0].Result.Manifests)[waitReady]) != 0 {
 		t.Fatalf("missing dependency emitted %s", waitReady)
 	}
-	if docs := outputByParent(runs[0].Result.Manifests)[readSecret]; len(docs) != 0 || !slices.Contains(runs[0].Result.Blocked[readSecret], secret) {
+	if docs := outputByParent(runs[0].Result.Manifests)[readSecret]; len(docs) != 0 ||
+		!slices.Contains(runs[0].Result.Blocked[readSecret], secret) {
 		t.Fatalf("another cluster satisfied the required Secret: docs=%v blocked=%v", docs, runs[0].Result.Blocked)
 	}
 	for _, w := range runs[1].Result.Warnings {
@@ -151,5 +255,9 @@ func TestRenderTrees_ClusterSecretAndDependencyIsolation(t *testing.T) {
 	}
 	assert.NoError(t, runs[1].Err)
 	assert.Equal(t, len(runs[1].Result.Failed), 0)
-	assert.Equal(t, outputByParent(runs[1].Result.Manifests)[readSecret][0]["data"].(map[string]any)["value"], any("omega-only"))
+	assert.Equal(
+		t,
+		outputByParent(runs[1].Result.Manifests)[readSecret][0]["data"].(map[string]any)["value"],
+		any("omega-only"),
+	)
 }

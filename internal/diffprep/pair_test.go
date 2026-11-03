@@ -44,20 +44,36 @@ func TestPair_DuplicateDocumentsWarnAndLastWins(t *testing.T) {
 			if side == "right" {
 				left, right = right, left
 			}
-			prepared := Prepare(left, right, Options{StripAttrs: []string{"helm.sh/chart", "checksum/", "app.kubernetes.io/version", "chart"}, Normalize: func(m map[string]any) {
-				meta := m["metadata"].(map[string]any)
-				meta["name"], meta["namespace"] = "normalized", "normalized-ns"
-				apiVersion := "v3"
-				if group := manifest.DocIdentity(m).Group; group != "" {
-					apiVersion = group + "/" + apiVersion
-				}
-				m["apiVersion"] = apiVersion
-			}})
+			prepared := Prepare(
+				left,
+				right,
+				Options{
+					StripAttrs: []string{"helm.sh/chart", "checksum/", "app.kubernetes.io/version", "chart"},
+					Normalize: func(m map[string]any) {
+						meta := m["metadata"].(map[string]any)
+						meta["name"], meta["namespace"] = "normalized", "normalized-ns"
+						apiVersion := "v3"
+						if group := manifest.DocIdentity(m).Group; group != "" {
+							apiVersion = group + "/" + apiVersion
+						}
+						m["apiVersion"] = apiVersion
+					},
+				},
+			)
 			pairs, warnings := prepared.Pairs, prepared.Warnings
 			if len(pairs) != 2 {
 				t.Fatalf("expected two paired resources, got %d", len(pairs))
 			}
-			assert.Equal(t, pairs[1].Resource, manifest.NamedResource{Group: "example.test", Kind: "ConfigMap", Namespace: "normalized-ns", Name: "normalized"})
+			assert.Equal(
+				t,
+				pairs[1].Resource,
+				manifest.NamedResource{
+					Group:     "example.test",
+					Kind:      "ConfigMap",
+					Namespace: "normalized-ns",
+					Name:      "normalized",
+				},
+			)
 			foreignDoc, absent := pairs[1].Old, pairs[1].New
 			if side == "right" {
 				foreignDoc, absent = absent, foreignDoc
@@ -69,7 +85,8 @@ func TestPair_DuplicateDocumentsWarnAndLastWins(t *testing.T) {
 			if side == "right" {
 				retained, counterpart = counterpart, retained
 			}
-			if retained["data"].(map[string]any)["k"] != "retained" || counterpart["data"].(map[string]any)["k"] != "other-side" {
+			if retained["data"].(map[string]any)["k"] != "retained" ||
+				counterpart["data"].(map[string]any)["k"] != "other-side" {
 				t.Fatalf("expected last document paired with other side, got %+v", pairs[0])
 			}
 			retainedChart, counterpartChart := pairs[0].OldChart, pairs[0].NewChart
@@ -89,11 +106,19 @@ func TestPair_DuplicateDocumentsWarnAndLastWins(t *testing.T) {
 			if side == "right" {
 				warningSide = SideCurrent
 			}
-			assert.Diff(t, warnings, []manifest.Warning{{
-				Resource: manifest.NamedResource{Kind: "ConfigMap", Namespace: "normalized-ns", Name: "normalized"},
-				Category: manifest.WarnDuplicateDocument, Message: "duplicate document shadows an earlier document",
-				Detail: []string{"side: " + string(warningSide), "parent: " + parent.String(), "parent path: new/apps", "apiVersion: v2"},
-			}})
+			assert.Diff(t, warnings, []manifest.Warning{
+				{
+					Resource: manifest.NamedResource{Kind: "ConfigMap", Namespace: "normalized-ns", Name: "normalized"},
+					Category: manifest.WarnDuplicateDocument,
+					Message:  "duplicate document shadows an earlier document",
+					Detail: []string{
+						"side: " + string(warningSide),
+						"parent: " + parent.String(),
+						"parent path: new/apps",
+						"apiVersion: v2",
+					},
+				},
+			})
 		})
 	}
 }

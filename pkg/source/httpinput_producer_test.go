@@ -27,7 +27,11 @@ func TestHttpGetURL_AcceptsLargeBody(t *testing.T) {
 		body := remoteBody{Reader: reader, close: func() error { closes++; return nil }}
 		return &http.Response{StatusCode: http.StatusOK, Body: body, Header: make(http.Header)}, nil
 	})
-	desc, err := c.httpGetURL(t.Context(), "https://example.invalid/big.yaml", sourcecache.ProducerInput{Writer: io.Discard})
+	desc, err := c.httpGetURL(
+		t.Context(),
+		"https://example.invalid/big.yaml",
+		sourcecache.ProducerInput{Writer: io.Discard},
+	)
 	if err != nil || desc.Size != size || closes != 1 {
 		t.Fatalf("large body: size=%d closes=%d error=%v, want %d bytes and one close", desc.Size, closes, err, size)
 	}
@@ -54,9 +58,19 @@ func TestHttpGetURL_BodyCloseErrors(t *testing.T) {
 				case "read":
 					reader = remoteRead(func([]byte) (int, error) { return 0, readErr })
 				case "large-read":
-					reader = io.MultiReader(io.LimitReader(remoteRead(func(p []byte) (int, error) { clear(p); return len(p), nil }), (64<<20)+1), iotest.ErrReader(readErr))
+					reader = io.MultiReader(
+						io.LimitReader(
+							remoteRead(func(p []byte) (int, error) { clear(p); return len(p), nil }),
+							(64<<20)+1,
+						),
+						iotest.ErrReader(readErr),
+					)
 				}
-				return &http.Response{StatusCode: status, Header: make(http.Header), Body: remoteBody{Reader: reader, close: func() error { closes++; return closeErr }}}, nil
+				return &http.Response{
+					StatusCode: status,
+					Header:     make(http.Header),
+					Body:       remoteBody{Reader: reader, close: func() error { closes++; return closeErr }},
+				}, nil
 			})
 			writer := io.Discard
 			if outcome == "write" {
@@ -67,11 +81,17 @@ func TestHttpGetURL_BodyCloseErrors(t *testing.T) {
 				defer pipe.Close()
 				writer = pipe
 			}
-			_, err := c.httpGetURL(t.Context(), "https://example.invalid/body", sourcecache.ProducerInput{Writer: writer})
+			_, err := c.httpGetURL(
+				t.Context(),
+				"https://example.invalid/body",
+				sourcecache.ProducerInput{Writer: writer},
+			)
 			if !errors.Is(err, closeErr) || closes != 1 || strings.Count(err.Error(), closeErr.Error()) != 1 {
 				t.Fatalf("body cleanup: %v closes=%d", err, closes)
 			}
-			if (outcome == "read" || outcome == "large-read") && !errors.Is(err, readErr) || outcome == "status" && fetcherr.Classes(err)&fetcherr.Client == 0 || outcome == "write" && !errors.Is(err, writeErr) {
+			if (outcome == "read" || outcome == "large-read") && !errors.Is(err, readErr) ||
+				outcome == "status" && fetcherr.Classes(err)&fetcherr.Client == 0 ||
+				outcome == "write" && !errors.Is(err, writeErr) {
 				t.Fatalf("operation identity: %v", err)
 			}
 			if outcome == "status" {
@@ -80,7 +100,8 @@ func TestHttpGetURL_BodyCloseErrors(t *testing.T) {
 					t.Fatalf("response facts=%+v error=%v", status, err)
 				}
 			}
-			if (outcome == "status" || outcome == "read" || outcome == "large-read" || outcome == "write") && !strings.HasSuffix(err.Error(), "\n"+closeErr.Error()) {
+			if (outcome == "status" || outcome == "read" || outcome == "large-read" || outcome == "write") &&
+				!strings.HasSuffix(err.Error(), "\n"+closeErr.Error()) {
 				t.Fatalf("operation must precede cleanup: %v", err)
 			}
 		})
@@ -118,7 +139,8 @@ func TestHttpGetURL_RequestLifetime(t *testing.T) {
 					}
 					requestCtx = r.Context()
 					deadline, ok := requestCtx.Deadline()
-					if stage == "caller-deadline" && (!ok || deadline.Sub(started) != bound) || stage != "caller-deadline" && ok {
+					if stage == "caller-deadline" && (!ok || deadline.Sub(started) != bound) ||
+						stage != "caller-deadline" && ok {
 						t.Fatalf("request deadline = %v, present = %t, want %v", deadline.Sub(started), ok, bound)
 					}
 					if stage == "headers" || stage == "body" {
@@ -135,15 +157,23 @@ func TestHttpGetURL_RequestLifetime(t *testing.T) {
 					if stage == "close" {
 						reader = strings.NewReader("complete")
 					}
-					return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: remoteBody{Reader: reader, close: func() error {
-						closes++
-						if stage == "close" && requestCtx.Err() != nil {
-							t.Errorf("request context canceled before body close: %v", requestCtx.Err())
-						}
-						return nil
-					}}}, nil
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Header:     make(http.Header),
+						Body: remoteBody{Reader: reader, close: func() error {
+							closes++
+							if stage == "close" && requestCtx.Err() != nil {
+								t.Errorf("request context canceled before body close: %v", requestCtx.Err())
+							}
+							return nil
+						}},
+					}, nil
 				})
-				_, err := c.httpGetURL(ctx, "https://example.invalid/resource", sourcecache.ProducerInput{Writer: io.Discard})
+				_, err := c.httpGetURL(
+					ctx,
+					"https://example.invalid/resource",
+					sourcecache.ProducerInput{Writer: io.Discard},
+				)
 				switch stage {
 				case "close":
 					if err != nil || closes != 1 || requestCtx.Err() != nil {
@@ -212,7 +242,12 @@ func TestHttpGetURL_RequestLifetime(t *testing.T) {
 		}
 		<-canceled
 		var body strings.Builder
-		if _, err := c.httpGetURL(t.Context(), srv.URL+"/healthy", sourcecache.ProducerInput{Writer: &body}); err != nil || body.String() != "healthy" {
+		if _, err := c.httpGetURL(
+			t.Context(),
+			srv.URL+"/healthy",
+			sourcecache.ProducerInput{Writer: &body},
+		); err != nil ||
+			body.String() != "healthy" {
 			t.Fatalf("Network after caller cancellation: %q %v", body.String(), err)
 		}
 	})

@@ -79,8 +79,18 @@ func TestPrepared_NativeOrder(t *testing.T) {
 		assert.Equal(t, report.Diffs[0].Path.RootDescription(), "v1/ConfigMap/apps/z")
 		assert.Equal(t, report.Diffs[1].Path.RootDescription(), "v1/ConfigMap/apps/a")
 	})
-	left := []Doc{ncm("b-removed", "greeting", "gone"), ncm("z-modified", "greeting", "old"), ncm("middle-unchanged", "greeting", "same"), ncm("a-modified", "greeting", "before")}
-	right := []Doc{ncm("y-added", "greeting", "born"), ncm("a-modified", "greeting", "after"), left[2], ncm("z-modified", "greeting", "new")}
+	left := []Doc{
+		ncm("b-removed", "greeting", "gone"),
+		ncm("z-modified", "greeting", "old"),
+		ncm("middle-unchanged", "greeting", "same"),
+		ncm("a-modified", "greeting", "before"),
+	}
+	right := []Doc{
+		ncm("y-added", "greeting", "born"),
+		ncm("a-modified", "greeting", "after"),
+		left[2],
+		ncm("z-modified", "greeting", "new"),
+	}
 
 	report, err := Prepare(left, right, Options{}).Native()
 	assert.NoError(t, err)

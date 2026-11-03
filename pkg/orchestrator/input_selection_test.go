@@ -84,7 +84,16 @@ spec:
 				switch obj := result.Objects[0].(type) {
 				case *manifest.Kustomization:
 					assert.Equal(t, obj.Path, "./apps/app-a")
-					assert.Equal(t, obj.SourceID(), manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "flux-system"})
+					assert.Equal(
+						t,
+						obj.SourceID(),
+						manifest.NamedResource{
+							Group:     manifest.SourceDomain,
+							Kind:      manifest.KindGitRepository,
+							Namespace: "flux-system",
+							Name:      "flux-system",
+						},
+					)
 					assert.Equal(t, obj.Labels["team"], "platform")
 					assert.Equal(t, obj.Prune && obj.Wait && obj.Suspend, true)
 					assert.Equal(t, obj.TargetNamespace, "workloads")
@@ -92,7 +101,16 @@ spec:
 					assert.Equal(t, obj.Chart.Name, "demo")
 					assert.Equal(t, obj.Chart.Version, "2.3.4")
 					assert.Equal(t, obj.ChartVersion(), "2.3.4")
-					assert.Equal(t, obj.ChartSource(), manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "flux-system", Name: "flux-system-release"})
+					assert.Equal(
+						t,
+						obj.ChartSource(),
+						manifest.NamedResource{
+							Group:     manifest.SourceDomain,
+							Kind:      manifest.KindHelmChart,
+							Namespace: "flux-system",
+							Name:      "flux-system-release",
+						},
+					)
 					assert.Equal(t, obj.ReleaseName(), "chosen-name")
 					assert.Equal(t, obj.TargetNamespace, "workloads")
 					assert.Equal(t, obj.Suspend, true)
@@ -103,14 +121,23 @@ spec:
 				}
 				assert.Equal(t, len(result.Manifests), 0)
 			}
-			filtered, selectedErr, remainder := Select(runs, err, []manifest.NamedResource{id}, map[string]string{"team": "other"})
+			filtered, selectedErr, remainder := Select(
+				runs,
+				err,
+				[]manifest.NamedResource{id},
+				map[string]string{"team": "other"},
+			)
 			assert.NoError(t, selectedErr)
 			assert.NoError(t, remainder)
 			for _, result := range filtered {
 				assert.Equal(t, result.Counts[id.Kind], 1)
 				assert.Equal(t, len(result.Objects), 0)
 			}
-			full, fullErr := RenderTrees(t.Context(), []Tree{{Path: roots[0], ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{Concurrency: 2, Selection: manifest.Selection{Roots: []manifest.NamedResource{id}}})
+			full, fullErr := RenderTrees(
+				t.Context(),
+				[]Tree{{Path: roots[0], ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
+				Config{Concurrency: 2, Selection: manifest.Selection{Roots: []manifest.NamedResource{id}}},
+			)
 			assert.NoError(t, fullErr)
 			objects, selectedErr, remainder := Select(full, fullErr, []manifest.NamedResource{id}, nil)
 			assert.NoError(t, selectedErr)
@@ -137,23 +164,60 @@ func TestRenderTrees_SelectedSelfSourceReproducer(t *testing.T) {
 	files := []string{"source.yaml"}
 	var resources strings.Builder
 	resources.WriteString("resources:\n- source.yaml\n")
-	testutil.WriteFile(t, root, "source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: flux-system}\nspec: {url: "+url+", ref: {branch: selected}}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"source.yaml",
+		"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: flux-system}\nspec: {url: "+url+", ref: {branch: selected}}\n",
+	)
 	for i := range 145 {
 		name := fmt.Sprintf("app-%03d", i)
 		id := testutil.KustomizationID("flux-system", name)
 		want = append(want, id.String())
 		files = append(files, name+".yaml")
 		fmt.Fprintf(&resources, "- %s.yaml\n", name)
-		testutil.WriteFile(t, root, name+".yaml", testutil.KustomizationYAML(name, id.Namespace, "  path: ./apps\n  sourceRef: {kind: GitRepository, name: cluster}\n"))
+		testutil.WriteFile(
+			t,
+			root,
+			name+".yaml",
+			testutil.KustomizationYAML(
+				name,
+				id.Namespace,
+				"  path: ./apps\n  sourceRef: {kind: GitRepository, name: cluster}\n",
+			),
+		)
 	}
 	testutil.WriteFile(t, root, "kustomization.yaml", resources.String())
 	slices.Sort(want)
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
-	testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected}\ndata: {value: before}\n")
-	baseHash := testutil.GitCommitAll(t, repo, "before", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}})
-	testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected}\ndata: {value: after}\n")
-	headHash := testutil.GitCommitAll(t, repo, "after", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}})
-	assert.NoError(t, repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewBranchReferenceName("selected"), headHash)))
+	testutil.WriteFile(
+		t,
+		root,
+		"apps/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected}\ndata: {value: before}\n",
+	)
+	baseHash := testutil.GitCommitAll(
+		t,
+		repo,
+		"before",
+		&git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}},
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"apps/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected}\ndata: {value: after}\n",
+	)
+	headHash := testutil.GitCommitAll(
+		t,
+		repo,
+		"after",
+		&git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}},
+	)
+	assert.NoError(
+		t,
+		repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewBranchReferenceName("selected"), headHash)),
+	)
 	cache := cachetest.New(t, "", sourcecache.New)
 	selected, err := baseline.AutoResolve(t.Context(), root, baseHash.String(), cache)
 	assert.NoError(t, err)
@@ -165,7 +229,14 @@ func TestRenderTrees_SelectedSelfSourceReproducer(t *testing.T) {
 		assert.NoError(t, err)
 		declarations = append(declarations, parsed...)
 	}
-	cfg := treeConfig{Cache: cache, Concurrency: 2, Input: selected.Source, BaseInput: selected.BaseInput, ExternalChanges: selected.Changes, SelfURLs: []string{url}}
+	cfg := treeConfig{
+		Cache:           cache,
+		Concurrency:     2,
+		Input:           selected.Source,
+		BaseInput:       selected.BaseInput,
+		ExternalChanges: selected.Changes,
+		SelfURLs:        []string{url},
+	}
 	for side := range 2 {
 		one := cfg
 		if side == 0 {
@@ -188,18 +259,53 @@ func TestRenderTrees_SelectedSelfSourceReproducer(t *testing.T) {
 		o.stop()
 	}
 	for run := range 2 {
-		renderedTrees1, err := RenderTrees(t.Context(), []Tree{{RepoRoot: cfg.BaseInput.LocalPath, SelfURLs: []string{url}, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, ExternalChanges: cfg.ExternalChanges, Input: cfg.BaseInput, BaseInput: cfg.Input}, {RepoRoot: root, SelfURLs: []string{url}, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: cfg.Input, BaseInput: cfg.BaseInput, ExternalChanges: cfg.ExternalChanges}}, cfg.Config)
+		renderedTrees1, err := RenderTrees(
+			t.Context(),
+			[]Tree{
+				{
+					RepoRoot:        cfg.BaseInput.LocalPath,
+					SelfURLs:        []string{url},
+					ID:              manifest.TreeID{Cluster: ".", Side: manifest.TreeBase},
+					ExternalChanges: cfg.ExternalChanges,
+					Input:           cfg.BaseInput,
+					BaseInput:       cfg.Input,
+				},
+				{
+					RepoRoot:        root,
+					SelfURLs:        []string{url},
+					ID:              manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
+					Input:           cfg.Input,
+					BaseInput:       cfg.BaseInput,
+					ExternalChanges: cfg.ExternalChanges,
+				},
+			},
+			cfg.Config,
+		)
 		base, head := renderedTrees1[0], renderedTrees1[1]
 		assert.NoError(t, err)
 		for side, rendered := range []Rendered{base, head} {
 			prerequisites := []string{rendered.entryBinding.Producer.String(), manifest.BootstrapSourceID.String()}
 			slices.Sort(prerequisites)
 			assert.Diff(t, rendered.filter.KeepNames(), prerequisites)
-			assert.Diff(t, outputByParent(rendered.Result.Manifests), map[manifest.NamedResource][]map[string]any{rendered.entryBinding.Producer: declarations})
-			delta, err := change.Detect(t.Context(), base.store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact), head.store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact))
+			assert.Diff(
+				t,
+				outputByParent(rendered.Result.Manifests),
+				map[manifest.NamedResource][]map[string]any{rendered.entryBinding.Producer: declarations},
+			)
+			delta, err := change.Detect(
+				t.Context(),
+				base.store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact),
+				head.store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact),
+			)
 			assert.NoError(t, err)
 			assert.Diff(t, delta.Paths(), []string(nil))
-			t.Logf("paired run=%d side=%d kept prerequisites=%v root declarations=%d", run, side, prerequisites, len(declarations))
+			t.Logf(
+				"paired run=%d side=%d kept prerequisites=%v root declarations=%d",
+				run,
+				side,
+				prerequisites,
+				len(declarations),
+			)
 		}
 	}
 }
@@ -210,24 +316,63 @@ func TestRenderTrees_LocalAliasSelfProducer(t *testing.T) {
 	repo := testutil.GitInit(t, root)
 	const url = "git://fixture.invalid/cluster"
 	testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [source.yaml, root.yaml, apps.yaml]\n")
-	testutil.WriteFile(t, root, "flux/source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: flux-system}\nspec: {url: "+url+"}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"flux/source.yaml",
+		"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: flux-system}\nspec: {url: "+url+"}\n",
+	)
 	for _, name := range []string{"root", "apps"} {
 		path := "./apps"
 		if name == "root" {
 			path = "./flux"
 		}
-		testutil.WriteFile(t, root, "flux/"+name+".yaml", testutil.KustomizationYAML(name, "flux-system", "  path: "+path+"\n  sourceRef: {kind: GitRepository, name: cluster}\n"))
+		testutil.WriteFile(
+			t,
+			root,
+			"flux/"+name+".yaml",
+			testutil.KustomizationYAML(
+				name,
+				"flux-system",
+				"  path: "+path+"\n  sourceRef: {kind: GitRepository, name: cluster}\n",
+			),
+		)
 	}
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
-	testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected}\ndata: {value: before}\n")
-	testutil.GitCommitAll(t, repo, "before", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}})
-	testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected}\ndata: {value: after}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"apps/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected}\ndata: {value: before}\n",
+	)
+	testutil.GitCommitAll(
+		t,
+		repo,
+		"before",
+		&git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}},
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"apps/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected}\ndata: {value: after}\n",
+	)
 	cache := cachetest.New(t, "", sourcecache.New)
 	selected, err := baseline.AutoResolve(t.Context(), root, "HEAD", cache)
 	assert.NoError(t, err)
 	trees := make([]Tree, 0, 2)
 	for side, input := range []*store.SourceArtifact{selected.BaseInput, selected.Source} {
-		trees = append(trees, Tree{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeSide(side)}, Path: filepath.Join(input.LocalPath, "flux"), RepoRoot: input.LocalPath, Input: input, SelfURLs: []string{url}, ExternalChanges: selected.Changes})
+		trees = append(
+			trees,
+			Tree{
+				ID:              manifest.TreeID{Cluster: ".", Side: manifest.TreeSide(side)},
+				Path:            filepath.Join(input.LocalPath, "flux"),
+				RepoRoot:        input.LocalPath,
+				Input:           input,
+				SelfURLs:        []string{url},
+				ExternalChanges: selected.Changes,
+			},
+		)
 	}
 	rendered, err := RenderTrees(t.Context(), trees, Config{Cache: cache, Concurrency: 2})
 	assert.NoError(t, err)

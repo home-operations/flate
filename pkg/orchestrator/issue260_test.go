@@ -20,7 +20,12 @@ import (
 // hitting the network. FS exposes the fixed working-tree fixture content.
 type fakeOCIFetcher struct{ localPath string }
 
-func (f fakeOCIFetcher) Fetch(_ context.Context, _ manifest.BaseManifest, _ *store.ReadSet, _ sourcecache.Policy) (*store.SourceArtifact, error) {
+func (f fakeOCIFetcher) Fetch(
+	_ context.Context,
+	_ manifest.BaseManifest,
+	_ *store.ReadSet,
+	_ sourcecache.Policy,
+) (*store.SourceArtifact, error) {
 	return &store.SourceArtifact{
 		Kind:      manifest.KindOCIRepository,
 		URL:       "oci://example.test/homepage-config",
@@ -69,11 +74,20 @@ func TestIssue260_OCIRepoFetchedWhenConsumerJoinsKeepSetAtRuntime(t *testing.T) 
 	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/flux/cluster/ks.yaml"), clusterKS)
 	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/default/homepage/ks.yaml"), homepageKS)
 	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/default/homepage/repos/ocirepository.yaml"), ociRepo)
-	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/default/homepage/config/kustomization.yaml"), "resources: []\n")
-	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/default/homepage/app/kustomization.yaml"), "resources: []\n")
+	testutil.WriteFileAt(
+		t,
+		filepath.Join(dir, "kubernetes/apps/default/homepage/config/kustomization.yaml"),
+		"resources: []\n",
+	)
+	testutil.WriteFileAt(
+		t,
+		filepath.Join(dir, "kubernetes/apps/default/homepage/app/kustomization.yaml"),
+		"resources: []\n",
+	)
 	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/networking/echo.yaml"), echoCM)
 
-	o, err := newTestOrchestrator(t, Tree{Path: dir,
+	o, err := newTestOrchestrator(t, Tree{
+		Path:            dir,
 		ExternalChanges: change.NewSet([]string{"kubernetes/apps/networking/echo.yaml"}),
 	}, Config{WipeSecrets: true, Concurrency: 2})
 	if err != nil {

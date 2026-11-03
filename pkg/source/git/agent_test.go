@@ -43,12 +43,19 @@ type agentAuthentication struct {
 	afterAuth     func() error
 }
 
-func (a *agentAuthentication) NewUploadPackSession(endpoint *transport.Endpoint, auth transport.AuthMethod) (transport.UploadPackSession, error) {
+func (a *agentAuthentication) NewUploadPackSession(
+	endpoint *transport.Endpoint,
+	auth transport.AuthMethod,
+) (transport.UploadPackSession, error) {
 	keys, ok := auth.(*gitssh.PublicKeysCallback)
 	if !ok || keys.User != "git" {
 		return nil, transport.ErrAuthenticationRequired
 	}
-	if err := keys.HostKeyCallback("fixture:22", &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 22}, a.host); err != nil {
+	if err := keys.HostKeyCallback(
+		"fixture:22",
+		&net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 22},
+		a.host,
+	); err != nil {
 		return nil, err
 	}
 	signers, err := keys.Callback()
@@ -128,7 +135,11 @@ func TestFetcher_AmbientAcquisition(t *testing.T) {
 			_, host := testSSHIdentity(t)
 			root := t.TempDir()
 			mustInitRepo(t, root)
-			tr := &agentAuthentication{Transport: server.DefaultServer, host: host.PublicKey(), allowed: signer.PublicKey()}
+			tr := &agentAuthentication{
+				Transport: server.DefaultServer,
+				host:      host.PublicKey(),
+				allowed:   signer.PublicKey(),
+			}
 			if shape == "retry" {
 				tr.afterAuth = func() error {
 					if tr.authenticated.Load() == 1 {
@@ -141,7 +152,9 @@ func TestFetcher_AmbientAcquisition(t *testing.T) {
 			var diagnostic bytes.Buffer
 			if shape == "fallback" {
 				previousLogger := slog.Default()
-				slog.SetDefault(slog.New(slog.NewTextHandler(&diagnostic, &slog.HandlerOptions{Level: slog.LevelDebug})))
+				slog.SetDefault(
+					slog.New(slog.NewTextHandler(&diagnostic, &slog.HandlerOptions{Level: slog.LevelDebug})),
+				)
 				t.Cleanup(func() { slog.SetDefault(previousLogger) })
 				tr.afterAuth = func() error {
 					if tr.authenticated.Load() == 1 {
@@ -155,7 +168,12 @@ func TestFetcher_AmbientAcquisition(t *testing.T) {
 			t.Cleanup(func() { client.InstallProtocol("ssh", previous) })
 			homeDir := t.TempDir()
 			t.Setenv("HOME", homeDir)
-			testutil.WriteFile(t, homeDir, ".ssh/known_hosts", knownhosts.Line([]string{"fixture"}, host.PublicKey())+"\n")
+			testutil.WriteFile(
+				t,
+				homeDir,
+				".ssh/known_hosts",
+				knownhosts.Line([]string{"fixture"}, host.PublicKey())+"\n",
+			)
 			var closed <-chan struct{}
 			var opened *atomic.Int32
 			var keyring agent.Agent
@@ -181,7 +199,12 @@ func TestFetcher_AmbientAcquisition(t *testing.T) {
 				tr.allowed = host.PublicKey()
 			}
 			if shape == "unverified" {
-				testutil.WriteFile(t, homeDir, ".ssh/known_hosts", knownhosts.Line([]string{"fixture"}, signer.PublicKey())+"\n")
+				testutil.WriteFile(
+					t,
+					homeDir,
+					".ssh/known_hosts",
+					knownhosts.Line([]string{"fixture"}, signer.PublicKey())+"\n",
+				)
 			}
 			repo := gitRepoWithSecret("agent", "ssh://git@fixture"+root, "auth")
 			if shape == "source only" {
@@ -213,9 +236,15 @@ func TestFetcher_AmbientAcquisition(t *testing.T) {
 				t.Fatalf("missing identity = %s", missing.Secret)
 			}
 			artifact, err = missing.RetryAmbient(t.Context())
-			success := shape == "fallback" || shape == "accepted" || shape == "source only" || shape == "retry" || shape == "provider"
+			success := shape == "fallback" || shape == "accepted" || shape == "source only" || shape == "retry" ||
+				shape == "provider"
 			if !success {
-				if artifact != nil || err == nil || errors.Is(err, manifest.ErrMissingSecret) != (shape == "absent" || shape == "refused" || shape == "unset" || shape == "empty agent" || shape == "rejected") || !errors.Is(err, manifest.ErrFlux) {
+				if artifact != nil || err == nil ||
+					errors.Is(
+						err,
+						manifest.ErrMissingSecret,
+					) != (shape == "absent" || shape == "refused" || shape == "unset" || shape == "empty agent" || shape == "rejected") ||
+					!errors.Is(err, manifest.ErrFlux) {
 					t.Fatalf("failed ambient acquisition = %v, %v; want acquisition error", artifact, err)
 				}
 			} else {
@@ -228,7 +257,8 @@ func TestFetcher_AmbientAcquisition(t *testing.T) {
 				<-closed
 				assert.Equal(t, opened.Load(), int32(1))
 			}
-			if shape == "fallback" && (tr.authenticated.Load() != 2 || strings.Contains(diagnostic.String(), "diagnostic-canary")) {
+			if shape == "fallback" &&
+				(tr.authenticated.Load() != 2 || strings.Contains(diagnostic.String(), "diagnostic-canary")) {
 				t.Fatalf("fallback diagnostics/selection: calls=%d %s", tr.authenticated.Load(), diagnostic.String())
 			}
 			if shape == "bad ref" && tr.authenticated.Load() == 0 {
@@ -256,7 +286,9 @@ func TestFetcher_AmbientAcquisition(t *testing.T) {
 					<-closed
 					data, err := fs.ReadFile(fresh.FS, "hello.txt")
 					assert.NoError(t, err)
-					if string(data) != "refreshed" || fresh.Content == warm.Content || fresh.Revision == warm.Revision || opened.Load() != before+2 {
+					if string(data) != "refreshed" || fresh.Content == warm.Content ||
+						fresh.Revision == warm.Revision ||
+						opened.Load() != before+2 {
 						t.Fatal("refreshed acquisition reused stale content or attempt credentials")
 					}
 					rotatedIdentity, rotatedSigner := testSSHIdentity(t)
@@ -269,7 +301,8 @@ func TestFetcher_AmbientAcquisition(t *testing.T) {
 					rotated, err := missing.RetryAmbient(t.Context())
 					assert.NoError(t, err)
 					<-closed
-					if rotated.Key == warm.Key || tr.authenticated.Load() != authenticated+1 || opened.Load() != before+3 {
+					if rotated.Key == warm.Key || tr.authenticated.Load() != authenticated+1 ||
+						opened.Load() != before+3 {
 						t.Fatal("signer rotation reused cache identity or agent selection")
 					}
 
@@ -303,7 +336,9 @@ func TestFetcher_AmbientPreparation(t *testing.T) {
 				auth = &manifest.Secret{StringData: map[string]any{"identity": "invalid private material"}}
 			}
 			if shape == "malformed hosts" {
-				auth = &manifest.Secret{StringData: map[string]any{"identity": identity, "known_hosts": "invalid host material"}}
+				auth = &manifest.Secret{
+					StringData: map[string]any{"identity": identity, "known_hosts": "invalid host material"},
+				}
 			}
 			reads := (testInputs{secrets: func(_, name string) *manifest.Secret {
 				if name == "proxy" {
@@ -315,7 +350,12 @@ func TestFetcher_AmbientPreparation(t *testing.T) {
 			f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
 			artifact, err := f.Fetch(t.Context(), repo, reads, sourcecache.Policy{})
 			if artifact != nil || err == nil || opened.Load() != 0 {
-				t.Fatalf("preparation opened agent or acquired content: artifact=%v error=%v opened=%d", artifact, err, opened.Load())
+				t.Fatalf(
+					"preparation opened agent or acquired content: artifact=%v error=%v opened=%d",
+					artifact,
+					err,
+					opened.Load(),
+				)
 			}
 			missing, unavailable := errors.AsType[*source.MissingSecretError](err)
 			if shape == "invalid proxy" || shape == "malformed identity" || shape == "malformed hosts" {
@@ -339,13 +379,22 @@ func TestFetcher_StalledAgent(t *testing.T) {
 		t.Run(cause, func(t *testing.T) {
 			_, key := testSSHIdentity(t)
 			_, host := testSSHIdentity(t)
-			tr := &agentAuthentication{Transport: server.DefaultServer, host: host.PublicKey(), allowed: key.PublicKey()}
+			tr := &agentAuthentication{
+				Transport: server.DefaultServer,
+				host:      host.PublicKey(),
+				allowed:   key.PublicKey(),
+			}
 			previous := client.Protocols["ssh"]
 			client.InstallProtocol("ssh", tr)
 			t.Cleanup(func() { client.InstallProtocol("ssh", previous) })
 			homeDir := t.TempDir()
 			t.Setenv("HOME", homeDir)
-			testutil.WriteFile(t, homeDir, ".ssh/known_hosts", knownhosts.Line([]string{"fixture"}, host.PublicKey())+"\n")
+			testutil.WriteFile(
+				t,
+				homeDir,
+				".ssh/known_hosts",
+				knownhosts.Line([]string{"fixture"}, host.PublicKey())+"\n",
+			)
 			t.Chdir(t.TempDir())
 			path := "agent"
 			listener, err := net.Listen("unix", path)

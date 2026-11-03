@@ -101,7 +101,17 @@ func (a *SourceArtifact) Input(read ArtifactRead) ArtifactInput {
 	}
 	var input ArtifactInput
 	if read&ArtifactContent != 0 {
-		input = ArtifactInput{Present: true, Readable: a.FS != nil, Kind: a.Kind, Key: a.Key, Content: a.Content, Digest: a.Digest, LocalRoot: a.LocalRoot, LocalPath: a.LocalPath, InputAlias: a.InputAlias}
+		input = ArtifactInput{
+			Present:    true,
+			Readable:   a.FS != nil,
+			Kind:       a.Kind,
+			Key:        a.Key,
+			Content:    a.Content,
+			Digest:     a.Digest,
+			LocalRoot:  a.LocalRoot,
+			LocalPath:  a.LocalPath,
+			InputAlias: a.InputAlias,
+		}
 	}
 	if read&ArtifactRevision != 0 {
 		input.Revision = a.Revision
@@ -174,7 +184,8 @@ func (sh *shard) publishArtifactLocked(id manifest.NamedResource, record *artifa
 	before.Revision, before.Origin, before.OriginPresent = "", "", false
 	after.Revision, after.Origin, after.OriginPresent = "", "", false
 	changed := ArtifactRead(0)
-	if before != after || input.Readable && input.Content == "" && mutableMaterial(record.effective) != mutableMaterial(value) {
+	if before != after ||
+		input.Readable && input.Content == "" && mutableMaterial(record.effective) != mutableMaterial(value) {
 		changed |= ArtifactContent
 	}
 	if _, source := value.(*SourceArtifact); !source && record.effective != value {
@@ -328,7 +339,12 @@ func emissionCurrent(e *Emission, view capture) bool {
 }
 
 func (sh *shard) clearFacetsLocked(id manifest.NamedResource) {
-	sh.requireCapacityLocked(sh.conditions[id].stamp(), sh.artifacts[id].authority, sh.artifacts[id].revisionHead, sh.artifacts[id].originHead)
+	sh.requireCapacityLocked(
+		sh.conditions[id].stamp(),
+		sh.artifacts[id].authority,
+		sh.artifacts[id].revisionHead,
+		sh.artifacts[id].originHead,
+	)
 	if record := sh.conditions[id]; len(record.conditions) > 0 || record.failure != nil {
 		record.advanceLocked(sh)
 		record.conditions, record.failure = record.conditions[:0], nil

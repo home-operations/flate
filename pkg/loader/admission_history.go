@@ -133,7 +133,8 @@ func (v *admissionRootView) Readlink(name string) (string, error) {
 }
 
 func resolveRoot(objects sourceStore, source manifest.NamedResource, root string) (string, bool) {
-	if root == "" || path.IsAbs(root) || strings.Contains(root, "://") || strings.HasPrefix(path.Clean(root), "../") || path.Clean(root) == ".." {
+	if root == "" || path.IsAbs(root) || strings.Contains(root, "://") || strings.HasPrefix(path.Clean(root), "../") ||
+		path.Clean(root) == ".." {
 		return "", false
 	}
 	art, _ := objects.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)

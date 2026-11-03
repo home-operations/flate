@@ -44,7 +44,11 @@ func BenchmarkReadRegistration_Collection(b *testing.B) {
 						if mode == "empty" || mode == "nonmatching" && i == 0 {
 							color = "red"
 						}
-						p := &manifest.ResourceSetInputProvider{Name: fmt.Sprintf("provider-%05d", i), Namespace: "ns", Labels: map[string]string{"color": color}}
+						p := &manifest.ResourceSetInputProvider{
+							Name:      fmt.Sprintf("provider-%05d", i),
+							Namespace: "ns",
+							Labels:    map[string]string{"color": color},
+						}
 						s.AddObject(p)
 						if i == 0 {
 							pivot = p
@@ -132,12 +136,21 @@ func BenchmarkDirtyRerun_IndependentWriters(b *testing.B) {
 				c.Configure(base.Options{})
 				c.StartLifecycle()
 
-				sets := [2]*manifest.ResourceSet{independentWriterFixture("u", "blue"), independentWriterFixture("v", "green")}
+				sets := [2]*manifest.ResourceSet{
+					independentWriterFixture("u", "blue"),
+					independentWriterFixture("v", "green"),
+				}
 				for _, rs := range sets {
 					s.AddObject(rs)
 				}
 				for i, color := range []string{"blue", "green"} {
-					s.AddObject(&manifest.ResourceSetInputProvider{Name: fmt.Sprintf("selected-%d", i), Namespace: "ns", Labels: map[string]string{"color": color}})
+					s.AddObject(
+						&manifest.ResourceSetInputProvider{
+							Name:      fmt.Sprintf("selected-%d", i),
+							Namespace: "ns",
+							Labels:    map[string]string{"color": color},
+						},
+					)
 				}
 				commitOrder := []int{0, 1}
 				if order == "VU" {
@@ -151,9 +164,18 @@ func BenchmarkDirtyRerun_IndependentWriters(b *testing.B) {
 				b.ReportAllocs()
 				for b.Loop() {
 					for i := range sets {
-						p, _ := s.Get[*manifest.ResourceSetInputProvider](manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSetInputProvider, Namespace: "ns", Name: fmt.Sprintf("selected-%d", i)})
+						p, _ := s.Get[*manifest.ResourceSetInputProvider](
+							manifest.NamedResource{
+								Group:     manifest.FluxOperatorDomain,
+								Kind:      manifest.KindResourceSetInputProvider,
+								Namespace: "ns",
+								Name:      fmt.Sprintf("selected-%d", i),
+							},
+						)
 						fresh := *p
-						fresh.Status.ExportedInputs = []fluxopv1.ResourceSetInput{{"revision": {Raw: []byte(fmt.Sprint(generation))}}}
+						fresh.Status.ExportedInputs = []fluxopv1.ResourceSetInput{
+							{"revision": {Raw: []byte(fmt.Sprint(generation))}},
+						}
 						s.AddObject(&fresh)
 					}
 					var artifacts [2]*store.Emission
@@ -166,7 +188,12 @@ func BenchmarkDirtyRerun_IndependentWriters(b *testing.B) {
 							var fp string
 							docs, _, err := renderProviders(rs, resolve, func(content any) (bool, error) {
 								var err error
-								fp, _, err = execution.run.FingerprintDedup(b.Context(), rs.Named(), content, &store.Emission{})
+								fp, _, err = execution.run.FingerprintDedup(
+									b.Context(),
+									rs.Named(),
+									content,
+									&store.Emission{},
+								)
 								return false, err
 							})
 							renders.Add(1)
@@ -183,12 +210,19 @@ func BenchmarkDirtyRerun_IndependentWriters(b *testing.B) {
 						outcomes := artifacts[i].Manifests
 						sets[i].EmissionPolicy().Stamp(outcomes)
 						_, _, next := s.GetEmission(id)
-						next.Children, next.Manifests, next.Failures = c.ParseChildren(c.Store.GetObject(id), outcomes, manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: id.Namespace})
+						next.Children, next.Manifests, next.Failures = c.ParseChildren(
+							c.Store.GetObject(id),
+							outcomes,
+							manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: id.Namespace},
+						)
 						next.Fingerprint, next.Complete = artifacts[i].Fingerprint, true
 						controllertest.Emit(b.Context(), c.Controller, id, &next)
 						expected[i].fingerprint, expected[i].manifests = next.Fingerprint, next.Manifests
 						next.Finish()
-						s.UpdateStatus(sets[i].Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
+						s.UpdateStatus(
+							sets[i].Named(),
+							store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""},
+						)
 					}
 					for range 32 {
 						for _, i := range commitOrder {
@@ -214,7 +248,14 @@ func BenchmarkDirtyRerun_IndependentWriters(b *testing.B) {
 					generation++
 				}
 				if tasks.Failures() != 0 || renders.Load() != int64(2*b.N) || dispatches.Load() != int64(64*b.N) {
-					b.Fatalf("panics=%d renders=%d dispatches=%d, want renders=%d dispatches=%d", tasks.Failures(), renders.Load(), dispatches.Load(), 2*b.N, 64*b.N)
+					b.Fatalf(
+						"panics=%d renders=%d dispatches=%d, want renders=%d dispatches=%d",
+						tasks.Failures(),
+						renders.Load(),
+						dispatches.Load(),
+						2*b.N,
+						64*b.N,
+					)
 				}
 				for i, rs := range sets {
 					info, _ := s.GetStatus(rs.Named())
@@ -222,7 +263,9 @@ func BenchmarkDirtyRerun_IndependentWriters(b *testing.B) {
 						b.Fatal("writer did not finish Ready")
 					}
 					current, ok := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
-					if !ok || !current.Complete || len(current.Children) != 2 || current.Fingerprint != expected[i].fingerprint || !cmp.Equal(current.Manifests, expected[i].manifests) {
+					if !ok || !current.Complete || len(current.Children) != 2 ||
+						current.Fingerprint != expected[i].fingerprint ||
+						!cmp.Equal(current.Manifests, expected[i].manifests) {
 						b.Fatal("equal publications changed the complete two-document inventory")
 					}
 					for _, child := range current.Children {
@@ -250,7 +293,14 @@ func TestDirtyRerun_EqualOutputReuse(t *testing.T) {
 	s.AddObject(rs)
 	provider := staticRSIP("selected", "ns", map[string]string{"color": "blue"}, nil)
 	s.AddObject(provider)
-	s.AddObject(&manifest.ResourceSetInputProvider{Name: "dynamic", Namespace: "ns", Type: fluxopv1.InputProviderGitHubBranch, Labels: map[string]string{"color": "blue"}})
+	s.AddObject(
+		&manifest.ResourceSetInputProvider{
+			Name:      "dynamic",
+			Namespace: "ns",
+			Type:      fluxopv1.InputProviderGitHubBranch,
+			Labels:    map[string]string{"color": "blue"},
+		},
+	)
 	var updates atomic.Int64
 	unsub := s.AddListener(store.EventArtifactUpdated, func(id manifest.NamedResource, _ any) {
 		if id == rs.Named() {
@@ -261,21 +311,39 @@ func TestDirtyRerun_EqualOutputReuse(t *testing.T) {
 	first := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone)
 	defer first.Close()
 	if first.Outcome() == schedule.Blocked || first.Valid() {
-		t.Fatalf("first provider publication: unresolved=%t valid=%t", first.Outcome() == schedule.Blocked, first.Valid())
+		t.Fatalf(
+			"first provider publication: unresolved=%t valid=%t",
+			first.Outcome() == schedule.Blocked,
+			first.Valid(),
+		)
 	}
 	settled := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone)
 	defer settled.Close()
 	first.Retire()
 	info, _ := s.GetStatus(rs.Named())
 	if settled.Outcome() == schedule.Blocked || !settled.Valid() || info.Outcome() != store.OutcomePassed {
-		t.Fatalf("initial settlement: unresolved=%t valid=%t status=%+v", settled.Outcome() == schedule.Blocked, settled.Valid(), info)
+		t.Fatalf(
+			"initial settlement: unresolved=%t valid=%t status=%+v",
+			settled.Outcome() == schedule.Blocked,
+			settled.Valid(),
+			info,
+		)
 	}
 	initial := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 	if len(initial.Manifests) != 2 || len(initial.Children) != 2 {
 		t.Fatal("initial render did not retain both documents and identities")
 	}
 	var reader store.ReadSet
-	reader.Init(s, manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "ns", Name: "reader"}, nil)
+	reader.Init(
+		s,
+		manifest.NamedResource{
+			Group:     manifest.FluxOperatorDomain,
+			Kind:      manifest.KindResourceSet,
+			Namespace: "ns",
+			Name:      "reader",
+		},
+		nil,
+	)
 	defer reader.Retire()
 	reader.GetArtifact(rs.Named(), store.ArtifactContent)
 	freshProvider := *provider
@@ -295,16 +363,26 @@ func TestDirtyRerun_EqualOutputReuse(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, _, inventory := replay.run.Reads.GetEmission(rs.Named())
-	inventory.Children, inventory.Manifests, inventory.Failures = c.ParseChildren(rs, initial.Manifests, manifest.ParseDocOptions{WipeSecrets: true})
+	inventory.Children, inventory.Manifests, inventory.Failures = c.ParseChildren(
+		rs,
+		initial.Manifests,
+		manifest.ParseDocOptions{WipeSecrets: true},
+	)
 	inventory.Complete = true
 	replay.run.Emit(t.Context(), rs.Named(), &inventory, nil)
 	inventory.Finish()
-	if accepted := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission); accepted.Fingerprint != initial.Fingerprint || !cmp.Equal(accepted.Manifests, initial.Manifests) || !cmp.Equal(accepted.Children, initial.Children, cmpopts.IgnoreUnexported(store.Child{})) {
+	if accepted := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission); accepted.Fingerprint != initial.Fingerprint ||
+		!cmp.Equal(accepted.Manifests, initial.Manifests) ||
+		!cmp.Equal(accepted.Children, initial.Children, cmpopts.IgnoreUnexported(store.Child{})) {
 		t.Error("same-inventory publication lost its rendered identity or bytes")
 	}
 	var objectEvents, statusEvents atomic.Int64
 	var statusChange atomic.Value
-	unsubObjects := s.AddListener(store.EventObjectAdded, func(manifest.NamedResource, any) { objectEvents.Add(1) }, false)
+	unsubObjects := s.AddListener(
+		store.EventObjectAdded,
+		func(manifest.NamedResource, any) { objectEvents.Add(1) },
+		false,
+	)
 	defer unsubObjects()
 	unsubStatus := s.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
 		statusEvents.Add(1)
@@ -316,8 +394,20 @@ func TestDirtyRerun_EqualOutputReuse(t *testing.T) {
 	defer second.Close()
 	settled.Retire()
 	after := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
-	if second.Outcome() == schedule.Blocked || !second.Valid() || !reader.Valid() || updates.Load() != 1 || objectEvents.Load() != 0 || statusEvents.Load() != 0 || !second.Reused {
-		t.Fatalf("equal output: unresolved=%t reader valid=%t artifact/object/status events=%d/%d/%d reused=%t status=%v", second.Outcome() == schedule.Blocked, reader.Valid(), updates.Load()-1, objectEvents.Load(), statusEvents.Load(), second.Reused, statusChange.Load())
+	if second.Outcome() == schedule.Blocked || !second.Valid() || !reader.Valid() || updates.Load() != 1 ||
+		objectEvents.Load() != 0 ||
+		statusEvents.Load() != 0 ||
+		!second.Reused {
+		t.Fatalf(
+			"equal output: unresolved=%t reader valid=%t artifact/object/status events=%d/%d/%d reused=%t status=%v",
+			second.Outcome() == schedule.Blocked,
+			reader.Valid(),
+			updates.Load()-1,
+			objectEvents.Load(),
+			statusEvents.Load(),
+			second.Reused,
+			statusChange.Load(),
+		)
 	}
 	if initial.Fingerprint != after.Fingerprint || !cmp.Equal(initial.Manifests, after.Manifests) {
 		t.Fatal("equal effective inputs changed accepted content")
@@ -328,8 +418,15 @@ func TestDirtyRerun_EqualOutputReuse(t *testing.T) {
 	third := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone)
 	defer third.Close()
 	changed := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
-	if third.Outcome() == schedule.Blocked || reader.Valid() || updates.Load() != 2 || third.Reused || changed.Fingerprint == initial.Fingerprint || !cmp.Equal(changed.Manifests, initial.Manifests) {
-		t.Fatalf("changed fingerprint: reader valid=%t artifact events=%d reused=%t", reader.Valid(), updates.Load(), third.Reused)
+	if third.Outcome() == schedule.Blocked || reader.Valid() || updates.Load() != 2 || third.Reused ||
+		changed.Fingerprint == initial.Fingerprint ||
+		!cmp.Equal(changed.Manifests, initial.Manifests) {
+		t.Fatalf(
+			"changed fingerprint: reader valid=%t artifact events=%d reused=%t",
+			reader.Valid(),
+			updates.Load(),
+			third.Reused,
+		)
 	}
 }
 
@@ -340,12 +437,25 @@ func independentWriterFixture(name, color string) *manifest.ResourceSet {
 }
 
 func selectorFixture(name, color string) *manifest.ResourceSet {
-	return &manifest.ResourceSet{Name: name, Namespace: "ns",
-		InputsFrom:        []fluxopv1.InputProviderReference{{Kind: manifest.KindResourceSetInputProvider, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"color": color}}}},
-		ResourcesTemplate: "<< if inputs >>\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: '<< inputs.provider.name >>', namespace: ns}\ndata: {value: selected}\n<< end >>\n"}
+	return &manifest.ResourceSet{
+		Name:      name,
+		Namespace: "ns",
+		InputsFrom: []fluxopv1.InputProviderReference{
+			{
+				Kind:     manifest.KindResourceSetInputProvider,
+				Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"color": color}},
+			},
+		},
+		ResourcesTemplate: "<< if inputs >>\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: '<< inputs.provider.name >>', namespace: ns}\ndata: {value: selected}\n<< end >>\n",
+	}
 }
 
-func publishResourceSetDocuments(tb testing.TB, c *Controller, id manifest.NamedResource, docs []manifest.DocOccurrence) {
+func publishResourceSetDocuments(
+	tb testing.TB,
+	c *Controller,
+	id manifest.NamedResource,
+	docs []manifest.DocOccurrence,
+) {
 	tb.Helper()
 	parent := c.Store.GetObject(id).(*manifest.ResourceSet)
 	parent.EmissionPolicy().Stamp(docs)

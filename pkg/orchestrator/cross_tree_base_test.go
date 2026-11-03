@@ -35,12 +35,16 @@ func TestOrchestrator_CrossTreeBaseSubstitution(t *testing.T) {
 	// Entry KSes: cluster-settings (provides the substitution ConfigMap) and
 	// cluster-apps (fans out ./apps/test with postBuild substitution + a patch
 	// injecting substituteFrom into every emitted child Kustomization).
-	testutil.WriteFile(t, dir, "cluster/flux-system.yaml", testutil.KustomizationYAML("cluster-settings", "flux-system", `  path: ./settings
+	testutil.WriteFile(
+		t,
+		dir,
+		"cluster/flux-system.yaml",
+		testutil.KustomizationYAML("cluster-settings", "flux-system", `  path: ./settings
   sourceRef:
     kind: GitRepository
     name: flux-system
 `)+"---\n"+
-		testutil.KustomizationYAML("cluster-apps", "flux-system", `  path: ./apps/test
+			testutil.KustomizationYAML("cluster-apps", "flux-system", `  path: ./apps/test
   dependsOn:
     - name: cluster-settings
   sourceRef:
@@ -64,7 +68,8 @@ func TestOrchestrator_CrossTreeBaseSubstitution(t *testing.T) {
       target:
         group: kustomize.toolkit.fluxcd.io
         kind: Kustomization
-`))
+`),
+	)
 
 	testutil.WriteFile(t, dir, "settings/kustomization.yaml", "resources:\n  - ./cluster-settings.yaml\n")
 	testutil.WriteFile(t, dir, "settings/cluster-settings.yaml", `apiVersion: v1
@@ -87,7 +92,16 @@ data:
 	testutil.WriteFile(t, dir, "apps/base/app-a/kustomization.yaml", "resources:\n  - ks.yaml\n  - cm.yaml\n")
 	// app-a is a ROOT — no dependsOn — so it fires as soon as its source is
 	// ready, the case that consistently lost the race pre-fix.
-	testutil.WriteFile(t, dir, "apps/base/app-a/ks.yaml", testutil.KustomizationYAML("app-a", "flux-system", "  path: ./apps/${CLUSTER_ENV}/app-a\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n"))
+	testutil.WriteFile(
+		t,
+		dir,
+		"apps/base/app-a/ks.yaml",
+		testutil.KustomizationYAML(
+			"app-a",
+			"flux-system",
+			"  path: ./apps/${CLUSTER_ENV}/app-a\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n",
+		),
+	)
 	testutil.WriteFile(t, dir, "apps/base/app-a/cm.yaml", `apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -96,7 +110,16 @@ metadata:
 `)
 
 	testutil.WriteFile(t, dir, "apps/base/app-b/kustomization.yaml", "resources:\n  - ks.yaml\n  - cm.yaml\n")
-	testutil.WriteFile(t, dir, "apps/base/app-b/ks.yaml", testutil.KustomizationYAML("app-b", "flux-system", "  path: ./apps/${CLUSTER_ENV}/app-b\n  dependsOn:\n    - name: app-a\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n"))
+	testutil.WriteFile(
+		t,
+		dir,
+		"apps/base/app-b/ks.yaml",
+		testutil.KustomizationYAML(
+			"app-b",
+			"flux-system",
+			"  path: ./apps/${CLUSTER_ENV}/app-b\n  dependsOn:\n    - name: app-a\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n",
+		),
+	)
 	testutil.WriteFile(t, dir, "apps/base/app-b/cm.yaml", `apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -104,7 +127,11 @@ metadata:
   namespace: flux-system
 `)
 
-	renderedSingleton1, err := RenderTrees(t.Context(), []Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true, Concurrency: 2})
+	renderedSingleton1, err := RenderTrees(
+		t.Context(),
+		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
+		Config{WipeSecrets: true, Concurrency: 2},
+	)
 	if len(renderedSingleton1) != 1 {
 		t.Fatalf("missing render: %v", err)
 	}

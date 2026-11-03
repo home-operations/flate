@@ -46,7 +46,10 @@ func (c *admissionClosure) comparisonSources() *admissionSources {
 		c.comparisons.storage = slices.Grow(c.comparisons.storage, count+1)
 		for source := range c.loader.Options.Changes.Sources() {
 			changes, snapshots, declarations := c.loader.Options.Changes.ForSource(source)
-			c.comparisons.storage = append(c.comparisons.storage, admissionSource{source: source, changes: changes, snapshots: snapshots, declarations: declarations})
+			c.comparisons.storage = append(
+				c.comparisons.storage,
+				admissionSource{source: source, changes: changes, snapshots: snapshots, declarations: declarations},
+			)
 		}
 		for i := range c.comparisons.storage {
 			evidence := &c.comparisons.storage[i]
@@ -67,7 +70,10 @@ func (c *admissionClosure) sourceEvidence(source manifest.NamedResource) *admiss
 		return evidence
 	}
 	changes, snapshots, declarations := c.loader.Options.Changes.ForSource(source)
-	comparisons.storage = append(comparisons.storage, admissionSource{source: source, changes: changes, snapshots: snapshots, declarations: declarations})
+	comparisons.storage = append(
+		comparisons.storage,
+		admissionSource{source: source, changes: changes, snapshots: snapshots, declarations: declarations},
+	)
 	evidence := &comparisons.storage[len(comparisons.storage)-1]
 	comparisons.bindings[source] = evidence
 	return evidence
@@ -111,7 +117,13 @@ func (c *admissionClosure) sourceFiles(source manifest.NamedResource) iter.Seq[s
 		}
 		for _, file := range evidence.paths {
 			if evidence.paired {
-				_, file = c.coordinates(manifest.Production{Source: source, File: file, Path: filepath.Join(evidence.input.LocalPath, filepath.FromSlash(file))})
+				_, file = c.coordinates(
+					manifest.Production{
+						Source: source,
+						File:   file,
+						Path:   filepath.Join(evidence.input.LocalPath, filepath.FromSlash(file)),
+					},
+				)
 			}
 			if !yield(file) {
 				return
@@ -174,7 +186,8 @@ func (c *admissionClosure) changedClaim(reader manifest.FileReader, file string)
 			file = filepath.ToSlash(relative)
 		}
 		return slices.ContainsFunc(roots, func(root string) bool {
-			return root == "." || root == "" || manifest.HasEnvsubstReference(root) || file == root || strings.HasPrefix(file, strings.TrimSuffix(root, "/")+"/")
+			return root == "." || root == "" || manifest.HasEnvsubstReference(root) || file == root ||
+				strings.HasPrefix(file, strings.TrimSuffix(root, "/")+"/")
 		})
 	}
 	return true
@@ -199,17 +212,29 @@ func (c *admissionClosure) changedInput(consumer, dependency manifest.NamedResou
 			if consumer == dependency && !delta.Contains(changed.File) {
 				continue
 			}
-			if id.Group != dependency.Group || id.Kind != dependency.Kind || id.Name != dependency.Name || id.Namespace != "" && id.Namespace != dependency.Namespace {
+			if id.Group != dependency.Group || id.Kind != dependency.Kind || id.Name != dependency.Name ||
+				id.Namespace != "" && id.Namespace != dependency.Namespace {
 				continue
 			}
 			file := changed.File
-			if occurrence, located := c.loader.occurrence(dependency); changed.Unbound && (located || len(c.loader.Index.Claims) != 0 || len(c.loader.Index.Readers) != 0) {
+			if occurrence, located := c.loader.occurrence(
+				dependency,
+			); changed.Unbound &&
+				(located || len(c.loader.Index.Claims) != 0 || len(c.loader.Index.Readers) != 0) {
 				indexed := file
 				if paired && input != nil {
-					_, indexed = c.coordinates(manifest.Production{Source: source, File: file, Path: filepath.Join(input.LocalPath, filepath.FromSlash(file))})
+					_, indexed = c.coordinates(
+						manifest.Production{
+							Source: source,
+							File:   file,
+							Path:   filepath.Join(input.LocalPath, filepath.FromSlash(file)),
+						},
+					)
 				}
 				if located {
-					if indexed != c.loader.fileCoordinate(filepath.Join(occurrence.Declaration.Source, filepath.FromSlash(occurrence.Declaration.File))) {
+					if indexed != c.loader.fileCoordinate(
+						filepath.Join(occurrence.Declaration.Source, filepath.FromSlash(occurrence.Declaration.File)),
+					) {
 						continue
 					}
 				} else {
@@ -232,7 +257,9 @@ func (c *admissionClosure) changedInput(consumer, dependency manifest.NamedResou
 				_, origins, _ := delta.ForSource(manifest.BootstrapSourceID)
 				local := false
 				for _, origin := range origins {
-					local = local || origin != nil && (origin.LocalPath == c.loader.SourceRoot || origin.LocalRoot == c.loader.SourceRoot)
+					local = local ||
+						origin != nil &&
+							(origin.LocalPath == c.loader.SourceRoot || origin.LocalRoot == c.loader.SourceRoot)
 				}
 				if (origins[0] != nil || origins[1] != nil) && !local {
 					continue
@@ -306,7 +333,11 @@ func (c *admissionClosure) changedProduction(p manifest.Production) bool {
 	return delta.Contains(indexed)
 }
 
-func (c *admissionClosure) reverse(id manifest.NamedResource, object manifest.BaseManifest, ref manifest.Reference) bool {
+func (c *admissionClosure) reverse(
+	id manifest.NamedResource,
+	object manifest.BaseManifest,
+	ref manifest.Reference,
+) bool {
 	if object != nil {
 		for input := range manifest.References(object, manifest.ReferenceRelations) {
 			if input.AffectedInput() && input.NamedResource == ref.NamedResource {

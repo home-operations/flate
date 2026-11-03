@@ -9,6 +9,7 @@ func filesForTest(index *manifest.DiscoveryIndex) map[manifest.NamedResource]str
 	}
 	return files
 }
+
 func parentsForTest(index *manifest.DiscoveryIndex) map[manifest.NamedResource]manifest.NamedResource {
 	parents := map[manifest.NamedResource]manifest.NamedResource{}
 	for id, r := range index.Records {
@@ -18,6 +19,7 @@ func parentsForTest(index *manifest.DiscoveryIndex) map[manifest.NamedResource]m
 	}
 	return parents
 }
+
 func ownersForTest(index *manifest.DiscoveryIndex, file string) []manifest.NamedResource {
 	owners, _ := index.OwnersOfFile(file)
 	return owners

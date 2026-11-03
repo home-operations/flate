@@ -77,7 +77,12 @@ func (f testInputs) lookup(obj manifest.BaseManifest) source.SecretGetter {
 
 func TestFetcher_InputsRequireRegistry(t *testing.T) {
 	t.Parallel()
-	provider := &manifest.ResourceSetInputProvider{Name: "static", Namespace: "ns", Type: fluxopv1.InputProviderStatic, URL: "oci://registry.test/app"}
+	provider := &manifest.ResourceSetInputProvider{
+		Name:      "static",
+		Namespace: "ns",
+		Type:      fluxopv1.InputProviderStatic,
+		URL:       "oci://registry.test/app",
+	}
 	_, err := (&Fetcher{}).FetchInputs(t.Context(), provider, nil, cache.Policy{})
 	if !errors.Is(err, manifest.ErrInput) {
 		t.Fatalf("non-registry inputs: %v", err)
@@ -94,10 +99,20 @@ func TestFetcher_InputsAcquisitionWaves(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	host := mustURL(t, srv.URL).Host
-	provider := &manifest.ResourceSetInputProvider{Name: "images", Namespace: "apps",
-		Type: fluxopv1.InputProviderOCIArtifactTag, URL: "oci://" + host + "/fixture", Insecure: true, SecretRef: &manifest.LocalObjectReference{Name: "auth"}}
+	provider := &manifest.ResourceSetInputProvider{
+		Name:      "images",
+		Namespace: "apps",
+		Type:      fluxopv1.InputProviderOCIArtifactTag,
+		URL:       "oci://" + host + "/fixture",
+		Insecure:  true,
+		SecretRef: &manifest.LocalObjectReference{Name: "auth"},
+	}
 	inputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
-		return &manifest.Secret{StringData: map[string]any{".dockerconfigjson": fmt.Sprintf(`{"auths":{%q:{"username":"fixture","password":"fixture"}}}`, host)}}
+		return &manifest.Secret{
+			StringData: map[string]any{
+				".dockerconfigjson": fmt.Sprintf(`{"auths":{%q:{"username":"fixture","password":"fixture"}}}`, host),
+			},
+		}
 	}}
 	f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, t.TempDir(), cache.New)}
 	var artifacts [2]*store.SourceArtifact
@@ -151,7 +166,8 @@ func TestFetcher_InputsSelectionAndRefresh(t *testing.T) {
 				if strings.HasSuffix(r.URL.Path, "/tags/list") {
 					lists.Add(1)
 					w.Header().Set("Content-Type", "application/json")
-					_ = json.NewEncoder(w).Encode(map[string]any{"name": "fixture", "tags": []string{"1.1.0", "v1.2.0", "1.2.0", "2.0.0", "dev", "1.0.0"}})
+					_ = json.NewEncoder(w).
+						Encode(map[string]any{"name": "fixture", "tags": []string{"1.1.0", "v1.2.0", "1.2.0", "2.0.0", "dev", "1.0.0"}})
 					return
 				}
 				if strings.Contains(r.URL.Path, "/manifests/") {
@@ -178,13 +194,27 @@ func TestFetcher_InputsSelectionAndRefresh(t *testing.T) {
 				srv.StartTLS()
 			}
 			t.Cleanup(srv.Close)
-			provider := &manifest.ResourceSetInputProvider{Name: "images", Namespace: "apps",
-				Type: fluxopv1.InputProviderOCIArtifactTag, URL: "oci://" + mustURL(t, srv.URL).Host + "/fixture", Insecure: true,
-				Filter:        &fluxopv1.ResourceSetInputFilter{IncludeTag: `^v?1\.`, Semver: ">=1.0.0", Limit: 2},
-				DefaultValues: fluxopv1.ResourceSetInput{"color": &apiextensionsv1.JSON{Raw: []byte(`"blue"`)}, "id": &apiextensionsv1.JSON{Raw: []byte(`"wrong"`)}, "tag": &apiextensionsv1.JSON{Raw: []byte(`"wrong"`)}, "digest": &apiextensionsv1.JSON{Raw: []byte(`"wrong"`)}}}
+			provider := &manifest.ResourceSetInputProvider{
+				Name:      "images",
+				Namespace: "apps",
+				Type:      fluxopv1.InputProviderOCIArtifactTag,
+				URL:       "oci://" + mustURL(t, srv.URL).Host + "/fixture",
+				Insecure:  true,
+				Filter:    &fluxopv1.ResourceSetInputFilter{IncludeTag: `^v?1\.`, Semver: ">=1.0.0", Limit: 2},
+				DefaultValues: fluxopv1.ResourceSetInput{
+					"color":  &apiextensionsv1.JSON{Raw: []byte(`"blue"`)},
+					"id":     &apiextensionsv1.JSON{Raw: []byte(`"wrong"`)},
+					"tag":    &apiextensionsv1.JSON{Raw: []byte(`"wrong"`)},
+					"digest": &apiextensionsv1.JSON{Raw: []byte(`"wrong"`)},
+				},
+			}
 			registryConfig := filepath.Join(t.TempDir(), "config.json")
 			testutil.WriteFileAt(t, registryConfig, `{}`)
-			f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, t.TempDir(), cache.New), RegistryConfig: registryConfig}
+			f := &Fetcher{
+				Network:        newTestNetwork(t),
+				Cache:          cachetest.New(t, t.TempDir(), cache.New),
+				RegistryConfig: registryConfig,
+			}
 			var previous *store.SourceArtifact
 			for run := range 3 {
 				if run == 2 {
@@ -202,10 +232,20 @@ func TestFetcher_InputsSelectionAndRefresh(t *testing.T) {
 				}
 				want := []map[string]any{}
 				for _, tag := range []string{"v1.2.0", "1.2.0"} {
-					want = append(want, map[string]any{"id": strconv.FormatUint(uint64(adler32.Checksum([]byte(tag))), 10), "tag": tag, "digest": digest, "color": "blue"})
+					want = append(
+						want,
+						map[string]any{
+							"id":     strconv.FormatUint(uint64(adler32.Checksum([]byte(tag))), 10),
+							"tag":    tag,
+							"digest": digest,
+							"color":  "blue",
+						},
+					)
 				}
 				assert.Diff(t, got, want)
-				if artifact.Kind != manifest.KindResourceSetInputProvider || artifact.Content == "" || artifact.Key == "" || len(artifact.Warnings) != 0 {
+				if artifact.Kind != manifest.KindResourceSetInputProvider || artifact.Content == "" ||
+					artifact.Key == "" ||
+					len(artifact.Warnings) != 0 {
 					t.Fatalf("incomplete input artifact: %+v", artifact)
 				}
 				if previous != nil {
@@ -214,7 +254,8 @@ func TestFetcher_InputsSelectionAndRefresh(t *testing.T) {
 					} else if artifact.Content == previous.Content {
 						t.Fatal("changed digest retained input identity")
 					}
-					if run == 2 && strings.Contains(mustReadFile(t, previous.FS, "inputs.json"), second.manifestDigest) {
+					if run == 2 &&
+						strings.Contains(mustReadFile(t, previous.FS, "inputs.json"), second.manifestDigest) {
 						t.Fatal("refresh mutated held input artifact")
 					}
 				}
@@ -264,7 +305,8 @@ func TestFetcher_InputsAuthentication(t *testing.T) {
 			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests.Add(1)
 				if tc.bearer && r.URL.Path != "/token" {
-					w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer realm="https://%s/token",service="fixture",scope="repository:fixture:pull"`, r.Host))
+					w.Header().
+						Set("WWW-Authenticate", fmt.Sprintf(`Bearer realm="https://%s/token",service="fixture",scope="repository:fixture:pull"`, r.Host))
 					w.WriteHeader(http.StatusUnauthorized)
 					return
 				}
@@ -283,7 +325,13 @@ func TestFetcher_InputsAuthentication(t *testing.T) {
 			}))
 			t.Cleanup(srv.Close)
 			host := mustURL(t, srv.URL).Host
-			provider := &manifest.ResourceSetInputProvider{Name: "images", Namespace: "apps", Type: fluxopv1.InputProviderOCIArtifactTag, URL: "oci://" + host + "/fixture", Insecure: true}
+			provider := &manifest.ResourceSetInputProvider{
+				Name:      "images",
+				Namespace: "apps",
+				Type:      fluxopv1.InputProviderOCIArtifactTag,
+				URL:       "oci://" + host + "/fixture",
+				Insecure:  true,
+			}
 			credentials := fmt.Sprintf(`{"auths":{%q:{"username":"fixture","password":"fixture"}}}`, host)
 			registryConfig := filepath.Join(t.TempDir(), "config.json")
 			body := `{}`
@@ -324,7 +372,11 @@ func TestFetcher_InputsAuthentication(t *testing.T) {
 			}}
 			reads := inputs.readSet(provider)
 			defer reads.Close()
-			f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, "", cache.New), RegistryConfig: registryConfig}
+			f := &Fetcher{
+				Network:        newTestNetwork(t),
+				Cache:          cachetest.New(t, "", cache.New),
+				RegistryConfig: registryConfig,
+			}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			if tc.canceled {
@@ -343,7 +395,8 @@ func TestFetcher_InputsAuthentication(t *testing.T) {
 			anonymous := hasMissing && missing.AnonymousDenied
 			assert.Equal(t, anonymous, tc.wantAnonymous)
 			if tc.wantAnonymous {
-				if missing.Owner != provider.Named() || missing.Secret != (manifest.NamedResource{}) || missing.Cause == nil {
+				if missing.Owner != provider.Named() || missing.Secret != (manifest.NamedResource{}) ||
+					missing.Cause == nil {
 					t.Fatalf("denial lost identity or cause: %+v", missing)
 				}
 				if tc.challenge {
@@ -369,7 +422,8 @@ func TestFetcher_InputsAuthentication(t *testing.T) {
 				t.Fatalf("lost deadline: %v", err)
 			}
 			wantRequests := int32(1)
-			if tc.missing || tc.wiped || tc.badAuth || tc.badCert || tc.missingCert || tc.canceled || tc.deadline || tc.badMachine {
+			if tc.missing || tc.wiped || tc.badAuth || tc.badCert || tc.missingCert || tc.canceled || tc.deadline ||
+				tc.badMachine {
 				wantRequests = 0
 			}
 			if tc.bearer {
@@ -411,12 +465,22 @@ func TestFetcher_InputsMachineCredentialsReuse(t *testing.T) {
 	t.Setenv("FLATE_HELPER_MARKER", marker)
 	t.Setenv("FLATE_HELPER_SECRET", "first")
 	helper := filepath.Join(bin, "docker-credential-fixture")
-	testutil.WriteFileAt(t, helper, "#!/bin/sh\nprintf called >> \"$FLATE_HELPER_MARKER\"\nprintf '{\"Username\":\"fixture\",\"Secret\":\"%s\"}' \"$FLATE_HELPER_SECRET\"\n")
+	testutil.WriteFileAt(
+		t,
+		helper,
+		"#!/bin/sh\nprintf called >> \"$FLATE_HELPER_MARKER\"\nprintf '{\"Username\":\"fixture\",\"Secret\":\"%s\"}' \"$FLATE_HELPER_SECRET\"\n",
+	)
 	assert.NoError(t, os.Chmod(helper, 0o700))
 	config := filepath.Join(t.TempDir(), "config.json")
 	testutil.WriteFileAt(t, config, fmt.Sprintf(`{"credHelpers":{%q:"fixture"}}`, mustURL(t, srv.URL).Host))
 	f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, t.TempDir(), cache.New), RegistryConfig: config}
-	provider := &manifest.ResourceSetInputProvider{Name: "images", Namespace: "apps", Type: fluxopv1.InputProviderOCIArtifactTag, URL: "oci://" + mustURL(t, srv.URL).Host + "/fixture", Insecure: true}
+	provider := &manifest.ResourceSetInputProvider{
+		Name:      "images",
+		Namespace: "apps",
+		Type:      fluxopv1.InputProviderOCIArtifactTag,
+		URL:       "oci://" + mustURL(t, srv.URL).Host + "/fixture",
+		Insecure:  true,
+	}
 	repo := &manifest.OCIRepository{Name: "source", Namespace: "apps", URL: provider.URL, Insecure: true}
 	sourceReads := (testInputs{}).readSet(repo)
 	defer sourceReads.Close()
@@ -478,10 +542,20 @@ func TestFetcher_InputsCanceledWork(t *testing.T) {
 			t.Cleanup(srv.Close)
 			config := filepath.Join(t.TempDir(), "config.json")
 			testutil.WriteFileAt(t, config, `{}`)
-			provider := &manifest.ResourceSetInputProvider{Name: "images", Namespace: "apps", Type: fluxopv1.InputProviderOCIArtifactTag, URL: "oci://" + mustURL(t, srv.URL).Host + "/fixture", Insecure: true}
+			provider := &manifest.ResourceSetInputProvider{
+				Name:      "images",
+				Namespace: "apps",
+				Type:      fluxopv1.InputProviderOCIArtifactTag,
+				URL:       "oci://" + mustURL(t, srv.URL).Host + "/fixture",
+				Insecure:  true,
+			}
 			reads := (testInputs{}).readSet(provider)
 			defer reads.Close()
-			f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, t.TempDir(), cache.New), RegistryConfig: config}
+			f := &Fetcher{
+				Network:        newTestNetwork(t),
+				Cache:          cachetest.New(t, t.TempDir(), cache.New),
+				RegistryConfig: config,
+			}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			done := make(chan error)
@@ -537,11 +611,26 @@ func TestFetcher_InputsRetry(t *testing.T) {
 			t.Cleanup(srv.Close)
 			config := filepath.Join(t.TempDir(), "config.json")
 			testutil.WriteFileAt(t, config, `{}`)
-			provider := &manifest.ResourceSetInputProvider{Name: "images", Namespace: "apps", Type: fluxopv1.InputProviderOCIArtifactTag, URL: "oci://" + mustURL(t, srv.URL).Host + "/fixture", Insecure: true}
+			provider := &manifest.ResourceSetInputProvider{
+				Name:      "images",
+				Namespace: "apps",
+				Type:      fluxopv1.InputProviderOCIArtifactTag,
+				URL:       "oci://" + mustURL(t, srv.URL).Host + "/fixture",
+				Insecure:  true,
+			}
 			reads := (testInputs{}).readSet(provider)
 			defer reads.Close()
-			f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, t.TempDir(), cache.New), RegistryConfig: config}
-			got, err := f.FetchInputs(t.Context(), provider, reads, cache.Policy{Retry: cache.RetryConfig{Attempts: 2, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}})
+			f := &Fetcher{
+				Network:        newTestNetwork(t),
+				Cache:          cachetest.New(t, t.TempDir(), cache.New),
+				RegistryConfig: config,
+			}
+			got, err := f.FetchInputs(
+				t.Context(),
+				provider,
+				reads,
+				cache.Policy{Retry: cache.RetryConfig{Attempts: 2, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}},
+			)
 			assert.NoError(t, err)
 			if !strings.Contains(mustReadFile(t, got.FS, "inputs.json"), artifact.manifestDigest) {
 				t.Fatal("retry lost resolved digest")

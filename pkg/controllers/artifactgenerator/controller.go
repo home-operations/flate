@@ -42,7 +42,11 @@ func (*Controller) Owns(id manifest.NamedResource) bool {
 }
 
 // ReconcileNode returns the captured assessment of ArtifactGenerator evaluation.
-func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
+func (c *Controller) ReconcileNode(
+	ctx context.Context,
+	id manifest.NamedResource,
+	level manifest.DrainLevel,
+) *base.Execution {
 	ex := &execution{Controller: c}
 	ex.run.Init(c.Controller, id)
 	ex.run.Dispatch(ctx, level, ex, (*execution).reconcile)
@@ -106,7 +110,11 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 	if err != nil {
 		return err
 	}
-	evaluation := evaluation{owner: c.cache, inputs: make(map[string]*store.SourceArtifact, len(spec.Sources)), maxAge: cache.Forever}
+	evaluation := evaluation{
+		owner:  c.cache,
+		inputs: make(map[string]*store.SourceArtifact, len(spec.Sources)),
+		maxAge: cache.Forever,
+	}
 	views := make(map[string]fs.FS, len(spec.Sources))
 	selections := make(map[string]store.ArtifactRead, len(spec.Sources))
 	for _, output := range spec.Artifacts {
@@ -126,7 +134,10 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 			c.run.Reads.GetArtifact(ref.NamedResource, read)
 		}
 		evaluation.inputs[alias], views[alias] = artifact, artifact.FS
-		evaluation.identity = append(evaluation.identity, inputIdentity{Alias: alias, Source: ref.NamedResource, Input: artifact.Input(read)})
+		evaluation.identity = append(
+			evaluation.identity,
+			inputIdentity{Alias: alias, Source: ref.NamedResource, Input: artifact.Input(read)},
+		)
 		if artifact.Content == "" {
 			evaluation.maxAge = 0
 		}
@@ -162,17 +173,33 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 			Request   request
 			Inputs    []inputIdentity
 		}{"artifactgenerator/output/v1", id, req, evaluation.identity}}
-		input, descriptor, keyID, err := c.cache.Acquire(ctx, key, cache.Policy{MaxAge: evaluation.maxAge}, func(ctx context.Context, target cache.ProducerInput) (cache.ProducerResult, error) {
-			return evaluation.produce(ctx, req, target)
-		})
+		input, descriptor, keyID, err := c.cache.Acquire(
+			ctx,
+			key,
+			cache.Policy{MaxAge: evaluation.maxAge},
+			func(ctx context.Context, target cache.ProducerInput) (cache.ProducerResult, error) {
+				return evaluation.produce(ctx, req, target)
+			},
+		)
 		if err != nil {
 			return fmt.Errorf("evaluate %s: %w", req.Output.Name, err)
 		}
 		digest := descriptor.Annotations["flate.tree-digest"]
 		if input == nil || keyID == "" || digest == "" {
-			return manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("incomplete generated source %q", req.Output.Name))
+			return manifest.NewError(
+				manifest.ErrInput,
+				nil,
+				fmt.Sprintf("incomplete generated source %q", req.Output.Name),
+			)
 		}
-		payload := &store.SourceArtifact{Kind: manifest.KindExternalArtifact, FS: input, Key: keyID, Content: cache.AcquisitionIdentity(input), Digest: digest, Revision: "latest@" + digest}
+		payload := &store.SourceArtifact{
+			Kind:     manifest.KindExternalArtifact,
+			FS:       input,
+			Key:      keyID,
+			Content:  cache.AcquisitionIdentity(input),
+			Digest:   digest,
+			Revision: "latest@" + digest,
+		}
 		if alias := strings.TrimPrefix(req.Output.Revision, "@"); alias != "" {
 			payload.Revision = evaluation.inputs[alias].Revision
 		}
@@ -189,7 +216,14 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 		}
 		maps.Copy(labels, req.Captures)
 		labels["app.kubernetes.io/managed-by"], labels["source.extensions.fluxcd.io/generator"] = "source-watcher", uid
-		declaration := raw.ExternalArtifact(metav1.ObjectMeta{Name: req.Output.Name, Namespace: id.Namespace, Labels: labels, Annotations: spec.CommonMetadata.Annotations})
+		declaration := raw.ExternalArtifact(
+			metav1.ObjectMeta{
+				Name:        req.Output.Name,
+				Namespace:   id.Namespace,
+				Labels:      labels,
+				Annotations: spec.CommonMetadata.Annotations,
+			},
+		)
 		generated, err := declaration.RenderDocument()
 		if err != nil {
 			return err
@@ -201,7 +235,12 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 		}
 		targetID := declaration.Named()
 		attempt.Children, attempt.Manifests, attempt.Complete = children, docs, false
-		if err := c.run.Emit(ctx, id, &attempt, map[manifest.NamedResource]*store.SourceArtifact{targetID: payload}); err != nil {
+		if err := c.run.Emit(
+			ctx,
+			id,
+			&attempt,
+			map[manifest.NamedResource]*store.SourceArtifact{targetID: payload},
+		); err != nil {
 			return err
 		}
 		desired, documents = append(desired, children...), append(documents, docs...)

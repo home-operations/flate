@@ -38,12 +38,18 @@ func TestResolveStaticPath_ParentSubstitutions(t *testing.T) {
 			}
 			parent.PostBuild = &kustomizev1.PostBuild{Substitute: inline}
 			if tc.reference {
-				parent.PostBuild.SubstituteFrom = []kustomizev1.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "settings"}}
+				parent.PostBuild.SubstituteFrom = []kustomizev1.SubstituteReference{
+					{Kind: manifest.KindConfigMap, Name: "settings"},
+				}
 				if tc.missingReference {
 					parent.PostBuild.SubstituteFrom[0].Name = "missing"
 				}
 			}
-			provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{{Name: "settings", Namespace: "apps", Data: map[string]any{"ROOT": "apps/blue"}}}}
+			provider := &SliceProvider{
+				ConfigMaps: []*manifest.ConfigMap{
+					{Name: "settings", Namespace: "apps", Data: map[string]any{"ROOT": "apps/blue"}},
+				},
+			}
 			before := parent.Clone()
 			got, known := ResolveStaticPath(tc.path, parent, provider)
 			assert.Equal(t, known, tc.known)

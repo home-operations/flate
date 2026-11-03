@@ -79,7 +79,12 @@ func readTestRenderFrame(tb testing.TB, cache *TreeCache, key string) (readSetSn
 	var r fs.FS
 	var err error
 	for _, phase := range []sourcecache.RenderMode{sourcecache.RenderAccepted, sourcecache.RenderPending} {
-		r, _, _, err = cache.owner.Blob(tb.Context(), sourcecache.BlobKey{Content: key, Render: phase}, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
+		r, _, _, err = cache.owner.Blob(
+			tb.Context(),
+			sourcecache.BlobKey{Content: key, Render: phase},
+			sourcecache.Policy{MaxAge: sourcecache.Forever},
+			nil,
+		)
 		if !errors.Is(err, errdef.ErrNotFound) {
 			break
 		}
@@ -119,10 +124,15 @@ func publishTestFrame(tb testing.TB, owner *sourcecache.Cache, key sourcecache.B
 			tb.Fatal(err)
 		}
 	}
-	_, _, _, err := owner.Blob(tb.Context(), key, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
-		_, err := w.Write(raw)
-		return sourcecache.ProducerResult{}, err
-	})
+	_, _, _, err := owner.Blob(
+		tb.Context(),
+		key,
+		sourcecache.Policy{MaxAge: 0},
+		func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+			_, err := w.Write(raw)
+			return sourcecache.ProducerResult{}, err
+		},
+	)
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -148,7 +158,10 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 			c := newTestTreeCache(t, storage)
 			docs, receipt1, err := testutil.RenderMaps(Render(t.Context(), c, req, sourcecache.RetryConfig{}))
 			if err == nil {
-				if recordErr := c.RecordRender(t.Context(), RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt1}); recordErr != nil {
+				if recordErr := c.RecordRender(
+					t.Context(),
+					RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt1},
+				); recordErr != nil {
 					t.Fatal(recordErr)
 				}
 			}
@@ -174,9 +187,25 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 	cache := newTestTreeCache(t, cacheDir)
 	ctx := t.Context()
 
-	out1, receipt2, err := testutil.RenderMaps(Render(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "selected", Spec: demoSpec}, sourcecache.RetryConfig{}))
+	out1, receipt2, err := testutil.RenderMaps(
+		Render(
+			ctx,
+			cache,
+			RenderRequest{
+				Source:      localSource(t, root),
+				Label:       root,
+				ApplyIgnore: false,
+				SubPath:     "selected",
+				Spec:        demoSpec,
+			},
+			sourcecache.RetryConfig{},
+		),
+	)
 	if err == nil {
-		if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt2}); recordErr != nil {
+		if recordErr := cache.RecordRender(
+			ctx,
+			RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt2},
+		); recordErr != nil {
 			t.Fatal(recordErr)
 		}
 	}
@@ -199,9 +228,19 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 	}
 	out1[0]["metadata"].(map[string]any)["name"] = "mutated"
 	var receipt3 *manifest.RenderReceipt
-	out1, receipt3, err = testutil.RenderMaps(Render(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: "selected", Spec: demoSpec}, sourcecache.RetryConfig{}))
+	out1, receipt3, err = testutil.RenderMaps(
+		Render(
+			ctx,
+			cache,
+			RenderRequest{Source: localSource(t, root), Label: root, SubPath: "selected", Spec: demoSpec},
+			sourcecache.RetryConfig{},
+		),
+	)
 	if err == nil {
-		if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt3}); recordErr != nil {
+		if recordErr := cache.RecordRender(
+			ctx,
+			RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt3},
+		); recordErr != nil {
 			t.Fatal(recordErr)
 		}
 	}
@@ -216,16 +255,37 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 		t.Fatal("owner did not retain completed render")
 	}
 	if eligible {
-		publishTestFrame(t, cache.owner, sourcecache.BlobKey{Content: key, Render: sourcecache.RenderPending}, testRenderFrame(t, snap, testRenderPayload(t, "SENTINEL")))
+		publishTestFrame(
+			t,
+			cache.owner,
+			sourcecache.BlobKey{Content: key, Render: sourcecache.RenderPending},
+			testRenderFrame(t, snap, testRenderPayload(t, "SENTINEL")),
+		)
 	}
 	cache.Close()
 	if err := cache.owner.Close(); err != nil {
 		t.Fatal(err)
 	}
 	cache = newTestTreeCache(t, cacheDir)
-	out2, receipt4, err := testutil.RenderMaps(Render(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "selected", Spec: demoSpec}, sourcecache.RetryConfig{}))
+	out2, receipt4, err := testutil.RenderMaps(
+		Render(
+			ctx,
+			cache,
+			RenderRequest{
+				Source:      localSource(t, root),
+				Label:       root,
+				ApplyIgnore: false,
+				SubPath:     "selected",
+				Spec:        demoSpec,
+			},
+			sourcecache.RetryConfig{},
+		),
+	)
 	if err == nil {
-		if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt4}); recordErr != nil {
+		if recordErr := cache.RecordRender(
+			ctx,
+			RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt4},
+		); recordErr != nil {
 			t.Fatal(recordErr)
 		}
 	}
@@ -246,9 +306,25 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 		[]byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\ndata:\n  k: v2\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	out3, receipt5, err := testutil.RenderMaps(Render(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "selected", Spec: demoSpec}, sourcecache.RetryConfig{}))
+	out3, receipt5, err := testutil.RenderMaps(
+		Render(
+			ctx,
+			cache,
+			RenderRequest{
+				Source:      localSource(t, root),
+				Label:       root,
+				ApplyIgnore: false,
+				SubPath:     "selected",
+				Spec:        demoSpec,
+			},
+			sourcecache.RetryConfig{},
+		),
+	)
 	if err == nil {
-		if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt5}); recordErr != nil {
+		if recordErr := cache.RecordRender(
+			ctx,
+			RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt5},
+		); recordErr != nil {
 			t.Fatal(recordErr)
 		}
 	}
@@ -262,10 +338,25 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 	if !hasRenderField(out3, "k", "v2") {
 		t.Errorf("re-render should reflect the edit; got %s", out3)
 	}
-	testutil.WriteFile(t, root, "patch.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo}\ndata: {patched: v2}\n")
-	out4, receipt6, err := testutil.RenderMaps(Render(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: "selected", Spec: demoSpec}, sourcecache.RetryConfig{}))
+	testutil.WriteFile(
+		t,
+		root,
+		"patch.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo}\ndata: {patched: v2}\n",
+	)
+	out4, receipt6, err := testutil.RenderMaps(
+		Render(
+			ctx,
+			cache,
+			RenderRequest{Source: localSource(t, root), Label: root, SubPath: "selected", Spec: demoSpec},
+			sourcecache.RetryConfig{},
+		),
+	)
 	if err == nil {
-		if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt6}); recordErr != nil {
+		if recordErr := cache.RecordRender(
+			ctx,
+			RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt6},
+		); recordErr != nil {
 			t.Fatal(recordErr)
 		}
 	}
@@ -273,11 +364,26 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 	if err != nil || !hasRenderField(out4, "patched", "v2") {
 		t.Fatalf("consumed patch edit replayed stale output: %s, %v", out4, err)
 	}
-	testutil.WriteFile(t, root, "child/kustomization.yaml", "namePrefix: child-\nresources: [../cm.yaml]\npatches: [{path: ../patch.yaml}]\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"child/kustomization.yaml",
+		"namePrefix: child-\nresources: [../cm.yaml]\npatches: [{path: ../patch.yaml}]\n",
+	)
 	var receipt7 *manifest.RenderReceipt
-	out4, receipt7, err = testutil.RenderMaps(Render(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: "selected", Spec: demoSpec}, sourcecache.RetryConfig{}))
+	out4, receipt7, err = testutil.RenderMaps(
+		Render(
+			ctx,
+			cache,
+			RenderRequest{Source: localSource(t, root), Label: root, SubPath: "selected", Spec: demoSpec},
+			sourcecache.RetryConfig{},
+		),
+	)
 	if err == nil {
-		if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt7}); recordErr != nil {
+		if recordErr := cache.RecordRender(
+			ctx,
+			RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt7},
+		); recordErr != nil {
 			t.Fatal(recordErr)
 		}
 	}
@@ -288,9 +394,19 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 	testutil.WriteFile(t, root, "child/kustomization.yaml", "resources: [../cm.yaml]\ngenerators: [../plugins]\n")
 	testutil.WriteFile(t, root, "value.txt", "v2")
 	var receipt8 *manifest.RenderReceipt
-	out4, receipt8, err = testutil.RenderMaps(Render(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: "selected", Spec: demoSpec}, sourcecache.RetryConfig{}))
+	out4, receipt8, err = testutil.RenderMaps(
+		Render(
+			ctx,
+			cache,
+			RenderRequest{Source: localSource(t, root), Label: root, SubPath: "selected", Spec: demoSpec},
+			sourcecache.RetryConfig{},
+		),
+	)
 	if err == nil {
-		if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt8}); recordErr != nil {
+		if recordErr := cache.RecordRender(
+			ctx,
+			RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt8},
+		); recordErr != nil {
 			t.Fatal(recordErr)
 		}
 	}
@@ -322,17 +438,25 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 		req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: "selected", Spec: spec}
 		out, receipt9, err := testutil.RenderMaps(Render(ctx, cache, req, sourcecache.RetryConfig{}))
 		if err == nil {
-			if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt9}); recordErr != nil {
+			if recordErr := cache.RecordRender(
+				ctx,
+				RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt9},
+			); recordErr != nil {
 				t.Fatal(recordErr)
 			}
 		}
 
-		if err != nil || !hasRenderField(out, strings.SplitN(tc.want, ": ", 2)[0], strings.SplitN(tc.want, ": ", 2)[1]) || reflect.DeepEqual(out, out4) {
+		if err != nil ||
+			!hasRenderField(out, strings.SplitN(tc.want, ": ", 2)[0], strings.SplitN(tc.want, ": ", 2)[1]) ||
+			reflect.DeepEqual(out, out4) {
 			t.Fatalf("typed edit returned stale output: %s, %v", out, err)
 		}
 		repeated, receipt10, err := testutil.RenderMaps(Render(ctx, cache, req, sourcecache.RetryConfig{}))
 		if err == nil {
-			if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt10}); recordErr != nil {
+			if recordErr := cache.RecordRender(
+				ctx,
+				RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt10},
+			); recordErr != nil {
 				t.Fatal(recordErr)
 			}
 		}
@@ -365,7 +489,10 @@ func TestRender_SourceignoreContentInvalidates(t *testing.T) {
 
 	out1, receipt11, err := testutil.RenderMaps(Render(ctx, cache, req, sourcecache.RetryConfig{}))
 	if err == nil {
-		if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt11}); recordErr != nil {
+		if recordErr := cache.RecordRender(
+			ctx,
+			RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt11},
+		); recordErr != nil {
 			t.Fatal(recordErr)
 		}
 	}
@@ -393,7 +520,10 @@ func TestRender_SourceignoreContentInvalidates(t *testing.T) {
 	}
 	out2, receipt12, err := testutil.RenderMaps(Render(ctx, cache, req, sourcecache.RetryConfig{}))
 	if err == nil {
-		if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt12}); recordErr != nil {
+		if recordErr := cache.RecordRender(
+			ctx,
+			RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt12},
+		); recordErr != nil {
 			t.Fatal(recordErr)
 		}
 	}
@@ -422,7 +552,10 @@ func TestRender_SourceignoreContentInvalidates(t *testing.T) {
 	}
 	out3, receipt13, err := testutil.RenderMaps(Render(ctx, cache, req, sourcecache.RetryConfig{}))
 	if err == nil {
-		if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt13}); recordErr != nil {
+		if recordErr := cache.RecordRender(
+			ctx,
+			RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt13},
+		); recordErr != nil {
 			t.Fatal(recordErr)
 		}
 	}
@@ -593,12 +726,19 @@ func TestRender_RemoteCacheDependencies(t *testing.T) {
 						v := version.Load()
 						remoteFiles["remote/cm.yaml"] = cmYAML(fmt.Sprintf("remote-v%d", v))
 						remote := memoryTree(t, remoteFiles)
-						c.SetGitBaseFetcher(func(_ context.Context, req GitBaseRequest, _ sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-							if req.URL != gitURL {
-								t.Errorf("unexpected git URL %q", req.URL)
-							}
-							return &store.SourceArtifact{FS: remote, Key: "family", Content: fmt.Sprint(v), Revision: fmt.Sprint(v)}, nil
-						})
+						c.SetGitBaseFetcher(
+							func(_ context.Context, req GitBaseRequest, _ sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+								if req.URL != gitURL {
+									t.Errorf("unexpected git URL %q", req.URL)
+								}
+								return &store.SourceArtifact{
+									FS:       remote,
+									Key:      "family",
+									Content:  fmt.Sprint(v),
+									Revision: fmt.Sprint(v),
+								}, nil
+							},
+						)
 
 						return c
 					}
@@ -612,9 +752,14 @@ func TestRender_RemoteCacheDependencies(t *testing.T) {
 					version.Store(1)
 					initial := len(trace.snapshot())
 					cache := newCache(cacheDir)
-					out1, receipt16, err := testutil.RenderMaps(Render(t.Context(), cache, request(), sourcecache.RetryConfig{}))
+					out1, receipt16, err := testutil.RenderMaps(
+						Render(t.Context(), cache, request(), sourcecache.RetryConfig{}),
+					)
 					if err == nil {
-						if recordErr := cache.RecordRender(t.Context(), RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt16}); recordErr != nil {
+						if recordErr := cache.RecordRender(
+							t.Context(),
+							RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt16},
+						); recordErr != nil {
 							t.Fatal(recordErr)
 						}
 					}
@@ -629,24 +774,34 @@ func TestRender_RemoteCacheDependencies(t *testing.T) {
 						t.Fatal(err)
 					}
 					recorded := inputRec.snapshot()
-					if len(recorded.Remotes) == 0 || immutable && (len(recorded.Files) != 0 || len(recorded.Dirs) != 0 || len(recorded.Nodes) != 0) {
+					if len(recorded.Remotes) == 0 ||
+						immutable && (len(recorded.Files) != 0 || len(recorded.Dirs) != 0 || len(recorded.Nodes) != 0) {
 						t.Fatalf("incomplete remote recorder: %+v", recorded)
 					}
 					if valid, err := recorded.stillValid(t.Context(), cache, view, immutable); err != nil || !valid {
 						t.Fatalf("unchanged remote identity: %t, %v", valid, err)
 					}
 					if origin == "generator" && len(trace.snapshot())-initial != 1 {
-						t.Fatalf("bootstrap, render and validation did not share acquisition: %+v", trace.snapshot()[initial:])
+						t.Fatalf(
+							"bootstrap, render and validation did not share acquisition: %+v",
+							trace.snapshot()[initial:],
+						)
 					}
 					key := renderKey(request(), root, nil)
 					snap, stored, hit := readTestRenderFrame(t, cache, key)
-					if !hit || !reflect.DeepEqual(stored, out1) || len(snap.Remotes) == 0 || immutable && (len(snap.Files) != 0 || len(snap.Dirs) != 0 || len(snap.Nodes) != 0) {
+					if !hit || !reflect.DeepEqual(stored, out1) || len(snap.Remotes) == 0 ||
+						immutable && (len(snap.Files) != 0 || len(snap.Dirs) != 0 || len(snap.Nodes) != 0) {
 						t.Fatalf("published=%t eligible=%t snapshot=%+v output=%s", hit, eligible, snap, stored)
 					}
 					fresh := newCache("")
-					want, receipt17, err := testutil.RenderMaps(Render(t.Context(), fresh, request(), sourcecache.RetryConfig{}))
+					want, receipt17, err := testutil.RenderMaps(
+						Render(t.Context(), fresh, request(), sourcecache.RetryConfig{}),
+					)
 					if err == nil {
-						if recordErr := fresh.RecordRender(t.Context(), RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt17}); recordErr != nil {
+						if recordErr := fresh.RecordRender(
+							t.Context(),
+							RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt17},
+						); recordErr != nil {
 							t.Fatal(recordErr)
 						}
 					}
@@ -656,31 +811,56 @@ func TestRender_RemoteCacheDependencies(t *testing.T) {
 					}
 					closeTestTreeCache(t, fresh)
 					if eligible {
-						publishTestFrame(t, cache.owner, sourcecache.BlobKey{Content: key, Render: sourcecache.RenderPending}, testRenderFrame(t, snap, testRenderPayload(t, "SENTINEL")))
+						publishTestFrame(
+							t,
+							cache.owner,
+							sourcecache.BlobKey{Content: key, Render: sourcecache.RenderPending},
+							testRenderFrame(t, snap, testRenderPayload(t, "SENTINEL")),
+						)
 					}
 					closeTestTreeCache(t, cache)
 					before := len(trace.snapshot())
 					cache = newCache(cacheDir)
-					if valid, err := recorded.stillValid(t.Context(), cache, &treeFS{lower: request().Source.FS}, immutable); err != nil || !valid {
+					if valid, err := recorded.stillValid(
+						t.Context(),
+						cache,
+						&treeFS{lower: request().Source.FS},
+						immutable,
+					); err != nil ||
+						!valid {
 						t.Fatalf("reopened unchanged remote identity: %t, %v", valid, err)
 					}
-					out2, receipt18, err := testutil.RenderMaps(Render(t.Context(), cache, request(), sourcecache.RetryConfig{}))
+					out2, receipt18, err := testutil.RenderMaps(
+						Render(t.Context(), cache, request(), sourcecache.RetryConfig{}),
+					)
 					if err == nil {
-						if recordErr := cache.RecordRender(t.Context(), RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt18}); recordErr != nil {
+						if recordErr := cache.RecordRender(
+							t.Context(),
+							RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt18},
+						); recordErr != nil {
 							t.Fatal(recordErr)
 						}
 					}
 
-					if err != nil || eligible && !hasRenderField(out2, "witness", "SENTINEL") || !eligible && !reflect.DeepEqual(out2, out1) {
+					if err != nil || eligible && !hasRenderField(out2, "witness", "SENTINEL") ||
+						!eligible && !reflect.DeepEqual(out2, out1) {
 						t.Fatalf("unchanged fresh-owner render: %s, %v", out2, err)
 					}
 					if origin != "git" && origin != "nested-mount" {
 						got := trace.snapshot()[before:]
 						if origin == "generator" {
-							t.Logf("bootstrap-primed persistence eligible=%t sentinel_reused=%t requests=%d", eligible, hasRenderField(out2, "witness", "SENTINEL"), len(got))
+							t.Logf(
+								"bootstrap-primed persistence eligible=%t sentinel_reused=%t requests=%d",
+								eligible,
+								hasRenderField(out2, "witness", "SENTINEL"),
+								len(got),
+							)
 						}
 						t.Logf("unchanged render: requests=%+v accepted_connections=%d", got, trace.connections.Load())
-						if len(got) != 1 || got[0].Method != http.MethodGet || got[0].ETag == "" || got[0].Modified == "" || got[0].Status != http.StatusNotModified || got[0].Bytes != 0 {
+						if len(got) != 1 || got[0].Method != http.MethodGet || got[0].ETag == "" ||
+							got[0].Modified == "" ||
+							got[0].Status != http.StatusNotModified ||
+							got[0].Bytes != 0 {
 							t.Errorf("unchanged render must make one conditional GET with zero body bytes: %+v", got)
 						}
 					}
@@ -688,12 +868,23 @@ func TestRender_RemoteCacheDependencies(t *testing.T) {
 					version.Store(2)
 					before = len(trace.snapshot())
 					cache = newCache(cacheDir)
-					if valid, err := recorded.stillValid(t.Context(), cache, &treeFS{lower: request().Source.FS}, immutable); err != nil || valid {
+					if valid, err := recorded.stillValid(
+						t.Context(),
+						cache,
+						&treeFS{lower: request().Source.FS},
+						immutable,
+					); err != nil ||
+						valid {
 						t.Fatalf("changed remote identity: %t, %v", valid, err)
 					}
-					out3, receipt19, err := testutil.RenderMaps(Render(t.Context(), cache, request(), sourcecache.RetryConfig{}))
+					out3, receipt19, err := testutil.RenderMaps(
+						Render(t.Context(), cache, request(), sourcecache.RetryConfig{}),
+					)
 					if err == nil {
-						if recordErr := cache.RecordRender(t.Context(), RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt19}); recordErr != nil {
+						if recordErr := cache.RecordRender(
+							t.Context(),
+							RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt19},
+						); recordErr != nil {
 							t.Fatal(recordErr)
 						}
 					}
@@ -703,9 +894,16 @@ func TestRender_RemoteCacheDependencies(t *testing.T) {
 					}
 					if origin != "git" && origin != "nested-mount" {
 						got := trace.snapshot()[before:]
-						t.Logf("changed render and preflight: requests=%+v accepted_connections=%d", got, trace.connections.Load())
+						t.Logf(
+							"changed render and preflight: requests=%+v accepted_connections=%d",
+							got,
+							trace.connections.Load(),
+						)
 						if len(got) != 1 || got[0].Status != http.StatusOK || got[0].Bytes == 0 {
-							t.Errorf("changed render must acquire one response including subsequent preflight: %+v", got)
+							t.Errorf(
+								"changed render must acquire one response including subsequent preflight: %+v",
+								got,
+							)
 						}
 					}
 					closeTestTreeCache(t, cache)
@@ -726,7 +924,11 @@ func closeTestTreeCache(t *testing.T, c *TreeCache) {
 
 func TestRenderKey_ContentInputs(t *testing.T) {
 	t.Parallel()
-	req := RenderRequest{Source: &store.SourceArtifact{Key: "family", Content: "generation"}, SubPath: ".", Spec: demoSpec}
+	req := RenderRequest{
+		Source:  &store.SourceArtifact{Key: "family", Content: "generation"},
+		SubPath: ".",
+		Spec:    demoSpec,
+	}
 	key := renderKey(req, "/source", nil)
 	for _, tc := range []struct {
 		name   string
@@ -855,10 +1057,18 @@ func TestRender_CacheIdentityIsolated(t *testing.T) {
 	cache := newTestTreeCache(t, t.TempDir())
 	req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoSpec}
 	key := renderKey(RenderRequest{Source: &store.SourceArtifact{}, Spec: demoSpec, SubPath: "."}, root, nil)
-	publishTestFrame(t, cache.owner, sourcecache.BlobKey{Content: struct{ Render string }{key}}, testRenderFrame(t, readSetSnapshot{}, []byte("ORDINARY\n")))
+	publishTestFrame(
+		t,
+		cache.owner,
+		sourcecache.BlobKey{Content: struct{ Render string }{key}},
+		testRenderFrame(t, readSetSnapshot{}, []byte("ORDINARY\n")),
+	)
 	out, receipt20, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
 	if err == nil {
-		if recordErr := cache.RecordRender(t.Context(), RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt20}); recordErr != nil {
+		if recordErr := cache.RecordRender(
+			t.Context(),
+			RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt20},
+		); recordErr != nil {
 			t.Fatal(recordErr)
 		}
 	}
@@ -876,7 +1086,8 @@ func TestRender_CacheIdentityIsolated(t *testing.T) {
 		t.Fatal("bare and owned cache identities collide")
 	}
 	first, _, err := testutil.RenderMaps(Render(t.Context(), cache, bare, sourcecache.RetryConfig{}))
-	if err != nil || hasRenderField(first, manifest.FluxKustomizeDomain+"/name", "demo") || !hasRenderField(first, "name", "fresh") {
+	if err != nil || hasRenderField(first, manifest.FluxKustomizeDomain+"/name", "demo") ||
+		!hasRenderField(first, "name", "fresh") {
 		t.Fatalf("bare render acquired owner metadata: %s, %v", first, err)
 	}
 	warm, _, err := testutil.RenderMaps(Render(t.Context(), cache, bare, sourcecache.RetryConfig{}))
@@ -891,7 +1102,8 @@ func TestRender_CacheIdentityIsolated(t *testing.T) {
 	req.Spec = req.Spec.Clone()
 	req.Spec.NamePrefix = "owned-"
 	owned, _, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
-	if err != nil || hasRenderField(owned, manifest.FluxKustomizeDomain+"/name", "demo") || !hasRenderField(owned, "name", "owned-changed") {
+	if err != nil || hasRenderField(owned, manifest.FluxKustomizeDomain+"/name", "demo") ||
+		!hasRenderField(owned, "name", "owned-changed") {
 		t.Fatalf("owned render reused bare output: %s, %v", owned, err)
 	}
 }
@@ -936,8 +1148,9 @@ func TestRender_CacheFrames(t *testing.T) {
 			var fresh []map[string]any
 			var freshErr error
 			if tc.corrupt {
-				fresh, _, freshErr = testutil.RenderMaps(Render(t.Context(), newTestTreeCache(t, ""), req, sourcecache.RetryConfig{}))
-
+				fresh, _, freshErr = testutil.RenderMaps(
+					Render(t.Context(), newTestTreeCache(t, ""), req, sourcecache.RetryConfig{}),
+				)
 			}
 			key := renderKey(req, root, nil)
 			frame := testRenderFrame(t, tc.snapshot, testRenderPayload(t, "STALE"))
@@ -948,10 +1161,18 @@ func TestRender_CacheFrames(t *testing.T) {
 			} else if tc.empty {
 				frame = testRenderFrame(t, tc.snapshot, testRenderEncoding(t, nil))
 			}
-			publishTestFrame(t, cache.owner, sourcecache.BlobKey{Content: key, Render: sourcecache.RenderPending}, frame)
+			publishTestFrame(
+				t,
+				cache.owner,
+				sourcecache.BlobKey{Content: key, Render: sourcecache.RenderPending},
+				frame,
+			)
 			out, receipt22, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
 			if err == nil {
-				if recordErr := cache.RecordRender(t.Context(), RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt22}); recordErr != nil {
+				if recordErr := cache.RecordRender(
+					t.Context(),
+					RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt22},
+				); recordErr != nil {
 					t.Fatal(recordErr)
 				}
 			}
@@ -970,7 +1191,10 @@ func TestRender_CacheFrames(t *testing.T) {
 				assert.Diff(t, out, fresh)
 				again, receipt23, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
 				if err == nil {
-					if recordErr := cache.RecordRender(t.Context(), RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt23}); recordErr != nil {
+					if recordErr := cache.RecordRender(
+						t.Context(),
+						RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt23},
+					); recordErr != nil {
 						t.Fatal(recordErr)
 					}
 				}
@@ -1001,7 +1225,10 @@ func TestRender_CacheFrames(t *testing.T) {
 			if tc.corrupt {
 				again, receipt24, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
 				if err == nil {
-					if recordErr := cache.RecordRender(t.Context(), RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt24}); recordErr != nil {
+					if recordErr := cache.RecordRender(
+						t.Context(),
+						RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt24},
+					); recordErr != nil {
 						t.Fatal(recordErr)
 					}
 				}
@@ -1060,15 +1287,40 @@ func TestRender_CacheAcquisitionOverlap(t *testing.T) {
 				storage = t.TempDir()
 			}
 			owner := newTestTreeCache(t, storage).owner
-			firstCache, secondCache := NewTreeCache(owner, nil, task.NewBounded(2)), NewTreeCache(owner, nil, task.NewBounded(2))
+			firstCache, secondCache := NewTreeCache(
+				owner,
+				nil,
+				task.NewBounded(2),
+			), NewTreeCache(
+				owner,
+				nil,
+				task.NewBounded(2),
+			)
 			defer firstCache.Close()
 			defer secondCache.Close()
 			var builds atomic.Int64
 			synctest.Test(t, func(t *testing.T) {
-				first := &pausedRenderFS{FS: os.DirFS(root), entered: make(chan struct{}), release: make(chan struct{}), builds: &builds}
+				first := &pausedRenderFS{
+					FS:      os.DirFS(root),
+					entered: make(chan struct{}),
+					release: make(chan struct{}),
+					builds:  &builds,
+				}
 				second := &pausedRenderFS{FS: os.DirFS(changed), builds: &builds}
 				run := func(c *TreeCache, input fs.FS, want string) {
-					out, _, err := testutil.RenderMaps(Render(t.Context(), c, RenderRequest{Source: &store.SourceArtifact{FS: input}, Label: root, SubPath: ".", Spec: demoSpec}, sourcecache.RetryConfig{}))
+					out, _, err := testutil.RenderMaps(
+						Render(
+							t.Context(),
+							c,
+							RenderRequest{
+								Source:  &store.SourceArtifact{FS: input},
+								Label:   root,
+								SubPath: ".",
+								Spec:    demoSpec,
+							},
+							sourcecache.RetryConfig{},
+						),
+					)
 					assert.NoError(t, err)
 					assert.Equal(t, hasRenderField(out, "name", want), true)
 				}
@@ -1081,10 +1333,15 @@ func TestRender_CacheAcquisitionOverlap(t *testing.T) {
 				}
 				synctest.Wait()
 				// A different acquisition key MUST progress while this render owns its key.
-				_, _, _, err := owner.Blob(t.Context(), sourcecache.BlobKey{Content: "unrelated-source"}, sourcecache.Policy{MaxAge: sourcecache.Forever}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
-					_, err := io.WriteString(w, "source")
-					return sourcecache.ProducerResult{}, err
-				})
+				_, _, _, err := owner.Blob(
+					t.Context(),
+					sourcecache.BlobKey{Content: "unrelated-source"},
+					sourcecache.Policy{MaxAge: sourcecache.Forever},
+					func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+						_, err := io.WriteString(w, "source")
+						return sourcecache.ProducerResult{}, err
+					},
+				)
 				assert.NoError(t, err)
 
 				testutil.WriteFile(t, changed, "cm.yaml", cmYAML("new"))
@@ -1107,7 +1364,10 @@ func TestRender_CacheStorageFailures(t *testing.T) {
 			if !renderPersistenceEligible(t) {
 				t.Skip("storage faults require an eligible build")
 			}
-			root := testutil.WriteTree(t, map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("fresh")})
+			root := testutil.WriteTree(
+				t,
+				map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("fresh")},
+			)
 
 			cacheDir := t.TempDir()
 			cache := newTestTreeCache(t, cacheDir)
@@ -1115,7 +1375,10 @@ func TestRender_CacheStorageFailures(t *testing.T) {
 			if fault == "lookup" || fault == "read" {
 				_, receipt26, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
 				if err == nil {
-					if recordErr := cache.RecordRender(t.Context(), RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt26}); recordErr != nil {
+					if recordErr := cache.RecordRender(
+						t.Context(),
+						RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt26},
+					); recordErr != nil {
 						t.Fatal(recordErr)
 					}
 				}
@@ -1125,7 +1388,12 @@ func TestRender_CacheStorageFailures(t *testing.T) {
 			}
 			if fault == "read" {
 				key := sourcecache.BlobKey{Content: renderKey(req, root, nil), Render: sourcecache.RenderAccepted}
-				reader, _, _, err := cache.owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
+				reader, _, _, err := cache.owner.Blob(
+					t.Context(),
+					key,
+					sourcecache.Policy{MaxAge: sourcecache.Forever},
+					nil,
+				)
 				assert.NoError(t, err)
 				data, err := fs.ReadFile(reader, "content")
 				assert.NoError(t, err)
@@ -1152,7 +1420,8 @@ func TestRender_CacheStorageFailures(t *testing.T) {
 				if fault == "publication" {
 					wantDocuments = 1
 				}
-				if len(out) != wantDocuments || !errors.Is(err, manifest.ErrFlux) || errors.Is(err, errdef.ErrNotFound) {
+				if len(out) != wantDocuments || !errors.Is(err, manifest.ErrFlux) ||
+					errors.Is(err, errdef.ErrNotFound) {
 					t.Fatalf("%s fault returned output %q, error %v", fault, out, err)
 				}
 			}
@@ -1170,7 +1439,12 @@ func TestRender_RemoteCacheReachability(t *testing.T) {
 		}
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
-		valid, err = (readSetSnapshot{Files: []localEntry{{Path: "unread", Hash: "hash"}}}).stillValid(ctx, nil, &treeFS{}, false)
+		valid, err = (readSetSnapshot{Files: []localEntry{{Path: "unread", Hash: "hash"}}}).stillValid(
+			ctx,
+			nil,
+			&treeFS{},
+			false,
+		)
 		if valid || !errors.Is(err, context.Canceled) {
 			t.Fatalf("cancellation did not precede replay: %t, %v", valid, err)
 		}
@@ -1178,10 +1452,19 @@ func TestRender_RemoteCacheReachability(t *testing.T) {
 	t.Run("cancellation-during-local-mismatch", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
-		lower := &pausedRenderFS{FS: memoryTree(t, map[string]string{"cm.yaml": cmYAML("local")}), entered: make(chan struct{}), release: make(chan struct{})}
+		lower := &pausedRenderFS{
+			FS:      memoryTree(t, map[string]string{"cm.yaml": cmYAML("local")}),
+			entered: make(chan struct{}),
+			release: make(chan struct{}),
+		}
 		done := make(chan error, 1)
 		go func() {
-			_, err := (readSetSnapshot{Files: []localEntry{{Path: "cm.yaml", Hash: "mismatch"}}}).stillValid(ctx, nil, &treeFS{lower: lower}, false)
+			_, err := (readSetSnapshot{Files: []localEntry{{Path: "cm.yaml", Hash: "mismatch"}}}).stillValid(
+				ctx,
+				nil,
+				&treeFS{lower: lower},
+				false,
+			)
 			done <- err
 		}()
 		<-lower.entered
@@ -1198,7 +1481,13 @@ func TestRender_RemoteCacheReachability(t *testing.T) {
 			entered := make(chan struct{}, 1)
 			var trace remoteHTTPTrace
 			srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				record := remoteHTTPRequest{Method: r.Method, Path: r.URL.Path, ETag: r.Header.Get("If-None-Match"), Modified: r.Header.Get("If-Modified-Since"), Status: http.StatusOK}
+				record := remoteHTTPRequest{
+					Method:   r.Method,
+					Path:     r.URL.Path,
+					ETag:     r.Header.Get("If-None-Match"),
+					Modified: r.Header.Get("If-Modified-Since"),
+					Status:   http.StatusOK,
+				}
 				defer func() {
 					trace.mu.Lock()
 					trace.requests = append(trace.requests, record)
@@ -1232,7 +1521,10 @@ func TestRender_RemoteCacheReachability(t *testing.T) {
 			if scenario == "local-removes" {
 				control = "resources: ['" + srv.URL + "/child.yaml']\n"
 			}
-			root := testutil.WriteTree(t, map[string]string{"kustomization.yaml": control, "local.yaml": cmYAML("local")})
+			root := testutil.WriteTree(
+				t,
+				map[string]string{"kustomization.yaml": control, "local.yaml": cmYAML("local")},
+			)
 			cacheDir := t.TempDir()
 			parentChanged := false
 			newCache := func() *TreeCache {
@@ -1240,13 +1532,23 @@ func TestRender_RemoteCacheReachability(t *testing.T) {
 				files := map[string]string{"kustomization.yaml": "resources: ['" + srv.URL + "/child.yaml']\n"}
 				revision := "1"
 				if parentChanged {
-					files = map[string]string{"kustomization.yaml": "resources: [local.yaml]\n", "local.yaml": cmYAML("parent-v2")}
+					files = map[string]string{
+						"kustomization.yaml": "resources: [local.yaml]\n",
+						"local.yaml":         cmYAML("parent-v2"),
+					}
 					revision = "2"
 				}
 				remote := memoryTree(t, files)
-				c.SetGitBaseFetcher(func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-					return &store.SourceArtifact{FS: remote, Key: "stable-parent", Content: revision, Revision: revision}, nil
-				})
+				c.SetGitBaseFetcher(
+					func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+						return &store.SourceArtifact{
+							FS:       remote,
+							Key:      "stable-parent",
+							Content:  revision,
+							Revision: revision,
+						}, nil
+					},
+				)
 				return c
 			}
 			request := func() RenderRequest {
@@ -1256,7 +1558,10 @@ func TestRender_RemoteCacheReachability(t *testing.T) {
 			c := newCache()
 			out, receipt28, err := testutil.RenderMaps(Render(t.Context(), c, request(), sourcecache.RetryConfig{}))
 			if err == nil {
-				if recordErr := c.RecordRender(t.Context(), RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt28}); recordErr != nil {
+				if recordErr := c.RecordRender(
+					t.Context(),
+					RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt28},
+				); recordErr != nil {
 					t.Fatal(recordErr)
 				}
 			}
@@ -1274,13 +1579,24 @@ func TestRender_RemoteCacheReachability(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if valid, err := snap.stillValid(t.Context(), c, &treeFS{lower: request().Source.FS}, false); err != nil || !valid {
+			if valid, err := snap.stillValid(
+				t.Context(),
+				c,
+				&treeFS{lower: request().Source.FS},
+				false,
+			); err != nil ||
+				!valid {
 				t.Fatalf("unchanged recorded graph: valid=%t, %v", valid, err)
 			}
 			key := renderKey(request(), root, nil)
 			if persisted, _, hit := readTestRenderFrame(t, c, key); hit {
 				snap = persisted
-				publishTestFrame(t, c.owner, sourcecache.BlobKey{Content: key, Render: sourcecache.RenderPending}, testRenderFrame(t, snap, testRenderPayload(t, "SENTINEL")))
+				publishTestFrame(
+					t,
+					c.owner,
+					sourcecache.BlobKey{Content: key, Render: sourcecache.RenderPending},
+					testRenderFrame(t, snap, testRenderPayload(t, "SENTINEL")),
+				)
 			}
 			closeTestTreeCache(t, c)
 			hits.Store(0)
@@ -1336,7 +1652,10 @@ func TestRender_RemoteCacheReachability(t *testing.T) {
 			var receipt29 *manifest.RenderReceipt
 			out, receipt29, err = testutil.RenderMaps(Render(ctx, c, request(), sourcecache.RetryConfig{}))
 			if err == nil {
-				if recordErr := c.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt29}); recordErr != nil {
+				if recordErr := c.RecordRender(
+					ctx,
+					RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt29},
+				); recordErr != nil {
 					t.Fatal(recordErr)
 				}
 			}
@@ -1352,7 +1671,8 @@ func TestRender_RemoteCacheReachability(t *testing.T) {
 				}
 			default:
 				want := map[string]string{"local-removes": "name: local", "nested-changes": "name: child-v2", "parent-removes": "name: parent-v2"}[scenario]
-				if err != nil || !hasRenderField(out, strings.SplitN(want, ": ", 2)[0], strings.SplitN(want, ": ", 2)[1]) {
+				if err != nil ||
+					!hasRenderField(out, strings.SplitN(want, ": ", 2)[0], strings.SplitN(want, ": ", 2)[1]) {
 					t.Fatalf("current graph: %s, %v; want %q", out, err, want)
 				}
 			}
@@ -1405,13 +1725,23 @@ func TestRender_RemoteCacheLocalAttribution(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			remote := memoryTree(t, map[string]string{"kustomization.yaml": "resources: [cm.yaml]\n", "cm.yaml": cmYAML("git")})
+			remote := memoryTree(
+				t,
+				map[string]string{"kustomization.yaml": "resources: [cm.yaml]\n", "cm.yaml": cmYAML("git")},
+			)
 			cacheDir := t.TempDir()
 			newCache := func() *TreeCache {
 				c := newTestTreeCache(t, cacheDir)
-				c.SetGitBaseFetcher(func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-					return &store.SourceArtifact{FS: remote, Key: "family", Content: "family-generation", Revision: "1"}, nil
-				})
+				c.SetGitBaseFetcher(
+					func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+						return &store.SourceArtifact{
+							FS:       remote,
+							Key:      "family",
+							Content:  "family-generation",
+							Revision: "1",
+						}, nil
+					},
+				)
 				return c
 			}
 			request := func() RenderRequest {
@@ -1432,7 +1762,13 @@ func TestRender_RemoteCacheLocalAttribution(t *testing.T) {
 				t.Fatal(err)
 			}
 			snap := rec.snapshot()
-			if valid, err := snap.stillValid(t.Context(), c, &treeFS{lower: request().Source.FS}, false); err != nil || !valid {
+			if valid, err := snap.stillValid(
+				t.Context(),
+				c,
+				&treeFS{lower: request().Source.FS},
+				false,
+			); err != nil ||
+				!valid {
 				t.Fatalf("unchanged snapshot: %+v, %v, %v", snap, valid, err)
 			}
 			observed := changed
@@ -1455,7 +1791,10 @@ func TestRender_RemoteCacheLocalAttribution(t *testing.T) {
 			}
 			out, receipt30, err := testutil.RenderMaps(Render(t.Context(), c, request(), sourcecache.RetryConfig{}))
 			if err == nil {
-				if recordErr := c.RecordRender(t.Context(), RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt30}); recordErr != nil {
+				if recordErr := c.RecordRender(
+					t.Context(),
+					RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt30},
+				); recordErr != nil {
 					t.Fatal(recordErr)
 				}
 			}
@@ -1465,7 +1804,12 @@ func TestRender_RemoteCacheLocalAttribution(t *testing.T) {
 			}
 			key := renderKey(request(), root, nil)
 			if persisted, _, hit := readTestRenderFrame(t, c, key); hit {
-				publishTestFrame(t, c.owner, sourcecache.BlobKey{Content: key, Render: sourcecache.RenderPending}, testRenderFrame(t, persisted, testRenderPayload(t, "SENTINEL")))
+				publishTestFrame(
+					t,
+					c.owner,
+					sourcecache.BlobKey{Content: key, Render: sourcecache.RenderPending},
+					testRenderFrame(t, persisted, testRenderPayload(t, "SENTINEL")),
+				)
 			}
 			closeTestTreeCache(t, c)
 			if scenario == "source-link" {
@@ -1481,13 +1825,22 @@ func TestRender_RemoteCacheLocalAttribution(t *testing.T) {
 				testutil.WriteFile(t, root, changed, value)
 			}
 			c = newCache()
-			if valid, err := snap.stillValid(t.Context(), c, &treeFS{lower: request().Source.FS}, false); err != nil || valid {
+			if valid, err := snap.stillValid(
+				t.Context(),
+				c,
+				&treeFS{lower: request().Source.FS},
+				false,
+			); err != nil ||
+				valid {
 				t.Fatalf("changed source validated: %t, %v", valid, err)
 			}
 			var receipt31 *manifest.RenderReceipt
 			out, receipt31, err = testutil.RenderMaps(Render(t.Context(), c, request(), sourcecache.RetryConfig{}))
 			if err == nil {
-				if recordErr := c.RecordRender(t.Context(), RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt31}); recordErr != nil {
+				if recordErr := c.RecordRender(
+					t.Context(),
+					RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt31},
+				); recordErr != nil {
 					t.Fatal(recordErr)
 				}
 			}
@@ -1511,7 +1864,11 @@ func TestRender_RemoteCacheLocalAttribution(t *testing.T) {
 				rec := newReadSet(root)
 				view := newTreeFS(memoryTree(t, nil), root, rec)
 				walk := inputWalk{cache: c, fs: view}
-				if _, err := walk.acquire(t.Context(), remoteInput{Operation: remoteHTTP, URL: srv.URL}, walkScope{}); err != nil {
+				if _, err := walk.acquire(
+					t.Context(),
+					remoteInput{Operation: remoteHTTP, URL: srv.URL},
+					walkScope{},
+				); err != nil {
 					t.Fatal(err)
 				}
 				generated, err := walk.mount([]byte(body))
@@ -1568,7 +1925,16 @@ func TestRender_RemoteCacheLocalAttribution(t *testing.T) {
 		}
 	})
 	t.Run("nested-snapshot-observations", func(t *testing.T) {
-		root := testutil.WriteTree(t, map[string]string{"local.txt": "source", "view-more-data/file": "prefix", "listed/one": "one", "walked/one": "one", "node": "file"})
+		root := testutil.WriteTree(
+			t,
+			map[string]string{
+				"local.txt":           "source",
+				"view-more-data/file": "prefix",
+				"listed/one":          "one",
+				"walked/one":          "one",
+				"node":                "file",
+			},
+		)
 		lower := os.DirFS(root)
 		rec := newReadSet(root)
 		view := newTreeFS(lower, root, rec)
@@ -1582,11 +1948,22 @@ func TestRender_RemoteCacheLocalAttribution(t *testing.T) {
 		}
 		view.origins = append(view.origins, mountOrigin{path: "view", source: "."})
 		c := newTestTreeCache(t, "")
-		c.SetGitBaseFetcher(func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-			return &store.SourceArtifact{FS: memoryTree(t, map[string]string{"foreign": "remote"}), Key: "git-family", Content: "git-family-generation", Revision: "1"}, nil
-		})
+		c.SetGitBaseFetcher(
+			func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+				return &store.SourceArtifact{
+					FS:       memoryTree(t, map[string]string{"foreign": "remote"}),
+					Key:      "git-family",
+					Content:  "git-family-generation",
+					Revision: "1",
+				}, nil
+			},
+		)
 		walk := inputWalk{cache: c, fs: view}
-		gitPath, err := walk.fetchGitBase(t.Context(), kustomizeinput.GitBase{RepoURL: "file:///example.invalid/o/repo.git"}, walkScope{root: filepath.Join(root, "view")})
+		gitPath, err := walk.fetchGitBase(
+			t.Context(),
+			kustomizeinput.GitBase{RepoURL: "file:///example.invalid/o/repo.git"},
+			walkScope{root: filepath.Join(root, "view")},
+		)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1602,8 +1979,16 @@ func TestRender_RemoteCacheLocalAttribution(t *testing.T) {
 		alias := filepath.Join(root, "view-more", "view")
 		originalDir := filepath.Join(root, "view", gitPath)
 		nestedDir := filepath.Join(alias, gitPath)
-		original := walk.location(controlLocation{file: filepath.Join(originalDir, "foreign"), root: originalDir, pluginRoot: filepath.Join(root, "view")})
-		nested := walk.location(controlLocation{file: filepath.Join(nestedDir, "foreign"), root: nestedDir, pluginRoot: alias})
+		original := walk.location(
+			controlLocation{
+				file:       filepath.Join(originalDir, "foreign"),
+				root:       originalDir,
+				pluginRoot: filepath.Join(root, "view"),
+			},
+		)
+		nested := walk.location(
+			controlLocation{file: filepath.Join(nestedDir, "foreign"), root: nestedDir, pluginRoot: alias},
+		)
 		if original != nested || original.file == "" {
 			t.Fatalf("nested remote location lost canonical coordinates: %+v, %+v", original, nested)
 		}
@@ -1638,11 +2023,15 @@ func TestRender_RemoteCacheLocalAttribution(t *testing.T) {
 		if _, err := view.ReadDir(filepath.Join(alias, "listed")); err != nil {
 			t.Fatal(err)
 		}
-		if err := view.Walk(filepath.Join(alias, "walked"), func(_ string, _ os.FileInfo, err error) error { return err }); err != nil {
+		if err := view.Walk(
+			filepath.Join(alias, "walked"),
+			func(_ string, _ os.FileInfo, err error) error { return err },
+		); err != nil {
 			t.Fatal(err)
 		}
 		snap := rec.snapshot()
-		if len(snap.Remotes) != 1 || len(snap.Files) != 2 || snap.Files[0].Path != "local.txt" || snap.Files[1].Path != "view-more-data/file" {
+		if len(snap.Remotes) != 1 || len(snap.Files) != 2 || snap.Files[0].Path != "local.txt" ||
+			snap.Files[1].Path != "view-more-data/file" {
 			t.Fatalf("nested snapshot attribution: %+v", snap)
 		}
 		if valid, err := snap.stillValid(t.Context(), c, &treeFS{lower: lower}, false); err != nil || !valid {
@@ -1727,7 +2116,10 @@ func TestRender_RemoteCacheIsolation(t *testing.T) {
 			}
 			out, receipt32, err := testutil.RenderMaps(Render(t.Context(), c, request, sourcecache.RetryConfig{}))
 			if err == nil {
-				if recordErr := c.RecordRender(t.Context(), RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt32}); recordErr != nil {
+				if recordErr := c.RecordRender(
+					t.Context(),
+					RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt32},
+				); recordErr != nil {
 					t.Fatal(recordErr)
 				}
 			}
@@ -1768,7 +2160,13 @@ func TestRender_RemoteCacheIsolation(t *testing.T) {
 				t.Fatalf("another source's read leaked: %+v, %v", file, err)
 			}
 		}
-		if valid, err := snap.stillValid(t.Context(), c, &treeFS{lower: got.request.Source.FS}, false); err != nil || !valid {
+		if valid, err := snap.stillValid(
+			t.Context(),
+			c,
+			&treeFS{lower: got.request.Source.FS},
+			false,
+		); err != nil ||
+			!valid {
 			t.Fatalf("private snapshot invalid: %+v, %t, %v", snap, valid, err)
 		}
 	}
@@ -1867,13 +2265,26 @@ func TestRender_RemoteSelectionTransition(t *testing.T) {
 			cacheDir := t.TempDir()
 			newCache := func() *TreeCache {
 				c := newTestTreeCache(t, cacheDir)
-				c.SetGitBaseFetcher(func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-					name := "git-output"
-					if changed.Load() && tc.changeGit {
-						name = "changed-git-output"
-					}
-					return &store.SourceArtifact{Key: "repository", Content: name, Revision: name, FS: memoryTree(t, map[string]string{"base/kustomization.yaml": "resources: [cm.yaml]\n", "base/cm.yaml": cmYAML(name)})}, nil
-				})
+				c.SetGitBaseFetcher(
+					func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+						name := "git-output"
+						if changed.Load() && tc.changeGit {
+							name = "changed-git-output"
+						}
+						return &store.SourceArtifact{
+							Key:      "repository",
+							Content:  name,
+							Revision: name,
+							FS: memoryTree(
+								t,
+								map[string]string{
+									"base/kustomization.yaml": "resources: [cm.yaml]\n",
+									"base/cm.yaml":            cmYAML(name),
+								},
+							),
+						}, nil
+					},
+				)
 				return c
 			}
 			c := newCache()
@@ -1883,7 +2294,10 @@ func TestRender_RemoteSelectionTransition(t *testing.T) {
 				t.Fatalf("initial directory selection: %s, %v", out, err)
 			}
 			realOutput := testRenderEncoding(t, out)
-			if err := c.RecordRender(t.Context(), RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt}); err != nil {
+			if err := c.RecordRender(
+				t.Context(),
+				RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt},
+			); err != nil {
 				t.Fatal(err)
 			}
 			frame := receipt.Value().(renderFrame)
@@ -1891,14 +2305,17 @@ func TestRender_RemoteSelectionTransition(t *testing.T) {
 			key := frame.header.Key
 			eligible := renderPersistenceEligible(t)
 			persisted, saved, hit := readTestRenderFrame(t, c, key)
-			if hit != eligible || hit && (!reflect.DeepEqual(persisted, snap) || !bytes.Equal(realOutput, testRenderEncoding(t, saved))) {
+			if hit != eligible ||
+				hit && (!reflect.DeepEqual(persisted, snap) || !bytes.Equal(realOutput, testRenderEncoding(t, saved))) {
 				t.Fatalf("persisted=%t eligible=%t observations=%+v output=%s", hit, eligible, persisted.Remotes, saved)
 			}
 			t.Logf("persistence eligible=%t persisted hit=%t", eligible, hit)
 			if hit {
 				snap = persisted
 			}
-			if len(snap.Remotes) != 2 || snap.Remotes[0].Input != (remoteInput{Operation: remoteHTTP, URL: url}) || snap.Remotes[1].Input.Operation != remoteGit || snap.Remotes[1].Identity != (remoteIdentity{Present: true, Readable: true, Key: "repository", Content: "git-output"}) {
+			if len(snap.Remotes) != 2 || snap.Remotes[0].Input != (remoteInput{Operation: remoteHTTP, URL: url}) ||
+				snap.Remotes[1].Input.Operation != remoteGit ||
+				snap.Remotes[1].Identity != (remoteIdentity{Present: true, Readable: true, Key: "repository", Content: "git-output"}) {
 				t.Fatalf("selection observations=%+v", snap.Remotes)
 			}
 			if tc.initialStatus == http.StatusNotFound {
@@ -1913,7 +2330,13 @@ func TestRender_RemoteSelectionTransition(t *testing.T) {
 			}
 			closeTestTreeCache(t, c)
 			c = newCache()
-			if valid, err := snap.stillValid(t.Context(), c, &treeFS{lower: request.Source.FS}, false); err != nil || !valid {
+			if valid, err := snap.stillValid(
+				t.Context(),
+				c,
+				&treeFS{lower: request.Source.FS},
+				false,
+			); err != nil ||
+				!valid {
 				t.Fatalf("unchanged resource selection rejected Git: valid=%t, %v", valid, err)
 			}
 			out, _, err = testutil.RenderMaps(Render(t.Context(), c, request, sourcecache.RetryConfig{}))
@@ -1921,7 +2344,12 @@ func TestRender_RemoteSelectionTransition(t *testing.T) {
 				t.Fatalf("unchanged real output: %s, %v", out, err)
 			}
 			if eligible {
-				publishTestFrame(t, c.owner, sourcecache.BlobKey{Content: key, Render: sourcecache.RenderPending}, testRenderFrame(t, persisted, testRenderPayload(t, "REMOTE-SELECTION")))
+				publishTestFrame(
+					t,
+					c.owner,
+					sourcecache.BlobKey{Content: key, Render: sourcecache.RenderPending},
+					testRenderFrame(t, persisted, testRenderPayload(t, "REMOTE-SELECTION")),
+				)
 			}
 			closeTestTreeCache(t, c)
 			c = newCache()
@@ -1930,11 +2358,22 @@ func TestRender_RemoteSelectionTransition(t *testing.T) {
 			if err != nil || witness != eligible || !eligible && !bytes.Equal(realOutput, testRenderEncoding(t, out)) {
 				t.Fatalf("saved-render reuse: %s, %v; eligible=%t", out, err, eligible)
 			}
-			t.Logf("persistence eligible=%t witness assertion executed=%t witness reused=%t", eligible, eligible, witness)
+			t.Logf(
+				"persistence eligible=%t witness assertion executed=%t witness reused=%t",
+				eligible,
+				eligible,
+				witness,
+			)
 			closeTestTreeCache(t, c)
 			changed.Store(true)
 			c = newCache()
-			if valid, err := snap.stillValid(t.Context(), c, &treeFS{lower: request.Source.FS}, false); err != nil || valid {
+			if valid, err := snap.stillValid(
+				t.Context(),
+				c,
+				&treeFS{lower: request.Source.FS},
+				false,
+			); err != nil ||
+				valid {
 				t.Fatalf("changed resource selection reused Git: valid=%t, %v", valid, err)
 			}
 			out, _, err = testutil.RenderMaps(Render(t.Context(), c, request, sourcecache.RetryConfig{}))
@@ -1942,7 +2381,8 @@ func TestRender_RemoteSelectionTransition(t *testing.T) {
 			if tc.changeGit {
 				want = "changed-git-output"
 			}
-			if err != nil || !hasRenderField(out, "name", want) || hasRenderField(out, "name", "git-output") || hasRenderField(out, "witness", "REMOTE-SELECTION") {
+			if err != nil || !hasRenderField(out, "name", want) || hasRenderField(out, "name", "git-output") ||
+				hasRenderField(out, "witness", "REMOTE-SELECTION") {
 				t.Fatalf("resource transition: %s, %v", out, err)
 			}
 			if hits.Load() != 4 {
@@ -1957,10 +2397,26 @@ func TestRender_AcceptedCacheAcquisitionOverlap(t *testing.T) {
 	for _, validate := range []bool{false, true} {
 		t.Run(fmt.Sprintf("validation_%t", validate), func(t *testing.T) {
 			eligible := renderPersistenceEligible(t)
-			root := testutil.WriteTree(t, map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("fresh")})
+			root := testutil.WriteTree(
+				t,
+				map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("fresh")},
+			)
 			cache := newTestTreeCache(t, t.TempDir())
-			key := sourcecache.BlobKey{Content: renderKey(RenderRequest{Source: &store.SourceArtifact{}, Spec: demoSpec, SubPath: "."}, root, nil), Render: sourcecache.RenderAccepted}
-			frame := testRenderFrame(t, readSetSnapshot{Files: []localEntry{{Path: "cm.yaml", Hash: manifest.SHA256Hex([]byte(cmYAML("fresh")))}}}, testRenderPayload(t, "VALIDATED"))
+			key := sourcecache.BlobKey{
+				Content: renderKey(
+					RenderRequest{Source: &store.SourceArtifact{}, Spec: demoSpec, SubPath: "."},
+					root,
+					nil,
+				),
+				Render: sourcecache.RenderAccepted,
+			}
+			frame := testRenderFrame(
+				t,
+				readSetSnapshot{
+					Files: []localEntry{{Path: "cm.yaml", Hash: manifest.SHA256Hex([]byte(cmYAML("fresh")))}},
+				},
+				testRenderPayload(t, "VALIDATED"),
+			)
 			if validate {
 				publishTestFrame(t, cache.owner, key, frame)
 			}
@@ -1977,9 +2433,24 @@ func TestRender_AcceptedCacheAcquisitionOverlap(t *testing.T) {
 			}()
 			rendered := make(chan error, 1)
 			wg.Go(func() {
-				out, receipt25, err := testutil.RenderMaps(Render(ctx, cache, RenderRequest{Source: &store.SourceArtifact{FS: lower}, Label: root, SubPath: ".", Spec: demoSpec}, sourcecache.RetryConfig{}))
+				out, receipt25, err := testutil.RenderMaps(
+					Render(
+						ctx,
+						cache,
+						RenderRequest{
+							Source:  &store.SourceArtifact{FS: lower},
+							Label:   root,
+							SubPath: ".",
+							Spec:    demoSpec,
+						},
+						sourcecache.RetryConfig{},
+					),
+				)
 				if err == nil {
-					if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt25}); recordErr != nil {
+					if recordErr := cache.RecordRender(
+						ctx,
+						RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt25},
+					); recordErr != nil {
 						t.Fatal(recordErr)
 					}
 				}
@@ -2049,7 +2520,10 @@ func TestRender_AcceptedCacheAcquisitionOverlap(t *testing.T) {
 
 func TestRender_UnidentifiedContent(t *testing.T) {
 	t.Parallel()
-	root := testutil.WriteTree(t, map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("first")})
+	root := testutil.WriteTree(
+		t,
+		map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("first")},
+	)
 	cache := newTestTreeCache(t, t.TempDir())
 	request := func() RenderRequest {
 		source := localSource(t, root)
@@ -2087,7 +2561,13 @@ func TestRender_SubstitutionRetainsRawBuild(t *testing.T) {
 	} {
 		t.Run(postBuild.name, func(t *testing.T) {
 			t.Parallel()
-			root := testutil.WriteTree(t, map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("original")})
+			root := testutil.WriteTree(
+				t,
+				map[string]string{
+					"kustomization.yaml": existingKustomization("cm.yaml"),
+					"cm.yaml":            cmYAML("original"),
+				},
+			)
 			cache := newTestTreeCache(t, t.TempDir())
 			var builds atomic.Int64
 			source := localSource(t, root)
@@ -2108,7 +2588,12 @@ func TestRender_SubstitutionRetainsRawBuild(t *testing.T) {
 				t,
 				cache.RecordRender(
 					t.Context(),
-					RenderAcceptance{Owner: spec.Named(), Receipt: receipt, Records: emptyRenderInventory, Content: content(req, docs)},
+					RenderAcceptance{
+						Owner:   spec.Named(),
+						Receipt: receipt,
+						Records: emptyRenderInventory,
+						Content: content(req, docs),
+					},
 				),
 			)
 			history := func(request RenderRequest) bool {
@@ -2145,7 +2630,12 @@ func TestRender_SubstitutionRetainsRawBuild(t *testing.T) {
 				t,
 				cache.RecordRender(
 					t.Context(),
-					RenderAcceptance{Owner: spec.Named(), Receipt: next, Records: emptyRenderInventory, Content: content(changed, again)},
+					RenderAcceptance{
+						Owner:   spec.Named(),
+						Receipt: next,
+						Records: emptyRenderInventory,
+						Content: content(changed, again),
+					},
 				),
 			)
 			if cache.owner.CanPersistRenders() {

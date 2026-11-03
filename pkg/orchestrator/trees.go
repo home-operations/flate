@@ -58,7 +58,11 @@ func RenderTrees(ctx context.Context, trees []Tree, cfg Config) (results []Rende
 			return nil, err
 		}
 		if seen[tree.ID] {
-			return nil, manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("duplicate tree %s/%d", tree.ID.Cluster, tree.ID.Side))
+			return nil, manifest.NewError(
+				manifest.ErrInput,
+				nil,
+				fmt.Sprintf("duplicate tree %s/%d", tree.ID.Cluster, tree.ID.Side),
+			)
 		}
 		seen[tree.ID] = true
 	}
@@ -79,8 +83,15 @@ func RenderTrees(ctx context.Context, trees []Tree, cfg Config) (results []Rende
 	if cfg.HelmClient == nil {
 		cfg.HelmClient = helm.NewClient(cfg.Cache)
 	}
-	cfg.chartFetcher = helmchart.New(&oci.Fetcher{Cache: cfg.Cache, Network: cfg.Network, RegistryConfig: cfg.RegistryConfig}, helmchart.Config{
-		Cache: cfg.Cache, Network: cfg.Network, Concurrency: cfg.Concurrency, DisableChartDigestTracking: cfg.HelmOptions.DisableChartDigestTracking})
+	cfg.chartFetcher = helmchart.New(
+		&oci.Fetcher{Cache: cfg.Cache, Network: cfg.Network, RegistryConfig: cfg.RegistryConfig},
+		helmchart.Config{
+			Cache:                      cfg.Cache,
+			Network:                    cfg.Network,
+			Concurrency:                cfg.Concurrency,
+			DisableChartDigestTracking: cfg.HelmOptions.DisableChartDigestTracking,
+		},
+	)
 	budget := task.NewBounded(cfg.Concurrency)
 	trees, err = prepareTrees(ctx, trees)
 	if err != nil {
@@ -367,7 +378,10 @@ func RenderTrees(ctx context.Context, trees []Tree, cfg Config) (results []Rende
 					ctx,
 					o.index,
 					projectedOther,
-					[2]map[manifest.NamedResource]inputprojection.Projection{o.loader.InputContent, other.loader.InputContent},
+					[2]map[manifest.NamedResource]inputprojection.Projection{
+						o.loader.InputContent,
+						other.loader.InputContent,
+					},
 				)
 				if err != nil {
 					return results, err
@@ -377,7 +391,10 @@ func RenderTrees(ctx context.Context, trees []Tree, cfg Config) (results []Rende
 					ctx,
 					projectedCurrent,
 					other.index,
-					[2]map[manifest.NamedResource]inputprojection.Projection{o.loader.InputContent, other.loader.InputContent},
+					[2]map[manifest.NamedResource]inputprojection.Projection{
+						o.loader.InputContent,
+						other.loader.InputContent,
+					},
 				)
 				if err != nil {
 					return results, err
@@ -388,7 +405,10 @@ func RenderTrees(ctx context.Context, trees []Tree, cfg Config) (results []Rende
 					ctx,
 					projectedOther,
 					o.index,
-					[2]map[manifest.NamedResource]inputprojection.Projection{other.loader.InputContent, o.loader.InputContent},
+					[2]map[manifest.NamedResource]inputprojection.Projection{
+						other.loader.InputContent,
+						o.loader.InputContent,
+					},
 				)
 				if err != nil {
 					return results, err
@@ -398,7 +418,10 @@ func RenderTrees(ctx context.Context, trees []Tree, cfg Config) (results []Rende
 					ctx,
 					other.index,
 					projectedCurrent,
-					[2]map[manifest.NamedResource]inputprojection.Projection{other.loader.InputContent, o.loader.InputContent},
+					[2]map[manifest.NamedResource]inputprojection.Projection{
+						other.loader.InputContent,
+						o.loader.InputContent,
+					},
 				)
 				if err != nil {
 					return results, err
@@ -472,7 +495,10 @@ func prepareTrees(ctx context.Context, trees []Tree) ([]Tree, error) {
 		if tree.Input == nil {
 			scan := cmp.Or(tree.Path, tree.RepoRoot)
 			if scan == "" {
-				return trees, &treeError{id: tree.ID, err: manifest.NewError(manifest.ErrInput, nil, "tree path is required")}
+				return trees, &treeError{
+					id:  tree.ID,
+					err: manifest.NewError(manifest.ErrInput, nil, "tree path is required"),
+				}
 			}
 			input, path, err := baseline.AdmitDirectory(ctx, scan, tree.RepoRoot)
 			if err != nil {
@@ -486,7 +512,10 @@ func prepareTrees(ctx context.Context, trees []Tree) ([]Tree, error) {
 			}
 		}
 		if tree.Input.FS == nil || tree.Input.LocalPath == "" {
-			return trees, &treeError{id: tree.ID, err: manifest.NewError(manifest.ErrInput, nil, "tree input content unavailable")}
+			return trees, &treeError{
+				id:  tree.ID,
+				err: manifest.NewError(manifest.ErrInput, nil, "tree input content unavailable"),
+			}
 		}
 		tree.RepoRoot = tree.Input.LocalPath
 		var err error
@@ -564,13 +593,17 @@ func (e *treeError) Error() string {
 func (e *treeError) Unwrap() error { return e.err }
 
 func projectEntryReaders(index *manifest.DiscoveryIndex, from, to discovery.Binding) *manifest.DiscoveryIndex {
-	if index == nil || from.Producer == to.Producer || from.Producer == (manifest.NamedResource{}) || to.Producer == (manifest.NamedResource{}) {
+	if index == nil || from.Producer == to.Producer || from.Producer == (manifest.NamedResource{}) ||
+		to.Producer == (manifest.NamedResource{}) {
 		return index
 	}
 	projected := *index
 	projected.Readers = maps.Clone(index.Readers)
 	for file, readers := range index.Readers {
-		if !slices.ContainsFunc(readers, func(reader manifest.FileReader) bool { return reader.Reader == from.Producer }) {
+		if !slices.ContainsFunc(
+			readers,
+			func(reader manifest.FileReader) bool { return reader.Reader == from.Producer },
+		) {
 			continue
 		}
 		readers = slices.Clone(readers)

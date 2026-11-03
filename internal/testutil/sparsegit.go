@@ -31,15 +31,33 @@ func NewSparseGit(tb testing.TB, files int, blobBytes int64) SparseGit {
 	root := tb.TempDir()
 	repo := GitInit(tb, root)
 	for _, name := range []string{"app", "sibling"} {
-		WriteFile(tb, root, "flux/"+name+".yaml", fmt.Sprintf("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: %s, namespace: flux-system}\nspec:\n  interval: 10m\n  path: ./%s\n  sourceRef: {kind: GitRepository, name: cluster}\n", name, name))
+		WriteFile(
+			tb,
+			root,
+			"flux/"+name+".yaml",
+			fmt.Sprintf(
+				"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: %s, namespace: flux-system}\nspec:\n  interval: 10m\n  path: ./%s\n  sourceRef: {kind: GitRepository, name: cluster}\n",
+				name,
+				name,
+			),
+		)
 		WriteFile(tb, root, name+"/kustomization.yaml", "resources: [input.yaml]\n")
-		WriteFile(tb, root, name+"/input.yaml", fmt.Sprintf("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: %s-output}\ndata: {value: before}\n", name))
+		WriteFile(
+			tb,
+			root,
+			name+"/input.yaml",
+			fmt.Sprintf("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: %s-output}\ndata: {value: before}\n", name),
+		)
 	}
 	for n := range files - 7 {
 		WriteFile(tb, root, fmt.Sprintf("disjoint/file-%05d.txt", n), "unconsumed\n")
 	}
 	WriteFile(tb, root, "unrelated/large.txt", "")
-	file, err := os.OpenFile(filepath.Join(root, "unrelated/large.txt"), os.O_RDWR, 0o600) //nolint:gosec // The path is fixed under the test-owned temporary directory.
+	file, err := os.OpenFile(
+		filepath.Join(root, "unrelated/large.txt"),
+		os.O_RDWR,
+		0o600,
+	) //nolint:gosec // The path is fixed under the test-owned temporary directory.
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -76,7 +94,17 @@ func NewSparseGit(tb testing.TB, files int, blobBytes int64) SparseGit {
 	if err != nil {
 		tb.Fatal(err)
 	}
-	idx.Entries = append(idx.Entries, &index.Entry{Name: "unrelated/large.txt", Hash: large, Mode: filemode.Regular, Size: uint32(blobBytes), ModifiedAt: info.ModTime(), CreatedAt: info.ModTime()}) //nolint:gosec // E8 fixes the blob size at 256 MiB or a bounded routine control.
+	idx.Entries = append(
+		idx.Entries,
+		&index.Entry{
+			Name:       "unrelated/large.txt",
+			Hash:       large,
+			Mode:       filemode.Regular,
+			Size:       uint32(blobBytes),
+			ModifiedAt: info.ModTime(),
+			CreatedAt:  info.ModTime(),
+		},
+	) //nolint:gosec // E8 fixes the blob size at 256 MiB or a bounded routine control.
 	if err := repo.Storer.SetIndex(idx); err != nil {
 		tb.Fatal(err)
 	}
@@ -85,7 +113,12 @@ func NewSparseGit(tb testing.TB, files int, blobBytes int64) SparseGit {
 	if err != nil {
 		tb.Fatal(err)
 	}
-	WriteFile(tb, root, "app/input.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: app-output}\ndata: {value: after!}\n")
+	WriteFile(
+		tb,
+		root,
+		"app/input.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: app-output}\ndata: {value: after!}\n",
+	)
 	if _, err := wt.Add("app/input.yaml"); err != nil {
 		tb.Fatal(err)
 	}

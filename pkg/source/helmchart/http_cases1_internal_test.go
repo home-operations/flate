@@ -459,48 +459,9 @@ func testFetchHTTPChartAdmissionTimeoutIsolationCallback(t *testing.T) {
 	healthyCalls := 0
 	var admitted time.Time
 	tr := chartTransport(func(req *http.Request) (*http.Response, error) {
-		index := strings.HasSuffix(req.URL.Path, "/index.yaml")
-		if req.URL.Host == "slow.invalid" && index {
-			close(entered)
-			select {
-			case <-release:
-			case <-req.Context().Done():
-				return nil, req.Context().Err()
-			}
-		}
-		if req.URL.Host == "healthy.invalid" {
-			healthyCalls++
-			if index {
-				admitted = time.Now()
-			}
-			{
-				deadline, ok := req.Context().Deadline()
-				assert.ErrorIf(
-					t,
-					!ok || !deadline.Equal(admitted.Add(5*time.Second)),
-					"healthy deadline=%v present=%t, want admission + five seconds",
-					deadline,
-					ok,
-				)
-			}
-			if !index {
-				select {
-				case <-time.After(4 * time.Second):
-				case <-req.Context().Done():
-					return nil, req.Context().Err()
-				}
-			}
-		}
-		data := chart
-		if index {
-			data = []byte(helmRepoIndex(chartDigest(chart)))
-		}
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(bytes.NewReader(data)),
-			Request:    req,
-		}, nil
+		return testAdmissionTransport(t, req, testAdmissionTransportInputs{
+			chart: &chart, entered: &entered, release: &release, healthyCalls: &healthyCalls, admitted: &admitted,
+		})
 	})
 	testFetchHTTPChartAdmissionTimeoutIsolationCallbackCompletion(
 		t,
@@ -516,6 +477,64 @@ func testFetchHTTPChartAdmissionTimeoutIsolationCallback(t *testing.T) {
 			admitted:     &admitted,
 		},
 	)
+}
+
+type testAdmissionTransportInputs struct {
+	chart        *[]byte
+	entered      *chan struct{}
+	release      *chan struct{}
+	healthyCalls *int
+	admitted     *time.Time
+}
+
+func testAdmissionTransport(
+	t *testing.T,
+	req *http.Request,
+	inputs testAdmissionTransportInputs,
+) (*http.Response, error) {
+	t.Helper()
+	index := strings.HasSuffix(req.URL.Path, "/index.yaml")
+	if req.URL.Host == "slow.invalid" && index {
+		close((*inputs.entered))
+		select {
+		case <-(*inputs.release):
+		case <-req.Context().Done():
+			return nil, req.Context().Err()
+		}
+	}
+	if req.URL.Host == "healthy.invalid" {
+		(*inputs.healthyCalls)++
+		if index {
+			(*inputs.admitted) = time.Now()
+		}
+		{
+			deadline, ok := req.Context().Deadline()
+			assert.ErrorIf(
+				t,
+				!ok || !deadline.Equal(inputs.admitted.Add(5*time.Second)),
+				"healthy deadline=%v present=%t, want admission + five seconds",
+				deadline,
+				ok,
+			)
+		}
+		if !index {
+			select {
+			case <-time.After(4 * time.Second):
+			case <-req.Context().Done():
+				return nil, req.Context().Err()
+			}
+		}
+	}
+	data := (*inputs.chart)
+	if index {
+		data = []byte(helmRepoIndex(chartDigest((*inputs.chart))))
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(bytes.NewReader(data)),
+		Request:    req,
+	}, nil
 }
 
 func testFetchHTTPChartAdmissionTimeoutIsolationCallbackCompletion(

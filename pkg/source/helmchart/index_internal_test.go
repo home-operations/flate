@@ -430,7 +430,7 @@ func testFetchIndexDecodeBudgetCaseCallbackCompletion(
 	} else {
 		synctest.Wait()
 		if !(*captures.testCaseInput.tc).restored &&
-			((*captures.calls).Load() != 2 || len((*captures.f).indexDecodes) != 2) {
+			(captures.calls.Load() != 2 || len((*captures.f).indexDecodes) != 2) {
 			t.Errorf(
 				"two permits did not admit two indexes: calls=%d permits=%d", captures.calls.
 					Load(), len((*captures.f).indexDecodes),

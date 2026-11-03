@@ -463,8 +463,8 @@ type testFetchHTTPChartBasicAuthSnapshotRotationCaseInputs struct {
 func testFetchHTTPChartBasicAuthSnapshotRotationCase(
 	t *testing.T, testCaseInputValue *testFetchHTTPChartBasicAuthSnapshotRotationCaseInputs,
 ) {
-	testCaseInput := *testCaseInputValue
 	t.Helper()
+	testCaseInput := *testCaseInputValue
 	if (*testCaseInput.wave) == "password" {
 		testCaseInput.password.
 			Store("second")

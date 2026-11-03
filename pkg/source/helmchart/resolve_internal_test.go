@@ -16,14 +16,11 @@ import (
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
-// startHelmRepoCounted is startHelmRepo with a SEPARATE index-fetch counter, so
-// a test can assert a warm run skips the live index.yaml fetch (not just the
-// chart download).
 func startHelmRepoCounted(
 	t *testing.T,
 	chartBytes []byte,
 	indexDigest string,
-) (srv *httptest.Server, indexHits, chartHits *int) {
+) (*httptest.Server, *int, *int) {
 	t.Helper()
 	ih, ch := 0, 0
 	mux := http.NewServeMux()
@@ -37,7 +34,7 @@ func startHelmRepoCounted(
 		w.Header().Set("Content-Type", "application/gzip")
 		_, _ = w.Write(chartBytes)
 	})
-	srv = httptest.NewServer(mux)
+	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv, &ih, &ch
 }

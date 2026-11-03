@@ -329,7 +329,7 @@ func buildChartTarGz(t *testing.T, name, version string) []byte {
 	}, 0o644, gzip.DefaultCompression)
 }
 
-//nolint:paralleltest // Subtests share their parent acquisition fixture and observe its state in order.
+//nolint:paralleltest,tparallel // Subtests compare cumulative request counts and acquisition keys in order.
 func TestFetchHTTPChart_BasicAuth(t *testing.T) {
 	t.Parallel()
 

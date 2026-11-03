@@ -200,9 +200,9 @@ func testFetchHTTPChartNestedIndexExhaustionDueWaveCaseCallbackCompletion(
 	if (*(*captures.testCaseInput.result)) == "cached child" {
 		wantIndex, wantAttempted = 0, 0
 	}
-	if captures.indexCalls.Load() != wantIndex || (*captures.chartCalls).Load() != wantChart ||
+	if captures.indexCalls.Load() != wantIndex || captures.chartCalls.Load() != wantChart ||
 		attempted != wantAttempted {
-		t.Fatalf("index=%d chart=%d attempted=%d", captures.indexCalls.Load(), (*captures.chartCalls).Load(), attempted)
+		t.Fatalf("index=%d chart=%d attempted=%d", captures.indexCalls.Load(), captures.chartCalls.Load(), attempted)
 	}
 	if (*(*captures.testCaseInput.result)) == "cached child" {
 		after, err := os.ReadFile(filepath.Join((*captures.root), "oci", "index.json"))

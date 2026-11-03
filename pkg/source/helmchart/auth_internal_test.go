@@ -133,8 +133,6 @@ func TestHelmRepoTransport_MissingMaterialSoftSkips(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // Credential fixture helpers change the process environment.
-//nolint:paralleltest // Credential and DNS fixtures change process environment or resolver state.
 func TestHelmRepoTransport_ProxySnapshot(t *testing.T) {
 	t.Setenv("HTTP_PROXY", "")
 	t.Setenv("HTTPS_PROXY", "")
@@ -171,8 +169,7 @@ func TestHelmRepoTransport_ProxySnapshot(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // Credential fixture helpers change the process environment.
-//nolint:paralleltest // Credential and DNS fixtures change process environment or resolver state.
+//nolint:paralleltest // Credential fixtures change the process environment and resolver state.
 func TestHelmRepoTransport_ClientReuse(t *testing.T) {
 	for _, name := range []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"} {
 		t.Setenv(name, "")
@@ -337,7 +334,7 @@ func testHelmRepoTransportClientReuseCaseCompletion(
 		if (*(*captures.settings)) == "ambient" {
 			assert.FatalIf(
 				t,
-				!errors.Is(err, manifest.ErrMissingSecret) || (*captures.prepared)[i] == nil,
+				!errors.Is(err, manifest.ErrMissingSecret) || captures.prepared[i] == nil,
 				"missing auth lost its prepared transport: %v",
 				err,
 			)
@@ -345,7 +342,7 @@ func testHelmRepoTransportClientReuseCaseCompletion(
 			assert.NoError(t, err)
 		}
 	}
-	first, second := (*captures.prepared)[0], (*captures.prepared)[1]
+	first, second := captures.prepared[0], captures.prepared[1]
 	assert.FatalIf(t, manifest.Fingerprint(first.material) != manifest.Fingerprint(second.material) ||
 		first.client.Transport != second.client.Transport, "%s", "equal captured identities did not share a transport")
 	assert.FatalIf(

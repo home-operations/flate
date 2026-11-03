@@ -20,11 +20,11 @@ import (
 func checkoutRef(repo *git.Repository, hash plumbing.Hash, sparse []string) error {
 	wt, err := repo.Worktree()
 	if err != nil {
-		return err
+		return err //nolint:wrapcheck // The go-git checkout and submodule adapters retain upstream protocol errors for source classification.
 	}
 	return wt.Checkout(
 		&git.CheckoutOptions{Hash: hash, SparseCheckoutDirectories: gittree.NormalizeSparsePaths(sparse)},
-	)
+	) //nolint:wrapcheck // The go-git checkout and submodule adapters retain upstream protocol errors for source classification.
 }
 
 // Flux reuses the parent's credentials for submodules on every host.
@@ -36,26 +36,26 @@ func (f *Fetcher) updateSubmodules(
 ) error {
 	wt, err := repo.Worktree()
 	if err != nil {
-		return err
+		return err //nolint:wrapcheck // The go-git checkout and submodule adapters retain upstream protocol errors for source classification.
 	}
 	subs, err := wt.Submodules()
 	if err != nil {
-		return err
+		return err //nolint:wrapcheck // The go-git checkout and submodule adapters retain upstream protocol errors for source classification.
 	}
 	slices.SortFunc(subs, func(a, b *git.Submodule) int {
 		return strings.Compare(a.Config().Name, b.Config().Name)
 	})
 	for _, sub := range subs {
 		if err := sub.Init(); err != nil && !errors.Is(err, git.ErrSubmoduleAlreadyInitialized) {
-			return err
+			return err //nolint:wrapcheck // The go-git checkout and submodule adapters retain upstream protocol errors for source classification.
 		}
 		child, err := sub.Repository()
 		if err != nil {
-			return err
+			return err //nolint:wrapcheck // The go-git checkout and submodule adapters retain upstream protocol errors for source classification.
 		}
 		remote, err := child.Remote(git.DefaultRemoteName)
 		if err != nil {
-			return err
+			return err //nolint:wrapcheck // The go-git checkout and submodule adapters retain upstream protocol errors for source classification.
 		}
 		if _, err := f.validateRepo(
 			manifest.NewGitRepository(
@@ -65,7 +65,7 @@ func (f *Fetcher) updateSubmodules(
 			return fmt.Errorf("validate submodule %q: %w", sub.Config().Name, err)
 		}
 		if err := sub.UpdateContext(ctx, &git.SubmoduleUpdateOptions{Auth: auth}); err != nil {
-			return err
+			return err //nolint:wrapcheck // The go-git checkout and submodule adapters retain upstream protocol errors for source classification.
 		}
 		if depth > 0 {
 			if err := f.updateSubmodules(ctx, child, auth, depth-1); err != nil {

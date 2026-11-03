@@ -14,10 +14,10 @@ type proxyConfig struct {
 }
 
 func resolveProxy(
-	secrets SecretGetter,
-	owner manifest.DiagnosticIdentity,
+	secrets SecretGetter, ownerValue *manifest.DiagnosticIdentity,
 	ref *manifest.LocalObjectReference,
 ) (*proxyConfig, *url.URL, error) {
+	owner := *ownerValue
 	if ref == nil {
 		return nil, nil, nil
 	}

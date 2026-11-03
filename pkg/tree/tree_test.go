@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -59,6 +60,8 @@ func TestTree_FSContract(t *testing.T) {
 	must(t, fstest.TestFS(build(t, tree.NewBuilder(nil))))
 }
 
+//nolint:paralleltest // The test calls a helper that changes process-global state.
+//nolint:paralleltest // This test changes process-global state.
 func TestTree_PlainPathsDoNotAllocateMetadata(t *testing.T) {
 	b := tree.NewBuilder(nil)
 	must(t, b.AddFile("dir/real.yaml", []byte("x"), 0o644))
@@ -164,8 +167,8 @@ func TestTree_MethodErrors(t *testing.T) {
 					err := method.call(p)
 					assert.Equal(t, errors.Is(err, fs.ErrInvalid), true)
 					pe, ok := errors.AsType[*fs.PathError](err)
-					if !ok {
-						t.Fatalf("expected PathError, got %v", err)
+					{
+						assert.FatalIf(t, !ok, "expected PathError, got %v", err)
 					}
 					assert.Equal(t, pe.Path, p)
 				})
@@ -234,20 +237,9 @@ func TestTree_SymlinkContract(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			data, err := tr.ReadFile(tc.name)
-			if tc.err == nil {
-				must(t, err)
-				assert.Equal(t, string(data), tc.want)
-				return
-			}
-			assert.Equal(t, errors.Is(err, tc.err), true)
-			_, err = tr.Open(tc.name)
-			assert.Equal(t, errors.Is(err, tc.err), true)
-			_, err = tr.Stat(tc.name)
-			assert.Equal(t, errors.Is(err, tc.err), true)
-			_, err = tr.ReadDir(tc.name)
-			assert.Equal(t, errors.Is(err, tc.err), true)
-		})
+			testTreeSymlinkContractCase(t, &testTreeSymlinkContractCaseInputs{tr: &tr, tc: &tc})
+		},
+		)
 	}
 	p, err := tr.Resolve("alias/../file")
 	must(t, err)
@@ -300,75 +292,25 @@ func TestTree_WalkRawLinkRoot(t *testing.T) {
 func TestTree_ConcurrentReaders(t *testing.T) {
 	t.Parallel()
 	for _, workers := range []int{2, 4} {
-		t.Run(fmt.Sprint(workers), func(t *testing.T) {
+		t.Run(strconv.Itoa(workers), func(t *testing.T) {
 			t.Parallel()
-			tr := fixture(t)
-			start := make(chan struct{})
-			var wg sync.WaitGroup
-			for range workers {
-				wg.Go(func() {
-					<-start
-					for range 32 {
-						data, err := fs.ReadFile(tr, "alias")
-						if err != nil || string(data) != "alpha" {
-							t.Errorf("ReadFile: %q, %v", data, err)
-							return
-						}
-						if err := fstest.TestFS(tr, "empty", "dir/a +@日本.yaml", "alias"); err != nil {
-							t.Error(err)
-							return
-						}
-					}
-				})
-			}
-			close(start)
-			wg.Wait()
-		})
+			testTreeConcurrentReadersCase(t, &workers)
+		},
+		)
 	}
 }
 
 func TestTree_ReturnedSlicesAreCallerOwned(t *testing.T) {
 	t.Parallel()
 	for _, workers := range []int{2, 4} {
-		t.Run(fmt.Sprint(workers), func(t *testing.T) {
+		t.Run(strconv.Itoa(workers), func(t *testing.T) {
 			t.Parallel()
-			tr := fixture(t)
-			start := make(chan struct{})
-			var wg sync.WaitGroup
-			for range workers {
-				wg.Go(func() {
-					<-start
-					for range 32 {
-						data, err := tr.ReadFile("alias")
-						if err != nil || string(data) != "alpha" {
-							t.Errorf("ReadFile: %q, %v", data, err)
-							return
-						}
-						data[0] = '!'
-						entries, err := tr.ReadDir("dir")
-						if err != nil || len(entries) != 2 || entries[0].Name() != "a +@日本.yaml" {
-							t.Errorf("ReadDir: %v, %v", entries, err)
-							return
-						}
-						entries[0] = nil
-						f, err := tr.Open("dir")
-						if err != nil {
-							t.Error(err)
-							return
-						}
-						entries, err = f.(fs.ReadDirFile).ReadDir(-1)
-						f.Close()
-						if err != nil || len(entries) != 2 || entries[0].Name() != "a +@日本.yaml" {
-							t.Errorf("handle ReadDir: %v, %v", entries, err)
-							return
-						}
-						entries[0] = nil
-					}
-				})
-			}
-			close(start)
-			wg.Wait()
-		})
+			testTreeReturnedSlicesAreCallerOwnedCase(
+				t,
+				&workers,
+			)
+		},
+		)
 	}
 }
 
@@ -499,8 +441,8 @@ func TestTree_StatNamesFollowedLinks(t *testing.T) {
 			must(t, fs.WalkDir(tr, name, func(p string, d fs.DirEntry, err error) error {
 				if p == name && err == nil {
 					root = d.Name()
-					entryInfo, err := d.Info()
-					must(t, err)
+					entryInfo, infoErr := d.Info()
+					must(t, infoErr)
 					assert.Equal(t, entryInfo.Name(), want.Name())
 				}
 				return err
@@ -516,4 +458,102 @@ func TestTree_StatNamesFollowedLinks(t *testing.T) {
 			assert.Equal(t, info.Name(), path.Base(name))
 		})
 	}
+}
+
+type testTreeSymlinkContractCaseInputs struct {
+	tr **tree.Tree
+	tc *struct {
+		name string
+		want string
+		err  error
+	}
+}
+
+func testTreeSymlinkContractCase(t *testing.T, testCaseInput *testTreeSymlinkContractCaseInputs) {
+	t.Helper()
+
+	data, err := (*testCaseInput.tr).ReadFile(testCaseInput.tc.name)
+	if testCaseInput.tc.err == nil {
+		must(t, err)
+		assert.Equal(t, string(data), testCaseInput.tc.want)
+		return
+	}
+	assert.Equal(t, errors.Is(err, testCaseInput.tc.err), true)
+	_, err = (*testCaseInput.tr).Open(testCaseInput.tc.name)
+	assert.Equal(t, errors.Is(err, testCaseInput.tc.err), true)
+	_, err = (*testCaseInput.tr).Stat(testCaseInput.tc.name)
+	assert.Equal(t, errors.Is(err, testCaseInput.tc.err), true)
+	_, err = (*testCaseInput.tr).ReadDir(testCaseInput.tc.name)
+	assert.Equal(t, errors.Is(err, testCaseInput.tc.err), true)
+}
+
+func testTreeConcurrentReadersCase(t *testing.T, testCaseInput *int,
+) {
+	t.Helper()
+
+	tr := fixture(t)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for range *testCaseInput {
+		wg.Go(func() {
+			<-start
+			for range 32 {
+				data, err := fs.ReadFile(tr, "alias")
+				if err != nil || string(data) != "alpha" {
+					t.Errorf("ReadFile: %q, %v", data, err)
+					return
+				}
+				if err := fstest.TestFS(tr, "empty", "dir/a +@日本.yaml", "alias"); err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		})
+	}
+	close(start)
+	wg.Wait()
+}
+
+func testTreeReturnedSlicesAreCallerOwnedCase(
+	t *testing.T,
+	testCaseInput *int,
+) {
+	t.Helper()
+
+	tr := fixture(t)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for range *testCaseInput {
+		wg.Go(func() {
+			<-start
+			for range 32 {
+				data, err := tr.ReadFile("alias")
+				if err != nil || string(data) != "alpha" {
+					t.Errorf("ReadFile: %q, %v", data, err)
+					return
+				}
+				data[0] = '!'
+				entries, err := tr.ReadDir("dir")
+				if err != nil || len(entries) != 2 || entries[0].Name() != "a +@日本.yaml" {
+					t.Errorf("ReadDir: %v, %v", entries, err)
+					return
+				}
+				entries[0] = nil
+				f, err := tr.Open("dir")
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				entries, err = f.(fs.ReadDirFile).ReadDir(-1)
+				f.Close()
+				if err != nil || len(entries) != 2 || entries[0].Name() != "a +@日本.yaml" {
+					t.Errorf("handle ReadDir: %v, %v", entries, err)
+					return
+				}
+				entries[0] = nil
+			}
+		})
+	}
+	close(start)
+	wg.Wait()
 }

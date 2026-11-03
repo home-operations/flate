@@ -27,6 +27,7 @@ type Fetcher struct {
 
 type operation struct {
 	*Fetcher
+
 	reads   *store.ReadSet
 	secrets source.SecretGetter
 }
@@ -38,8 +39,8 @@ func (f *Fetcher) Fetch(
 	reads *store.ReadSet,
 	policy cache.Policy,
 ) (*store.SourceArtifact, error) {
-	operation := operation{Fetcher: f, reads: reads, secrets: source.SecretLookup(reads)}
-	return operation.fetchSource(ctx, b, policy)
+	innerOperation := operation{Fetcher: f, reads: reads, secrets: source.SecretLookup(reads)}
+	return innerOperation.fetchSource(ctx, b, policy)
 }
 
 func (f *operation) fetchSource(
@@ -48,26 +49,26 @@ func (f *operation) fetchSource(
 	policy cache.Policy,
 ) (*store.SourceArtifact, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 	}
 	request, err := f.prepare(b)
 	if missing, ok := errors.AsType[*source.MissingSecretError](err); ok && request.bucket != nil {
-		missing.RetryAmbient = func(ctx context.Context) (*store.SourceArtifact, error) { return f.machineFetch(ctx, request, policy) }
+		missing.RetryAmbient = func(ctx context.Context) (*store.SourceArtifact, error) { return f.machineFetch(ctx, &request, policy) }
 	}
 	if err != nil {
 		return nil, err
 	}
 	if b.Provider == sourcev1.BucketProviderAmazon && b.SecretRef == nil {
-		return f.machineFetch(ctx, request, policy)
+		return f.machineFetch(ctx, &request, policy)
 	}
-	return f.fetch(ctx, request, policy)
+	return f.fetch(ctx, &request, policy)
 }
 
 func (f *operation) machineFetch(
-	ctx context.Context,
-	request bucketAcquisition,
+	ctx context.Context, requestValue *bucketAcquisition,
 	policy cache.Policy,
 ) (*store.SourceArtifact, error) {
+	request := *requestValue
 	timeout := request.bucket.OperationTimeout()
 	policy.Timeout = &timeout
 	return source.AcquireMachine(ctx, policy, func(ctx context.Context) error {
@@ -82,15 +83,15 @@ func (f *operation) machineFetch(
 		request.options.Transport = tr
 		return err
 	}, func(ctx context.Context, policy cache.Policy) (*store.SourceArtifact, error) {
-		return f.fetch(ctx, request, policy)
+		return f.fetch(ctx, &request, policy)
 	})
 }
 
 func (f *operation) fetch(
-	ctx context.Context,
-	request bucketAcquisition,
+	ctx context.Context, requestValue *bucketAcquisition,
 	policy cache.Policy,
 ) (*store.SourceArtifact, error) {
+	request := *requestValue
 	b := request.bucket
 	ignore := ""
 	if b.Ignore != nil {

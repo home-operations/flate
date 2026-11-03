@@ -34,19 +34,13 @@ func TestTuneGC_Overrides(t *testing.T) {
 			t.Setenv("GOGC", tt.gogc)
 			t.Setenv("GOMEMLIMIT", tt.gomemlimit)
 			if tt.gomemlimit == "" {
-				if err := os.Unsetenv("GOMEMLIMIT"); err != nil {
-					t.Fatal(err)
-				}
+				assert.NoError(t, os.Unsetenv("GOMEMLIMIT"))
 			}
 			t.Setenv("AUTOMEMLIMIT", "")
-			if err := os.Unsetenv("AUTOMEMLIMIT"); err != nil {
-				t.Fatal(err)
-			}
+			assert.NoError(t, os.Unsetenv("AUTOMEMLIMIT"))
 			tuneGC(func(options ...memlimit.Option) (int64, error) {
 				limit, err := memlimit.Set(append(options, memlimit.WithProvider(memlimit.Limit(1<<30)))...)
-				if err != nil {
-					t.Fatal(err)
-				}
+				assert.NoError(t, err)
 				return limit, err
 			})
 			assert.Equal(t, debug.SetGCPercent(100), tt.wantGCPercent)

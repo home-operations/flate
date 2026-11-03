@@ -20,87 +20,23 @@ type request struct {
 var captureName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 func expand(ctx context.Context, spec specification, inputs map[string]fs.FS) ([]request, error) {
-	var matcher *regexp.Regexp
-	var input fs.FS
-	if spec.PathPattern != "" {
-		alias, pattern, err := sourcePath(spec.PathPattern)
-		if err != nil {
-			return nil, err
-		}
-		input = inputs[alias]
-		if input == nil {
-			return nil, fmt.Errorf("unknown pathPattern source %q", alias)
-		}
-		var expression strings.Builder
-		expression.WriteByte('^')
-		seen := map[string]bool{}
-		for pattern != "" {
-			i := strings.IndexAny(pattern, "{}")
-			if i < 0 {
-				expression.WriteString(regexp.QuoteMeta(pattern))
-				break
-			}
-			expression.WriteString(regexp.QuoteMeta(pattern[:i]))
-			name, rest, ok := strings.Cut(pattern[i+1:], "}")
-			if pattern[i] != '{' || !ok || !captureName.MatchString(name) || seen[name] ||
-				len(content.IsLabelKey(name)) != 0 {
-				return nil, fmt.Errorf("invalid or repeated pathPattern capture %q", name)
-			}
-			seen[name] = true
-			expression.WriteString("(?P<" + name + ">[^/]+)")
-			pattern = rest
-		}
-		expression.WriteByte('$')
-		matcher, err = regexp.Compile(expression.String())
-		if err != nil {
-			return nil, err
-		}
+	matcher, input, err := pathMatcher(spec.PathPattern, inputs)
+	if err != nil {
+		return nil, err
 	}
-	var requests []request
-	names := map[string]bool{}
-	add := func(raw map[string]string) error {
-		normalized := make(map[string]string, len(raw))
-		for k, v := range raw {
-			normalized[k] = strings.ToLower(v)
-			if len(content.IsLabelValue(normalized[k])) != 0 {
-				return fmt.Errorf("invalid capture value %q", v)
-			}
-		}
-		for _, artifact := range spec.Artifacts {
-			var err error
-			artifact.Name, err = render(artifact.Name, normalized)
-			if err != nil {
-				return err
-			}
-			if len(apivalidation.NameIsDNSSubdomain(artifact.Name, false)) != 0 || names[artifact.Name] {
-				return fmt.Errorf("invalid or duplicate output name %q", artifact.Name)
-			}
-			names[artifact.Name] = true
-			artifact.Copy = append([]operation(nil), artifact.Copy...)
-			for i := range artifact.Copy {
-				artifact.Copy[i].From, err = render(artifact.Copy[i].From, raw)
-				if err != nil {
-					return err
-				}
-				artifact.Copy[i].To, err = render(artifact.Copy[i].To, raw)
-				if err != nil {
-					return err
-				}
-			}
-			requests = append(requests, request{artifact, maps.Clone(normalized)})
-		}
-		return nil
-	}
+
+	x := requestExpansion{spec: &spec, names: map[string]bool{}}
+	add := x.add
 	if matcher == nil {
 		err := add(nil)
-		return requests, err
+		return x.requests, err
 	}
-	err := fs.WalkDir(input, ".", func(name string, entry fs.DirEntry, err error) error {
+	err = fs.WalkDir(input, ".", func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if err := ctx.Err(); err != nil {
-			return err
+			return fmt.Errorf("context: %w", err)
 		}
 		if name == "." || !entry.IsDir() {
 			return nil
@@ -117,7 +53,98 @@ func expand(ctx context.Context, spec specification, inputs map[string]fs.FS) ([
 		}
 		return add(captures)
 	})
-	return requests, err
+	if err != nil {
+		return x.requests, fmt.Errorf("walkdir: %w", err)
+	}
+	return x.requests, nil
+}
+
+type requestExpansion struct {
+	spec     *specification
+	requests []request
+	names    map[string]bool
+}
+
+func (x *requestExpansion) add(raw map[string]string) error {
+	normalized := make(map[string]string, len(raw))
+	for k, v := range raw {
+		normalized[k] = strings.ToLower(v)
+		if len(content.IsLabelValue(normalized[k])) != 0 {
+			return fmt.Errorf("invalid capture value %q", v)
+		}
+	}
+	for _, artifact := range x.spec.Artifacts {
+		var err error
+		artifact.Name, err = render(artifact.Name, normalized)
+		if err != nil {
+			return err
+		}
+		if len(apivalidation.NameIsDNSSubdomain(artifact.Name, false)) != 0 || x.names[artifact.Name] {
+			return fmt.Errorf("invalid or duplicate output name %q", artifact.Name)
+		}
+		x.names[artifact.Name] = true
+		if err := renderCopies(&artifact, raw); err != nil {
+			return err
+		}
+		x.requests = append(x.requests, request{artifact, maps.Clone(normalized)})
+	}
+	return nil
+}
+
+func renderCopies(artifact *output, raw map[string]string) error {
+	var err error
+	artifact.Copy = append([]operation(nil), artifact.Copy...)
+	for i := range artifact.Copy {
+		artifact.Copy[i].From, err = render(artifact.Copy[i].From, raw)
+		if err != nil {
+			return err
+		}
+		artifact.Copy[i].To, err = render(artifact.Copy[i].To, raw)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func pathMatcher(patternValue string, inputs map[string]fs.FS) (*regexp.Regexp, fs.FS, error) {
+	var matcher *regexp.Regexp
+	var input fs.FS
+	if patternValue != "" {
+		alias, pattern, err := sourcePath(patternValue)
+		if err != nil {
+			return nil, nil, err
+		}
+		input = inputs[alias]
+		if input == nil {
+			return nil, nil, fmt.Errorf("unknown pathPattern source %q", alias)
+		}
+		var expression strings.Builder
+		expression.WriteByte('^')
+		seen := map[string]bool{}
+		for pattern != "" {
+			i := strings.IndexAny(pattern, "{}")
+			if i < 0 {
+				expression.WriteString(regexp.QuoteMeta(pattern))
+				break
+			}
+			expression.WriteString(regexp.QuoteMeta(pattern[:i]))
+			name, rest, ok := strings.Cut(pattern[i+1:], "}")
+			if pattern[i] != '{' || !ok || !captureName.MatchString(name) || seen[name] ||
+				len(content.IsLabelKey(name)) != 0 {
+				return nil, nil, fmt.Errorf("invalid or repeated pathPattern capture %q", name)
+			}
+			seen[name] = true
+			expression.WriteString("(?P<" + name + ">[^/]+)")
+			pattern = rest
+		}
+		expression.WriteByte('$')
+		matcher, err = regexp.Compile(expression.String())
+		if err != nil {
+			return nil, nil, fmt.Errorf("compile: %w", err)
+		}
+	}
+	return matcher, input, nil
 }
 
 func render(template string, captures map[string]string) (string, error) {

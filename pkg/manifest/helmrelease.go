@@ -174,6 +174,8 @@ func (h *HelmRelease) Named() NamedResource {
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (h *HelmRelease) WithNamespace(namespace string) BaseManifest {
 	out := *h
 	out.Namespace = namespace
@@ -374,7 +376,7 @@ func (h *HelmRelease) references(yield func(Reference) bool) {
 				Reference{
 					NamespaceDefault: namespaceDefault,
 					NamedResource:    declared,
-					Use:              "chart",
+					Use:              chartKey,
 					Content:          true,
 					Gate:             stage,
 					Artifact:         artifact,
@@ -396,7 +398,7 @@ func (h *HelmRelease) references(yield func(Reference) bool) {
 				Reference{
 					NamespaceDefault: h.Chart.Source.Namespace == "",
 					NamedResource:    backing.Source,
-					Use:              "source",
+					Use:              sourceKey,
 					Content:          true,
 					Files:            files,
 					ChartPath:        path,
@@ -427,7 +429,7 @@ func (h *HelmRelease) references(yield func(Reference) bool) {
 				"",
 				h.Namespace,
 			),
-			Use:              "dependsOn",
+			Use:              dependsOnKey,
 			Position:         i,
 			ReadyExpr:        referenceExpression(&dep.ReadyExpr),
 			Gate:             GateInputs,

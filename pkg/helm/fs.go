@@ -44,6 +44,7 @@ func (c capturedChart) load() (*chart.Chart, error) {
 // A missing requested location is distinct from a read failure within a chart.
 func captureChart(ctx context.Context, input fs.FS, name string, archiveShape bool) (capturedChart, bool, error) {
 	if err := ctx.Err(); err != nil {
+		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return capturedChart{}, false, err
 	}
 	info, err := fs.Stat(input, name)
@@ -70,8 +71,8 @@ func captureChart(ctx context.Context, input fs.FS, name string, archiveShape bo
 				"",
 			)
 		}
-		files, err := chartFilesInFS(ctx, input, archiveShape)
-		return capturedChart{files: files}, false, err
+		files, chartFilesInFSErr := chartFilesInFS(ctx, input, archiveShape)
+		return capturedChart{files: files}, false, chartFilesInFSErr
 	}
 	r, err := input.Open(name)
 	if err != nil {
@@ -99,30 +100,11 @@ func chartFilesInFS(ctx context.Context, input fs.FS, archiveShape bool) ([]*arc
 	visit := func(name string, info fs.FileInfo, data []byte) error {
 		rooted := name
 		if archiveShape {
-			delimiter := "/"
-			if strings.ContainsRune(name, '\\') {
-				delimiter = "\\"
+			var err error
+			rooted, err = archiveFileName(name)
+			if err != nil {
+				return err
 			}
-			base, relative, _ := strings.Cut(name, delimiter)
-			relative = strings.ReplaceAll(relative, delimiter, "/")
-			if path.IsAbs(relative) {
-				return errors.New("chart illegally contains absolute paths")
-			}
-			relative = path.Clean(relative)
-			if relative == "." {
-				return fmt.Errorf("chart illegally contains content outside the base directory: %q", name)
-			}
-			if strings.HasPrefix(relative, "..") {
-				return errors.New("chart illegally references parent directory")
-			}
-			if len(relative) >= 3 && relative[1:3] == ":/" &&
-				(relative[0] >= 'a' && relative[0] <= 'z' || relative[0] >= 'A' && relative[0] <= 'Z') {
-				return errors.New("chart contains illegally named files")
-			}
-			if base == "Chart.yaml" {
-				return errors.New("chart yaml not in base directory")
-			}
-			rooted = relative
 		}
 		if data == nil {
 			r, err := input.Open(name)
@@ -152,4 +134,31 @@ func chartFilesInFS(ctx context.Context, input fs.FS, archiveShape bool) ([]*arc
 		return nil, manifest.NewError(manifest.ErrInput, err, "")
 	}
 	return files, nil
+}
+
+func archiveFileName(name string) (string, error) {
+	delimiter := "/"
+	if strings.ContainsRune(name, '\\') {
+		delimiter = "\\"
+	}
+	base, relative, _ := strings.Cut(name, delimiter)
+	relative = strings.ReplaceAll(relative, delimiter, "/")
+	if path.IsAbs(relative) {
+		return "", errors.New("chart illegally contains absolute paths")
+	}
+	relative = path.Clean(relative)
+	if relative == "." {
+		return "", fmt.Errorf("chart illegally contains content outside the base directory: %q", name)
+	}
+	if strings.HasPrefix(relative, "..") {
+		return "", errors.New("chart illegally references parent directory")
+	}
+	if len(relative) >= 3 && relative[1:3] == ":/" &&
+		(relative[0] >= 'a' && relative[0] <= 'z' || relative[0] >= 'A' && relative[0] <= 'Z') {
+		return "", errors.New("chart contains illegally named files")
+	}
+	if base == "Chart.yaml" {
+		return "", errors.New("chart yaml not in base directory")
+	}
+	return relative, nil
 }

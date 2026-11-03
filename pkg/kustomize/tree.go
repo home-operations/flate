@@ -13,11 +13,11 @@ import (
 
 // GitBaseRequest carries effective Git policy and the referencing Flux interval.
 type GitBaseRequest struct {
-	URL        string
-	Ref        string
-	MaxAge     time.Duration
-	Timeout    time.Duration
-	Submodules bool
+	URL        string        `json:"URL"`
+	Ref        string        `json:"Ref"`
+	MaxAge     time.Duration `json:"MaxAge"`
+	Timeout    time.Duration `json:"Timeout"`
+	Submodules bool          `json:"Submodules"`
 }
 
 // GitBaseFetcher acquires an immutable repository view for private render mounts.

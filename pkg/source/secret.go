@@ -38,7 +38,7 @@ func (e *MissingSecretError) Error() string {
 	return fmt.Sprintf("secret %s/%s %s", e.Secret.Namespace, e.Secret.Name, e.Detail)
 }
 
-// Unwrap keeps errors.Is(err, manifest.ErrMissingSecret) working.
+// Unwrap keeps [errors.Is](err, manifest.ErrMissingSecret) working.
 func (e *MissingSecretError) Unwrap() error {
 	if e.Cause != nil {
 		return errors.Join(manifest.ErrMissingSecret, e.Cause)
@@ -61,7 +61,7 @@ func (e *MissingSecretError) ProducerBacked(reads *store.ReadSet) bool {
 // RetryMachine runs the acquisition owner's continuation when no producer can supply material.
 func (e *MissingSecretError) RetryMachine(ctx context.Context, reads *store.ReadSet) (*store.SourceArtifact, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 	}
 	if e.RetryAmbient == nil || e.ProducerBacked(reads) {
 		return nil, e
@@ -91,7 +91,7 @@ func AcquireMachine(
 		return nil, manifest.NewError(manifest.ErrFlux, err, "")
 	}
 	policy.Machine = true
-	preparation := ctx
+	var preparation context.Context
 	var cancel context.CancelFunc
 	if policy.Timeout != nil {
 		preparation, cancel = context.WithTimeout(ctx, *policy.Timeout)
@@ -155,12 +155,12 @@ func BasicAuthFromSecret(
 	sec *manifest.Secret,
 	owner manifest.DiagnosticIdentity,
 	secretRef string,
-) (username, password string, err error) {
-	username, _, err = sec.Value("username")
+) (string, string, error) {
+	username, _, err := sec.Value("username")
 	if err != nil {
 		return "", "", fmt.Errorf("secret %s/%s: %w", owner.ID.Namespace, secretRef, err)
 	}
-	password, _, err = sec.Value("password")
+	password, _, err := sec.Value("password")
 	if err != nil {
 		return "", "", fmt.Errorf("secret %s/%s: %w", owner.ID.Namespace, secretRef, err)
 	}

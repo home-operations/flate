@@ -17,6 +17,7 @@ import (
 //go:embed templates/diff.html.tmpl
 var htmlTmpl string
 
+//nolint:gochecknoglobals // Parse the immutable HTML template once for all concurrent encoders.
 var diffHTMLTemplate = template.Must(template.New("diff").Parse(htmlTmpl))
 
 // Row/cell kinds become CSS class suffixes and must match diff.html.tmpl.
@@ -103,8 +104,8 @@ func (e Encoder) html(changes []LineChange) error {
 	}
 
 	data := htmlData{ChromaCSS: template.CSS(css)} //nolint:gosec // chroma-generated stylesheet, not user input
-	for _, p := range changes {
-		r := buildHTMLResource(p, hl)
+	for i := range changes {
+		r := buildHTMLResource(&changes[i], hl)
 		r.ID = fmt.Sprintf("r%d", len(data.Resources))
 		data.Resources = append(data.Resources, r)
 		switch r.Status {
@@ -132,7 +133,8 @@ func (e Encoder) html(changes []LineChange) error {
 // relying on that ordering.
 func buildTree(res []htmlResource) []treeParent {
 	var tree []treeParent
-	for _, r := range res {
+	for rIndex := range res {
+		r := res[rIndex]
 		if len(tree) == 0 || tree[len(tree)-1].Label != r.Parent {
 			tree = append(tree, treeParent{Label: r.Parent})
 		}
@@ -151,7 +153,7 @@ func buildTree(res []htmlResource) []treeParent {
 // trimmed before/between/after the hunks are emitted as collapsed rows behind
 // an expander so the whole file can be revealed in place — see unifiedRows /
 // sideRows.
-func buildHTMLResource(p LineChange, hl *highlighter) htmlResource {
+func buildHTMLResource(p *LineChange, hl *highlighter) htmlResource {
 	a, b := difflib.SplitLines(p.From), difflib.SplitLines(p.To)
 	groups := difflib.NewMatcher(a, b).GetGroupedOpCodes(diffContextLines)
 	ah, bh := highlightPair(a, b, groups, hl)
@@ -245,25 +247,7 @@ func unifiedRows(ah, bh []template.HTML, groups [][]difflib.OpCode) []uRow {
 	for gi, group := range groups {
 		fold(gi)
 		for _, op := range group {
-			if op.Tag == 'e' {
-				for k := range op.I2 - op.I1 {
-					rows = append(
-						rows,
-						uRow{Kind: kindCtx, OldNo: op.I1 + k + 1, NewNo: op.J1 + k + 1, HTML: ah[op.I1+k]},
-					)
-				}
-				continue
-			}
-			if op.Tag == 'd' || op.Tag == 'r' { // old lines removed
-				for k := range op.I2 - op.I1 {
-					rows = append(rows, uRow{Kind: kindDel, OldNo: op.I1 + k + 1, HTML: ah[op.I1+k]})
-				}
-			}
-			if op.Tag == 'i' || op.Tag == 'r' { // new lines added
-				for k := range op.J2 - op.J1 {
-					rows = append(rows, uRow{Kind: kindAdd, NewNo: op.J1 + k + 1, HTML: bh[op.J1+k]})
-				}
-			}
+			rows = appendUnifiedRows(rows, ah, bh, op)
 		}
 	}
 	fold(len(groups))
@@ -295,47 +279,7 @@ func sideRows(ah, bh []template.HTML, groups [][]difflib.OpCode) []sRow {
 	for gi, group := range groups {
 		fold(gi)
 		for _, op := range group {
-			switch op.Tag {
-			case 'e':
-				for k := range op.I2 - op.I1 {
-					rows = append(rows, sRow{
-						Left:  cell{Kind: kindCtx, No: op.I1 + k + 1, HTML: ah[op.I1+k]},
-						Right: cell{Kind: kindCtx, No: op.J1 + k + 1, HTML: bh[op.J1+k]},
-					})
-				}
-			case 'd':
-				for k := range op.I2 - op.I1 {
-					rows = append(
-						rows,
-						sRow{
-							Left:  cell{Kind: kindDel, No: op.I1 + k + 1, HTML: ah[op.I1+k]},
-							Right: cell{Kind: kindBlank},
-						},
-					)
-				}
-			case 'i':
-				for k := range op.J2 - op.J1 {
-					rows = append(
-						rows,
-						sRow{
-							Left:  cell{Kind: kindBlank},
-							Right: cell{Kind: kindAdd, No: op.J1 + k + 1, HTML: bh[op.J1+k]},
-						},
-					)
-				}
-			case 'r':
-				dn, an := op.I2-op.I1, op.J2-op.J1
-				for k := range max(dn, an) {
-					l, r := cell{Kind: kindBlank}, cell{Kind: kindBlank}
-					if k < dn {
-						l = cell{Kind: kindDel, No: op.I1 + k + 1, HTML: ah[op.I1+k]}
-					}
-					if k < an {
-						r = cell{Kind: kindAdd, No: op.J1 + k + 1, HTML: bh[op.J1+k]}
-					}
-					rows = append(rows, sRow{Left: l, Right: r})
-				}
-			}
+			rows = appendSideRows(rows, ah, bh, op)
 		}
 	}
 	fold(len(groups))
@@ -368,7 +312,7 @@ func highlightPair(a, b []string, groups [][]difflib.OpCode, hl *highlighter) ([
 // runeDiffRange returns the per-side changed rune ranges of two differing lines
 // by trimming the common prefix and suffix. It returns empty ranges when the
 // lines share no common affix (a total change — not worth a word highlight).
-func runeDiffRange(a, b string) (aLo, aHi, bLo, bHi int) {
+func runeDiffRange(a, b string) (int, int, int, int) {
 	ar, br := []rune(a), []rune(b)
 	p := 0
 	for p < len(ar) && p < len(br) && ar[p] == br[p] {
@@ -491,4 +435,72 @@ func (h *highlighter) lines(src []string) []template.HTML {
 // rawHTML accepts markup whose token text has already been HTML-escaped.
 func rawHTML(s string) template.HTML {
 	return template.HTML(s) //nolint:gosec // s contains escaped token text and generated spans
+}
+
+func appendUnifiedRows(rows []uRow, ah, bh []template.HTML, op difflib.OpCode) []uRow {
+	if op.Tag == 'e' {
+		for k := range op.I2 - op.I1 {
+			rows = append(
+				rows,
+				uRow{Kind: kindCtx, OldNo: op.I1 + k + 1, NewNo: op.J1 + k + 1, HTML: ah[op.I1+k]},
+			)
+		}
+		return rows
+	}
+	if op.Tag == 'd' || op.Tag == 'r' { // old lines removed
+		for k := range op.I2 - op.I1 {
+			rows = append(rows, uRow{Kind: kindDel, OldNo: op.I1 + k + 1, HTML: ah[op.I1+k]})
+		}
+	}
+	if op.Tag == 'i' || op.Tag == 'r' { // new lines added
+		for k := range op.J2 - op.J1 {
+			rows = append(rows, uRow{Kind: kindAdd, NewNo: op.J1 + k + 1, HTML: bh[op.J1+k]})
+		}
+	}
+	return rows
+}
+
+func appendSideRows(rows []sRow, ah, bh []template.HTML, op difflib.OpCode) []sRow {
+	switch op.Tag {
+	case 'e':
+		for k := range op.I2 - op.I1 {
+			rows = append(rows, sRow{
+				Left:  cell{Kind: kindCtx, No: op.I1 + k + 1, HTML: ah[op.I1+k]},
+				Right: cell{Kind: kindCtx, No: op.J1 + k + 1, HTML: bh[op.J1+k]},
+			})
+		}
+	case 'd':
+		for k := range op.I2 - op.I1 {
+			rows = append(
+				rows,
+				sRow{
+					Left:  cell{Kind: kindDel, No: op.I1 + k + 1, HTML: ah[op.I1+k]},
+					Right: cell{Kind: kindBlank},
+				},
+			)
+		}
+	case 'i':
+		for k := range op.J2 - op.J1 {
+			rows = append(
+				rows,
+				sRow{
+					Left:  cell{Kind: kindBlank},
+					Right: cell{Kind: kindAdd, No: op.J1 + k + 1, HTML: bh[op.J1+k]},
+				},
+			)
+		}
+	case 'r':
+		dn, an := op.I2-op.I1, op.J2-op.J1
+		for k := range max(dn, an) {
+			l, r := cell{Kind: kindBlank}, cell{Kind: kindBlank}
+			if k < dn {
+				l = cell{Kind: kindDel, No: op.I1 + k + 1, HTML: ah[op.I1+k]}
+			}
+			if k < an {
+				r = cell{Kind: kindAdd, No: op.J1 + k + 1, HTML: bh[op.J1+k]}
+			}
+			rows = append(rows, sRow{Left: l, Right: r})
+		}
+	}
+	return rows
 }

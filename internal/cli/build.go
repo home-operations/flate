@@ -28,13 +28,13 @@ func newBuildCmd() *cobra.Command {
 	cmd.AddCommand(
 		buildCmd(&cobra.Command{
 			Use:     "ks [name]",
-			Aliases: []string{"kustomization", "kustomizations"},
+			Aliases: []string{kustomizationAlias, kustomizationAliases},
 			Short:   "Render Kustomizations",
 			Args:    cobra.MaximumNArgs(1),
 		}, manifest.KindKustomization),
 		buildCmd(&cobra.Command{
 			Use:     "hr [name]",
-			Aliases: []string{"helmrelease", "helmreleases"},
+			Aliases: []string{helmReleaseAlias, helmReleaseAliases},
 			Short:   "Render HelmReleases",
 			Args:    cobra.MaximumNArgs(1),
 		}, manifest.KindHelmRelease),
@@ -78,7 +78,7 @@ func buildCmd(cmd *cobra.Command, kinds ...string) *cobra.Command {
 }
 
 func collectRendered(res *selection.Selection, b *buildFlags) []map[string]any {
-	out := []map[string]any{}
+	out := make([]map[string]any, 0, renderedDocumentCount(res))
 	for _, batch := range res.Manifests {
 		out = append(out, emissionDocs(batch.Documents, b)...)
 	}
@@ -99,4 +99,12 @@ func emissionDocs(mans []map[string]any, b *buildFlags) []map[string]any {
 
 func compareDocs(a, b map[string]any) int {
 	return manifest.DocIdentity(a).Compare(manifest.DocIdentity(b))
+}
+
+func renderedDocumentCount(res *selection.Selection) int {
+	total := 0
+	for _, batch := range res.Manifests {
+		total += len(batch.Documents)
+	}
+	return total
 }

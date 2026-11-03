@@ -61,6 +61,7 @@ func (*Controller) PreviousRender(
 	return nil, false
 }
 
+//nolint:ireturn // Heterogeneous controllers retain the consumer interface.
 func (c *Controllers) owner(id manifest.NamedResource) nodeController {
 	for _, owner := range [...]nodeController{c.Kustomization, c.HelmRelease, c.ResourceSet, c.Source, c.ArtifactGenerator} {
 		if owner != nil && owner.Owns(id) {

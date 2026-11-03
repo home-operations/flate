@@ -37,3 +37,19 @@ func NoError(tb testing.TB, err error) {
 		tb.Fatal(err)
 	}
 }
+
+// FatalIf stops the test when invalid is true.
+func FatalIf(tb testing.TB, invalid bool, format string, args ...any) {
+	tb.Helper()
+	if invalid {
+		tb.Fatalf(format, args...)
+	}
+}
+
+// ErrorIf fails the test when invalid is true.
+func ErrorIf(tb testing.TB, invalid bool, format string, args ...any) {
+	tb.Helper()
+	if invalid {
+		tb.Errorf(format, args...)
+	}
+}

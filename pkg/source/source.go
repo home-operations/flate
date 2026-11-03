@@ -93,7 +93,7 @@ type SecretGetter func(namespace, name string) *manifest.Secret
 // OperationView refreshes admitted mutable observations and retains cache acquisition identity.
 func OperationView(ctx context.Context, input fs.FS) (fs.FS, string, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, "", err
+		return nil, "", err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 	}
 	if current, ok := input.(*gittree.FS); ok {
 		return gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: current})

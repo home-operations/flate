@@ -51,6 +51,8 @@ func (g *GitRepository) Named() NamedResource {
 
 // BootstrapAlias returns a local copy and the borrowed immutable Git descriptor.
 // A non-nil descriptor selects repository-root policy and supplies ref/view inputs.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (g *GitRepository) BootstrapAlias(root string) (BaseManifest, *GitRepository) {
 	spec := g.GitRepositorySpec
 	spec.URL = "file://" + root
@@ -89,6 +91,8 @@ func (g *GitRepository) Content(ref sourcev1.GitRepositoryRef) any {
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (g *GitRepository) WithNamespace(namespace string) BaseManifest {
 	out := *g
 	out.Namespace = namespace
@@ -254,6 +258,8 @@ func (o *OCIRepository) Content(ref sourcev1.OCIRepositoryRef) any {
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (o *OCIRepository) WithNamespace(namespace string) BaseManifest {
 	out := *o
 	out.Namespace = namespace
@@ -350,6 +356,8 @@ func (e *ExternalArtifact) Named() NamedResource {
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (e *ExternalArtifact) WithNamespace(namespace string) BaseManifest {
 	out := *e
 	out.Namespace = namespace

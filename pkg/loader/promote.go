@@ -289,9 +289,12 @@ func (l *Loader) PromotionDocuments(id manifest.NamedResource) []store.Child {
 		}
 		return nil
 	}
-	for root, doc := range l.documents.cache {
-		if doc.built != nil && (l.fileCoordinate(root) == r.Builder || l.fileCoordinate(doc.file) == r.Builder) {
-			return doc.built
+	{
+		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+		for root, doc := range l.documents.cache {
+			if doc.built != nil && (l.fileCoordinate(root) == r.Builder || l.fileCoordinate(doc.file) == r.Builder) {
+				return doc.built
+			}
 		}
 	}
 	return nil

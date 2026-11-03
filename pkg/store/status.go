@@ -128,6 +128,7 @@ type conditionRecord struct {
 
 type conditionState struct {
 	authority
+
 	first [1]Condition
 }
 

@@ -17,6 +17,7 @@ import (
 // Execution owns one reconciliation's captured inputs and retained assessment.
 type Execution struct {
 	*Controller
+
 	Reads      store.ReadSet
 	Unreadable []manifest.NamedResource
 	Blocked    []manifest.NamedResource
@@ -150,6 +151,7 @@ func (e *Execution) classify(ctx context.Context, level manifest.DrainLevel) err
 			continue
 		}
 		switch cl.Kind {
+		case schedule.Terminal:
 		case schedule.DependencyFailed:
 			if failed == nil {
 				failed = &manifest.DependencyFailedError{
@@ -223,43 +225,7 @@ func (e *Execution) finish(ctx context.Context, err error) {
 		return
 	}
 	if err != nil {
-		if _, failed := errors.AsType[*manifest.DependencyFailedError](err); failed {
-			e.kind = schedule.DependencyFailed
-		}
-		if artifact, ok := e.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact); ok &&
-			!artifact.Reads.Valid() {
-			e.Store.SetArtifact(id, nil)
-		}
-		_, _, next := e.Reads.GetEmission(id)
-		if e.Store.HasInventory(id) && len(next.Failures) == 0 {
-			next.Complete = !next.OutputReads.Valid()
-			if publishErr := e.publish(ctx, id, &next, nil); publishErr != nil {
-				err = errors.Join(err, publishErr)
-			}
-		}
-		next.Finish()
-		if slog.Default().Enabled(ctx, slog.LevelDebug) {
-			slog.DebugContext(
-				ctx,
-				"base: resource failed",
-				"id",
-				manifest.DiagnosticFor(id, e.Reads.GetObject(id)).String(),
-				"err",
-				manifest.ErrorDetails(err),
-			)
-		}
-		if errors.Is(err, manifest.ErrSourceSkipped) {
-			e.Store.UpdateStatus(
-				id,
-				store.StatusInfo{
-					Status:  store.StatusReady,
-					Reason:  store.ReasonSkipped,
-					Message: strings.TrimSpace(err.Error()),
-				},
-			)
-		} else {
-			e.Store.UpdateFailure(id, err)
-		}
+		e.finishFailure(ctx, id, err)
 		return
 	}
 	if prior, ok := e.Store.GetStatus(
@@ -269,6 +235,46 @@ func (e *Execution) finish(ctx context.Context, err error) {
 		return
 	}
 	e.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
+}
+
+func (e *Execution) finishFailure(ctx context.Context, id manifest.NamedResource, err error) {
+	if _, failed := errors.AsType[*manifest.DependencyFailedError](err); failed {
+		e.kind = schedule.DependencyFailed
+	}
+	if artifact, ok := e.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact); ok &&
+		!artifact.Reads.Valid() {
+		e.Store.SetArtifact(id, nil)
+	}
+	_, _, next := e.Reads.GetEmission(id)
+	if e.Store.HasInventory(id) && len(next.Failures) == 0 {
+		next.Complete = !next.OutputReads.Valid()
+		if publishErr := e.publish(ctx, id, &next, nil); publishErr != nil {
+			err = errors.Join(err, publishErr)
+		}
+	}
+	next.Finish()
+	if slog.Default().Enabled(ctx, slog.LevelDebug) {
+		slog.DebugContext(
+			ctx,
+			"base: resource failed",
+			"id",
+			manifest.DiagnosticFor(id, e.Reads.GetObject(id)).String(),
+			"err",
+			manifest.ErrorDetails(err),
+		)
+	}
+	if errors.Is(err, manifest.ErrSourceSkipped) {
+		e.Store.UpdateStatus(
+			id,
+			store.StatusInfo{
+				Status:  store.StatusReady,
+				Reason:  store.ReasonSkipped,
+				Message: strings.TrimSpace(err.Error()),
+			},
+		)
+	} else {
+		e.Store.UpdateFailure(id, err)
+	}
 }
 
 // Dispatch runs a captured declaration through the common acceptance path.
@@ -329,27 +335,7 @@ func (e *Execution) Dispatch[T manifest.BaseManifest, S any](
 		return
 	}
 	if !ok {
-		e.resume = e.requireDeclaration
-		err := e.requireDeclaration(ctx, level)
-		if err != nil && !errors.Is(err, manifest.ErrSourceSkipped) {
-			e.finish(ctx, err)
-		} else {
-			if err := e.withdrawInvalid(ctx); err != nil {
-				e.finish(ctx, err)
-				return
-			}
-			if info, exists := e.Store.GetStatus(id); exists && info.Status != store.StatusReady {
-				e.Store.UpdateStatus(
-					id,
-					store.StatusInfo{
-						Status:  store.StatusReady,
-						Reason:  store.ReasonSkipped,
-						Message: "object not in store at reconcile time",
-					},
-				)
-			}
-			e.Reads.Accept()
-		}
+		e.dispatchMissing(ctx, level)
 		return
 	}
 
@@ -430,9 +416,14 @@ func (e *Execution) requireDeclaration(ctx context.Context, level manifest.Drain
 		return nil
 	}
 	var owners []manifest.NamedResource
-	for _, production := range e.Reads.Productions(id, nil) {
-		if owner := e.Reads.Materializer(id, production); owner != (manifest.NamedResource{}) && owner != id {
-			owners = append(owners, owner)
+	{
+		productionValues := e.Reads.Productions(id, nil)
+		for productionIndex := range productionValues {
+			production := productionValues[productionIndex]
+
+			if owner := e.Reads.Materializer(id, production); owner != (manifest.NamedResource{}) && owner != id {
+				owners = append(owners, owner)
+			}
 		}
 	}
 	slices.SortFunc(owners, manifest.NamedResource.Compare)
@@ -485,7 +476,7 @@ func (e *Execution) FingerprintDedup(
 	attempt *store.Emission,
 ) (string, bool, error) {
 	if err := ctx.Err(); err != nil {
-		return "", true, err
+		return "", true, fmt.Errorf("context: %w", err)
 	}
 	if err := e.Checkpoint(); err != nil {
 		return "", true, err
@@ -584,25 +575,30 @@ type DataWait struct {
 
 // AwaitData retains availability separately from required authored readiness gates.
 func (e *Execution) AwaitData(ctx context.Context, wait DataWait, level manifest.DrainLevel) error {
-	for _, input := range wait.Inputs {
-		if !input.Optional && !input.Input.Private {
-			for _, producer := range input.Input.Materializers {
-				e.Reads.RequireData(producer)
+	{
+		inputValues := wait.Inputs
+		for inputIndex := range inputValues {
+			input := inputValues[inputIndex]
+
+			if !input.Optional && !input.Input.Private {
+				for _, producer := range input.Input.Materializers {
+					e.Reads.RequireData(producer)
+				}
 			}
 		}
 	}
-	return (&pendingData{execution: e, wait: wait}).Settle(ctx, level)
+	return (&pendingDataError{execution: e, wait: wait}).Settle(ctx, level)
 }
 
-type pendingData struct {
+type pendingDataError struct {
 	execution *Execution
 	wait      DataWait
 	blocked   []manifest.NamedResource
 }
 
-func (p *pendingData) Error() string { return "waiting for values inputs" }
-func (p *pendingData) Unwrap() error { return &depwait.ErrBlocked{Deps: p.blocked} }
-func (p *pendingData) Settle(ctx context.Context, level manifest.DrainLevel) error {
+func (p *pendingDataError) Error() string { return "waiting for values inputs" }
+func (p *pendingDataError) Unwrap() error { return &depwait.ErrBlocked{Deps: p.blocked} }
+func (p *pendingDataError) Settle(ctx context.Context, level manifest.DrainLevel) error {
 	e := p.execution
 	gateErr := e.classify(ctx, level)
 
@@ -618,36 +614,43 @@ func (p *pendingData) Settle(ctx context.Context, level manifest.DrainLevel) err
 	if blocked, ok := errors.AsType[*depwait.ErrBlocked](gateErr); ok {
 		p.blocked = append(p.blocked, blocked.Deps...)
 	}
-	for _, input := range p.wait.Inputs {
-		result := w.Available(ctx, input, level)
-		if result.Err != nil {
-			return result.Err
-		}
-		if !input.Optional && !input.Input.Private && result.Kind != schedule.Blocked && !result.Omit {
-			e.Reads.RequireData(input.NamedResource)
-		}
-		switch result.Kind {
-		case schedule.Blocked:
-			p.blocked = append(p.blocked, result.Blocked...)
-		case schedule.DependencyFailed:
-			if failed == nil {
-				failed = &manifest.DependencyFailedError{
-					Parent:  e.Reads.ID(),
-					Subject: manifest.DiagnosticFor(e.Reads.ID(), e.Reads.GetObject(e.Reads.ID())),
-					Reasons: make(map[manifest.NamedResource]manifest.DiagnosticReason),
+	{
+		inputValues2 := p.wait.Inputs
+		for inputIndex2 := range inputValues2 {
+			input := inputValues2[inputIndex2]
+
+			result := w.Available(ctx, input, level)
+			if result.Err != nil {
+				return result.Err
+			}
+			if !input.Optional && !input.Input.Private && result.Kind != schedule.Blocked && !result.Omit {
+				e.Reads.RequireData(input.NamedResource)
+			}
+			switch result.Kind {
+			case schedule.Blocked:
+				p.blocked = append(p.blocked, result.Blocked...)
+			case schedule.DependencyFailed:
+				if failed == nil {
+					failed = &manifest.DependencyFailedError{
+						Parent:  e.Reads.ID(),
+						Subject: manifest.DiagnosticFor(e.Reads.ID(), e.Reads.GetObject(e.Reads.ID())),
+						Reasons: make(map[manifest.NamedResource]manifest.DiagnosticReason),
+					}
 				}
-			}
-			causes := result.Failed
-			if len(causes) == 0 {
-				causes = []manifest.NamedResource{input.NamedResource}
-			}
-			for _, cause := range causes {
-				failed.Failed = append(failed.Failed, cause)
-				failed.Reasons[cause] = result.Reason
-			}
-		default:
-			if result.Omit && !input.Optional {
-				omitted = append(omitted, input.NamedResource)
+				causes := result.Failed
+				if len(causes) == 0 {
+					causes = []manifest.NamedResource{input.NamedResource}
+				}
+				for _, cause := range causes {
+					failed.Failed = append(failed.Failed, cause)
+					failed.Reasons[cause] = result.Reason
+				}
+			case schedule.Terminal:
+				fallthrough
+			default:
+				if result.Omit && !input.Optional {
+					omitted = append(omitted, input.NamedResource)
+				}
 			}
 		}
 	}
@@ -696,4 +699,29 @@ func (e *Execution) promoteData(ctx context.Context, id manifest.NamedResource) 
 		return err
 	}
 	return nil
+}
+
+func (e *Execution) dispatchMissing(ctx context.Context, level manifest.DrainLevel) {
+	id := e.Reads.ID()
+	e.resume = e.requireDeclaration
+	err := e.requireDeclaration(ctx, level)
+	if err != nil && !errors.Is(err, manifest.ErrSourceSkipped) {
+		e.finish(ctx, err)
+	} else {
+		if err := e.withdrawInvalid(ctx); err != nil {
+			e.finish(ctx, err)
+			return
+		}
+		if info, exists := e.Store.GetStatus(id); exists && info.Status != store.StatusReady {
+			e.Store.UpdateStatus(
+				id,
+				store.StatusInfo{
+					Status:  store.StatusReady,
+					Reason:  store.ReasonSkipped,
+					Message: "object not in store at reconcile time",
+				},
+			)
+		}
+		e.Reads.Accept()
+	}
 }

@@ -23,6 +23,8 @@ type Snapshot struct {
 // Compare compares two selected snapshots in orig/current order. Selected errors
 // remain errors even when the snapshots produce a usable partial diff; discovered
 // warnings and structured suppressions remain available alongside those errors.
+//
+//nolint:gocritic // Preserve the existing value API and its snapshot semantics.
 func Compare(
 	orig, current Snapshot,
 	selectedErr error,
@@ -63,17 +65,21 @@ func CompareImages(orig, current Snapshot, selectedErr error, includeRemoved boo
 
 func publicSuppressions(notes []diffprep.Suppression) []Suppression {
 	out := slices.Grow([]Suppression(nil), len(notes))
-	for _, n := range notes {
-		out = append(
-			out,
-			Suppression{
-				Parent:  Parent(n.Parent),
-				Subject: n.Subject,
-				Side:    Side(n.Side),
-				Count:   n.Count,
-				Reason:  n.Reason,
-			},
-		)
+	{
+		nValues := notes
+		for nIndex := range nValues {
+			n := nValues[nIndex]
+			out = append(
+				out,
+				Suppression{
+					Parent:  Parent(n.Parent),
+					Subject: n.Subject,
+					Side:    Side(n.Side),
+					Count:   n.Count,
+					Reason:  n.Reason,
+				},
+			)
+		}
 	}
 	return out
 }

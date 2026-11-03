@@ -91,6 +91,7 @@ func (r generatorRecord) materialize(ctx context.Context, opts options) (manifes
 // KV loading is synchronous; the adapter binds only the current materialization.
 type generatorFileLoader struct {
 	ifc.Loader
+
 	load func(string) ([]byte, error)
 }
 

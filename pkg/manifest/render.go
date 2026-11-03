@@ -26,7 +26,7 @@ const (
 
 // EncodeRender encodes constructed render documents without changing scalar types.
 func EncodeRender(docs []DocOccurrence) ([]byte, error) {
-	data := binary.AppendUvarint(make([]byte, 0, 256*len(docs)), uint64(len(docs)))
+	data := binary.AppendUvarint(make([]byte, 0, initialRenderDocumentCapacity*len(docs)), uint64(len(docs)))
 	for _, doc := range docs {
 		if doc.Err != nil {
 			return nil, doc.Err
@@ -248,12 +248,12 @@ func (d *renderDecoder) value(depth int) any {
 	case renderUint64:
 		return d.unsigned()
 	case renderFloat64:
-		if len(d.data) < 8 {
+		if len(d.data) < renderFloatBytes {
 			d.err = fmt.Errorf("truncated render float")
 			return nil
 		}
 		v := math.Float64frombits(binary.LittleEndian.Uint64(d.data))
-		d.data = d.data[8:]
+		d.data = d.data[renderFloatBytes:]
 		return v
 	case renderString, renderTime:
 		n := d.count()
@@ -285,7 +285,7 @@ func (d *renderDecoder) value(depth int) any {
 		}
 		return v
 	case renderStringMap:
-		n := d.reserve(2)
+		n := d.reserve(renderMapEntryWidth)
 		if d.err != nil {
 			return nil
 		}
@@ -305,7 +305,7 @@ func (d *renderDecoder) value(depth int) any {
 		}
 		return v
 	case renderAnyMap:
-		n := d.reserve(2)
+		n := d.reserve(renderMapEntryWidth)
 		if d.err != nil {
 			return nil
 		}
@@ -332,3 +332,9 @@ func (d *renderDecoder) value(depth int) any {
 		return nil
 	}
 }
+
+const (
+	initialRenderDocumentCapacity = 256
+	renderFloatBytes              = 8
+	renderMapEntryWidth           = 2
+)

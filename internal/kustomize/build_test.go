@@ -73,6 +73,7 @@ const buildSchema = `{"definitions":{"schema.example.v1.Widget":{
  }}}}
 }}}`
 
+//nolint:ireturn // The upstream interface contract requires this return type.
 func buildFixture(t *testing.T) (filesys.FileSystem, string) {
 	t.Helper()
 	root := t.TempDir()
@@ -104,6 +105,7 @@ func buildFixture(t *testing.T) (filesys.FileSystem, string) {
 	return filesys.MakeFsOnDisk(), root
 }
 
+//nolint:paralleltest // Tests mutate the process-wide OpenAPI schema and scope memo.
 func TestBuild_BuiltinRetention(t *testing.T) {
 	fs, root := buildFixture(t)
 	kustomize.BuildMutex.Lock()
@@ -119,13 +121,17 @@ func TestBuild_BuiltinRetention(t *testing.T) {
 	definition := openapi.SchemaForResourceType(meta).Schema
 	for _, dir := range []string{"plain", "ordinary-error"} {
 		t.Run(dir, func(t *testing.T) {
-			rm, err := kustomize.Build(fs, filepath.Join(root, dir))
-			if dir == "plain" {
-				assert.NoError(t, err)
-				got, err := rm.AsYaml()
-				assert.NoError(t, err)
+			rm, buildErr := kustomize.Build(fs, filepath.Join(root, dir))
+			switch {
+			case dir == "plain":
+
+				assert.NoError(t, buildErr)
+				got, asYamlErr := rm.AsYaml()
+				assert.NoError(t, asYamlErr)
 				assert.Diff(t, string(got), string(want))
-			} else if err == nil {
+
+			case buildErr == nil:
+
 				t.Fatal("expected missing-resource error")
 			}
 			assert.Equal(t, openapi.SchemaForResourceType(meta).Schema, definition)
@@ -138,12 +144,17 @@ func TestBuild_BuiltinRetention(t *testing.T) {
 	got, err := custom.AsYaml()
 	assert.NoError(t, err)
 	for _, retained := range []string{"name: sidecar", "name: second"} {
-		if !strings.Contains(string(got), retained) {
-			t.Errorf("cold additive custom build lost %q:\n%s", retained, got)
-		}
+		assert.ErrorIf(
+			t,
+			!strings.Contains(string(got), retained),
+			"cold additive custom build lost %q:\n%s",
+			retained,
+			got,
+		)
 	}
 }
 
+//nolint:paralleltest // Tests mutate the process-wide OpenAPI schema and scope memo.
 func TestBuild_FluxParity(t *testing.T) {
 	fs, root := buildFixture(t)
 	cases := []struct {
@@ -170,9 +181,14 @@ func TestBuild_FluxParity(t *testing.T) {
 	for _, tc := range cases {
 		rm, err := fluxkustomize.Build(fs, filepath.Join(root, tc.name))
 		if tc.failure != "" {
-			if err == nil || !strings.Contains(err.Error(), tc.failure) {
-				t.Fatalf("%s: expected Flux error containing %q, got %v", tc.name, tc.failure, err)
-			}
+			assert.FatalIf(
+				t,
+				err == nil || !strings.Contains(err.Error(), tc.failure),
+				"%s: expected Flux error containing %q, got %v",
+				tc.name,
+				tc.failure,
+				err,
+			)
 			expected[tc.name] = result{failure: err.Error()}
 			continue
 		}
@@ -188,13 +204,16 @@ func TestBuild_FluxParity(t *testing.T) {
 				rm, err := kustomize.Build(fs, filepath.Join(root, dir))
 				want := expected[dir]
 				if want.failure != "" {
-					if err == nil {
-						t.Fatalf("%s: expected error %q", dir, want.failure)
-					}
+					assert.FatalIf(t, err == nil, "%s: expected error %q", dir, want.failure)
 					assert.Equal(t, err.Error(), want.failure)
-					if !strings.Contains(err.Error(), tc.failure) {
-						t.Errorf("%s: expected error containing %q, got %v", dir, tc.failure, err)
-					}
+					assert.ErrorIf(
+						t,
+						!strings.Contains(err.Error(), tc.failure),
+						"%s: expected error containing %q, got %v",
+						dir,
+						tc.failure,
+						err,
+					)
 				} else {
 					assert.NoError(t, err)
 					out, err := rm.AsYaml()
@@ -206,6 +225,7 @@ func TestBuild_FluxParity(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // Tests mutate the process-wide OpenAPI schema and scope memo.
 func TestBuild_PanicRecovery(t *testing.T) {
 	fs, root := buildFixture(t)
 	testutil.WriteFile(t, root, "malformed/kustomization.yaml", buildConfig+"openapi:\n  path: schema.json\n")
@@ -230,9 +250,13 @@ func TestBuild_PanicRecovery(t *testing.T) {
 	expected := make(map[string]string)
 	for _, dir := range []string{"malformed", "invalid-object"} {
 		_, err := fluxkustomize.Build(fs, filepath.Join(root, dir))
-		if err == nil || !strings.HasPrefix(err.Error(), "recovered from kustomize build panic:") {
-			t.Fatalf("%s: expected real Flux recovered panic, got %v", dir, err)
-		}
+		assert.FatalIf(
+			t,
+			err == nil || !strings.HasPrefix(err.Error(), "recovered from kustomize build panic:"),
+			"%s: expected real Flux recovered panic, got %v",
+			dir,
+			err,
+		)
 		expected[dir] = err.Error()
 	}
 	for _, dir := range []string{"malformed", "invalid-object"} {
@@ -240,9 +264,7 @@ func TestBuild_PanicRecovery(t *testing.T) {
 			openapi.ResetOpenAPI()
 			definitions := openapi.Schema()
 			_, err := kustomize.Build(fs, filepath.Join(root, dir))
-			if err == nil {
-				t.Fatal("expected recovered panic")
-			}
+			assert.FatalIf(t, err == nil, "%v", "expected recovered panic")
 			assert.Equal(t, err.Error(), expected[dir])
 			assert.Equal(t, openapi.GetSchemaVersion(), openapi.DefaultOpenAPI)
 			assert.Equal(t, len(definitions.Definitions), 0)

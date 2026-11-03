@@ -24,8 +24,8 @@ func GitCommitAll(tb testing.TB, repo *git.Repository, message string, options *
 	if err != nil {
 		tb.Fatal(err)
 	}
-	if _, err := wt.Add("."); err != nil {
-		tb.Fatal(err)
+	if _, addErr := wt.Add("."); addErr != nil {
+		tb.Fatal(addErr)
 	}
 	hash, err := wt.Commit(message, options)
 	if err != nil {

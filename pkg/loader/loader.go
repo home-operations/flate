@@ -221,9 +221,13 @@ func (l *Loader) fileOwners(file, coordinate string, yield func(manifest.NamedRe
 		coordinate = l.fileCoordinate(origin)
 	}
 	if l.scopes != nil {
-		for _, v := range l.scopes.visits[file] {
-			if v.owner != (manifest.NamedResource{}) && v.role == kustomizeinput.Resource && !yield(v.owner) {
-				return
+		{
+			vValues := l.scopes.visits[file]
+			for vIndex := range vValues {
+				v := vValues[vIndex]
+				if v.owner != (manifest.NamedResource{}) && v.role == kustomizeinput.Resource && !yield(v.owner) {
+					return
+				}
 			}
 		}
 	}
@@ -396,16 +400,16 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 		return 0, err
 	}
 	if l.documents.mountedRoot(abs) == "" && (l.SourceRoot == "" || l.documents.mountedRoot(inputRoot) == "") {
-		location, err := gitrepo.Locate(ctx, inputRoot, inputRoot)
-		if err != nil {
-			return 0, err
+		location, locateErr := gitrepo.Locate(ctx, inputRoot, inputRoot)
+		if locateErr != nil {
+			return 0, locateErr
 		}
-		input, err := gittree.AdmitDirectory(ctx, location)
-		if err != nil {
-			if l.IgnoreFile != "" && errors.Is(err, fs.ErrNotExist) {
+		input, locateErr := gittree.AdmitDirectory(ctx, location)
+		if locateErr != nil {
+			if l.IgnoreFile != "" && errors.Is(locateErr, fs.ErrNotExist) {
 				return 0, nil
 			}
-			return 0, err
+			return 0, locateErr
 		}
 		l.documents.views[inputRoot] = input.FS.(*gittree.FS).OperationView()
 		l.documents.edgesDirty = true
@@ -460,15 +464,19 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 				doc.adHoc, doc.traversed = doc.adHoc || directory.adHoc, doc.traversed || directory.traversed
 				l.documents.cache[file] = doc
 			}
-			for _, file := range facts.files {
-				if !w.proceed(ctx) {
-					break
-				}
-				n, err := l.replayFile(ctx, file)
-				w.count += n
-				if err != nil {
-					w.err = err
-					break
+			{
+				fileValues := facts.files
+				for fileIndex := range fileValues {
+					file := fileValues[fileIndex]
+					if !w.proceed(ctx) {
+						break
+					}
+					n, err := l.replayFile(ctx, file)
+					w.count += n
+					if err != nil {
+						w.err = err
+						break
+					}
 				}
 			}
 			facts.complete = w.proceed(ctx)
@@ -535,33 +543,37 @@ func (l *Loader) loadFile(ctx context.Context, path string) (int, error) {
 		return 0, err
 	}
 	count := 0
-	for _, child := range objs {
-		if child.fact != nil {
-			l.recordOccurrence(path, child.fact)
-			if !child.fact.facts.uncertain && child.fact.Identity.KindInfo().Discovery {
+	{
+		childValues := objs
+		for childIndex := range childValues {
+			child := childValues[childIndex]
+			if child.fact != nil {
+				l.recordOccurrence(path, child.fact)
+				if !child.fact.facts.uncertain && child.fact.Identity.KindInfo().Discovery {
+					count++
+				}
+				continue
+			}
+			obj := child.Obj
+			if obj == nil || child.outcome.Err != nil {
+				continue
+			}
+			info := manifest.KindOf(obj)
+			if !info.Tracked {
+				_, _, hasPath := obj.SourcePath()
+				if hasPath || len(manifest.ProducerTargets(obj)) != 0 {
+					l.recordObject(obj, path)
+				}
+				continue
+			}
+			id := obj.Named()
+			if !l.acceptObject(id) {
+				continue
+			}
+			l.recordObject(obj, path)
+			if info.Discovery {
 				count++
 			}
-			continue
-		}
-		obj := child.Obj
-		if obj == nil || child.outcome.Err != nil {
-			continue
-		}
-		info := manifest.KindOf(obj)
-		if !info.Tracked {
-			_, _, hasPath := obj.SourcePath()
-			if hasPath || len(manifest.ProducerTargets(obj)) != 0 {
-				l.recordObject(obj, path)
-			}
-			continue
-		}
-		id := obj.Named()
-		if !l.acceptObject(id) {
-			continue
-		}
-		l.recordObject(obj, path)
-		if info.Discovery {
-			count++
 		}
 	}
 	cached := l.documents.cache[path]
@@ -581,12 +593,16 @@ func (l *Loader) recordDataFile(ctx context.Context, absPath string) error {
 		if err != nil {
 			return err
 		}
-		for _, child := range facts {
-			if child.outcome.Err != nil {
-				continue
-			}
-			if child.fact.Identity.KindInfo().Data {
-				l.recordOccurrence(absPath, child.fact)
+		{
+			childValues2 := facts
+			for childIndex2 := range childValues2 {
+				child := childValues2[childIndex2]
+				if child.outcome.Err != nil {
+					continue
+				}
+				if child.fact.Identity.KindInfo().Data {
+					l.recordOccurrence(absPath, child.fact)
+				}
 			}
 		}
 		return nil
@@ -598,22 +614,26 @@ func (l *Loader) recordDataFile(ctx context.Context, absPath string) error {
 	if err != nil {
 		return err
 	}
-	for _, child := range objs {
-		obj := child.Obj
-		if obj == nil || child.outcome.Err != nil {
-			continue
+	{
+		childValues3 := objs
+		for childIndex3 := range childValues3 {
+			child := childValues3[childIndex3]
+			obj := child.Obj
+			if obj == nil || child.outcome.Err != nil {
+				continue
+			}
+			id := obj.Named()
+			if !manifest.KindOf(obj).Data {
+				// Non-data kinds (most commonly templated Flux CRs in a
+				// Component subtree) intentionally stay invisible — the
+				// producer-index use case is data-only.
+				continue
+			}
+			if !l.acceptObject(id) {
+				continue
+			}
+			l.recordObject(obj, absPath)
 		}
-		id := obj.Named()
-		if !manifest.KindOf(obj).Data {
-			// Non-data kinds (most commonly templated Flux CRs in a
-			// Component subtree) intentionally stay invisible — the
-			// producer-index use case is data-only.
-			continue
-		}
-		if !l.acceptObject(id) {
-			continue
-		}
-		l.recordObject(obj, absPath)
 	}
 	return nil
 }
@@ -635,9 +655,13 @@ func (l *Loader) recordOccurrence(path string, o *Occurrence) {
 		Path:     path,
 		File:     l.fileCoordinate(path),
 	}
-	for _, ref := range o.facts.refs {
-		if discoveryReference(ref) {
-			r.Refs = append(r.Refs, ref.NamedResource)
+	{
+		refValues := o.facts.refs
+		for refIndex := range refValues {
+			ref := refValues[refIndex]
+			if discoveryReference(ref) {
+				r.Refs = append(r.Refs, ref.NamedResource)
+			}
 		}
 	}
 	l.Index.Records[o.Identity] = r
@@ -672,7 +696,7 @@ func discoveryReferences(refs []manifest.NamedResource, obj manifest.BaseManifes
 func discoveryReference(ref manifest.Reference) bool {
 	return ref.Use == "valuesFrom" ||
 		ref.Use == "substituteFrom" && ref.Group == "" && ref.Kind == manifest.KindConfigMap ||
-		(ref.Use == "source" || ref.Use == "chart" || ref.Use == "artifact") && ref.Kind != "" && ref.Name != ""
+		(ref.Use == sourceReferenceUse || ref.Use == "chart" || ref.Use == "artifact") && ref.Kind != "" && ref.Name != ""
 }
 
 func (l *Loader) fileCoordinate(absPath string) string {
@@ -699,15 +723,20 @@ func (l *Loader) replayFile(ctx context.Context, file fileAdmission) (int, error
 	}
 	if file.kind == admissionBootstrap {
 		l.documents.restore(file.file)
-		for _, child := range l.documents.cache[file.file].objects {
-			if child.fact == nil || child.fact.Declaration != file.coordinate || !l.acceptObject(child.fact.Identity) {
-				continue
+		{
+			childValues4 := l.documents.cache[file.file].objects
+			for childIndex4 := range childValues4 {
+				child := childValues4[childIndex4]
+				if child.fact == nil || child.fact.Declaration != file.coordinate ||
+					!l.acceptObject(child.fact.Identity) {
+					continue
+				}
+				l.recordOccurrence(file.file, child.fact)
+				doc := l.documents.cache[file.file]
+				doc.bootstrap = true
+				l.documents.cache[file.file] = doc
+				return 1, nil
 			}
-			l.recordOccurrence(file.file, child.fact)
-			doc := l.documents.cache[file.file]
-			doc.bootstrap = true
-			l.documents.cache[file.file] = doc
-			return 1, nil
 		}
 		return 0, nil
 	}
@@ -737,3 +766,7 @@ func (l *Loader) replayFile(ctx context.Context, file fileAdmission) (int, error
 	}
 	return n, nil
 }
+
+const (
+	sourceReferenceUse = "source"
+)

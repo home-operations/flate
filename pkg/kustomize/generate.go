@@ -63,8 +63,8 @@ func generateManifest(fsys filesys.FileSystem, dirPath string, obj map[string]an
 		APIVersion: kustypes.KustomizationVersion,
 		Kind:       kustypes.KustomizationKind,
 	}
-	if err := yaml.Unmarshal(data, &kus); err != nil {
-		return nil, "", err
+	if unmarshalErr := yaml.Unmarshal(data, &kus); unmarshalErr != nil {
+		return nil, "", unmarshalErr
 	}
 
 	// An existing kustomization with no resources would fail krusty's
@@ -75,14 +75,24 @@ func generateManifest(fsys filesys.FileSystem, dirPath string, obj map[string]an
 		kus.BuildMetadata = []string{"originAnnotations"}
 	}
 
-	if err := setNestedString(&kus.Namespace, obj, specField, targetNSField); err != nil {
-		return nil, "", err
+	if setNestedStringErr := setNestedString(&kus.Namespace, obj, specField, targetNSField); setNestedStringErr != nil {
+		return nil, "", setNestedStringErr
 	}
-	if err := setNestedString(&kus.NamePrefix, obj, specField, namePrefixField); err != nil {
-		return nil, "", err
+	if setNestedStringErr2 := setNestedString(
+		&kus.NamePrefix,
+		obj,
+		specField,
+		namePrefixField,
+	); setNestedStringErr2 != nil {
+		return nil, "", setNestedStringErr2
 	}
-	if err := setNestedString(&kus.NameSuffix, obj, specField, nameSuffixField); err != nil {
-		return nil, "", err
+	if setNestedStringErr3 := setNestedString(
+		&kus.NameSuffix,
+		obj,
+		specField,
+		nameSuffixField,
+	); setNestedStringErr3 != nil {
+		return nil, "", setNestedStringErr3
 	}
 
 	patches, err := decodeTypedSlice[fluxapis.Patch](obj, specField, patchesField)
@@ -111,56 +121,12 @@ func generateManifest(fsys filesys.FileSystem, dirPath string, obj map[string]an
 		kus.Components = append(kus.Components, component)
 	}
 
-	patchesSM, err := decodeTypedSlice[apiextensionsv1.JSON](obj, specField, patchesSMField)
-	if err != nil {
-		return nil, "", fmt.Errorf("unable to get patchesStrategicMerge: %w", err)
-	}
-	for _, p := range patchesSM {
-		//nolint:staticcheck // byte-for-byte parity with flux's Generator, which populates this deprecated field
-		kus.PatchesStrategicMerge = append(kus.PatchesStrategicMerge, kustypes.PatchStrategicMerge(p.Raw))
+	if err := appendVersionedPatches(&kus, obj); err != nil {
+		return nil, "", err
 	}
 
-	patchesJSON, err := decodeTypedSlice[fluxapis.JSON6902Patch](obj, specField, patchesJSON6902Field)
-	if err != nil {
-		return nil, "", fmt.Errorf("unable to get patchesJson6902: %w", err)
-	}
-	for _, p := range patchesJSON {
-		raw, err := json.Marshal(p.Patch)
-		if err != nil {
-			return nil, "", err
-		}
-		//nolint:staticcheck // byte-for-byte parity with flux's Generator, which populates this deprecated field
-		kus.PatchesJson6902 = append(kus.PatchesJson6902, kustypes.Patch{
-			Patch:  string(raw),
-			Target: AdaptSelector(&p.Target),
-		})
-	}
-
-	images, err := decodeTypedSlice[fluxapis.Image](obj, specField, imagesField)
-	if err != nil {
-		return nil, "", fmt.Errorf("unable to get images: %w", err)
-	}
-	for _, image := range images {
-		if i := slices.IndexFunc(kus.Images, func(img kustypes.Image) bool {
-			return img.Name == image.Name
-		}); i >= 0 {
-			if image.NewName != "" {
-				kus.Images[i].NewName = image.NewName
-			}
-			// Tag and digest select one version; overriding either must clear
-			// the other so a stale digest cannot defeat a new tag at pull time.
-			if image.NewTag != "" || image.Digest != "" {
-				kus.Images[i].NewTag = image.NewTag
-				kus.Images[i].Digest = image.Digest
-			}
-		} else {
-			kus.Images = append(kus.Images, kustypes.Image{
-				Name:    image.Name,
-				NewName: image.NewName,
-				NewTag:  image.NewTag,
-				Digest:  image.Digest,
-			})
-		}
+	if err := applyGeneratedImages(&kus, obj); err != nil {
+		return nil, "", err
 	}
 
 	buildMetadata, _, err := unstructured.NestedStringSlice(obj, specField, buildMetadataField)
@@ -196,7 +162,7 @@ func setNestedString(dst *string, obj map[string]any, fields ...string) error {
 // file directly inside dir (a regular file, not a directory), or ok=false when
 // none is present. Mirrors the lookup flux performs in both findOrGenerate and
 // its manifest scan.
-func kustomizationFileIn(fsys filesys.FileSystem, dir string) (path string, ok bool) {
+func kustomizationFileIn(fsys filesys.FileSystem, dir string) (string, bool) {
 	for _, name := range konfig.RecognizedKustomizationFileNames() {
 		kpath := filepath.Join(dir, name)
 		if fsys.Exists(kpath) && !fsys.IsDir(kpath) {
@@ -212,7 +178,7 @@ func kustomizationFileIn(fsys filesys.FileSystem, dir string) (path string, ok b
 func findOrGenerateKustomization(
 	fsys filesys.FileSystem,
 	dirPath string,
-) (data []byte, kfile string, foundExisting bool, err error) {
+) ([]byte, string, bool, error) {
 	if kpath, ok := kustomizationFileIn(fsys, dirPath); ok {
 		b, rerr := fsys.ReadFile(kpath)
 		return b, kpath, true, rerr
@@ -251,8 +217,8 @@ func findOrGenerateKustomization(
 		kus.Resources = resources
 	}
 
-	kfile = filepath.Join(dirPath, konfig.DefaultKustomizationFileName())
-	data, err = yaml.Marshal(kus)
+	kfile := filepath.Join(dirPath, konfig.DefaultKustomizationFileName())
+	data, err := yaml.Marshal(kus)
 	return data, kfile, false, err
 }
 
@@ -299,15 +265,7 @@ func scanManifests(fsys filesys.FileSystem, base string) ([]string, error) {
 			// without metadata.name and fails cryptically. The usual cause is a
 			// misnamed kustomization file (e.g. "kustomzation.yaml"), which the
 			// scan then treats as a resource — say so plainly instead.
-			if kind := kustomizeConfigKind(contents); kind != "" {
-				return fmt.Errorf(
-					"%s: looks like a misnamed kustomization file (kind %s); rename it to %s or remove it",
-					path,
-					kind,
-					konfig.DefaultKustomizationFileName(),
-				)
-			}
-			return fmt.Errorf("failed to decode Kubernetes YAML from %s: %w", path, err)
+			return resourceDecodeError(contents, path, err)
 		}
 		paths = append(paths, path)
 		return nil
@@ -382,4 +340,80 @@ func AdaptSelector(selector *fluxapis.Selector) *kustypes.Selector {
 	out.LabelSelector = selector.LabelSelector
 	out.AnnotationSelector = selector.AnnotationSelector
 	return out
+}
+
+func appendVersionedPatches(kus *kustypes.Kustomization, obj map[string]any) error {
+	patchesSM, err := decodeTypedSlice[apiextensionsv1.JSON](obj, specField, patchesSMField)
+	if err != nil {
+		return fmt.Errorf("unable to get patchesStrategicMerge: %w", err)
+	}
+	for _, p := range patchesSM {
+		//nolint:staticcheck // byte-for-byte parity with flux's Generator, which populates this deprecated field
+		kus.PatchesStrategicMerge = append(kus.PatchesStrategicMerge, kustypes.PatchStrategicMerge(p.Raw))
+	}
+
+	patchesJSON, err := decodeTypedSlice[fluxapis.JSON6902Patch](obj, specField, patchesJSON6902Field)
+	if err != nil {
+		return fmt.Errorf("unable to get patchesJson6902: %w", err)
+	}
+	{
+		pValues := patchesJSON
+		for pIndex := range pValues {
+			p := pValues[pIndex]
+			raw, marshalErr := json.Marshal(p.Patch)
+			if marshalErr != nil {
+				return marshalErr
+			}
+			//nolint:staticcheck // byte-for-byte parity with flux's Generator, which populates this deprecated field
+			kus.PatchesJson6902 = append(kus.PatchesJson6902, kustypes.Patch{
+				Patch:  string(raw),
+				Target: AdaptSelector(&p.Target),
+			})
+		}
+	}
+
+	return nil
+}
+
+func applyGeneratedImages(kus *kustypes.Kustomization, obj map[string]any) error {
+	images, err := decodeTypedSlice[fluxapis.Image](obj, specField, imagesField)
+	if err != nil {
+		return fmt.Errorf("unable to get images: %w", err)
+	}
+	for _, image := range images {
+		if i := slices.IndexFunc(kus.Images, func(img kustypes.Image) bool {
+			return img.Name == image.Name
+		}); i >= 0 {
+			if image.NewName != "" {
+				kus.Images[i].NewName = image.NewName
+			}
+			// Tag and digest select one version; overriding either must clear
+			// the other so a stale digest cannot defeat a new tag at pull time.
+			if image.NewTag != "" || image.Digest != "" {
+				kus.Images[i].NewTag = image.NewTag
+				kus.Images[i].Digest = image.Digest
+			}
+		} else {
+			kus.Images = append(kus.Images, kustypes.Image{
+				Name:    image.Name,
+				NewName: image.NewName,
+				NewTag:  image.NewTag,
+				Digest:  image.Digest,
+			})
+		}
+	}
+
+	return nil
+}
+
+func resourceDecodeError(contents []byte, path string, err error) error {
+	if kind := kustomizeConfigKind(contents); kind != "" {
+		return fmt.Errorf(
+			"%s: looks like a misnamed kustomization file (kind %s); rename it to %s or remove it",
+			path,
+			kind,
+			konfig.DefaultKustomizationFileName(),
+		)
+	}
+	return fmt.Errorf("failed to decode Kubernetes YAML from %s: %w", path, err)
 }

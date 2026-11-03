@@ -29,9 +29,12 @@ type KindInfo struct {
 }
 
 var (
+	//nolint:gochecknoglobals // API versions are derived once from upstream schemes.
 	kustomizeAPIVersion = kustomizev1.GroupVersion.String()
-	helmAPIVersion      = helmv2.GroupVersion.String()
-	sourceAPIVersion    = sourcev1.GroupVersion.String()
+	//nolint:gochecknoglobals // API versions are derived once from upstream schemes.
+	helmAPIVersion = helmv2.GroupVersion.String()
+	//nolint:gochecknoglobals // API versions are derived once from upstream schemes.
+	sourceAPIVersion = sourcev1.GroupVersion.String()
 )
 
 // APIVersion returns the Flux API version used by readiness projections.
@@ -50,6 +53,7 @@ func (k KindInfo) APIVersion() string {
 
 type kindEntry struct {
 	KindInfo
+
 	decode    func(map[string]any) (BaseManifest, error)
 	bindLocal func(NamedResource, string) BaseManifest
 }
@@ -71,12 +75,15 @@ const (
 )
 
 var (
+	//nolint:gochecknoglobals // Kind metadata forms an immutable shared inventory.
 	kindTable [kindArtifactGenerator + 1]kindEntry
+	//nolint:gochecknoglobals // The immutable index shares the kind inventory.
 	kindIndex map[string]int
 )
 
 // Decoders initialize after package variables because parsing reads this registry.
 func init() {
+	//nolint:gochecknoglobals // Kind metadata forms an immutable shared inventory.
 	kindTable = [...]kindEntry{
 		kindKustomization: {
 			KindInfo: KindInfo{
@@ -264,6 +271,7 @@ func init() {
 		)
 	}
 
+	//nolint:gochecknoglobals // The immutable index shares the kind inventory.
 	kindIndex = make(map[string]int, len(kindTable))
 	for i := range kindTable {
 		entry := &kindTable[i]
@@ -306,6 +314,8 @@ func (n NamedResource) CanBindLocal() bool {
 }
 
 // BindLocal constructs this source's actual local artifact binding.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (n NamedResource) BindLocal(root string) (BaseManifest, error) {
 	if !n.CanBindLocal() {
 		return nil, inputf("invalid local source identity %s", n)

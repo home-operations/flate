@@ -1,4 +1,4 @@
-package helm
+package helm_test
 
 import (
 	"path/filepath"
@@ -15,6 +15,7 @@ import (
 	"github.com/home-operations/flate/test/e2e/internal/harness"
 )
 
+//nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_ChangedOnlyEmittedKustomizationPath(t *testing.T) {
 	for _, tc := range []struct {
 		name, path string
@@ -87,10 +88,14 @@ spec:
 			for _, state := range []string{"cold", "warm"} {
 				t.Run(state, func(t *testing.T) {
 					out, stderr := harness.RequireCLIOK(t, args...)
-					if !strings.Contains(out, "-  value: before") || !strings.Contains(out, "+  value: after") ||
-						!strings.Contains(out, "child-output") {
-						t.Fatalf("emitted child change missing:\n%s\n%s", out, stderr)
-					}
+					assert.FatalIf(
+						t,
+						!strings.Contains(out, "-  value: before") || !strings.Contains(out, "+  value: after") ||
+							!strings.Contains(out, "child-output"),
+						"emitted child change missing:\n%s\n%s",
+						out,
+						stderr,
+					)
 					if cold == "" {
 						cold = out
 					} else {

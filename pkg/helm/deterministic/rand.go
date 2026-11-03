@@ -19,9 +19,12 @@ const (
 
 // charsASCII is the printable ASCII range (bytes 32..126) — sprig's randAscii
 // character set.
+//
+//nolint:gochecknoglobals // The immutable ASCII alphabet is shared without per-render allocation.
 var charsASCII = func() string {
-	b := make([]byte, 0, 95)
-	for c := byte(32); c <= 126; c++ {
+	const firstPrintable, lastPrintable = byte(32), byte(126)
+	b := make([]byte, 0, int(lastPrintable-firstPrintable)+1)
+	for c := firstPrintable; c <= lastPrintable; c++ {
 		b = append(b, c)
 	}
 	return string(b)
@@ -88,13 +91,13 @@ func randBytes(s *stream, n int) (string, error) {
 	}
 	buf := make([]byte, n)
 	if _, err := io.ReadFull(s, buf); err != nil {
-		return "", err
+		return "", fmt.Errorf("read deterministic bytes: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(buf), nil
 }
 
 // randInt mirrors sprig's randInt(min,max): an int in [min,max). A non-positive
-// span yields min (sprig would panic via math/rand.Intn; a renderer prefers a
+// span yields min (sprig would panic via [math/rand.Intn]; a renderer prefers a
 // benign value). The draw comes from the same ChaCha8 the stream wraps.
 func randInt(s *stream, minN, maxN int) int {
 	span := maxN - minN
@@ -103,9 +106,14 @@ func randInt(s *stream, minN, maxN int) int {
 	}
 	var buf [8]byte
 	_, _ = s.Read(buf[:])
+	//nolint:gosec // Modulo bounds the conversion below the positive int span.
 	return minN + int(
-		binary.LittleEndian.Uint64(buf[:])%uint64(span),
-	) //nolint:gosec // G115: the remainder is less than the positive int span.
+		binary.LittleEndian.Uint64(
+			buf[:],
+		)%uint64(
+			span,
+		),
+	)
 }
 
 func uuidv4(s *stream) string {

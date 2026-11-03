@@ -13,6 +13,7 @@ import (
 // DataDependency retains a values reference and its captured availability policy.
 type DataDependency struct {
 	manifest.DependencyRef
+
 	Input        values.Input
 	Optional     bool
 	AllowMissing bool
@@ -46,20 +47,8 @@ func (w *Waiter) Available(ctx context.Context, dep DataDependency, level manife
 			cl.Kind == schedule.Terminal && level < manifest.DrainForce && slices.Contains(pending, producer) {
 			blocked = append(blocked, producer)
 		}
-		if cl.Kind == schedule.DependencyFailed && !dep.Optional && !dep.AllowMissing && !dep.Input.AllowsAbsence() {
-			if status, _ := w.Store.GetStatus(
-				producer,
-			); status.Status != store.StatusFailed ||
-				w.blocksParent(producer) {
-				if status.Status == store.StatusFailed {
-					cl.Message, cl.Causes = "not ready", nil
-				}
-				return availability{
-					Kind:   cl.Kind,
-					Reason: cl.DiagnosticReason(producer),
-					Failed: []manifest.NamedResource{producer},
-				}
-			}
+		if failure, failed := w.materializerFailure(&dep, producer, &cl); failed {
+			return failure
 		}
 	}
 	if len(blocked) != 0 {
@@ -68,6 +57,32 @@ func (w *Waiter) Available(ctx context.Context, dep DataDependency, level manife
 	if dep.Input.Data != nil {
 		return availability{Kind: schedule.Terminal}
 	}
+	return w.availableAbsent(ctx, &dep, level)
+}
+
+func (w *Waiter) materializerFailure(
+	dep *DataDependency,
+	producer manifest.NamedResource,
+	cl *Classification,
+) (availability, bool) {
+	if cl.Kind != schedule.DependencyFailed || dep.Optional || dep.AllowMissing || dep.Input.AllowsAbsence() {
+		return availability{}, false
+	}
+	status, _ := w.Store.GetStatus(producer)
+	if status.Status == store.StatusFailed && !w.blocksParent(producer) {
+		return availability{}, false
+	}
+	if status.Status == store.StatusFailed {
+		cl.Message, cl.Causes = "not ready", nil
+	}
+	return availability{
+		Kind:   cl.Kind,
+		Reason: cl.DiagnosticReason(producer),
+		Failed: []manifest.NamedResource{producer},
+	}, true
+}
+
+func (w *Waiter) availableAbsent(ctx context.Context, dep *DataDependency, level manifest.DrainLevel) availability {
 	allowed := dep.Optional || dep.AllowMissing || dep.Input.AllowsAbsence()
 	if dep.Input.AllowsAbsence() || len(dep.Input.Materializers) != 0 {
 		if allowed {
@@ -77,7 +92,7 @@ func (w *Waiter) Available(ctx context.Context, dep DataDependency, level manife
 			Kind: schedule.DependencyFailed,
 			Reason: manifest.DiagnosticReason{
 				Subject: manifest.DiagnosticFor(dep.NamedResource, w.Store.GetObject(dep.NamedResource)),
-				Message: "dependency not found",
+				Message: dependencyNotFound,
 			},
 		}
 	}
@@ -103,7 +118,7 @@ func (w *Waiter) Available(ctx context.Context, dep DataDependency, level manife
 			Kind: schedule.DependencyFailed,
 			Reason: manifest.DiagnosticReason{
 				Subject: manifest.DiagnosticFor(dep.NamedResource, w.Store.GetObject(dep.NamedResource)),
-				Message: "dependency not found",
+				Message: dependencyNotFound,
 			},
 		}
 	}

@@ -23,11 +23,11 @@ import (
 // Synthetic source labels MUST use their already admitted filesystem instead.
 func AdmitDirectory(ctx context.Context, location *gitrepo.Location) (*store.SourceArtifact, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 	}
 	root := location.ContentRoot
 	if _, err := os.Stat(root); err != nil {
-		return nil, err
+		return nil, err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
 	}
 	input := newLocal(root, false, &localPolicy{})
 	input.location = location
@@ -74,7 +74,7 @@ func newLocal(root string, operation bool, policy *localPolicy) *FS {
 func (g *localView) Stat(name string) (fs.FileInfo, error) {
 	info, err := g.Lstat(name)
 	if pathErr, ok := errors.AsType[*fs.PathError](err); ok {
-		return info, &fs.PathError{Op: "stat", Path: pathErr.Path, Err: pathErr.Err}
+		return info, &fs.PathError{Op: statOperation, Path: pathErr.Path, Err: pathErr.Err}
 	}
 	return info, err
 }
@@ -93,7 +93,9 @@ func (g *localView) OpenRegular(name string) (fs.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	return os.Open(abs) //nolint:gosec // Callers MUST supply a regular file admitted from the stable checkout.
+	return os.Open(
+		abs,
+	) //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
 }
 
 type localObservation struct {
@@ -126,28 +128,30 @@ func (g *localView) ReadDir(name string) ([]fs.DirEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := g.admitDirectory(name, abs); err != nil {
-		return nil, err
+	if admitDirectoryErr := g.admitDirectory(name, abs); admitDirectoryErr != nil {
+		return nil, admitDirectoryErr
 	}
 	if !g.operation {
 		return g.readDir(abs)
 	}
 	cached, _ := g.observations.Load(abs)
-	entries, err := cached.(*localObservation).list(func() ([]fs.DirEntry, error) { return g.readDir(abs) })
+	entries, err := cached.(*localObservation).list( //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+		func() ([]fs.DirEntry, error) { return g.readDir(abs) },
+	)
 	return slices.Clone(entries), err
 }
 
 func (g *localView) readDir(abs string) ([]fs.DirEntry, error) {
 	entries, err := os.ReadDir(abs)
 	return slices.DeleteFunc(entries, func(entry fs.DirEntry) bool {
-		if g.operation && entry.Type()&fs.ModeSymlink != 0 && entry.Name() != ".git" {
+		if g.operation && entry.Type()&fs.ModeSymlink != 0 && entry.Name() != gitDirectory {
 			name := filepath.Join(abs, entry.Name())
 			g.observations.LoadOrStore(
 				name,
-				&localObservation{err: &fs.PathError{Op: "stat", Path: name, Err: fs.ErrPermission}},
+				&localObservation{err: &fs.PathError{Op: statOperation, Path: name, Err: fs.ErrPermission}},
 			)
 		}
-		return entry.Name() == ".git" || !entry.Type().IsRegular() && !entry.IsDir()
+		return entry.Name() == gitDirectory || !entry.Type().IsRegular() && !entry.IsDir()
 	}), err
 }
 
@@ -167,7 +171,9 @@ func (g *localView) Open(name string) (fs.File, error) {
 		}
 		return &gitFile{info: info, input: g, entries: entries}, nil
 	}
-	return os.Open(abs) //nolint:gosec // Admission omits links; the checkout MUST remain stable during reads.
+	return os.Open(
+		abs,
+	) //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
 }
 
 func (g *localView) ReadLink(name string) (string, error) {
@@ -175,23 +181,23 @@ func (g *localView) ReadLink(name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if _, err := g.localStat(name, abs); err != nil {
-		return "", err
+	if _, localStatErr := g.localStat(name, abs); localStatErr != nil {
+		return "", localStatErr
 	}
 	target, err := os.Readlink(abs)
 	if err != nil {
-		return "", err
+		return "", err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
 	}
 	return target, nil
 }
 
 func (g *localView) mounted(name string) (string, error) {
 	if !fs.ValidPath(name) {
-		return "", &fs.PathError{Op: "open", Path: name, Err: fs.ErrInvalid}
+		return "", &fs.PathError{Op: openOperation, Path: name, Err: fs.ErrInvalid}
 	}
 	for parent := name; parent != "."; parent = path.Dir(parent) {
-		if path.Base(parent) == ".git" {
-			return "", &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
+		if path.Base(parent) == gitDirectory {
+			return "", &fs.PathError{Op: openOperation, Path: name, Err: fs.ErrNotExist}
 		}
 	}
 	if name == "." {
@@ -205,32 +211,37 @@ func (g *localView) localStat(name, abs string) (fs.FileInfo, error) {
 	var info fs.FileInfo
 	var err error
 	if cached, ok := g.observations.Load(abs); g.operation && ok {
-		observation := cached.(*localObservation)
+		observation := cached.(*localObservation) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
 		info, err = observation.info, observation.err
 	} else {
 		info, err = g.statPath(name, abs)
 		if g.operation && (err != nil || info.IsDir()) {
 			candidate := &localObservation{info: info, err: err}
 			cached, _ := g.observations.LoadOrStore(abs, candidate)
-			observation := cached.(*localObservation)
+			observation := cached.(*localObservation) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
 			info, err = observation.info, observation.err
 		}
 	}
 	if err == nil && info.Mode()&fs.ModeSymlink != 0 {
-		return nil, &fs.PathError{Op: "stat", Path: name, Err: fs.ErrPermission}
+		return nil, &fs.PathError{Op: statOperation, Path: name, Err: fs.ErrPermission}
 	}
 	if errors.Is(err, fs.ErrNotExist) || err == nil && !info.Mode().IsRegular() && !info.IsDir() {
-		return nil, &fs.PathError{Op: "stat", Path: name, Err: fs.ErrNotExist}
+		return nil, &fs.PathError{Op: statOperation, Path: name, Err: fs.ErrNotExist}
 	}
 	return info, err
 }
 
 func (g *localView) statPath(name, abs string) (fs.FileInfo, error) {
 	if g.operation && name != "." {
-		if cached, ok := g.observations.Load(filepath.Dir(abs)); ok && cached.(*localObservation).listed.Load() {
-			entries, err := cached.(*localObservation).list(func() ([]fs.DirEntry, error) {
-				return g.readDir(filepath.Dir(abs))
-			})
+		if cached, ok := g.observations.Load(
+			filepath.Dir(abs),
+		); ok &&
+			cached.(*localObservation).listed.Load() { //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+			entries, err := cached.(*localObservation).list( //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+				func() ([]fs.DirEntry, error) {
+					return g.readDir(filepath.Dir(abs))
+				},
+			)
 			if err != nil {
 				return nil, err
 			}
@@ -239,12 +250,12 @@ func (g *localView) statPath(name, abs string) (fs.FileInfo, error) {
 			})
 			if !found {
 				if cached, ok := g.observations.Load(abs); ok {
-					observation := cached.(*localObservation)
+					observation := cached.(*localObservation) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
 					return observation.info, observation.err
 				}
-				return nil, &fs.PathError{Op: "stat", Path: name, Err: fs.ErrNotExist}
+				return nil, &fs.PathError{Op: statOperation, Path: name, Err: fs.ErrNotExist}
 			}
-			return entries[i].Info()
+			return entries[i].Info() //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
 		}
 	}
 	if parent := path.Dir(name); parent != "." {
@@ -252,7 +263,9 @@ func (g *localView) statPath(name, abs string) (fs.FileInfo, error) {
 			return nil, err
 		}
 	}
-	return os.Lstat(abs)
+	return os.Lstat(
+		abs,
+	) //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
 }
 
 func (g *localView) admitDirectory(name, abs string) error {
@@ -261,7 +274,7 @@ func (g *localView) admitDirectory(name, abs string) error {
 		return err
 	}
 	if !info.IsDir() {
-		return &fs.PathError{Op: "stat", Path: name, Err: fs.ErrNotExist}
+		return &fs.PathError{Op: statOperation, Path: name, Err: fs.ErrNotExist}
 	}
 	return nil
 }

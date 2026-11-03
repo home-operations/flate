@@ -43,22 +43,7 @@ func BenchmarkRender_Matrix(b *testing.B) {
 			}
 		})
 	}
-	b.Run("resourcesTemplate", func(b *testing.B) {
-		rs := &manifest.ResourceSet{
-			Name:              "apps",
-			Namespace:         "default",
-			ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '<< inputs.name >>'}\n---\napiVersion: v1\nkind: Service\nmetadata: {name: '<< inputs.name >>'}\n---\napiVersion: apps/v1\nkind: Deployment\nmetadata: {name: '<< inputs.name >>'}",
-		}
-		for i := range 50 {
-			rs.Inputs = append(rs.Inputs, fluxopv1.ResourceSetInput{"name": {Raw: []byte(fmt.Sprintf(`"app-%d"`, i))}})
-		}
-		b.ReportAllocs()
-		for b.Loop() {
-			if _, _, err := renderProviders(rs, nil, nil); err != nil {
-				b.Fatal(err)
-			}
-		}
-	})
+	benchmarkRenderMatrixCompletion(b)
 }
 
 func BenchmarkStoreResolver_SelectorCandidates(b *testing.B) {
@@ -98,4 +83,24 @@ func BenchmarkStoreResolver_SelectorCandidates(b *testing.B) {
 			}
 		})
 	}
+}
+
+func benchmarkRenderMatrixCompletion(b *testing.B) {
+	b.Helper()
+	b.Run("resourcesTemplate", func(b *testing.B) {
+		rs := &manifest.ResourceSet{
+			Name:              "apps",
+			Namespace:         "default",
+			ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '<< inputs.name >>'}\n---\napiVersion: v1\nkind: Service\nmetadata: {name: '<< inputs.name >>'}\n---\napiVersion: apps/v1\nkind: Deployment\nmetadata: {name: '<< inputs.name >>'}",
+		}
+		for i := range 50 {
+			rs.Inputs = append(rs.Inputs, fluxopv1.ResourceSetInput{"name": {Raw: []byte(fmt.Sprintf(`"app-%d"`, i))}})
+		}
+		b.ReportAllocs()
+		for b.Loop() {
+			if _, _, err := renderProviders(rs, nil, nil); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
 }

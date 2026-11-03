@@ -11,7 +11,8 @@ import (
 func (p Prepared) Changes() iter.Seq2[Pair, string] {
 	return func(yield func(Pair, string) bool) {
 		paired, leftCopied, rightCopied := p.Pairs, p.leftCopied, p.rightCopied
-		for _, p := range paired {
+		for i := range paired {
+			p := paired[i]
 			status := p.Status()
 			if status == "" {
 				continue
@@ -30,7 +31,7 @@ func (p Prepared) Changes() iter.Seq2[Pair, string] {
 }
 
 // Status classifies the pair, returning an empty string for equal sides.
-func (p Pair) Status() string {
+func (p *Pair) Status() string {
 	switch {
 	case p.Old == nil:
 		return "added"

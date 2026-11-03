@@ -70,6 +70,8 @@ func (b *Bucket) Content(endpoint string, secure bool) any {
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (b *Bucket) WithNamespace(namespace string) BaseManifest {
 	out := *b
 	out.Namespace = namespace

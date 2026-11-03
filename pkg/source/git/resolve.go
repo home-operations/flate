@@ -20,7 +20,7 @@ func resolveRefHash(repo *git.Repository, ref *sourcev1.GitRepositoryRef, origin
 	selected := (*manifest.GitRepositoryRef)(ref)
 	kind, value := selected.Effective()
 	switch kind {
-	case "commit":
+	case commitReference:
 		if err := selected.Validate(); err != nil {
 			return plumbing.ZeroHash, manifest.NewError(manifest.ErrInput, err, "")
 		}
@@ -174,17 +174,17 @@ func resolveSemver(repo *git.Repository, expr string) (plumbing.Hash, error) {
 		name := ref.Name().Short()
 		v, verr := semver.NewVersion(name)
 		if verr != nil {
-			return nil
+			return nil //nolint:nilerr // This optional cache miss deliberately discards an unavailable prior result.
 		}
 		if !constraint.Check(v) {
-			return nil
+			return nil //nolint:nilerr // This optional cache miss deliberately discards an unavailable prior result.
 		}
 		if best == nil || v.GreaterThan(best) || (v.Equal(best) && name < bestName) {
 			best, bestHash, bestName = v, ref.Hash(), name
 		}
 		return nil
 	}); err != nil {
-		return plumbing.ZeroHash, err
+		return plumbing.ZeroHash, fmt.Errorf("enumerate git references: %w", err)
 	}
 	if best == nil {
 		return plumbing.ZeroHash, fmt.Errorf("%w: no tag satisfies semver %q", errRefUnavailable, expr)

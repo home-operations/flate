@@ -1,0 +1,712 @@
+package loader
+
+import (
+	"fmt"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+	"testing"
+	"testing/fstest"
+
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
+	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/inputprojection"
+	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
+)
+
+func TestAdmission_InputGate(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	st := store.New()
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		"consumer.yaml": {
+			Data: []byte(
+				"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: consumer, namespace: apps}\nspec: {dependsOn: [{apiVersion: kustomize.toolkit.fluxcd.io/v1, kind: Kustomization, name: gate}]}\n",
+			),
+		},
+		"gate.yaml": {
+			Data: []byte(
+				"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: gate, namespace: apps}\nspec: {path: ./gate}\n",
+			),
+		},
+	}})
+	l := New(st)
+	l.SourceRoot = root
+	l.Options.Filter = change.NewFilter()
+	l.Options.Selection = manifest.Selection{
+		Roots: []manifest.NamedResource{(&manifest.ResourceSet{Name: "consumer", Namespace: "apps"}).Named()},
+	}
+	_, err := l.Load(t.Context(), root)
+	assert.NoError(t, err)
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
+	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+	assert.NoError(t, err)
+	gate := (&manifest.Kustomization{Name: "gate", Namespace: "apps"}).Named()
+	assert.Equal(t, slices.Contains(proposal.Needed, gate), true)
+	assert.Equal(t, slices.Contains(proposal.Selected, gate), false)
+}
+
+func TestAdmission_ChangedInputRequiresReaderHistory(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	st := store.New()
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		"input.yaml": {
+			Data: []byte(
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: values, namespace: apps}\ndata: {replicas: '2'}\n",
+			),
+		},
+		"producer.yaml": {
+			Data: []byte(
+				"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: templates, namespace: apps}\nspec:\n  resourcesTemplate: |\n    apiVersion: helm.toolkit.fluxcd.io/v2\n    kind: HelmRelease\n    metadata: {name: child}\n    spec: {interval: 1m, valuesFrom: [{kind: ConfigMap, name: values}]}\n",
+			),
+		},
+	}})
+	l := New(st)
+	l.SourceRoot = root
+	l.Options.Filter = change.NewFilter()
+	l.Options.Changes = change.NewSet([]string{"input.yaml"})
+	l.Options.Selection = manifest.Selection{Changed: true}
+	_, err := l.Load(t.Context(), root)
+	assert.NoError(t, err)
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
+	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+	assert.NoError(t, err)
+	producer := (&manifest.ResourceSet{Name: "templates", Namespace: "apps"}).Named()
+	assert.Equal(t, slices.Contains(proposal.Needed, producer), false)
+	assert.Equal(t, slices.Contains(proposal.Selected, producer), false)
+	assert.Equal(t, slices.Contains(proposal.Dirty, producer), false)
+	l.Options.HistoryOwners = []manifest.NamedResource{producer}
+	proposal, err = l.Prepare(t.Context(), store.Child{}, nil, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, slices.Contains(proposal.Needed, producer), true)
+	assert.Equal(t, slices.Contains(proposal.Selected, producer), false)
+	assert.Equal(t, slices.Contains(proposal.Dirty, producer), false)
+}
+
+type admissionArtifactReads struct {
+	admissionReader
+
+	calls    int
+	lists    int
+	bySource map[manifest.NamedResource]int
+}
+
+func (r *admissionArtifactReads) GetArtifact(id manifest.NamedResource, read store.ArtifactRead) store.Artifact {
+	r.calls++
+	if r.bySource != nil {
+		r.bySource[id]++
+	}
+	return r.admissionReader.GetArtifact(id, read)
+}
+
+func (r *admissionArtifactReads) ListObjects(group, kind string) []manifest.BaseManifest {
+	r.lists++
+	return r.admissionReader.ListObjects(group, kind)
+}
+
+func TestAdmission_InputChangesQualifiedOnce(t *testing.T) {
+	t.Parallel()
+	for _, changed := range []string{"selected.yaml", "unrelated.yaml"} {
+		t.Run(changed, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			st := store.New()
+			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+			l := New(st)
+			l.SourceRoot = root
+			l.Options.Changes = change.NewSet([]string{changed})
+			id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}
+			inputs := make([]string, 100)
+			for i := range inputs {
+				inputs[i] = "other-" + strings.Repeat("x", i) + ".yaml"
+			}
+			inputs[len(inputs)-1] = "selected.yaml"
+			l.Index.Records[id] = manifest.DiscoveryRecord{File: "settings.yaml", Inputs: inputs}
+			reads := &admissionArtifactReads{admissionReader: st}
+			c := admissionClosure{loader: l, objects: reads}
+			assert.Equal(t, c.affected(id, nil), changed == "selected.yaml")
+			if reads.calls > 3 {
+				t.Fatalf(
+					"qualified one changed path %d times for %d recorded inputs; want at most 3 artifact reads",
+					reads.calls,
+					len(inputs),
+				)
+			}
+		})
+	}
+}
+
+func TestAdmission_SourceBindingsCaptureOncePerEvaluation(t *testing.T) {
+	t.Parallel()
+	_, stores, roots, source := optionalSupplierPair(t, "apps")
+	sources := []manifest.NamedResource{source.Named()}
+	for i := 1; i < 3; i++ {
+		supplier := *source
+		supplier.Name = fmt.Sprintf("supplier-%d", i)
+		sources = append(sources, supplier.Named())
+		for _, st := range stores {
+			st.AddObject(&supplier)
+			st.SetArtifact(
+				supplier.Named(),
+				st.GetArtifact(source.Named(), store.ArtifactContent).(*store.SourceArtifact),
+			)
+		}
+	}
+	changes, err := change.Qualify(t.Context(), nil, stores[0], stores[1])
+	assert.NoError(t, err)
+	var observations [2]manifest.DiscoveryIndex
+	for _, source := range sources {
+		visible := manifest.InputVisibility{
+			Source:   source,
+			Root:     "inputs",
+			Complete: true,
+			Inputs: map[manifest.NamedResource][]string{
+				{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"}: {"inputs/optional.yaml"},
+			},
+		}
+		empty := visible
+		empty.Inputs = nil
+		observations[0].Visibility = append(observations[0].Visibility, visible)
+		observations[1].Visibility = append(observations[1].Visibility, empty)
+	}
+	changes, err = changes.WithReaders(
+		t.Context(),
+		&observations[0],
+		&observations[1],
+		[2]map[manifest.NamedResource]inputprojection.Projection{},
+	)
+	assert.NoError(t, err)
+	consumer := &manifest.Kustomization{
+		Name:      "consumer",
+		Namespace: "apps",
+		Path:      "apps",
+		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+			{Kind: manifest.KindConfigMap, Name: "unrelated", Optional: true},
+			{Kind: manifest.KindConfigMap, Name: "optional", Optional: true},
+		}},
+	}
+	l := New(stores[1])
+	l.SourceRoot = roots[1]
+	l.Options.Changes = changes
+	l.Options.Selection = manifest.Selection{Changed: true}
+	l.Options.Filter = change.NewFilter()
+	for _, replaced := range []bool{false, true} {
+		if replaced {
+			for _, id := range sources {
+				input := *stores[1].GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
+				input.Key, input.Content = "replacement", "replacement"
+				stores[1].SetArtifact(id, &input)
+			}
+		}
+		var captured store.ReadSet
+		captured.Init(stores[1], consumer.Named(), nil)
+		reads := &admissionArtifactReads{admissionReader: &captured, bySource: map[manifest.NamedResource]int{}}
+		c := admissionClosure{loader: l, objects: reads, incoming: store.Child{Obj: consumer}}
+		c.proposal = &c.result
+		proposal, err := c.evaluate(t.Context(), nil)
+		assert.NoError(t, err)
+		assert.Equal(t, slices.Contains(proposal.Selected, consumer.Named()), !replaced)
+		if len(reads.bySource) < len(sources) {
+			t.Fatalf("captured %d source identities for %d suppliers", len(reads.bySource), len(sources))
+		}
+		for id, count := range reads.bySource {
+			assert.Equal(t, count, 1)
+			assert.Equal(t, slices.Contains(slices.Collect(captured.Inputs()), id), true)
+		}
+		assert.Equal(t, captured.Valid(), true)
+		input := *stores[1].GetArtifact(source.Named(), store.ArtifactContent).(*store.SourceArtifact)
+		input.Key, input.Content = "invalidated", "invalidated"
+		stores[1].SetArtifact(source.Named(), &input)
+		assert.Equal(t, captured.Valid(), false)
+		captured.Close()
+	}
+}
+
+func TestAdmission_FrozenBindingsCaptureEachConsumer(t *testing.T) {
+	t.Parallel()
+	changes, stores, roots, source := optionalSupplierPair(t, "apps")
+	changes, err := change.Qualify(t.Context(), changes, stores[0], stores[1])
+	assert.NoError(t, err)
+	l := New(stores[1])
+	l.SourceRoot = roots[1]
+	l.Options.Changes = changes
+	l.Options.Selection = manifest.Selection{Changed: true}
+	l.Options.Filter = change.NewFilter()
+	l.sideKnown, l.side = true, manifest.TreeHead
+	l.freezeConstruction()
+	input := stores[1].GetArtifact(source.Named(), store.ArtifactContent).(*store.SourceArtifact)
+	var captured [2]store.ReadSet
+	for i := range captured {
+		consumer := &manifest.Kustomization{
+			Name:      fmt.Sprintf("consumer-%d", i),
+			Namespace: "apps",
+			Path:      "apps",
+			PostBuild: &kustomizev1.PostBuild{
+				SubstituteFrom: []manifest.SubstituteReference{
+					{Kind: manifest.KindConfigMap, Name: "optional", Optional: true},
+				},
+			},
+		}
+		captured[i].Init(stores[1], consumer.Named(), nil)
+		defer captured[i].Close()
+		reads := &admissionArtifactReads{admissionReader: &captured[i], bySource: map[manifest.NamedResource]int{}}
+		c := admissionClosure{loader: l, objects: reads, incoming: store.Child{Obj: consumer}}
+		c.proposal = &c.result
+		proposal, err := c.evaluate(t.Context(), nil)
+		assert.NoError(t, err)
+		assert.Equal(t, slices.Contains(proposal.Selected, consumer.Named()), true)
+		assert.Equal(t, reads.bySource[source.Named()], 1)
+		assert.Equal(t, slices.Contains(slices.Collect(captured[i].Inputs()), source.Named()), true)
+		assert.Equal(t, captured[i].Valid(), true)
+	}
+	replacement := *input
+	replacement.Key, replacement.Content = "replacement", "replacement"
+	stores[1].SetArtifact(source.Named(), &replacement)
+	for i := range captured {
+		assert.Equal(t, captured[i].Valid(), false)
+	}
+	c := admissionClosure{
+		loader:      l,
+		objects:     stores[1],
+		comparisons: &admissionSources{bindings: map[manifest.NamedResource]*admissionSource{}},
+	}
+	evidence := c.boundSource(source.Named())
+	assert.Equal(t, evidence.input, &replacement)
+	assert.Equal(t, evidence.paired, false)
+}
+
+func TestAdmission_SourceBindingsTrackComparison(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	st := store.New()
+	source := (&manifest.GitRepository{Name: "local", Namespace: "apps"}).Named()
+	st.SetArtifact(source, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+	l := New(st)
+	l.SourceRoot = root
+	l.Options.Selection = manifest.Selection{Changed: true}
+	l.Options.Filter = change.NewFilter()
+	l.Options.Changes = change.NewSet([]string{"before.yaml"})
+	c := admissionClosure{loader: l, objects: st}
+	c.proposal = &c.result
+	before, _, _ := c.delta(source)
+	assert.Equal(t, before.Contains("before.yaml"), true)
+	_, err := c.evaluate(t.Context(), nil)
+	assert.NoError(t, err)
+	l.Options.Changes = change.NewSet([]string{"after.yaml"})
+	next := admissionClosure{
+		loader:      l,
+		objects:     st,
+		comparisons: &admissionSources{bindings: map[manifest.NamedResource]*admissionSource{}},
+	}
+	after, _, _ := next.delta(source)
+	assert.Equal(t, after.Contains("before.yaml"), false)
+	assert.Equal(t, after.Contains("after.yaml"), true)
+}
+
+func TestAdmission_ChangedDeclarationsPrepareLinearly(t *testing.T) {
+	t.Parallel()
+	for _, count := range []int{32, 128} {
+		t.Run(strconv.Itoa(count), func(t *testing.T) {
+			t.Parallel()
+			testAdmissionChangedDeclarationsPrepareLinearlyCase(
+				t,
+				&count,
+			)
+		},
+		)
+	}
+}
+
+func TestAdmission_UnreferencedInputCollision(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"component_collision", "unreferenced_file"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			testAdmissionUnreferencedInputCollisionCase(
+				t,
+				&name,
+			)
+		},
+		)
+	}
+}
+
+func TestAdmission_ParentPatchRemoval(t *testing.T) {
+	t.Parallel()
+	var stores [2]*store.Store
+	var loaders [2]*Loader
+	for side := range stores {
+		root := t.TempDir()
+		files := fstest.MapFS{
+			"flux/consumer.yaml": {
+				Data: []byte(
+					"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: flux-system}\nspec:\n interval: 10m\n path: ./app\n sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n postBuild:\n  substituteFrom: [{kind: ConfigMap, name: vars}]\n patches:\n - target: {kind: HelmRelease, name: a}\n   patch: |\n    - op: add\n      path: /metadata/annotations\n      value: {kustomize.toolkit.fluxcd.io/substitute: disabled}\n",
+				),
+			},
+			"flux/vars.yaml": {
+				Data: []byte(
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: vars, namespace: flux-system}\ndata:\n FLAG: old\n",
+				),
+			},
+			"app/kustomization.yaml": {Data: []byte("resources: [hr.yaml]\n")},
+			"chart/Chart.yaml":       {Data: []byte("apiVersion: v2\nname: demo\nversion: 1.0.0\n")},
+			"chart/values.yaml":      {Data: []byte("value: original\n")},
+			"chart/payload.txt":      {Data: []byte("original")},
+			"chart/templates/cm.yaml": {
+				Data: []byte(
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: \"{{ .Release.Name }}\", namespace: apps}\ndata:\n value: {{ .Values.value | quote }}\n version: {{ .Chart.Version | quote }}\n file: {{ .Files.Get \"payload.txt\" | quote }}\n",
+				),
+			},
+			"app/hr.yaml": {
+				Data: []byte(
+					"apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: a, namespace: apps}\nspec:\n interval: 10m\n releaseName: a\n chart:\n  spec:\n   chart: ./chart\n   sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n values: {value: \"${FLAG}\"}\n",
+				),
+			},
+		}
+		if side == 1 {
+			files["flux/vars.yaml"] = &fstest.MapFile{
+				Data: []byte(
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: vars, namespace: flux-system}\ndata:\n FLAG: new\n",
+				),
+			}
+			files["flux/consumer.yaml"] = &fstest.MapFile{
+				Data: []byte(
+					"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: flux-system}\nspec:\n interval: 10m\n path: ./app\n sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n postBuild:\n  substituteFrom: [{kind: ConfigMap, name: vars}]\n",
+				),
+			}
+		}
+		st := store.New()
+		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: files})
+		l := New(st)
+		l.SourceRoot = root
+		l.Options.Selection = manifest.Selection{Changed: true}
+		l.Options.Filter = change.NewFilter()
+		_, err := l.Load(t.Context(), filepath.Join(root, "flux"))
+		assert.NoError(t, err)
+		_, err = l.Load(t.Context(), filepath.Join(root, "app"))
+		assert.NoError(t, err)
+		assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
+		stores[side], loaders[side] = st, l
+	}
+	changes, err := change.Qualify(t.Context(), nil, stores[0], stores[1])
+	assert.NoError(t, err)
+	for side, l := range loaders {
+		l.Options.Changes = changes
+		proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+		assert.NoError(t, err)
+		id := (&manifest.Kustomization{Name: "consumer", Namespace: "flux-system"}).Named()
+		assert.ErrorIf(
+			t,
+			!slices.ContainsFunc(proposal.Objects, func(child store.Child) bool { return child.Obj.Named() == id }),
+			"side %d failed to hydrate changed parent",
+			side,
+		)
+	}
+}
+
+func TestAdmission_HistoryOwnerDeclarationAndInputs(t *testing.T) {
+	t.Parallel()
+	for _, seeded := range []bool{false, true} {
+		t.Run(strconv.FormatBool(seeded), func(t *testing.T) {
+			t.Parallel()
+			testAdmissionHistoryOwnerDeclarationAndInputsCase(
+				t,
+				&seeded,
+			)
+		},
+		)
+	}
+}
+
+func TestAdmission_StableAncestorsPrepareLinearly(t *testing.T) {
+	t.Parallel()
+	for _, count := range []int{32, 128} {
+		t.Run(strconv.Itoa(count), func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			st := store.New()
+			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+			l := New(st)
+			l.SourceRoot = root
+			l.Options.Selection = manifest.Selection{Changed: true}
+			l.Options.Changes = change.NewSet([]string{"unrelated.yaml"})
+			l.Options.Filter = change.NewFilter()
+			l.locations = map[manifest.NamedResource]Occurrence{}
+			var parent manifest.NamedResource
+			for i := range count {
+				object := &manifest.Kustomization{Name: fmt.Sprintf("item-%05d", i), Namespace: "apps"}
+				object.Path = "./apps"
+				id := object.Named()
+				file := fmt.Sprintf("declarations/%05d.yaml", i)
+				l.Index.Records[id] = manifest.DiscoveryRecord{File: file, Parent: parent, Declaration: object}
+				occurrence := compactOccurrence(object, manifest.ProjectProducer(object))
+				occurrence.Declaration = OccurrenceID{Source: root, File: file}
+				l.locations[id] = occurrence
+				parent = id
+			}
+			reads := &admissionArtifactReads{admissionReader: st}
+			c := admissionClosure{loader: l, objects: reads}
+			c.proposal = &c.result
+			proposal, err := c.evaluate(t.Context(), nil)
+			assert.NoError(t, err)
+			assert.Equal(t, len(proposal.Needed), 0)
+			t.Logf("%d stable ancestors: %d artifact reads", count, reads.calls)
+			if reads.calls > 128*count+128 {
+				t.Errorf(
+					"%d stable ancestors caused %d artifact reads; want at most %d",
+					count,
+					reads.calls,
+					128*count+128,
+				)
+			}
+		})
+	}
+}
+
+func testAdmissionChangedDeclarationsPrepareLinearlyCase(
+	t *testing.T,
+	testCaseInput *int,
+) {
+	t.Helper()
+
+	root := t.TempDir()
+	files := fstest.MapFS{}
+	paths := make([]string, (*testCaseInput))
+	for i := range paths {
+		name := fmt.Sprintf("item-%05d", i)
+		paths[i] = name + ".yaml"
+		files[paths[i]] = &fstest.MapFile{
+			Data: []byte(testutil.KustomizationYAML(name, "apps", "  suspend: true\n")),
+		}
+	}
+	st := store.New()
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
+	l := New(st)
+	l.SourceRoot = root
+	l.Options.Selection = manifest.Selection{Changed: true}
+	l.Options.Changes = change.NewSet(paths)
+	l.Options.Filter = change.NewFilter()
+	_, err := l.Load(t.Context(), root)
+	assert.NoError(t, err)
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
+	for _, published := range []bool{false, true} {
+		reads := &admissionArtifactReads{admissionReader: st}
+		c := admissionClosure{loader: l, objects: reads}
+		c.proposal = &c.result
+		proposal, evaluateErr := c.evaluate(t.Context(), nil)
+		assert.NoError(t, evaluateErr)
+		assert.Equal(t, len(proposal.Selected), (*testCaseInput))
+		wantObjects := (*testCaseInput)
+		if published {
+			wantObjects = 0
+		}
+		assert.Equal(t, len(proposal.Objects), wantObjects)
+		t.Logf(
+			"%d declarations, published %v: %d artifact reads, %d inventories", (*testCaseInput), published,
+			reads.calls,
+			reads.lists,
+		)
+		if reads.calls > 32*(*testCaseInput)+32 {
+			t.Errorf(
+				"%d changed declarations caused %d artifact reads; want at most %d",
+				(*testCaseInput),
+				reads.calls,
+				32*(*testCaseInput)+32,
+			)
+		}
+		assert.Equal(t, reads.lists, 1)
+		for _, child := range proposal.Objects {
+			st.AddObject(child.Obj, child.Doc)
+		}
+	}
+	var required store.ReadSet
+	required.Init(st, manifest.NamedResource{}, nil)
+	defer required.Close()
+	ids := make([]manifest.NamedResource, 0, (*testCaseInput))
+	for _, object := range st.Objects() {
+		ids = append(ids, object.Named())
+		required.RequireData(object.Named())
+	}
+	_, _, _, revision := l.Options.Filter.Membership(manifest.NamedResource{})
+	_, retry := l.Options.Filter.AddEmitted(ids, ids, ids, revision)
+	assert.Equal(t, retry, false)
+	reads := &admissionArtifactReads{admissionReader: st}
+	c := admissionClosure{loader: l, objects: reads}
+	c.proposal = &c.result
+	proposal, err := c.evaluate(t.Context(), &required)
+	assert.NoError(t, err)
+	assert.Equal(t, len(proposal.Needed), 0)
+	assert.Equal(t, len(proposal.Selected), 0)
+	assert.Equal(t, len(proposal.Objects), 0)
+	assert.Equal(t, reads.calls, 0)
+	assert.Equal(t, reads.lists, 0)
+	calls := 0
+	for _, object := range st.Objects() {
+		var proof store.ReadSet
+		proof.Init(st, object.Named(), nil)
+		readsResult := &admissionArtifactReads{admissionReader: &proof}
+		cResult := admissionClosure{
+			loader:   l,
+			objects:  readsResult,
+			incoming: store.Child{Obj: object, Productions: st.Productions(object.Named(), l.Index)},
+		}
+		cResult.proposal = &cResult.result
+		evaluateProposal, err := cResult.evaluate(t.Context(), &proof)
+		proof.Close()
+		assert.NoError(t, err)
+		assert.Equal(t, len(evaluateProposal.Objects), 0)
+		assert.Equal(t, readsResult.lists, 1)
+		calls += readsResult.calls
+	}
+	t.Logf("%d dispatches: %d artifact reads", (*testCaseInput), calls)
+	if calls > 32*(*testCaseInput)+32 {
+		t.Errorf(
+			"%d declarations reopened %d artifact reads during dispatch; want at most %d",
+			(*testCaseInput),
+			calls,
+			32*(*testCaseInput)+32,
+		)
+	}
+	child := store.Child{
+		Obj:         &manifest.ConfigMap{Name: "emitted", Namespace: "apps"},
+		Productions: []manifest.Production{{Owner: ids[0]}},
+	}
+	reads = &admissionArtifactReads{admissionReader: st}
+	c = admissionClosure{loader: l, objects: reads, incoming: child}
+	c.proposal = &c.result
+	proposal, err = c.evaluate(t.Context(), nil)
+	assert.NoError(t, err)
+	assert.Equal(t, slices.Contains(proposal.Needed, child.Obj.Named()), true)
+	assert.Equal(t, slices.Contains(proposal.Selected, child.Obj.Named()), true)
+	t.Logf("emitted data child with %d unrelated declarations: %d inventories", (*testCaseInput), reads.lists)
+	assert.Equal(t, reads.lists, 0)
+}
+
+func testAdmissionUnreferencedInputCollisionCase(
+	t *testing.T,
+	testCaseInput *string,
+) {
+	t.Helper()
+
+	var stores [2]*store.Store
+	var loaders [2]*Loader
+	for side := range stores {
+		root := t.TempDir()
+		files := fstest.MapFS{
+			"flux/parent.yaml": {
+				Data: []byte(testutil.KustomizationYAML("parent", "flux-system", "  path: ./decls\n")),
+			},
+			"decls/kustomization.yaml": {Data: []byte("resources: [child.yaml]\n")},
+			"decls/child.yaml": {
+				Data: []byte(testutil.KustomizationYAML("child", "flux-system", "  path: ./app\n")),
+			},
+			"app/kustomization.yaml": {Data: []byte("resources: [cm.yaml]\n")},
+			"app/cm.yaml": {
+				Data: []byte(
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output, namespace: apps}\ndata: {value: original}\n",
+				),
+			},
+		}
+		if side == 1 {
+			if (*testCaseInput) == "component_collision" {
+				files["unused/kustomization.yaml"] = &fstest.MapFile{
+					Data: []byte(
+						"apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [cm.yaml]\n",
+					),
+				}
+				files["unused/cm.yaml"] = files["app/cm.yaml"]
+			} else {
+				files["app/unreferenced.yaml"] = &fstest.MapFile{
+					Data: []byte(
+						"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unreferenced, namespace: apps}\n",
+					),
+				}
+			}
+		}
+		st := store.New()
+		st.SetArtifact(
+			manifest.BootstrapSourceID,
+			&store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: files},
+		)
+		l := New(st)
+		l.SourceRoot = root
+		l.Options.Selection = manifest.Selection{Changed: true}
+		l.Options.Filter = change.NewFilter()
+		for _, dir := range []string{"flux", "decls", "app"} {
+			_, err := l.Load(t.Context(), filepath.Join(root, dir))
+			assert.NoError(t, err)
+		}
+		assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
+		stores[side], loaders[side] = st, l
+	}
+	changes, err := change.Qualify(t.Context(), nil, stores[0], stores[1])
+	assert.NoError(t, err)
+	for side, l := range loaders {
+		l.Options.Changes = changes
+		proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+		assert.NoError(t, err)
+		if len(proposal.Needed) != 0 {
+			t.Errorf("side %d admitted unrelated objects: %v", side, proposal.Needed)
+		}
+	}
+}
+
+func testAdmissionHistoryOwnerDeclarationAndInputsCase(
+	t *testing.T,
+	testCaseInput *bool,
+) {
+	t.Helper()
+
+	root := t.TempDir()
+	input := fstest.MapFS{
+		"release.yaml": {
+			Data: []byte(
+				"apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: emitter, namespace: apps}\nspec:\n  interval: 1m\n  values: {marker: keep}\n  valuesFrom: [{kind: ConfigMap, name: supplied}]\n  chart: {spec: {chart: ./charts/demo, sourceRef: {kind: GitRepository, name: charts}}}\n",
+			),
+		},
+		"values.yaml": {
+			Data: []byte(
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: supplied, namespace: apps}\ndata: {values.yaml: '{}'}\n",
+			),
+		},
+	}
+	st := store.New()
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
+	l := New(st)
+	l.SourceRoot = root
+	l.Options.Selection = manifest.Selection{Changed: true}
+	l.Options.Changes = change.NewSet([]string{"removed/child.yaml"})
+	l.Options.Filter = change.NewFilter()
+	owner := testutil.HelmReleaseID("apps", "emitter")
+	if *testCaseInput {
+		l.Options.HistoryOwners = []manifest.NamedResource{owner}
+	}
+	_, err := l.Load(t.Context(), root)
+	assert.NoError(t, err)
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
+	for range 2 {
+		proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+		assert.NoError(t, err)
+		assert.Equal(t, slices.Contains(proposal.Needed, owner), (*testCaseInput))
+		assert.Equal(t, slices.Contains(proposal.Selected, owner), false)
+		assert.Equal(t, slices.Contains(proposal.Dirty, owner), false)
+		inputID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "supplied"}
+		assert.Equal(t, slices.Contains(proposal.Needed, inputID), (*testCaseInput))
+		found := false
+		for _, child := range proposal.Objects {
+			if child.Obj.Named() == owner {
+				declaration := child.Obj.(*manifest.HelmRelease)
+				assert.Equal(t, declaration.Values["marker"], any("keep"))
+				assert.Equal(t, len(declaration.ValuesFrom), 1)
+				found = true
+			}
+		}
+		assert.Equal(t, found, (*testCaseInput))
+	}
+}

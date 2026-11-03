@@ -40,10 +40,10 @@ type TestReport struct {
 }
 
 // AnyFailed includes blocked-only runs, even without a primary failure in scope.
-func (r TestReport) AnyFailed() bool { return r.Failed > 0 || len(r.Blocked) > 0 }
+func (r *TestReport) AnyFailed() bool { return r.Failed > 0 || len(r.Blocked) > 0 }
 
 // Glyphs render at every destination; only color is gated.
-func (o Outcome) decorate() (glyph string, paint func(string, bool) string) {
+func (o Outcome) decorate() (string, func(string, bool) string) {
 	switch o {
 	case OutcomePassed:
 		return GlyphPass, Pass
@@ -51,13 +51,14 @@ func (o Outcome) decorate() (glyph string, paint func(string, bool) string) {
 		return GlyphFail, Fail
 	case OutcomeBlocked:
 		return GlyphBlocked, Dim
-	default: // OutcomeSkipped
+	case OutcomeSkipped:
 		return GlyphSkip, Dim
 	}
+	return GlyphSkip, Dim
 }
 
 // Cases retain their supplied order; blocked cases follow them.
-func (r TestReport) rosterBlock(names Names, color bool) string {
+func (r *TestReport) rosterBlock(names Names, color bool) string {
 	all := slices.Concat(r.Cases, r.Blocked)
 	kindW := 0
 	for _, c := range all {
@@ -65,12 +66,13 @@ func (r TestReport) rosterBlock(names Names, color bool) string {
 	}
 	rows := make([]string, len(all))
 	for i, c := range all {
-		rows[i] = caseRow(c, names.Subjects[c.ID], kindW, color)
+		subject := names.Subjects[c.ID]
+		rows[i] = caseRow(&c, &subject, kindW, color)
 	}
 	return strings.Join(rows, "\n")
 }
 
-func caseRow(c Case, subject Subject, kindW int, color bool) string {
+func caseRow(c *Case, subject *Subject, kindW int, color bool) string {
 	glyph, paint := c.Outcome.decorate()
 	var row strings.Builder
 	fmt.Fprintf(&row, "  %s  %s  %s",
@@ -81,7 +83,7 @@ func caseRow(c Case, subject Subject, kindW int, color bool) string {
 	return row.String()
 }
 
-func (r TestReport) verdict(color bool, elapsed time.Duration) string {
+func (r *TestReport) verdict(color bool, elapsed time.Duration) string {
 	glyph, paint := GlyphPass, Pass
 	if r.AnyFailed() {
 		glyph, paint = GlyphFail, Fail

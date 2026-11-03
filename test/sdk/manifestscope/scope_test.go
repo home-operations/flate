@@ -3,6 +3,8 @@ package manifestscope_test
 import (
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
+
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	"sigs.k8s.io/kustomize/kyaml/yaml"
 
@@ -26,30 +28,33 @@ func (r *resolver) LookupScope(meta yaml.TypeMeta) (bool, bool) {
 	return value, ok
 }
 
+//nolint:nonamedreturns,paralleltest // Panic recovery updates the result and scope registration changes process-wide state.
 func TestScopeStartup(t *testing.T) {
 	panics := func(f func()) (panicked bool) {
 		defer func() { panicked = recover() != nil }()
 		f()
 		return false
 	}
-	if !panics(func() { manifest.KindOf(&manifest.RawObject{APIVersion: "v1", Kind: "ConfigMap"}).Namespaced() }) {
-		t.Fatal("missing scope resolver silently supplied an answer")
-	}
-	if (manifest.KindInfo{}).Namespaced() {
-		t.Fatal("empty kind has namespace scope")
-	}
-	if !panics(func() { manifest.RegisterScopeResolver(nil) }) {
-		t.Fatal("nil scope resolver was accepted at startup")
-	}
+	assert.FatalIf(
+		t,
+		!panics(func() { manifest.KindOf(&manifest.RawObject{APIVersion: "v1", Kind: "ConfigMap"}).Namespaced() }),
+		"%v",
+		"missing scope resolver silently supplied an answer",
+	)
+	assert.FatalIf(t, (manifest.KindInfo{}).Namespaced(), "%v", "empty kind has namespace scope")
+	assert.FatalIf(
+		t,
+		!panics(func() { manifest.RegisterScopeResolver(nil) }),
+		"%v",
+		"nil scope resolver was accepted at startup",
+	)
 	r := &resolver{memo: make(map[yaml.TypeMeta]bool)}
 	manifest.RegisterScopeResolver(r)
 	obj, _, _, err := manifest.ParseDoc(
 		map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "cm"}},
 		manifest.ParseDocOptions{DefaultNamespace: "apps"},
 	)
-	if err != nil || obj.Named().Namespace != "apps" {
-		t.Fatalf("standalone namespace default = %v, %v", obj, err)
-	}
+	assert.FatalIf(t, err != nil || obj.Named().Namespace != "apps", "standalone namespace default = %v, %v", obj, err)
 	obj, _, _, err = manifest.ParseDoc(map[string]any{
 		"apiVersion": manifest.FluxOperatorDomain + "/v1",
 		"kind":       manifest.KindResourceSet,
@@ -65,34 +70,29 @@ func TestScopeStartup(t *testing.T) {
 			},
 		},
 	}, manifest.ParseDocOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, err)
 	before := r.resolutions
 	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
-		if ref.Namespace != "" {
-			t.Fatalf("cluster dependency namespace = %q", ref.Namespace)
-		}
+		assert.FatalIf(t, ref.Namespace != "", "cluster dependency namespace = %q", ref.Namespace)
 	}
 	direct := &manifest.ResourceSet{
 		DependsOn: []fluxopv1.Dependency{{APIVersion: "direct.example/v1", Kind: "Widget", Name: "widget"}},
 	}
-	if !panics(func() {
+	assert.FatalIf(t, !panics(func() {
 		for range manifest.References(direct, manifest.ReferenceRelations) {
 			t.Error("unprepared dependency yielded a reference")
 		}
-	}) || r.resolutions != before {
-		t.Fatal("memo miss did not preserve the preparation invariant")
-	}
+	}) || r.resolutions != before, "%v", "memo miss did not preserve the preparation invariant")
 	manifest.KindOf(&manifest.RawObject{APIVersion: "direct.example/v1", Kind: "Widget"}).Namespaced()
 	count := 0
 	for range manifest.References(direct, manifest.ReferenceRelations) {
 		count++
 	}
-	if count != 1 {
-		t.Fatalf("prepared direct references = %d; want 1", count)
-	}
-	if !panics(func() { manifest.RegisterScopeResolver(r) }) {
-		t.Fatal("scope owner was replaceable after startup")
-	}
+	assert.FatalIf(t, count != 1, "prepared direct references = %d; want 1", count)
+	assert.FatalIf(
+		t,
+		!panics(func() { manifest.RegisterScopeResolver(r) }),
+		"%v",
+		"scope owner was replaceable after startup",
+	)
 }

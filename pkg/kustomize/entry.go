@@ -16,31 +16,33 @@ import (
 
 // EntryEvidence retains the accepted producer inventory that qualified an entry application.
 type EntryEvidence struct {
-	Application map[string]any
-	Owner       manifest.NamedResource
-	Records     iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
-	Receipt     *manifest.RenderReceipt
-	Inputs      []EntryInput
-	Renders     []*manifest.RenderReceipt
+	Application map[string]any                                              `json:"Application"`
+	Owner       manifest.NamedResource                                      `json:"Owner"`
+	Records     iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord] `json:"Records"`
+	Receipt     *manifest.RenderReceipt                                     `json:"Receipt"`
+	Inputs      []EntryInput                                                `json:"Inputs"`
+	Renders     []*manifest.RenderReceipt                                   `json:"Renders"`
 }
 
 // EntryInput binds one resolved qualification input to owner-derived content.
 type EntryInput struct {
-	Resource manifest.NamedResource
-	Content  string
-	Binding  store.ArtifactInput
-	Artifact *store.SourceArtifact `json:"-"`
-	Data     manifest.Data         `json:"-"`
+	Resource manifest.NamedResource `json:"Resource"`
+	Content  string                 `json:"Content"`
+	Binding  store.ArtifactInput    `json:"Binding"`
+	Artifact *store.SourceArtifact  `json:"-"`
+	Data     manifest.Data          `json:"-"`
 }
 
 func resolvedEntryInput(ctx context.Context, input EntryInput) (EntryInput, bool, error) {
 	resolved := EntryInput{Resource: input.Resource}
 	if input.Data != nil {
 		resolved.Content = manifest.Fingerprint(input.Data.Snapshot())
+		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return resolved, resolved.Content != "", ctx.Err()
 	}
 	artifact := input.Artifact
 	if artifact == nil || artifact.FS == nil || !artifact.Reads.Valid() {
+		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return resolved, false, ctx.Err()
 	}
 	resolved.Binding = artifact.Input(store.ArtifactContent | store.ArtifactRevision)
@@ -50,9 +52,11 @@ func resolvedEntryInput(ctx context.Context, input EntryInput) (EntryInput, bool
 		var err error
 		resolved.Content, err = artifact.ContentFingerprint(ctx, artifact.FS)
 		if err != nil {
+			//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 			return resolved, false, ctx.Err()
 		}
 	}
+	//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 	return resolved, resolved.Content != "", ctx.Err()
 }
 
@@ -61,6 +65,8 @@ func equalEntryInput(a, b EntryInput) bool {
 }
 
 // ApplicationReceipt captures complete local and resolved entry qualification inputs.
+//
+//nolint:gocritic // Preserve the existing value API and its snapshot semantics.
 func (*TreeCache) ApplicationReceipt(
 	ctx context.Context,
 	source *store.SourceArtifact,
@@ -69,29 +75,37 @@ func (*TreeCache) ApplicationReceipt(
 ) (*manifest.RenderReceipt, error) {
 	for _, receipt := range evidence.Renders {
 		if frame, ok := receipt.Value().(renderFrame); ok && len(frame.header.Reads.Remotes) != 0 {
+			//nolint:nilnil // An unavailable receipt is a cache miss, not a render failure.
 			return nil, nil
 		}
 	}
 	inputs := make([]EntryInput, 0, len(evidence.Inputs))
-	for _, input := range evidence.Inputs {
-		resolved, complete, err := resolvedEntryInput(ctx, input)
-		if err != nil || !complete {
-			return nil, err
+	{
+		inputValues := evidence.Inputs
+		for inputIndex := range inputValues {
+			input := inputValues[inputIndex]
+			resolved, complete, err := resolvedEntryInput(ctx, input)
+			if err != nil || !complete {
+				return nil, err
+			}
+			inputs = append(inputs, resolved)
 		}
-		inputs = append(inputs, resolved)
 	}
 	slices.SortFunc(inputs, func(a, b EntryInput) int { return a.Resource.Compare(b.Resource) })
 	inputs = slices.CompactFunc(inputs, equalEntryInput)
 	reads := newReadSet(source.LocalPath)
 	for _, file := range slices.Sorted(slices.Values(files)) {
 		if err := ctx.Err(); err != nil {
+			//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 			return nil, err
 		}
 		if !fs.ValidPath(file) {
+			//nolint:nilnil // An unavailable receipt is a cache miss, not a render failure.
 			return nil, nil
 		}
 		data, err := fs.ReadFile(source.FS, file)
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			//nolint:nilnil // An unavailable receipt is a cache miss, not a render failure.
 			return nil, nil
 		}
 		reads.recordFile(filepath.Join(source.LocalPath, filepath.FromSlash(file)), data, err)
@@ -123,30 +137,36 @@ func equalEntryApplication(a, b any) bool {
 }
 
 // EntryValid qualifies provisional evidence against current resolved input content.
+//
+//nolint:gocritic // Preserve the existing value API and its snapshot semantics.
 func (*TreeCache) EntryValid(ctx context.Context, evidence EntryEvidence, st *store.Store) bool {
-	for _, expected := range evidence.Inputs {
-		input := EntryInput{Resource: expected.Resource}
-		if expected.Binding.Present {
-			input.Artifact, _ = st.GetArtifact(expected.Resource, store.ArtifactContent).(*store.SourceArtifact)
-		} else {
-			input.Data = st.ReferenceFacts(expected.Resource, nil).Supplied
-		}
-		actual, complete, err := resolvedEntryInput(ctx, input)
-		if err != nil || !complete || !equalEntryInput(actual, expected) {
-			slog.Debug(
-				"kustomize: entry application input changed",
-				"resource",
-				expected.Resource,
-				"complete",
-				complete,
-				"recorded",
-				expected.Content,
-				"resolved",
-				actual.Content,
-				"binding_matches",
-				expected.Binding == actual.Binding,
-			)
-			return false
+	{
+		expectedValues := evidence.Inputs
+		for expectedIndex := range expectedValues {
+			expected := expectedValues[expectedIndex]
+			input := EntryInput{Resource: expected.Resource}
+			if expected.Binding.Present {
+				input.Artifact, _ = st.GetArtifact(expected.Resource, store.ArtifactContent).(*store.SourceArtifact)
+			} else {
+				input.Data = st.ReferenceFacts(expected.Resource, nil).Supplied
+			}
+			actual, complete, err := resolvedEntryInput(ctx, input)
+			if err != nil || !complete || !equalEntryInput(actual, expected) {
+				slog.Debug(
+					"kustomize: entry application input changed",
+					"resource",
+					expected.Resource,
+					"complete",
+					complete,
+					"recorded",
+					expected.Content,
+					"resolved",
+					actual.Content,
+					"binding_matches",
+					expected.Binding == actual.Binding,
+				)
+				return false
+			}
 		}
 	}
 	return evidence.Receipt != nil && ctx.Err() == nil
@@ -181,8 +201,8 @@ func (c *TreeCache) PreviousEntry(ctx context.Context, req RenderRequest) EntryE
 		return EntryEvidence{}
 	}
 	if frame.header.Entry == nil {
-		valid, err := frame.header.Reads.localsValid(ctx, prepared.lower, req.Source.Content != "")
-		if err != nil || !valid {
+		valid, localsValidErr := frame.header.Reads.localsValid(ctx, prepared.lower, req.Source.Content != "")
+		if localsValidErr != nil || !valid {
 			return EntryEvidence{}
 		}
 		records, _ := frame.history(req.Spec.Named())

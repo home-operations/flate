@@ -28,134 +28,171 @@ func ResolveLocal(
 	sideRevision string,
 ) (map[manifest.NamedResource]*store.SourceArtifact, error) {
 	if len(repositories) == 0 {
-		return nil, nil
+		return nil, nil //nolint:nilnil // An empty inventory has no locally resolved artifacts.
 	}
-	var repo *git.Repository
-	root := ""
+	r := localResolver{
+		location:     location,
+		sideRevision: sideRevision,
+		resolved:     make(map[sourcev1.GitRepositoryRef]localResolution),
+	}
 	if location != nil {
-		root = location.ContentRoot
+		r.root = location.ContentRoot
 	}
-	var local fs.FS
-	var head plumbing.Hash
-	opened := false
-	type resolution struct {
-		hash plumbing.Hash
-		err  error
-	}
-	resolved := make(map[sourcev1.GitRepositoryRef]resolution)
 	artifacts := make(map[manifest.NamedResource]*store.SourceArtifact, len(repositories))
 	for _, repository := range repositories {
-		if repository == nil {
-			return failedLocal(artifacts), manifest.NewError(manifest.ErrInput, nil, "local GitRepository is nil")
-		}
-		selected := (*manifest.GitRepositoryRef)(repository.Reference)
-		ref := selected.Normalized()
-		if kind, _ := selected.Effective(); kind == "" {
-			continue
-		}
-		if err := selected.Validate(); err != nil {
-			return failedLocal(artifacts), localError(err)
-		}
-		if err := ctx.Err(); err != nil {
-			return failedLocal(artifacts), localError(err)
-		}
-		if !opened {
-			opened = true
-			if location != nil {
-				if location.LookupErr != nil {
-					return failedLocal(artifacts), localError(location.LookupErr)
-				}
-				if location.RepositoryRoot == root {
-					repo = location.Repository
-				}
-			}
-			if repo != nil {
-				headRef, err := repo.Head()
-				if err != nil {
-					return failedLocal(artifacts), localError(err)
-				}
-				head = headRef.Hash()
-				if _, err := readCommit(repo, head); err != nil {
-					return failedLocal(artifacts), localError(err)
-				}
-			}
-		}
-		if repo == nil {
-			continue
-		}
-		r, ok := resolved[ref]
-		if !ok {
-			r.hash, r.err = resolveRefHash(repo, &ref, false)
-			resolved[ref] = r
-		}
-		if errors.Is(r.err, errRefUnavailable) {
-			continue
-		}
-		if r.err != nil {
-			return failedLocal(artifacts), localError(r.err)
-		}
-		if r.hash == head && (sideRevision == "" || sideRevision == r.hash.String()) {
-			if local == nil {
-				input, err := gittree.AdmitDirectory(ctx, location)
-				if err != nil {
-					return failedLocal(artifacts), localError(err)
-				}
-				local = input.FS
-			}
-			artifacts[repository.Named()] = &store.SourceArtifact{
-				Kind:               manifest.KindGitRepository,
-				URL:                repository.URL,
-				LocalPath:          root,
-				Revision:           r.hash.String(),
-				FS:                 local,
-				ContentFingerprint: gittree.ContentFingerprint,
-			}
-			continue
-		}
-		if repository.RecurseSubmodules {
-			if _, err := readCommit(repo, r.hash); err != nil {
-				return failedLocal(artifacts), localError(err)
-			}
-			continue
-		}
-		ignore := ""
-		if repository.Ignore != nil {
-			ignore = *repository.Ignore
-		}
-		input, key, err := gittree.New(
-			ctx,
-			repo.Storer.(*filesystem.Storage).Filesystem(),
-			r.hash,
-			gittree.ViewOptions{
-				Location: location,
-				Content:  struct{ Root string }{root},
-				Sparse:   repository.SparseCheckout,
-				Ignore:   ignore,
-			},
-		)
-		var warnings []manifest.Warning
-		if input != nil && len(input.Warnings) > 0 {
-			warnings = gitWarnings(input, repository.Named(), repository.URL, selected.String())
+		artifact, err := r.resolve(ctx, repository)
+		if artifact != nil {
+			artifacts[repository.Named()] = artifact
 		}
 		if err != nil {
-			artifacts[repository.Named()] = &store.SourceArtifact{Warnings: warnings}
-			return failedLocal(artifacts), localError(err)
+			return failedLocal(artifacts), err
 		}
-		label, _ := gittree.Label(gittree.LabelOptions{Root: root, Mode: gittree.Source, Key: key})
-		artifact := &store.SourceArtifact{
-			Kind:               manifest.KindGitRepository,
-			URL:                repository.URL,
-			LocalPath:          label,
-			Revision:           r.hash.String(),
-			Key:                key,
-			Content:            key,
-			FS:                 input,
-			ContentFingerprint: gittree.ContentFingerprint,
-			Warnings:           warnings,
-		}
-		artifacts[repository.Named()] = artifact
 	}
 	return artifacts, nil
+}
+
+type localResolution struct {
+	hash plumbing.Hash
+	err  error
+}
+
+type localResolver struct {
+	location     *gitrepo.Location
+	sideRevision string
+	root         string
+	repo         *git.Repository
+	head         plumbing.Hash
+	local        fs.FS
+	opened       bool
+	resolved     map[sourcev1.GitRepositoryRef]localResolution
+}
+
+func (r *localResolver) resolve(
+	ctx context.Context,
+	repository *manifest.GitRepository,
+) (*store.SourceArtifact, error) {
+	if repository == nil {
+		return nil, manifest.NewError(manifest.ErrInput, nil, "local GitRepository is nil")
+	}
+	selected := (*manifest.GitRepositoryRef)(repository.Reference)
+	ref := selected.Normalized()
+	if kind, _ := selected.Effective(); kind == "" {
+		return nil, nil //nolint:nilnil // Repositories without an authored reference do not select local content.
+	}
+	if err := selected.Validate(); err != nil {
+		return nil, localError(err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, localError(err)
+	}
+	if !r.opened {
+		r.opened = true
+		if err := r.open(); err != nil {
+			return nil, localError(err)
+		}
+	}
+	if r.repo == nil {
+		return nil, nil //nolint:nilnil // An unavailable repository leaves remote acquisition responsible for this source.
+	}
+	resolution, ok := r.resolved[ref]
+	if !ok {
+		resolution.hash, resolution.err = resolveRefHash(r.repo, &ref, false)
+		r.resolved[ref] = resolution
+	}
+	if errors.Is(resolution.err, errRefUnavailable) {
+		return nil, nil //nolint:nilnil // An unavailable local ref leaves remote acquisition responsible for this source.
+	}
+	if resolution.err != nil {
+		return nil, localError(resolution.err)
+	}
+	if resolution.hash == r.head && (r.sideRevision == "" || r.sideRevision == resolution.hash.String()) {
+		return r.directory(ctx, repository, resolution.hash)
+	}
+	if repository.RecurseSubmodules {
+		if _, err := readCommit(r.repo, resolution.hash); err != nil {
+			return nil, localError(err)
+		}
+		return nil, nil //nolint:nilnil // Non-HEAD submodule sources require remote acquisition.
+	}
+	return r.committed(ctx, repository, resolution.hash, selected)
+}
+
+func (r *localResolver) open() error {
+	if r.location != nil {
+		if r.location.LookupErr != nil {
+			return r.location.LookupErr
+		}
+		if r.location.RepositoryRoot == r.root {
+			r.repo = r.location.Repository
+		}
+	}
+	if r.repo == nil {
+		return nil
+	}
+	headRef, err := r.repo.Head()
+	if err != nil {
+		return err
+	}
+	r.head = headRef.Hash()
+	_, err = readCommit(r.repo, r.head)
+	return err
+}
+
+func (r *localResolver) directory(
+	ctx context.Context,
+	repository *manifest.GitRepository,
+	hash plumbing.Hash,
+) (*store.SourceArtifact, error) {
+	if r.local == nil {
+		input, err := gittree.AdmitDirectory(ctx, r.location)
+		if err != nil {
+			return nil, localError(err)
+		}
+		r.local = input.FS
+	}
+	return &store.SourceArtifact{
+		Kind: manifest.KindGitRepository, URL: repository.URL, LocalPath: r.root, Revision: hash.String(),
+		FS: r.local, ContentFingerprint: gittree.ContentFingerprint,
+	}, nil
+}
+
+func (r *localResolver) committed(
+	ctx context.Context, repository *manifest.GitRepository, hash plumbing.Hash, selected *manifest.GitRepositoryRef,
+) (*store.SourceArtifact, error) {
+	ignore := ""
+	if repository.Ignore != nil {
+		ignore = *repository.Ignore
+	}
+	input, key, err := gittree.New(
+		ctx,
+		r.repo.Storer.(*filesystem.Storage).Filesystem(), //nolint:errcheck // The admitted repository uses the filesystem storage selected by discovery.
+		hash,
+		gittree.ViewOptions{
+			Location: r.location,
+			Content:  struct{ Root string }{r.root},
+			Sparse:   repository.SparseCheckout,
+			Ignore:   ignore,
+		},
+	)
+	var warnings []manifest.Warning
+	if input != nil && len(input.Warnings) > 0 {
+		warnings = gitWarnings(input, repository.Named(), repository.URL, selected.String())
+	}
+	if err != nil {
+		return &store.SourceArtifact{Warnings: warnings}, localError(err)
+	}
+	label, _ := gittree.Label(gittree.LabelOptions{Root: r.root, Mode: gittree.Source, Key: key})
+	return &store.SourceArtifact{
+		Kind:               manifest.KindGitRepository,
+		URL:                repository.URL,
+		LocalPath:          label,
+		Revision:           hash.String(),
+		Key:                key,
+		Content:            key,
+		FS:                 input,
+		ContentFingerprint: gittree.ContentFingerprint,
+		Warnings:           warnings,
+	}, nil
 }
 
 func failedLocal(

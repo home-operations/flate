@@ -59,6 +59,8 @@ func (h *HelmRepository) Content() any {
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (h *HelmRepository) WithNamespace(namespace string) BaseManifest {
 	out := *h
 	out.Namespace = namespace

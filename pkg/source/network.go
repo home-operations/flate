@@ -46,7 +46,9 @@ func (n *Network) RoundTrip(r *http.Request) (*http.Response, error) {
 	n.defaultOnce.Do(func() {
 		n.defaultHTTP, _ = n.HTTPTransport(HTTPTransportConfig{})
 	})
-	return n.defaultHTTP.RoundTrip(r)
+	return n.defaultHTTP.RoundTrip(
+		r,
+	) //nolint:wrapcheck // HTTP transport adapters preserve net.Error behavior and upstream protocol classification.
 }
 
 type networkTransports map[string]*networkTransport
@@ -70,6 +72,7 @@ type networkRequestKey struct{}
 
 type networkTransport struct {
 	auth.Cache
+
 	network   *Network
 	transport *http.Transport
 	proxy     func(*http.Request) (*url.URL, error)
@@ -78,11 +81,11 @@ type networkTransport struct {
 func (n *Network) wrapHTTPTransport(tr *http.Transport) http.RoundTripper {
 	t := &networkTransport{Cache: auth.NewCache(), network: n, transport: tr, proxy: tr.Proxy}
 	tr.Proxy = func(r *http.Request) (*url.URL, error) {
-		return r.Context().Value(networkRequestKey{}).(*networkRequest).proxy, nil
+		return r.Context().Value(networkRequestKey{}).(*networkRequest).proxy, nil //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
 	}
 	dial := tr.DialContext
 	tr.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-		request := ctx.Value(networkRequestKey{}).(*networkRequest)
+		request := ctx.Value(networkRequestKey{}).(*networkRequest) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
 		key := request.endpoint
 		key.authority = networkAuthority(address)
 		cause := n.endpoint(key)
@@ -136,7 +139,9 @@ func (t *networkTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if err := t.network.endpoint(request.endpoint).Load(); err != nil {
 		return nil, &cache.TerminalError{Err: *err}
 	}
-	return t.transport.RoundTrip(r.WithContext(context.WithValue(r.Context(), networkRequestKey{}, request)))
+	return t.transport.RoundTrip(
+		r.WithContext(context.WithValue(r.Context(), networkRequestKey{}, request)),
+	) //nolint:wrapcheck // HTTP transport adapters preserve net.Error behavior and upstream protocol classification.
 }
 
 func (n *Network) endpoint(key networkEndpoint) *atomic.Pointer[error] {

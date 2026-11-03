@@ -36,6 +36,7 @@ type sourceFacts interface {
 // Store with the result.
 type Controller struct {
 	*base.Controller
+
 	retry cache.RetryConfig
 
 	// Fetchers maps source kinds to their fetchers. Kinds without an entry
@@ -63,6 +64,7 @@ type FetchOptions struct {
 
 type execution struct {
 	*Controller
+
 	run      base.Execution
 	acquired *store.SourceArtifact
 }
@@ -129,9 +131,29 @@ func (c *Controller) ReconcileNode(
 	}
 }
 
+func (c *execution) reuseArtifact(id manifest.NamedResource, art *store.SourceArtifact) bool {
+	if art.FS == nil {
+		return false
+	}
+	switch {
+	case art.Reads.Valid():
+		c.run.Reads.CarryAdvisories(art.Reads)
+	case c.run.Reads.Matches(art.Reads):
+		c.run.Reads.CarryAdvisories(art.Reads)
+		c.Store.SetArtifact(id, art.WithReads(&c.run.Reads))
+	default:
+		return false
+	}
+	for i := range art.Warnings {
+		c.run.Reads.AddWarning(art.Warnings[i])
+	}
+	c.run.Reused = true
+	return true
+}
+
 func (c *execution) reconcile(ctx context.Context, obj manifest.BaseManifest, level manifest.DrainLevel) error {
 	id := obj.Named()
-	facts := obj.(sourceFacts)
+	facts := obj.(sourceFacts) //nolint:errcheck // The source controller accepts only source manifests.
 	if facts.ExistenceOnly() {
 		return nil
 	}
@@ -140,21 +162,7 @@ func (c *execution) reconcile(ctx context.Context, obj manifest.BaseManifest, le
 	// Available content survives idempotent re-emission. Released pins must
 	// reacquire normally and publish a Ready transition to wake content consumers.
 	if art, ok := c.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact); ok {
-		if art.FS != nil && art.Reads.Valid() {
-			c.run.Reads.CarryAdvisories(art.Reads)
-			for _, warning := range art.Warnings {
-				c.run.Reads.AddWarning(warning)
-			}
-			c.run.Reused = true
-			return nil
-		}
-		if art.FS != nil && c.run.Reads.Matches(art.Reads) {
-			c.run.Reads.CarryAdvisories(art.Reads)
-			c.Store.SetArtifact(id, art.WithReads(&c.run.Reads))
-			for _, warning := range art.Warnings {
-				c.run.Reads.AddWarning(warning)
-			}
-			c.run.Reused = true
+		if c.reuseArtifact(id, art) {
 			return nil
 		}
 	}
@@ -202,8 +210,13 @@ func (c *execution) reconcile(ctx context.Context, obj manifest.BaseManifest, le
 
 func (c *execution) completeFetch(obj manifest.BaseManifest, artifact *store.SourceArtifact, err error) error {
 	if artifact != nil {
-		for _, warning := range artifact.Warnings {
-			c.run.Reads.AddWarning(warning)
+		{
+			warningValues3 := artifact.Warnings
+			for warningIndex3 := range warningValues3 {
+				warning := warningValues3[warningIndex3]
+
+				c.run.Reads.AddWarning(warning)
+			}
 		}
 	}
 	if err != nil {

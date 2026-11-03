@@ -46,6 +46,7 @@ type document struct {
 
 type parsedObject struct {
 	store.Child
+
 	outcome  manifest.DocOccurrence
 	item     int
 	fact     *Occurrence
@@ -117,9 +118,12 @@ func (r *documentReader) mountSources(s sourceReader, candidates ...*manifest.Di
 		}
 	}
 	for _, index := range candidates {
-		for id, record := range index.Records {
-			if id.KindInfo().SourceArtifact && record.File != "" {
-				mountSource(mounted, s.GetArtifact(id, store.ArtifactContent))
+		{
+			//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+			for id, record := range index.Records {
+				if id.KindInfo().SourceArtifact && record.File != "" {
+					mountSource(mounted, s.GetArtifact(id, store.ArtifactContent))
+				}
 			}
 		}
 	}
@@ -162,9 +166,13 @@ func (r *documentReader) setSources(mounted map[string]*store.SourceArtifact) []
 	}
 	if len(changed) != 0 {
 		r.edgesDirty = true
-		for file, doc := range r.cache {
-			doc.incoming, doc.edgesKnown = false, false
-			r.cache[file] = doc
+		{
+			//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+			for file, doc := range r.cache {
+
+				doc.incoming, doc.edgesKnown = false, false
+				r.cache[file] = doc
+			}
 		}
 	}
 	if len(mounted) != 0 && r.views == nil {
@@ -211,9 +219,13 @@ func (l *Loader) refreshSources() {
 		previous := l.scopes
 		l.scopes = nil
 		l.ensureScopes()
-		for _, scope := range previous.sources {
-			if scope.sourceState == l.sourceState(scope.id, scope.repoRoot) {
-				l.scopes.sources = append(l.scopes.sources, scope)
+		{
+			scopeValues := previous.sources
+			for scopeIndex := range scopeValues {
+				scope := scopeValues[scopeIndex]
+				if scope.sourceState == l.sourceState(scope.id, scope.repoRoot) {
+					l.scopes.sources = append(l.scopes.sources, scope)
+				}
 			}
 		}
 	}
@@ -310,11 +322,19 @@ func (r *documentReader) read(dir string) (*types.Kustomization, string) {
 		//nolint:staticcheck // Kustomize still accepts these deprecated input fields.
 		fix := k.Kind == types.ComponentKind && k.APIVersion == "" ||
 			len(k.Bases)+len(k.ImageTags)+len(k.HelmChartInflationGenerator) != 0
-		for _, g := range k.ConfigMapGenerator {
-			fix = fix || g.EnvSource != ""
+		{
+			gValues := k.ConfigMapGenerator
+			for gIndex := range gValues {
+				g := gValues[gIndex]
+				fix = fix || g.EnvSource != ""
+			}
 		}
-		for _, g := range k.SecretGenerator {
-			fix = fix || g.EnvSource != ""
+		{
+			gValues2 := k.SecretGenerator
+			for gIndex2 := range gValues2 {
+				g := gValues2[gIndex2]
+				fix = fix || g.EnvSource != ""
+			}
 		}
 		if fix {
 			k.FixKustomization()

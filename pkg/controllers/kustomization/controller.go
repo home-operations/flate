@@ -26,6 +26,7 @@ import (
 // encoded in the embedded *base.Controller, not just in code review.
 type Controller struct {
 	*base.Controller
+
 	retry cache.RetryConfig
 
 	// Trees shares remote fetches and persisted renders.
@@ -43,12 +44,14 @@ type Controller struct {
 // controller before StartLifecycle. base.Options holds the common reconcile config.
 type Options struct {
 	base.Options
+
 	// StrictSubstitutions rejects undefined variables without defaults.
 	StrictSubstitutions bool
 }
 
 type execution struct {
 	*Controller
+
 	run  base.Execution
 	data *values.StoreProvider
 }
@@ -103,8 +106,8 @@ func (c *execution) reconcile(ctx context.Context, ks *manifest.Kustomization, l
 	if err != nil {
 		return err
 	}
-	if _, err := c.run.RequireRefresh(ctx, ks, manifest.GateArtifacts, level); err != nil {
-		return err
+	if _, localErr := c.run.RequireRefresh(ctx, ks, manifest.GateArtifacts, level); localErr != nil {
+		return localErr
 	}
 	source, applyIgnore, err := kustomize.SourceInput(&c.run.Reads, ks)
 	if err != nil {
@@ -140,12 +143,12 @@ func (c *execution) render(
 	var attempt store.Emission
 	defer attempt.Finish()
 	if c.restricted {
-		_, handled, err := c.run.FingerprintDedup(ctx, id, nil, &attempt)
-		if handled || err != nil {
-			return err
+		_, handled, innerLocalErr := c.run.FingerprintDedup(ctx, id, nil, &attempt)
+		if handled || innerLocalErr != nil {
+			return innerLocalErr
 		}
-	} else if err := c.run.Checkpoint(); err != nil {
-		return err
+	} else if innerInnerLocalErr := c.run.Checkpoint(); innerInnerLocalErr != nil {
+		return innerInnerLocalErr
 	}
 
 	_, _, attempt = c.run.Reads.GetEmission(id)

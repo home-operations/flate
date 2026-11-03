@@ -71,6 +71,7 @@ type sourceState struct {
 
 type sourceScope struct {
 	sourceState
+
 	root                    string
 	origin                  string
 	pinned, external, ready bool
@@ -415,10 +416,14 @@ func (l *Loader) visitScope(root graphVisit, membershipOnly bool) []graphVisit {
 	if unshared {
 		visits = slices.Clone(visits)
 		namespace := root.namespace
-		for _, visit := range visits {
-			if visit.document != nil && visit.dir == root.dir {
-				namespace = visit.namespace
-				break
+		{
+			visitValues := visits
+			for visitIndex := range visitValues {
+				visit := visitValues[visitIndex]
+				if visit.document != nil && visit.dir == root.dir {
+					namespace = visit.namespace
+					break
+				}
 			}
 		}
 		for _, component := range ks.Components {
@@ -450,17 +455,21 @@ func (l *Loader) visitScope(root graphVisit, membershipOnly bool) []graphVisit {
 			input:          root.input,
 		},
 	)
-	for _, v := range visits {
-		v.owner, v.source, v.input = root.owner, root.source, root.input
-		v.membershipOnly = membershipOnly
-		if membershipOnly {
-			// Membership projects identities without owning or materializing bootstrap files.
-			v.owner, v.deferMaterialization = manifest.NamedResource{}, false
-		}
-		l.scopes.visits[v.file] = append(l.scopes.visits[v.file], v)
-		if local := v.localCoordinate(); local != "" {
-			file := filepath.Join(l.SourceRoot, filepath.FromSlash(local))
-			l.scopes.visits[file] = append(l.scopes.visits[file], v)
+	{
+		vValues := visits
+		for vIndex := range vValues {
+			v := vValues[vIndex]
+			v.owner, v.source, v.input = root.owner, root.source, root.input
+			v.membershipOnly = membershipOnly
+			if membershipOnly {
+				// Membership projects identities without owning or materializing bootstrap files.
+				v.owner, v.deferMaterialization = manifest.NamedResource{}, false
+			}
+			l.scopes.visits[v.file] = append(l.scopes.visits[v.file], v)
+			if local := v.localCoordinate(); local != "" {
+				file := filepath.Join(l.SourceRoot, filepath.FromSlash(local))
+				l.scopes.visits[file] = append(l.scopes.visits[file], v)
+			}
 		}
 	}
 	return visits
@@ -545,17 +554,21 @@ func (l *Loader) projectAuthored(repoRoot string) bool {
 			(l.entry != entryKustomize && doc.loaded && !doc.bootstrap || scopes[r.Path].admits(l, id, r))
 	}
 	if l.documents.compact {
-		for id, record := range next {
-			if _, known := allowed[id]; known {
-				continue
+		{
+			//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+			for id, record := range next {
+
+				if _, known := allowed[id]; known {
+					continue
+				}
+				if obj := l.CatalogObject(id); obj == nil || !manifest.AdmitsRoot(obj) {
+					allowed[id] = false
+					continue
+				}
+				doc := l.documents.cache[record.Path]
+				allowed[id] = doc.eligible != fileInactive &&
+					(id.KindInfo().Discovery && l.entry != entryKustomize && doc.loaded && !doc.bootstrap || scopes[record.Path].admits(l, id, record))
 			}
-			if obj := l.CatalogObject(id); obj == nil || !manifest.AdmitsRoot(obj) {
-				allowed[id] = false
-				continue
-			}
-			doc := l.documents.cache[record.Path]
-			allowed[id] = doc.eligible != fileInactive &&
-				(id.KindInfo().Discovery && l.entry != entryKustomize && doc.loaded && !doc.bootstrap || scopes[record.Path].admits(l, id, record))
 		}
 	}
 	l.scopes.candidates, l.candidates = l.candidates, objects
@@ -579,96 +592,101 @@ func (l *Loader) desiredAuthored(
 	}
 	clear(objects)
 	prediction := map[string]nsResolution{}
-	for _, indexed := range raw {
-		r := l.Index.Records[indexed.id]
-		path, id := r.Path, r.Authored
-		authored := l.authoredObject(path, id)
-		forced := ""
-		if ks, ok := authored.Obj.(*manifest.Kustomization); ok {
-			authored.Obj, forced = l.predictNamespaces(ks, repoRoot, r, prediction)
-		}
-		if l.documents.compact {
-			if fact, ok := l.authoredOccurrence(path, id); ok {
-				if structural, ok := authored.Obj.(*manifest.Kustomization); ok && structural != fact.facts.structural {
-					facts := *fact.facts
-					facts.structural = structural
-					facts.catalog = structural
-					fact.facts = &facts
+	{
+		indexedValues := raw
+		for indexedIndex := range indexedValues {
+			indexed := indexedValues[indexedIndex]
+			r := l.Index.Records[indexed.id]
+			path, id := r.Path, r.Authored
+			authored := l.authoredObject(path, id)
+			forced := ""
+			if ks, ok := authored.Obj.(*manifest.Kustomization); ok {
+				authored.Obj, forced = l.predictNamespaces(ks, repoRoot, r, prediction)
+			}
+			if l.documents.compact {
+				if fact, ok := l.authoredOccurrence(path, id); ok {
+					if structural, ok := authored.Obj.(*manifest.Kustomization); ok &&
+						structural != fact.facts.structural {
+						facts := *fact.facts
+						facts.structural = structural
+						facts.catalog = structural
+						fact.facts = &facts
+					}
+					for _, namespace := range l.recordNamespaces(r, forced) {
+						projected := fact
+						if fact.facts.namespaced {
+							projected.Identity.Namespace = namespace
+						}
+						refs := []manifest.NamedResource{}
+						for ref := range projected.references() {
+							if discoveryReference(ref) {
+								refs = append(refs, ref.NamedResource)
+							}
+						}
+						record := r
+						record.Productions = nil
+						record.Refs = refs
+						next[projected.Identity] = record
+						if old, known := l.locations[projected.Identity]; known && old.facts == projected.facts {
+							projected.object = old.object
+						}
+						if projected.object == nil && projected.facts.catalog.Named() != projected.Identity {
+							if projected.facts.catalog.Named().Name == projected.Identity.Name {
+								projected.object = projected.facts.catalog.WithNamespace(projected.Identity.Namespace)
+							} else {
+								projected.object = manifest.CatalogObject(projected.facts.catalog, projected.Identity)
+							}
+						}
+						l.locations[projected.Identity] = projected
+						if authored.Obj != nil {
+							object := authored.Obj
+							if previous := l.candidates[projected.Identity]; previous.Obj != nil &&
+								object.ProjectionCompatible(previous.Obj) {
+								object = previous.Obj
+							}
+							if object.Named().Namespace != projected.Identity.Namespace {
+								object = object.WithNamespace(projected.Identity.Namespace)
+							}
+							objects[projected.Identity] = store.Child{Obj: object}
+						} else if previous := l.candidates[projected.Identity]; previous.Obj != nil {
+							if current, ok := l.Index.Lookup(
+								projected.Identity,
+							); ok && current.Path == r.Path &&
+								current.Authored == r.Authored {
+								objects[projected.Identity] = previous
+							}
+						}
+					}
+					continue
 				}
-				for _, namespace := range l.recordNamespaces(r, forced) {
-					projected := fact
-					if fact.facts.namespaced {
-						projected.Identity.Namespace = namespace
-					}
-					refs := []manifest.NamedResource{}
-					for ref := range projected.references() {
-						if discoveryReference(ref) {
-							refs = append(refs, ref.NamedResource)
-						}
-					}
-					record := r
-					record.Productions = nil
-					record.Refs = refs
-					next[projected.Identity] = record
-					if old, known := l.locations[projected.Identity]; known && old.facts == projected.facts {
-						projected.object = old.object
-					}
-					if projected.object == nil && projected.facts.catalog.Named() != projected.Identity {
-						if projected.facts.catalog.Named().Name == projected.Identity.Name {
-							projected.object = projected.facts.catalog.WithNamespace(projected.Identity.Namespace)
-						} else {
-							projected.object = manifest.CatalogObject(projected.facts.catalog, projected.Identity)
-						}
-					}
-					l.locations[projected.Identity] = projected
-					if authored.Obj != nil {
-						object := authored.Obj
-						if previous := l.candidates[projected.Identity]; previous.Obj != nil &&
-							object.ProjectionCompatible(previous.Obj) {
-							object = previous.Obj
-						}
-						if object.Named().Namespace != projected.Identity.Namespace {
-							object = object.WithNamespace(projected.Identity.Namespace)
-						}
-						objects[projected.Identity] = store.Child{Obj: object}
-					} else if previous := l.candidates[projected.Identity]; previous.Obj != nil {
-						if current, ok := l.Index.Lookup(
-							projected.Identity,
-						); ok && current.Path == r.Path &&
-							current.Authored == r.Authored {
-							objects[projected.Identity] = previous
-						}
-					}
-				}
+			}
+			if authored.Obj == nil {
 				continue
 			}
-		}
-		if authored.Obj == nil {
-			continue
-		}
-		obj := authored.Obj
-		for _, ns := range l.recordNamespaces(r, forced) {
-			id := obj.Named()
-			id.Namespace = ns
-			projected := obj
-			// Candidate identities MUST stay stable until their source state changes.
-			previous := l.candidates[id]
-			if previous.Obj != nil && obj.ProjectionCompatible(previous.Obj) {
-				projected = previous.Obj
-			}
-			if projected.Named().Namespace != ns {
-				projected = projected.WithNamespace(ns)
-			}
-			record := r
-			record.Productions = nil
-			if old, ok := l.Index.Lookup(id); ok && old.Path == r.Path && previous.Obj == projected {
-				record.Refs = old.Refs
-			} else {
-				record.Refs = discoveryReferences(nil, projected)
-			}
-			next[id] = record
-			if manifest.KindOf(projected).Discovery {
-				objects[id] = store.Child{Obj: projected, Doc: authored.Doc}
+			obj := authored.Obj
+			for _, ns := range l.recordNamespaces(r, forced) {
+				id := obj.Named()
+				id.Namespace = ns
+				projected := obj
+				// Candidate identities MUST stay stable until their source state changes.
+				previous := l.candidates[id]
+				if previous.Obj != nil && obj.ProjectionCompatible(previous.Obj) {
+					projected = previous.Obj
+				}
+				if projected.Named().Namespace != ns {
+					projected = projected.WithNamespace(ns)
+				}
+				record := r
+				record.Productions = nil
+				if old, ok := l.Index.Lookup(id); ok && old.Path == r.Path && previous.Obj == projected {
+					record.Refs = old.Refs
+				} else {
+					record.Refs = discoveryReferences(nil, projected)
+				}
+				next[id] = record
+				if manifest.KindOf(projected).Discovery {
+					objects[id] = store.Child{Obj: projected, Doc: authored.Doc}
+				}
 			}
 		}
 	}
@@ -678,9 +696,13 @@ func (l *Loader) desiredAuthored(
 func (l *Loader) authoredObject(path string, id manifest.NamedResource) store.Child {
 	doc := l.documents.cache[path]
 	if l.documents.compact {
-		for _, child := range doc.objects {
-			if child.fact != nil && child.fact.Authored == id && child.fact.facts.structural != nil {
-				return store.Child{Obj: child.fact.facts.structural}
+		{
+			childValues := doc.objects
+			for childIndex := range childValues {
+				child := childValues[childIndex]
+				if child.fact != nil && child.fact.Authored == id && child.fact.facts.structural != nil {
+					return store.Child{Obj: child.fact.facts.structural}
+				}
 			}
 		}
 		return store.Child{}
@@ -688,13 +710,17 @@ func (l *Loader) authoredObject(path string, id manifest.NamedResource) store.Ch
 	if len(doc.objects) > 1 {
 		if doc.lookup == nil {
 			doc.lookup = make(map[manifest.NamedResource]store.Child, len(doc.objects))
-			for _, child := range doc.objects {
-				obj := child.Obj
-				if obj == nil || child.outcome.Err != nil {
-					continue
-				}
-				if doc.lookup[obj.Named()].Obj == nil {
-					doc.lookup[obj.Named()] = child.Child
+			{
+				childValues2 := doc.objects
+				for childIndex2 := range childValues2 {
+					child := childValues2[childIndex2]
+					obj := child.Obj
+					if obj == nil || child.outcome.Err != nil {
+						continue
+					}
+					if doc.lookup[obj.Named()].Obj == nil {
+						doc.lookup[obj.Named()] = child.Child
+					}
 				}
 			}
 			l.documents.cache[path] = doc
@@ -782,30 +808,34 @@ func (l *Loader) recordNamespaces(r manifest.DiscoveryRecord, forced string) []s
 	var namespaces []string
 	authoritative := false
 	inactive := l.scopes.inactive
-	for _, v := range l.scopes.visits[r.Path] {
-		if inactive && v.input != 0 && !l.scopes.inputs[v.input-1].active {
-			continue
-		}
-		if v.deferMaterialization || v.role != kustomizeinput.Resource || l.selfClaim(v.owner, r.Authored) {
-			continue
-		}
-		if v.membershipOnly {
-			if authoritative {
+	{
+		vValues2 := l.scopes.visits[r.Path]
+		for vIndex2 := range vValues2 {
+			v := vValues2[vIndex2]
+			if inactive && v.input != 0 && !l.scopes.inputs[v.input-1].active {
 				continue
 			}
-		} else if !authoritative {
-			namespaces = namespaces[:0]
-			authoritative = true
-		}
-		fallback := v.fallback
-		if r.Authored.Namespace == "" && v.namespace == "" && len(owners) == 1 {
-			if ks, ok := l.CatalogObject(owners[0]).(*manifest.Kustomization); ok {
-				fallback = ks.TargetNamespace
+			if v.deferMaterialization || v.role != kustomizeinput.Resource || l.selfClaim(v.owner, r.Authored) {
+				continue
 			}
-		}
-		ns := manifest.Resolve(r.Authored, v.namespace, fallback).Namespace
-		if !slices.Contains(namespaces, ns) {
-			namespaces = append(namespaces, ns)
+			if v.membershipOnly {
+				if authoritative {
+					continue
+				}
+			} else if !authoritative {
+				namespaces = namespaces[:0]
+				authoritative = true
+			}
+			fallback := v.fallback
+			if r.Authored.Namespace == "" && v.namespace == "" && len(owners) == 1 {
+				if ks, ok := l.CatalogObject(owners[0]).(*manifest.Kustomization); ok {
+					fallback = ks.TargetNamespace
+				}
+			}
+			ns := manifest.Resolve(r.Authored, v.namespace, fallback).Namespace
+			if !slices.Contains(namespaces, ns) {
+				namespaces = append(namespaces, ns)
+			}
 		}
 	}
 	if len(namespaces) == 0 {
@@ -841,20 +871,28 @@ func (l *Loader) terminalInput(file string) bool {
 		return l.documents.cache[file].terminal
 	}
 	terminal := false
-	for _, v := range l.scopes.visits[file] {
-		if v.role == kustomizeinput.Resource && v.readable {
-			return false
+	{
+		vValues3 := l.scopes.visits[file]
+		for vIndex3 := range vValues3 {
+			v := vValues3[vIndex3]
+			if v.role == kustomizeinput.Resource && v.readable {
+				return false
+			}
+			terminal = terminal || v.role != kustomizeinput.Resource
 		}
-		terminal = terminal || v.role != kustomizeinput.Resource
 	}
 	return terminal
 }
 
 func (l *Loader) resetAdmissions() {
 	clear(l.roots)
-	for file, doc := range l.documents.cache {
-		doc.eligible, doc.rootKnown, doc.rootAdmitted, doc.terminal = fileUnknown, false, false, false
-		l.documents.cache[file] = doc
+	{
+		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+		for file, doc := range l.documents.cache {
+
+			doc.eligible, doc.rootKnown, doc.rootAdmitted, doc.terminal = fileUnknown, false, false, false
+			l.documents.cache[file] = doc
+		}
 	}
 }
 
@@ -873,61 +911,73 @@ func (l *Loader) resolveEligibility() {
 		l.documents.cache[file] = doc
 		return true
 	}
-	for _, c := range l.scopes.contributions {
-		traversal := l.scopes.walks[c.context]
-		if !c.unshared && traversal.controlled {
-			continue
-		}
-		owner, _ := l.Index.Lookup(c.owner)
-		source, _ := l.Index.Lookup(c.source)
-		declaredSource := c.membershipOnly && l.IndexedObject(c.source, source).Obj != nil
-		controlled := c.owner != (manifest.NamedResource{}) && !declaredSource
-		for _, v := range c.visits {
-			if v.role != kustomizeinput.Resource {
-				mark(v.file, fileInactive)
+	{
+		cValues := l.scopes.contributions
+		for cIndex := range cValues {
+			c := cValues[cIndex]
+			traversal := l.scopes.walks[c.context]
+			if !c.unshared && traversal.controlled {
 				continue
 			}
-			if c.owner == (manifest.NamedResource{}) || declaredSource || owner.Path == v.file ||
-				v.origin != "" && owner.Path == v.origin {
-				controlled = false
-				continue
+			owner, _ := l.Index.Lookup(c.owner)
+			source, _ := l.Index.Lookup(c.source)
+			declaredSource := c.membershipOnly && l.IndexedObject(c.source, source).Obj != nil
+			controlled := c.owner != (manifest.NamedResource{}) && !declaredSource
+			{
+				vValues4 := c.visits
+				for vIndex4 := range vValues4 {
+					v := vValues4[vIndex4]
+					if v.role != kustomizeinput.Resource {
+						mark(v.file, fileInactive)
+						continue
+					}
+					if c.owner == (manifest.NamedResource{}) || declaredSource || owner.Path == v.file ||
+						v.origin != "" && owner.Path == v.origin {
+						controlled = false
+						continue
+					}
+					mark(v.file, fileInactive)
+					if v.localFile != "" {
+						mark(v.localFile, fileInactive)
+					}
+				}
 			}
-			mark(v.file, fileInactive)
-			if v.localFile != "" {
-				mark(v.localFile, fileInactive)
+			if controlled && !c.unshared {
+				traversal.controlled = true
+				l.scopes.walks[c.context] = traversal
 			}
-		}
-		if controlled && !c.unshared {
-			traversal.controlled = true
-			l.scopes.walks[c.context] = traversal
 		}
 	}
-	for file, doc := range l.documents.cache {
-		if l.entry == entryPlain && filepath.Dir(file) == l.entryPath && doc.loaded && !l.terminalInput(file) {
-			mark(file, fileEligible)
-			continue
-		}
-		if doc.eligible != fileUnknown || doc.objects == nil {
-			continue
-		}
-		_, builder := l.documents.read(filepath.Dir(file))
-		if builder != "" || l.terminalInput(file) {
-			continue
-		}
-		unowned := true
-		coordinate := l.fileCoordinate(l.documents.localPath(file))
-		for _, claim := range l.scopes.claims {
-			owner, _ := l.Index.Lookup(claim.ID)
-			if strings.HasPrefix(coordinate, claim.Prefix) && owner.Path != file {
-				unowned = false
-				break
+	{
+		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+		for file, doc := range l.documents.cache {
+
+			if l.entry == entryPlain && filepath.Dir(file) == l.entryPath && doc.loaded && !l.terminalInput(file) {
+				mark(file, fileEligible)
+				continue
 			}
+			if doc.eligible != fileUnknown || doc.objects == nil {
+				continue
+			}
+			_, builder := l.documents.read(filepath.Dir(file))
+			if builder != "" || l.terminalInput(file) {
+				continue
+			}
+			unowned := true
+			coordinate := l.fileCoordinate(l.documents.localPath(file))
+			for _, claim := range l.scopes.claims {
+				owner, _ := l.Index.Lookup(claim.ID)
+				if strings.HasPrefix(coordinate, claim.Prefix) && owner.Path != file {
+					unowned = false
+					break
+				}
+			}
+			state := fileInactive
+			if unowned {
+				state = fileEligible
+			}
+			mark(file, state)
 		}
-		state := fileInactive
-		if unowned {
-			state = fileEligible
-		}
-		mark(file, state)
 	}
 	for {
 		changed := false
@@ -972,13 +1022,17 @@ func (l *Loader) resolveEligibility() {
 				traversal.reached = reachability
 				l.scopes.walks[c.context] = traversal
 			}
-			for _, v := range c.visits {
-				if v.role != kustomizeinput.Resource {
-					continue
-				}
-				changed = mark(v.file, reachability) || changed
-				if v.localFile != "" {
-					changed = mark(v.localFile, reachability) || changed
+			{
+				vValues5 := c.visits
+				for vIndex5 := range vValues5 {
+					v := vValues5[vIndex5]
+					if v.role != kustomizeinput.Resource {
+						continue
+					}
+					changed = mark(v.file, reachability) || changed
+					if v.localFile != "" {
+						changed = mark(v.localFile, reachability) || changed
+					}
 				}
 			}
 		}
@@ -993,9 +1047,12 @@ func (l *Loader) resolveEligibility() {
 			break
 		}
 	}
-	for file, doc := range l.documents.cache {
-		if doc.eligible == fileUnknown && len(doc.objects) != 0 {
-			mark(file, fileInactive)
+	{
+		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+		for file, doc := range l.documents.cache {
+			if doc.eligible == fileUnknown && len(doc.objects) != 0 {
+				mark(file, fileInactive)
+			}
 		}
 	}
 }

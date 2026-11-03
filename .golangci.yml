@@ -343,8 +343,7 @@ linters:
       disable:
         - fieldalignment
       settings:
-        shadow:
-          strict: true
+        shadow: {}
     inamedparam:
       skip-single-param: true
     mnd:

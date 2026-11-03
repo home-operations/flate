@@ -223,7 +223,7 @@ func (t *view) resolve(name string, follow bool) (string, *node, error) {
 				return "", nil, ErrEscape
 			}
 			hops++
-			if hops > 8 {
+			if hops > maxSymbolicLinkDepth {
 				return "", nil, ErrLoop
 			}
 			remaining = n.target
@@ -305,12 +305,12 @@ func (t *view) ReadFile(name string) ([]byte, error) {
 
 // ReadDir returns caller-owned entries sorted by name, following a link root.
 func (t *view) ReadDir(name string) ([]fs.DirEntry, error) {
-	n, err := t.readNode("readdir", name, true)
+	n, err := t.readNode(readDirOperation, name, true)
 	if err != nil {
 		return nil, err
 	}
 	if !n.IsDir() {
-		return nil, &fs.PathError{Op: "readdir", Path: name, Err: fs.ErrInvalid}
+		return nil, &fs.PathError{Op: readDirOperation, Path: name, Err: fs.ErrInvalid}
 	}
 	entries, err := t.entries(n)
 	return slices.Clone(entries), err
@@ -430,8 +430,8 @@ func (t *view) walk(name string, n *node, fn fs.WalkDirFunc) error {
 			var err error
 			child, err = t.lookup(p)
 			if err != nil {
-				if err := fn(p, entry, err); err != nil {
-					return err
+				if fnErr := fn(p, entry, err); fnErr != nil {
+					return fnErr
 				}
 				continue
 			}
@@ -445,3 +445,13 @@ func (t *view) walk(name string, n *node, fn fs.WalkDirFunc) error {
 	}
 	return nil
 }
+
+const (
+	addFileOperation    = "addfile"
+	addSymlinkOperation = "addsymlink"
+	readDirOperation    = "readdir"
+)
+
+const (
+	maxSymbolicLinkDepth = 8
+)

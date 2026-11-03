@@ -63,8 +63,8 @@ Set --dry-run to see what would be removed without touching disk.`,
 			}
 			var writeErr error
 			for _, p := range res.Removed {
-				_, err := fmt.Fprintln(w, prefix+p)
-				writeErr = errors.Join(writeErr, err)
+				_, fprintlnErr := fmt.Fprintln(w, prefix+p)
+				writeErr = errors.Join(writeErr, fprintlnErr)
 			}
 			_, err = fmt.Fprintf(w, "%s%d entries, %s in Git generations; blob reclamation is decided by OCI graph GC",
 				prefix, len(res.Removed), formatBytes(res.Bytes))
@@ -81,12 +81,13 @@ Set --dry-run to see what would be removed without touching disk.`,
 			}
 			stderr := cmd.ErrOrStderr()
 			report := output.Report{Groups: []output.ReportGroup{{}}}
-			for _, warning := range warnings {
+			for warningIndex := range warnings {
+				warning := warnings[warningIndex]
 				report.Warnings = append(report.Warnings, output.Warning{Warning: warning})
 			}
 			report.Prepare(nil)
 			encoder := output.Encoder{Writer: stderr, Color: output.ColorEnabled(stderr)}
-			return errors.Join(writeErr, encoder.Report(report, encoder))
+			return errors.Join(writeErr, encoder.Report(&report, encoder))
 		},
 	}
 	cmd.Flags().
@@ -100,21 +101,21 @@ func bindCacheDir(fs *pflag.FlagSet, dest *string, usage string) {
 	fs.StringVar(dest, "cache-dir", "", usage)
 }
 
-// formatBytes renders byte counts as KiB/MiB/GiB strings. Approximate;
+// formatBytes renders byte counts as kib/mib/gib strings. Approximate;
 // suited for human-facing summaries.
 func formatBytes(n int64) string {
 	const (
-		KiB = 1024
-		MiB = 1024 * KiB
-		GiB = 1024 * MiB
+		kib = 1024
+		mib = 1024 * kib
+		gib = 1024 * mib
 	)
 	switch {
-	case n >= GiB:
-		return fmt.Sprintf("%.2f GiB", float64(n)/float64(GiB))
-	case n >= MiB:
-		return fmt.Sprintf("%.2f MiB", float64(n)/float64(MiB))
-	case n >= KiB:
-		return fmt.Sprintf("%.2f KiB", float64(n)/float64(KiB))
+	case n >= gib:
+		return fmt.Sprintf("%.2f GiB", float64(n)/float64(gib))
+	case n >= mib:
+		return fmt.Sprintf("%.2f MiB", float64(n)/float64(mib))
+	case n >= kib:
+		return fmt.Sprintf("%.2f KiB", float64(n)/float64(kib))
 	}
 	return fmt.Sprintf("%d B", n)
 }

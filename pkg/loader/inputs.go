@@ -41,6 +41,7 @@ type parsedDocument struct {
 
 type physicalContext struct {
 	graphContext
+
 	sourceRoot, prefix, localBase string
 }
 
@@ -121,15 +122,19 @@ func (l *Loader) ParsedInputs() *ParsedInputs {
 		source.documents = map[string]parsedDocument{}
 		inputs.sources[root] = source
 	}
-	for file, doc := range l.documents.cache {
-		if doc.body == nil && doc.objects == nil &&
-			(!inputs.compact || !doc.searched && doc.pathState == pathUnknown && doc.decodeErr == nil) {
-			continue
-		}
-		if source, ok := inputs.sources[l.documents.mountedRoot(file)]; ok {
-			source.documents[file] = parsedDocument{
-				body: doc.body, file: doc.file, objects: cloneInputObjects(doc.objects),
-				state: doc.pathState, searched: doc.searched, plugins: doc.plugins, decodeErr: doc.decodeErr,
+	{
+		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+		for file, doc := range l.documents.cache {
+
+			if doc.body == nil && doc.objects == nil &&
+				(!inputs.compact || !doc.searched && doc.pathState == pathUnknown && doc.decodeErr == nil) {
+				continue
+			}
+			if source, ok := inputs.sources[l.documents.mountedRoot(file)]; ok {
+				source.documents[file] = parsedDocument{
+					body: doc.body, file: doc.file, objects: cloneInputObjects(doc.objects),
+					state: doc.pathState, searched: doc.searched, plugins: doc.plugins, decodeErr: doc.decodeErr,
+				}
 			}
 		}
 	}
@@ -205,15 +210,19 @@ func (l *Loader) inputVisibility() []manifest.InputVisibility {
 		if root == l.documents.bootstrap {
 			sources = append(sources, manifest.BootstrapSourceID)
 		}
-		for _, scope := range l.scopes.sources {
-			if scope.root != root || scope.artifact == nil || slices.Contains(sources, scope.id) {
-				continue
+		{
+			scopeValues := l.scopes.sources
+			for scopeIndex := range scopeValues {
+				scope := scopeValues[scopeIndex]
+				if scope.root != root || scope.artifact == nil || slices.Contains(sources, scope.id) {
+					continue
+				}
+				if parsedInputIdentity(scope.artifact) != identity ||
+					scope.artifact.Input(store.ArtifactContent|store.ArtifactRevision) != *facts.binding {
+					continue
+				}
+				sources = append(sources, scope.id)
 			}
-			if parsedInputIdentity(scope.artifact) != identity ||
-				scope.artifact.Input(store.ArtifactContent|store.ArtifactRevision) != *facts.binding {
-				continue
-			}
-			sources = append(sources, scope.id)
 		}
 		for domain, load := range facts.loads {
 			if !load.observed {
@@ -225,40 +234,53 @@ func (l *Loader) inputVisibility() []manifest.InputVisibility {
 				relative, _ := filepath.Rel(root, domain.ignore)
 				observation.Ignore = filepath.ToSlash(relative)
 			}
-			for _, file := range load.files {
-				if file.kind == admissionWarning || l.terminalInput(file.file) ||
-					l.documents.cache[file.file].eligible == fileInactive {
-					continue
-				}
-				for _, child := range l.documents.cache[file.file].objects {
-					if child.outcome.Err != nil {
+			{
+				fileValues := load.files
+				for fileIndex := range fileValues {
+					file := fileValues[fileIndex]
+					if file.kind == admissionWarning || l.terminalInput(file.file) ||
+						l.documents.cache[file.file].eligible == fileInactive {
 						continue
 					}
-					var id manifest.NamedResource
-					if child.fact != nil {
-						if child.fact.facts.uncertain ||
-							file.kind == admissionBootstrap && child.fact.Declaration != file.coordinate {
-							continue
+					{
+						childValues := l.documents.cache[file.file].objects
+						for childIndex := range childValues {
+							child := childValues[childIndex]
+							if child.outcome.Err != nil {
+								continue
+							}
+							var id manifest.NamedResource
+							if child.fact != nil {
+								if child.fact.facts.uncertain ||
+									file.kind == admissionBootstrap && child.fact.Declaration != file.coordinate {
+									continue
+								}
+								id = child.fact.Authored
+							} else if child.Obj != nil {
+								id = child.Obj.Named()
+							}
+							if id.Name == "" || !id.KindInfo().Tracked ||
+								file.kind == admissionData && !id.KindInfo().Data {
+								continue
+							}
+							record := manifest.DiscoveryRecord{
+								Authored: id,
+								Path:     file.file,
+								File:     l.fileCoordinate(file.file),
+							}
+							relative, _ := filepath.Rel(root, file.file)
+							for _, namespace := range l.recordNamespaces(record, "") {
+								effective := id
+								effective.Namespace = namespace
+								if observation.Inputs == nil {
+									observation.Inputs = map[manifest.NamedResource][]string{}
+								}
+								observation.Inputs[effective] = append(
+									observation.Inputs[effective],
+									filepath.ToSlash(relative),
+								)
+							}
 						}
-						id = child.fact.Authored
-					} else if child.Obj != nil {
-						id = child.Obj.Named()
-					}
-					if id.Name == "" || !id.KindInfo().Tracked || file.kind == admissionData && !id.KindInfo().Data {
-						continue
-					}
-					record := manifest.DiscoveryRecord{Authored: id, Path: file.file, File: l.fileCoordinate(file.file)}
-					relative, _ := filepath.Rel(root, file.file)
-					for _, namespace := range l.recordNamespaces(record, "") {
-						effective := id
-						effective.Namespace = namespace
-						if observation.Inputs == nil {
-							observation.Inputs = map[manifest.NamedResource][]string{}
-						}
-						observation.Inputs[effective] = append(
-							observation.Inputs[effective],
-							filepath.ToSlash(relative),
-						)
 					}
 				}
 			}

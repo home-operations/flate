@@ -23,13 +23,13 @@ func newTestCmd() *cobra.Command {
 	cmd.AddCommand(
 		testCmd(&cobra.Command{
 			Use:     "ks [name]",
-			Aliases: []string{"kustomization", "kustomizations"},
+			Aliases: []string{kustomizationAlias, kustomizationAliases},
 			Short:   "Validate Kustomizations",
 			Args:    cobra.MaximumNArgs(1),
 		}, manifest.KindKustomization),
 		testCmd(&cobra.Command{
 			Use:     "hr [name]",
-			Aliases: []string{"helmrelease", "helmreleases"},
+			Aliases: []string{helmReleaseAlias, helmReleaseAliases},
 			Short:   "Validate HelmReleases",
 			Args:    cobra.MaximumNArgs(1),
 		}, manifest.KindHelmRelease),

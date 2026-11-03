@@ -10,13 +10,15 @@ import (
 	bcryptlib "golang.org/x/crypto/bcrypt"
 )
 
+//nolint:gochecknoglobals // Reuse the immutable bcrypt alphabet without allocating an encoder per placeholder.
 var bcryptEncoding = base64.NewEncoding("./ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789").
 	WithPadding(base64.NoPadding)
 
 // bcrypt emits a bcrypt-shaped offline placeholder, not a password hash.
 // The seeded salt and input digest avoid the expensive bcrypt cost loop.
 func bcrypt(s *stream, input string) string {
-	if len(input) > 72 {
+	const maxPasswordBytes = 72
+	if len(input) > maxPasswordBytes {
 		return fmt.Sprintf("failed to encrypt string with bcrypt: %s", bcryptlib.ErrPasswordTooLong)
 	}
 	var salt [16]byte
@@ -38,10 +40,11 @@ func encryptAES(s *stream, password, plaintext string) (string, error) {
 	copy(key[:], password)
 	block, err := aes.NewCipher(key[:])
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("initialize deterministic cipher: %w", err)
 	}
 	padding := aes.BlockSize - len(plaintext)%aes.BlockSize
 	ciphertext := make([]byte, aes.BlockSize+len(plaintext)+padding)
+	//nolint:gosec // Seeded IVs are reproducible offline render placeholders, never live encryption keys.
 	iv, content := ciphertext[:aes.BlockSize], ciphertext[aes.BlockSize:]
 	_, _ = s.Read(iv)
 	copy(content, plaintext)
@@ -50,6 +53,7 @@ func encryptAES(s *stream, password, plaintext string) (string, error) {
 	}
 	cipher.NewCBCEncrypter(block, iv).
 		CryptBlocks(content, content)
-		//nolint:gosec // G407: offline placeholders deliberately use a seeded IV.
+		//nolint:gosec // The seeded IV is an offline render placeholder and must be reproducible.
+
 	return base64.StdEncoding.EncodeToString(ciphertext), nil
 }

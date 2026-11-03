@@ -34,7 +34,7 @@ func Plan(ctx context.Context, cfg Config) ([]Entry, error) {
 	if _, err := d.resolveEntrySources(ctx, false); err != nil {
 		return nil, err
 	}
-	input := cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
+	input := cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact) //nolint:errcheck // Entry admission provides a source artifact.
 	l.SourceRoot = input.LocalPath
 	l.IgnoreFile = cfg.KRMIgnoreFile
 	if _, err := l.Load(ctx, d.cfg.Path); err != nil {

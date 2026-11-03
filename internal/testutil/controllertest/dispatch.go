@@ -3,6 +3,7 @@ package controllertest
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"testing"
 
@@ -22,16 +23,22 @@ type Dispatch struct {
 }
 
 // Dispatch captures one reconciliation's assessment for the scheduler.
+//
+//nolint:gocritic // Each scheduler retains an independent copy of the fixture dispatch state.
 func (d Dispatch) Dispatch(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
 	return schedule.Result{Assessment: d.ReconcileNode(ctx, id, level)}
 }
 
 // Sweep delivers pending store publications and returns invalidated executions.
+//
+//nolint:gocritic // Each scheduler retains an independent copy of the fixture dispatch state.
 func (d Dispatch) Sweep(context.Context, bool) []schedule.NodeID {
 	return slices.Collect(d.Store.Sweep())
 }
 
 // Reconcile submits one pass and reports whether it has no blocked dependencies.
+//
+//nolint:gocritic // The fixture captures dispatch state before submitting asynchronous work.
 func Reconcile(ctx context.Context, tb testing.TB, d Dispatch, drain manifest.DrainLevel) bool {
 	tb.Helper()
 	var terminal bool
@@ -49,6 +56,8 @@ func Reconcile(ctx context.Context, tb testing.TB, d Dispatch, drain manifest.Dr
 }
 
 // DispatchToFixpoint runs retained assessments to structural settlement.
+//
+//nolint:gocritic // The scheduler owns a snapshot of the caller's fixture dispatch state.
 func DispatchToFixpoint(ctx context.Context, tb testing.TB, d Dispatch) store.StatusInfo {
 	tb.Helper()
 	failures := d.Tasks.Failures()
@@ -76,25 +85,14 @@ func Emit(ctx context.Context, c *base.Controller, id manifest.NamedResource, ne
 	children := next.Children
 	cloned := false
 	if next.Reads.Valid() {
-		for i, child := range children {
-			if child.Obj == nil || child.Obj.Named() == id {
-				continue
-			}
-			obj := manifest.MapDependsOn(child.Obj, c.DependencySubstitutions.Resolve, nil)
-			if obj != child.Obj {
-				if !cloned {
-					next.Children = slices.Clone(children)
-					cloned = true
-				}
-				next.Children[i].Obj = obj
-			}
-			if _, err := c.KeepEmitted(ctx, id, next.Children[i], next.Reads); err != nil {
-				return err
-			}
+		var err error
+		cloned, err = keepFixtureChildren(ctx, c, id, next)
+		if err != nil {
+			return err
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return fmt.Errorf("emit fixture output: %w", err)
 	}
 	c.Store.RecordEmitted(id, next, nil)
 	if cloned && !next.Complete {
@@ -109,4 +107,31 @@ func Emit(ctx context.Context, c *base.Controller, id manifest.NamedResource, ne
 		}
 	}
 	return nil
+}
+
+func keepFixtureChildren(
+	ctx context.Context,
+	c *base.Controller,
+	id manifest.NamedResource,
+	next *store.Emission,
+) (bool, error) {
+	children := next.Children
+	cloned := false
+	for i, child := range children {
+		if child.Obj == nil || child.Obj.Named() == id {
+			continue
+		}
+		obj := manifest.MapDependsOn(child.Obj, c.DependencySubstitutions.Resolve, nil)
+		if obj != child.Obj {
+			if !cloned {
+				next.Children = slices.Clone(children)
+				cloned = true
+			}
+			next.Children[i].Obj = obj
+		}
+		if _, err := c.KeepEmitted(ctx, id, next.Children[i], next.Reads); err != nil {
+			return cloned, err
+		}
+	}
+	return cloned, nil
 }

@@ -47,6 +47,7 @@ type controlObservation struct {
 
 type walkScope struct {
 	controlLocation
+
 	parents     []remoteInput
 	observation controlLocation
 }
@@ -100,14 +101,17 @@ func (w *inputWalk) directory(ctx context.Context, dir string, scope walkScope) 
 	}
 	// Build owns local parse diagnostics for byte-for-byte parity.
 	var k types.Kustomization
-	if err := k.Unmarshal(body); err != nil {
+	if unmarshalErr := k.Unmarshal(body); unmarshalErr != nil {
+		//nolint:nilerr // Build owns parse diagnostics, so preflight must preserve its input on parse failure.
 		return inputResult{}, nil
 	}
 	var doc yaml.Node
-	if err := yaml.Unmarshal(body, &doc); err != nil {
+	if unmarshalErr2 := yaml.Unmarshal(body, &doc); unmarshalErr2 != nil {
+		//nolint:nilerr // Build owns parse diagnostics, so preflight must preserve its input on parse failure.
 		return inputResult{}, nil
 	}
-	if err := yaml.NewRNode(&doc).DeAnchor(); err != nil {
+	if deAnchorErr := yaml.NewRNode(&doc).DeAnchor(); deAnchorErr != nil {
+		//nolint:nilerr // Build owns parse diagnostics, so preflight must preserve its input on parse failure.
 		return inputResult{}, nil
 	}
 	refs := slices.Collect(kustomizeinput.Kustomization(&k))
@@ -155,26 +159,26 @@ func (w *inputWalk) pluginDirectory(
 				injected = true
 			}
 		} else {
-			snapshot, err := w.fs.upper.Build()
-			if err != nil {
-				return "", inputResult{}, err
+			snapshot, buildErr := w.fs.upper.Build()
+			if buildErr != nil {
+				return "", inputResult{}, buildErr
 			}
 			w.fs.upper = tree.NewBuilder(snapshot)
 			name := remoteResourcePrefix + manifest.Fingerprint([]string{key.file, key.root, key.pluginRoot})
-			if err := w.fs.upper.Mount(name, snapshot); err != nil {
-				return "", inputResult{}, err
+			if mountErr := w.fs.upper.Mount(name, snapshot); mountErr != nil {
+				return "", inputResult{}, mountErr
 			}
 			w.fs.origins = append(w.fs.origins, mountOrigin{path: name, source: "."})
 			mount := filepath.Join(w.fs.root, name)
-			rel, err := filepath.Rel(w.fs.root, key.root)
-			if err != nil {
-				return "", inputResult{}, err
+			rel, buildErr := filepath.Rel(w.fs.root, key.root)
+			if buildErr != nil {
+				return "", inputResult{}, buildErr
 			}
 			selected = filepath.Join(mount, rel)
 			scope.pluginRoot = owner
-			result, err := w.directory(ctx, selected, scope)
-			if err != nil {
-				return "", inputResult{}, err
+			result, buildErr := w.directory(ctx, selected, scope)
+			if buildErr != nil {
+				return "", inputResult{}, buildErr
 			}
 			if !result.injected {
 				selected = canonical.String()

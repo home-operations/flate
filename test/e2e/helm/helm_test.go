@@ -1,5 +1,5 @@
 // Package helm tests Helm rendering, listing and diagnostics.
-package helm
+package helm_test
 
 import (
 	"encoding/json"
@@ -19,6 +19,7 @@ import (
 	"github.com/home-operations/flate/test/e2e/internal/harness"
 )
 
+//nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_GetHR_YAMLExposesProjectedFields(t *testing.T) {
 	for _, tc := range []struct{ name, spec, want string }{
 		{"target namespace", "  targetNamespace: target\n", "target-demo"},
@@ -32,14 +33,13 @@ func TestE2E_GetHR_YAMLExposesProjectedFields(t *testing.T) {
 			testutil.WriteFileAt(t, file, string(body)+tc.spec)
 			out := harness.RunCLIOutputOnly(t, "get", "hr", "--path", filepath.Join(dir, "cluster"), "-o", "yaml")
 			for _, want := range []string{"sourceRef:", "releaseName: " + tc.want} {
-				if !strings.Contains(out, want) {
-					t.Errorf("missing %q in projected hr YAML:\n%s", want, out)
-				}
+				assert.ErrorIf(t, !strings.Contains(out, want), "missing %q in projected hr YAML:\n%s", want, out)
 			}
 		})
 	}
 }
 
+//nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_BuildHR(t *testing.T) {
 	dir := simpleFixture(t)
 	testutil.WriteFile(t, dir, "charts/mychart/templates/configmap.yaml", `apiVersion: v1
@@ -64,26 +64,28 @@ stringData: {greeting: hello-from-secret}
 		t.Run(tc.name, func(t *testing.T) {
 			out := harness.RunCLIStdout(t, "build", "hr", "--path", filepath.Join(dir, "cluster"),
 				"--skip-kinds="+tc.skip, "--concurrency", "2", "--cache-dir", t.TempDir())
-			if !strings.Contains(out, "demo-cm") {
-				t.Errorf("missing rendered HR ConfigMap:\n%s", out)
-			}
-			if !strings.Contains(out, "greeting: hello-from-helm") {
-				t.Errorf("values not applied:\n%s", out)
-			}
-			if got := strings.Contains(out, "kind: Secret"); got != tc.wantSecret {
-				t.Errorf("Secret present=%v, want %v:\n%s", got, tc.wantSecret, out)
+			assert.ErrorIf(t, !strings.Contains(out, "demo-cm"), "missing rendered HR ConfigMap:\n%s", out)
+			assert.ErrorIf(t, !strings.Contains(out, "greeting: hello-from-helm"), "values not applied:\n%s", out)
+			{
+				got := strings.Contains(out, "kind: Secret")
+				assert.ErrorIf(t, got != tc.wantSecret, "Secret present=%v, want %v:\n%s", got, tc.wantSecret, out)
 			}
 			if !tc.wantSecret {
 				again := harness.RunCLIStdout(t, "build", "hr", "--path", filepath.Join(dir, "cluster"),
 					"--skip-kinds="+tc.skip, "--concurrency", "2", "--cache-dir", t.TempDir())
-				if out != again {
-					t.Errorf("build hr output differs between runs (length %d vs %d)", len(out), len(again))
-				}
+				assert.ErrorIf(
+					t,
+					out != again,
+					"build hr output differs between runs (length %d vs %d)",
+					len(out),
+					len(again),
+				)
 			}
 		})
 	}
 }
 
+//nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_MalformedChartCRD(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -97,16 +99,18 @@ func TestE2E_MalformedChartCRD(t *testing.T) {
 			testutil.WriteFile(t, dir, "charts/mychart/crds/bad.yaml", "apiVersion: [\n")
 			out, code := harness.RunCLIExpectErr(t, "build", "all", "--path", filepath.Join(dir, "cluster"),
 				"--skip-kinds="+tc.skip, "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
-			if code != 1 {
-				t.Fatalf("got exit %d, want 1:\n%s", code, out)
-			}
-			if !strings.Contains(out, "did not find expected node content") {
-				t.Errorf("missing malformed CRD parser error:\n%s", out)
-			}
+			assert.FatalIf(t, code != 1, "got exit %d, want 1:\n%s", code, out)
+			assert.ErrorIf(
+				t,
+				!strings.Contains(out, "did not find expected node content"),
+				"missing malformed CRD parser error:\n%s",
+				out,
+			)
 		})
 	}
 }
 
+//nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_ChangedOnlyHRDependsOnUnchangedDep(t *testing.T) {
 	clusterPath, repoRoot := initGitFixtureFrom(t, harness.TestdataPath(t, "dependson"))
 
@@ -118,20 +122,31 @@ func TestE2E_ChangedOnlyHRDependsOnUnchangedDep(t *testing.T) {
 
 	out := harness.RunCLIOutputOnly(t, "test", "all", "--path", clusterPath, "--base", "HEAD")
 
-	if strings.Contains(out, "dependency not found") {
-		t.Errorf("changed-only HR dependsOn on an unchanged dep must not fail:\n%s", out)
-	}
-	if lidarr := harness.MustExtractLine(t, out, "downloads/lidarr"); !strings.Contains(lidarr, "✓") {
-		t.Errorf("lidarr HR should PASS once the unchanged dep is pruned; got: %s", lidarr)
+	assert.ErrorIf(
+		t,
+		strings.Contains(out, "dependency not found"),
+		"changed-only HR dependsOn on an unchanged dep must not fail:\n%s",
+		out,
+	)
+	{
+		lidarr := harness.MustExtractLine(t, out, "downloads/lidarr")
+		assert.ErrorIf(
+			t,
+			!strings.Contains(lidarr, "✓"),
+			"lidarr HR should PASS once the unchanged dep is pruned; got: %s",
+			lidarr,
+		)
 	}
 	// Confirm the test actually exercises the bug: qbittorrent's KS (the
 	// dep's producer) must be skipped, otherwise the dep would render and
 	// the assertion above would pass trivially.
-	if line := harness.MustExtractSkipLine(t, out, "downloads/qbittorrent"); !strings.Contains(line, "‒") {
-		t.Errorf("expected qbittorrent KS skipped (unchanged); got: %s", line)
+	{
+		line := harness.MustExtractSkipLine(t, out, "downloads/qbittorrent")
+		assert.ErrorIf(t, !strings.Contains(line, "‒"), "expected qbittorrent KS skipped (unchanged); got: %s", line)
 	}
 }
 
+//nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_ChangedOnlyRenderEmittedDependency(t *testing.T) {
 	before, after := t.TempDir(), t.TempDir()
 	repo := testutil.GitInit(t, after)
@@ -197,20 +212,34 @@ data: {value: '${VALUE}'}
 		full, _ := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(root, "flux"),
 			"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
 		value := []string{"before", "after"}[i]
-		if !strings.Contains(full, "name: dependency-output") || !strings.Contains(full, "value: stable") {
-			t.Fatalf("full %s build omitted dependency output:\n%s", value, full)
-		}
+		assert.FatalIf(
+			t,
+			!strings.Contains(full, "name: dependency-output") || !strings.Contains(full, "value: stable"),
+			"full %s build omitted dependency output:\n%s",
+			value,
+			full,
+		)
 		consumer := ""
+		var consumerSb204 strings.Builder
 		for doc := range strings.SplitSeq(full, "---\n") {
-			if strings.Contains(doc, "name: consumer-output\n") {
-				consumer += "---\n" + doc
-			} else if doc != "" {
+			switch {
+			case strings.Contains(doc, "name: consumer-output\n"):
+
+				consumerSb204.WriteString("---\n" + doc)
+
+			case doc != "":
+
 				unchanged[i] += "---\n" + doc
 			}
 		}
-		if !strings.Contains(consumer, "value: "+value) {
-			t.Fatalf("full %s build omitted consumer value:\n%s", value, full)
-		}
+		consumer += consumerSb204.String()
+		assert.FatalIf(
+			t,
+			!strings.Contains(consumer, "value: "+value),
+			"full %s build omitted consumer value:\n%s",
+			value,
+			full,
+		)
 		snapshots[i] = t.TempDir()
 		testutil.GitInit(t, snapshots[i])
 		testutil.WriteFile(
@@ -226,9 +255,12 @@ data: {value: '${VALUE}'}
 	fullDiff, _ := harness.RequireCLIOK(t, "diff", "all", "--path", filepath.Join(snapshots[1], "flux"),
 		"--path-orig", filepath.Join(snapshots[0], "flux"), "-o", "diff",
 		"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
-	if !strings.Contains(fullDiff, "-  value: before") || !strings.Contains(fullDiff, "+  value: after") {
-		t.Fatalf("full-render comparison omitted consumer change:\n%s", fullDiff)
-	}
+	assert.FatalIf(
+		t,
+		!strings.Contains(fullDiff, "-  value: before") || !strings.Contains(fullDiff, "+  value: after"),
+		"full-render comparison omitted consumer change:\n%s",
+		fullDiff,
+	)
 	for range 2 {
 		changed, _ := harness.RequireCLIOK(t, "diff", "all", "--path", filepath.Join(after, "flux"),
 			"--base", base.String(), "-o", "diff", "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
@@ -236,6 +268,7 @@ data: {value: '${VALUE}'}
 	}
 }
 
+//nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_HelmSourceRootValuesFiles(t *testing.T) {
 	for _, tc := range []struct {
 		name, files string
@@ -253,78 +286,25 @@ func TestE2E_HelmSourceRootValuesFiles(t *testing.T) {
 				"--concurrency", "2", "--cache-dir", t.TempDir(),
 			}
 			out := harness.RunCLIStdout(t, args...)
-			if !strings.Contains(out, "greeting: production") {
-				t.Fatalf("source-root values missing:\n%s", out)
-			}
+			assert.FatalIf(t, !strings.Contains(out, "greeting: production"), "source-root values missing:\n%s", out)
 			assert.Equal(t, harness.RunCLIStdout(t, args...), out)
 		})
 	}
 }
 
+//nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_HelmSourceRootValuesFilesChangedOnly(t *testing.T) {
 	for _, chartRef := range []bool{false, true} {
 		for _, operation := range []string{"edit", "add", "delete", "strict delete"} {
-			t.Run(fmt.Sprintf("chartRef=%v/%s", chartRef, operation), func(t *testing.T) {
-				dir := sourceValuesFixture(t, "[./config/prod.yaml]", operation != "strict delete", chartRef)
-				valuesPath := filepath.Join(dir, "config", "prod.yaml")
-				if operation == "add" {
-					assert.NoError(t, os.Remove(valuesPath))
-				}
-				repo := testutil.GitInit(t, dir)
-				testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{
-					Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)},
-				})
-				want := "production"
-				switch operation {
-				case "edit":
-					testutil.WriteFile(t, dir, "config/prod.yaml", "greeting: edited\n")
-					want = "edited"
-				case "add":
-					testutil.WriteFile(t, dir, "config/prod.yaml", "greeting: production\n")
-				case "delete", "strict delete":
-					assert.NoError(t, os.Remove(valuesPath))
-					want = "default"
-				}
-				args := []string{
-					"build", "all", "--path", filepath.Join(dir, "cluster"), "--base", "HEAD",
-					"--concurrency", "2", "--cache-dir", t.TempDir(),
-				}
-				if operation == "strict delete" {
-					out, code := harness.RunCLIExpectErr(t, args...)
-					assert.Equal(t, code, 1)
-					if !strings.Contains(out, "config/prod.yaml") {
-						t.Fatalf("missing selected-file failure:\n%s", out)
-					}
-					return
-				}
-				out := harness.RunCLIStdout(t, args...)
-				if !strings.Contains(out, "name: demo-values") || !strings.Contains(out, "greeting: "+want) {
-					t.Fatalf("selected release did not render %q:\n%s", want, out)
-				}
-				if strings.Contains(out, "name: sibling-values") {
-					t.Fatalf("unchanged sibling rendered:\n%s", out)
-				}
-				assert.Equal(t, harness.RunCLIStdout(t, args...), out)
-				args[0] = "test"
-				status := harness.RunCLI(t, args...)
-				for _, kind := range []string{"Kustomization", "HelmRelease"} {
-					found := false
-					for line := range strings.SplitSeq(status, "\n") {
-						if strings.Contains(line, kind) && strings.Contains(line, "apps/demo") &&
-							strings.Contains(line, "✓") {
-							found = true
-						}
-					}
-					if !found {
-						t.Errorf("selected %s did not pass:\n%s", kind, status)
-					}
-				}
-				harness.MustExtractSkipLine(t, status, "apps/sibling")
-			})
+			t.Run(
+				fmt.Sprintf("chartRef=%v/%s", chartRef, operation),
+				func(t *testing.T) { e2EHelmSourceRootValuesFilesChangedOnlyCase(t, &operation, &chartRef) },
+			)
 		}
 	}
 }
 
+//nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_HelmReleaseTargetNamespaceIdentity(t *testing.T) {
 	dir := sourceValuesFixture(t, "[]", false, false)
 	testutil.WriteFile(t, dir, "charts/jenkins-deployment/templates/configmap.yaml", `apiVersion: v1
@@ -351,9 +331,7 @@ metadata: {name: '{{ .Release.Name }}-values', namespace: '{{ .Release.Namespace
 		cache,
 	}
 	baseline := harness.RunCLIStdout(t, args...)
-	if !strings.Contains(baseline, "name: demo-values") {
-		t.Fatalf("baseline identity missing:\n%s", baseline)
-	}
+	assert.FatalIf(t, !strings.Contains(baseline, "name: demo-values"), "baseline identity missing:\n%s", baseline)
 	file := filepath.Join(dir, "apps", "demo", "app", "release.yaml")
 	body, err := os.ReadFile(file)
 	assert.NoError(t, err)
@@ -366,14 +344,13 @@ metadata: {name: '{{ .Release.Name }}-values', namespace: '{{ .Release.Namespace
 			}
 			out := harness.RunCLIStdout(t, selected...)
 			for _, want := range []string{"name: target-demo-values", "namespace: target"} {
-				if !strings.Contains(out, want) {
-					t.Fatalf("missing %q:\n%s", want, out)
-				}
+				assert.FatalIf(t, !strings.Contains(out, want), "missing %q:\n%s", want, out)
 			}
-			if strings.Contains(out, "name: demo-values") ||
-				strings.Contains(out, "name: sibling-values") == changedOnly {
-				t.Fatalf("incorrect identity or sibling selection:\n%s", out)
-			}
+			assert.FatalIf(t, strings.Contains(out, "name: demo-values") ||
+				strings.Contains(
+					out,
+					"name: sibling-values",
+				) == changedOnly, "incorrect identity or sibling selection:\n%s", out)
 			assert.Equal(t, harness.RunCLIStdout(t, selected...), out)
 		})
 	}
@@ -400,10 +377,17 @@ metadata: {name: '{{ .Release.Name }}-values', namespace: '{{ .Release.Namespace
 			)
 			var result struct {
 				Changes []struct {
-					Kind, Name, Namespace, Status string
-					Parent                        struct{ Kind, Name, Namespace string }
-				}
-				Suppressed []any
+					Kind      string `json:"Kind"`
+					Name      string `json:"Name"`
+					Namespace string `json:"Namespace"`
+					Status    string `json:"Status"`
+					Parent    struct {
+						Kind      string `json:"Kind"`
+						Name      string `json:"Name"`
+						Namespace string `json:"Namespace"`
+					} `json:"Parent"`
+				} `json:"Changes"`
+				Suppressed []any `json:"Suppressed"`
 			}
 			assert.NoError(t, json.Unmarshal([]byte(out), &result))
 			assert.Equal(t, len(result.Suppressed), 0)
@@ -414,9 +398,7 @@ metadata: {name: '{{ .Release.Name }}-values', namespace: '{{ .Release.Namespace
 				}
 				added := change.Name == tc.added && change.Namespace == tc.addedNS && change.Status == "added"
 				removed := change.Name == tc.removed && change.Namespace == tc.removedNS && change.Status == "removed"
-				if !added && !removed {
-					t.Fatalf("unexpected identity change: %s\n%s", out, stderr)
-				}
+				assert.FatalIf(t, !added && !removed, "unexpected identity change: %s\n%s", out, stderr)
 				assert.Equal(t, change.Parent.Kind, "HelmRelease")
 				assert.Equal(t, change.Parent.Name, "demo")
 				assert.Equal(t, change.Parent.Namespace, "apps")
@@ -427,6 +409,7 @@ metadata: {name: '{{ .Release.Name }}-values', namespace: '{{ .Release.Namespace
 	}
 }
 
+//nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_HelmMissingOCISource(t *testing.T) {
 	dir := sourceValuesFixture(t, "[]", false, false)
 	testutil.WriteFile(t, dir, "apps/demo/app/release.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
@@ -453,10 +436,11 @@ spec:
 	out, code := harness.RunCLIExpectErr(t, "build", "all", "--path", filepath.Join(dir, "cluster"),
 		"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
 	assert.Equal(t, code, 1)
-	if !strings.Contains(out, "OCIRepository  flux-system/automatic  not found") ||
-		strings.Contains(out, "track oci chart version") || strings.Contains(out, "flux error:") {
-		t.Fatalf("missing OCI source failure changed:\n%s", out)
-	}
+	assert.FatalIf(t, !strings.Contains(out, "OCIRepository  flux-system/automatic  not found") ||
+		strings.Contains(
+			out,
+			"track oci chart version",
+		) || strings.Contains(out, "flux error:"), "missing OCI source failure changed:\n%s", out)
 }
 
 func simpleFixture(t *testing.T) string {
@@ -468,9 +452,7 @@ func simpleFixture(t *testing.T) string {
 	body, err := os.ReadFile(file)
 	assert.NoError(t, err)
 	_, release, found := strings.Cut(string(body), "---\n")
-	if !found {
-		t.Fatal("simple fixture has no HelmRelease document")
-	}
+	assert.FatalIf(t, !found, "%v", "simple fixture has no HelmRelease document")
 	testutil.WriteFileAt(t, file, release)
 	return dir
 }
@@ -559,7 +541,7 @@ data:
 	return dir
 }
 
-func initGitFixtureFrom(t *testing.T, src string) (clusterPath, repoRoot string) {
+func initGitFixtureFrom(t *testing.T, src string) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
 	testutil.CopyTree(t, src, dir)
@@ -573,6 +555,7 @@ func initGitFixtureFrom(t *testing.T, src string) (clusterPath, repoRoot string)
 	return filepath.Join(dir, "flux"), dir
 }
 
+//nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_ReadyExpr_HelmRelease(t *testing.T) {
 	dir := simpleFixture(t)
 	for _, name := range []string{"dependency", "consumer"} {
@@ -615,275 +598,22 @@ data: {greeting: '{{ .Values.greeting }}', version: '{{ .Values.releaseVersion }
 			"--log-level",
 			"warn",
 		)
-		if !strings.Contains(stdout, "name: consumer-output") || !strings.Contains(stdout, "greeting: desired-spec") ||
-			!strings.Contains(stdout, "version: v1") ||
-			strings.Contains(stderr, "readyExpr") {
-			t.Fatalf("Helm desired-spec readiness: stdout=%s stderr=%s", stdout, stderr)
-		}
-		if run == 1 && (stdout != previousOut || stderr != previousErr) {
-			t.Fatalf("Helm output or warnings changed: stdout=%s stderr=%s", stdout, stderr)
-		}
+		assert.FatalIf(
+			t,
+			!strings.Contains(stdout, "name: consumer-output") || !strings.Contains(stdout, "greeting: desired-spec") ||
+				!strings.Contains(stdout, "version: v1") ||
+				strings.Contains(stderr, "readyExpr"),
+			"Helm desired-spec readiness: stdout=%s stderr=%s",
+			stdout,
+			stderr,
+		)
+		assert.FatalIf(
+			t,
+			run == 1 && (stdout != previousOut || stderr != previousErr),
+			"Helm output or warnings changed: stdout=%s stderr=%s",
+			stdout,
+			stderr,
+		)
 		previousOut, previousErr = stdout, stderr
-	}
-}
-
-func TestE2E_InvalidHelmList(t *testing.T) {
-	dir := simpleFixture(t)
-	testutil.WriteFile(
-		t,
-		dir,
-		"charts/mychart/templates/configmap.yaml",
-		"apiVersion: v1\nkind: ConfigMapList\nitems: [{apiVersion: v1, metadata: {name: invalid}}]\n",
-	)
-	for _, tc := range []struct {
-		name string
-		skip bool
-	}{
-		{name: "included"},
-		{name: "excluded", skip: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			args := []string{
-				"build",
-				"hr",
-				"--path",
-				filepath.Join(dir, "cluster"),
-				"--concurrency",
-				"2",
-				"--no-progress",
-				"--cache-dir",
-				t.TempDir(),
-			}
-			if tc.skip {
-				args = append(args, "--skip-kinds=ConfigMapList")
-			}
-			out, stderr, code := harness.RunCLIBuffers(args...)
-			diagnostic := harness.MustExtractLine(t, stderr, "Object 'Kind' is missing")
-			if code != 1 || strings.Count(stderr, "Object 'Kind' is missing") != 1 ||
-				strings.Count(diagnostic, "apps/demo") != 1 {
-				t.Fatalf("invalid list exit=%d stdout=%s stderr=%s", code, out, stderr)
-			}
-			for _, text := range []string{"name: invalid", "kind: ConfigMapList"} {
-				if got := strings.Contains(out, text); got != !tc.skip {
-					t.Errorf("output contains %q=%v, want %v:\n%s", text, got, !tc.skip, out)
-				}
-			}
-		})
-	}
-}
-
-func TestE2E_HelmListMemberDiff(t *testing.T) {
-	before, after := simpleFixture(t), t.TempDir()
-	body := `apiVersion: v1
-kind: ConfigMapList
-items:
-- metadata: {name: stable}
-  data: {value: fixed}
-`
-	testutil.WriteFile(t, before, "charts/mychart/templates/configmap.yaml", body)
-	testutil.CopyTree(t, before, after)
-	testutil.WriteFile(
-		t,
-		after,
-		"charts/mychart/templates/configmap.yaml",
-		body+"- metadata: {name: added}\n  data: {value: extra}\n",
-	)
-	for _, tc := range []struct{ current, original, status string }{{after, before, "added"}, {before, after, "removed"}} {
-		t.Run(tc.status, func(t *testing.T) {
-			out, stderr := harness.RequireCLIOK(
-				t,
-				"diff",
-				"all",
-				"-o",
-				"json",
-				"--path",
-				filepath.Join(tc.current, "cluster"),
-				"--path-orig",
-				filepath.Join(tc.original, "cluster"),
-				"--concurrency",
-				"2",
-				"--no-progress",
-				"--cache-dir",
-				t.TempDir(),
-			)
-			var result struct {
-				Changes []struct {
-					Name, Status string
-					Parent       struct{ Kind, Name, Namespace string }
-				}
-				Suppressed []any
-			}
-			if err := json.Unmarshal([]byte(out), &result); err != nil {
-				t.Fatal(err)
-			}
-			if len(result.Changes) != 1 || len(result.Suppressed) != 0 {
-				t.Fatalf("list diff = %s\n%s", out, stderr)
-			}
-			change := result.Changes[0]
-			if change.Name != "added" || change.Status != tc.status || change.Parent.Kind != "HelmRelease" ||
-				change.Parent.Name != "demo" ||
-				change.Parent.Namespace != "apps" {
-				t.Fatalf("list member lost pairing/parent: %s", out)
-			}
-		})
-	}
-}
-
-func TestE2E_UnreadableParentDoesNotFillRequiredValues(t *testing.T) {
-	dir := sourceValuesFixture(t, "[]", false, false)
-	testutil.WriteFile(t, dir, "charts/jenkins-deployment/templates/configmap.yaml", `apiVersion: v1
-kind: ConfigMap
-metadata: {name: '{{ .Release.Name }}-values'}
-data: {greeting: {{ required "missing required value" .Values.greeting | quote }}}
-`)
-	parentPath := filepath.Join(dir, "apps/demo/ks.yaml")
-	parent, err := os.ReadFile(parentPath)
-	assert.NoError(t, err)
-	testutil.WriteFileAt(
-		t,
-		parentPath,
-		string(parent)+"  postBuild: {substituteFrom: [{kind: Secret, name: unreadable}]}\n",
-	)
-	testutil.WriteFile(
-		t,
-		dir,
-		"apps/demo/app/producer.yaml",
-		"apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: unreadable, namespace: apps}\nspec: {target: {name: unreadable}}\n",
-	)
-	testutil.WriteFile(t, dir, "apps/demo/app/kustomization.yaml", "resources: [release.yaml, producer.yaml]\n")
-	releasePath := filepath.Join(dir, "apps/demo/app/release.yaml")
-	release, err := os.ReadFile(releasePath)
-	assert.NoError(t, err)
-	testutil.WriteFileAt(t, releasePath, string(release)+"  values: {greeting: valid}\n")
-	original := t.TempDir()
-	testutil.CopyTree(t, dir, original)
-	for _, root := range []string{dir, original} {
-		testutil.GitCommitAll(t, testutil.GitInit(t, root), "init", &gogit.CommitOptions{
-			Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)},
-		})
-	}
-	testutil.WriteFileAt(t, releasePath, string(release)+"  values: {greeting: \"\"}\n")
-	for _, mode := range []string{"full", "changed-only"} {
-		t.Run(mode, func(t *testing.T) {
-			args := []string{
-				"build",
-				"all",
-				"--path",
-				filepath.Join(dir, "cluster"),
-				"--allow-missing-kinds=Secret,ConfigMap",
-				"--concurrency",
-				"2",
-				"--no-progress",
-				"--cache-dir",
-				t.TempDir(),
-			}
-			if mode == "changed-only" {
-				args = append(args, "--base", "HEAD")
-			}
-			stdout, stderr, code := harness.RunCLIBuffers(args...)
-			if code != 1 || !strings.Contains(stderr, "missing required value") ||
-				!strings.Contains(stderr, "apps/demo") {
-				t.Fatalf("required chart failure: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
-			}
-			if !strings.Contains(stderr, "[UnresolvedSubstitution]") ||
-				!strings.Contains(stderr, `substituteFrom Secret "unreadable"`) {
-				t.Fatalf("parent omission warning missing: %s", stderr)
-			}
-			if strings.Contains(stdout, "name: demo-values") || strings.Contains(stdout, "..PLACEHOLDER_") {
-				t.Fatalf("failed chart published fabricated output: %s", stdout)
-			}
-			if strings.Contains(stdout, "name: sibling-values") != (mode == "full") {
-				t.Fatalf("unchanged sibling selection: mode=%s stdout=%s stderr=%s", mode, stdout, stderr)
-			}
-		})
-	}
-	for _, tc := range []struct{ current, original, side string }{
-		{dir, original, "current"},
-		{original, dir, "orig"},
-	} {
-		t.Run("diff/"+tc.side, func(t *testing.T) {
-			stdout, stderr, code := harness.RunCLIBuffers(
-				"diff",
-				"all",
-				"--path",
-				filepath.Join(tc.current, "cluster"),
-				"--path-orig",
-				filepath.Join(tc.original, "cluster"),
-				"-o",
-				"json",
-				"--allow-missing-kinds=Secret,ConfigMap",
-				"--concurrency",
-				"2",
-				"--no-progress",
-				"--cache-dir",
-				t.TempDir(),
-			)
-			if code != 1 || !strings.Contains(stderr, "missing required value") ||
-				!strings.Contains(stderr, "diff suppressed") {
-				t.Fatalf("failed-side chart diagnostic: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
-			}
-			if !strings.Contains(stderr, "[UnresolvedSubstitution]") ||
-				!strings.Contains(stderr, `substituteFrom Secret "unreadable"`) {
-				t.Fatalf("diff lost parent omission warning: %s", stderr)
-			}
-			if strings.Contains(stdout, "demo-values") || strings.Contains(stdout, "..PLACEHOLDER_") {
-				t.Fatalf("failed chart leaked into diff: %s", stdout)
-			}
-			var result struct {
-				Suppressed []struct {
-					Parent struct{ Kind, Name, Namespace string }
-					Side   string
-					Count  int
-				}
-			}
-			assert.NoError(t, json.Unmarshal([]byte(stdout), &result))
-			if len(result.Suppressed) != 1 {
-				t.Fatalf("missing failed-release suppression: %s", stdout)
-			}
-			note := result.Suppressed[0]
-			if note.Parent.Kind != "HelmRelease" || note.Parent.Name != "demo" || note.Parent.Namespace != "apps" ||
-				note.Side != tc.side ||
-				note.Count != 1 {
-				t.Fatalf("failed-release suppression changed: %s", stdout)
-			}
-		})
-	}
-}
-
-func TestE2E_MalformedChartFailsProducer(t *testing.T) {
-	for _, tc := range []struct{ name, body, symptom string }{
-		{"duplicate keys", "null\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: invalid}\ndata:\n  key: first\n  key: duplicate\n", "already defined"},
-		{"typed child", "null\n---\napiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: invalid}\nspec:\n  interval: []\n  suspend: true\n  chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: charts}}}\n", "cannot unmarshal"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := simpleFixture(t)
-			testutil.WriteFile(
-				t,
-				dir,
-				"charts/mychart/templates/invalid.yaml",
-				tc.body+"---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: chart-sibling}\n",
-			)
-			args := []string{
-				"build",
-				"hr",
-				"--path",
-				filepath.Join(dir, "cluster"),
-				"--no-progress",
-				"--concurrency",
-				"2",
-				"--cache-dir",
-				t.TempDir(),
-			}
-			stdout, stderr, code := harness.RunCLIBuffers(args...)
-			if code != 1 || (!strings.Contains(stderr, "HelmRelease") || !strings.Contains(stderr, "apps/demo")) ||
-				strings.Count(stderr, tc.symptom) != 1 ||
-				!strings.Contains(stdout, "chart-sibling") {
-				t.Fatalf("exit=%d\n%s\n%s", code, stdout, stderr)
-			}
-			nextOut, nextErr, nextCode := harness.RunCLIBuffers(args...)
-			assert.Equal(t, nextCode, code)
-			assert.Equal(t, nextOut, stdout)
-			assert.Equal(t, nextErr, stderr)
-		})
 	}
 }

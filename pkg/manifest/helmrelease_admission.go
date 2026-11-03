@@ -93,24 +93,24 @@ func validateChartTemplateDocument(doc map[string]any, spec *helmv2.HelmReleaseS
 	if err := normalizeChartTemplate(spec); err != nil {
 		return err
 	}
-	rawSpec, _ := doc["spec"].(map[string]any)
+	rawSpec, _ := doc[specKey].(map[string]any)
 	if ref := spec.ChartRef; ref != nil {
 		raw, _ := rawSpec["chartRef"].(map[string]any)
-		if raw["namespace"] != nil && ref.Namespace == "" {
+		if raw[namespaceKey] != nil && ref.Namespace == "" {
 			return inputf("spec.chartRef.namespace cannot be empty")
 		}
 		return nil
 	}
-	rawTemplate, _ := rawSpec["chart"].(map[string]any)
-	raw, _ := rawTemplate["spec"].(map[string]any)
+	rawTemplate, _ := rawSpec[chartKey].(map[string]any)
+	raw, _ := rawTemplate[specKey].(map[string]any)
 	if raw == nil {
 		return inputf("spec.chart.spec is required")
 	}
-	if rawTemplate["kind"] != nil && spec.Chart.Kind == "" {
+	if rawTemplate[kindKey] != nil && spec.Chart.Kind == "" {
 		return inputf("spec.chart.kind cannot be empty")
 	}
 	if spec.Chart.Kind == KindOCIRepository {
-		for _, key := range []string{"chart", "sourceRef", "valuesFiles", "ignoreMissingValuesFiles"} {
+		for _, key := range []string{chartKey, "sourceRef", "valuesFiles", "ignoreMissingValuesFiles"} {
 			if raw[key] != nil {
 				return inputf("spec.chart.spec.%s cannot be set for OCIRepository", key)
 			}
@@ -134,14 +134,14 @@ func validateChartTemplateDocument(doc map[string]any, spec *helmv2.HelmReleaseS
 			return inputf("invalid spec.chart.spec.%s duration", constraint.field)
 		}
 	}
-	if ref, _ := raw["sourceRef"].(map[string]any); ref != nil && ref["namespace"] != nil && ref["namespace"] == "" {
+	if ref, _ := raw["sourceRef"].(map[string]any); ref != nil && ref[namespaceKey] != nil && ref[namespaceKey] == "" {
 		return inputf("spec.chart.spec.sourceRef.namespace cannot be empty")
 	}
 	if selector, _ := raw["layerSelector"].(map[string]any); selector != nil && selector["operation"] == "" {
 		return inputf("spec.chart.spec.layerSelector.operation cannot be empty")
 	}
-	for _, key := range []string{"secretRef", "certSecretRef", "proxySecretRef"} {
-		if ref, _ := raw[key].(map[string]any); ref != nil && ref["name"] == nil {
+	for _, key := range []string{secretRefKey, "certSecretRef", "proxySecretRef"} {
+		if ref, _ := raw[key].(map[string]any); ref != nil && ref[nameKey] == nil {
 			return inputf("spec.chart.spec.%s.name is required", key)
 		}
 	}
@@ -149,8 +149,8 @@ func validateChartTemplateDocument(doc map[string]any, spec *helmv2.HelmReleaseS
 		if verify["provider"] == "" {
 			return inputf("spec.chart.spec.verify.provider cannot be empty")
 		}
-		for _, key := range []string{"secretRef", "trustedRootSecretRef"} {
-			if ref, _ := verify[key].(map[string]any); ref != nil && ref["name"] == nil {
+		for _, key := range []string{secretRefKey, "trustedRootSecretRef"} {
+			if ref, _ := verify[key].(map[string]any); ref != nil && ref[nameKey] == nil {
 				return inputf("spec.chart.spec.verify.%s.name is required", key)
 			}
 		}

@@ -34,10 +34,10 @@ func (f *file) Read(p []byte) (int, error) {
 
 func (f *file) ReadDir(n int) ([]fs.DirEntry, error) {
 	if f.closed {
-		return nil, &fs.PathError{Op: "readdir", Path: f.name, Err: fs.ErrClosed}
+		return nil, &fs.PathError{Op: readDirOperation, Path: f.name, Err: fs.ErrClosed}
 	}
 	if !f.node.IsDir() {
-		return nil, &fs.PathError{Op: "readdir", Path: f.name, Err: fs.ErrInvalid}
+		return nil, &fs.PathError{Op: readDirOperation, Path: f.name, Err: fs.ErrInvalid}
 	}
 	entries := f.node.children[f.offset:]
 	if n > 0 && len(entries) == 0 {

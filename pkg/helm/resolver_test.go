@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
+
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/helm"
@@ -67,8 +69,9 @@ data:
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := resolver.Declaration(tc.id); got != tc.want {
-				t.Fatalf("HelmChart(%+v) = %p, want %p", tc.id, got, tc.want)
+			{
+				got := resolver.Declaration(tc.id)
+				assert.FatalIf(t, got != tc.want, "HelmChart(%+v) = %p, want %p", tc.id, got, tc.want)
 			}
 		})
 	}
@@ -76,9 +79,12 @@ data:
 	foreign.Group = "example.test"
 	foreignArtifact := &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: "foreign"}
 	st.SetArtifact(foreign, foreignArtifact)
-	if resolver.LocalSourceArtifact(foreign, store.ArtifactContent) != foreignArtifact ||
-		resolver.LocalSourceArtifact(gr.Named(), store.ArtifactContent).URL != gr.URL {
-		t.Fatal("source resolver lost canonical artifact identity")
+	{
+		assert.FatalIf(t, resolver.LocalSourceArtifact(foreign, store.ArtifactContent) != foreignArtifact ||
+			resolver.LocalSourceArtifact(
+				gr.Named(),
+				store.ArtifactContent,
+			).URL != gr.URL, "%s", "source resolver lost canonical artifact identity")
 	}
 	cliSources := resolver
 
@@ -104,14 +110,24 @@ data:
 			helm.RenderOptions{Options: helm.Options{}, Sources: cliSources},
 		),
 	)
-	if err != nil {
-		t.Fatalf("Template via resolver: %v", err)
+	{
+		assert.FatalIf(t, err != nil, "Template via resolver: %v", err)
 	}
-	if len(out) != 1 || out[0]["metadata"].(map[string]any)["name"] != "demo-cm" {
-		t.Errorf("expected rendered ConfigMap; got: %s", out)
+	{
+		assert.ErrorIf(
+			t,
+			len(out) != 1 || out[0]["metadata"].(map[string]any)["name"] != "demo-cm",
+			"expected rendered ConfigMap; got: %s",
+			out,
+		)
 	}
-	if len(out) != 1 || out[0]["data"].(map[string]any)["greeting"] != "hello" {
-		t.Errorf("expected values applied; got: %s", out)
+	{
+		assert.ErrorIf(
+			t,
+			len(out) != 1 || out[0]["data"].(map[string]any)["greeting"] != "hello",
+			"expected values applied; got: %s",
+			out,
+		)
 	}
 }
 
@@ -191,8 +207,13 @@ func TestSourceResolver_OverlappingCapturedInputs(t *testing.T) {
 			t.Fatalf("operation %s: err=%v output=%s", name, failures[i], outputs[i])
 		}
 	}
-	if reads[0].Valid() || !reads[1].Valid() {
-		t.Fatal("source replacement did not invalidate exactly its captured operation")
+	{
+		assert.FatalIf(
+			t,
+			reads[0].Valid() || !reads[1].Valid(),
+			"%s",
+			"source replacement did not invalidate exactly its captured operation",
+		)
 	}
 	var successor store.ReadSet
 	successor.Init(st, releases[0].Named(), nil)
@@ -200,15 +221,22 @@ func TestSourceResolver_OverlappingCapturedInputs(t *testing.T) {
 	output, _, err := testutil.RenderMaps(
 		client.Template(t.Context(), releases[0], nil, helm.RenderOptions{Sources: helm.NewSources(&successor)}),
 	)
-	if err != nil || len(output) != 1 || output[0]["metadata"].(map[string]any)["name"] != "replacement" ||
-		output[0]["data"].(map[string]any)["greeting"] != "replacement" ||
-		!successor.Valid() {
-		t.Fatalf("successor: err=%v output=%s", err, output)
+	{
+		assert.FatalIf(
+			t,
+			err != nil || len(output) != 1 || output[0]["metadata"].(map[string]any)["name"] != "replacement" ||
+				output[0]["data"].(map[string]any)["greeting"] != "replacement" ||
+				!successor.Valid(),
+			"successor: err=%v output=%s",
+			err,
+			output,
+		)
 	}
 }
 
 type capturedChartFS struct {
 	fs.FS
+
 	entered chan<- struct{}
 	release <-chan struct{}
 	once    sync.Once

@@ -15,11 +15,14 @@ import (
 // BuildMutex MUST guard every krusty build and uncached scope lookup because
 // krusty mutates process-global OpenAPI and plugin state. The registered scope
 // owner resolves cold keys here before publication; reference walks only read its memo.
-var BuildMutex sync.Mutex
+var BuildMutex sync.Mutex //nolint:gochecknoglobals // Krusty requires one process-wide serialization point.
 
 // Build renders with Flux's options while retaining builtin schema definitions.
 // Callers MUST hold BuildMutex for the complete call.
-func Build(fs filesys.FileSystem, dir string) (res resmap.ResMap, err error) {
+//
+
+//nolint:ireturn,wrapcheck // Krusty's result interface and exact error strings preserve Flux parity.
+func Build(fs filesys.FileSystem, dir string) (_ resmap.ResMap, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("recovered from kustomize build panic: %v", r)

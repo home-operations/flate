@@ -44,13 +44,13 @@ func RecordInventory[T io.WriterTo](ctx context.Context, c *Cache, inventory Acc
 		history = snapshot.histories[inventory.Key]
 	}
 	if lookupErr == nil && descriptor.Annotations[acceptedRenderAnnotation] == inventory.Acceptance &&
-		history.matches(inventory.History, inventory.Acceptance) {
+		history.matches(&inventory.History, inventory.Acceptance) {
 		identity := ""
 		if history != nil {
 			identity = history.identity
 		}
 		if descriptor.Annotations[historyIdentityAnnotation] == identity {
-			return ctx.Err()
+			return ctx.Err() //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 		}
 	}
 	history = inventory.History.record(inventory.Acceptance)
@@ -70,47 +70,57 @@ func RecordInventory[T io.WriterTo](ctx context.Context, c *Cache, inventory Acc
 					e.descriptor.Annotations[historyIdentityAnnotation] != acceptance {
 					return false, nil
 				}
-				_, err := c.root.Stat(e.fs.(fileFS).backingPath)
-				return err == nil, err
+				_, statErr := c.root.Stat(
+					e.fs.(fileFS).backingPath, //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+				)
+				return statErr == nil, statErr //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
 			},
 			produce: func(ctx context.Context, c *Cache, staged *payload) (*entry, error) {
-				result, err := producer.produce(
+				result, produceErr := producer.produce(
 					ctx,
 					c,
 					staged,
 					func(_ context.Context, output ProducerInput) (ProducerResult, error) {
-						metadata, err := history.metadata()
-						if err != nil {
-							return ProducerResult{}, err
-						}
-						if metadata == nil {
-							metadata = make(map[string]string, 2)
-						}
-						metadata[acceptedRenderAnnotation] = inventory.Acceptance
-						metadata[historyIdentityAnnotation] = acceptance
-						_, err = inventory.Content.WriteTo(output)
-						return ProducerResult{Annotations: metadata}, err
+						return inventory.write(history, acceptance, output)
 					},
 				)
 				if result != nil {
 					result.inventoryKey, result.history = inventory.Key, history
 				}
-				return result, err
+				return result, produceErr
 			},
 		},
 	)
 	return err
 }
 
+func (inventory AcceptedInventory[T]) write(
+	history *historyRecord, acceptance string, output ProducerInput,
+) (ProducerResult, error) {
+	metadata, metadataErr := history.metadata()
+	if metadataErr != nil {
+		return ProducerResult{}, metadataErr
+	}
+	if metadata == nil {
+		metadata = make(map[string]string, inventoryAnnotationCount)
+	}
+	metadata[acceptedRenderAnnotation] = inventory.Acceptance
+	metadata[historyIdentityAnnotation] = acceptance
+	_, metadataErr = inventory.Content.WriteTo(output)
+	return ProducerResult{
+		Annotations: metadata,
+	}, metadataErr //nolint:wrapcheck // The cache producer and stream adapters preserve the original error tree for replay and io sentinel handling.
+}
+
 // RenderHistory supplies source paths associated with one accepted inventory.
 type RenderHistory struct {
-	Owner   manifest.NamedResource
+	Owner   manifest.NamedResource `json:"Owner"`
 	Sources []manifest.SourceEvidence
 }
 
 func (r *historyRecord) metadata() (map[string]string, error) {
 	if r == nil {
-		return nil, nil
+		return nil, nil //nolint:nilnil // A nil value and nil error represent an optional absence or a reusable-cache miss.
 	}
 	data, err := json.Marshal(r)
 	if err != nil {
@@ -120,22 +130,22 @@ func (r *historyRecord) metadata() (map[string]string, error) {
 }
 
 type historyPaths struct {
-	Source string
-	Paths  []historyPath
+	Source string        `json:"Source"`
+	Paths  []historyPath `json:"Paths"`
 }
 
 type historyPath struct {
-	Path    string
-	Subtree bool
+	Path    string `json:"Path"`
+	Subtree bool   `json:"Subtree"`
 }
 
 type historyRecord struct {
 	identity   string
 	identities map[manifest.SourceIdentity]string
-	Acceptance string
-	Build      string
-	Owner      manifest.NamedResource
-	Sources    []historyPaths
+	Acceptance string                 `json:"Acceptance"`
+	Build      string                 `json:"Build"`
+	Owner      manifest.NamedResource `json:"Owner"`
+	Sources    []historyPaths         `json:"Sources"`
 }
 
 func (h RenderHistory) record(acceptance string) *historyRecord {
@@ -180,7 +190,8 @@ func (h RenderHistory) record(acceptance string) *historyRecord {
 	return &record
 }
 
-func (r *historyRecord) matches(h RenderHistory, acceptance string) bool {
+func (r *historyRecord) matches(hValue *RenderHistory, acceptance string) bool {
+	h := *hValue
 	if h.Sources == nil || acceptance == "" {
 		return r == nil
 	}
@@ -228,8 +239,34 @@ func (c *Cache) ProducersForPaths(
 		return nil, &CacheError{err}
 	}
 	if !c.CanPersistRenders() || len(query) == 0 {
-		return nil, nil
+		return nil, nil //nolint:nilnil // A nil value and nil error represent an optional absence or a reusable-cache miss.
 	}
+	changes := changedHistoryPaths(query)
+
+	c.prepareSnapshot()
+	var tags []string
+	if err := c.store.Tags(ctx, "", func(batch []string) error {
+		tags = append(tags, batch...)
+		return nil
+	}); err != nil {
+		return nil, &CacheError{err}
+	}
+	owners := map[manifest.NamedResource]struct{}{}
+	seen := map[historyVersion]struct{}{}
+	for _, tag := range tags {
+		producer, matched, err := c.pathProducer(ctx, tag, changes, seen)
+		if err != nil {
+			return nil, err
+		}
+		if matched {
+			owners[producer] = struct{}{}
+		}
+	}
+
+	return slices.SortedFunc(maps.Keys(owners), manifest.NamedResource.Compare), nil
+}
+
+func changedHistoryPaths(query []manifest.SourceEvidence) map[string]map[string]struct{} {
 	changes := map[string]map[string]struct{}{}
 	identities := map[manifest.SourceIdentity]string{}
 	for _, evidence := range query {
@@ -250,71 +287,71 @@ func (c *Cache) ProducersForPaths(
 		}
 	}
 
-	c.prepareSnapshot()
-	var tags []string
-	if err := c.store.Tags(ctx, "", func(batch []string) error {
-		tags = append(tags, batch...)
-		return nil
-	}); err != nil {
-		return nil, &CacheError{err}
-	}
-	owners := map[manifest.NamedResource]struct{}{}
-	seen := map[struct{ digest, metadata string }]struct{}{}
-	for _, tag := range tags {
-		if !strings.HasPrefix(tag, "render-") {
-			continue
-		}
-		if err := ctx.Err(); err != nil {
-			return nil, &CacheError{err}
-		}
-		descriptor, err := c.store.Resolve(ctx, tag)
-		if errors.Is(err, errdef.ErrNotFound) {
-			continue
-		}
-		if err != nil {
-			return nil, &CacheError{err}
-		}
-		data := descriptor.Annotations[historyAnnotation]
-		if data == "" {
-			continue
-		}
-		identity := struct{ digest, metadata string }{descriptor.Digest.String(), data}
-		if _, ok := seen[identity]; ok {
-			continue
-		}
-		seen[identity] = struct{}{}
-		var record historyRecord
-		if json.Unmarshal([]byte(data), &record) != nil || record.Build != processIdentity || record.Owner.Name == "" ||
-			record.Owner.Kind == "" ||
-			record.Acceptance == "" ||
-			record.Acceptance != descriptor.Annotations[acceptedRenderAnnotation] {
-			continue
-		}
-		matched := false
-		for _, source := range record.Sources {
-			for file := range changes[source.Source] {
-				for _, root := range source.Paths {
-					if !fs.ValidPath(root.Path) {
-						continue
-					}
-					matched = matched || file == root.Path ||
-						root.Subtree && (root.Path == "." || strings.HasPrefix(file, root.Path+"/"))
+	return changes
+}
+
+func (record *historyRecord) reaches(changes map[string]map[string]struct{}) bool {
+	matched := false
+	for _, source := range record.Sources {
+		for file := range changes[source.Source] {
+			for _, root := range source.Paths {
+				if !fs.ValidPath(root.Path) {
+					continue
 				}
+				matched = matched || file == root.Path ||
+					root.Subtree && (root.Path == "." || strings.HasPrefix(file, root.Path+"/"))
 			}
 		}
-		if !matched {
-			continue
-		}
-		info, err := c.root.Stat(blobPath(descriptor.Digest))
-		if errors.Is(err, fs.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return nil, &CacheError{err}
-		}
-		if info.Mode().IsRegular() && info.Size() == descriptor.Size {
-			owners[record.Owner] = struct{}{}
-		}
 	}
-	return slices.SortedFunc(maps.Keys(owners), manifest.NamedResource.Compare), nil
+	return matched
+}
+
+type historyVersion struct{ digest, metadata string }
+
+func (c *Cache) pathProducer(
+	ctx context.Context,
+	tag string,
+	changes map[string]map[string]struct{},
+	seen map[historyVersion]struct{},
+) (manifest.NamedResource, bool, error) {
+	if !strings.HasPrefix(tag, "render-") {
+		return manifest.NamedResource{}, false, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return manifest.NamedResource{}, false, &CacheError{err}
+	}
+	descriptor, err := c.store.Resolve(ctx, tag)
+	if errors.Is(err, errdef.ErrNotFound) {
+		return manifest.NamedResource{}, false, nil
+	}
+	if err != nil {
+		return manifest.NamedResource{}, false, &CacheError{err}
+	}
+	data := descriptor.Annotations[historyAnnotation]
+	if data == "" {
+		return manifest.NamedResource{}, false, nil
+	}
+	identity := historyVersion{descriptor.Digest.String(), data}
+	if _, ok := seen[identity]; ok {
+		return manifest.NamedResource{}, false, nil
+	}
+	seen[identity] = struct{}{}
+	var record historyRecord
+	if json.Unmarshal([]byte(data), &record) != nil || record.Build != processIdentity || record.Owner.Name == "" ||
+		record.Owner.Kind == "" ||
+		record.Acceptance == "" ||
+		record.Acceptance != descriptor.Annotations[acceptedRenderAnnotation] {
+		return manifest.NamedResource{}, false, nil
+	}
+	if !record.reaches(changes) {
+		return manifest.NamedResource{}, false, nil
+	}
+	info, err := c.root.Stat(blobPath(descriptor.Digest))
+	if errors.Is(err, fs.ErrNotExist) {
+		return manifest.NamedResource{}, false, nil
+	}
+	if err != nil {
+		return manifest.NamedResource{}, false, &CacheError{err}
+	}
+	return record.Owner, info.Mode().IsRegular() && info.Size() == descriptor.Size, nil
 }

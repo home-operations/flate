@@ -23,9 +23,11 @@ const certValidity = 24 * time.Hour
 // this package don't share serial numbers. Two certs with the same
 // (Issuer, Serial) tuple can short-circuit a verify-cache hit and
 // mask a real chain bug in the system under test.
+const serialBits = 128
+
 func randomSerial(t *testing.T) *big.Int {
 	t.Helper()
-	limit := new(big.Int).Lsh(big.NewInt(1), 128)
+	limit := new(big.Int).Lsh(big.NewInt(1), serialBits)
 	n, err := rand.Int(rand.Reader, limit)
 	if err != nil {
 		t.Fatalf("serial: %v", err)
@@ -34,7 +36,7 @@ func randomSerial(t *testing.T) *big.Int {
 }
 
 // ecKey generates an ephemeral ECDSA P-256 key. P-256 is accepted by
-// tls.X509KeyPair and x509.NewCertPool; it is ~20x faster to generate
+// tls.X509KeyPair and [x509.NewCertPool]; it is ~20x faster to generate
 // than RSA-2048 at equivalent security, which matters in tests that
 // call these helpers in tight loops.
 func ecKey(t *testing.T) *ecdsa.PrivateKey {
@@ -56,7 +58,7 @@ func pemKey(t *testing.T, priv *ecdsa.PrivateKey) string {
 	return string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
 }
 
-func makeCertificate(t *testing.T, tmpl *x509.Certificate) (cert, key string) {
+func makeCertificate(t *testing.T, tmpl *x509.Certificate) (string, string) {
 	t.Helper()
 	priv := ecKey(t)
 	now := time.Now()
@@ -84,7 +86,7 @@ func SelfSignedCA(t *testing.T) string {
 // SelfSignedServerCert returns a PEM-encoded server+client cert and
 // matching ECDSA private key — usable as both a TLS server cert and a
 // CA bundle (IsCA=true).
-func SelfSignedServerCert(t *testing.T) (cert, key string) {
+func SelfSignedServerCert(t *testing.T) (string, string) {
 	t.Helper()
 	return makeCertificate(t, &x509.Certificate{
 		Subject:     pkix.Name{CommonName: "flate-test"},
@@ -96,7 +98,7 @@ func SelfSignedServerCert(t *testing.T) (cert, key string) {
 
 // SelfSignedClientCert returns a PEM-encoded client cert and matching
 // ECDSA private key — ExtKeyUsage is ClientAuth only.
-func SelfSignedClientCert(t *testing.T) (cert, key string) {
+func SelfSignedClientCert(t *testing.T) (string, string) {
 	t.Helper()
 	return makeCertificate(t, &x509.Certificate{
 		Subject:     pkix.Name{CommonName: "flate-test-client"},

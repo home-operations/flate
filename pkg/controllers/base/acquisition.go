@@ -37,7 +37,7 @@ func (e *Execution) Acquire(
 		return err
 	}
 	if missing, ok := errors.AsType[*source.MissingSecretError](err); ok {
-		pending := &pendingAcquisition{execution: e, object: obj, acquisition: acquisition, missing: missing}
+		pending := &pendingAcquisitionError{execution: e, object: obj, acquisition: acquisition, missing: missing}
 		if level == manifest.DrainNone && missing.Secret != (manifest.NamedResource{}) {
 			e.Store.UpdateStatus(
 				e.Reads.ID(),
@@ -47,7 +47,7 @@ func (e *Execution) Acquire(
 		}
 		return pending.Settle(ctx, level)
 	}
-	return (&pendingAcquisition{execution: e, object: obj, acquisition: acquisition}).complete(
+	return (&pendingAcquisitionError{execution: e, object: obj, acquisition: acquisition}).complete(
 		ctx,
 		artifact,
 		err,
@@ -55,19 +55,19 @@ func (e *Execution) Acquire(
 	)
 }
 
-type pendingAcquisition struct {
+type pendingAcquisitionError struct {
 	execution   *Execution
 	object      manifest.BaseManifest
 	acquisition Acquisition
 	missing     *source.MissingSecretError
 }
 
-func (p *pendingAcquisition) Error() string { return p.missing.Error() }
-func (p *pendingAcquisition) Unwrap() error {
+func (p *pendingAcquisitionError) Error() string { return p.missing.Error() }
+func (p *pendingAcquisitionError) Unwrap() error {
 	return &depwait.ErrBlocked{Deps: []manifest.NamedResource{p.missing.Secret}}
 }
 
-func (p *pendingAcquisition) Settle(ctx context.Context, level manifest.DrainLevel) error {
+func (p *pendingAcquisitionError) Settle(ctx context.Context, level manifest.DrainLevel) error {
 	var artifact *store.SourceArtifact
 	var err error
 	p.execution.Tasks.YieldSlot(func() { artifact, err = p.missing.RetryMachine(ctx, &p.execution.Reads) })
@@ -77,7 +77,7 @@ func (p *pendingAcquisition) Settle(ctx context.Context, level manifest.DrainLev
 	return p.complete(ctx, artifact, err, level)
 }
 
-func (p *pendingAcquisition) complete(
+func (p *pendingAcquisitionError) complete(
 	ctx context.Context,
 	artifact *store.SourceArtifact,
 	err error,

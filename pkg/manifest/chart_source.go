@@ -42,34 +42,7 @@ func equalChartTemplate(a, b *helmv2.HelmChartTemplate) bool {
 		return false
 	}
 	x, y := &a.Spec.OCIRepositorySpec, &b.Spec.OCIRepositorySpec
-	ociIdentity := x.URL == y.URL && x.Provider == y.Provider && x.ServiceAccountName == y.ServiceAccountName
-	if !ociIdentity {
-		return false
-	}
-	ociPolicy := x.Insecure == y.Insecure && x.Suspend == y.Suspend
-	if !ociPolicy {
-		return false
-	}
-	references := equalValue(x.Reference, y.Reference) && equalValue(x.LayerSelector, y.LayerSelector)
-	if !references {
-		return false
-	}
-	credentials := equalValue(x.SecretRef, y.SecretRef) && equalValue(x.CertSecretRef, y.CertSecretRef) &&
-		equalValue(x.ProxySecretRef, y.ProxySecretRef)
-	if !credentials {
-		return false
-	}
-	timing := equalValue(x.Interval, y.Interval) && equalValue(x.Timeout, y.Timeout) && equalValue(x.Ignore, y.Ignore)
-	if !timing {
-		return false
-	}
-	if x.Verify == nil || y.Verify == nil {
-		return x.Verify == y.Verify
-	}
-	verification := x.Verify.Provider == y.Verify.Provider && equalValue(x.Verify.SecretRef, y.Verify.SecretRef) &&
-		equalValue(x.Verify.TrustedRootSecretRef, y.Verify.TrustedRootSecretRef) &&
-		slices.Equal(x.Verify.MatchOIDCIdentity, y.Verify.MatchOIDCIdentity)
-	return verification
+	return equalChartOCI(x, y)
 }
 
 func equalValue[T comparable](a, b *T) bool {
@@ -277,4 +250,35 @@ func (h *HelmChartSource) OCIRepository(repository *HelmRepository) *OCIReposito
 	subject := DiagnosticFor(h.Named(), h)
 	repo.diagnosticOwner, repo.diagnosticPath, repo.hasDiagnostic = subject.Resource, subject.Path, true
 	return repo
+}
+
+func equalChartOCI(x, y *sourcev1.OCIRepositorySpec) bool {
+	ociIdentity := x.URL == y.URL && x.Provider == y.Provider && x.ServiceAccountName == y.ServiceAccountName
+	if !ociIdentity {
+		return false
+	}
+	ociPolicy := x.Insecure == y.Insecure && x.Suspend == y.Suspend
+	if !ociPolicy {
+		return false
+	}
+	references := equalValue(x.Reference, y.Reference) && equalValue(x.LayerSelector, y.LayerSelector)
+	if !references {
+		return false
+	}
+	credentials := equalValue(x.SecretRef, y.SecretRef) && equalValue(x.CertSecretRef, y.CertSecretRef) &&
+		equalValue(x.ProxySecretRef, y.ProxySecretRef)
+	if !credentials {
+		return false
+	}
+	timing := equalValue(x.Interval, y.Interval) && equalValue(x.Timeout, y.Timeout) && equalValue(x.Ignore, y.Ignore)
+	if !timing {
+		return false
+	}
+	if x.Verify == nil || y.Verify == nil {
+		return x.Verify == y.Verify
+	}
+	verification := x.Verify.Provider == y.Verify.Provider && equalValue(x.Verify.SecretRef, y.Verify.SecretRef) &&
+		equalValue(x.Verify.TrustedRootSecretRef, y.Verify.TrustedRootSecretRef) &&
+		slices.Equal(x.Verify.MatchOIDCIdentity, y.Verify.MatchOIDCIdentity)
+	return verification
 }

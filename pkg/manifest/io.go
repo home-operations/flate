@@ -12,9 +12,11 @@ import (
 )
 
 // yaml.v4 reuses non-nil maps; only unretained documents may return here.
+//
+//nolint:gochecknoglobals // A process-wide pool reuses decoded document maps.
 var decodedMapPool = sync.Pool{
 	New: func() any {
-		return make(map[string]any, 8)
+		return make(map[string]any, initialDocumentCapacity)
 	},
 }
 
@@ -38,9 +40,9 @@ func ReleaseDoc(m map[string]any) {
 
 // DocOccurrence retains a constructed document or failure at its original stream ordinal.
 type DocOccurrence struct {
-	Document map[string]any
-	Ordinal  int
-	Err      error
+	Document map[string]any `json:"Document"`
+	Ordinal  int            `json:"Ordinal"`
+	Err      error          `json:"Err"`
 }
 
 // DocumentRole determines whether nonmapping documents are required manifests.
@@ -134,6 +136,7 @@ func preserveTimestampStrings(n *yaml.Node) {
 
 type documentStream struct {
 	io.Reader
+
 	err error
 }
 
@@ -157,3 +160,7 @@ func DocumentFailure(docs []DocOccurrence) error {
 	}
 	return nil
 }
+
+const (
+	initialDocumentCapacity = 8
+)

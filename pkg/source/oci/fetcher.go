@@ -26,6 +26,7 @@ type Fetcher struct {
 
 type operation struct {
 	*Fetcher
+
 	reads                *store.ReadSet
 	secrets              source.SecretGetter
 	mediaTypes           []string
@@ -44,8 +45,8 @@ func (f *Fetcher) Fetch(
 	if mediaType := repo.LayerMediaType(); mediaType != "" {
 		mediaTypes = []string{mediaType}
 	}
-	operation := operation{Fetcher: f, reads: reads, secrets: source.SecretLookup(reads), mediaTypes: mediaTypes}
-	return operation.fetchSource(ctx, repo, policy)
+	innerOperation := operation{Fetcher: f, reads: reads, secrets: source.SecretLookup(reads), mediaTypes: mediaTypes}
+	return innerOperation.fetchSource(ctx, repo, policy)
 }
 
 // FetchChart acquires chart layers using Helm's supported media types.
@@ -55,11 +56,11 @@ func (f *Fetcher) FetchChart(
 	reads *store.ReadSet,
 	policy cache.Policy,
 ) (*store.SourceArtifact, error) {
-	operation := operation{
+	innerOperation2 := operation{
 		Fetcher: f, reads: reads, secrets: source.SecretLookup(reads),
 		mediaTypes: []string{registry.ChartLayerMediaType, registry.LegacyChartLayerMediaType},
 	}
-	return operation.fetchSource(ctx, repo, policy)
+	return innerOperation2.fetchSource(ctx, repo, policy)
 }
 
 func (f *operation) fetchSource(

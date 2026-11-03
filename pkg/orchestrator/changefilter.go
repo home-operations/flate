@@ -2,11 +2,13 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"log/slog"
 	"maps"
 	"slices"
 
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -15,7 +17,7 @@ import (
 func (o *Orchestrator) buildChangeFilter(ctx context.Context) error {
 	defer func() { o.entryDiscovery = nil }()
 	if err := ctx.Err(); err != nil {
-		return err
+		return fmt.Errorf("context: %w", err)
 	}
 	if o.cfg.BaseInput == o.cfg.Input && o.cfg.ExternalChanges == nil {
 		o.store.AddWarning(
@@ -56,55 +58,17 @@ func (o *Orchestrator) buildChangeFilter(ctx context.Context) error {
 	o.configureControllers()
 	for _, id := range proposal.Needed {
 		if err := ctx.Err(); err != nil {
-			return err
+			return fmt.Errorf("context: %w", err)
 		}
 		if !id.KindInfo().Render {
 			continue
 		}
-		reads := &store.ReadSet{}
-		reads.Init(o.store, id, nil)
-		func() {
-			_, _, output := reads.GetEmission(id)
-			defer reads.Retire()
-			defer output.Finish()
-			obj := reads.GetDeclaration(id)
-			if obj == nil {
-				obj = o.index.Records[id].Declaration
-			}
-			if obj == nil {
-				return
-			}
-			records, canNarrow := o.controllers.PreviousRender(ctx, obj, reads)
-			if records == nil {
-				return
-			}
-			materialized := make(map[manifest.NamedResource]manifest.DiscoveryRecord)
-			for child, record := range records {
-				record.Refs = slices.Clone(record.Refs)
-				record.Productions = slices.Clone(record.Productions)
-				record.Inputs = slices.Clone(record.Inputs)
-				record.ContentRoots = maps.Clone(record.ContentRoots)
-				for source, roots := range record.ContentRoots {
-					record.ContentRoots[source] = slices.Clone(roots)
-				}
-				materialized[child] = record
-			}
-			if reads.Valid() {
-				for child, record := range materialized {
-					o.admission.AddHistory(o.store, child, record)
-				}
-				entry := history[id]
-				entry.Complete = canNarrow
-				entry.Records = func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
-					for child, record := range materialized {
-						if !yield(child, record) {
-							return
-						}
-					}
-				}
-				history[id] = entry
-			}
-		}()
+		records, complete := o.prepareProducerHistory(ctx, id)
+		if records != nil {
+			entry := history[id]
+			entry.Complete, entry.Records = complete, records
+			history[id] = entry
+		}
 	}
 	if o.entryDiscovery != nil {
 		if err := o.entryDiscovery.PrepareEntry(ctx, o.cfg.ExternalChanges); err != nil {
@@ -114,10 +78,48 @@ func (o *Orchestrator) buildChangeFilter(ctx context.Context) error {
 	}
 	o.history = history
 	if err := ctx.Err(); err != nil {
-		return err
+		return fmt.Errorf("context: %w", err)
 	}
 
 	return nil
+}
+
+func (o *Orchestrator) prepareProducerHistory(ctx context.Context, id manifest.NamedResource) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
+	reads := &store.ReadSet{}
+	reads.Init(o.store, id, nil)
+
+	_, _, output := reads.GetEmission(id)
+	defer reads.Retire()
+	defer output.Finish()
+	obj := reads.GetDeclaration(id)
+	if obj == nil {
+		obj = o.index.Records[id].Declaration
+	}
+	if obj == nil {
+		return nil, false
+	}
+	records, canNarrow := o.controllers.PreviousRender(ctx, obj, reads)
+	if records == nil {
+		return nil, false
+	}
+	materialized := make(map[manifest.NamedResource]manifest.DiscoveryRecord)
+	for child, record := range records { //nolint:gocritic // The iterator yields records by value.
+		record.Refs = slices.Clone(record.Refs)
+		record.Productions = slices.Clone(record.Productions)
+		record.Inputs = slices.Clone(record.Inputs)
+		record.ContentRoots = maps.Clone(record.ContentRoots)
+		for source, roots := range record.ContentRoots {
+			record.ContentRoots[source] = slices.Clone(roots)
+		}
+		materialized[child] = record
+	}
+	if reads.Valid() {
+		for child, record := range materialized { //nolint:gocritic // Map iteration preserves a value snapshot without an extra lookup.
+			o.admission.AddHistory(o.store, child, record)
+		}
+		return maps.All(materialized), canNarrow
+	}
+	return nil, false
 }
 
 func (o *Orchestrator) lookupHistory(ctx context.Context) error {
@@ -127,27 +129,7 @@ func (o *Orchestrator) lookupHistory(ctx context.Context) error {
 	var query []manifest.SourceEvidence
 	changes := o.cfg.ExternalChanges
 	for source := range changes.Sources() {
-		delta, inputs, _ := changes.ForSource(source)
-		paths := delta.Paths()
-		if len(paths) == 0 {
-			continue
-		}
-		found := false
-		for _, input := range inputs {
-			if input != nil && input.FS != nil && input.Reads.Valid() {
-				for _, file := range paths {
-					query = append(query, manifest.SourceEvidence{Source: input.HistoryIdentity(source), Path: file})
-				}
-				found = true
-			}
-		}
-		if !found && source == manifest.BootstrapSourceID {
-			if input := o.cfg.Input; input != nil && input.FS != nil && input.Reads.Valid() {
-				for _, file := range paths {
-					query = append(query, manifest.SourceEvidence{Source: input.HistoryIdentity(source), Path: file})
-				}
-			}
-		}
+		query = o.appendHistoryQuery(query, source, changes)
 	}
 	producers, err := o.cache.ProducersForPaths(ctx, query)
 	if err != nil {
@@ -155,6 +137,31 @@ func (o *Orchestrator) lookupHistory(ctx context.Context) error {
 	}
 	o.loader.Options.HistoryOwners = append([]manifest.NamedResource{}, producers...)
 	return nil
+}
+
+func (o *Orchestrator) appendHistoryQuery(query []manifest.SourceEvidence, source manifest.NamedResource, changes *change.Set) []manifest.SourceEvidence {
+	delta, inputs, _ := changes.ForSource(source)
+	paths := delta.Paths()
+	if len(paths) == 0 {
+		return query
+	}
+	found := false
+	for _, input := range inputs {
+		if input != nil && input.FS != nil && input.Reads.Valid() {
+			for _, file := range paths {
+				query = append(query, manifest.SourceEvidence{Source: input.HistoryIdentity(source), Path: file})
+			}
+			found = true
+		}
+	}
+	if !found && source == manifest.BootstrapSourceID {
+		if input := o.cfg.Input; input != nil && input.FS != nil && input.Reads.Valid() {
+			for _, file := range paths {
+				query = append(query, manifest.SourceEvidence{Source: input.HistoryIdentity(source), Path: file})
+			}
+		}
+	}
+	return query
 }
 
 func (o *Orchestrator) installAdmission(ctx context.Context) error {
@@ -197,7 +204,7 @@ func (o *Orchestrator) installAdmission(ctx context.Context) error {
 	}
 	for _, child := range proposal.Objects {
 		if err := ctx.Err(); err != nil {
-			return err
+			return fmt.Errorf("context: %w", err)
 		}
 		o.store.AddObject(child.Obj, child.Doc)
 	}

@@ -64,7 +64,7 @@ func labels(obj BaseManifest, input map[string]any) map[string]any {
 	if raw, ok := obj.(*RawObject); ok && input == nil {
 		input = raw.labelInput()
 	}
-	metadata, _ := input["metadata"].(map[string]any)
+	metadata, _ := input[metadataKey].(map[string]any)
 	labels, _ := metadata["labels"].(map[string]any)
 	return labels
 }

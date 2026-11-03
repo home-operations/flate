@@ -12,7 +12,7 @@ func OverlayPayload(obj BaseManifest, doc map[string]any) map[string]any {
 func (s *Secret) overlayPayload(doc map[string]any) map[string]any {
 	doc = maps.Clone(doc)
 	snapshot := s.Snapshot()
-	for _, key := range []string{"data", "stringData", "type"} {
+	for _, key := range []string{dataKey, stringDataKey, "type"} {
 		delete(doc, key)
 		if value, ok := snapshot[key]; ok {
 			doc[key] = value

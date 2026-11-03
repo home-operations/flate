@@ -142,15 +142,15 @@ func (f *Fetcher) fetchIndex(ctx context.Context, r *httpRepository, policy cach
 		return nil, err
 	}
 	if v, ok := f.indexCache.Load(desc.Digest.String()); ok {
-		return v.(*repo.IndexFile), nil
+		return v.(*repo.IndexFile), nil //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
 	}
 	candidate, _, err := f.loadIndex(ctx, indexURL, func(w io.Writer) (ocispec.Descriptor, error) {
-		input, err := generation.Open("content")
-		if err != nil {
-			return desc, err
+		input, openErr := generation.Open("content")
+		if openErr != nil {
+			return desc, openErr //nolint:wrapcheck // Filesystem content adapters retain the original fs.PathError and io sentinel contracts.
 		}
-		_, err = io.Copy(w, input)
-		return desc, errors.Join(err, input.Close())
+		_, openErr = io.Copy(w, input)
+		return desc, errors.Join(openErr, input.Close())
 	})
 	return candidate, err
 }
@@ -171,7 +171,7 @@ func (f *Fetcher) loadIndex(
 	}
 	defer release()
 	if v, ok := f.indexCache.Load(desc.Digest.String()); ok {
-		return v.(*repo.IndexFile), desc, nil
+		return v.(*repo.IndexFile), desc, nil //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
 	}
 	idx := &repo.IndexFile{}
 	switch {
@@ -215,14 +215,14 @@ func (f *Fetcher) loadIndex(
 func absChartURL(base, target string) (string, error) {
 	u, err := url.Parse(target)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("resolve chart URL: %w", err)
 	}
 	if u.IsAbs() {
 		return target, nil
 	}
 	parent, err := url.Parse(base)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("resolve chart URL: %w", err)
 	}
 	parent.Path = strings.TrimSuffix(parent.Path, "/") + "/"
 	return parent.ResolveReference(u).String(), nil
@@ -235,11 +235,11 @@ func normalizeChartDigest(d string) string {
 func (r *httpRepository) get(ctx context.Context, target string, w io.Writer) (ocispec.Descriptor, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
 	if err != nil {
-		return ocispec.Descriptor{}, err
+		return ocispec.Descriptor{}, fmt.Errorf("create source HTTP request: %w", err)
 	}
 	base, err := url.Parse(r.URL)
 	if err != nil {
-		return ocispec.Descriptor{}, err
+		return ocispec.Descriptor{}, fmt.Errorf("resolve chart URL: %w", err)
 	}
 	if (r.PassCredentials || base.Scheme == req.URL.Scheme && base.Host == req.URL.Host) && r.username != "" &&
 		r.password != "" {
@@ -247,7 +247,7 @@ func (r *httpRepository) get(ctx context.Context, target string, w io.Writer) (o
 	}
 	response, err := r.client.Do(req)
 	if err != nil {
-		return ocispec.Descriptor{}, err
+		return ocispec.Descriptor{}, err //nolint:wrapcheck // The HTTP client already returns a URL error identifying method and target, including net.Error behavior.
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {

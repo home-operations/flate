@@ -57,6 +57,8 @@ func (r *ResourceSet) Named() NamedResource {
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (r *ResourceSet) WithNamespace(namespace string) BaseManifest {
 	out := *r
 	out.Namespace = namespace
@@ -84,7 +86,7 @@ func parseResourceSet(doc map[string]any) (*ResourceSet, error) {
 				fmt.Errorf(
 					"ResourceSet %w",
 					field.Invalid(
-						field.NewPath("spec", "dependsOn").Index(i).Child("apiVersion"),
+						field.NewPath(specKey, dependsOnKey).Index(i).Child(apiVersionKey),
 						dep.APIVersion,
 						"must have a valid version",
 					),
@@ -94,13 +96,13 @@ func parseResourceSet(doc map[string]any) (*ResourceSet, error) {
 		}
 		scopes.ResolveScope(yaml.TypeMeta{APIVersion: dep.APIVersion, Kind: dep.Kind})
 	}
-	spec, _ := doc["spec"].(map[string]any)
+	spec, _ := doc[specKey].(map[string]any)
 	inputsFrom, _ := spec["inputsFrom"].([]any)
 	for i, ref := range cr.Spec.InputsFrom {
 		explicit := ref.APIVersion != ""
 		if i < len(inputsFrom) {
 			raw, _ := inputsFrom[i].(map[string]any)
-			_, explicit = raw["apiVersion"]
+			_, explicit = raw[apiVersionKey]
 		}
 		if !explicit {
 			continue
@@ -112,7 +114,7 @@ func parseResourceSet(doc map[string]any) (*ResourceSet, error) {
 				fmt.Errorf(
 					"ResourceSet %w",
 					field.Invalid(
-						field.NewPath("spec", "inputsFrom").Index(i).Child("apiVersion"),
+						field.NewPath(specKey, "inputsFrom").Index(i).Child(apiVersionKey),
 						ref.APIVersion,
 						"must have a valid version",
 					),
@@ -160,6 +162,8 @@ func (p *ResourceSetInputProvider) Named() NamedResource {
 func (p *ResourceSetInputProvider) Suspended() bool { return false }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (p *ResourceSetInputProvider) WithNamespace(namespace string) BaseManifest {
 	out := *p
 	out.Namespace = namespace
@@ -291,7 +295,7 @@ func (p *ResourceSetInputProvider) SelectTags(tags []string) ([]string, error) {
 		parsed := parsedTag{name: tag}
 		if constraint != nil {
 			// Flux ParseVersion requires three dot-separated components before SemVer parsing.
-			if strings.Count(tag, ".") < 2 {
+			if strings.Count(tag, ".") < semverSeparatorCount {
 				continue
 			}
 			v, err := semver.NewVersion(tag)
@@ -322,7 +326,7 @@ func (p *ResourceSetInputProvider) TagInputs(tag, digest string) (fluxopv1.Resou
 		return nil, NewError(ErrInput, fmt.Errorf("defaultValues: %w", err), "")
 	}
 	inputs, err := fluxopv1.NewResourceSetInput(defaults, map[string]any{
-		"id": strconv.FormatUint(uint64(adler32.Checksum([]byte(tag))), 10), "tag": tag, "digest": digest,
+		"id": strconv.FormatUint(uint64(adler32.Checksum([]byte(tag))), 10), tagKey: tag, "digest": digest,
 	})
 	if err != nil {
 		return nil, NewError(ErrInput, fmt.Errorf("tag %q inputs: %w", tag, err), "")
@@ -377,7 +381,7 @@ func (r *ResourceSet) references(yield func(Reference) bool) {
 		}
 		if !yield(Reference{
 			NamedResource: id,
-			Use:           "dependsOn", Position: i, ReadyExpr: referenceExpression(&dep.ReadyExpr), Gate: GateInputs,
+			Use:           dependsOnKey, Position: i, ReadyExpr: referenceExpression(&dep.ReadyExpr), Gate: GateInputs,
 		}) {
 			return
 		}
@@ -411,3 +415,7 @@ func (r *ResourceSet) kind() KindInfo { return kindTable[kindResourceSet].KindIn
 func (p *ResourceSetInputProvider) kind() KindInfo {
 	return kindTable[kindResourceSetInputProvider].KindInfo
 }
+
+const (
+	semverSeparatorCount = 2
+)

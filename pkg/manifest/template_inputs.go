@@ -160,21 +160,21 @@ func projectTemplate(data []byte, namespace string, projected bool, yield func(B
 			Spec map[string]any `yaml:"spec"`
 		}
 		if projected {
-			if err := yamlv3.Unmarshal(document, &fields); err != nil {
+			if unmarshalErr := yamlv3.Unmarshal(document, &fields); unmarshalErr != nil {
 				continue
 			}
 			if !strings.HasSuffix(fields.Kind, "List") {
 				doc := map[string]any{
-					"apiVersion": fields.APIVersion,
-					"kind":       fields.Kind,
-					"metadata": map[string]any{
-						"name":      fields.Metadata.Name,
-						"namespace": fields.Metadata.Namespace,
+					apiVersionKey: fields.APIVersion,
+					kindKey:       fields.Kind,
+					metadataKey: map[string]any{
+						nameKey:      fields.Metadata.Name,
+						namespaceKey: fields.Metadata.Namespace,
 					},
-					"spec": fields.Spec,
+					specKey: fields.Spec,
 				}
-				object, _, _, err := ParseDoc(doc, ParseDocOptions{DefaultNamespace: namespace})
-				if err == nil && object != nil {
+				object, _, _, parseDocErr := ParseDoc(doc, ParseDocOptions{DefaultNamespace: namespace})
+				if parseDocErr == nil && object != nil {
 					yield(object, fields.Metadata.Namespace)
 				}
 				continue
@@ -184,13 +184,13 @@ func projectTemplate(data []byte, namespace string, projected bool, yield func(B
 		if err != nil || kyaml.IsMissingOrNull(node) {
 			continue
 		}
-		if _, err := node.GetMeta(); err != nil && !errors.Is(err, kyaml.ErrMissingMetadata) {
+		if _, getMetaErr := node.GetMeta(); getMetaErr != nil && !errors.Is(getMetaErr, kyaml.ErrMissingMetadata) {
 			continue
 		}
 		var header struct {
 			Kind string `yaml:"kind"`
 		}
-		if err := node.YNode().Decode(&header); err != nil {
+		if decodeErr := node.YNode().Decode(&header); decodeErr != nil {
 			continue
 		}
 		nodes := []*kyaml.RNode{node}
@@ -212,13 +212,13 @@ func projectTemplate(data []byte, namespace string, projected bool, yield func(B
 					} `yaml:"metadata"`
 					Spec map[string]any `yaml:"spec"`
 				}
-				if err := node.YNode().Decode(&fields); err != nil {
+				if decodeErr2 := node.YNode().Decode(&fields); decodeErr2 != nil {
 					continue
 				}
 				doc = map[string]any{
-					"apiVersion": fields.APIVersion, "kind": fields.Kind,
-					"metadata": map[string]any{"name": fields.Metadata.Name, "namespace": fields.Metadata.Namespace},
-					"spec":     fields.Spec,
+					apiVersionKey: fields.APIVersion, kindKey: fields.Kind,
+					metadataKey: map[string]any{nameKey: fields.Metadata.Name, namespaceKey: fields.Metadata.Namespace},
+					specKey:     fields.Spec,
 				}
 			} else {
 				doc, err = node.Map()
@@ -260,7 +260,7 @@ func (p *TemplateProjection) addObject(object BaseManifest, authoredNamespace st
 		ref.Gate, ref.ArtifactStages = 0, 0
 		ref.Artifact, ref.ChartSource = false, false
 		unresolved := false
-		if ref.Use == "source" {
+		if ref.Use == sourceKey {
 			for root := range SourceRoots(object) {
 				if concreteTemplateOperand(root) {
 					ref.Files = append(ref.Files, root)

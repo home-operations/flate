@@ -83,7 +83,7 @@ func (sh *shard) admitAbsenceLocked(id manifest.NamedResource, kind facet) {
 
 func (sh *shard) newHeadLocked(generation uint64) *registrationHead {
 	if len(sh.spareHeads) == 0 {
-		sh.headCapacity = max(2, 2*sh.headCapacity)
+		sh.headCapacity = max(minRegistrationHeadBlock, allocationGrowthFactor*sh.headCapacity)
 		sh.spareHeads = make([]registrationHead, sh.headCapacity)
 	}
 	head := &sh.spareHeads[0]
@@ -333,3 +333,7 @@ func (s *Store) Sweep() iter.Seq[manifest.NamedResource] {
 		}
 	}
 }
+
+const (
+	minRegistrationHeadBlock = 2
+)

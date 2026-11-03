@@ -12,6 +12,8 @@ import (
 
 // RequireRefresh gates effective inputs against the execution's captured canonical declaration.
 // Prepared clones MUST remain distinct from the canonical snapshot that produced them.
+//
+//nolint:ireturn // The generic result retains the concrete manifest type supplied by the caller.
 func (e *Execution) RequireRefresh[T manifest.BaseManifest](
 	ctx context.Context,
 	effective T,

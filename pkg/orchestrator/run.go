@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"maps"
 	"slices"
 
@@ -16,6 +17,7 @@ import (
 
 type orchestratorExistence struct {
 	*manifest.DiscoveryIndex
+
 	o *Orchestrator
 }
 
@@ -33,7 +35,7 @@ func (e *orchestratorExistence) Promote(
 ) (bool, error) {
 	if e.o.preparation != nil {
 		if err := ctx.Err(); err != nil {
-			return false, err
+			return false, fmt.Errorf("context: %w", err)
 		}
 		obj := e.o.store.GetDeclaration(id)
 		if reads != nil {
@@ -66,24 +68,29 @@ func (e *orchestratorExistence) Promote(
 	if obj != nil {
 		return e.admit(ctx, store.Child{Obj: obj, Productions: productions}, reads)
 	}
-	for _, p := range productions {
-		admit := func(obj manifest.BaseManifest) (bool, error) {
-			return e.admit(ctx, store.Child{Obj: obj, Productions: []manifest.Production{p}}, reads)
-		}
-		promoted, err := loader.Promote(
-			ctx,
-			e.o.store,
-			id,
-			loader.PromoteOptions{Record: p, Reads: reads, WipeSecrets: e.o.cfg.WipeSecrets, Admit: admit},
-		)
-		if err != nil {
-			return false, err
-		}
-		if promoted {
-			if reads != nil {
-				reads.Productions(id, e.o.index)
+	{
+		pValues := productions
+		for pIndex := range pValues {
+			p := pValues[pIndex]
+
+			admit := func(obj manifest.BaseManifest) (bool, error) {
+				return e.admit(ctx, store.Child{Obj: obj, Productions: []manifest.Production{p}}, reads)
 			}
-			return true, nil
+			promoted, err := loader.Promote(
+				ctx,
+				e.o.store,
+				id,
+				loader.PromoteOptions{Record: p, Reads: reads, WipeSecrets: e.o.cfg.WipeSecrets, Admit: admit},
+			)
+			if err != nil {
+				return false, err
+			}
+			if promoted {
+				if reads != nil {
+					reads.Productions(id, e.o.index)
+				}
+				return true, nil
+			}
 		}
 	}
 	if e.o.admission != nil && reads != nil && reads.GetDeclaration(reads.ID()) != nil {

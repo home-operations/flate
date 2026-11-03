@@ -42,6 +42,8 @@ import (
 )
 
 // restrict is the process-global on/off toggle, read at dial time by control.
+//
+//nolint:gochecknoglobals // Egress restriction is deliberately process-wide and read at each dial.
 var restrict atomic.Bool
 
 // Restrict enables or disables the egress guard process-wide. The orchestrator
@@ -50,11 +52,13 @@ var restrict atomic.Bool
 // doc on why per-render is not possible.
 func Restrict(on bool) { restrict.Store(on) }
 
-// Ranges netip.Addr.IsPrivate does NOT cover but that are not legitimate fetch
+// Ranges [netip.Addr.IsPrivate] does NOT cover but that are not legitimate fetch
 // targets: carrier-grade NAT, the IETF protocol-assignments /24 (holds
 // 192.0.0.192), and the benchmarking range. Plus the IPv6 transition prefixes
 // that can embed a private/metadata IPv4 (NAT64 is realistic on DNS64 clusters —
 // flate's deployment target).
+//
+//nolint:gochecknoglobals // Parsed immutable address policy is shared so each dial avoids reparsing.
 var (
 	cgnat       = netip.MustParsePrefix("100.64.0.0/10")
 	ietfProto   = netip.MustParsePrefix("192.0.0.0/24")

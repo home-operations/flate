@@ -46,10 +46,14 @@ func (l *Loader) buildProductions(
 		}
 	}
 	remaining := map[string]struct{}{}
-	for dir, doc := range l.documents.cache {
-		b.scanExclusions = b.scanExclusions || doc.scanExcluded
-		if doc.body != nil && !doc.selected && len(doc.body.ConfigMapGenerator)+len(doc.body.SecretGenerator) != 0 {
-			remaining[dir] = struct{}{}
+	{
+		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+		for dir, doc := range l.documents.cache {
+
+			b.scanExclusions = b.scanExclusions || doc.scanExcluded
+			if doc.body != nil && !doc.selected && len(doc.body.ConfigMapGenerator)+len(doc.body.SecretGenerator) != 0 {
+				remaining[dir] = struct{}{}
+			}
 		}
 	}
 	record := func(v graphVisit) error {
@@ -98,34 +102,42 @@ func (l *Loader) buildProductions(
 			return nil
 		}
 		if v.document != nil {
-			for _, g := range v.document.ConfigMapGenerator {
-				generators = append(
-					generators,
-					generatorRecord{
-						root:        v.root,
-						file:        v.file,
-						namespace:   cmp.Or(v.namespace, g.Namespace, v.fallback),
-						isConfigMap: true,
-						args:        g.GeneratorArgs,
-						owner:       v.owner,
-						source:      v.source,
-						reader:      l.documents,
-					},
-				)
+			{
+				gValues := v.document.ConfigMapGenerator
+				for gIndex := range gValues {
+					g := gValues[gIndex]
+					generators = append(
+						generators,
+						generatorRecord{
+							root:        v.root,
+							file:        v.file,
+							namespace:   cmp.Or(v.namespace, g.Namespace, v.fallback),
+							isConfigMap: true,
+							args:        g.GeneratorArgs,
+							owner:       v.owner,
+							source:      v.source,
+							reader:      l.documents,
+						},
+					)
+				}
 			}
-			for _, g := range v.document.SecretGenerator {
-				generators = append(
-					generators,
-					generatorRecord{
-						root:      v.root,
-						file:      v.file,
-						namespace: cmp.Or(v.namespace, g.Namespace, v.fallback),
-						args:      g.GeneratorArgs,
-						owner:     v.owner,
-						source:    v.source,
-						reader:    l.documents,
-					},
-				)
+			{
+				gValues2 := v.document.SecretGenerator
+				for gIndex2 := range gValues2 {
+					g := gValues2[gIndex2]
+					generators = append(
+						generators,
+						generatorRecord{
+							root:      v.root,
+							file:      v.file,
+							namespace: cmp.Or(v.namespace, g.Namespace, v.fallback),
+							args:      g.GeneratorArgs,
+							owner:     v.owner,
+							source:    v.source,
+							reader:    l.documents,
+						},
+					)
+				}
 			}
 			return nil
 		}
@@ -137,9 +149,12 @@ func (l *Loader) buildProductions(
 		return nil
 	}
 	var builtDirs []string
-	for dir, doc := range l.documents.cache {
-		if doc.built != nil {
-			builtDirs = append(builtDirs, dir)
+	{
+		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+		for dir, doc := range l.documents.cache {
+			if doc.built != nil {
+				builtDirs = append(builtDirs, dir)
+			}
 		}
 	}
 	slices.Sort(builtDirs)
@@ -199,41 +214,57 @@ func (l *Loader) buildProductions(
 			}
 		}
 	}
-	for _, contribution := range l.scopes.contributions {
-		if !contribution.active || contribution.membershipOnly {
-			continue
-		}
-		for _, v := range contribution.visits {
-			v.owner, v.source = contribution.owner, contribution.source
-			if err := record(v); err != nil {
-				return err
-			}
-		}
-		b.joinProductions(declarations, contribution.visits)
-		declarations = nil
-	}
-	if l.documents.compact {
-		for _, contribution := range l.scopes.contributions {
-			occurrence, located := l.locations[contribution.owner]
-			if !located {
+	{
+		contributionValues := l.scopes.contributions
+		for contributionIndex := range contributionValues {
+			contribution := contributionValues[contributionIndex]
+			if !contribution.active || contribution.membershipOnly {
 				continue
 			}
-			var roots []string
-			complete := true
-			for _, v := range contribution.visits {
-				file, err := filepath.Rel(contribution.context.root, v.file)
-				if v.incomplete != "" || err != nil {
-					complete = false
-					break
+			{
+				vValues := contribution.visits
+				for vIndex := range vValues {
+					v := vValues[vIndex]
+					v.owner, v.source = contribution.owner, contribution.source
+					if err := record(v); err != nil {
+						return err
+					}
 				}
-				roots = append(roots, filepath.ToSlash(file))
 			}
-			if complete && len(roots) != 0 {
-				slices.Sort(roots)
-				facts := *occurrence.facts
-				facts.roots = slices.Compact(roots)
-				occurrence.facts = &facts
-				l.locations[contribution.owner] = occurrence
+			b.joinProductions(declarations, contribution.visits)
+			declarations = nil
+		}
+	}
+	if l.documents.compact {
+		{
+			contributionValues2 := l.scopes.contributions
+			for contributionIndex2 := range contributionValues2 {
+				contribution := contributionValues2[contributionIndex2]
+				occurrence, located := l.locations[contribution.owner]
+				if !located {
+					continue
+				}
+				var roots []string
+				complete := true
+				{
+					vValues2 := contribution.visits
+					for vIndex2 := range vValues2 {
+						v := vValues2[vIndex2]
+						file, err := filepath.Rel(contribution.context.root, v.file)
+						if v.incomplete != "" || err != nil {
+							complete = false
+							break
+						}
+						roots = append(roots, filepath.ToSlash(file))
+					}
+				}
+				if complete && len(roots) != 0 {
+					slices.Sort(roots)
+					facts := *occurrence.facts
+					facts.roots = slices.Compact(roots)
+					occurrence.facts = &facts
+					l.locations[contribution.owner] = occurrence
+				}
 			}
 		}
 	}
@@ -256,11 +287,15 @@ func (l *Loader) buildProductions(
 		for _, dir := range l.unreachedGeneratorRoots(repoRoot, remaining) {
 			root := graphVisit{root: repoRoot, dir: dir}
 			walks := l.visitScope(root, false)
-			for _, v := range walks {
-				v.owner = manifest.NamedResource{}
-				v.source = manifest.BootstrapSourceID
-				if err := record(v); err != nil {
-					return err
+			{
+				vValues3 := walks
+				for vIndex3 := range vValues3 {
+					v := vValues3[vIndex3]
+					v.owner = manifest.NamedResource{}
+					v.source = manifest.BootstrapSourceID
+					if err := record(v); err != nil {
+						return err
+					}
 				}
 			}
 			b.joinProductions(declarations, walks)
@@ -332,43 +367,47 @@ func (l *Loader) unreachedGeneratorRoots(repoRoot string, remaining map[string]s
 }
 
 func (l *Loader) addGenerated(ctx context.Context, generators []generatorRecord) error {
-	for _, r := range generators {
-		// Generator names are indexed before suffix hashing, including failed inputs.
-		id := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: r.namespace, Name: r.args.Name}
-		if r.isConfigMap {
-			id.Kind = manifest.KindConfigMap
-		}
-		record := l.Index.Records[id]
-		if record.File == "" {
-			record.File = l.fileCoordinate(r.file)
-		}
-		p := manifest.Production{Owner: r.owner, Source: r.source, File: l.fileCoordinate(r.file)}
-		if ks, ok := l.Store.Get[*manifest.Kustomization](r.owner); ok {
-			p.Source = ks.SourceID()
-		}
-		if p.Source.Name == "" || p.Source.Kind == "" {
-			p.Source = manifest.BootstrapSourceID
-		}
-		if !slices.Contains(record.Productions, p) {
-			record.Productions = append(record.Productions, p)
-		}
-		l.Index.Records[id] = record
-		if l.documents.compact {
-			continue
-		}
-		obj, err := r.materialize(ctx, l.Options)
-		if err != nil {
-			if ctx.Err() != nil || errors.Is(err, errRemoteInputs) {
-				return err
+	{
+		rValues := generators
+		for rIndex := range rValues {
+			r := rValues[rIndex]
+			// Generator names are indexed before suffix hashing, including failed inputs.
+			id := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: r.namespace, Name: r.args.Name}
+			if r.isConfigMap {
+				id.Kind = manifest.KindConfigMap
 			}
-			slog.Debug("loader: skipping generator input", "file", r.file, "generator", r.args.Name, "error", err)
-			continue
+			record := l.Index.Records[id]
+			if record.File == "" {
+				record.File = l.fileCoordinate(r.file)
+			}
+			p := manifest.Production{Owner: r.owner, Source: r.source, File: l.fileCoordinate(r.file)}
+			if ks, ok := l.Store.Get[*manifest.Kustomization](r.owner); ok {
+				p.Source = ks.SourceID()
+			}
+			if p.Source.Name == "" || p.Source.Kind == "" {
+				p.Source = manifest.BootstrapSourceID
+			}
+			if !slices.Contains(record.Productions, p) {
+				record.Productions = append(record.Productions, p)
+			}
+			l.Index.Records[id] = record
+			if l.documents.compact {
+				continue
+			}
+			obj, err := r.materialize(ctx, l.Options)
+			if err != nil {
+				if ctx.Err() != nil || errors.Is(err, errRemoteInputs) {
+					return err
+				}
+				slog.Debug("loader: skipping generator input", "file", r.file, "generator", r.args.Name, "error", err)
+				continue
+			}
+			record.ReferenceData = append(
+				record.ReferenceData,
+				manifest.ReferenceData{Production: p, OfflineData: obj.(manifest.Data)},
+			)
+			l.Index.Records[id] = record
 		}
-		record.ReferenceData = append(
-			record.ReferenceData,
-			manifest.ReferenceData{Production: p, OfflineData: obj.(manifest.Data)},
-		)
-		l.Index.Records[id] = record
 	}
 	return nil
 }
@@ -386,6 +425,7 @@ type graphContext struct {
 
 type graphVisit struct {
 	graphContext
+
 	file, origin       string
 	localFile          string
 	prefix, coordinate string
@@ -418,16 +458,19 @@ func (l *Loader) packageRoots(repoRoot string, kss []store.Child) []string {
 	l.documents.replayEdges()
 	sourceRoot := l.documents.mountedRoot(repoRoot)
 	roots := map[string]bool{}
-	for dir, doc := range l.documents.cache {
-		if (doc.traversed || dir == l.entryPath) && doc.file != "" {
-			roots[dir] = false
-			if l.documents.mountedRoot(dir) == sourceRoot {
-				rel, err := filepath.Rel(repoRoot, dir)
-				roots[dir] = err == nil && !safepath.Escaped(rel) && l.anchorRoot(repoRoot, filepath.ToSlash(rel))
-			}
-			if doc.buildExcluded {
-				doc.buildExcluded = false
-				l.documents.cache[dir] = doc
+	{
+		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+		for dir, doc := range l.documents.cache {
+			if (doc.traversed || dir == l.entryPath) && doc.file != "" {
+				roots[dir] = false
+				if l.documents.mountedRoot(dir) == sourceRoot {
+					rel, err := filepath.Rel(repoRoot, dir)
+					roots[dir] = err == nil && !safepath.Escaped(rel) && l.anchorRoot(repoRoot, filepath.ToSlash(rel))
+				}
+				if doc.buildExcluded {
+					doc.buildExcluded = false
+					l.documents.cache[dir] = doc
+				}
 			}
 		}
 	}
@@ -652,9 +695,13 @@ func (b *selfProduceBuilder) recordProduced(
 			return declarations, err
 		}
 	}
-	for _, obj := range objects {
-		if obj.outcome.Err == nil {
-			record(obj, obj.version)
+	{
+		objValues := objects
+		for objIndex := range objValues {
+			obj := objValues[objIndex]
+			if obj.outcome.Err == nil {
+				record(obj, obj.version)
+			}
 		}
 	}
 	return declarations, projectionErr
@@ -682,44 +729,56 @@ func (b *selfProduceBuilder) joinProductions(declarations []producerDeclaration,
 		return
 	}
 	var candidates []manifest.NamedResource
-	for _, v := range scope {
-		if v.role != kustomizeinput.Resource || v.document != nil || !v.readable ||
-			b.scanExclusions && b.reader.scanExcluded(v.file) {
-			continue
-		}
-		record := func(child store.Child) {
-			obj := child.Obj
-			if obj == nil {
-				return
+	{
+		vValues4 := scope
+		for vIndex4 := range vValues4 {
+			v := vValues4[vIndex4]
+			if v.role != kustomizeinput.Resource || v.document != nil || !v.readable ||
+				b.scanExclusions && b.reader.scanExcluded(v.file) {
+				continue
 			}
-			ns := manifest.Resolve(obj.Named(), v.namespace, v.fallback).Namespace
-			if ns != obj.Named().Namespace {
-				obj = obj.WithNamespace(ns)
+			record := func(child store.Child) {
+				obj := child.Obj
+				if obj == nil {
+					return
+				}
+				ns := manifest.Resolve(obj.Named(), v.namespace, v.fallback).Namespace
+				if ns != obj.Named().Namespace {
+					obj = obj.WithNamespace(ns)
+				}
+				if v.deferMaterialization && !b.reader.cache[v.file].loaded && b.store.GetObject(obj.Named()) == nil {
+					return
+				}
+				for ref := range manifest.References(obj, manifest.ReferenceRelations) {
+					candidates = append(candidates, ref.NamedResource)
+				}
 			}
-			if v.deferMaterialization && !b.reader.cache[v.file].loaded && b.store.GetObject(obj.Named()) == nil {
-				return
+			objects, err := b.reader.fileObjects(v.file, manifest.ParseDocOptions{WipeSecrets: b.wipeSecrets})
+			if err != nil {
+				if b.err == nil {
+					b.err = err
+				}
+				continue
 			}
-			for ref := range manifest.References(obj, manifest.ReferenceRelations) {
-				candidates = append(candidates, ref.NamedResource)
-			}
-		}
-		objects, err := b.reader.fileObjects(v.file, manifest.ParseDocOptions{WipeSecrets: b.wipeSecrets})
-		if err != nil {
-			if b.err == nil {
-				b.err = err
-			}
-			continue
-		}
-		for _, obj := range objects {
-			if obj.outcome.Err == nil {
-				record(obj.Child)
+			{
+				objValues2 := objects
+				for objIndex2 := range objValues2 {
+					obj := objValues2[objIndex2]
+					if obj.outcome.Err == nil {
+						record(obj.Child)
+					}
+				}
 			}
 		}
 	}
 	slices.SortFunc(candidates, manifest.NamedResource.Compare)
 	candidates = slices.Compact(candidates)
-	for _, declaration := range declarations {
-		b.recordProducer(declaration, candidates)
+	{
+		declarationValues := declarations
+		for declarationIndex := range declarationValues {
+			declaration := declarationValues[declarationIndex]
+			b.recordProducer(declaration, candidates)
+		}
 	}
 }
 

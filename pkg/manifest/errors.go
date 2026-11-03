@@ -71,7 +71,7 @@ func ErrorDetails(err error) string {
 	return out.String()
 }
 
-// Sentinel errors. Callers branch on these with errors.Is. Every error
+// Sentinel errors. Callers branch on these with [errors.Is]. Every error
 // produced by this module wraps ErrFlux, so a generic
 // errors.Is(err, manifest.ErrFlux) classifies any flux-related failure.
 var (

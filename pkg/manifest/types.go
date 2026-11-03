@@ -117,6 +117,7 @@ type BaseManifest interface {
 // DependencyRef is a compact prerequisite identity and optional CEL gate.
 type DependencyRef struct {
 	NamedResource
+
 	// ReadyExpr borrows an immutable authored expression and replaces built-in readiness when non-empty.
 	ReadyExpr *string
 	// Artifact requires acquired filesystem content after readiness.
@@ -154,6 +155,7 @@ const (
 // Retained references MUST be cloned; iteration borrows immutable manifest fields.
 type Reference struct {
 	DependencyRef
+
 	// Use is source, chart, dependsOn, valuesFrom, substituteFrom, secretRef,
 	// certSecretRef, proxySecretRef, inputsFrom, artifact or materializer; empty selects an implicit gate only.
 	Use string
@@ -198,12 +200,12 @@ func (r Reference) Clone() Reference {
 
 // ContentInput reports whether a reference carries affected or required input content.
 func (r Reference) ContentInput() bool {
-	return r.Content || r.Use == "substituteFrom" && r.Name != ""
+	return r.Content || r.Use == substituteFromKey && r.Name != ""
 }
 
 // AffectedInput reports whether changed content can affect the consumer.
 func (r Reference) AffectedInput() bool {
-	return r.ContentInput() || r.Use == "source" || r.Use == "artifact" || r.Use == "chart" || r.Use == "valuesFrom" ||
+	return r.ContentInput() || r.Use == sourceKey || r.Use == "artifact" || r.Use == chartKey || r.Use == "valuesFrom" ||
 		r.Use == "inputsFrom"
 }
 
@@ -243,6 +245,8 @@ func References(obj BaseManifest, view ReferenceView) iter.Seq[Reference] {
 }
 
 // MapDependsOn transforms dependency fields without mutating the object; a nil namespace preserves it.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func MapDependsOn(obj BaseManifest, name, namespace func(string) string) BaseManifest {
 	if ks, ok := obj.(*Kustomization); ok {
 		return ks.mapDependsOn(name, namespace)
@@ -251,7 +255,7 @@ func MapDependsOn(obj BaseManifest, name, namespace func(string) string) BaseMan
 }
 
 func credentialReferences(yield func(Reference) bool, namespace string, refs ...*LocalObjectReference) bool {
-	uses := [...]string{"secretRef", "certSecretRef", "proxySecretRef"}
+	uses := [...]string{secretRefKey, "certSecretRef", "proxySecretRef"}
 	for i, ref := range refs {
 		if ref != nil && !yield(Reference{
 			NamedResource: Resolve(NamedResource{Kind: KindSecret, Name: ref.Name}, "", namespace),
@@ -305,14 +309,16 @@ func (r *RawObject) ReconcileInput(doc map[string]any) (string, bool, bool) {
 	if !r.isArtifactGenerator() {
 		return "", false, false
 	}
-	metadata, _ := doc["metadata"].(map[string]any)
+	metadata, _ := doc[metadataKey].(map[string]any)
 	uid, _ := metadata["uid"].(string)
-	annotations, _ := metadata["annotations"].(map[string]any)
+	annotations, _ := metadata[annotationsKey].(map[string]any)
 	disabled, _ := annotations["source.extensions.fluxcd.io/reconcile"].(string)
 	return uid, strings.EqualFold(disabled, "disabled"), true
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (r *RawObject) WithNamespace(namespace string) BaseManifest {
 	out := *r
 	out.Namespace = namespace
@@ -342,7 +348,7 @@ func parseRawObject(doc map[string]any) (*RawObject, error) {
 	if missing != "" {
 		return nil, inputf("missing %s for %s", missing, kind)
 	}
-	spec, _ := doc["spec"].(map[string]any)
+	spec, _ := doc[specKey].(map[string]any)
 	spec = DeepCopyMap(spec)
 	return &RawObject{
 		Kind:       kind,
@@ -378,7 +384,7 @@ func referenceExpression(expr *string) *string {
 func ContentInputs(obj BaseManifest, reverse bool) iter.Seq[NamedResource] {
 	return func(yield func(NamedResource) bool) {
 		for ref := range References(obj, ReferenceRelations) {
-			include := ref.Content || ref.Use == "substituteFrom" && ref.Name != ""
+			include := ref.Content || ref.Use == substituteFromKey && ref.Name != ""
 			if reverse {
 				include = ref.AffectedInput()
 			}

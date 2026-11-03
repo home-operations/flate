@@ -31,6 +31,7 @@ func Prepare(doc manifest.DocOccurrence, opts manifest.ParseDocOptions) (store.C
 	return store.Child{Obj: obj, Doc: authoritative}, doc, changed
 }
 
+//nolint:gocritic // Keep immutable value-receiver semantics.
 func (r documentReader) parseFile(
 	ctx context.Context,
 	path string,
@@ -39,9 +40,13 @@ func (r documentReader) parseFile(
 	if r.compact && r.coordinate == nil {
 		facts, err := r.censusFile(ctx, path, opts)
 		var children []store.Child
-		for _, fact := range facts {
-			if fact.Obj != nil && fact.outcome.Err == nil && !fact.fact.facts.uncertain {
-				children = append(children, fact.Child)
+		{
+			factValues := facts
+			for factIndex := range factValues {
+				fact := factValues[factIndex]
+				if fact.Obj != nil && fact.outcome.Err == nil && !fact.fact.facts.uncertain {
+					children = append(children, fact.Child)
+				}
 			}
 		}
 		return children, err
@@ -54,9 +59,13 @@ func (r documentReader) parseFile(
 	if len(out) != 0 {
 		tracked = make([]store.Child, 0, len(out))
 	}
-	for _, child := range out {
-		if child.Obj != nil && child.outcome.Err == nil && manifest.KindOf(child.Obj).Tracked {
-			tracked = append(tracked, child.Child)
+	{
+		childValues := out
+		for childIndex := range childValues {
+			child := childValues[childIndex]
+			if child.Obj != nil && child.outcome.Err == nil && manifest.KindOf(child.Obj).Tracked {
+				tracked = append(tracked, child.Child)
+			}
 		}
 	}
 	return tracked, nil
@@ -230,19 +239,27 @@ func (r documentReader) censusFile(
 	}
 	if len(facts) > 1 {
 		declared := map[manifest.NamedResource]string{}
-		for _, child := range facts {
-			if child.fact == nil {
-				continue
+		{
+			childValues2 := facts
+			for childIndex2 := range childValues2 {
+				child := childValues2[childIndex2]
+				if child.fact == nil {
+					continue
+				}
+				id, fingerprint := child.fact.Authored, child.fact.facts.declared
+				if previous, known := declared[id]; known && previous != fingerprint {
+					fingerprint = ""
+				}
+				declared[id] = fingerprint
 			}
-			id, fingerprint := child.fact.Authored, child.fact.facts.declared
-			if previous, known := declared[id]; known && previous != fingerprint {
-				fingerprint = ""
-			}
-			declared[id] = fingerprint
 		}
-		for _, child := range facts {
-			if child.fact != nil {
-				child.fact.facts.declared = declared[child.fact.Authored]
+		{
+			childValues3 := facts
+			for childIndex3 := range childValues3 {
+				child := childValues3[childIndex3]
+				if child.fact != nil {
+					child.fact.facts.declared = declared[child.fact.Authored]
+				}
 			}
 		}
 	}

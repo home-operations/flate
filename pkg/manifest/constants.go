@@ -46,6 +46,8 @@ const DefaultNamespace = "flux-system"
 // when their own SourceRef is still empty (#105 — see resolveSourceRoot).
 // Exported so orchestrator and kustomization controller share one
 // declaration.
+//
+//nolint:gochecknoglobals // The SDK exposes the canonical bootstrap identity.
 var BootstrapSourceID = NamedResource{
 	Group: SourceDomain, Kind: KindGitRepository, Namespace: DefaultNamespace, Name: DefaultNamespace,
 }
@@ -54,6 +56,29 @@ var BootstrapSourceID = NamedResource{
 const ValuePlaceholderPrefix = "..PLACEHOLDER_"
 
 // KustomizeBuilderFilenames is the upstream list of recognized root filenames.
+//
+//nolint:gochecknoglobals // The SDK exposes the upstream filename inventory.
 var KustomizeBuilderFilenames = konfig.RecognizedKustomizationFileNames()
 
 const internalKustomizationNamespace = "\x00"
+
+const (
+	annotationsKey    = "annotations"
+	apiVersionKey     = "apiVersion"
+	branchKey         = "branch"
+	chartKey          = "chart"
+	commitKey         = "commit"
+	dataKey           = "data"
+	dependsOnKey      = "dependsOn"
+	kindKey           = "kind"
+	metadataKey       = "metadata"
+	nameKey           = "name"
+	namespaceKey      = "namespace"
+	secretRefKey      = "secretRef"
+	semverKey         = "semver"
+	sourceKey         = "source"
+	specKey           = "spec"
+	stringDataKey     = "stringData"
+	substituteFromKey = "substituteFrom"
+	tagKey            = "tag"
+)

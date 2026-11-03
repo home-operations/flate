@@ -22,30 +22,39 @@ import (
 const frameDomain = "flateks4"
 
 type renderHeader struct {
-	Key, Binding, Output string
-	Size                 int
-	Reads                readSetSnapshot
-	Entry                *entryApplication `json:",omitempty"`
+	Key     string            `json:"Key"`
+	Binding string            `json:"Binding"`
+	Output  string            `json:"Output"`
+	Size    int               `json:"Size"`
+	Reads   readSetSnapshot   `json:"Reads"`
+	Entry   *entryApplication `json:",omitempty"`
 }
 
 type entryApplication struct {
-	Application map[string]any
-	Reads       readSetSnapshot
-	Inventory   acceptedRender
-	Inputs      []EntryInput
-	Complete    bool
+	Application map[string]any  `json:"Application"`
+	Reads       readSetSnapshot `json:"Reads"`
+	Inventory   acceptedRender  `json:"Inventory"`
+	Inputs      []EntryInput    `json:"Inputs"`
+	Complete    bool            `json:"Complete"`
 }
 
 const frameHeaderLimit = 16 << 20
 
 type renderBinding struct {
-	Render                                       string
-	Source                                       manifest.NamedResource
-	Kind, URL, Path, Root, Key, Revision, Digest string
-	Alias                                        bool
-	Wipe, Strict                                 bool
-	Skip                                         []string `json:",omitempty"`
-	Dependencies                                 values.DependencySubstitutions
+	Render       string                         `json:"Render"`
+	Source       manifest.NamedResource         `json:"Source"`
+	Kind         string                         `json:"Kind"`
+	URL          string                         `json:"URL"`
+	Path         string                         `json:"Path"`
+	Root         string                         `json:"Root"`
+	Key          string                         `json:"Key"`
+	Revision     string                         `json:"Revision"`
+	Digest       string                         `json:"Digest"`
+	Alias        bool                           `json:"Alias"`
+	Wipe         bool                           `json:"Wipe"`
+	Strict       bool                           `json:"Strict"`
+	Skip         []string                       `json:",omitempty"`
+	Dependencies values.DependencySubstitutions `json:"Dependencies"`
 }
 
 func (a renderBinding) equal(b renderBinding) bool {
@@ -85,23 +94,23 @@ func equalRenderFrame(a, b any) bool {
 }
 
 type acceptedRoot struct {
-	Source manifest.NamedResource
-	Paths  []string
+	Source manifest.NamedResource `json:"Source"`
+	Paths  []string               `json:"Paths"`
 }
 
 type acceptedRecord struct {
-	ID     manifest.NamedResource
-	Record manifest.DiscoveryRecord
-	Roots  []acceptedRoot
+	ID     manifest.NamedResource   `json:"ID"`
+	Record manifest.DiscoveryRecord `json:"Record"`
+	Roots  []acceptedRoot           `json:"Roots"`
 }
 
 type acceptedRender struct {
-	Version  int
-	Complete bool
-	Owner    manifest.NamedResource
-	Raw      string
-	Final    string
-	Records  []acceptedRecord
+	Version  int                    `json:"Version"`
+	Complete bool                   `json:"Complete"`
+	Owner    manifest.NamedResource `json:"Owner"`
+	Raw      string                 `json:"Raw"`
+	Final    string                 `json:"Final"`
+	Records  []acceptedRecord       `json:"Records"`
 }
 
 func (a *acceptedRender) equal(b *acceptedRender) bool {
@@ -115,17 +124,21 @@ func (a *acceptedRender) equal(b *acceptedRender) bool {
 	if (a.Records == nil) != (b.Records == nil) || len(a.Records) != len(b.Records) {
 		return false
 	}
-	for i, x := range a.Records {
-		y := b.Records[i]
-		if x.ID != y.ID || !x.Record.Equal(y.Record) || (x.Roots == nil) != (y.Roots == nil) ||
-			len(x.Roots) != len(y.Roots) {
-			return false
-		}
-		for j, root := range x.Roots {
-			other := y.Roots[j]
-			if root.Source != other.Source || (root.Paths == nil) != (other.Paths == nil) ||
-				!slices.Equal(root.Paths, other.Paths) {
+	{
+		xValues := a.Records
+		for i := range xValues {
+			x := xValues[i]
+			y := b.Records[i]
+			if x.ID != y.ID || !x.Record.Equal(y.Record) || (x.Roots == nil) != (y.Roots == nil) ||
+				len(x.Roots) != len(y.Roots) {
 				return false
+			}
+			for j, root := range x.Roots {
+				other := y.Roots[j]
+				if root.Source != other.Source || (root.Paths == nil) != (other.Paths == nil) ||
+					!slices.Equal(root.Paths, other.Paths) {
+					return false
+				}
 			}
 		}
 	}
@@ -139,38 +152,38 @@ func encodeFrame(header renderHeader, output []byte) ([]byte, error) {
 	header.Size, header.Output = len(output), manifest.Fingerprint(output)
 	data, err := json.Marshal(header)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("encode render frame: %w", err)
 	}
 	if len(data) > frameHeaderLimit {
 		return nil, errors.New("render header exceeds frame limit")
 	}
-	frame := make([]byte, 12+len(data)+len(output))
+	frame := make([]byte, framePrefixSize+len(data)+len(output))
 	copy(frame, frameDomain)
 	binary.BigEndian.PutUint32(
-		frame[8:12],
-		uint32(len(data)),
-	) //nolint:gosec // The header is bounded by frameHeaderLimit.
-	copy(frame[12:], data)
-	copy(frame[12+len(data):], output)
+		frame[8:framePrefixSize],
+		uint32(len(data)), //nolint:gosec // frameHeaderLimit bounds the header length below uint32 capacity.
+	)
+	copy(frame[framePrefixSize:], data)
+	copy(frame[framePrefixSize+len(data):], output)
 	return frame, nil
 }
 
 func decodeFrame(data []byte) (renderFrame, error) {
-	if len(data) < 12 || string(data[:8]) != frameDomain {
+	if len(data) < framePrefixSize || string(data[:8]) != frameDomain {
 		return renderFrame{}, errors.New("invalid render frame domain or version")
 	}
-	size := int(binary.BigEndian.Uint32(data[8:12]))
-	if size > frameHeaderLimit || size > len(data)-12 {
+	size := int(binary.BigEndian.Uint32(data[8:framePrefixSize]))
+	if size > frameHeaderLimit || size > len(data)-framePrefixSize {
 		return renderFrame{}, errors.New("invalid render header length")
 	}
 	var header renderHeader
-	if err := json.Unmarshal(data[12:12+size], &header); err != nil {
-		return renderFrame{}, err
+	if err := json.Unmarshal(data[framePrefixSize:framePrefixSize+size], &header); err != nil {
+		return renderFrame{}, fmt.Errorf("decode render frame: %w", err)
 	}
 	if header.Entry != nil && (!header.Entry.Complete || header.Entry.Inputs == nil) {
 		return renderFrame{}, errors.New("incomplete entry qualification evidence")
 	}
-	begin := 12 + size
+	begin := framePrefixSize + size
 	if header.Size < 0 || header.Size > len(data)-begin {
 		return renderFrame{}, errors.New("invalid render payload length")
 	}
@@ -179,30 +192,40 @@ func decodeFrame(data []byte) (renderFrame, error) {
 	if header.Output == "" || manifest.Fingerprint(output) != header.Output {
 		return renderFrame{}, errors.New("invalid render payload identity")
 	}
-	frame := renderFrame{header: header, output: bytes.Clone(output), raw: manifest.Fingerprint(data[12:begin])}
+	frame := renderFrame{
+		header: header,
+		output: bytes.Clone(output),
+		raw:    manifest.Fingerprint(data[framePrefixSize:begin]),
+	}
 	tail := data[end:]
 	if len(tail) == 0 || len(tail) > frameHeaderLimit {
 		return frame, nil
 	}
 	var accepted acceptedRender
 	if err := json.Unmarshal(tail, &accepted); err != nil {
+		//nolint:nilerr // Invalid cache metadata must remain a miss so the renderer can rebuild.
 		return frame, nil
 	}
 	if accepted.Version != 2 || accepted.Final == "" || !accepted.Complete || accepted.Raw != frame.raw {
 		return frame, nil
 	}
-	for i, item := range accepted.Records {
-		if i > 0 && accepted.Records[i-1].ID.Compare(item.ID) >= 0 {
-			return frame, nil
-		}
-		for j, root := range item.Roots {
-			if j > 0 && item.Roots[j-1].Source.Compare(root.Source) >= 0 {
+	{
+		itemValues := accepted.Records
+		for i := range itemValues {
+			item := itemValues[i]
+			if i > 0 && accepted.Records[i-1].ID.Compare(item.ID) >= 0 {
 				return frame, nil
+			}
+			for j, root := range item.Roots {
+				if j > 0 && item.Roots[j-1].Source.Compare(root.Source) >= 0 {
+					return frame, nil
+				}
 			}
 		}
 	}
 	canonical, err := json.Marshal(accepted)
 	if err != nil {
+		//nolint:nilerr // Invalid cache metadata must remain a miss so the renderer can rebuild.
 		return frame, nil
 	}
 	frame.accepted, frame.acceptedKey = &accepted, manifest.Fingerprint(canonical)
@@ -216,32 +239,35 @@ func prepareAccepted(
 	records iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord],
 ) (acceptedRender, error) {
 	accepted := acceptedRender{Version: 2, Complete: true, Owner: owner, Raw: frame.raw, Final: fingerprint}
-	for id, record := range records {
-		item := acceptedRecord{ID: id, Record: record}
-		item.Record.ContentRoots = nil
-		item.Record.Inputs = slices.Clone(record.Inputs)
-		item.Record.Refs = slices.Clone(record.Refs)
-		slices.SortFunc(item.Record.Refs, manifest.NamedResource.Compare)
-		item.Record.Refs = slices.Compact(item.Record.Refs)
-		item.Record.Productions = slices.Clone(record.Productions)
-		slices.SortFunc(item.Record.Productions, func(a, b manifest.Production) int {
-			return cmp.Or(
-				a.Owner.Compare(b.Owner),
-				a.Declaration.Compare(b.Declaration),
-				a.Authored.Compare(b.Authored),
-				a.Source.Compare(b.Source),
-				cmp.Compare(a.Path, b.Path),
-				cmp.Compare(a.File, b.File),
-			)
-		})
-		item.Record.Productions = slices.Compact(item.Record.Productions)
-		for source, paths := range record.ContentRoots {
-			paths = slices.Clone(paths)
-			slices.Sort(paths)
-			item.Roots = append(item.Roots, acceptedRoot{Source: source, Paths: slices.Compact(paths)})
+	{
+		//nolint:gocritic // The iterator supplies immutable value snapshots.
+		for id, record := range records {
+			item := acceptedRecord{ID: id, Record: record}
+			item.Record.ContentRoots = nil
+			item.Record.Inputs = slices.Clone(record.Inputs)
+			item.Record.Refs = slices.Clone(record.Refs)
+			slices.SortFunc(item.Record.Refs, manifest.NamedResource.Compare)
+			item.Record.Refs = slices.Compact(item.Record.Refs)
+			item.Record.Productions = slices.Clone(record.Productions)
+			slices.SortFunc(item.Record.Productions, func(a, b manifest.Production) int {
+				return cmp.Or(
+					a.Owner.Compare(b.Owner),
+					a.Declaration.Compare(b.Declaration),
+					a.Authored.Compare(b.Authored),
+					a.Source.Compare(b.Source),
+					cmp.Compare(a.Path, b.Path),
+					cmp.Compare(a.File, b.File),
+				)
+			})
+			item.Record.Productions = slices.Compact(item.Record.Productions)
+			for source, paths := range record.ContentRoots {
+				paths = slices.Clone(paths)
+				slices.Sort(paths)
+				item.Roots = append(item.Roots, acceptedRoot{Source: source, Paths: slices.Compact(paths)})
+			}
+			slices.SortFunc(item.Roots, func(a, b acceptedRoot) int { return a.Source.Compare(b.Source) })
+			accepted.Records = append(accepted.Records, item)
 		}
-		slices.SortFunc(item.Roots, func(a, b acceptedRoot) int { return a.Source.Compare(b.Source) })
-		accepted.Records = append(accepted.Records, item)
 	}
 	slices.SortFunc(accepted.Records, func(a, b acceptedRecord) int { return a.ID.Compare(b.ID) })
 	for i := 1; i < len(accepted.Records); i++ {
@@ -252,6 +278,7 @@ func prepareAccepted(
 	return accepted, nil
 }
 
+//nolint:gocritic // Keep immutable value-receiver semantics.
 func (f renderFrame) history(
 	owner manifest.NamedResource,
 ) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
@@ -259,25 +286,31 @@ func (f renderFrame) history(
 		return nil, false
 	}
 	return func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
-		for _, item := range f.accepted.Records {
-			record := item.Record
-			record.Inputs = slices.Clone(record.Inputs)
-			record.Refs = slices.Clone(record.Refs)
-			record.Productions = slices.Clone(record.Productions)
-			if len(item.Roots) > 0 {
-				record.ContentRoots = make(map[manifest.NamedResource][]string, len(item.Roots))
-			}
-			for _, root := range item.Roots {
-				record.ContentRoots[root.Source] = slices.Clone(root.Paths)
-			}
-			if !yield(item.ID, record) {
-				return
+		{
+			itemValues2 := f.accepted.Records
+			for itemIndex := range itemValues2 {
+				item := itemValues2[itemIndex]
+				record := item.Record
+				record.Inputs = slices.Clone(record.Inputs)
+				record.Refs = slices.Clone(record.Refs)
+				record.Productions = slices.Clone(record.Productions)
+				if len(item.Roots) > 0 {
+					record.ContentRoots = make(map[manifest.NamedResource][]string, len(item.Roots))
+				}
+				for _, root := range item.Roots {
+					record.ContentRoots[root.Source] = slices.Clone(root.Paths)
+				}
+				if !yield(item.ID, record) {
+					return
+				}
 			}
 		}
 	}, true
 }
 
 // PreviousRender returns validated raw output without rendering or acquiring remote inputs.
+//
+//nolint:gocritic // Preserve the existing value API and its snapshot semantics.
 func (c *TreeCache) PreviousRender(
 	ctx context.Context,
 	req RenderRequest,
@@ -375,16 +408,17 @@ func (p renderPublication) WriteTo(w io.Writer) (int64, error) {
 // RenderAcceptance binds accepted output and optional entry inventory to its final owner.
 type RenderAcceptance struct {
 	// Source identifies the admitted filesystem used by the receipt.
-	Source  manifest.SourceIdentity
-	Sources []manifest.SourceEvidence
-	Owner   manifest.NamedResource
-	Receipt *manifest.RenderReceipt
-	Entry   *manifest.RenderReceipt
+	Source  manifest.SourceIdentity   `json:"Source"`
+	Sources []manifest.SourceEvidence `json:"Sources"`
+	Owner   manifest.NamedResource    `json:"Owner"`
+	Receipt *manifest.RenderReceipt   `json:"Receipt"`
+	Entry   *manifest.RenderReceipt   `json:"Entry"`
 	// Records is supplied for opaque output or the entry applier receipt.
-	Records                 iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
-	DependencySubstitutions values.DependencySubstitutions
-	Content                 any
-	Reads, OutputReads      *store.ReadSet
+	Records                 iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord] `json:"Records"`
+	DependencySubstitutions values.DependencySubstitutions                              `json:"DependencySubstitutions"`
+	Content                 any                                                         `json:"Content"`
+	Reads                   *store.ReadSet                                              `json:"Reads"`
+	OutputReads             *store.ReadSet                                              `json:"OutputReads"`
 }
 
 // RecordRender persists accepted output and optional entry applier evidence.
@@ -416,6 +450,7 @@ func (c *TreeCache) RecordRender(ctx context.Context, acceptance RenderAcceptanc
 		frame.encoded, frame.accepted, frame.acceptedKey = nil, nil, ""
 	}
 	if records == nil && frame.accepted != nil {
+		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return ctx.Err()
 	}
 	var sources []manifest.SourceEvidence
@@ -435,6 +470,7 @@ func (c *TreeCache) RecordRender(ctx context.Context, acceptance RenderAcceptanc
 		}
 	}
 	if !c.owner.CanPersistRenders() {
+		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return ctx.Err()
 	}
 	var err error
@@ -448,7 +484,9 @@ func (c *TreeCache) RecordRender(ctx context.Context, acceptance RenderAcceptanc
 		}
 	}
 	if frame.raw == "" {
-		frame.raw = manifest.Fingerprint(frame.encoded[12 : 12+int(binary.BigEndian.Uint32(frame.encoded[8:12]))])
+		frame.raw = manifest.Fingerprint(
+			frame.encoded[12 : framePrefixSize+int(binary.BigEndian.Uint32(frame.encoded[8:framePrefixSize]))],
+		)
 	}
 	var accepted acceptedRender
 	var data []byte
@@ -479,3 +517,5 @@ func (c *TreeCache) RecordRender(ctx context.Context, acceptance RenderAcceptanc
 		},
 	)
 }
+
+const framePrefixSize = 12

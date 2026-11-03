@@ -45,7 +45,7 @@ func (f *operation) prepare(b *manifest.Bucket) (bucketAcquisition, error) {
 	if err != nil {
 		return bucketAcquisition{}, err
 	}
-	if _, err := resolved.ProxyURL(&url.URL{Scheme: schemeFor(secure), Host: endpoint}); err != nil {
+	if _, proxyURLErr := resolved.ProxyURL(&url.URL{Scheme: schemeFor(secure), Host: endpoint}); proxyURLErr != nil {
 		return bucketAcquisition{}, manifest.NewError(
 			manifest.ErrInput,
 			nil,
@@ -84,54 +84,12 @@ func (f *operation) prepare(b *manifest.Bucket) (bucketAcquisition, error) {
 
 func (r *bucketAcquisition) machineCredentials(ctx context.Context, providers []credentials.Provider) error {
 	for _, provider := range providers {
-		_, file := provider.(*credentials.FileAWSCredentials)
-		if file {
-			config, shared := os.Getenv("AWS_CONFIG_FILE"), os.Getenv("AWS_SHARED_CREDENTIALS_FILE")
-			if config == "" || shared == "" {
-				home, err := os.UserHomeDir()
-				if err != nil {
-					return err
-				}
-				config, shared = cmp.Or(
-					config,
-					filepath.Join(home, ".aws", "config"),
-				), cmp.Or(
-					shared,
-					filepath.Join(home, ".aws", "credentials"),
-				)
-			}
-			configured := false
-			for _, path := range []string{config, shared} {
-				_, err := os.Stat(
-					path,
-				) //nolint:gosec // Native AWS profiles accept user-selected paths; this only checks their presence.
-				if err != nil && !errors.Is(err, fs.ErrNotExist) {
-					return err
-				}
-				configured = configured || err == nil
-			}
-			if !configured {
-				continue
-			}
-		}
-		value, err := r.network.AWSCredentials(ctx, provider)
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
+		value, available, err := r.machineCredential(ctx, provider)
 		if err != nil {
-			if file {
-				return err
-			}
-			if request, ok := errors.AsType[*url.Error](err); ok {
-				target, parseErr := url.Parse(request.URL)
-				dial, isDial := errors.AsType[*net.OpError](request.Err)
-				timeout, isNetwork := errors.AsType[net.Error](request.Err)
-				if parseErr == nil && target.Scheme+"://"+target.Host == credentials.DefaultIAMRoleEndpoint &&
-					(isDial && dial.Op == "dial" || isNetwork && timeout.Timeout() || errors.Is(request.Err, context.DeadlineExceeded)) {
-					continue
-				}
-			}
 			return err
+		}
+		if !available {
+			continue
 		}
 		if value.SignerType == credentials.SignatureAnonymous ||
 			value.AccessKeyID == "" && value.SecretAccessKey == "" {
@@ -180,4 +138,77 @@ func (f *operation) resolveCredentials(b *manifest.Bucket) (*credentials.Credent
 		)
 	}
 	return credentials.NewStaticV4(access, secret, ""), nil
+}
+
+func machineFilesConfigured() (bool, error) {
+	config, shared := os.Getenv("AWS_CONFIG_FILE"), os.Getenv("AWS_SHARED_CREDENTIALS_FILE")
+	if config == "" || shared == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return false, fmt.Errorf("inspect AWS credential files: %w", err)
+		}
+		config, shared = cmp.Or(
+			config,
+			filepath.Join(home, ".aws", "config"),
+		), cmp.Or(
+			shared,
+			filepath.Join(home, ".aws", "credentials"),
+		)
+	}
+	configured := false
+	for _, path := range []string{config, shared} {
+		_, err := os.Stat( //nolint:gosec // Machine credential environment variables intentionally name caller-selected files.
+			path,
+		)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			if err != nil {
+				return false, fmt.Errorf("inspect AWS credential files: %w", err)
+			}
+			return false, nil
+		}
+		configured = configured || err == nil
+	}
+	return configured, nil
+}
+
+func unavailableIAMEndpoint(err error) bool {
+	request, ok := errors.AsType[*url.Error](err)
+	if !ok {
+		return false
+	}
+	target, parseErr := url.Parse(request.URL)
+	dial, isDial := errors.AsType[*net.OpError](request.Err)
+	timeout, isNetwork := errors.AsType[net.Error](request.Err)
+	return parseErr == nil && target.Scheme+"://"+target.Host == credentials.DefaultIAMRoleEndpoint &&
+		(isDial && dial.Op == "dial" || isNetwork && timeout.Timeout() || errors.Is(request.Err, context.DeadlineExceeded))
+}
+
+func (r *bucketAcquisition) machineCredential(
+	ctx context.Context,
+	provider credentials.Provider,
+) (credentials.Value, bool, error) {
+	_, file := provider.(*credentials.FileAWSCredentials)
+	if file {
+		configured, fileErr := machineFilesConfigured()
+		if fileErr != nil {
+			return credentials.Value{}, false, fileErr
+		}
+		if !configured {
+			return credentials.Value{}, false, nil
+		}
+	}
+	value, err := r.network.AWSCredentials(ctx, provider)
+	if ctx.Err() != nil {
+		return credentials.Value{}, false, ctx.Err() //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
+	}
+	if err != nil {
+		if file {
+			return credentials.Value{}, false, err
+		}
+		if unavailableIAMEndpoint(err) {
+			return credentials.Value{}, false, nil
+		}
+		return credentials.Value{}, false, err
+	}
+	return value, true, nil
 }

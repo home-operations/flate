@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
+
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -121,11 +123,11 @@ data:
 			ExternalChanges: change.NewSet([]string{"kubernetes/apps/media/plex/app/cm.yaml"}),
 		},
 	}, orchestrator.Config{WipeSecrets: true, Concurrency: 2})
-	if err != nil {
-		t.Fatal(err)
+	{
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
-	if len(runs) != 1 || runs[0].Orchestrator == nil {
-		t.Fatal("missing completed tree")
+	{
+		assert.FatalIf(t, len(runs) != 1 || runs[0].Orchestrator == nil, "%v", "missing completed tree")
 	}
 	o := runs[0].Orchestrator
 
@@ -140,14 +142,20 @@ data:
 			t.Errorf("%s: no status reported (expected reconciled)", id)
 			return
 		}
-		if info.Outcome() == store.OutcomeUnchanged {
-			t.Errorf("%s: expected reconciled, got OutcomeUnchanged — keep-cascade fix did not pull this into keep", id)
+		{
+			assert.ErrorIf(
+				t,
+				info.Outcome() == store.OutcomeUnchanged,
+				"%s: expected reconciled, got OutcomeUnchanged — keep-cascade fix did not pull this into keep",
+				id,
+			)
 		}
 	}
 	requireUnadmitted := func(id manifest.NamedResource) {
 		t.Helper()
-		if info, exists := o.Store().GetStatus(id); exists {
-			t.Errorf("%s: unselected sibling received a scheduler status: %+v", id, info)
+		{
+			info, exists := o.Store().GetStatus(id)
+			assert.ErrorIf(t, exists, "%s: unselected sibling received a scheduler status: %+v", id, info)
 		}
 	}
 

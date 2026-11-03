@@ -16,14 +16,17 @@ import (
 
 // DiffFormats lists accepted diff formats in help order, with the default first.
 // Callers must not modify this list.
-var DiffFormats = []Format{
-	FormatHuman, FormatGitHub, FormatDiff, FormatHTML,
-	FormatBrief, FormatGitLab, FormatGitea, FormatJSON,
+func DiffFormats() []Format {
+	return []Format{
+		FormatHuman, FormatGitHub, FormatDiff, FormatHTML,
+		FormatBrief, FormatGitLab, FormatGitea, FormatJSON,
+	}
 }
 
 const (
 	diffContextLines         = 3
 	dyffContextLines         = 4
+	nativeReportIndent       = 2
 	dyffMinorChangeThreshold = 0.1
 )
 
@@ -37,8 +40,10 @@ type DiffGroup struct {
 // DiffGroups writes canonical per-cluster JSON changes and suppressions.
 func (e Encoder) DiffGroups(groups []DiffGroup) error {
 	if len(groups) == 1 && !groups[0].Added && !groups[0].Removed {
-		_, err := e.Writer.Write(groups[0].Body)
-		return err
+		if _, err := e.Writer.Write(groups[0].Body); err != nil {
+			return fmt.Errorf("write cluster diff: %w", err)
+		}
+		return nil
 	}
 	values := make([]map[string]json.RawMessage, len(groups))
 	for i, g := range groups {
@@ -48,7 +53,11 @@ func (e Encoder) DiffGroups(groups []DiffGroup) error {
 				return fmt.Errorf("decode cluster diff: %w", err)
 			}
 		}
-		value["cluster"], _ = json.Marshal(g.Cluster)
+		cluster, err := json.Marshal(g.Cluster)
+		if err != nil {
+			return fmt.Errorf("encode cluster name: %w", err)
+		}
+		value["cluster"] = cluster
 		if g.Added {
 			value["added"] = json.RawMessage("true")
 		}
@@ -71,7 +80,8 @@ type LineChange struct {
 // PrepareLines collects serialization errors before any report is written.
 func PrepareLines(prepared diffprep.Prepared) ([]LineChange, error) {
 	var out []LineChange
-	for _, p := range prepared.Pairs {
+	for pIndex := range prepared.Pairs {
+		p := prepared.Pairs[pIndex]
 		var sides [2]string
 		for i, doc := range [2]map[string]any{p.Old, p.New} {
 			if doc == nil {
@@ -97,7 +107,8 @@ func PrepareLines(prepared diffprep.Prepared) ([]LineChange, error) {
 // LineSubjects inventories only the resource and producer labels this format prints.
 func LineSubjects(changes []LineChange, format Format) []manifest.NamedResource {
 	ids := make([]manifest.NamedResource, 0, len(changes))
-	for _, c := range changes {
+	for cIndex := range changes {
+		c := changes[cIndex]
 		ids = append(ids, c.Resource.ID)
 		if format == FormatHTML {
 			ids = append(ids, c.Parent.ID)
@@ -122,7 +133,8 @@ func (e Encoder) Lines(changes []LineChange) error {
 		return e.html(changes)
 	}
 	separate := false
-	for _, p := range changes {
+	for pIndex := range changes {
+		p := changes[pIndex]
 		label := p.Label
 		if p.ParentPath != "" {
 			label += " (" + p.ParentPath + ")"
@@ -136,41 +148,48 @@ func (e Encoder) Lines(changes []LineChange) error {
 		}
 		if separate {
 			if _, err := io.WriteString(e.Writer, "\n"); err != nil {
-				return err
+				return fmt.Errorf("write diff: %w", err)
 			}
 		}
 		if _, err := io.WriteString(e.Writer, body); err != nil {
-			return err
+			return fmt.Errorf("write diff: %w", err)
 		}
 		separate = true
 	}
 	return nil
 }
 
-var nativeStyles = map[Format]func(dyff.Report) dyff.ReportWriter{
-	FormatGitHub: diffSyntax("@@", "#", "!"),
-	FormatGitLab: diffSyntax("=", "=", "#"),
-	FormatGitea:  diffSyntax("@@", "=", "!"),
-	FormatHuman: func(report dyff.Report) dyff.ReportWriter {
+//nolint:ireturn // Dyff defines the common writer interface for its concrete report formats.
+func nativeStyle(format Format, report *dyff.Report) dyff.ReportWriter {
+	switch format {
+	case FormatGitHub:
+		return diffSyntax("@@", "#", "!")(*report)
+	case FormatGitLab:
+		return diffSyntax("=", "=", "#")(*report)
+	case FormatGitea:
+		return diffSyntax("@@", "=", "!")(*report)
+	case FormatHuman:
 		return &dyff.HumanReport{
-			Report: report, Indent: 2, UseIndentLines: true, OmitHeader: true,
+			Report: *report, Indent: nativeReportIndent, UseIndentLines: true, OmitHeader: true,
 			MultilineContextLines: dyffContextLines, MinorChangeThreshold: dyffMinorChangeThreshold,
 		}
-	},
-	FormatBrief: func(report dyff.Report) dyff.ReportWriter {
-		return &dyff.BriefReport{Report: report}
-	},
+	case FormatBrief:
+		return &dyff.BriefReport{Report: *report}
+	case FormatTable, FormatYAML, FormatJSON, FormatName, FormatDiff, FormatHTML:
+		return nil
+	}
+	return nil
 }
 
 // Native writes a prepared dyff report.
-func (e Encoder) Native(report dyff.Report) error {
+func (e Encoder) Native(report *dyff.Report) error {
 	// dyff emits a stray newline for an empty report.
 	if len(report.Diffs) == 0 {
 		return nil
 	}
 	// dyff reuses this buffer but ignores its final Flush error.
 	writer := bufio.NewWriter(e.Writer)
-	err := nativeStyles[e.Format](report).WriteReport(writer)
+	err := nativeStyle(e.Format, report).WriteReport(writer)
 	if err == nil {
 		err = writer.Flush()
 	}

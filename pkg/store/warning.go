@@ -48,12 +48,16 @@ func (s *Store) Warnings() []manifest.Warning {
 	s.warnMu.Unlock()
 	for _, reads := range s.assessments() {
 		start := len(out)
-		for _, warning := range reads.warnings {
-			if !slices.ContainsFunc(
-				out[start:],
-				func(w manifest.Warning) bool { return manifest.CompareWarning(w, warning) == 0 },
-			) {
-				out = append(out, warning)
+		{
+			warningValues := reads.warnings
+			for warningIndex := range warningValues {
+				warning := warningValues[warningIndex]
+				if !slices.ContainsFunc(
+					out[start:],
+					func(w manifest.Warning) bool { return manifest.CompareWarning(w, warning) == 0 },
+				) {
+					out = append(out, warning)
+				}
 			}
 		}
 	}
@@ -90,9 +94,13 @@ func (s *Store) Warnings() []manifest.Warning {
 			slices.SortFunc(contributions, func(a, b contribution) int { return a.owner.Compare(b.owner) })
 			owners := make([]string, len(contributions))
 			related := make([]manifest.NamedResource, 0, len(contributions)+1)
-			for i, c := range contributions {
-				owners[i] = manifest.DiagnosticFor(c.owner, s.GetObject(c.owner)).String()
-				related = append(related, c.owner)
+			{
+				cValues := contributions
+				for i := range cValues {
+					c := cValues[i]
+					owners[i] = manifest.DiagnosticFor(c.owner, s.GetObject(c.owner)).String()
+					related = append(related, c.owner)
+				}
 			}
 			winner := "static object"
 			if owner := s.EmissionOwner(id); owner != (manifest.NamedResource{}) {

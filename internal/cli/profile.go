@@ -18,10 +18,11 @@ func startProfile() (func(), error) {
 	if mode == "" {
 		return func() {}, nil
 	}
+	//nolint:gosec // FLATE_PROFILE_OUT explicitly selects the user-controlled output directory.
 	if err := os.MkdirAll(
 		outDir,
 		0o750,
-	); err != nil { //nolint:gosec // FLATE_PROFILE_OUT is an operator-selected profile destination.
+	); err != nil {
 		return nil, fmt.Errorf("FLATE_PROFILE_OUT: %w", err)
 	}
 	path := filepath.Join(outDir, mode+".pprof")
@@ -33,7 +34,7 @@ func startProfile() (func(), error) {
 		}
 		if err := pprof.StartCPUProfile(f); err != nil {
 			_ = f.Close()
-			return nil, err
+			return nil, fmt.Errorf("start CPU profile: %w", err)
 		}
 		return func() { pprof.StopCPUProfile(); _ = f.Close() }, nil
 	case "mem":
@@ -59,7 +60,7 @@ func startProfile() (func(), error) {
 		}
 		if err := trace.Start(f); err != nil {
 			_ = f.Close()
-			return nil, err
+			return nil, fmt.Errorf("start trace: %w", err)
 		}
 		return func() { trace.Stop(); _ = f.Close() }, nil
 	}
@@ -86,6 +87,14 @@ func dumpProfileAt(path, name string, disable func()) func() {
 // is centralized here: every caller composes path from the trusted
 // FLATE_PROFILE_OUT directory plus a fixed mode/filename suffix, so it is
 // not an attacker-controlled path.
+//
+//nolint:gosec // FLATE_PROFILE_OUT explicitly selects the profile output path.
 func createProfileFile(path string) (*os.File, error) {
-	return os.Create(path) //nolint:gosec // path = trusted FLATE_PROFILE_OUT + fixed suffix
+	f, err := os.Create(
+		path,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create profile: %w", err)
+	}
+	return f, nil
 }

@@ -121,63 +121,71 @@ func childFootprint(
 ) iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord] {
 	return func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
 		records := make(map[manifest.NamedResource]manifest.DiscoveryRecord, len(entries))
-		for _, entry := range entries {
-			id := entry.child.Obj.Named()
-			record := records[id]
-			if applier, ok := entry.child.Obj.(interface {
-				EntryApplication() (manifest.EntryApplication, bool)
-			}); ok {
-				if _, valid := applier.EntryApplication(); valid && entry.child.Doc != nil {
-					if data, err := json.Marshal(entry.child.Doc); err == nil {
-						record.Application = string(data)
+		{
+			entryValues := entries
+			for entryIndex := range entryValues {
+				entry := entryValues[entryIndex]
+				id := entry.child.Obj.Named()
+				record := records[id]
+				if applier, ok := entry.child.Obj.(interface {
+					EntryApplication() (manifest.EntryApplication, bool)
+				}); ok {
+					if _, valid := applier.EntryApplication(); valid && entry.child.Doc != nil {
+						if data, err := json.Marshal(entry.child.Doc); err == nil {
+							record.Application = string(data)
+						}
 					}
 				}
-			}
-			if !slices.ContainsFunc(
-				entry.child.Productions,
-				func(p manifest.Production) bool { return p.Owner == origin },
-			) {
-				record.Productions = append(
-					record.Productions,
-					manifest.Production{Owner: origin, Source: entry.binding.source},
-				)
-			}
-			record.Productions = append(record.Productions, entry.child.Productions...)
-			source := manifest.BootstrapSourceID
-			for ref := range manifest.References(entry.child.Obj, manifest.ReferenceRelations) {
-				if ref.Name != "" {
-					record.Refs = append(record.Refs, ref.NamedResource)
-					if ref.Use == "source" {
-						source = ref.NamedResource
+				if !slices.ContainsFunc(
+					entry.child.Productions,
+					func(p manifest.Production) bool { return p.Owner == origin },
+				) {
+					record.Productions = append(
+						record.Productions,
+						manifest.Production{Owner: origin, Source: entry.binding.source},
+					)
+				}
+				record.Productions = append(record.Productions, entry.child.Productions...)
+				source := manifest.BootstrapSourceID
+				for ref := range manifest.References(entry.child.Obj, manifest.ReferenceRelations) {
+					if ref.Name != "" {
+						record.Refs = append(record.Refs, ref.NamedResource)
+						if ref.Use == "source" {
+							source = ref.NamedResource
+						}
 					}
 				}
-			}
-			for root := range manifest.RenderRoots(entry.child.Obj) {
-				if root == "" {
-					root = "."
+				for root := range manifest.RenderRoots(entry.child.Obj) {
+					if root == "" {
+						root = "."
+					}
+					if record.ContentRoots == nil {
+						record.ContentRoots = map[manifest.NamedResource][]string{}
+					}
+					record.ContentRoots[source] = append(record.ContentRoots[source], root)
 				}
-				if record.ContentRoots == nil {
-					record.ContentRoots = map[manifest.NamedResource][]string{}
+				var authored manifest.Production
+				{
+					pValues := entry.child.Productions
+					for pIndex := range pValues {
+						p := pValues[pIndex]
+						if p.Path != "" && p.Source == entry.binding.source &&
+							manifest.Resolve(p.Authored, id.Namespace, "") == id &&
+							(authored.Path == "" || compareProduction(p, authored) < 0) {
+							authored = p
+						}
+					}
 				}
-				record.ContentRoots[source] = append(record.ContentRoots[source], root)
-			}
-			var authored manifest.Production
-			for _, p := range entry.child.Productions {
-				if p.Path != "" && p.Source == entry.binding.source &&
-					manifest.Resolve(p.Authored, id.Namespace, "") == id &&
-					(authored.Path == "" || compareProduction(p, authored) < 0) {
-					authored = p
+				record.Authored, record.Path, record.File = authored.Authored, authored.Path, authored.File
+				records[id] = record
+				for _, target := range entry.targets {
+					record := records[target.NamedResource]
+					record.Productions = append(
+						record.Productions,
+						manifest.Production{Owner: origin, Declaration: id, Source: entry.binding.source},
+					)
+					records[target.NamedResource] = record
 				}
-			}
-			record.Authored, record.Path, record.File = authored.Authored, authored.Path, authored.File
-			records[id] = record
-			for _, target := range entry.targets {
-				record := records[target.NamedResource]
-				record.Productions = append(
-					record.Productions,
-					manifest.Production{Owner: origin, Declaration: id, Source: entry.binding.source},
-				)
-				records[target.NamedResource] = record
 			}
 		}
 		for _, id := range slices.SortedFunc(maps.Keys(records), manifest.NamedResource.Compare) {
@@ -274,6 +282,7 @@ type inputStamp struct {
 
 type producerSlot struct {
 	authority
+
 	id      manifest.NamedResource
 	current atomic.Pointer[Emission]
 	visible atomic.Bool
@@ -321,6 +330,8 @@ func (s *Store) EmissionOwner(id manifest.NamedResource) manifest.NamedResource 
 }
 
 // GetDeclaration returns the effective input authorized by static or accepted support.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (s *Store) GetDeclaration(id manifest.NamedResource) manifest.BaseManifest {
 	sh := s.shardFor(id)
 	sh.mu.RLock()
@@ -349,6 +360,8 @@ func (c capture) declaration() manifest.BaseManifest {
 // Render identity is available through Emission.Replay.
 // OutputReads preserves validity evidence for withdrawal without exposing invalid inventory.
 // Returned slices and their contents MUST be copied before mutation.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (s *Store) GetEmission(id manifest.NamedResource) (manifest.BaseManifest, map[string]any, Emission) {
 	return s.getEmission(nil, id)
 }
@@ -532,37 +545,45 @@ func (s *Store) referenceData(
 		}
 	}
 	for _, candidates := range records {
-		for _, candidate := range candidates {
-			if !slices.Contains(productions, candidate.Production) {
-				continue
-			}
+		{
+			candidateValues := candidates
+			for candidateIndex := range candidateValues {
+				candidate := candidateValues[candidateIndex]
+				if !slices.Contains(productions, candidate.Production) {
+					continue
+				}
 
-			getArtifact := s.GetArtifact
-			if reads != nil {
-				getArtifact = reads.GetArtifact
-			}
-			if c := s.coverage[candidate.Production.Owner]; c != nil &&
-				c.binding.source == candidate.Production.Source &&
-				c.binding.artifact != nil {
-				artifact, _ := getArtifact(candidate.Production.Source, ArtifactContent).(*SourceArtifact)
-				binding := sourceBinding{source: candidate.Production.Source, artifact: artifact}
-				if artifact != nil && artifact.Content == "" {
-					binding.mutable = artifact.mutableMaterial()
+				getArtifact := s.GetArtifact
+				if reads != nil {
+					getArtifact = reads.GetArtifact
 				}
-				if !c.binding.equal(&binding) {
-					candidate.DeclaredKeys, candidate.OfflineData = nil, nil
+				if c := s.coverage[candidate.Production.Owner]; c != nil &&
+					c.binding.source == candidate.Production.Source &&
+					c.binding.artifact != nil {
+					artifact, _ := getArtifact(candidate.Production.Source, ArtifactContent).(*SourceArtifact)
+					binding := sourceBinding{source: candidate.Production.Source, artifact: artifact}
+					if artifact != nil && artifact.Content == "" {
+						binding.mutable = artifact.mutableMaterial()
+					}
+					if !c.binding.equal(&binding) {
+						candidate.DeclaredKeys, candidate.OfflineData = nil, nil
+					}
 				}
+				add(candidate)
 			}
-			add(candidate)
 		}
 	}
-	for _, p := range productions {
-		if p.Declaration == (manifest.NamedResource{}) ||
-			slices.ContainsFunc(records[0], func(c manifest.ReferenceData) bool { return c.Production == p }) ||
-			slices.ContainsFunc(records[1], func(c manifest.ReferenceData) bool { return c.Production == p }) {
-			continue
+	{
+		pValues2 := productions
+		for pIndex2 := range pValues2 {
+			p := pValues2[pIndex2]
+			if p.Declaration == (manifest.NamedResource{}) ||
+				slices.ContainsFunc(records[0], func(c manifest.ReferenceData) bool { return c.Production == p }) ||
+				slices.ContainsFunc(records[1], func(c manifest.ReferenceData) bool { return c.Production == p }) {
+				continue
+			}
+			add(manifest.ReferenceData{Production: p})
 		}
-		add(manifest.ReferenceData{Production: p})
 	}
 	return out
 }
@@ -653,8 +674,12 @@ func (s *Store) visitProductions(id manifest.NamedResource, index *manifest.Disc
 		}
 		if reads != nil {
 			for _, productions := range [2][]manifest.Production{evidence, bare} {
-				for _, p := range productions {
-					reads.GetArtifact(p.Source, ArtifactContent)
+				{
+					pValues3 := productions
+					for pIndex3 := range pValues3 {
+						p := pValues3[pIndex3]
+						reads.GetArtifact(p.Source, ArtifactContent)
+					}
 				}
 			}
 		}
@@ -686,30 +711,35 @@ func (s *Store) visitProductions(id manifest.NamedResource, index *manifest.Disc
 			(result.incoming != nil || a.Path == "" || a.File == b.File && a.Authored == b.Authored)
 	}
 	var first *manifest.Production
-	for i, p := range bare {
-		if p.Path == "" || p.Authored.Namespace != "" ||
-			p.Authored != (manifest.NamedResource{}) && manifest.Resolve(p.Authored, id.Namespace, "") != id {
-			continue
-		}
-		matches := slices.ContainsFunc(evidence, func(e manifest.Production) bool {
-			return sameFamily(e, p) && sameProductionContext(s.coverage, e, p)
-		})
-		if len(evidence) == 0 {
-			matches = first == nil || sameFamily(*first, p) && sameProductionContext(s.coverage, *first, p)
-		}
-		if !matches {
-			matches = slices.ContainsFunc(bare[:i], func(e manifest.Production) bool {
-				return e.Path != "" && e.Authored.Namespace == "" && sameFamily(e, p) && s.coverage[e.Owner] == nil &&
-					(len(evidence) == 0 && sameFamily(*first, e) || slices.ContainsFunc(evidence, func(d manifest.Production) bool {
-						return sameFamily(d, e)
-					}))
-			})
-		}
-		if matches {
-			if first == nil {
-				first = &bare[i]
+	{
+		pValues4 := bare
+		for i := range pValues4 {
+			p := pValues4[i]
+			if p.Path == "" || p.Authored.Namespace != "" ||
+				p.Authored != (manifest.NamedResource{}) && manifest.Resolve(p.Authored, id.Namespace, "") != id {
+				continue
 			}
-			visible(&bare[i])
+			matches := slices.ContainsFunc(evidence, func(e manifest.Production) bool {
+				return sameFamily(e, p) && sameProductionContext(s.coverage, e, p)
+			})
+			if len(evidence) == 0 {
+				matches = first == nil || sameFamily(*first, p) && sameProductionContext(s.coverage, *first, p)
+			}
+			if !matches {
+				matches = slices.ContainsFunc(bare[:i], func(e manifest.Production) bool {
+					return e.Path != "" && e.Authored.Namespace == "" && sameFamily(e, p) &&
+						s.coverage[e.Owner] == nil &&
+						(len(evidence) == 0 && sameFamily(*first, e) || slices.ContainsFunc(evidence, func(d manifest.Production) bool {
+							return sameFamily(d, e)
+						}))
+				})
+			}
+			if matches {
+				if first == nil {
+					first = &bare[i]
+				}
+				visible(&bare[i])
+			}
 		}
 	}
 	if result.facts {
@@ -798,28 +828,36 @@ func (s *Store) SetDiscoveryIndex(index *manifest.DiscoveryIndex) {
 		return
 	}
 	coverage := map[manifest.NamedResource]*contributor{}
-	for id, r := range index.Records {
-		if len(r.Productions) == 0 {
-			continue
-		}
-		independent := declarationIndependent(index, id)
-		for _, p := range r.Productions {
-			if p.Owner == (manifest.NamedResource{}) || p.Owner == id {
+	{
+		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+		for id, r := range index.Records {
+
+			if len(r.Productions) == 0 {
 				continue
 			}
-			c := coverage[p.Owner]
-			if c == nil {
-				c = &contributor{binding: sourceBinding{source: p.Source}}
-				coverage[p.Owner] = c
-			}
-			// Each identity is visited once, so repeated owner evidence can only match the tail.
-			if len(c.records) == 0 || c.records[len(c.records)-1].id != id {
-				c.records = append(c.records, footprint{id: id, record: r, independent: independent})
-			}
-			if a, ok := s.GetArtifact(p.Source, ArtifactContent).(*SourceArtifact); ok {
-				c.binding.artifact = a
-				if a.Content == "" {
-					c.binding.mutable = a.mutableMaterial()
+			independent := declarationIndependent(index, id)
+			{
+				pValues5 := r.Productions
+				for pIndex4 := range pValues5 {
+					p := pValues5[pIndex4]
+					if p.Owner == (manifest.NamedResource{}) || p.Owner == id {
+						continue
+					}
+					c := coverage[p.Owner]
+					if c == nil {
+						c = &contributor{binding: sourceBinding{source: p.Source}}
+						coverage[p.Owner] = c
+					}
+					// Each identity is visited once, so repeated owner evidence can only match the tail.
+					if len(c.records) == 0 || c.records[len(c.records)-1].id != id {
+						c.records = append(c.records, footprint{id: id, record: r, independent: independent})
+					}
+					if a, ok := s.GetArtifact(p.Source, ArtifactContent).(*SourceArtifact); ok {
+						c.binding.artifact = a
+						if a.Content == "" {
+							c.binding.mutable = a.mutableMaterial()
+						}
+					}
 				}
 			}
 		}
@@ -831,11 +869,15 @@ func (s *Store) SetDiscoveryIndex(index *manifest.DiscoveryIndex) {
 	if s.index.Load() == nil {
 		// Every non-independent declaration MUST occur in a contributor footprint.
 		for owner, c := range coverage {
-			for _, record := range c.records {
-				sh := s.shardFor(record.id)
-				if cell, exists := sh.cells[record.id]; exists {
-					cell.independent = record.independent
-					sh.cells[record.id] = cell
+			{
+				recordValues := c.records
+				for recordIndex := range recordValues {
+					record := recordValues[recordIndex]
+					sh := s.shardFor(record.id)
+					if cell, exists := sh.cells[record.id]; exists {
+						cell.independent = record.independent
+						sh.cells[record.id] = cell
+					}
 				}
 			}
 			sh := s.shardFor(owner)
@@ -963,12 +1005,16 @@ func (s *Store) RecordEmitted(
 			}
 		}
 		if unchanged && !next.Complete {
-			for _, old := range prev.entries {
-				if old.child.Generated && !slices.ContainsFunc(candidate.Children, func(child Child) bool {
-					return child.Obj != nil && child.Generated && child.Obj.Named() == old.child.Obj.Named()
-				}) {
-					unchanged = false
-					break
+			{
+				oldValues := prev.entries
+				for oldIndex := range oldValues {
+					old := oldValues[oldIndex]
+					if old.child.Generated && !slices.ContainsFunc(candidate.Children, func(child Child) bool {
+						return child.Obj != nil && child.Generated && child.Obj.Named() == old.child.Obj.Named()
+					}) {
+						unchanged = false
+						break
+					}
 				}
 			}
 		}
@@ -1101,36 +1147,40 @@ func (s *Store) prepareAdmissions(
 	}
 	dynamic := false
 	compacted := prepared[:0]
-	for i, entry := range prepared {
-		child := entry.child
-		if child.Obj.Named() == id {
-			if len(compacted) == i {
-				// ReadSet retains the unfiltered inventory for lazy captures.
-				compacted = make([]admission, i, len(prepared)-1)
-				copy(compacted, prepared[:i])
+	{
+		entryValues2 := prepared
+		for i := range entryValues2 {
+			entry := entryValues2[i]
+			child := entry.child
+			if child.Obj.Named() == id {
+				if len(compacted) == i {
+					// ReadSet retains the unfiltered inventory for lazy captures.
+					compacted = make([]admission, i, len(prepared)-1)
+					copy(compacted, prepared[:i])
+				}
+				continue
 			}
-			continue
-		}
-		child.Productions = slices.Clone(child.Productions)
-		entry.child, entry.binding = child, next.binding
-		if child.payload != nil {
-			if projections == nil {
-				projections = make([]ArtifactInput, len(prepared))
+			child.Productions = slices.Clone(child.Productions)
+			entry.child, entry.binding = child, next.binding
+			if child.payload != nil {
+				if projections == nil {
+					projections = make([]ArtifactInput, len(prepared))
+				}
+				projections[len(compacted)] = child.payload.Input(ArtifactContent | ArtifactRevision | ArtifactOrigin)
+				entry.input = &projections[len(compacted)]
 			}
-			projections[len(compacted)] = child.payload.Input(ArtifactContent | ArtifactRevision | ArtifactOrigin)
-			entry.input = &projections[len(compacted)]
-		}
-		if position, exists := byID[child.Obj.Named()]; exists &&
-			(child.Generated || compacted[position].child.Generated) {
-			previous := compacted[position].child
-			if child.Doc != nil && previous.Generated || previous.Doc == nil && !previous.Generated {
-				compacted[position] = entry
+			if position, exists := byID[child.Obj.Named()]; exists &&
+				(child.Generated || compacted[position].child.Generated) {
+				previous := compacted[position].child
+				if child.Doc != nil && previous.Generated || previous.Doc == nil && !previous.Generated {
+					compacted[position] = entry
+				}
+				continue
 			}
-			continue
+			byID[child.Obj.Named()] = len(compacted)
+			compacted = append(compacted, entry)
+			dynamic = dynamic || manifest.ProducerNeedsCandidates(child.Obj)
 		}
-		byID[child.Obj.Named()] = len(compacted)
-		compacted = append(compacted, entry)
-		dynamic = dynamic || manifest.ProducerNeedsCandidates(child.Obj)
 	}
 	prepared = compacted
 	if !dynamic {
@@ -1159,48 +1209,63 @@ func (s *Store) prepareAdmissions(
 	if next.family != nil && next.family != s.index.Load() {
 		binding = next.binding
 		coverage = nil
-		for target, record := range next.family.Records {
-			if slices.ContainsFunc(
-				record.Productions,
-				func(p manifest.Production) bool { return p.Owner == id && p.Source == binding.source },
-			) {
-				coverage = append(coverage, footprint{id: target, record: record})
+		{
+			//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+			for target, record := range next.family.Records {
+				if slices.ContainsFunc(
+					record.Productions,
+					func(p manifest.Production) bool { return p.Owner == id && p.Source == binding.source },
+				) {
+					coverage = append(coverage, footprint{id: target, record: record})
+				}
 			}
 		}
 	}
 	if next.binding.equal(&binding) {
 		shadowed := prev.shadows(next.binding)
-		for _, f := range coverage {
-			for _, p := range f.record.Productions {
-				if p.Owner != id || p.Source != next.binding.source {
-					continue
-				}
-				if p.File == f.record.File && p.Path == f.record.Path {
-					if _, replaced := byID[f.id]; replaced {
-						superseded = append(superseded, f.record.Refs...)
-					} else if !shadowed {
-						refs = append(refs, f.record.Refs...)
+		{
+			fValues := coverage
+			for fIndex := range fValues {
+				f := fValues[fIndex]
+				{
+					pValues6 := f.record.Productions
+					for pIndex5 := range pValues6 {
+						p := pValues6[pIndex5]
+						if p.Owner != id || p.Source != next.binding.source {
+							continue
+						}
+						if p.File == f.record.File && p.Path == f.record.Path {
+							if _, replaced := byID[f.id]; replaced {
+								superseded = append(superseded, f.record.Refs...)
+							} else if !shadowed {
+								refs = append(refs, f.record.Refs...)
+							}
+						}
+						if !shadowed && p.Declaration != (manifest.NamedResource{}) {
+							retain(p.Declaration, f.id)
+						}
 					}
-				}
-				if !shadowed && p.Declaration != (manifest.NamedResource{}) {
-					retain(p.Declaration, f.id)
 				}
 			}
 		}
 	}
 	if prev != nil {
-		for _, entry := range prev.entries {
-			if entry.binding.equal(&next.binding) {
-				_, replacement := byID[entry.child.Obj.Named()]
-				for ref := range manifest.References(entry.child.Obj, manifest.ReferenceRelations) {
-					if replacement {
-						superseded = append(superseded, ref.NamedResource)
-					} else {
-						retained = append(retained, ref.NamedResource)
+		{
+			entryValues3 := prev.entries
+			for entryIndex2 := range entryValues3 {
+				entry := entryValues3[entryIndex2]
+				if entry.binding.equal(&next.binding) {
+					_, replacement := byID[entry.child.Obj.Named()]
+					for ref := range manifest.References(entry.child.Obj, manifest.ReferenceRelations) {
+						if replacement {
+							superseded = append(superseded, ref.NamedResource)
+						} else {
+							retained = append(retained, ref.NamedResource)
+						}
 					}
-				}
-				for _, target := range entry.targets {
-					retain(entry.child.Obj.Named(), target.NamedResource)
+					for _, target := range entry.targets {
+						retain(entry.child.Obj.Named(), target.NamedResource)
+					}
 				}
 			}
 		}
@@ -1300,11 +1365,15 @@ func (s *Store) commitStable(slot *producerSlot, prev, proposal *Emission, gener
 		ps.mu.Unlock()
 		panic("store: authority generation exhausted")
 	}
-	for _, a := range proposal.entries {
-		if a.objectChanged && a.objectHead != nil && a.objectHead.selected.Load() == slot &&
-			a.objectHead.stamp() == ^uint64(0) {
-			ps.mu.Unlock()
-			panic("store: authority generation exhausted")
+	{
+		aValues := proposal.entries
+		for aIndex := range aValues {
+			a := aValues[aIndex]
+			if a.objectChanged && a.objectHead != nil && a.objectHead.selected.Load() == slot &&
+				a.objectHead.stamp() == ^uint64(0) {
+				ps.mu.Unlock()
+				panic("store: authority generation exhausted")
+			}
 		}
 	}
 	for i := range proposal.entries {
@@ -1315,9 +1384,13 @@ func (s *Store) commitStable(slot *producerSlot, prev, proposal *Emission, gener
 	}
 	slot.authority = ps.advanceLocked(slot.authority)
 	slot.current.Store(proposal)
-	for _, a := range proposal.entries {
-		if a.objectChanged && a.objectHead != nil && a.objectHead.selected.Load() == slot {
-			a.objectHead.shard.queue(a.objectHead)
+	{
+		aValues2 := proposal.entries
+		for aIndex2 := range aValues2 {
+			a := aValues2[aIndex2]
+			if a.objectChanged && a.objectHead != nil && a.objectHead.selected.Load() == slot {
+				a.objectHead.shard.queue(a.objectHead)
+			}
 		}
 	}
 	var artifact eventDispatch
@@ -1334,16 +1407,20 @@ func (s *Store) commitStable(slot *producerSlot, prev, proposal *Emission, gener
 		artifact.payload = visible
 		listeners := s.listeners[EventObjectAdded].snapshot.Load()
 		if len(listeners.entries) > 0 {
-			for _, a := range proposal.entries {
-				if !a.changed {
-					continue
-				}
-				events = append(
-					events,
-					eventDispatch{id: a.child.Obj.Named(), payload: a.child.Obj, listeners: listeners},
-				)
-				for _, t := range a.targets {
-					events = append(events, eventDispatch{id: t.NamedResource, listeners: listeners})
+			{
+				aValues3 := proposal.entries
+				for aIndex3 := range aValues3 {
+					a := aValues3[aIndex3]
+					if !a.changed {
+						continue
+					}
+					events = append(
+						events,
+						eventDispatch{id: a.child.Obj.Named(), payload: a.child.Obj, listeners: listeners},
+					)
+					for _, t := range a.targets {
+						events = append(events, eventDispatch{id: t.NamedResource, listeners: listeners})
+					}
 				}
 			}
 		}
@@ -1367,8 +1444,12 @@ func (s *Store) commitReplacement(
 	var storage [4]regionState
 	changed := s.changedTargets(prev, proposal, storage[:])
 	if proposal.shadows(s.contributionBinding(id)) {
-		for _, f := range proposal.coverage {
-			changed = changed.add(f.id, true, f.independent)
+		{
+			fValues2 := proposal.coverage
+			for fIndex2 := range fValues2 {
+				f := fValues2[fIndex2]
+				changed = changed.add(f.id, true, f.independent)
+			}
 		}
 	}
 	independent := declarationIndependent(s.index.Load(), id)
@@ -1399,10 +1480,17 @@ func (s *Store) commitReplacement(
 		slot.visible.Store(ps.objectLocked(id) != nil)
 		slot.hidden.Store(ps.cells[id].hidden)
 	}
-	for _, state := range region.states {
-		target := state.id
-		sh := s.shardFor(target)
-		sh.members[target] = slices.DeleteFunc(sh.members[target], func(m membership) bool { return m.slot == slot })
+	{
+		stateValues := region.states
+		for stateIndex := range stateValues {
+			state := stateValues[stateIndex]
+			target := state.id
+			sh := s.shardFor(target)
+			sh.members[target] = slices.DeleteFunc(
+				sh.members[target],
+				func(m membership) bool { return m.slot == slot },
+			)
+		}
 	}
 	// A publication MUST retain the bootstrap authority supporting its own declaration.
 	for ancestor, inside := region.position(id); inside; {
@@ -1416,19 +1504,23 @@ func (s *Store) commitReplacement(
 		}
 		ancestor, inside = region.position(state.owner.id)
 	}
-	for _, entry := range proposal.entries {
-		target := entry.child.Obj.Named()
-		r, _ := s.index.Load().Lookup(target)
-		sh := s.shardFor(target)
-		cell := sh.cells[target]
-		if bootstrapSeed(r.Productions) && cell.static != nil && !cell.rooted && !cell.retired {
-			position, _ := region.position(target)
-			if region.states[position].supportsProducer {
-				continue
+	{
+		entryValues4 := proposal.entries
+		for entryIndex3 := range entryValues4 {
+			entry := entryValues4[entryIndex3]
+			target := entry.child.Obj.Named()
+			r, _ := s.index.Load().Lookup(target)
+			sh := s.shardFor(target)
+			cell := sh.cells[target]
+			if bootstrapSeed(r.Productions) && cell.static != nil && !cell.rooted && !cell.retired {
+				position, _ := region.position(target)
+				if region.states[position].supportsProducer {
+					continue
+				}
+				cell.retired = true
+				sh.cells[target] = cell
+				region.states[position].seed = true
 			}
-			cell.retired = true
-			sh.cells[target] = cell
-			region.states[position].seed = true
 		}
 	}
 
@@ -1461,16 +1553,20 @@ func (s *Store) commitReplacement(
 		}
 		slot.hidden.Store(true)
 	}
-	for position, a := range proposal.entries {
-		target := a.child.Obj.Named()
-		sh := s.shardFor(target)
-		sh.members[target] = append(sh.members[target], membership{slot: slot, position: position})
-		for _, t := range a.targets {
-			sh := s.shardFor(t.NamedResource)
-			sh.members[t.NamedResource] = append(
-				sh.members[t.NamedResource],
-				membership{slot: slot, position: position, declaration: true},
-			)
+	{
+		aValues4 := proposal.entries
+		for position := range aValues4 {
+			a := aValues4[position]
+			target := a.child.Obj.Named()
+			sh := s.shardFor(target)
+			sh.members[target] = append(sh.members[target], membership{slot: slot, position: position})
+			for _, t := range a.targets {
+				sh := s.shardFor(t.NamedResource)
+				sh.members[t.NamedResource] = append(
+					sh.members[t.NamedResource],
+					membership{slot: slot, position: position, declaration: true},
+				)
+			}
 		}
 	}
 	publications := s.reachabilityLocked(region)
@@ -1505,28 +1601,32 @@ func (s *Store) changedTargets(prev, proposal *Emission, storage []regionState) 
 	}
 	next := 0
 	if prev != nil {
-		for _, old := range prev.entries {
-			if next == len(proposal.entries) || old.child.Obj.Named() != proposal.entries[next].child.Obj.Named() {
-				add(old, true)
-				continue
+		{
+			oldValues2 := prev.entries
+			for oldIndex2 := range oldValues2 {
+				old := oldValues2[oldIndex2]
+				if next == len(proposal.entries) || old.child.Obj.Named() != proposal.entries[next].child.Obj.Named() {
+					add(old, true)
+					continue
+				}
+				entry := proposal.entries[next]
+				direct := entry.objectChanged ||
+					entry.changed &&
+						!manifest.LabelsEqual(
+							old.child.Obj,
+							entry.child.Obj,
+							[2]map[string]any{old.child.Doc, entry.child.Doc},
+							ownershipLabel,
+						) ||
+					!old.binding.equal(&entry.binding) ||
+					!slices.Equal(old.child.Productions, entry.child.Productions) ||
+					!slices.EqualFunc(old.targets, entry.targets, func(a, b manifest.ProducerTarget) bool {
+						return a.NamedResource == b.NamedResource && slices.Equal(a.DeclaredKeys, b.DeclaredKeys)
+					})
+				add(old, direct)
+				add(entry, direct)
+				next++
 			}
-			entry := proposal.entries[next]
-			direct := entry.objectChanged ||
-				entry.changed &&
-					!manifest.LabelsEqual(
-						old.child.Obj,
-						entry.child.Obj,
-						[2]map[string]any{old.child.Doc, entry.child.Doc},
-						ownershipLabel,
-					) ||
-				!old.binding.equal(&entry.binding) ||
-				!slices.Equal(old.child.Productions, entry.child.Productions) ||
-				!slices.EqualFunc(old.targets, entry.targets, func(a, b manifest.ProducerTarget) bool {
-					return a.NamedResource == b.NamedResource && slices.Equal(a.DeclaredKeys, b.DeclaredKeys)
-				})
-			add(old, direct)
-			add(entry, direct)
-			next++
 		}
 	}
 	for _, entry := range proposal.entries[next:] {
@@ -1537,10 +1637,14 @@ func (s *Store) changedTargets(prev, proposal *Emission, storage []regionState) 
 
 func prepareEmission(next, prev *Emission, prepared []admission, byID map[manifest.NamedResource]int) *Emission {
 	if prev != nil && next.Complete && !prev.OutputReads.Valid() {
-		for _, old := range prev.entries {
-			if i, ok := byID[old.child.Obj.Named()]; ok {
-				prepared[i].objectHead, prepared[i].objectGeneration = old.objectHead, old.objectGeneration
-				prepared[i].objectChanged = !reconcileEqual(prepared[i].child, old.child)
+		{
+			oldValues3 := prev.entries
+			for oldIndex3 := range oldValues3 {
+				old := oldValues3[oldIndex3]
+				if i, ok := byID[old.child.Obj.Named()]; ok {
+					prepared[i].objectHead, prepared[i].objectGeneration = old.objectHead, old.objectGeneration
+					prepared[i].objectChanged = !reconcileEqual(prepared[i].child, old.child)
+				}
 			}
 		}
 		prev = nil
@@ -1566,52 +1670,68 @@ func prepareEmission(next, prev *Emission, prepared []admission, byID map[manife
 	e.Failures = slices.Clone(next.Failures)
 	e.Unreadable = slices.Clone(next.Unreadable)
 	clear(byID)
-	for i, a := range prepared {
-		byID[a.child.Obj.Named()] = i
+	{
+		aValues5 := prepared
+		for i := range aValues5 {
+			a := aValues5[i]
+			byID[a.child.Obj.Named()] = i
+		}
 	}
 	// Stable positions retain reverse membership offsets independently of document order.
 	if prev != nil {
-		for _, old := range prev.entries {
-			id := old.child.Obj.Named()
-			if i, ok := byID[id]; ok {
-				entry := prepared[i]
-				if !next.Complete && entry.child.Generated && old.child.Doc != nil && !old.child.Generated {
-					entry = old
+		{
+			oldValues4 := prev.entries
+			for oldIndex4 := range oldValues4 {
+				old := oldValues4[oldIndex4]
+				id := old.child.Obj.Named()
+				if i, ok := byID[id]; ok {
+					entry := prepared[i]
+					if !next.Complete && entry.child.Generated && old.child.Doc != nil && !old.child.Generated {
+						entry = old
+					}
+					entry.changed = entry.child.Generated != old.child.Generated ||
+						!manifest.Equal(entry.child.Obj, old.child.Obj) ||
+						!manifest.ValueEqual(entry.child.Doc, old.child.Doc)
+					entry.objectChanged = !reconcileEqual(entry.child, old.child)
+					entry.objectHead = old.objectHead
+					entry.objectGeneration = old.objectGeneration
+					e.entries = append(e.entries, entry)
+					delete(byID, id)
+				} else if !next.Complete && len(next.Failures) == 0 && !old.child.Generated {
+					old.changed, old.objectChanged = false, false
+					e.entries = append(e.entries, old)
 				}
-				entry.changed = entry.child.Generated != old.child.Generated ||
-					!manifest.Equal(entry.child.Obj, old.child.Obj) ||
-					!manifest.ValueEqual(entry.child.Doc, old.child.Doc)
-				entry.objectChanged = !reconcileEqual(entry.child, old.child)
-				entry.objectHead = old.objectHead
-				entry.objectGeneration = old.objectGeneration
-				e.entries = append(e.entries, entry)
-				delete(byID, id)
-			} else if !next.Complete && len(next.Failures) == 0 && !old.child.Generated {
-				old.changed, old.objectChanged = false, false
-				e.entries = append(e.entries, old)
 			}
 		}
 	}
-	for _, a := range prepared {
-		id := a.child.Obj.Named()
-		if _, ok := byID[id]; ok {
-			a.changed = true
-			e.entries = append(e.entries, a)
-			delete(byID, id)
+	{
+		aValues6 := prepared
+		for aIndex4 := range aValues6 {
+			a := aValues6[aIndex4]
+			id := a.child.Obj.Named()
+			if _, ok := byID[id]; ok {
+				a.changed = true
+				e.entries = append(e.entries, a)
+				delete(byID, id)
+			}
 		}
 	}
 	if len(e.entries) > 0 {
 		e.Children = make([]Child, len(e.entries))
-		for i, a := range e.entries {
-			e.Children[i] = a.child
-			if reads := a.child.output; reads != nil {
-				if e.payloadReads == nil {
-					e.payloadReads = reads
-				} else if e.payloadReads != reads {
-					if e.borrowed == nil {
-						e.borrowed = make(map[*ReadSet]struct{})
+		{
+			aValues7 := e.entries
+			for i := range aValues7 {
+				a := aValues7[i]
+				e.Children[i] = a.child
+				if reads := a.child.output; reads != nil {
+					if e.payloadReads == nil {
+						e.payloadReads = reads
+					} else if e.payloadReads != reads {
+						if e.borrowed == nil {
+							e.borrowed = make(map[*ReadSet]struct{})
+						}
+						e.borrowed[reads] = struct{}{}
 					}
-					e.borrowed[reads] = struct{}{}
 				}
 			}
 		}
@@ -1629,8 +1749,12 @@ func prepareEmission(next, prev *Emission, prepared []admission, byID map[manife
 	if !next.Complete && len(next.Failures) == 0 && prev != nil {
 		if !inherited {
 			visited := make(map[manifest.NamedResource]struct{}, len(prepared))
-			for _, entry := range prepared {
-				visited[entry.child.Obj.Named()] = struct{}{}
+			{
+				entryValues5 := prepared
+				for entryIndex4 := range entryValues5 {
+					entry := entryValues5[entryIndex4]
+					visited[entry.child.Obj.Named()] = struct{}{}
+				}
 			}
 			available := make(map[manifest.NamedResource][]int, len(e.Manifests))
 			for i, doc := range e.Manifests {
@@ -1657,11 +1781,15 @@ func prepareEmission(next, prev *Emission, prepared []admission, byID map[manife
 			}
 		}
 		e.coverage = slices.Clone(e.coverage)
-		for _, old := range prev.coverage {
-			if !slices.ContainsFunc(e.coverage, func(f footprint) bool {
-				return f.id == old.id && slices.Equal(f.record.Productions, old.record.Productions)
-			}) {
-				e.coverage = append(e.coverage, old)
+		{
+			oldValues5 := prev.coverage
+			for oldIndex5 := range oldValues5 {
+				old := oldValues5[oldIndex5]
+				if !slices.ContainsFunc(e.coverage, func(f footprint) bool {
+					return f.id == old.id && slices.Equal(f.record.Productions, old.record.Productions)
+				}) {
+					e.coverage = append(e.coverage, old)
+				}
 			}
 		}
 	}
@@ -1670,18 +1798,26 @@ func prepareEmission(next, prev *Emission, prepared []admission, byID map[manife
 
 func bindDocuments(docs []manifest.DocOccurrence, entries []admission) []manifest.NamedResource {
 	byDocument := make(map[manifest.NamedResource][]admission, len(entries))
-	for _, entry := range entries {
-		if entry.child.Doc != nil {
-			key := manifest.DocIdentity(entry.child.Doc)
-			byDocument[key] = append(byDocument[key], entry)
+	{
+		entryValues6 := entries
+		for entryIndex5 := range entryValues6 {
+			entry := entryValues6[entryIndex5]
+			if entry.child.Doc != nil {
+				key := manifest.DocIdentity(entry.child.Doc)
+				byDocument[key] = append(byDocument[key], entry)
+			}
 		}
 	}
 	owners := make([]manifest.NamedResource, len(docs))
 	for i, doc := range docs {
-		for _, entry := range byDocument[manifest.DocIdentity(doc.Document)] {
-			if manifest.ValueEqual(doc.Document, entry.child.Doc) {
-				owners[i] = entry.child.Obj.Named()
-				break
+		{
+			entryValues7 := byDocument[manifest.DocIdentity(doc.Document)]
+			for entryIndex6 := range entryValues7 {
+				entry := entryValues7[entryIndex6]
+				if manifest.ValueEqual(doc.Document, entry.child.Doc) {
+					owners[i] = entry.child.Obj.Named()
+					break
+				}
 			}
 		}
 	}
@@ -1697,23 +1833,27 @@ func sameMembership(a, b *Emission) bool {
 		}) {
 		return false
 	}
-	for i, x := range a.entries {
-		y := b.entries[i]
-		if x.child.Obj.Named() != y.child.Obj.Named() || x.child.Generated != y.child.Generated ||
-			!x.binding.equal(&y.binding) ||
-			!slices.Equal(x.child.Productions, y.child.Productions) ||
-			!manifest.LabelsEqual(
-				x.child.Obj,
-				y.child.Obj,
-				[2]map[string]any{x.child.Doc, y.child.Doc},
-				ownershipLabel,
-			) ||
-			!slices.EqualFunc(
-				x.targets,
-				y.targets,
-				func(a, b manifest.ProducerTarget) bool { return a.NamedResource == b.NamedResource },
-			) {
-			return false
+	{
+		xValues := a.entries
+		for i := range xValues {
+			x := xValues[i]
+			y := b.entries[i]
+			if x.child.Obj.Named() != y.child.Obj.Named() || x.child.Generated != y.child.Generated ||
+				!x.binding.equal(&y.binding) ||
+				!slices.Equal(x.child.Productions, y.child.Productions) ||
+				!manifest.LabelsEqual(
+					x.child.Obj,
+					y.child.Obj,
+					[2]map[string]any{x.child.Doc, y.child.Doc},
+					ownershipLabel,
+				) ||
+				!slices.EqualFunc(
+					x.targets,
+					y.targets,
+					func(a, b manifest.ProducerTarget) bool { return a.NamedResource == b.NamedResource },
+				) {
+				return false
+			}
 		}
 	}
 	return true
@@ -1826,6 +1966,7 @@ func (c *capture) sourceBinding() sourceBinding {
 	return sourceBinding{}
 }
 
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (sh *shard) objectLocked(id manifest.NamedResource) manifest.BaseManifest {
 	if !sh.derived && sh.cells[id].binding == nil {
 		return sh.cells[id].static
@@ -1963,18 +2104,26 @@ func (r objectRegion) add(id manifest.NamedResource, direct, independent bool) o
 
 func (s *Store) affectedLocked(region objectRegion, producer manifest.NamedResource) objectRegion {
 	capacity := len(region.states)
-	for _, state := range region.states {
-		id := state.id
-		if slot := s.shardFor(id).slots[id]; slot != nil {
-			if e := slot.current.Load(); e != nil {
-				capacity += len(e.entries)
-				for _, a := range e.entries {
-					capacity += len(a.targets)
+	{
+		stateValues2 := region.states
+		for stateIndex2 := range stateValues2 {
+			state := stateValues2[stateIndex2]
+			id := state.id
+			if slot := s.shardFor(id).slots[id]; slot != nil {
+				if e := slot.current.Load(); e != nil {
+					capacity += len(e.entries)
+					{
+						aValues8 := e.entries
+						for aIndex5 := range aValues8 {
+							a := aValues8[aIndex5]
+							capacity += len(a.targets)
+						}
+					}
 				}
 			}
-		}
-		if c := s.coverage[id]; c != nil {
-			capacity += len(c.records)
+			if c := s.coverage[id]; c != nil {
+				capacity += len(c.records)
+			}
 		}
 	}
 	region.reserve = capacity
@@ -1991,17 +2140,25 @@ func (s *Store) affectedLocked(region objectRegion, producer manifest.NamedResou
 		id := region.states[i].id
 		if slot := s.shardFor(id).slots[id]; slot != nil {
 			if e := slot.current.Load(); e != nil {
-				for _, a := range e.entries {
-					region = region.add(a.child.Obj.Named(), false, false)
-					for _, t := range a.targets {
-						region = region.add(t.NamedResource, false, false)
+				{
+					aValues9 := e.entries
+					for aIndex6 := range aValues9 {
+						a := aValues9[aIndex6]
+						region = region.add(a.child.Obj.Named(), false, false)
+						for _, t := range a.targets {
+							region = region.add(t.NamedResource, false, false)
+						}
 					}
 				}
 			}
 		}
 		if c := s.coverage[id]; c != nil {
-			for _, f := range c.records {
-				region = region.add(f.id, false, f.independent)
+			{
+				fValues3 := c.records
+				for fIndex3 := range fValues3 {
+					f := fValues3[fIndex3]
+					region = region.add(f.id, false, f.independent)
+				}
 			}
 		}
 	}
@@ -2082,20 +2239,24 @@ func (s *Store) staticAnchorLocked(id manifest.NamedResource, support objectRegi
 	if cell.retired && bootstrapSeed(r.Productions) {
 		return false
 	}
-	for _, p := range r.Productions {
-		if p.Owner == (manifest.NamedResource{}) || p.Owner == id {
-			return true
-		}
-		slot := s.shardFor(p.Owner).slots[p.Owner]
-		if i, inside := support.position(p.Owner); inside {
-			if !support.states[i].live {
+	{
+		pValues7 := r.Productions
+		for pIndex6 := range pValues7 {
+			p := pValues7[pIndex6]
+			if p.Owner == (manifest.NamedResource{}) || p.Owner == id {
+				return true
+			}
+			slot := s.shardFor(p.Owner).slots[p.Owner]
+			if i, inside := support.position(p.Owner); inside {
+				if !support.states[i].live {
+					continue
+				}
+			} else if slot != nil && slot.hidden.Load() {
 				continue
 			}
-		} else if slot != nil && slot.hidden.Load() {
-			continue
-		}
-		if slot == nil || !slot.current.Load().shadows(s.contributionBinding(p.Owner)) {
-			return true
+			if slot == nil || !slot.current.Load().shadows(s.contributionBinding(p.Owner)) {
+				return true
+			}
 		}
 	}
 	return len(r.Productions) == 0
@@ -2109,19 +2270,23 @@ func (s *Store) reachabilityLocked(region objectRegion) []objectPublication {
 			queue = append(queue, i)
 		}
 	}
-	for _, state := range region.states {
-		id := state.id
-		live := s.staticAnchorLocked(id, region)
-		if !live {
-			for _, m := range s.shardFor(id).members[id] {
-				if _, inside := region.position(m.slot.id); !inside && m.slot.visible.Load() {
-					live = true
-					break
+	{
+		stateValues3 := region.states
+		for stateIndex3 := range stateValues3 {
+			state := stateValues3[stateIndex3]
+			id := state.id
+			live := s.staticAnchorLocked(id, region)
+			if !live {
+				for _, m := range s.shardFor(id).members[id] {
+					if _, inside := region.position(m.slot.id); !inside && m.slot.visible.Load() {
+						live = true
+						break
+					}
 				}
 			}
-		}
-		if live {
-			add(id)
+			if live {
+				add(id)
+			}
 		}
 	}
 	//nolint:intrange // add MUST extend the worklist during traversal.
@@ -2132,10 +2297,14 @@ func (s *Store) reachabilityLocked(region objectRegion) []objectPublication {
 			e = slot.current.Load()
 		}
 		if e != nil {
-			for _, a := range e.entries {
-				add(a.child.Obj.Named())
-				for _, t := range a.targets {
-					add(t.NamedResource)
+			{
+				aValues10 := e.entries
+				for aIndex7 := range aValues10 {
+					a := aValues10[aIndex7]
+					add(a.child.Obj.Named())
+					for _, t := range a.targets {
+						add(t.NamedResource)
+					}
 				}
 			}
 		}
@@ -2143,9 +2312,13 @@ func (s *Store) reachabilityLocked(region objectRegion) []objectPublication {
 			continue
 		}
 		if c := s.coverage[id]; c != nil {
-			for _, f := range c.records {
-				if s.shardFor(f.id).cells[f.id].static != nil {
-					add(f.id)
+			{
+				fValues4 := c.records
+				for fIndex4 := range fValues4 {
+					f := fValues4[fIndex4]
+					if s.shardFor(f.id).cells[f.id].static != nil {
+						add(f.id)
+					}
 				}
 			}
 		}
@@ -2166,86 +2339,90 @@ func (s *Store) reachabilityLocked(region objectRegion) []objectPublication {
 		}
 	}
 	publications := make([]objectPublication, 0, len(region.states)+1)
-	for _, state := range region.states {
-		id := state.id
-		sh := s.shardFor(id)
-		cell := sh.cells[id]
-		generation, retired, hidden, auxiliary := cell.generation, cell.retired, cell.hidden, cell.auxiliary
-		cell.generation = max(cell.generation, state.cell.generation)
-		if cell.generation == 0 && cell.static == nil && len(sh.members[id]) == 0 && sh.slots[id] == nil {
-			continue
-		}
-		if cell.hidden && state.live {
-			sh.clearFacetsLocked(id)
-		}
-		cell.retired, cell.hidden, cell.independent = !state.static, !state.live, state.independent
-		var view capture
-		sh.captureLocked(id, cell, &view)
-		after := view.child
-		cell.auxiliary = view.auxiliary
-		if state.direct || (state.before == nil) != (after.Obj == nil) || state.owner != view.owner ||
-			!state.source.equal(view.source) ||
-			cell.rooted != state.cell.rooted && state.cell.static == nil ||
-			cell.retired != state.cell.retired ||
-			cell.hidden != state.cell.hidden {
-			if cell.generation == 0 {
-				sh.admitAbsenceLocked(id, objectFacet)
+	{
+		stateValues4 := region.states
+		for stateIndex4 := range stateValues4 {
+			state := stateValues4[stateIndex4]
+			id := state.id
+			sh := s.shardFor(id)
+			cell := sh.cells[id]
+			generation, retired, hidden, auxiliary := cell.generation, cell.retired, cell.hidden, cell.auxiliary
+			cell.generation = max(cell.generation, state.cell.generation)
+			if cell.generation == 0 && cell.static == nil && len(sh.members[id]) == 0 && sh.slots[id] == nil {
+				continue
 			}
-			cell.authority = sh.advanceLocked(cell.current())
-		}
-		if cell.generation != generation || cell.retired != retired || cell.hidden != hidden ||
-			cell.auxiliary != auxiliary {
-			sh.cells[id] = cell
-		}
-		if head := cell.links; head != nil &&
-			(head.selected.Load() != view.owner || view.owner != nil && head.position.Load() != int64(view.position)) {
-			head.generation.Store(max(cell.generation, head.stamp()))
-			if view.owner != nil {
-				head.position.Store(int64(view.position))
+			if cell.hidden && state.live {
+				sh.clearFacetsLocked(id)
 			}
-			head.selected.Store(view.owner)
-		}
-		key := kindID{id.Group, id.Kind}
-		bucket := sh.byName[key]
-		if bucket.links == nil && after.Obj != nil {
-			sh.admitAbsenceLocked(manifest.NamedResource{Group: id.Group, Kind: id.Kind}, bucketFacet)
-			bucket.links = sh.newHeadLocked(bucket.generation)
-		}
-		if bucket.update(nameID{id.Namespace, id.Name}, after.Obj != nil, state.direct, state.bucketGeneration) {
-			bucket.authority = sh.enqueueLocked(bucket.authority)
-			sh.byName[key] = bucket
-		}
-		// Direct removal MUST restore surviving emitted payloads after clearing static facets.
-		if state.direct || state.payload != view.payload || state.cell.hidden != cell.hidden {
-			record := sh.artifacts[id]
-			effective := sh.projectArtifactLocked(id, &view, record)
-			if record.effective != effective {
-				changed := sh.publishArtifactLocked(id, &record, effective)
-				sh.artifacts[id] = record
-				if changed && (!cell.hidden || state.payload != nil) {
-					event := fireUnderLock(s, EventArtifactUpdated, id)
-					event.payload = effective
-					if effective == nil {
-						event.payload = view.payload
+			cell.retired, cell.hidden, cell.independent = !state.static, !state.live, state.independent
+			var view capture
+			sh.captureLocked(id, cell, &view)
+			after := view.child
+			cell.auxiliary = view.auxiliary
+			if state.direct || (state.before == nil) != (after.Obj == nil) || state.owner != view.owner ||
+				!state.source.equal(view.source) ||
+				cell.rooted != state.cell.rooted && state.cell.static == nil ||
+				cell.retired != state.cell.retired ||
+				cell.hidden != state.cell.hidden {
+				if cell.generation == 0 {
+					sh.admitAbsenceLocked(id, objectFacet)
+				}
+				cell.authority = sh.advanceLocked(cell.current())
+			}
+			if cell.generation != generation || cell.retired != retired || cell.hidden != hidden ||
+				cell.auxiliary != auxiliary {
+				sh.cells[id] = cell
+			}
+			if head := cell.links; head != nil &&
+				(head.selected.Load() != view.owner || view.owner != nil && head.position.Load() != int64(view.position)) {
+				head.generation.Store(max(cell.generation, head.stamp()))
+				if view.owner != nil {
+					head.position.Store(int64(view.position))
+				}
+				head.selected.Store(view.owner)
+			}
+			key := kindID{id.Group, id.Kind}
+			bucket := sh.byName[key]
+			if bucket.links == nil && after.Obj != nil {
+				sh.admitAbsenceLocked(manifest.NamedResource{Group: id.Group, Kind: id.Kind}, bucketFacet)
+				bucket.links = sh.newHeadLocked(bucket.generation)
+			}
+			if bucket.update(nameID{id.Namespace, id.Name}, after.Obj != nil, state.direct, state.bucketGeneration) {
+				bucket.authority = sh.enqueueLocked(bucket.authority)
+				sh.byName[key] = bucket
+			}
+			// Direct removal MUST restore surviving emitted payloads after clearing static facets.
+			if state.direct || state.payload != view.payload || state.cell.hidden != cell.hidden {
+				record := sh.artifacts[id]
+				effective := sh.projectArtifactLocked(id, &view, record)
+				if record.effective != effective {
+					changed := sh.publishArtifactLocked(id, &record, effective)
+					sh.artifacts[id] = record
+					if changed && (!cell.hidden || state.payload != nil) {
+						event := fireUnderLock(s, EventArtifactUpdated, id)
+						event.payload = effective
+						if effective == nil {
+							event.payload = view.payload
+						}
+						publications = append(publications, objectPublication{event: event, force: true})
 					}
-					publications = append(publications, objectPublication{event: event, force: true})
 				}
 			}
-		}
-		if (state.direct || state.before != after.Obj) && (after.Obj != nil || state.visible || !cell.hidden) {
-			event := fireUnderLock(s, EventObjectAdded, id)
-			event.payload = after.Obj
-			publications = append(
-				publications,
-				objectPublication{
-					event:        event,
-					before:       state.before,
-					document:     state.document,
-					after:        after.Obj,
-					nextDocument: after.Doc,
-					force:        state.seed,
-				},
-			)
+			if (state.direct || state.before != after.Obj) && (after.Obj != nil || state.visible || !cell.hidden) {
+				event := fireUnderLock(s, EventObjectAdded, id)
+				event.payload = after.Obj
+				publications = append(
+					publications,
+					objectPublication{
+						event:        event,
+						before:       state.before,
+						document:     state.document,
+						after:        after.Obj,
+						nextDocument: after.Doc,
+						force:        state.seed,
+					},
+				)
+			}
 		}
 	}
 	return publications

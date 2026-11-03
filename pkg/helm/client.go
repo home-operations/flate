@@ -95,34 +95,11 @@ func (c *Client) describeChart(
 	if err != nil {
 		return chartDescription{}, err
 	}
-	selector := struct {
-		Pin, Path string
-		Auto      bool
-	}{Pin: pin, Path: location, Auto: auto}
+	selector := chartSelector{Pin: pin, Path: location, Auto: auto}
 	var captured capturedChart
 	capture := func() error {
-		location = selector.Path
-		archiveShape := false
-		if selector.Auto {
-			location = cache.FileName(input)
-			archiveShape = location == ""
-			if archiveShape {
-				location = "."
-			}
-		}
-		label := location
-		if art.LocalPath != "" {
-			label = filepath.Join(art.LocalPath, filepath.FromSlash(location))
-		}
-		var missing bool
-		captured, missing, err = captureChart(ctx, input, location, archiveShape)
-		if missing {
-			return err
-		}
-		if err != nil {
-			return fmt.Errorf("load chart %s: %w", label, err)
-		}
-		return nil
+		captured, location, err = selector.capture(ctx, input, art.LocalPath)
+		return err
 	}
 	var cacheKey string
 	if pin != "" {
@@ -291,4 +268,34 @@ func cloneChartForRender(src *chart.Chart) *chart.Chart {
 		out.SetDependencies(clones...)
 	}
 	return &out
+}
+
+type chartSelector struct {
+	Pin  string `json:"Pin"`
+	Path string `json:"Path"`
+	Auto bool   `json:"Auto"`
+}
+
+func (s chartSelector) capture(ctx context.Context, input fs.FS, root string) (capturedChart, string, error) {
+	location := s.Path
+	archiveShape := false
+	if s.Auto {
+		location = cache.FileName(input)
+		archiveShape = location == ""
+		if archiveShape {
+			location = "."
+		}
+	}
+	label := location
+	if root != "" {
+		label = filepath.Join(root, filepath.FromSlash(location))
+	}
+	captured, missing, err := captureChart(ctx, input, location, archiveShape)
+	if missing {
+		return captured, location, err
+	}
+	if err != nil {
+		return captured, location, fmt.Errorf("load chart %s: %w", label, err)
+	}
+	return captured, location, nil
 }

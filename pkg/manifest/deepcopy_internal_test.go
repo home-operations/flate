@@ -1,0 +1,288 @@
+package manifest
+
+import (
+	"testing"
+
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	"github.com/fluxcd/pkg/apis/kustomize"
+
+	"github.com/home-operations/flate/internal/assert"
+)
+
+// DeepCopyMap must produce an independent tree — mutating the copy
+// can't bleed into the original or vice versa. Used by Kustomization.
+// Clone and HelmRelease.Clone to isolate reconcile-time mutations.
+func TestDeepCopyMap_Isolation(t *testing.T) {
+	t.Parallel()
+	src := map[string]any{
+		"top": "scalar",
+		"nested": map[string]any{
+			"k": "v",
+			"list": []any{
+				map[string]any{"x": "y"},
+				"z",
+			},
+		},
+	}
+	dst := DeepCopyMap(src)
+
+	// Mutate the copy at every nesting level. Source should be intact.
+	dst["top"] = "MUTATED"
+	dst["nested"].(map[string]any)["k"] = "MUTATED"
+	dst["nested"].(map[string]any)["list"].([]any)[0].(map[string]any)["x"] = "MUTATED"
+	dst["nested"].(map[string]any)["list"].([]any)[1] = "MUTATED"
+
+	if src["top"] != "scalar" {
+		t.Errorf("source top leaked: %v", src["top"])
+	}
+	if src["nested"].(map[string]any)["k"] != "v" {
+		t.Errorf("source nested leaked: %v", src["nested"])
+	}
+	{
+		assert.ErrorIf(
+			t,
+			src["nested"].(map[string]any)["list"].([]any)[0].(map[string]any)["x"] != "y",
+			"source deep nested leaked",
+		)
+	}
+	{
+		assert.ErrorIf(t, src["nested"].(map[string]any)["list"].([]any)[1] != "z", "source list leaked")
+	}
+}
+
+func TestDeepCopyMap_Nil(t *testing.T) {
+	t.Parallel()
+	{
+		assert.ErrorIf(t, DeepCopyMap(nil) != nil, "nil source should produce nil")
+	}
+}
+
+func TestContainsValuePlaceholder_ValuesOnly(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		in   any
+		want bool
+	}{
+		{"nil", nil, false},
+		{"literal", "value", false},
+		{"placeholder", "..PLACEHOLDER_key..", true},
+		{"concatenation", "registry...PLACEHOLDER_DOMAIN..", true},
+		{"key only", map[string]any{"..PLACEHOLDER_key..": 1}, false},
+		{"nested key", []any{map[string]any{"..PLACEHOLDER_key..": "value"}}, false},
+		{"nested value", map[string]any{"data": []any{3, map[string]any{"value": "..PLACEHOLDER_key.."}}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			{
+				got := ContainsValuePlaceholder(tc.in)
+				assert.ErrorIf(t, got != tc.want, "ContainsValuePlaceholder = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// HelmRelease.Clone must produce a HR whose mutable fields don't alias
+// the source — critical for the store-immutability contract.
+func TestHelmRelease_Clone_Isolation(t *testing.T) {
+	t.Parallel()
+	src := &HelmRelease{
+		Name: "plex", Namespace: "media",
+		Values:           map[string]any{"replicas": 1, "nested": map[string]any{"k": "v"}},
+		ChartValuesFiles: []string{"values.yaml"},
+	}
+	dst := src.Clone()
+	dst.Values["replicas"] = 99
+	dst.Values["nested"].(map[string]any)["k"] = "MUTATED"
+	dst.ChartValuesFiles[0] = "MUTATED"
+
+	if src.Values["replicas"] != 1 {
+		t.Errorf("source Values aliased: %v", src.Values["replicas"])
+	}
+	if src.Values["nested"].(map[string]any)["k"] != "v" {
+		t.Errorf("source nested Values aliased: %v", src.Values["nested"])
+	}
+	if src.ChartValuesFiles[0] != "values.yaml" {
+		t.Errorf("source ChartValuesFiles aliased: %v", src.ChartValuesFiles)
+	}
+}
+
+func TestKustomization_Clone_Isolation(t *testing.T) {
+	t.Parallel()
+	doc := mustYAML(t, `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: apps, namespace: flux-system, labels: {owner: original}, annotations: {note: original}}
+spec:
+  patches: [{patch: original, target: {kind: ConfigMap, name: original}}, null]
+  components: [original]
+  commonMetadata:
+    labels: {app: null, team: original}
+    annotations: {note: null}
+`)
+	src, err := parseKustomization(doc)
+	assert.NoError(t, err)
+	snapshot := Fingerprint(src.Content(nil, nil, false))
+	rawSpec := doc["spec"].(map[string]any)
+	rawSpec["patches"].([]any)[0].(map[string]any)["target"].(map[string]any)["name"] = "raw-edit"
+	rawSpec["commonMetadata"].(map[string]any)["labels"].(map[string]any)["team"] = "raw-edit"
+	assert.Equal(t, Fingerprint(src.Content(nil, nil, false)), snapshot)
+	dst := src.Clone()
+	dst.Patches[0].Patch = "changed"
+	dst.Patches[0].Target.Name = "changed"
+	dst.Components[0] = "changed"
+	dst.CommonMetadata.Labels["app"] = "changed"
+	dst.CommonMetadata.Annotations["note"] = "changed"
+	dst.Labels["owner"] = "changed"
+	dst.Annotations["note"] = "changed"
+	assert.Equal(t, src.Labels["owner"], "original")
+	assert.Equal(t, src.Annotations["note"], "original")
+	assert.Equal(t, Fingerprint(src.Content(nil, nil, false)), snapshot)
+	{
+		assert.FatalIf(
+			t,
+			Fingerprint(dst.Content(nil, nil, false)) == snapshot,
+			"%s",
+			"typed input edits did not invalidate content",
+		)
+	}
+}
+
+// TestHelmRelease_Clone_DeepCopiesEmbeddedSpec pins the deep-copy of
+// the embedded helmv2.HelmReleaseSpec pointer/slice fields. The pre-fix
+// shallow `out := *h` aliased these to the canonical store-owned HR,
+// so a future code path mutating, e.g., Install.DisableHooks on a Clone
+// would corrupt the store. Iterate every pointer-shaped field the
+// spec exposes — any one regressing breaks the immutability contract.
+func TestHelmRelease_Clone_DeepCopiesEmbeddedSpec(t *testing.T) {
+	t.Parallel()
+	src := &HelmRelease{
+		Name: "plex", Namespace: "media",
+		Install:   &helmv2.Install{DisableHooks: false},
+		Upgrade:   &helmv2.Upgrade{DisableHooks: false},
+		Rollback:  &helmv2.Rollback{DisableHooks: false},
+		Uninstall: &helmv2.Uninstall{DisableHooks: false},
+		Test:      &helmv2.Test{Enable: false},
+		DriftDetection: &helmv2.DriftDetection{
+			Mode: helmv2.DriftDetectionWarn,
+		},
+		ValuesFrom: []helmv2.ValuesReference{
+			{Kind: "ConfigMap", Name: "src-cm"},
+		},
+		DependsOn: []helmv2.DependencyReference{
+			{Name: "src-dep"},
+		},
+	}
+	dst := src.Clone()
+	dst.Install.DisableHooks = true
+	dst.Upgrade.DisableHooks = true
+	dst.Rollback.DisableHooks = true
+	dst.Uninstall.DisableHooks = true
+	dst.Test.Enable = true
+	dst.DriftDetection.Mode = helmv2.DriftDetectionEnabled
+	dst.ValuesFrom[0].Name = "MUTATED"
+	dst.HelmReleaseSpec.DependsOn[0].Name = "MUTATED"
+
+	{
+		assert.ErrorIf(t, src.Install.DisableHooks, "source Install aliased after Clone mutation")
+	}
+	{
+		assert.ErrorIf(t, src.Upgrade.DisableHooks, "source Upgrade aliased after Clone mutation")
+	}
+	{
+		assert.ErrorIf(t, src.Rollback.DisableHooks, "source Rollback aliased after Clone mutation")
+	}
+	{
+		assert.ErrorIf(t, src.Uninstall.DisableHooks, "source Uninstall aliased after Clone mutation")
+	}
+	{
+		assert.ErrorIf(t, src.Test.Enable, "source Test aliased after Clone mutation")
+	}
+	{
+		assert.ErrorIf(
+			t,
+			src.DriftDetection.Mode != helmv2.DriftDetectionWarn,
+			"source DriftDetection aliased after Clone mutation",
+		)
+	}
+	if src.ValuesFrom[0].Name != "src-cm" {
+		t.Errorf("source ValuesFrom aliased: %v", src.ValuesFrom[0].Name)
+	}
+	if src.HelmReleaseSpec.DependsOn[0].Name != "src-dep" {
+		t.Errorf("source spec DependsOn aliased: %v", src.HelmReleaseSpec.DependsOn[0].Name)
+	}
+}
+
+// TestKustomization_Clone_DeepCopiesEmbeddedSpec pins the deep-copy of
+// the embedded kustomizev1.KustomizationSpec pointer/slice fields.
+// Pre-fix the spec's PostBuild.Substitute map, Patches slice, Images
+// slice etc. aliased the canonical store-owned Kustomization.
+func TestKustomization_Clone_DeepCopiesEmbeddedSpec(t *testing.T) {
+	t.Parallel()
+	src := &Kustomization{
+		Name: "apps", Namespace: "flux-system",
+		PostBuild: &kustomizev1.PostBuild{
+			Substitute: map[string]string{"K": "v"},
+		},
+		Patches: []kustomize.Patch{
+			{Patch: "src-patch"},
+		},
+		Components: []string{"src-comp"},
+		DependsOn: []kustomizev1.DependencyReference{
+			{Name: "src-dep"},
+		},
+	}
+	dst := src.Clone()
+	dst.PostBuild.Substitute["K"] = "MUTATED"
+	dst.Patches[0].Patch = "MUTATED"
+	dst.Components[0] = "MUTATED"
+	dst.KustomizationSpec.DependsOn[0].Name = "MUTATED"
+
+	if src.PostBuild.Substitute["K"] != "v" {
+		t.Errorf("source PostBuild.Substitute aliased: %v", src.PostBuild.Substitute["K"])
+	}
+	if src.Patches[0].Patch != "src-patch" {
+		t.Errorf("source Patches aliased: %v", src.Patches[0].Patch)
+	}
+	if src.Components[0] != "src-comp" {
+		t.Errorf("source Components aliased: %v", src.Components[0])
+	}
+	if src.KustomizationSpec.DependsOn[0].Name != "src-dep" {
+		t.Errorf("source spec DependsOn aliased: %v", src.KustomizationSpec.DependsOn[0].Name)
+	}
+}
+
+func TestWithNamespace_Copy(t *testing.T) {
+	t.Parallel()
+	ks := &Kustomization{Name: "app", Namespace: "authored"}
+	ks.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []SubstituteReference{{Kind: KindConfigMap, Name: "values"}}}
+	for _, tc := range []struct{ name, namespace string }{
+		{"projected", "effective"}, {"cleared", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			projected := ks.WithNamespace(tc.namespace).(*Kustomization)
+			assert.Equal(
+				t,
+				projected.Named(),
+				NamedResource{
+					Group:     FluxKustomizeDomain,
+					Kind:      KindKustomization,
+					Namespace: tc.namespace,
+					Name:      "app",
+				},
+			)
+			assert.Equal(
+				t,
+				ks.Named(),
+				NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "authored", Name: "app"},
+			)
+			assert.Diff(
+				t,
+				ks.PostBuild,
+				&kustomizev1.PostBuild{SubstituteFrom: []SubstituteReference{{Kind: KindConfigMap, Name: "values"}}},
+			)
+			assert.Diff(t, projected.PostBuild, ks.PostBuild)
+		})
+	}
+}

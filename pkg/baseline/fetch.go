@@ -41,20 +41,20 @@ type baseRemote struct {
 func fetchBase(ctx context.Context, url, rev string, owner *sourcecache.Cache) (*resolution, error) {
 	ep, err := transport.NewEndpoint(url)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("newendpoint: %w", err)
 	}
 	client, err := client.NewClient(ep)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("newclient: %w", err)
 	}
 	session, err := client.NewUploadPackSession(ep, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("newuploadpacksession: %w", err)
 	}
 	defer func() { _ = session.Close() }()
 	refs, err := session.AdvertisedReferencesContext(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("advertisedreferencescontext: %w", err)
 	}
 	pin, err := remotePin(refs, rev)
 	if err != nil {
@@ -67,13 +67,13 @@ func fetchBase(ctx context.Context, url, rev string, owner *sourcecache.Cache) (
 		key,
 		sourcecache.Policy{MaxAge: sourcecache.Forever},
 		func(ctx context.Context, upper storage.Storer, _ billy.Filesystem) (plumbing.Hash, error) {
-			if err := remote.fetch(ctx, upper, nil); err != nil {
-				return plumbing.ZeroHash, err
+			if localErr := remote.fetch(ctx, upper, nil); localErr != nil {
+				return plumbing.ZeroHash, localErr
 			}
-			if tag, err := object.GetTag(upper, pin); err == nil {
-				commit, err := tag.Commit()
-				if err != nil {
-					return plumbing.ZeroHash, err
+			if tag, localErr := object.GetTag(upper, pin); localErr == nil {
+				commit, innerLocalErr := tag.Commit()
+				if innerLocalErr != nil {
+					return plumbing.ZeroHash, fmt.Errorf("commit: %w", innerLocalErr)
 				}
 				remote.pin = commit.Hash
 			}
@@ -93,10 +93,12 @@ func fetchBase(ctx context.Context, url, rev string, owner *sourcecache.Cache) (
 
 func (r *resolution) adopt(lower storage.Storer) error {
 	upper := filesystem.NewStorageWithOptions(r.backing, objectcache.NewObjectLRU(0), filesystem.Options{})
-	if _, err := upper.Reference(fullBaseRef); err == nil {
+	_, err := upper.Reference(fullBaseRef)
+	switch {
+	case err == nil:
 		r.remote.full = true
-	} else if !errors.Is(err, plumbing.ErrReferenceNotFound) {
-		return err
+	case !errors.Is(err, plumbing.ErrReferenceNotFound):
+		return fmt.Errorf("reference: %w", err)
 	}
 	var storer storage.Storer = upper
 	if lower != nil {
@@ -127,44 +129,25 @@ func remotePin(refs *packp.AdvRefs, rev string) (plumbing.Hash, error) {
 // partial capabilities permit one full fetch of the same resolved commit.
 func (r *baseRemote) fetch(ctx context.Context, upper storage.Storer, wants []plumbing.Hash) error {
 	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context: %w", err)
+	}
+	req, err := r.prepareRequest(wants)
+	if err != nil {
 		return err
 	}
-	req := r.newRequest(len(wants) == 0)
-	if len(wants) == 0 {
-		if !r.full && r.capabilities.Supports(capability.Filter) {
-			if err := req.Capabilities.Set(capability.Filter); err != nil {
-				return err
-			}
-			req.Filter = packp.FilterBlobNone()
-		} else {
-			r.full = true
-		}
-	} else if r.capabilities.Supports(capability.AllowReachableSHA1InWant) {
-		req.Wants = wants
-	} else if r.full {
-		return fmt.Errorf("base %s is missing objects after full fetch", r.pin)
-	} else {
-		r.full = true
-		req = r.newRequest(true)
-	}
 	for {
-		session, err := r.client.NewUploadPackSession(r.endpoint, nil)
-		if err != nil {
-			return err
-		}
-		response, err := session.UploadPack(ctx, req)
-		if err == nil {
-			err = errors.Join(packfile.UpdateObjectStorage(upper, response), response.Close())
-		}
-		err = errors.Join(err, session.Close())
+		err := r.uploadPack(ctx, upper, req)
 		if err == nil {
 			if !r.full {
 				return nil
 			}
-			return upper.SetReference(plumbing.NewHashReference(fullBaseRef, r.pin))
+			if err := upper.SetReference(plumbing.NewHashReference(fullBaseRef, r.pin)); err != nil {
+				return fmt.Errorf("setreference: %w", err)
+			}
+			return nil
 		}
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return fmt.Errorf("context: %w", ctx.Err())
 		}
 		if errors.Is(err, transport.ErrAuthenticationRequired) || errors.Is(err, transport.ErrAuthorizationFailed) {
 			return err
@@ -175,6 +158,42 @@ func (r *baseRemote) fetch(ctx context.Context, upper storage.Storer, wants []pl
 		r.full = true
 		req = r.newRequest(true)
 	}
+}
+
+func (r *baseRemote) uploadPack(ctx context.Context, upper storage.Storer, req *packp.UploadPackRequest) error {
+	session, err := r.client.NewUploadPackSession(r.endpoint, nil)
+	if err != nil {
+		return fmt.Errorf("newuploadpacksession: %w", err)
+	}
+	response, err := session.UploadPack(ctx, req)
+	if err == nil {
+		err = errors.Join(packfile.UpdateObjectStorage(upper, response), response.Close())
+	}
+	err = errors.Join(err, session.Close())
+	return err
+}
+
+func (r *baseRemote) prepareRequest(wants []plumbing.Hash) (*packp.UploadPackRequest, error) {
+	req := r.newRequest(len(wants) == 0)
+	switch {
+	case len(wants) == 0:
+		if !r.full && r.capabilities.Supports(capability.Filter) {
+			if err := req.Capabilities.Set(capability.Filter); err != nil {
+				return nil, fmt.Errorf("set: %w", err)
+			}
+			req.Filter = packp.FilterBlobNone()
+		} else {
+			r.full = true
+		}
+	case r.capabilities.Supports(capability.AllowReachableSHA1InWant):
+		req.Wants = wants
+	case r.full:
+		return nil, fmt.Errorf("base %s is missing objects after full fetch", r.pin)
+	default:
+		r.full = true
+		req = r.newRequest(true)
+	}
+	return req, nil
 }
 
 func (r *baseRemote) newRequest(wantCommit bool) *packp.UploadPackRequest {
@@ -193,52 +212,52 @@ func (r *baseRemote) newRequest(wantCommit bool) *packp.UploadPackRequest {
 
 func copyMetadata(ctx context.Context, source storage.Storer, upper storage.Storer, hash plumbing.Hash) error {
 	if err := ctx.Err(); err != nil {
-		return err
+		return fmt.Errorf("context: %w", err)
 	}
 	commit, err := source.EncodedObject(plumbing.CommitObject, hash)
 	if err != nil {
-		return err
+		return fmt.Errorf("encodedobject: %w", err)
 	}
 	if _, err = upper.SetEncodedObject(commit); err != nil {
-		return err
+		return fmt.Errorf("setencodedobject: %w", err)
 	}
 	c, err := object.GetCommit(source, hash)
 	if err != nil {
-		return err
+		return fmt.Errorf("getcommit: %w", err)
 	}
 	tree, err := c.Tree()
 	if err != nil {
-		return err
+		return fmt.Errorf("tree: %w", err)
 	}
 	walker := object.NewTreeWalker(tree, true, nil)
 	defer walker.Close()
 	root, err := source.EncodedObject(plumbing.TreeObject, tree.Hash)
 	if err != nil {
-		return err
+		return fmt.Errorf("encodedobject: %w", err)
 	}
 	if _, err = upper.SetEncodedObject(root); err != nil {
-		return err
+		return fmt.Errorf("setencodedobject: %w", err)
 	}
 	for {
 		if err := ctx.Err(); err != nil {
-			return err
+			return fmt.Errorf("context: %w", err)
 		}
 		_, entry, err := walker.Next()
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
-			return err
+			return fmt.Errorf("next: %w", err)
 		}
 		if entry.Mode != filemode.Dir {
 			continue
 		}
 		obj, err := source.EncodedObject(plumbing.TreeObject, entry.Hash)
 		if err != nil {
-			return err
+			return fmt.Errorf("encodedobject: %w", err)
 		}
 		if _, err = upper.SetEncodedObject(obj); err != nil {
-			return err
+			return fmt.Errorf("setencodedobject: %w", err)
 		}
 	}
 	return nil

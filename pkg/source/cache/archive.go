@@ -34,6 +34,7 @@ type tarFS struct {
 }
 type tarNode struct {
 	fs.FileInfo
+
 	offset   int64
 	header   int64
 	sparse   bool
@@ -46,6 +47,7 @@ func (n *tarNode) Info() (fs.FileInfo, error) { return n, nil }
 type tarFile struct {
 	*tarNode
 	io.Reader
+
 	file   *os.File
 	cursor int
 }
@@ -53,7 +55,7 @@ type tarFile struct {
 func (f *tarFile) Stat() (fs.FileInfo, error) { return f.tarNode, nil }
 func (f *tarFile) Close() error {
 	if f.file != nil {
-		return f.file.Close()
+		return f.file.Close() //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
 	}
 	return nil
 }
@@ -85,11 +87,11 @@ func (t *tarFS) identify(content digest.Digest, key ArchiveKey) {
 
 func (t *tarFS) Open(name string) (fs.File, error) {
 	if (t.memory == nil || t.nodes != nil || len(t.denied) != 0) && !fs.ValidPath(name) {
-		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrInvalid}
+		return nil, &fs.PathError{Op: openOperation, Path: name, Err: fs.ErrInvalid}
 	}
 	for parent := name; len(t.denied) > 0 && parent != "."; parent = path.Dir(parent) {
 		if t.denied[parent] {
-			return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrPermission}
+			return nil, &fs.PathError{Op: openOperation, Path: name, Err: fs.ErrPermission}
 		}
 	}
 	if t.memory != nil && t.nodes == nil {
@@ -97,7 +99,7 @@ func (t *tarFS) Open(name string) (fs.File, error) {
 	}
 	node := t.nodes[name]
 	if node == nil {
-		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
+		return nil, &fs.PathError{Op: openOperation, Path: name, Err: fs.ErrNotExist}
 	}
 	f := &tarFile{tarNode: node, Reader: bytes.NewReader(nil)}
 	if !node.IsDir() {
@@ -107,14 +109,14 @@ func (t *tarFS) Open(name string) (fs.File, error) {
 		var err error
 		f.file, err = t.root.Open(blobPath(t.digest))
 		if err != nil {
-			return nil, err
+			return nil, err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
 		}
 		f.Reader = io.NewSectionReader(f.file, node.offset, node.Size())
 		if node.sparse {
 			tr := tar.NewReader(io.NewSectionReader(f.file, node.header, 1<<63-1-node.header))
 			if _, err := tr.Next(); err != nil {
 				_ = f.file.Close()
-				return nil, err
+				return nil, err //nolint:wrapcheck // The cache producer and stream adapters preserve the original error tree for replay and io sentinel handling.
 			}
 			f.Reader = tr
 		}
@@ -124,13 +126,14 @@ func (t *tarFS) Open(name string) (fs.File, error) {
 
 type positionReader struct {
 	io.Reader
+
 	offset int64
 }
 
 func (r *positionReader) Read(p []byte) (int, error) {
 	n, err := r.Reader.Read(p)
 	r.offset += int64(n)
-	return n, err
+	return n, err //nolint:wrapcheck // The cache producer and stream adapters preserve the original error tree for replay and io sentinel handling.
 }
 
 func (r *positionReader) Seek(offset int64, whence int) (int64, error) {
@@ -142,190 +145,223 @@ func (r *positionReader) Seek(offset int64, whence int) (int64, error) {
 	if err == nil {
 		r.offset = n
 	}
-	return n, err
+	return n, err //nolint:wrapcheck // The cache producer and stream adapters preserve the original error tree for replay and io sentinel handling.
 }
 
-func alignNext(offset int64) int64 { return (offset + 511) / 512 * 512 }
+func alignNext(offset int64) int64 { return (offset + tarBlockSize - 1) / tarBlockSize * tarBlockSize }
+
+type archiveReader struct {
+	position          *positionReader
+	reader            *tar.Reader
+	key               ArchiveKey
+	index             *tarFS
+	builder           *tree.Builder
+	total, nextHeader int64
+}
 
 func readArchive(r io.Reader, key ArchiveKey, index *tarFS) (*tarFS, error) {
 	pos := &positionReader{Reader: r}
-	tr := tar.NewReader(pos)
-	var builder *tree.Builder
+	a := archiveReader{position: pos, reader: tar.NewReader(pos), key: key, index: index}
 	if index.root == nil {
-		builder = tree.NewBuilder(nil)
+		a.builder = tree.NewBuilder(nil)
 	}
 	index.nodes = map[string]*tarNode{
-		".": {FileInfo: (&tar.Header{Name: ".", Mode: 0o750, Typeflag: tar.TypeDir}).FileInfo()},
+		".": {FileInfo: (&tar.Header{Name: ".", Mode: cacheDirectoryMode, Typeflag: tar.TypeDir}).FileInfo()},
 	}
-	var total, nextHeader int64
 	for {
-		header := nextHeader
-		h, err := tr.Next()
+		header := a.nextHeader
+		h, err := a.reader.Next()
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
 			return nil, fmt.Errorf("tar: %w", err)
 		}
-		name, err := safepath.ArchiveName(h.Name)
-		if err != nil {
+		if err := a.readEntry(h, header); err != nil {
 			return nil, err
 		}
-		if key.Policy == "extract" {
-			const limit = 100 << 20
-			if h.Size > limit-total {
-				return nil, fmt.Errorf("tar entry %q exceeds %d-byte extract limit", h.Name, limit)
-			}
-			total += h.Size
-		}
-		nextHeader = alignNext(pos.offset + h.Size)
-		link := h.Typeflag == tar.TypeSymlink || h.Typeflag == tar.TypeLink
-		if key.Policy == "extract" && h.Typeflag != tar.TypeReg && h.Typeflag != tar.TypeDir {
-			return nil, fmt.Errorf("unsupported tar entry %q type %d", h.Name, h.Typeflag)
-		}
-		if h.Typeflag != tar.TypeReg && h.Typeflag != tar.TypeDir && !link {
-			if _, err := io.Copy(
-				io.Discard,
-				tr,
-			); err != nil { //nolint:gosec // Flux source archives permit uncapped traversal; member paths are validated.
-				return nil, err
-			}
-			nextHeader = alignNext(pos.offset)
-			continue
-		}
-		sparse := false
-		for k := range h.PAXRecords {
-			sparse = sparse || strings.HasPrefix(k, "GNU.sparse.")
-		}
+	}
+	return a.finish()
+}
 
-		old := index.nodes[name]
-		if old != nil && (old.IsDir() != (h.Typeflag == tar.TypeDir) || (old.Mode()&fs.ModeSymlink != 0) != link) {
-			return nil, tree.ErrConflict
+func (a *archiveReader) readEntry(h *tar.Header, header int64) error {
+	name, err := safepath.ArchiveName(h.Name)
+	if err != nil {
+		return err
+	}
+	if a.key.Policy == extractPolicy {
+		const limit = 100 << 20
+		if h.Size > limit-a.total {
+			return fmt.Errorf("tar entry %q exceeds %d-byte extract limit", h.Name, limit)
 		}
-		for parent := path.Dir(name); parent != "."; parent = path.Dir(parent) {
-			if n := index.nodes[parent]; n != nil && !n.IsDir() {
-				return nil, tree.ErrConflict
-			}
-			if index.nodes[parent] == nil {
-				mode := int64(0o750)
-				if key.Policy == "extract" {
-					mode = 0o755
-				}
-				index.nodes[parent] = &tarNode{
-					FileInfo: (&tar.Header{Name: path.Base(parent), Mode: mode, Typeflag: tar.TypeDir}).FileInfo(),
-				}
-			}
+		a.total += h.Size
+	}
+	a.nextHeader = alignNext(a.position.offset + h.Size)
+	link := h.Typeflag == tar.TypeSymlink || h.Typeflag == tar.TypeLink
+	if a.key.Policy == extractPolicy && h.Typeflag != tar.TypeReg && h.Typeflag != tar.TypeDir {
+		return fmt.Errorf("unsupported tar entry %q type %d", h.Name, h.Typeflag)
+	}
+	if h.Typeflag != tar.TypeReg && h.Typeflag != tar.TypeDir && !link {
+		return a.discardBody()
+	}
+	old := a.index.nodes[name]
+	if admitParentsErr := a.admitParents(name, h.Typeflag == tar.TypeDir, link); admitParentsErr != nil {
+		return admitParentsErr
+	}
+	if link {
+		a.index.nodes[name] = &tarNode{
+			FileInfo: (&tar.Header{Name: path.Base(name), Typeflag: tar.TypeSymlink}).FileInfo(),
 		}
-		if link {
-			index.nodes[name] = &tarNode{
-				FileInfo: (&tar.Header{Name: path.Base(name), Typeflag: tar.TypeSymlink}).FileInfo(),
-			}
-			if index.denied == nil {
-				index.denied = make(map[string]bool)
-			}
-			index.denied[name] = true
+		if a.index.denied == nil {
+			a.index.denied = make(map[string]bool)
+		}
+		a.index.denied[name] = true
+		return nil
+	}
+	sparse := false
+	for k := range h.PAXRecords {
+		sparse = sparse || strings.HasPrefix(k, "GNU.sparse.")
+	}
+	copyHeader := a.copyHeader(name, h, old)
+	a.index.nodes[name] = &tarNode{
+		FileInfo: copyHeader.FileInfo(),
+		offset:   a.position.offset,
+		header:   header,
+		sparse:   sparse,
+	}
+	if h.Typeflag == tar.TypeDir {
+		return a.mountDirectory(name)
+	}
+	if sparse && a.builder == nil {
+		return a.discardBody()
+	}
+	if a.builder == nil {
+		return nil
+	}
+	data, err := io.ReadAll(a.reader)
+	if err != nil {
+		return fmt.Errorf("read tar body: %w", err)
+	}
+	a.nextHeader = alignNext(a.position.offset)
+	return a.builder.AddFile(name, data, copyHeader.FileInfo().Mode())
+}
+
+func (a *archiveReader) discardBody() error {
+	// Flux accepts source archives without an extract size limit.
+	if _, err := io.Copy(
+		io.Discard,
+		a.reader,
+	); err != nil { //nolint:gosec // Flux source archives have no extract size limit.
+		return fmt.Errorf("read tar body: %w", err)
+	}
+	a.nextHeader = alignNext(a.position.offset)
+	return nil
+}
+
+func (a *archiveReader) admitParents(name string, directory, link bool) error {
+	old := a.index.nodes[name]
+	if old != nil && (old.IsDir() != directory || (old.Mode()&fs.ModeSymlink != 0) != link) {
+		return tree.ErrConflict
+	}
+	for parent := path.Dir(name); parent != "."; parent = path.Dir(parent) {
+		if n := a.index.nodes[parent]; n != nil && !n.IsDir() {
+			return tree.ErrConflict
+		}
+		if a.index.nodes[parent] != nil {
 			continue
 		}
-		copyHeader := *h
-		copyHeader.Name = path.Base(name)
-		copyHeader.Mode = 0o600
-		if h.Typeflag == tar.TypeDir {
-			copyHeader.Mode = 0o750
+		mode := int64(cacheDirectoryMode)
+		if a.key.Policy == extractPolicy {
+			mode = 0o755
 		}
-		if key.Policy == "extract" {
-			copyHeader.Mode = h.Mode & 0o777
-			if old != nil {
-				copyHeader.Mode = int64(old.Mode().Perm())
-			}
-		}
-		if key.Policy == "fixed" && h.Typeflag != tar.TypeDir && h.Mode&0o111 != 0 {
-			copyHeader.Mode = 0o700
-		}
-		copyHeader.ModTime = time.Time{}
-		if key.Policy == "fixed" {
-			copyHeader.Uid, copyHeader.Gid, copyHeader.Uname, copyHeader.Gname = 0, 0, "", ""
-			copyHeader.AccessTime, copyHeader.ChangeTime = time.Time{}, time.Time{}
-		}
-		index.nodes[name] = &tarNode{
-			FileInfo: copyHeader.FileInfo(),
-			offset:   pos.offset,
-			header:   header,
-			sparse:   sparse,
-		}
-		if h.Typeflag == tar.TypeDir {
-			if builder != nil && (key.Policy == "fixed" || key.Policy == "extract") {
-				if _, err := fs.Stat(builder, name); errors.Is(err, fs.ErrNotExist) {
-					empty, _ := tree.NewBuilder(nil).Build()
-					if err := builder.Mount(name, empty); err != nil {
-						return nil, err
-					}
-				} else if err != nil {
-					return nil, err
-				}
-			}
-			continue
-		}
-		if sparse && builder == nil {
-			if _, err := io.Copy(
-				io.Discard,
-				tr,
-			); err != nil { //nolint:gosec // Flux source archives permit sparse expansion; reads stay confined to this member.
-				return nil, err
-			}
-			nextHeader = alignNext(pos.offset)
-		}
-		if builder != nil {
-			data, err := io.ReadAll(tr)
-			if err != nil {
-				return nil, err
-			}
-			nextHeader = alignNext(pos.offset)
-			if err := builder.AddFile(name, data, copyHeader.FileInfo().Mode()); err != nil {
-				return nil, err
-			}
+		a.index.nodes[parent] = &tarNode{
+			FileInfo: (&tar.Header{Name: path.Base(parent), Mode: mode, Typeflag: tar.TypeDir}).FileInfo(),
 		}
 	}
-	if builder == nil {
-		index.list()
-		if index.digest != "" {
-			if err := pruneArchive(index, index.nodes, key); err != nil {
+	return nil
+}
+
+func (a *archiveReader) copyHeader(name string, h *tar.Header, old *tarNode) tar.Header {
+	copyHeader := *h
+	copyHeader.Name = path.Base(name)
+	copyHeader.Mode = privateFileMode
+	if h.Typeflag == tar.TypeDir {
+		copyHeader.Mode = cacheDirectoryMode
+	}
+	if a.key.Policy == extractPolicy {
+		copyHeader.Mode = h.Mode & unixPermissionMask
+		if old != nil {
+			copyHeader.Mode = int64(old.Mode().Perm())
+		}
+	}
+	if a.key.Policy == fixedPolicy && h.Typeflag != tar.TypeDir && h.Mode&0o111 != 0 {
+		copyHeader.Mode = 0o700
+	}
+	copyHeader.ModTime = time.Time{}
+	if a.key.Policy == fixedPolicy {
+		copyHeader.Uid, copyHeader.Gid, copyHeader.Uname, copyHeader.Gname = 0, 0, "", ""
+		copyHeader.AccessTime, copyHeader.ChangeTime = time.Time{}, time.Time{}
+	}
+	return copyHeader
+}
+
+func (a *archiveReader) mountDirectory(name string) error {
+	if a.builder == nil || a.key.Policy != fixedPolicy && a.key.Policy != extractPolicy {
+		return nil
+	}
+	_, err := fs.Stat(a.builder, name)
+	if errors.Is(err, fs.ErrNotExist) {
+		empty, _ := tree.NewBuilder(nil).Build()
+		return a.builder.Mount(name, empty)
+	}
+	if err != nil {
+		return fmt.Errorf("stat tar directory: %w", err)
+	}
+	return nil
+}
+
+func (a *archiveReader) finish() (*tarFS, error) {
+	if a.builder == nil {
+		a.index.list()
+		if a.index.digest != "" {
+			if err := pruneArchive(a.index, a.index.nodes, a.key); err != nil {
 				return nil, err
 			}
-			index.list()
+			a.index.list()
 		}
-		return index, nil
+		return a.index, nil
 	}
-	if err := pruneArchive(builder, index.nodes, key); err != nil {
+	if err := pruneArchive(a.builder, a.index.nodes, a.key); err != nil {
 		return nil, err
 	}
-	memory, err := builder.Build()
+	memory, err := a.builder.Build()
 	if err != nil {
 		return nil, err
 	}
-	index.memory = memory
-	if key.Policy != "fixed" {
-		index.nodes = nil
+	a.index.memory = memory
+	if a.key.Policy != fixedPolicy {
+		a.index.nodes = nil
 	} else {
-		index.list()
+		a.index.list()
 	}
-	return index, nil
+	return a.index, nil
 }
 
 func pruneArchive(raw fs.FS, nodes map[string]*tarNode, key ArchiveKey) error {
-	if key.Policy == "extract" {
+	if key.Policy == extractPolicy {
 		return nil
 	}
 	var files []string
-	if key.Policy == "fixed" {
+	if key.Policy == fixedPolicy {
 		files = []string{}
 	}
-	matcher, err := sourceignore.NewFS(raw, files, key.Ignore, key.Policy == "source" || key.Policy == "fixed")
+	matcher, err := sourceignore.NewFS(raw, files, key.Ignore, key.Policy == "source" || key.Policy == fixedPolicy)
 	if err != nil {
 		return err
 	}
 	kept := map[string]bool{".": true}
 	for name, node := range nodes {
-		if name == "." || !node.Mode().IsRegular() && (key.Policy != "fixed" || !node.IsDir()) ||
+		if name == "." || !node.Mode().IsRegular() && (key.Policy != fixedPolicy || !node.IsDir()) ||
 			matcher.Match(filepath.FromSlash(name), node.IsDir()) {
 			continue
 		}
@@ -334,23 +370,7 @@ func pruneArchive(raw fs.FS, nodes map[string]*tarNode, key ArchiveKey) error {
 			kept[p] = true
 		}
 	}
-	names := make([]string, 0, len(nodes))
-	for name := range nodes {
-		names = append(names, name)
-	}
-	slices.Sort(names)
-	for _, name := range names {
-		if kept[name] {
-			continue
-		}
-		delete(nodes, name)
-		if builder, ok := raw.(*tree.Builder); ok {
-			if err := builder.RemoveAll(name); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return pruneNodes(raw, nodes, kept)
 }
 
 func (t *tarFS) list() {
@@ -378,7 +398,7 @@ func (t *tarFS) treeIdentity(ctx context.Context) (string, error) {
 	records := make([]record, 0, len(t.nodes))
 	for _, name := range slices.Sorted(maps.Keys(t.nodes)) {
 		if err := ctx.Err(); err != nil {
-			return "", err
+			return "", err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 		}
 		if name == "." {
 			continue
@@ -388,7 +408,7 @@ func (t *tarFS) treeIdentity(ctx context.Context) (string, error) {
 		if node.Mode().IsRegular() {
 			data, err := fs.ReadFile(t, name)
 			if err != nil {
-				return "", err
+				return "", fmt.Errorf("read cached tree content: %w", err)
 			}
 			r.Content = manifest.Fingerprint(data)
 			if r.Content == "" {
@@ -402,4 +422,24 @@ func (t *tarFS) treeIdentity(ctx context.Context) (string, error) {
 		return "", manifest.NewError(manifest.ErrInput, nil, "cannot hash tree")
 	}
 	return fingerprint, nil
+}
+
+func pruneNodes(raw fs.FS, nodes map[string]*tarNode, kept map[string]bool) error {
+	names := make([]string, 0, len(nodes))
+	for name := range nodes {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		if kept[name] {
+			continue
+		}
+		delete(nodes, name)
+		if builder, ok := raw.(*tree.Builder); ok {
+			if err := builder.RemoveAll(name); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

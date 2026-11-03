@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -25,7 +26,7 @@ import (
 // the root command's PersistentPreRunE when progressBarEnabled allows it, and
 // pointed at by slog so log records interleave cleanly above the bar. stdout is
 // never touched — rendered output stays byte-deterministic.
-var barSink *barWriter
+var barSink *barWriter //nolint:gochecknoglobals // CLI invocations share the active process-wide log destination.
 
 // barWriter routes logs above an active progress frame or directly to stderr.
 type barWriter struct {
@@ -57,7 +58,11 @@ func (w *barWriter) Write(p []byte) (int, error) {
 		prog.Send(tea.Println(strings.TrimRight(string(p), "\n"))())
 		return len(p), nil
 	}
-	return w.out.Write(p)
+	n, err := w.out.Write(p)
+	if err != nil {
+		return n, fmt.Errorf("write progress output: %w", err)
+	}
+	return n, nil
 }
 
 func (w *barWriter) progress(
@@ -65,11 +70,13 @@ func (w *barWriter) progress(
 ) (func(manifest.TreeID, manifest.DiagnosticIdentity, store.StatusInfo), func()) {
 	m := newBarModel(w.color)
 	events := m.events
-	restore := captureStderr(func(line string) { slog.Debug(line) })
+	restore := captureStderr(func(line string) {
+		slog.Debug(line) //nolint:sloglint // Preserve each upstream stderr line as the debug message.
+	})
 	completed, finish, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	go func() {
 		defer close(done)
-		w.runProgress(ctx, m, completed, finish)
+		w.runProgress(ctx, &m, completed, finish)
 	}()
 	return events.observe, func() {
 		close(completed)
@@ -80,6 +87,7 @@ func (w *barWriter) progress(
 	}
 }
 
+//nolint:gocritic // The status listener contract passes diagnostic identities by value.
 func (e *progressEvents) observe(tree manifest.TreeID, subject manifest.DiagnosticIdentity, info store.StatusInfo) {
 	id := subject.ID
 	label := subject.Resource.Name
@@ -98,7 +106,7 @@ func (e *progressEvents) observe(tree manifest.TreeID, subject manifest.Diagnost
 	e.publish(id, info.Status, time.Now(), label)
 }
 
-func (w *barWriter) runProgress(ctx context.Context, m barModel, completed, finish <-chan struct{}) {
+func (w *barWriter) runProgress(ctx context.Context, m *barModel, completed, finish <-chan struct{}) {
 	select {
 	case <-completed:
 		return
@@ -111,7 +119,7 @@ func (w *barWriter) runProgress(ctx context.Context, m barModel, completed, fini
 	if f, ok := out.(*os.File); ok {
 		out = &queryFilterFile{File: f}
 	}
-	p := tea.NewProgram(m, tea.WithOutput(out), tea.WithInput(nil), tea.WithoutSignalHandler())
+	p := tea.NewProgram(*m, tea.WithOutput(out), tea.WithInput(nil), tea.WithoutSignalHandler())
 	w.setProgram(p)
 	runDone := make(chan struct{})
 	go func() {
@@ -135,6 +143,8 @@ func (w *barWriter) runProgress(ctx context.Context, m barModel, completed, fini
 // in the tty input buffer and spill into the shell's next prompt. Stripping the
 // probes keeps the program truly output-only; the renderer simply never enables
 // those modes, which is the same behavior as a terminal that doesn't reply.
+//
+//nolint:gochecknoglobals // Immutable probe bytes are reused on every terminal write.
 var terminalQueries = [][]byte{
 	[]byte(ansi.RequestModeSynchronizedOutput),
 	[]byte(ansi.RequestModeUnicodeCore),
@@ -142,7 +152,7 @@ var terminalQueries = [][]byte{
 }
 
 // queryFilterFile wraps the bar's stderr TTY and drops terminalQueries from
-// everything written through it. It stays a term.File (embedded *os.File) so
+// everything written through it. It stays a term.File (embedded *[os.File]) so
 // Bubble Tea still recognizes the output as a terminal for sizing and state
 // restore; only Write is intercepted. Both probe paths reach Write whole:
 // Program.execute buffers each probe pair in one call, and the renderer's
@@ -161,42 +171,47 @@ func (f *queryFilterFile) Write(p []byte) (int, error) {
 	}
 	if len(filtered) > 0 {
 		if _, err := f.File.Write(filtered); err != nil {
-			return 0, err
+			return 0, fmt.Errorf("write terminal output: %w", err)
 		}
 	}
 	return len(p), nil
 }
 
-// captureStderr redirects the process os.Stderr to a pipe and delivers each
+// captureStderr redirects the process [os.Stderr] to a pipe and delivers each
 // line written to it to emit, returning a restore func that puts the original
-// os.Stderr back and blocks until the drain has flushed. It exists for output
+// [os.Stderr] back and blocks until the drain has flushed. It exists for output
 // from libraries that write to the stderr file descriptor directly and take no
 // injectable writer — notably kustomize, which prints deprecation and
-// sort-order warnings via fmt.Fprintf(os.Stderr, …) deep in its build. Left
+// sort-order warnings via [fmt.Fprintf]([os.Stderr], …) deep in its build. Left
 // alone those writes shred the status bar's inline frame; routed through emit
 // (slog.Debug) they stay off the clean bar yet remain available under
 // --log-level debug. flate's own structured logs are unaffected: slog and
 // Bubble Tea hold barSink.out (the real stderr captured at startup), not the
-// os.Stderr variable this swaps.
+// [os.Stderr] variable this swaps.
 //
 // Restore must drain before an active program stops so tail logs remain routed.
 // The swap is race-free: it is installed once before Render fans out the build
-// goroutines (the only readers of os.Stderr) and restored once after Render
+// goroutines (the only readers of [os.Stderr]) and restored once after Render
 // joins them, so no read races the write. If the pipe cannot be created,
-// os.Stderr is left untouched and restore is a no-op — a build never fails
+// [os.Stderr] is left untouched and restore is a no-op — a build never fails
 // because capture was unavailable.
-func captureStderr(emit func(line string)) (restore func()) {
+const (
+	stderrMaxLineShift      = 20
+	stderrInitialBufferSize = 64 * 1024
+)
+
+func captureStderr(emit func(line string)) func() {
 	orig := os.Stderr
 	r, w, err := os.Pipe()
 	if err != nil {
 		return func() {}
 	}
-	os.Stderr = w
+	os.Stderr = w //nolint:reassign // Upstream libraries write directly to process stderr.
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		sc := bufio.NewScanner(r)
-		sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+		sc.Buffer(make([]byte, 0, stderrInitialBufferSize), 1<<stderrMaxLineShift)
 		for sc.Scan() {
 			emit(sc.Text())
 		}
@@ -205,15 +220,15 @@ func captureStderr(emit func(line string)) (restore func()) {
 		_, _ = io.Copy(io.Discard, r)
 	}()
 	return func() {
-		os.Stderr = orig
-		_ = w.Close() // EOF the read end so the drain goroutine returns
+		os.Stderr = orig //nolint:reassign // Restore the process stderr after upstream output drains.
+		_ = w.Close()    // EOF the read end so the drain goroutine returns
 		<-done
 		_ = r.Close()
 	}
 }
 
 // writerIsTTY reports whether w is a character device (an interactive terminal).
-// Buffers and pipes — CI, redirections, the e2e harness's bytes.Buffer — are
+// Buffers and pipes — CI, redirections, the e2e harness's [bytes.Buffer] — are
 // not, so the bar stays off there without a flag.
 func writerIsTTY(w io.Writer) bool {
 	f, ok := w.(*os.File)

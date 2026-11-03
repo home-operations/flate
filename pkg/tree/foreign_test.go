@@ -11,6 +11,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/internal/assert"
+
 	"github.com/home-operations/flate/pkg/tree"
 )
 
@@ -151,9 +153,9 @@ func assertMountView(t *testing.T, tr *tree.Tree, contract mountContract) {
 			t.Errorf("Stat(%q) mode = %v, want %v", want.name, info.Mode(), want.mode)
 		}
 		if want.mode.IsDir() {
-			entries, err := fs.ReadDir(tr, want.name)
-			if err != nil {
-				t.Errorf("ReadDir(%q): %v", want.name, err)
+			entries, readDirErr := fs.ReadDir(tr, want.name)
+			if readDirErr != nil {
+				t.Errorf("ReadDir(%q): %v", want.name, readDirErr)
 				continue
 			}
 			var names, wantNames []string
@@ -173,14 +175,14 @@ func assertMountView(t *testing.T, tr *tree.Tree, contract mountContract) {
 					t.Errorf("listed %q metadata disagrees with Stat", entry.Name())
 				}
 			}
-			if !slices.Equal(names, wantNames) {
-				t.Errorf("ReadDir(%q) = %v, want %v", want.name, names, wantNames)
+			{
+				assert.ErrorIf(t, !slices.Equal(names, wantNames), "ReadDir(%q) = %v, want %v", want.name, names, wantNames)
 			}
 			continue
 		}
 		data, err := fs.ReadFile(tr, want.name)
-		if err != nil || string(data) != want.data {
-			t.Errorf("ReadFile(%q) = %q, %v; want %q", want.name, data, err, want.data)
+		{
+			assert.ErrorIf(t, err != nil || string(data) != want.data, "ReadFile(%q) = %q, %v; want %q", want.name, data, err, want.data)
 		}
 		file, err := tr.Open(want.name)
 		if err != nil {
@@ -196,36 +198,7 @@ func assertMountView(t *testing.T, tr *tree.Tree, contract mountContract) {
 			t.Errorf("opened %q metadata = %v, %d", want.name, opened.Mode(), opened.Size())
 		}
 	}
-	for _, name := range contract.missing {
-		if _, err := fs.ReadFile(tr, name); !errors.Is(err, fs.ErrNotExist) {
-			t.Errorf("ReadFile(%q) = %v, want ErrNotExist", name, err)
-		}
-		if file, err := tr.Open(name); !errors.Is(err, fs.ErrNotExist) {
-			if err == nil {
-				file.Close()
-			}
-			t.Errorf("Open(%q) = %v, want ErrNotExist", name, err)
-		}
-		if _, err := fs.Stat(tr, name); !errors.Is(err, fs.ErrNotExist) {
-			t.Errorf("Stat(%q) = %v, want ErrNotExist", name, err)
-		}
-	}
-	slices.Sort(wantWalk)
-	for _, walk := range []struct {
-		name string
-		run  func(fs.WalkDirFunc) error
-	}{{"WalkDir", func(fn fs.WalkDirFunc) error { return fs.WalkDir(tr, ".", fn) }}, {"WalkRaw", func(fn fs.WalkDirFunc) error { return tr.WalkRaw(".", fn) }}} {
-		for range 2 {
-			var visited []string
-			err := walk.run(func(name string, _ fs.DirEntry, err error) error {
-				visited = append(visited, name)
-				return err
-			})
-			if err != nil || !slices.Equal(visited, wantWalk) {
-				t.Errorf("%s = %v, %v; want %v", walk.name, visited, err, wantWalk)
-			}
-		}
-	}
+	assertMountViewCompletion(t, tr, &contract, &wantWalk)
 }
 
 func TestBuilder_ForeignLower(t *testing.T) {
@@ -241,23 +214,36 @@ func TestBuilder_ForeignLower(t *testing.T) {
 			b := tree.NewBuilder(input)
 			must(t, b.AddFile("dir/file", []byte("upper"), 0o644))
 			data, err := b.ReadFile("dir/file")
-			if err != nil || string(data) != "upper" {
-				t.Fatalf("upper read: %s %v", data, err)
+			{
+				assert.FatalIf(t, err != nil || string(data) != "upper", "upper read: %s %v", data, err)
 			}
-			if _, err := fs.Lstat(input, "link"); err == nil {
-				data, err = b.ReadFile("link/file")
-				if err != nil || string(data) != "upper" {
-					t.Fatalf("merged link target: %s %v", data, err)
+			if _, lstatErr := fs.Lstat(input, "link"); lstatErr == nil {
+				data, lstatErr = b.ReadFile("link/file")
+				{
+					assert.FatalIf(
+						t,
+						lstatErr != nil || string(data) != "upper",
+						"merged link target: %s %v",
+						data,
+						lstatErr,
+					)
 				}
 			}
 			must(t, b.RemoveAll("dir"))
 			must(t, b.AddFile("dir/new", []byte("new"), 0o644))
-			if _, err := b.Stat("dir/other"); !errors.Is(err, fs.ErrNotExist) {
-				t.Fatalf("masked descendant: %v", err)
+			{
+				_, statErr2 := b.Stat("dir/other")
+				assert.FatalIf(t, !errors.Is(statErr2, fs.ErrNotExist), "masked descendant: %v", statErr2)
 			}
 			entries, err := b.ReadDir("dir")
-			if err != nil || len(entries) != 1 || entries[0].Name() != "new" {
-				t.Fatalf("recreated listing: %v %v", entries, err)
+			{
+				assert.FatalIf(
+					t,
+					err != nil || len(entries) != 1 || entries[0].Name() != "new",
+					"recreated listing: %v %v",
+					entries,
+					err,
+				)
 			}
 			tr := build(t, b)
 			var visited []string
@@ -268,8 +254,8 @@ func TestBuilder_ForeignLower(t *testing.T) {
 				}
 				return err
 			}))
-			if slices.Contains(visited, "dir/new") {
-				t.Fatal("merged walk ignored SkipDir")
+			{
+				assert.FatalIf(t, slices.Contains(visited, "dir/new"), "%s", "merged walk ignored SkipDir")
 			}
 		})
 	}
@@ -284,16 +270,19 @@ func (deniedFS) Open(n string) (fs.File, error) {
 func TestBuilder_LowerError(t *testing.T) {
 	t.Parallel()
 	b := tree.NewBuilder(deniedFS{})
-	if _, err := b.ReadFile("file"); !errors.Is(err, fs.ErrPermission) {
-		t.Fatalf("lower error: %v", err)
+	{
+		_, err := b.ReadFile("file")
+		assert.FatalIf(t, !errors.Is(err, fs.ErrPermission), "lower error: %v", err)
 	}
-	if err := b.AddFile("file", []byte("upper"), 0o644); !errors.Is(err, fs.ErrPermission) {
-		t.Fatalf("construction swallowed lower error: %v", err)
+	{
+		err := b.AddFile("file", []byte("upper"), 0o644)
+		assert.FatalIf(t, !errors.Is(err, fs.ErrPermission), "construction swallowed lower error: %v", err)
 	}
 }
 
 type countedDirFS struct {
 	fs.FS
+
 	dirs int
 }
 
@@ -316,15 +305,20 @@ func TestBuilder_ForeignDirectoriesStayLazy(t *testing.T) {
 	next := tree.NewBuilder(tr)
 	must(t, next.AddFile("apps/one/later", []byte("later"), 0o644))
 	entries, err := next.ReadDir("apps/one")
-	if err != nil {
-		t.Fatal(err)
+	{
+		assert.NoError(t, err)
 	}
 	names := make([]string, len(entries))
 	for i, e := range entries {
 		names[i] = e.Name()
 	}
-	if !slices.Equal(names, []string{"file", "generated", "later"}) {
-		t.Fatalf("stacked foreign listing: %v", names)
+	{
+		assert.FatalIf(
+			t,
+			!slices.Equal(names, []string{"file", "generated", "later"}),
+			"stacked foreign listing: %v",
+			names,
+		)
 	}
 }
 
@@ -337,15 +331,15 @@ func TestBuilder_RemoveAllMasksForeignListing(t *testing.T) {
 	must(t, b.RemoveAll("d/sub"))
 	must(t, b.AddFile("d/z", []byte("z"), 0o644))
 	entries, err := b.ReadDir("d")
-	if err != nil {
-		t.Fatal(err)
+	{
+		assert.NoError(t, err)
 	}
-	var names []string
+	names := make([]string, 0, len(entries))
 	for _, e := range entries {
 		names = append(names, e.Name())
 	}
-	if !slices.Equal(names, []string{"b", "z"}) {
-		t.Fatalf("removed lower children listed: %v", names)
+	{
+		assert.FatalIf(t, !slices.Equal(names, []string{"b", "z"}), "removed lower children listed: %v", names)
 	}
 }
 
@@ -366,12 +360,19 @@ func TestBuilder_SealedForeignOverlayConcurrentReads(t *testing.T) {
 	for g := range 4 {
 		wg.Go(func() {
 			for i := range 64 {
-				if _, err := fs.ReadFile(sealed, fmt.Sprintf("d%d/f", (i+g)%64)); err != nil {
-					t.Error(err)
+				{
+					_, err := fs.ReadFile(sealed, fmt.Sprintf("d%d/f", (i+g)%64))
+					assert.ErrorIf(t, err != nil, "%v", err)
 				}
 				entries, err := fs.ReadDir(sealed, fmt.Sprintf("d%d", i))
-				if err != nil || len(entries) != 1 || entries[0].Name() != "f" {
-					t.Errorf("stacked foreign listing: %v, %v", entries, err)
+				{
+					assert.ErrorIf(
+						t,
+						err != nil || len(entries) != 1 || entries[0].Name() != "f",
+						"stacked foreign listing: %v, %v",
+						entries,
+						err,
+					)
 				}
 			}
 		})
@@ -392,58 +393,110 @@ func TestBuilder_StackedForeignRemovals(t *testing.T) {
 	for _, added := range []bool{false, true} {
 		t.Run(fmt.Sprintf("added=%v", added), func(t *testing.T) {
 			t.Parallel()
-			upper := tree.NewBuilder(lower)
-			want := []string{"b"}
-			if added {
-				must(t, upper.AddFile("d/z", []byte("z"), 0o644))
-				want = append(want, "z")
+			testBuilderStackedForeignRemovalsCase(
+				t,
+				&testBuilderStackedForeignRemovalsCaseInputs{lower: &lower, added: &added},
+			)
+		},
+		)
+	}
+}
+
+type testBuilderStackedForeignRemovalsCaseInputs struct {
+	lower **tree.Tree
+	added *bool
+}
+
+func testBuilderStackedForeignRemovalsCase(t *testing.T, testCaseInput *testBuilderStackedForeignRemovalsCaseInputs) {
+	t.Helper()
+
+	upper := tree.NewBuilder((*testCaseInput.lower))
+	want := []string{"b"}
+	if *testCaseInput.added {
+		must(t, upper.AddFile("d/z", []byte("z"), 0o644))
+		want = append(want, "z")
+	}
+	for _, sealed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("sealed=%v", sealed), func(t *testing.T) {
+			var view fs.FS = upper
+			if sealed {
+				view = build(t, upper)
 			}
-			for _, sealed := range []bool{false, true} {
-				t.Run(fmt.Sprintf("sealed=%v", sealed), func(t *testing.T) {
-					var view fs.FS = upper
-					if sealed {
-						view = build(t, upper)
-					}
-					for _, name := range []string{"d/a", "d/sub/c"} {
-						if _, err := fs.Stat(view, name); !errors.Is(err, fs.ErrNotExist) {
-							t.Fatalf("removed path %s: %v", name, err)
-						}
-					}
-					entries, err := fs.ReadDir(view, "d")
-					must(t, err)
-					var names []string
-					for _, entry := range entries {
-						names = append(names, entry.Name())
-					}
-					if !slices.Equal(names, want) {
-						t.Fatalf("stacked listing = %v, want %v", names, want)
-					}
-					dir, err := view.Open("d")
-					must(t, err)
-					defer dir.Close()
-					reader, ok := dir.(fs.ReadDirFile)
-					if !ok {
-						t.Fatal("directory handle does not implement fs.ReadDirFile")
-					}
-					entries, err = reader.ReadDir(-1)
-					must(t, err)
-					names = nil
-					for _, entry := range entries {
-						names = append(names, entry.Name())
-					}
-					if !slices.Equal(names, want) {
-						t.Fatalf("directory handle = %v, want %v", names, want)
-					}
-					var visited []string
-					must(t, fs.WalkDir(view, "d", func(name string, _ fs.DirEntry, err error) error {
-						visited = append(visited, name)
-						return err
-					}))
-					if len(visited) != len(want)+1 {
-						t.Fatalf("walk = %v", visited)
-					}
-				})
+			for _, name := range []string{"d/a", "d/sub/c"} {
+				{
+					_, err := fs.Stat(view, name)
+					assert.FatalIf(t, !errors.Is(err, fs.ErrNotExist), "removed path %s: %v", name, err)
+				}
+			}
+			entries, err := fs.ReadDir(view, "d")
+			must(t, err)
+			names := make([]string, 0, len(entries))
+			for _, entry := range entries {
+				names = append(names, entry.Name())
+			}
+			{
+				assert.FatalIf(t, !slices.Equal(names, want), "stacked listing = %v, want %v", names, want)
+			}
+			dir, err := view.Open("d")
+			must(t, err)
+			defer dir.Close()
+			reader, ok := dir.(fs.ReadDirFile)
+			{
+				assert.FatalIf(t, !ok, "%s", "directory handle does not implement fs.ReadDirFile")
+			}
+			entries, err = reader.ReadDir(-1)
+			must(t, err)
+			names = nil
+			for _, entry := range entries {
+				names = append(names, entry.Name())
+			}
+			{
+				assert.FatalIf(t, !slices.Equal(names, want), "directory handle = %v, want %v", names, want)
+			}
+			var visited []string
+			must(t, fs.WalkDir(view, "d", func(name string, _ fs.DirEntry, err error) error {
+				visited = append(visited, name)
+				return err
+			}))
+			{
+				assert.FatalIf(t, len(visited) != len(want)+1, "walk = %v", visited)
 			}
 		})
+	}
+}
+
+func assertMountViewCompletion(t *testing.T, tr *tree.Tree, contract *mountContract, wantWalk *[]string) {
+	t.Helper()
+	for _, name := range (*contract).missing {
+		{
+			_, err := fs.ReadFile(tr, name)
+			assert.ErrorIf(t, !errors.Is(err, fs.ErrNotExist), "ReadFile(%q) = %v, want ErrNotExist", name, err)
+		}
+		if file, err := tr.Open(name); !errors.Is(err, fs.ErrNotExist) {
+			if err == nil {
+				file.Close()
+			}
+			t.Errorf("Open(%q) = %v, want ErrNotExist", name, err)
+		}
+		{
+			_, err := fs.Stat(tr, name)
+			assert.ErrorIf(t, !errors.Is(err, fs.ErrNotExist), "Stat(%q) = %v, want ErrNotExist", name, err)
+		}
+	}
+	slices.Sort((*wantWalk))
+	for _, walk := range []struct {
+		name string
+		run  func(fs.WalkDirFunc) error
+	}{{"WalkDir", func(fn fs.WalkDirFunc) error { return fs.WalkDir(tr, ".", fn) }}, {"WalkRaw", func(fn fs.WalkDirFunc) error { return tr.WalkRaw(".", fn) }}} {
+		for range 2 {
+			var visited []string
+			err := walk.run(func(name string, _ fs.DirEntry, err error) error {
+				visited = append(visited, name)
+				return err
+			})
+			{
+				assert.ErrorIf(t, err != nil || !slices.Equal(visited, (*wantWalk)), "%s = %v, %v; want %v", walk.name, visited, err, (*wantWalk))
+			}
+		}
 	}
 }

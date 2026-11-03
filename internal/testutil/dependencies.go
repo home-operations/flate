@@ -205,7 +205,7 @@ func WriteSubstitutionProducerCluster(tb testing.TB, root, kind string) {
 	}
 	for _, ks := range []struct{ name, path, postBuild string }{
 		{"producer", "data", "  patches:\n  - target: {kind: " + kind + ", name: settings}\n    patch: |-\n      - op: replace\n        path: /data/VERSION\n        value: " + version + "\n"},
-		{"consumer", "app", "  postBuild: {substituteFrom: [{kind: " + kind + ", name: settings}]}\n"},
+		{"consumer", fixtureAppName, "  postBuild: {substituteFrom: [{kind: " + kind + ", name: settings}]}\n"},
 	} {
 		body := strings.Replace(dependencyKS(ks.name, ks.path, ""), "name: shared", "name: flux-system", 1)
 		WriteFile(tb, root, "flux/"+ks.name+".yaml", body+ks.postBuild)
@@ -252,3 +252,5 @@ func WriteSubstitutionCycleCluster(tb testing.TB, root string) {
 		)
 	}
 }
+
+const fixtureAppName = "app"

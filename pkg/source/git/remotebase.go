@@ -80,8 +80,7 @@ func (f *Fetcher) FetchRemoteBase(
 			cloned, err := f.acquire(
 				ctx,
 				storer,
-				worktree,
-				gitAcquisition{
+				worktree, &gitAcquisition{
 					spec:    &acquisition,
 					options: git.CloneOptions{URL: request.URL, NoCheckout: true},
 					timeout: request.Timeout,
@@ -96,15 +95,18 @@ func (f *Fetcher) FetchRemoteBase(
 				if request.Timeout > 0 {
 					fetchCtx, cancel = context.WithTimeout(ctx, request.Timeout)
 				}
-				err := cloned.FetchContext(
+				fetchContextErr := cloned.FetchContext(
 					fetchCtx,
-					&git.FetchOptions{RefSpecs: []config.RefSpec{"+refs/*:refs/*"}, Tags: git.NoTags},
+					&git.FetchOptions{RefSpecs: []config.RefSpec{fetchAllRefs}, Tags: git.NoTags},
 				)
 				if cancel != nil {
 					cancel()
 				}
-				if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
-					return plumbing.ZeroHash, err
+				if fetchContextErr != nil && !errors.Is(fetchContextErr, git.NoErrAlreadyUpToDate) {
+					if fetchContextErr != nil {
+						return plumbing.ZeroHash, fmt.Errorf("fetch git revision: %w", fetchContextErr)
+					}
+					return plumbing.ZeroHash, nil
 				}
 			}
 			hash, err := resolveRefHash(cloned, repo.Reference, true)
@@ -112,25 +114,25 @@ func (f *Fetcher) FetchRemoteBase(
 				return plumbing.ZeroHash, err
 			}
 			if request.Submodules {
-				if err := checkoutRef(cloned, hash, nil); err != nil {
-					return plumbing.ZeroHash, err
+				if checkoutRefErr := checkoutRef(cloned, hash, nil); checkoutRefErr != nil {
+					return plumbing.ZeroHash, checkoutRefErr
 				}
 				updateCtx := ctx
 				var cancel context.CancelFunc
 				if request.Timeout > 0 {
 					updateCtx, cancel = context.WithTimeout(ctx, request.Timeout)
 				}
-				err := f.updateSubmodules(updateCtx, cloned, nil, git.DefaultSubmoduleRecursionDepth)
+				updateSubmodulesErr := f.updateSubmodules(updateCtx, cloned, nil, git.DefaultSubmoduleRecursionDepth)
 				if cancel != nil {
 					cancel()
 				}
-				if err != nil {
-					return plumbing.ZeroHash, err
+				if updateSubmodulesErr != nil {
+					return plumbing.ZeroHash, updateSubmodulesErr
 				}
 			}
 			input, identity, err = gittree.New(
 				ctx,
-				storer.(*filesystem.Storage).Filesystem(),
+				storer.(*filesystem.Storage).Filesystem(), //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
 				hash,
 				gittree.ViewOptions{Content: content, Mode: gittree.RemoteBase, Worktree: worktree},
 			)

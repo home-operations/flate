@@ -146,12 +146,12 @@ func (f *operation) produceLayer(
 	if unchanged {
 		desc = *previous
 	} else {
-		data, err := content.FetchAll(ctx, client, desc)
-		if err != nil {
-			return cache.ProducerResult{}, fmt.Errorf("fetch manifest: %w", orasError(err))
+		data, fetchAllErr := content.FetchAll(ctx, client, desc)
+		if fetchAllErr != nil {
+			return cache.ProducerResult{}, fmt.Errorf("fetch manifest: %w", orasError(fetchAllErr))
 		}
-		if err := json.Unmarshal(data, &m); err != nil {
-			return cache.ProducerResult{}, err
+		if unmarshalErr := json.Unmarshal(data, &m); unmarshalErr != nil {
+			return cache.ProducerResult{}, fmt.Errorf("decode OCI manifest: %w", unmarshalErr)
 		}
 		desc.Annotations = maps.Clone(m.Annotations)
 	}
@@ -186,16 +186,16 @@ func (f *operation) produceLayer(
 		if err != nil {
 			return result, fmt.Errorf("gzip: %w", orasError(err))
 		}
-		_, copyErr := io.Copy(
+		_, copyErr := io.Copy( //nolint:gosec // Flux source archives impose no decompressed size limit.
 			w,
 			gz,
-		) //nolint:gosec // Flux source extraction is uncapped; the cache validates and confines archive entries.
+		)
 		closeErr := gz.Close()
 		if copyErr != nil {
 			return result, orasError(copyErr)
 		}
 		if closeErr != nil {
-			return result, closeErr
+			return result, closeErr //nolint:wrapcheck // The layer adapter preserves the upstream compression error contract.
 		}
 	} else {
 		if _, err := io.Copy(w, verified); err != nil {
@@ -203,9 +203,9 @@ func (f *operation) produceLayer(
 		}
 	}
 	if _, err := io.Copy(io.Discard, verified); err != nil {
-		return result, err
+		return result, fmt.Errorf("copy source content: %w", err)
 	}
-	return result, verified.Verify()
+	return result, verified.Verify() //nolint:wrapcheck // This adapter delegates the upstream error contract; its caller supplies the operation context.
 }
 
 func orasError(err error) error {

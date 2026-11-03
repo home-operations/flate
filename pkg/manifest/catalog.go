@@ -7,10 +7,13 @@ import (
 )
 
 // CatalogObject borrows immutable reporting and traversal facts without granting execution authority.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func CatalogObject(obj BaseManifest, id NamedResource) BaseManifest {
 	return obj.catalog(id)
 }
 
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (k *Kustomization) catalog(id NamedResource) BaseManifest {
 	if k.Named() == id {
 		return k
@@ -20,6 +23,7 @@ func (k *Kustomization) catalog(id NamedResource) BaseManifest {
 	return &out
 }
 
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (h *HelmRelease) catalog(id NamedResource) BaseManifest {
 	out := &HelmRelease{Name: id.Name, Namespace: id.Namespace, Labels: maps.Clone(h.Labels)}
 	out.Suspend, out.TargetNamespace, out.HelmReleaseSpec.ReleaseName = h.Suspend, h.TargetNamespace, h.HelmReleaseSpec.ReleaseName
@@ -39,50 +43,61 @@ func (h *HelmRelease) catalog(id NamedResource) BaseManifest {
 	return out
 }
 
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (g *GitRepository) catalog(id NamedResource) BaseManifest {
 	return &GitRepository{Name: id.Name, Namespace: id.Namespace, Labels: maps.Clone(g.Labels)}
 }
 
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (o *OCIRepository) catalog(id NamedResource) BaseManifest {
 	out := &OCIRepository{Name: id.Name, Namespace: id.Namespace, Labels: maps.Clone(o.Labels)}
 	out.Reference = o.Reference
 	return out
 }
 
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (*HelmRepository) catalog(id NamedResource) BaseManifest {
 	return &HelmRepository{Name: id.Name, Namespace: id.Namespace}
 }
 
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (h *HelmChartSource) catalog(id NamedResource) BaseManifest {
 	out := &HelmChartSource{Name: id.Name, Namespace: id.Namespace, Labels: maps.Clone(h.Labels)}
 	out.Chart, out.Version, out.SourceRef = h.Chart, h.Version, h.SourceRef
 	return out
 }
 
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (e *ExternalArtifact) catalog(id NamedResource) BaseManifest {
 	return &ExternalArtifact{Name: id.Name, Namespace: id.Namespace, Labels: maps.Clone(e.Labels)}
 }
 
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (b *Bucket) catalog(id NamedResource) BaseManifest {
 	return &Bucket{Name: id.Name, Namespace: id.Namespace, Labels: maps.Clone(b.Labels)}
 }
 
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (r *ResourceSet) catalog(id NamedResource) BaseManifest {
 	return &ResourceSet{Name: id.Name, Namespace: id.Namespace, Labels: maps.Clone(r.Labels), Suspend: r.Suspend}
 }
 
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (p *ResourceSetInputProvider) catalog(id NamedResource) BaseManifest {
 	return &ResourceSetInputProvider{Name: id.Name, Namespace: id.Namespace, Labels: maps.Clone(p.Labels)}
 }
 
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (*ConfigMap) catalog(id NamedResource) BaseManifest {
 	return &ConfigMap{Name: id.Name, Namespace: id.Namespace}
 }
 
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (*Secret) catalog(id NamedResource) BaseManifest {
 	return &Secret{Name: id.Name, Namespace: id.Namespace}
 }
 
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (r *RawObject) catalog(id NamedResource) BaseManifest {
 	out := &RawObject{Kind: r.Kind, APIVersion: r.APIVersion, Name: id.Name, Namespace: id.Namespace}
 	if r.isArtifactGenerator() {

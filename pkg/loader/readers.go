@@ -54,350 +54,262 @@ func (l *Loader) finalizeRecords(
 	repoRoot string,
 	emittedFiles map[string][]manifest.NamedResource,
 ) error {
-	controls := map[manifest.NamedResource][]string{}
-	if l.documents.compact && l.scopes != nil {
-		for _, contribution := range l.scopes.contributions {
-			if contribution.owner == (manifest.NamedResource{}) || contribution.membershipOnly || !contribution.active {
+	rf := readerFinalizer{
+		loader: l,
+
+		repoRoot: repoRoot,
+
+		emittedFiles: emittedFiles,
+	}
+	rf.collectControls()
+	rf.objects = map[manifest.NamedResource]manifest.BaseManifest{}
+	rf.sources = map[manifest.NamedResource]graphVisit{}
+	rf.charts = map[string][]string{}
+	rf.templateBodies = map[string][][]byte{}
+	rf.templateRefs = map[[2]string]manifest.TemplateProjection{}
+	rf.templateWalks = map[[2]string]bool{}
+	rf.visited = map[manifest.NamedResource]struct{}{}
+
+	{
+		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+		for id, r := range rf.loader.Index.Records {
+
+			occurrence, located := rf.loader.locations[id]
+			if rf.repoRoot == "" || len(r.Refs) == 0 && (!located || len(occurrence.facts.templateInputs) == 0) {
 				continue
 			}
-			for _, visit := range contribution.visits {
-				if visit.role == kustomizeinput.Resource && visit.document == nil {
-					continue
-				}
-				for _, file := range []string{visit.coordinate, visit.localCoordinate()} {
-					if file != "" {
-						controls[contribution.owner] = append(controls[contribution.owner], file)
-					}
-				}
+			clear(rf.visited)
+			clear(rf.templateWalks)
+			if err := rf.collect(ctx, id, id, false); err != nil {
+				return err
 			}
 		}
 	}
-	for owner, files := range controls {
-		slices.Sort(files)
-		controls[owner] = slices.Compact(files)
-	}
+	{
+		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+		for id, r := range rf.loader.Index.Records {
 
-	objects := map[manifest.NamedResource]manifest.BaseManifest{}
-	object := func(id manifest.NamedResource) manifest.BaseManifest {
-		if record, ok := l.Index.Lookup(id); ok && record.Builder != "" && record.Declaration != nil {
-			return record.Declaration
+			rf.admitRecord(id, &r)
+			rf.setRecordOrigin(id, &r)
+			rf.compactOrigins(id, &r)
+			rf.setRecordOutput(id, &r)
+			rf.setRecordParent(id, &r)
+			rf.setRecordInputs(id, &r)
+			rf.loader.Index.Records[id] = r
 		}
-		if obj := l.Store.GetObject(id); obj != nil {
-			return obj
-		}
-		if obj, seen := objects[id]; seen {
-			return obj
-		}
-		r, _ := l.Index.Lookup(id)
-		obj := l.IndexedObject(id, r).Obj
-		objects[id] = obj
+	}
+	return nil
+}
+
+type readerFinalizer struct {
+	loader          *Loader
+	repoRoot        string
+	emittedFiles    map[string][]manifest.NamedResource
+	controls        map[manifest.NamedResource][]string
+	objects         map[manifest.NamedResource]manifest.BaseManifest
+	sources         map[manifest.NamedResource]graphVisit
+	charts          map[string][]string
+	templateBodies  map[string][][]byte
+	templateRefs    map[[2]string]manifest.TemplateProjection
+	templateWalks   map[[2]string]bool
+	visited         map[manifest.NamedResource]struct{}
+	unresolvedPaths map[manifest.NamedResource]bool
+}
+
+//nolint:ireturn // Indexed manifests retain their concrete polymorphic types.
+func (rf *readerFinalizer) object(id manifest.NamedResource) manifest.BaseManifest {
+	if record, ok := rf.loader.Index.Lookup(id); ok && record.Builder != "" && record.Declaration != nil {
+		return record.Declaration
+	}
+	if obj := rf.loader.Store.GetObject(id); obj != nil {
 		return obj
 	}
-	sources := map[manifest.NamedResource]graphVisit{}
-	charts := map[string][]string{}
-	templateBodies := map[string][][]byte{}
-	templateRefs := map[[2]string]manifest.TemplateProjection{}
-	templateWalks := map[[2]string]bool{}
-	visited := map[manifest.NamedResource]struct{}{}
-	var unresolvedPaths map[manifest.NamedResource]bool
-	var collect func(manifest.NamedResource, manifest.NamedResource, bool) error
-	var observe func(manifest.Reference, manifest.NamedResource, bool) error
-	project := func(input manifest.TemplateInput, consumer manifest.NamedResource) error {
-		if input.Reader.Namespace == "" && input.Reader.KindInfo().Namespaced() {
-			input.Reader.Namespace = consumer.Namespace
-		}
-		if l.Index.IsFileIndexed(input.Reader) && !input.UnresolvedPath {
-			return nil
-		}
-		ref := input.Reference
-		if input.UnresolvedPath {
-			if unresolvedPaths == nil {
-				unresolvedPaths = map[manifest.NamedResource]bool{}
-			}
-			unresolvedPaths[consumer] = true
-			ref.Files = append(slices.Clone(ref.Files), ".")
-			ref.Subtree = true
-		}
-		if ref.NamespaceDefault && ref.Namespace == "" {
-			ref.Namespace = consumer.Namespace
-		}
-		return observe(ref, consumer, true)
+	if obj, seen := rf.objects[id]; seen {
+		return obj
 	}
+	r, _ := rf.loader.Index.Lookup(id)
+	obj := rf.loader.IndexedObject(id, r).Obj
+	rf.objects[id] = obj
+	return obj
+}
 
-	observe = func(ref manifest.Reference, consumer manifest.NamedResource, materialize bool) error {
-		if ref.ContentInput() && l.Store.ReferenceFacts(ref.NamedResource, l.Index).Supplied != nil {
-			return nil
+func (rf *readerFinalizer) project(ctx context.Context,
+
+	input manifest.TemplateInput, consumer manifest.NamedResource,
+) error {
+	if input.Reader.Namespace == "" && input.Reader.KindInfo().Namespaced() {
+		input.Reader.Namespace = consumer.Namespace
+	}
+	if rf.loader.Index.IsFileIndexed(input.Reader) && !input.UnresolvedPath {
+		return nil
+	}
+	ref := input.Reference
+	if input.UnresolvedPath {
+		if rf.unresolvedPaths == nil {
+			rf.unresolvedPaths = map[manifest.NamedResource]bool{}
 		}
-		if ref.ContentInput() {
-			record, _ := l.Index.Lookup(ref.NamedResource)
-			if record.File != "" {
-				sources := []manifest.NamedResource{manifest.BootstrapSourceID}
-				if len(record.Productions) != 0 {
-					sources = nil
-					for _, production := range record.Productions {
-						source := production.Source
-						if source == (manifest.NamedResource{}) {
-							source = manifest.BootstrapSourceID
-						}
-						if !slices.Contains(sources, source) {
-							sources = append(sources, source)
-						}
-					}
-				}
-				for _, source := range sources {
-					l.recordReader(
-						record.File,
-						"",
-						manifest.FileReader{
-							Reader:      consumer,
-							Source:      source,
-							Declaration: ref.NamedResource,
-							Exact:       true,
-							Materialize: materialize,
-						},
-					)
-				}
-			}
-			for _, file := range record.Inputs {
-				if file == record.File {
-					continue
-				}
-				l.recordReader(
-					file,
-					"",
-					manifest.FileReader{
-						Reader:      consumer,
-						Source:      manifest.BootstrapSourceID,
-						Declaration: ref.NamedResource,
-						Materialize: materialize,
-					},
-				)
-			}
+		rf.unresolvedPaths[consumer] = true
+		ref.Files = append(slices.Clone(ref.Files), ".")
+		ref.Subtree = true
+	}
+	if ref.NamespaceDefault && ref.Namespace == "" {
+		ref.Namespace = consumer.Namespace
+	}
+	return rf.observe(ctx, ref, consumer, true)
+}
+
+func (rf *readerFinalizer) observe(ctx context.Context,
+
+	ref manifest.Reference, consumer manifest.NamedResource, materialize bool,
+) error {
+	if ref.ContentInput() && rf.loader.Store.ReferenceFacts(ref.NamedResource, rf.loader.Index).Supplied != nil {
+		return nil
+	}
+	if ref.ContentInput() {
+		rf.observeContent(&ref, consumer, materialize)
+	}
+	if ref.Use == "chart" {
+		if err := rf.collect(ctx, ref.NamedResource, consumer, materialize); err != nil {
+			return err
 		}
-		if ref.Use == "chart" {
-			if err := collect(ref.NamedResource, consumer, materialize); err != nil {
+		return nil
+	}
+	if len(ref.Files) == 0 && ref.ChartPath == "" || ref.Name == "" || ref.Kind == "" {
+		return nil
+	}
+	v := rf.sourceVisit(ref.NamedResource)
+	if v.root == "" {
+		return nil
+	}
+	rf.observeFiles(&ref, consumer, materialize, v)
+	return rf.observeChart(ctx, &ref, manifest.FileReader{Reader: consumer, Source: ref.NamedResource, Exact: true, Materialize: materialize}, v)
+}
+
+func (rf *readerFinalizer) collect(ctx context.Context,
+
+	id, consumer manifest.NamedResource, materialize bool,
+) error {
+	if err := ctx.Err(); err != nil {
+		//nolint:wrapcheck // The caller preserves cancellation error identity.
+		return err
+	}
+	if _, seen := rf.visited[id]; seen {
+		return nil
+	}
+	rf.visited[id] = struct{}{}
+	if rf.loader.documents.compact {
+		if occurrence, ok := rf.loader.locations[id]; ok {
+			if err := rf.projectOccurrence(ctx, &occurrence, consumer); err != nil {
 				return err
 			}
-			return nil
-		}
-		if len(ref.Files) == 0 && ref.ChartPath == "" || ref.Name == "" || ref.Kind == "" {
-			return nil
-		}
-		v, seen := sources[ref.NamedResource]
-		if !seen {
-			root, pinned, external := SourceView(l.Store, ref.NamedResource, repoRoot)
-			if !external {
-				v.root = root
-				prefix, _ := filepath.Rel(repoRoot, root)
-				if prefix != "." {
-					v.prefix = filepath.ToSlash(prefix)
-					if !pinned {
-						v.localBase = l.documents.localBase(root, repoRoot)
-					}
-				}
-			}
-			sources[ref.NamedResource] = v
-		}
-		if v.root == "" {
-			return nil
-		}
-		add := func(name string) {
-			v.coordinate = path.Join(v.prefix, name)
-			l.recordReader(
-				v.coordinate,
-				v.localCoordinate(),
-				manifest.FileReader{Reader: consumer, Source: ref.NamedResource, Exact: true, Materialize: materialize},
-			)
-		}
-		for _, name := range ref.Files {
-			clean := path.Clean(name)
-			if ref.Subtree {
-				var valid bool
-				clean, valid = resolveRoot(l.Store, ref.NamedResource, cmp.Or(name, "."))
-				if !valid {
-					continue
-				}
-			} else if name == "" || !fs.ValidPath(clean) || clean == "." || strings.IndexByte(clean, 0) >= 0 {
-				continue
-			}
-			v.coordinate = path.Join(v.prefix, clean)
-			l.recordReader(
-				v.coordinate,
-				v.localCoordinate(),
-				manifest.FileReader{
-					Reader:      consumer,
-					Source:      ref.NamedResource,
-					Exact:       !ref.Subtree,
-					Materialize: materialize,
-				},
-			)
-		}
-
-		if ref.ChartPath == "" {
-			return nil
-		}
-		ref.ChartPath = path.Clean(ref.ChartPath)
-		location := filepath.Join(v.root, filepath.FromSlash(ref.ChartPath))
-		names, seen := charts[location]
-		if !seen {
-			input, name := l.documents.input(location)
-			info, err := fs.Stat(input, name)
-			if err == nil {
-				if info.IsDir() {
-					names = append(names, path.Join(ref.ChartPath, ".helmignore"))
-					if sub, err := fs.Sub(input, name); err == nil {
-						// Reconciliation owns chart-local loading errors, including policy failures.
-						_ = chartinput.Walk(ctx, sub, true, func(name string, _ fs.FileInfo, data []byte) error {
-							names = append(names, path.Join(ref.ChartPath, name))
-							if strings.HasPrefix(name, "templates/") || strings.Contains(name, "/templates/") {
-								if data == nil {
-									var err error
-									data, err = fs.ReadFile(sub, name)
-									if err != nil {
-										return nil
-									}
-								}
-								templateBodies[location] = append(templateBodies[location], data)
-							}
-							return nil
-						})
-					}
-				} else if info.Mode().IsRegular() {
-					names = append(names, ref.ChartPath)
-				}
-			}
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			charts[location] = names
-		}
-		for _, name := range names {
-			add(name)
-		}
-		namespace := consumer.Namespace
-		if producer, ok := object(consumer).(emissionProducer); ok {
-			namespace = producer.EmissionPolicy().Namespace
-		}
-		key := [2]string{location, namespace}
-		refs, seen := templateRefs[key]
-		if !seen {
-			templateRefs[key] = manifest.TemplateProjection{}
-			for _, data := range templateBodies[location] {
-				next, err := l.documents.projections.ProjectTemplate(ctx, data, namespace)
-				if err != nil {
+			for ref := range occurrence.references() {
+				if err := rf.observe(ctx, ref, consumer, materialize); err != nil {
 					return err
 				}
-				refs.Inputs = append(refs.Inputs, next.Inputs...)
-				refs.Targets = append(refs.Targets, next.Targets...)
 			}
-			templateRefs[key] = refs
-		}
-		if templateWalks[key] {
 			return nil
 		}
-		templateWalks[key] = true
-		for _, target := range refs.Targets {
-			if l.templateTargets == nil {
-				l.templateTargets = map[manifest.NamedResource][]manifest.ProducerTarget{}
-			}
-			targets := l.templateTargets[consumer]
-			if !slices.ContainsFunc(
-				targets,
-				func(known manifest.ProducerTarget) bool { return known.NamedResource == target.NamedResource },
-			) {
-				l.templateTargets[consumer] = append(targets, target)
-			}
+	}
+	for ref := range manifest.References(rf.object(id), manifest.ReferenceRelations) {
+		if err := rf.observe(ctx, ref, consumer, materialize); err != nil {
+			return err
 		}
-		for _, input := range refs.Inputs {
-			if err := project(input, consumer); err != nil {
-				return err
-			}
-		}
+	}
+	return nil
+}
 
-		return nil
-	}
-	collect = func(id, consumer manifest.NamedResource, materialize bool) error {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if _, seen := visited[id]; seen {
-			return nil
-		}
-		visited[id] = struct{}{}
-		if l.documents.compact {
-			if occurrence, ok := l.locations[id]; ok {
-				for _, input := range occurrence.facts.templateInputs {
-					if err := project(input, consumer); err != nil {
-						return err
+func (rf *readerFinalizer) collectControls() {
+	rf.controls = map[manifest.NamedResource][]string{}
+	if rf.loader.documents.compact && rf.loader.scopes != nil {
+		{
+			contributionValues := rf.loader.scopes.contributions
+			for contributionIndex := range contributionValues {
+				contribution := contributionValues[contributionIndex]
+				if contribution.owner == (manifest.NamedResource{}) || contribution.membershipOnly ||
+					!contribution.active {
+					continue
+				}
+				{
+					visitValues := contribution.visits
+					for visitIndex := range visitValues {
+						visit := visitValues[visitIndex]
+						if visit.role == kustomizeinput.Resource && visit.document == nil {
+							continue
+						}
+						for _, file := range []string{visit.coordinate, visit.localCoordinate()} {
+							if file != "" {
+								rf.controls[contribution.owner] = append(rf.controls[contribution.owner], file)
+							}
+						}
 					}
 				}
-				for ref := range occurrence.references() {
-					if err := observe(ref, consumer, materialize); err != nil {
-						return err
-					}
-				}
-				return nil
 			}
-		}
-		for ref := range manifest.References(object(id), manifest.ReferenceRelations) {
-			if err := observe(ref, consumer, materialize); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	for id, r := range l.Index.Records {
-		occurrence, located := l.locations[id]
-		if repoRoot == "" || len(r.Refs) == 0 && (!located || len(occurrence.facts.templateInputs) == 0) {
-			continue
-		}
-		clear(visited)
-		clear(templateWalks)
-		if err := collect(id, id, false); err != nil {
-			return err
 		}
 	}
-	for id, r := range l.Index.Records {
-		kind := id.KindInfo()
-		if r.Path != "" {
-			if kind.Discovery {
-				if _, known := l.roots[id]; !known {
-					if l.roots == nil {
-						l.roots = map[manifest.NamedResource]bool{}
-					}
-					l.roots[id] = l.rootAdmission(r.Path, r.File, kind.Structural).admits(l, id, r)
-				}
-			} else if doc := l.documents.cache[r.Path]; r.Authored != (manifest.NamedResource{}) && !doc.rootKnown {
-				doc.rootAdmitted = l.rootAdmission(r.Path, r.File, false).admits(l, id, r)
-				doc.rootKnown = true
-				l.documents.cache[r.Path] = doc
+	for owner, files := range rf.controls {
+		slices.Sort(files)
+		rf.controls[owner] = slices.Compact(files)
+	}
+}
+
+func (rf *readerFinalizer) admitRecord(id manifest.NamedResource, r *manifest.DiscoveryRecord) {
+	if r.Path == "" {
+		return
+	}
+	kind := id.KindInfo()
+	if kind.Discovery {
+		if _, known := rf.loader.roots[id]; known {
+			return
+		}
+		if rf.loader.roots == nil {
+			rf.loader.roots = map[manifest.NamedResource]bool{}
+		}
+		rf.loader.roots[id] = rf.loader.rootAdmission(r.Path, r.File, kind.Structural).admits(rf.loader, id, *r)
+		return
+	}
+	doc := rf.loader.documents.cache[r.Path]
+	if r.Authored == (manifest.NamedResource{}) || doc.rootKnown {
+		return
+	}
+	doc.rootAdmitted = rf.loader.rootAdmission(r.Path, r.File, false).admits(rf.loader, id, *r)
+	doc.rootKnown = true
+	rf.loader.documents.cache[r.Path] = doc
+}
+
+func (rf *readerFinalizer) setRecordOrigin(id manifest.NamedResource, r *manifest.DiscoveryRecord) {
+	kind := id.KindInfo()
+	if r.File != "" {
+		if parents := rf.emittedFiles[r.File]; kind.Structural && r.Parent == (manifest.NamedResource{}) &&
+			len(parents) == 1 &&
+			parents[0] != id {
+			r.Parent = parents[0]
+		}
+		if len(r.Productions) == 0 && r.Authored != (manifest.NamedResource{}) {
+			r.Productions = []manifest.Production{
+				{Authored: r.Authored, Path: r.Path, File: r.File, Source: manifest.BootstrapSourceID},
 			}
 		}
-		if r.File != "" {
-			if parents := emittedFiles[r.File]; kind.Structural && r.Parent == (manifest.NamedResource{}) &&
-				len(parents) == 1 &&
-				parents[0] != id {
-				r.Parent = parents[0]
-			}
-			if len(r.Productions) == 0 && r.Authored != (manifest.NamedResource{}) {
-				r.Productions = []manifest.Production{
-					{Authored: r.Authored, Path: r.Path, File: r.File, Source: manifest.BootstrapSourceID},
-				}
-			}
+	}
+
+}
+
+func (rf *readerFinalizer) compactOrigins(id manifest.NamedResource, r *manifest.DiscoveryRecord) {
+	// Owner evidence MUST survive compaction while provisional origins are removed.
+	r.Productions = slices.DeleteFunc(r.Productions, func(p manifest.Production) bool {
+		if p.Owner != (manifest.NamedResource{}) || p.Path == "" {
+			return false
 		}
-		// Owner evidence MUST survive compaction while provisional origins are removed.
-		r.Productions = slices.DeleteFunc(r.Productions, func(p manifest.Production) bool {
-			if p.Owner != (manifest.NamedResource{}) || p.Path == "" {
-				return false
-			}
-			return slices.ContainsFunc(r.Productions, func(owner manifest.Production) bool {
-				return owner.Owner != (manifest.NamedResource{}) &&
-					(owner.Source == p.Source && owner.Authored == p.Authored && owner.Path == p.Path && owner.File == p.File ||
-						p.Source == manifest.BootstrapSourceID && p.Path == r.Path && !l.AdmitsRoot(l.CatalogObject(id), p.Path))
-			})
+		return slices.ContainsFunc(r.Productions, func(owner manifest.Production) bool {
+			return owner.Owner != (manifest.NamedResource{}) &&
+				(owner.Source == p.Source && owner.Authored == p.Authored && owner.Path == p.Path && owner.File == p.File ||
+					p.Source == manifest.BootstrapSourceID && p.Path == r.Path && !rf.loader.AdmitsRoot(rf.loader.CatalogObject(id), p.Path))
 		})
-		if l.documents.compact && l.AdmitsRoot(l.CatalogObject(id), r.Path) {
-			for _, p := range r.Productions {
+	})
+	if rf.loader.documents.compact && rf.loader.AdmitsRoot(rf.loader.CatalogObject(id), r.Path) {
+		{
+			pValues := r.Productions
+			for pIndex := range pValues {
+				p := pValues[pIndex]
 				if p.Owner != (manifest.NamedResource{}) && p.Materializer(id) == (manifest.NamedResource{}) &&
 					p.Declaration == (manifest.NamedResource{}) &&
 					p.Authored != (manifest.NamedResource{}) {
@@ -408,51 +320,292 @@ func (l *Loader) finalizeRecords(
 				}
 			}
 		}
-		slices.SortFunc(r.Productions, func(a, b manifest.Production) int { return a.Owner.Compare(b.Owner) })
-		if !l.documents.compact && r.Builder == "" {
-			r.Declaration = l.IndexedObject(id, r).Obj
+	}
+	slices.SortFunc(r.Productions, func(a, b manifest.Production) int { return a.Owner.Compare(b.Owner) })
+
+}
+
+func (rf *readerFinalizer) setRecordOutput(id manifest.NamedResource, r *manifest.DiscoveryRecord) {
+	kind := id.KindInfo()
+	if !rf.loader.documents.compact && r.Builder == "" {
+		r.Declaration = rf.loader.IndexedObject(id, *r).Obj
+	}
+	r.StaticOutput = kind.Structural || len(rf.loader.templateTargets[id]) != 0
+	if len(rf.loader.locations) != 0 {
+		if occurrence, known := rf.loader.occurrence(id); known {
+			r.StaticOutput = !occurrence.facts.opaque(rf.loader.templateTargets[id])
 		}
-		r.StaticOutput = kind.Structural || len(l.templateTargets[id]) != 0
-		if len(l.locations) != 0 {
-			if occurrence, known := l.occurrence(id); known {
-				r.StaticOutput = !occurrence.facts.opaque(l.templateTargets[id])
-			}
-		}
-		r.StaticOutput = r.StaticOutput && !unresolvedPaths[id]
-		if l.documents.compact && kind.Parent && r.Parent == (manifest.NamedResource{}) &&
-			!l.AdmitsRoot(l.CatalogObject(id), r.Path) {
-			var owner manifest.NamedResource
-			multiple := false
-			for _, p := range r.Productions {
+	}
+	r.StaticOutput = r.StaticOutput && !rf.unresolvedPaths[id]
+
+}
+
+func (rf *readerFinalizer) setRecordParent(id manifest.NamedResource, r *manifest.DiscoveryRecord) {
+	kind := id.KindInfo()
+	if rf.loader.documents.compact && kind.Parent && r.Parent == (manifest.NamedResource{}) &&
+		!rf.loader.AdmitsRoot(rf.loader.CatalogObject(id), r.Path) {
+		var owner manifest.NamedResource
+		multiple := false
+		{
+			pValues2 := r.Productions
+			for pIndex2 := range pValues2 {
+				p := pValues2[pIndex2]
 				if parent := p.Materializer(id); parent != (manifest.NamedResource{}) {
 					multiple = multiple || owner != (manifest.NamedResource{}) && owner != parent
 					owner = parent
 				}
 			}
-			if !multiple && owner != id {
-				r.Parent = owner
-			}
 		}
-		if len(controls) != 0 {
-			owners := []manifest.NamedResource{manifest.Resolve(r.Parent, "", id.Namespace)}
-			for _, p := range r.Productions {
+		if !multiple && owner != id {
+			r.Parent = owner
+		}
+	}
+
+}
+
+func (rf *readerFinalizer) setRecordInputs(id manifest.NamedResource, r *manifest.DiscoveryRecord) {
+	if len(rf.controls) != 0 {
+		owners := []manifest.NamedResource{manifest.Resolve(r.Parent, "", id.Namespace)}
+		{
+			pValues3 := r.Productions
+			for pIndex3 := range pValues3 {
+				p := pValues3[pIndex3]
 				owner := p.Materializer(id)
 				if owner != (manifest.NamedResource{}) && !slices.Contains(owners, owner) {
 					owners = append(owners, owner)
 				}
 			}
-			for _, owner := range owners {
-				files := controls[owner]
-				if len(r.Inputs) == 0 {
-					r.Inputs = files
-				} else if len(files) != 0 && !slices.Equal(r.Inputs, files) {
-					r.Inputs = append(slices.Clone(r.Inputs), files...)
-					slices.Sort(r.Inputs)
-					r.Inputs = slices.Compact(r.Inputs)
-				}
+		}
+		for _, owner := range owners {
+			files := rf.controls[owner]
+			if len(r.Inputs) == 0 {
+				r.Inputs = files
+			} else if len(files) != 0 && !slices.Equal(r.Inputs, files) {
+				r.Inputs = append(slices.Clone(r.Inputs), files...)
+				slices.Sort(r.Inputs)
+				r.Inputs = slices.Compact(r.Inputs)
 			}
 		}
-		l.Index.Records[id] = r
+	}
+
+}
+
+func (rf *readerFinalizer) observeContent(ref *manifest.Reference, consumer manifest.NamedResource, materialize bool) {
+
+	record, _ := rf.loader.Index.Lookup(ref.NamedResource)
+	if record.File != "" {
+		sources := productionSources(record.Productions)
+		for _, source := range sources {
+			rf.loader.recordReader(
+				record.File,
+				"",
+				manifest.FileReader{
+					Reader:      consumer,
+					Source:      source,
+					Declaration: ref.NamedResource,
+					Exact:       true,
+					Materialize: materialize,
+				},
+			)
+		}
+	}
+	for _, file := range record.Inputs {
+		if file == record.File {
+			continue
+		}
+		rf.loader.recordReader(
+			file,
+			"",
+			manifest.FileReader{
+				Reader:      consumer,
+				Source:      manifest.BootstrapSourceID,
+				Declaration: ref.NamedResource,
+				Materialize: materialize,
+			},
+		)
+	}
+}
+
+func (rf *readerFinalizer) sourceVisit(id manifest.NamedResource) graphVisit {
+	v, seen := rf.sources[id]
+	if seen {
+		return v
+	}
+	root, pinned, external := SourceView(rf.loader.Store, id, rf.repoRoot)
+	if !external {
+		v.root = root
+		prefix, _ := filepath.Rel(rf.repoRoot, root)
+		if prefix != "." {
+			v.prefix = filepath.ToSlash(prefix)
+			if !pinned {
+				v.localBase = rf.loader.documents.localBase(root, rf.repoRoot)
+			}
+		}
+	}
+	rf.sources[id] = v
+	return v
+}
+
+func (rf *readerFinalizer) observeFiles(ref *manifest.Reference, consumer manifest.NamedResource, materialize bool, v graphVisit) {
+	for _, name := range ref.Files {
+		clean := path.Clean(name)
+		if ref.Subtree {
+			var valid bool
+			clean, valid = resolveRoot(rf.loader.Store, ref.NamedResource, cmp.Or(name, "."))
+			if !valid {
+				continue
+			}
+		} else if name == "" || !fs.ValidPath(clean) || clean == "." || strings.IndexByte(clean, 0) >= 0 {
+			continue
+		}
+		v.coordinate = path.Join(v.prefix, clean)
+		rf.loader.recordReader(
+			v.coordinate,
+			v.localCoordinate(),
+			manifest.FileReader{
+				Reader:      consumer,
+				Source:      ref.NamedResource,
+				Exact:       !ref.Subtree,
+				Materialize: materialize,
+			},
+		)
+	}
+}
+
+func (rf *readerFinalizer) chartNames(ctx context.Context, location, chartPath string) ([]string, error) {
+	names, seen := rf.charts[location]
+	if seen {
+		return names, nil
+	}
+	input, name := rf.loader.documents.input(location)
+	info, err := fs.Stat(input, name)
+	if err == nil {
+		if info.IsDir() {
+			names = append(names, path.Join(chartPath, ".helmignore"))
+			if sub, subErr := fs.Sub(input, name); subErr == nil {
+				names = append(names, rf.readChartFiles(ctx, sub, chartPath, location)...)
+			}
+		} else if info.Mode().IsRegular() {
+			names = append(names, chartPath)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		//nolint:wrapcheck // The caller preserves cancellation error identity.
+		return nil, err
+	}
+	rf.charts[location] = names
+	return names, nil
+}
+
+func (rf *readerFinalizer) observeChart(ctx context.Context, ref *manifest.Reference, reader manifest.FileReader, v graphVisit) error {
+
+	if ref.ChartPath == "" {
+		return nil
+	}
+	ref.ChartPath = path.Clean(ref.ChartPath)
+	location := filepath.Join(v.root, filepath.FromSlash(ref.ChartPath))
+	names, err := rf.chartNames(ctx, location, ref.ChartPath)
+	if err != nil {
+		return err
+	}
+	for _, name := range names {
+		v.coordinate = path.Join(v.prefix, name)
+		rf.loader.recordReader(v.coordinate, v.localCoordinate(), reader)
+	}
+	namespace := reader.Reader.Namespace
+	if producer, ok := rf.object(reader.Reader).(emissionProducer); ok {
+		namespace = producer.EmissionPolicy().Namespace
+	}
+	key := [2]string{location, namespace}
+	refs, seen := rf.templateRefs[key]
+	if !seen {
+		rf.templateRefs[key] = manifest.TemplateProjection{}
+		for _, data := range rf.templateBodies[location] {
+			next, err := rf.loader.documents.projections.ProjectTemplate(ctx, data, namespace)
+			if err != nil {
+				return err
+			}
+			refs.Inputs = append(refs.Inputs, next.Inputs...)
+			refs.Targets = append(refs.Targets, next.Targets...)
+		}
+		rf.templateRefs[key] = refs
+	}
+	if rf.templateWalks[key] {
+		return nil
+	}
+	rf.templateWalks[key] = true
+	for _, target := range refs.Targets {
+		if rf.loader.templateTargets == nil {
+			rf.loader.templateTargets = map[manifest.NamedResource][]manifest.ProducerTarget{}
+		}
+		targets := rf.loader.templateTargets[reader.Reader]
+		if !slices.ContainsFunc(
+			targets,
+			func(known manifest.ProducerTarget) bool { return known.NamedResource == target.NamedResource },
+		) {
+			rf.loader.templateTargets[reader.Reader] = append(targets, target)
+		}
+	}
+	{
+		inputValues := refs.Inputs
+		for inputIndex := range inputValues {
+			input := inputValues[inputIndex]
+			if err := rf.project(ctx, input, reader.Reader); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func productionSources(productions []manifest.Production) []manifest.NamedResource {
+	sources := []manifest.NamedResource{manifest.BootstrapSourceID}
+	if len(productions) == 0 {
+		return sources
+	}
+	sources = nil
+	for i := range productions {
+		source := productions[i].Source
+		if source == (manifest.NamedResource{}) {
+			source = manifest.BootstrapSourceID
+		}
+		if !slices.Contains(sources, source) {
+			sources = append(sources, source)
+		}
+	}
+	return sources
+}
+
+func (rf *readerFinalizer) readChartFiles(ctx context.Context, input fs.FS, chartPath, location string) []string {
+	var names []string
+	// Reconciliation owns chart loading errors, including policy failures.
+	_ = chartinput.Walk(ctx, input, true, func(name string, _ fs.FileInfo, data []byte) error {
+		names = append(names, path.Join(chartPath, name))
+		if strings.HasPrefix(name, "templates/") || strings.Contains(name, "/templates/") {
+			if data, ok := readTemplateBody(ctx, input, name, data); ok {
+				rf.templateBodies[location] = append(rf.templateBodies[location], data)
+			}
+		}
+		return nil
+	})
+	return names
+}
+
+func readTemplateBody(_ context.Context, input fs.FS, name string, data []byte) ([]byte, bool) {
+	if data != nil {
+		return data, true
+	}
+	data, err := fs.ReadFile(input, name)
+	return data, err == nil
+}
+
+func (rf *readerFinalizer) projectOccurrence(ctx context.Context, occurrence *Occurrence, consumer manifest.NamedResource) error {
+	for i := range occurrence.facts.templateInputs {
+		input := occurrence.facts.templateInputs[i]
+		if err := rf.project(ctx, input, consumer); err != nil {
+			return err
+		}
 	}
 	return nil
 }

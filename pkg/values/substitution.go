@@ -19,9 +19,9 @@ func NeedsSubstitution(v any) bool {
 	case float64:
 		return math.IsNaN(v) || math.IsInf(v, 0) || v == 0 && math.Signbit(v)
 	case int:
-		return v < -(1<<53) || v > 1<<53
+		return v < -(1<<floatMantissaBits) || v > 1<<floatMantissaBits
 	case uint64:
-		return v > 1<<53
+		return v > 1<<floatMantissaBits
 	case map[string]any:
 		for k, vv := range v {
 			if hasSubstitution(k) || NeedsSubstitution(vv) {
@@ -93,3 +93,7 @@ func collectSubstitutionNames(node parse.Node, names map[string]struct{}) bool {
 	}
 	return true
 }
+
+const (
+	floatMantissaBits = 53
+)

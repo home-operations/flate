@@ -173,14 +173,21 @@ type readSetSnapshot struct {
 }
 
 func (rs *readSet) snapshot() readSetSnapshot {
-	var remotes []remoteEntry
-	for input, observation := range rs.remotes {
-		entry := remoteEntry{Input: input, Identity: observation.identity}
-		for parent := range observation.parents {
-			entry.Parents = append(entry.Parents, parent)
+	remotes := make([]remoteEntry, 0, len(rs.remotes))
+	if len(rs.remotes) == 0 {
+		remotes = nil
+	}
+	{
+		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+		for input, observation := range rs.remotes {
+
+			entry := remoteEntry{Input: input, Identity: observation.identity}
+			for parent := range observation.parents {
+				entry.Parents = append(entry.Parents, parent)
+			}
+			slices.SortFunc(entry.Parents, compareRemoteInputs)
+			remotes = append(remotes, entry)
 		}
-		slices.SortFunc(entry.Parents, compareRemoteInputs)
-		remotes = append(remotes, entry)
 	}
 	slices.SortFunc(remotes, func(a, b remoteEntry) int { return compareRemoteInputs(a.Input, b.Input) })
 	rs.mu.Lock()
@@ -216,6 +223,7 @@ func (rs *readSet) snapshot() readSetSnapshot {
 	return snap
 }
 
+//nolint:gocritic // Keep immutable value-receiver semantics.
 func (rs readSetSnapshot) stillValid(
 	ctx context.Context,
 	cache *TreeCache,
@@ -231,62 +239,80 @@ func (rs readSetSnapshot) stillValid(
 
 func (rs readSetSnapshot) localsValid(ctx context.Context, lower fs.FS, immutable bool) (bool, error) {
 	if err := ctx.Err(); err != nil {
+		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return false, err
 	}
 	if !immutable {
 		for _, f := range rs.Files {
 			b, err := fs.ReadFile(lower, f.Path)
 			if (err != nil) != (f.Hash == "") {
+				//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 				return false, ctx.Err()
 			}
 			if err == nil && manifest.SHA256Hex(b) != f.Hash {
+				//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 				return false, ctx.Err()
 			}
 		}
 		for _, d := range rs.Dirs {
 			entries, err := fs.ReadDir(lower, d.Path)
 			if err != nil {
+				//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 				return false, ctx.Err()
 			}
 			if hashEntries(entryNames(entries)) != d.Hash {
+				//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 				return false, ctx.Err()
 			}
 		}
 		for _, n := range rs.Nodes {
 			info, err := fs.Stat(lower, n.Path)
 			if observedKind(err == nil, err == nil && info.IsDir()) != n.Kind {
+				//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 				return false, ctx.Err()
 			}
 		}
 	}
+	//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 	return ctx.Err() == nil, ctx.Err()
 }
 
 func (rs readSetSnapshot) validateRemotes(ctx context.Context, cache *TreeCache, input *treeFS) (bool, error) {
 	if len(rs.Remotes) == 0 {
+		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return ctx.Err() == nil, ctx.Err()
 	}
 	indices := make(map[remoteInput]int, len(rs.Remotes))
-	for index, entry := range rs.Remotes {
-		if _, duplicate := indices[entry.Input]; duplicate {
-			return false, ctx.Err()
+	{
+		entryValues := rs.Remotes
+		for index := range entryValues {
+			entry := entryValues[index]
+			if _, duplicate := indices[entry.Input]; duplicate {
+				//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
+				return false, ctx.Err()
+			}
+			indices[entry.Input] = index
 		}
-		indices[entry.Input] = index
 	}
 	pending := make([]int, len(rs.Remotes))
 	children := make([][]int, len(rs.Remotes))
 	var ready []int
-	for index, entry := range rs.Remotes {
-		pending[index] = len(entry.Parents)
-		if pending[index] == 0 {
-			ready = append(ready, index)
-		}
-		for _, parent := range entry.Parents {
-			parentIndex, ok := indices[parent]
-			if !ok {
-				return false, ctx.Err()
+	{
+		entryValues2 := rs.Remotes
+		for index := range entryValues2 {
+			entry := entryValues2[index]
+			pending[index] = len(entry.Parents)
+			if pending[index] == 0 {
+				ready = append(ready, index)
 			}
-			children[parentIndex] = append(children[parentIndex], index)
+			for _, parent := range entry.Parents {
+				parentIndex, ok := indices[parent]
+				if !ok {
+					//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
+					return false, ctx.Err()
+				}
+				children[parentIndex] = append(children[parentIndex], index)
+			}
 		}
 	}
 	var waves [][]int
@@ -306,6 +332,7 @@ func (rs readSetSnapshot) validateRemotes(ctx context.Context, cache *TreeCache,
 		ready = next
 	}
 	if visited != len(rs.Remotes) {
+		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return false, ctx.Err()
 	}
 	results := make([]struct {
@@ -347,5 +374,6 @@ func (rs readSetSnapshot) validateRemotes(ctx context.Context, cache *TreeCache,
 	} else {
 		input.slot.YieldSlot(validate)
 	}
+	//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 	return valid && ctx.Err() == nil, ctx.Err()
 }

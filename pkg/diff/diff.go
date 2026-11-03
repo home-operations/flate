@@ -16,6 +16,7 @@ import (
 // resources from different producers and attributes structured output.
 type Parent struct {
 	manifest.NamedResource
+
 	// Path is the Flux Kustomization spec.path (only set for KS
 	// parents), with the conventional `./` prefix stripped. It is display
 	// metadata, not part of producer identity.
@@ -112,7 +113,7 @@ func renderPrepared(prepared diffprep.Prepared, opts Options) ([]byte, error) {
 		err = nativeErr
 		if err == nil {
 			var buf bytes.Buffer
-			err = (output.Encoder{Writer: &buf, Format: output.Format(opts.Format)}).Native(report)
+			err = (output.Encoder{Writer: &buf, Format: output.Format(opts.Format)}).Native(&report)
 			if err == nil {
 				out = buf.Bytes()
 			}

@@ -23,6 +23,8 @@ const (
 
 // Semantic styles, by ANSI base color (0-7) so they downsample cleanly on
 // 16-color terminals: 1 red, 2 green, 3 yellow, 6 cyan; faint and bold carry no hue.
+//
+//nolint:gochecknoglobals // Immutable styles are reused across report rows without rebuilding them.
 var (
 	greenStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 	redStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
@@ -41,7 +43,7 @@ func ColorEnabled(w io.Writer) bool {
 
 // render applies st when color is on; otherwise returns s untouched so plain
 // output carries no escape codes.
-func render(st lipgloss.Style, s string, color bool) string {
+func render(st *lipgloss.Style, s string, color bool) string {
 	if !color {
 		return s
 	}
@@ -49,22 +51,22 @@ func render(st lipgloss.Style, s string, color bool) string {
 }
 
 // Pass renders s as a success (green) when color is on, else verbatim.
-func Pass(s string, color bool) string { return render(greenStyle, s, color) }
+func Pass(s string, color bool) string { return render(&greenStyle, s, color) }
 
 // Fail renders s as a failure (red) when color is on, else verbatim.
-func Fail(s string, color bool) string { return render(redStyle, s, color) }
+func Fail(s string, color bool) string { return render(&redStyle, s, color) }
 
 // Warn renders s as an advisory (yellow) when color is on, else verbatim.
-func Warn(s string, color bool) string { return render(yellowStyle, s, color) }
+func Warn(s string, color bool) string { return render(&yellowStyle, s, color) }
 
 // Dim renders s faint when color is on, else verbatim.
-func Dim(s string, color bool) string { return render(faintStyle, s, color) }
+func Dim(s string, color bool) string { return render(&faintStyle, s, color) }
 
 // Bold renders s bold when color is on, else verbatim.
-func Bold(s string, color bool) string { return render(boldStyle, s, color) }
+func Bold(s string, color bool) string { return render(&boldStyle, s, color) }
 
 // Cyan renders s cyan when color is on, else verbatim.
-func Cyan(s string, color bool) string { return render(cyanStyle, s, color) }
+func Cyan(s string, color bool) string { return render(&cyanStyle, s, color) }
 
 // Truncate shortens s to width visible columns, appending an ellipsis on
 // overflow. It is ANSI- and wide-rune-aware (escape sequences and CJK width are

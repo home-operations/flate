@@ -8,6 +8,7 @@ import (
 
 const flateModule = "github.com/home-operations/flate"
 
+//nolint:gochecknoglobals // The stamped process identity is computed once and shared by all cache owners.
 var processIdentity, processIdentityReason = func() (string, string) {
 	info, ok := debug.ReadBuildInfo()
 	if !ok {

@@ -28,17 +28,18 @@ func (p Prepared) Native() (dyff.Report, error) {
 	report := dyff.Report{From: from, To: to}
 	rank := func(p Pair) int {
 		if p.Old == nil {
-			return 2
+			return nativeAddedRank
 		}
 		if p.New == nil {
-			return 1
+			return nativeRemovedRank
 		}
 		return 0
 	}
 	slices.SortFunc(paired, func(a, b Pair) int {
 		return cmp.Or(cmp.Compare(rank(a), rank(b)), cmp.Compare(a.OldPos, b.OldPos), cmp.Compare(a.NewPos, b.NewPos))
 	})
-	for _, p := range paired {
+	for pIndex := range paired {
+		p := paired[pIndex]
 		switch {
 		case p.Old == nil && p.New == nil:
 			continue
@@ -128,3 +129,8 @@ func nativeInput(location string, paired []Pair) (ytbx.InputFile, error) {
 	}
 	return input, nil
 }
+
+const (
+	nativeAddedRank   = 2
+	nativeRemovedRank = 1
+)

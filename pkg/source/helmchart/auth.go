@@ -19,6 +19,7 @@ import (
 
 type httpRepository struct {
 	*manifest.HelmRepository
+
 	username, password string
 	client             *http.Client
 	material           any
@@ -78,7 +79,7 @@ func (f *operation) prepareHTTP(r *manifest.HelmRepository) (*httpRepository, er
 
 func (r *httpRepository) localCredentials(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
-		return err
+		return err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 	}
 	config, err := repo.LoadFile(cmp.Or(os.Getenv("HELM_REPOSITORY_CONFIG"), helmpath.ConfigPath("repositories.yaml")))
 	if errors.Is(err, os.ErrNotExist) {

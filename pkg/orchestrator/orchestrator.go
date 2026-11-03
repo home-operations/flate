@@ -32,6 +32,7 @@ import (
 	"github.com/home-operations/flate/pkg/values"
 )
 
+//nolint:gochecknoglobals // The immutable render-kind registry is computed once before parallel rendering.
 var reconcilableKinds = func() []manifest.KindInfo {
 	var kinds []manifest.KindInfo
 	for info := range manifest.Kinds() {
@@ -208,7 +209,11 @@ func newOrchestrator(cfg Config, tree Tree, ts *task.Service) *Orchestrator {
 			if st.ReportHidden(id) {
 				return
 			}
-			cfg.StatusListener(tree.ID, manifest.DiagnosticFor(id, st.GetObject(id)), value.(store.StatusInfo))
+			cfg.StatusListener(
+				tree.ID,
+				manifest.DiagnosticFor(id, st.GetObject(id)),
+				value.(store.StatusInfo), //nolint:errcheck // Status events always carry store.StatusInfo.
+			)
 		}, false)
 	}
 	trees := kustomize.NewTreeCache(cfg.Cache, &o.inputs, ts)
@@ -248,16 +253,21 @@ func (o *Orchestrator) parentOf(id manifest.NamedResource) (manifest.NamedResour
 func (o *Orchestrator) childrenByParent() map[manifest.NamedResource][]manifest.NamedResource {
 	children := map[manifest.NamedResource][]manifest.NamedResource{}
 	for _, obj := range o.store.ListObjects("", "") {
-		for _, p := range o.store.Productions(obj.Named(), o.index) {
-			if p.Owner != (manifest.NamedResource{}) && p.Owner != obj.Named() &&
-				p.Authored == (manifest.NamedResource{}) &&
-				p.Declaration == (manifest.NamedResource{}) {
-				children[p.Owner] = append(children[p.Owner], obj.Named())
+		{
+			pValues := o.store.Productions(obj.Named(), o.index)
+			for pIndex := range pValues {
+				p := pValues[pIndex]
+
+				if p.Owner != (manifest.NamedResource{}) && p.Owner != obj.Named() &&
+					p.Authored == (manifest.NamedResource{}) &&
+					p.Declaration == (manifest.NamedResource{}) {
+					children[p.Owner] = append(children[p.Owner], obj.Named())
+				}
 			}
 		}
 	}
 	if o.index != nil {
-		for child, record := range o.index.Records {
+		for child, record := range o.index.Records { //nolint:gocritic // Map iteration preserves a value snapshot without an extra lookup.
 			if parent := record.Parent; parent != (manifest.NamedResource{}) {
 				children[parent] = append(children[parent], child)
 			}
@@ -288,7 +298,9 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 				sourcecache.Policy{MaxAge: request.MaxAge, Retry: retry},
 			)
 			if artifact != nil {
-				for _, warning := range artifact.Warnings {
+				for itemIndex := range artifact.Warnings {
+					warning := artifact.Warnings[itemIndex]
+
 					o.store.AddWarning(warning)
 				}
 			}
@@ -320,7 +332,7 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			o.cfg.Input = o.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
+			o.cfg.Input = o.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact) //nolint:errcheck // Bootstrap admission publishes a source artifact.
 			o.cfg.RepoRoot, o.repoRoot, o.index = o.cfg.Input.LocalPath, o.cfg.Input.LocalPath, o.loader.Index
 			return nil
 		}
@@ -332,7 +344,7 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	o.cfg.Input = o.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
+	o.cfg.Input = o.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact) //nolint:errcheck // Bootstrap admission publishes a source artifact.
 	o.cfg.RepoRoot = res.RepoRoot
 	o.repoRoot = res.RepoRoot
 	o.index = res.Index

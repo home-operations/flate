@@ -462,9 +462,13 @@ func (s *Store) AddObjects(objs []manifest.BaseManifest) {
 		}
 		slices.SortStableFunc(bucket, func(a, b objectUpdate) int { return a.obj.Named().Compare(b.obj.Named()) })
 		compacted := bucket[:0]
-		for j, u := range bucket {
-			if j+1 == len(bucket) || u.obj.Named() != bucket[j+1].obj.Named() {
-				compacted = append(compacted, u)
+		{
+			uValues := bucket
+			for j := range uValues {
+				u := uValues[j]
+				if j+1 == len(bucket) || u.obj.Named() != bucket[j+1].obj.Named() {
+					compacted = append(compacted, u)
+				}
 			}
 		}
 		bucket = compacted
@@ -495,13 +499,17 @@ func (s *Store) AddObjects(objs []manifest.BaseManifest) {
 				sh.mu.Unlock()
 				continue
 			}
-			for _, u := range bucket {
-				id := u.obj.Named()
-				if u.cell.hidden || !u.cell.rooted && (len(sh.members[id]) > 0 || sh.slots[id] != nil) {
-					anchors = append(anchors, u)
-					continue
+			{
+				uValues2 := bucket
+				for uIndex := range uValues2 {
+					u := uValues2[uIndex]
+					id := u.obj.Named()
+					if u.cell.hidden || !u.cell.rooted && (len(sh.members[id]) > 0 || sh.slots[id] != nil) {
+						anchors = append(anchors, u)
+						continue
+					}
+					dispatches = append(dispatches, s.admitLocked(sh, id, &u))
 				}
-				dispatches = append(dispatches, s.admitLocked(sh, id, &u))
 			}
 			sh.mu.Unlock()
 			break
@@ -510,15 +518,23 @@ func (s *Store) AddObjects(objs []manifest.BaseManifest) {
 	for len(anchors) > 0 {
 		var storage [4]regionState
 		changed := newObjectRegion(len(anchors), storage[:])
-		for _, u := range anchors {
-			changed = changed.add(u.obj.Named(), !u.effectiveEqual || u.cell.static == nil, u.independent)
+		{
+			uValues3 := anchors
+			for uIndex2 := range uValues3 {
+				u := uValues3[uIndex2]
+				changed = changed.add(u.obj.Named(), !u.effectiveEqual || u.cell.static == nil, u.independent)
+			}
 		}
 		s.lockAll()
 		current := true
-		for _, u := range anchors {
-			if !u.currentLocked(s.shardFor(u.obj.Named())) {
-				current = false
-				break
+		{
+			uValues4 := anchors
+			for uIndex3 := range uValues4 {
+				u := uValues4[uIndex3]
+				if !u.currentLocked(s.shardFor(u.obj.Named())) {
+					current = false
+					break
+				}
 			}
 		}
 		if !current {
@@ -540,17 +556,21 @@ func (s *Store) AddObjects(objs []manifest.BaseManifest) {
 			continue
 		}
 		region := s.affectedLocked(changed, manifest.NamedResource{})
-		for _, u := range anchors {
-			obj := u.obj
-			if u.effectiveEqual && u.cell.static != nil {
-				obj = u.cell.static
+		{
+			uValues5 := anchors
+			for uIndex4 := range uValues5 {
+				u := uValues5[uIndex4]
+				obj := u.obj
+				if u.effectiveEqual && u.cell.static != nil {
+					obj = u.cell.static
+				}
+				id := obj.Named()
+				sh := s.shardFor(id)
+				cell := sh.cells[id]
+				cell.static, cell.rooted, cell.retired, cell.document = obj, true, false, u.document
+				cell.publication++
+				sh.cells[id] = cell
 			}
-			id := obj.Named()
-			sh := s.shardFor(id)
-			cell := sh.cells[id]
-			cell.static, cell.rooted, cell.retired, cell.document = obj, true, false, u.document
-			cell.publication++
-			sh.cells[id] = cell
 		}
 		for _, p := range s.reachabilityLocked(region) {
 			dispatches = append(dispatches, p.event)
@@ -614,6 +634,8 @@ func (sh *shard) deleteLocked(id manifest.NamedResource) bool {
 }
 
 // GetObject returns the manifest for id, or nil if not present.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (s *Store) GetObject(id manifest.NamedResource) manifest.BaseManifest {
 	sh := s.shardFor(id)
 	sh.mu.RLock()
@@ -624,11 +646,14 @@ func (s *Store) GetObject(id manifest.NamedResource) manifest.BaseManifest {
 // Observation holds the requested readiness facts from a coherent Snapshot.
 type Observation struct {
 	StatusInfo
+
 	Conditions []Condition
 	Statusful  bool
 }
 
 // Snapshot reads an effective object and its requested readiness observation.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (s *Store) Snapshot(id manifest.NamedResource, conditions bool) (manifest.BaseManifest, Observation) {
 	sh := s.shardFor(id)
 	sh.mu.RLock()
@@ -772,14 +797,18 @@ type objectPublication struct {
 
 func dispatchPublications(publications []objectPublication) {
 	slices.SortStableFunc(publications, func(a, b objectPublication) int { return a.event.id.Compare(b.event.id) })
-	for _, p := range publications {
-		changed := p.force || p.before == nil || p.after == nil || !manifest.Equal(p.before, p.after)
-		if !changed && p.document != nil {
-			equal, _ := reconcileInputEqual(p.after, p.document, p.nextDocument)
-			changed = !equal
-		}
-		if changed {
-			p.event.run()
+	{
+		pValues := publications
+		for pIndex := range pValues {
+			p := pValues[pIndex]
+			changed := p.force || p.before == nil || p.after == nil || !manifest.Equal(p.before, p.after)
+			if !changed && p.document != nil {
+				equal, _ := reconcileInputEqual(p.after, p.document, p.nextDocument)
+				changed = !equal
+			}
+			if changed {
+				p.event.run()
+			}
 		}
 	}
 }

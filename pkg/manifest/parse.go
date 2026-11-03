@@ -33,14 +33,14 @@ func decodeCR(doc map[string]any, cr any, kind, domain string) error {
 
 // DocKind returns the "kind" field of a manifest document, or "" if absent.
 func DocKind(doc map[string]any) string {
-	k, _ := doc["kind"].(string)
+	k, _ := doc[kindKey].(string)
 	return k
 }
 
 // DocAPIVersion returns the "apiVersion" field of a manifest document,
 // or "" if absent.
 func DocAPIVersion(doc map[string]any) string {
-	v, _ := doc["apiVersion"].(string)
+	v, _ := doc[apiVersionKey].(string)
 	return v
 }
 
@@ -53,12 +53,12 @@ func DocIdentity(doc map[string]any) NamedResource {
 // DocMetadata returns (name, namespace) from a manifest document's
 // metadata block. Both are "" when metadata is absent or unset.
 func DocMetadata(doc map[string]any) (name, namespace string) {
-	md, _ := doc["metadata"].(map[string]any)
+	md, _ := doc[metadataKey].(map[string]any)
 	if md == nil {
 		return "", ""
 	}
-	name, _ = md["name"].(string)
-	namespace, _ = md["namespace"].(string)
+	name, _ = md[nameKey].(string)
+	namespace, _ = md[namespaceKey].(string)
 	return name, namespace
 }
 
@@ -74,6 +74,8 @@ type ParseDocOptions struct {
 // document and whether sanitation or namespace defaulting changed it, including
 // on errors. Foreign kinds become RawObjects; bare data and Kustomize build
 // directives return nil.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func ParseDoc(doc map[string]any, opts ParseDocOptions) (BaseManifest, map[string]any, bool, error) {
 	kind, apiVersion := DocKind(doc), DocAPIVersion(doc)
 	if kind == "" || apiGroup(apiVersion) == KustomizeDomain {
@@ -111,7 +113,7 @@ func checkAPIVersion(doc map[string]any, want string) error {
 	if err != nil || gv.Version == "" {
 		return NewError(
 			ErrInput,
-			fmt.Errorf("invalid %w", field.Invalid(field.NewPath("apiVersion"), v, "must have a valid version")),
+			fmt.Errorf("invalid %w", field.Invalid(field.NewPath(apiVersionKey), v, "must have a valid version")),
 			"",
 		)
 	}
@@ -126,8 +128,8 @@ func requireMetadata(doc map[string]any) (name, namespace, missing string) {
 	if name != "" {
 		return name, namespace, ""
 	}
-	if md, _ := doc["metadata"].(map[string]any); md == nil {
-		return "", "", "metadata"
+	if md, _ := doc[metadataKey].(map[string]any); md == nil {
+		return "", "", metadataKey
 	}
 	return "", "", "metadata.name"
 }

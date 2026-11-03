@@ -42,101 +42,133 @@ func (s *selectionSide) prepareFailures(roots []manifest.NamedResource, other *s
 	s.result.Causes = s.failureCauses(s.result.Failed, s.result.Blocked)
 }
 
-func (s *selectionSide) requiredClosure(
-	roots []manifest.NamedResource,
-	other *selectionSide,
-) map[manifest.NamedResource]struct{} {
-	seen := make(map[manifest.NamedResource]struct{})
-	var work []manifest.NamedResource
-	add := func(id manifest.NamedResource) {
-		if _, ok := seen[id]; !ok {
-			seen[id] = struct{}{}
-			work = append(work, id)
-		}
-	}
-	intent := manifest.Selection{Roots: roots}
-	seed := func(id manifest.NamedResource) {
-		if roots[0].Name == "" && s.run.filter.Enabled() {
-			if _, selected, _, _ := s.run.filter.Membership(id); !selected {
-				return
-			}
-		}
-		if intent.Matches(id) && s.includes(id.Namespace) {
-			add(id)
-		}
-	}
-	for _, id := range s.roots {
-		seed(id)
-	}
-	if s.run.index != nil {
-		for id := range s.run.index.Records {
-			seed(id)
-		}
-	}
-	for id := range s.run.Result.Failed {
-		seed(id)
-	}
+func (s *selectionSide) requiredClosure(roots []manifest.NamedResource, other *selectionSide) map[manifest.NamedResource]struct{} {
+	q := requiredSelection{side: s, intent: manifest.Selection{Roots: roots}, seen: make(map[manifest.NamedResource]struct{})}
+	q.seedRoots()
 	children := s.run.childrenByParent()
 	for _, kids := range children {
 		for _, id := range kids {
-			seed(id)
+			q.seed(id)
 		}
 	}
 	// Prerequisites MUST NOT expand downward into unrelated siblings.
 	if roots[0].Name != "" || roots[0].Namespace != "" {
-		for i := 0; i < len(work); i++ { //nolint:intrange // Descendants extend this traversal.
-			for _, child := range children[work[i]] {
-				if roots[0].Name == "" {
-					if s.run.filter.Enabled() {
-						if _, selected, _, _ := s.run.filter.Membership(child); !selected {
-							continue
-						}
-					} else if !s.includes(child.Namespace) {
-						continue
-					}
-				}
-				add(child)
-			}
-		}
+		q.expandChildren(children)
 	}
-	if id := s.run.entryBinding.Producer; id != (manifest.NamedResource{}) && s.run.filter.Enabled() &&
-		s.run.filter.ShouldReconcile(id) {
-		add(id)
+	if id := s.run.entryBinding.Producer; id != (manifest.NamedResource{}) && s.run.filter.Enabled() && s.run.filter.ShouldReconcile(id) {
+		q.add(id)
 	}
 	if other != nil {
-		for _, id := range other.roots {
-			if s.run.filter.Enabled() {
-				if _, selected, _, _ := other.run.filter.Membership(id); selected {
-					add(id)
-				}
-			}
-			visited := make(map[manifest.NamedResource]bool)
-			for s.run.store.GetObject(id) == nil && !visited[id] {
-				visited[id] = true
-				parent, ok := other.run.parentOf(id)
-				if !ok {
-					break
-				}
-				actual := s.actualProducer(other.comparisonKey(parent))
-				add(actual)
-				if actual != parent {
-					break
-				}
-				id = parent
+		q.seedOther(other)
+	}
+	q.expandPrerequisites()
+	return q.seen
+}
+
+type requiredSelection struct {
+	side   *selectionSide
+	intent manifest.Selection
+	seen   map[manifest.NamedResource]struct{}
+	work   []manifest.NamedResource
+}
+
+func (q *requiredSelection) add(id manifest.NamedResource) {
+	if _, ok := q.seen[id]; !ok {
+		q.seen[id] = struct{}{}
+		q.work = append(q.work, id)
+	}
+}
+
+func (q *requiredSelection) seed(id manifest.NamedResource) {
+	s := q.side
+	if q.intent.Roots[0].Name == "" && s.run.filter.Enabled() {
+		if _, selected, _, _ := s.run.filter.Membership(id); !selected {
+			return
+		}
+	}
+	if q.intent.Matches(id) && s.includes(id.Namespace) {
+		q.add(id)
+	}
+}
+
+func (q *requiredSelection) seedRoots() {
+	s := q.side
+	for _, id := range s.roots {
+		q.seed(id)
+	}
+	if s.run.index != nil {
+		for id := range s.run.index.Records {
+			q.seed(id)
+		}
+	}
+	for id := range s.run.Result.Failed {
+		q.seed(id)
+	}
+}
+
+func (q *requiredSelection) expandChildren(children map[manifest.NamedResource][]manifest.NamedResource) {
+	for i := 0; i < len(q.work); i++ { //nolint:intrange // Descendants extend this traversal.
+		for _, child := range children[q.work[i]] {
+			if q.selectedChild(child) {
+				q.add(child)
 			}
 		}
 	}
-	for len(work) > 0 {
-		id := work[len(work)-1]
-		work = work[:len(work)-1]
-		if parent, ok := s.run.parentOf(id); ok {
-			add(parent)
+}
+
+func (q *requiredSelection) selectedChild(child manifest.NamedResource) bool {
+	if q.intent.Roots[0].Name != "" {
+		return true
+	}
+	s := q.side
+	if s.run.filter.Enabled() {
+		_, selected, _, _ := s.run.filter.Membership(child)
+		return selected
+	}
+	return s.includes(child.Namespace)
+}
+
+func (q *requiredSelection) seedOther(other *selectionSide) {
+	s := q.side
+	for _, id := range other.roots {
+		if s.run.filter.Enabled() {
+			if _, selected, _, _ := other.run.filter.Membership(id); selected {
+				q.add(id)
+			}
 		}
-		for dep := range s.run.store.RequiredInputs(id) {
-			add(dep)
+		q.addOtherParents(other, id)
+	}
+}
+
+func (q *requiredSelection) addOtherParents(other *selectionSide, id manifest.NamedResource) {
+	s := q.side
+	visited := make(map[manifest.NamedResource]bool)
+	for s.run.store.GetObject(id) == nil && !visited[id] {
+		visited[id] = true
+		parent, ok := other.run.parentOf(id)
+		if !ok {
+			break
+		}
+		actual := s.actualProducer(other.comparisonKey(parent))
+		q.add(actual)
+		if actual != parent {
+			break
+		}
+		id = parent
+	}
+}
+
+func (q *requiredSelection) expandPrerequisites() {
+	for len(q.work) > 0 {
+		id := q.work[len(q.work)-1]
+		q.work = q.work[:len(q.work)-1]
+		if parent, ok := q.side.run.parentOf(id); ok {
+			q.add(parent)
+		}
+		for dep := range q.side.run.store.RequiredInputs(id) {
+			q.add(dep)
 		}
 	}
-	return seen
 }
 
 func rootsOf(
@@ -455,7 +487,7 @@ func nonResourceErrors(err error) error {
 
 func selectionError(sides []selectionSide, runErr error) (error, error) {
 	if runErr == nil {
-		return nil, nil
+		return nil, nil //nolint:nilnil // A nil result denotes successful absence.
 	}
 	selected := make([]error, len(sides))
 	remainders := make([]error, len(sides))

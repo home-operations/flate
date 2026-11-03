@@ -122,28 +122,32 @@ spec: {url: https://example.test/excluded.git}
 	}
 
 	size := len(filter.KeepNames())
-	if promoted, err := promote(
-		selected,
-	); err != nil || !promoted || st.GetObject(selected) == nil ||
-		st.GetObject(chart) == nil {
-		t.Fatal("selected values and required chart source must be admitted")
+	{
+		promoted, err := promote(
+			selected,
+		)
+		assert.FatalIf(t, err != nil || !promoted || st.GetObject(selected) == nil ||
+			st.GetObject(chart) == nil, "%v", "selected values and required chart source must be admitted")
 	}
-	if got := st.GetObject(selected).(*manifest.ConfigMap).Data["values.yaml"]; got != "greeting: selected" {
-		t.Errorf("selected values = %v", got)
+	{
+		got := st.GetObject(selected).(*manifest.ConfigMap).Data["values.yaml"]
+		assert.ErrorIf(t, got != "greeting: selected", "selected values = %v", got)
 	}
 	for _, id := range []manifest.NamedResource{excluded, excludedSource} {
-		if promoted, err := promote(
-			id,
-		); err != nil || promoted || st.GetObject(id) != nil ||
-			filter.ShouldReconcile(id) {
-			t.Errorf("excluded sibling %s must remain absent", id)
+		{
+			promoted, err := promote(
+				id,
+			)
+			assert.ErrorIf(t, err != nil || promoted || st.GetObject(id) != nil ||
+				filter.ShouldReconcile(id), "excluded sibling %s must remain absent", id)
 		}
 	}
-	if len(filter.KeepNames()) != size {
-		t.Error("ordering promotion must not expand keep")
+	{
+		assert.ErrorIf(t, len(filter.KeepNames()) != size, "%v", "ordering promotion must not expand keep")
 	}
 	st.AddObject(&manifest.ConfigMap{Name: "excluded", Namespace: "apps"})
-	if promoted, err := promote(excluded); err != nil || promoted {
-		t.Error("availability must not bypass admission")
+	{
+		promoted, err := promote(excluded)
+		assert.ErrorIf(t, err != nil || promoted, "%v", "availability must not bypass admission")
 	}
 }

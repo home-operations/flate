@@ -70,13 +70,13 @@ type ExistenceLookup interface {
 //     (typically a missing attribute because the dep's status isn't populated
 //     yet) — the dep is not yet satisfied but may still become so.
 func (w *Waiter) tryReadyExpr(
-	dep manifest.DependencyRef,
+	dep *manifest.DependencyRef,
 	obj manifest.BaseManifest,
 	conds []store.Condition,
-) (ready bool, failMsg string) {
+) (bool, string) {
 	ok, err := w.evaluateReadyExpr(*dep.ReadyExpr, dep.NamedResource, obj, conds)
 	if err != nil {
-		if _, isCompile := errors.AsType[*celCompileErr](err); isCompile {
+		if _, isCompile := errors.AsType[*celCompileError](err); isCompile {
 			return false, "readyExpr: " + err.Error()
 		}
 		// Eval error: transient, treat as not-yet-ready.

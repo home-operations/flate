@@ -1,4 +1,4 @@
-package sourceref
+package sourceref_test
 
 import (
 	"os"
@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/home-operations/flate/internal/assert"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -15,12 +17,11 @@ import (
 	"github.com/home-operations/flate/test/e2e/internal/harness"
 )
 
+//nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_PinnedDiff_EscapedPatchInput(t *testing.T) {
 	root, repo, _, _ := sourceRefFixture(t)
 	for _, file := range []string{"apps/kustomization.yaml", "apps/cm.yaml"} {
-		if err := os.Remove(filepath.Join(root, file)); err != nil {
-			t.Fatal(err)
-		}
+		assert.NoError(t, os.Remove(filepath.Join(root, file)))
 	}
 	testutil.WriteFile(t, root, "apps/nested/kustomization.yaml", "resources: [../../shared]\n")
 	testutil.WriteFile(
@@ -53,14 +54,10 @@ func TestE2E_PinnedDiff_EscapedPatchInput(t *testing.T) {
 			},
 		)
 		head, err := repo.Head()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := repo.Storer.SetReference(
+		assert.NoError(t, err)
+		assert.NoError(t, repo.Storer.SetReference(
 			plumbing.NewHashReference(plumbing.NewTagReferenceName(version), head.Hash()),
-		); err != nil {
-			t.Fatal(err)
-		}
+		))
 		if version == "input-before" {
 			original = t.TempDir()
 			testutil.CopyTree(t, root, original)
@@ -91,9 +88,12 @@ func TestE2E_PinnedDiff_EscapedPatchInput(t *testing.T) {
 			"--cache-dir",
 			t.TempDir(),
 		)
-		if !strings.Contains(out, "value: "+side.value) || strings.Contains(out, "value: dirty") {
-			t.Fatalf("pinned input read a different source view: %s", out)
-		}
+		assert.FatalIf(
+			t,
+			!strings.Contains(out, "value: "+side.value) || strings.Contains(out, "value: dirty"),
+			"pinned input read a different source view: %s",
+			out,
+		)
 	}
 	for _, baseline := range [][]string{{"--base", "HEAD"}, {"--path-orig", filepath.Join(original, "flux")}} {
 		t.Run(baseline[0], func(t *testing.T) {

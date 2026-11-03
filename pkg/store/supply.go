@@ -67,6 +67,7 @@ func NewSupplied(inputs []SuppliedObject) (*Supplied, error) {
 // SetSupplied installs the immutable snapshot before publication or concurrent reads.
 func (s *Store) SetSupplied(supplied *Supplied) { s.supplied = supplied }
 
+//nolint:ireturn // The values contract supports multiple data implementations.
 func (s *Store) suppliedObject(id manifest.NamedResource) (manifest.Data, string) {
 	if s.supplied == nil {
 		return nil, ""

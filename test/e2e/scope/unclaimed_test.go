@@ -1,4 +1,4 @@
-package scope
+package scope_test
 
 import (
 	"os"
@@ -14,6 +14,7 @@ import (
 	"github.com/home-operations/flate/test/e2e/internal/harness"
 )
 
+//nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_UnclaimedPathWithoutHistory(t *testing.T) {
 	root := t.TempDir()
 	assert.NoError(t, os.CopyFS(root, os.DirFS(harness.TestdataPath(t, "unclaimed-change"))))

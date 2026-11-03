@@ -32,6 +32,7 @@ type admissionSource struct {
 	bound, paired              bool
 }
 
+//nolint:gochecknoglobals // A process-wide pool reuses temporary comparison storage.
 var admissionSourcePool = sync.Pool{New: func() any {
 	return &admissionSources{bindings: map[manifest.NamedResource]*admissionSource{}}
 }}
@@ -91,7 +92,7 @@ func (c *admissionClosure) sources(id manifest.NamedResource) iter.Seq[manifest.
 			return
 		}
 		for ref := range manifest.References(c.object(id), manifest.ReferenceRelations) {
-			if ref.Use == "source" {
+			if ref.Use == sourceReferenceUse {
 				yield(ref.NamedResource)
 				return
 			}
@@ -163,34 +164,7 @@ func (c *admissionClosure) changedClaim(reader manifest.FileReader, file string)
 		}
 		return !matched
 	}
-	if !contentChanged(reader) {
-		return false
-	}
-	for actual := range c.loader.Index.ReadersOfFile(file) {
-		if actual.Reader == reader.Reader {
-			if !contentChanged(actual) {
-				continue
-			}
-			qualified, _, _ := c.delta(actual.Source)
-			if qualified == delta {
-				return true
-			}
-		}
-	}
-	if roots, known := record.ContentRoots[reader.Source]; known {
-		if input != nil {
-			relative, err := filepath.Rel(evidence.origin, filepath.Join(c.loader.SourceRoot, filepath.FromSlash(file)))
-			if err != nil {
-				return false
-			}
-			file = filepath.ToSlash(relative)
-		}
-		return slices.ContainsFunc(roots, func(root string) bool {
-			return root == "." || root == "" || manifest.HasEnvsubstReference(root) || file == root ||
-				strings.HasPrefix(file, strings.TrimSuffix(root, "/")+"/")
-		})
-	}
-	return true
+	return c.completeChangedClaim(&completeChangedClaimState{reader: &reader, file: &file, evidence: &evidence, delta: &delta, input: &input, record: &record, contentChanged: &contentChanged})
 }
 
 func (c *admissionClosure) changedInput(consumer, dependency manifest.NamedResource) bool {
@@ -347,19 +321,64 @@ func (c *admissionClosure) reverse(
 		return false
 	}
 	if occurrence, ok := c.loader.occurrence(id); ok {
-		for _, original := range occurrence.facts.refs {
-			if !slices.Contains(occurrence.facts.reverse, original.NamedResource) {
-				continue
-			}
-			input := original.NamedResource
-			if original.NamespaceDefault {
-				input.Namespace = id.Namespace
-			}
-			if input == ref.NamedResource {
-				return true
+		{
+			originalValues := occurrence.facts.refs
+			for originalIndex := range originalValues {
+				original := originalValues[originalIndex]
+				if !slices.Contains(occurrence.facts.reverse, original.NamedResource) {
+					continue
+				}
+				input := original.NamedResource
+				if original.NamespaceDefault {
+					input.Namespace = id.Namespace
+				}
+				if input == ref.NamedResource {
+					return true
+				}
 			}
 		}
 		return false
 	}
 	return ref.ContentInput()
+}
+
+type completeChangedClaimState struct {
+	reader         *manifest.FileReader
+	file           *string
+	evidence       **admissionSource
+	delta          **change.Set
+	input          **store.SourceArtifact
+	record         *manifest.DiscoveryRecord
+	contentChanged *func(reader manifest.FileReader) bool
+}
+
+func (c *admissionClosure) completeChangedClaim(scope *completeChangedClaimState) bool {
+	if !(*scope.contentChanged)((*scope.reader)) {
+		return false
+	}
+	for actual := range c.loader.Index.ReadersOfFile((*scope.file)) {
+		if actual.Reader == (*scope.reader).Reader {
+			if !(*scope.contentChanged)(actual) {
+				continue
+			}
+			qualified, _, _ := c.delta(actual.Source)
+			if qualified == (*scope.delta) {
+				return true
+			}
+		}
+	}
+	if roots, known := (*scope.record).ContentRoots[(*scope.reader).Source]; known {
+		if (*scope.input) != nil {
+			relative, err := filepath.Rel((*scope.evidence).origin, filepath.Join(c.loader.SourceRoot, filepath.FromSlash((*scope.file))))
+			if err != nil {
+				return false
+			}
+			(*scope.file) = filepath.ToSlash(relative)
+		}
+		return slices.ContainsFunc(roots, func(root string) bool {
+			return root == "." || root == "" || manifest.HasEnvsubstReference(root) || (*scope.file) == root ||
+				strings.HasPrefix((*scope.file), strings.TrimSuffix(root, "/")+"/")
+		})
+	}
+	return true
 }

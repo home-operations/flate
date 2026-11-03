@@ -1,4 +1,4 @@
-package substitution
+package substitution_test
 
 import (
 	"bytes"
@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/home-operations/flate/internal/assert"
 
 	gitlib "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
@@ -31,12 +33,14 @@ import (
 
 type suppliedSSHTransport struct {
 	transport.Transport
+
 	allowed       ssh.PublicKey
 	host          ssh.PublicKey
 	authenticated atomic.Int32
 	onAuth        func()
 }
 
+//nolint:ireturn // The upstream interface contract requires this return type.
 func (s *suppliedSSHTransport) NewUploadPackSession(
 	endpoint *transport.Endpoint,
 	auth transport.AuthMethod,
@@ -98,18 +102,12 @@ func (s *suppliedSSHTransport) NewUploadPackSession(
 
 func TestE2E_DataReader_SuppliedSSHOnBothDiffSides(t *testing.T) {
 	public, key, err := ed25519.GenerateKey(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, err)
 	block, err := ssh.MarshalPrivateKey(key, "fixture")
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, err)
 	identity := string(pem.EncodeToMemory(block))
 	allowed, err := ssh.NewPublicKey(public)
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, err)
 	tr := &suppliedSSHTransport{Transport: server.DefaultServer, allowed: allowed}
 	previous := client.Protocols["ssh"]
 	client.InstallProtocol("ssh", tr)
@@ -132,21 +130,27 @@ func TestE2E_DataReader_SuppliedSSHOnBothDiffSides(t *testing.T) {
 		commit := testutil.GitCommitAll(t, repository, value, &gitlib.CommitOptions{Author: author})
 		root := t.TempDir()
 		local := testutil.GitInit(t, root)
-		if _, err := local.CreateRemote(
-			&config.RemoteConfig{Name: "origin", URLs: []string{"https://local.invalid/cluster"}},
-		); err != nil {
-			t.Fatal(err)
+		{
+			_, err := local.CreateRemote(
+				&config.RemoteConfig{Name: "origin", URLs: []string{"https://local.invalid/cluster"}},
+			)
+			assert.FatalIf(t, err != nil, "%v", err)
+		}
+		if roots == nil {
+			roots = make([]string, 0, 2)
 		}
 		roots = append(roots, root)
 		declarations := "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: flux-system}\nspec: {url: 'https://local.invalid/cluster'}\n---\n" +
 			"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: private, namespace: flux-system}\nspec:\n  url: ssh://git@fixture" + remote + "\n  ref: {commit: " + commit.String() + "}\n  secretRef: {name: ursa-major-ssh}\n"
+		var declarationsSb143 strings.Builder
 		for _, name := range []string{"one", "two"} {
-			declarations += "---\n" + testutil.KustomizationYAML(
+			declarationsSb143.WriteString("---\n" + testutil.KustomizationYAML(
 				name,
 				"flux-system",
 				"  path: ./"+name+"\n  sourceRef: {kind: GitRepository, name: private}\n",
-			)
+			))
 		}
+		declarations += declarationsSb143.String()
 		declarations += "---\n" + testutil.KustomizationYAML(
 			"credentials",
 			"flux-system",
@@ -190,13 +194,17 @@ func TestE2E_DataReader_SuppliedSSHOnBothDiffSides(t *testing.T) {
 			"--skip-kinds",
 			"CustomResourceDefinition",
 		)
-		if code != 0 || !strings.Contains(stdout, "..PLACEHOLDER_identity..") ||
-			strings.Contains(stdout+stderr, "BEGIN OPENSSH PRIVATE KEY") {
-			t.Fatalf("supplied build: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
-		}
-		if strings.Count(stdout, "value: "+[]string{"before", "after"}[i]) != 2 {
-			t.Fatalf("private consumers missing: %s", stdout)
-		}
+		assert.FatalIf(t, code != 0 || !strings.Contains(stdout, "..PLACEHOLDER_identity..") ||
+			strings.Contains(
+				stdout+stderr,
+				"BEGIN OPENSSH PRIVATE KEY",
+			), "supplied build: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+		assert.FatalIf(
+			t,
+			strings.Count(stdout, "value: "+[]string{"before", "after"}[i]) != 2,
+			"private consumers missing: %s",
+			stdout,
+		)
 	}
 	before := tr.authenticated.Load()
 	var changed sync.Once
@@ -237,93 +245,20 @@ func TestE2E_DataReader_SuppliedSSHOnBothDiffSides(t *testing.T) {
 	before = tr.authenticated.Load()
 	stdout, stderr, code = harness.RunCLIBuffers(
 		append(args, "--cache-dir", t.TempDir(), "--allow-missing-kinds=Secret,ConfigMap")...)
-	if code != 0 || !strings.Contains(stderr, "SourceCredentialsUnavailable") ||
+	assert.FatalIf(t, code != 0 || !strings.Contains(stderr, "SourceCredentialsUnavailable") ||
 		!strings.Contains(stderr, "ursa-major-ssh") ||
 		strings.Contains(stderr, "ExternalSource") ||
-		tr.authenticated.Load() != before {
-		t.Fatalf("absent-agent cause: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
-	}
+		tr.authenticated.Load() != before, "absent-agent cause: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 }
 
+//nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_DataReader_GeneratorEmbeddedCiphertext(t *testing.T) {
-	const value = "enabled: ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]"
 	for _, kind := range []string{"secretGenerator", "configMapGenerator"} {
-		t.Run(kind, func(t *testing.T) {
-			root := t.TempDir()
-			refKind := "Secret"
-			if kind == "configMapGenerator" {
-				refKind = "ConfigMap"
-			}
-			testutil.WriteFile(
-				t,
-				root,
-				"flux/ks.yaml",
-				testutil.KustomizationYAML(
-					"consumer",
-					"flux-system",
-					"  path: ./apps\n  postBuild: {substituteFrom: [{kind: "+refKind+", name: creds}]}\n",
-				),
-			)
-			testutil.WriteFile(
-				t,
-				root,
-				"kustomization.yaml",
-				"resources: [flux]\ngeneratorOptions: {disableNameSuffixHash: true}\n"+kind+":\n- name: creds\n  namespace: flux-system\n  files: [VALUE=values.yaml]\n",
-			)
-			testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [ks.yaml]\n")
-			testutil.WriteFile(t, root, "values.yaml", value+"\n")
-			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
-			testutil.WriteFile(
-				t,
-				root,
-				"apps/cm.yaml",
-				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: result}\ndata:\n  value: |\n    ${VALUE}\n",
-			)
-			var first string
-			for i := range 2 {
-				stdout, stderr, code := harness.RunCLIBuffers(
-					"build",
-					"ks",
-					"consumer",
-					"--path",
-					root,
-					"--concurrency",
-					"2",
-					"--cache-dir",
-					t.TempDir(),
-					"--no-progress",
-				)
-				if code != 0 || strings.Contains(stdout, "..PLACEHOLDER_VALUE..") {
-					t.Fatalf("exit=%d stdout=%s stderr=%s", code, stdout, stderr)
-				}
-				docs, err := testutil.DecodeDocs(strings.NewReader(stdout))
-				if err != nil {
-					t.Fatal(err)
-				}
-				found := 0
-				for _, doc := range docs {
-					name, _ := manifest.DocMetadata(doc)
-					if manifest.DocKind(doc) != "ConfigMap" || name != "result" {
-						continue
-					}
-					found++
-					data, _ := doc["data"].(map[string]any)
-					if data["value"] != value+"\n" {
-						t.Fatalf("value=%v, want %q", data["value"], value+"\n")
-					}
-				}
-				if found != 1 {
-					t.Fatalf("result ConfigMaps=%d, want 1", found)
-				}
-				if i == 1 && stdout != first {
-					t.Fatal("repeated build changed stdout")
-				}
-				first = stdout
-			}
-		})
+		t.Run(kind, func(t *testing.T) { e2EDataReaderGeneratorEmbeddedCiphertextKind(t, &kind) })
 	}
 }
 
+//nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_DataReader_StringDataPrecedence(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteFile(
@@ -361,25 +296,25 @@ func TestE2E_DataReader_StringDataPrecedence(t *testing.T) {
 		t.TempDir(),
 		"--no-progress",
 	)
-	if code != 0 || !strings.Contains(stdout, "value: B") || !strings.Contains(stdout, "empty: fallback") {
-		t.Fatalf("exit=%d stdout=%s stderr=%s", code, stdout, stderr)
-	}
+	assert.FatalIf(
+		t,
+		code != 0 || !strings.Contains(stdout, "value: B") || !strings.Contains(stdout, "empty: fallback"),
+		"exit=%d stdout=%s stderr=%s",
+		code,
+		stdout,
+		stderr,
+	)
 }
 
+//nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_DataReader_SuppliedSourceProducesCredential(t *testing.T) {
 	public, key, err := ed25519.GenerateKey(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, err)
 	block, err := ssh.MarshalPrivateKey(key, "fixture")
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, err)
 	identity := string(pem.EncodeToMemory(block))
 	allowed, err := ssh.NewPublicKey(public)
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, err)
 	tr := &suppliedSSHTransport{Transport: server.DefaultServer, allowed: allowed}
 	previous := client.Protocols["ssh"]
 	client.InstallProtocol("ssh", tr)
@@ -410,19 +345,22 @@ func TestE2E_DataReader_SuppliedSourceProducesCredential(t *testing.T) {
 	)
 	root := t.TempDir()
 	local := testutil.GitInit(t, root)
-	if _, err := local.CreateRemote(
-		&config.RemoteConfig{Name: "origin", URLs: []string{"https://local.invalid/cluster"}},
-	); err != nil {
-		t.Fatal(err)
+	{
+		_, err := local.CreateRemote(
+			&config.RemoteConfig{Name: "origin", URLs: []string{"https://local.invalid/cluster"}},
+		)
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	declarations := "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: flux-system}\nspec: {url: https://local.invalid/cluster}\n---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: private, namespace: flux-system}\nspec:\n  url: ssh://git@fixture" + remote + "\n  ref: {commit: " + commit.String() + "}\n  secretRef: {name: credentials}\n"
+	var declarationsSb419 strings.Builder
 	for _, name := range []string{"credentials", "workload"} {
-		declarations += "---\n" + testutil.KustomizationYAML(
+		declarationsSb419.WriteString("---\n" + testutil.KustomizationYAML(
 			name,
 			"flux-system",
 			"  path: ./"+name+"\n  sourceRef: {kind: GitRepository, name: private}\n",
-		)
+		))
 	}
+	declarations += declarationsSb419.String()
 	testutil.WriteFile(t, root, "flux.yaml", declarations)
 	input := filepath.Join(t.TempDir(), "credentials.yaml")
 	testutil.WriteFileAt(t, input, secret)
@@ -441,14 +379,13 @@ func TestE2E_DataReader_SuppliedSourceProducesCredential(t *testing.T) {
 			t.TempDir(),
 			"--no-progress",
 		)
-		if code != 0 || !strings.Contains(stdout, "name: source-produced") ||
+		assert.FatalIf(t, code != 0 || !strings.Contains(stdout, "name: source-produced") ||
 			strings.Contains(stdout, "BEGIN OPENSSH PRIVATE KEY") ||
-			strings.Contains(stderr, "dependency cycle") {
-			t.Fatalf("source-producing credential: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
-		}
-		if i == 1 && stdout != first {
-			t.Fatal("source-producing output varies across runs")
-		}
+			strings.Contains(
+				stderr,
+				"dependency cycle",
+			), "source-producing credential: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+		assert.FatalIf(t, i == 1 && stdout != first, "%v", "source-producing output varies across runs")
 		first = stdout
 	}
 	if tr.authenticated.Load() < 2 {
@@ -458,21 +395,13 @@ func TestE2E_DataReader_SuppliedSourceProducesCredential(t *testing.T) {
 
 func TestE2E_DataReader_ClusterAdvisoriesOnBothBaseSides(t *testing.T) {
 	public, key, err := ed25519.GenerateKey(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, err)
 	allowed, err := ssh.NewPublicKey(public)
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, err)
 	_, hostKey, err := ed25519.GenerateKey(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, err)
 	host, err := ssh.NewSignerFromKey(hostKey)
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, err)
 	tr := &suppliedSSHTransport{Transport: server.DefaultServer, allowed: allowed, host: host.PublicKey()}
 	previous := client.Protocols["ssh"]
 	client.InstallProtocol("ssh", tr)
@@ -481,14 +410,10 @@ func TestE2E_DataReader_ClusterAdvisoriesOnBothBaseSides(t *testing.T) {
 	t.Setenv("HOME", homeDir)
 	testutil.WriteFile(t, homeDir, ".ssh/known_hosts", knownhosts.Line([]string{"fixture"}, host.PublicKey())+"\n")
 	keyring := agent.NewKeyring()
-	if err := keyring.Add(agent.AddedKey{PrivateKey: key}); err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, keyring.Add(agent.AddedKey{PrivateKey: key}))
 	t.Chdir(t.TempDir())
 	listener, err := net.Listen("unix", "a")
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, err)
 	t.Setenv("SSH_AUTH_SOCK", "a")
 	var workers sync.WaitGroup
 	workers.Go(func() {
@@ -506,10 +431,11 @@ func TestE2E_DataReader_ClusterAdvisoriesOnBothBaseSides(t *testing.T) {
 	t.Cleanup(func() { _ = listener.Close(); workers.Wait() })
 	remote, root := t.TempDir(), t.TempDir()
 	repository, local := testutil.GitInit(t, remote), testutil.GitInit(t, root)
-	if _, err := local.CreateRemote(
-		&config.RemoteConfig{Name: "origin", URLs: []string{"https://local.invalid/cluster"}},
-	); err != nil {
-		t.Fatal(err)
+	{
+		_, err := local.CreateRemote(
+			&config.RemoteConfig{Name: "origin", URLs: []string{"https://local.invalid/cluster"}},
+		)
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	author := &object.Signature{Name: "fixture", Email: "fixture@example.test", When: time.Unix(1, 0)}
 	var base string
@@ -562,17 +488,104 @@ func TestE2E_DataReader_ClusterAdvisoriesOnBothBaseSides(t *testing.T) {
 				stderr,
 			)
 		}
-		if strings.Count(stderr, "[SuppliedPrecedence]") != 1 || strings.Contains(stderr, "authenticated with") ||
-			!strings.Contains(stderr, "ConfigMap/flux-system/settings: OVERRIDE") {
-			t.Fatalf("cluster advisories lost or duplicated: %s", stderr)
-		}
-		if strings.Contains(stdout+stderr, "PRIVATE KEY") || strings.Contains(stdout, "supplied") ||
-			!strings.Contains(stdout, "override: repository") {
-			t.Fatalf("private material or incorrect precedence: stdout=%s stderr=%s", stdout, stderr)
-		}
-		if run == 1 && (stdout != previousOut || stderr != previousErr) {
-			t.Fatalf("base diff changed across runs: stdout=%s stderr=%s", stdout, stderr)
-		}
+		assert.FatalIf(
+			t,
+			strings.Count(stderr, "[SuppliedPrecedence]") != 1 || strings.Contains(stderr, "authenticated with") ||
+				!strings.Contains(
+					stderr,
+					"ConfigMap/flux-system/settings: OVERRIDE",
+				),
+			"cluster advisories lost or duplicated: %s",
+			stderr,
+		)
+		assert.FatalIf(t, strings.Contains(stdout+stderr, "PRIVATE KEY") || strings.Contains(stdout, "supplied") ||
+			!strings.Contains(
+				stdout,
+				"override: repository",
+			), "private material or incorrect precedence: stdout=%s stderr=%s", stdout, stderr)
+		assert.FatalIf(
+			t,
+			run == 1 && (stdout != previousOut || stderr != previousErr),
+			"base diff changed across runs: stdout=%s stderr=%s",
+			stdout,
+			stderr,
+		)
 		previousOut, previousErr = stdout, stderr
+	}
+}
+
+func e2EDataReaderGeneratorEmbeddedCiphertextKind(t *testing.T, kind *string) {
+	t.Helper()
+	const value = "enabled: ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]"
+
+	root := t.TempDir()
+	refKind := "Secret"
+	if (*kind) == "configMapGenerator" {
+		refKind = "ConfigMap"
+	}
+	testutil.WriteFile(
+		t,
+		root,
+		"flux/ks.yaml",
+		testutil.KustomizationYAML(
+			"consumer",
+			"flux-system",
+			"  path: ./apps\n  postBuild: {substituteFrom: [{kind: "+refKind+", name: creds}]}\n",
+		),
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"kustomization.yaml",
+		"resources: [flux]\ngeneratorOptions: {disableNameSuffixHash: true}\n"+(*kind)+":\n- name: creds\n  namespace: flux-system\n  files: [VALUE=values.yaml]\n",
+	)
+	testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [ks.yaml]\n")
+	testutil.WriteFile(t, root, "values.yaml", value+"\n")
+	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"apps/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: result}\ndata:\n  value: |\n    ${VALUE}\n",
+	)
+	var first string
+	for i := range 2 {
+		stdout, stderr, code := harness.RunCLIBuffers(
+			"build",
+			"ks",
+			"consumer",
+			"--path",
+			root,
+			"--concurrency",
+			"2",
+			"--cache-dir",
+			t.TempDir(),
+			"--no-progress",
+		)
+		assert.FatalIf(
+			t,
+			code != 0 || strings.Contains(stdout, "..PLACEHOLDER_VALUE.."),
+			"exit=%d stdout=%s stderr=%s",
+			code,
+			stdout,
+			stderr,
+		)
+		docs, err := testutil.DecodeDocs(strings.NewReader(stdout))
+		assert.NoError(t, err)
+		found := 0
+		for _, doc := range docs {
+			name, _ := manifest.DocMetadata(doc)
+			if manifest.DocKind(doc) != "ConfigMap" || name != "result" {
+				continue
+			}
+			found++
+			data, _ := doc["data"].(map[string]any)
+			if data["value"] != value+"\n" {
+				t.Fatalf("value=%v, want %q", data["value"], value+"\n")
+			}
+		}
+		assert.FatalIf(t, found != 1, "result ConfigMaps=%d, want 1", found)
+		assert.FatalIf(t, i == 1 && stdout != first, "%v", "repeated build changed stdout")
+		first = stdout
 	}
 }

@@ -31,7 +31,7 @@ func (h *HelmRelease) ReferenceCapacity() (int, int) {
 				}
 			}
 		} else {
-			n += 2
+			n += chartTemplateSourceCapacity
 		}
 	}
 	return n, len(h.ValuesFrom)
@@ -43,16 +43,16 @@ func (r *ResourceSet) ReferenceCapacity() (int, int) {
 }
 
 // ReferenceCapacity bounds all references and data input uses without resolving identities.
-func (*GitRepository) ReferenceCapacity() (int, int) { return 2, 0 }
+func (*GitRepository) ReferenceCapacity() (int, int) { return gitCredentialCapacity, 0 }
 
 // ReferenceCapacity bounds all references and data input uses without resolving identities.
-func (*OCIRepository) ReferenceCapacity() (int, int) { return 3, 0 }
+func (*OCIRepository) ReferenceCapacity() (int, int) { return ociCredentialCapacity, 0 }
 
 // ReferenceCapacity bounds all references and data input uses without resolving identities.
-func (*Bucket) ReferenceCapacity() (int, int) { return 3, 0 }
+func (*Bucket) ReferenceCapacity() (int, int) { return bucketCredentialCapacity, 0 }
 
 // ReferenceCapacity bounds all references and data input uses without resolving identities.
-func (*HelmRepository) ReferenceCapacity() (int, int) { return 2, 0 }
+func (*HelmRepository) ReferenceCapacity() (int, int) { return helmCredentialCapacity, 0 }
 
 // ReferenceCapacity bounds all references and data input uses without resolving identities.
 func (*HelmChartSource) ReferenceCapacity() (int, int) { return 1, 0 }
@@ -68,7 +68,7 @@ func (e *ExternalArtifact) ReferenceCapacity() (int, int) {
 // ReferenceCapacity bounds all references and data input uses without resolving identities.
 func (p *ResourceSetInputProvider) ReferenceCapacity() (int, int) {
 	if p.inputKind() == ProviderInputRegistry {
-		return 2, 0
+		return registryCredentialCapacity, 0
 	}
 	return 0, 0
 }
@@ -87,3 +87,12 @@ func (r *RawObject) ReferenceCapacity() (int, int) {
 	}
 	return 0, 0
 }
+
+const (
+	chartTemplateSourceCapacity = 2
+	gitCredentialCapacity       = 2
+	ociCredentialCapacity       = 3
+	bucketCredentialCapacity    = 3
+	helmCredentialCapacity      = 2
+	registryCredentialCapacity  = 2
+)

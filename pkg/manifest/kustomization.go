@@ -74,6 +74,8 @@ func (k *Kustomization) Named() NamedResource {
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (k *Kustomization) WithNamespace(namespace string) BaseManifest {
 	out := *k
 	out.Namespace = namespace
@@ -196,7 +198,7 @@ func (k *Kustomization) references(yield func(Reference) bool, view ReferenceVie
 	if authoredSource || implicitSource {
 		src := k.SourceID()
 		content := src.Kind != "" && src.Name != ""
-		use := "source"
+		use := sourceKey
 		if !content && k.Path != "" {
 			src = BootstrapSourceID
 			use = ""
@@ -224,7 +226,7 @@ func (k *Kustomization) references(yield func(Reference) bool, view ReferenceVie
 				"",
 				k.Namespace,
 			),
-			Use:              "dependsOn",
+			Use:              dependsOnKey,
 			Position:         i,
 			ReadyExpr:        referenceExpression(&dep.ReadyExpr),
 			Gate:             GateInputs,
@@ -244,7 +246,7 @@ func (k *Kustomization) references(yield func(Reference) bool, view ReferenceVie
 		content := !ref.Optional && ref.Name != ""
 		if !yield(Reference{
 			NamedResource:    Resolve(NamedResource{Kind: ref.Kind, Name: ref.Name}, "", k.Namespace),
-			Use:              "substituteFrom",
+			Use:              substituteFromKey,
 			Position:         i,
 			Optional:         ref.Optional,
 			Content:          content,
@@ -259,7 +261,7 @@ func (k *Kustomization) kind() KindInfo { return kindTable[kindKustomization].Ki
 
 // Content returns raw inputs for nil names, or final inputs projected to effective substitutions.
 //
-//nolint:ireturn // Fingerprint accepts type-specific render identities.
+
 func (k *Kustomization) Content(source any, names map[string]struct{}, active bool) any {
 	spec := k.KustomizationSpec
 	spec.PostBuild, spec.DependsOn = nil, nil
@@ -303,6 +305,7 @@ type kustomizationEncoder struct {
 	object  kustomizev1.Kustomization
 }
 
+//nolint:gochecknoglobals // A process-wide pool reuses render encoders.
 var kustomizationEncoders = sync.Pool{New: func() any {
 	state := new(kustomizationEncoder)
 	state.encoder = jsontext.NewEncoder(&state.buffer)

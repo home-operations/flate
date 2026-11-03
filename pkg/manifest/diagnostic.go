@@ -58,8 +58,12 @@ func (r DiagnosticReason) String() string {
 	message := cmp.Or(r.Message, "unknown error")
 	if len(r.Causes) != 0 {
 		parts := make([]string, len(r.Causes))
-		for i, cause := range r.Causes {
-			parts[i] = cause.String()
+		{
+			causeValues := r.Causes
+			for i := range causeValues {
+				cause := causeValues[i]
+				parts[i] = cause.String()
+			}
 		}
 		message = "dependencies failed: " + strings.Join(parts, "; ")
 	}

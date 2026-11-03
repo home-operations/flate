@@ -49,6 +49,7 @@ type payload struct {
 // ProducerInput writes new content or exposes the owner's last complete generation.
 type ProducerInput struct {
 	io.Writer
+
 	cache   *Cache
 	payload *payload
 }
@@ -61,38 +62,20 @@ func (p ProducerInput) Previous(ctx context.Context) (*ocispec.Descriptor, error
 	}
 	s := p.payload
 	if s == nil {
-		return nil, nil
+		return nil, nil //nolint:nilnil // A nil value and nil error represent an optional absence or a reusable-cache miss.
 	}
 	e := s.previous
 	if e == nil || e.outcome != nil {
-		return nil, nil
+		return nil, nil //nolint:nilnil // A nil value and nil error represent an optional absence or a reusable-cache miss.
 	}
 	if !s.verified {
-		prior := &entry{fs: e.fs, descriptor: e.descriptor, stored: e.stored, resolved: e.resolved}
-		if p.cache.store != nil && !s.key.memoryOnly {
-			upstream, at, valid := decode(e.stored, s.key.required)
-			if !valid {
-				s.previous = nil
-				return nil, nil
-			}
-			info, err := p.cache.root.Stat(blobPath(e.stored.Digest))
-			if errors.Is(err, fs.ErrNotExist) || err == nil && info.Size() != e.stored.Size {
-				s.previous = nil
-				return nil, nil
-			}
-			if err != nil {
-				return nil, &CacheError{err}
-			}
-			prior.descriptor, prior.resolved = upstream, at
-			if prior.fs == nil {
-				if err := s.key.producer.restore(ctx, p.cache, e.stored, prior); err != nil {
-					return nil, &CacheError{err}
-				}
-			}
+		prior, err := p.restorePrevious(ctx)
+		if err != nil {
+			return nil, err
 		}
-		if prior.fs == nil {
+		if prior == nil || prior.fs == nil {
 			s.previous = nil
-			return nil, nil
+			return nil, nil //nolint:nilnil // Missing prior content requires a fresh producer result.
 		}
 		s.previous, s.verified = prior, true
 		e = prior
@@ -102,9 +85,39 @@ func (p ProducerInput) Previous(ctx context.Context) (*ocispec.Descriptor, error
 	return &desc, nil
 }
 
+func (p ProducerInput) restorePrevious(ctx context.Context) (*entry, error) {
+	s := p.payload
+	e := s.previous
+	prior := &entry{fs: e.fs, descriptor: e.descriptor, stored: e.stored, resolved: e.resolved}
+	if p.cache.store == nil || s.key.memoryOnly {
+		return prior, nil
+	}
+	upstream, at, valid := decode(&e.stored, s.key.required)
+	if !valid {
+		s.previous = nil
+		return nil, nil //nolint:nilnil // A nil value and nil error represent an optional absence or a reusable-cache miss.
+	}
+	info, err := p.cache.root.Stat(blobPath(e.stored.Digest))
+	if errors.Is(err, fs.ErrNotExist) || err == nil && info.Size() != e.stored.Size {
+		s.previous = nil
+		return nil, nil //nolint:nilnil // A nil value and nil error represent an optional absence or a reusable-cache miss.
+	}
+	if err != nil {
+		return nil, &CacheError{err}
+	}
+	prior.descriptor, prior.resolved = upstream, at
+	if prior.fs == nil {
+		if err := s.key.producer.restore(ctx, p.cache, e.stored, prior); err != nil {
+			return nil, &CacheError{err}
+		}
+	}
+	return prior, nil
+}
+
 // ProducerResult reports new bytes or successful validation of the previous payload.
 type ProducerResult struct {
 	ocispec.Descriptor
+
 	// Unchanged requires a usable previous payload and forbids writing new bytes.
 	Unchanged bool
 }
@@ -117,14 +130,14 @@ func (s *payload) Write(data []byte) (int, error) {
 	}
 	n, err := s.writer.Write(data)
 	s.written += int64(n)
-	return n, err
+	return n, err //nolint:wrapcheck // The cache producer and stream adapters preserve the original error tree for replay and io sentinel handling.
 }
 
 func (s *payload) stage() error {
 	name := acquirePath(uuid.NewString())
-	file, err := s.disk.root.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+	file, err := s.disk.root.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL, privateFileMode)
 	if err != nil {
-		return err
+		return err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
 	}
 	s.file, s.name = file, name
 	s.hash = digest.SHA256.Digester()
@@ -132,11 +145,12 @@ func (s *payload) stage() error {
 	return nil
 }
 
-func (s *payload) complete(ctx context.Context, c *Cache, result ProducerResult) (*entry, error) {
+func (s *payload) complete(ctx context.Context, c *Cache, resultValue *ProducerResult) (*entry, error) {
+	result := *resultValue
 	e := &entry{descriptor: result.Descriptor}
 	if result.Unchanged {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return nil, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 		}
 		if !s.verified {
 			if _, err := (ProducerInput{cache: c, payload: s}).Previous(ctx); err != nil {
@@ -193,7 +207,7 @@ func (p archiveProducer) produce(
 	var producerFailure, readerFailure error
 	g.Go(func() error {
 		if err := gctx.Err(); err != nil {
-			return err
+			return err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 		}
 		produced, err := write(gctx, ProducerInput{Writer: io.MultiWriter(staged, pw), cache: c, payload: staged})
 		result = produced
@@ -207,41 +221,30 @@ func (p archiveProducer) produce(
 		return err
 	})
 	g.Go(func() error {
-		_, err := readArchive(pr, p.key, index)
-		if err == nil && p.key.Policy == "extract" {
-			_, err = io.Copy(io.Discard, pr)
-		} else if err == nil {
-			if n, copyErr := io.CopyN(io.Discard, pr, maxTrailingBytes+1); n > maxTrailingBytes {
-				err = fmt.Errorf("archive has more than %d bytes after its end marker", maxTrailingBytes)
-			} else if !errors.Is(copyErr, io.EOF) {
-				err = copyErr
-			}
-		}
-		if err != nil {
-			if _, inherited := errors.AsType[*producerError](err); !inherited {
-				readerFailure = err
-			}
-			_ = pr.CloseWithError(&readerError{err})
-		} else {
-			_ = pr.Close()
-		}
+		failure, err := p.readPayload(pr, index)
+		readerFailure = failure
 		return err
 	})
 	err := g.Wait()
 	if !stop() {
 		<-cancelDone
 	}
-	if err := ctx.Err(); err != nil {
-		if readerFailure != nil && !errors.Is(readerFailure, err) {
-			return nil, errors.Join(err, readerFailure)
+	if errErr := ctx.Err(); errErr != nil {
+		if readerFailure != nil && !errors.Is(readerFailure, errErr) {
+			return nil, errors.Join(errErr, readerFailure)
 		}
-		return nil, err
+		return nil, errErr //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 	}
 	if result.Unchanged && producerFailure == nil {
-		return staged.complete(ctx, c, result)
+		return staged.complete(ctx, c, &result)
 	}
 	if err != nil {
-		return nil, cmp.Or(ctx.Err(), readerFailure, producerFailure, err)
+		return nil, cmp.Or(
+			ctx.Err(),
+			readerFailure,
+			producerFailure,
+			err,
+		) //nolint:wrapcheck // The cache producer and stream adapters preserve the original error tree for replay and io sentinel handling.
 	}
 	index.identify(staged.hash.Digest(), p.key)
 	return &entry{fs: index, descriptor: result.Descriptor}, nil
@@ -249,7 +252,7 @@ func (p archiveProducer) produce(
 
 func (p archiveProducer) restore(_ context.Context, c *Cache, stored ocispec.Descriptor, e *entry) error {
 	if e.fs != nil {
-		index := e.fs.(*tarFS)
+		index := e.fs.(*tarFS) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
 		index.digest = stored.Digest
 		if err := pruneArchive(index, index.nodes, p.key); err != nil {
 			return err
@@ -261,7 +264,7 @@ func (p archiveProducer) restore(_ context.Context, c *Cache, stored ocispec.Des
 	index.identify(stored.Digest, p.key)
 	file, err := c.root.Open(blobPath(stored.Digest))
 	if err != nil {
-		return err
+		return err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
 	}
 	loaded, err := readArchive(file, p.key, index)
 	err = errors.Join(err, file.Close())
@@ -278,7 +281,11 @@ type blobProducer struct {
 
 func (p blobProducer) identity() string {
 	if p.render != 0 {
-		return blobID(processIdentity, p.content.(string), p.render)
+		return blobID(
+			processIdentity,
+			p.content.(string),
+			p.render,
+		) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
 	}
 	return manifest.Fingerprint(acquisitionContent{Blob: struct{ Content any }{p.content}})
 }
@@ -293,7 +300,7 @@ func (p blobProducer) produce(
 	if err != nil {
 		return nil, newProducerError(err)
 	}
-	e, err := staged.complete(ctx, c, result)
+	e, err := staged.complete(ctx, c, &result)
 	if err != nil {
 		return nil, err
 	}
@@ -303,7 +310,7 @@ func (p blobProducer) produce(
 	if c.store == nil || staged.key.memoryOnly {
 		data := staged.memory.Bytes()
 		e.fs = fileFS{
-			name:     "content",
+			name:     payloadName,
 			identity: digest.FromBytes(data).String(),
 			size:     int64(len(data)),
 			open: func() (io.ReadCloser, error) {
@@ -330,7 +337,7 @@ func (p blobProducer) restore(_ context.Context, c *Cache, stored ocispec.Descri
 	name := stored.Digest.Encoded()
 	e.fs = fileFS{
 		backingPath: blobPath(stored.Digest),
-		name:        "content",
+		name:        payloadName,
 		identity:    stored.Digest.String(),
 		size:        stored.Size,
 		open: func() (io.ReadCloser, error) {
@@ -345,4 +352,27 @@ func (p blobProducer) restore(_ context.Context, c *Cache, stored ocispec.Descri
 		},
 	}
 	return nil
+}
+
+func (p archiveProducer) readPayload(pr *io.PipeReader, index *tarFS) (error, error) {
+	_, err := readArchive(pr, p.key, index)
+	if err == nil && p.key.Policy == extractPolicy {
+		_, err = io.Copy(io.Discard, pr)
+	} else if err == nil {
+		if n, copyErr := io.CopyN(io.Discard, pr, maxTrailingBytes+1); n > maxTrailingBytes {
+			err = fmt.Errorf("archive has more than %d bytes after its end marker", maxTrailingBytes)
+		} else if !errors.Is(copyErr, io.EOF) {
+			err = copyErr
+		}
+	}
+	var readerFailure error
+	if err != nil {
+		if _, inherited := errors.AsType[*producerError](err); !inherited {
+			readerFailure = err
+		}
+		_ = pr.CloseWithError(&readerError{err})
+	} else {
+		_ = pr.Close()
+	}
+	return readerFailure, err
 }

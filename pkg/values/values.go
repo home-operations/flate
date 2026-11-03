@@ -47,26 +47,13 @@ type Input struct {
 // NewInput resolves data and offline availability from captured source-qualified facts.
 func NewInput(facts store.ReferenceFacts, owner manifest.NamedResource) Input {
 	input := Input{}
-	self, independent := false, false
-	for _, production := range facts.Productions {
-		self = self || production.Owner == owner && owner != (manifest.NamedResource{})
-		if production.Owner != (manifest.NamedResource{}) && production.Owner != owner &&
-			!slices.Contains(input.Materializers, production.Owner) {
-			input.Materializers = append(input.Materializers, production.Owner)
-		}
-		if production.Declaration == (manifest.NamedResource{}) {
-			input.Offline = input.Offline || production.Owner != (manifest.NamedResource{}) || production.Path != ""
-			independent = independent || production.Owner == (manifest.NamedResource{}) && production.Path != ""
-		} else {
-			input.Generated = true
-		}
-	}
-	input.Private = self
+	independent := trackProductions(&input, facts.Productions, owner)
 	allowData := owner == (manifest.NamedResource{}) || facts.Accepted || independent || len(input.Materializers) == 0
 	if allowData {
 		input.Data = facts.Data
 		if input.Data == nil {
-			for _, candidate := range facts.ReferenceData {
+			for index := range facts.ReferenceData {
+				candidate := &facts.ReferenceData[index]
 				if candidate.OfflineData != nil {
 					input.Data, input.Offline = candidate.OfflineData, true
 					break
@@ -82,6 +69,14 @@ func (i Input) AllowsAbsence() bool {
 	return i.Private || i.Generated && !i.Offline
 }
 
+// StoreProvider retains one execution's captured values and availability evidence.
+type StoreProvider struct {
+	s           dataReader
+	wipeSecrets bool
+	owner       manifest.NamedResource
+	inputs      []capturedInput
+}
+
 // NewStoreProvider returns one execution's captured values and availability evidence.
 func NewStoreProvider(s dataReader, wipeSecrets bool) *StoreProvider {
 	p := &StoreProvider{s: s, wipeSecrets: wipeSecrets}
@@ -91,20 +86,14 @@ func NewStoreProvider(s dataReader, wipeSecrets bool) *StoreProvider {
 	return p
 }
 
-// StoreProvider retains one execution's captured values and availability evidence.
-type StoreProvider struct {
-	s           dataReader
-	wipeSecrets bool
-	owner       manifest.NamedResource
-	inputs      []capturedInput
-}
-
 type capturedInput struct {
 	id    manifest.NamedResource
 	input Input
 }
 
 // Data returns the captured data for id.
+//
+//nolint:ireturn // The values contract supports multiple data implementations.
 func (p *StoreProvider) Data(id manifest.NamedResource) manifest.Data { return p.Lookup(id).Data }
 
 // Lookup captures a values object and its materializers once for expansion and diagnostics.
@@ -125,7 +114,8 @@ func (p *StoreProvider) Lookup(id manifest.NamedResource) Input {
 		pending = len(reads.UnsettledProducers(id)) != 0
 	}
 	if input.Data == nil && p.wipeSecrets && !input.Offline && !pending {
-		for _, candidate := range facts.ReferenceData {
+		for index := range facts.ReferenceData {
+			candidate := &facts.ReferenceData[index]
 			if len(candidate.DeclaredKeys) == 0 {
 				continue
 			}
@@ -137,21 +127,7 @@ func (p *StoreProvider) Lookup(id manifest.NamedResource) Input {
 			break
 		}
 	}
-	if facts.Supplied != nil {
-		if input.Data == nil {
-			input.Data = facts.Supplied
-		} else {
-			var overridden []string
-			input.Data, overridden = input.Data.WithSupplied(facts.Supplied)
-			if len(overridden) > 0 {
-				if reads, ok := p.s.(*store.ReadSet); ok {
-					reads.RecordSuppliedOverride(
-						store.SuppliedOverride{Resource: id, SupplyPath: facts.SupplyPath, Keys: overridden},
-					)
-				}
-			}
-		}
-	}
+	p.applySupplied(id, &facts, &input)
 	if input.Data != nil {
 		input.Materializers = nil
 	}
@@ -231,47 +207,20 @@ func ExpandValueReferences(
 	if hr == nil || len(hr.ValuesFrom) == 0 {
 		return nil, nil
 	}
-	var omitted []manifest.NamedResource
-	values := map[string]any{}
-	owned := true
+
+	ex := valueExpansion{values: map[string]any{}, owned: true}
 	for edge := range manifest.References(hr, manifest.ReferenceRelations) {
 		if edge.Use != "valuesFrom" {
 			continue
 		}
 		ref := hr.ValuesFrom[edge.Position]
-		found, err := lookupValueRef(ref, edge.Namespace, provider)
-		if err != nil {
-			if _, ok := errors.AsType[*missingValueRefError](err); ok && ref.Optional {
-				continue
-			}
-			return omitted, err
-		}
-		if ref.TargetPath != "" {
-			if !owned {
-				// Cached nested values may be borrowed; strvals mutates them in place.
-				values = manifest.DeepCopyMap(values)
-				owned = true
-			}
-			if ref.Literal {
-				err = replaceLiteralValueAtPath(values, ref.TargetPath, found)
-			} else {
-				err = replaceValueAtPath(values, ref.TargetPath, found)
-			}
-		} else {
-			var unavailable bool
-			unavailable, err = cache.updateHelmReleaseValues(ref, found, values)
-			if unavailable && !ref.Optional {
-				omitted = append(omitted, edge.NamedResource)
-			}
-			owned = false
-		}
-		if err != nil {
-			return omitted, err
+		if err := ex.expand(&ref, &edge, provider, cache); err != nil {
+			return ex.omitted, err
 		}
 	}
-	DeepMergeInto(values, hr.Values)
-	hr.Values = values
-	return omitted, nil
+	DeepMergeInto(ex.values, hr.Values)
+	hr.Values = ex.values
+	return ex.omitted, nil
 }
 
 // lookupValueRef reads only the requested key, preserving unrelated malformed siblings.
@@ -298,6 +247,7 @@ func lookupValueRef(ref manifest.ValuesReference, namespace string, p Provider) 
 	return value, nil
 }
 
+//nolint:ireturn // The values contract supports multiple data implementations.
 func resourceData(kind, namespace, name string, p Provider) (manifest.Data, error) {
 	switch kind {
 	case manifest.KindSecret, manifest.KindConfigMap:
@@ -392,7 +342,7 @@ func replaceLiteralValueAtPath(values map[string]any, path, value string) error 
 
 // A single quote MUST remain a scalar; stripping it would produce an invalid slice.
 func stripMatchingQuotes(value string) (string, bool) {
-	if len(value) >= 2 {
+	if len(value) >= matchingQuoteWidth {
 		if q := value[0]; (q == '\'' || q == '"') && value[len(value)-1] == q {
 			return value[1 : len(value)-1], true
 		}
@@ -415,45 +365,79 @@ func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, p Provider) 
 
 	// Flux gives inline substitutions precedence over references.
 	values := map[string]string{}
-	for _, ref := range ks.PostBuild.SubstituteFrom {
-		data, err := resourceData(ref.Kind, ks.Namespace, ref.Name, p)
-		if err != nil {
-			if errors.Is(err, manifest.ErrInvalidValuesReference) {
-				slog.Debug("values: unsupported SubstituteReference kind",
-					"id", manifest.DiagnosticFor(ks.Named(), ks).String(), "kind", ref.Kind)
-				continue
-			}
-			return err
-		}
-		if data == nil || !data.HasKeys() {
-			if !ref.Optional && ref.Kind != manifest.KindSecret {
-				slog.Debug("values: SubstituteReference not found",
-					"id", manifest.DiagnosticFor(ks.Named(), ks).String(), "ref", ref.Name)
-			}
-			continue
-		}
-		var failure struct {
-			key string
-			err error
-		}
-		data.Keys()(func(k string) bool {
-			v, _, err := data.Value(k)
-			if err != nil {
-				if failure.err == nil || k < failure.key {
-					failure.err, failure.key = err, k
-				}
-				return true
-			}
-			// Flux strips newlines before substituting into single-line YAML fields.
-			values[k] = strings.ReplaceAll(v, "\n", "")
-			return true
-		})
-		if failure.err != nil {
-			return failure.err
-		}
+	if err := readSubstitutions(ks, p, values); err != nil {
+		return err
 	}
 	maps.Copy(values, ks.PostBuild.Substitute)
 
+	if err := validateSubstitutions(values); err != nil {
+		return err
+	}
+	ks.PostBuild.Substitute = values
+	return nil
+}
+
+func trackProductions(i *Input, productions []manifest.Production, owner manifest.NamedResource) bool {
+	independent := false
+	for index := range productions {
+		production := &productions[index]
+		hasOwner := production.Owner != (manifest.NamedResource{})
+		isOwner := hasOwner && production.Owner == owner
+		i.Private = i.Private || isOwner
+		if hasOwner && !isOwner && !slices.Contains(i.Materializers, production.Owner) {
+			i.Materializers = append(i.Materializers, production.Owner)
+		}
+		if production.Declaration != (manifest.NamedResource{}) {
+			i.Generated = true
+			continue
+		}
+		i.Offline = i.Offline || hasOwner || production.Path != ""
+		independent = independent || !hasOwner && production.Path != ""
+	}
+	return independent
+}
+
+func (p *StoreProvider) applySupplied(id manifest.NamedResource, facts *store.ReferenceFacts, input *Input) {
+	if facts.Supplied == nil {
+		return
+	}
+	if input.Data == nil {
+		input.Data = facts.Supplied
+		return
+	}
+	var overridden []string
+	input.Data, overridden = input.Data.WithSupplied(facts.Supplied)
+	if len(overridden) == 0 {
+		return
+	}
+	if reads, ok := p.s.(*store.ReadSet); ok {
+		reads.RecordSuppliedOverride(
+			store.SuppliedOverride{Resource: id, SupplyPath: facts.SupplyPath, Keys: overridden},
+		)
+	}
+}
+
+func mergeSubstitutions(values map[string]string, data manifest.Data) error {
+	var failure struct {
+		key string
+		err error
+	}
+	data.Keys()(func(k string) bool {
+		v, _, err := data.Value(k)
+		if err != nil {
+			if failure.err == nil || k < failure.key {
+				failure.err, failure.key = err, k
+			}
+			return true
+		}
+		// Flux strips newlines before substituting into single-line YAML fields.
+		values[k] = strings.ReplaceAll(v, "\n", "")
+		return true
+	})
+	return failure.err
+}
+
+func validateSubstitutions(values map[string]string) error {
 	// Flux rejects invalid variable names; sort diagnostics for determinism.
 	var invalid []string
 	for name := range values {
@@ -473,6 +457,77 @@ func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, p Provider) 
 			"invalid substitute "+noun+" "+strings.Join(invalid, ", "),
 		)
 	}
-	ks.PostBuild.Substitute = values
 	return nil
 }
+
+func setValueReference(values map[string]any, ref *manifest.ValuesReference, found string) error {
+	if ref.Literal {
+		return replaceLiteralValueAtPath(values, ref.TargetPath, found)
+	}
+	return replaceValueAtPath(values, ref.TargetPath, found)
+}
+
+type valueExpansion struct {
+	values  map[string]any
+	omitted []manifest.NamedResource
+	owned   bool
+}
+
+func (ex *valueExpansion) expand(ref *manifest.ValuesReference, edge *manifest.Reference, provider Provider, cache *Cache) error {
+	found, err := lookupValueRef(*ref, edge.Namespace, provider)
+	if err != nil {
+		if _, ok := errors.AsType[*missingValueRefError](err); ok && ref.Optional {
+			return nil
+		}
+		return err
+	}
+	if ref.TargetPath != "" {
+		if !ex.owned {
+			// Cached nested ex.values may be borrowed; strvals mutates them in place.
+			ex.values = manifest.DeepCopyMap(ex.values)
+			ex.owned = true
+		}
+		err = setValueReference(ex.values, ref, found)
+	} else {
+		var unavailable bool
+		unavailable, err = cache.updateHelmReleaseValues(*ref, found, ex.values)
+		if unavailable && !ref.Optional {
+			ex.omitted = append(ex.omitted, edge.NamedResource)
+		}
+		ex.owned = false
+	}
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func readSubstitutions(ks *manifest.Kustomization, p Provider, values map[string]string) error {
+	for _, ref := range ks.PostBuild.SubstituteFrom {
+		data, err := resourceData(ref.Kind, ks.Namespace, ref.Name, p)
+		if err != nil {
+			if errors.Is(err, manifest.ErrInvalidValuesReference) {
+				slog.Debug("values: unsupported SubstituteReference kind",
+					"id", manifest.DiagnosticFor(ks.Named(), ks).String(), "kind", ref.Kind)
+				continue
+			}
+			return err
+		}
+		if data == nil || !data.HasKeys() {
+			if !ref.Optional && ref.Kind != manifest.KindSecret {
+				slog.Debug("values: SubstituteReference not found",
+					"id", manifest.DiagnosticFor(ks.Named(), ks).String(), "ref", ref.Name)
+			}
+			continue
+		}
+		if err := mergeSubstitutions(values, data); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+const (
+	matchingQuoteWidth = 2
+)

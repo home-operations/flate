@@ -1,0 +1,607 @@
+package helm
+
+import (
+	"context"
+	"os"
+	"strings"
+	"sync"
+	"testing"
+
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+	"helm.sh/helm/v4/pkg/chart/common"
+	chart "helm.sh/helm/v4/pkg/chart/v2"
+	release "helm.sh/helm/v4/pkg/release/v1"
+
+	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/store"
+)
+
+func TestTemplate_LocalChart(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "mychart/Chart.yaml", `apiVersion: v2
+name: mychart
+version: 0.1.0
+description: test
+`)
+	testutil.WriteFile(t, dir, "mychart/values.yaml", "greeting: hi\n")
+	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-cm
+data:
+  greeting: {{ .Values.greeting }}
+`)
+
+	cli := NewClient(cachetest.New(t, "", sourcecache.New))
+	cliSources := localChartResolver(t, "chart-repo", "flux-system", dir)
+
+	hr := &manifest.HelmRelease{
+		Name:      "demo",
+		Namespace: "default",
+		Chart: manifest.HelmChart{
+			Name: "mychart",
+			Source: manifest.NamedResource{
+				Name:      "chart-repo",
+				Namespace: "flux-system",
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindGitRepository,
+			},
+		},
+	}
+
+	out, _, err := testutil.RenderMaps(
+		cli.Template(
+			context.Background(),
+			hr,
+			map[string]any{"greeting": "hello"},
+			RenderOptions{Options: Options{}, Sources: cliSources},
+		),
+	)
+	{
+		assert.FatalIf(t, err != nil, "Template: %v", err)
+	}
+	{
+		assert.ErrorIf(t, !hasRenderField(out, "name", "demo-cm"), "rendered output missing expected name: %s", out)
+	}
+	{
+		assert.ErrorIf(t, !hasRenderField(out, "greeting", "hello"), "values not applied: %s", out)
+	}
+}
+
+func TestTemplate_DoesNotMutateInputValues(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "mychart/Chart.yaml",
+		"apiVersion: v2\nname: mychart\nversion: 0.1.0\ndescription: t\n")
+	testutil.WriteFile(t, dir, "mychart/values.yaml", "image:\n  tag: default\n")
+	testutil.WriteFile(
+		t,
+		dir,
+		"mychart/first.yaml",
+		"image:\n  tag: first\n  repository: file-repo\n  pullPolicy: Always\n",
+	)
+	testutil.WriteFile(t, dir, "mychart/second.yaml", "image:\n  tag: second\n  repository: nginx-file\n")
+	testutil.WriteFile(
+		t,
+		dir,
+		"mychart/templates/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\ndata:\n  tag: {{ .Values.image.tag }}\n  repository: {{ .Values.image.repository }}\n  pullPolicy: {{ .Values.image.pullPolicy }}\n",
+	)
+
+	cli := NewClient(cachetest.New(t, "", sourcecache.New))
+	cliSources := localChartResolver(t, "chart-repo", "flux-system", dir)
+
+	hr := &manifest.HelmRelease{
+		Name:      "demo",
+		Namespace: "default",
+		Chart: manifest.HelmChart{
+			Name: "mychart",
+			Source: manifest.NamedResource{
+				Name:      "chart-repo",
+				Namespace: "flux-system",
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindGitRepository,
+			},
+		},
+	}
+	vals := map[string]any{
+		"image": map[string]any{"tag": "v1", "repository": "nginx"},
+		"env":   []any{map[string]any{"name": "A", "value": "1"}},
+	}
+	hr.ChartValuesFiles = []string{"mychart/values.yaml", "mychart/first.yaml", "mychart/second.yaml"}
+	snapshot := manifest.DeepCopyMap(vals)
+	hrBefore := hr.Clone()
+	canonical, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
+	assert.NoError(t, err)
+	chartSnapshot := manifest.DeepCopyMap(canonical.chart.Values)
+	start := make(chan struct{})
+	var ready, done sync.WaitGroup
+	outputs := make([][]map[string]any, 2)
+	ready.Add(2)
+	for i := range 2 {
+		done.Go(func() {
+			ready.Done()
+			<-start
+			var errResult error
+			outputs[i], _, errResult = testutil.RenderMaps(
+				cli.Template(t.Context(), hr, vals, RenderOptions{Options: Options{}, Sources: cliSources}),
+			)
+			assert.ErrorIf(t, errResult != nil, "%v", errResult)
+		})
+	}
+	ready.Wait()
+	close(start)
+	done.Wait()
+	assert.Diff(t, canonical.chart.Values, chartSnapshot)
+	assert.Diff(t, vals, snapshot)
+	assert.Diff(t, hr.HelmReleaseSpec, hrBefore.HelmReleaseSpec)
+	assert.Equal(t, hr.Chart, hrBefore.Chart)
+	assert.Diff(t, outputs[1], outputs[0])
+	for _, want := range []string{"tag: v1", "repository: nginx", "pullPolicy: Always"} {
+		key, value, _ := strings.Cut(want, ": ")
+		if !hasRenderField(outputs[0], key, value) {
+			t.Errorf("missing %q in render: %s", want, outputs[0])
+		}
+	}
+	cachedBefore := make(map[string]map[string]any, len(cli.chartValuesCache))
+	for key, value := range cli.chartValuesCache {
+		cachedBefore[key] = manifest.DeepCopyMap(value.merged)
+	}
+	repeated, _, err := testutil.RenderMaps(
+		cli.Template(t.Context(), hr, vals, RenderOptions{Options: Options{}, Sources: cliSources}),
+	)
+	assert.NoError(t, err)
+	assert.Diff(t, repeated, outputs[0])
+	assert.Equal(t, len(cli.chartValuesCache), len(cachedBefore))
+	for key, before := range cachedBefore {
+		assert.Diff(t, cli.chartValuesCache[key].merged, before)
+	}
+}
+
+func helmChartFixture(t *testing.T) (*Client, Sources) {
+	t.Helper()
+	cli := NewClient(cachetest.New(t, "", sourcecache.New))
+	cliSources := localChartResolver(t, "chart-repo", "flux-system", helmChartDirectory(t))
+	return cli, cliSources
+}
+
+func helmChartDirectory(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "mychart/Chart.yaml",
+		"apiVersion: v2\nname: mychart\nversion: 0.1.0\ndescription: t\n")
+	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\ndata:\n  k: v\n")
+	testutil.WriteFile(
+		t,
+		dir,
+		"mychart/templates/pre-install-hook.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-pre\n  annotations:\n    \"helm.sh/hook\": pre-install\ndata:\n  k: v\n",
+	)
+	testutil.WriteFile(
+		t,
+		dir,
+		"mychart/templates/test-hook.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-test\n  annotations:\n    \"helm.sh/hook\": test\ndata:\n  k: v\n",
+	)
+
+	return dir
+}
+
+// localChartResolver wires a *store.Store containing a single
+// GitRepository with its on-disk artifact, then returns a
+// StoreSourceResolver backed by it.
+func localChartResolver(t *testing.T, name, namespace, dir string) Sources {
+	t.Helper()
+	st := store.New()
+	gr := &manifest.GitRepository{Name: name, Namespace: namespace}
+	st.AddObject(gr)
+	st.SetArtifact(gr.Named(), &store.SourceArtifact{
+		Kind: manifest.KindGitRepository, URL: "file://" + dir, FS: os.DirFS(dir), LocalPath: dir,
+	})
+	return NewSources(st)
+}
+
+func newHR() *manifest.HelmRelease {
+	return &manifest.HelmRelease{
+		Name:      "demo",
+		Namespace: "default",
+		Chart: manifest.HelmChart{
+			Name: "mychart",
+			Source: manifest.NamedResource{
+				Name:      "chart-repo",
+				Namespace: "flux-system",
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindGitRepository,
+			},
+		},
+	}
+}
+
+func TestTemplate_TestHooksSkippedByDefault(t *testing.T) {
+	t.Parallel()
+	cli, cliSources := helmChartFixture(t)
+	hr := newHR()
+
+	out, _, err := testutil.RenderMaps(
+		cli.Template(context.Background(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}),
+	)
+	{
+		assert.FatalIf(t, err != nil, "Template: %v", err)
+	}
+	// pre-install hook should render; test hook should not when
+	// spec.test.enable is unset (default behavior matches helm-controller).
+	{
+		assert.ErrorIf(t, !hasRenderField(out, "name", "demo-pre"), "expected pre-install hook in output: %s", out)
+	}
+	{
+		assert.ErrorIf(t, hasRenderField(out, "name", "demo-test"), "test hook should be skipped by default: %s", out)
+	}
+}
+
+func templateResources(t *testing.T, docs []map[string]any) []string {
+	t.Helper()
+	resources := make([]string, 0, len(docs))
+	for _, doc := range docs {
+		name, _ := manifest.DocMetadata(doc)
+		resources = append(resources, manifest.DocKind(doc)+"/"+name)
+	}
+	return resources
+}
+
+func TestTemplate_TestEnableIncludesTestHook(t *testing.T) {
+	t.Parallel()
+	cli, cliSources := helmChartFixture(t)
+	for _, tc := range []struct {
+		name string
+		skip bool
+		want []string
+	}{
+		{"enabled", false, []string{"ConfigMap/demo-cm", "ConfigMap/demo-pre", "ConfigMap/demo-test"}},
+		{"explicit-skip", true, []string{"ConfigMap/demo-cm", "ConfigMap/demo-pre"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			hr := newHR()
+			hr.Test = &helmv2.Test{Enable: true}
+			out, _, err := testutil.RenderMaps(
+				cli.Template(t.Context(), hr, nil, RenderOptions{SkipTests: tc.skip, Sources: cliSources}),
+			)
+			assert.NoError(t, err)
+			assert.Diff(t, templateResources(t, out), tc.want)
+		})
+	}
+}
+
+func TestTemplate_ActionHookPolicy(t *testing.T) {
+	t.Parallel()
+	cli, cliSources := helmChartFixture(t)
+	on, off := true, false
+	for _, tc := range []struct {
+		name             string
+		install, upgrade *bool
+		wantHook         bool
+	}{
+		{"both allow", &off, &off, true},
+		{"upgrade disables", &off, &on, true},
+		{"install disables", &on, &off, false},
+		{"both disable", &on, &on, false},
+		{"nil install", nil, &on, true},
+		{"absent", nil, nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			hr := newHR()
+			if tc.install != nil {
+				hr.Install = &helmv2.Install{DisableHooks: *tc.install}
+			}
+			if tc.upgrade != nil {
+				hr.Upgrade = &helmv2.Upgrade{DisableHooks: *tc.upgrade}
+			}
+			out, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Sources: cliSources}))
+			assert.NoError(t, err)
+			want := []string{"ConfigMap/demo-cm"}
+			if tc.wantHook {
+				want = append(want, "ConfigMap/demo-pre")
+			}
+			assert.Diff(t, templateResources(t, out), want)
+		})
+	}
+}
+
+func TestReleaseManifest_HookSeparators(t *testing.T) {
+	t.Parallel()
+	rel := &release.Release{
+		Manifest: "kind: ConfigMap",
+		Hooks: []*release.Hook{
+			{Path: "hooks/a.yaml", Manifest: "kind: Job", Events: []release.HookEvent{release.HookPreInstall}},
+			{Path: "hooks/b.yaml", Manifest: "kind: Secret\n", Events: []release.HookEvent{release.HookPreInstall}},
+		},
+	}
+
+	got := releaseManifest(rel, false, false)
+	want := "kind: ConfigMap\n" +
+		"---\n# Source: hooks/a.yaml\nkind: Job\n" +
+		"---\n# Source: hooks/b.yaml\nkind: Secret\n"
+	{
+		assert.ErrorIf(t, got != want, "releaseManifest hook separators mismatch\nwant:\n%q\ngot:\n%q", want, got)
+	}
+}
+
+func TestStamp_HelmMetadata(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name          string
+		docs          string
+		common        *helmv2.CommonMetadata
+		origin        bool
+		renderedChart bool
+		want          string
+	}{
+		{
+			name:          "RenderedChart",
+			renderedChart: true,
+			common: &helmv2.CommonMetadata{
+				Labels: map[string]string{
+					"team": "flate", "managed-by": "override",
+					"helm.toolkit.fluxcd.io/name":      "user-override-should-lose",
+					"helm.toolkit.fluxcd.io/namespace": "user-override-should-lose",
+				},
+				Annotations: map[string]string{"owner": "platform"},
+			},
+			origin: true,
+			want: `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo-cm
+  labels:
+    team: flate
+    managed-by: override
+    helm.toolkit.fluxcd.io/name: demo
+    helm.toolkit.fluxcd.io/namespace: default
+  annotations: {owner: platform}
+data: {k: v}
+`,
+		},
+		{
+			name:   "LabelsOnly",
+			docs:   "metadata: {name: x}\n",
+			common: &helmv2.CommonMetadata{Labels: map[string]string{"team": "flate"}},
+			want:   "metadata: {name: x, labels: {team: flate}}\n",
+		},
+		{
+			name:   "AnnotationsOnly",
+			docs:   "metadata: {name: x}\n",
+			common: &helmv2.CommonMetadata{Annotations: map[string]string{"owner": "platform"}},
+			want:   "metadata: {name: x, annotations: {owner: platform}}\n",
+		},
+		{
+			name: "NilMetadata",
+			docs: "metadata: {name: x}\n",
+			want: "metadata: {name: x}\n",
+		},
+		{
+			name:   "EmptyMetadata",
+			docs:   "metadata: {name: x}\n",
+			common: &helmv2.CommonMetadata{},
+			want:   "metadata: {name: x}\n",
+		},
+		{
+			name:   "CreatesMetadataWhenMissing",
+			docs:   "kind: Deployment\n",
+			common: &helmv2.CommonMetadata{Labels: map[string]string{"team": "flate"}},
+			want:   "kind: Deployment\nmetadata: {labels: {team: flate}}\n",
+		},
+		{
+			name: "CommonMetadataSkipsHooksAndCRDs",
+			docs: `kind: Deployment
+metadata: {name: real}
+---
+kind: ConfigMap
+metadata: {name: hook-cm, annotations: {helm.sh/hook: pre-install}}
+---
+kind: CustomResourceDefinition
+metadata: {name: things.example.com}
+`,
+			common: &helmv2.CommonMetadata{
+				Labels:      map[string]string{"team": "platform"},
+				Annotations: map[string]string{"owner": "platform"},
+			},
+			want: `kind: Deployment
+metadata: {name: real, labels: {team: platform}, annotations: {owner: platform}}
+---
+kind: ConfigMap
+metadata: {name: hook-cm, annotations: {helm.sh/hook: pre-install}}
+---
+kind: CustomResourceDefinition
+metadata: {name: things.example.com}
+`,
+		},
+		{
+			name: "OriginLabelsSkipHooks",
+			docs: `kind: Deployment
+metadata: {name: real}
+---
+kind: Job
+metadata: {name: hook-job, annotations: {helm.sh/hook: pre-install}}
+`,
+			origin: true,
+			want: `kind: Deployment
+metadata:
+  name: real
+  labels: {helm.toolkit.fluxcd.io/name: demo, helm.toolkit.fluxcd.io/namespace: default}
+---
+kind: Job
+metadata: {name: hook-job, annotations: {helm.sh/hook: pre-install}}
+`,
+		},
+		{
+			name: "CommonThenOrigin",
+			docs: `kind: Deployment
+metadata: {name: real, labels: {app: retained}}
+---
+kind: Job
+metadata: {name: hook-job, annotations: {helm.sh/hook: pre-install}}
+---
+kind: CustomResourceDefinition
+metadata: {name: things.example.com}
+`,
+			common: &helmv2.CommonMetadata{
+				Labels:      map[string]string{"team": "platform"},
+				Annotations: map[string]string{"owner": "platform"},
+			},
+			origin: true,
+			want: `kind: Deployment
+metadata:
+  name: real
+  labels: {app: retained, team: platform, helm.toolkit.fluxcd.io/name: demo, helm.toolkit.fluxcd.io/namespace: default}
+  annotations: {owner: platform}
+---
+kind: Job
+metadata: {name: hook-job, annotations: {helm.sh/hook: pre-install}}
+---
+kind: CustomResourceDefinition
+metadata:
+  name: things.example.com
+  labels: {helm.toolkit.fluxcd.io/name: demo, helm.toolkit.fluxcd.io/namespace: default}
+`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			hr := newHR()
+			hr.CommonMetadata = tc.common
+			docs, err := testutil.SplitDocs([]byte(tc.docs))
+			assert.NoError(t, err)
+			if tc.renderedChart {
+				cli, cliSources := helmChartFixture(t)
+				hr.Install = &helmv2.Install{DisableHooks: true}
+				docs, _, err = testutil.RenderMaps(
+					cli.Template(t.Context(), hr, nil, RenderOptions{Sources: cliSources}),
+				)
+				assert.NoError(t, err)
+			}
+			want, err := testutil.SplitDocs([]byte(tc.want))
+			assert.NoError(t, err)
+			policy := hr.EmissionPolicy()
+			policy.Owner = tc.origin
+			policy.Stamp(testutil.DocumentOccurrences(docs))
+			assert.Diff(t, docs, want)
+		})
+	}
+}
+
+func TestMergeChartValuesFiles(t *testing.T) {
+	t.Parallel()
+	cli := NewClient(cachetest.New(t, "", sourcecache.New))
+	chartWith := func(files map[string]string) *chart.Chart {
+		c := &chart.Chart{}
+		for name, body := range files {
+			c.Files = append(c.Files, &common.File{Name: name, Data: []byte(body)})
+		}
+		return c
+	}
+
+	t.Run("LayersInOrderOverridesEarlier", func(t *testing.T) {
+		t.Parallel()
+		c := chartWith(map[string]string{
+			"first.yaml":  "a: first-only\nb: from-first\n",
+			"second.yaml": "b: from-second\nc: second-only\n",
+		})
+		got, err := cli.mergeChartValuesFiles(
+			t.Context(),
+			chartDescription{chart: c},
+			[]string{"first.yaml", "second.yaml"},
+			false,
+		)
+		{
+			assert.FatalIf(t, err != nil, "merge: %v", err)
+		}
+		{
+			assert.ErrorIf(
+				t,
+				got["a"] != "first-only" || got["b"] != "from-second" || got["c"] != "second-only",
+				"layering failed: %v",
+				got,
+			)
+		}
+	})
+
+	t.Run("MissingFileIgnored", func(t *testing.T) {
+		t.Parallel()
+		c := chartWith(map[string]string{"a.yaml": "k: v\n"})
+		got, err := cli.mergeChartValuesFiles(
+			t.Context(),
+			chartDescription{chart: c},
+			[]string{"a.yaml", "missing.yaml"},
+			true,
+		)
+		{
+			assert.FatalIf(t, err != nil, "merge: %v", err)
+		}
+		{
+			assert.ErrorIf(t, got["k"] != "v", "present file should still merge: %v", got)
+		}
+	})
+
+	t.Run("MissingFileErrorsWhenStrict", func(t *testing.T) {
+		t.Parallel()
+		c := chartWith(map[string]string{"a.yaml": "k: v\n"})
+		_, err := cli.mergeChartValuesFiles(t.Context(), chartDescription{chart: c}, []string{"missing.yaml"}, false)
+		{
+			assert.FatalIf(t, err == nil, "%s", "expected error for missing file when ignoreMissing=false")
+		}
+		{
+			assert.ErrorIf(
+				t,
+				!strings.Contains(err.Error(), "missing.yaml"),
+				"error should name the missing file: %v",
+				err,
+			)
+		}
+	})
+
+	t.Run("InvalidYAMLErrors", func(t *testing.T) {
+		t.Parallel()
+		c := chartWith(map[string]string{"bad.yaml": "key: : not-yaml\n"})
+		_, err := cli.mergeChartValuesFiles(t.Context(), chartDescription{chart: c}, []string{"bad.yaml"}, false)
+		{
+			assert.FatalIf(t, err == nil, "%s", "expected error for invalid YAML")
+		}
+		{
+			assert.ErrorIf(t, !strings.Contains(err.Error(), "bad.yaml"), "error should name the bad file: %v", err)
+		}
+	})
+
+	t.Run("EmptyNamesReturnsEmpty", func(t *testing.T) {
+		t.Parallel()
+		c := chartWith(map[string]string{"a.yaml": "k: v\n"})
+		got, err := cli.mergeChartValuesFiles(t.Context(), chartDescription{chart: c}, nil, false)
+		{
+			assert.FatalIf(t, err != nil, "merge: %v", err)
+		}
+		{
+			assert.ErrorIf(t, len(got) != 0, "expected empty result for nil names: %v", got)
+		}
+	})
+}
+
+func TestOptions_SkipResourceKinds(t *testing.T) {
+	t.Parallel()
+	o := Options{SkipCRDs: true, SkipKinds: []string{manifest.KindConfigMap, manifest.KindSecret}}
+	got := o.SkipResourceKinds()
+	want := map[string]bool{"ConfigMap": true, "CustomResourceDefinition": true, "Secret": true}
+	for _, k := range got {
+		{
+			assert.ErrorIf(t, !want[k], "unexpected kind in skip list: %s", k)
+		}
+	}
+	{
+		assert.ErrorIf(t, len(got) != 3, "expected 3 kinds, got %d: %v", len(got), got)
+	}
+}

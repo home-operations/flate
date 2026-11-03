@@ -30,31 +30,33 @@ import (
 type RenderRequest struct {
 	// HeldSlot is TreeCache's borrowed service when this render holds its slot.
 	// Standalone callers leave it nil.
-	HeldSlot *task.Service
+	HeldSlot *task.Service `json:"HeldSlot"`
 	// Source.FS supplies content; nil Source or FS is unavailable.
 	// Empty Source.Content denotes mutable content validated on every cache hit.
-	Source *store.SourceArtifact
+	Source *store.SourceArtifact `json:"Source"`
 	// ApplyIgnore selects source-controller exclusions for admitted local aliases.
-	ApplyIgnore bool
+	ApplyIgnore bool `json:"ApplyIgnore"`
 	// Label mounts source content in kyaml; empty uses Source.LocalPath.
-	Label string
+	Label string `json:"Label"`
 	// SubPath selects the source directory to build.
-	SubPath string
+	SubPath string `json:"SubPath"`
 	// Spec is the prepared Flux Kustomization; nil builds without a Flux owner.
-	Spec *manifest.Kustomization
+	Spec *manifest.Kustomization `json:"Spec"`
 	// WipeSecrets binds the parse policy to accepted history.
-	WipeSecrets bool
+	WipeSecrets bool `json:"WipeSecrets"`
 	// StrictSubstitutions binds undefined-variable handling to accepted history.
-	StrictSubstitutions bool
+	StrictSubstitutions bool `json:"StrictSubstitutions"`
 	// SkipKinds binds the effective emitted-kind policy to accepted history.
-	SkipKinds []string
+	SkipKinds []string `json:"SkipKinds"`
 	// DependencySubstitutions binds emitted dependency projection to accepted history.
-	DependencySubstitutions values.DependencySubstitutions
+	DependencySubstitutions values.DependencySubstitutions `json:"DependencySubstitutions"`
 }
 
 // Render returns unstamped renderer documents from an admitted source and a private overlay.
 // Generated files never mutate the source. Cancellation is checked around the
 // upstream build, which does not accept a context.
+//
+//nolint:gocritic // Preserve the existing value API and its snapshot semantics.
 func Render(
 	ctx context.Context,
 	cache *TreeCache,
@@ -65,53 +67,17 @@ func Render(
 	if err != nil {
 		return nil, nil, err
 	}
-	lower, root := prepared.lower, prepared.root
-	var maxAge time.Duration
+	prepared.request, prepared.retry = req, retry
 	if req.Spec != nil {
-		maxAge = req.Spec.Interval.Duration
+		prepared.maxAge = req.Spec.Interval.Duration
 	}
-	key := prepared.key
-	var docs []manifest.DocOccurrence
-	var receipt *manifest.RenderReceipt
+	var result renderResult
+
 	blobKey := sourcecache.BlobKey{
-		Content: key,
+		Content: prepared.key,
 		Render:  sourcecache.RenderPending,
 		Validate: func(ctx context.Context, generation fs.FS) (bool, error) {
-			receipt = nil
-			raw, err := fs.ReadFile(generation, "content")
-			if err != nil {
-				return false, manifest.NewError(
-					manifest.ErrFlux,
-					fmt.Errorf("read kustomize render cache: %w", err),
-					"",
-				)
-			}
-			frame, err := decodeFrame(raw)
-			if err != nil || frame.header.Key != key {
-				slog.Debug("kustomize: decode render frame", "err", err)
-				return false, nil
-			}
-			valid, err := frame.header.Reads.stillValid(
-				ctx,
-				cache,
-				&treeFS{lower: lower, retry: retry, maxAge: maxAge},
-				req.Source.Content != "",
-			)
-			if err != nil || !valid {
-				return false, err
-			}
-			docs, err = manifest.DecodeRender(frame.output)
-			if err != nil {
-				return false, nil
-			}
-			frame.binding = prepared.binding
-			binding := manifest.Fingerprint(prepared.binding)
-			if frame.header.Binding != binding {
-				frame.header.Binding, frame.encoded, frame.raw = binding, nil, ""
-				frame.accepted, frame.acceptedKey = nil, ""
-			}
-			receipt = manifest.NewRenderReceipt(frame, equalRenderFrame)
-			return true, nil
+			return prepared.validate(ctx, cache, &result, generation)
 		},
 	}
 	acquire := func() {
@@ -120,120 +86,7 @@ func Render(
 			blobKey,
 			sourcecache.Policy{MaxAge: sourcecache.Forever},
 			func(ctx context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
-				rec := newReadSet(root)
-				rec.immutable = req.Source.Content != ""
-				memFS := newTreeFS(lower, root, rec)
-				memFS.retry = retry
-				memFS.maxAge = maxAge
-				subDir := root + string(filepath.Separator) + strings.TrimLeft(req.SubPath, "/")
-				canonicalDir, file, err := memFS.CleanedAbs(subDir)
-				if err != nil {
-					return sourcecache.ProducerResult{}, manifest.NewError(
-						manifest.ErrInput,
-						fmt.Errorf("kustomization path is not a directory: %s: %w", req.SubPath, err),
-						"",
-					)
-				}
-				if file != "" {
-					return sourcecache.ProducerResult{}, manifest.NewError(
-						manifest.ErrInput,
-						nil,
-						fmt.Sprintf("kustomization path is not a directory: %s", req.SubPath),
-					)
-				}
-				subDir = canonicalDir.String()
-				var ks map[string]any
-				var data []byte
-				var kfile string
-				if req.Spec != nil {
-					ks, err = req.Spec.RenderDocument()
-					if err != nil {
-						return sourcecache.ProducerResult{}, err
-					}
-					data, kfile, err = generateManifest(memFS, subDir, ks)
-					if err != nil {
-						return sourcecache.ProducerResult{}, fmt.Errorf("flux kustomize generator: %w", err)
-					}
-					if err := memFS.WriteFile(kfile, data); err != nil {
-						return sourcecache.ProducerResult{}, fmt.Errorf("write kustomization.yaml: %w", err)
-					}
-				} else {
-					kfile, _ = kustomizationFileIn(memFS, subDir)
-				}
-				subPath := req.SubPath
-
-				if err := preflightRemoteResources(ctx, cache, memFS, subDir); err != nil {
-					return sourcecache.ProducerResult{}, err
-				}
-				if err := ctx.Err(); err != nil {
-					return sourcecache.ProducerResult{}, err
-				}
-				if slog.Default().Enabled(ctx, slog.LevelDebug) {
-					slog.Debug("kustomize: build", "path", req.SubPath)
-				}
-				rm, err := func() (resmap.ResMap, error) {
-					kustomizestate.BuildMutex.Lock()
-					defer kustomizestate.BuildMutex.Unlock()
-					return kustomizestate.Build(memFS, subDir)
-				}()
-				if err != nil {
-					built := manifest.NewError(manifest.ErrFlux, fmt.Errorf("kustomize build %s: %w", subPath, err), "")
-					// Kustomize API v0.21.2 resmap/reswrangler.go Append returns an untyped formatted duplicate-ID error.
-					if strings.Contains(err.Error(), "already registered id") {
-						data, readErr := memFS.ReadFile(kfile)
-						if readErr != nil {
-							return sourcecache.ProducerResult{}, readErr
-						}
-						if attr := duplicateProducers(memFS, subDir, subPath, data); attr != "" {
-							return sourcecache.ProducerResult{}, fmt.Errorf(
-								"%w\n%s\nselect an individual overlay with -p",
-								built,
-								attr,
-							)
-						}
-					}
-					return sourcecache.ProducerResult{}, built
-				}
-				// AsYAML converts through JSON, so label scalar spelling MUST be retained first.
-				if req.Spec != nil && req.Spec.EmissionPolicy().StringLabels {
-					for _, r := range rm.Resources() {
-						if err := r.SetLabels(r.GetLabels()); err != nil {
-							return sourcecache.ProducerResult{}, manifest.NewError(
-								manifest.ErrInput,
-								fmt.Errorf("normalize labels: %w", err),
-								"",
-							)
-						}
-					}
-				}
-				if err := ctx.Err(); err != nil {
-					return sourcecache.ProducerResult{}, err
-				}
-
-				out, err := rm.AsYaml()
-				if err != nil {
-					return sourcecache.ProducerResult{}, fmt.Errorf("kustomize render %s: %w", subPath, err)
-				}
-				docs, err = manifest.DecodeDocs(bytes.NewReader(out), manifest.RequiredDocuments)
-				if err != nil {
-					return sourcecache.ProducerResult{}, err
-				}
-				if manifest.DocumentFailure(docs) != nil {
-					// Incomplete renders MUST fail frame validation to preserve each caller's local output.
-					return sourcecache.ProducerResult{}, nil
-				}
-				payload, err := manifest.EncodeRender(docs)
-				if err != nil {
-					return sourcecache.ProducerResult{}, err
-				}
-				data, err = encodeFrame(
-					renderHeader{Key: key, Binding: manifest.Fingerprint(prepared.binding), Reads: rec.snapshot()},
-					payload,
-				)
-				if err == nil {
-					_, err = w.Write(data)
-				}
-				return sourcecache.ProducerResult{}, err
+				return prepared.produce(ctx, cache, &result, w)
 			},
 		)
 	}
@@ -245,10 +98,13 @@ func Render(
 	if err != nil {
 		return nil, nil, err
 	}
-	return docs, receipt, nil
+	return result.docs, result.receipt, nil
 }
 
 type renderRequest struct {
+	request   RenderRequest
+	retry     sourcecache.RetryConfig
+	maxAge    time.Duration
 	lower     fs.FS
 	root, key string
 	binding   renderBinding
@@ -259,6 +115,7 @@ func (c *TreeCache) prepareRender(ctx context.Context, req RenderRequest) (rende
 		return renderRequest{}, manifest.NewError(manifest.ErrInput, nil, "incomplete render request")
 	}
 	if err := ctx.Err(); err != nil {
+		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return renderRequest{}, err
 	}
 	if req.Source == nil || req.Source.FS == nil {
@@ -316,12 +173,12 @@ func renderKey(req RenderRequest, root string, ignore any) string {
 		spec = req.Spec.Content(nil, nil, false)
 	}
 	return manifest.Fingerprint(struct {
-		Spec        any
-		SourceRoot  string
-		SubPath     string
-		ApplyIgnore bool
-		Ignore      any
-		Immutable   any
+		Spec        any    `json:"Spec"`
+		SourceRoot  string `json:"SourceRoot"`
+		SubPath     string `json:"SubPath"`
+		ApplyIgnore bool   `json:"ApplyIgnore"`
+		Ignore      any    `json:"Ignore"`
+		Immutable   any    `json:"Immutable"`
 	}{spec, root, req.SubPath, req.ApplyIgnore, ignore, immutable})
 }
 
@@ -338,6 +195,7 @@ func (c *TreeCache) sourceRootFor(
 	root string,
 ) (*sourceRoot, error) {
 	if err := ctx.Err(); err != nil {
+		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return nil, err
 	}
 	key := struct {
@@ -345,6 +203,7 @@ func (c *TreeCache) sourceRootFor(
 		root   string
 	}{artifact, root}
 	if cached, ok := c.sourceRoots.Load(key); ok {
+		//nolint:errcheck // This cache stores only the exact concrete type asserted at this boundary.
 		return cached.(func() (*sourceRoot, error))()
 	}
 	// Shared admission belongs to the cache lifetime, not the first reader's cancellation.
@@ -361,6 +220,7 @@ func (c *TreeCache) sourceRootFor(
 		return &sourceRoot{fs: input, ignore: input.PolicyEvidence()}, nil
 	})
 	actual, _ := c.sourceRoots.LoadOrStore(key, load)
+	//nolint:errcheck // This cache stores only the exact concrete type asserted at this boundary.
 	return actual.(func() (*sourceRoot, error))()
 }
 
@@ -369,6 +229,7 @@ func RenderInputs(receipt *manifest.RenderReceipt) map[string]bool {
 	if receipt == nil {
 		return nil
 	}
+	//nolint:errcheck // This cache stores only the exact concrete type asserted at this boundary.
 	frame := receipt.Value().(renderFrame)
 	inputs := make(
 		map[string]bool,
@@ -384,4 +245,218 @@ func RenderInputs(receipt *manifest.RenderReceipt) map[string]bool {
 		inputs[item.Path] = false
 	}
 	return inputs
+}
+
+type renderResult struct {
+	docs    []manifest.DocOccurrence
+	receipt *manifest.RenderReceipt
+}
+
+func (r *renderRequest) validate(
+	ctx context.Context,
+	cache *TreeCache,
+	result *renderResult,
+	generation fs.FS,
+) (bool, error) {
+	result.receipt = nil
+	raw, readFileErr := fs.ReadFile(generation, "content")
+	if readFileErr != nil {
+		return false, manifest.NewError(
+			manifest.ErrFlux,
+			fmt.Errorf("read kustomize render cache: %w", readFileErr),
+			"",
+		)
+	}
+	frame, readFileErr := decodeFrame(raw)
+	if readFileErr != nil || frame.header.Key != r.key {
+		slog.Debug("kustomize: decode render frame", "err", readFileErr)
+		return false, nil
+	}
+	valid, readFileErr := frame.header.Reads.stillValid(
+		ctx,
+		cache,
+		&treeFS{lower: r.lower, retry: r.retry, maxAge: r.maxAge},
+		r.request.Source.Content != "",
+	)
+	if readFileErr != nil || !valid {
+		return false, readFileErr
+	}
+	result.docs, readFileErr = manifest.DecodeRender(frame.output)
+	if readFileErr != nil {
+		//nolint:nilerr // Incomplete render output must reject cache publication without failing the local result.
+		return false, nil
+	}
+	frame.binding = r.binding
+	binding := manifest.Fingerprint(r.binding)
+	if frame.header.Binding != binding {
+		frame.header.Binding, frame.encoded, frame.raw = binding, nil, ""
+		frame.accepted, frame.acceptedKey = nil, ""
+	}
+	result.receipt = manifest.NewRenderReceipt(frame, equalRenderFrame)
+	return true, nil
+}
+
+func (r *renderRequest) produce(
+	ctx context.Context,
+	cache *TreeCache,
+	result *renderResult,
+	w sourcecache.ProducerInput,
+) (sourcecache.ProducerResult, error) {
+	rec := newReadSet(r.root)
+	rec.immutable = r.request.Source.Content != ""
+	memFS := newTreeFS(r.lower, r.root, rec)
+	memFS.retry = r.retry
+	memFS.maxAge = r.maxAge
+	subDir := r.root + string(filepath.Separator) + strings.TrimLeft(r.request.SubPath, "/")
+	canonicalDir, file, cleanedAbsErr := memFS.CleanedAbs(subDir)
+	if cleanedAbsErr != nil {
+		return sourcecache.ProducerResult{}, manifest.NewError(
+			manifest.ErrInput,
+			fmt.Errorf("kustomization path is not a directory: %s: %w", r.request.SubPath, cleanedAbsErr),
+			"",
+		)
+	}
+	if file != "" {
+		return sourcecache.ProducerResult{}, manifest.NewError(
+			manifest.ErrInput,
+			nil,
+			fmt.Sprintf("kustomization path is not a directory: %s", r.request.SubPath),
+		)
+	}
+	subDir = canonicalDir.String()
+	kfile, generateErr := r.generateFiles(ctx, memFS, subDir)
+	if generateErr != nil {
+		return sourcecache.ProducerResult{}, generateErr
+	}
+
+	if preflightRemoteResourcesErr := preflightRemoteResources(
+		ctx,
+		cache,
+		memFS,
+		subDir,
+	); preflightRemoteResourcesErr != nil {
+		return sourcecache.ProducerResult{}, preflightRemoteResourcesErr
+	}
+	result.docs, cleanedAbsErr = r.buildDocuments(ctx, memFS, subDir, kfile)
+	if cleanedAbsErr != nil {
+		return sourcecache.ProducerResult{}, cleanedAbsErr
+	}
+	if manifest.DocumentFailure(result.docs) != nil {
+		// Incomplete renders MUST fail frame validation to preserve each caller's local output.
+		//nolint:nilerr // Incomplete render output must reject cache publication without failing the local result.
+		return sourcecache.ProducerResult{}, nil
+	}
+	payload, cleanedAbsErr := manifest.EncodeRender(result.docs)
+	if cleanedAbsErr != nil {
+		return sourcecache.ProducerResult{}, cleanedAbsErr
+	}
+	data, cleanedAbsErr := encodeFrame(
+		renderHeader{Key: r.key, Binding: manifest.Fingerprint(r.binding), Reads: rec.snapshot()},
+		payload,
+	)
+	if cleanedAbsErr == nil {
+		_, cleanedAbsErr = w.Write(data)
+	}
+	return sourcecache.ProducerResult{}, cleanedAbsErr
+}
+
+func (r *renderRequest) generateFiles(_ context.Context, memFS *treeFS, subDir string) (string, error) {
+	var ks map[string]any
+	var cleanedAbsErr error
+	var data []byte
+	var kfile string
+	if r.request.Spec != nil {
+		ks, cleanedAbsErr = r.request.Spec.RenderDocument()
+		if cleanedAbsErr != nil {
+			return "", cleanedAbsErr
+		}
+		data, kfile, cleanedAbsErr = generateManifest(memFS, subDir, ks)
+		if cleanedAbsErr != nil {
+			return "", fmt.Errorf("flux kustomize generator: %w", cleanedAbsErr)
+		}
+		if writeFileErr := memFS.WriteFile(kfile, data); writeFileErr != nil {
+			return "", fmt.Errorf("write kustomization.yaml: %w", writeFileErr)
+		}
+	} else {
+		kfile, _ = kustomizationFileIn(memFS, subDir)
+	}
+
+	return kfile, nil
+}
+
+func (r *renderRequest) buildDocuments(
+	ctx context.Context,
+	memFS *treeFS,
+	subDir, kfile string,
+) ([]manifest.DocOccurrence, error) {
+	subPath := r.request.SubPath
+	if errErr := ctx.Err(); errErr != nil {
+		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
+		return nil, errErr
+	}
+	if slog.Default().Enabled(ctx, slog.LevelDebug) {
+		slog.Debug("kustomize: build", "path", r.request.SubPath)
+	}
+	rm, cleanedAbsErr := func() (resmap.ResMap, error) {
+		kustomizestate.BuildMutex.Lock()
+		defer kustomizestate.BuildMutex.Unlock()
+		return kustomizestate.Build(memFS, subDir)
+	}()
+	if cleanedAbsErr != nil {
+		built := manifest.NewError(
+			manifest.ErrFlux,
+			fmt.Errorf("kustomize build %s: %w", subPath, cleanedAbsErr),
+			"",
+		)
+		// Kustomize API v0.21.2 resmap/reswrangler.go Append returns an untyped formatted duplicate-ID error.
+		if !strings.Contains(cleanedAbsErr.Error(), "already registered id") {
+			return nil, built
+		}
+
+		readFileData, readErr := memFS.ReadFile(kfile)
+		if readErr != nil {
+			return nil, readErr
+		}
+		if attr := duplicateProducers(memFS, subDir, subPath, readFileData); attr != "" {
+			return nil, fmt.Errorf(
+				"%w\n%s\nselect an individual overlay with -p",
+				built,
+				attr,
+			)
+		}
+		return nil, built
+	}
+	// AsYAML converts through JSON, so label scalar spelling MUST be retained first.
+	if r.request.Spec != nil && r.request.Spec.EmissionPolicy().StringLabels {
+		if err := normalizeRenderedLabels(rm); err != nil {
+			return nil, err
+		}
+	}
+	if errErr2 := ctx.Err(); errErr2 != nil {
+		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
+		return nil, errErr2
+	}
+
+	out, cleanedAbsErr := rm.AsYaml()
+	if cleanedAbsErr != nil {
+		return nil, fmt.Errorf("kustomize render %s: %w", subPath, cleanedAbsErr)
+	}
+	docs, cleanedAbsErr := manifest.DecodeDocs(bytes.NewReader(out), manifest.RequiredDocuments)
+	if cleanedAbsErr != nil {
+		return nil, cleanedAbsErr
+	}
+	return docs, nil
+}
+
+func normalizeRenderedLabels(rm resmap.ResMap) error {
+	for _, r := range rm.Resources() {
+		if setLabelsErr := r.SetLabels(r.GetLabels()); setLabelsErr != nil {
+			return manifest.NewError(
+				manifest.ErrInput,
+				fmt.Errorf("normalize labels: %w", setLabelsErr),
+				"",
+			)
+		}
+	}
+	return nil
 }

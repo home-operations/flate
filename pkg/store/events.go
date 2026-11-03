@@ -88,11 +88,15 @@ func (s *Store) AddListener(event EventKind, fn Listener, flush bool) Unsubscrib
 	handle := set.add(fn)
 	pairs := s.snapshotForReplay(event)
 	s.unlockAll()
-	for _, p := range pairs {
-		if e, ok := p.payload.(*Emission); ok && !emissionCurrent(e, p.input) {
-			continue
+	{
+		pValues := pairs
+		for pIndex := range pValues {
+			p := pValues[pIndex]
+			if e, ok := p.payload.(*Emission); ok && !emissionCurrent(e, p.input) {
+				continue
+			}
+			safeInvoke(fn, p.id, p.payload)
 		}
-		safeInvoke(fn, p.id, p.payload)
 	}
 	return func() { set.remove(handle) }
 }
@@ -183,6 +187,7 @@ func collectReplay[V any](
 	return out
 }
 
+//nolint:gochecknoglobals // The shared empty snapshot avoids per-store allocation.
 var emptyListenerSnapshot listenerSnapshot
 
 // fireUnderLock MUST capture the immutable listener set before the writer unlocks.

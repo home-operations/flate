@@ -21,8 +21,11 @@ import (
 )
 
 // Controller evaluates generated sources through the shared publication lifecycle.
+const generatedLabelCount = 2
+
 type Controller struct {
 	*base.Controller
+
 	cache *cache.Cache
 }
 
@@ -33,6 +36,7 @@ func New(s *store.Store, tasks *task.Service, owner *cache.Cache) *Controller {
 
 type execution struct {
 	*Controller
+
 	run base.Execution
 }
 
@@ -110,7 +114,7 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 	if err != nil {
 		return err
 	}
-	evaluation := evaluation{
+	localEvaluation := evaluation{
 		owner:  c.cache,
 		inputs: make(map[string]*store.SourceArtifact, len(spec.Sources)),
 		maxAge: cache.Forever,
@@ -128,18 +132,18 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 	for ref := range manifest.References(raw, manifest.ReferenceRelations) {
 		alias := spec.Sources[ref.Position].Alias
 		read := store.ArtifactContent | selections[alias]
-		artifact := c.run.Reads.GetArtifact(ref.NamedResource, read).(*store.SourceArtifact)
+		artifact := c.run.Reads.GetArtifact(ref.NamedResource, read).(*store.SourceArtifact) //nolint:errcheck // Required source dependencies resolve source artifacts before reconciliation.
 		if read&store.ArtifactOrigin != 0 && artifact.Metadata["org.opencontainers.image.revision"] == "" {
 			read |= store.ArtifactRevision
 			c.run.Reads.GetArtifact(ref.NamedResource, read)
 		}
-		evaluation.inputs[alias], views[alias] = artifact, artifact.FS
-		evaluation.identity = append(
-			evaluation.identity,
+		localEvaluation.inputs[alias], views[alias] = artifact, artifact.FS
+		localEvaluation.identity = append(
+			localEvaluation.identity,
 			inputIdentity{Alias: alias, Source: ref.NamedResource, Input: artifact.Input(read)},
 		)
 		if artifact.Content == "" {
-			evaluation.maxAge = 0
+			localEvaluation.maxAge = 0
 		}
 	}
 	content := struct {
@@ -148,9 +152,9 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 		UID       string
 		Disabled  bool
 		Inputs    []inputIdentity
-	}{id, spec, uid, disabled, evaluation.identity}
+	}{id, spec, uid, disabled, localEvaluation.identity}
 	var replayContent any = content
-	if evaluation.maxAge == 0 {
+	if localEvaluation.maxAge == 0 {
 		replayContent = nil
 	}
 	fingerprint, handled, err := c.run.FingerprintDedup(ctx, id, replayContent, &store.Emission{})
@@ -165,20 +169,20 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 	var documents []manifest.DocOccurrence
 	for _, req := range requests {
 		if err := ctx.Err(); err != nil {
-			return err
+			return fmt.Errorf("context: %w", err)
 		}
 		key := cache.ArchiveKey{Policy: "fixed", Content: struct {
 			Namespace string
 			Generator manifest.NamedResource
 			Request   request
 			Inputs    []inputIdentity
-		}{"artifactgenerator/output/v1", id, req, evaluation.identity}}
+		}{"artifactgenerator/output/v1", id, req, localEvaluation.identity}}
 		input, descriptor, keyID, err := c.cache.Acquire(
 			ctx,
 			key,
-			cache.Policy{MaxAge: evaluation.maxAge},
+			cache.Policy{MaxAge: localEvaluation.maxAge},
 			func(ctx context.Context, target cache.ProducerInput) (cache.ProducerResult, error) {
-				return evaluation.produce(ctx, req, target)
+				return localEvaluation.produce(ctx, &req, target)
 			},
 		)
 		if err != nil {
@@ -201,9 +205,9 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 			Revision: "latest@" + digest,
 		}
 		if alias := strings.TrimPrefix(req.Output.Revision, "@"); alias != "" {
-			payload.Revision = evaluation.inputs[alias].Revision
+			payload.Revision = localEvaluation.inputs[alias].Revision
 		}
-		if source := evaluation.inputs[strings.TrimPrefix(req.Output.OriginRevision, "@")]; source != nil {
+		if source := localEvaluation.inputs[strings.TrimPrefix(req.Output.OriginRevision, "@")]; source != nil {
 			origin := source.Metadata["org.opencontainers.image.revision"]
 			if origin == "" {
 				origin = source.Revision
@@ -212,7 +216,7 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 		}
 		labels := maps.Clone(spec.CommonMetadata.Labels)
 		if labels == nil {
-			labels = make(map[string]string, len(req.Captures)+2)
+			labels = make(map[string]string, len(req.Captures)+generatedLabelCount)
 		}
 		maps.Copy(labels, req.Captures)
 		labels["app.kubernetes.io/managed-by"], labels["source.extensions.fluxcd.io/generator"] = "source-watcher", uid
@@ -246,7 +250,7 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 		desired, documents = append(desired, children...), append(documents, docs...)
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return fmt.Errorf("context: %w", err)
 	}
 	attempt.Children, attempt.Manifests, attempt.Complete, attempt.Fingerprint = desired, documents, true, fingerprint
 	return c.run.Emit(ctx, id, &attempt, nil)

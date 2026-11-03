@@ -71,53 +71,70 @@ func sourcePaths(
 				roots(input.view.declaration())
 			}
 			binding := input.view.sourceBinding()
-			for _, production := range input.view.child.Productions {
-				if production.File != "" && production.Source == binding.source && binding.artifact != nil {
-					out = append(
-						out,
-						manifest.SourceEvidence{
-							Source: binding.artifact.HistoryIdentity(binding.source),
-							Path:   filepath.ToSlash(production.File),
-						},
-					)
+			{
+				productionValues := input.view.child.Productions
+				for productionIndex := range productionValues {
+					production := productionValues[productionIndex]
+					if production.File != "" && production.Source == binding.source && binding.artifact != nil {
+						out = append(
+							out,
+							manifest.SourceEvidence{
+								Source: binding.artifact.HistoryIdentity(binding.source),
+								Path:   filepath.ToSlash(production.File),
+							},
+						)
+					}
 				}
 			}
 		}
 	}
-	for _, entry := range entries {
-		roots(entry.child.Obj)
-		for _, production := range entry.child.Productions {
-			if production.File != "" && production.Source == entry.binding.source && entry.binding.artifact != nil {
-				out = append(
-					out,
-					manifest.SourceEvidence{
-						Source: entry.binding.artifact.HistoryIdentity(entry.binding.source),
-						Path:   filepath.ToSlash(production.File),
-					},
-				)
+	{
+		entryValues := entries
+		for entryIndex := range entryValues {
+			entry := entryValues[entryIndex]
+			roots(entry.child.Obj)
+			{
+				productionValues2 := entry.child.Productions
+				for productionIndex2 := range productionValues2 {
+					production := productionValues2[productionIndex2]
+					if production.File != "" && production.Source == entry.binding.source &&
+						entry.binding.artifact != nil {
+						out = append(
+							out,
+							manifest.SourceEvidence{
+								Source: entry.binding.artifact.HistoryIdentity(entry.binding.source),
+								Path:   filepath.ToSlash(production.File),
+							},
+						)
+					}
+				}
 			}
-		}
-		for ref := range manifest.References(entry.child.Obj, manifest.ReferenceRelations) {
-			if !ref.ContentInput() || ref.Name == "" {
-				continue
-			}
-			facts := s.ReferenceFacts(ref.NamedResource, index)
-			if facts.Supplied != nil {
-				continue
-			}
-			for _, production := range facts.Productions {
-				if production.File == "" {
+			for ref := range manifest.References(entry.child.Obj, manifest.ReferenceRelations) {
+				if !ref.ContentInput() || ref.Name == "" {
 					continue
 				}
-				artifact, _ := s.GetArtifact(production.Source, ArtifactContent).(*SourceArtifact)
-				if artifact != nil {
-					out = append(
-						out,
-						manifest.SourceEvidence{
-							Source: artifact.HistoryIdentity(production.Source),
-							Path:   filepath.ToSlash(production.File),
-						},
-					)
+				facts := s.ReferenceFacts(ref.NamedResource, index)
+				if facts.Supplied != nil {
+					continue
+				}
+				{
+					productionValues3 := facts.Productions
+					for productionIndex3 := range productionValues3 {
+						production := productionValues3[productionIndex3]
+						if production.File == "" {
+							continue
+						}
+						artifact, _ := s.GetArtifact(production.Source, ArtifactContent).(*SourceArtifact)
+						if artifact != nil {
+							out = append(
+								out,
+								manifest.SourceEvidence{
+									Source: artifact.HistoryIdentity(production.Source),
+									Path:   filepath.ToSlash(production.File),
+								},
+							)
+						}
+					}
 				}
 			}
 		}

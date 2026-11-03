@@ -7,6 +7,7 @@ import (
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 )
 
+//nolint:gochecknoglobals // Ownership keys form an immutable shared inventory.
 var ownershipKeys = [...][2]string{
 	{FluxKustomizeDomain + "/name", FluxKustomizeDomain + "/namespace"},
 	{HelmReleaseDomain + "/name", HelmReleaseDomain + "/namespace"},
@@ -48,7 +49,7 @@ func IsOwnershipLabel(key string) bool {
 // WithoutOwnershipLabels removes reconciliation stamps from a borrowed declaration document.
 // The returned document MUST remain immutable and can share unchanged containers.
 func WithoutOwnershipLabels(document map[string]any) map[string]any {
-	metadata, _ := document["metadata"].(map[string]any)
+	metadata, _ := document[metadataKey].(map[string]any)
 	labels, _ := metadata["labels"].(map[string]any)
 	stamped := false
 	for key := range labels {
@@ -69,7 +70,7 @@ func WithoutOwnershipLabels(document map[string]any) map[string]any {
 		metadata["labels"] = labels
 	}
 	out := maps.Clone(document)
-	out["metadata"] = metadata
+	out[metadataKey] = metadata
 	return out
 }
 
@@ -135,7 +136,7 @@ func (p EmissionPolicy) Stamp(docs []DocOccurrence) {
 			if p.HookAnnotation == "" {
 				return false
 			}
-			annotations, _ := md["annotations"].(map[string]any)
+			annotations, _ := md[annotationsKey].(map[string]any)
 			_, found := annotations[p.HookAnnotation]
 			return found
 		}
@@ -145,7 +146,7 @@ func (p EmissionPolicy) Stamp(docs []DocOccurrence) {
 			}
 			labels, _ := md["labels"].(map[string]any)
 			if labels == nil {
-				labels = make(map[string]any, 2)
+				labels = make(map[string]any, ownerLabelCount)
 				md["labels"] = labels
 			}
 			labels[p.OwnerKeys[0]] = p.OwnerValues[0]
@@ -158,7 +159,7 @@ func (p EmissionPolicy) Stamp(docs []DocOccurrence) {
 		}
 		if !hook() && (p.CommonExcludedKind == "" || DocKind(doc) != p.CommonExcludedKind) {
 			MergeStringMap(md, "labels", p.Labels)
-			MergeStringMap(md, "annotations", p.Annotations)
+			MergeStringMap(md, annotationsKey, p.Annotations)
 		}
 		if p.CommonFirst {
 			owner()
@@ -167,6 +168,8 @@ func (p EmissionPolicy) Stamp(docs []DocOccurrence) {
 }
 
 // SelectOutput reports whether this producer's batch or document matches requested output scope.
+//
+//nolint:gocritic // Preserve the existing value API and its snapshot semantics.
 func (p EmissionPolicy) SelectOutput(
 	doc map[string]any,
 	roots []NamedResource,
@@ -187,7 +190,7 @@ func (p EmissionPolicy) SelectOutput(
 			return false
 		}
 	}
-	md, _ := doc["metadata"].(map[string]any)
+	md, _ := doc[metadataKey].(map[string]any)
 	actual, _ := md["labels"].(map[string]any)
 	for key, value := range labels {
 		if got, ok := actual[key]; !ok || got != value {
@@ -196,3 +199,7 @@ func (p EmissionPolicy) SelectOutput(
 	}
 	return true
 }
+
+const (
+	ownerLabelCount = 2
+)

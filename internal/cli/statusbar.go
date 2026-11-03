@@ -28,6 +28,8 @@ import (
 // bar is gone.
 //
 // Update owns the model maps; store callbacks only publish pending events.
+//
+//nolint:recvcheck // Bubble Tea consumes value snapshots while event helpers mutate the current snapshot.
 type barModel struct {
 	spinner   spinner.Model
 	color     bool
@@ -85,11 +87,13 @@ func (e *progressEvents) take() *progressEvent {
 // finishMsg clears the frame and quits the program — the bar leaves no trace.
 type finishMsg struct{}
 
+const defaultBarWidth = 80
+
 func newBarModel(color bool) barModel {
 	return barModel{
 		spinner:   spinner.New(spinner.WithSpinner(spinner.MiniDot)),
 		color:     color,
-		width:     80,
+		width:     defaultBarWidth,
 		startedAt: time.Now(),
 		events:    &progressEvents{},
 		labels:    map[manifest.NamedResource]string{},
@@ -101,8 +105,11 @@ func newBarModel(color bool) barModel {
 
 // Init starts the spinner animation; subsequent TickMsgs re-render the frame
 // (which also refreshes the elapsed clock).
+//
+//nolint:gocritic // Bubble Tea requires a value snapshot rather than a shared mutable model.
 func (m barModel) Init() tea.Cmd { return m.spinner.Tick }
 
+//nolint:gocritic,ireturn // Bubble Tea requires a value snapshot and its model interface return type.
 func (m barModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case spinner.TickMsg:
@@ -153,6 +160,8 @@ func (m *barModel) track(id manifest.NamedResource, status store.Status, observe
 // View composes one frame, styled via internal/output and truncated to the
 // terminal width (ANSI- and wide-rune-aware). An empty frame after finishMsg
 // clears the line so the bar vanishes without a trace.
+//
+//nolint:gocritic // Bubble Tea requires a value snapshot rather than a shared mutable model.
 func (m barModel) View() tea.View {
 	if m.finished {
 		return tea.NewView("")
@@ -168,7 +177,7 @@ func (m barModel) View() tea.View {
 
 // inflightLabels returns the in-flight resource names ordered by first-seen
 // (id-tiebroken) so the bar's name list is stable frame to frame.
-func (m barModel) inflightLabels() []string {
+func (m *barModel) inflightLabels() []string {
 	ids := make([]manifest.NamedResource, 0, len(m.inflight))
 	for id := range m.inflight {
 		ids = append(ids, id)

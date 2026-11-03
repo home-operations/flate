@@ -7,6 +7,7 @@ type scopeResolver interface {
 	LookupScope(yaml.TypeMeta) (bool, bool)
 }
 
+//nolint:gochecknoglobals // The registry shares discovered immutable resource scopes.
 var scopes scopeResolver
 
 // RegisterScopeResolver installs the process scope owner once during initialization.
@@ -16,6 +17,7 @@ func RegisterScopeResolver(resolver scopeResolver) {
 	if scopes != nil || resolver == nil {
 		panic("manifest: scope resolver must be registered once during initialization")
 	}
+	//nolint:gochecknoglobals // The registry shares discovered immutable resource scopes.
 	scopes = resolver
 }
 

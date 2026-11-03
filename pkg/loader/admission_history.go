@@ -24,24 +24,27 @@ func (c *admissionClosure) readHistory() {
 		}
 		c.replace[owner] = history.Complete
 		records := map[manifest.NamedResource]manifest.DiscoveryRecord{}
-		for id, record := range history.Records {
-			record.ContentRoots = maps.Clone(record.ContentRoots)
-			for source, roots := range record.ContentRoots {
-				resolved := make([]string, 0, len(roots))
-				for _, root := range roots {
-					base, ok := resolveRoot(c.objects, source, root)
-					if !ok {
-						c.replace[owner] = false
-						base = root
-						if strings.Contains(root, "/../") || strings.HasSuffix(root, "/..") {
-							base = "."
+		{
+			//nolint:gocritic // The iterator supplies immutable value snapshots.
+			for id, record := range history.Records {
+				record.ContentRoots = maps.Clone(record.ContentRoots)
+				for source, roots := range record.ContentRoots {
+					resolved := make([]string, 0, len(roots))
+					for _, root := range roots {
+						base, ok := resolveRoot(c.objects, source, root)
+						if !ok {
+							c.replace[owner] = false
+							base = root
+							if strings.Contains(root, "/../") || strings.HasSuffix(root, "/..") {
+								base = "."
+							}
 						}
+						resolved = append(resolved, base)
 					}
-					resolved = append(resolved, base)
+					record.ContentRoots[source] = resolved
 				}
-				record.ContentRoots[source] = resolved
+				records[id] = record
 			}
-			records[id] = record
 		}
 		c.accepted[owner] = records
 	}
@@ -66,25 +69,7 @@ func (c *admissionClosure) record(id manifest.NamedResource) manifest.DiscoveryR
 	if len(c.accepted) == 0 {
 		return record
 	}
-	if record.File == "" && len(record.Productions) != 0 && len(c.productions(id)) == 0 {
-		record.Refs, record.ContentRoots, record.Parent = nil, nil, manifest.NamedResource{}
-	}
-	for owner, records := range c.accepted {
-		if historical, ok := records[id]; ok {
-			record.Refs = append(slices.Clone(record.Refs), historical.Refs...)
-			record.ContentRoots = maps.Clone(record.ContentRoots)
-			if record.ContentRoots == nil {
-				record.ContentRoots = map[manifest.NamedResource][]string{}
-			}
-			for source, roots := range historical.ContentRoots {
-				if owner != id && c.replace[id] {
-					continue
-				}
-				record.ContentRoots[source] = append(slices.Clone(record.ContentRoots[source]), roots...)
-			}
-		}
-	}
-	return record
+	return c.completeRecord(&id, &record)
 }
 
 func (c *admissionClosure) historicalReferences(id manifest.NamedResource) iter.Seq[manifest.Reference] {
@@ -112,6 +97,7 @@ func (c *admissionClosure) historicalReferences(id manifest.NamedResource) iter.
 
 type admissionRootView struct {
 	fs.FS
+
 	valid bool
 }
 
@@ -152,4 +138,26 @@ func resolveRoot(objects sourceStore, source manifest.NamedResource, root string
 	}
 	info, err := fs.Stat(art.FS, resolved)
 	return resolved, err == nil && info.IsDir()
+}
+
+func (c *admissionClosure) completeRecord(id *manifest.NamedResource, record *manifest.DiscoveryRecord) manifest.DiscoveryRecord {
+	if (*record).File == "" && len((*record).Productions) != 0 && len(c.productions((*id))) == 0 {
+		(*record).Refs, (*record).ContentRoots, (*record).Parent = nil, nil, manifest.NamedResource{}
+	}
+	for owner, records := range c.accepted {
+		if historical, ok := records[(*id)]; ok {
+			(*record).Refs = append(slices.Clone((*record).Refs), historical.Refs...)
+			(*record).ContentRoots = maps.Clone((*record).ContentRoots)
+			if (*record).ContentRoots == nil {
+				(*record).ContentRoots = map[manifest.NamedResource][]string{}
+			}
+			for source, roots := range historical.ContentRoots {
+				if owner != (*id) && c.replace[(*id)] {
+					continue
+				}
+				(*record).ContentRoots[source] = append(slices.Clone((*record).ContentRoots[source]), roots...)
+			}
+		}
+	}
+	return (*record)
 }

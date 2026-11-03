@@ -50,15 +50,15 @@ func TestSession_OnlyRequiredStandaloneConstruction(t *testing.T) {
 	advanced, err := session.Advance(t.Context(), &loader.Admission{Blocked: []string{"one"}})
 	assert.NoError(t, err)
 	assert.Equal(t, advanced, true)
-	if st.GetObject(
-		manifest.NamedResource{
-			Group:     manifest.FluxOperatorDomain,
-			Kind:      manifest.KindResourceSet,
-			Namespace: "apps",
-			Name:      "two",
-		},
-	) != nil {
-		t.Fatal("unrelated package was hydrated")
+	{
+		assert.FatalIf(t, st.GetObject(
+			manifest.NamedResource{
+				Group:     manifest.FluxOperatorDomain,
+				Kind:      manifest.KindResourceSet,
+				Namespace: "apps",
+				Name:      "two",
+			},
+		) != nil, "%v", "unrelated package was hydrated")
 	}
 	one := manifest.NamedResource{
 		Group:     manifest.FluxOperatorDomain,
@@ -78,15 +78,15 @@ func TestSession_OnlyRequiredStandaloneConstruction(t *testing.T) {
 	assert.Equal(t, result, again)
 	assert.Equal(t, result.Index, l.Index)
 	assert.Equal(t, st.GetObject(one) != nil, true)
-	if st.GetObject(
-		manifest.NamedResource{
-			Group:     manifest.FluxOperatorDomain,
-			Kind:      manifest.KindResourceSet,
-			Namespace: "apps",
-			Name:      "two",
-		},
-	) != nil {
-		t.Fatal("freeze hydrated an unrelated package")
+	{
+		assert.FatalIf(t, st.GetObject(
+			manifest.NamedResource{
+				Group:     manifest.FluxOperatorDomain,
+				Kind:      manifest.KindResourceSet,
+				Namespace: "apps",
+				Name:      "two",
+			},
+		) != nil, "%v", "freeze hydrated an unrelated package")
 	}
 }
 

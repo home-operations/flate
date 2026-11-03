@@ -9,10 +9,11 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-var namespaceScopes sync.Map
+var namespaceScopes sync.Map //nolint:gochecknoglobals // Builtin scope results persist across all render invocations.
 
 type scopeResolver struct{}
 
+//nolint:gochecknoinits // Importing the krusty owner registers the SDK scope resolver before use.
 func init() { manifest.RegisterScopeResolver(scopeResolver{}) }
 
 func (scopeResolver) LookupScope(meta yaml.TypeMeta) (bool, bool) {

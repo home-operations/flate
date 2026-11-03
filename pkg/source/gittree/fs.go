@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/go-git/go-billy/v5"
-	"github.com/go-git/go-billy/v5/osfs"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/cache"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
@@ -26,8 +25,6 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/storer"
 	"github.com/go-git/go-git/v5/storage/filesystem"
 	"github.com/go-git/go-git/v5/storage/transactional"
-	merklefs "github.com/go-git/go-git/v5/utils/merkletrie/filesystem"
-	"github.com/go-git/go-git/v5/utils/merkletrie/noder"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
@@ -83,239 +80,18 @@ func NormalizeSparsePaths(paths []string) []string {
 
 // FS is an admitted filesystem. Its representation is selected once by New.
 type FS struct {
+	view
+
 	// Warnings is immutable admission evidence, nil when no advisory was observed.
 	Warnings []manifest.Warning
-	view
 	location *gitrepo.Location
 	policy   *sourceignore.Matcher
 	snapshot *localPolicy
 	content  atomic.Pointer[contentFingerprint]
 }
 
-type contentFingerprint struct {
-	files atomic.Pointer[map[string]string]
-	once  sync.Once
-	key   string
-	err   error
-}
-
-// ContentFingerprint identifies selected bytes once per stable admitted view.
-// Immutable views retain their acquisition identity; mutable identities remain separate.
-func ContentFingerprint(ctx context.Context, input fs.FS) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	g, ok := input.(*FS)
-	if !ok {
-		return "", nil
-	}
-	for {
-		content := g.content.Load()
-		if content == nil {
-			content = &contentFingerprint{}
-			if !g.content.CompareAndSwap(nil, content) {
-				continue
-			}
-		}
-		run := false
-		content.once.Do(func() {
-			run = true
-			policy, err := g.SourcePolicy(ctx)
-			if err != nil {
-				content.err = err
-				return
-			}
-			v, native := g.view.(*gitView)
-			files := map[string]string{}
-			var ignores []string
-			visit := func(name string, entry fs.DirEntry, err error) error {
-				if err != nil {
-					return err
-				}
-				if err := ctx.Err(); err != nil || entry.IsDir() {
-					return err
-				}
-				if entry.Name() == ".sourceignore" {
-					ignores = append(ignores, name)
-				}
-				files[name] = ""
-				return nil
-			}
-			if native {
-				files = make(map[string]string, len(v.nodes))
-				for name := range v.nodes {
-					if content.err = visit(name, gitEntry{v, name}, nil); content.err != nil {
-						break
-					}
-				}
-			} else {
-				content.err = fs.WalkDir(g, ".", visit)
-			}
-			if content.err == nil {
-				selectedPolicy := native && v.mode == Source
-				for _, file := range policy.Evidence() {
-					if _, admitted := files[file.Path]; !admitted {
-						selectedPolicy = false
-						break
-					}
-				}
-				if !selectedPolicy {
-					sourceignore.Select(policy, files, ignores)
-				}
-				if content.err = g.identifyFiles(ctx, files); content.err != nil {
-					return
-				}
-				content.key = manifest.Fingerprint(files)
-				if v, ok := g.view.(*gitView); ok && v.identity != "" {
-					content.key = v.identity
-				}
-				content.files.Store(&files)
-			}
-		})
-		if errors.Is(content.err, context.Canceled) || errors.Is(content.err, context.DeadlineExceeded) {
-			g.content.CompareAndSwap(content, nil)
-			if !run && ctx.Err() == nil {
-				continue
-			}
-		}
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-		return content.key, content.err
-	}
-}
-
-func (g *FS) identifyFiles(ctx context.Context, files map[string]string) error {
-	var v *gitView
-	subdir, origin := ".", "."
-	nodes := map[string]noder.Noder{}
-	prefix := "."
-	root := ""
-	for input := g; input != nil; {
-		switch current := input.view.(type) {
-		case *localView:
-			root = filepath.Join(current.root, filepath.FromSlash(subdir))
-			input = nil
-		case *scopedView:
-			subdir = path.Join(current.path, subdir)
-			input = current.parent
-		case *gitView:
-			if v == nil && current.commit != plumbing.ZeroHash {
-				v, origin = current, subdir
-			}
-			input, _ = current.current.(*FS)
-		default:
-			input = nil
-		}
-	}
-	if root != "" && g.location != nil && g.location.Repository != nil && (v == nil || v.identity == "") {
-		idx, err := g.location.Repository.Storer.Index()
-		if err != nil {
-			return err
-		}
-		prefix, err = filepath.Rel(g.location.RepositoryRoot, root)
-		if err != nil {
-			return err
-		}
-		prefix = filepath.ToSlash(prefix)
-		nodes["."] = merklefs.NewRootNodeWithOptions(
-			osfs.New(g.location.RepositoryRoot, osfs.WithBoundOS()),
-			nil,
-			merklefs.Options{Index: idx},
-		)
-	}
-	var lookup func(string) (noder.Noder, error)
-	lookup = func(name string) (noder.Noder, error) {
-		if node := nodes[name]; node != nil || name == "." {
-			return node, nil
-		}
-		parent, err := lookup(path.Dir(name))
-		if parent == nil || err != nil {
-			return nil, err
-		}
-		children, err := parent.Children()
-		if err != nil {
-			return nil, err
-		}
-		for _, child := range children {
-			nodes[path.Join(path.Dir(name), child.Name())] = child
-		}
-		return nodes[name], nil
-	}
-	for _, name := range slices.Sorted(maps.Keys(files)) {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		var identity plumbing.Hash
-		member := path.Join(origin, name)
-		if v != nil && (v.identity != "" || v.changes[member]) {
-			identity = v.nodes[member].hash
-		}
-		if identity == plumbing.ZeroHash {
-			node, err := lookup(path.Join(prefix, name))
-			if err != nil {
-				return err
-			}
-			if node != nil {
-				identity = plumbing.Hash(node.Hash()[:len(identity)])
-			}
-		}
-		if identity == plumbing.ZeroHash {
-			data, err := g.ReadFile(name)
-			if err != nil {
-				return err
-			}
-			identity = plumbing.ComputeHash(plumbing.BlobObject, data)
-		}
-		files[name] = manifest.Fingerprint(identity)
-	}
-	return nil
-}
-
-// FileDigests borrows completed selected-file evidence without reading content.
-// Returned maps MUST remain read-only.
-func (g *FS) FileDigests() map[string]string {
-	if content := g.content.Load(); content != nil {
-		if files := content.files.Load(); files != nil {
-			return *files
-		}
-	}
-	return nil
-}
-
 // Location returns the resolved disk identity retained by admission.
 func (g *FS) Location() *gitrepo.Location { return g.location }
-
-// PolicyEvidence returns the ordered ignore-file content used to shape the view.
-// Policy evidence MUST NOT be used as immutable source acquisition authority.
-func (g *FS) PolicyEvidence() any {
-	if g.policy == nil {
-		return nil
-	}
-	files := g.policy.Evidence()
-	content := make([]struct {
-		Path string
-		Data []byte
-	}, 0, len(files))
-	for _, file := range files {
-		content = append(content, struct {
-			Path string
-			Data []byte
-		}{file.Path, []byte(file.Data)})
-	}
-	return content
-}
-
-// SourcePolicy returns the admission's captured Flux policy without reshaping its files.
-func (g *FS) SourcePolicy(ctx context.Context) (*sourceignore.Matcher, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if g.policy != nil {
-		return g.policy, nil
-	}
-	return g.snapshot.load(g)
-}
 
 // OperationView creates private local observations while retaining admitted membership.
 func (g *FS) OperationView() *FS {
@@ -373,6 +149,7 @@ func (e gitEntry) Info() (fs.FileInfo, error) { return e.input.Lstat(e.name) }
 
 type gitInfo struct {
 	*gitNode
+
 	size int64
 }
 
@@ -392,48 +169,11 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 		return warningOnly(current), "", err
 	}
 	direct, source := opts.Mode == Direct, opts.Mode == Source
-	reuse := direct && commit == plumbing.ZeroHash
-	identity := opts.CurrentContent
-	var matcher *sourceignore.Matcher
-	current, _ := opts.Current.(*FS)
-	if current != nil {
-		if opts.Location == nil {
-			opts.Location = current.location
-		}
-		switch v := current.view.(type) {
-		case *localView:
-			current = current.OperationView()
-			current.location = opts.Location
-		case *gitView:
-			if v.refresh != nil {
-				refreshed, _, err := New(ctx, v.backing, v.commit, *v.refresh)
-				if err != nil {
-					return warningOnly(refreshed), "", err
-				}
-				current, v = refreshed, refreshed.view.(*gitView)
-			}
-			identity = v.identity
-			if commit == plumbing.ZeroHash {
-				matcher = current.policy
-			}
-			if source && matcher != nil && opts.Ignore != "" {
-				matcher = matcher.WithExtra(opts.Ignore)
-			}
-			reuse = reuse ||
-				commit == plumbing.ZeroHash && source && v.mode == Source && opts.Ignore == "" && len(opts.Sparse) == 0
-		}
-		if source && commit == plumbing.ZeroHash && matcher == nil {
-			var err error
-			matcher, err = current.SourcePolicy(ctx)
-			if err != nil {
-				return warningOnly(current), "", err
-			}
-			if opts.Ignore != "" {
-				matcher = matcher.WithExtra(opts.Ignore)
-			}
-		}
-		opts.Current = current
+	current, matcher, reuse, err := opts.refreshCurrent(ctx, commit)
+	if err != nil {
+		return warningOnly(current), "", err
 	}
+	identity := opts.CurrentContent
 	if reuse && opts.Current != nil && (current != nil || identity == "") {
 		if current != nil {
 			return current, identity, nil
@@ -441,6 +181,7 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 		input := &struct {
 			FS
 			directView
+
 			policyState localPolicy
 		}{directView: directView{FS: opts.Current}}
 		input.view = &input.directView
@@ -451,7 +192,7 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 	if direct && opts.Current == nil && opts.Worktree != nil {
 		root := opts.Worktree.Root()
 		if _, err := os.Stat(root); err != nil {
-			return nil, "", err
+			return nil, "", err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
 		}
 		input := newLocal(root, false, &localPolicy{})
 		input.location = opts.Location
@@ -465,34 +206,7 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 		return warningOnly(input), "", err
 	}
 	input.policy = matcher
-	g := input.view.(*gitView)
-	if commit != plumbing.ZeroHash {
-		identity = ""
-	}
-	if committed := commit != plumbing.ZeroHash &&
-		(opts.Worktree == nil || opts.Content != nil); committed ||
-		identity != "" {
-		g.identity = manifest.Fingerprint(struct {
-			Content         any
-			Commit, Current string
-			Mode            ViewMode
-			Sparse          []string `json:",omitempty"`
-			Ignore          string
-		}{opts.Content, commit.String(), identity, opts.Mode, opts.Sparse, opts.Ignore})
-		if g.identity == "" {
-			return warningOnly(
-					input,
-				), "", manifest.NewError(
-					manifest.ErrInput,
-					nil,
-					"git view content cannot be fingerprinted",
-				)
-		}
-	}
-	if err := g.shape(ctx, opts, input); err != nil {
-		return warningOnly(input), "", err
-	}
-	return input, g.identity, nil
+	return input.finishGitView(ctx, commit, &opts, identity)
 }
 
 func warningOnly(input *FS) *FS {
@@ -516,8 +230,9 @@ func newTree(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash
 	combined := &struct {
 		FS
 		gitView
+
 		policyState localPolicy
-	}{commit: commit, mode: opts.Mode, worktree: opts.Worktree, backing: backing, current: opts.Current, nodes: map[string]*gitNode{".": {name: ".", mode: fs.ModeDir | 0o755}}}
+	}{commit: commit, mode: opts.Mode, worktree: opts.Worktree, backing: backing, current: opts.Current, nodes: map[string]*gitNode{".": {name: ".", mode: fs.ModeDir | gitDirectoryMode}}}
 	input := &combined.gitView
 	combined.snapshot = opts.policy
 	if combined.snapshot == nil {
@@ -543,20 +258,8 @@ func newTree(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash
 		}
 	}
 	if opts.Current != nil && commit == plumbing.ZeroHash {
-		if native {
-			input.storers.New = current.storers.New
-			input.backing = current.backing
-			input.worktree = current.worktree
-		}
-		if !native || current.backing == nil && current.worktree == nil {
-			if err := input.walkWorktree(ctx, "."); err != nil {
-				return warningOnly(&combined.FS), err
-			}
-		} else {
-			input.denied = current.denied
-			for name, node := range current.nodes {
-				input.nodes[name] = &gitNode{name: node.name, hash: node.hash, mode: node.mode, children: node.children}
-			}
+		if err := input.populateCurrent(ctx, current, native); err != nil {
+			return warningOnly(&combined.FS), err
 		}
 	} else {
 		warnings, err := input.walk(ctx, commit)
@@ -578,16 +281,13 @@ func (g *gitView) shape(ctx context.Context, opts ViewOptions, input *FS) error 
 		g.refresh = &refresh
 	}
 	names := slices.Sorted(maps.Keys(g.nodes))
-	visible := ViewOptions.visible
 	matcher := input.policy
 	var links *tree.Builder
 	var err error
 	switch opts.Mode {
 	case Direct:
-		visible = ViewOptions.directVisible
 	case Source:
 		opts.Sparse = NormalizeSparsePaths(opts.Sparse)
-		visible = ViewOptions.sourceVisible
 		if matcher == nil {
 			matcher, err = input.SourcePolicy(ctx)
 			if err == nil && opts.Ignore != "" {
@@ -601,35 +301,9 @@ func (g *gitView) shape(ctx context.Context, opts ViewOptions, input *FS) error 
 	if err != nil {
 		return err
 	}
-	kept := map[string]bool{".": true}
-	for _, name := range names {
-		node := g.nodes[name]
-		if node.mode&fs.ModeSymlink != 0 && opts.Mode != RemoteBase {
-			if g.denied == nil {
-				g.denied = make(map[string]bool)
-			}
-			g.denied[name] = true
-		}
-		if node.mode.IsDir() || !visible(opts, name, node.mode, matcher) {
-			continue
-		}
-		if node.mode&fs.ModeSymlink != 0 {
-			resolved, err := links.Resolve(name)
-			if errors.Is(err, tree.ErrEscape) || errors.Is(err, fs.ErrNotExist) {
-				continue
-			}
-			if err != nil {
-				return err
-			}
-			target := g.nodes[resolved]
-			if !target.mode.IsRegular() {
-				continue
-			}
-			g.nodes[name] = &gitNode{name: path.Base(name), hash: target.hash, mode: target.mode}
-		}
-		for parent := name; parent != "."; parent = path.Dir(parent) {
-			kept[parent] = true
-		}
+	kept, err := g.selectNodes(names, &opts, matcher, links)
+	if err != nil {
+		return err
 	}
 	maps.DeleteFunc(g.nodes, func(name string, _ *gitNode) bool { return !kept[name] })
 	g.list()
@@ -681,11 +355,11 @@ func (g *gitView) walk(ctx context.Context, commit plumbing.Hash) ([]manifest.Wa
 	if g.worktree != nil && g.current == nil {
 		return nil, g.walkWorktree(ctx, ".")
 	}
-	storer := g.storers.Get().(storer.EncodedObjectStorer)
+	storer := g.storers.Get().(storer.EncodedObjectStorer) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
 	defer g.storers.Put(storer)
 	c, err := object.GetCommit(storer, commit)
 	if err != nil {
-		return nil, err
+		return nil, err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
 	}
 	return g.walkCommit(ctx, storer, c.TreeHash, ".")
 }
@@ -697,11 +371,11 @@ func (g *gitView) walkCommit(
 	prefix string,
 ) ([]manifest.Warning, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 	}
 	t, err := object.GetTree(storer, hash)
 	if err != nil {
-		return nil, err
+		return nil, err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
 	}
 	var warnings []manifest.Warning
 	for _, entry := range t.Entries {
@@ -711,7 +385,7 @@ func (g *gitView) walkCommit(
 		name := path.Join(prefix, entry.Name)
 		mode, err := entry.Mode.ToOSFileMode()
 		if err != nil {
-			return warnings, err
+			return warnings, err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
 		}
 		if entry.Mode == filemode.Submodule {
 			warnings = append(warnings, manifest.Warning{
@@ -739,43 +413,17 @@ func (g *gitView) walkCommit(
 
 func (g *gitView) walkWorktree(ctx context.Context, prefix string) error {
 	if err := ctx.Err(); err != nil {
-		return err
+		return err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 	}
 	if g.worktree == nil {
-		return fs.WalkDir(g.current, prefix, func(name string, entry fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if entry.Name() == ".git" {
-				if entry.IsDir() {
-					return fs.SkipDir
-				}
-				return nil
-			}
-			if !fs.ValidPath(name) || strings.ContainsAny(entry.Name(), "/\x00") {
-				return fs.ErrInvalid
-			}
-			mode := entry.Type()
-			if !mode.IsRegular() && !mode.IsDir() && mode&fs.ModeSymlink == 0 {
-				return nil
-			}
-			g.nodes[name] = &gitNode{name: entry.Name(), mode: mode}
-			if name != prefix {
-				parent := g.nodes[path.Dir(name)]
-				parent.children = append(parent.children, gitEntry{g, name})
-			}
-			return nil
-		})
+		return g.walkCurrent(ctx, prefix)
 	}
 	entries, err := g.worktree.ReadDir(filepath.FromSlash(prefix))
 	if err != nil {
-		return err
+		return err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
 	}
 	for _, entry := range entries {
-		if entry.Name() == ".git" {
+		if entry.Name() == gitDirectory {
 			continue
 		}
 		name := path.Join(prefix, entry.Name())
@@ -820,31 +468,26 @@ func (g *gitView) Lstat(name string) (fs.FileInfo, error) {
 	}
 	node := g.nodes[name]
 	if node == nil {
-		for parent := name; len(g.denied) > 0 && parent != "."; parent = path.Dir(parent) {
-			if g.denied[parent] {
-				return nil, &fs.PathError{Op: "stat", Path: name, Err: fs.ErrPermission}
-			}
-		}
-		if g.backing == nil && g.current != nil {
-			if _, err := fs.Lstat(g.current, name); err != nil {
-				return nil, err
-			}
-		}
-		return nil, &fs.PathError{Op: "stat", Path: name, Err: fs.ErrNotExist}
+		return g.missingInfo(name)
 	}
 	if g.backing == nil && g.current != nil {
-		return fs.Lstat(g.current, name)
+		return fs.Lstat(
+			g.current,
+			name,
+		) //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
 	}
 	if node.mode.IsDir() {
 		return gitInfo{gitNode: node}, nil
 	}
 	if g.worktree != nil {
-		return g.worktree.Lstat(filepath.FromSlash(name))
+		return g.worktree.Lstat(
+			filepath.FromSlash(name),
+		) //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
 	}
 	if info := node.info.Load(); info != nil {
 		return info, nil
 	}
-	storer := g.storers.Get().(storer.EncodedObjectStorer)
+	storer := g.storers.Get().(storer.EncodedObjectStorer) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
 	defer g.storers.Put(storer)
 	var size int64
 	var err error
@@ -858,7 +501,7 @@ func (g *gitView) Lstat(name string) (fs.FileInfo, error) {
 		size, err = storer.EncodedObjectSize(node.hash)
 	}
 	if err != nil {
-		return nil, err
+		return nil, err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
 	}
 	info := &gitInfo{node, size}
 	node.info.Store(info)
@@ -869,7 +512,7 @@ func (g *gitView) Lstat(name string) (fs.FileInfo, error) {
 func (g *gitView) Stat(name string) (fs.FileInfo, error) {
 	info, err := g.Lstat(name)
 	if pathErr, ok := errors.AsType[*fs.PathError](err); ok {
-		return info, &fs.PathError{Op: "stat", Path: pathErr.Path, Err: pathErr.Err}
+		return info, &fs.PathError{Op: statOperation, Path: pathErr.Path, Err: pathErr.Err}
 	}
 	return info, err
 }
@@ -892,7 +535,7 @@ func (g *gitView) ReadDir(name string) ([]fs.DirEntry, error) {
 // Open returns an independent cursor and retains backing through reader Close.
 func (g *gitView) Open(name string) (fs.File, error) {
 	if node := g.nodes[name]; node != nil && node.mode&fs.ModeSymlink != 0 {
-		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
+		return nil, &fs.PathError{Op: openOperation, Path: name, Err: fs.ErrNotExist}
 	}
 	info, err := g.Lstat(name)
 	if err != nil {
@@ -916,13 +559,13 @@ func (g *gitView) Open(name string) (fs.File, error) {
 
 func (g *gitView) openBlob(hash plumbing.Hash) (io.ReadCloser, error) {
 	// Upstream's streaming delta reader does not reset its position on backward copies.
-	storer := g.storers.Get().(storer.EncodedObjectStorer)
+	storer := g.storers.Get().(storer.EncodedObjectStorer) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
 	defer g.storers.Put(storer)
 	blob, err := object.GetBlob(storer, hash)
 	if err != nil {
-		return nil, err
+		return nil, err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
 	}
-	return blob.Reader()
+	return blob.Reader() //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
 }
 
 type gitFile struct {
@@ -949,7 +592,7 @@ func (f *gitFile) Close() error {
 		err = f.reader.Close()
 	}
 	f.input, f.reader, f.info, f.entries = nil, nil, nil, nil
-	return err
+	return err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
 }
 
 func (f *gitFile) Read(p []byte) (int, error) {
@@ -959,7 +602,9 @@ func (f *gitFile) Read(p []byte) (int, error) {
 	if f.reader == nil {
 		return 0, fs.ErrInvalid
 	}
-	return f.reader.Read(p)
+	return f.reader.Read(
+		p,
+	) //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
 }
 
 func (f *gitFile) ReadDir(n int) ([]fs.DirEntry, error) {
@@ -994,7 +639,8 @@ func (g *gitView) ReadFile(name string) ([]byte, error) {
 				}
 				return os.ReadFile(
 					abs,
-				) //nolint:gosec // Source membership admits regular files from the stable checkout.
+				) //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
+
 			}
 		}
 	}
@@ -1013,7 +659,7 @@ func (g *gitView) OpenRegular(name string) (fs.File, error) { return g.Open(name
 // ReadLink exposes visible link metadata to the remote-base resolver.
 func (g *gitView) ReadLink(name string) (string, error) {
 	if !fs.ValidPath(name) {
-		return "", &fs.PathError{Op: "readlink", Path: name, Err: fs.ErrInvalid}
+		return "", &fs.PathError{Op: readLinkOperation, Path: name, Err: fs.ErrInvalid}
 	}
 	if g.nodes[name] == nil {
 		if _, err := g.Lstat(name); err != nil {
@@ -1023,40 +669,207 @@ func (g *gitView) ReadLink(name string) (string, error) {
 	if g.mode != Direct {
 		node := g.nodes[name]
 		if node == nil {
-			return "", &fs.PathError{Op: "readlink", Path: name, Err: fs.ErrNotExist}
+			return "", &fs.PathError{Op: readLinkOperation, Path: name, Err: fs.ErrNotExist}
 		}
 		if node.mode&fs.ModeSymlink == 0 {
-			return "", &fs.PathError{Op: "readlink", Path: name, Err: fs.ErrInvalid}
+			return "", &fs.PathError{Op: readLinkOperation, Path: name, Err: fs.ErrInvalid}
 		}
 	}
 	if g.backing == nil && g.worktree == nil && g.current != nil {
-		return fs.ReadLink(g.current, name)
+		return fs.ReadLink(
+			g.current,
+			name,
+		) //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
 	}
 	var target string
 	if g.worktree != nil {
 		var err error
 		target, err = g.worktree.Readlink(filepath.FromSlash(name))
 		if err != nil {
-			return "", err
+			return "", err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
 		}
 	} else {
-		node := g.nodes[name]
-		if node == nil {
-			return "", &fs.PathError{Op: "readlink", Path: name, Err: fs.ErrNotExist}
-		}
-		if node.mode&fs.ModeSymlink == 0 {
-			return "", &fs.PathError{Op: "readlink", Path: name, Err: fs.ErrInvalid}
-		}
-		r, err := g.openBlob(node.hash)
+		var err error
+		target, err = g.blobLink(name)
 		if err != nil {
 			return "", err
 		}
-		data, err := io.ReadAll(r)
-		if err := errors.Join(err, r.Close()); err != nil {
-			return "", err
-		}
-		target = string(data)
 	}
+	return g.relativeLink(name, target)
+}
+
+const gitDirectoryMode = 0o755
+
+func (o *ViewOptions) refreshCurrent(
+	ctx context.Context,
+	commit plumbing.Hash,
+) (*FS, *sourceignore.Matcher, bool, error) {
+	source := o.Mode == Source
+	reuse := o.Mode == Direct && commit == plumbing.ZeroHash
+	var matcher *sourceignore.Matcher
+	current, _ := o.Current.(*FS)
+	if current == nil {
+		return current, matcher, reuse, nil
+	}
+
+	if o.Location == nil {
+		o.Location = current.location
+	}
+	switch v := current.view.(type) {
+	case *localView:
+		current = current.OperationView()
+		current.location = o.Location
+	case *gitView:
+		if v.refresh != nil {
+			refreshed, _, err := New(ctx, v.backing, v.commit, *v.refresh)
+			if err != nil {
+				return refreshed, nil, false, err
+			}
+			current, v = refreshed, refreshed.view.(*gitView) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+		}
+		o.CurrentContent = v.identity
+		if commit == plumbing.ZeroHash {
+			matcher = current.policy
+		}
+		if source && matcher != nil && o.Ignore != "" {
+			matcher = matcher.WithExtra(o.Ignore)
+		}
+		reuse = reuse ||
+			commit == plumbing.ZeroHash && source && v.mode == Source && o.Ignore == "" && len(o.Sparse) == 0
+	}
+	if source && commit == plumbing.ZeroHash && matcher == nil {
+		var err error
+		matcher, err = current.SourcePolicy(ctx)
+		if err != nil {
+			return current, nil, false, err
+		}
+		if o.Ignore != "" {
+			matcher = matcher.WithExtra(o.Ignore)
+		}
+	}
+	o.Current = current
+	return current, matcher, reuse, nil
+}
+
+func (input *FS) finishGitView(
+	ctx context.Context,
+	commit plumbing.Hash,
+	opts *ViewOptions,
+	identity string,
+) (*FS, string, error) {
+	g := input.view.(*gitView) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+	if commit != plumbing.ZeroHash {
+		identity = ""
+	}
+	if committed := commit != plumbing.ZeroHash &&
+		(opts.Worktree == nil || opts.Content != nil); committed ||
+		identity != "" {
+		g.identity = manifest.Fingerprint(struct {
+			Content         any
+			Commit, Current string
+			Mode            ViewMode
+			Sparse          []string `json:",omitempty"`
+			Ignore          string
+		}{opts.Content, commit.String(), identity, opts.Mode, opts.Sparse, opts.Ignore})
+		if g.identity == "" {
+			return warningOnly(
+					input,
+				), "", manifest.NewError(
+					manifest.ErrInput,
+					nil,
+					"git view content cannot be fingerprinted",
+				)
+		}
+	}
+	if err := g.shape(ctx, *opts, input); err != nil {
+		return warningOnly(input), "", err
+	}
+	return input, g.identity, nil
+}
+
+func (g *gitView) populateCurrent(ctx context.Context, current *gitView, native bool) error {
+	if native {
+		g.storers.New = current.storers.New
+		g.backing = current.backing
+		g.worktree = current.worktree
+	}
+	if !native || current.backing == nil && current.worktree == nil {
+		if err := g.walkWorktree(ctx, "."); err != nil {
+			return err
+		}
+	} else {
+		g.denied = current.denied
+		for name, node := range current.nodes {
+			g.nodes[name] = &gitNode{name: node.name, hash: node.hash, mode: node.mode, children: node.children}
+		}
+	}
+	return nil
+}
+
+func (g *gitView) walkCurrent(ctx context.Context, prefix string) error {
+	return fs.WalkDir(g.current, prefix, func(name string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if entry.Name() == gitDirectory {
+			if entry.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !fs.ValidPath(name) || strings.ContainsAny(entry.Name(), "/\x00") {
+			return fs.ErrInvalid
+		}
+		mode := entry.Type()
+		if !mode.IsRegular() && !mode.IsDir() && mode&fs.ModeSymlink == 0 {
+			return nil
+		}
+		g.nodes[name] = &gitNode{name: entry.Name(), mode: mode}
+		if name != prefix {
+			parent := g.nodes[path.Dir(name)]
+			parent.children = append(parent.children, gitEntry{g, name})
+		}
+		return nil
+	}) //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
+}
+
+func (g *gitView) missingInfo(name string) (fs.FileInfo, error) {
+	for parent := name; len(g.denied) > 0 && parent != "."; parent = path.Dir(parent) {
+		if g.denied[parent] {
+			return nil, &fs.PathError{Op: statOperation, Path: name, Err: fs.ErrPermission}
+		}
+	}
+	if g.backing == nil && g.current != nil {
+		if _, err := fs.Lstat(g.current, name); err != nil {
+			return nil, err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
+		}
+	}
+	return nil, &fs.PathError{Op: statOperation, Path: name, Err: fs.ErrNotExist}
+}
+
+func (g *gitView) blobLink(name string) (string, error) {
+	node := g.nodes[name]
+	if node == nil {
+		return "", &fs.PathError{Op: readLinkOperation, Path: name, Err: fs.ErrNotExist}
+	}
+	if node.mode&fs.ModeSymlink == 0 {
+		return "", &fs.PathError{Op: readLinkOperation, Path: name, Err: fs.ErrInvalid}
+	}
+	r, err := g.openBlob(node.hash)
+	if err != nil {
+		return "", err
+	}
+	data, err := io.ReadAll(r)
+	if joinErr := errors.Join(err, r.Close()); joinErr != nil {
+		return "", joinErr
+	}
+	return string(data), nil
+}
+
+func (g *gitView) relativeLink(name, target string) (string, error) {
 	root := ""
 	if current, ok := g.current.(*FS); ok {
 		if mounted, ok := current.view.(*localView); ok {
@@ -1068,10 +881,57 @@ func (g *gitView) ReadLink(name string) (string, error) {
 		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			rel, err = filepath.Rel(filepath.FromSlash(path.Dir(name)), rel)
 			if err != nil {
-				return "", err
+				return "", err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
 			}
 			target = filepath.ToSlash(rel)
 		}
 	}
 	return target, nil
+}
+
+func (g *gitView) selectNodes(
+	names []string,
+	opts *ViewOptions,
+	matcher *sourceignore.Matcher,
+	links *tree.Builder,
+) (map[string]bool, error) {
+	visible := ViewOptions.visible
+	switch opts.Mode {
+	case Direct:
+		visible = ViewOptions.directVisible
+	case Source:
+		visible = ViewOptions.sourceVisible
+	case RemoteBase:
+	}
+	kept := map[string]bool{".": true}
+	for _, name := range names {
+		node := g.nodes[name]
+		if node.mode&fs.ModeSymlink != 0 && opts.Mode != RemoteBase {
+			if g.denied == nil {
+				g.denied = make(map[string]bool)
+			}
+			g.denied[name] = true
+		}
+		if node.mode.IsDir() || !visible(*opts, name, node.mode, matcher) {
+			continue
+		}
+		if node.mode&fs.ModeSymlink != 0 {
+			resolved, err := links.Resolve(name)
+			if errors.Is(err, tree.ErrEscape) || errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			target := g.nodes[resolved]
+			if !target.mode.IsRegular() {
+				continue
+			}
+			g.nodes[name] = &gitNode{name: path.Base(name), hash: target.hash, mode: target.mode}
+		}
+		for parent := name; parent != "."; parent = path.Dir(parent) {
+			kept[parent] = true
+		}
+	}
+	return kept, nil
 }

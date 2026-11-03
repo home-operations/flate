@@ -35,13 +35,13 @@ import (
 // noise on every chart-version rotation despite the strip pass.
 func StripResourceAttributes(resource map[string]any, attrs []string) {
 	stripObjectMetadata(resource, attrs)
-	if spec, ok := resource["spec"].(map[string]any); ok {
+	if spec, ok := resource[specKey].(map[string]any); ok {
 		if tmpl, ok := spec["template"].(map[string]any); ok {
 			stripObjectMetadata(tmpl, attrs)
 		}
 		if jobTmpl, ok := spec["jobTemplate"].(map[string]any); ok {
 			stripObjectMetadata(jobTmpl, attrs)
-			if jobSpec, ok := jobTmpl["spec"].(map[string]any); ok {
+			if jobSpec, ok := jobTmpl[specKey].(map[string]any); ok {
 				if podTmpl, ok := jobSpec["template"].(map[string]any); ok {
 					stripObjectMetadata(podTmpl, attrs)
 				}
@@ -57,11 +57,11 @@ func StripResourceAttributes(resource map[string]any, attrs []string) {
 }
 
 func stripObjectMetadata(parent map[string]any, attrs []string) {
-	meta, ok := parent["metadata"].(map[string]any)
+	meta, ok := parent[metadataKey].(map[string]any)
 	if !ok {
 		return
 	}
-	for _, key := range []string{"annotations", "labels"} {
+	for _, key := range []string{annotationsKey, "labels"} {
 		val, ok := meta[key].(map[string]any)
 		if !ok || val == nil {
 			continue

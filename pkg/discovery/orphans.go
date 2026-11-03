@@ -25,7 +25,7 @@ func (d *Session) promoteOrphans(ctx context.Context, standaloneSecrets []manife
 			d.cfg.Store.DeleteObject(id)
 		}
 	}
-	for id, record := range index.Files() {
+	for id, record := range index.Files() { //nolint:gocritic // The iterator supplies independent value snapshots.
 		if d.cfg.Store.GetObject(id) != nil ||
 			record.Declaration != nil && !d.loader.AdmitsRoot(record.Declaration, record.Path) {
 			continue

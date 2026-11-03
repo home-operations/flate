@@ -30,7 +30,7 @@ func NewSparseGit(tb testing.TB, files int, blobBytes int64) SparseGit {
 	tb.Helper()
 	root := tb.TempDir()
 	repo := GitInit(tb, root)
-	for _, name := range []string{"app", "sibling"} {
+	for _, name := range []string{fixtureAppName, "sibling"} {
 		WriteFile(
 			tb,
 			root,
@@ -53,37 +53,14 @@ func NewSparseGit(tb testing.TB, files int, blobBytes int64) SparseGit {
 		WriteFile(tb, root, fmt.Sprintf("disjoint/file-%05d.txt", n), "unconsumed\n")
 	}
 	WriteFile(tb, root, "unrelated/large.txt", "")
-	file, err := os.OpenFile(
-		filepath.Join(root, "unrelated/large.txt"),
-		os.O_RDWR,
-		0o600,
-	) //nolint:gosec // The path is fixed under the test-owned temporary directory.
-	if err != nil {
-		tb.Fatal(err)
-	}
-	if err := file.Truncate(blobBytes); err != nil {
-		tb.Fatal(err)
-	}
-	writer, header, err := repo.Storer.(*filesystem.Storage).LazyWriter()
-	if err != nil {
-		tb.Fatal(err)
-	}
-	if err := header(plumbing.BlobObject, blobBytes); err != nil {
-		tb.Fatal(err)
-	}
-	hasher := plumbing.NewHasher(plumbing.BlobObject, blobBytes)
-	n, err := io.Copy(io.MultiWriter(writer, hasher), file)
-	if closeErr := errors.Join(writer.Close(), file.Close()); err != nil || closeErr != nil || n != blobBytes {
-		tb.Fatalf("stream blob: bytes=%d want=%d error=%v", n, blobBytes, errors.Join(err, closeErr))
-	}
-	large := hasher.Sum()
+	large := writeSparseBlob(tb, root, repo, blobBytes)
 	wt, err := repo.Worktree()
 	if err != nil {
 		tb.Fatal(err)
 	}
-	for _, dir := range []string{"flux", "app", "sibling", "disjoint"} {
-		if _, err := wt.Add(dir); err != nil {
-			tb.Fatal(err)
+	for _, dir := range []string{"flux", fixtureAppName, "sibling", "disjoint"} {
+		if _, addErr := wt.Add(dir); addErr != nil {
+			tb.Fatal(addErr)
 		}
 	}
 	idx, err := repo.Storer.Index()
@@ -97,16 +74,17 @@ func NewSparseGit(tb testing.TB, files int, blobBytes int64) SparseGit {
 	idx.Entries = append(
 		idx.Entries,
 		&index.Entry{
-			Name:       "unrelated/large.txt",
-			Hash:       large,
-			Mode:       filemode.Regular,
+			Name: "unrelated/large.txt",
+			Hash: large,
+			Mode: filemode.Regular,
+			//nolint:gosec // Git index size intentionally retains the low 32 bits of file length.
 			Size:       uint32(blobBytes),
 			ModifiedAt: info.ModTime(),
 			CreatedAt:  info.ModTime(),
 		},
-	) //nolint:gosec // E8 fixes the blob size at 256 MiB or a bounded routine control.
-	if err := repo.Storer.SetIndex(idx); err != nil {
-		tb.Fatal(err)
+	)
+	if setIndexErr := repo.Storer.SetIndex(idx); setIndexErr != nil {
+		tb.Fatal(setIndexErr)
 	}
 	opts := &git.CommitOptions{Author: &object.Signature{Name: "fixture", Email: "fixture@example.test"}}
 	base, err := wt.Commit("before", opts)
@@ -119,35 +97,16 @@ func NewSparseGit(tb testing.TB, files int, blobBytes int64) SparseGit {
 		"app/input.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: app-output}\ndata: {value: after!}\n",
 	)
-	if _, err := wt.Add("app/input.yaml"); err != nil {
-		tb.Fatal(err)
+	if _, addErr := wt.Add("app/input.yaml"); addErr != nil {
+		tb.Fatal(addErr)
 	}
 	head, err := wt.Commit("after", opts)
 	if err != nil {
 		tb.Fatal(err)
 	}
-	for _, hash := range []plumbing.Hash{base, head} {
-		commit, err := repo.CommitObject(hash)
-		if err != nil {
-			tb.Fatal(err)
-		}
-		tree, err := commit.Tree()
-		if err != nil {
-			tb.Fatal(err)
-		}
-		entry, err := tree.FindEntry("unrelated/large.txt")
-		if err != nil || entry.Hash != large {
-			tb.Fatalf("unchanged blob: %v, %v", entry, err)
-		}
-		count := 0
-		if err := tree.Files().ForEach(func(*object.File) error { count++; return nil }); err != nil {
-			tb.Fatal(err)
-		}
-		if count != files {
-			tb.Fatalf("committed files=%d want=%d", count, files)
-		}
-	}
-	return SparseGit{Root: root, Repo: repo, Base: base, Head: head, Large: large}
+	fixture := SparseGit{Root: root, Repo: repo, Base: base, Head: head, Large: large}
+	fixture.assertSnapshots(tb, files)
+	return fixture
 }
 
 // GitReads separates metadata Reader opens from blob Reader opens in one phase.
@@ -166,10 +125,13 @@ func (r *GitReads) Reset() {
 // CountingStorer preserves storage behavior while counting object Reader opens.
 type CountingStorer struct {
 	storage.Storer
+
 	Reads *GitReads
 }
 
 // EncodedObject wraps readers without changing their type, identity or bytes.
+//
+//nolint:ireturn,wrapcheck // The counting adapter preserves the upstream interface and sentinel identity.
 func (s *CountingStorer) EncodedObject(kind plumbing.ObjectType, hash plumbing.Hash) (plumbing.EncodedObject, error) {
 	obj, err := s.Storer.EncodedObject(kind, hash)
 	if err != nil {
@@ -180,9 +142,11 @@ func (s *CountingStorer) EncodedObject(kind plumbing.ObjectType, hash plumbing.H
 
 type countedGitObject struct {
 	plumbing.EncodedObject
+
 	reads *GitReads
 }
 
+//nolint:wrapcheck // The counting adapter preserves upstream reader errors unchanged.
 func (o *countedGitObject) Reader() (io.ReadCloser, error) {
 	if o.Type() == plumbing.BlobObject {
 		o.reads.Bodies.Add(1)
@@ -193,4 +157,57 @@ func (o *countedGitObject) Reader() (io.ReadCloser, error) {
 		o.reads.Metadata.Add(1)
 	}
 	return o.EncodedObject.Reader()
+}
+
+func (s *SparseGit) assertSnapshots(tb testing.TB, files int) {
+	tb.Helper()
+	for _, hash := range []plumbing.Hash{s.Base, s.Head} {
+		commit, err := s.Repo.CommitObject(hash)
+		if err != nil {
+			tb.Fatal(err)
+		}
+		tree, err := commit.Tree()
+		if err != nil {
+			tb.Fatal(err)
+		}
+		entry, err := tree.FindEntry("unrelated/large.txt")
+		if err != nil || entry.Hash != s.Large {
+			tb.Fatalf("unchanged blob: %v, %v", entry, err)
+		}
+		count := 0
+		if err := tree.Files().ForEach(func(*object.File) error { count++; return nil }); err != nil {
+			tb.Fatal(err)
+		}
+		if count != files {
+			tb.Fatalf("committed files=%d want=%d", count, files)
+		}
+	}
+}
+
+func writeSparseBlob(tb testing.TB, root string, repo *git.Repository, blobBytes int64) plumbing.Hash {
+	tb.Helper()
+	file, err := os.OpenFile(
+		filepath.Join(root, "unrelated/large.txt"),
+		os.O_RDWR,
+		0o600,
+	)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	if truncateErr := file.Truncate(blobBytes); truncateErr != nil {
+		tb.Fatal(truncateErr)
+	}
+	writer, header, err := repo.Storer.(*filesystem.Storage).LazyWriter() //nolint:errcheck // GitInit creates filesystem-backed storage.
+	if err != nil {
+		tb.Fatal(err)
+	}
+	if errInner := header(plumbing.BlobObject, blobBytes); errInner != nil {
+		tb.Fatal(errInner)
+	}
+	hasher := plumbing.NewHasher(plumbing.BlobObject, blobBytes)
+	n, err := io.Copy(io.MultiWriter(writer, hasher), file)
+	if closeErr := errors.Join(writer.Close(), file.Close()); err != nil || closeErr != nil || n != blobBytes {
+		tb.Fatalf("stream blob: bytes=%d want=%d error=%v", n, blobBytes, errors.Join(err, closeErr))
+	}
+	return hasher.Sum()
 }

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
+
 	"github.com/go-git/go-git/v5/config"
 
 	"github.com/home-operations/flate/internal/testutil"
@@ -17,13 +19,15 @@ import (
 	"github.com/home-operations/flate/test/e2e/internal/harness"
 )
 
+//nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_ArtifactGenerator_AllStrategies(t *testing.T) {
 	root := t.TempDir()
 	repository := testutil.GitInit(t, root)
-	if _, err := repository.CreateRemote(
-		&config.RemoteConfig{Name: "origin", URLs: []string{"https://example.invalid/repo.git"}},
-	); err != nil {
-		t.Fatal(err)
+	{
+		_, err := repository.CreateRemote(
+			&config.RemoteConfig{Name: "origin", URLs: []string{"https://example.invalid/repo.git"}},
+		)
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	testutil.WriteFile(t, root, "entry/sources.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
@@ -63,21 +67,14 @@ spec:
 	gz := gzip.NewWriter(&compressed)
 	tw := tar.NewWriter(gz)
 	content := "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: extracted, namespace: apps}\ndata: {value: archive}\n"
-	if err := tw.WriteHeader(&tar.Header{Name: "extracted.yaml", Mode: 0o644, Size: int64(len(content))}); err != nil {
-		t.Fatal(err)
+	assert.NoError(t, tw.WriteHeader(&tar.Header{Name: "extracted.yaml", Mode: 0o644, Size: int64(len(content))}))
+	{
+		_, err := tw.Write([]byte(content))
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
-	if _, err := tw.Write([]byte(content)); err != nil {
-		t.Fatal(err)
-	}
-	if err := tw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := gz.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "archive.tgz"), compressed.Bytes(), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, tw.Close())
+	assert.NoError(t, gz.Close())
+	assert.NoError(t, os.WriteFile(filepath.Join(root, "archive.tgz"), compressed.Bytes(), 0o600))
 	args := []string{
 		"build",
 		"all",
@@ -91,16 +88,13 @@ spec:
 	}
 	stdout, _ := harness.RequireCLIOK(t, args...)
 	for _, want := range []string{"name: merged", "a: after", "b: retained", "name: extracted", "value: archive", "kind: ExternalArtifact", "source.extensions.fluxcd.io/generator: authored"} {
-		if !strings.Contains(stdout, want) {
-			t.Fatalf("missing %q in output:\n%s", want, stdout)
-		}
+		assert.FatalIf(t, !strings.Contains(stdout, want), "missing %q in output:\n%s", want, stdout)
 	}
 	again, _ := harness.RequireCLIOK(t, args...)
-	if stdout != again {
-		t.Fatal("generated output changed between equal runs")
-	}
+	assert.FatalIf(t, stdout != again, "%v", "generated output changed between equal runs")
 }
 
+//nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_ArtifactGenerator_BootstrapInput(t *testing.T) {
 	root := t.TempDir()
 	testutil.GitInit(t, root)
@@ -138,9 +132,12 @@ spec:
 		t.TempDir(),
 		"--skip-kinds=",
 	)
-	if !strings.Contains(stdout, "name: bootstrap") || !strings.Contains(stdout, "kind: ExternalArtifact") {
-		t.Fatalf("missing bootstrap-generated output:\n%s", stdout)
-	}
+	assert.FatalIf(
+		t,
+		!strings.Contains(stdout, "name: bootstrap") || !strings.Contains(stdout, "kind: ExternalArtifact"),
+		"missing bootstrap-generated output:\n%s",
+		stdout,
+	)
 	original := t.TempDir()
 	testutil.CopyTree(t, root, original)
 	testutil.WriteFile(t, root, "entry/consumer.yaml", consumer+"  targetNamespace: apps\n")
@@ -158,15 +155,18 @@ spec:
 		"--skip-kinds=",
 	}
 	stdout, stderr := harness.RequireCLIOK(t, args...)
-	if strings.Count(stdout, "name: bootstrap") != 1 {
-		t.Fatalf("consumer-only change skipped its static generator:\n%s\n%s", stdout, stderr)
-	}
+	assert.FatalIf(
+		t,
+		strings.Count(stdout, "name: bootstrap") != 1,
+		"consumer-only change skipped its static generator:\n%s\n%s",
+		stdout,
+		stderr,
+	)
 	again, _ := harness.RequireCLIOK(t, args...)
-	if again != stdout {
-		t.Fatal("static generator consumer output changed between equal runs")
-	}
+	assert.FatalIf(t, again != stdout, "%v", "static generator consumer output changed between equal runs")
 }
 
+//nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_ArtifactGenerator_PartialFailure(t *testing.T) {
 	root := t.TempDir()
 	testutil.GitInit(t, root)
@@ -214,41 +214,52 @@ spec:
 		"--skip-kinds=",
 	}
 	stdout, stderr, code := harness.RunCLIBuffers(args...)
-	if code != 1 || !strings.Contains(stderr, "evaluate generated-c") ||
+	assert.FatalIf(t, code != 1 || !strings.Contains(stderr, "evaluate generated-c") ||
 		!strings.Contains(stderr, "required by apps/c") ||
-		!strings.Contains(stderr, "1 blocked") {
-		t.Fatalf("partial generation lost failure diagnostics: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
-	}
+		!strings.Contains(
+			stderr,
+			"1 blocked",
+		), "partial generation lost failure diagnostics: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	for _, name := range []string{"a", "b"} {
-		if strings.Count(stdout, "name: accepted-"+name) != 1 || !strings.Contains(stdout, "name: generated-"+name) {
-			t.Fatalf("partial generation lost accepted %s output:\n%s\n%s", name, stdout, stderr)
-		}
-	}
-	docs, err := testutil.DecodeDocs(strings.NewReader(stdout))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, doc := range docs {
-		name, _ := manifest.DocMetadata(doc)
-		if name == "generated-c" && manifest.DocKind(doc) == "ExternalArtifact" || name == "accepted-c" {
-			t.Fatalf("failed output acquired content:\n%s", stdout)
-		}
-	}
-	if !strings.Contains(stdout, "name: generated-c") {
-		t.Fatalf("root declaration missing the failed output reference:\n%s", stdout)
-	}
-	again, _, againCode := harness.RunCLIBuffers(args...)
-	if againCode != code || again != stdout {
-		t.Fatalf(
-			"partial generation changed between equal runs: exits=%d/%d\nfirst:\n%s\nsecond:\n%s",
-			code,
-			againCode,
+		assert.FatalIf(
+			t,
+			strings.Count(stdout, "name: accepted-"+name) != 1 || !strings.Contains(stdout, "name: generated-"+name),
+			"partial generation lost accepted %s output:\n%s\n%s",
+			name,
 			stdout,
-			again,
+			stderr,
 		)
 	}
+	docs, err := testutil.DecodeDocs(strings.NewReader(stdout))
+	assert.NoError(t, err)
+	for _, doc := range docs {
+		name, _ := manifest.DocMetadata(doc)
+		assert.FatalIf(
+			t,
+			name == "generated-c" && manifest.DocKind(doc) == "ExternalArtifact" || name == "accepted-c",
+			"failed output acquired content:\n%s",
+			stdout,
+		)
+	}
+	assert.FatalIf(
+		t,
+		!strings.Contains(stdout, "name: generated-c"),
+		"root declaration missing the failed output reference:\n%s",
+		stdout,
+	)
+	again, _, againCode := harness.RunCLIBuffers(args...)
+	assert.FatalIf(
+		t,
+		againCode != code || again != stdout,
+		"partial generation changed between equal runs: exits=%d/%d\nfirst:\n%s\nsecond:\n%s",
+		code,
+		againCode,
+		stdout,
+		again,
+	)
 }
 
+//nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_ArtifactGenerator_EmittedChangedOnlyDiff(t *testing.T) {
 	root := t.TempDir()
 	testutil.GitInit(t, root)
@@ -346,29 +357,31 @@ spec:
 				args = append(args, "-o", "diff")
 			}
 			stdout, stderr := harness.RequireCLIOK(t, args...)
-			if !strings.Contains(stdout, "value: "+tc.after) || strings.Contains(stdout, "unrelated-config") {
-				t.Fatalf(
-					"changed-only output lost generated consumer or selected unrelated sibling:\n%s\n%s",
-					stdout,
-					stderr,
-				)
-			}
-			if tc.command == "build" &&
-				(strings.Count(stdout, "name: generated-config") != 1 || !strings.Contains(stdout, "kind: ExternalArtifact")) {
-				t.Fatalf("emitted generator output was missing or rendered twice:\n%s", stdout)
-			}
-			if tc.command == "diff" &&
-				(strings.Count(stdout, "-  value: "+tc.before) != 1 || strings.Count(stdout, "+  value: "+tc.after) != 1) {
-				t.Fatalf("diff lost one generated side:\n%s", stdout)
-			}
+			assert.FatalIf(
+				t,
+				!strings.Contains(stdout, "value: "+tc.after) || strings.Contains(stdout, "unrelated-config"),
+				"changed-only output lost generated consumer or selected unrelated sibling:\n%s\n%s",
+				stdout,
+				stderr,
+			)
+			assert.FatalIf(t, tc.command == "build" &&
+				(strings.Count(stdout, "name: generated-config") != 1 || !strings.Contains(stdout, "kind: ExternalArtifact")), "emitted generator output was missing or rendered twice:\n%s", stdout)
+			assert.FatalIf(t, tc.command == "diff" &&
+				(strings.Count(stdout, "-  value: "+tc.before) != 1 || strings.Count(stdout, "+  value: "+tc.after) != 1), "diff lost one generated side:\n%s", stdout)
 			again, _ := harness.RequireCLIOK(t, args...)
-			if again != stdout {
-				t.Fatalf("%s output changed between equal runs:\n%s\n%s", tc.command, stdout, again)
-			}
+			assert.FatalIf(
+				t,
+				again != stdout,
+				"%s output changed between equal runs:\n%s\n%s",
+				tc.command,
+				stdout,
+				again,
+			)
 		})
 	}
 }
 
+//nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_ArtifactGenerator_ConsumedInputConvergence(t *testing.T) {
 	root := t.TempDir()
 	testutil.GitInit(t, root)
@@ -427,21 +440,18 @@ spec:
 		"--skip-kinds=",
 	}
 	stdout, _ := harness.RequireCLIOK(t, args...)
-	if strings.Count(stdout, "name: generated-config") != 1 ||
+	assert.FatalIf(t, strings.Count(stdout, "name: generated-config") != 1 ||
 		strings.Count(stdout, "\nkind: ExternalArtifact\n") != 1 ||
 		!strings.Contains(stdout, "value: transformed") ||
 		!strings.Contains(stdout, "source.extensions.fluxcd.io/generator: built-generator") ||
 		strings.Contains(stdout, "value: raw") ||
-		strings.Contains(stdout, "raw-generator") {
-		t.Fatalf("built generator lost transformed input or duplicated output:\n%s", stdout)
-	}
+		strings.Contains(
+			stdout,
+			"raw-generator",
+		), "built generator lost transformed input or duplicated output:\n%s", stdout)
 	for _, want := range []string{"revision: '@repo'", "originRevision: '@repo'", "ignored: retained"} {
-		if !strings.Contains(stdout, want) {
-			t.Fatalf("missing current generator selection %q:\n%s", want, stdout)
-		}
+		assert.FatalIf(t, !strings.Contains(stdout, want), "missing current generator selection %q:\n%s", want, stdout)
 	}
 	again, _ := harness.RequireCLIOK(t, args...)
-	if again != stdout {
-		t.Fatal("built generator output changed between equal runs")
-	}
+	assert.FatalIf(t, again != stdout, "%v", "built generator output changed between equal runs")
 }

@@ -92,25 +92,7 @@ func knownTopLevelKeys(ch *chart.Chart) map[string]struct{} {
 		return allow
 	}
 	var hasTags bool
-	if ch.Metadata != nil {
-		for _, d := range ch.Metadata.Dependencies {
-			if d == nil {
-				continue
-			}
-			if d.Name != "" {
-				allow[d.Name] = struct{}{}
-			}
-			if d.Alias != "" {
-				allow[d.Alias] = struct{}{}
-			}
-			for cond := range strings.SplitSeq(d.Condition, ",") {
-				if top, _, _ := strings.Cut(strings.TrimSpace(cond), "."); top != "" {
-					allow[top] = struct{}{}
-				}
-			}
-			hasTags = hasTags || len(d.Tags) > 0
-		}
-	}
+	hasTags = allowDependencyKeys(ch, allow)
 	for _, sub := range ch.Dependencies() {
 		if n := sub.Name(); n != "" {
 			allow[n] = struct{}{}
@@ -226,4 +208,30 @@ func isIdentByte(b byte) bool {
 		(b >= 'a' && b <= 'z') ||
 		(b >= 'A' && b <= 'Z') ||
 		(b >= '0' && b <= '9')
+}
+
+func allowDependencyKeys(ch *chart.Chart, allow map[string]struct{}) bool {
+	if ch.Metadata == nil {
+		return false
+	}
+	var hasTags bool
+
+	for _, d := range ch.Metadata.Dependencies {
+		if d == nil {
+			continue
+		}
+		if d.Name != "" {
+			allow[d.Name] = struct{}{}
+		}
+		if d.Alias != "" {
+			allow[d.Alias] = struct{}{}
+		}
+		for cond := range strings.SplitSeq(d.Condition, ",") {
+			if top, _, _ := strings.Cut(strings.TrimSpace(cond), "."); top != "" {
+				allow[top] = struct{}{}
+			}
+		}
+		hasTags = hasTags || len(d.Tags) > 0
+	}
+	return hasTags
 }

@@ -32,6 +32,7 @@ type Controller struct {
 
 type execution struct {
 	*Controller
+
 	run  base.Execution
 	data interface {
 		values.Provider
@@ -105,8 +106,8 @@ func (c *execution) render(
 	// dedup gate (a re-emit that finds the prior fingerprint cached must not
 	// replay stale docs over a source that has since failed or soft-skipped
 	// via --allow-missing-kinds Secret).
-	if _, err := c.run.RequireRefresh(ctx, hr, manifest.GateArtifacts, level); err != nil {
-		return err
+	if _, localErr := c.run.RequireRefresh(ctx, hr, manifest.GateArtifacts, level); localErr != nil {
+		return localErr
 	}
 
 	var fp string
@@ -124,10 +125,10 @@ func (c *execution) render(
 		if key != "" {
 			content = hr.Content(key, omitted)
 		}
-		var err error
-		fp, handled, err = c.run.FingerprintDedup(ctx, id, content, &attempt)
-		if handled || err != nil {
-			return handled, err
+		var innerLocalErr error
+		fp, handled, innerLocalErr = c.run.FingerprintDedup(ctx, id, content, &attempt)
+		if handled || innerLocalErr != nil {
+			return handled, innerLocalErr
 		}
 		attempt.Finish()
 		_, _, attempt = c.run.Reads.GetEmission(id)

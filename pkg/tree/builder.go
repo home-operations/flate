@@ -19,6 +19,7 @@ var ErrSealed = errors.New("builder is sealed")
 // between renders or source producers. Reads can memoize lower metadata.
 type Builder struct {
 	view
+
 	sealed bool
 }
 
@@ -32,7 +33,7 @@ func NewBuilder(lower fs.FS) *Builder {
 		removed: make(map[string]struct{}),
 	}
 	if lower == nil || (isTree && indexed == nil) {
-		b.nodes["."] = &node{name: ".", mode: fs.ModeDir | 0o755}
+		b.nodes["."] = &node{name: ".", mode: fs.ModeDir | defaultDirectoryMode}
 	} else if indexed == nil || indexed.input != nil {
 		b.input = &foreignInput{lower: lower, memo: make(map[string]*node)}
 	}
@@ -57,7 +58,7 @@ func (b *Builder) directory(name string) (*node, error) {
 		}
 		return n, nil
 	}
-	n := &node{name: path.Base(name), mode: fs.ModeDir | 0o755}
+	n := &node{name: path.Base(name), mode: fs.ModeDir | defaultDirectoryMode}
 	if lower, err := b.lookup(name); err == nil {
 		if !lower.IsDir() {
 			return nil, ErrConflict
@@ -104,21 +105,21 @@ func (b *Builder) put(name string, n *node) error {
 // AddFile copies data once. Duplicate files are last-wins; directories and
 // symlinks are conflicts until removed explicitly.
 func (b *Builder) AddFile(name string, data []byte, mode fs.FileMode) error {
-	p, err := b.normalize("addfile", name)
+	p, err := b.normalize(addFileOperation, name)
 	if err != nil {
 		return err
 	}
 	if p == "." || mode.Type() != 0 {
-		return &fs.PathError{Op: "addfile", Path: name, Err: fs.ErrInvalid}
+		return &fs.PathError{Op: addFileOperation, Path: name, Err: fs.ErrInvalid}
 	}
 	if n, err := b.lookup(p); err == nil && n.mode.Type() != 0 {
-		return &fs.PathError{Op: "addfile", Path: name, Err: ErrConflict}
+		return &fs.PathError{Op: addFileOperation, Path: name, Err: ErrConflict}
 	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	n := &node{name: path.Base(p), mode: mode, data: bytes.Clone(data)}
 	if err := b.put(p, n); err != nil {
-		return &fs.PathError{Op: "addfile", Path: name, Err: err}
+		return &fs.PathError{Op: addFileOperation, Path: name, Err: err}
 	}
 	return nil
 }
@@ -126,21 +127,21 @@ func (b *Builder) AddFile(name string, data []byte, mode fs.FileMode) error {
 // AddSymlink stores a lexical target, including dangling, absolute and escaping
 // targets. Follow operations enforce confinement; raw scans do not follow links.
 func (b *Builder) AddSymlink(name, target string) error {
-	p, err := b.normalize("addsymlink", name)
+	p, err := b.normalize(addSymlinkOperation, name)
 	if err != nil {
 		return err
 	}
 	if p == "." || strings.ContainsRune(target, 0) {
-		return &fs.PathError{Op: "addsymlink", Path: name, Err: fs.ErrInvalid}
+		return &fs.PathError{Op: addSymlinkOperation, Path: name, Err: fs.ErrInvalid}
 	}
 	if n, err := b.lookup(p); err == nil && n.mode&fs.ModeSymlink == 0 {
-		return &fs.PathError{Op: "addsymlink", Path: name, Err: ErrConflict}
+		return &fs.PathError{Op: addSymlinkOperation, Path: name, Err: ErrConflict}
 	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	n := &node{name: path.Base(p), mode: fs.ModeSymlink | 0o777, target: target}
+	n := &node{name: path.Base(p), mode: fs.ModeSymlink | symbolicLinkMode, target: target}
 	if err := b.put(p, n); err != nil {
-		return &fs.PathError{Op: "addsymlink", Path: name, Err: err}
+		return &fs.PathError{Op: addSymlinkOperation, Path: name, Err: err}
 	}
 	return nil
 }
@@ -159,14 +160,14 @@ func (b *Builder) RemoveAll(name string) error {
 	}
 	b.removed[p] = struct{}{}
 	if p == "." {
-		b.nodes["."] = &node{name: ".", mode: fs.ModeDir | 0o755}
+		b.nodes["."] = &node{name: ".", mode: fs.ModeDir | defaultDirectoryMode}
 		return nil
 	}
 	parentPath := path.Dir(p)
-	if n, err := b.lookup(parentPath); errors.Is(err, fs.ErrNotExist) || (err == nil && !n.IsDir()) {
+	if n, lookupErr := b.lookup(parentPath); errors.Is(lookupErr, fs.ErrNotExist) || (lookupErr == nil && !n.IsDir()) {
 		return nil
-	} else if err != nil {
-		return err
+	} else if lookupErr != nil {
+		return lookupErr
 	}
 	parent, err := b.directory(parentPath)
 	if err != nil {
@@ -227,3 +228,8 @@ func (b *Builder) Mount(name string, input fs.FS) error {
 	}
 	return nil
 }
+
+const (
+	defaultDirectoryMode = 0o755
+	symbolicLinkMode     = 0o777
+)

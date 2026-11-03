@@ -17,15 +17,15 @@ func (r *GitRepositoryRef) Effective() (string, string) {
 	if r != nil {
 		switch {
 		case r.Commit != "":
-			return "commit", r.Commit
+			return commitKey, r.Commit
 		case r.Name != "":
-			return "name", r.Name
+			return nameKey, r.Name
 		case r.SemVer != "":
-			return "semver", r.SemVer
+			return semverKey, r.SemVer
 		case r.Tag != "":
-			return "tag", r.Tag
+			return tagKey, r.Tag
 		case r.Branch != "":
-			return "branch", r.Branch
+			return branchKey, r.Branch
 		}
 	}
 	return "", ""
@@ -36,15 +36,15 @@ func (r *GitRepositoryRef) Normalized() sourcev1.GitRepositoryRef {
 	kind, value := r.Effective()
 	ref := sourcev1.GitRepositoryRef{}
 	switch kind {
-	case "commit":
+	case commitKey:
 		ref.Commit, ref.Branch = value, r.Branch
-	case "name":
+	case nameKey:
 		ref.Name = value
-	case "semver":
+	case semverKey:
 		ref.SemVer = value
-	case "tag":
+	case tagKey:
 		ref.Tag = value
-	case "branch":
+	case branchKey:
 		ref.Branch = value
 	}
 	return ref
@@ -62,7 +62,7 @@ func (r *GitRepositoryRef) String() string {
 // Label returns the cache label including branch context for a selected commit.
 func (r *GitRepositoryRef) Label() string {
 	kind, value := r.Effective()
-	if kind == "commit" && r.Branch != "" {
+	if kind == commitKey && r.Branch != "" {
 		return "branch:" + r.Branch + "@commit:" + value
 	}
 	return r.String()
@@ -73,13 +73,13 @@ func (r *GitRepositoryRef) RefSpec() config.RefSpec {
 	kind, value := r.Effective()
 	var name string
 	switch kind {
-	case "name":
+	case nameKey:
 		name = value
-	case "semver":
+	case semverKey:
 		name = "refs/tags/*"
-	case "tag":
+	case tagKey:
 		name = plumbing.NewTagReferenceName(value).String()
-	case "branch":
+	case branchKey:
 		name = plumbing.NewBranchReferenceName(value).String()
 	default:
 		return ""
@@ -92,7 +92,7 @@ func (r *GitRepositoryRef) Validate() error {
 	kind, value := r.Effective()
 	var name plumbing.ReferenceName
 	switch kind {
-	case "commit":
+	case commitKey:
 		if !plumbing.IsHash(value) {
 			return fmt.Errorf("invalid full commit hash %q", value)
 		}
@@ -100,14 +100,14 @@ func (r *GitRepositoryRef) Validate() error {
 			return nil
 		}
 		name = plumbing.NewBranchReferenceName(r.Branch)
-	case "name":
+	case nameKey:
 		name = plumbing.ReferenceName(value)
-	case "semver":
+	case semverKey:
 		_, err := semver.NewConstraint(value)
 		return err
-	case "tag":
+	case tagKey:
 		name = plumbing.NewTagReferenceName(value)
-	case "branch":
+	case branchKey:
 		name = plumbing.NewBranchReferenceName(value)
 	default:
 		return nil
@@ -121,5 +121,5 @@ func (r *GitRepositoryRef) Validate() error {
 // Pinned reports the conservative commit-only cache retention policy.
 func (r *GitRepositoryRef) Pinned() bool {
 	kind, _ := r.Effective()
-	return kind == "commit" && r.Branch == "" && r.Tag == "" && r.SemVer == "" && r.Name == ""
+	return kind == commitKey && r.Branch == "" && r.Tag == "" && r.SemVer == "" && r.Name == ""
 }

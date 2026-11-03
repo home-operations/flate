@@ -82,7 +82,7 @@ func (c *Cache) acquire(
 		remaining := policy
 		remaining.Retry.Attempts -= attempt - 1
 		key.policy = remaining
-		e, err := c.acquireOnce(ctx, key, callbacks)
+		e, err := c.acquireOnce(ctx, &key, callbacks)
 		if err == nil {
 			if !e.ready.Load() {
 				e.ready.Store(true)
@@ -121,10 +121,10 @@ func (c *Cache) acquire(
 
 func backoffSchedule(attempt uint64, minimum, maximum time.Duration) (time.Duration, time.Duration) {
 	if maximum <= 0 {
-		maximum = 15 * time.Minute
+		maximum = defaultMaximumBackoff
 	}
 	if minimum <= 0 {
-		minimum = 750 * time.Millisecond
+		minimum = defaultMinimumBackoff
 	}
 	delay := min(minimum, maximum)
 	for ; attempt > 0; attempt-- {

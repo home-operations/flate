@@ -23,15 +23,8 @@ const (
 // Resolve joins a reference and applies its lexical boundary policy.
 // Filesystem confinement and symlink resolution remain the source view's job.
 func Resolve(base, ref string, policy Policy) (string, bool) {
-	if policy == Directory || policy == Transformer || policy == Dependency {
-		if strings.Contains(ref, "://") {
-			return "", false
-		}
-		for _, prefix := range []string{"git::", "gh:", "git@", "github.com:", "github.com/"} {
-			if strings.HasPrefix(strings.ToLower(ref), prefix) {
-				return "", false
-			}
-		}
+	if (policy == Directory || policy == Transformer || policy == Dependency) && remoteReference(ref) {
+		return "", false
 	}
 	absolute := filepath.IsAbs(ref)
 	if policy == Claim {
@@ -55,16 +48,30 @@ func Resolve(base, ref string, policy Policy) (string, bool) {
 	case Root:
 		resolved = path.Clean(ref)
 	}
-	if policy == File {
-		cleanBase := filepath.Clean(base)
-		suffix, within := strings.CutPrefix(resolved, cleanBase)
-		if resolved != cleanBase && (!within || !strings.HasPrefix(suffix, string(filepath.Separator))) {
-			return "", false
-		}
+	if policy == File && !withinBase(base, resolved) {
+		return "", false
 	}
 	if (policy == Transformer || policy == Claim || policy == Root) &&
 		(resolved == ".." || strings.HasPrefix(resolved, "../") || policy != Root && resolved == ".") {
 		return "", false
 	}
 	return resolved, true
+}
+
+func remoteReference(ref string) bool {
+	if strings.Contains(ref, "://") {
+		return true
+	}
+	for _, prefix := range []string{"git::", "gh:", "git@", "github.com:", "github.com/"} {
+		if strings.HasPrefix(strings.ToLower(ref), prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func withinBase(base, resolved string) bool {
+	cleanBase := filepath.Clean(base)
+	suffix, within := strings.CutPrefix(resolved, cleanBase)
+	return resolved == cleanBase || within && strings.HasPrefix(suffix, string(filepath.Separator))
 }

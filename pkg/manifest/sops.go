@@ -23,9 +23,9 @@ func ValuePlaceholder(key string) string {
 
 func sanitizeData(doc map[string]any, kind string) (map[string]any, bool) {
 	var sanitized map[string]any
-	for _, field := range []string{"data", "stringData", "binaryData"} {
+	for _, field := range []string{dataKey, stringDataKey, "binaryData"} {
 		var encoding *base64.Encoding
-		secretData := kind == KindSecret && field == "data"
+		secretData := kind == KindSecret && field == dataKey
 		if field == "binaryData" || secretData {
 			encoding = base64.StdEncoding
 		}
@@ -103,11 +103,11 @@ const SubstituteAnnotationKey = "kustomize.toolkit.fluxcd.io/substitute"
 // substitute-disabled label or annotation. flate skips envsubst on
 // such resources, mirroring Flux's per-resource opt-out.
 func HasSubstituteDisabled(doc map[string]any) bool {
-	md, _ := doc["metadata"].(map[string]any)
+	md, _ := doc[metadataKey].(map[string]any)
 	if md == nil {
 		return false
 	}
-	for _, field := range []string{"labels", "annotations"} {
+	for _, field := range []string{"labels", annotationsKey} {
 		m, _ := md[field].(map[string]any)
 		if v, _ := m[SubstituteAnnotationKey].(string); v == kustomizev1.DisabledValue {
 			return true

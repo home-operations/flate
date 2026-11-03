@@ -66,13 +66,13 @@ func substituteDoc(doc map[string]any, vars map[string]string, strict bool) (map
 }
 
 type renderContent struct {
-	Manifest     any
-	Dependencies values.DependencySubstitutions
+	Manifest     any                            `json:"Manifest"`
+	Dependencies values.DependencySubstitutions `json:"Dependencies"`
 }
 
 // Content projects validated raw documents and effective variables into immutable final inputs.
 //
-//nolint:ireturn // Fingerprint accepts type-specific render identities.
+
 func (r RenderRequest) Content(docs []manifest.DocOccurrence) any {
 	ks := r.Spec
 	ks.EmissionPolicy().Stamp(docs)
@@ -86,11 +86,12 @@ func (r RenderRequest) Content(docs []manifest.DocOccurrence) any {
 		}
 	}
 	source := struct {
-		Input        store.ArtifactInput
-		ApplyIgnore  bool
-		Output       string
-		Wipe, Strict bool
-		Skip         []string
+		Input       store.ArtifactInput `json:"Input"`
+		ApplyIgnore bool                `json:"ApplyIgnore"`
+		Output      string              `json:"Output"`
+		Wipe        bool                `json:"Wipe"`
+		Strict      bool                `json:"Strict"`
+		Skip        []string            `json:"Skip"`
 	}{
 		r.Source.Input(store.ArtifactContent), r.ApplyIgnore, manifest.Fingerprint(docs),
 		r.WipeSecrets, r.StrictSubstitutions, r.SkipKinds,

@@ -2,10 +2,12 @@ package external_test
 
 import (
 	"errors"
-	"fmt"
+	"strconv"
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
+
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/external"
 	"github.com/home-operations/flate/pkg/store"
@@ -14,7 +16,7 @@ import (
 func TestFetcher_NoArtifact(t *testing.T) {
 	t.Parallel()
 	for _, predicted := range []bool{false, true} {
-		t.Run(fmt.Sprint(predicted), func(t *testing.T) {
+		t.Run(strconv.FormatBool(predicted), func(t *testing.T) {
 			t.Parallel()
 			f := &external.Fetcher{}
 			ea := &manifest.ExternalArtifact{Name: "ea", Namespace: "apps"}
@@ -34,18 +36,18 @@ func TestFetcher_NoArtifact(t *testing.T) {
 					&store.Emission{Children: []store.Child{{Obj: generator}}, Complete: true},
 					nil,
 				)
-				if len(s.Productions(ea.Named(), nil)) != 1 {
-					t.Fatal("missing producer evidence")
-				}
+				assert.FatalIf(t, len(s.Productions(ea.Named(), nil)) != 1, "%s", "missing producer evidence")
 			}
-			if s.GetObject(ea.Named()) != nil || s.GetArtifact(ea.Named(), store.ArtifactContent) != nil {
-				t.Fatal("prediction supplied source content")
-			}
+			assert.FatalIf(
+				t,
+				s.GetObject(ea.Named()) != nil || s.GetArtifact(ea.Named(), store.ArtifactContent) != nil,
+				"%s",
+				"prediction supplied source content",
+			)
+
 			_, err := f.Fetch(t.Context(), ea, testReadSet(ea), sourcecache.Policy{})
-			if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) ||
-				err.Error() != "no generated content" {
-				t.Fatalf("missing-content error = %v", err)
-			}
+			assert.FatalIf(t, !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) ||
+				err.Error() != "no generated content", "missing-content error = %v", err)
 		})
 	}
 }

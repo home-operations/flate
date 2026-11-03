@@ -286,6 +286,7 @@ func (w *traversal) walk(ctx context.Context, v graphVisit, yield func(graphVisi
 	return w.proceed(ctx)
 }
 
+//nolint:gocritic // Keep immutable value-receiver semantics.
 func (r documentReader) references(
 	dir string,
 	body *types.Kustomization,
@@ -319,9 +320,12 @@ func (r documentReader) references(
 func (r *documentReader) replayEdges() {
 	if r.edgesDirty {
 		var pending []string
-		for dir, doc := range r.cache {
-			if !doc.edgesKnown && doc.traversed && doc.body != nil {
-				pending = append(pending, dir)
+		{
+			//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+			for dir, doc := range r.cache {
+				if !doc.edgesKnown && doc.traversed && doc.body != nil {
+					pending = append(pending, dir)
+				}
 			}
 		}
 		for _, dir := range pending {
@@ -364,6 +368,7 @@ func (w *traversal) admitFile(ctx context.Context, root, file string, component 
 
 type traversalReference struct {
 	kustomizeinput.Reference
+
 	target string
 }
 
@@ -596,35 +601,39 @@ func (w *traversal) scanBootstrapFluxKS(ctx context.Context, root, dir, kpath st
 			w.loader.Store.AddWarning(warning)
 			continue
 		}
-		for _, child := range objs {
-			if child.fact != nil && child.fact.facts.uncertain {
-				continue
+		{
+			childValues := objs
+			for childIndex := range childValues {
+				child := childValues[childIndex]
+				if child.fact != nil && child.fact.facts.uncertain {
+					continue
+				}
+				obj := child.Obj
+				ks, ok := obj.(*manifest.Kustomization)
+				if !ok {
+					continue
+				}
+				// A Flux-GVK patch fragment with neither spec.path nor sourceRef
+				// must never become a reconcilable Kustomization. A sourceRef alone
+				// is sufficient for a bootstrap entry that renders the source root.
+				if ks.IsFragment() {
+					continue
+				}
+				if w.files != nil && child.fact != nil {
+					*w.files = append(
+						*w.files,
+						fileAdmission{file: abs, kind: admissionBootstrap, coordinate: child.fact.Declaration},
+					)
+				}
+				if !w.loader.acceptObject(obj.Named()) {
+					continue
+				}
+				w.loader.recordObject(obj, abs)
+				cached := w.documents.cache[abs]
+				cached.bootstrap = true
+				w.documents.cache[abs] = cached
+				count++
 			}
-			obj := child.Obj
-			ks, ok := obj.(*manifest.Kustomization)
-			if !ok {
-				continue
-			}
-			// A Flux-GVK patch fragment with neither spec.path nor sourceRef
-			// must never become a reconcilable Kustomization. A sourceRef alone
-			// is sufficient for a bootstrap entry that renders the source root.
-			if ks.IsFragment() {
-				continue
-			}
-			if w.files != nil && child.fact != nil {
-				*w.files = append(
-					*w.files,
-					fileAdmission{file: abs, kind: admissionBootstrap, coordinate: child.fact.Declaration},
-				)
-			}
-			if !w.loader.acceptObject(obj.Named()) {
-				continue
-			}
-			w.loader.recordObject(obj, abs)
-			cached := w.documents.cache[abs]
-			cached.bootstrap = true
-			w.documents.cache[abs] = cached
-			count++
 		}
 	}
 	return count

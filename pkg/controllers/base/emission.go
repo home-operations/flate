@@ -2,6 +2,7 @@ package base
 
 import (
 	"context"
+	"fmt"
 	"slices"
 
 	"github.com/home-operations/flate/pkg/loader"
@@ -30,12 +31,11 @@ func (c *Controller) ParseChildren(
 	return children, visible, failures
 }
 
-func (c *Controller) emit(
+func (c *Controller) admitChildren(
 	ctx context.Context,
 	id manifest.NamedResource,
 	next *store.Emission,
-	payloads map[manifest.NamedResource]*store.SourceArtifact,
-) error {
+) ([]store.Child, bool, error) {
 	children := next.Children
 	cloned := false
 	if next.Reads.Valid() {
@@ -52,12 +52,25 @@ func (c *Controller) emit(
 				next.Children[i].Obj = obj
 			}
 			if _, err := c.KeepEmitted(ctx, id, next.Children[i], next.Reads); err != nil {
-				return err
+				return nil, false, err
 			}
 		}
 	}
-	if err := ctx.Err(); err != nil {
+	return children, cloned, nil
+}
+
+func (c *Controller) emit(
+	ctx context.Context,
+	id manifest.NamedResource,
+	next *store.Emission,
+	payloads map[manifest.NamedResource]*store.SourceArtifact,
+) error {
+	children, cloned, err := c.admitChildren(ctx, id, next)
+	if err != nil {
 		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context: %w", err)
 	}
 	c.Store.RecordEmitted(id, next, payloads)
 	if cloned && !next.Complete {

@@ -59,7 +59,7 @@ func ResolveTransport(
 	for _, input := range inputs {
 		switch input.Use {
 		case TransportProxy:
-			proxy, selected, err := resolveProxy(secrets, owner, input.Reference)
+			proxy, selected, err := resolveProxy(secrets, &owner, input.Reference)
 			if err != nil {
 				return TransportMaterial{}, err
 			}
@@ -68,7 +68,7 @@ func ResolveTransport(
 			if input.Reference == nil {
 				continue
 			}
-			cfg, certificate, identity, err := resolveTLS(secrets, owner, input)
+			cfg, certificate, identity, err := resolveTLS(secrets, &owner, input)
 			if err != nil {
 				return TransportMaterial{}, err
 			}
@@ -120,7 +120,7 @@ func (m TransportMaterial) ProxyURL(target *url.URL) (*url.URL, error) {
 		return &selected, nil
 	}
 	if m.environment == nil {
-		return nil, nil
+		return nil, nil //nolint:nilnil // A nil value and nil error represent an optional absence or a reusable-cache miss.
 	}
 	return m.environment.ProxyFunc()(target)
 }
@@ -128,7 +128,7 @@ func (m TransportMaterial) ProxyURL(target *url.URL) (*url.URL, error) {
 // NewHTTPTransport builds the concrete guarded kernel required by HTTP libraries.
 func NewHTTPTransport(material TransportMaterial) *http.Transport {
 	material = material.captureEnvironment()
-	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr := http.DefaultTransport.(*http.Transport).Clone() //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
 	if material.config != nil {
 		tr.TLSClientConfig = material.config.Clone()
 	}
@@ -138,7 +138,8 @@ func NewHTTPTransport(material TransportMaterial) *http.Transport {
 		selectProxy := material.environment.ProxyFunc()
 		tr.Proxy = func(r *http.Request) (*url.URL, error) { return selectProxy(r.URL) }
 	}
-	ssrfguard.WrapTransport(tr, &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second})
+	const dialTimeout = 30 * time.Second
+	ssrfguard.WrapTransport(tr, &net.Dialer{Timeout: dialTimeout, KeepAlive: dialTimeout})
 	return tr
 }
 
@@ -207,7 +208,7 @@ func (n *Network) HTTPTransport(cfg HTTPTransportConfig) (http.RoundTripper, err
 			}
 			next = maps.Clone(*current)
 		}
-		next[key] = selected.(*networkTransport)
+		next[key] = selected.(*networkTransport) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
 		if n.transports.CompareAndSwap(current, &next) {
 			return selected, nil
 		}

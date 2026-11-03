@@ -41,6 +41,7 @@ type Controller struct {
 
 type execution struct {
 	*Controller
+
 	run    base.Execution
 	inputs []resourceset.ProviderInputs
 	next   int
@@ -109,42 +110,52 @@ func (c *execution) collect(ctx context.Context, rs *manifest.ResourceSet, level
 			input.State = resourceset.ProviderInputUnsupported
 		case manifest.ProviderInputLiteral:
 		case manifest.ProviderInputRegistry:
-			if c.Inputs == nil {
-				return manifest.NewError(manifest.ErrInput, nil, "registry input fetcher is not configured")
-			}
-			return c.run.Acquire(ctx, provider, base.Acquisition{
-				AllowMissingSecrets:  c.AllowMissingSecrets,
-				AllowAnonymousDenied: true,
-				Fetch: func(ctx context.Context) (*store.SourceArtifact, error) {
-					return c.Inputs.FetchInputs(ctx, provider, &c.run.Reads, cache.Policy{Retry: c.Retry})
-				},
-				Complete: func(ctx context.Context, artifact *store.SourceArtifact, unavailable error, level manifest.DrainLevel) error {
-					if !c.run.Reads.Valid() {
-						return nil
-					}
-					if unavailable != nil {
-						input.State = resourceset.ProviderInputUnavailable
-					} else {
-						body, err := fs.ReadFile(artifact.FS, "inputs.json")
-						if err != nil {
-							return manifest.NewError(manifest.ErrFlux, fmt.Errorf("read provider inputs: %w", err), "")
-						}
-						if err := json.Unmarshal(body, &input.Inputs); err != nil {
-							return manifest.NewError(
-								manifest.ErrFlux,
-								fmt.Errorf("decode provider inputs: %w", err),
-								"",
-							)
-						}
-					}
-					c.next++
-					return c.collect(ctx, rs, level)
-				},
-			}, level)
+			return c.acquireProvider(ctx, rs, input, level)
 		}
 		c.next++
 	}
 	return c.render(ctx, rs)
+}
+
+func (c *execution) acquireProvider(
+	ctx context.Context,
+	rs *manifest.ResourceSet,
+	input *resourceset.ProviderInputs,
+	level manifest.DrainLevel,
+) error {
+	provider := input.Declaration
+	if c.Inputs == nil {
+		return manifest.NewError(manifest.ErrInput, nil, "registry input fetcher is not configured")
+	}
+	return c.run.Acquire(ctx, provider, base.Acquisition{
+		AllowMissingSecrets:  c.AllowMissingSecrets,
+		AllowAnonymousDenied: true,
+		Fetch: func(ctx context.Context) (*store.SourceArtifact, error) {
+			return c.Inputs.FetchInputs(ctx, provider, &c.run.Reads, cache.Policy{Retry: c.Retry})
+		},
+		Complete: func(ctx context.Context, artifact *store.SourceArtifact, unavailable error, level manifest.DrainLevel) error {
+			if !c.run.Reads.Valid() {
+				return nil
+			}
+			if unavailable != nil {
+				input.State = resourceset.ProviderInputUnavailable
+			} else {
+				body, err := fs.ReadFile(artifact.FS, "inputs.json")
+				if err != nil {
+					return manifest.NewError(manifest.ErrFlux, fmt.Errorf("read provider inputs: %w", err), "")
+				}
+				if err := json.Unmarshal(body, &input.Inputs); err != nil {
+					return manifest.NewError(
+						manifest.ErrFlux,
+						fmt.Errorf("decode provider inputs: %w", err),
+						"",
+					)
+				}
+			}
+			c.next++
+			return c.collect(ctx, rs, level)
+		},
+	}, level)
 }
 
 func (c *execution) render(ctx context.Context, rs *manifest.ResourceSet) error {
@@ -162,8 +173,13 @@ func (c *execution) render(ctx context.Context, rs *manifest.ResourceSet) error 
 		attempt.Fingerprint = fp
 		return false, nil
 	})
-	for _, warning := range warnings {
-		c.run.Reads.AddWarning(warning)
+	{
+		warningValues := warnings
+		for warningIndex := range warningValues {
+			warning := warningValues[warningIndex]
+
+			c.run.Reads.AddWarning(warning)
+		}
 	}
 	if err != nil {
 		return err

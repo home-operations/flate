@@ -81,7 +81,7 @@ func AutoResolve(ctx context.Context, path, base string, owner *sourcecache.Cach
 	if err != nil {
 		return nil, err
 	}
-	current := input.FS.(*gittree.FS)
+	current := input.FS.(*gittree.FS) //nolint:errcheck // AutoResolve admits the current source as a gittree filesystem.
 	s := selection{repo: repo, current: current, owner: owner}
 	r, err := s.resolve(ctx, location, base)
 	if err != nil {
@@ -112,7 +112,7 @@ func AutoResolve(ctx context.Context, path, base string, owner *sourcecache.Cach
 	label, _ := gittree.Label(gittree.LabelOptions{Root: root, Mode: gittree.Direct, Key: r.Hash.String()})
 	rel, err := filepath.Rel(root, location.ScanPath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("rel: %w", err)
 	}
 	input.URL = ""
 	input.Metadata = map[string]string{"baseline-selection": r.Source}
@@ -278,7 +278,7 @@ func (s selection) resolveExplicit(ctx context.Context, location *gitrepo.Locati
 		return &resolution{Hash: *h, Source: "explicit --base=" + base, Repo: repo}, nil
 	}
 	remote := git.DefaultRemoteName + "/" + base
-	if h, err := repo.ResolveRevision(plumbing.Revision(remote)); err == nil {
+	if h, localErr := repo.ResolveRevision(plumbing.Revision(remote)); localErr == nil {
 		return &resolution{Hash: *h, Source: "explicit --base=" + base + " (via " + remote + ")", Repo: repo}, nil
 	}
 	url, ok := originURL(location.Config)
@@ -374,11 +374,11 @@ func resolveRef(repo *git.Repository, name plumbing.ReferenceName) (plumbing.Has
 func mergeBase(repo *git.Repository, headCommit *object.Commit, other plumbing.Hash) (plumbing.Hash, error) {
 	otherCommit, err := repo.CommitObject(other)
 	if err != nil {
-		return plumbing.ZeroHash, err
+		return plumbing.ZeroHash, fmt.Errorf("commitobject: %w", err)
 	}
 	bases, err := headCommit.MergeBase(otherCommit)
 	if err != nil {
-		return plumbing.ZeroHash, err
+		return plumbing.ZeroHash, fmt.Errorf("mergebase: %w", err)
 	}
 	if len(bases) == 0 {
 		return plumbing.ZeroHash, errors.New("no merge-base (disjoint histories)")

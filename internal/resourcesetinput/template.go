@@ -12,11 +12,14 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
+//nolint:gochecknoinits // Flux slug semantics require process-wide slug configuration before template evaluation.
 func init() {
-	slug.MaxLength = 63
-	slug.EnableSmartTruncate = true
+	const maxSlugLength = 63
+	slug.MaxLength = maxSlugLength  //nolint:reassign // Flux configures the upstream slug implementation globally.
+	slug.EnableSmartTruncate = true //nolint:reassign // Flux configures the upstream slug implementation globally.
 }
 
+//nolint:gochecknoglobals // The pool reuses template buffers across executions.
 var bufPool = sync.Pool{New: func() any { return new(bytes.Buffer) }}
 
 // Template holds one sequential template execution context.
@@ -49,7 +52,7 @@ func Parse(tmplStr string) (*Template, error) {
 func (pt *Template) Execute(inputSet map[string]any) ([]byte, error) {
 	*pt.cell = inputSet
 
-	buf := bufPool.Get().(*bytes.Buffer)
+	buf := bufPool.Get().(*bytes.Buffer) //nolint:errcheck // Only buffers created by this pool are stored in it.
 	buf.Reset()
 	defer bufPool.Put(buf)
 
@@ -69,5 +72,8 @@ func toYaml(v any) string {
 
 func mustToYaml(v any) (string, error) {
 	out, err := yaml.Marshal(v)
-	return string(out), err
+	if err != nil {
+		return "", fmt.Errorf("marshal template value: %w", err)
+	}
+	return string(out), nil
 }

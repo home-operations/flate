@@ -16,7 +16,7 @@ import (
 )
 
 // certFuncs registers deterministic overrides for sprig's certificate and
-// private-key generators. All generated material is ed25519: ed25519.GenerateKey
+// private-key generators. All generated material is ed25519: [ed25519.GenerateKey]
 // reads the seeded stream directly (unlike rsa/ecdsa.GenerateKey, which route
 // through crypto/rand's CustomReader and discard a custom reader), and ed25519
 // signatures are deterministic (RFC 8032). Combined with a stream-derived serial
@@ -52,8 +52,8 @@ func certFuncs(s *stream, fm template.FuncMap) {
 // certificate mirrors sprig's type: an unexported type with exported fields, so
 // templates read .Cert/.Key and a genCA value flows into genSignedCert's ca arg.
 type certificate struct {
-	Cert string
-	Key  string
+	Cert string `json:"Cert"`
+	Key  string `json:"Key"`
 }
 
 type certConfig struct {
@@ -62,7 +62,7 @@ type certConfig struct {
 	days              int
 }
 
-// A nil signerKey means self-signed. x509.CreateCertificate never reads the
+// A nil signerKey means self-signed. [x509.CreateCertificate] never reads the
 // stream: the serial is pre-set and ed25519 signing consumes no randomness.
 func (s *stream) issue(tmpl, parent *x509.Certificate, signerKey ed25519.PrivateKey, days int) (certificate, error) {
 	pub, priv, err := ed25519.GenerateKey(s)

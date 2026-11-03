@@ -63,10 +63,10 @@ func (e Encoder) DocumentGroups(groups []DocumentGroup) error {
 	}
 	for _, g := range groups {
 		if _, err := fmt.Fprintln(e.Writer, "# Cluster:", g.Cluster); err != nil {
-			return err
+			return fmt.Errorf("encode output: %w", err)
 		}
 		if err := e.Documents(g.Documents); err != nil {
-			return err
+			return fmt.Errorf("encode output: %w", err)
 		}
 	}
 	return nil
@@ -79,10 +79,10 @@ func (e Encoder) ImageGroups(groups []ImageGroup) error {
 			return e.Images(groups[0].Images)
 		}
 	}
-	switch e.Format {
-	case FormatJSON:
+	if e.Format == FormatJSON {
 		return e.JSON(groups)
-	case FormatYAML:
+	}
+	if e.Format == FormatYAML {
 		return e.YAML(groups)
 	}
 	return e.Names(func(yield func(string) bool) {
@@ -106,10 +106,10 @@ func (e Encoder) Documents(docs []map[string]any) error {
 
 // Images writes the prepared image list in its supplied order.
 func (e Encoder) Images(images []string) error {
-	switch e.Format {
-	case FormatJSON:
+	if e.Format == FormatJSON {
 		return e.JSON(images)
-	case FormatYAML:
+	}
+	if e.Format == FormatYAML {
 		return e.YAML(images)
 	}
 	return e.Names(slices.Values(images))
@@ -126,11 +126,11 @@ func (e Encoder) Tables(sections []Table) error {
 	for i, section := range sections {
 		if i > 0 {
 			if _, err := io.WriteString(e.Writer, "\n"); err != nil {
-				return err
+				return fmt.Errorf("encode output: %w", err)
 			}
 		}
 		if err := table(e.Writer, section.Columns, section.Rows); err != nil {
-			return err
+			return fmt.Errorf("encode output: %w", err)
 		}
 	}
 	return nil
@@ -181,8 +181,10 @@ func table(w io.Writer, cols []Column, rows []map[string]string) error {
 		}
 		b.WriteByte('\n')
 	}
-	_, err := w.Write(b.Bytes())
-	return err
+	if _, err := w.Write(b.Bytes()); err != nil {
+		return fmt.Errorf("write table: %w", err)
+	}
+	return nil
 }
 
 func writeCol(b *bytes.Buffer, value string, width int, last bool) {
@@ -202,13 +204,13 @@ func (e Encoder) yamlMulti(docs []map[string]any) error {
 	for _, d := range docs {
 		out, err := yaml.Marshal(d)
 		if err != nil {
-			return err
+			return fmt.Errorf("encode output: %w", err)
 		}
-		if _, err := io.WriteString(e.Writer, "---\n"); err != nil {
-			return err
+		if _, writeStringErr := io.WriteString(e.Writer, "---\n"); writeStringErr != nil {
+			return fmt.Errorf("encode output: %w", writeStringErr)
 		}
-		if _, err := e.Writer.Write(out); err != nil {
-			return err
+		if _, err = e.Writer.Write(out); err != nil {
+			return fmt.Errorf("encode output: %w", err)
 		}
 	}
 	return nil
@@ -218,30 +220,34 @@ func (e Encoder) yamlMulti(docs []map[string]any) error {
 func (e Encoder) YAML(value any) error {
 	out, err := yaml.Marshal(value)
 	if err != nil {
-		return err
+		return fmt.Errorf("encode output: %w", err)
 	}
-	_, err = e.Writer.Write(out)
-	return err
+	if _, err = e.Writer.Write(out); err != nil {
+		return fmt.Errorf("write output: %w", err)
+	}
+	return nil
 }
 
 // JSON emits a 2-space-indented JSON document.
 func (e Encoder) JSON(value any) error {
 	out, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("encode output: %w", err)
 	}
-	if _, err := e.Writer.Write(out); err != nil {
-		return err
+	if _, writeErr := e.Writer.Write(out); writeErr != nil {
+		return fmt.Errorf("write output: %w", writeErr)
 	}
-	_, err = io.WriteString(e.Writer, "\n")
-	return err
+	if _, err = io.WriteString(e.Writer, "\n"); err != nil {
+		return fmt.Errorf("write output: %w", err)
+	}
+	return nil
 }
 
 // Names writes prepared names in their supplied order.
 func (e Encoder) Names(values iter.Seq[string]) error {
 	for value := range values {
 		if _, err := fmt.Fprintln(e.Writer, value); err != nil {
-			return err
+			return fmt.Errorf("encode output: %w", err)
 		}
 	}
 	return nil

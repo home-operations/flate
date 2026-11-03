@@ -13,15 +13,6 @@ import (
 // `--path` ↦ FLATE_PATH, `--skip-kinds` ↦ FLATE_SKIP_KINDS, etc.
 const envPrefix = "FLATE_"
 
-// envSkipFlags lists flag names whose env-var binding would be useless
-// or actively harmful. `help` and `version` short-circuit normal
-// command execution when set, so `FLATE_HELP=true` would silently
-// disable every other invocation — better to leave them CLI-only.
-var envSkipFlags = map[string]bool{
-	"help":    true,
-	"version": true,
-}
-
 // envKey returns the env-var name corresponding to a cobra flag.
 // Identity transform: kebab → snake, uppercase, FLATE_ prefix.
 func envKey(flagName string) string {
@@ -34,10 +25,12 @@ func envKey(flagName string) string {
 // values parse the same form pflag accepts on argv (CSV for slices,
 // `k=v,k=v` for maps, `true/false/1/0` for bools, `30m` for durations).
 // An invalid value fails loud with the offending env key named.
+//
+//nolint:errcheck // Cobra binds supply to StringArray, which implements pflag.SliceValue.
 func applyEnvVars(cmd *cobra.Command) error {
 	var firstErr error
 	cmd.Flags().VisitAll(func(f *pflag.Flag) {
-		if firstErr != nil || f.Changed || envSkipFlags[f.Name] {
+		if firstErr != nil || f.Changed || (f.Name == "help" || f.Name == versionFlag) {
 			return
 		}
 		key := envKey(f.Name)
@@ -51,7 +44,9 @@ func applyEnvVars(cmd *cobra.Command) error {
 				firstErr = err
 				return
 			}
-			firstErr = f.Value.(pflag.SliceValue).Replace(entries)
+			firstErr = f.Value.(pflag.SliceValue).Replace(
+				entries,
+			)
 			f.Changed = firstErr == nil
 			return
 		}
@@ -82,7 +77,7 @@ func annotateEnvUsage(root *cobra.Command) {
 	var walk func(*cobra.Command)
 	walk = func(cmd *cobra.Command) {
 		cmd.LocalFlags().VisitAll(func(f *pflag.Flag) {
-			if envSkipFlags[f.Name] {
+			if f.Name == "help" || f.Name == versionFlag {
 				return
 			}
 			f.Usage = strings.TrimRight(f.Usage, " ") + " [env: " + envKey(f.Name) + "]"

@@ -11,6 +11,8 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
+const comparisonSides = 2
+
 type selectionSide struct {
 	run        Rendered
 	result     *selection.Selection
@@ -32,7 +34,7 @@ func Select(
 	roots []manifest.NamedResource,
 	labels map[string]string,
 ) ([]*selection.Selection, error, error) {
-	if len(runs) < 1 || len(runs) > 2 {
+	if len(runs) < 1 || len(runs) > comparisonSides {
 		err := errors.Join(manifest.NewError(manifest.ErrInput, nil, "selection requires one or two runs"), runErr)
 		return nil, err, nonResourceErrors(err)
 	}
@@ -73,7 +75,7 @@ func Select(
 	}
 	for i, run := range runs {
 		var other *selectionSide
-		if len(sides) == 2 {
+		if len(sides) == comparisonSides {
 			other = &sides[1-i]
 		}
 		if complete && !run.Absent {
@@ -81,7 +83,7 @@ func Select(
 		} else {
 			sides[i].result = &selection.Selection{}
 		}
-		sides[i].collectWarnings(roots[0], kinds, len(runs) == 2)
+		sides[i].collectWarnings(roots[0], kinds, len(runs) == comparisonSides)
 		if run.Orchestrator != nil {
 			sides[i].prepareSubjects()
 		}
@@ -98,7 +100,7 @@ func Select(
 			continue
 		}
 		var other *selectionSide
-		if len(sides) == 2 && !sides[1-i].run.Absent {
+		if len(sides) == comparisonSides && !sides[1-i].run.Absent {
 			other = &sides[1-i]
 		}
 		side.prepareFailures(roots, other)
@@ -136,66 +138,99 @@ func (s *selectionSide) collect(roots []manifest.NamedResource, labels map[strin
 	if binding := s.run.entryBinding; binding.Producer != (manifest.NamedResource{}) {
 		s.result.ProducerKeys = map[manifest.NamedResource]manifest.NamedResource{binding.Producer: binding.Key}
 	}
-	var emitters []manifest.BaseManifest
-	intent := manifest.Selection{Roots: roots}
-	for _, root := range roots {
-		objects := s.run.store.ListObjects(root.Group, root.Kind)
-		stored := len(objects)
-		for id, record := range s.run.index.Files() {
-			if id.Group == root.Group && id.Kind == root.Kind {
-				if obj := s.run.unchangedDeclaration(id, record); obj != nil {
-					objects = append(objects, obj)
-				}
-			}
+	c := selectionCollection{side: s, intent: manifest.Selection{Roots: roots}, labels: labels, other: other}
+	c.collectObjects()
+	c.collectBatches()
+}
+
+type selectionCollection struct {
+	side     *selectionSide
+	intent   manifest.Selection
+	labels   map[string]string
+	other    *selectionSide
+	emitters []manifest.BaseManifest
+}
+
+func (c *selectionCollection) collectObjects() {
+	for _, root := range c.intent.Roots {
+		for _, obj := range c.rootObjects(root) {
+			c.collectObject(root, obj)
 		}
-		if len(objects) != stored {
-			slices.SortFunc(objects, func(a, b manifest.BaseManifest) int { return a.Named().Compare(b.Named()) })
-		}
-		for _, obj := range objects {
-			id := obj.Named()
-			if other != nil {
-				s.prepareExternal(root, obj)
-			}
-			if id.ReportHidden() && manifest.KindOf(obj).Render {
-				if root.Name == "" && manifest.KindOf(obj).Render {
-					s.roots = append(s.roots, id)
-					emitters = append(emitters, obj)
-				}
-				continue
-			}
-			if !intent.Matches(id) || !s.includes(id.Namespace) {
-				if root.Name == "" && s.run.filter.Enabled() && s.run.filter.ShouldReconcile(id) {
-					emitters = append(emitters, obj)
-				}
-				continue
-			}
-			if s.run.filter.Enabled() && !manifest.KindOf(obj).Discovery {
-				_, selected, _, _ := s.run.filter.Membership(id)
-				if !selected && s.run.store.GetObject(id) != nil {
-					parent, owned := s.run.parentOf(id)
-					_, parentSelected, _, _ := s.run.filter.Membership(parent)
-					if !owned || !parentSelected {
-						continue
-					}
-				}
-			}
-			s.result.Counts[root.Kind]++
-			s.roots = append(s.roots, id)
-			if !matchesLabels(obj, labels) {
-				continue
-			}
-			s.result.Objects = append(s.result.Objects, obj)
-			if version := s.chartVersion(obj); version != "" {
-				if s.result.ChartVersions == nil {
-					s.result.ChartVersions = make(map[manifest.NamedResource]string)
-				}
-				s.result.ChartVersions[id] = version
+	}
+}
+
+func (c *selectionCollection) rootObjects(root manifest.NamedResource) []manifest.BaseManifest {
+	s := c.side
+	objects := s.run.store.ListObjects(root.Group, root.Kind)
+	stored := len(objects)
+	for id, record := range s.run.index.Files() { //nolint:gocritic // The iterator supplies independent value snapshots.
+		if id.Group == root.Group && id.Kind == root.Kind {
+			if obj := s.run.unchangedDeclaration(id, record); obj != nil {
+				objects = append(objects, obj)
 			}
 		}
 	}
+	if len(objects) != stored {
+		slices.SortFunc(objects, func(a, b manifest.BaseManifest) int { return a.Named().Compare(b.Named()) })
+	}
+	return objects
+}
+
+func (c *selectionCollection) collectObject(root manifest.NamedResource, obj manifest.BaseManifest) {
+	s := c.side
+	id := obj.Named()
+	if c.other != nil {
+		s.prepareExternal(root, obj)
+	}
+	if id.ReportHidden() && manifest.KindOf(obj).Render {
+		if root.Name == "" {
+			s.roots = append(s.roots, id)
+			c.emitters = append(c.emitters, obj)
+		}
+		return
+	}
+	if !c.intent.Matches(id) || !s.includes(id.Namespace) {
+		if root.Name == "" && s.run.filter.Enabled() && s.run.filter.ShouldReconcile(id) {
+			c.emitters = append(c.emitters, obj)
+		}
+		return
+	}
+	if !s.selectedObject(obj) {
+		return
+	}
+	s.result.Counts[root.Kind]++
+	s.roots = append(s.roots, id)
+	if !matchesLabels(obj, c.labels) {
+		return
+	}
+	s.result.Objects = append(s.result.Objects, obj)
+	if version := s.chartVersion(obj); version != "" {
+		if s.result.ChartVersions == nil {
+			s.result.ChartVersions = make(map[manifest.NamedResource]string)
+		}
+		s.result.ChartVersions[id] = version
+	}
+}
+
+func (s *selectionSide) selectedObject(obj manifest.BaseManifest) bool {
+	id := obj.Named()
+	if !s.run.filter.Enabled() || manifest.KindOf(obj).Discovery {
+		return true
+	}
+	_, selected, _, _ := s.run.filter.Membership(id)
+	if selected || s.run.store.GetObject(id) == nil {
+		return true
+	}
+	parent, owned := s.run.parentOf(id)
+	_, parentSelected, _, _ := s.run.filter.Membership(parent)
+	return owned && parentSelected
+}
+
+func (c *selectionCollection) collectBatches() {
+	s := c.side
 	scoped := s.namespaces != nil
-	if other != nil && !other.run.Absent {
-		scoped = scoped && other.namespaces != nil
+	if c.other != nil && !c.other.run.Absent {
+		scoped = scoped && c.other.namespaces != nil
 	}
 	positions := make(map[manifest.NamedResource]int, len(s.run.Result.Manifests))
 	for i, batch := range s.run.Result.Manifests {
@@ -206,85 +241,103 @@ func (s *selectionSide) collect(roots []manifest.NamedResource, labels map[strin
 	if len(s.run.Result.Manifests) != 0 {
 		s.result.Manifests = make([]manifest.DocumentBatch, 0, len(s.result.Objects)+1)
 	}
-	for _, objects := range [2][]manifest.BaseManifest{s.result.Objects, emitters} {
+	for _, objects := range [2][]manifest.BaseManifest{s.result.Objects, c.emitters} {
 		for _, obj := range objects {
 			i, ok := positions[obj.Named()]
 			if !ok {
 				continue
 			}
-			batch := s.run.Result.Manifests[i]
-			var counterpart []map[string]any
-			counterpartKnown := false
-			selectedOutput := func(id manifest.NamedResource) bool {
-				_, selected, _, _ := s.run.filter.Membership(id)
-				if selected || other == nil || other.run.Absent {
-					return selected
-				}
-				if _, selected, _, _ := other.run.filter.Membership(id); !selected {
-					return false
-				}
-				if !counterpartKnown {
-					for _, batch := range other.run.Result.Manifests {
-						if batch.Parent != nil && batch.Parent.Named() == obj.Named() {
-							counterpart = batch.Documents
-							break
-						}
-					}
-					counterpartKnown = true
-				}
-				return slices.ContainsFunc(counterpart, func(doc map[string]any) bool {
-					return manifest.DocIdentity(doc) == id
-				})
-			}
-			var policy manifest.EmissionPolicy
-			if producer, ok := obj.(interface {
-				EmissionPolicy() manifest.EmissionPolicy
-			}); ok {
-				policy = producer.EmissionPolicy()
-			}
-			if policy.DocumentScope {
-				compared := other == nil || other.run.Absent ||
-					other.run.filter.ShouldReconcile(other.actualProducer(s.comparisonKey(obj.Named())))
-				batch.Documents = nil
-				for _, doc := range s.run.Result.Manifests[i].Documents {
-					if s.run.filter.Enabled() && !scoped {
-						id := manifest.DocIdentity(doc)
-						declaration := compared &&
-							slices.ContainsFunc(
-								roots,
-								func(root manifest.NamedResource) bool { return root.Group == id.Group && root.Kind == id.Kind },
-							)
-						if !declaration && !selectedOutput(id) {
-							continue
-						}
-					}
-					selected := policy.SelectOutput(doc, roots, s.namespaces, labels)
-					if !selected && other != nil && !other.run.Absent {
-						selected = policy.SelectOutput(doc, roots, other.namespaces, labels)
-					}
-					if selected {
-						batch.Documents = append(batch.Documents, doc)
-					}
-				}
-			}
-			if s.run.filter.Enabled() && !policy.DocumentScope {
-				if _, selected, _, _ := s.run.filter.Membership(obj.Named()); !selected {
-					documents := []map[string]any{}
-					for _, doc := range batch.Documents {
-						if selectedOutput(manifest.DocIdentity(doc)) {
-							documents = append(documents, doc)
-						}
-					}
-					batch.Documents = documents
-				}
-			}
-			if len(batch.Documents) != 0 {
-				s.result.Manifests = append(s.result.Manifests, batch)
+			batch := batchSelection{collection: c, object: obj, batch: s.run.Result.Manifests[i]}
+			batch.selectDocuments(scoped)
+			if len(batch.batch.Documents) != 0 {
+				s.result.Manifests = append(s.result.Manifests, batch.batch)
 			}
 		}
 	}
 }
 
+type batchSelection struct {
+	collection       *selectionCollection
+	object           manifest.BaseManifest
+	batch            manifest.DocumentBatch
+	counterpart      []map[string]any
+	counterpartKnown bool
+}
+
+func (b *batchSelection) selectedOutput(id manifest.NamedResource) bool {
+	s, other := b.collection.side, b.collection.other
+	_, selected, _, _ := s.run.filter.Membership(id)
+	if selected || other == nil || other.run.Absent {
+		return selected
+	}
+	if _, selected, _, _ := other.run.filter.Membership(id); !selected {
+		return false
+	}
+	if !b.counterpartKnown {
+		for _, batch := range other.run.Result.Manifests {
+			if batch.Parent != nil && batch.Parent.Named() == b.object.Named() {
+				b.counterpart = batch.Documents
+				break
+			}
+		}
+		b.counterpartKnown = true
+	}
+	return slices.ContainsFunc(b.counterpart, func(doc map[string]any) bool { return manifest.DocIdentity(doc) == id })
+}
+
+func (b *batchSelection) selectDocuments(scoped bool) {
+	var policy manifest.EmissionPolicy
+	if producer, ok := b.object.(interface {
+		EmissionPolicy() manifest.EmissionPolicy
+	}); ok {
+		policy = producer.EmissionPolicy()
+	}
+	if policy.DocumentScope {
+		b.selectScopedDocuments(&policy, scoped)
+	}
+	s := b.collection.side
+	if s.run.filter.Enabled() && !policy.DocumentScope {
+		if _, selected, _, _ := s.run.filter.Membership(b.object.Named()); !selected {
+			documents := []map[string]any{}
+			for _, doc := range b.batch.Documents {
+				if b.selectedOutput(manifest.DocIdentity(doc)) {
+					documents = append(documents, doc)
+				}
+			}
+			b.batch.Documents = documents
+		}
+	}
+}
+
+func (b *batchSelection) selectScopedDocuments(policy *manifest.EmissionPolicy, scoped bool) {
+	s, other := b.collection.side, b.collection.other
+	compared := other == nil || other.run.Absent ||
+		other.run.filter.ShouldReconcile(other.actualProducer(s.comparisonKey(b.object.Named())))
+	documents := b.batch.Documents
+	b.batch.Documents = nil
+	for _, doc := range documents {
+		if s.run.filter.Enabled() && !scoped && !b.declarationSelected(doc, compared) {
+			continue
+		}
+		selected := policy.SelectOutput(doc, b.collection.intent.Roots, s.namespaces, b.collection.labels)
+		if !selected && other != nil && !other.run.Absent {
+			selected = policy.SelectOutput(doc, b.collection.intent.Roots, other.namespaces, b.collection.labels)
+		}
+		if selected {
+			b.batch.Documents = append(b.batch.Documents, doc)
+		}
+	}
+}
+
+func (b *batchSelection) declarationSelected(doc map[string]any, compared bool) bool {
+	id := manifest.DocIdentity(doc)
+	declaration := compared && slices.ContainsFunc(b.collection.intent.Roots, func(root manifest.NamedResource) bool {
+		return root.Group == id.Group && root.Kind == id.Kind
+	})
+	return declaration || b.selectedOutput(id)
+}
+
+//nolint:ireturn // Declarations retain their heterogeneous manifest types.
 func (o *Orchestrator) unchangedDeclaration(
 	id manifest.NamedResource,
 	record manifest.DiscoveryRecord,
@@ -380,7 +433,9 @@ func (s *selectionSide) collectWarnings(
 		return
 	}
 	s.result.ClusterWarnings = s.run.Result.ClusterWarnings
-	for _, warning := range s.run.Result.Warnings {
+	for itemIndex := range s.run.Result.Warnings {
+		warning := s.run.Result.Warnings[itemIndex]
+
 		if warning.Category == manifest.WarnIncompleteInputCoverage {
 			id := warning.Resource
 			if (s.run.Orchestrator == nil || !s.run.filter.Enabled()) ||
@@ -401,7 +456,7 @@ func (s *selectionSide) collectWarnings(
 }
 
 func selectionCandidates(sides []selectionSide) []manifest.NamedResource {
-	if len(sides) != 2 {
+	if len(sides) != comparisonSides {
 		return nil
 	}
 	producers := make(map[manifest.NamedResource]struct{})
@@ -592,7 +647,9 @@ func (s *selectionSide) prepareSubjects() {
 			add(s.run.diagnostic(dep))
 		}
 	}
-	for _, warning := range s.run.Result.Warnings {
+	for itemIndex := range s.run.Result.Warnings {
+		warning := s.run.Result.Warnings[itemIndex]
+
 		if warning.Subject.ID != (manifest.NamedResource{}) {
 			add(warning.Subject)
 		} else if warning.Resource != (manifest.NamedResource{}) {

@@ -8,10 +8,10 @@ import "maps"
 // should prefer a direct type-assert + nil-tolerant access so we
 // don't allocate when nothing will be written.
 func EnsureMetadata(doc map[string]any) map[string]any {
-	metadata, _ := doc["metadata"].(map[string]any)
+	metadata, _ := doc[metadataKey].(map[string]any)
 	if metadata == nil {
 		metadata = make(map[string]any)
-		doc["metadata"] = metadata
+		doc[metadataKey] = metadata
 	}
 	return metadata
 }
@@ -37,6 +37,7 @@ func MergeStringMap(md map[string]any, key string, in map[string]string) {
 	md[key] = out
 }
 
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func defaultNamespace(
 	obj BaseManifest,
 	doc map[string]any,
@@ -51,9 +52,9 @@ func defaultNamespace(
 	if !changed {
 		doc = maps.Clone(doc)
 	}
-	metadata := maps.Clone(doc["metadata"].(map[string]any))
-	metadata["namespace"] = namespace
-	doc["metadata"] = metadata
+	metadata := maps.Clone(doc[metadataKey].(map[string]any))
+	metadata[namespaceKey] = namespace
+	doc[metadataKey] = metadata
 	return obj, doc, true
 }
 

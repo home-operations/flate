@@ -18,8 +18,11 @@ import (
 
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/safepath"
+	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/tree"
 )
+
+const strategyExtract = "Extract"
 
 func sourcePath(value string) (string, string, error) {
 	alias, pattern, ok := strings.Cut(value, "/")
@@ -44,23 +47,56 @@ func destinationPath(value string) (string, error) {
 }
 
 func (e *evaluation) apply(ctx context.Context, builder *tree.Builder, op operation) error {
-	alias, pattern, err := sourcePath(op.From)
+	plan, err := e.prepareCopy(op)
 	if err != nil {
 		return err
+	}
+	selected := 0
+	for _, name := range plan.matches {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("context: %w", err)
+		}
+		if plan.glob && name == "." || excluded(name, plan.root, op.Exclude) {
+			continue
+		}
+		selected++
+		if err := plan.apply(ctx, builder, name); err != nil {
+			return err
+		}
+	}
+	if plan.glob && selected == 0 {
+		return fmt.Errorf("no unexcluded files match %q", plan.pattern)
+	}
+	return nil
+}
+
+type copyPlan struct {
+	evaluation                        *evaluation
+	op                                operation
+	input                             *store.SourceArtifact
+	alias, pattern, destination, root string
+	glob                              bool
+	matches                           []string
+}
+
+func (e *evaluation) prepareCopy(op operation) (copyPlan, error) {
+	alias, pattern, err := sourcePath(op.From)
+	if err != nil {
+		return copyPlan{}, err
 	}
 	if pattern == "" {
 		pattern = "."
 	}
-	if err := validateGlob(pattern); err != nil {
-		return err
+	if localErr := validateGlob(pattern); localErr != nil {
+		return copyPlan{}, localErr
 	}
 	input := e.inputs[alias]
 	if input == nil {
-		return fmt.Errorf("unknown source alias %q", alias)
+		return copyPlan{}, fmt.Errorf("unknown source alias %q", alias)
 	}
 	destination, err := destinationPath(op.To)
 	if err != nil {
-		return err
+		return copyPlan{}, err
 	}
 	glob := strings.ContainsAny(pattern, "*?[]")
 	root := path.Clean(pattern)
@@ -75,83 +111,79 @@ func (e *evaluation) apply(ctx context.Context, builder *tree.Builder, op operat
 	}
 	matches := []string{path.Clean(pattern)}
 	if glob {
-		if op.Strategy == "Extract" {
+		if op.Strategy == strategyExtract {
 			matches, err = doublestar.Glob(input.FS, pattern, doublestar.WithFailOnIOErrors())
 		} else {
 			matches, err = fs.Glob(input.FS, pattern)
 		}
 		if err != nil {
-			return err
+			return copyPlan{}, fmt.Errorf("glob: %w", err)
 		}
 	}
-	selected := 0
-	for _, name := range matches {
+	return copyPlan{e, op, input, alias, pattern, destination, root, glob, matches}, nil
+}
+
+func (p *copyPlan) apply(ctx context.Context, builder *tree.Builder, name string) error {
+	info, err := fs.Stat(p.input.FS, name)
+	if err != nil {
+		return fmt.Errorf("stat: %w", err)
+	}
+	if p.op.Strategy == strategyExtract {
+		lower := strings.ToLower(name)
+		if info.IsDir() || !strings.HasSuffix(lower, ".tar.gz") && !strings.HasSuffix(lower, ".tgz") {
+			if p.glob {
+				return nil
+			}
+			return fmt.Errorf("extract requires a tarball, got %q", name)
+		}
+		return p.evaluation.extract(ctx, builder, archiveSelection{p.alias, name, p.destination})
+	}
+	target := p.copyDestination(builder, name, info)
+	if info.IsDir() {
+		return p.copyDirectory(ctx, builder, operation{From: name, To: target})
+	}
+	return copyFile(ctx, p.input.FS, builder, operation{From: name, To: target, Strategy: p.op.Strategy})
+}
+
+func (p *copyPlan) copyDestination(builder *tree.Builder, name string, info fs.FileInfo) string {
+	target := p.destination
+	if p.glob {
+		relative := name
+		if prefix, ok := strings.CutSuffix(p.pattern, "/**"); ok {
+			relative = strings.TrimPrefix(name, prefix+"/")
+		}
+		target = path.Join(target, relative)
+	} else if info.IsDir() || strings.HasSuffix(p.op.To, "/") {
+		target = path.Join(target, path.Base(name))
+	} else if previous, err := fs.Stat(builder, target); err == nil && previous.IsDir() {
+		target = path.Join(target, path.Base(name))
+	}
+	return target
+}
+
+func (p *copyPlan) copyDirectory(ctx context.Context, builder *tree.Builder, selection operation) error {
+	err := fs.WalkDir(p.input.FS, selection.From, func(current string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
 		if err := ctx.Err(); err != nil {
-			return err
+			return fmt.Errorf("context: %w", err)
 		}
-		if glob && name == "." || excluded(name, root, op.Exclude) {
-			continue
-		}
-		selected++
-		info, err := fs.Stat(input.FS, name)
-		if err != nil {
-			return err
-		}
-		target := destination
-		if op.Strategy == "Extract" {
-			lower := strings.ToLower(name)
-			if info.IsDir() || !strings.HasSuffix(lower, ".tar.gz") && !strings.HasSuffix(lower, ".tgz") {
-				if glob {
-					continue
-				}
-				return fmt.Errorf("extract requires a tarball, got %q", name)
+		if current != selection.From && excluded(current, p.root, p.op.Exclude) {
+			if entry.IsDir() {
+				return fs.SkipDir
 			}
-			if err := e.extract(ctx, builder, archiveSelection{alias, name, target}); err != nil {
-				return err
-			}
-			continue
+			return nil
 		}
-		if glob {
-			relative := name
-			if prefix, ok := strings.CutSuffix(pattern, "/**"); ok {
-				relative = strings.TrimPrefix(name, prefix+"/")
-			}
-			target = path.Join(target, relative)
-		} else if info.IsDir() || strings.HasSuffix(op.To, "/") {
-			target = path.Join(target, path.Base(name))
-		} else if previous, err := fs.Stat(builder, target); err == nil && previous.IsDir() {
-			target = path.Join(target, path.Base(name))
+		relative := strings.TrimPrefix(strings.TrimPrefix(current, selection.From), "/")
+		to := path.Join(selection.To, relative)
+		if entry.IsDir() {
+			return ensureDirectory(builder, to)
 		}
-		if info.IsDir() {
-			err = fs.WalkDir(input.FS, name, func(current string, entry fs.DirEntry, err error) error {
-				if err != nil {
-					return err
-				}
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-				if current != name && excluded(current, root, op.Exclude) {
-					if entry.IsDir() {
-						return fs.SkipDir
-					}
-					return nil
-				}
-				relative := strings.TrimPrefix(strings.TrimPrefix(current, name), "/")
-				to := path.Join(target, relative)
-				if entry.IsDir() {
-					return ensureDirectory(builder, to)
-				}
-				return copyFile(ctx, input.FS, builder, operation{From: current, To: to})
-			})
-		} else {
-			err = copyFile(ctx, input.FS, builder, operation{From: name, To: target, Strategy: op.Strategy})
-		}
-		if err != nil {
-			return err
-		}
-	}
-	if glob && selected == 0 {
-		return fmt.Errorf("no unexcluded files match %q", pattern)
+		return copyFile(ctx, p.input.FS, builder, operation{From: current, To: to})
+	})
+	if err != nil {
+		return fmt.Errorf("walkdir: %w", err)
 	}
 	return nil
 }
@@ -188,21 +220,21 @@ func ensureDirectory(builder *tree.Builder, name string) error {
 
 func copyFile(ctx context.Context, input fs.FS, builder *tree.Builder, op operation) error {
 	if err := ctx.Err(); err != nil {
-		return err
+		return fmt.Errorf("context: %w", err)
 	}
 	info, err := fs.Stat(input, op.From)
 	if err != nil {
-		return err
+		return fmt.Errorf("stat: %w", err)
 	}
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("unsupported source file %q", op.From)
 	}
 	data, err := fs.ReadFile(input, op.From)
 	if err != nil {
-		return err
+		return fmt.Errorf("readfile: %w", err)
 	}
 	mode := info.Mode()
-	if previous, err := fs.Stat(builder, op.To); op.Strategy == "Extract" && err == nil {
+	if previous, err := fs.Stat(builder, op.To); op.Strategy == strategyExtract && err == nil {
 		mode = previous.Mode()
 	} else if op.Strategy == "Merge" && err == nil {
 		base, err := loadYAML(ctx, builder, op.To)
@@ -215,7 +247,7 @@ func copyFile(ctx context.Context, input fs.FS, builder *tree.Builder, op operat
 		}
 		data, err = yaml.Marshal(loader.MergeMaps(base, overlay))
 		if err != nil {
-			return err
+			return fmt.Errorf("marshal: %w", err)
 		}
 		mode = previous.Mode()
 	}
@@ -225,14 +257,14 @@ func copyFile(ctx context.Context, input fs.FS, builder *tree.Builder, op operat
 func loadYAML(ctx context.Context, input fs.FS, name string) (map[string]any, error) {
 	file, err := input.Open(name)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open: %w", err)
 	}
 	defer func() { _ = file.Close() }()
 	reader := utilyaml.NewYAMLToJSONDecoder(file)
 	out := map[string]any{}
 	for {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("context: %w", err)
 		}
 		var document map[string]any
 		err := reader.Decode(&document)
@@ -240,7 +272,7 @@ func loadYAML(ctx context.Context, input fs.FS, name string) (map[string]any, er
 			return out, nil
 		}
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("decode: %w", err)
 		}
 		out = loader.MergeMaps(out, document)
 	}
@@ -262,19 +294,22 @@ func (e *evaluation) extract(ctx context.Context, builder *tree.Builder, selecti
 		func(_ context.Context, target cache.ProducerInput) (cache.ProducerResult, error) {
 			file, err := input.FS.Open(selection.Path)
 			if err != nil {
-				return cache.ProducerResult{}, err
+				return cache.ProducerResult{}, fmt.Errorf("open: %w", err)
 			}
 			defer func() { _ = file.Close() }()
 			compressed, err := gzip.NewReader(file)
 			if err != nil {
-				return cache.ProducerResult{}, err
+				return cache.ProducerResult{}, fmt.Errorf("newreader: %w", err)
 			}
 			defer func() { _ = compressed.Close() }()
-			_, err = io.Copy(
+			_, err = io.Copy( //nolint:gosec // Flux archive extraction has no uncompressed size limit.
 				target,
 				compressed,
-			) //nolint:gosec // Cache validates tar members; Extract preserves Flux's unbounded trailing-data semantics.
-			return cache.ProducerResult{}, err
+			)
+			if err != nil {
+				return cache.ProducerResult{}, fmt.Errorf("copy: %w", err)
+			}
+			return cache.ProducerResult{}, nil
 		},
 	)
 	if err != nil {
@@ -288,7 +323,7 @@ func (e *evaluation) extract(ctx context.Context, builder *tree.Builder, selecti
 			return err
 		}
 		if err := ctx.Err(); err != nil {
-			return err
+			return fmt.Errorf("context: %w", err)
 		}
 		if name == "." {
 			return nil
@@ -297,13 +332,13 @@ func (e *evaluation) extract(ctx context.Context, builder *tree.Builder, selecti
 		if entry.IsDir() {
 			return ensureDirectory(builder, target)
 		}
-		return copyFile(ctx, extracted, builder, operation{From: name, To: target, Strategy: "Extract"})
+		return copyFile(ctx, extracted, builder, operation{From: name, To: target, Strategy: strategyExtract})
 	})
 }
 
 func (e *evaluation) produce(
 	ctx context.Context,
-	req request,
+	req *request,
 	target cache.ProducerInput,
 ) (cache.ProducerResult, error) {
 	builder := tree.NewBuilder(nil)
@@ -314,7 +349,7 @@ func (e *evaluation) produce(
 	}
 	writer := tar.NewWriter(target)
 	if err := writer.AddFS(builder); err != nil {
-		return cache.ProducerResult{}, err
+		return cache.ProducerResult{}, fmt.Errorf("addfs: %w", err)
 	}
 	return cache.ProducerResult{}, writer.Close()
 }

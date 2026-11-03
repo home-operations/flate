@@ -31,6 +31,7 @@ type remoteInput struct {
 
 type remoteIdentity struct {
 	store.ArtifactInput
+
 	HTTPStatus int `json:"httpStatus,omitempty"`
 }
 

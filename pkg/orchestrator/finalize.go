@@ -15,7 +15,7 @@ import (
 
 func (o *Orchestrator) reportingClaims() []manifest.KSClaim {
 	candidates := o.store.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)
-	for id, record := range o.index.Files() {
+	for id, record := range o.index.Files() { //nolint:gocritic // The iterator supplies independent value snapshots.
 		if !id.KindInfo().Structural {
 			continue
 		}
@@ -119,7 +119,7 @@ func (o *Orchestrator) finalize() error {
 			}
 		}
 	}
-	for id, record := range o.index.Files() {
+	for id, record := range o.index.Files() { //nolint:gocritic // The iterator supplies independent value snapshots.
 		if id.KindInfo().Render && !id.ReportHidden() && o.unchangedDeclaration(id, record) != nil {
 			counts[id.Kind]++
 		}

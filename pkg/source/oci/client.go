@@ -26,7 +26,7 @@ func (f *operation) acquire(
 	policy cache.Policy,
 ) (*store.SourceArtifact, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 	}
 	if f.secrets != nil {
 		for _, ref := range []*manifest.LocalObjectReference{access.SecretRef, access.CertSecretRef, access.ProxySecretRef} {
@@ -41,17 +41,17 @@ func (f *operation) acquire(
 		machineRequest := request
 		machineRequest.client = &remote.Repository{Reference: request.client.Reference}
 		return source.AcquireMachine(ctx, policy, func(ctx context.Context) error {
-			selected, err := f.Network.RegistryCredentials(
+			selected, registryCredentialsErr := f.Network.RegistryCredentials(
 				ctx,
 				f.RegistryConfig,
 				machineRequest.client.Reference.Host(),
 			)
-			if err != nil {
-				return err
+			if registryCredentialsErr != nil {
+				return registryCredentialsErr
 			}
 			return f.configure(access, &machineRequest, *selected)
 		}, func(ctx context.Context, policy cache.Policy) (*store.SourceArtifact, error) {
-			return f.acquirePrepared(ctx, access, machineRequest, policy)
+			return f.acquirePrepared(ctx, &access, &machineRequest, policy)
 		})
 	}
 	if missing, ok := errors.AsType[*source.MissingSecretError](err); ok && request.client != nil {
@@ -63,7 +63,7 @@ func (f *operation) acquire(
 	if access.SecretRef == nil {
 		return machine(ctx)
 	}
-	return f.acquirePrepared(ctx, access, request, policy)
+	return f.acquirePrepared(ctx, &access, &request, policy)
 }
 
 func (f *operation) newRepoClient(ctx context.Context, access manifest.RegistryAccess) (registryAcquisition, error) {
@@ -86,7 +86,9 @@ func (f *operation) newRepoClient(ctx context.Context, access manifest.RegistryA
 	if err != nil {
 		return registryAcquisition{}, err
 	}
-	if _, err := resolved.ProxyURL(&url.URL{Scheme: "https", Host: client.Reference.Host()}); err != nil {
+	if _, proxyURLErr := resolved.ProxyURL(
+		&url.URL{Scheme: "https", Host: client.Reference.Host()},
+	); proxyURLErr != nil {
 		return registryAcquisition{}, manifest.NewError(
 			manifest.ErrInput,
 			nil,
@@ -124,18 +126,18 @@ func (f *operation) configure(
 	}
 	request.client.Client = &auth.Client{
 		Client:     &http.Client{Transport: tr},
-		Cache:      tr.(auth.Cache),
+		Cache:      tr.(auth.Cache), //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
 		Credential: auth.StaticCredential(request.client.Reference.Registry, cred),
 	}
 	return nil
 }
 
 func (f *operation) acquirePrepared(
-	ctx context.Context,
-	access manifest.RegistryAccess,
-	request registryAcquisition,
+	ctx context.Context, accessValue *manifest.RegistryAccess, requestValue *registryAcquisition,
 	policy cache.Policy,
 ) (*store.SourceArtifact, error) {
+	access := *accessValue
+	request := *requestValue
 	artifact, err := f.produce(ctx, request, policy)
 	if access.Insecure && ctx.Err() == nil && errors.Is(err, http.ErrSchemeMismatch) {
 		if requestErr, ok := errors.AsType[*url.Error](err); ok {

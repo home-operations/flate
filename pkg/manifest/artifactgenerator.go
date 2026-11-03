@@ -43,7 +43,7 @@ func (r *RawObject) artifactTargets(candidates []NamedResource) []ProducerTarget
 	}
 	for _, entry := range entries {
 		m, _ := entry.(map[string]any)
-		name, _ := m["name"].(string)
+		name, _ := m[nameKey].(string)
 		if name == "" {
 			continue
 		}
@@ -151,7 +151,7 @@ func artifactMatch(tokens []artifactToken, name string, bound []string, budget *
 			minimum++
 		}
 	}
-	for end := 1; end <= min(63, (len(name)-minimum)/occurrences); end++ {
+	for end := 1; end <= min(maxArtifactCaptureLength, (len(name)-minimum)/occurrences); end++ {
 		if *budget == 0 {
 			break
 		}
@@ -171,7 +171,7 @@ func artifactMatch(tokens []artifactToken, name string, bound []string, budget *
 
 func (r *RawObject) references(yield func(Reference) bool) {
 	if application, valid := r.EntryApplication(); valid {
-		if !yield(Reference{NamedResource: application.Source, Use: "source", Content: true}) {
+		if !yield(Reference{NamedResource: application.Source, Use: sourceKey, Content: true}) {
 			return
 		}
 	}
@@ -181,9 +181,9 @@ func (r *RawObject) references(yield func(Reference) bool) {
 	sources, _ := r.Spec["sources"].([]any)
 	for i, source := range sources {
 		fields, _ := source.(map[string]any)
-		kind, _ := fields["kind"].(string)
-		name, _ := fields["name"].(string)
-		namespace, _ := fields["namespace"].(string)
+		kind, _ := fields[kindKey].(string)
+		name, _ := fields[nameKey].(string)
+		namespace, _ := fields[namespaceKey].(string)
 		id := Resolve(
 			NamedResource{Group: referenceGroup(kind, ""), Kind: kind, Name: name, Namespace: namespace},
 			"",
@@ -205,3 +205,7 @@ func (r *RawObject) references(yield func(Reference) bool) {
 		}
 	}
 }
+
+const (
+	maxArtifactCaptureLength = 63
+)

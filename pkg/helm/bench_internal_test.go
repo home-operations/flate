@@ -445,13 +445,15 @@ func benchmarkTemplateSourceValuesName(b *testing.B, tc *struct {
 		nil,
 		RenderOptions{Options: Options{}, Sources: cliSources},
 	)
+	var recordErr error
 	if err == nil {
-		if recordErr := cli.RecordRender(
+		recordErr = cli.RecordRender(
 			b.Context(),
 			RenderAcceptance{Owner: hr.Named(), Receipt: receipt4, Records: emptyRenderInventory},
-		); recordErr != nil {
-			b.Fatal(recordErr)
-		}
+		)
+	}
+	if recordErr != nil {
+		b.Fatal(recordErr)
 	}
 
 	if err != nil {
@@ -463,47 +465,17 @@ func benchmarkTemplateSourceValuesName(b *testing.B, tc *struct {
 		b.Fatalf("source values are not pinned: %v", err)
 	}
 	if tc.disk {
-		if loaded.record == nil {
-			b.Fatal("warm render did not use persisted output")
-		}
-		witness := manifest.DeepCopyMap(first[0].Document)
-		witness["cacheWitness"] = "selected source values persisted hit"
-		output := encodedRender(b, []map[string]any{witness})
-		_, _, _, err := owner.Blob(
-			b.Context(),
-			sourcecache.BlobKey{Content: loaded.record.key, Render: sourcecache.RenderAccepted},
-			sourcecache.Policy{},
-			func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
-				err := writeTestRecord(
-					w,
-					sourcecache.BlobKey{Content: loaded.record.key, Render: sourcecache.RenderAccepted},
-					&renderRecord{Output: output, Analysis: loaded.record.Analysis},
-				)
-				return sourcecache.ProducerResult{}, err
+		benchmarkSourceValuesPersistence(
+			b,
+			&benchmarkSourceValuesInputs{
+				owner:      &owner,
+				loaded:     &loaded,
+				first:      &first,
+				cli:        &cli,
+				hr:         &hr,
+				cliSources: &cliSources,
 			},
 		)
-		if err != nil {
-			b.Fatal(err)
-		}
-		out, receipt5, err := cli.Template(
-			b.Context(),
-			hr,
-			nil,
-			RenderOptions{Options: Options{}, Sources: cliSources},
-		)
-		if err == nil {
-			if recordErr := cli.RecordRender(
-				b.Context(),
-				RenderAcceptance{Owner: hr.Named(), Receipt: receipt5, Records: emptyRenderInventory},
-			); recordErr != nil {
-				b.Fatal(recordErr)
-			}
-		}
-
-		if err != nil || len(out) != 1 || out[0].Document["cacheWitness"] != witness["cacheWitness"] {
-			b.Fatalf("persisted output witness missing: %v", err)
-		}
-		b.Log("verified selected source values persisted hit")
 	}
 	b.ReportAllocs()
 	for b.Loop() {
@@ -582,4 +554,59 @@ func benchmarkTemplateSourceValuesNameLoop(b *testing.B, loopInputs struct {
 			b.Fatal(recordErr)
 		}
 	}
+}
+
+type benchmarkSourceValuesInputs struct {
+	owner      **sourcecache.Cache
+	loaded     *chartDescription
+	first      *[]manifest.DocOccurrence
+	cli        **Client
+	hr         **manifest.HelmRelease
+	cliSources *Sources
+}
+
+func benchmarkSourceValuesPersistence(b *testing.B, inputs *benchmarkSourceValuesInputs) {
+	b.Helper()
+
+	if inputs.loaded.record == nil {
+		b.Fatal("warm render did not use persisted output")
+	}
+	witness := manifest.DeepCopyMap((*inputs.first)[0].Document)
+	witness["cacheWitness"] = "selected source values persisted hit"
+	output := encodedRender(b, []map[string]any{witness})
+	_, _, _, err := (*inputs.owner).Blob(
+		b.Context(),
+		sourcecache.BlobKey{Content: inputs.loaded.record.key, Render: sourcecache.RenderAccepted},
+		sourcecache.Policy{},
+		func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+			err := writeTestRecord(
+				w,
+				sourcecache.BlobKey{Content: inputs.loaded.record.key, Render: sourcecache.RenderAccepted},
+				&renderRecord{Output: output, Analysis: inputs.loaded.record.Analysis},
+			)
+			return sourcecache.ProducerResult{}, err
+		},
+	)
+	if err != nil {
+		b.Fatal(err)
+	}
+	out, receipt5, err := (*inputs.cli).Template(
+		b.Context(),
+		(*inputs.hr),
+		nil,
+		RenderOptions{Options: Options{}, Sources: (*inputs.cliSources)},
+	)
+	if err == nil {
+		if recordErr := (*inputs.cli).RecordRender(
+			b.Context(),
+			RenderAcceptance{Owner: (*inputs.hr).Named(), Receipt: receipt5, Records: emptyRenderInventory},
+		); recordErr != nil {
+			b.Fatal(recordErr)
+		}
+	}
+
+	if err != nil || len(out) != 1 || out[0].Document["cacheWitness"] != witness["cacheWitness"] {
+		b.Fatalf("persisted output witness missing: %v", err)
+	}
+	b.Log("verified selected source values persisted hit")
 }

@@ -217,314 +217,19 @@ extra: {sequence: [{value: original}]}
 	}
 
 	if root != "" && renderPersistenceEligible(t) {
-		t.Log("verified persisted completed-output hit")
-		{
-			assert.FatalIf(
-				t,
-				err != nil || !reflect.DeepEqual(out, first),
-				"completed hit: output=%q, error=%v",
-				out,
-				err,
-			)
-		}
-		out[0]["data"].(map[string]any)["greeting"] = "mutated"
-		out[0]["extra"].(map[string]any)["sequence"].([]any)[0].(map[string]any)["value"] = "mutated"
-		again, receipt18, renderMapsErr := testutil.RenderMaps(
-			cli.Template(t.Context(), newHR(), values, RenderOptions{Sources: cliSources}),
-		)
-		if renderMapsErr == nil {
-			{
-				recordErr := cli.RecordRender(
-					t.Context(),
-					RenderAcceptance{Owner: newHR().Named(), Receipt: receipt18, Records: emptyRenderInventory},
-				)
-				assert.NoError(t, recordErr)
-			}
-		}
-
-		assert.NoError(t, renderMapsErr)
-		assert.Diff(t, again, first)
-		fresh := NewClient(cachetest.New(t, root, cache.New))
-		var receipt19 *manifest.RenderReceipt
-		again, receipt19, renderMapsErr = testutil.RenderMaps(
-			fresh.Template(t.Context(), newHR(), values, RenderOptions{Sources: cliSources}),
-		)
-		if renderMapsErr == nil {
-			{
-				recordErr := fresh.RecordRender(
-					t.Context(),
-					RenderAcceptance{Owner: newHR().Named(), Receipt: receipt19, Records: emptyRenderInventory},
-				)
-				assert.NoError(t, recordErr)
-			}
-		}
-
-		assert.NoError(t, renderMapsErr)
-		assert.Diff(t, again, first)
-		initial, renderMapsErr := cli.describeChart(t.Context(), newHR(), cliSources)
-		assert.NoError(t, renderMapsErr)
-		var receipt20 *manifest.RenderReceipt
-		_, receipt20, renderMapsErr = testutil.RenderMaps(
-			cli.Template(t.Context(), newHR(), values, RenderOptions{Options: Options{}, Sources: cliSources}),
-		)
-		if renderMapsErr == nil {
-			{
-				recordErr := cli.RecordRender(
-					t.Context(),
-					RenderAcceptance{Owner: newHR().Named(), Receipt: receipt20, Records: emptyRenderInventory},
-				)
-				assert.NoError(t, recordErr)
-			}
-		}
-
-		assert.NoError(t, renderMapsErr)
-		repeated, renderMapsErr := cli.describeChart(t.Context(), newHR(), cliSources)
-		assert.NoError(t, renderMapsErr)
-		{
-			assert.FatalIf(
-				t,
-				initial.record == nil || repeated.record != initial.record,
-				"%s",
-				"repeated hit did not share its typed record",
-			)
-		}
-		alternate := maps.Clone(values)
-		alternate["variant"] = true
-		loaded.values, loaded.valuesErr = cli.observeValuesFiles(
-			t.Context(), &loaded, newHR().ChartValuesFiles,
-			newHR().IgnoreMissingValuesFiles,
-		)
-		assert.NoError(t, loaded.valuesErr)
-		alternateKey := cache.BlobKey{
-			Content: computeTemplateKey(&loaded, alternate, Options{}, newHR()),
-			Render:  cache.RenderAccepted,
-		}
-		r, _, _, renderMapsErr := cli.cache.Blob(
-			t.Context(),
-			alternateKey,
-			cache.Policy{},
-			func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-				writeTestRecordErr2 := writeTestRecord(w, alternateKey, initial.record)
-				return cache.ProducerResult{}, writeTestRecordErr2
+		testTemplateCachePersistedIntegration(
+			t,
+			&templateCacheIntegrationInputs{
+				root:       &root,
+				cli:        &cli,
+				cliSources: &cliSources,
+				loaded:     &loaded,
+				values:     &values,
+				first:      &first,
+				out:        &out,
+				err:        &err,
 			},
 		)
-		assert.NoError(t, renderMapsErr)
-		assert.Equal(t, cache.AcquisitionIdentity(r) != initial.record.identity, true)
-
-		var receipt21 *manifest.RenderReceipt
-		_, receipt21, renderMapsErr = testutil.RenderMaps(
-			cli.Template(
-				t.Context(),
-				newHR(),
-				alternate,
-				RenderOptions{Options: Options{}, Sources: cliSources},
-			),
-		)
-		if renderMapsErr == nil {
-			{
-				recordErr := cli.RecordRender(
-					t.Context(),
-					RenderAcceptance{Owner: newHR().Named(), Receipt: receipt21, Records: emptyRenderInventory},
-				)
-				assert.NoError(t, recordErr)
-			}
-		}
-
-		assert.NoError(t, renderMapsErr)
-		distinct, renderMapsErr := cli.describeChart(t.Context(), newHR(), cliSources)
-		assert.NoError(t, renderMapsErr)
-		{
-			assert.FatalIf(
-				t,
-				distinct.record == initial.record || distinct.record.key != alternateKey.Content,
-				"%s",
-				"distinct release key reused a typed record",
-			)
-		}
-		for _, replacement := range []string{"changed output", "corrupt payload", "{", `{"Output":"bWlzc2luZyBhbmFseXNpcw=="}`} {
-			replacementDocs := []map[string]any{{"witness": replacement}}
-			_, _, _, blobErr := cli.cache.Blob(
-				t.Context(),
-				alternateKey,
-				cache.Policy{},
-				func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-					var errResult error
-					switch replacement {
-					case "corrupt payload":
-						errResult = writeTestRecord(
-							w,
-							alternateKey,
-							&renderRecord{Output: []byte("corrupt"), Analysis: loaded.analyze()},
-						)
-					case "changed output":
-						errResult = writeTestRecord(
-							w,
-							alternateKey,
-							&renderRecord{Output: encodedRender(t, replacementDocs), Analysis: loaded.analyze()},
-						)
-					default:
-						_, errResult = io.WriteString(w, replacement)
-					}
-					return cache.ProducerResult{}, errResult
-				},
-			)
-			assert.NoError(t, blobErr)
-
-			out, receipt22, blobErr := testutil.RenderMaps(
-				cli.Template(
-					t.Context(),
-					newHR(),
-					alternate,
-					RenderOptions{Options: Options{}, Sources: cliSources},
-				),
-			)
-			if blobErr == nil {
-				{
-					recordErr := cli.RecordRender(
-						t.Context(),
-						RenderAcceptance{
-							Owner:   newHR().Named(),
-							Receipt: receipt22,
-							Records: emptyRenderInventory,
-						},
-					)
-					assert.NoError(t, recordErr)
-				}
-			}
-
-			switch replacement {
-			case "changed output":
-				assert.NoError(t, blobErr)
-				{
-					assert.FatalIf(
-						t,
-						!reflect.DeepEqual(out, replacementDocs),
-						"%s",
-						"same-key replacement served stale output",
-					)
-				}
-			case "corrupt payload":
-				{
-					assert.FatalIf(
-						t,
-						blobErr == nil || !strings.Contains(blobErr.Error(), "cache miss action") || len(out) != 0,
-						"corrupt payload: %v, %v",
-						out,
-						blobErr,
-					)
-				}
-			case "{":
-				{
-					assert.FatalIf(
-						t,
-						blobErr == nil || !strings.Contains(blobErr.Error(), "cache miss action") || len(out) != 0,
-						"malformed replacement was concealed: %v",
-						blobErr,
-					)
-				}
-			default:
-				{
-					assert.FatalIf(
-						t,
-						blobErr == nil || !strings.Contains(blobErr.Error(), "cache miss action") || len(out) != 0,
-						"missing analysis was accepted: %v",
-						blobErr,
-					)
-				}
-			}
-		}
-		recoveryValues := map[string]any{"greeting": "hi"}
-		recoveryKey := cache.BlobKey{
-			Content: computeTemplateKey(&loaded, recoveryValues, Options{}, newHR()),
-			Render:  cache.RenderAccepted,
-		}
-		_, _, _, renderMapsErr = cli.cache.Blob(
-			t.Context(),
-			recoveryKey,
-			cache.Policy{},
-			func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-				writeTestRecordErr3 := writeTestRecord(
-					w,
-					recoveryKey,
-					&renderRecord{Output: []byte("corrupt"), Analysis: loaded.analyze()},
-				)
-				return cache.ProducerResult{}, writeTestRecordErr3
-			},
-		)
-		assert.NoError(t, renderMapsErr)
-
-		beforeRecovery, renderMapsErr := cli.describeChart(t.Context(), newHR(), cliSources)
-		assert.NoError(t, renderMapsErr)
-		recovered, receipt23, renderMapsErr := testutil.RenderMaps(
-			cli.Template(t.Context(), newHR(), recoveryValues, RenderOptions{Sources: cliSources}),
-		)
-		if renderMapsErr == nil {
-			{
-				recordErr := cli.RecordRender(
-					t.Context(),
-					RenderAcceptance{Owner: newHR().Named(), Receipt: receipt23, Records: emptyRenderInventory},
-				)
-				assert.NoError(t, recordErr)
-			}
-		}
-
-		assert.NoError(t, renderMapsErr)
-		assert.Diff(t, recovered, first)
-		afterRecovery, renderMapsErr := cli.describeChart(t.Context(), newHR(), cliSources)
-		assert.NoError(t, renderMapsErr)
-		{
-			assert.FatalIf(
-				t,
-				afterRecovery.record == beforeRecovery.record || afterRecovery.record == nil,
-				"%s",
-				"recovered generation did not replace the typed record",
-			)
-		}
-		recoveredOutput, renderMapsErr := testutil.DecodeRender(afterRecovery.record.Output)
-		assert.NoError(t, renderMapsErr)
-		assert.Diff(t, recoveredOutput, first)
-		r, _, _, renderMapsErr = cli.cache.Blob(t.Context(), recoveryKey, cache.Policy{MaxAge: cache.Forever}, nil)
-		assert.NoError(t, renderMapsErr)
-		var replacement renderRecord
-		assert.NoError(t, readTestRecord(r, &replacement))
-
-		decoded, renderMapsErr := testutil.DecodeRender(replacement.Output)
-		assert.NoError(t, renderMapsErr)
-		assert.Diff(t, decoded, first)
-		var receipt24 *manifest.RenderReceipt
-		again, receipt24, renderMapsErr = testutil.RenderMaps(
-			cli.Template(t.Context(), newHR(), recoveryValues, RenderOptions{Sources: cliSources}),
-		)
-		if renderMapsErr == nil {
-			{
-				recordErr := cli.RecordRender(
-					t.Context(),
-					RenderAcceptance{Owner: newHR().Named(), Receipt: receipt24, Records: emptyRenderInventory},
-				)
-				assert.NoError(t, recordErr)
-			}
-		}
-
-		assert.NoError(t, renderMapsErr)
-		assert.Diff(t, again, first)
-		reopened := NewClient(cachetest.New(t, root, cache.New))
-		var receipt25 *manifest.RenderReceipt
-		again, receipt25, renderMapsErr = testutil.RenderMaps(
-			reopened.Template(t.Context(), newHR(), recoveryValues, RenderOptions{Sources: cliSources}),
-		)
-		if renderMapsErr == nil {
-			{
-				recordErr := reopened.RecordRender(
-					t.Context(),
-					RenderAcceptance{Owner: newHR().Named(), Receipt: receipt25, Records: emptyRenderInventory},
-				)
-				assert.NoError(t, recordErr)
-			}
-		}
-
-		assert.NoError(t, renderMapsErr)
-		assert.Diff(t, again, first)
-		t.Log("verified corrupt payload recovery, replacement, subsequent and reopened hits")
 	} else {
 		assert.FatalIf(
 			t,
@@ -606,4 +311,369 @@ func testTemplateCacheTemplateIntegrationCase3Loop(t *testing.T, loopInputs stru
 		assert.NoError(t, err)
 		assert.Diff(t, repeated, (*loopInputs.first))
 	}
+}
+
+type templateCacheIntegrationInputs struct {
+	root       *string
+	cli        **Client
+	cliSources *Sources
+	loaded     *chartDescription
+	values     *map[string]any
+	first      *[]map[string]any
+	out        *[]map[string]any
+	err        *error
+}
+
+func testTemplateCachePersistedIntegration(t *testing.T, inputs *templateCacheIntegrationInputs) {
+	t.Helper()
+
+	t.Log("verified persisted completed-output hit")
+	{
+		assert.FatalIf(
+			t,
+			(*inputs.err) != nil || !reflect.DeepEqual((*inputs.out), (*inputs.first)),
+			"completed hit: output=%q, error=%v",
+			(*inputs.out),
+			(*inputs.err),
+		)
+	}
+	(*inputs.out)[0]["data"].(map[string]any)["greeting"] = "mutated"
+	(*inputs.out)[0]["extra"].(map[string]any)["sequence"].([]any)[0].(map[string]any)["value"] = "mutated"
+	again, receipt18, renderMapsErr := testutil.RenderMaps(
+		(*inputs.cli).Template(t.Context(), newHR(), (*inputs.values), RenderOptions{Sources: (*inputs.cliSources)}),
+	)
+	if renderMapsErr == nil {
+		{
+			recordErr := (*inputs.cli).RecordRender(
+				t.Context(),
+				RenderAcceptance{Owner: newHR().Named(), Receipt: receipt18, Records: emptyRenderInventory},
+			)
+			assert.NoError(t, recordErr)
+		}
+	}
+
+	assert.NoError(t, renderMapsErr)
+	assert.Diff(t, again, (*inputs.first))
+	fresh := NewClient(cachetest.New(t, (*inputs.root), cache.New))
+	var receipt19 *manifest.RenderReceipt
+	again, receipt19, renderMapsErr = testutil.RenderMaps(
+		fresh.Template(t.Context(), newHR(), (*inputs.values), RenderOptions{Sources: (*inputs.cliSources)}),
+	)
+	if renderMapsErr == nil {
+		{
+			recordErr := fresh.RecordRender(
+				t.Context(),
+				RenderAcceptance{Owner: newHR().Named(), Receipt: receipt19, Records: emptyRenderInventory},
+			)
+			assert.NoError(t, recordErr)
+		}
+	}
+
+	assert.NoError(t, renderMapsErr)
+	assert.Diff(t, again, (*inputs.first))
+	initial, renderMapsErr := (*inputs.cli).describeChart(t.Context(), newHR(), (*inputs.cliSources))
+	assert.NoError(t, renderMapsErr)
+	var receipt20 *manifest.RenderReceipt
+	_, receipt20, renderMapsErr = testutil.RenderMaps(
+		(*inputs.cli).Template(
+			t.Context(),
+			newHR(),
+			(*inputs.values),
+			RenderOptions{Options: Options{}, Sources: (*inputs.cliSources)},
+		),
+	)
+	if renderMapsErr == nil {
+		{
+			recordErr := (*inputs.cli).RecordRender(
+				t.Context(),
+				RenderAcceptance{Owner: newHR().Named(), Receipt: receipt20, Records: emptyRenderInventory},
+			)
+			assert.NoError(t, recordErr)
+		}
+	}
+
+	assert.NoError(t, renderMapsErr)
+	repeated, renderMapsErr := (*inputs.cli).describeChart(t.Context(), newHR(), (*inputs.cliSources))
+	assert.NoError(t, renderMapsErr)
+	{
+		assert.FatalIf(
+			t,
+			initial.record == nil || repeated.record != initial.record,
+			"%s",
+			"repeated hit did not share its typed record",
+		)
+	}
+	alternate := maps.Clone((*inputs.values))
+	alternate["variant"] = true
+	inputs.loaded.values, inputs.loaded.valuesErr = (*inputs.cli).observeValuesFiles(
+		t.Context(), inputs.loaded, newHR().ChartValuesFiles,
+		newHR().IgnoreMissingValuesFiles,
+	)
+	assert.NoError(t, inputs.loaded.valuesErr)
+	alternateKey := cache.BlobKey{
+		Content: computeTemplateKey(inputs.loaded, alternate, Options{}, newHR()),
+		Render:  cache.RenderAccepted,
+	}
+	r, _, _, renderMapsErr := (*inputs.cli).cache.Blob(
+		t.Context(),
+		alternateKey,
+		cache.Policy{},
+		func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+			writeTestRecordErr2 := writeTestRecord(w, alternateKey, initial.record)
+			return cache.ProducerResult{}, writeTestRecordErr2
+		},
+	)
+	assert.NoError(t, renderMapsErr)
+	assert.Equal(t, cache.AcquisitionIdentity(r) != initial.record.identity, true)
+
+	var receipt21 *manifest.RenderReceipt
+	_, receipt21, renderMapsErr = testutil.RenderMaps(
+		(*inputs.cli).Template(
+			t.Context(),
+			newHR(),
+			alternate,
+			RenderOptions{Options: Options{}, Sources: (*inputs.cliSources)},
+		),
+	)
+	if renderMapsErr == nil {
+		{
+			recordErr := (*inputs.cli).RecordRender(
+				t.Context(),
+				RenderAcceptance{Owner: newHR().Named(), Receipt: receipt21, Records: emptyRenderInventory},
+			)
+			assert.NoError(t, recordErr)
+		}
+	}
+
+	assert.NoError(t, renderMapsErr)
+	distinct, renderMapsErr := (*inputs.cli).describeChart(t.Context(), newHR(), (*inputs.cliSources))
+	assert.NoError(t, renderMapsErr)
+	{
+		assert.FatalIf(
+			t,
+			distinct.record == initial.record || distinct.record.key != alternateKey.Content,
+			"%s",
+			"distinct release key reused a typed record",
+		)
+	}
+	testTemplateCacheSameKeyReplacements(t, inputs, &alternateKey, &alternate)
+
+	testTemplateCachePayloadRecovery(t, inputs, struct {
+		again         *[]map[string]any
+		renderMapsErr *error
+		r             *fs.FS
+	}{again: &again, renderMapsErr: &renderMapsErr, r: &r})
+}
+
+func testTemplateCacheSameKeyReplacements(
+	t *testing.T,
+	inputs *templateCacheIntegrationInputs,
+	alternateKey *cache.BlobKey,
+	alternate *map[string]any,
+) {
+	t.Helper()
+	for _, replacement := range []string{"changed output", "corrupt payload", "{", `{"Output":"bWlzc2luZyBhbmFseXNpcw=="}`} {
+		replacementDocs := []map[string]any{{"witness": replacement}}
+		_, _, _, blobErr := (*inputs.cli).cache.Blob(
+			t.Context(),
+			(*alternateKey),
+			cache.Policy{},
+			func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+				var errResult error
+				switch replacement {
+				case "corrupt payload":
+					errResult = writeTestRecord(
+						w,
+						(*alternateKey),
+						&renderRecord{Output: []byte("corrupt"), Analysis: inputs.loaded.analyze()},
+					)
+				case "changed output":
+					errResult = writeTestRecord(
+						w,
+						(*alternateKey),
+						&renderRecord{Output: encodedRender(t, replacementDocs), Analysis: inputs.loaded.analyze()},
+					)
+				default:
+					_, errResult = io.WriteString(w, replacement)
+				}
+				return cache.ProducerResult{}, errResult
+			},
+		)
+		assert.NoError(t, blobErr)
+
+		out, receipt22, blobErr := testutil.RenderMaps(
+			(*inputs.cli).Template(
+				t.Context(),
+				newHR(),
+				(*alternate),
+				RenderOptions{Options: Options{}, Sources: (*inputs.cliSources)},
+			),
+		)
+		if blobErr == nil {
+			{
+				recordErr := (*inputs.cli).RecordRender(
+					t.Context(),
+					RenderAcceptance{
+						Owner:   newHR().Named(),
+						Receipt: receipt22,
+						Records: emptyRenderInventory,
+					},
+				)
+				assert.NoError(t, recordErr)
+			}
+		}
+
+		switch replacement {
+		case "changed output":
+			assert.NoError(t, blobErr)
+			{
+				assert.FatalIf(
+					t,
+					!reflect.DeepEqual(out, replacementDocs),
+					"%s",
+					"same-key replacement served stale output",
+				)
+			}
+		case "corrupt payload":
+			{
+				assert.FatalIf(
+					t,
+					blobErr == nil || !strings.Contains(blobErr.Error(), "cache miss action") || len(out) != 0,
+					"corrupt payload: %v, %v",
+					out,
+					blobErr,
+				)
+			}
+		case "{":
+			{
+				assert.FatalIf(
+					t,
+					blobErr == nil || !strings.Contains(blobErr.Error(), "cache miss action") || len(out) != 0,
+					"malformed replacement was concealed: %v",
+					blobErr,
+				)
+			}
+		default:
+			{
+				assert.FatalIf(
+					t,
+					blobErr == nil || !strings.Contains(blobErr.Error(), "cache miss action") || len(out) != 0,
+					"missing analysis was accepted: %v",
+					blobErr,
+				)
+			}
+		}
+	}
+}
+
+func testTemplateCachePayloadRecovery(t *testing.T, inputs *templateCacheIntegrationInputs, recovery struct {
+	again         *[]map[string]any
+	renderMapsErr *error
+	r             *fs.FS
+},
+) {
+	t.Helper()
+	recoveryValues := map[string]any{"greeting": "hi"}
+	recoveryKey := cache.BlobKey{
+		Content: computeTemplateKey(inputs.loaded, recoveryValues, Options{}, newHR()),
+		Render:  cache.RenderAccepted,
+	}
+	_, _, _, (*recovery.renderMapsErr) = (*inputs.cli).cache.Blob(
+		t.Context(),
+		recoveryKey,
+		cache.Policy{},
+		func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+			writeTestRecordErr3 := writeTestRecord(
+				w,
+				recoveryKey,
+				&renderRecord{Output: []byte("corrupt"), Analysis: inputs.loaded.analyze()},
+			)
+			return cache.ProducerResult{}, writeTestRecordErr3
+		},
+	)
+	assert.NoError(t, (*recovery.renderMapsErr))
+
+	var beforeRecovery chartDescription
+	beforeRecovery, (*recovery.renderMapsErr) = (*inputs.cli).describeChart(t.Context(), newHR(), (*inputs.cliSources))
+	assert.NoError(t, (*recovery.renderMapsErr))
+	var recovered []map[string]any
+	var receipt23 *manifest.RenderReceipt
+	recovered, receipt23, (*recovery.renderMapsErr) = testutil.RenderMaps(
+		(*inputs.cli).Template(t.Context(), newHR(), recoveryValues, RenderOptions{Sources: (*inputs.cliSources)}),
+	)
+	if (*recovery.renderMapsErr) == nil {
+		{
+			recordErr := (*inputs.cli).RecordRender(
+				t.Context(),
+				RenderAcceptance{Owner: newHR().Named(), Receipt: receipt23, Records: emptyRenderInventory},
+			)
+			assert.NoError(t, recordErr)
+		}
+	}
+
+	assert.NoError(t, (*recovery.renderMapsErr))
+	assert.Diff(t, recovered, (*inputs.first))
+	var afterRecovery chartDescription
+	afterRecovery, (*recovery.renderMapsErr) = (*inputs.cli).describeChart(t.Context(), newHR(), (*inputs.cliSources))
+	assert.NoError(t, (*recovery.renderMapsErr))
+	{
+		assert.FatalIf(
+			t,
+			afterRecovery.record == beforeRecovery.record || afterRecovery.record == nil,
+			"%s",
+			"recovered generation did not replace the typed record",
+		)
+	}
+	var recoveredOutput []map[string]any
+	recoveredOutput, (*recovery.renderMapsErr) = testutil.DecodeRender(afterRecovery.record.Output)
+	assert.NoError(t, (*recovery.renderMapsErr))
+	assert.Diff(t, recoveredOutput, (*inputs.first))
+	(*recovery.r), _, _, (*recovery.renderMapsErr) = (*inputs.cli).cache.Blob(
+		t.Context(),
+		recoveryKey,
+		cache.Policy{MaxAge: cache.Forever},
+		nil,
+	)
+	assert.NoError(t, (*recovery.renderMapsErr))
+	var replacement renderRecord
+	assert.NoError(t, readTestRecord((*recovery.r), &replacement))
+
+	var decoded []map[string]any
+	decoded, (*recovery.renderMapsErr) = testutil.DecodeRender(replacement.Output)
+	assert.NoError(t, (*recovery.renderMapsErr))
+	assert.Diff(t, decoded, (*inputs.first))
+	var receipt24 *manifest.RenderReceipt
+	(*recovery.again), receipt24, (*recovery.renderMapsErr) = testutil.RenderMaps(
+		(*inputs.cli).Template(t.Context(), newHR(), recoveryValues, RenderOptions{Sources: (*inputs.cliSources)}),
+	)
+	if (*recovery.renderMapsErr) == nil {
+		{
+			recordErr := (*inputs.cli).RecordRender(
+				t.Context(),
+				RenderAcceptance{Owner: newHR().Named(), Receipt: receipt24, Records: emptyRenderInventory},
+			)
+			assert.NoError(t, recordErr)
+		}
+	}
+
+	assert.NoError(t, (*recovery.renderMapsErr))
+	assert.Diff(t, (*recovery.again), (*inputs.first))
+	reopened := NewClient(cachetest.New(t, (*inputs.root), cache.New))
+	var receipt25 *manifest.RenderReceipt
+	(*recovery.again), receipt25, (*recovery.renderMapsErr) = testutil.RenderMaps(
+		reopened.Template(t.Context(), newHR(), recoveryValues, RenderOptions{Sources: (*inputs.cliSources)}),
+	)
+	if (*recovery.renderMapsErr) == nil {
+		{
+			recordErr := reopened.RecordRender(
+				t.Context(),
+				RenderAcceptance{Owner: newHR().Named(), Receipt: receipt25, Records: emptyRenderInventory},
+			)
+			assert.NoError(t, recordErr)
+		}
+	}
+
+	assert.NoError(t, (*recovery.renderMapsErr))
+	assert.Diff(t, (*recovery.again), (*inputs.first))
+	t.Log("verified corrupt payload recovery, replacement, subsequent and reopened hits")
 }

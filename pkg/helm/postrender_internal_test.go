@@ -143,23 +143,7 @@ spec:
 			<-start
 			for range 4 {
 				if worker == 0 {
-					kustomizestate.BuildMutex.Lock()
-					rm, err := kustomizestate.Build(fs, "/")
-					if err != nil {
-						t.Errorf("Build: %v", err)
-					} else {
-						out, err := rm.AsYaml()
-						{
-							assert.ErrorIf(
-								t,
-								err != nil || !strings.Contains(string(out), "nginx:1.19"),
-								"Build output: %s; error: %v",
-								out,
-								err,
-							)
-						}
-					}
-					kustomizestate.BuildMutex.Unlock()
+					testPostRendererOriginalImage(t, &fs)
 				} else {
 					out, err := pr.Run(bytes.NewBufferString(input))
 					if err != nil {
@@ -180,4 +164,26 @@ spec:
 	}
 	close(start)
 	wg.Wait()
+}
+
+func testPostRendererOriginalImage(t *testing.T, fs *filesys.FileSystem) {
+	t.Helper()
+
+	kustomizestate.BuildMutex.Lock()
+	rm, err := kustomizestate.Build((*fs), "/")
+	if err != nil {
+		t.Errorf("Build: %v", err)
+	} else {
+		out, err := rm.AsYaml()
+		{
+			assert.ErrorIf(
+				t,
+				err != nil || !strings.Contains(string(out), "nginx:1.19"),
+				"Build output: %s; error: %v",
+				out,
+				err,
+			)
+		}
+	}
+	kustomizestate.BuildMutex.Unlock()
 }

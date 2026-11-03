@@ -288,6 +288,7 @@ func TestObjectEqual_KustomizationContent(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest,tparallel // Subtests finish clone checks before the parent reuses the shared original.
 func TestObjectEqual_RawObjectFields(t *testing.T) {
 	t.Parallel()
 	rawType := reflect.TypeFor[manifest.RawObject]()
@@ -317,7 +318,6 @@ func TestObjectEqual_RawObjectFields(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
 			candidate := base.Clone()
 			assert.Equal(t, candidate == base, false)
 			if tc.change != nil {
@@ -489,7 +489,7 @@ func TestStore_AdmissionResetsUnchangedReadiness(t *testing.T) {
 	assert.Equal(t, previous.Conditions[0].Status, metav1.ConditionTrue)
 }
 
-//nolint:paralleltest // Subtests apply successive transitions to one shared status history.
+//nolint:paralleltest,tparallel // Subtests apply successive transitions to one shared status history.
 func TestStore_UpdateStatus_Idempotent(
 	t *testing.T,
 ) {

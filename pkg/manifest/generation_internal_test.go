@@ -126,6 +126,7 @@ func TestReferences_InlineTemplateNoAllocations(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest,tparallel // Subtests finish clone checks before the parent reuses the shared original.
 func TestHelmRelease_HistoryTemplatePolicy(t *testing.T) {
 	t.Parallel()
 	hr := &HelmRelease{Name: "app", Namespace: "apps", HelmReleaseSpec: helmv2.HelmReleaseSpec{
@@ -225,7 +226,6 @@ func TestHelmRelease_HistoryTemplatePolicy(t *testing.T) {
 		{"annotations", func(t *helmv2.HelmChartTemplate) { t.ObjectMeta.Annotations["annotation"] = "other" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
 			changed := hr.Clone()
 			tc.change(changed.HelmReleaseSpec.Chart)
 			originalTemplate, changedTemplate := hr.HelmReleaseSpec.Chart, changed.HelmReleaseSpec.Chart

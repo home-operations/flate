@@ -31,6 +31,7 @@ func TestParseDoc_DependsOnNames(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest,tparallel // Subtests finish clone checks before the parent reuses the shared original.
 func TestMapDependsOn_PreservesFields(t *testing.T) {
 	t.Parallel()
 	doc := mustYAML(t, `apiVersion: kustomize.toolkit.fluxcd.io/v1
@@ -70,7 +71,6 @@ spec:
 	resolve := func(s string) string { return strings.ReplaceAll(s, "${PREFIX}", "prod-") }
 	for _, namespaces := range []bool{false, true} {
 		t.Run(map[bool]string{false: "preserve-namespace", true: "resolve-namespace"}[namespaces], func(t *testing.T) {
-			t.Parallel()
 			testMapDependsOnPreservesFieldsCase(
 				t,
 				&testMapDependsOnPreservesFieldsCaseInputs{

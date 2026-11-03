@@ -152,89 +152,7 @@ func projectTemplate(data []byte, namespace string, projected bool, yield func(B
 		if err != nil {
 			return
 		}
-		var fields struct {
-			APIVersion string `yaml:"apiVersion"`
-			Kind       string `yaml:"kind"`
-			Metadata   struct {
-				Name      string `yaml:"name"`
-				Namespace string `yaml:"namespace"`
-			} `yaml:"metadata"`
-			Spec map[string]any `yaml:"spec"`
-		}
-		if projected {
-			if unmarshalErr := yamlv3.Unmarshal(document, &fields); unmarshalErr != nil {
-				continue
-			}
-			if !strings.HasSuffix(fields.Kind, "List") {
-				doc := map[string]any{
-					apiVersionKey: fields.APIVersion,
-					kindKey:       fields.Kind,
-					metadataKey: map[string]any{
-						nameKey:      fields.Metadata.Name,
-						namespaceKey: fields.Metadata.Namespace,
-					},
-					specKey: fields.Spec,
-				}
-				object, _, _, parseDocErr := ParseDoc(doc, ParseDocOptions{DefaultNamespace: namespace})
-				if parseDocErr == nil && object != nil {
-					yield(object, fields.Metadata.Namespace)
-				}
-				continue
-			}
-		}
-		node, err := kyaml.Parse(string(document))
-		if err != nil || kyaml.IsMissingOrNull(node) {
-			continue
-		}
-		if _, getMetaErr := node.GetMeta(); getMetaErr != nil && !errors.Is(getMetaErr, kyaml.ErrMissingMetadata) {
-			continue
-		}
-		var header struct {
-			Kind string `yaml:"kind"`
-		}
-		if decodeErr := node.YNode().Decode(&header); decodeErr != nil {
-			continue
-		}
-		nodes := []*kyaml.RNode{node}
-		if strings.HasSuffix(header.Kind, "List") {
-			nodes, err = resource.NewFactory(nil).RNodesFromBytes(document)
-			if err != nil {
-				continue
-			}
-		}
-		for _, node := range nodes {
-			var doc map[string]any
-			if projected {
-				var fields struct {
-					APIVersion string `yaml:"apiVersion"`
-					Kind       string `yaml:"kind"`
-					Metadata   struct {
-						Name      string `yaml:"name"`
-						Namespace string `yaml:"namespace"`
-					} `yaml:"metadata"`
-					Spec map[string]any `yaml:"spec"`
-				}
-				if decodeErr2 := node.YNode().Decode(&fields); decodeErr2 != nil {
-					continue
-				}
-				doc = map[string]any{
-					apiVersionKey: fields.APIVersion, kindKey: fields.Kind,
-					metadataKey: map[string]any{nameKey: fields.Metadata.Name, namespaceKey: fields.Metadata.Namespace},
-					specKey:     fields.Spec,
-				}
-			} else {
-				doc, err = node.Map()
-				if err != nil {
-					continue
-				}
-			}
-			_, authoredNamespace := DocMetadata(doc)
-			object, _, _, err := ParseDoc(doc, ParseDocOptions{DefaultNamespace: namespace})
-			if err != nil || object == nil {
-				continue
-			}
-			yield(object, authoredNamespace)
-		}
+		projectTemplateDocument(document, namespace, projected, yield)
 	}
 }
 
@@ -359,4 +277,95 @@ func (r *ResourceSet) templateProjection() TemplateProjection {
 		projection.addObject(child.object, child.namespace, true)
 	}
 	return projection
+}
+
+func projectTemplateDocument(document []byte, namespace string, projected bool, yield func(BaseManifest, string)) {
+	var fields struct {
+		APIVersion string `yaml:"apiVersion"`
+		Kind       string `yaml:"kind"`
+		Metadata   struct {
+			Name      string `yaml:"name"`
+			Namespace string `yaml:"namespace"`
+		} `yaml:"metadata"`
+		Spec map[string]any `yaml:"spec"`
+	}
+	if projected {
+		if unmarshalErr := yamlv3.Unmarshal(document, &fields); unmarshalErr != nil {
+			return
+		}
+		if !strings.HasSuffix(fields.Kind, "List") {
+			doc := map[string]any{
+				apiVersionKey: fields.APIVersion,
+				kindKey:       fields.Kind,
+				metadataKey: map[string]any{
+					nameKey:      fields.Metadata.Name,
+					namespaceKey: fields.Metadata.Namespace,
+				},
+				specKey: fields.Spec,
+			}
+			object, _, _, parseDocErr := ParseDoc(doc, ParseDocOptions{DefaultNamespace: namespace})
+			if parseDocErr == nil && object != nil {
+				yield(object, fields.Metadata.Namespace)
+			}
+			return
+		}
+	}
+	node, err := kyaml.Parse(string(document))
+	if err != nil || kyaml.IsMissingOrNull(node) {
+		return
+	}
+	if _, getMetaErr := node.GetMeta(); getMetaErr != nil && !errors.Is(getMetaErr, kyaml.ErrMissingMetadata) {
+		return
+	}
+	var header struct {
+		Kind string `yaml:"kind"`
+	}
+	if decodeErr := node.YNode().Decode(&header); decodeErr != nil {
+		return
+	}
+	nodes := []*kyaml.RNode{node}
+	if strings.HasSuffix(header.Kind, "List") {
+		nodes, err = resource.NewFactory(nil).RNodesFromBytes(document)
+		if err != nil {
+			return
+		}
+	}
+	for _, node := range nodes {
+		projectTemplateNode(node, namespace, projected, yield)
+	}
+}
+
+func projectTemplateNode(node *kyaml.RNode, namespace string, projected bool, yield func(BaseManifest, string)) {
+	var err error
+	var doc map[string]any
+	if projected {
+		var fields struct {
+			APIVersion string `yaml:"apiVersion"`
+			Kind       string `yaml:"kind"`
+			Metadata   struct {
+				Name      string `yaml:"name"`
+				Namespace string `yaml:"namespace"`
+			} `yaml:"metadata"`
+			Spec map[string]any `yaml:"spec"`
+		}
+		if decodeErr2 := node.YNode().Decode(&fields); decodeErr2 != nil {
+			return
+		}
+		doc = map[string]any{
+			apiVersionKey: fields.APIVersion, kindKey: fields.Kind,
+			metadataKey: map[string]any{nameKey: fields.Metadata.Name, namespaceKey: fields.Metadata.Namespace},
+			specKey:     fields.Spec,
+		}
+	} else {
+		doc, err = node.Map()
+		if err != nil {
+			return
+		}
+	}
+	_, authoredNamespace := DocMetadata(doc)
+	object, _, _, err := ParseDoc(doc, ParseDocOptions{DefaultNamespace: namespace})
+	if err != nil || object == nil {
+		return
+	}
+	yield(object, authoredNamespace)
 }

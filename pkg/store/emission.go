@@ -123,67 +123,7 @@ func childFootprint(
 			entryValues := entries
 			for entryIndex := range entryValues {
 				entry := entryValues[entryIndex]
-				id := entry.child.Obj.Named()
-				record := records[id]
-				if applier, ok := entry.child.Obj.(interface {
-					EntryApplication() (manifest.EntryApplication, bool)
-				}); ok {
-					if _, valid := applier.EntryApplication(); valid && entry.child.Doc != nil {
-						if data, err := json.Marshal(entry.child.Doc); err == nil {
-							record.Application = string(data)
-						}
-					}
-				}
-				if !slices.ContainsFunc(
-					entry.child.Productions,
-					func(p manifest.Production) bool { return p.Owner == origin },
-				) {
-					record.Productions = append(
-						record.Productions,
-						manifest.Production{Owner: origin, Source: entry.binding.source},
-					)
-				}
-				record.Productions = append(record.Productions, entry.child.Productions...)
-				source := manifest.BootstrapSourceID
-				for ref := range manifest.References(entry.child.Obj, manifest.ReferenceRelations) {
-					if ref.Name != "" {
-						record.Refs = append(record.Refs, ref.NamedResource)
-						if ref.Use == "source" {
-							source = ref.NamedResource
-						}
-					}
-				}
-				for root := range manifest.RenderRoots(entry.child.Obj) {
-					if root == "" {
-						root = "."
-					}
-					if record.ContentRoots == nil {
-						record.ContentRoots = map[manifest.NamedResource][]string{}
-					}
-					record.ContentRoots[source] = append(record.ContentRoots[source], root)
-				}
-				var authored manifest.Production
-				{
-					pValues := entry.child.Productions
-					for pIndex := range pValues {
-						p := pValues[pIndex]
-						if p.Path != "" && p.Source == entry.binding.source &&
-							manifest.Resolve(p.Authored, id.Namespace, "") == id &&
-							(authored.Path == "" || compareProduction(p, authored) < 0) {
-							authored = p
-						}
-					}
-				}
-				record.Authored, record.Path, record.File = authored.Authored, authored.Path, authored.File
-				records[id] = record
-				for _, target := range entry.targets {
-					record := records[target.NamedResource]
-					record.Productions = append(
-						record.Productions,
-						manifest.Production{Owner: origin, Declaration: id, Source: entry.binding.source},
-					)
-					records[target.NamedResource] = record
-				}
+				addChildFootprint(records, origin, &entry)
 			}
 		}
 		for _, id := range slices.SortedFunc(maps.Keys(records), manifest.NamedResource.Compare) {
@@ -291,4 +231,84 @@ type membership struct {
 	slot        *producerSlot
 	position    int
 	declaration bool
+}
+
+func addChildFootprint(
+	records map[manifest.NamedResource]manifest.DiscoveryRecord,
+	origin manifest.NamedResource,
+	entry *admission,
+) {
+	id := entry.child.Obj.Named()
+	record := records[id]
+	footprintApplication(&record, entry)
+	if !slices.ContainsFunc(
+		entry.child.Productions,
+		func(p manifest.Production) bool { return p.Owner == origin },
+	) {
+		record.Productions = append(
+			record.Productions,
+			manifest.Production{Owner: origin, Source: entry.binding.source},
+		)
+	}
+	record.Productions = append(record.Productions, entry.child.Productions...)
+	footprintReferenceRoots(&record, entry)
+	footprintAuthored(&record, entry, id)
+	records[id] = record
+	for _, target := range entry.targets {
+		record := records[target.NamedResource]
+		record.Productions = append(
+			record.Productions,
+			manifest.Production{Owner: origin, Declaration: id, Source: entry.binding.source},
+		)
+		records[target.NamedResource] = record
+	}
+}
+
+func footprintApplication(record *manifest.DiscoveryRecord, entry *admission) {
+	if applier, ok := entry.child.Obj.(interface {
+		EntryApplication() (manifest.EntryApplication, bool)
+	}); ok {
+		if _, valid := applier.EntryApplication(); valid && entry.child.Doc != nil {
+			if data, err := json.Marshal(entry.child.Doc); err == nil {
+				record.Application = string(data)
+			}
+		}
+	}
+}
+
+func footprintReferenceRoots(record *manifest.DiscoveryRecord, entry *admission) {
+	source := manifest.BootstrapSourceID
+	for ref := range manifest.References(entry.child.Obj, manifest.ReferenceRelations) {
+		if ref.Name != "" {
+			record.Refs = append(record.Refs, ref.NamedResource)
+			if ref.Use == "source" {
+				source = ref.NamedResource
+			}
+		}
+	}
+	for root := range manifest.RenderRoots(entry.child.Obj) {
+		if root == "" {
+			root = "."
+		}
+		if record.ContentRoots == nil {
+			record.ContentRoots = map[manifest.NamedResource][]string{}
+		}
+		record.ContentRoots[source] = append(record.ContentRoots[source], root)
+	}
+}
+
+func footprintAuthored(record *manifest.DiscoveryRecord, entry *admission, id manifest.NamedResource) {
+	var authored manifest.Production
+	{
+		pValues := entry.child.Productions
+		for pIndex := range pValues {
+			p := pValues[pIndex]
+			if p.Path != "" && p.Source == entry.binding.source &&
+				manifest.Resolve(p.Authored, id.Namespace, "") == id &&
+				(authored.Path == "" || compareProduction(p, authored) < 0) {
+				authored = p
+			}
+		}
+	}
+	record.Authored, record.Path, record.File = authored.Authored, authored.Path, authored.File
 }

@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
-	yaml "go.yaml.in/yaml/v3"
+	yaml "go.yaml.in/yaml/v4"
 	sigsyaml "sigs.k8s.io/yaml"
 
 	"github.com/home-operations/flate/pkg/manifest"

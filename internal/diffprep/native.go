@@ -8,7 +8,7 @@ import (
 
 	"github.com/gonvenience/ytbx"
 	"github.com/homeport/dyff/pkg/dyff"
-	yamlv3 "go.yaml.in/yaml/v3"
+	yamlv3 "go.yaml.in/yaml/v4"
 	"sigs.k8s.io/yaml"
 
 	"github.com/home-operations/flate/pkg/manifest"

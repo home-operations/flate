@@ -12,7 +12,7 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/fluxcd/pkg/envsubst"
 	fluxkustomize "github.com/fluxcd/pkg/kustomize"
-	yamlv3 "go.yaml.in/yaml/v3"
+	yamlv3 "go.yaml.in/yaml/v4"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/kustomize/api/resource"
 	kyaml "sigs.k8s.io/kustomize/kyaml/yaml"

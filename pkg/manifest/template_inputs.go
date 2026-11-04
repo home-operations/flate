@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"text/template"
 
-	yamlv3 "go.yaml.in/yaml/v3"
+	yamlv3 "go.yaml.in/yaml/v4"
 	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/kustomize/api/resource"
 	kyaml "sigs.k8s.io/kustomize/kyaml/yaml"

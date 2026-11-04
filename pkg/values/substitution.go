@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/fluxcd/pkg/envsubst/parse"
-	yaml "go.yaml.in/yaml/v3"
+	yaml "go.yaml.in/yaml/v4"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )

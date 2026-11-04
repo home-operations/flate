@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/homeport/dyff/pkg/dyff"
-	yamlv3 "go.yaml.in/yaml/v3"
+	yamlv3 "go.yaml.in/yaml/v4"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"

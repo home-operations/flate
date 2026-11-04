@@ -97,7 +97,7 @@ func (r documentReader) decodeFileObjects(
 	keepRaw bool,
 	yield func(parsedObject),
 ) error {
-	input, name := r.input(path)
+	input, name := new(r).input(path)
 	path = new(r).localPath(path)
 	var f fs.File
 	var err error
@@ -217,7 +217,7 @@ func (r documentReader) censusFile(
 		o := compactOccurrence(child.Obj, projection)
 		o.facts.declared = child.declared
 		origin := new(r).localPath(path)
-		root := r.mountedRoot(origin)
+		root := new(r).mountedRoot(origin)
 		file, _ := filepath.Rel(root, origin)
 		o.Declaration = OccurrenceID{
 			Source:   root,

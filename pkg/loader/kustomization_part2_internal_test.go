@@ -140,7 +140,7 @@ func testDocumentReaderSourceViewsAndReuseReplacedSource(
 			st.SetArtifact(manifest.BootstrapSourceID, nil)
 			l.mountSources()
 			{
-				assert.FatalIf(t, l.documents.mountedRoot((*testCaseInput)) != "" || len(l.documents.cache) != 0 ||
+				assert.FatalIf(t, new(l.documents).mountedRoot((*testCaseInput)) != "" || len(l.documents.cache) != 0 ||
 					len(retainedErrorsForTest(l)) != 0 ||
 					len(l.Index.Records) != 0 ||
 					len(
@@ -213,7 +213,7 @@ func testDocumentReaderSourceViewsAndReuseLateNestedSource(t *testing.T) {
 	}
 	{
 		assert.FatalIf(t, l.documents.views[artifact.LocalPath] == artifact.FS ||
-			l.documents.mountedRoot(
+			new(l.documents).mountedRoot(
 				filepath.Join(root, "child/ks.yaml"),
 			) != artifact.LocalPath, "%s", "late native mount did not bind its own private operation view")
 	}

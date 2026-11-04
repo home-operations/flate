@@ -481,7 +481,7 @@ func (rf *readerFinalizer) chartNames(ctx context.Context, location, chartPath s
 	if seen {
 		return names, nil
 	}
-	input, name := rf.loader.documents.input(location)
+	input, name := new(rf.loader.documents).input(location)
 	info, err := fs.Stat(input, name)
 	if err == nil {
 		if info.IsDir() {

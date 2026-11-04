@@ -57,7 +57,7 @@ func (l *Loader) buildProductions(
 		}
 	}
 	record := func(v graphVisit) error {
-		if b.scanExclusions && l.documents.scanExcluded(v.file) {
+		if b.scanExclusions && new(l.documents).scanExcluded(v.file) {
 			return nil
 		}
 		if file := cmp.Or(v.origin, v.file); len(pinned) != 0 && !pinned[v.owner] && safepath.Contains(repoRoot, file) {
@@ -191,7 +191,7 @@ func (l *Loader) buildProductions(
 		candidates = slices.Compact(candidates)
 		_, builder := l.documents.read(dir)
 		root.coordinate = l.fileCoordinate(cmp.Or(builder, dir))
-		sourceRoot := l.documents.mountedRoot(dir)
+		sourceRoot := new(l.documents).mountedRoot(dir)
 		for name, exact := range doc.builtInput.Reads {
 			file := filepath.Join(sourceRoot, filepath.FromSlash(name))
 			coordinate := l.fileCoordinate(file)
@@ -334,13 +334,13 @@ func (l *Loader) buildProductions(
 			candidates == nil {
 			candidates = map[string][]manifest.NamedResource{}
 			for _, input := range l.Index.Files() {
-				root := l.documents.mountedRoot(input.Path)
+				root := new(l.documents).mountedRoot(input.Path)
 				candidates[root] = append(candidates[root], input.Refs...)
 			}
 		}
 		v := graphVisit{owner: id, source: manifest.BootstrapSourceID, coordinate: r.File}
 		declaration.visit = v
-		b.recordProducer(declaration, candidates[l.documents.mountedRoot(r.Path)])
+		b.recordProducer(declaration, candidates[new(l.documents).mountedRoot(r.Path)])
 	}
 	if b.err != nil {
 		return b.err
@@ -456,14 +456,14 @@ func (l *Loader) packageRoots(repoRoot string, kss []store.Child) []string {
 	}
 	l.ensureScopes()
 	l.documents.replayEdges()
-	sourceRoot := l.documents.mountedRoot(repoRoot)
+	sourceRoot := new(l.documents).mountedRoot(repoRoot)
 	roots := map[string]bool{}
 	{
 		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
 		for dir, doc := range l.documents.cache {
 			if (doc.traversed || dir == l.entryPath) && doc.file != "" {
 				roots[dir] = false
-				if l.documents.mountedRoot(dir) == sourceRoot {
+				if new(l.documents).mountedRoot(dir) == sourceRoot {
 					rel, err := filepath.Rel(repoRoot, dir)
 					roots[dir] = err == nil && !safepath.Escaped(rel) && l.anchorRoot(repoRoot, filepath.ToSlash(rel))
 				}
@@ -532,7 +532,7 @@ func (l *Loader) packageRoots(repoRoot string, kss []store.Child) []string {
 			repoRoot,
 			dir,
 		); err == nil && !safepath.Escaped(rel) &&
-			l.documents.mountedRoot(dir) == sourceRoot {
+			new(l.documents).mountedRoot(dir) == sourceRoot {
 			dirs = append(dirs, filepath.ToSlash(rel))
 		}
 	}
@@ -734,7 +734,7 @@ func (b *selfProduceBuilder) joinProductions(declarations []producerDeclaration,
 		for vIndex4 := range vValues4 {
 			v := vValues4[vIndex4]
 			if v.role != kustomizeinput.Resource || v.document != nil || !v.readable ||
-				b.scanExclusions && b.reader.scanExcluded(v.file) {
+				b.scanExclusions && new(b.reader).scanExcluded(v.file) {
 				continue
 			}
 			record := func(child store.Child) {

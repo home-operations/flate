@@ -420,9 +420,9 @@ func (l *Loader) visitScope(root graphVisit, membershipOnly bool) []graphVisit {
 			child := root
 			child.dir = path.Join(root.dir, filepath.ToSlash(component))
 			file := filepath.Join(root.root, child.dir)
-			input, name := l.documents.input(file)
+			input, name := new(l.documents).input(file)
 			info, err := fs.Stat(input, name)
-			l.documents.rememberStat(file, info, err)
+			new(l.documents).rememberStat(file, info, err)
 			if err != nil && ks.IgnoreMissingComponents {
 				continue
 			}

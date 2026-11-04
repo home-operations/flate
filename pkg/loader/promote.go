@@ -116,7 +116,7 @@ func (l *Loader) RegisterBuilt(input BuiltInput, docs []store.Child) {
 		l.construction++
 	}
 	l.ensureScopes()
-	sourceRoot := cmp.Or(l.documents.mountedRoot(root), l.SourceRoot, root)
+	sourceRoot := cmp.Or(new(l.documents).mountedRoot(root), l.SourceRoot, root)
 	l.Admit(sourceRoot)
 	_, packageFile := l.documents.read(root)
 	if packageFile != "" && l.documents.cache[packageFile].eligible == fileInactive {

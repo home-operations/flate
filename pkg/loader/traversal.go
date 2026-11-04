@@ -69,7 +69,7 @@ func (w *traversal) walk(ctx context.Context, v graphVisit, yield func(graphVisi
 			v.dir,
 			kustpath.Root,
 		); !ok || !safepath.Contains(v.root, abs) ||
-			w.documents.mountedRoot(abs) != w.documents.mountedRoot(v.root) {
+			new(w.documents).mountedRoot(abs) != new(w.documents).mountedRoot(v.root) {
 			return true
 		}
 		v.file, v.coordinate, v.document = abs, path.Join(v.prefix, v.dir), nil
@@ -175,7 +175,7 @@ func (w *traversal) walk(ctx context.Context, v graphVisit, yield func(graphVisi
 		if !w.proceed(ctx) {
 			return false
 		}
-		input, name := w.documents.input(abs)
+		input, name := new(w.documents).input(abs)
 		entries, err := fs.ReadDir(input, name)
 		if err != nil && w.policy == traversalAdmission {
 			w.err = err
@@ -219,7 +219,7 @@ func (w *traversal) walk(ctx context.Context, v graphVisit, yield func(graphVisi
 			}
 			if cached.plugins == nil {
 				var plugins []pluginInputs
-				input, name := w.documents.input(v.file)
+				input, name := new(w.documents).input(v.file)
 				body, readErr := fs.ReadFile(input, name)
 				resources, parseErr := kustomizeinput.Resources(body)
 				if readErr == nil && parseErr == nil {
@@ -294,7 +294,8 @@ func (r documentReader) references(
 	yield func(kustomizeinput.Reference, string) bool,
 ) bool {
 	doc := r.cache[dir]
-	record := !doc.edgesKnown && doc.traversed && body != nil && r.mountedRoot(dir) == r.mountedRoot(r.bootstrap)
+	record := !doc.edgesKnown && doc.traversed && body != nil &&
+		new(r).mountedRoot(dir) == new(r).mountedRoot(r.bootstrap)
 	for ref := range kustomizeinput.Kustomization(body) {
 		var target string
 		if (record || resolve) && ref.Role != kustomizeinput.File && !ref.Inline {
@@ -392,9 +393,9 @@ func (w *traversal) reference(
 		if resolved == "" || filepath.IsAbs(ref.Path) {
 			return true
 		}
-		input, name := w.documents.input(resolved)
+		input, name := new(w.documents).input(resolved)
 		info, err := fs.Stat(input, name)
-		w.documents.rememberStat(resolved, info, err)
+		new(w.documents).rememberStat(resolved, info, err)
 		if err != nil {
 			return w.proceed(ctx)
 		}
@@ -456,7 +457,7 @@ func (w *traversal) reference(
 		}
 		resolved, ok := kustpath.Resolve(filepath.Join(v.root, v.dir), ref.Path, kustpath.Dependency)
 		if !ok || !safepath.Contains(v.root, resolved) ||
-			w.documents.mountedRoot(resolved) != w.documents.mountedRoot(v.root) {
+			new(w.documents).mountedRoot(resolved) != new(w.documents).mountedRoot(v.root) {
 			if child.role == kustomizeinput.Configuration {
 				return w.uncertain(v, ref.FieldPath()+": configuration reference cannot be inspected locally", yield)
 			}
@@ -550,7 +551,7 @@ func (w *traversal) scanBootstrapFluxKS(ctx context.Context, root, dir, kpath st
 	if !w.proceed(ctx) {
 		return 0
 	}
-	input, name := w.documents.input(dir)
+	input, name := new(w.documents).input(dir)
 	entries, err := fs.ReadDir(input, name)
 	if err != nil {
 		warning := manifest.Warning{

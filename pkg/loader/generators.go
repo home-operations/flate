@@ -86,7 +86,7 @@ func materializeGeneratorData(r *generatorRecord, opts *options, pairs []types.P
 //nolint:ireturn // Kustomize requires its loader interface for generator inputs.
 func (r *generatorRecord) inputLoader(ctx context.Context, optsArg *options) (ifc.Loader, error) {
 	opts := *optsArg
-	input, name := r.reader.input(r.root)
+	input, name := new(r.reader).input(r.root)
 	input, err := fs.Sub(input, name)
 	if err != nil {
 		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("generator fs %s: %w", r.root, err), "")

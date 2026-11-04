@@ -399,7 +399,8 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if l.documents.mountedRoot(abs) == "" && (l.SourceRoot == "" || l.documents.mountedRoot(inputRoot) == "") {
+	if new(l.documents).mountedRoot(abs) == "" &&
+		(l.SourceRoot == "" || new(l.documents).mountedRoot(inputRoot) == "") {
 		location, locateErr := gitrepo.Locate(ctx, inputRoot, inputRoot)
 		if locateErr != nil {
 			return 0, locateErr
@@ -432,9 +433,9 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 	l.scopes.complete = false
 	var ignore *ignoreSet
 	if l.IgnoreFile != "" {
-		input, name := l.documents.input(abs)
+		input, name := new(l.documents).input(abs)
 		info, statErr := fs.Stat(input, name)
-		l.documents.rememberStat(abs, info, statErr)
+		new(l.documents).rememberStat(abs, info, statErr)
 		if errors.Is(statErr, fs.ErrNotExist) || statErr == nil && !info.IsDir() {
 			return 0, nil
 		}

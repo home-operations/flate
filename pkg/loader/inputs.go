@@ -76,7 +76,7 @@ func (l *Loader) sourceFacts(root string) parsedSource {
 	if l.facts == nil {
 		l.facts = &ParsedInputs{sources: map[string]parsedSource{}}
 	}
-	root = l.documents.mountedRoot(root)
+	root = new(l.documents).mountedRoot(root)
 	artifact := l.documents.artifacts[root]
 	var identity any
 	if artifact != nil {
@@ -130,7 +130,7 @@ func (l *Loader) ParsedInputs() *ParsedInputs {
 				(!inputs.compact || !doc.searched && doc.pathState == pathUnknown && doc.decodeErr == nil) {
 				continue
 			}
-			if source, ok := inputs.sources[l.documents.mountedRoot(file)]; ok {
+			if source, ok := inputs.sources[new(l.documents).mountedRoot(file)]; ok {
 				source.documents[file] = parsedDocument{
 					body: doc.body, file: doc.file, objects: cloneInputObjects(doc.objects),
 					state: doc.pathState, searched: doc.searched, plugins: doc.plugins, decodeErr: doc.decodeErr,
@@ -163,7 +163,7 @@ func (r documentReader) restore(file string) {
 	if cached.body != nil || cached.objects != nil {
 		return
 	}
-	root := r.mountedRoot(file)
+	root := new(r).mountedRoot(file)
 	source, ok := r.parsed.sources[root]
 	artifact := r.artifacts[root]
 	if !ok || artifact == nil {

@@ -210,7 +210,7 @@ func (l *Loader) completeIndexInputs(repoRoot string) {
 			incomplete := doc.decodeErr != nil ||
 				slices.ContainsFunc(doc.objects, func(object parsedObject) bool { return object.outcome.Err != nil })
 			if l.Options.Selection.Changed && incomplete {
-				root := l.documents.mountedRoot(file)
+				root := new(l.documents).mountedRoot(file)
 				for source := range l.Index.CompleteSources {
 					input, _ := l.Store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
 					if source == manifest.BootstrapSourceID && root == repoRoot ||

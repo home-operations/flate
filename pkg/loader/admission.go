@@ -2016,7 +2016,6 @@ func (c *admissionClosure) rootMatches(root string, occurrences []Occurrence) bo
 }
 
 func (c *admissionClosure) releaseComparisons() {
-
 	if c.comparisons != nil {
 		c.publishComparisons()
 		clear(c.comparisons.bindings)
@@ -2027,11 +2026,9 @@ func (c *admissionClosure) releaseComparisons() {
 		admissionSourcePool.Put(c.comparisons)
 		c.comparisons = nil
 	}
-
 }
 
 func (c *admissionClosure) selectIncoming() error {
-
 	id := c.incoming.Obj.Named()
 	role := c.role(id)
 	eligible := c.loader.Options.Selection.Matches(id)
@@ -2051,11 +2048,22 @@ func (c *admissionClosure) selectIncoming() error {
 			role.selected, role.dirty = true, true
 		}
 	}
-	return c.completeSelectIncoming(&completeSelectIncomingState{id: &id, role: &role, eligible: &eligible, affected: &affected, footprintRead: &footprintRead})
-
+	return c.completeSelectIncoming(
+		&completeSelectIncomingState{
+			id:            &id,
+			role:          &role,
+			eligible:      &eligible,
+			affected:      &affected,
+			footprintRead: &footprintRead,
+		},
+	)
 }
 
-func (c *admissionClosure) seedAdmission(ctx context.Context, reads *store.ReadSet, materializers func(materializerDemand, manifest.NamedResource) bool) error {
+func (c *admissionClosure) seedAdmission(
+	ctx context.Context,
+	reads *store.ReadSet,
+	materializers func(materializerDemand, manifest.NamedResource) bool,
+) error {
 	if c.incoming.Obj == nil && reads != nil {
 		for id := range reads.Required() {
 			role := c.role(id)
@@ -2072,10 +2080,12 @@ func (c *admissionClosure) seedAdmission(ctx context.Context, reads *store.ReadS
 		return c.selectIncoming()
 	}
 	return nil
-
 }
 
-func (c *admissionClosure) finishAdmission(ctx context.Context, materializers func(materializerDemand, manifest.NamedResource) bool) (*Admission, error) {
+func (c *admissionClosure) finishAdmission(
+	ctx context.Context,
+	materializers func(materializerDemand, manifest.NamedResource) bool,
+) (*Admission, error) {
 	if err := c.walk(ctx, materializers); err != nil {
 		return nil, err
 	}
@@ -2123,7 +2133,11 @@ func (c *admissionClosure) productionRole(id manifest.NamedResource, role admiss
 	return role
 }
 
-func (c *admissionClosure) reverseInputRole(id manifest.NamedResource, role admissionRole, eligible bool) admissionRole {
+func (c *admissionClosure) reverseInputRole(
+	id manifest.NamedResource,
+	role admissionRole,
+	eligible bool,
+) admissionRole {
 	for ref := range c.references(id, c.incoming.Obj) {
 		if !c.reverse(id, c.incoming.Obj, ref) {
 			continue
@@ -2224,10 +2238,13 @@ func (c *admissionClosure) publishComparisons() {
 		}
 		c.comparisons.changed = false
 	}
-
 }
 
-func (c *admissionClosure) completeCoversDeclaration(id *manifest.NamedResource, source *manifest.NamedResource, dir *string) bool {
+func (c *admissionClosure) completeCoversDeclaration(
+	id *manifest.NamedResource,
+	source *manifest.NamedResource,
+	dir *string,
+) bool {
 	_, input, _ := c.delta((*source))
 	file := c.record((*id)).Path
 	origin := c.declarationSource((*id))
@@ -2261,7 +2278,10 @@ type completeHydrateState struct {
 	blocked *bool
 }
 
-func (c *admissionClosure) completeHydrate(ctx context.Context, scope *completeHydrateState) (manifest.BaseManifest, error) {
+func (c *admissionClosure) completeHydrate(
+	ctx context.Context,
+	scope *completeHydrateState,
+) (manifest.BaseManifest, error) {
 	if !(*scope.blocked) {
 		if child := c.loader.candidates[(*scope.id)]; child.Obj != nil && (*scope.record).Path == "" {
 			if c.children == nil {
@@ -2270,7 +2290,7 @@ func (c *admissionClosure) completeHydrate(ctx context.Context, scope *completeH
 			c.children[(*scope.id)] = child
 			(*scope.obj) = child.Obj
 		} else if occurrence, ok := c.loader.occurrence((*scope.id)); ok {
-			root := c.loader.documents.mountedRoot((*scope.record).Path)
+			root := new(c.loader.documents).mountedRoot((*scope.record).Path)
 			var input *store.SourceArtifact
 			for _, source := range [...]manifest.NamedResource{c.source((*scope.id)), manifest.BootstrapSourceID} {
 				_, candidate, _ := c.delta(source)
@@ -2309,7 +2329,8 @@ type completeSelectIncomingState struct {
 }
 
 func (c *admissionClosure) completeSelectIncoming(scope *completeSelectIncomingState) error {
-	if (!(*scope.role).selected || !(*scope.role).dirty) && ((*scope.eligible) || (*scope.role).needed || c.loader.Options.Selection.MatchesScope((*scope.id))) {
+	if (!(*scope.role).selected || !(*scope.role).dirty) &&
+		((*scope.eligible) || (*scope.role).needed || c.loader.Options.Selection.MatchesScope((*scope.id))) {
 		(*scope.role) = c.reverseInputRole((*scope.id), (*scope.role), (*scope.eligible))
 	}
 	(*scope.role) = c.sourceRole((*scope.id), (*scope.role))

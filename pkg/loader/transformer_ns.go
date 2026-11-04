@@ -163,7 +163,7 @@ func (r *documentReader) subtreeHasNamespaceTransformer(repoRoot, dir string, vi
 // any document is malformed (all-or-nothing, matching a whole-file parse).
 func (r *documentReader) fileHasNamespaceTransformer(repoRoot, target string) bool {
 	dr := *r
-	input, name := dr.input(filepath.Join(repoRoot, target))
+	input, name := new(dr).input(filepath.Join(repoRoot, target))
 	data, err := fs.ReadFile(input, name)
 	if err != nil {
 		return false
@@ -245,7 +245,7 @@ func replacementInjectsTargetNamespace(
 	if ref == "" {
 		return false
 	}
-	input, name := dr.input(filepath.Join(repoRoot, ref))
+	input, name := new(dr).input(filepath.Join(repoRoot, ref))
 	data, err := fs.ReadFile(input, name)
 	if err != nil {
 		return false

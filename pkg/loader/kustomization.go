@@ -82,9 +82,10 @@ type documentReader struct {
 	edgesDirty bool
 }
 
-func (r documentReader) scanExcluded(file string) bool {
+func (r *documentReader) scanExcluded(file string) bool {
+	dr := *r
 	for {
-		doc := r.cache[file]
+		doc := dr.cache[file]
 		if doc.loaded || doc.selected {
 			return false
 		}
@@ -239,6 +240,7 @@ func (l *Loader) refreshSources() {
 func (l *Loader) mountSources() {
 	l.refreshSources()
 	for _, root := range l.documents.changed {
+		//nolint:gocritic // Filtered iterator values remain snapshots during record deletion.
 		for id, r := range l.Index.Files() {
 			if r.Path == root || strings.HasPrefix(r.Path, root+string(filepath.Separator)) {
 				delete(l.Index.Records, id)
@@ -260,9 +262,10 @@ func (unavailableSource) Open(string) (fs.File, error) {
 
 // input binds source coordinates to their filesystem; an absent mounted file
 // MUST never fall through to the working tree.
-func (r documentReader) input(file string) (fs.FS, string) {
-	if root := r.mountedRoot(file); root != "" {
-		input := r.views[root]
+func (r *documentReader) input(file string) (fs.FS, string) {
+	dr := *r
+	if root := new(dr).mountedRoot(file); root != "" {
+		input := dr.views[root]
 		rel, _ := filepath.Rel(root, file)
 		if input == nil {
 			input = unavailableSource{}
@@ -272,12 +275,13 @@ func (r documentReader) input(file string) (fs.FS, string) {
 	return unavailableSource{}, "."
 }
 
-func (r documentReader) mountedRoot(file string) string {
-	if len(r.views) == 0 {
+func (r *documentReader) mountedRoot(file string) string {
+	dr := *r
+	if len(dr.views) == 0 {
 		return ""
 	}
 	for root := file; ; root = filepath.Dir(root) {
-		if _, exists := r.views[root]; exists {
+		if _, exists := dr.views[root]; exists {
 			return root
 		}
 		if root == filepath.Dir(root) {
@@ -301,9 +305,9 @@ func (r *documentReader) read(dir string) (*types.Kustomization, string) {
 		return nil, ""
 	}
 	if cached.pathState == pathUnknown {
-		input, name := r.input(dir)
+		input, name := new(*r).input(dir)
 		info, err := fs.Stat(input, name)
-		cached = r.rememberStat(dir, info, err)
+		cached = new(*r).rememberStat(dir, info, err)
 	}
 	if cached.pathState == pathFile || cached.pathState == pathMissing {
 		return nil, ""
@@ -316,7 +320,7 @@ func (r *documentReader) readBuilder(dir string, cachedValue *document) (*types.
 	cached.searched = true
 	for _, name := range manifest.KustomizeBuilderFilenames {
 		file := filepath.Join(dir, name)
-		input, name := r.input(file)
+		input, name := new(*r).input(file)
 		data, err := fs.ReadFile(input, name)
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
@@ -365,8 +369,9 @@ func normalizeKustomization(k *types.Kustomization) {
 	}
 }
 
-func (r documentReader) rememberStat(file string, info fs.FileInfo, err error) document {
-	cached := r.cache[file]
+func (r *documentReader) rememberStat(file string, info fs.FileInfo, err error) document {
+	dr := *r
+	cached := dr.cache[file]
 	switch {
 	case err == nil && info.IsDir():
 		cached.pathState = pathDirectory
@@ -377,8 +382,8 @@ func (r documentReader) rememberStat(file string, info fs.FileInfo, err error) d
 	default:
 		cached.pathState = pathUnavailable
 	}
-	if r.cache != nil {
-		r.cache[file] = cached
+	if dr.cache != nil {
+		dr.cache[file] = cached
 	}
 	return cached
 }

@@ -61,10 +61,26 @@ func TestResolve_File(t *testing.T) {
 			t.Parallel()
 			abs, ok := kustpath.Resolve(tc.base, tc.rel, kustpath.File)
 			{
-				assert.FatalIf(t, ok != tc.wantOK, "kustpath.Resolve(%q, %q) ok = %v, want %v", tc.base, tc.rel, ok, tc.wantOK)
+				assert.FatalIf(
+					t,
+					ok != tc.wantOK,
+					"kustpath.Resolve(%q, %q) ok = %v, want %v",
+					tc.base,
+					tc.rel,
+					ok,
+					tc.wantOK,
+				)
 			}
 			{
-				assert.ErrorIf(t, ok && abs != tc.wantAbs, "kustpath.Resolve(%q, %q) = %q, want %q", tc.base, tc.rel, abs, tc.wantAbs)
+				assert.ErrorIf(
+					t,
+					ok && abs != tc.wantAbs,
+					"kustpath.Resolve(%q, %q) = %q, want %q",
+					tc.base,
+					tc.rel,
+					abs,
+					tc.wantAbs,
+				)
 			}
 		})
 	}
@@ -95,10 +111,26 @@ func TestResolve_Directory(t *testing.T) {
 			t.Parallel()
 			abs, ok := kustpath.Resolve(tc.base, tc.rel, kustpath.Directory)
 			{
-				assert.FatalIf(t, ok != tc.wantOK, "kustpath.Resolve(%q, %q) ok = %v, want %v", tc.base, tc.rel, ok, tc.wantOK)
+				assert.FatalIf(
+					t,
+					ok != tc.wantOK,
+					"kustpath.Resolve(%q, %q) ok = %v, want %v",
+					tc.base,
+					tc.rel,
+					ok,
+					tc.wantOK,
+				)
 			}
 			{
-				assert.ErrorIf(t, ok && abs != tc.wantAbs, "kustpath.Resolve(%q, %q) = %q, want %q", tc.base, tc.rel, abs, tc.wantAbs)
+				assert.ErrorIf(
+					t,
+					ok && abs != tc.wantAbs,
+					"kustpath.Resolve(%q, %q) = %q, want %q",
+					tc.base,
+					tc.rel,
+					abs,
+					tc.wantAbs,
+				)
 			}
 		})
 	}
@@ -157,7 +189,14 @@ func TestLoader_KustomizationFilenames(t *testing.T) {
 			}
 			{
 				loaded, err := New(store.New()).Load(t.Context(), root)
-				assert.FatalIf(t, err != nil || loaded != tc.loaded, "Load = %d, %v; want %d objects", loaded, err, tc.loaded)
+				assert.FatalIf(
+					t,
+					err != nil || loaded != tc.loaded,
+					"Load = %d, %v; want %d objects",
+					loaded,
+					err,
+					tc.loaded,
+				)
 			}
 		})
 	}
@@ -172,7 +211,7 @@ func TestDocumentReader_SourceViewsAndReuse(t *testing.T) {
 	testutil.WriteFile(t, committed, "Kustomization", "namespace: host\n")
 	testutil.WriteFile(t, committed, "host.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: host}\n")
 	{
-		_, name := r.input(filepath.VolumeName(working) + string(filepath.Separator))
+		_, name := new(r).input(filepath.VolumeName(working) + string(filepath.Separator))
 		assert.FatalIf(t, name != ".", "filesystem root name = %q, want dot", name)
 	}
 	r.views = map[string]fs.FS{working: os.DirFS(working), committed: fstest.MapFS{
@@ -459,7 +498,7 @@ func testDocumentReaderSourceViewsAndReuseLoadMissingMountedChild(
 	}
 	{
 		assert.FatalIf(t, st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != input ||
-			l.documents.mountedRoot(
+			new(l.documents).mountedRoot(
 				child,
 			) != (*testCaseInput), "%s", "missing child replaced the authoritative mounted view")
 	}
@@ -600,7 +639,7 @@ func testDocumentReaderSourceViewsAndReuseArtifactMembershipAndInvalidation(t *t
 		body, _ := reader.read(bucketPath)
 		assert.FatalIf(
 			t,
-			body != nil || reader.mountedRoot(bucketPath) != "",
+			body != nil || new(reader).mountedRoot(bucketPath) != "",
 			"%s",
 			"removed source retained a mount or read the physical decoy",
 		)

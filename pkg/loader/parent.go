@@ -208,7 +208,7 @@ func (r *documentReader) claimBase(root, p string) string {
 //
 //nolint:gocritic // SecureJoin consumes filesystem methods from documentReader values.
 func (r documentReader) Lstat(file string) (fs.FileInfo, error) {
-	input, name := r.input(filepath.Clean(file))
+	input, name := new(r).input(filepath.Clean(file))
 	return fs.Lstat(input, name) //nolint:wrapcheck // SecureJoin requires original filesystem errors.
 }
 
@@ -216,7 +216,7 @@ func (r documentReader) Lstat(file string) (fs.FileInfo, error) {
 //
 //nolint:gocritic // SecureJoin consumes filesystem methods from documentReader values.
 func (r documentReader) Readlink(file string) (string, error) {
-	input, name := r.input(filepath.Clean(file))
+	input, name := new(r).input(filepath.Clean(file))
 	return fs.ReadLink(input, name) //nolint:wrapcheck // SecureJoin requires original filesystem errors.
 }
 
@@ -269,5 +269,5 @@ func (r *documentReader) localBase(root, repoRoot string) string {
 
 func (r *documentReader) localPath(file string) string {
 	dr := *r
-	return dr.artifacts[dr.mountedRoot(file)].OriginPath(file)
+	return dr.artifacts[new(dr).mountedRoot(file)].OriginPath(file)
 }

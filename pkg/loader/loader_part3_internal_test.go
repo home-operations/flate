@@ -587,7 +587,10 @@ func testLoaderIndependentRootsCase2(t *testing.T, testCaseInput *struct {
 		assert.FatalIf(t, l.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != nil ||
 			l.Store.GetObject(manifest.BootstrapSourceID) != nil, "%s", "standalone load published bootstrap identity")
 	}
-	testLoaderIndependentRootsCase2Completion(t, &testLoaderIndependentRootsCase2CompletionState{testCaseInput: &testCaseInput, roots: &roots, ids: &ids, l: &l})
+	testLoaderIndependentRootsCase2Completion(
+		t,
+		&testLoaderIndependentRootsCase2CompletionState{testCaseInput: &testCaseInput, roots: &roots, ids: &ids, l: &l},
+	)
 }
 
 func testLoaderWarningConditionsCase(t *testing.T, testCaseInput *string,
@@ -746,10 +749,15 @@ func testLoaderIndependentRootsCase2Completion(t *testing.T, scope *testLoaderIn
 				_, indexed := (*scope.l).Index.Lookup(
 					(*scope.ids)[1],
 				)
-				assert.FatalIf(t, indexed || (*scope.l).Store.GetObject((*scope.ids)[1]) != nil || len((*scope.l).Index.Records) != 1 ||
-					len(
-						retainedErrorsForTest((*scope.l)),
-					) != 0, "%s", "unrelated root supplied objects or evidence outside SourceRoot")
+				assert.FatalIf(
+					t,
+					indexed || (*scope.l).Store.GetObject((*scope.ids)[1]) != nil || len((*scope.l).Index.Records) != 1 ||
+						len(
+							retainedErrorsForTest((*scope.l)),
+						) != 0,
+					"%s",
+					"unrelated root supplied objects or evidence outside SourceRoot",
+				)
 			}
 		} else {
 			assert.NoError(t, err)
@@ -766,7 +774,7 @@ func testLoaderIndependentRootsCase2Completion(t *testing.T, scope *testLoaderIn
 				) != nil, "%s", "independent load published bootstrap identity")
 		}
 		if (*scope.testCaseInput).nested {
-			input, file := (*scope.l).documents.input(filepath.Join((*scope.roots)[0], "ks.yaml"))
+			input, file := new((*scope.l).documents).input(filepath.Join((*scope.roots)[0], "ks.yaml"))
 			{
 				assert.FatalIf(
 					t,

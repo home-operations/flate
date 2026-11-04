@@ -263,7 +263,7 @@ func TestDocumentReader_CopiedSourceViews(t *testing.T) {
 	reader := l.documents
 	input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{"probe": {Data: []byte("shared")}}}
 	reader.setSources(map[string]*store.SourceArtifact{root: input})
-	view, name := l.documents.input(filepath.Join(root, "probe"))
+	view, name := new(l.documents).input(filepath.Join(root, "probe"))
 	data, err := fs.ReadFile(view, name)
 	{
 		assert.FatalIf(

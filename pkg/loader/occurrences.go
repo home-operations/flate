@@ -265,12 +265,12 @@ func (l *Loader) Packages(ctx context.Context) ([]PackageEvidence, error) {
 		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
 		for dir, doc := range l.documents.cache {
 
-			if doc.adHoc && l.documents.mountedRoot(dir) == l.SourceRoot {
+			if doc.adHoc && new(l.documents).mountedRoot(dir) == l.SourceRoot {
 				relative, _ := filepath.Rel(l.SourceRoot, dir)
 				scans[dir] = filepath.ToSlash(relative)
 			}
 			if doc.traversed && doc.body != nil && !isKustomizeComponent(doc.body) &&
-				l.documents.mountedRoot(dir) == l.SourceRoot {
+				new(l.documents).mountedRoot(dir) == l.SourceRoot {
 				packages[dir] = struct{}{}
 			}
 		}
@@ -296,7 +296,8 @@ func (l *Loader) Packages(ctx context.Context) ([]PackageEvidence, error) {
 		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
 		for file, doc := range l.documents.cache {
 
-			if !doc.loaded || len(doc.objects) == 0 || doc.bootstrap || l.documents.mountedRoot(file) != l.SourceRoot {
+			if !doc.loaded || len(doc.objects) == 0 || doc.bootstrap ||
+				new(l.documents).mountedRoot(file) != l.SourceRoot {
 				continue
 			}
 			relative, _ := filepath.Rel(l.SourceRoot, file)
@@ -347,7 +348,7 @@ func (l *Loader) Packages(ctx context.Context) ([]PackageEvidence, error) {
 func (l *Loader) Occurrences(ctx context.Context, dir, namespace string) ([]Occurrence, error) {
 	l.mountSources()
 	l.ensureScopes()
-	root := l.documents.mountedRoot(dir)
+	root := new(l.documents).mountedRoot(dir)
 	if root == "" {
 		return nil, nil
 	}
@@ -377,7 +378,7 @@ func (l *Loader) Occurrences(ctx context.Context, dir, namespace string) ([]Occu
 				continue
 			}
 			origin := new(l.documents).localPath(v.file)
-			source := l.documents.mountedRoot(origin)
+			source := new(l.documents).mountedRoot(origin)
 			file, _ := filepath.Rel(source, origin)
 			{
 				childValues3 := doc.objects

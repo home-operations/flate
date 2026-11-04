@@ -626,65 +626,77 @@ func (d *Session) entryCandidateReady(ctx context.Context, candidate *manifest.K
 }
 
 func (d *Session) entryEligible(owner *manifest.Kustomization, children []store.Child) bool {
-	batch := make(map[manifest.NamedResource]manifest.BaseManifest, len(children))
+	e := entryPrerequisites{d: d, owner: owner, children: children}
+	e.batch = make(map[manifest.NamedResource]manifest.BaseManifest, len(children))
 	for _, child := range children {
-		batch[child.Obj.Named()] = child.Obj
+		e.batch[child.Obj.Named()] = child.Obj
 	}
-	seen := map[manifest.NamedResource]bool{}
-	source := owner.SourceID()
-	if source.Name == "" || source.Kind == "" {
-		source = manifest.BootstrapSourceID
+	e.seen = map[manifest.NamedResource]bool{}
+
+	e.source = owner.SourceID()
+	if e.source.Name == "" || e.source.Kind == "" {
+		e.source = manifest.BootstrapSourceID
 	}
-	var captured func(manifest.NamedResource) bool
-	prerequisites := func(obj manifest.BaseManifest) bool {
-		obj = manifest.MapDependsOn(obj, d.substitutions.Resolve, d.substitutions.Resolve)
-		for ref := range manifest.References(obj, manifest.ReferenceRelations) {
-			if (ref.Ordering || ref.ArtifactStages != 0 && d.cfg.Store.GetArtifact(ref.NamedResource, store.ArtifactContent) == nil) &&
-				captured(ref.NamedResource) {
+	return !e.prerequisites(owner)
+}
+
+type entryPrerequisites struct {
+	d        *Session
+	owner    *manifest.Kustomization
+	children []store.Child
+	batch    map[manifest.NamedResource]manifest.BaseManifest
+	seen     map[manifest.NamedResource]bool
+	source   manifest.NamedResource
+}
+
+func (e *entryPrerequisites) prerequisites(obj manifest.BaseManifest) bool {
+	obj = manifest.MapDependsOn(obj, e.d.substitutions.Resolve, e.d.substitutions.Resolve)
+	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
+		if (ref.Ordering || ref.ArtifactStages != 0 && e.d.cfg.Store.GetArtifact(ref.NamedResource, store.ArtifactContent) == nil) &&
+			e.captured(ref.NamedResource) {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *entryPrerequisites) captured(id manifest.NamedResource) bool {
+	if id.Name == "" || id.Kind == "" || id == e.owner.Named() || e.seen[id] {
+		return false
+	}
+	e.seen[id] = true
+	if e.batch[id] != nil {
+		return true
+	}
+	for _, child := range e.children {
+		for _, target := range manifest.ProducerTargets(child.Obj, id) {
+			if target.NamedResource == id {
 				return true
 			}
 		}
-		return false
 	}
-	captured = func(id manifest.NamedResource) bool {
-		if id.Name == "" || id.Kind == "" || id == owner.Named() || seen[id] {
-			return false
-		}
-		seen[id] = true
-		if batch[id] != nil {
-			return true
-		}
-		for _, child := range children {
-			for _, target := range manifest.ProducerTargets(child.Obj, id) {
-				if target.NamedResource == id {
-					return true
-				}
-			}
-		}
-		obj := d.cfg.Store.GetObject(id)
-		if obj == nil {
-			obj = d.loader.Index.Records[id].Declaration
-		}
-		if obj != nil && prerequisites(obj) {
-			return true
-		}
-		{
-			productionValues := d.cfg.Store.Productions(id, d.loader.Index)
-			for productionIndex := range productionValues {
-				production := productionValues[productionIndex]
+	obj := e.d.cfg.Store.GetObject(id)
+	if obj == nil {
+		obj = e.d.loader.Index.Records[id].Declaration
+	}
+	if obj != nil && e.prerequisites(obj) {
+		return true
+	}
+	{
+		productionValues := e.d.cfg.Store.Productions(id, e.d.loader.Index)
+		for productionIndex := range productionValues {
+			production := productionValues[productionIndex]
 
-				if production.Source != (manifest.NamedResource{}) && production.Source != source {
-					continue
-				}
-				if production.Owner == owner.Named() || captured(production.Materializer(id)) ||
-					captured(production.Declaration) {
-					return true
-				}
+			if production.Source != (manifest.NamedResource{}) && production.Source != e.source {
+				continue
+			}
+			if production.Owner == e.owner.Named() || e.captured(production.Materializer(id)) ||
+				e.captured(production.Declaration) {
+				return true
 			}
 		}
-		return false
 	}
-	return !prerequisites(owner)
+	return false
 }
 
 func (d *Session) prepareDocuments(

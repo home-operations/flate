@@ -119,4 +119,67 @@ func TestE2E_PinnedDiff_EscapedPatchInput(t *testing.T) {
 	if loader.calls.Load() != 0 {
 		t.Fatalf("local pinned input fetched remotely %d times", loader.calls.Load())
 	}
+
+	t.Run("supplied GitRepository", testSourceRefSuppliedGitRepository)
+}
+
+func testSourceRefSuppliedGitRepository(t *testing.T) {
+	t.Helper()
+	remote := t.TempDir()
+	repo := testutil.GitInit(t, remote)
+	testutil.WriteFile(t, remote, "app/kustomization.yaml", "resources: [cm.yaml]\n")
+	testutil.WriteFile(t,
+		remote,
+		"app/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: supplied-source-output, namespace: "+
+			"apps}\ndata: {value: committed}\n")
+	testutil.GitCommitAll(t,
+		repo,
+		"source",
+		&git.CommitOptions{Author: &object.Signature{
+			Name:  "fixture",
+			Email: "fixture@example.test",
+			When: time.Unix(0,
+				0),
+		}})
+	root, inputs := t.TempDir(), t.TempDir()
+	testutil.GitInit(t, root)
+	testutil.WriteFile(t,
+		root,
+		"consumer.yaml",
+		testutil.KustomizationYAML("consumer",
+			"apps",
+			"  path: ./app\n  sourceRef: {kind: GitRepository, name: remote}\n"))
+	testutil.WriteFile(t,
+		inputs,
+		"source.yaml",
+		"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: remote, namespace: apps}\n"+
+			"spec: {url: 'file://"+filepath.ToSlash(remote)+"'}\n"+
+			"---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\n"+
+			"metadata: {name: unused, namespace: apps}\nspec: {url: 'file:///absent-supplied-source'}\n")
+	var previous string
+	for range 2 {
+		out, _ := harness.RequireCLIOK(t,
+			"build",
+			"all",
+			"--path",
+			root,
+			"--supply",
+			filepath.Join(inputs,
+				"source.yaml"),
+			"--concurrency=2",
+			"--no-progress")
+		if !strings.Contains(out,
+			"name: supplied-source-output") ||
+			strings.Contains(out,
+				"kind: GitRepository") ||
+			strings.Contains(out,
+				"unused") {
+			t.Fatalf("supplied source output: %s", out)
+		}
+		if previous != "" && previous != out {
+			t.Fatal("nondeterministic supplied source output")
+		}
+		previous = out
+	}
 }

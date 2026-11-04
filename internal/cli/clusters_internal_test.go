@@ -48,7 +48,7 @@ func runClusterInputs(t *testing.T, argv ...string) (string, string, int) {
 	}{verb: &verb, format: &format, kind: &kind})
 	flags.StringVarP(&c.output, "output", "o", string(format), "")
 	assert.NoError(t, flags.Parse(args))
-	assert.NoError(t, c.loadInputs(t.Context()))
+	assert.NoError(t, c.loadInputs(t.Context(), nil))
 	var trees []orchestrator.Tree
 	runClusterInputsLoop(struct {
 		c     *commonFlags

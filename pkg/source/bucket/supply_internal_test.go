@@ -3,6 +3,8 @@ package bucket
 import (
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
@@ -12,20 +14,23 @@ import (
 func TestFetcher_SuppliedCredentials(t *testing.T) {
 	t.Parallel()
 	b := &manifest.Bucket{Name: "bucket", Namespace: "apps", SecretRef: &manifest.LocalObjectReference{Name: "auth"}}
-	snapshot, err := store.NewSupplied(
-		[]store.SuppliedObject{
-			{
-				Object: &manifest.Secret{
-					Name:       "auth",
-					Namespace:  "apps",
-					StringData: map[string]any{"accesskey": "filled", "secretkey": "filled"},
-				},
-			},
+	snapshot := []store.Declaration{
+		{
+			Obj: &manifest.Secret{
+				Name:       "auth",
+				Namespace:  "apps",
+				StringData: map[string]any{"accesskey": "filled", "secretkey": "filled"},
+			}, Doc: testutil.ObjectDocument(&manifest.Secret{
+				Name:       "auth",
+				Namespace:  "apps",
+				StringData: map[string]any{"accesskey": "filled", "secretkey": "filled"},
+			}), Origin: manifest.SuppliedDeclaration,
 		},
-	)
-	assert.NoError(t, err)
+	}
 	s := store.New()
-	s.SetSupplied(snapshot)
+	for _, declaration := range snapshot {
+		s.AddDeclaration(declaration)
+	}
 	s.AddObject(
 		&manifest.Secret{
 			Name:       "auth",

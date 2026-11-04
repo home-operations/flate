@@ -26,7 +26,7 @@ func (d *Session) promoteOrphans(ctx context.Context, standaloneSecrets []manife
 		}
 	}
 	for id, record := range index.Files() { //nolint:gocritic // The iterator supplies independent value snapshots.
-		if d.cfg.Store.GetObject(id) != nil ||
+		if obj, policy := d.cfg.Store.Lookup(id); obj != nil && policy.Root ||
 			record.Declaration != nil && !d.loader.AdmitsRoot(record.Declaration, record.Path) {
 			continue
 		}
@@ -51,7 +51,7 @@ func (d *Session) promoteOrphans(ctx context.Context, standaloneSecrets []manife
 	}
 	for _, child := range saved {
 		obj := child.Obj
-		if d.cfg.Store.GetObject(obj.Named()) == nil {
+		if existing, policy := d.cfg.Store.Lookup(obj.Named()); existing == nil || !policy.Root {
 			d.cfg.Store.AddObject(obj, child.Doc)
 		}
 	}

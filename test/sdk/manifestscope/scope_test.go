@@ -16,11 +16,11 @@ type resolver struct {
 	resolutions int
 }
 
-func (r *resolver) ResolveScope(meta yaml.TypeMeta) bool {
+func (r *resolver) ResolveScope(meta yaml.TypeMeta) (bool, bool) {
 	r.resolutions++
 	value := meta.Kind != "ClusterRole"
 	r.memo[meta] = value
-	return value
+	return value, true
 }
 
 func (r *resolver) LookupScope(meta yaml.TypeMeta) (bool, bool) {

@@ -18,6 +18,7 @@ import (
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/filtertest"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
@@ -76,9 +77,14 @@ func TestSource_CapturedMaterialRefresh(t *testing.T) {
 		repo.Named(): {Productions: []manifest.Production{{Owner: parent.Named()}}},
 	}})
 	st.AddObjects([]manifest.BaseManifest{parent, repo, secret})
-	supply, err := store.NewSupplied([]store.SuppliedObject{{Object: secret, Path: "credentials.yaml"}})
-	assert.NoError(t, err)
-	st.SetSupplied(supply)
+	st.AddDeclaration(
+		store.Declaration{
+			Obj:       secret,
+			Doc:       testutil.ObjectDocument(secret),
+			Origin:    manifest.SuppliedDeclaration,
+			InputPath: "credentials.yaml",
+		},
+	)
 	controllertest.Emit(
 		t.Context(),
 		c.Controller,
@@ -447,9 +453,14 @@ func testSourceDeclarationContributorsReuseCase(
 		StringData: map[string]any{"username": "same"},
 	}
 	st.AddObject(secret)
-	supply, err := store.NewSupplied([]store.SuppliedObject{{Object: secret, Path: "credentials.yaml"}})
-	assert.NoError(t, err)
-	st.SetSupplied(supply)
+	st.AddDeclaration(
+		store.Declaration{
+			Obj:       secret,
+			Doc:       testutil.ObjectDocument(secret),
+			Origin:    manifest.SuppliedDeclaration,
+			InputPath: "credentials.yaml",
+		},
+	)
 	publish := func(value string) {
 		controllertest.Emit(
 			t.Context(),

@@ -57,9 +57,10 @@ type DiscoveryRecord struct {
 	Parent        NamedResource              `json:"Parent"`        // Strict structural parent, excluding peers with the same claimed path.
 	Productions   []Production               `json:"Productions"`   // Immutable source-qualified contributor evidence.
 	ReferenceData []ReferenceData            `json:"ReferenceData"` // Borrowed lookup candidates qualified by their production.
-	StaticOutput  bool                       `json:"StaticOutput"`  // Discovery derives this producer's output without accepted history.
-	Pinned        bool                       `json:"Pinned"`        // The Kustomization reads a committed local source artifact.
-	ContentRoots  map[NamedResource][]string `json:"-"`             // Source-qualified render locations; no authored-file authority.
+	Origin        DeclarationOrigin          `json:"-"`
+	StaticOutput  bool                       `json:"StaticOutput"` // Discovery derives this producer's output without accepted history.
+	Pinned        bool                       `json:"Pinned"`       // The Kustomization reads a committed local source artifact.
+	ContentRoots  map[NamedResource][]string `json:"-"`            // Source-qualified render locations; no authored-file authority.
 }
 
 // Equal compares the record facts retained by accepted renders.

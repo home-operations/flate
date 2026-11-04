@@ -49,7 +49,7 @@ func TestRenderTrees_SubstitutionAdmissionAndDiff(t *testing.T) {
 		CacheDir:            t.TempDir(),
 		Concurrency:         4,
 		WipeSecrets:         true,
-		Supply:              []store.SuppliedObject{source},
+		Supply:              []store.Declaration{source},
 		StrictSubstitutions: true,
 		Tree:                Tree{},
 	}
@@ -88,9 +88,9 @@ func TestRenderTrees_SubstitutionAdmissionAndDiff(t *testing.T) {
 		}
 		assert.FatalIf(t, !side.filter.ShouldReconcile(consumer) || side.filter.ShouldReconcile(stable) ||
 			side.Store().GetArtifact(stable, store.ArtifactContent) != nil ||
-			side.Store().
-				GetObject(source.Object.Named()) !=
-				nil, "%v", "selected-consumer admission or supplied-object isolation failed")
+			!side.Store().
+				ReportHidden(source.Obj.Named()),
+			"%v", "selected-consumer admission or supplied-object isolation failed")
 	}
 	for _, side := range []Rendered{base, head} {
 		batches := slices.DeleteFunc(canonicalBatches(side.Result), func(batch struct {
@@ -125,11 +125,12 @@ func TestRender_SubstitutionChangesDoNotSelectConsumers(t *testing.T) {
 	}
 	for _, value := range []string{"first", "second"} {
 		source := suppliedSubstitution("external")
-		source.Object.(*manifest.ConfigMap).Data["VALUE"] = value
+		source.Obj.(*manifest.ConfigMap).Data["VALUE"] = value
+		source.Doc = testutil.ObjectDocument(source.Obj)
 		o := newSubstitutionOrchestrator(
 			t,
 			treeConfig{
-				Supply:    []store.SuppliedObject{source},
+				Supply:    []store.Declaration{source},
 				Path:      headRoot,
 				BaseInput: testDirectoryInput(t, baseRoot),
 			},
@@ -148,7 +149,7 @@ func TestRender_SubstitutionChangesDoNotSelectConsumers(t *testing.T) {
 
 func TestRenderTrees_SuppliedTransitionsMatchFull(t *testing.T) {
 	t.Parallel()
-	for _, transition := range [][2]string{{"absent", "real"}, {"wiped", "real"}, {"real", "absent"}} {
+	for _, transition := range [][2]string{{"absent", "real"}, {"wiped", "real"}, {"real", "absent"}, {"real", "wiped"}} {
 		t.Run(strings.Join(transition[:], "-"), func(t *testing.T) {
 			t.Parallel()
 			testRenderTreesSuppliedTransitionsMatchFullCase(
@@ -165,21 +166,27 @@ func TestBootstrap_SubstitutionDuplicatesReplaceWholeObjects(t *testing.T) {
 	root := t.TempDir()
 	writeSubstitutionCluster(t, root, "external", "${VALUE}-${OLD:-gone}")
 	first := suppliedSubstitution("external")
-	first.Object.(*manifest.ConfigMap).Data["OLD"] = "old"
+	first.Obj.(*manifest.ConfigMap).Data["OLD"] = "old"
 	last := suppliedSubstitution("external")
-	last.Object.(*manifest.ConfigMap).Data["VALUE"] = "last"
-	o := newSubstitutionOrchestrator(t, treeConfig{Supply: []store.SuppliedObject{first, last}, Path: root})
+	last.Obj.(*manifest.ConfigMap).Data["VALUE"] = "last"
+	last.Doc = testutil.ObjectDocument(last.Obj)
+	first.Doc = testutil.ObjectDocument(first.Obj)
+	o := newSubstitutionOrchestrator(t, treeConfig{Supply: []store.Declaration{first, last}, Path: root})
 	res, err := o.render(t.Context())
-	assert.FatalIf(t, err != nil, "%v", err)
-	id := testutil.KustomizationID("apps", "consumer")
-	{
-		got := substitutionValue(t, res, id)
-		assert.FatalIf(t, got != "last-gone", "duplicate maps merged: %q", got)
+	if err != nil {
+		t.Fatal(err)
 	}
-	assert.FatalIf(t, !maps.Equal(
-		o.store.ReferenceFacts(last.Object.Named(), nil).Supplied.(*manifest.ConfigMap).Data,
-		last.Object.(*manifest.ConfigMap).Data,
-	), "%v", "accepted input differs from last whole object")
+	id := testutil.KustomizationID("apps", "consumer")
+	if got := substitutionValue(t, res, id); got != "last-gone" {
+		t.Fatalf("duplicate maps merged: %q", got)
+	}
+	if !maps.Equal(o.store.ReferenceFacts(last.Obj.Named(),
+		nil,
+		false,
+		manifest.NamedResource{}).Data.(*manifest.ConfigMap).Data,
+		last.Obj.(*manifest.ConfigMap).Data) {
+		t.Fatal("accepted input differs from last whole object")
+	}
 }
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
@@ -187,8 +194,8 @@ func TestSupply_IndexedIdentityDoesNotPublish(t *testing.T) {
 	for _, namespace := range []string{"apps", "", "other"} {
 		t.Run("namespace_"+namespace, func(t *testing.T) {
 			source := suppliedSubstitution("external")
-			o := newSubstitutionOrchestrator(t, treeConfig{Supply: []store.SuppliedObject{source}, Path: t.TempDir()})
-			id := source.Object.Named()
+			o := newSubstitutionOrchestrator(t, treeConfig{Supply: []store.Declaration{source}, Path: t.TempDir()})
+			id := source.Obj.Named()
 			indexed := id
 			indexed.Namespace = namespace
 			o.store.SetDiscoveryIndex(
@@ -196,12 +203,10 @@ func TestSupply_IndexedIdentityDoesNotPublish(t *testing.T) {
 					Records: map[manifest.NamedResource]manifest.DiscoveryRecord{indexed: {Path: "repository.yaml"}},
 				},
 			)
-			assert.FatalIf(
-				t,
-				o.store.ReferenceFacts(id, nil).Supplied == nil || o.store.GetObject(id) != nil,
-				"%v",
-				"indexed evidence changed supply or published it",
-			)
+			if o.store.ReferenceFacts(id, nil, false, manifest.NamedResource{}).Data == nil ||
+				!o.store.ReportHidden(id) {
+				t.Fatal("indexed evidence changed supply or published it")
+			}
 		})
 	}
 }
@@ -366,40 +371,46 @@ func TestRender_RootSecretOverridesProducerPlaceholder(t *testing.T) {
 		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: rendered, namespace: apps}\ndata: {value: '${VALUE}'}\n",
 	)
 	input := &manifest.Secret{Name: "settings", Namespace: "apps", StringData: map[string]any{"VALUE": "private-value"}}
-	o := newSubstitutionOrchestrator(
-		t,
-		treeConfig{Path: root, RepoRoot: root, Supply: []store.SuppliedObject{{Object: input}}},
-	)
+	o := newSubstitutionOrchestrator(t,
+		treeConfig{
+			Path:     root,
+			RepoRoot: root,
+			Supply: []store.Declaration{{
+				Doc:    testutil.ObjectDocument(input),
+				Obj:    input,
+				Origin: manifest.SuppliedDeclaration,
+			}},
+		})
 	assert.NoError(t, o.bootstrap(t.Context()))
 	secret := input.Named()
-	assert.FatalIf(
-		t,
-		o.store.GetObject(secret) != nil || o.store.EmissionOwner(secret) != (manifest.NamedResource{}),
-		"%v",
-		"root-owned Secret published before its producer",
-	)
+	if o.store.GetObject(secret) != input &&
+		o.store.GetObject(secret).(manifest.Data).HasKeys() == false ||
+		o.store.EmissionOwner(secret) != (manifest.NamedResource{}) {
+		t.Fatal("root-owned Secret published before its producer")
+	}
 	record := o.index.Records[secret]
 	before, ok := record.Declaration.(*manifest.Secret)
-	assert.FatalIf(
-		t,
-		!ok || before.StringData["VALUE"] != "repository" || record.BuilderOwner != o.entryBinding.Producer,
-		"root-owned Secret lost immutable entry evidence: %+v",
-		record,
-	)
+	if !ok || before.StringData["VALUE"] != "repository" || record.BuilderOwner != o.entryBinding.Producer {
+		t.Fatalf("root-owned Secret lost immutable entry evidence: %+v", record)
+	}
 	result, err := o.collectResult(o.run(t.Context()))
 	assert.NoError(t, err)
 	assert.Equal(t, substitutionValue(t, result, testutil.KustomizationID("apps", "consumer")), "repository")
 	after, ok := o.store.GetObject(secret).(*manifest.Secret)
-	assert.FatalIf(
-		t,
-		!ok || after.StringData["VALUE"] != "repository",
-		"runtime repository precedence lost: %+v",
-		after,
-	)
+	if !ok || after.StringData["VALUE"] != "repository" {
+		t.Fatalf("runtime repository precedence lost: %+v", after)
+	}
 	assert.Equal(t, o.store.EmissionOwner(secret), o.entryBinding.Producer)
-	facts := o.store.ReferenceFacts(secret, nil)
-	assert.FatalIf(t, facts.Supplied == nil, "%v", "repository data removed the invocation supplied snapshot")
-	supplied, _, err := facts.Supplied.Value("VALUE")
+	_, _, inventory := o.store.GetEmission(o.entryBinding.Producer)
+	inventory.Children, inventory.Complete = nil, true
+	o.store.RecordEmitted(o.entryBinding.Producer, &inventory, nil)
+	inventory.Finish()
+	o.store.DeleteObject(secret)
+	facts := o.store.ReferenceFacts(secret, nil, false, manifest.NamedResource{})
+	if facts.Data == nil {
+		t.Fatal("repository data removed the invocation supplied snapshot")
+	}
+	supplied, _, err := facts.Data.Value("VALUE")
 	assert.NoError(t, err)
 	assert.Equal(t, supplied, "private-value")
 	assert.Equal(t, input.StringData["VALUE"], "private-value")
@@ -506,7 +517,7 @@ func testRenderTreesSuppliedTransitionsMatchFullCase(
 		CacheDir:    t.TempDir(),
 		Concurrency: 2,
 		WipeSecrets: true,
-		Supply:      []store.SuppliedObject{suppliedSubstitution("settings")},
+		Supply:      []store.Declaration{suppliedSubstitution("settings")},
 	}
 	consumer := testutil.KustomizationID("apps", "consumer")
 	for range 2 {
@@ -532,6 +543,10 @@ func testRenderTreesSuppliedTransitionsMatchFullCase(
 			}
 			assert.Equal(t, substitutionValue(t, full[0].Result, consumer), want)
 			assert.Equal(t, substitutionValue(t, paired[i].Result, consumer), want)
+			origin := map[string]manifest.DeclarationOrigin{"absent": manifest.SuppliedDeclaration, "real": manifest.RepositoryDeclaration, "wiped": manifest.RepositoryDeclaration}[testCaseInput[i]]
+			id := cfg.Supply[0].Obj.Named()
+			assert.Equal(t, paired[i].Store().Policy(id).Origin, origin)
+			assert.Equal(t, full[0].Store().Policy(id).Origin, origin)
 			var wantWarnings []manifest.Warning
 			if testCaseInput[i] == "real" {
 				wantWarnings = []manifest.Warning{

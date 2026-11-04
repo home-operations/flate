@@ -36,7 +36,7 @@ func TestClassify_MissingCRDs(t *testing.T) {
 	t.Parallel()
 	for _, enabled := range []bool{false, true} {
 		for _, drain := range []manifest.DrainLevel{manifest.DrainNone, manifest.DrainCascade, manifest.DrainForce} {
-			for _, state := range []string{"absent", "explicit namespace", "object", "ready status", "pending status", "failed status", "promoted", "promotion miss", "ConfigMap", "Secret", "Widget", "Kustomization", "HelmRelease", "CustomResourceDefinitionList", "valid expression", "invalid expression", "present invalid expression"} {
+			for _, state := range []string{"absent", "explicit namespace", "object", "supplied", "ready status", "pending status", "failed status", "promoted", "promotion miss", "ConfigMap", "Secret", "Widget", "Kustomization", "HelmRelease", "CustomResourceDefinitionList", "valid expression", "invalid expression", "present invalid expression"} {
 				t.Run(fmt.Sprintf("enabled_%t/drain_%d/%s", enabled, drain, state), func(t *testing.T) {
 					t.Parallel()
 					testClassifyMissingCRDsCase(
@@ -101,8 +101,10 @@ func testClassifyMissingCRDsCase(t *testing.T, testCaseInput testClassifyMissing
 		ref.ReadyExpr = new("false")
 	case "explicit namespace":
 		ref.Namespace = "explicit"
-	case "object", "present invalid expression":
-		s.AddObject(&manifest.RawObject{APIVersion: ref.Group + "/v1", Kind: ref.Kind, Name: ref.Name})
+	case "object", "supplied", "present invalid expression":
+		obj := &manifest.RawObject{APIVersion: ref.Group + "/v1", Kind: ref.Kind, Name: ref.Name}
+		origin := map[string]manifest.DeclarationOrigin{"supplied": manifest.SuppliedDeclaration}[*testCaseInput.state]
+		s.AddDeclaration(store.Declaration{Obj: obj, Origin: origin})
 		want = schedule.Terminal
 		msg = ""
 		if (*testCaseInput.state) == "present invalid expression" {

@@ -70,7 +70,7 @@ func testFeasibilityPointerOnlyExistingSectionCase(
 	{
 		assert.FatalIf(
 			t,
-			!slices.EqualFunc(retained.Children, []Child{changed}, childEqual),
+			!slices.EqualFunc(retained.Children, []Child{changed}, Child.equal),
 			"%s",
 			"retry changed the accepted replacement children",
 		)

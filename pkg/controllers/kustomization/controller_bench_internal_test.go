@@ -30,11 +30,9 @@ func benchmarkSubstitutionLookup(b *testing.B, supplied *bool) {
 	c := New(st, nil, nil, false)
 	opts := Options{}
 	if *supplied {
-		snapshot, err := store.NewSupplied([]store.SuppliedObject{{Object: cm}})
-		if err != nil {
-			b.Fatal(err)
-		}
-		st.SetSupplied(snapshot)
+		st.AddDeclaration(
+			store.Declaration{Obj: cm, Doc: testutil.ObjectDocument(cm), Origin: manifest.SuppliedDeclaration},
+		)
 	} else {
 		st.AddObject(cm)
 	}

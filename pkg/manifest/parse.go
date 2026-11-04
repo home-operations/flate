@@ -66,6 +66,8 @@ func DocMetadata(doc map[string]any) (string, string) {
 
 // ParseDocOptions tunes ParseDoc behavior.
 type ParseDocOptions struct {
+	// RequiredIdentity requires complete Kubernetes identity without namespace defaulting.
+	RequiredIdentity bool
 	// WipeSecrets replaces SOPS ciphertext with offline placeholders.
 	WipeSecrets bool
 	// DefaultNamespace fills omitted namespaced identity and authoritative document metadata.
@@ -80,6 +82,12 @@ type ParseDocOptions struct {
 //nolint:ireturn // The manifest contract requires polymorphic results.
 func ParseDoc(doc map[string]any, opts ParseDocOptions) (BaseManifest, map[string]any, bool, error) {
 	kind, apiVersion := DocKind(doc), DocAPIVersion(doc)
+	if opts.RequiredIdentity {
+		if err := ValidateIdentity(doc, nil); err != nil {
+			return nil, doc, false, err
+		}
+		opts.DefaultNamespace, opts.WipeSecrets = "", false
+	}
 	if kind == "" || apiGroup(apiVersion) == KustomizeDomain {
 		return nil, doc, false, nil
 	}
@@ -101,6 +109,11 @@ func ParseDoc(doc map[string]any, opts ParseDocOptions) (BaseManifest, map[strin
 	}
 	if err == nil {
 		obj, doc, changed = defaultNamespace(obj, doc, opts.DefaultNamespace, changed)
+		if opts.RequiredIdentity {
+			if data, ok := obj.(Data); ok {
+				err = validateDataDocument(doc, data)
+			}
+		}
 	}
 	return obj, doc, changed, err
 }

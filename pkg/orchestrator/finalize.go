@@ -114,7 +114,7 @@ func (o *Orchestrator) finalize() error {
 			continue
 		}
 		for _, obj := range o.store.ListObjects(info.Group, info.Kind) {
-			if !obj.Named().ReportHidden() {
+			if o.store.Policy(obj.Named()).Report {
 				counts[info.Kind]++
 			}
 		}
@@ -248,7 +248,7 @@ func (o *Orchestrator) logSummary(failed map[manifest.NamedResource]store.Status
 		"failed", len(failed))
 	if o.loader != nil && ksCount == 0 && hrCount == 0 {
 		for id := range o.index.Records {
-			if id.KindInfo().Render {
+			if id.KindInfo().Render && o.index.Records[id].Origin.Policy(id, nil).Root {
 				return
 			}
 		}

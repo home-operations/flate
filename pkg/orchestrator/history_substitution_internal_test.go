@@ -113,8 +113,9 @@ func substitutionHistoryConfig(cacheDir string, variables map[string]string) Con
 		for name, value := range variables {
 			data[name] = value
 		}
-		cfg.Supply = []store.SuppliedObject{
-			{Object: &manifest.ConfigMap{Name: "supplied", Namespace: "apps", Data: data}},
+		obj := &manifest.ConfigMap{Name: "supplied", Namespace: "apps", Data: data}
+		cfg.Supply = []store.Declaration{
+			{Obj: obj, Doc: testutil.ObjectDocument(obj), Origin: manifest.SuppliedDeclaration},
 		}
 	}
 	return cfg

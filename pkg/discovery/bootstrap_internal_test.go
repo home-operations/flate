@@ -234,6 +234,37 @@ spec:
 
 func TestResolveEntrySources_Identity(t *testing.T) {
 	t.Parallel()
+	t.Run("real supplied source", func(t *testing.T) {
+		t.Parallel()
+		const root = "/virtual/supplied-source"
+		st := store.New()
+		st.SetArtifact(manifest.BootstrapSourceID,
+			&store.SourceArtifact{
+				LocalPath: root,
+				FS:        fstest.MapFS{"apps/file": {Data: []byte("input")}},
+			})
+		l := loader.New(st)
+		src := &manifest.GitRepository{Name: "external", Namespace: "apps", URL: "https://fixture.invalid/external"}
+		l.AdmitDeclarations([]store.Declaration{{Obj: src, Origin: manifest.SuppliedDeclaration}})
+		for _, name := range []string{"first", "second"} {
+			st.AddObject(&manifest.Kustomization{
+				Name:      name,
+				Namespace: "apps",
+				Path:      "./apps",
+				SourceRef: kustomizev1.CrossNamespaceSourceReference{
+					Kind: manifest.KindGitRepository,
+					Name: src.Name,
+				},
+			})
+		}
+		d := Session{cfg: Config{Path: root, Store: st}, loader: l}
+		count, err := d.resolveEntrySources(t.Context(), true)
+		if err != nil || count != 0 || st.GetObject(src.Named()) != src ||
+			st.GetArtifact(src.Named(), store.ArtifactContent) != nil {
+			t.Fatalf("real source became an alias: count=%d err=%v", count, err)
+		}
+	})
+
 	for _, tc := range []struct {
 		kind, group, namespace, name, path string
 		want                               bool

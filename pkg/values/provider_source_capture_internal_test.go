@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -17,19 +18,21 @@ type countedDataReader struct {
 func (r *countedDataReader) ReferenceFacts(
 	id manifest.NamedResource,
 	index *manifest.DiscoveryIndex,
+	wipeSecrets bool,
+	consumer manifest.NamedResource,
 ) store.ReferenceFacts {
 	r.objects++
 	r.productions++
-	return r.ReadSet.ReferenceFacts(id, index)
+	return r.ReadSet.ReferenceFacts(id, index, wipeSecrets, consumer)
 }
 
 func TestStoreProvider_LookupRetainsOneSource(t *testing.T) {
 	t.Parallel()
 	s := store.New()
 	supplied := &manifest.Secret{Name: "supplied", Namespace: "apps", StringData: map[string]any{"VALUE": "supplied"}}
-	snapshot, err := store.NewSupplied([]store.SuppliedObject{{Object: supplied}})
-	assert.NoError(t, err)
-	s.SetSupplied(snapshot)
+	s.AddDeclaration(
+		store.Declaration{Obj: supplied, Doc: testutil.ObjectDocument(supplied), Origin: manifest.SuppliedDeclaration},
+	)
 	first := &manifest.ConfigMap{Name: "settings", Namespace: "apps", Data: map[string]any{"VALUE": "first"}}
 	s.AddObject(first)
 	owner := manifest.NamedResource{
@@ -113,7 +116,7 @@ func TestStoreProvider_LookupRetainsOneSource(t *testing.T) {
 	)
 	for _, captured := range []struct {
 		id    manifest.NamedResource
-		input Input
+		input store.ReferenceFacts
 	}{{first.Named(), input}, {absent, missing}, {other.Named(), otherInput}, {supplied.Named(), private}, {generatedID, generated}} {
 		assert.Diff(t, captured.input, provider.Lookup(captured.id))
 		{

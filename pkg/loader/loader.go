@@ -116,6 +116,20 @@ func New(s *store.Store) *Loader {
 	}
 }
 
+// AdmitDeclarations retains pathless reference evidence before repository discovery.
+func (l *Loader) AdmitDeclarations(children []store.Declaration) {
+	for _, child := range children {
+		l.Store.AddDeclaration(child)
+		id := child.Obj.Named()
+		r := l.Index.Records[id]
+		if r.Path == "" && r.Builder == "" {
+			r.Origin, r.Declaration = child.Origin, child.Obj
+			r.Refs = discoveryReferences(nil, child.Obj)
+			l.Index.Records[id] = r
+		}
+	}
+}
+
 // Sources yields eligible immutable source-artifact evidence in unspecified order.
 func (l *Loader) Sources(ctx context.Context) iter.Seq2[store.Child, error] {
 	return func(yield func(store.Child, error) bool) {
@@ -288,7 +302,7 @@ func (l *Loader) kustomizations() []store.Child {
 
 func (l *Loader) eachKustomization(objects []manifest.BaseManifest, yield func(store.Child)) {
 	for _, obj := range objects {
-		if _, _, applies := obj.SourcePath(); !applies {
+		if _, _, applies := obj.SourcePath(); !applies || !l.Store.Policy(obj.Named()).Root {
 			continue
 		}
 		id := obj.Named()
@@ -302,8 +316,10 @@ func (l *Loader) eachKustomization(objects []manifest.BaseManifest, yield func(s
 	}
 	//nolint:gocritic // The iterator supplies filtered value snapshots through its callback.
 	for id, r := range l.Index.Files() {
-		if id.Group != manifest.FluxKustomizeDomain || id.Kind != manifest.KindKustomization ||
-			l.Store.GetObject(id) != nil {
+		if id.Group != manifest.FluxKustomizeDomain || id.Kind != manifest.KindKustomization {
+			continue
+		}
+		if obj, policy := l.Store.Lookup(id); obj != nil && policy.Root {
 			continue
 		}
 		child := l.IndexedObject(id, r)
@@ -321,6 +337,9 @@ func (l *Loader) eachKustomization(objects []manifest.BaseManifest, yield func(s
 //nolint:gocritic // The SDK contract accepts a discovery record value snapshot.
 func (l *Loader) IndexedObject(id manifest.NamedResource, r manifest.DiscoveryRecord) store.Child {
 	child := l.candidates[id]
+	if r.Origin == manifest.SuppliedDeclaration {
+		return store.Child{Obj: l.Store.GetDeclaration(id), Origin: r.Origin}
+	}
 	if child.Obj == nil {
 		child = l.authoredObject(r.Path, r.Authored)
 	}
@@ -427,7 +446,7 @@ func (l *Loader) acceptObject(id manifest.NamedResource) bool {
 	if l.Index.Records[id].Path != "" {
 		return false
 	}
-	if l.Store.GetObject(id) == nil {
+	if obj, policy := l.Store.Lookup(id); obj == nil || !policy.Root {
 		return true
 	}
 	artifact, _ := l.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
@@ -534,7 +553,7 @@ func (l *Loader) recordOccurrence(path string, o *Occurrence) {
 func (l *Loader) recordObject(obj manifest.BaseManifest, absPath string) {
 	id := obj.Named()
 	if l.candidates[id].Obj != nil {
-		if record, exists := l.Index.Lookup(id); exists && record.Path == "" {
+		if record, exists := l.Index.Lookup(id); exists && record.Path == "" && record.Origin.Policy(id, nil).Root {
 			return
 		}
 	}

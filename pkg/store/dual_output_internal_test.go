@@ -55,17 +55,29 @@ func TestRecordEmitted_ProvenanceOnlyChange(t *testing.T) {
 	child := manifest.NewConfigMap(manifest.NamedResource{Name: "child", Namespace: "apps"}, nil)
 	s.AddObject(owner)
 	for _, generated := range []bool{true, false, true} {
+		var previous ReadSet
+		previous.Init(s, owner.Named(), nil)
+		previous.Lookup(child.Named())
 		_, _, inventory := s.GetEmission(owner.Named())
 		inventory.Children = []Child{{Obj: child, Generated: generated}}
 		s.RecordEmitted(owner.Named(), &inventory, nil)
 		inventory.Finish()
-		{
-			assert.FatalIf(
-				t,
-				s.GetObject(child.Named()) != child || s.ReportHidden(child.Named()) != generated,
-				"%s",
-				"equal child content bypassed its provenance transition",
-			)
+		valid := previous.Valid()
+		previous.Retire()
+		if valid {
+			t.Fatal("provenance transition did not invalidate the captured policy")
+		}
+		obj, policy := s.Lookup(child.Named())
+		want := (Child{Obj: child, Generated: generated}).Policy(child.Named())
+		if obj != child || policy != want || s.ReportHidden(child.Named()) != generated {
+			t.Fatal("equal child content bypassed its provenance transition")
+		}
+		var reads ReadSet
+		reads.Init(s, owner.Named(), nil)
+		captured, capturedPolicy := reads.Lookup(child.Named())
+		reads.Retire()
+		if captured != obj || capturedPolicy != policy {
+			t.Fatal("captured representative and policy disagree")
 		}
 	}
 }

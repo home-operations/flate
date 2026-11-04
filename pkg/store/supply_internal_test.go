@@ -1,90 +1,217 @@
 package store
 
 import (
-	"errors"
-	"strings"
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func TestNewSupplied_SnapshotAndReplacement(t *testing.T) {
+func TestDeclaration_Authority(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{manifest.KindSecret, manifest.KindConfigMap} {
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+			id := manifest.NamedResource{Kind: kind, Namespace: "apps", Name: "input"}
+			object := func(data map[string]any) manifest.BaseManifest {
+				if kind == manifest.KindSecret {
+					return manifest.NewSecret(id, nil, data)
+				}
+				return manifest.NewConfigMap(id, data)
+			}
+			s := New()
+			first := object(map[string]any{"old": "old"})
+			last := object(map[string]any{"value": "supplied"})
+			for _, obj := range []manifest.BaseManifest{first, last} {
+				s.AddDeclaration(
+					Declaration{Obj: obj, Doc: testutil.ObjectDocument(obj), Origin: manifest.SuppliedDeclaration},
+				)
+			}
+			assert.Equal(t, s.GetObject(id), last)
+			assert.Equal(t, s.GetDeclaration(id), last)
+			assert.Equal(t, len(s.ListObjects("", kind)), 1)
+			assert.Equal(t, s.Policy(id).Root, false)
+			assert.Equal(t, s.ReportHidden(id), true)
+			if _, found, _ := s.ReferenceFacts(id, nil, false, manifest.NamedResource{}).Data.Value("old"); found {
+				t.Fatal("duplicate retained old key")
+			}
+			reads := &ReadSet{}
+			reads.Init(s, testutil.KustomizationID("apps", "consumer"), nil)
+			defer reads.Retire()
+			assert.Equal(t, reads.GetObject(id), last)
+			assert.Equal(t, reads.Policy(id), s.Policy(id))
+			repository := object(map[string]any{"value": "repository"})
+			s.AddObject(repository)
+			assert.Equal(t, reads.Valid(), false)
+			assert.Equal(t, reads.Policy(id).Origin, manifest.SuppliedDeclaration)
+			assert.Equal(t, s.Policy(id).Origin, manifest.RepositoryDeclaration)
+			assert.Equal(t, s.GetObject(id), repository)
+			assert.Equal(t, s.ReportHidden(id), false)
+			before := &ReadSet{}
+			before.Init(s, testutil.KustomizationID("apps", "other"), nil)
+			defer before.Retire()
+			before.GetObject(id)
+			observed := false
+			stop := s.AddListener(EventObjectAdded, func(got manifest.NamedResource, payload any) {
+				if got == id {
+					observed = true
+					assert.Equal(t, payload, any(last))
+					assert.Equal(t, s.GetObject(id), last)
+				}
+			}, false)
+			assert.Equal(t, s.DeleteObject(id), true)
+			stop()
+			assert.Equal(t, observed, true)
+			assert.Equal(t, before.Valid(), false)
+			assert.Equal(t, s.GetObject(id), last)
+			obj, _ := s.Snapshot(id, false)
+			assert.Equal(t, obj, last)
+			assert.Equal(t, len(s.ListObjects("", kind)), 1)
+			assert.Equal(t, s.ReportHidden(id), true)
+		})
+	}
+}
+
+func TestDeclaration_SourceWithdrawal(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name   string
-		object func(map[string]any) manifest.BaseManifest
+		name     string
+		ancestor bool
 	}{
-		{"Secret", func(data map[string]any) manifest.BaseManifest {
-			return &manifest.Secret{Name: "input", Namespace: "apps", StringData: data}
-		}},
-		{"ConfigMap", func(data map[string]any) manifest.BaseManifest {
-			return &manifest.ConfigMap{Name: "input", Namespace: "apps", Data: data}
-		}},
+		{"direct", false},
+		{"ancestor", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			first := tc.object(map[string]any{"old": "old"})
-			payload := []byte("owned")
-			data := map[string]any{"value": payload}
-			last := tc.object(data)
-			supplied, err := NewSupplied([]SuppliedObject{{Object: first, Path: "first"}, {Object: last, Path: "last"}})
-			assert.NoError(t, err)
-			payload[0] = 'x'
-			data["extra"] = "late"
 			s := New()
-			s.SetSupplied(supplied)
-			facts := s.ReferenceFacts(first.Named(), nil)
-			{
-				assert.FatalIf(
-					t,
-					facts.Data != nil || facts.Accepted || facts.SupplyPath != "last" ||
-						s.GetObject(first.Named()) != nil,
-					"canonical publication: %+v",
-					facts,
-				)
+			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
+			s.AddObject(parent)
+			reference := &manifest.GitRepository{
+				Name:      "source",
+				Namespace: "apps",
+				URL:       "https://fixture.invalid/reference",
 			}
-			value, found, err := facts.Supplied.Value("value")
-			assert.NoError(t, err)
-			{
-				assert.FatalIf(t, value != "owned" || !found, "snapshot value = %q, found %t", value, found)
+			repository := &manifest.GitRepository{
+				Name:      "source",
+				Namespace: "apps",
+				URL:       "https://fixture.invalid/repository",
 			}
-			for _, key := range []string{"old", "extra"} {
-				{
-					_, found, _ := facts.Supplied.Value(key)
-					assert.FatalIf(t, found, "snapshot contains %s", key)
-				}
+			s.AddDeclaration(
+				Declaration{
+					Obj:    reference,
+					Doc:    testutil.ObjectDocument(reference),
+					Origin: manifest.SuppliedDeclaration,
+				},
+			)
+			producer := parent
+			if tc.ancestor {
+				producer = &manifest.Kustomization{Name: "producer", Namespace: "apps"}
+				s.RecordEmitted(parent.Named(), &Emission{Children: []Child{{Obj: producer}}, Complete: true}, nil)
+			}
+			s.RecordEmitted(producer.Named(), &Emission{Children: []Child{{Obj: repository}}, Complete: true}, nil)
+			s.SetArtifact(repository.Named(), &SourceArtifact{Key: "repository"})
+			s.UpdateStatus(repository.Named(), StatusInfo{Status: StatusReady})
+			var reads ReadSet
+			reads.Init(s, ownerID("reader"), nil)
+			defer reads.Retire()
+			reads.GetObject(repository.Named())
+			reads.GetArtifact(repository.Named(), ArtifactContent)
+			reads.GetStatus(repository.Named())
+			done := make(chan struct{})
+			go func() { s.RecordEmitted(parent.Named(), &Emission{Complete: true}, nil); close(done) }()
+			<-done
+			assert.Equal(t, reads.Valid(), false)
+			assert.Equal(t, s.GetObject(reference.Named()), manifest.BaseManifest(reference))
+			assert.Equal(t, s.GetArtifact(reference.Named(), ArtifactContent), Artifact(nil))
+			_, known := s.GetStatus(reference.Named())
+			assert.Equal(t, known, false)
+			assert.Equal(t, len(s.ListObjects(manifest.SourceDomain, manifest.KindGitRepository)), 1)
+			s.SetArtifact(reference.Named(), &SourceArtifact{Key: "reference"})
+			s.UpdateStatus(reference.Named(), StatusInfo{Status: StatusReady})
+			for range s.Sweep() {
+			}
+			if artifact, ok := s.GetArtifact(reference.Named(), ArtifactContent).(*SourceArtifact); !ok ||
+				artifact.Key != "reference" {
+				t.Fatal("reference acquisition was retired")
 			}
 		})
 	}
 }
 
-func TestNewSupplied_Validation(t *testing.T) {
+func TestDeclaration_ProducerWithdrawal(t *testing.T) {
 	t.Parallel()
+	s := New()
+	parent := &manifest.ResourceSet{Name: "parent", Namespace: "apps"}
+	reference := &manifest.Kustomization{Name: "child", Namespace: "apps", Path: "supplied"}
+	repository := reference.Clone()
+	repository.Path = "repository"
+	leaf := &manifest.ConfigMap{Name: "leaf", Namespace: "apps"}
+	s.AddObject(parent)
+	s.AddDeclaration(
+		Declaration{Obj: reference, Doc: testutil.ObjectDocument(reference), Origin: manifest.SuppliedDeclaration},
+	)
+	s.RecordEmitted(parent.Named(), &Emission{Children: []Child{{Obj: repository}}, Complete: true}, nil)
+	s.RecordEmitted(repository.Named(), &Emission{Children: []Child{{Obj: leaf}}, Complete: true}, nil)
+	assert.Equal(t, s.GetObject(leaf.Named()), manifest.BaseManifest(leaf))
+	var reads ReadSet
+	reads.Init(s, ownerID("reader"), nil)
+	defer reads.Retire()
+	reads.GetObject(repository.Named())
+	reads.GetObject(leaf.Named())
+	done := make(chan struct{})
+	go func() { s.RecordEmitted(parent.Named(), &Emission{Complete: true}, nil); close(done) }()
+	<-done
+	assert.Equal(t, reads.Valid(), false)
+	assert.Equal(t, s.GetDeclaration(reference.Named()), manifest.BaseManifest(reference))
+	assert.Equal(t, s.Policy(reference.Named()).Reconcile, false)
+	assert.Equal(t, len(s.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)), 1)
+	assert.Equal(t, s.GetObject(leaf.Named()), manifest.BaseManifest(nil))
+	_, _, inventory := s.GetEmission(reference.Named())
+	defer inventory.Finish()
+	assert.Equal(t, len(inventory.Children), 0)
+	s.RecordEmitted(parent.Named(), &Emission{Children: []Child{{Obj: repository}}, Complete: true}, nil)
+	assert.Equal(t, s.Policy(reference.Named()).Reconcile, true)
+	assert.Equal(t, s.GetObject(leaf.Named()), manifest.BaseManifest(leaf))
+}
+
+func TestPolicy_CapabilityReplacement(t *testing.T) {
+	t.Parallel()
+	raw := &manifest.RawObject{
+		APIVersion: manifest.FluxKustomizeDomain + "/v1",
+		Kind:       manifest.KindKustomization,
+		Name:       "input",
+		Namespace:  "apps",
+	}
+	first := &manifest.Kustomization{Name: "input", Namespace: "apps", Path: "first"}
+	second := &manifest.Kustomization{Name: "input", Namespace: "apps", Path: "second"}
 	for _, tc := range []struct {
-		name   string
-		object manifest.BaseManifest
+		name            string
+		before, after   manifest.BaseManifest
+		beforeReconcile bool
+		afterReconcile  bool
 	}{
-		{"nil", nil},
-		{"typed nil Secret", (*manifest.Secret)(nil)},
-		{"typed nil ConfigMap", (*manifest.ConfigMap)(nil)},
-		{"unsupported type", &manifest.Kustomization{Name: "input", Namespace: "apps"}},
-		{"missing namespace", &manifest.ConfigMap{Name: "missing-namespace"}},
-		{"invalid base64", &manifest.Secret{Name: "input", Namespace: "apps", Data: map[string]any{"bad": "payload%%%"}}},
-		{"nonscalar", &manifest.ConfigMap{Name: "input", Namespace: "apps", Data: map[string]any{"bad": []any{"payload"}}}},
+		{"raw_to_typed", raw, first, false, true},
+		{"typed_to_raw", first, raw, true, false},
+		{"typed_update", first, second, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := NewSupplied(
-				[]SuppliedObject{
-					{Object: tc.object, Path: "input.yaml"},
-					{Object: &manifest.Secret{Name: "input", Namespace: "apps"}},
-				},
-			)
-			{
-				assert.FatalIf(t, !errors.Is(err, manifest.ErrInput) || strings.Contains(err.Error(), "payload") ||
-					!strings.Contains(err.Error(), "input.yaml"), "validation = %v", err)
-			}
+			s := New()
+			id := tc.before.Named()
+			s.AddObject(tc.before)
+			var before ReadSet
+			before.Init(s, ownerID("reader"), nil)
+			defer before.Retire()
+			assert.Equal(t, before.Policy(id).Reconcile, tc.beforeReconcile)
+			s.AddObject(tc.after)
+			assert.Equal(t, before.Valid(), false)
+			assert.Equal(t, before.Policy(id).Reconcile, tc.beforeReconcile)
+			assert.Equal(t, s.Policy(id).Reconcile, tc.afterReconcile)
+			var current ReadSet
+			current.Init(s, ownerID("current"), nil)
+			defer current.Retire()
+			assert.Equal(t, current.Policy(id), s.Policy(id))
 		})
 	}
 }

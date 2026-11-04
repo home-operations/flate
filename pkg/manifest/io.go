@@ -90,7 +90,7 @@ func DecodeDocs(r io.Reader, role DocumentRole) ([]DocOccurrence, error) {
 			}
 			continue
 		}
-		if len(m) == 0 {
+		if len(m) == 0 && (m == nil || role != RequiredDocuments) {
 			ReleaseDoc(m)
 			continue
 		}

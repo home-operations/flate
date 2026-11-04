@@ -298,14 +298,20 @@ func (e *Execution) Dispatch[T manifest.BaseManifest, S any](
 		}
 	}()
 	obj, ok := e.Reads.Get[T](id)
+	policy := e.Reads.Policy(id)
 	if ok && e.filterActive() {
-		if _, err := e.KeepEmitted(ctx, manifest.NamedResource{}, store.Child{Obj: obj}, &e.Reads); err != nil {
+		if _, err := e.KeepEmitted(
+			ctx,
+			manifest.NamedResource{},
+			store.Child{Obj: obj, Origin: policy.Origin},
+			&e.Reads,
+		); err != nil {
 			e.finish(ctx, err)
 			return
 		}
 	}
 
-	if ok && e.preGate(obj) {
+	if ok && (!policy.Root && !policy.Reconcile || e.preGate(obj)) {
 		e.acceptReads(ctx)
 		return
 	}

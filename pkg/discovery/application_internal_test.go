@@ -18,7 +18,7 @@ import (
 
 func TestEntryQualification_ReceiptInputs(t *testing.T) {
 	t.Parallel()
-	for _, scenario := range []string{"identical", "ancestor chart changed", "acquisition failure", "canceled"} {
+	for _, scenario := range []string{"identical", "ancestor chart changed", "acquisition failure", "canceled", "supplied unchanged", "supplied changed", "supplied removed", "repository precedence"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Parallel()
 			testEntryQualificationReceiptInputsCase(
@@ -80,6 +80,31 @@ func testEntryQualificationReceiptInputsCase(t *testing.T, testCaseInput *string
 		)
 		q.refresh = append(q.refresh, id)
 	}
+	secret := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "settings"}
+	data := manifest.NewSecret(secret, nil, map[string]any{"VALUE": "original"})
+	switch *testCaseInput {
+	case "supplied unchanged", "supplied changed", "supplied removed", "repository precedence":
+		evidence.Inputs = append(evidence.Inputs,
+			kustomize.EntryInput{
+				Resource: secret,
+				Content:  manifest.Fingerprint(data.Snapshot()),
+			})
+		if (*testCaseInput) != "supplied removed" {
+			value := "original"
+			if (*testCaseInput) == "supplied changed" || (*testCaseInput) == "repository precedence" {
+				value = "changed"
+			}
+			st.AddDeclaration(store.Declaration{
+				Obj: manifest.NewSecret(secret,
+					nil,
+					map[string]any{"VALUE": value}),
+				Origin: manifest.SuppliedDeclaration,
+			})
+		}
+		if (*testCaseInput) == "repository precedence" {
+			st.AddObject(data, testutil.ObjectDocument(data))
+		}
+	}
 	q.previous = evidence
 	pending, _, err := a.BindEntry(t.Context(), st)
 	assert.NoError(t, err)
@@ -88,6 +113,9 @@ func testEntryQualificationReceiptInputsCase(t *testing.T, testCaseInput *string
 	assert.Diff(t, a.EntryInputs(), q.refresh)
 	for i := range evidence.Inputs {
 		expected := &evidence.Inputs[i]
+		if !expected.Binding.Present {
+			continue
+		}
 		content := expected.Content
 		if (*testCaseInput) == "ancestor chart changed" && i == 0 {
 			content = manifest.Fingerprint("new chart behind same tag")
@@ -116,7 +144,12 @@ func testEntryQualificationReceiptInputsCase(t *testing.T, testCaseInput *string
 	}
 	bound, _, err := a.BindEntry(ctx, st)
 	assert.Equal(t, errors.Is(err, context.Canceled), (*testCaseInput) == "canceled")
-	assert.Equal(t, bound != nil, (*testCaseInput) == "identical")
+	assert.Equal(
+		t,
+		bound != nil,
+		(*testCaseInput) == "identical" || (*testCaseInput) == "supplied unchanged" ||
+			(*testCaseInput) == "repository precedence",
+	)
 	assert.Equal(t, a.applications.Load() == nil, true)
 }
 

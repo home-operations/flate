@@ -184,7 +184,7 @@ func testStoreProductionsScopedFileBridgeCase(
 		}
 	}
 	assert.Diff(t, s.Productions(target, nil), testCaseInput.tc.want)
-	assert.Diff(t, s.ReferenceFacts(target, nil).Productions, testCaseInput.tc.want)
+	assert.Diff(t, s.ReferenceFacts(target, nil, false, manifest.NamedResource{}).Productions, testCaseInput.tc.want)
 }
 
 func testStoreProductionsScopedFileBridgeHiddenBareOnlyAfterWithdrawal(t *testing.T) {
@@ -220,7 +220,7 @@ func testStoreProductionsScopedFileBridgeHiddenBareOnlyAfterWithdrawal(t *testin
 		)
 	}
 	assert.Equal(t, len(s.Productions(target, nil)), 0)
-	assert.Diff(t, s.ReferenceFacts(target, nil), ReferenceFacts{})
+	assert.Diff(t, s.ReferenceFacts(target, nil, false, manifest.NamedResource{}), ReferenceFacts{})
 	parent, ok := s.RenderedParent(target, nil)
 	assert.Equal(t, parent, manifest.NamedResource{})
 	assert.Equal(t, ok, false)
@@ -282,7 +282,7 @@ func testStoreProductionsScopedFileBridgeCase2(
 		s.coverage[fileOwner].binding.artifact = &SourceArtifact{Key: "other"}
 	}
 	result := s.Productions(target, index)
-	facts := s.ReferenceFacts(target, index)
+	facts := s.ReferenceFacts(target, index, false, manifest.NamedResource{})
 	assert.Diff(t, facts.Productions, result)
 	parent, ok := s.RenderedParent(target, nil)
 	{

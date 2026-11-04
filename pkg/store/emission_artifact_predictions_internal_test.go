@@ -155,7 +155,7 @@ func TestRecordEmitted_IdenticalArtifactEmission(t *testing.T) {
 		Namespace: "apps",
 		Name:      "app-api",
 	}
-	facts := s.ReferenceFacts(target, nil)
+	facts := s.ReferenceFacts(target, nil, false, manifest.NamedResource{})
 	assert.Diff(t, facts.Productions, s.Productions(target, nil))
 	assert.Diff(t, facts.Productions, []manifest.Production{{Owner: owner.Named(), Declaration: generator.Named()}})
 	{
@@ -379,7 +379,7 @@ func testRecordEmittedArtifactPredictionsCaseCompletion(
 		{
 			assert.FatalIf(t, predicted != want, "predicted = %t, want %t", predicted, want)
 		}
-		facts := scope.s.ReferenceFacts((*scope.testCaseInput.target), nil)
+		facts := scope.s.ReferenceFacts((*scope.testCaseInput.target), nil, false, manifest.NamedResource{})
 		assert.Diff(t, facts.Productions, scope.s.Productions((*scope.testCaseInput.target), nil))
 		{
 			assert.FatalIf(
@@ -522,7 +522,7 @@ func testRecordEmittedArtifactPredictionsRetryRebuildsAdmissions(
 			)
 		}
 		for _, id := range []manifest.NamedResource{(*testCaseInput.target), replacement} {
-			facts := s.ReferenceFacts(id, nil)
+			facts := s.ReferenceFacts(id, nil, false, manifest.NamedResource{})
 			assert.Diff(t, facts.Productions, s.Productions(id, nil))
 			{
 				assert.ErrorIf(t, facts.Data != nil || facts.Accepted || s.GetObject(id) != nil ||

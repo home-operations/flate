@@ -153,10 +153,18 @@ func TestFetcher_SuppliedRegistryIdentity(t *testing.T) {
 			Namespace:  "apps",
 			StringData: map[string]any{".dockerconfigjson": config(tc.password)},
 		}
-		snapshot, err := store.NewSupplied([]store.SuppliedObject{{Object: secret, Path: tc.path}})
-		assert.NoError(t, err)
+		snapshot := []store.Declaration{
+			{
+				Obj:       secret,
+				Doc:       testutil.ObjectDocument(secret),
+				Origin:    manifest.SuppliedDeclaration,
+				InputPath: tc.path,
+			},
+		}
 		s := store.New()
-		s.SetSupplied(snapshot)
+		for _, declaration := range snapshot {
+			s.AddDeclaration(declaration)
+		}
 		if tc.repository != "" {
 			s.AddObject(
 				&manifest.Secret{

@@ -32,7 +32,10 @@ func (l *Loader) applyAdmittedObjects(
 		if !allowed[id] || !manifest.KindOf(obj).Discovery || l.documents.compact && next[id].Path != "" {
 			continue
 		}
-		if existing := l.Store.GetObject(id); existing != nil && obj.ProjectionCompatible(existing) {
+		if existing, policy := l.Store.Lookup(
+			id,
+		); existing != nil && policy.Root &&
+			obj.ProjectionCompatible(existing) {
 			continue
 		}
 		l.Store.AddObject(obj, child.Doc)

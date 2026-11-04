@@ -10,7 +10,6 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/values"
 )
 
 //nolint:ireturn // Hydration MUST retain each concrete manifest type behind the common contract.
@@ -192,29 +191,25 @@ func (c *admissionClosure) materializeReferenceInput(
 	materializers func(materializerDemand, manifest.NamedResource) bool,
 ) {
 	ref := *refValue
-	if !ref.Ordering && (!wasNeeded || !ref.Optional && !ref.Acquisition && ref.ContentInput()) {
-		if _, indexed := c.loader.Index.Lookup(
-			ref.NamedResource,
-		); !indexed && !c.loader.IsFileIndexed(ref.NamedResource) && c.object(ref.NamedResource) == nil && c.objects.GetArtifact(ref.NamedResource, store.ArtifactContent) == nil &&
-			c.objects.ReferenceFacts(ref.NamedResource, c.loader.Index).Supplied == nil {
-			requiredContent := !ref.Optional && !ref.Acquisition && ref.ContentInput()
-			allowedMissing := ref.Use == "valuesFrom" &&
-				slices.Contains(c.loader.Options.AllowMissingKinds, ref.Kind)
-			required := requiredContent && !allowedMissing
-			if required {
-				input := values.NewInput(c.objects.ReferenceFacts(ref.NamedResource, c.loader.Index), id)
-				required = input.Data == nil && !input.AllowsAbsence() && !c.changedInput(id, ref.NamedResource)
-			}
-			materializers(
-				materializerDemand{
-					target:   ref.NamedResource,
-					source:   c.declarationSource(id),
-					required: required,
-				},
-				id,
-			)
-		}
+	if ref.Ordering || wasNeeded && (ref.Optional || ref.Acquisition || !ref.ContentInput()) {
+		return
 	}
+	_, indexed := c.loader.Index.Lookup(ref.NamedResource)
+	unresolved := !indexed && !c.loader.IsFileIndexed(ref.NamedResource) && c.object(ref.NamedResource) == nil
+	if !unresolved || c.objects.GetArtifact(ref.NamedResource, store.ArtifactContent) != nil {
+		return
+	}
+	input := c.objects.ReferenceFacts(ref.NamedResource, c.loader.Index, false, id)
+	if input.Data != nil {
+		return
+	}
+	requiredContent := !ref.Optional && !ref.Acquisition && ref.ContentInput()
+	allowedMissing := ref.Use == "valuesFrom" && slices.Contains(c.loader.Options.AllowMissingKinds, ref.Kind)
+	required := requiredContent && !allowedMissing && !input.AllowsAbsence() && !c.changedInput(id, ref.NamedResource)
+	materializers(
+		materializerDemand{target: ref.NamedResource, source: c.declarationSource(id), required: required},
+		id,
+	)
 }
 
 func (c *admissionClosure) productionOwner(
@@ -442,15 +437,15 @@ func (c *admissionClosure) hydrateIndependent(
 	independent bool,
 	obj *manifest.BaseManifest,
 ) error {
-	if independent && (c.incoming.Obj == nil || c.incoming.Obj.Named() != id) && c.children[id].Obj == nil &&
-		c.objects.GetObject(id) == nil {
-		var err error
-		*obj, err = c.hydrate(ctx, id)
-		if err != nil {
-			return err
-		}
+	if !independent || c.incoming.Obj != nil && c.incoming.Obj.Named() == id || c.children[id].Obj != nil {
+		return nil
 	}
-	return nil
+	if current, policy := c.objects.Lookup(id); current != nil && policy.Root {
+		return nil
+	}
+	var err error
+	*obj, err = c.hydrate(ctx, id)
+	return err
 }
 
 func (c *admissionClosure) selectedDeclarationFileChanged(

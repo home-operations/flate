@@ -10,7 +10,6 @@ import (
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/values"
 )
 
 type errorPromotion struct{ cause error }
@@ -51,7 +50,7 @@ func TestAvailable_AdmissionErrorPrecedesOptionalOmission(t *testing.T) {
 			t.Parallel()
 			cause := manifest.NewError(manifest.ErrInput, nil, "admission failed")
 			w := Waiter{Store: store.New(), Existence: errorPromotion{cause}}
-			input := values.Input{Offline: true}
+			input := store.ReferenceFacts{Offline: true}
 			if materializer {
 				input.Materializers = []manifest.NamedResource{producer}
 			}

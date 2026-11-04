@@ -7,14 +7,13 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/values"
 )
 
 // DataDependency retains a values reference and its captured availability policy.
 type DataDependency struct {
 	manifest.DependencyRef
 
-	Input        values.Input
+	Input        store.ReferenceFacts
 	Optional     bool
 	AllowMissing bool
 }

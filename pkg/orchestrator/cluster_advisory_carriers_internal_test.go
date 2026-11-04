@@ -30,7 +30,7 @@ func testRenderTreesClusterAdvisoriesCase(t *testing.T, testCaseInput *string,
 		Concurrency: 2,
 		CacheDir:    t.TempDir(),
 		HeadOnly:    (*testCaseInput) == "head_only",
-		Supply:      []store.SuppliedObject{suppliedSubstitution("settings")},
+		Supply:      []store.Declaration{suppliedSubstitution("settings")},
 	}
 	clusters := []manifest.ClusterID{"alpha"}
 	if (*testCaseInput) == "two_clusters" {

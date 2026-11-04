@@ -39,6 +39,8 @@ type Result struct { // Binding identifies the entry's actual producer and admit
 type Config struct {
 	// Projections shares source-free facts across concurrent Plan calls.
 	Projections *manifest.ProducerProjections
+	// Declarations contains immutable invocation references admitted before discovery.
+	Declarations []store.Declaration
 	// Selection controls restricted declaration construction.
 	Selection manifest.Selection
 	// Loader borrows the invocation's sole declaration loader.
@@ -249,6 +251,7 @@ func newDiscoverer(config *Config) *Session {
 	if l == nil {
 		l = loader.New(cfg.Store)
 	}
+	l.AdmitDeclarations(cfg.Declarations)
 	l.Options.WipeSecrets, l.Options.RemoteInputs, l.Options.RemoteRetry = cfg.WipeSecrets, cfg.RemoteInputs, cfg.RemoteRetry
 	l.Options.Selection = cfg.Selection
 	if cfg.Projections != nil {

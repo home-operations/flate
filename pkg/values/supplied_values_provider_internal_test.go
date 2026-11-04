@@ -6,6 +6,7 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -22,9 +23,14 @@ func TestStoreProvider_SuppliedProductionReplacementAndWithdrawal(t *testing.T) 
 		Namespace:  "apps",
 		StringData: map[string]any{"VALUE": "supplied"},
 	}
-	snapshot, err := store.NewSupplied([]store.SuppliedObject{{Object: supplied, Path: "credentials.yaml"}})
-	assert.NoError(t, err)
-	s.SetSupplied(snapshot)
+	s.AddDeclaration(
+		store.Declaration{
+			Obj:       supplied,
+			Doc:       testutil.ObjectDocument(supplied),
+			Origin:    manifest.SuppliedDeclaration,
+			InputPath: "credentials.yaml",
+		},
+	)
 	var first store.ReadSet
 	first.Init(s, consumer.Named(), nil)
 	defer first.Close()
@@ -32,7 +38,7 @@ func TestStoreProvider_SuppliedProductionReplacementAndWithdrawal(t *testing.T) 
 	{
 		assert.FatalIf(
 			t,
-			input.Data == nil || input.Private || len(input.Materializers) != 0 || s.GetObject(supplied.Named()) != nil,
+			input.Data == nil || input.Private || len(input.Materializers) != 0 || !s.ReportHidden(supplied.Named()),
 			"supplied-only input = %+v",
 			input,
 		)
@@ -87,7 +93,7 @@ func TestStoreProvider_SuppliedProductionReplacementAndWithdrawal(t *testing.T) 
 	{
 		assert.FatalIf(
 			t,
-			s.GetObject(supplied.Named()) != nil || len(s.Warnings()) != 0 || len(s.AdvisoryEvidence().Overrides) != 0,
+			!s.ReportHidden(supplied.Named()) || len(s.Warnings()) != 0 || len(s.AdvisoryEvidence().Overrides) != 0,
 			"%s",
 			"withdrawal retained canonical data or stale precedence",
 		)
@@ -102,9 +108,9 @@ func TestStoreProvider_SharedSuppliedValues(t *testing.T) {
 		Namespace:  "apps",
 		StringData: map[string]any{"VALUE": "supplied", "VALUES": "greeting: supplied\n", "tag": "supplied-tag"},
 	}
-	snapshot, err := store.NewSupplied([]store.SuppliedObject{{Object: secret}})
-	assert.NoError(t, err)
-	s.SetSupplied(snapshot)
+	s.AddDeclaration(
+		store.Declaration{Obj: secret, Doc: testutil.ObjectDocument(secret), Origin: manifest.SuppliedDeclaration},
+	)
 	s.AddObject(
 		&manifest.Secret{
 			Name:       secret.Name,

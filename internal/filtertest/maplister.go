@@ -19,6 +19,13 @@ func (m MapLister) GetObject(id manifest.NamedResource) manifest.BaseManifest { 
 //nolint:ireturn // The upstream interface contract requires this return type.
 func (m MapLister) GetDeclaration(id manifest.NamedResource) manifest.BaseManifest { return m[id] }
 
+// Lookup returns the fixture object and its declaration roles.
+//
+//nolint:ireturn // The fixture MUST implement the heterogeneous store lookup contract.
+func (m MapLister) Lookup(id manifest.NamedResource) (manifest.BaseManifest, manifest.DeclarationPolicy) {
+	return m[id], (store.Child{Obj: m[id]}).Policy(id)
+}
+
 // Objects returns the complete unordered fixture inventory.
 func (m MapLister) Objects() []manifest.BaseManifest {
 	var out []manifest.BaseManifest
@@ -74,7 +81,12 @@ func (m MapLister) GetEmission(manifest.NamedResource) (manifest.BaseManifest, m
 }
 
 // ReferenceFacts exposes map-only data without supplied inputs.
-func (m MapLister) ReferenceFacts(id manifest.NamedResource, index *manifest.DiscoveryIndex) store.ReferenceFacts {
+func (m MapLister) ReferenceFacts(
+	id manifest.NamedResource,
+	index *manifest.DiscoveryIndex,
+	_ bool,
+	_ manifest.NamedResource,
+) store.ReferenceFacts {
 	data, _ := m[id].(manifest.Data)
 	return store.ReferenceFacts{Data: data, Accepted: data != nil, Productions: m.Productions(id, index)}
 }

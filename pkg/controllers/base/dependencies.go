@@ -7,7 +7,7 @@ import (
 
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/values"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // RequireRefresh gates effective inputs against the execution's captured canonical declaration.
@@ -87,7 +87,7 @@ func (e *Execution) Checkpoint() error {
 }
 
 type dataLookup interface {
-	Lookup(manifest.NamedResource) values.Input
+	Lookup(manifest.NamedResource) store.ReferenceFacts
 }
 
 // DataInputs captures authored values and substitution inputs through the shared gate.

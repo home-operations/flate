@@ -22,7 +22,6 @@ import (
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
-	"github.com/home-operations/flate/pkg/values"
 )
 
 func TestExecution_Dispatch(t *testing.T) {
@@ -555,7 +554,7 @@ func testExecutionDispatchCase2(t *testing.T, testCaseInput testExecutionDispatc
 					return s.run.AwaitData(ctx, base.DataWait{
 						Inputs: []depwait.DataDependency{{
 							Kind: manifest.KindConfigMap, Namespace: "apps", Name: "values",
-							Input:    values.Input{Materializers: []manifest.NamedResource{gate}},
+							Input:    store.ReferenceFacts{Materializers: []manifest.NamedResource{gate}},
 							Optional: true,
 						}},
 						Resume: func(context.Context, manifest.DrainLevel, []manifest.NamedResource) error { return finish(s, got) },

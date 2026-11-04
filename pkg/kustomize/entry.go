@@ -150,7 +150,7 @@ func (*TreeCache) EntryValid(ctx context.Context, evidence EntryEvidence, st *st
 			if expected.Binding.Present {
 				input.Artifact, _ = st.GetArtifact(expected.Resource, store.ArtifactContent).(*store.SourceArtifact)
 			} else {
-				input.Data = st.ReferenceFacts(expected.Resource, nil).Supplied
+				input.Data = st.ReferenceFacts(expected.Resource, nil, false, manifest.NamedResource{}).Data
 			}
 			actual, complete, err := resolvedEntryInput(ctx, &input)
 			if err != nil || !complete || !equalEntryInput(actual, expected) {

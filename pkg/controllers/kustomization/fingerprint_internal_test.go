@@ -172,12 +172,14 @@ func TestKustomizationFingerprint_PreparedSources(t *testing.T) {
 						StringData: map[string]any{"VALUE": value},
 					}
 				}
-				supplied, err := store.NewSupplied([]store.SuppliedObject{{Object: source}})
-				{
-					assert.FatalIf(t, err != nil, "%v", err)
-				}
 				st := store.New()
-				st.SetSupplied(supplied)
+				st.AddDeclaration(
+					store.Declaration{
+						Obj:    source,
+						Doc:    testutil.ObjectDocument(source),
+						Origin: manifest.SuppliedDeclaration,
+					},
+				)
 				provider := values.NewStoreProvider(st, true)
 				prepared, err := kustomize.Prepare(ks, provider)
 				{

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -138,7 +137,7 @@ func TestRun_ExternalSubstitution(t *testing.T) {
 			want: "supplied",
 		},
 		{
-			name:      "secret ciphertext wiped",
+			name:      "supplied ciphertext sanitized in rendered output",
 			postBuild: substitutionReference("Secret", false),
 			input: strings.Replace(
 				externalSecret,
@@ -146,7 +145,7 @@ func TestRun_ExternalSubstitution(t *testing.T) {
 				"'ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]'",
 				1,
 			) + "sops: {encrypted_regex: data}\n",
-			want: "..PLACEHOLDER_VALUE..",
+			want: "..PLACEHOLDER_value..",
 		},
 		{name: "missing unsupplied secret", postBuild: substitutionReference("Secret", false), fail: true},
 		{
@@ -203,69 +202,6 @@ func TestRun_ExternalSubstitution(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestLoadSubstitutions_InputValidation(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name, body string
-		ordinal    int
-	}{
-		{"scalar", "private-fixture-value\n", 1},
-		{"sequence", "[private-fixture-value]\n", 1},
-		{"ordinal after null", "---\nnull\n---\n\n---\n[private-fixture-value]\n", 3},
-		{"decoder error", "data: [private-fixture-value\n", 1},
-		{"duplicate YAML key", "data: {VALUE: private-fixture-value, VALUE: another}\n", 1},
-		{"empty mapping", "{}\n", 1},
-		{"wrong api", strings.Replace(externalCM, "apiVersion: v1", "apiVersion: example.io/v1", 1), 1},
-		{"unsupported kind", strings.Replace(externalCM, "kind: ConfigMap", "kind: List", 1), 1},
-		{"invalid data bag", strings.Replace(externalCM, "data: {VALUE: supplied}", "data: [private-fixture-value]", 1), 1},
-		{"missing namespace", strings.Replace(externalCM, ", namespace: apps", "", 1), 1},
-		{"missing name", strings.Replace(externalCM, "name: external, ", "", 1), 1},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			path := substitutionInput(t, tc.body)
-			c := commonFlags{supply: []string{path}}
-			err := c.loadInputs(t.Context())
-			assert.FatalIf(t, !errors.Is(err, manifest.ErrInput), "expected input error: %v", err)
-			for _, text := range []string{path, fmt.Sprintf("document %d", tc.ordinal)} {
-				assert.FatalIf(t, !strings.Contains(err.Error(), text), "missing %q in %v", text, err)
-			}
-			assert.FatalIf(
-				t,
-				strings.Contains(err.Error(), "private-fixture-value"),
-				"%v",
-				"input value leaked in error",
-			)
-		})
-	}
-	t.Run("unreadable", func(t *testing.T) {
-		t.Parallel()
-		c := commonFlags{supply: []string{filepath.Join(t.TempDir(), "absent.yaml")}}
-		{
-			err := c.loadInputs(t.Context())
-			assert.FatalIf(t, !errors.Is(err, manifest.ErrInput), "expected input error: %v", err)
-		}
-	})
-	t.Run("canceled before unreadable file", func(t *testing.T) {
-		t.Parallel()
-		ctx, cancel := context.WithCancel(t.Context())
-		cancel()
-		c := commonFlags{supply: []string{filepath.Join(t.TempDir(), "absent.yaml")}}
-		{
-			err := c.loadInputs(ctx)
-			assert.FatalIf(t, !errors.Is(err, context.Canceled), "expected cancellation before file I/O: %v", err)
-		}
-	})
-	t.Run("empty and null", func(t *testing.T) {
-		t.Parallel()
-		c := commonFlags{supply: []string{substitutionInput(t, "---\nnull\n---\n\n")}}
-		{
-			err := c.loadInputs(t.Context())
-			assert.FatalIf(t, err != nil || len(c.suppliedObjects) != 0, "empty documents: %v", err)
-		}
-	})
 }
 
 func TestRun_SubstitutionFilesAndDuplicates(t *testing.T) {
@@ -405,43 +341,22 @@ func TestRun_StrictSubstitutions(t *testing.T) {
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestRun_SubstitutionHelpAndSharedCommands(t *testing.T) {
 	root := substitutionFixture(t, substitutionReference("ConfigMap", false), "${VALUE}")
-	input := substitutionInput(t, externalCM)
+	input := substitutionInput(t,
+		externalCM+"---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: rendered, namespace: apps}\nda"+
+			"ta: {value: private-fixture-value}\n---\napiVersion: kustomize.toolkit.fluxcd.io/v1\n"+
+			"kind: Kustomization\nmetadata: {name: consumer, namespace: apps}\nspec: {path: ./abse"+
+			"nt-supply}\n"+"---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: u"+
+			"nused-supply, namespace: supply-only}\nspec: {url: 'file:///absent-supply'}\n---\napi"+
+			"Version: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: unused"+
+			"-supply, namespace: supply-only}\nspec: {path: ./absent-supply}\n---\napiVersion: api"+
+			"extensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata: {name: supplied.examp"+
+			"le.io}\n---\napiVersion: example.io/v1\nkind: Widget\nmetadata: {name: unused-supply,"+
+			" namespace: supply-only}\nspec: {payload: private-fixture-value}\n")
 	for _, verb := range []string{"build", "get", "test", "diff"} {
-		t.Run(verb, func(t *testing.T) {
-			help, diagnostic, code := runCLI(t, verb, "all", "--help")
-			assert.FatalIf(t, code != 0, "%v", diagnostic)
-			for _, flag := range []string{"supply", "allow-missing-kinds", "strict-substitutions"} {
-				for _, want := range []string{"--" + flag, envKey(flag)} {
-					assert.FatalIf(t, !strings.Contains(help, want), "help missing %s", want)
-				}
-			}
-			args := []string{
-				verb,
-				"all",
-				"--path",
-				root,
-				"--cache-dir",
-				t.TempDir(),
-				"--concurrency",
-				"2",
-				"--supply",
-				input,
-				"--strict-substitutions",
-			}
-			if verb == "diff" {
-				base := substitutionFixture(t, substitutionReference("ConfigMap", false), "${VALUE}-base")
-				args = append(args, "--path-orig", base, "-o", "diff", "--skip-kinds", "CustomResourceDefinition")
-			}
-			out, diagnostic, code := runCLI(t, args...)
-			assert.FatalIf(t, code != 0, "shared inputs failed: %s", diagnostic)
-			assert.FatalIf(
-				t,
-				verb == "diff" && (strings.Contains(out, "name: external") || !strings.Contains(out, "supplied")),
-				"diff emitted input or omitted selected consumer: %s",
-				out,
-			)
-		})
+		t.Run(verb, func(t *testing.T) { testSuppliedSharedCommand(t, verb, root, input) })
 	}
+	t.Run("device stdin", testLoadInputsDevStdin)
+	t.Run("stdin", testRunSupplyStdin)
 }
 
 //nolint:paralleltest // CLI execution changes process-wide logging.

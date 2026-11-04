@@ -76,7 +76,13 @@ func TestStore_CollectionAuthority(t *testing.T) {
 				defer sh.mu.RUnlock()
 				return sh.byName[kindID{id.Group, id.Kind}].generation
 			}
+			s.AddDeclaration(Declaration{Obj: versions[0], Origin: manifest.SuppliedDeclaration})
+			var before ReadSet
+			before.Init(s, ownerID("before"), nil)
+			defer before.Retire()
+			assert.Equal(t, len(before.ListObjects(id.Group, id.Kind)), 1)
 			s.AddObject(versions[0])
+			assert.Equal(t, before.Valid(), false)
 			first := head()
 			s.AddObject(versions[1])
 			assert.Equal(t, head(), first)
@@ -90,6 +96,15 @@ func TestStore_CollectionAuthority(t *testing.T) {
 			objects := s.ListObjects(id.Group, id.Kind)
 			assert.Equal(t, len(objects), 1)
 			assert.Equal(t, objects[0], versions[2])
+			var after ReadSet
+			after.Init(s, ownerID("after"), nil)
+			defer after.Retire()
+			after.ListObjects(id.Group, id.Kind)
+			s.DeleteObject(id)
+			assert.Equal(t, after.Valid(), false)
+			assert.Equal(t, len(s.ListObjects(id.Group, id.Kind)), 1)
+			assert.Equal(t, s.GetObject(id), versions[0])
+			assert.Equal(t, s.ReportHidden(id), true)
 		})
 	}
 }
@@ -521,6 +536,7 @@ func testReadRegistrationSameByteAuthorityTransitionsCase(
 		},
 	)
 	child := emissionChild("shared", "equal")
+	s.AddDeclaration(Declaration{Obj: child.Obj, Doc: child.Doc, Origin: manifest.SuppliedDeclaration})
 	s.RecordEmitted(p, &Emission{Children: []Child{child}, Complete: true}, nil)
 	h1 := headsForTest(s, child.Obj.Named())
 	captureReads := func() *ReadSet {
@@ -598,6 +614,13 @@ func testReadRegistrationSameByteAuthorityTransitionsCase(
 		)
 	}
 	assert.Equal(t, fifth.Valid(), false)
+	sixth := captureReads()
+	s.RecordEmitted(q, &Emission{Complete: true}, nil)
+	assert.Equal(t, sixth.Valid(), false)
+	assert.Equal(t, s.GetObject(child.Obj.Named()), child.Obj)
+	assert.Equal(t, s.GetDeclaration(child.Obj.Named()), child.Obj)
+	assert.Equal(t, s.ReportHidden(child.Obj.Named()), true)
+	assert.Equal(t, len(s.ListObjects(child.Obj.Named().Group, child.Obj.Named().Kind)), 1)
 }
 
 func testReadRegistrationNoABAObject(t *testing.T) {

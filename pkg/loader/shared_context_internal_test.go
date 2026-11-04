@@ -67,7 +67,8 @@ func TestAdmission_MissingInputWaitsForKnownOwner(t *testing.T) {
 	for _, tc := range []struct {
 		name                                        string
 		complete, optional, generated, allowMissing bool
-	}{{name: "pending"}, {name: "complete", complete: true}, {name: "optional", complete: true, optional: true}, {name: "generated", complete: true, generated: true}, {name: "allowed", complete: true, allowMissing: true}} {
+		production                                  string
+	}{{name: "pending"}, {name: "complete", complete: true}, {name: "optional", complete: true, optional: true}, {name: "generated", complete: true, generated: true}, {name: "allowed", complete: true, allowMissing: true}, {name: "self", complete: true, production: "self"}, {name: "peer", complete: true, production: "peer"}} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			testAdmissionMissingInputWaitsForKnownOwnerCase(
@@ -137,6 +138,7 @@ func testAdmissionMissingInputWaitsForKnownOwnerCase(
 		optional     bool
 		generated    bool
 		allowMissing bool
+		production   string
 	},
 ) {
 	t.Helper()
@@ -186,6 +188,17 @@ func testAdmissionMissingInputWaitsForKnownOwnerCase(
 			Productions: []manifest.Production{{Owner: owner.Named(), Source: manifest.BootstrapSourceID}},
 		},
 	}}
+	if testCaseInput.production != "" {
+		producer := owner.Named()
+		if testCaseInput.production == "self" {
+			producer = consumer.Named()
+		}
+		bare := manifest.NamedResource{Kind: kind, Name: "missing"}
+		l.Index.Records[bare] = manifest.DiscoveryRecord{Productions: []manifest.Production{{
+			Owner:  producer,
+			Source: manifest.BootstrapSourceID, Authored: bare, File: "missing.yaml", Path: "missing.yaml",
+		}}}
+	}
 	occurrence := compactOccurrence(opaque, manifest.ProjectProducer(opaque))
 	occurrence.Declaration.Source = root
 	l.locations = map[manifest.NamedResource]Occurrence{opaque.Named(): occurrence}
@@ -198,7 +211,31 @@ func testAdmissionMissingInputWaitsForKnownOwnerCase(
 			proposal.Needed,
 			opaque.Named(),
 		),
-		testCaseInput.complete && !testCaseInput.optional && !testCaseInput.generated && !testCaseInput.allowMissing,
+		testCaseInput.complete && !testCaseInput.optional && !testCaseInput.generated && !testCaseInput.allowMissing &&
+			testCaseInput.production != "self",
 	)
 	assert.Equal(t, slices.Contains(proposal.Selected, opaque.Named()), false)
+	plain, err := l.Prepare(t.Context(), store.Child{Obj: consumer}, nil, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, slices.Contains(plain.Needed, owner.Named()), true)
+	wantOpaque := testCaseInput.complete && !testCaseInput.optional && !testCaseInput.generated &&
+		!testCaseInput.allowMissing
+	assert.Equal(t, slices.Contains(plain.Needed, opaque.Named()), wantOpaque && testCaseInput.production != "self")
+	assertAdmissionCapturedMembership(t, l, consumer, plain)
+}
+
+func assertAdmissionCapturedMembership(t *testing.T, l *Loader, consumer manifest.BaseManifest, plain *Admission) {
+	t.Helper()
+	var reads store.ReadSet
+	owner := l.Index.Records[consumer.Named()].Parent
+	reads.Init(l.Store, owner, nil)
+	defer reads.Close()
+	for range 2 {
+		captured, err := l.Prepare(t.Context(), store.Child{Obj: consumer}, &reads, nil)
+		assert.NoError(t, err)
+		assert.Diff(t, captured.Needed, plain.Needed)
+		assert.Diff(t, captured.Selected, plain.Selected)
+		assert.Diff(t, captured.Dirty, plain.Dirty)
+	}
+	assert.Equal(t, reads.ID(), owner)
 }

@@ -68,10 +68,20 @@ func newSubstitutionOrchestrator(t *testing.T, cfg treeConfig) *Orchestrator {
 	return o
 }
 
-func suppliedSubstitution(name string) store.SuppliedObject {
-	return store.SuppliedObject{
-		Path:   "ci-values.yaml",
-		Object: &manifest.ConfigMap{Name: name, Namespace: "apps", Data: map[string]any{"VALUE": "supplied"}},
+func suppliedSubstitution(name string) store.Declaration {
+	return store.Declaration{
+		InputPath: "ci-values.yaml",
+		Doc: testutil.ObjectDocument(&manifest.ConfigMap{
+			Name:      name,
+			Namespace: "apps",
+			Data:      map[string]any{"VALUE": "supplied"},
+		}),
+		Obj: &manifest.ConfigMap{
+			Name:      name,
+			Namespace: "apps",
+			Data:      map[string]any{"VALUE": "supplied"},
+		},
+		Origin: manifest.SuppliedDeclaration,
 	}
 }
 
@@ -85,10 +95,12 @@ func substitutionValue(t *testing.T, res *Result, id manifest.NamedResource) str
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestSnapshotSubstitutions_OwnsInputs(t *testing.T) {
+	t.Run("supplied custom scope", testSuppliedCustomScope)
 	source := suppliedSubstitution("external")
-	cm := source.Object.(*manifest.ConfigMap)
+	cm := source.Obj.(*manifest.ConfigMap)
 	raw := []byte("owned")
 	cm.Data["BINARY"] = raw
+	source.Doc = testutil.ObjectDocument(cm)
 	secretData, secretStringData := []byte("b3duZWQ="), []byte("owned")
 	secret := &manifest.Secret{
 		Name:       "secret",
@@ -97,35 +109,66 @@ func TestSnapshotSubstitutions_OwnsInputs(t *testing.T) {
 		StringData: map[string]any{"VALUE": secretStringData},
 	}
 	allowed := []string{manifest.KindSecret}
-	sources := []store.SuppliedObject{source, {Object: secret, Path: "secret-values.yaml"}}
+	customDoc := map[string]any{
+		"apiVersion": "example.io/v1",
+		"kind":       "Widget",
+		"metadata": map[string]any{
+			"name":      "custom",
+			"namespace": "apps",
+		},
+		"spec":  map[string]any{"payload": map[string]any{"value": "owned"}},
+		"extra": map[string]any{"retained": true},
+	}
+	sources := []store.Declaration{
+		source,
+		{
+			Doc:       testutil.ObjectDocument(secret),
+			Obj:       secret,
+			InputPath: "secret-values.yaml",
+			Origin:    manifest.SuppliedDeclaration,
+		},
+		{Doc: customDoc},
+	}
+
 	o := newSubstitutionOrchestrator(t, treeConfig{Supply: sources, AllowMissingKinds: allowed, Path: t.TempDir()})
+	customDoc["spec"].(map[string]any)["payload"].(map[string]any)["value"] = "changed"
+	customDoc["extra"].(map[string]any)["retained"] = false
+	id := manifest.NamedResource{Group: "example.io", Kind: "Widget", Namespace: "apps", Name: "custom"}
+	custom := o.store.GetObject(id).(*manifest.RawObject)
+	assert.Equal(t, custom.Spec["payload"].(map[string]any)["value"], any("owned"))
+	for _, child := range o.cfg.Supply {
+		if manifest.DocKind(child.Doc) == "Widget" {
+			assert.Equal(t, child.Doc["extra"].(map[string]any)["retained"], any(true))
+		}
+	}
 	cm.Name, cm.Data["VALUE"] = "changed", "changed"
 	raw[0], secretData[0], secretStringData[0] = 'x', 'x', 'x'
-	sources[0].Path, allowed[0] = "changed", manifest.KindConfigMap
-	facts := o.store.ReferenceFacts(
-		manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "external"},
+	sources[0].InputPath, allowed[0] = "changed", manifest.KindConfigMap
+	facts := o.store.ReferenceFacts(manifest.NamedResource{
+		Kind:      manifest.KindConfigMap,
+		Namespace: "apps",
+		Name:      "external",
+	},
 		nil,
-	)
-	assert.Equal(t, facts.SupplyPath, "ci-values.yaml")
+		false,
+		manifest.NamedResource{})
+	assert.Equal(t, o.cfg.Supply[0].InputPath, "ci-values.yaml")
 	for key, want := range map[string]string{"VALUE": "supplied", "BINARY": "owned"} {
-		got, _, err := facts.Supplied.Value(key)
+		got, _, err := facts.Data.Value(key)
 		assert.NoError(t, err)
 		assert.Equal(t, got, want)
 	}
-	secretFacts := o.store.ReferenceFacts(secret.Named(), nil)
+	secretFacts := o.store.ReferenceFacts(secret.Named(), nil, false, manifest.NamedResource{})
 	for _, key := range []string{"ENCODED", "VALUE"} {
-		got, _, err := secretFacts.Supplied.Value(key)
+		got, _, err := secretFacts.Data.Value(key)
 		assert.NoError(t, err)
 		assert.Equal(t, got, "owned")
 	}
 	assert.Diff(t, o.cfg.AllowMissingKinds, []string{manifest.KindSecret})
 	plain := newSubstitutionOrchestrator(t, treeConfig{Config: Config{}, Path: t.TempDir()})
-	assert.FatalIf(
-		t,
-		plain.cfg.AllowMissingKinds != nil || plain.cfg.supplied != nil || plain.cfg.Supply != nil,
-		"%v",
-		"zero-input path allocated state",
-	)
+	if plain.cfg.AllowMissingKinds != nil || plain.cfg.Supply != nil {
+		t.Fatal("zero-input path allocated state")
+	}
 }
 
 func TestRenderTrees_SubstitutionValidation(t *testing.T) {
@@ -143,7 +186,11 @@ func TestRenderTrees_SubstitutionValidation(t *testing.T) {
 			_, err := RenderTrees(
 				t.Context(),
 				[]Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: t.TempDir()}},
-				Config{Supply: []store.SuppliedObject{{Object: tc.object}}},
+				Config{
+					Supply: []store.Declaration{
+						{Obj: tc.object, Doc: testutil.ObjectDocument(tc.object), Origin: manifest.SuppliedDeclaration},
+					},
+				},
 			)
 			assert.FatalIf(t, !errors.Is(err, manifest.ErrInput), "expected input error, got %v", err)
 		})
@@ -154,8 +201,14 @@ func TestRenderTrees_SubstitutionValidation(t *testing.T) {
 			root := t.TempDir()
 			cfg := treeConfig{
 				CacheDir: root,
-				Supply:   []store.SuppliedObject{{Object: &manifest.ConfigMap{Namespace: "apps"}}},
-				Path:     t.TempDir(),
+				Supply: []store.Declaration{
+					{
+						Obj:    &manifest.ConfigMap{Namespace: "apps"},
+						Doc:    testutil.ObjectDocument(&manifest.ConfigMap{Namespace: "apps"}),
+						Origin: manifest.SuppliedDeclaration,
+					},
+				},
+				Path: t.TempDir(),
 			}
 			if injected {
 				owner := cachetest.New(t, root, sourcecache.New)
@@ -201,40 +254,41 @@ func TestRender_SubstitutionOwnershipAndIsolation(t *testing.T) {
 	root := t.TempDir()
 	writeSubstitutionCluster(t, root, "external", "${VALUE}")
 	source := suppliedSubstitution("external")
-	cfg := treeConfig{Supply: []store.SuppliedObject{source}, StrictSubstitutions: true, Path: root}
+	cfg := treeConfig{Supply: []store.Declaration{source}, StrictSubstitutions: true, Path: root}
 	first := newSubstitutionOrchestrator(t, cfg)
 	second := newSubstitutionOrchestrator(t, cfg)
-	source.Object.(*manifest.ConfigMap).Data["VALUE"] = "caller-change"
+	source.Obj.(*manifest.ConfigMap).Data["VALUE"] = "caller-change"
 	for _, o := range []*Orchestrator{first, second} {
 		res, err := o.render(t.Context())
-		assert.FatalIf(t, err != nil, "%v", err)
+		if err != nil {
+			t.Fatal(err)
+		}
 		id := testutil.KustomizationID("apps", "consumer")
-		{
-			got := substitutionValue(t, res, id)
-			assert.FatalIf(t, got != "supplied", "owned values changed: %q", got)
+		if got := substitutionValue(t, res, id); got != "supplied" {
+			t.Fatalf("owned values changed: %q", got)
 		}
-		external := source.Object.Named()
-		assert.FatalIf(t, o.store.GetObject(external) != nil, "%v", "supplied object entered store")
-		{
-			_, ok := o.index.Lookup(external)
-			assert.FatalIf(t, ok, "%v", "supplied object entered existence index")
+		external := source.Obj.Named()
+		if !o.store.ReportHidden(external) {
+			t.Fatal("supplied declaration gained production visibility")
 		}
-		{
-			_, ok := filesForTest(o.index)[external]
-			assert.FatalIf(t, ok, "%v", "supplied object entered file/change index")
+		if record, ok := o.index.Lookup(external); !ok || record.Declaration == nil {
+			t.Fatal("supplied declaration missing from existence index")
 		}
-		{
-			declarations := testutil.Declarations(
-				o.store.Productions(external, nil),
-			)
-			assert.FatalIf(t, len(declarations) > 0 ||
-				len(renderersForTest(o.index, external)) != 0, "%v", "supplied object entered producer indexes")
+		if _, ok := filesForTest(o.index)[external]; ok {
+			t.Fatal("supplied object entered file/change index")
+		}
+		if declarations := testutil.Declarations(
+			o.store.Productions(external, nil),
+		); len(declarations) > 0 ||
+			len(renderersForTest(o.index, external)) != 0 {
+			t.Fatal("supplied object entered producer indexes")
 		}
 		stored, _ := o.store.Get[*manifest.Kustomization](id)
-		assert.FatalIf(t, len(stored.PostBuild.Substitute) != 0, "%v", "preparation mutated stored Kustomization")
-		{
-			info, _ := o.store.GetStatus(id)
-			assert.FatalIf(t, info.Status != store.StatusReady, "consumer not ready: %+v", info)
+		if len(stored.PostBuild.Substitute) != 0 {
+			t.Fatal("preparation mutated stored Kustomization")
+		}
+		if info, _ := o.store.GetStatus(id); info.Status != store.StatusReady {
+			t.Fatalf("consumer not ready: %+v", info)
 		}
 	}
 }
@@ -244,20 +298,24 @@ func TestRender_SuppliedObjectsPreserveRequiredChartFailure(t *testing.T) {
 	tests := []struct {
 		name          string
 		references    string
-		sources       []store.SuppliedObject
+		sources       []store.Declaration
 		missingSecret string
 	}{
 		{
 			name:       "unrelated supplied Secret",
 			references: "[{kind: Secret, name: absent}]",
-			sources: []store.SuppliedObject{
+			sources: []store.Declaration{
 				{
-					Object: &manifest.Secret{
+					Doc: testutil.ObjectDocument(&manifest.Secret{
+						Name:       "missing",
+						Namespace:  "flux-system",
+						StringData: map[string]any{"OTHER": "unrelated"},
+					}), Origin: manifest.SuppliedDeclaration, Obj: &manifest.Secret{
 						Name:       "missing",
 						Namespace:  "flux-system",
 						StringData: map[string]any{"OTHER": "unrelated"},
 					},
-					Path: "ci.yaml",
+					InputPath: "ci.yaml",
 				},
 			},
 			missingSecret: "absent",
@@ -265,14 +323,18 @@ func TestRender_SuppliedObjectsPreserveRequiredChartFailure(t *testing.T) {
 		{
 			name:       "same name in another namespace",
 			references: "[{kind: Secret, name: missing}]",
-			sources: []store.SuppliedObject{
+			sources: []store.Declaration{
 				{
-					Object: &manifest.Secret{
+					Doc: testutil.ObjectDocument(&manifest.Secret{
+						Name:       "missing",
+						Namespace:  "elsewhere",
+						StringData: map[string]any{"OTHER": "unrelated"},
+					}), Origin: manifest.SuppliedDeclaration, Obj: &manifest.Secret{
 						Name:       "missing",
 						Namespace:  "elsewhere",
 						StringData: map[string]any{"OTHER": "unrelated"},
 					},
-					Path: "ci.yaml",
+					InputPath: "ci.yaml",
 				},
 			},
 			missingSecret: "missing",
@@ -280,14 +342,18 @@ func TestRender_SuppliedObjectsPreserveRequiredChartFailure(t *testing.T) {
 		{
 			name:       "supplied and missing references",
 			references: "[{kind: Secret, name: given}, {kind: Secret, name: missing}]",
-			sources: []store.SuppliedObject{
+			sources: []store.Declaration{
 				{
-					Object: &manifest.Secret{
+					Doc: testutil.ObjectDocument(&manifest.Secret{
+						Name:       "given",
+						Namespace:  "flux-system",
+						StringData: map[string]any{"OTHER": "unrelated"},
+					}), Origin: manifest.SuppliedDeclaration, Obj: &manifest.Secret{
 						Name:       "given",
 						Namespace:  "flux-system",
 						StringData: map[string]any{"OTHER": "unrelated"},
 					},
-					Path: "ci.yaml",
+					InputPath: "ci.yaml",
 				},
 			},
 			missingSecret: "missing",
@@ -295,14 +361,18 @@ func TestRender_SuppliedObjectsPreserveRequiredChartFailure(t *testing.T) {
 		{
 			name:       "only supplied reference",
 			references: "[{kind: Secret, name: missing}]",
-			sources: []store.SuppliedObject{
+			sources: []store.Declaration{
 				{
-					Object: &manifest.Secret{
+					Doc: testutil.ObjectDocument(&manifest.Secret{
+						Name:       "missing",
+						Namespace:  "flux-system",
+						StringData: map[string]any{"OTHER": "unrelated"},
+					}), Origin: manifest.SuppliedDeclaration, Obj: &manifest.Secret{
 						Name:       "missing",
 						Namespace:  "flux-system",
 						StringData: map[string]any{"OTHER": "unrelated"},
 					},
-					Path: "ci.yaml",
+					InputPath: "ci.yaml",
 				},
 			},
 		},
@@ -412,20 +482,17 @@ func TestBootstrap_SubstitutionCollisions(t *testing.T) {
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestSupply_UnreadObjectsHaveNoPrecedenceWarning(t *testing.T) {
-	sources := []store.SuppliedObject{suppliedSubstitution("z"), suppliedSubstitution("a"), suppliedSubstitution("a")}
+	sources := []store.Declaration{suppliedSubstitution("z"), suppliedSubstitution("a"), suppliedSubstitution("a")}
 	o := newSubstitutionOrchestrator(t, treeConfig{Supply: sources, Path: t.TempDir()})
 	for _, source := range sources {
-		o.store.AddObject(source.Object)
+		o.store.AddObject(source.Obj)
 	}
 	assert.NoError(t, o.bootstrap(t.Context()))
 	assert.Diff(t, o.store.AdvisoryEvidence(), store.AdvisoryEvidence{})
 	for _, warning := range o.store.Warnings() {
-		assert.FatalIf(
-			t,
-			warning.Category == manifest.WarnSuppliedPrecedence,
-			"%v",
-			"unconsumed supply emitted precedence warning",
-		)
+		if warning.Category == manifest.WarnSuppliedPrecedence {
+			t.Fatal("unconsumed supply emitted precedence warning")
+		}
 	}
 }
 
@@ -457,7 +524,7 @@ func TestRender_SubstitutionLateConsumer(t *testing.T) {
 	o := newSubstitutionOrchestrator(
 		t,
 		treeConfig{
-			Supply:              []store.SuppliedObject{suppliedSubstitution("external")},
+			Supply:              []store.Declaration{suppliedSubstitution("external")},
 			StrictSubstitutions: true,
 			Path:                scan,
 			RepoRoot:            root,
@@ -543,16 +610,17 @@ func testBootstrapSubstitutionCollisionsCase(
 			"producer/external-secret.yaml",
 			"apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: producer, namespace: apps}\nspec:\n  target: {name: external}\n"+data,
 		)
-		input.Object = &manifest.Secret{
+		input.Obj = &manifest.Secret{
 			Name:       "external",
 			Namespace:  "apps",
 			StringData: map[string]any{"VALUE": "private-fixture-value"},
 		}
+		input.Doc = testutil.ObjectDocument(input.Obj)
 	}
 	if (*testCaseInput) != "stored" {
 		testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux.yaml, producer.yaml]\n")
 	}
-	cfg := treeConfig{Supply: []store.SuppliedObject{input}, Path: root}
+	cfg := treeConfig{Supply: []store.Declaration{input}, Path: root}
 	if (*testCaseInput) == "known Kustomization producer" {
 		cfg.ExternalChanges = change.NewSet([]string{"app/cm.yaml"})
 	}
@@ -571,33 +639,31 @@ func testBootstrapSubstitutionCollisionsCase(
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	if (*testCaseInput) == "known Secret producer without declared keys" {
-		id := input.Object.Named()
+		id := input.Obj.Named()
 		{
 			declarations := testutil.Declarations(
 				o.store.Productions(id, nil),
 			)
 			assert.FatalIf(t, len(declarations) == 0 ||
-				o.store.GetObject(
-					id,
-				) != nil, "%v", "test requires a known producer without a synthesized Secret")
+				!o.store.ReportHidden(id), "%v", "test requires a known producer without a synthesized Secret")
 		}
 	}
 	assert.FatalIf(
 		t,
-		o.store.ReferenceFacts(input.Object.Named(), nil).Supplied == nil,
+		o.store.ReferenceFacts(input.Obj.Named(), nil, false, manifest.NamedResource{}).Data == nil,
 		"%v",
 		"repository evidence discarded supplied snapshot",
 	)
 	assert.FatalIf(
 		t, (*testCaseInput) ==
-			"indexed file" && o.store.GetObject(input.Object.Named()) != nil, "%v",
+			"indexed file" && !o.store.ReportHidden(input.Obj.Named()), "%v",
 		"test requires unpromoted file identity",
 	)
 	if (*testCaseInput) == "known Kustomization producer" {
 		producer := testutil.KustomizationID("apps", "producer")
 		assert.FatalIf(t, !o.filter.ShouldReconcile(producer) ||
 			!slices.Contains(
-				testutil.Owners(o.store.Productions(input.Object.Named(), o.index)),
+				testutil.Owners(o.store.Productions(input.Obj.Named(), o.index)),
 				producer,
 			), "%v", "known producer selection/edge lost")
 	}
@@ -615,7 +681,7 @@ func testBootstrapSubstitutionCollisionsCase(
 	var wantOverrides []store.SuppliedOverride
 	if !strings.HasPrefix((*testCaseInput), "known Secret producer") {
 		wantOverrides = []store.SuppliedOverride{
-			{Resource: input.Object.Named(), SupplyPath: "ci-values.yaml", Keys: []string{"VALUE"}},
+			{Resource: input.Obj.Named(), SupplyPath: "ci-values.yaml", Keys: []string{"VALUE"}},
 		}
 	}
 	assert.Diff(t, o.store.AdvisoryEvidence().Overrides, wantOverrides)
@@ -673,7 +739,7 @@ func testRenderSubstitutionLateProducerCase(t *testing.T, testCaseInput testRend
 		CacheDir:            t.TempDir(),
 		WipeSecrets:         true,
 		Concurrency:         2,
-		Supply:              []store.SuppliedObject{source},
+		Supply:              []store.Declaration{source},
 		StrictSubstitutions: true,
 		Path:                root,
 		RepoRoot:            root,
@@ -689,10 +755,10 @@ func testRenderSubstitutionLateProducerCase(t *testing.T, testCaseInput testRend
 			assert.FatalIf(t, localErr != nil, "%v", localErr)
 		}
 	}
-	external := source.Object.Named()
+	external := source.Obj.Named()
 	assert.FatalIf(
 		t,
-		o.store.ReferenceFacts(external, nil).Supplied == nil || o.store.GetObject(external) != nil ||
+		o.store.ReferenceFacts(external, nil, false, manifest.NamedResource{}).Data == nil || !o.store.ReportHidden(external) ||
 			len(renderersForTest(o.index, external)) != 0,
 		"%v",
 		"test requires producer unknown at bootstrap",

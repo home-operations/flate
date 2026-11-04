@@ -51,6 +51,60 @@ func TestCapture_RawSupportExcludesReadiness(t *testing.T) {
 
 func TestReadSet_DeclarationAuthority(t *testing.T) {
 	t.Parallel()
+	t.Run("reuse after authority changes", func(t *testing.T) {
+		t.Parallel()
+		s := New()
+		owner := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
+		s.AddObject(owner)
+		supplied := &manifest.OCIRepository{Name: "input", Namespace: "apps", URL: "oci://supplied.example"}
+		s.AddDeclaration(Declaration{Obj: supplied, Origin: manifest.SuppliedDeclaration})
+		replacement := &manifest.OCIRepository{
+			Name:      supplied.Name,
+			Namespace: supplied.Namespace,
+			URL:       "oci://repository.example",
+		}
+		latest := &manifest.OCIRepository{
+			Name:      supplied.Name,
+			Namespace: supplied.Namespace,
+			URL:       "oci://latest.example",
+		}
+		var reads ReadSet
+		reads.Init(s, ownerID("reused"), nil)
+		t.Cleanup(reads.Retire)
+		var current manifest.BaseManifest = supplied
+		for _, next := range []struct {
+			object manifest.BaseManifest
+			change func()
+		}{
+			{replacement, func() {
+				s.RecordEmitted(owner.Named(), &Emission{Children: []Child{{Obj: replacement}}, Complete: true}, nil)
+			}},
+			{latest, func() {
+				s.RecordEmitted(owner.Named(), &Emission{Children: []Child{{Obj: latest}}, Complete: true}, nil)
+			}},
+			{supplied, func() { s.RecordEmitted(owner.Named(), &Emission{Complete: true}, nil) }},
+		} {
+			for range 2 {
+				object, policy := reads.Lookup(supplied.Named())
+				assert.Equal(t, object, current)
+				assert.Equal(t, policy, s.Policy(supplied.Named()))
+			}
+			captured := reads.input(supplied.Named())
+			next.change()
+			assert.Equal(t, reads.Valid(), false)
+			assert.Equal(t, reads.GetObject(supplied.Named()), current)
+			assert.Equal(t, reads.input(supplied.Named()), captured)
+			reads.Retire()
+			for range s.Sweep() {
+			}
+			reads.Init(s, ownerID("reused"), nil)
+			assert.Equal(t, reads.last == nil, true)
+			assert.Equal(t, reads.GetDeclaration(supplied.Named()), next.object)
+			assert.Equal(t, reads.Valid(), true)
+			current = next.object
+		}
+		assert.Equal(t, reads.Policy(supplied.Named()).Origin, manifest.SuppliedDeclaration)
+	})
 	s := New()
 	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
 	supplier := &manifest.Kustomization{Name: "supplier", Namespace: "apps"}
@@ -65,7 +119,7 @@ func TestReadSet_DeclarationAuthority(t *testing.T) {
 	)
 	var pending ReadSet
 	pending.Init(s, ownerID("waiting"), nil)
-	defer pending.Retire()
+	t.Cleanup(pending.Retire)
 	{
 		assert.FatalIf(
 			t,
@@ -86,7 +140,7 @@ func TestReadSet_DeclarationAuthority(t *testing.T) {
 	}
 	var accepted ReadSet
 	accepted.Init(s, ownerID("accepted"), nil)
-	defer accepted.Retire()
+	t.Cleanup(accepted.Retire)
 	{
 		assert.FatalIf(
 			t,
@@ -106,7 +160,7 @@ func TestReadSet_DeclarationAuthority(t *testing.T) {
 	}
 	var withdrawn ReadSet
 	withdrawn.Init(s, ownerID("withdrawn"), nil)
-	defer withdrawn.Retire()
+	t.Cleanup(withdrawn.Retire)
 	{
 		assert.FatalIf(
 			t,
@@ -118,7 +172,7 @@ func TestReadSet_DeclarationAuthority(t *testing.T) {
 	s.RecordEmitted(supplier.Named(), &Emission{Children: []Child{{Obj: raw}}, Complete: true}, nil)
 	var supplied ReadSet
 	supplied.Init(s, ownerID("supplied"), nil)
-	defer supplied.Retire()
+	t.Cleanup(supplied.Retire)
 	supplied.GetDeclaration(raw.Named())
 	s.AddObject(raw)
 	{
@@ -126,7 +180,7 @@ func TestReadSet_DeclarationAuthority(t *testing.T) {
 	}
 	var rooted ReadSet
 	rooted.Init(s, ownerID("rooted"), nil)
-	defer rooted.Retire()
+	t.Cleanup(rooted.Retire)
 	{
 		assert.FatalIf(
 			t,

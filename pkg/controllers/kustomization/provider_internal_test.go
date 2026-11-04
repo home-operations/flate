@@ -40,9 +40,13 @@ func TestSubstitutionProvider_ExactIdentity(t *testing.T) {
 					StringData: map[string]any{"VALUE": "supplied"},
 				}
 			}
-			snapshot, err := store.NewSupplied([]store.SuppliedObject{{Object: source}})
-			assert.NoError(t, err)
-			st.SetSupplied(snapshot)
+			st.AddDeclaration(
+				store.Declaration{
+					Obj:    source,
+					Doc:    testutil.ObjectDocument(source),
+					Origin: manifest.SuppliedDeclaration,
+				},
+			)
 			c := New(st, task.NewBounded(2), nil, true)
 			c.Configure(Options{}, sourcecache.RetryConfig{})
 			execution := c.newExecution(testutil.KustomizationID("apps", "consumer"))
@@ -76,9 +80,13 @@ func TestSubstitutionProvider_AcceptedSourceAndFallback(t *testing.T) {
 			other := external.WithNamespace("other")
 			st.AddObject(other)
 			c := New(st, task.NewBounded(2), nil, true)
-			snapshot, err := store.NewSupplied([]store.SuppliedObject{{Object: external}})
-			assert.NoError(t, err)
-			st.SetSupplied(snapshot)
+			st.AddDeclaration(
+				store.Declaration{
+					Obj:    external,
+					Doc:    testutil.ObjectDocument(external),
+					Origin: manifest.SuppliedDeclaration,
+				},
+			)
 			c.Configure(Options{}, sourcecache.RetryConfig{})
 			st.AddObject(tc.late)
 			execution := c.newExecution(testutil.KustomizationID("apps", "consumer"))
@@ -122,9 +130,13 @@ func TestSubstitutionProvider_SuppliedLookupAllocations(t *testing.T) {
 		t.Run(source.Named().Kind, func(t *testing.T) {
 			st := store.New()
 			c := New(st, task.NewBounded(2), nil, true)
-			snapshot, err := store.NewSupplied([]store.SuppliedObject{{Object: source}})
-			assert.NoError(t, err)
-			st.SetSupplied(snapshot)
+			st.AddDeclaration(
+				store.Declaration{
+					Obj:    source,
+					Doc:    testutil.ObjectDocument(source),
+					Origin: manifest.SuppliedDeclaration,
+				},
+			)
 			c.Configure(Options{}, sourcecache.RetryConfig{})
 			execution := c.newExecution(testutil.KustomizationID("apps", "consumer"))
 			defer execution.run.Close()

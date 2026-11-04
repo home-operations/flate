@@ -1,78 +1,121 @@
 package store
 
-import (
-	"cmp"
-	"fmt"
-	"reflect"
-	"slices"
+import "github.com/home-operations/flate/pkg/manifest"
 
-	"github.com/home-operations/flate/pkg/manifest"
-)
-
-// SuppliedObject associates a supplied Secret or ConfigMap with its input file.
-type SuppliedObject struct {
-	Object manifest.BaseManifest
-	Path   string
+// Declaration associates an immutable input object with its origin and provenance.
+type Declaration struct {
+	Obj       manifest.BaseManifest
+	Doc       map[string]any
+	Origin    manifest.DeclarationOrigin
+	policy    manifest.DeclarationPolicy
+	InputPath string
+	Ordinal   int
 }
 
-// Supplied owns an immutable invocation snapshot separate from canonical objects.
-type Supplied struct {
-	objects map[manifest.NamedResource]SuppliedObject
+func (d *Declaration) child() Child {
+	return Child{Obj: d.Obj, Doc: d.Doc, Origin: d.Origin, policy: d.policy}
 }
 
-// NewSupplied validates and snapshots inputs with whole-object last-input precedence.
-func NewSupplied(inputs []SuppliedObject) (*Supplied, error) {
-	if len(inputs) == 0 {
-		return nil, nil //nolint:nilnil // No supplied inputs means successful absence of a snapshot.
+// AddDeclaration admits an immutable declaration under its origin's authority.
+func (s *Store) AddDeclaration(child Declaration) {
+	if child.Origin == manifest.RepositoryDeclaration {
+		s.AddObject(child.Obj, child.Doc)
+		return
 	}
-	s := &Supplied{objects: make(map[manifest.NamedResource]SuppliedObject, len(inputs))}
-	for i, input := range inputs {
-		data, ok := input.Object.(manifest.Data)
-		origin := fmt.Sprintf("supply %q input %d", cmp.Or(input.Path, "SDK input"), i+1)
-		if !ok || reflect.ValueOf(data).Kind() == reflect.Pointer && reflect.ValueOf(data).IsNil() ||
-			input.Object.Named().Name == "" ||
-			input.Object.Named().Namespace == "" {
-			return nil, manifest.NewError(
-				manifest.ErrInput,
-				nil,
-				fmt.Sprintf("%s: expected a core v1 Secret or ConfigMap with name and namespace", origin),
-			)
-		}
-		id := input.Object.Named()
-		for _, key := range slices.Sorted(data.Keys()) {
-			if _, _, err := data.Value(key); err != nil {
-				return nil, manifest.NewError(
-					manifest.ErrInput,
-					nil,
-					fmt.Sprintf("%s %s key %q: invalid supplied data", origin, id, key),
-				)
-			}
-		}
-		obj, _, _, err := manifest.ParseDoc(
-			data.Snapshot(),
-			manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: ""},
-		)
-		if err != nil {
-			return nil, manifest.NewError(
-				manifest.ErrInput,
-				nil,
-				fmt.Sprintf("%s %s: invalid supplied object", origin, id),
-			)
-		}
-		s.objects[id] = SuppliedObject{Object: obj, Path: cmp.Or(input.Path, "SDK input")}
+	id := child.Obj.Named()
+	child.policy = child.child().Policy(id)
+	sh := s.shardFor(id)
+	sh.mu.Lock()
+	cell := sh.cells[id]
+	if cell.reference != nil &&
+		cell.reference.Obj == child.Obj &&
+		cell.reference.InputPath == child.InputPath &&
+		cell.reference.Ordinal == child.Ordinal {
+		sh.mu.Unlock()
+		return
 	}
-	return s, nil
+	bucket := sh.byName[kindID{id.Group, id.Kind}]
+	sh.requireCapacityLocked(cell.authority, bucket.authority)
+	if cell.generation == 0 {
+		sh.admitAbsenceLocked(id, objectFacet)
+		cell.links = sh.newHeadLocked(0)
+	}
+	if bucket.links == nil {
+		sh.admitAbsenceLocked(manifest.NamedResource{Group: id.Group, Kind: id.Kind}, bucketFacet)
+		bucket.links = sh.newHeadLocked(bucket.generation)
+	}
+	cell.reference = &child
+	cell.publication++
+	cell.authority = sh.advanceLocked(cell.current())
+	obj, policy := sh.captureLocked(id, new(cell), nil)
+	cell.policy = policy
+	sh.cells[id] = cell
+	if bucket.update(nameID{id.Namespace, id.Name}, true, true, bucket.generation) {
+		bucket.authority = sh.enqueueLocked(bucket.authority)
+		sh.byName[kindID{id.Group, id.Kind}] = bucket
+	}
+	event := fireUnderLock(s, EventObjectAdded, id)
+	event.payload = obj
+	sh.mu.Unlock()
+	event.run()
 }
 
-// SetSupplied installs the immutable snapshot before publication or concurrent reads.
-func (s *Store) SetSupplied(supplied *Supplied) { s.supplied = supplied }
-
-//nolint:ireturn // The values contract supports multiple data implementations.
-func (s *Store) suppliedObject(id manifest.NamedResource) (manifest.Data, string) {
-	if s.supplied == nil {
-		return nil, ""
+// Lookup returns the coherent representative and its declaration roles.
+//
+//nolint:ireturn // The heterogeneous store MUST preserve each manifest's concrete type.
+func (s *Store) Lookup(id manifest.NamedResource) (manifest.BaseManifest, manifest.DeclarationPolicy) {
+	sh := s.shardFor(id)
+	sh.mu.RLock()
+	obj, policy := sh.captureLocked(id, new(sh.cells[id]), nil)
+	sh.mu.RUnlock()
+	if obj == nil {
+		policy = manifest.RepositoryDeclaration.Policy(id, nil)
 	}
-	input := s.supplied.objects[id]
-	data, _ := input.Object.(manifest.Data)
-	return data, input.Path
+	return obj, policy
+}
+
+// Policy projects the coherent representative's declaration roles.
+func (s *Store) Policy(id manifest.NamedResource) manifest.DeclarationPolicy {
+	sh := s.shardFor(id)
+	sh.mu.RLock()
+	policy := sh.policyLocked(id)
+	sh.mu.RUnlock()
+	return policy
+}
+
+func (sh *shard) policyLocked(id manifest.NamedResource) manifest.DeclarationPolicy {
+	cell := sh.cells[id]
+	if (cell.policy.Root || cell.policy.Origin != manifest.RepositoryDeclaration) && cell.bound() {
+		return cell.policy
+	}
+	obj, policy := sh.captureLocked(id, new(cell), nil)
+	if obj == nil {
+		return manifest.RepositoryDeclaration.Policy(id, nil)
+	}
+	return policy
+}
+
+// Policy derives execution roles from an incoming or captured declaration envelope.
+func (c Child) Policy(id manifest.NamedResource) manifest.DeclarationPolicy {
+	policy := c.Origin.Policy(id, c.Obj)
+	policy.Report = policy.Report && !c.Generated
+	return policy
+}
+
+// Lookup MUST return the object and policy from one captured authority.
+//
+//nolint:ireturn // The heterogeneous store MUST preserve each manifest's concrete type.
+func (r *ReadSet) Lookup(id manifest.NamedResource) (manifest.BaseManifest, manifest.DeclarationPolicy) {
+	input := r.input(id)
+	obj := r.Capture(input)
+	if obj == nil {
+		return nil, input.view.child.Policy(id)
+	}
+	return obj, input.view.child.policy
+}
+
+// Policy MUST retain the origin captured with the object.
+func (r *ReadSet) Policy(id manifest.NamedResource) manifest.DeclarationPolicy {
+	_, policy := r.Lookup(id)
+	return policy
 }

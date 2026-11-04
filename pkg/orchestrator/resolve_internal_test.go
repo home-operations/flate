@@ -617,7 +617,7 @@ func testResolveResourceSetInputCase(t *testing.T, testCaseInput testResolveReso
 			manifest.BootstrapSourceID,
 			store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""},
 		)
-		facts := o.store.ReferenceFacts(target, o.index)
+		facts := o.store.ReferenceFacts(target, o.index, false, manifest.NamedResource{})
 		{
 			assert.FatalIf(t, !slices.ContainsFunc(
 				facts.Productions,
@@ -639,7 +639,9 @@ func testResolveResourceSetInputCase(t *testing.T, testCaseInput testResolveReso
 		}
 		sched := schedule.New(d, d)
 		unsubscribe := o.watchDAG(sched)
-		sched.Seed(o.seedNodes())
+		seeds, err := o.seedNodes()
+		assert.NoError(t, err)
+		sched.Seed(seeds)
 		assert.NoError(t, sched.Run(t.Context()))
 		unsubscribe()
 		output, _ := o.store.Get[*manifest.ConfigMap](

@@ -344,7 +344,7 @@ func (c *admissionClosure) recordDirectState(
 ) {
 	state := c.states[id]
 	state.direct = changed
-	state.eligible = c.loader.Options.Selection.Matches(id)
+	state.eligible = record.Origin.Policy(id, nil).Root && c.loader.Options.Selection.Matches(id)
 	state.declarationChanged = state.eligible && !changed &&
 		(c.fileChanged(c.source(id), record.File) || c.inputsChanged(c.source(id), record.Inputs))
 	for next := state.claim; next != 0; next = claims[next-1].next {

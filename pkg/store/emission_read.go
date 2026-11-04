@@ -9,22 +9,11 @@ import (
 
 // ReportHidden classifies the coherent representative's auxiliary provenance.
 func (s *Store) ReportHidden(id manifest.NamedResource) bool {
-	sh := s.shardFor(id)
-	sh.mu.RLock()
-	hidden := sh.reportHiddenLocked(id)
-	sh.mu.RUnlock()
-	return hidden
+	return !s.Policy(id).Report
 }
 
 func (sh *shard) reportHiddenLocked(id manifest.NamedResource) bool {
-	if id.ReportHidden() {
-		return true
-	}
-	if !sh.cells[id].auxiliary {
-		return false
-	}
-	cell := sh.cells[id]
-	return !cell.hidden && (!cell.rooted || !cell.bound())
+	return !sh.policyLocked(id).Report
 }
 
 // EmissionOwner returns the generated producer supplying the representative for id.
@@ -64,7 +53,7 @@ func declarationIndependent(index *manifest.DiscoveryIndex, id manifest.NamedRes
 //nolint:ireturn // The manifest contract requires polymorphic results.
 func (cv *capture) declaration() manifest.BaseManifest {
 	c := *cv
-	if c.independent || c.accepted || c.owner != nil {
+	if c.independent || c.accepted || c.owner != nil || c.child.Origin == manifest.SuppliedDeclaration {
 		return c.child.Obj
 	}
 	return nil
@@ -141,12 +130,17 @@ func (s *Store) getEmission(
 
 // ReferenceFacts preserves visible data separately from accepted authority and relations.
 type ReferenceFacts struct {
-	Data          manifest.Data
-	Supplied      manifest.Data
-	SupplyPath    string
-	Accepted      bool
-	Productions   []manifest.Production
-	ReferenceData []manifest.ReferenceData
+	Data                        manifest.Data
+	Materializers               []manifest.NamedResource
+	Generated, Offline, Private bool
+	Accepted                    bool
+	Productions                 []manifest.Production
+	ReferenceData               []manifest.ReferenceData
+}
+
+// AllowsAbsence MUST preserve omission policy for producer-owned inputs.
+func (f *ReferenceFacts) AllowsAbsence() bool {
+	return f.Private || f.Generated && !f.Offline
 }
 
 // Productions merges discovery evidence with accepted reverse memberships into a read-only snapshot.
@@ -164,22 +158,29 @@ func (s *Store) IncomingProductions(child Child, index *manifest.DiscoveryIndex)
 }
 
 // ReferenceFacts selects visible data and source-qualified production evidence.
-func (s *Store) ReferenceFacts(id manifest.NamedResource, index *manifest.DiscoveryIndex) ReferenceFacts {
+func (s *Store) ReferenceFacts(
+	id manifest.NamedResource,
+	index *manifest.DiscoveryIndex,
+	wipeSecrets bool,
+	consumer manifest.NamedResource,
+) ReferenceFacts {
 	result := productionResult{facts: true}
 	s.visitProductions(id, index, &result)
-	data, path := s.suppliedObject(id)
 	var candidates []manifest.ReferenceData
 	if len(result.out) != 0 {
 		candidates = s.referenceData(id, index, result.out, nil)
 	}
-	return ReferenceFacts{
+	facts := ReferenceFacts{
 		Data:          result.data,
 		Accepted:      result.accepted,
 		Productions:   result.out,
 		ReferenceData: candidates,
-		Supplied:      data,
-		SupplyPath:    path,
 	}
+	return facts.resolve(
+		id,
+		wipeSecrets,
+		&referenceResolution{consumer: consumer, reference: result.reference},
+	)
 }
 
 func (s *Store) referenceData(
@@ -245,6 +246,7 @@ func (s *Store) RenderedParent(
 }
 
 type productionResult struct {
+	reference     *Declaration
 	data          manifest.Data
 	out           []manifest.Production
 	id            manifest.NamedResource
@@ -325,10 +327,7 @@ func (s *Store) visitProductions(id manifest.NamedResource, index *manifest.Disc
 	}
 	s.addBareProductions(id, result, reads, [2][]manifest.Production{evidence, bare})
 	if result.facts {
-		var view capture
-		sh.captureLocked(id, new(sh.cells[id]), &view)
-		result.data, _ = view.child.Obj.(manifest.Data)
-		result.accepted = view.accepted || view.owner != nil
+		result.captureReferenceLocked(sh, id)
 	}
 	if result.incoming == nil {
 		sh.addProductionMembers(id, result, reads, provisional)
@@ -523,7 +522,7 @@ func (sh *shard) addProductionMembers(
 	provisional bool,
 ) {
 	cell := sh.cells[id]
-	if cell.hidden {
+	if cell.hidden && cell.reference == nil {
 		result.reset(nil)
 		return
 	}
@@ -734,4 +733,14 @@ func referenceRecords(index *manifest.DiscoveryIndex, id manifest.NamedResource)
 		}
 	}
 	return records
+}
+
+func (r *productionResult) captureReferenceLocked(sh *shard, id manifest.NamedResource) {
+	var view capture
+	sh.captureLocked(id, new(sh.cells[id]), &view)
+	if view.child.Origin.Policy(id, nil).Root {
+		r.data, _ = view.child.Obj.(manifest.Data)
+	}
+	r.reference = view.reference
+	r.accepted = view.accepted || view.owner != nil
 }

@@ -97,8 +97,8 @@ func (c *entryCapture) collect() bool {
 
 func (c *entryCapture) visit(id manifest.NamedResource) bool {
 	st, q := c.store, c.qualification
-	if supplied := st.ReferenceFacts(id, q.loader.Index).Supplied; supplied != nil {
-		c.inputs = append(c.inputs, kustomize.EntryInput{Resource: id, Data: supplied})
+	if data := st.ReferenceFacts(id, q.loader.Index, false, manifest.NamedResource{}).Data; data != nil {
+		c.inputs = append(c.inputs, kustomize.EntryInput{Resource: id, Data: data})
 	}
 	artifact, source := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 	if !c.captureSource(id, artifact, source) || !c.captureOutput(id) {
@@ -229,8 +229,8 @@ func (d *Session) applications() []manifest.BaseManifest {
 		for childIndex := range childValues {
 			child := childValues[childIndex]
 
-			obj := d.cfg.Store.GetObject(child.Identity)
-			if obj == nil {
+			obj, policy := d.cfg.Store.Lookup(child.Identity)
+			if obj == nil || !policy.Root {
 				obj = d.loader.CatalogObject(child.Identity)
 			}
 			add(obj)
@@ -468,7 +468,10 @@ func (a *Admission) bindApplication(
 	key := root.Named()
 	if candidate, ok := owner.(*manifest.Kustomization); ok && len(candidate.DependsOn) == 0 &&
 		(candidate.PostBuild == nil || len(candidate.PostBuild.SubstituteFrom) == 0) {
-		if current := st.GetObject(candidate.Named()); current == nil || manifest.Equal(current, candidate) {
+		if current, policy := st.Lookup(
+			candidate.Named(),
+		); policy.Root &&
+			(current == nil || manifest.Equal(current, candidate)) {
 			root = candidate
 		}
 	}

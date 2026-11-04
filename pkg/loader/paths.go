@@ -20,11 +20,15 @@ import (
 )
 
 // ReferenceFacts resolves data against the current discovery index before publication.
-func (l *Loader) ReferenceFacts(id manifest.NamedResource, index *manifest.DiscoveryIndex) store.ReferenceFacts {
+func (l *Loader) ReferenceFacts(id manifest.NamedResource,
+	index *manifest.DiscoveryIndex,
+	wipeSecrets bool,
+	consumer manifest.NamedResource,
+) store.ReferenceFacts {
 	if index == nil {
 		index = l.Index
 	}
-	return l.Store.ReferenceFacts(id, index)
+	return l.Store.ReferenceFacts(id, index, wipeSecrets, consumer)
 }
 
 func (l *Loader) resolvePaths(ctx context.Context) error {
@@ -305,7 +309,7 @@ func (l *Loader) pathBindings(
 		inputID := manifest.NamedResource{Kind: ref.Kind, Name: ref.Name, Namespace: child.Namespace}
 		input := provider.Lookup(inputID)
 		known = known && input.Data != nil && len(input.Materializers) == 0 &&
-			l.ReferenceFacts(inputID, nil).Supplied == nil
+			l.Store.Policy(inputID).Root
 		if input.Data != nil {
 			bindings[inputID] = input.Data
 		}

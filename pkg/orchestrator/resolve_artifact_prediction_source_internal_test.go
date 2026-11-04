@@ -89,7 +89,7 @@ func TestResolve_ArtifactPredictionSource(t *testing.T) {
 			{
 				assert.FatalIf(t, info.Status != store.StatusReady, "producer did not settle: %+v", info)
 			}
-			facts := o.store.ReferenceFacts(target, o.index)
+			facts := o.store.ReferenceFacts(target, o.index, false, manifest.NamedResource{})
 			{
 				assert.FatalIf(t, facts.Data != nil || facts.Accepted ||
 					!slices.ContainsFunc(facts.Productions, func(p manifest.Production) bool {

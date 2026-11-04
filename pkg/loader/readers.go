@@ -164,9 +164,6 @@ func (rf *readerFinalizer) observe(ctx context.Context,
 	refValue *manifest.Reference, consumer manifest.NamedResource, materialize bool,
 ) error {
 	ref := *refValue
-	if ref.ContentInput() && rf.loader.Store.ReferenceFacts(ref.NamedResource, rf.loader.Index).Supplied != nil {
-		return nil
-	}
 	if ref.ContentInput() {
 		rf.observeContent(&ref, consumer, materialize)
 	}

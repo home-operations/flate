@@ -156,7 +156,7 @@ func (l *Loader) resetDerivedProductions() {
 		{
 			//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
 			for id, record := range l.Index.Records {
-				if record.Path == "" && record.Builder == "" {
+				if record.Path == "" && record.Builder == "" && record.Origin.Policy(id, nil).Root {
 					delete(l.Index.Records, id)
 					delete(l.locations, id)
 					continue

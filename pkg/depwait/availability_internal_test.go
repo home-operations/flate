@@ -10,7 +10,6 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/values"
 )
 
 func TestAvailable_OptionalMaterializerAbsence(t *testing.T) {
@@ -92,7 +91,7 @@ func testAvailableOptionalMaterializerAbsenceCase(
 
 	s := store.New()
 	owner := testutil.KustomizationID("apps", "producer")
-	input := values.Input{
+	input := store.ReferenceFacts{
 		Generated: testCaseInput.generated,
 		Offline:   testCaseInput.offline,
 		Private:   testCaseInput.private,
@@ -199,7 +198,7 @@ func testAvailableRequiredMaterializerCycleCase(
 	w := Waiter{Store: &reads, Parent: parent}
 	got := w.Available(t.Context(), DataDependency{
 		NamedResource: id, Optional: testCaseInput.optional,
-		Input: values.Input{Data: data, Materializers: []manifest.NamedResource{owner}},
+		Input: store.ReferenceFacts{Data: data, Materializers: []manifest.NamedResource{owner}},
 	}, manifest.DrainForce)
 	want := schedule.DependencyFailed
 	if testCaseInput.optional || testCaseInput.unrelated {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"path/filepath"
@@ -112,33 +113,11 @@ func (r documentReader) decodeFileObjects(
 		return fileOpenFailure(path, err, yield)
 	}
 	defer func() { _ = f.Close() }()
-	docs, err := manifest.DecodeDocs(f, manifest.IncidentalDocuments)
-	for _, occurrence := range docs {
-		if new(r).skipFileOccurrence(new(occurrence), yield) {
-			continue
+	err = r.prepareStream(f, opts, func(child parsedObject) {
+		if prepared, emit := new(r).prepareFileObject(path, keepRaw, &child); emit {
+			yield(prepared)
 		}
-		leaves := []manifest.DocOccurrence{occurrence}
-		var collection bool
-		{
-			var skip bool
-			leaves, collection, skip = new(r).expandFileOccurrence(new(occurrence), leaves, yield)
-			if skip {
-				continue
-			}
-		}
-		for item, leaf := range leaves {
-			if new(r).skipFileLeaf(item, new(leaf)) {
-				continue
-			}
-			if child, emit := new(r).prepareFileObject(path, opts, keepRaw, new(leaf)); emit {
-				child.item = item
-				yield(child)
-			}
-		}
-		if collection {
-			manifest.ReleaseDoc(occurrence.Document)
-		}
-	}
+	})
 	if err != nil {
 		return fmt.Errorf("decode %s: %w", path, err)
 	}
@@ -253,26 +232,15 @@ func resolveDeclaredFingerprints(facts []parsedObject) {
 	}
 }
 
-func (r *documentReader) prepareFileObject(
-	path string,
-	opts manifest.ParseDocOptions,
-	keepRaw bool,
-	leafValue *manifest.DocOccurrence,
-) (parsedObject, bool) {
-	leaf := *leafValue
-	version := manifest.DocAPIVersion(leaf.Document)
-	declared := ""
-	if r.compact && r.coordinate == nil {
-		declared = manifest.Fingerprint(manifest.WithoutOwnershipLabels(leaf.Document))
-	}
-	child, outcome, _ := Prepare(leaf, opts)
-	if outcome.Err != nil {
-		return parsedObject{Child: child, outcome: outcome, version: version}, true
+func (r *documentReader) prepareFileObject(path string, keepRaw bool, childValue *parsedObject) (parsedObject, bool) {
+	child := *childValue
+	if child.outcome.Err != nil {
+		return child, true
 	}
 	obj := child.Obj
 	tracked := obj != nil && manifest.KindOf(obj).Tracked
 	if obj == nil || !tracked && !keepRaw {
-		manifest.ReleaseDoc(leaf.Document)
+		manifest.ReleaseDoc(child.Doc)
 		return parsedObject{}, false
 	}
 	id := obj.Named()
@@ -285,14 +253,14 @@ func (r *documentReader) prepareFileObject(
 			"id",
 			id.String(),
 		)
-		manifest.ReleaseDoc(leaf.Document)
+		manifest.ReleaseDoc(child.Doc)
 		return parsedObject{}, false
 	}
 	if !tracked {
-		manifest.ReleaseDoc(leaf.Document)
-		child.Doc, outcome.Document = nil, nil
+		manifest.ReleaseDoc(child.Doc)
+		child.Doc, child.outcome.Document = nil, nil
 	}
-	return parsedObject{Child: child, outcome: outcome, version: version, declared: declared}, true
+	return child, true
 }
 
 func fileOpenFailure(path string, err error, yield func(parsedObject)) error {
@@ -349,4 +317,43 @@ func (r *documentReader) skipFileLeaf(item int, leafValue *manifest.DocOccurrenc
 		return true
 	}
 	return false
+}
+
+func (r *documentReader) prepareStream(input io.Reader, opts manifest.ParseDocOptions, yield func(parsedObject)) error {
+	role := manifest.IncidentalDocuments
+	if opts.RequiredIdentity {
+		role = manifest.RequiredDocuments
+	}
+	docs, err := manifest.DecodeDocs(input, role)
+	for _, occurrence := range docs {
+		if r.skipFileOccurrence(new(occurrence), yield) {
+			continue
+		}
+		leaves, collection, skip := r.expandFileOccurrence(new(occurrence), []manifest.DocOccurrence{occurrence}, yield)
+		if skip {
+			continue
+		}
+		for item, leaf := range leaves {
+			if r.skipFileLeaf(item, new(leaf)) {
+				continue
+			}
+			child := r.prepareStreamObject(opts, new(leaf))
+			child.item = item
+			yield(child)
+		}
+		if collection {
+			manifest.ReleaseDoc(occurrence.Document)
+		}
+	}
+	return err
+}
+
+func (r *documentReader) prepareStreamObject(opts manifest.ParseDocOptions, leaf *manifest.DocOccurrence) parsedObject {
+	version := manifest.DocAPIVersion(leaf.Document)
+	declared := ""
+	if r.compact && r.coordinate == nil {
+		declared = manifest.Fingerprint(manifest.WithoutOwnershipLabels(leaf.Document))
+	}
+	child, outcome, _ := Prepare(*leaf, opts)
+	return parsedObject{Child: child, outcome: outcome, version: version, declared: declared}
 }

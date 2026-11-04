@@ -11,7 +11,6 @@ type capture struct {
 	accepted     bool
 	independent  bool
 	bound        bool
-	auxiliary    bool
 	binding      *Input
 	support      *Input
 	preflight    string
@@ -25,6 +24,7 @@ type capture struct {
 	source       *sourceBinding
 	generation   uint64
 	position     int
+	reference    *Declaration
 }
 
 func (c *capture) sourceBinding() sourceBinding {
@@ -36,14 +36,20 @@ func (c *capture) sourceBinding() sourceBinding {
 
 //nolint:ireturn // The manifest contract requires polymorphic results.
 func (sh *shard) objectLocked(id manifest.NamedResource) manifest.BaseManifest {
-	if !sh.derived && sh.cells[id].binding == nil {
-		return sh.cells[id].static
+	cell := sh.cells[id]
+	if !sh.derived && cell.binding == nil && (cell.static != nil || cell.reference == nil) {
+		return cell.static
 	}
-	return sh.captureLocked(id, new(sh.cells[id]), nil)
+	obj, _ := sh.captureLocked(id, new(cell), nil)
+	return obj
 }
 
 //nolint:ireturn // The manifest contract requires polymorphic results.
-func (sh *shard) captureLocked(id manifest.NamedResource, cellValue *objectCell, view *capture) manifest.BaseManifest {
+func (sh *shard) captureLocked(
+	id manifest.NamedResource,
+	cellValue *objectCell,
+	view *capture,
+) (manifest.BaseManifest, manifest.DeclarationPolicy) {
 	cell := *cellValue
 	if view != nil {
 		*view = capture{
@@ -54,11 +60,26 @@ func (sh *shard) captureLocked(id manifest.NamedResource, cellValue *objectCell,
 			preflight:   cell.preflight,
 			binding:     cell.binding,
 			support:     cell.support,
+			reference:   cell.reference,
 		}
 	}
+	var child Child
 	if cell.hidden {
-		return nil
+		if cell.reference != nil {
+			child = cell.reference.child()
+		}
+	} else {
+		child = sh.captureRepresentativeLocked(id, cellValue, view)
 	}
+	if view != nil {
+		view.child = child
+	}
+	return child.Obj, child.policy
+}
+
+func (sh *shard) captureRepresentativeLocked(id manifest.NamedResource, cellValue *objectCell, view *capture) Child {
+	cell := *cellValue
+	policy := manifest.DeclarationPolicy{Root: true, Reconcile: cell.reconcile, Report: cell.report}
 	obj := cell.static
 	bound := cell.bound()
 	if view != nil {
@@ -66,6 +87,12 @@ func (sh *shard) captureLocked(id manifest.NamedResource, cellValue *objectCell,
 	}
 	if !bound {
 		obj = nil
+	}
+	if view == nil && bound {
+		available := cell.rooted || !sh.derived && obj != nil
+		if available {
+			return Child{Obj: obj, Doc: cell.document, policy: policy}
+		}
 	}
 	chosen := sh.captureMembersLocked(id, view)
 	if !cell.rooted || !bound {
@@ -77,16 +104,16 @@ func (sh *shard) captureLocked(id manifest.NamedResource, cellValue *objectCell,
 				view.generation = max(cell.generation, record.entries[chosen.position].objectGeneration)
 				view.position = chosen.position
 			}
-			return child.Obj
+			return *child
 		}
 		if cell.retired {
 			obj = nil
 		}
 	}
-	if view != nil {
-		view.child.Obj, view.child.Doc = obj, cell.document
+	if obj == nil && cell.reference != nil {
+		return cell.reference.child()
 	}
-	return obj
+	return Child{Obj: obj, Doc: cell.document, policy: policy}
 }
 
 type regionState struct {
@@ -209,7 +236,7 @@ func (s *Store) reachabilityLocked(region objectRegion) []objectPublication {
 			id := state.id
 			sh := s.shardFor(id)
 			cell := sh.cells[id]
-			generation, retired, hidden, auxiliary := cell.generation, cell.retired, cell.hidden, cell.auxiliary
+			generation, retired, hidden, policy := cell.generation, cell.retired, cell.hidden, cell.policy
 			cell.generation = max(cell.generation, state.cell.generation)
 			if cell.generation == 0 && cell.static == nil && len(sh.members[id]) == 0 && sh.slots[id] == nil {
 				continue
@@ -221,10 +248,10 @@ func (s *Store) reachabilityLocked(region objectRegion) []objectPublication {
 			var view capture
 			sh.captureLocked(id, new(cell), &view)
 			after := view.child
-			cell.auxiliary = view.auxiliary
+
 			s.advanceRegionObjectLocked(new(state), &cell, new(view))
 			if cell.generation != generation || cell.retired != retired || cell.hidden != hidden ||
-				cell.auxiliary != auxiliary {
+				cell.policy != policy {
 				sh.cells[id] = cell
 			}
 			selectRegionHeadLocked(&cell, new(view))
@@ -286,9 +313,6 @@ func (sh *shard) captureMembersLocked(id manifest.NamedResource, view *capture) 
 		}
 		if view != nil {
 			record := m.slot.current.Load()
-			if chosen == m {
-				view.auxiliary = record.entries[m.position].child.Generated
-			}
 			payload := record.entries[m.position].child.payload
 			if payload != nil && (view.payloadOwner == nil || m.slot.id.Compare(view.payloadOwner.id) > 0) {
 				view.payload, view.payloadOwner = payload, m.slot
@@ -453,7 +477,8 @@ func (s *Store) seedReachabilityLocked(region objectRegion, add func(manifest.Na
 		for stateIndex3 := range stateValues3 {
 			state := stateValues3[stateIndex3]
 			id := state.id
-			live := s.staticAnchorLocked(id, region)
+			reference := s.shardFor(id).cells[id].reference
+			live := s.staticAnchorLocked(id, region) || reference != nil && reference.policy.Reconcile
 			if !live {
 				for _, m := range s.shardFor(id).members[id] {
 					if _, inside := region.position(m.slot.id); !inside && m.slot.visible.Load() {
@@ -534,11 +559,16 @@ func (s *Store) advanceRegionObjectLocked(stateValue *regionState, cell *objectC
 	after := view.child
 	id := state.id
 	sh := s.shardFor(id)
+	referenceChanged := state.before != after.Obj && after.Origin == manifest.SuppliedDeclaration
+	if state.before != nil && referenceChanged {
+		sh.clearFacetsLocked(id)
+	}
+	cell.policy = after.policy
 	if state.direct || (state.before == nil) != (after.Obj == nil) || state.owner != view.owner ||
 		!state.source.equal(view.source) ||
 		cell.rooted != state.cell.rooted && state.cell.static == nil ||
 		cell.retired != state.cell.retired ||
-		cell.hidden != state.cell.hidden {
+		cell.hidden != state.cell.hidden || cell.policy != state.cell.policy {
 		if cell.generation == 0 {
 			sh.admitAbsenceLocked(id, objectFacet)
 		}
@@ -585,7 +615,8 @@ func (s *Store) appendRegionArtifactLocked(
 	view := *viewValue
 	id := state.id
 	sh := s.shardFor(id)
-	if !state.direct && state.payload == view.payload && state.cell.hidden == cell.hidden {
+	referenceChanged := state.before != view.child.Obj && view.child.Origin == manifest.SuppliedDeclaration
+	if !state.direct && state.payload == view.payload && state.cell.hidden == cell.hidden && !referenceChanged {
 		return publications
 	}
 	record := sh.artifacts[id]

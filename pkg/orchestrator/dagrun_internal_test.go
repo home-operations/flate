@@ -171,7 +171,8 @@ func renderScalePublicationsTail(t *testing.T, tailCaseInput *renderScalePublica
 		}
 	}, false)
 	defer unsubPublications()
-	seeds := o.seedNodes()
+	seeds, err := o.seedNodes()
+	assert.NoError(t, err)
 	s.Seed(seeds)
 	done := make(chan error, 1)
 	go func() { done <- s.Run(t.Context()) }()

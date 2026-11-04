@@ -51,6 +51,11 @@ func (c *admissionClosure) record(id manifest.NamedResource) manifest.DiscoveryR
 		}
 		record.ContentRoots = map[manifest.NamedResource][]string{source: occurrence.facts.roots}
 	}
+	if c.incoming.Obj != nil && c.incoming.Obj.Named() == id {
+		record.Origin = c.incoming.Origin
+	} else if !record.Origin.Policy(id, nil).Root && c.loader.Store.Policy(id).Root {
+		record.Origin = manifest.RepositoryDeclaration
+	}
 	if len(c.accepted) == 0 {
 		return record
 	}
@@ -126,6 +131,7 @@ func (c *admissionClosure) completeRecord(
 	}
 	for owner, records := range c.accepted {
 		if historical, ok := records[(*id)]; ok {
+			record.Origin = historical.Origin
 			record.Refs = append(slices.Clone(record.Refs), historical.Refs...)
 			// An entry's exact current coverage MUST supersede historical subtree coverage.
 			if record.ContentRoots != nil && id.ReportHidden() {

@@ -119,7 +119,7 @@ func getAllCmd(use, short string) *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runSelected(cmd.Context(), selectedRequest{
 				flags: *c, roots: c.roots("", renderKinds...),
-				stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(),
+				stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(), stdin: cmd.InOrStdin(),
 			}, func(inv *selectedInvocation) selectedPayload {
 				return resourcePayload(inv, []listSection{
 					collectSelected(inv, ksView()),
@@ -141,7 +141,7 @@ func newGetImagesCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runSelected(cmd.Context(), selectedRequest{
 				flags: *c, roots: c.roots("", renderKinds...),
-				stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(),
+				stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(), stdin: cmd.InOrStdin(),
 			}, func(inv *selectedInvocation) selectedPayload {
 				return imagePayload(inv, output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)})
 			})
@@ -168,7 +168,7 @@ func resourceListCmd[T manifest.BaseManifest](view listView[T]) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSelected(cmd.Context(), selectedRequest{
 				flags: *c, roots: c.roots(firstArg(args), view.kind), labels: l.labels,
-				stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(),
+				stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(), stdin: cmd.InOrStdin(),
 			}, func(inv *selectedInvocation) selectedPayload {
 				return resourcePayload(inv, []listSection{collectSelected(inv, view)},
 					output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}, false)

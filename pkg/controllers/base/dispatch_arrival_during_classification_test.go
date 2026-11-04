@@ -21,7 +21,6 @@ import (
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
-	"github.com/home-operations/flate/pkg/values"
 )
 
 func TestDispatch_ArrivalDuringClassification(t *testing.T) {
@@ -236,7 +235,7 @@ func testExecutionSyntheticDependencyReasonsCase(
 						Kind:      manifest.KindConfigMap,
 						Namespace: "apps",
 						Name:      "missing",
-						Input:     values.Input{Materializers: []manifest.NamedResource{owner.Named()}},
+						Input:     store.ReferenceFacts{Materializers: []manifest.NamedResource{owner.Named()}},
 					},
 				},
 				Resume: func(context.Context, manifest.DrainLevel, []manifest.NamedResource) error {

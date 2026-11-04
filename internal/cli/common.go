@@ -52,7 +52,7 @@ type commonFlags struct {
 	namespace           string
 	supply              []string
 	strictSubstitutions bool
-	suppliedObjects     []store.SuppliedObject
+	suppliedObjects     []store.Declaration
 	allowMissingKinds   []string
 	restrictEgress      bool
 	skipKinds           []string
@@ -74,7 +74,12 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
 	fs.StringVarP(&f.pathOrig, "path-orig", "P", "", "Compare with a baseline directory (exclusive with --base)")
 	bindBase(fs, f)
 	fs.StringVarP(&f.namespace, namespaceKey, "n", "", "Select resources in this namespace")
-	fs.StringArrayVar(&f.supply, "supply", nil, "Read missing Secret and ConfigMap data from YAML (repeatable)")
+	fs.StringArrayVar(
+		&f.supply,
+		"supply",
+		nil,
+		"Read reference-only Kubernetes objects from YAML; - reads stdin (repeatable)",
+	)
 	fs.BoolVar(
 		&f.strictSubstitutions,
 		"strict-substitutions",
@@ -328,6 +333,7 @@ type selectedRequest struct {
 	labels         map[string]string
 	pair           bool
 	stdout, stderr io.Writer
+	stdin          io.Reader
 	test           bool
 }
 
@@ -362,7 +368,7 @@ func runSelected(ctx context.Context, req selectedRequest, payload func(*selecte
 		return finishSelected(&req, &selectedInvocation{err: err, remainder: err}, &selectedPayload{})
 	}
 	c := &req.flags
-	if err := c.loadInputs(ctx); err != nil {
+	if err := c.loadInputs(ctx, req.stdin); err != nil {
 		return early(err)
 	}
 	if err := validateSelectedPaths(&req); err != nil {

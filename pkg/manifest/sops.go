@@ -23,10 +23,10 @@ func ValuePlaceholder(key string) string {
 
 func sanitizeData(doc map[string]any, kind string) (map[string]any, bool) {
 	var sanitized map[string]any
-	for _, field := range []string{dataKey, stringDataKey, "binaryData"} {
+	for _, field := range []string{dataKey, stringDataKey, binaryDataKey} {
 		var encoding *base64.Encoding
 		secretData := kind == KindSecret && field == dataKey
-		if field == "binaryData" || secretData {
+		if field == binaryDataKey || secretData {
 			encoding = base64.StdEncoding
 		}
 		data, _ := doc[field].(map[string]any)

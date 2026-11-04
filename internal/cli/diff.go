@@ -82,7 +82,7 @@ func newDiffImagesCmd() *cobra.Command {
 func runDiffImages(cmd *cobra.Command, c *commonFlags, includeRemoved bool) error {
 	return runSelected(cmd.Context(), selectedRequest{
 		flags: *c, roots: c.roots("", renderKinds...), pair: true,
-		stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(),
+		stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(), stdin: cmd.InOrStdin(),
 	}, func(inv *selectedInvocation) selectedPayload {
 		groups := make([]output.ImageGroup, len(inv.groups))
 		result := selectedPayload{warnings: make([][]manifest.Warning, len(groups))}
@@ -133,7 +133,7 @@ func (d *diffFlags) run(cmd *cobra.Command, c *commonFlags, root manifest.NamedR
 	}
 	return runSelected(cmd.Context(), selectedRequest{
 		flags: *c, roots: c.roots(root.Name, kinds...), pair: true,
-		stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(),
+		stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(), stdin: cmd.InOrStdin(),
 	}, func(inv *selectedInvocation) selectedPayload {
 		return d.payload(inv, output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)})
 	})

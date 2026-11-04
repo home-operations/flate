@@ -37,7 +37,7 @@ data:
 	input := localSource(b, src)
 	ctx := context.Background()
 	req := RenderRequest{Source: input, Label: src, SubPath: ".", Spec: rawSpec}
-	accepted := acceptBenchmarkRender(b, cache, req)
+	accepted := acceptBenchmarkRender(b, cache, &req)
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -87,7 +87,7 @@ func BenchmarkRender_CacheHit(b *testing.B) {
 		}),
 	}
 	ctx := b.Context()
-	accepted := acceptBenchmarkRender(b, cache, req)
+	accepted := acceptBenchmarkRender(b, cache, &req)
 	_, receipt2, err := Render(ctx, cache, req, sourcecache.RetryConfig{})
 	if err == nil {
 		if recordErr := cache.RecordRender(
@@ -176,7 +176,7 @@ data:
 	input := localSource(b, src)
 	ctx := context.Background()
 	req := RenderRequest{Source: input, Label: src, SubPath: ".", Spec: rawSpec}
-	accepted := acceptBenchmarkRender(b, cache, req)
+	accepted := acceptBenchmarkRender(b, cache, &req)
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -227,7 +227,7 @@ func BenchmarkRender_MultiKSPerRoot(b *testing.B) {
 	accepted := make([]*store.Emission, apps)
 	for i := range apps {
 		requests[i] = RenderRequest{Source: input, Label: src, SubPath: fmt.Sprintf("apps/app-%d", i), Spec: rawSpec}
-		accepted[i] = acceptBenchmarkRender(b, cache, requests[i])
+		accepted[i] = acceptBenchmarkRender(b, cache, &requests[i])
 	}
 
 	b.ReportAllocs()
@@ -260,8 +260,9 @@ func BenchmarkRender_CacheHitConstructed(b *testing.B) {
 	BenchmarkRender_CacheHit(b)
 }
 
-func acceptBenchmarkRender(b *testing.B, cache *TreeCache, request RenderRequest) *store.Emission {
+func acceptBenchmarkRender(b *testing.B, cache *TreeCache, incoming *RenderRequest) *store.Emission {
 	b.Helper()
+	request := *incoming
 	_, receipt, err := Render(b.Context(), cache, request, sourcecache.RetryConfig{})
 	if err != nil {
 		b.Fatal(err)

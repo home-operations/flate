@@ -17,8 +17,9 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func recordTestRender(t *testing.T, cache *TreeCache, req RenderRequest, receipt *manifest.RenderReceipt) {
+func recordTestRender(t *testing.T, cache *TreeCache, incoming *RenderRequest, receipt *manifest.RenderReceipt) {
 	t.Helper()
+	req := *incoming
 	assert.FatalIf(t, receipt == nil, "%v", "first render returned no receipt")
 	assert.NoError(t, cache.RecordRender(t.Context(), RenderAcceptance{Owner: req.Spec.Named(), Receipt: receipt}))
 	_, stored, hit := readTestRenderFrame(t, cache, receipt.Value().(renderFrame).header.Key)
@@ -41,7 +42,7 @@ func TestRender_CacheMissesOnDirectoryMembership(t *testing.T) {
 	req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: "app", Spec: demoSpec}
 	first, receipt, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
 	assert.FatalIf(t, err != nil || !hasRenderField(first, "name", "a"), "first = %q, %v", first, err)
-	recordTestRender(t, cache, req, receipt)
+	recordTestRender(t, cache, &req, receipt)
 	testutil.WriteFile(t, root, "app/b.yaml", cmYAML("b"))
 	second, _, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
 	assert.FatalIf(
@@ -111,7 +112,7 @@ func TestRender_CacheInvalidatesTypeTransitions(t *testing.T) {
 	req := RenderRequest{Source: artifact, SubPath: "app", Spec: demoSpec}
 	_, receipt, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
 	assert.NoError(t, err)
-	recordTestRender(t, cache, req, receipt)
+	recordTestRender(t, cache, &req, receipt)
 	assert.NoError(t, os.RemoveAll(filepath.Join(root, "app")))
 	testutil.WriteFile(t, root, "app", "file")
 	{
@@ -151,7 +152,7 @@ func TestRender_CacheMissingComponentAppearance(t *testing.T) {
 	}))}
 	_, receipt, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
 	assert.NoError(t, err)
-	recordTestRender(t, cache, req, receipt)
+	recordTestRender(t, cache, &req, receipt)
 	testutil.WriteFile(
 		t,
 		root,

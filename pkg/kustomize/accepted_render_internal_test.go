@@ -76,7 +76,7 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 				Content: acceptedInput,
 			}))
 			{
-				_, complete := previousHistory(t.Context(), renderer, req, owner)
+				_, complete := previousHistory(t.Context(), renderer, &req, owner)
 				assert.FatalIf(t, !complete, "%s", "matching source binding missed")
 			}
 			changed := req
@@ -108,7 +108,7 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 			assert.NoError(t, err)
 
 			{
-				_, complete := previousHistory(t.Context(), renderer, changed, owner)
+				_, complete := previousHistory(t.Context(), renderer, &changed, owner)
 				assert.FatalIf(t, complete, "%s", "foreign source coordinate borrowed history")
 			}
 		})
@@ -244,7 +244,7 @@ func TestRecordRender_FinalDependencyBinding(t *testing.T) {
 	projected.Spec = manifest.MapDependsOn(spec, final.Resolve, nil).(*manifest.Kustomization)
 	projected.DependencySubstitutions = final
 	{
-		_, complete := previousHistory(t.Context(), renderer, projected, spec.Named())
+		_, complete := previousHistory(t.Context(), renderer, &projected, spec.Named())
 		assert.FatalIf(t, complete, "%s", "unaccepted snapshot supplied history")
 	}
 	acceptance := RenderAcceptance{
@@ -259,14 +259,14 @@ func TestRecordRender_FinalDependencyBinding(t *testing.T) {
 		records, complete := previousHistory(
 			t.Context(),
 			renderer,
-			projected,
+			&projected,
 			spec.Named(),
 		)
 		assert.FatalIf(t, !complete ||
 			records == nil, "%s", "final projected binding missed accepted history")
 	}
 	{
-		_, complete := previousHistory(t.Context(), renderer, req, spec.Named())
+		_, complete := previousHistory(t.Context(), renderer, &req, spec.Named())
 		assert.FatalIf(t, complete, "%s", "displaced snapshot retained history")
 	}
 	original := pending.Value().(renderFrame)
@@ -428,6 +428,6 @@ func testRecordRenderAcceptanceRequiredCase(t *testing.T, testCaseInput *string,
 		emission.Fingerprint = ""
 	}
 	assert.NoError(t, cache.RecordRender(t.Context(), acceptanceForEmission(demoSpec.Named(), emission)))
-	_, complete := previousHistory(t.Context(), cache, request, demoSpec.Named())
+	_, complete := previousHistory(t.Context(), cache, &request, demoSpec.Named())
 	assert.Equal(t, complete, (*testCaseInput) == "accepted")
 }

@@ -179,7 +179,7 @@ func (p *acceptedHistoryPublication) change(t *testing.T) {
 	{
 		assert.FatalIf(t, bytes.Equal(initialIndex, changedIndex), "%s", "changed accepted frame was not published")
 	}
-	previous, complete := previousHistory(t.Context(), p.renderer, p.req, p.owner)
+	previous, complete := previousHistory(t.Context(), p.renderer, &p.req, p.owner)
 	assert.Equal(t, complete && previous != nil, true)
 	for range previous {
 		t.Fatal("changed complete-empty frame retained children")
@@ -195,7 +195,7 @@ func (p *acceptedHistoryPublication) change(t *testing.T) {
 		Content: acceptedInput,
 	}))
 	{
-		_, previousHistoryComplete := previousHistory(t.Context(), p.renderer, p.req, p.owner)
+		_, previousHistoryComplete := previousHistory(t.Context(), p.renderer, &p.req, p.owner)
 		assert.FatalIf(t, previousHistoryComplete, "%s", "foreign overwrite retained the previous owner's history")
 	}
 	assert.NoError(t, p.renderer.RecordRender(t.Context(), RenderAcceptance{
@@ -205,7 +205,7 @@ func (p *acceptedHistoryPublication) change(t *testing.T) {
 		Content: acceptedInput,
 	}))
 	assert.Equal(t, p.storedKey(t), p.initialKey)
-	previous, complete = previousHistory(t.Context(), p.renderer, p.req, p.owner)
+	previous, complete = previousHistory(t.Context(), p.renderer, &p.req, p.owner)
 	assert.Equal(t, complete, true)
 	got := maps.Collect(previous)
 	assert.Diff(t, got, p.records)
@@ -258,7 +258,7 @@ func (p *acceptedHistoryPublication) failures(t *testing.T) {
 	}
 	check()
 	p.renderer = newTestTreeCache(t, p.directory)
-	previous, complete := previousHistory(t.Context(), p.renderer, p.req, p.owner)
+	previous, complete := previousHistory(t.Context(), p.renderer, &p.req, p.owner)
 	assert.Equal(t, complete, true)
 	got := maps.Collect(previous)
 	assert.Diff(t, got, p.records)

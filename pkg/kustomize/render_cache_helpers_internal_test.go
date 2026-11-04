@@ -50,12 +50,13 @@ func acceptedEmission(
 func previousHistory(
 	ctx context.Context,
 	cache *TreeCache,
-	request RenderRequest,
+	incoming *RenderRequest,
 	owner manifest.NamedResource,
 ) (
 	iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord],
 	bool,
 ) {
+	request := *incoming
 	_, receipt, found := cache.PreviousRender(ctx, request)
 	if !found {
 		return nil, false

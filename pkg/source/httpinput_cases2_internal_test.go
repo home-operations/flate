@@ -383,23 +383,13 @@ func testAcquireCloseJoinsAcquisitionCaseCallback(
 				status = http.StatusServiceUnavailable
 			}
 			body := remoteBody{Reader: reader, close: func() error {
-				defer close(completed)
-				if (*(*testCaseInput.stage)) == "cleanup" || (*(*testCaseInput.stage)) == "publication" {
-					close(entered)
-					select {
-					case <-r.Context().Done():
-						close(canceled)
-					case <-release:
-					}
-					<-release
-					if (*(*testCaseInput.stage)) == "cleanup" {
-						return context.Canceled
-					}
-				}
-				if (*(*testCaseInput.stage)) == "backoff" {
-					close(entered)
-				}
-				return nil
+				return testAcquireCloseResponse(r, &acquisitionCloseResponse{
+					testCaseInput: &testCaseInput,
+					entered:       &entered,
+					canceled:      &canceled,
+					release:       &release,
+					completed:     &completed,
+				})
 			}}
 			return &http.Response{StatusCode: status, Body: body, Header: make(http.Header)}, nil
 		}),
@@ -643,4 +633,29 @@ type testAcquireCloseJoinsAcquisitionCaseCallbackCompletionInputs struct {
 	completed     *chan struct{}
 	hits          *int
 	root          *string
+}
+
+type acquisitionCloseResponse struct {
+	testCaseInput                         *testAcquireCloseJoinsAcquisitionCaseCallbackInputs
+	entered, canceled, release, completed *chan struct{}
+}
+
+func testAcquireCloseResponse(r *http.Request, captures *acquisitionCloseResponse) error {
+	defer close(*captures.completed)
+	if (*(*captures.testCaseInput.stage)) == "cleanup" || (*(*captures.testCaseInput.stage)) == "publication" {
+		close(*captures.entered)
+		select {
+		case <-r.Context().Done():
+			close(*captures.canceled)
+		case <-*captures.release:
+		}
+		<-*captures.release
+		if (*(*captures.testCaseInput.stage)) == "cleanup" {
+			return context.Canceled
+		}
+	}
+	if (*(*captures.testCaseInput.stage)) == "backoff" {
+		close(*captures.entered)
+	}
+	return nil
 }

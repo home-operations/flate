@@ -196,28 +196,7 @@ func testAcquireConditionalValidationCase3(t *testing.T, scenario *string,
 		}
 		closeTestHTTPInputs(t, c)
 		if phase == 0 && (*scenario) == "missing" {
-			data, err := os.ReadFile(filepath.Join(root, "oci/index.json"))
-			assert.NoError(t, err)
-
-			var index ocispec.Index
-			{
-				err := json.Unmarshal(data, &index)
-				assert.NoError(t, err)
-			}
-
-			for _, desc := range index.Manifests {
-				if desc.MediaType == "application/octet-stream" {
-					path := filepath.Join(
-						root,
-						"oci/blobs",
-						desc.Digest.Algorithm().String(),
-						desc.Digest.Encoded(),
-					)
-					if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
-						t.Fatal(err)
-					}
-				}
-			}
+			testRemoveValidationPayload(t, root)
 		}
 	}
 }
@@ -659,4 +638,30 @@ type testAcquirePolicyIsolationCaseCallbackCompletionInputs struct {
 	release       *chan struct{}
 	done          *chan error
 	hits          *int
+}
+
+func testRemoveValidationPayload(t *testing.T, root string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(root, "oci/index.json"))
+	assert.NoError(t, err)
+
+	var index ocispec.Index
+	{
+		err := json.Unmarshal(data, &index)
+		assert.NoError(t, err)
+	}
+
+	for _, desc := range index.Manifests {
+		if desc.MediaType == "application/octet-stream" {
+			path := filepath.Join(
+				root,
+				"oci/blobs",
+				desc.Digest.Algorithm().String(),
+				desc.Digest.Encoded(),
+			)
+			if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				t.Fatal(err)
+			}
+		}
+	}
 }

@@ -384,49 +384,15 @@ func testAcquireMachineLifecycleCase(t *testing.T, cause **fs.PathError,
 		}
 		return partial, nil
 	})
-	switch *phase {
-	case "pre-canceled":
-		assert.FatalIf(
-			t,
-			prepared != 0 || acquired != 0 || !errors.Is(err, context.Canceled),
-			"canceled lifecycle: %d/%d %v",
-			prepared,
-			acquired,
-			err,
-		)
-	case "unavailable":
-		assert.FatalIf(
-			t,
-			prepared != 1 || acquired != 0 || !errors.Is(err, manifest.ErrMissingSecret),
-			"unavailable: %d/%d %v",
-			prepared,
-			acquired,
-			err,
-		)
-	case "expired preparation":
-		assert.FatalIf(
-			t,
-			acquired != 0 || !errors.Is(err, context.DeadlineExceeded),
-			"late success admitted acquisition: %v",
-			err,
-		)
-	case "prepare failure", "acquire failure":
-		assert.FatalIf(t, !errors.Is(err, (*cause)) || !errors.Is(err, manifest.ErrFlux) ||
-			strings.Contains(err.Error(), "canary"), "classification lost cause or exposed material: %v", err)
-		assert.FatalIf(t, (*phase) == "prepare failure" && acquired != 0 ||
-			(*phase) == "acquire failure" &&
-				artifact != partial, "%s", "changed partial result or acquired after preparation failure")
-
-	case "success", "unbounded":
-		assert.FatalIf(
-			t,
-			err != nil || artifact != partial || prepared != 1 || acquired != 1,
-			"successful lifecycle: %d/%d %v",
-			prepared,
-			acquired,
-			err,
-		)
-	}
+	testAcquireMachineLifecycleResult(t, &machineLifecycleResult{
+		phase:    phase,
+		cause:    cause,
+		prepared: prepared,
+		acquired: acquired,
+		artifact: artifact,
+		partial:  partial,
+		err:      err,
+	})
 }
 
 func testMissingSecretErrorRetryMachineCase(t *testing.T, shape *string,
@@ -505,6 +471,64 @@ func testMissingSecretErrorRetryMachineCase(t *testing.T, shape *string,
 			"eligible retry: %v calls=%d",
 			got,
 			calls,
+		)
+	}
+}
+
+type machineLifecycleResult struct {
+	phase              *string
+	cause              **fs.PathError
+	prepared, acquired int
+	artifact, partial  *store.SourceArtifact
+	err                error
+}
+
+func testAcquireMachineLifecycleResult(t *testing.T, captures *machineLifecycleResult) {
+	t.Helper()
+	phase, cause := captures.phase, captures.cause
+	prepared, acquired := captures.prepared, captures.acquired
+	artifact, partial, err := captures.artifact, captures.partial, captures.err
+	switch *phase {
+	case "pre-canceled":
+		assert.FatalIf(
+			t,
+			prepared != 0 || acquired != 0 || !errors.Is(err, context.Canceled),
+			"canceled lifecycle: %d/%d %v",
+			prepared,
+			acquired,
+			err,
+		)
+	case "unavailable":
+		assert.FatalIf(
+			t,
+			prepared != 1 || acquired != 0 || !errors.Is(err, manifest.ErrMissingSecret),
+			"unavailable: %d/%d %v",
+			prepared,
+			acquired,
+			err,
+		)
+	case "expired preparation":
+		assert.FatalIf(
+			t,
+			acquired != 0 || !errors.Is(err, context.DeadlineExceeded),
+			"late success admitted acquisition: %v",
+			err,
+		)
+	case "prepare failure", "acquire failure":
+		assert.FatalIf(t, !errors.Is(err, (*cause)) || !errors.Is(err, manifest.ErrFlux) ||
+			strings.Contains(err.Error(), "canary"), "classification lost cause or exposed material: %v", err)
+		assert.FatalIf(t, (*phase) == "prepare failure" && acquired != 0 ||
+			(*phase) == "acquire failure" &&
+				artifact != partial, "%s", "changed partial result or acquired after preparation failure")
+
+	case "success", "unbounded":
+		assert.FatalIf(
+			t,
+			err != nil || artifact != partial || prepared != 1 || acquired != 1,
+			"successful lifecycle: %d/%d %v",
+			prepared,
+			acquired,
+			err,
 		)
 	}
 }

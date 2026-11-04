@@ -131,9 +131,8 @@ func testAcquireConditionalValidationCompletion(t *testing.T) {
 			assert.NoError(t, err)
 
 			body, err := fs.ReadFile(input, "content")
-			if err != nil || string(body) != fmt.Sprintf("version: v%d\n", run.version) {
-				t.Fatalf("%s: body=%q, error=%v", run.name, body, err)
-			}
+			assert.FatalIf(t, err != nil || string(body) != fmt.Sprintf("version: v%d\n", run.version),
+				"%s: body=%q, error=%v", run.name, body, err)
 		}
 		got := trace.snapshot()[before:]
 		t.Logf("%s: requests=%+v accepted_connections=%d", run.name, got, trace.connections.Load())

@@ -152,7 +152,7 @@ func testWarnMissingCRDsReplacementAndRetainedOutputCase(
 	parent := testutil.KustomizationID("flux-system", "parent")
 	s.UpdateStatus(parent, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 	opts := base.Options{AllowMissingKinds: []string{manifest.KindCustomResourceDefinition}}
-	c := resourcesetctrl.New(s, tasks, nil, true)
+	c := resourcesetctrl.New(s, tasks, nil)
 	c.Configure(opts)
 	c.StartLifecycle()
 
@@ -175,9 +175,9 @@ func testWarnMissingCRDsReplacementAndRetainedOutputCase(
 	}
 	s.AddObject(rs)
 	initial := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainCascade)
-	if initial.Outcome() == schedule.Blocked {
-		t.Fatalf("initial render blocked: %v", initial.Blocked)
-	}
+	assert.FatalIf(t, initial.Outcome() == schedule.Blocked,
+		"initial render blocked: %v", initial.Blocked)
+
 	t.Cleanup(initial.Close)
 	before := s.GetArtifact(rs.Named(), store.ArtifactContent)
 	fresh := *rs
@@ -211,7 +211,7 @@ func testWarnMissingCRDsReplacementAndRetainedOutputCase(
 		)
 		admissiontest.Commit(t, opts.Loader, nil)
 		opts.Filter = opts.Loader.Options.Filter
-		c = resourcesetctrl.New(s, tasks, nil, true)
+		c = resourcesetctrl.New(s, tasks, nil)
 		c.Configure(opts)
 		c.StartLifecycle()
 
@@ -221,9 +221,9 @@ func testWarnMissingCRDsReplacementAndRetainedOutputCase(
 	u := s.AddListener(store.EventArtifactUpdated, func(manifest.NamedResource, any) { publications++ }, false)
 	defer u()
 	current := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainCascade)
-	if current.Outcome() == schedule.Blocked {
-		t.Fatalf("final render blocked: %v", current.Blocked)
-	}
+	assert.FatalIf(t, current.Outcome() == schedule.Blocked,
+		"final render blocked: %v", current.Blocked)
+
 	initial.Retire()
 	t.Cleanup(current.Close)
 	info, _ := s.GetStatus(rs.Named())

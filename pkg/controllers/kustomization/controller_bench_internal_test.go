@@ -27,7 +27,7 @@ func benchmarkSubstitutionLookup(b *testing.B, supplied *bool) {
 	b.Helper()
 	st := store.New()
 	cm := &manifest.ConfigMap{Name: "external", Namespace: "apps"}
-	c := New(st, nil, nil, false)
+	c := New(st, nil, nil)
 	opts := Options{}
 	if *supplied {
 		st.AddDeclaration(
@@ -39,7 +39,7 @@ func benchmarkSubstitutionLookup(b *testing.B, supplied *bool) {
 	c.Configure(opts, sourcecache.RetryConfig{})
 	execution := c.newExecution(testutil.KustomizationID("apps", "consumer"))
 	defer execution.run.Close()
-	provider := values.NewStoreProvider(&execution.run.Reads, c.WipeSecrets)
+	provider := values.NewStoreProvider(&execution.run.Reads)
 	expected := provider.Data(cm.Named())
 	if expected == nil {
 		b.Fatal("lookup failed")

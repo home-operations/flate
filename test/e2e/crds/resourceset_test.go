@@ -2,7 +2,6 @@
 package crds_test
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -55,8 +54,8 @@ func TestE2E_ResourceSetExpandsIntoChildKustomizations(t *testing.T) {
 			if verb == "get" {
 				args[1] = "ks"
 			}
-			requireCLIOKResult1 := harness.RequireCLIOK(t, args...)
-			stdout, stderr := requireCLIOKResult1.Stdout, requireCLIOKResult1.Stderr
+			migratedResult1 := harness.RequireCLIOK(t, args...)
+			stdout, stderr := migratedResult1.Stdout, migratedResult1.Stderr
 			assert.FatalIf(
 				t,
 				strings.Count(stderr, "[OfflineInputProvider]") != 1 || !strings.Contains(stderr, "branches") ||
@@ -142,7 +141,6 @@ spec:
 			if tc.encrypted {
 				fields = fmt.Sprintf("{key: value, encrypted: '%s'}", ciphertext)
 				secretData = fmt.Sprintf("      data: {plain: dmFsdWU=, encoded: '%s'}\n", ciphertext)
-				wantFields["encrypted"] = "..PLACEHOLDER_encrypted.."
 			}
 			testutil.WriteFile(t, root, "app/resourceset.yaml", fmt.Sprintf(`apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSet
@@ -176,19 +174,19 @@ spec:
 					t.TempDir(),
 				},
 				tc.flags...)
-			requireCLIOKResult2 := harness.RequireCLIOK(t, args...)
-			stdout, _ := requireCLIOKResult2.Stdout, requireCLIOKResult2.Stderr
+			migratedResult2 := harness.RequireCLIOK(t, args...)
+			stdout := migratedResult2.Stdout
 			if tc.name == "all" {
-				requireCLIOKResult3 := harness.RequireCLIOK(t, args...)
-				again, _ := requireCLIOKResult3.Stdout, requireCLIOKResult3.Stderr
+				migratedResult3 := harness.RequireCLIOK(t, args...)
+				again := migratedResult3.Stdout
 				assert.Equal(t, again, stdout)
 			}
 			docs, err := testutil.DecodeDocs(strings.NewReader(stdout))
 			assert.NoError(t, err)
 			identities := make([]string, 0, len(docs))
 			for _, doc := range docs {
-				metadata := manifest.DocMetadata(doc)
-				name, namespace := metadata.Name, metadata.Namespace
+				result1 := manifest.DocMetadata(doc)
+				name, namespace := result1.Name, result1.Namespace
 				identity := manifest.DocKind(doc) + "/" + namespace + "/" + name
 				identities = append(identities, identity)
 				switch identity {
@@ -198,8 +196,7 @@ spec:
 					assert.Diff(t, doc["stringData"], wantFields)
 					if tc.encrypted {
 						assert.Diff(t, doc["data"], map[string]any{
-							"plain":   "dmFsdWU=",
-							"encoded": base64.StdEncoding.EncodeToString([]byte("..PLACEHOLDER_encoded..")),
+							"plain": "dmFsdWU=",
 						})
 					}
 				}
@@ -212,34 +209,17 @@ spec:
 
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_ResourceSetDocumentBoundary(t *testing.T) {
+	testE2EResourceSetDocumentBoundaryCase1(t)
+}
+
+func testE2EResourceSetDocumentBoundaryCase1(t *testing.T) {
+	t.Helper()
 	path := t.TempDir()
 	testutil.CopyTree(t, harness.TestdataPath(t, "resourceset-documents"), path)
 	args := []string{"build", "all", "--path", path, "--cache-dir", t.TempDir(), "--concurrency", "2"}
 	var previous string
 	for range 2 {
-		runCLIBuffersResult4 := harness.RunCLIBuffers(args...)
-		out, stderr, code := runCLIBuffersResult4.Stdout, runCLIBuffersResult4.Stderr, runCLIBuffersResult4.Code
-		assert.FatalIf(t, code != 1 || !strings.Contains(stderr, "flux-system/documents") ||
-			!strings.Contains(stderr, "document 1:") ||
-			!strings.Contains(
-				stderr,
-				"missing metadata.name for List",
-			), "invalid ResourceSet output: exit=%d stderr=%s", code, stderr)
-		counts := map[string]int{}
-		decoder := yamlutil.NewYAMLOrJSONDecoder(strings.NewReader(out), 2048)
-		e2EResourceSetDocumentBoundaryLoop(t, struct {
-			decoder **yamlutil.YAMLOrJSONDecoder
-			counts  *map[string]int
-		}{decoder: &decoder, counts: &counts})
-		for key, want := range map[string]int{"raw": 1, "duplicate": 2, "nameless-json": 1, "nameless-list": 1, "kindless-list": 1, "wrapper": 2, "directive": 2, "explicit": 1, "sanitized": 1, "nested": 0, "item-directive": 1, "child-result": 1, "rejected-yaml": 0, "rejected-directive": 0, "child": 0} {
-			if counts[key] != want {
-				t.Errorf("%s count=%d, want %d; all=%v", key, counts[key], want, counts)
-			}
-		}
-		if previous != "" {
-			assert.Equal(t, out, previous)
-		}
-		previous = out
+		testE2EResourceSetDocumentBoundaryCase1Part1(t, &args, &previous)
 	}
 
 	original := t.TempDir()
@@ -258,7 +238,7 @@ func TestE2E_ResourceSetDocumentBoundary(t *testing.T) {
 	)
 	var previousDiff, previousWarnings string
 	for run := range 2 {
-		runCLIBuffersResult5 := harness.RunCLIBuffers(
+		result2 := harness.RunCLIBuffers(
 			"diff",
 			"all",
 			"--path",
@@ -268,51 +248,40 @@ func TestE2E_ResourceSetDocumentBoundary(t *testing.T) {
 			"--output=json",
 			"--concurrency=2",
 		)
-		product, diagnostics, code := runCLIBuffersResult5.Stdout, runCLIBuffersResult5.Stderr, runCLIBuffersResult5.Code
-		assert.FatalIf(
-			t,
-			code != 1 || !strings.Contains(diagnostics, "missing metadata.name for List"),
-			"invalid ResourceSet diff: exit=%d stderr=%s",
-			code,
-			diagnostics,
-		)
+		product, diagnostics, code := result2.Stdout, result2.Stderr, result2.Code
+		assert.FatalIf(t, code != 1 || !strings.Contains(diagnostics, "missing metadata.name for List"),
+			"invalid ResourceSet diff: exit=%d stderr=%s", code, diagnostics)
 		assert.FatalIf(
 			t,
 			strings.Count(diagnostics, "[DuplicateDocument]") != 2 || !strings.Contains(diagnostics, "duplicate") ||
 				!strings.Contains(diagnostics, "orig") ||
 				!strings.Contains(diagnostics, "current") ||
-				strings.Contains(
-					product,
-					"[DuplicateDocument]",
-				),
+				strings.Contains(product, "[DuplicateDocument]"),
 			"duplicate diff: stdout=%s stderr=%s",
 			product,
 			diagnostics,
 		)
+
 		var changes struct {
-			Changes    []map[string]any `json:"Changes"`
+			Changes    []map[string]any `json:"changes"`
 			Suppressed []struct {
 				Parent struct {
-					Name string `json:"Name"`
-				} `json:"Parent"`
-				Side   string `json:"Side"`
-				Count  int    `json:"Count"`
-				Reason string `json:"Reason"`
-			} `json:"Suppressed"`
+					Name string `json:"name"`
+				} `json:"parent"`
+				Side   string `json:"side"`
+				Count  int    `json:"count"`
+				Reason string `json:"reason"`
+			} `json:"suppressed"`
 		}
 		assert.NoError(t, json.Unmarshal([]byte(product), &changes))
-		assert.FatalIf(
-			t,
-			len(changes.Changes) == 0 || len(changes.Suppressed) != 1,
-			"duplicate product changed: %s",
-			product,
-		)
+		assert.FatalIf(t, len(changes.Changes) == 0 || len(changes.Suppressed) != 1,
+			"duplicate product changed: %s", product)
+
 		suppressed := changes.Suppressed[0]
 		assert.FatalIf(t, suppressed.Parent.Name != "child" || suppressed.Side != "both" || suppressed.Count != 2 ||
-			!strings.Contains(
-				suppressed.Reason,
-				"missing metadata.name for List",
-			), "failed ResourceSet descendant was not suppressed: %+v", suppressed)
+			!strings.Contains(suppressed.Reason, "missing metadata.name for List"),
+			"failed ResourceSet descendant was not suppressed: %+v", suppressed)
+
 		if run == 0 {
 			previousDiff, previousWarnings = product, diagnostics
 		} else {
@@ -327,53 +296,91 @@ func TestE2E_ResourceSetDocumentBoundary(t *testing.T) {
 		"apps/rs.yaml",
 		"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: documents, namespace: flux-system}\nspec:\n resourcesTemplate: |\n  items: [null]\n",
 	)
-	runCLIExpectErrResult6 := harness.RunCLIExpectErr(t, args...)
-	out, code := runCLIExpectErrResult6.Output, runCLIExpectErrResult6.Code
+	migratedResult4 := harness.RunCLIExpectErr(t, args...)
+	out, code := migratedResult4.Output, migratedResult4.Code
 	assert.Equal(t, code, 1)
-	assert.FatalIf(t, !strings.Contains(out, "read rendered list"), "malformed member failure missing: %s", out)
+	assert.FatalIf(t, !strings.Contains(out, "read rendered list"),
+		"malformed member failure missing: %s", out)
 }
 
-func e2EResourceSetDocumentBoundaryLoop(t *testing.T, loopInputs struct {
-	decoder **yamlutil.YAMLOrJSONDecoder
-	counts  *map[string]int
-},
-) {
+func testE2EResourceSetDocumentBoundaryCase1Part1(t *testing.T, args *[]string, previous *string) {
 	t.Helper()
+	result3 := harness.RunCLIBuffers((*args)...)
+	out, stderr, code := result3.Stdout, result3.Stderr, result3.Code
+	assert.FatalIf(t, code != 1 || !strings.Contains(stderr, "flux-system/documents") ||
+		!strings.Contains(stderr, "document 1:") ||
+		!strings.Contains(stderr, "missing metadata.name for List"),
+		"invalid ResourceSet output: exit=%d stderr=%s", code, stderr)
 
+	counts := map[string]int{}
+	decoder := yamlutil.NewYAMLOrJSONDecoder(strings.NewReader(out), 2048)
 	for {
 		var doc map[string]any
-		err := (*loopInputs.decoder).Decode(&doc)
+		err := decoder.Decode(&doc)
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		assert.NoError(t, err)
-		metadata2 := manifest.DocMetadata(doc)
-		name, ns := metadata2.Name, metadata2.Namespace
-		if name == "raw" || name == "duplicate" {
+		result4 := manifest.DocMetadata(doc)
+		name, ns := result4.Name, result4.Namespace
+		switch name {
+		case "raw", "duplicate":
 			assert.Equal(t, ns, "")
-		}
-		if name == "explicit" {
+		case "explicit":
 			assert.Equal(t, ns, "other")
-		}
-		if name == "sanitized" {
-			assert.Diff(t, doc["data"], map[string]any{"encrypted": "..PLACEHOLDER_encrypted.."})
-		}
-		if name == "kindless-list" {
+		case "sanitized":
+			assert.Diff(t, doc["data"], map[string]any{})
+		case "kindless-list":
 			assert.Equal(t, manifest.DocKind(doc), "")
 			assert.Equal(t, manifest.DocAPIVersion(doc), "")
 		}
-		(*loopInputs.counts)[name]++
+		counts[name]++
 		if data, ok := doc["data"].(map[string]any); ok {
-			(*loopInputs.counts)[fmt.Sprint(data["value"])]++
+			counts[fmt.Sprint(data["value"])]++
 		}
 		if spec, ok := doc["spec"].(map[string]any); ok {
-			(*loopInputs.counts)[fmt.Sprint(spec["value"])]++
+			counts[fmt.Sprint(spec["value"])]++
 		}
 		if manifest.DocKind(doc) == "List" {
-			(*loopInputs.counts)["wrapper"]++
+			counts["wrapper"]++
 		}
 		if manifest.DocAPIVersion(doc) == "kustomize.config.k8s.io/v1beta1" {
-			(*loopInputs.counts)["directive"]++
+			counts["directive"]++
 		}
 	}
+	testE2EResourceSetDocumentBoundaryCase1Part1Tail(
+		t,
+		&testE2EResourceSetDocumentBoundaryCase1Part1TailInputs{counts: &counts, previous: &previous, out: &out},
+	)
+}
+
+type testE2EResourceSetDocumentBoundaryCase1Part1TailInputs struct {
+	counts *map[string]int
+
+	previous **string
+
+	out *string
+}
+
+func testE2EResourceSetDocumentBoundaryCase1Part1Tail(
+	t *testing.T,
+	inputs *testE2EResourceSetDocumentBoundaryCase1Part1TailInputs,
+) {
+	t.Helper()
+
+	for key, want := range map[string]int{"raw": 1, "duplicate": 2, "nameless-json": 1, "nameless-list": 1, "kindless-list": 1, "wrapper": 2, "directive": 2, "explicit": 1, "sanitized": 1, "nested": 0, "item-directive": 1, "child-result": 1, "rejected-yaml": 0, "rejected-directive": 0, "child": 0} {
+		assert.ErrorIf(
+			t,
+			(*inputs.counts)[key] != want,
+			"%s count=%d, want %d; all=%v",
+			key,
+			(*inputs.counts)[key],
+			want,
+			(*inputs.counts),
+		)
+	}
+	if (*(*inputs.previous)) != "" {
+		assert.Equal(t, (*inputs.out), (*(*inputs.previous)))
+	}
+	(*(*inputs.previous)) = (*inputs.out)
 }

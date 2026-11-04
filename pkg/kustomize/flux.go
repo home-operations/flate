@@ -42,8 +42,7 @@ type RenderRequest struct {
 	SubPath string `json:"SubPath"`
 	// Spec is the prepared Flux Kustomization; nil builds without a Flux owner.
 	Spec *manifest.Kustomization `json:"Spec"`
-	// WipeSecrets binds the parse policy to accepted history.
-	WipeSecrets bool `json:"WipeSecrets"`
+
 	// StrictSubstitutions binds undefined-variable handling to accepted history.
 	StrictSubstitutions bool `json:"StrictSubstitutions"`
 	// SkipKinds binds the effective emitted-kind policy to accepted history.
@@ -154,7 +153,7 @@ func (c *TreeCache) prepareRender(ctx context.Context, incoming *RenderRequest) 
 			req.Source.Revision,
 			req.Source.Digest,
 			req.Source.InputAlias,
-			req.WipeSecrets,
+
 			req.StrictSubstitutions,
 			slices.Clone(req.SkipKinds),
 			req.DependencySubstitutions,

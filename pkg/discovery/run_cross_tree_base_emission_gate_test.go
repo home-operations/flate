@@ -77,11 +77,10 @@ func TestRun_CrossTreeBaseEmissionGate(t *testing.T) {
 	res, err := discovery.Run(
 		context.Background(),
 		discovery.Config{
-			Trees:       testTrees(t),
-			Path:        filepath.Join(dir, "cluster"),
-			RepoRoot:    dir,
-			Store:       st,
-			WipeSecrets: true,
+			Trees:    testTrees(t),
+			Path:     filepath.Join(dir, "cluster"),
+			RepoRoot: dir,
+			Store:    st,
 		},
 	)
 	assert.FatalIf(t, err != nil, "Run: %v", err)
@@ -96,12 +95,10 @@ func TestRun_CrossTreeBaseEmissionGate(t *testing.T) {
 	selfish := testutil.KustomizationID("flux-system", "selfish")
 	{
 		got := parentsForTest(res.Index)[selfish]
-		if got != res.Binding.Producer {
-			t.Errorf("ParentOf[selfish] = %v, want entry %v",
-				got,
-				res.Binding.Producer,
-			)
-		}
+		assert.ErrorIf(t, got != res.Binding.Producer,
+			"ParentOf[selfish] = %v, want entry %v",
+			got,
+			res.Binding.Producer)
 	}
 }
 
@@ -120,9 +117,9 @@ func TestRun_SymlinkEntryResolved(t *testing.T) {
 	got, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t), Path: link, Store: store.New()})
 	assert.FatalIf(t, err != nil, "%v", err)
 	want, _ := filepath.EvalSymlinks(target)
-	if got.RepoRoot != want {
-		t.Errorf("RepoRoot = %q, want %q", got.RepoRoot, want)
-	}
+	assert.ErrorIf(t, got.RepoRoot != want,
+		"RepoRoot = %q, want %q", got.RepoRoot, want)
+
 	entries, err := discovery.Plan(t.Context(), discovery.Config{Path: link})
 	assert.FatalIf(t, err != nil, "%v", err)
 	assert.FatalIf(
@@ -149,13 +146,11 @@ func TestRun_NoRepositoryUsesScanRoot(t *testing.T) {
 			result, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t), Path: dir, Store: st})
 			assert.FatalIf(t, err != nil, "%v", err)
 			artifact := st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
-			if result.RepoRoot != dir || artifact.LocalPath != dir {
-				t.Errorf("no-repository roots = %q, %q; want %q",
-					result.RepoRoot,
-					artifact.LocalPath,
-					dir,
-				)
-			}
+			assert.ErrorIf(t, result.RepoRoot != dir || artifact.LocalPath != dir,
+				"no-repository roots = %q, %q; want %q",
+				result.RepoRoot,
+				artifact.LocalPath,
+				dir)
 		})
 	}
 }
@@ -281,7 +276,7 @@ spec:
 	{
 		_, err := discovery.Run(context.Background(), discovery.Config{
 			Trees: testTrees(t),
-			Path:  dir, Store: st, WipeSecrets: true,
+			Path:  dir, Store: st,
 		})
 		assert.FatalIf(t, err != nil, "Run: %v", err)
 	}
@@ -338,7 +333,7 @@ configMapGenerator:
 	{
 		_, err := discovery.Run(t.Context(), discovery.Config{
 			Trees: testTrees(t),
-			Path:  dir, Store: st, WipeSecrets: true, RemoteInputs: &inputs,
+			Path:  dir, Store: st, RemoteInputs: &inputs,
 		})
 		assert.FatalIf(t, err != nil, "Run: %v", err)
 	}
@@ -346,7 +341,7 @@ configMapGenerator:
 	cmID := manifest.NamedResource{
 		Kind: manifest.KindConfigMap, Name: "cluster-settings",
 	}
-	cm, _ := values.NewStoreProvider(st, true).Data(cmID).(*manifest.ConfigMap)
+	cm, _ := values.NewStoreProvider(st).Data(cmID).(*manifest.ConfigMap)
 	assert.FatalIf(t, st.GetObject(cmID) != nil, "%v", "generator lookup entered canonical inventory")
 	assert.FatalIf(t, cm == nil, "ConfigMap %s unavailable through generator lookup", cmID)
 	{
@@ -397,7 +392,12 @@ func TestRun_KRMIgnoreFileScopesInitialScanOnly(t *testing.T) {
 	st := store.New()
 	result, err := discovery.Run(t.Context(), discovery.Config{
 		Trees: testTrees(t),
-		Path:  filepath.Join(dir, "cluster"), RepoRoot: dir, Store: st, WipeSecrets: true,
+		Path: filepath.Join(
+			dir,
+			"cluster",
+		),
+		RepoRoot:      dir,
+		Store:         st,
 		KRMIgnoreFile: filepath.Join(dir, "override.krmignore"),
 	})
 	assert.FatalIf(t, err != nil, "Run: %v", err)
@@ -510,7 +510,7 @@ data: {value: fixture}
 			st := store.New()
 			res, err := discovery.Run(
 				t.Context(),
-				discovery.Config{Trees: testTrees(t), Path: dir, RepoRoot: dir, Store: st, WipeSecrets: true},
+				discovery.Config{Trees: testTrees(t), Path: dir, RepoRoot: dir, Store: st},
 			)
 			assert.FatalIf(t, err != nil, "%v", err)
 			raw := testutil.HelmReleaseID("demo", "demo")
@@ -528,9 +528,9 @@ data: {value: fixture}
 			)
 			standalone := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "demo", Name: "standalone"}
 			record, indexed := res.Index.Lookup(standalone)
-			if !indexed || st.GetObject(standalone) == nil || res.Binding != (discovery.Binding{}) {
-				t.Fatalf("standalone ConfigMap ownership = %+v, published=%v", record, st.GetObject(standalone))
-			}
+			assert.FatalIf(t, !indexed || st.GetObject(standalone) == nil || res.Binding != (discovery.Binding{}),
+				"standalone ConfigMap ownership = %+v, published=%v", record, st.GetObject(standalone))
+
 			assert.Equal(t, len(testutil.Owners(st.Productions(standalone, res.Index))), 0)
 		})
 	}
@@ -541,13 +541,102 @@ func TestRun_SecretPreparationPreservesPrecedence(t *testing.T) {
 	for _, scenario := range []string{"entry-owned", "preexisting", "graph-owned"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Parallel()
-			testRunSecretPreparationPreservesPrecedenceCase(
-				t,
-				&scenario,
-			)
-		},
-		)
+			testRunSecretPreparationPreservesPrecedenceCase1(t, &scenario)
+		})
 	}
+}
+
+func testRunSecretPreparationPreservesPrecedenceCase1(t *testing.T, scenario *string) {
+	t.Helper()
+
+	dir := t.TempDir()
+	testutil.WriteFile(
+		t,
+		dir,
+		"flux/ks.yaml",
+		testutil.KustomizationYAML(
+			"owner",
+			"flux-system",
+			"  {path: ./apps, sourceRef: {kind: GitRepository, name: flux-system}}\n",
+		),
+	)
+	resources := "producer.yaml"
+	if (*scenario) == "graph-owned" {
+		resources += ", ../secret.yaml"
+	}
+	entry := "flux/ks.yaml"
+	if (*scenario) == "entry-owned" {
+		entry += ", secret.yaml"
+	}
+	testutil.WriteFile(t, dir, "kustomization.yaml", "resources: ["+entry+"]\n")
+	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "namespace: secure\nresources: ["+resources+"]\n")
+	testutil.WriteFile(t, dir, "apps/producer.yaml", `apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata: {name: producer, namespace: secure}
+spec:
+ target: {name: app-secret}
+ data: [{secretKey: HOST, remoteRef: {key: fixture}}]
+`)
+	const authored = `apiVersion: v1
+kind: Secret
+metadata: {name: app-secret, namespace: secure}
+stringData: {HOST: fixture-value}
+`
+	testutil.WriteFile(t, dir, "secret.yaml", authored)
+	st := store.New()
+	id := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "secure", Name: "app-secret"}
+	preexisting := &manifest.Secret{
+		Name:       id.Name,
+		Namespace:  id.Namespace,
+		StringData: map[string]any{"HOST": "preexisting-value"},
+	}
+	if (*scenario) == "preexisting" {
+		st.AddObject(preexisting)
+	}
+	result, err := discovery.Run(
+		t.Context(),
+		discovery.Config{Trees: testTrees(t), Path: dir, RepoRoot: dir, Store: st},
+	)
+	assert.FatalIf(t, err != nil, "%s", err)
+
+	secret, ok := st.GetObject(id).(*manifest.Secret)
+	if (*scenario) != "preexisting" {
+		assert.FatalIf(t, st.GetObject(id) != nil,
+			"%s Secret published before rendering: %+v", (*scenario), secret)
+	} else if !ok || secret != preexisting || secret.StringData["HOST"] != "preexisting-value" {
+		t.Fatalf("preexisting Secret replaced: %+v", secret)
+	}
+	assert.FatalIf(
+		t,
+		(*scenario) == "graph-owned" && values.NewStoreProvider(st).Data(id) != nil,
+		"%s",
+		"remote declaration fabricated data",
+	)
+
+	if (*scenario) == "entry-owned" {
+		declared, ok := result.Index.Records[id].Declaration.(*manifest.Secret)
+		assert.FatalIf(t, !ok || declared.StringData["HOST"] != "fixture-value" || declared == secret,
+			"prepared Secret = %+v, published=%+v", declared, secret)
+
+		if _, indexed := result.Index.Lookup(
+			id,
+		); !indexed ||
+			!slices.Contains(testutil.Owners(st.Productions(id, result.Index)), result.Binding.Producer) {
+			t.Fatalf("prepared Secret lost entry ownership: %+v", result.Index.Records[id])
+		}
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "secret.yaml"))
+	assert.NoError(t, err)
+	assert.Equal(t, string(data), authored)
+	assert.Diff(t, preexisting.StringData, map[string]any{"HOST": "preexisting-value"})
+	declarations := testutil.Declarations(st.Productions(id, nil))
+	assert.FatalIf(t, !slices.Equal(
+		declarations,
+		[]manifest.NamedResource{
+			{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "secure", Name: "producer"},
+		},
+	),
+		"declarations=%v", declarations)
 }
 
 type testRunAliasesURLMatchedInTreeGitRepositoryCaseInputs struct {
@@ -603,7 +692,7 @@ func testRunAliasesURLMatchedInTreeGitRepositoryCase(
 	{
 		_, err := discovery.Run(
 			t.Context(),
-			discovery.Config{Trees: testTrees(t), Path: (*testCaseInput.dir), Store: st, WipeSecrets: true},
+			discovery.Config{Trees: testTrees(t), Path: (*testCaseInput.dir), Store: st},
 		)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
@@ -642,112 +731,4 @@ func testRunAliasesURLMatchedInTreeGitRepositoryCase(
 		warnings,
 		want,
 	)
-}
-
-func testRunSecretPreparationPreservesPrecedenceCase(
-	t *testing.T,
-	testCaseInput *string,
-) {
-	t.Helper()
-
-	dir := t.TempDir()
-	testutil.WriteFile(
-		t,
-		dir,
-		"flux/ks.yaml",
-		testutil.KustomizationYAML(
-			"owner",
-			"flux-system",
-			"  {path: ./apps, sourceRef: {kind: GitRepository, name: flux-system}}\n",
-		),
-	)
-	resources := "producer.yaml"
-	if (*testCaseInput) == "graph-owned" {
-		resources += ", ../secret.yaml"
-	}
-	entry := "flux/ks.yaml"
-	if (*testCaseInput) == "entry-owned" {
-		entry += ", secret.yaml"
-	}
-	testutil.WriteFile(t, dir, "kustomization.yaml", "resources: ["+entry+"]\n")
-	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "namespace: secure\nresources: ["+resources+"]\n")
-	testutil.WriteFile(t, dir, "apps/producer.yaml", `apiVersion: external-secrets.io/v1
-kind: ExternalSecret
-metadata: {name: producer, namespace: secure}
-spec:
- target: {name: app-secret}
- data: [{secretKey: HOST, remoteRef: {key: fixture}}]
-`)
-	const authored = `apiVersion: v1
-kind: Secret
-metadata: {name: app-secret, namespace: secure}
-stringData: {HOST: fixture-value}
-`
-	testutil.WriteFile(t, dir, "secret.yaml", authored)
-	st := store.New()
-	id := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "secure", Name: "app-secret"}
-	preexisting := &manifest.Secret{
-		Name:       id.Name,
-		Namespace:  id.Namespace,
-		StringData: map[string]any{"HOST": "preexisting-value"},
-	}
-	if (*testCaseInput) == "preexisting" {
-		st.AddObject(preexisting)
-	}
-	result, err := discovery.Run(
-		t.Context(),
-		discovery.Config{Trees: testTrees(t), Path: dir, RepoRoot: dir, Store: st, WipeSecrets: true},
-	)
-	assert.FatalIf(t, err != nil, "%v", err)
-	secret, ok := st.GetObject(id).(*manifest.Secret)
-	if (*testCaseInput) != "preexisting" {
-		assert.FatalIf(
-			t,
-			st.GetObject(id) != nil,
-			"%s Secret published before rendering: %+v", (*testCaseInput), secret,
-		)
-	} else {
-		assert.FatalIf(
-			t,
-			!ok || secret != preexisting || secret.StringData["HOST"] != "preexisting-value",
-			"preexisting Secret replaced: %+v",
-			secret,
-		)
-	}
-	if (*testCaseInput) == "graph-owned" {
-		lookup, ok := values.NewStoreProvider(st, true).Data(id).(*manifest.Secret)
-		assert.FatalIf(
-			t,
-			!ok || lookup.StringData["HOST"] != manifest.ValuePlaceholder("HOST"),
-			"lookup Secret = %+v, want declared-key placeholder",
-			lookup,
-		)
-	}
-	if (*testCaseInput) == "entry-owned" {
-		declared, ok := result.Index.Records[id].Declaration.(*manifest.Secret)
-		assert.FatalIf(
-			t,
-			!ok || declared.StringData["HOST"] != "fixture-value" || declared == secret,
-			"prepared Secret = %+v, published=%+v",
-			declared,
-			secret,
-		)
-		if _, indexed := result.Index.Lookup(
-			id,
-		); !indexed ||
-			!slices.Contains(testutil.Owners(st.Productions(id, result.Index)), result.Binding.Producer) {
-			t.Fatalf("prepared Secret lost entry ownership: %+v", result.Index.Records[id])
-		}
-	}
-	data, err := os.ReadFile(filepath.Join(dir, "secret.yaml"))
-	assert.NoError(t, err)
-	assert.Equal(t, string(data), authored)
-	assert.Diff(t, preexisting.StringData, map[string]any{"HOST": "preexisting-value"})
-	declarations := testutil.Declarations(st.Productions(id, nil))
-	assert.FatalIf(t, !slices.Equal(
-		declarations,
-		[]manifest.NamedResource{
-			{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "secure", Name: "producer"},
-		},
-	), "declarations=%v", declarations)
 }

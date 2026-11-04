@@ -68,32 +68,22 @@ data: {greeting: {{ required "missing required value" .Values.greeting | quote }
 			if mode == "changed-only" {
 				args = append(args, "--base", "HEAD")
 			}
-			runCLIBuffersResult1 := harness.RunCLIBuffers(args...)
-			stdout, stderr, code := runCLIBuffersResult1.Stdout, runCLIBuffersResult1.Stderr, runCLIBuffersResult1.Code
+			result1 := harness.RunCLIBuffers(args...)
+			stdout, stderr, code := result1.Stdout, result1.Stderr, result1.Code
 			assert.FatalIf(t, code != 1 || !strings.Contains(stderr, "missing required value") ||
-				!strings.Contains(
-					stderr,
-					"apps/demo",
-				), "required chart failure: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+				!strings.Contains(stderr, "apps/demo"),
+				"required chart failure: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 			assert.FatalIf(t, !strings.Contains(stderr, "[UnresolvedSubstitution]") ||
-				!strings.Contains(
-					stderr,
-					`substituteFrom Secret "unreadable"`,
-				), "parent omission warning missing: %s", stderr)
+				!strings.Contains(stderr, `substituteFrom Secret "unreadable"`),
+				"parent omission warning missing: %s", stderr)
 			assert.FatalIf(
 				t,
-				strings.Contains(stdout, "name: demo-values") || strings.Contains(stdout, "..PLACEHOLDER_"),
+				strings.Contains(stdout, "name: demo-values") || strings.Contains(stdout, "ENC[AES256_GCM"),
 				"failed chart published fabricated output: %s",
 				stdout,
 			)
-			assert.FatalIf(
-				t,
-				strings.Contains(stdout, "name: sibling-values") != (mode == "full"),
-				"unchanged sibling selection: mode=%s stdout=%s stderr=%s",
-				mode,
-				stdout,
-				stderr,
-			)
+			assert.FatalIf(t, strings.Contains(stdout, "name: sibling-values") != (mode == "full"),
+				"unchanged sibling selection: mode=%s stdout=%s stderr=%s", mode, stdout, stderr)
 		})
 	}
 	for _, tc := range []struct{ current, original, side string }{
@@ -101,63 +91,68 @@ data: {greeting: {{ required "missing required value" .Values.greeting | quote }
 		{original, dir, "orig"},
 	} {
 		t.Run("diff/"+tc.side, func(t *testing.T) {
-			runCLIBuffersResult2 := harness.RunCLIBuffers(
-				"diff",
-				"all",
-				"--path",
-				filepath.Join(tc.current, "cluster"),
-				"--path-orig",
-				filepath.Join(tc.original, "cluster"),
-				"-o",
-				"json",
-				"--allow-missing-kinds=Secret,ConfigMap",
-				"--concurrency",
-				"2",
-				"--no-progress",
-				"--cache-dir",
-				t.TempDir(),
-			)
-			stdout, stderr, code := runCLIBuffersResult2.Stdout, runCLIBuffersResult2.Stderr, runCLIBuffersResult2.Code
-			assert.FatalIf(t, code != 1 || !strings.Contains(stderr, "missing required value") ||
-				!strings.Contains(
-					stderr,
-					"diff suppressed",
-				), "failed-side chart diagnostic: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
-			assert.FatalIf(t, !strings.Contains(stderr, "[UnresolvedSubstitution]") ||
-				!strings.Contains(
-					stderr,
-					`substituteFrom Secret "unreadable"`,
-				), "diff lost parent omission warning: %s", stderr)
-			assert.FatalIf(
-				t,
-				strings.Contains(stdout, "demo-values") || strings.Contains(stdout, "..PLACEHOLDER_"),
-				"failed chart leaked into diff: %s",
-				stdout,
-			)
-			var result struct {
-				Suppressed []struct {
-					Parent struct {
-						Kind      string `json:"Kind"`
-						Name      string `json:"Name"`
-						Namespace string `json:"Namespace"`
-					} `json:"Parent"`
-					Side  string `json:"Side"`
-					Count int    `json:"Count"`
-				} `json:"Suppressed"`
-			}
-			assert.NoError(t, json.Unmarshal([]byte(stdout), &result))
-			assert.FatalIf(t, len(result.Suppressed) != 1, "missing failed-release suppression: %s", stdout)
-			note := result.Suppressed[0]
-			assert.FatalIf(
-				t,
-				note.Parent.Kind != "HelmRelease" || note.Parent.Name != "demo" || note.Parent.Namespace != "apps" ||
-					note.Side != tc.side ||
-					note.Count != 1,
-				"failed-release suppression changed: %s",
-				stdout,
-			)
+			testE2EUnreadableParentDoesNotFillRequiredValuesCase1(t, &tc)
 		})
 	}
+}
+
+func testE2EUnreadableParentDoesNotFillRequiredValuesCase1(t *testing.T, tc *struct {
+	current  string
+	original string
+	side     string
+},
+) {
+	t.Helper()
+	result2 := harness.RunCLIBuffers(
+		"diff",
+		"all",
+		"--path",
+		filepath.Join(tc.current, "cluster"),
+		"--path-orig",
+		filepath.Join(tc.original, "cluster"),
+		"-o",
+		"json",
+		"--allow-missing-kinds=Secret,ConfigMap",
+		"--concurrency",
+		"2",
+		"--no-progress",
+		"--cache-dir",
+		t.TempDir(),
+	)
+	stdout, stderr, code := result2.Stdout, result2.Stderr, result2.Code
+	assert.FatalIf(t, code != 1 || !strings.Contains(stderr, "missing required value") ||
+		!strings.Contains(stderr, "diff suppressed"),
+		"failed-side chart diagnostic: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+	assert.FatalIf(t, !strings.Contains(stderr, "[UnresolvedSubstitution]") ||
+		!strings.Contains(stderr, `substituteFrom Secret "unreadable"`),
+		"diff lost parent omission warning: %s", stderr)
+	assert.FatalIf(t, strings.Contains(stdout, "demo-values") || strings.Contains(stdout, "ENC[AES256_GCM"),
+		"failed chart leaked into diff: %s", stdout)
+
+	var result struct {
+		Suppressed []struct {
+			Parent struct {
+				Kind      string `json:"kind"`
+				Name      string `json:"name"`
+				Namespace string `json:"namespace"`
+			} `json:"parent"`
+			Side  string `json:"side"`
+			Count int    `json:"count"`
+		} `json:"suppressed"`
+	}
+	assert.NoError(t, json.Unmarshal([]byte(stdout), &result))
+	assert.FatalIf(t, len(result.Suppressed) != 1,
+		"missing failed-release suppression: %s", stdout)
+
+	note := result.Suppressed[0]
+	assert.FatalIf(
+		t,
+		note.Parent.Kind != "HelmRelease" || note.Parent.Name != "demo" || note.Parent.Namespace != "apps" ||
+			note.Side != tc.side ||
+			note.Count != 1,
+		"failed-release suppression changed: %s",
+		stdout,
+	)
 }
 
 //nolint:paralleltest // CLI execution changes process-wide logging.
@@ -185,8 +180,8 @@ func TestE2E_MalformedChartFailsProducer(t *testing.T) {
 				"--cache-dir",
 				t.TempDir(),
 			}
-			runCLIBuffersResult3 := harness.RunCLIBuffers(args...)
-			stdout, stderr, code := runCLIBuffersResult3.Stdout, runCLIBuffersResult3.Stderr, runCLIBuffersResult3.Code
+			result3 := harness.RunCLIBuffers(args...)
+			stdout, stderr, code := result3.Stdout, result3.Stderr, result3.Code
 			assert.FatalIf(
 				t,
 				code != 1 || (!strings.Contains(stderr, "HelmRelease") || !strings.Contains(stderr, "apps/demo")) ||
@@ -197,8 +192,8 @@ func TestE2E_MalformedChartFailsProducer(t *testing.T) {
 				stdout,
 				stderr,
 			)
-			runCLIBuffersResult4 := harness.RunCLIBuffers(args...)
-			nextOut, nextErr, nextCode := runCLIBuffersResult4.Stdout, runCLIBuffersResult4.Stderr, runCLIBuffersResult4.Code
+			result4 := harness.RunCLIBuffers(args...)
+			nextOut, nextErr, nextCode := result4.Stdout, result4.Stderr, result4.Code
 			assert.Equal(t, nextCode, code)
 			assert.Equal(t, nextOut, stdout)
 			assert.Equal(t, nextErr, stderr)

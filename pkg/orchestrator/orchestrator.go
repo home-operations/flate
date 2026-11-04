@@ -49,8 +49,7 @@ type Config struct {
 	Selection manifest.Selection
 	// HelmOptions tunes templating and kind filtering through SkipKinds.
 	HelmOptions helm.Options
-	// WipeSecrets controls Secret cleartext placeholders.
-	WipeSecrets bool
+
 	// AllowMissingKinds tolerates missing source Secret material, Helm valuesFrom kinds, and CRDs.
 	// Required postBuild references and malformed data remain errors.
 	AllowMissingKinds []string
@@ -223,9 +222,9 @@ func newOrchestrator(cfg *Config, treeInput *Tree, ts *task.Service) *Orchestrat
 		o.src.Fetchers[kind] = nil
 	}
 	o.src.Fetchers[manifest.KindExternalArtifact] = source.Wrap(manifest.KindExternalArtifact, &external.Fetcher{})
-	o.ksc = kustomization.New(st, ts, trees, cfg.WipeSecrets)
-	o.hrc = helmrelease.New(base.New(st, ts), cfg.HelmClient, cfg.HelmOptions, cfg.WipeSecrets)
-	o.rsc = resourcesetctrl.New(st, ts, cfg.Cache, cfg.WipeSecrets)
+	o.ksc = kustomization.New(st, ts, trees)
+	o.hrc = helmrelease.New(base.New(st, ts), cfg.HelmClient, cfg.HelmOptions)
+	o.rsc = resourcesetctrl.New(st, ts, cfg.Cache)
 	o.agc = artifactgenerator.New(st, ts, cfg.Cache)
 	o.controllers = base.Controllers{
 		Kustomization:     o.ksc,
@@ -315,7 +314,7 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 		Declarations: o.cfg.Supply,
 		Selection:    o.cfg.Selection, Loader: o.loader,
 		Path: o.cfg.Path, RepoRoot: o.cfg.RepoRoot, SelfURLs: o.cfg.SelfURLs, Input: o.cfg.Input,
-		Store: o.store, WipeSecrets: o.cfg.WipeSecrets,
+		Store: o.store,
 		Trees: o.ksc.Trees, RemoteInputs: &o.inputs, RemoteRetry: o.cfg.SourceRetry,
 		StrictSubstitutions: o.cfg.StrictSubstitutions, SkipKinds: o.cfg.HelmOptions.SkipResourceKinds(),
 	}

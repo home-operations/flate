@@ -80,7 +80,7 @@ func computeTemplateKey(
 		ReleaseName:              hr.ReleaseName(),
 		ReleaseNamespace:         hr.ReleaseNamespace(),
 		CRDsPolicy:               cmp.Or(policy.CRDs, helmv2.Create),
-		DisableSchemaValidation:  schemaValidationSkipped(hr, nil),
+		DisableSchemaValidation:  hr.DisableSchemaValidation,
 		DisableOpenAPIValidation: policy.DisableOpenAPIValidation,
 		ChartVersion:             hr.Chart.Version,
 		ChartValuesFiles:         hr.ChartValuesFiles,
@@ -141,7 +141,6 @@ type templateBinding struct {
 	Digest       string                            `json:"Digest"`
 	Alias        bool                              `json:"Alias"`
 	Options      Options                           `json:"Options"`
-	Wipe         bool                              `json:"Wipe"`
 	Dependencies values.DependencySubstitutions    `json:"Dependencies"`
 }
 
@@ -152,7 +151,6 @@ func (a *templateBinding) same(b *templateBinding) bool {
 		a.Revision != b.Revision ||
 		a.Digest != b.Digest ||
 		a.Alias != b.Alias ||
-		a.Wipe != b.Wipe ||
 		!a.Dependencies.Equal(b.Dependencies) {
 		return false
 	}

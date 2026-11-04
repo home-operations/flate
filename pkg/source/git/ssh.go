@@ -2,20 +2,11 @@ package git
 
 import (
 	"fmt"
-	"net"
 	"os"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 )
-
-// insecureIgnoreHostKey is the default SSH host-key callback when a
-// GitRepository SecretRef does NOT include a known_hosts entry. It
-// matches the pre-existing ssh-with-agent behavior; users who want
-// strict host-key checking provide known_hosts in the Secret.
-func insecureIgnoreHostKey(_ string, _ net.Addr, _ ssh.PublicKey) error {
-	return nil
-}
 
 // knownHostsCallback returns an SSH HostKeyCallback that validates
 // against the provided known_hosts data. It feeds the data through an

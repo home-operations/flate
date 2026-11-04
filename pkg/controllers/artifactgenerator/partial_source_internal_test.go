@@ -96,7 +96,7 @@ func partialSourcePublicationCase(t *testing.T, output *[]map[string]any) {
 	gen.StartLifecycle()
 	trees := kustomize.NewTreeCache(owner, nil, bodies)
 	defer trees.Close()
-	ks := kustomization.New(st, bodies, trees, false)
+	ks := kustomization.New(st, bodies, trees)
 	ks.StartLifecycle()
 	src := sourcecontroller.New(st, bodies)
 	src.Fetchers[manifest.KindExternalArtifact] = sources.Wrap(manifest.KindExternalArtifact, &external.Fetcher{})

@@ -364,15 +364,15 @@ func testRecordEmittedCoverageAndStaticBoundaryCase2(
 		assert.Equal(t, warnings[0].Message, "conflicting producers; using static object")
 		assert.Diff(t, warnings[0].Detail, []string{p.String(), q.String()})
 		assert.FatalIf(t, s.GetObject(seed.Obj.Named()) != seed.Obj, "%s", "rooted read lost static authority")
-		checkEffectiveObject(t, s, seed.Obj.Named(), seed)
+		checkEffectiveObject(t, s, seed.Obj.Named(), &seed)
 		replacement := emissionChild("seed", "replacement")
 		s.AddObject(replacement.Obj, replacement.Doc)
-		checkEffectiveObject(t, s, seed.Obj.Named(), replacement)
+		checkEffectiveObject(t, s, seed.Obj.Named(), &replacement)
 		_, document, replaced := s.GetEmission(seed.Obj.Named())
 		assert.Diff(t, document, replacement.Doc)
 		replaced.Finish()
 		assert.FatalIf(t, !s.DeleteObject(seed.Obj.Named()), "%s", "static authority was not deleted")
-		checkEffectiveObject(t, s, seed.Obj.Named(), other)
+		checkEffectiveObject(t, s, seed.Obj.Named(), &other)
 		return
 	}
 	assert.FatalIf(
@@ -382,7 +382,7 @@ func testRecordEmittedCoverageAndStaticBoundaryCase2(
 		"static deletion lost live emitted support",
 	)
 	assert.Equal(t, s.EmissionOwner(seed.Obj.Named()), p)
-	checkEffectiveObject(t, s, seed.Obj.Named(), child)
+	checkEffectiveObject(t, s, seed.Obj.Named(), &child)
 }
 
 func testRecordEmittedCoverageAndStaticBoundaryNeverEmittedStatic(t *testing.T) {
@@ -563,7 +563,7 @@ func testRecordEmittedCoverageAndStaticBoundaryCaseCompletion(
 	scope.s.RecordEmitted((*scope.p), &attempt, nil)
 	unsub()
 	assert.Equal(t, scope.s.EmissionOwner(scope.seed.Obj.Named()), (*scope.p))
-	checkEffectiveObject(t, scope.s, scope.seed.Obj.Named(), actual)
+	checkEffectiveObject(t, scope.s, scope.seed.Obj.Named(), &actual)
 	if *scope.independent {
 		assert.FatalIf(
 			t,
@@ -577,7 +577,7 @@ func testRecordEmittedCoverageAndStaticBoundaryCaseCompletion(
 		accept(t, scope.s, (*scope.p), &empty)
 		empty.Finish()
 		assert.Equal(t, scope.s.EmissionOwner(scope.seed.Obj.Named()), manifest.NamedResource{})
-		checkEffectiveObject(t, scope.s, scope.seed.Obj.Named(), (*scope.seed))
+		checkEffectiveObject(t, scope.s, scope.seed.Obj.Named(), scope.seed)
 		{
 			got := scope.s.Productions(
 				scope.seed.Obj.Named(),
@@ -613,9 +613,9 @@ func testRecordEmittedCoverageAndStaticBoundaryCaseCompletion(
 		"%s",
 		"complete empty resurrected covered prediction",
 	)
-	checkEffectiveObject(t, scope.s, scope.seed.Obj.Named(), Child{})
+	checkEffectiveObject(t, scope.s, scope.seed.Obj.Named(), &Child{})
 	scope.s.AddObject(scope.seed.Obj)
-	checkEffectiveObject(t, scope.s, scope.seed.Obj.Named(), (*scope.seed))
+	checkEffectiveObject(t, scope.s, scope.seed.Obj.Named(), scope.seed)
 	assert.FatalIf(
 		t,
 		scope.s.GetObject(scope.seed.Obj.Named()) == nil,

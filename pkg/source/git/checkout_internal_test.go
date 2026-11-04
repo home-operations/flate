@@ -23,6 +23,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/client"
 	"github.com/go-git/go-git/v5/plumbing/transport/server"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -371,11 +372,16 @@ func testFetcherSubmoduleSchemesCaseCase(t *testing.T, testCaseInput testFetcher
 			Reference:         &sourcev1.GitRepositoryRef{Commit: testCaseInput.hash.String()},
 			RecurseSubmodules: true,
 		}
+		signer, keyErr := ssh.ParsePrivateKey([]byte(*(*testCaseInput.identity)))
+		assert.NoError(t, keyErr)
 		artifact, err = f.Fetch(
 			t.Context(),
 			repo,
 			(testInputs{secrets: func(_, _ string) *manifest.Secret {
-				return &manifest.Secret{StringData: map[string]any{"identity": (*(*testCaseInput.identity))}}
+				return &manifest.Secret{StringData: map[string]any{
+					"identity":    *(*testCaseInput.identity),
+					"known_hosts": "host " + string(ssh.MarshalAuthorizedKey(signer.PublicKey())),
+				}}
 			}}).readSet(repo),
 			sourcecache.Policy{},
 		)

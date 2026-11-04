@@ -71,7 +71,7 @@ func TestPrepare_LayersAndImmutability(t *testing.T) {
 	} {
 		st.AddObject(cm)
 	}
-	provider := values.NewStoreProvider(st, true)
+	provider := values.NewStoreProvider(st)
 	prepared, err := Prepare(projected, provider)
 	assert.NoError(t, err)
 	want := map[string]string{"VALUE": "inline", "REF": "second", "NORMALIZED": "onetwo", "EXTRA": "one\ntwo"}
@@ -131,7 +131,7 @@ func TestPrepare_EntrySubstitutionContext(t *testing.T) {
 	st.AddObject(
 		&manifest.ConfigMap{Name: "vars", Namespace: "sources", Data: map[string]any{"INVALID": []any{"nested"}}},
 	)
-	_, err := Prepare(entry, values.NewStoreProvider(st, true))
+	_, err := Prepare(entry, values.NewStoreProvider(st))
 	assert.FatalIf(t, err == nil || strings.Contains(err.Error(), owner.String()) ||
 		strings.Contains(err.Error(), `entry path "clusters/test"`) ||
 		strings.Contains(err.Error(), entry.Named().String()), "substituteFrom repeated its owner: %v", err)

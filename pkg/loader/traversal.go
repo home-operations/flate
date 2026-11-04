@@ -413,7 +413,7 @@ func (w *traversal) scanBootstrapFile(ctx context.Context, abs string, reader *d
 	count := 0
 	var objs []parsedObject
 	var err error
-	opts := manifest.ParseDocOptions{WipeSecrets: w.loader.Options.WipeSecrets}
+	opts := manifest.ParseDocOptions{}
 	if reader.compact {
 		objs, err = reader.censusFile(ctx, abs, opts)
 	} else {

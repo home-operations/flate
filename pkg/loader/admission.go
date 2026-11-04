@@ -25,7 +25,7 @@ type admissionReader interface {
 	Lookup(manifest.NamedResource) (manifest.BaseManifest, manifest.DeclarationPolicy)
 	GetObject(manifest.NamedResource) manifest.BaseManifest
 	GetDeclaration(manifest.NamedResource) manifest.BaseManifest
-	ReferenceFacts(manifest.NamedResource, *manifest.DiscoveryIndex, bool, manifest.NamedResource) store.ReferenceFacts
+	ReferenceFacts(manifest.NamedResource, *manifest.DiscoveryIndex, manifest.NamedResource) store.ReferenceFacts
 	GetArtifact(manifest.NamedResource, store.ArtifactRead) store.Artifact
 	GetStatus(manifest.NamedResource) (store.StatusInfo, bool)
 	Productions(manifest.NamedResource, *manifest.DiscoveryIndex) []manifest.Production
@@ -83,6 +83,8 @@ type admissionClosure struct {
 
 // Prepare computes the local declaration and input closure without publishing membership or objects.
 // History is invocation-local borrowed evidence; complete inventories replace only their owner's support.
+//
+//nolint:gocritic // Immutable value inputs preserve snapshot semantics.
 func (l *Loader) Prepare(
 	ctx context.Context,
 	incoming store.Child,

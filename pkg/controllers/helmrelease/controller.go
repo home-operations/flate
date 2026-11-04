@@ -24,10 +24,6 @@ type Controller struct {
 
 	// Options applied to every template call.
 	Options helm.Options
-
-	// WipeSecrets controls whether secrets are wiped from rendered
-	// templates.
-	WipeSecrets bool
 }
 
 type execution struct {
@@ -43,17 +39,16 @@ type execution struct {
 func (c *Controller) newExecution(id manifest.NamedResource) *execution {
 	execution := &execution{Controller: c}
 	execution.run.Init(c.Controller, id)
-	execution.data = values.NewStoreProvider(&execution.run.Reads, c.WipeSecrets)
+	execution.data = values.NewStoreProvider(&execution.run.Reads)
 	return execution
 }
 
 // New constructs a HelmRelease controller.
-func New(controller *base.Controller, h *helm.Client, opts helm.Options, wipeSecrets bool) *Controller {
+func New(controller *base.Controller, h *helm.Client, opts helm.Options) *Controller {
 	return &Controller{
-		Controller:  controller,
-		Helm:        h,
-		Options:     opts,
-		WipeSecrets: wipeSecrets,
+		Controller: controller,
+		Helm:       h,
+		Options:    opts,
 	}
 }
 
@@ -93,8 +88,7 @@ func (c *execution) render(
 	id := hr.Named()
 
 	c.SetPendingUnlessReady(id, "resolving chart")
-	hr, unavailable, err := helm.Prepare(hr, helm.NewSources(&c.run.Reads).Declaration, c.data, c.Helm.ValuesCache())
-	omitted = append(omitted, unavailable...)
+	hr, err := helm.Prepare(hr, helm.NewSources(&c.run.Reads).Declaration, c.data, c.Helm.ValuesCache())
 	slices.SortFunc(omitted, manifest.NamedResource.Compare)
 	omitted = slices.Compact(omitted)
 	c.recordOmittedValues(id, omitted)
@@ -118,7 +112,6 @@ func (c *execution) render(
 		Options:                 c.Options,
 		DependencySubstitutions: c.DependencySubstitutions,
 		Sources:                 helm.NewSources(&c.run.Reads),
-		WipeSecrets:             c.WipeSecrets,
 	}
 	input.Admit = func(key string) (bool, error) {
 		var content any
@@ -160,10 +153,10 @@ func (c *execution) render(
 	}
 	hr.EmissionPolicy().Stamp(docs)
 
-	parseChildrenResult2 := c.ParseChildren(
+	parseChildrenResult2 := c.run.ParseChildren(
 		hr,
 		docs,
-		manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets},
+		manifest.ParseDocOptions{},
 	)
 	attempt.Children, attempt.Manifests, attempt.Failures = parseChildrenResult2.Children, parseChildrenResult2.Visible, parseChildrenResult2.Failures
 	attempt.Fingerprint, attempt.Complete, attempt.Render = fp, true, receipt
@@ -191,7 +184,7 @@ func (c *Controller) PreviousRender(
 	if !ok || ctx.Err() != nil {
 		return nil, false
 	}
-	data := values.NewStoreProvider(reads, c.WipeSecrets)
+	data := values.NewStoreProvider(reads)
 	waiter := depwait.Waiter{Store: reads, Parent: reads.ID(), AllowMissingCRDs: c.MissingCRDsAllowed()}
 	var omittedRefs []manifest.NamedResource
 	for ref := range manifest.References(hr, manifest.ReferenceRelations) {
@@ -216,8 +209,8 @@ func (c *Controller) PreviousRender(
 		}
 	}
 	hr = omitValues(hr, omittedRefs)
-	hr, omitted, err := helm.Prepare(hr, helm.NewSources(reads).Declaration, data, c.Helm.ValuesCache())
-	if err != nil || len(omitted) != 0 {
+	hr, err := helm.Prepare(hr, helm.NewSources(reads).Declaration, data, c.Helm.ValuesCache())
+	if err != nil {
 		return nil, false
 	}
 	records, found := c.Helm.PreviousRender(
@@ -228,7 +221,6 @@ func (c *Controller) PreviousRender(
 			Options:                 c.Options,
 			DependencySubstitutions: c.DependencySubstitutions,
 			Sources:                 helm.NewSources(reads),
-			WipeSecrets:             c.WipeSecrets,
 		},
 	)
 	if !found {

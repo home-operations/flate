@@ -32,7 +32,7 @@ func newController(t *testing.T) (*Controller, *store.Store) {
 	t.Helper()
 	s := store.New()
 	tasks := task.NewBounded(0)
-	c := New(s, tasks, nil, true)
+	c := New(s, tasks, nil)
 	c.Configure(base.Options{})
 	c.StartLifecycle()
 	t.Cleanup(func() {
@@ -111,9 +111,8 @@ metadata: {name: << inputs.user >>, namespace: flux-system}
 		Namespace: "flux-system",
 		Name:      "rsip",
 	}
-	if blocked[0] != want {
-		t.Fatalf("blocked on %v, want %v", blocked[0], want)
-	}
+	assert.FatalIf(t, blocked[0] != want,
+		"blocked on %v, want %v", blocked[0], want)
 
 	// RSIP arrives → re-dispatch renders the Widget from its inputs.
 	s.AddObject(staticRSIP("rsip", "flux-system", nil, map[string]string{"user": "alice"}))
@@ -138,7 +137,7 @@ func TestReconcile_SelectorInputsFrom_LateRSIP(t *testing.T) {
 	t.Parallel()
 	s := store.New()
 	tasks := task.NewBounded(2)
-	c := New(s, tasks, nil, true)
+	c := New(s, tasks, nil)
 	c.Configure(base.Options{})
 	c.StartLifecycle()
 
@@ -198,9 +197,9 @@ func TestReconcile_SelectorInputsFrom_LateRSIP(t *testing.T) {
 		inventories,
 	)
 	artifact, _ := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
-	if artifact == nil || len(artifact.Manifests) != 0 || s.GetObject(child) != nil {
-		t.Fatalf("removed selector member survived: artifact=%+v child=%v", artifact, s.GetObject(child))
-	}
+	assert.FatalIf(t, artifact == nil || len(artifact.Manifests) != 0 || s.GetObject(child) != nil,
+		"removed selector member survived: artifact=%+v child=%v", artifact, s.GetObject(child))
+
 	assert.FatalIf(
 		t,
 		rs.InputsFrom[0].Selector.MatchLabels["color"] != "blue",
@@ -296,9 +295,9 @@ spec: {}
 		childID,
 		ok,
 	)
-	if child.Path != "first" {
-		t.Fatalf("emitted path = %q, want first", child.Path)
-	}
+	assert.FatalIf(t, child.Path != "first",
+		"emitted path = %q, want first", child.Path)
+
 	for _, object := range manifest.ProjectProducer(rs).Objects {
 		assert.FatalIf(
 			t,
@@ -380,18 +379,17 @@ func TestReconcile_NamedOnlyRetainsNamedGate(t *testing.T) {
 		Namespace: "flux-system",
 		Name:      "rsip",
 	}
-	if !slices.Equal(execution.Blocked, []manifest.NamedResource{want}) {
-		t.Fatalf("named-only dependencies = %v, want [%s]", execution.Blocked, want)
-	}
+	assert.FatalIf(t, !slices.Equal(execution.Blocked, []manifest.NamedResource{want}),
+		"named-only dependencies = %v, want [%s]", execution.Blocked, want)
+
 	unknown := c.ReconcileNode(
 		t.Context(),
 		manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Name: "ghost"},
 		manifest.DrainNone,
 	)
 	defer unknown.Close()
-	if unknown.Outcome() == schedule.Blocked {
-		t.Fatalf("absent declaration has dependencies: %v", unknown.Blocked)
-	}
+	assert.FatalIf(t, unknown.Outcome() == schedule.Blocked,
+		"absent declaration has dependencies: %v", unknown.Blocked)
 }
 
 func TestReconcile_AlreadyReady_NoTransientPending(t *testing.T) {

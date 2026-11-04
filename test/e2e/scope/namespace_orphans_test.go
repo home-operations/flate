@@ -126,7 +126,7 @@ func TestE2E_NamespaceOrphans_FailingOwner(t *testing.T) {
 			{
 				_, err := discovery.Run(
 					t.Context(),
-					discovery.Config{Path: filepath.Join(root, "flux"), RepoRoot: root, Store: st, WipeSecrets: true},
+					discovery.Config{Path: filepath.Join(root, "flux"), RepoRoot: root, Store: st},
 				)
 				assert.FatalIf(t, err != nil, "%v", err)
 			}
@@ -570,8 +570,7 @@ func e2EChildKustomizationIdentityNameLoop(t *testing.T, loopInputs struct {
 				t,
 				ns != (*loopInputs.tc).namespace,
 				"child document namespace=%q want=%q",
-				ns,
-				(*loopInputs.tc).namespace,
+				ns, (*loopInputs.tc).namespace,
 			)
 		}
 		if manifest.DocKind(doc) == manifest.KindConfigMap && name == "child-output" {

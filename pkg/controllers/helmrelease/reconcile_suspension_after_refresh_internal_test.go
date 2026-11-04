@@ -185,12 +185,11 @@ func TestReconcile_SyntheticChartReplayContent(t *testing.T) {
 		want := []string{"app-first", "app-second"}[i]
 		labels := doc.Document["metadata"].(map[string]any)["labels"].(map[string]any)
 		assert.Equal(t, labels["helm.toolkit.fluxcd.io/name"], any(hr.Name))
-		if name != want || namespace != hr.Namespace ||
+		assert.FatalIf(t, name != want || namespace != hr.Namespace ||
 			st.GetObject(
 				manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: namespace, Name: name},
-			) == nil {
-			t.Fatalf("rendered identity = %s/%s, want %s/%s", namespace, name, hr.Namespace, want)
-		}
+			) == nil,
+			"rendered identity = %s/%s, want %s/%s", namespace, name, hr.Namespace, want)
 	}
 	testReconcileSyntheticChartReplayContentTail(
 		t,
@@ -216,9 +215,7 @@ func testReconcileSyntheticChartReplayContentTail(
 	(*tailCaseInput.st).
 		AddObject(stamped)
 	assert.FatalIf(
-		t,
-		(*tailCaseInput.initial).OutputReads.Valid(),
-		"%v",
+		t, (*tailCaseInput.initial).OutputReads.Valid(), "%v",
 		"metadata change did not invalidate the prior assessment",
 	)
 	var pending atomic.Bool
@@ -232,16 +229,15 @@ func testReconcileSyntheticChartReplayContentTail(
 	replay := (*tailCaseInput.reconcile)()
 	after := (*tailCaseInput.st).GetArtifact((*tailCaseInput.hr).Named(), store.ArtifactContent).(*store.Emission)
 	assert.ErrorIf(t, pending.Load(), "%v", "equal synthetic-chart replay transiently became Pending")
-	if replay.Outcome() == schedule.Blocked || !replay.Reused ||
-		after.Fingerprint != (*tailCaseInput.initial).Fingerprint {
-		t.Errorf(
-			"same content after synthetic publication: unresolved=%t reused=%t fingerprint=%q, want %q",
-			replay.Outcome() == schedule.Blocked,
-			replay.Reused,
-			after.Fingerprint, (*tailCaseInput.initial).
-				Fingerprint,
-		)
-	}
+	assert.ErrorIf(t, replay.Outcome() == schedule.Blocked || !replay.Reused ||
+		after.Fingerprint != (*tailCaseInput.initial).Fingerprint,
+
+		"same content after synthetic publication: unresolved=%t reused=%t fingerprint=%q, want %q",
+		replay.Outcome() == schedule.Blocked,
+		replay.Reused,
+		after.Fingerprint, (*tailCaseInput.initial).
+			Fingerprint)
+
 	{
 		diff := cmp.Diff((*tailCaseInput.initial).Manifests, after.Manifests)
 		assert.FatalIf(t, diff != "", "same content changed output (-want +got): %s", diff)
@@ -270,20 +266,18 @@ func testReconcileSyntheticChartReplayContentTail(
 		)
 	sourceRun := (*tailCaseInput.reconcile)()
 	withSource := (*tailCaseInput.st).GetArtifact((*tailCaseInput.hr).Named(), store.ArtifactContent).(*store.Emission)
-	if sourceRun.Outcome() == schedule.Blocked || sourceRun.Reused ||
+	assert.FatalIf(t, sourceRun.Outcome() == schedule.Blocked || sourceRun.Reused ||
 		withSource.Fingerprint == withValues.Fingerprint ||
 		renderedConfigMapValue(testutil.DocumentMaps(withSource.Manifests), "source") != "two" ||
-		len(withSource.Manifests) != 2 {
-		t.Fatalf(
-			"changed chart content: unresolved=%t reused=%t fingerprint=%q previous=%q source=%q documents=%d",
-			sourceRun.Outcome() == schedule.Blocked,
-			sourceRun.Reused,
-			withSource.Fingerprint,
-			withValues.Fingerprint,
-			renderedConfigMapValue(testutil.DocumentMaps(withSource.Manifests), "source"),
-			len(withSource.Manifests),
-		)
-	}
+		len(withSource.Manifests) != 2,
+
+		"changed chart content: unresolved=%t reused=%t fingerprint=%q previous=%q source=%q documents=%d",
+		sourceRun.Outcome() == schedule.Blocked,
+		sourceRun.Reused,
+		withSource.Fingerprint,
+		withValues.Fingerprint,
+		renderedConfigMapValue(testutil.DocumentMaps(withSource.Manifests), "source"),
+		len(withSource.Manifests))
 }
 
 type chartCaptureFS struct {
@@ -470,7 +464,7 @@ data: {greeting: hi}
 				c,
 				parent.Named(),
 				testutil.DocumentOccurrences([]map[string]any{replacement}),
-				manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: ""},
+				manifest.ParseDocOptions{DefaultNamespace: ""},
 			)
 		} else {
 			fresh := hr.Clone()
@@ -501,12 +495,24 @@ data: {greeting: hi}
 }
 
 type testReconcileSyntheticChartReplayContentTailInputs struct {
-	hr        **manifest.HelmRelease
-	st        **store.Store
-	initial   **store.Emission
-	reconcile *func() *base.Execution
-	input     **manifest.ConfigMap
-	chart     *manifest.NamedResource
+	hr **manifest.
+		HelmRelease
+
+	st **store.
+		Store
+
+	initial **store.
+		Emission
+
+	reconcile *func() *base.
+			Execution
+
+	input **manifest.
+		ConfigMap
+
+	chart *manifest.
+		NamedResource
+
 	secondDir *string
 }
 
@@ -528,17 +534,14 @@ type refreshedReleaseChecks struct {
 func checkRefreshedRelease(t *testing.T, scope *refreshedReleaseChecks) {
 	t.Helper()
 	reconcileFixture(t, (*scope.c), (*scope.id))
-	if scope.observations.Load() < 1 || !scope.published.Load() || (*scope.c).Tasks.Failures() != 0 {
-		t.Fatalf(
-			"observations=%d published=%t panics=%d",
-			scope.observations.Load(),
-			scope.published.Load(),
-			(*scope.c).Tasks.Failures(),
-		)
-	}
-	if scope.parentEvents.Load() != 0 {
-		t.Fatalf("parent refresh events = %d", scope.parentEvents.Load())
-	}
+	assert.FatalIf(t, scope.observations.Load() < 1 || !scope.published.Load() || (*scope.c).Tasks.Failures() != 0,
+
+		"observations=%d published=%t panics=%d",
+		scope.observations.Load(),
+		scope.published.Load(), (*scope.c).Tasks.Failures())
+	assert.FatalIf(t, scope.parentEvents.Load() != 0,
+		"parent refresh events = %d", scope.parentEvents.Load())
+
 	fresh, ok := (*scope.st).Get[*manifest.HelmRelease]((*scope.id))
 	assert.FatalIf(t, !ok || fresh == (*scope.hr) || fresh.Suspend != (*scope.testCaseInput.suspended) ||
 		fresh.Values["output"] != "hr-refresh-output", "canonical replacement = %+v", fresh)
@@ -548,12 +551,9 @@ func checkRefreshedRelease(t *testing.T, scope *refreshedReleaseChecks) {
 	}
 	if (*scope.testCaseInput.testCaseInput).parent {
 		{
-			owners := testutil.Owners(
-				(*scope.st).Productions((*scope.id), nil),
-			)
+			owners := testutil.Owners((*scope.st).Productions((*scope.id), nil))
 			assert.FatalIf(t, !slices.Contains(
-				owners,
-				(*scope.parent).Named(),
+				owners, (*scope.parent).Named(),
 			), "missing independent contributor: %v", owners)
 		}
 	}
@@ -572,15 +572,15 @@ func checkRefreshedRelease(t *testing.T, scope *refreshedReleaseChecks) {
 			info,
 		)
 		_, _, inventory := (*scope.st).GetEmission((*scope.id))
-		if art != (*scope.retained) || scope.renders.Load() != 0 || (*scope.st).GetObject(output) != nil ||
-			len(inventory.Children) != 0 {
-			t.Errorf(
-				"suspended replacement rendered: artifact=%+v output=%v renders=%d",
-				art,
-				(*scope.st).GetObject(output),
-				scope.renders.Load(),
-			)
-		}
+		assert.ErrorIf(
+			t,
+			art != (*scope.retained) || scope.renders.Load() != 0 || (*scope.st).GetObject(output) != nil ||
+				len(inventory.Children) != 0,
+			"suspended replacement rendered: artifact=%+v output=%v renders=%d",
+			art,
+			(*scope.st).GetObject(output),
+			scope.renders.Load(),
+		)
 	} else if info.Status != store.StatusReady || art == nil || art == (*scope.retained) || scope.renders.Load() != 1 || len(art.Manifests) != 1 || (*scope.st).GetObject(output) == nil {
 		t.Fatalf(
 			"active replacement did not render %s: status=%+v artifact=%+v renders=%d",
@@ -601,7 +601,7 @@ func checkParentUpdateDuringRender(t *testing.T, workers *int) {
 	assert.FatalIf(t, err != nil, "%v", err)
 	t.Cleanup(func() { _ = owner.Close() })
 	client := helm.NewClient(owner)
-	c := New(base.New(st, tasks), client, helm.Options{}, false)
+	c := New(base.New(st, tasks), client, helm.Options{})
 	c.Configure(base.Options{})
 	c.StartLifecycle()
 	started, resume, rendered := make(chan struct{}), make(chan struct{}), make(chan struct{})
@@ -643,7 +643,7 @@ data:
 	publish := func(doc map[string]any) {
 		_, _, next := st.GetEmission(parent.Named())
 		defer next.Finish()
-		parsed2 := c.ParseChildren(
+		parsed2 := (&base.Execution{Controller: c.Controller}).ParseChildren(
 			parent,
 			testutil.DocumentOccurrences([]map[string]any{doc}),
 			manifest.ParseDocOptions{DefaultNamespace: "apps"},
@@ -695,10 +695,9 @@ data:
 		},
 	})
 	assert.FatalIf(t, info.Status != store.StatusReady, "canonical replacement status = %+v", info)
+	assert.FatalIf(t, tasks.Failures() != 0,
+		"task failures = %d", tasks.Failures())
 
-	if tasks.Failures() != 0 {
-		t.Fatalf("task failures = %d", tasks.Failures())
-	}
 	emission := accepted.Load()
 	assert.FatalIf(
 		t,

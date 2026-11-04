@@ -27,11 +27,8 @@ type Result struct { // Binding identifies the entry's actual producer and admit
 	Binding   Binding    // Admission applies the same immutable bootstrap policy to runtime source identities.
 	Admission *Admission // RepoRoot is the bootstrap input's ownership coordinate. Admitted
 	// inputs may use a synthetic label with no corresponding directory.
-	RepoRoot string                   // Index contains the immutable static discovery facts consumed by rendering.
-	Index    *manifest.DiscoveryIndex // WipeSecrets reflects the loader's WipeSecrets setting. The
-	// orchestrator forwards it to lazy-promotion so SOPS Secrets
-	// stay wiped on demand the same way they were at file-load.
-	WipeSecrets             bool // DependencySubstitutions is frozen after complete discovery and before rendering.
+	RepoRoot                string // Index contains the immutable static discovery facts consumed by rendering.
+	Index                   *manifest.DiscoveryIndex
 	DependencySubstitutions values.DependencySubstitutions
 }
 
@@ -76,7 +73,6 @@ type Config struct {
 	// Trees is required when discovered packages need a bare Kustomize build.
 	Trees               *kustomize.TreeCache
 	Store               *store.Store
-	WipeSecrets         bool
 	RemoteInputs        *source.HTTPInputs
 	RemoteRetry         cache.RetryConfig
 	StrictSubstitutions bool
@@ -191,7 +187,6 @@ func (d *Session) finishDiscovery(
 			cfg.Store.AddObject(resolved, doc)
 		}
 	}
-	standaloneSecrets := d.standaloneSecretIDs(l, cfg.WipeSecrets)
 	if d.binding.Failure == nil {
 		if err := l.EntryFailure(ctx, repoRoot); err != nil {
 			return nil, err
@@ -201,7 +196,7 @@ func (d *Session) finishDiscovery(
 		return nil, err
 	}
 	if !cfg.Selection.Changed && len(cfg.Selection.Roots) == 0 {
-		if err := d.promoteOrphans(ctx, standaloneSecrets); err != nil {
+		if err := d.promoteOrphans(ctx); err != nil {
 			return nil, err
 		}
 	}
@@ -221,20 +216,7 @@ func (d *Session) finishDiscovery(
 		DependencySubstitutions: d.substitutions,
 		RepoRoot:                repoRoot,
 		Index:                   l.Index,
-		WipeSecrets:             cfg.WipeSecrets,
 	}, nil
-}
-
-func (d *Session) standaloneSecretIDs(l *loader.Loader, wipeSecrets bool) []manifest.NamedResource {
-	var standaloneSecrets []manifest.NamedResource
-	if wipeSecrets {
-		for id := range l.Index.Files() {
-			if id.Group == "" && id.Kind == manifest.KindSecret && d.cfg.Store.GetObject(id) == nil {
-				standaloneSecrets = append(standaloneSecrets, id)
-			}
-		}
-	}
-	return standaloneSecrets
 }
 
 type declarationPreparation struct {
@@ -243,6 +225,7 @@ type declarationPreparation struct {
 	receipt    *manifest.RenderReceipt
 	content    any
 	registered bool
+	warnings   []manifest.Warning
 }
 
 func newDiscoverer(config *Config) *Session {
@@ -252,7 +235,7 @@ func newDiscoverer(config *Config) *Session {
 		l = loader.New(cfg.Store)
 	}
 	l.AdmitDeclarations(cfg.Declarations)
-	l.Options.WipeSecrets, l.Options.RemoteInputs, l.Options.RemoteRetry = cfg.WipeSecrets, cfg.RemoteInputs, cfg.RemoteRetry
+	l.Options.RemoteInputs, l.Options.RemoteRetry = cfg.RemoteInputs, cfg.RemoteRetry
 	l.Options.Selection = cfg.Selection
 	if cfg.Projections != nil {
 		l.Options.Projections = cfg.Projections
@@ -267,7 +250,7 @@ func newDiscoverer(config *Config) *Session {
 	if input == nil {
 		input, _ = cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	}
-	if input == nil || cfg.WipeSecrets != prepared.wipeSecrets {
+	if input == nil {
 		return d
 	}
 	if !prepared.parsed.Matches(input) || input.LocalPath != prepared.input.LocalPath ||
@@ -618,7 +601,6 @@ func (d *Session) prepareDocuments(
 		ApplyIgnore:             ks.SourceID() == manifest.BootstrapSourceID || input.InputAlias || input.Content == "",
 		SubPath:                 prepared.Path,
 		Spec:                    prepared,
-		WipeSecrets:             d.cfg.WipeSecrets,
 		StrictSubstitutions:     d.cfg.StrictSubstitutions,
 		SkipKinds:               d.cfg.SkipKinds,
 		DependencySubstitutions: d.substitutions,
@@ -638,7 +620,7 @@ func (d *Session) prepareDocuments(
 	parseChildrenResult2 := loader.ParseChildren(
 		prepared,
 		docs,
-		manifest.ParseDocOptions{WipeSecrets: d.cfg.WipeSecrets},
+		manifest.ParseDocOptions{},
 		d.cfg.SkipKinds,
 	)
 	built, _, failures := parseChildrenResult2.Children, parseChildrenResult2.Visible, parseChildrenResult2.Failures
@@ -649,6 +631,9 @@ func (d *Session) prepareDocuments(
 		d.prepared = map[*manifest.Kustomization]declarationPreparation{}
 	}
 	result := declarationPreparation{source: input, children: built, receipt: receipt, content: content}
+	for _, doc := range docs {
+		result.warnings = append(result.warnings, doc.Warnings...)
+	}
 	d.prepared[ks] = result
 	return result, nil
 }
@@ -712,6 +697,10 @@ func (d *Session) acceptPrepared(ctx context.Context) error {
 			DependencySubstitutions: d.substitutions,
 		}); err != nil {
 			return fmt.Errorf("discovery entry %q publish: %w", ks.Path, err)
+		}
+		for warningIndex := range prepared.warnings {
+			warning := prepared.warnings[warningIndex]
+			d.cfg.Store.AddWarning(warning)
 		}
 	}
 	return nil

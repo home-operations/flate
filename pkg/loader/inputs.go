@@ -16,9 +16,8 @@ import (
 
 // ParsedInputs retains immutable parsed content from exact admitted source views.
 type ParsedInputs struct {
-	sources     map[string]parsedSource
-	wipeSecrets bool
-	compact     bool
+	sources map[string]parsedSource
+	compact bool
 }
 
 type parsedSource struct {
@@ -109,9 +108,8 @@ func (l *Loader) sourceFacts(root string) parsedSource {
 // ParsedInputs snapshots parsed bodies without retaining entry admission state.
 func (l *Loader) ParsedInputs() *ParsedInputs {
 	inputs := &ParsedInputs{
-		sources:     map[string]parsedSource{},
-		wipeSecrets: l.Options.WipeSecrets,
-		compact:     l.documents.compact,
+		sources: map[string]parsedSource{},
+		compact: l.documents.compact,
 	}
 	for root, artifact := range l.documents.artifacts {
 		source := parsedSource{input: parsedInputIdentity(artifact)}

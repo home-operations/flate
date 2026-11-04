@@ -253,9 +253,9 @@ func testRenderEntryOwnerDependsOnSiblingCase(
 	assert.NoError(t, err)
 	t.Cleanup(o.stop)
 	assert.NoError(t, o.bootstrap(t.Context()))
-	if !o.entryBinding.Producer.ReportHidden() {
-		t.Fatalf("entry prerequisite reused its owner: %+v", o.entryBinding)
-	}
+	assert.FatalIf(t, !o.entryBinding.Producer.ReportHidden(),
+		"entry prerequisite reused its owner: %+v", o.entryBinding)
+
 	owner := testutil.KustomizationID("apps", "owner")
 	if (*testCaseInput) == "deferred_required" || (*testCaseInput) == "deferred_optional" {
 		record, _ := o.index.Lookup(owner)
@@ -724,7 +724,7 @@ data: {VALUE: rendered}
 	reads.Init(warm.store, owner, nil)
 	prepared, err := kustomize.Prepare(
 		warm.store.GetObject(owner).(*manifest.Kustomization),
-		values.NewStoreProvider(&reads, false),
+		values.NewStoreProvider(&reads),
 	)
 	assert.NoError(t, err)
 	source := reads.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
@@ -739,7 +739,11 @@ data: {VALUE: rendered}
 	assert.NoError(t, err)
 	content := request.Content(documents)
 	assert.NoError(t, kustomize.Shape(prepared, documents, true))
-	parseChildrenResult1 := warm.ksc.ParseChildren(prepared, documents, manifest.ParseDocOptions{})
+	parseChildrenResult1 := (&base.Execution{Controller: warm.ksc.Controller}).ParseChildren(
+		prepared,
+		documents,
+		manifest.ParseDocOptions{},
+	)
 	children, _, failures := parseChildrenResult1.Children, parseChildrenResult1.Visible, parseChildrenResult1.Failures
 	assert.Equal(t, len(failures), 0)
 	assert.NoError(

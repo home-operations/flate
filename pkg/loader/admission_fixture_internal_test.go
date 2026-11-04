@@ -91,6 +91,7 @@ func newAdmission(tb testing.TB, cfg admissionConfig) *admissionFixture {
 	return f
 }
 
+//nolint:gocritic // Immutable value inputs preserve snapshot semantics.
 func (f *admissionFixture) prepare(child store.Child, reads *store.ReadSet, commit bool) []manifest.NamedResource {
 	f.tb.Helper()
 	proposal := &Admission{}
@@ -171,6 +172,7 @@ func (f *admissionFixture) KeepNamespaces() map[string]struct{} {
 	return namespaces
 }
 
+//nolint:gocritic // Immutable value inputs preserve snapshot semantics.
 func (f *admissionFixture) AddEmitted(
 	parent manifest.NamedResource,
 	child store.Child,

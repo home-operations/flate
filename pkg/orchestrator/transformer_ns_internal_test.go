@@ -84,7 +84,7 @@ spec:
 	renderedSingleton1, err := RenderTrees(
 		t.Context(),
 		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
-		Config{WipeSecrets: true, Concurrency: 4},
+		Config{Concurrency: 4},
 	)
 	assert.FatalIf(t, len(renderedSingleton1) != 1, "missing render: %v", err)
 	o := renderedSingleton1[0].Orchestrator
@@ -103,10 +103,9 @@ spec:
 	)
 
 	namespaced := testutil.HelmReleaseID("myns", "myapp")
-	if o.store.GetObject(namespaced) == nil {
-		t.Errorf("expected HelmRelease at myns/myapp; HR objects in store: %v",
-			hrIDs(o))
-	}
+	assert.ErrorIf(t, o.store.GetObject(namespaced) == nil,
+		"expected HelmRelease at myns/myapp; HR objects in store: %v",
+		hrIDs(o))
 
 	// The empty-namespace phantom must never reach the store.
 	phantom := testutil.HelmReleaseID("", "myapp")
@@ -116,9 +115,8 @@ spec:
 	}
 
 	for id := range res.Failed {
-		if id.Kind == manifest.KindHelmRelease {
-			t.Errorf("unexpected HelmRelease failure: %s = %v", id, res.Failed[id])
-		}
+		assert.ErrorIf(t, id.Kind == manifest.KindHelmRelease,
+			"unexpected HelmRelease failure: %s = %v", id, res.Failed[id])
 	}
 
 	testutil.WriteFile(
@@ -145,15 +143,15 @@ spec:
 	renderedSingleton2, err := RenderTrees(
 		t.Context(),
 		[]Tree{{Path: path, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
-		Config{WipeSecrets: true, Concurrency: 4},
+		Config{Concurrency: 4},
 	)
 	assert.FatalIf(t, len(renderedSingleton2) != 1, "missing render: %v", err)
 	o = renderedSingleton2[0].Orchestrator
 	res = renderedSingleton2[0].Result
 	assert.FatalIf(t, err != nil, "%v", err)
-	if len(res.Failed) != 0 {
-		t.Fatalf("shared-context failures: %v", res.Failed)
-	}
+	assert.FatalIf(t, len(res.Failed) != 0,
+		"shared-context failures: %v", res.Failed)
+
 	for _, ns := range []string{"myns", "other"} {
 		for _, info := range reconcilableKinds {
 			kind := info.Kind
@@ -216,7 +214,7 @@ spec:
 		Path: (*testCaseInput.path), RepoRoot: (*testCaseInput.dir),
 		SelfURLs:        []string{"https://fixture.invalid/cluster"},
 		ExternalChanges: change.NewSet([]string{dirty}),
-	}, Config{WipeSecrets: true, Concurrency: 4},
+	}, Config{Concurrency: 4},
 	)
 	assert.FatalIf(t, err != nil, "%v", err)
 	{
@@ -280,9 +278,9 @@ spec:
 		other,
 	)
 	res, err := o.collectResult(o.run(t.Context()))
-	if err != nil || len(res.Failed) != 0 {
-		t.Fatalf("changed-only Render: %v; failures=%v", err, res.Failed)
-	}
+	assert.FatalIf(t, err != nil || len(res.Failed) != 0,
+		"changed-only Render: %v; failures=%v", err, res.Failed)
+
 	docs := outputByParent(res.Manifests)[other]
 	assert.FatalIf(
 		t,

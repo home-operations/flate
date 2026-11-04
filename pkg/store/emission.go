@@ -25,6 +25,7 @@ type Child struct {
 	Origin      manifest.DeclarationOrigin
 	policy      manifest.DeclarationPolicy
 	Productions []manifest.Production
+	Warnings    []manifest.Warning `json:"-"`
 	payload     *SourceArtifact
 	output      *ReadSet
 }

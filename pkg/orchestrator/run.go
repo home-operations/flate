@@ -73,7 +73,7 @@ func (e *orchestratorExistence) Promote(
 				ctx,
 				e.o.store,
 				id,
-				loader.PromoteOptions{Record: p, Reads: reads, WipeSecrets: e.o.cfg.WipeSecrets, Admit: admit},
+				loader.PromoteOptions{Record: p, Reads: reads, Admit: admit},
 			)
 			if err != nil {
 				return false, err
@@ -129,6 +129,7 @@ func (e *orchestratorExistence) promoteAdmission(
 	return false, nil
 }
 
+//nolint:gocritic // Immutable value inputs preserve snapshot semantics.
 func (e *orchestratorExistence) admit(ctx context.Context, child store.Child, reads *store.ReadSet) (bool, error) {
 	info := manifest.KindOf(child.Obj)
 	if !info.Tracked || info.Group != manifest.SourceDomain && info.Runnable {

@@ -96,9 +96,7 @@ func TestHelmRepoTransport_MissingSecretIsSoftSkippable(t *testing.T) {
 	)
 	assert.Equal(t, missing.Secret, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "tls"})
 	assert.Equal(t, err.Error(), "secret ns/tls not found")
-	if prepared != nil {
-		t.Error("repository should be nil on error")
-	}
+	assert.ErrorIf(t, prepared != nil, "%s", "repository should be nil on error")
 }
 
 func TestHelmRepoTransport_MissingMaterialSoftSkips(t *testing.T) {
@@ -110,7 +108,7 @@ func TestHelmRepoTransport_MissingMaterialSoftSkips(t *testing.T) {
 		soft bool
 	}{
 		{"unrelated", map[string]any{"unrelated": "x"}, true},
-		{"wiped", map[string]any{"ca.crt": "..PLACEHOLDER_ca.crt.."}, true},
+		{"empty", map[string]any{"ca.crt": ""}, true},
 		{"malformed", map[string]any{"ca.crt": "broken"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -122,13 +120,8 @@ func TestHelmRepoTransport_MissingMaterialSoftSkips(t *testing.T) {
 			preparedHTTP(t, f, fInputs, r)
 			secret = &manifest.Secret{StringData: tc.data}
 			prepared, err := (&operation{Fetcher: f, secrets: fInputs.lookup(r)}).prepareHTTP(r)
-			assert.FatalIf(
-				t,
-				err == nil || errors.Is(err, manifest.ErrMissingSecret) != tc.soft || prepared != nil,
-				"warm memo bypassed material policy: repository=%v, error=%v",
-				prepared,
-				err,
-			)
+			assert.FatalIf(t, err == nil || errors.Is(err, manifest.ErrMissingSecret) != tc.soft || prepared != nil,
+				"warm memo bypassed material policy: repository=%v, error=%v", prepared, err)
 		})
 	}
 }
@@ -406,9 +399,9 @@ func testHelmRepoTransportSourceTimeoutCase(t *testing.T, tc *struct {
 		prepared := preparedHTTP(t, f, inputs, r)
 		prepared.client.Transport = chartTransport(func(req *http.Request) (*http.Response, error) {
 			deadline, ok := req.Context().Deadline()
-			if !ok || time.Until(deadline) != want {
-				t.Errorf("request deadline remaining=%v present=%t, want %v", time.Until(deadline), ok, want)
-			}
+			assert.ErrorIf(t, !ok || time.Until(deadline) != want,
+				"request deadline remaining=%v present=%t, want %v", time.Until(deadline), ok, want)
+
 			return &http.Response{
 				StatusCode: http.StatusOK,
 				Header:     make(http.Header),
@@ -423,14 +416,12 @@ func testHelmRepoTransportSourceTimeoutCase(t *testing.T, tc *struct {
 			helmChart(r.Name, "app-template", "1.0.0"),
 			sourcecache.Policy{},
 		)
-		if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) != want {
-			t.Errorf(
-				"body deadline: elapsed=%v error=%v, want %v and DeadlineExceeded",
-				time.Since(start),
-				err,
-				want,
-			)
-		}
+		assert.ErrorIf(t, !errors.Is(err, context.DeadlineExceeded) || time.Since(start) != want,
+
+			"body deadline: elapsed=%v error=%v, want %v and DeadlineExceeded",
+			time.Since(start),
+			err,
+			want)
 	})
 }
 

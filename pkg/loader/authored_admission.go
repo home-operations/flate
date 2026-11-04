@@ -32,6 +32,11 @@ func (l *Loader) applyAdmittedObjects(
 		if !allowed[id] || !manifest.KindOf(obj).Discovery || l.documents.compact && next[id].Path != "" {
 			continue
 		}
+		for warningIndex := range child.Warnings {
+			warning := child.Warnings[warningIndex]
+			warning.Resource = id
+			l.Store.AddWarning(warning)
+		}
 		if existing, policy := l.Store.Lookup(
 			id,
 		); existing != nil && policy.Root &&

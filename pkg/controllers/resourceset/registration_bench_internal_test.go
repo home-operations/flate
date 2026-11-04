@@ -39,7 +39,7 @@ func TestDirtyRerun_EqualOutputReuse(t *testing.T) {
 	t.Parallel()
 	s := store.New()
 	tasks := task.NewBounded(2)
-	c := New(s, tasks, nil, true)
+	c := New(s, tasks, nil)
 	c.Configure(base.Options{})
 	c.StartLifecycle()
 
@@ -64,25 +64,25 @@ func TestDirtyRerun_EqualOutputReuse(t *testing.T) {
 	defer unsub()
 	first := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone)
 	defer first.Close()
-	if first.Outcome() == schedule.Blocked || first.Valid() {
-		t.Fatalf(
-			"first provider publication: unresolved=%t valid=%t",
-			first.Outcome() == schedule.Blocked,
-			first.Valid(),
-		)
-	}
+	assert.FatalIf(t, first.Outcome() == schedule.Blocked || first.Valid(),
+
+		"first provider publication: unresolved=%t valid=%t",
+		first.Outcome() == schedule.Blocked,
+		first.Valid())
+
 	settled := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone)
 	defer settled.Close()
 	first.Retire()
 	info, _ := s.GetStatus(rs.Named())
-	if settled.Outcome() == schedule.Blocked || !settled.Valid() || info.Outcome() != store.OutcomePassed {
-		t.Fatalf(
-			"initial settlement: unresolved=%t valid=%t status=%+v",
-			settled.Outcome() == schedule.Blocked,
-			settled.Valid(),
-			info,
-		)
-	}
+	assert.FatalIf(
+		t,
+		settled.Outcome() == schedule.Blocked || !settled.Valid() || info.Outcome() != store.OutcomePassed,
+		"initial settlement: unresolved=%t valid=%t status=%+v",
+		settled.Outcome() == schedule.Blocked,
+		settled.Valid(),
+		info,
+	)
+
 	initial := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 	assert.FatalIf(
 		t,
@@ -126,10 +126,10 @@ func TestDirtyRerun_EqualOutputReuse(t *testing.T) {
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	_, _, inventory := replay.run.Reads.GetEmission(rs.Named())
-	parseChildrenResult1 := c.ParseChildren(
+	parseChildrenResult1 := (&base.Execution{Controller: c.Controller}).ParseChildren(
 		rs,
 		initial.Manifests,
-		manifest.ParseDocOptions{WipeSecrets: true},
+		manifest.ParseDocOptions{},
 	)
 	inventory.Children, inventory.Manifests, inventory.Failures = parseChildrenResult1.Children, parseChildrenResult1.Visible, parseChildrenResult1.Failures
 	inventory.Complete = true
@@ -163,21 +163,22 @@ func TestDirtyRerun_EqualOutputReuse(t *testing.T) {
 	defer second.Close()
 	settled.Retire()
 	after := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
-	if second.Outcome() == schedule.Blocked || !second.Valid() || !reader.Valid() || updates.Load() != 1 ||
-		objectEvents.Load() != 0 ||
-		statusEvents.Load() != 0 ||
-		!second.Reused {
-		t.Fatalf(
-			"equal output: unresolved=%t reader valid=%t artifact/object/status events=%d/%d/%d reused=%t status=%v",
-			second.Outcome() == schedule.Blocked,
-			reader.Valid(),
-			updates.Load()-1,
-			objectEvents.Load(),
-			statusEvents.Load(),
-			second.Reused,
-			statusChange.Load(),
-		)
-	}
+	assert.FatalIf(
+		t,
+		second.Outcome() == schedule.Blocked || !second.Valid() || !reader.Valid() || updates.Load() != 1 ||
+			objectEvents.Load() != 0 ||
+			statusEvents.Load() != 0 ||
+			!second.Reused,
+		"equal output: unresolved=%t reader valid=%t artifact/object/status events=%d/%d/%d reused=%t status=%v",
+		second.Outcome() == schedule.Blocked,
+		reader.Valid(),
+		updates.Load()-1,
+		objectEvents.Load(),
+		statusEvents.Load(),
+		second.Reused,
+		statusChange.Load(),
+	)
+
 	assert.FatalIf(
 		t,
 		initial.Fingerprint != after.Fingerprint || !cmp.Equal(initial.Manifests, after.Manifests),
@@ -190,16 +191,14 @@ func TestDirtyRerun_EqualOutputReuse(t *testing.T) {
 	third := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone)
 	defer third.Close()
 	changed := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
-	if third.Outcome() == schedule.Blocked || reader.Valid() || updates.Load() != 2 || third.Reused ||
+	assert.FatalIf(t, third.Outcome() == schedule.Blocked || reader.Valid() || updates.Load() != 2 || third.Reused ||
 		changed.Fingerprint == initial.Fingerprint ||
-		!cmp.Equal(changed.Manifests, initial.Manifests) {
-		t.Fatalf(
-			"changed fingerprint: reader valid=%t artifact events=%d reused=%t",
-			reader.Valid(),
-			updates.Load(),
-			third.Reused,
-		)
-	}
+		!cmp.Equal(changed.Manifests, initial.Manifests),
+
+		"changed fingerprint: reader valid=%t artifact events=%d reused=%t",
+		reader.Valid(),
+		updates.Load(),
+		third.Reused)
 }
 
 func independentWriterFixture(name, color string) *manifest.ResourceSet {
@@ -233,7 +232,11 @@ func publishResourceSetDocuments(
 	parent.EmissionPolicy().Stamp(docs)
 	_, _, next := c.Store.GetEmission(id)
 	defer next.Finish()
-	parseChildrenResult2 := c.ParseChildren(parent, docs, manifest.ParseDocOptions{})
+	parseChildrenResult2 := (&base.Execution{Controller: c.Controller}).ParseChildren(
+		parent,
+		docs,
+		manifest.ParseDocOptions{},
+	)
 	next.Children, next.Manifests, next.Failures = parseChildrenResult2.Children, parseChildrenResult2.Visible, parseChildrenResult2.Failures
 	next.Complete = true
 	controllertest.Emit(tb.Context(), c.Controller, id, &next)
@@ -270,7 +273,7 @@ func benchmarkReadRegistrationCollectionCase(b *testing.B, count *int, mode *str
 	b.Helper()
 	s := store.New()
 	tasks := task.NewBounded(*workers)
-	c := New(s, tasks, nil, true)
+	c := New(s, tasks, nil)
 	c.Configure(base.Options{})
 	c.StartLifecycle()
 
@@ -339,7 +342,7 @@ func benchmarkDirtyRerunIndependentWritersCase(b *testing.B, order *string, work
 			}
 		}
 	}()
-	c := New(s, tasks, nil, true)
+	c := New(s, tasks, nil)
 	c.Configure(base.Options{})
 	c.StartLifecycle()
 
@@ -504,10 +507,10 @@ func runIndependentWriterRounds(b *testing.B, scope *independentWriterRounds) {
 			outcomes := artifacts[i].Manifests
 			scope.sets[i].EmissionPolicy().Stamp(outcomes)
 			_, _, next := (*scope.s).GetEmission(id)
-			parseChildrenResult4 := (*scope.c).ParseChildren(
+			parseChildrenResult4 := (&base.Execution{Controller: (*scope.c).Controller}).ParseChildren(
 				(*scope.c).Store.GetObject(id),
 				outcomes,
-				manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: id.Namespace},
+				manifest.ParseDocOptions{DefaultNamespace: id.Namespace},
 			)
 			next.Children, next.Manifests, next.Failures = parseChildrenResult4.Children, parseChildrenResult4.Visible, parseChildrenResult4.Failures
 			next.Fingerprint, next.Complete = artifacts[i].Fingerprint, true

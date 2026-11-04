@@ -50,13 +50,12 @@ func TestRun_SmallTree(t *testing.T) {
 	st := store.New()
 	res, err := discovery.Run(context.Background(), discovery.Config{
 		Trees: testTrees(t),
-		Path:  dir, Store: st, WipeSecrets: true,
+		Path:  dir, Store: st,
 	})
 	assert.FatalIf(t, err != nil, "Run: %v", err)
 	wantRoot, _ := filepath.EvalSymlinks(dir)
-	if res.RepoRoot != wantRoot {
-		t.Errorf("RepoRoot = %q, want %q", res.RepoRoot, wantRoot)
-	}
+	assert.ErrorIf(t, res.RepoRoot != wantRoot,
+		"RepoRoot = %q, want %q", res.RepoRoot, wantRoot)
 
 	parent := testutil.KustomizationID("flux-system", "parent")
 	child := testutil.KustomizationID("flux-system", "child")
@@ -142,7 +141,7 @@ spec: {target: {name: values}}
 	st.AddObject(foreign)
 	res, err := discovery.Run(
 		t.Context(),
-		discovery.Config{Trees: testTrees(t), Path: dir, Store: st, WipeSecrets: true},
+		discovery.Config{Trees: testTrees(t), Path: dir, Store: st},
 	)
 	assert.FatalIf(t, err != nil, "%v", err)
 	hr := testutil.HelmReleaseID("apps", "demo")
@@ -220,7 +219,7 @@ func TestRun_AliasesNonDefaultNamespaceBootstrap(t *testing.T) {
 	{
 		_, err := discovery.Run(context.Background(), discovery.Config{
 			Trees: testTrees(t),
-			Path:  dir, Store: st, WipeSecrets: true,
+			Path:  dir, Store: st,
 		})
 		assert.FatalIf(t, err != nil, "Run: %v", err)
 	}
@@ -324,13 +323,14 @@ func assertAdmittedScanCoordinates(t *testing.T, root, kind, scan string) {
 			discovery.Config{Trees: testTrees(t), Input: input, Path: scan, Store: st},
 		)
 		assert.FatalIf(t, err != nil, "Run with Path %q: %v", scan, err)
-		if result.RepoRoot != root || st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != input {
-			t.Fatalf(
-				"bootstrap root = %q, artifact = %+v",
-				result.RepoRoot,
-				st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent),
-			)
-		}
+		assert.FatalIf(
+			t,
+			result.RepoRoot != root || st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != input,
+			"bootstrap root = %q, artifact = %+v",
+			result.RepoRoot,
+			st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent),
+		)
+
 		var ids []string
 		for kind := range manifest.Kinds() {
 			for _, obj := range st.ListObjects(kind.Group, kind.Kind) {
@@ -439,11 +439,10 @@ func TestRun_BootstrapOCIArtifactRoot(t *testing.T) {
 			res, err := discovery.Run(
 				t.Context(),
 				discovery.Config{
-					Trees:       testTrees(t),
-					Path:        filepath.Join(dir, "entry"),
-					RepoRoot:    dir,
-					Store:       st,
-					WipeSecrets: true,
+					Trees:    testTrees(t),
+					Path:     filepath.Join(dir, "entry"),
+					RepoRoot: dir,
+					Store:    st,
 				},
 			)
 			assert.NoError(t, err)
@@ -565,7 +564,7 @@ spec:
 	st := store.New()
 	res, err := discovery.Run(context.Background(), discovery.Config{
 		Trees: testTrees(t),
-		Path:  dir, Store: st, WipeSecrets: true,
+		Path:  dir, Store: st,
 	})
 	assert.FatalIf(t, err != nil, "Run: %v", err)
 

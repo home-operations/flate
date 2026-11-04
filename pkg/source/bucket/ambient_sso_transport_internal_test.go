@@ -54,9 +54,13 @@ func testFetcherMachineSSOTransportCase(t *testing.T, canceled *bool,
 	}})
 	bucketCredentialRoute(t, hostname, func(r *http.Request) *http.Response {
 		calls.Add(1)
-		if r.Host != hostname || r.Header.Get("X-Amz-Sso_bearer_token") != "token-canary" {
-			t.Error("SSO lost its destination or fixture token")
-		}
+		assert.ErrorIf(
+			t,
+			r.Host != hostname || r.Header.Get("X-Amz-Sso_bearer_token") != "token-canary",
+			"%s",
+			"SSO lost its destination or fixture token",
+		)
+
 		if *canceled {
 			cancel()
 		}
@@ -68,10 +72,12 @@ func testFetcherMachineSSOTransportCase(t *testing.T, canceled *bool,
 	})
 	endpoint := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		dataCalls.Add(1)
-		if !strings.Contains(r.Header.Get("Authorization"), "Credential=sso-canary/") ||
-			strings.Contains(fmt.Sprint(r.Header, r.URL), "token-canary") {
-			t.Error("S3 lost its SSO signing credentials or received the bearer token")
-		}
+		assert.ErrorIf(t, !strings.Contains(r.Header.Get("Authorization"), "Credential=sso-canary/") ||
+			strings.Contains(
+				fmt.Sprint(r.Header, r.URL),
+				"token-canary",
+			), "%s", "S3 lost its SSO signing credentials or received the bearer token")
+
 		if r.URL.Query().Get("list-type") != "" {
 			_, _ = io.WriteString(
 				w,
@@ -88,11 +94,14 @@ func testFetcherMachineSSOTransportCase(t *testing.T, canceled *bool,
 	var destinations sync.Map
 	proxy := bucketSourceProxy(t, target, func(r *http.Request) {
 		destinations.Store(r.Host, true)
-		if strings.Contains(fmt.Sprint(r.Header, r.URL), "token-canary") {
-			t.Error("SSO bearer token reached repository proxy")
-		}
+		assert.ErrorIf(
+			t,
+			strings.Contains(fmt.Sprint(r.Header, r.URL), "token-canary"),
+			"%s",
+			"SSO bearer token reached repository proxy",
+		)
 	})
-	shouldReturn := testFetcherMachineSSOTransportCaseCompletion(
+	testFetcherMachineSSOTransportCaseCompletion(
 		t,
 		&testFetcherMachineSSOTransportCaseCompletionInputs{
 			ctx:          &ctx,
@@ -106,15 +115,12 @@ func testFetcherMachineSSOTransportCase(t *testing.T, canceled *bool,
 			dataCalls:    &dataCalls,
 		},
 	)
-	if shouldReturn {
-		return
-	}
 }
 
 func testFetcherMachineSSOTransportCaseCompletion(
 	t *testing.T,
 	captures *testFetcherMachineSSOTransportCaseCompletionInputs,
-) bool {
+) {
 	t.Helper()
 	ca := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: (*captures.endpoint).Certificate().Raw}))
 	_, err := (*captures.endpoint).Certificate().Verify(x509.VerifyOptions{DNSName: "127.0.0.1"})
@@ -155,27 +161,25 @@ func testFetcherMachineSSOTransportCaseCompletion(
 			)
 			return true
 		})
-	if captures.calls.Load() != 1 || captures.traced.Load() != 1 ||
+	assert.FatalIf(t, captures.calls.Load() != 1 || captures.traced.Load() != 1 ||
 		(*(*captures.canceled)) && !errors.Is(err, context.Canceled) ||
-		!(*(*captures.canceled)) && err != nil {
-		t.Fatalf("SSO outcome: run calls=%d traced=%d: %v", captures.calls.Load(), captures.traced.Load(), err)
-	}
+		!(*(*captures.canceled)) && err != nil,
+		"SSO outcome: run calls=%d traced=%d: %v", captures.calls.Load(), captures.traced.Load(), err)
+
 	if *(*captures.canceled) {
 		assert.Equal(t, captures.dataCalls.Load(), int32(0))
-		return true
+		return
 	}
 	_, proxied := captures.destinations.Load((*captures.target))
-	if !proxied || captures.dataCalls.Load() < 2 || artifact == nil {
-		t.Fatalf(
-			"S3 did not list and download through the source proxy: proxied=%t calls=%d",
-			proxied, captures.dataCalls.
-				Load(),
-		)
-	}
+	assert.FatalIf(t, !proxied || captures.dataCalls.Load() < 2 || artifact == nil,
+
+		"S3 did not list and download through the source proxy: proxied=%t calls=%d",
+		proxied, captures.dataCalls.
+			Load())
+
 	data, err := fs.ReadFile(artifact.FS, "file.yaml")
 	assert.NoError(t, err)
 	assert.Equal(t, string(data), "data")
-	return false
 }
 
 type testFetcherMachineSSOTransportCaseCallbackInputs struct {

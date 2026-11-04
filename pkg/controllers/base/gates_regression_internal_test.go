@@ -203,13 +203,13 @@ func TestRequireRefresh_DataPromotionRefreshesCanonical(t *testing.T) {
 	})
 	first := gateExecution(c, canonical.Named())
 	_ = first.Reads.GetObject(canonical.Named())
-	_, admissionErr1 := first.DataInputs(t.Context(), canonical, values.NewStoreProvider(&first.Reads, false))
+	_, admissionErr1 := first.DataInputs(t.Context(), canonical, values.NewStoreProvider(&first.Reads))
 	assert.FatalIf(t, admissionErr1 != nil, "%v", admissionErr1)
 	assert.FatalIf(t, first.Reads.Valid(), "%v", "promotion did not invalidate the captured declaration")
 	second := gateExecution(c, canonical.Named())
 	got, _ := second.Reads.Get[*manifest.Kustomization](canonical.Named())
 	assert.Equal(t, got, fresh)
-	inputs, admissionErr2 := second.DataInputs(t.Context(), got, values.NewStoreProvider(&second.Reads, false))
+	inputs, admissionErr2 := second.DataInputs(t.Context(), got, values.NewStoreProvider(&second.Reads))
 	assert.FatalIf(t, admissionErr2 != nil, "%v", admissionErr2)
 	assert.Equal(t, len(inputs), 1)
 	assert.Equal(t, inputs[0].NamedResource, replacement.Named())
@@ -285,7 +285,7 @@ func TestRequireRefresh_ChangedCanonicalReferences(t *testing.T) {
 				return
 			}
 			assert.NoError(t, err)
-			inputs, admissionErr3 := second.DataInputs(t.Context(), got, values.NewStoreProvider(&second.Reads, false))
+			inputs, admissionErr3 := second.DataInputs(t.Context(), got, values.NewStoreProvider(&second.Reads))
 			assert.FatalIf(t, admissionErr3 != nil, "%v", admissionErr3)
 			assert.Equal(t, len(inputs), 1)
 			assert.Equal(t, inputs[0].Name, "current")
@@ -399,7 +399,7 @@ func TestEmit_ProducerNamespacePolicy(t *testing.T) {
 				{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "data"}},
 				{"apiVersion": "v1", "kind": "Namespace", "metadata": map[string]any{"name": "cluster"}},
 			}
-			parsed2 := c.ParseChildren(
+			parsed2 := (&Execution{Controller: c}).ParseChildren(
 				producer,
 				testutil.DocumentOccurrences(docs),
 				manifest.ParseDocOptions{DefaultNamespace: "wrong"},
@@ -462,7 +462,11 @@ func TestEmit_KindExclusionPolicy(t *testing.T) {
 				),
 			)
 			assert.NoError(t, err)
-			parsed3 := c.ParseChildren(producer, testutil.DocumentOccurrences(docs), manifest.ParseDocOptions{})
+			parsed3 := (&Execution{Controller: c}).ParseChildren(
+				producer,
+				testutil.DocumentOccurrences(docs),
+				manifest.ParseDocOptions{},
+			)
 			if failure := manifest.DocumentFailure(parsed3.Failures); failure != nil {
 				panic(failure)
 			}
@@ -485,9 +489,8 @@ func TestEmit_KindExclusionPolicy(t *testing.T) {
 			accepted, _ := s.GetArtifact(producer.Named(), store.ArtifactContent).(*store.Emission)
 			assert.FatalIf(t, accepted == nil || len(accepted.Manifests) != 1, "accepted=%v", accepted)
 			for _, child := range children {
-				if s.GetObject(child.Obj.Named()) == nil {
-					t.Fatalf("internal child %s was hidden", child.Obj.Named())
-				}
+				assert.FatalIf(t, s.GetObject(child.Obj.Named()) == nil,
+					"internal child %s was hidden", child.Obj.Named())
 			}
 		})
 	}

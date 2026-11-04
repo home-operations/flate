@@ -137,7 +137,7 @@ func (p *sourcePathProjection) addReferencePaths(object manifest.BaseManifest) {
 		if !ref.ContentInput() || ref.Name == "" {
 			continue
 		}
-		facts := p.store.ReferenceFacts(ref.NamedResource, p.index, false, manifest.NamedResource{})
+		facts := p.store.ReferenceFacts(ref.NamedResource, p.index, manifest.NamedResource{})
 		{
 			productionValues3 := facts.Productions
 			for productionIndex3 := range productionValues3 {

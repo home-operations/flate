@@ -27,9 +27,6 @@ import (
 type Controller struct {
 	*base.Controller
 
-	// WipeSecrets controls whether Secret cleartext is wiped when parsing
-	// emitted children (forwarded to base.Execution.Emit).
-	WipeSecrets bool
 	// Inputs fetches registry-backed provider content through the shared OCI owner.
 	Inputs *oci.Fetcher
 	// Retry controls transient failures during provider acquisition.
@@ -54,11 +51,10 @@ func (c *Controller) newExecution(id manifest.NamedResource) *execution {
 }
 
 // New constructs a ResourceSet controller.
-func New(s *store.Store, t *task.Service, owner *cache.Cache, wipeSecrets bool) *Controller {
+func New(s *store.Store, t *task.Service, owner *cache.Cache) *Controller {
 	return &Controller{
-		Controller:  base.New(s, t),
-		WipeSecrets: wipeSecrets,
-		cache:       owner,
+		Controller: base.New(s, t),
+		cache:      owner,
 	}
 }
 
@@ -187,10 +183,10 @@ func (c *execution) render(ctx context.Context, rs *manifest.ResourceSet) error 
 	}
 	if !handled {
 		rs.EmissionPolicy().Stamp(docs)
-		parseChildrenResult2 := c.ParseChildren(
+		parseChildrenResult2 := c.run.ParseChildren(
 			rs,
 			docs,
-			manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets},
+			manifest.ParseDocOptions{},
 		)
 		attempt.Children, attempt.Manifests, attempt.Failures = parseChildrenResult2.Children, parseChildrenResult2.Visible, parseChildrenResult2.Failures
 		attempt.Complete = true

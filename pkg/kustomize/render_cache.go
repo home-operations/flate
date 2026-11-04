@@ -53,7 +53,6 @@ type renderBinding struct {
 	Revision     string                         `json:"Revision"`
 	Digest       string                         `json:"Digest"`
 	Alias        bool                           `json:"Alias"`
-	Wipe         bool                           `json:"Wipe"`
 	Strict       bool                           `json:"Strict"`
 	Skip         []string                       `json:",omitempty"`
 	Dependencies values.DependencySubstitutions `json:"Dependencies"`
@@ -66,7 +65,6 @@ func (a *renderBinding) equal(b *renderBinding) bool {
 		a.Revision == b.Revision &&
 		a.Digest == b.Digest &&
 		a.Alias == b.Alias &&
-		a.Wipe == b.Wipe &&
 		a.Strict == b.Strict &&
 		slices.Equal(a.Skip, b.Skip) &&
 		a.Dependencies.Equal(b.Dependencies)

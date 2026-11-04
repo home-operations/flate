@@ -210,11 +210,11 @@ func TestFinalizeIndex_ConfigurationInvokingLoader(t *testing.T) {
 		idx.Readers["combined/dual.txt"],
 		[]manifest.FileReader{{Reader: combined.Named(), Source: manifest.BootstrapSourceID}},
 	)
-	if len(idx.Readers["configs/value.txt"]) != 0 || len(idx.Readers["configs/nested/value.txt"]) != 0 ||
+	assert.FatalIf(t, len(idx.Readers["configs/value.txt"]) != 0 || len(idx.Readers["configs/nested/value.txt"]) != 0 ||
 		len(idx.Readers["ordinary/value.txt"]) != 0 ||
-		len(s.Warnings()) != 0 {
-		t.Fatalf("configuration used its own loader or lost namespace-wrapper proof: %+v", s.Warnings())
-	}
+		len(s.Warnings()) != 0,
+		"configuration used its own loader or lost namespace-wrapper proof: %+v", s.Warnings())
+
 	{
 		_, exists := idx.Lookup(
 			manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "generated", Namespace: "wrappers"},
@@ -326,8 +326,14 @@ func TestAdmit_FluxComponentInputContexts(t *testing.T) {
 		"injected components mutated the cached document or retained ignored input",
 	)
 	{
-		data, ok := lookupDataForTest[*manifest.Secret](t, s, secretID("effective", "component"))
-		assert.FatalIf(t, !ok || data == nil, "%s", "injected component lost its inherited namespace")
+		componentRecord, indexed := idx.Lookup(secretID("effective", "component"))
+		// SOPS removes encrypted keys, so the index proves namespace inheritance.
+		assert.FatalIf(
+			t,
+			!indexed || componentRecord.Authored.Name != "component",
+			"%s",
+			"injected component lost its inherited namespace",
+		)
 	}
 	warnings := s.Warnings()
 	assert.FatalIf(t, len(warnings) != 1 || len(warnings[0].Detail) != 1 || warnings[0].Resource != a.Named() ||
@@ -535,9 +541,8 @@ func testFinalizeIndexNestedConfigurationLoaderCase(
 			idx.Readers["config/operand-patch"],
 			[]manifest.FileReader{{Reader: owner.Named(), Source: manifest.BootstrapSourceID}},
 		)
-		if len(s.Warnings()) != 1 {
-			t.Fatalf("nested operand rewrite must warn: %+v", s.Warnings())
-		}
+		assert.FatalIf(t, len(s.Warnings()) != 1,
+			"nested operand rewrite must warn: %+v", s.Warnings())
 	} else if len(s.Warnings()) != 0 {
 		t.Fatalf("metadata-only nested transformer warned: %+v", s.Warnings())
 	}

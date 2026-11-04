@@ -651,14 +651,13 @@ spec:
 		assert.Equal(t, warm.store.GetDeclaration(supplied) != nil, true)
 		reads.Init(warm.store, owner, nil)
 		hr := declaration.(*manifest.HelmRelease)
-		prepared, omitted, localErr := helm.Prepare(
+		prepared, localErr := helm.Prepare(
 			hr,
 			helm.NewSources(reads).Declaration,
-			values.NewStoreProvider(reads, cfg.WipeSecrets),
+			values.NewStoreProvider(reads),
 			warm.hrc.Helm.ValuesCache(),
 		)
 		assert.NoError(t, localErr)
-		assert.Equal(t, len(omitted), 0)
 		_, receipt, localErr := testutil.RenderMaps(
 			warm.hrc.Helm.Template(
 				t.Context(),
@@ -668,7 +667,6 @@ spec:
 					Options:                 warm.hrc.Options,
 					DependencySubstitutions: warm.dependencySubstitutions,
 					Sources:                 helm.NewSources(reads),
-					WipeSecrets:             cfg.WipeSecrets,
 				},
 			),
 		)

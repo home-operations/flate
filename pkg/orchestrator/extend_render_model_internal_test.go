@@ -412,10 +412,14 @@ func rekeyRenderModel(w modelWorld, old, next modelID) {
 
 type extendRenderModelTailInputs struct {
 	variant *byte
-	source  *modelSource
-	f       **renderModelCase
-	app     *modelID
-	seed    *int
+
+	source *modelSource
+
+	f **renderModelCase
+
+	app *modelID
+
+	seed *int
 }
 
 func extendRenderModelSegment(f **renderModelCase, variant *byte, source *modelSource, app *modelID) bool {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/controllers/base"
+
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -20,7 +22,7 @@ func publishDocuments(
 			&manifest.RawObject{APIVersion: id.Group + "/v1", Kind: id.Kind, Name: id.Name, Namespace: id.Namespace},
 		)
 	}
-	parseChildrenResult1 := c.ParseChildren(c.Store.GetObject(id), docs, opts)
+	parseChildrenResult1 := (&base.Execution{Controller: c.Controller}).ParseChildren(c.Store.GetObject(id), docs, opts)
 	children, retained, failures := parseChildrenResult1.Children, parseChildrenResult1.Visible, parseChildrenResult1.Failures
 	_, _, next := c.Store.GetEmission(id)
 	defer next.Finish()

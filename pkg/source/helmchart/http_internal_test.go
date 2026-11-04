@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/pkg/store"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -179,9 +180,8 @@ func TestFetchHTTPChart_ChartNotFound(t *testing.T) {
 		"chart cause: %v",
 		err,
 	)
-	if !strings.Contains(manifest.ErrorDetails(err), "no chart name found") {
-		t.Fatalf("lost lookup detail: %s", manifest.ErrorDetails(err))
-	}
+	assert.FatalIf(t, !strings.Contains(manifest.ErrorDetails(err), "no chart name found"),
+		"lost lookup detail: %s", manifest.ErrorDetails(err))
 }
 
 func TestFetchHTTPChart_SecretReferences(t *testing.T) {
@@ -194,21 +194,111 @@ func TestFetchHTTPChart_SecretReferences(t *testing.T) {
 	}{
 		{name: "auth unwired", state: "unwired", missing: true},
 		{name: "auth absent", state: "absent", missing: true},
-		{name: "auth wiped", state: "wiped", missing: true},
+		{name: "auth empty", state: "empty", missing: true},
 		{name: "auth partial", state: "partial", missing: true},
 		{name: "auth malformed", state: "malformed", input: true},
 		{name: "auth malformed password", state: "malformed password", input: true},
 		{name: "auth nonscalar", state: "nonscalar", input: true},
-		{name: "auth wiped username malformed password", state: "wiped malformed", input: true},
-		{name: "auth malformed username wiped password", state: "malformed wiped", input: true},
+		{name: "auth empty username malformed password", state: "empty malformed", input: true},
+		{name: "auth malformed username empty password", state: "malformed empty", input: true},
 		{name: "cert unwired", state: "unwired", cert: true},
 		{name: "cert absent", state: "absent", cert: true, missing: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			testFetchHTTPChartSecretReferencesCase(t, &tc)
-		},
+			testFetchHTTPChartSecretReferencesCase1(t, &tc)
+		})
+	}
+}
+
+func testFetchHTTPChartSecretReferencesCase1(t *testing.T, tc *struct {
+	name    string
+	state   string
+	cert    bool
+	missing bool
+	input   bool
+},
+) {
+	t.Helper()
+
+	r := httpRepo("https://charts.example")
+	secret := &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "first"}}
+	f, fInputs := newHTTPFetcherWithSecrets(t, r, func(_, _ string) *manifest.Secret { return secret })
+	if tc.cert {
+		r.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
+	} else {
+		r.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
+		preparedHTTP(t, f, fInputs, r)
+	}
+	switch tc.state {
+	case "unwired":
+		fInputs.secrets = nil
+	case "absent":
+		secret = nil
+	case "empty":
+		secret = &manifest.Secret{StringData: map[string]any{"username": "alice", "password": ""}}
+	case "partial":
+		secret = &manifest.Secret{StringData: map[string]any{"username": "alice"}}
+	case "malformed":
+		secret = &manifest.Secret{
+			Data:       map[string]any{"username": "credential-payload!"},
+			StringData: map[string]any{"password": "first"},
+		}
+	case "malformed password":
+		secret = &manifest.Secret{
+			Data:       map[string]any{"password": "credential-payload!"},
+			StringData: map[string]any{"username": "alice"},
+		}
+	case "nonscalar":
+		secret = &manifest.Secret{
+			StringData: map[string]any{"username": []any{"credential-payload"}, "password": "first"},
+		}
+	case "empty malformed":
+		secret = &manifest.Secret{
+			StringData: map[string]any{"username": ""},
+			Data:       map[string]any{"password": "credential-payload!"},
+		}
+	case "malformed empty":
+		secret = &manifest.Secret{
+			Data:       map[string]any{"username": "credential-payload!"},
+			StringData: map[string]any{"password": ""},
+		}
+	}
+	f.cache = nil
+	var artifact *store.SourceArtifact
+	var err error
+	if tc.state == "unwired" {
+		_, err = (&operation{Fetcher: f}).prepareHTTP(r)
+	} else {
+		artifact, err = f.Fetch(
+			t.Context(),
+			helmChart("repo", "app-template", "1.0.0"),
+			fInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
+			sourcecache.Policy{},
 		)
+	}
+	assert.FatalIf(t, err == nil || errors.Is(err, manifest.ErrMissingSecret) != tc.missing || artifact != nil,
+		"missing=%t, artifact=%v, error=%v", tc.missing, artifact, err)
+
+	if tc.input {
+		assert.FatalIf(t, !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux),
+			"expected hard input error, got %v", err)
+		assert.ErrorIf(t, strings.Contains(err.Error(), "HelmRepository flux-system/repo") ||
+			!strings.Contains(err.Error(), "secret flux-system/creds"),
+			"input error lost source or Secret identity: %v", err)
+		assert.ErrorIf(
+			t,
+			strings.Contains(err.Error(), "credential-payload"),
+			"%s",
+			"input error exposed credential payload",
+		)
+	}
+	if tc.missing && tc.state != "unwired" && !tc.cert {
+		missing, ok := errors.AsType[*source.MissingSecretError](err)
+		assert.FatalIf(t, !ok || missing.Owner != r.Named() || missing.Secret.Name != "creds" ||
+			missing.Secret.Namespace != r.Namespace ||
+			missing.RetryAmbient == nil,
+			"missing error lost source identity or ambient continuation: %v", err)
 	}
 }
 
@@ -291,9 +381,9 @@ func TestFetchHTTPChart_SubpathRelativeURL(t *testing.T) {
 			sourcecache.Policy{},
 		)
 		assert.FatalIf(t, err != nil, "Fetch: %v", err)
-		if *repository.hits != 1 {
-			t.Errorf("chart fetched %d times from subpath, want 1 (url resolved against host root?)", *repository.hits)
-		}
+		assert.ErrorIf(t, *repository.hits != 1,
+			"chart fetched %d times from subpath, want 1 (url resolved against host root?)", *repository.hits)
+
 		if _, err := fs.Stat(art.FS, "chart.tgz"); err != nil {
 			t.Errorf("chart.tgz missing from artifact %s: %v", art.Key, err)
 		}
@@ -313,9 +403,8 @@ func TestFetchHTTPChart_SubpathRelativeURL(t *testing.T) {
 			)
 			assert.FatalIf(t, err != nil, "Fetch: %v", err)
 		}
-		if *repository2.hits != 1 {
-			t.Errorf("chart fetched %d times from subpath, want 1", *repository2.hits)
-		}
+		assert.ErrorIf(t, *repository2.hits != 1,
+			"chart fetched %d times from subpath, want 1", *repository2.hits)
 	})
 }
 
@@ -446,9 +535,8 @@ entries:
 				)
 				assert.FatalIf(t, err != nil, "Fetch: %v", err)
 			}
-			if gotAuth != tc.wantAuth {
-				t.Errorf("chart host got basic auth = %v, want %v", gotAuth, tc.wantAuth)
-			}
+			assert.ErrorIf(t, gotAuth != tc.wantAuth,
+				"chart host got basic auth = %v, want %v", gotAuth, tc.wantAuth)
 		})
 	}
 }
@@ -487,15 +575,15 @@ func TestFetchIndex_FreshnessAndDigest(t *testing.T) {
 	assert.NoError(t, err)
 
 	second, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, r), sourcecache.Policy{})
-	if err != nil || second != first || hits.Load() != 1 {
-		t.Fatalf("fresh memo=%p/%p, hits=%d, error=%v", first, second, hits.Load(), err)
-	}
+	assert.FatalIf(t, err != nil || second != first || hits.Load() != 1,
+		"fresh memo=%p/%p, hits=%d, error=%v", first, second, hits.Load(), err)
+
 	strict := *r
 	strict.Interval.Duration = 0
 	same, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, &strict), sourcecache.Policy{})
-	if err != nil || same != first || hits.Load() != 2 {
-		t.Fatalf("same digest=%p/%p, hits=%d, error=%v", first, same, hits.Load(), err)
-	}
+	assert.FatalIf(t, err != nil || same != first || hits.Load() != 2,
+		"same digest=%p/%p, hits=%d, error=%v", first, same, hits.Load(), err)
+
 	version.Store(2)
 	updated, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, &strict), sourcecache.Policy{})
 	assert.NoError(t, err)
@@ -506,9 +594,9 @@ func TestFetchIndex_FreshnessAndDigest(t *testing.T) {
 	other := *r
 	other.URL += "/other"
 	shared, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, &other), sourcecache.Policy{})
-	if err != nil || shared != updated || hits.Load() != 4 {
-		t.Fatalf("equal response digest across URLs=%p/%p, hits=%d, error=%v", updated, shared, hits.Load(), err)
-	}
+	assert.FatalIf(t, err != nil || shared != updated || hits.Load() != 4,
+		"equal response digest across URLs=%p/%p, hits=%d, error=%v", updated, shared, hits.Load(), err)
+
 	key := "sha256:" + chartDigest([]byte(strings.ReplaceAll(helmRepoIndex(""), "1.0.0", "2.0.0")))
 	{
 		memo, ok := f.indexCache.Load(key)
@@ -534,9 +622,9 @@ func TestHTTPRepositoryGet_ResponseRules(t *testing.T) {
 			var body bytes.Buffer
 			_, err := r.get(t.Context(), "https://charts.invalid/chart.tgz", &body)
 			if status == http.StatusOK {
-				if err != nil || body.String() != "content" {
-					t.Fatalf("successful response: body=%q error=%v", body.String(), err)
-				}
+				assert.FatalIf(t, err != nil || body.String() != "content",
+					"successful response: body=%q error=%v", body.String(), err)
+
 				return
 			}
 			response, ok := errors.AsType[*fetcherr.ResponseError](err)
@@ -545,10 +633,16 @@ func TestHTTPRepositoryGet_ResponseRules(t *testing.T) {
 				status,
 				http.StatusText(status),
 			)
-			if !ok || response.StatusCode != status || response.Op != http.MethodGet || err.Error() != want ||
-				body.Len() != 0 {
-				t.Fatalf("response=%+v body=%q error=%v want=%q", response, body.String(), err, want)
-			}
+			assert.FatalIf(
+				t,
+				!ok || response.StatusCode != status || response.Op != http.MethodGet || err.Error() != want ||
+					body.Len() != 0,
+				"response=%+v body=%q error=%v want=%q",
+				response,
+				body.String(),
+				err,
+				want,
+			)
 		})
 	}
 }
@@ -631,9 +725,9 @@ func TestFetchIndex_ConcurrentRefreshDuringBackoff(t *testing.T) {
 		}
 
 		memo, err := f.fetchIndex(t.Context(), prepared, sourcecache.Policy{})
-		if err != nil || memo != updated || hits.Load() != 2 {
-			t.Fatalf("digest-bound memo=%p/%p, hits=%d, error=%v", updated, memo, hits.Load(), err)
-		}
+		assert.FatalIf(t, err != nil || memo != updated || hits.Load() != 2,
+			"digest-bound memo=%p/%p, hits=%d, error=%v", updated, memo, hits.Load(), err)
+
 		key := "sha256:" + chartDigest([]byte(strings.ReplaceAll(helmRepoIndex(""), "1.0.0", "2.0.0")))
 		{
 			cached, ok := f.indexCache.Load(key)

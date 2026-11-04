@@ -37,7 +37,7 @@ func resolveProxy(
 	}
 	proxy := &proxyConfig{Address: material[0], Username: material[1], Password: material[2]}
 	var selected *url.URL
-	if proxy.Address != "" && !manifest.HasValuePlaceholder(proxy.Address) {
+	if proxy.Address != "" {
 		var err error
 		selected, err = url.Parse(proxy.Address)
 		if err != nil {
@@ -49,11 +49,6 @@ func resolveProxy(
 		}
 		if proxy.Username != "" {
 			selected.User = url.UserPassword(proxy.Username, proxy.Password)
-		}
-	}
-	for _, value := range material {
-		if manifest.HasValuePlaceholder(value) {
-			return nil, nil, MissingSecretErr(owner, ref.Name, "proxy material unavailable")
 		}
 	}
 	if material[0] == "" {

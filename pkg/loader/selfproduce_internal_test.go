@@ -65,9 +65,9 @@ func TestPackageRoots_EdgeFactLifetime(t *testing.T) {
 		)
 		roots := l.packageRoots(root, nil)
 		want := name == "a"
-		if l.documents.cache[target].incoming != want {
-			t.Fatalf("target after masking %s: incoming=%t, want %t", name, l.documents.cache[target].incoming, want)
-		}
+		assert.FatalIf(t, l.documents.cache[target].incoming != want,
+			"target after masking %s: incoming=%t, want %t", name, l.documents.cache[target].incoming, want)
+
 		assert.FatalIf(
 			t,
 			slices.Contains(roots, "target") == want,
@@ -166,7 +166,7 @@ func TestFinalizeIndex_EmptyPathRequiresSource(t *testing.T) {
 			}
 			st.AddObject(ks)
 			l := loaderFixture(st, nil)
-			l.Options.WipeSecrets = false
+
 			idx := rendererFixture(t, l, root)
 			var want []manifest.NamedResource
 			if tc.produces {
@@ -653,9 +653,9 @@ func testFinalizeIndexBareDirComponentNamespaceCase(
 	}
 	consumer := testutil.KustomizationID(testCaseInput.namespace, "consumer")
 	record, ok := idx.Lookup(consumer)
-	if !ok {
-		t.Fatalf("consumer %s not indexed: records=%+v", consumer, idx.Records)
-	}
+	assert.FatalIf(t, !ok,
+		"consumer %s not indexed: records=%+v", consumer, idx.Records)
+
 	assert.Diff(t, record.Refs, []manifest.NamedResource{generated})
 	obj, ok := candidateForTest(t, l, consumer).(*manifest.Kustomization)
 	assert.FatalIf(t, !ok, "consumer %s not stored", consumer)

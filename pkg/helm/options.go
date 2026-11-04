@@ -15,8 +15,7 @@ type RenderOptions struct {
 	Options
 
 	Sources Sources `json:"Sources"`
-	// WipeSecrets binds the emitted Secret policy to accepted history.
-	WipeSecrets bool `json:"WipeSecrets"`
+
 	// DependencySubstitutions binds emitted dependency projection to accepted history.
 	DependencySubstitutions values.DependencySubstitutions `json:"DependencySubstitutions"`
 	// Admit receives the cache owner's content key; true returns empty output without rendering.

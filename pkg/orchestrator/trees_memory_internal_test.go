@@ -186,7 +186,6 @@ func TestRender_MemorySharedOwner(t *testing.T) {
 					Tree{Path: filepath.Join(root, "kubernetes", "apps"), RepoRoot: root},
 					Config{
 						Cache:       owner,
-						WipeSecrets: true,
 						Concurrency: runtime.NumCPU() * 4,
 						GitDepth:    1,
 						HelmOptions: helm.Options{

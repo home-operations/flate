@@ -214,8 +214,11 @@ func TestCollectManifests_MissingParent(t *testing.T) {
 		"kind":       "ConfigMap",
 		"metadata":   map[string]any{"name": "settings", "namespace": "apps"},
 	}
-	parsedChildren1 := base.New(st, nil).
-		ParseChildren(rs, testutil.DocumentOccurrences([]map[string]any{doc}), manifest.ParseDocOptions{})
+	parsedChildren1 := (&base.Execution{Controller: base.New(st, nil)}).ParseChildren(
+		rs,
+		testutil.DocumentOccurrences([]map[string]any{doc}),
+		manifest.ParseDocOptions{},
+	)
 	if err := manifest.DocumentFailure(parsedChildren1.Failures); err != nil {
 		panic(err)
 	}
@@ -351,9 +354,8 @@ func testCollectManifestsConflictingProducersCase(
 	got := outputByParent(o.collectManifests())
 	assert.FatalIf(t, len(got) != (*testCaseInput.workers), "output lost producer documents: %v", got)
 	for i, owner := range owners {
-		if len(got[owner]) != 1 || got[owner][0]["data"].(map[string]any)["value"] != strconv.Itoa(i) {
-			t.Fatalf("output lost %s contribution: %v", owner, got[owner])
-		}
+		assert.FatalIf(t, len(got[owner]) != 1 || got[owner][0]["data"].(map[string]any)["value"] != strconv.Itoa(i),
+			"output lost %s contribution: %v", owner, got[owner])
 	}
 	for _, owner := range owners {
 		parseChildrenForTestResult4 := parseChildrenForTest(

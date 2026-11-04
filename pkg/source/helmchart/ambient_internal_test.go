@@ -151,7 +151,7 @@ func TestFetcher_LocalHelmContinuationEligibility(t *testing.T) {
 		wantInput   bool
 	}{
 		{name: "missing auth", wantAmbient: true},
-		{name: "wiped auth", auth: &manifest.Secret{StringData: map[string]any{"username": "user", "password": manifest.ValuePlaceholder("password")}}, wantAmbient: true},
+		{name: "empty auth", auth: &manifest.Secret{StringData: map[string]any{"username": "user", "password": ""}}, wantAmbient: true},
 		{name: "malformed auth", auth: &manifest.Secret{Data: map[string]any{"username": "credential-canary!"}}, wantInput: true},
 		{name: "missing TLS", certRef: true},
 		{name: "malformed TLS", certRef: true, cert: &manifest.Secret{StringData: map[string]any{"ca.crt": "credential-canary"}}, wantInput: true},
@@ -172,16 +172,14 @@ func TestFetcher_LocalHelmContinuationEligibility(t *testing.T) {
 			hc := helmChart(r.Name, "app-template", "1.0.0")
 			artifact, err := f.Fetch(t.Context(), hc, inputs.readSet(hc), cache.Policy{})
 			missing, ok := errors.AsType[*source.MissingSecretError](err)
-			if err == nil || artifact != nil || (ok && missing.RetryAmbient != nil) != tc.wantAmbient ||
+			assert.FatalIf(t, err == nil || artifact != nil || (ok && missing.RetryAmbient != nil) != tc.wantAmbient ||
 				errors.Is(err, manifest.ErrInput) != tc.wantInput ||
-				strings.Contains(err.Error(), "canary") {
-				t.Fatalf(
-					"ambient=%t input=%t: %v",
-					ok && missing.RetryAmbient != nil,
-					errors.Is(err, manifest.ErrInput),
-					err,
-				)
-			}
+				strings.Contains(err.Error(), "canary"),
+
+				"ambient=%t input=%t: %v",
+				ok && missing.RetryAmbient != nil,
+				errors.Is(err, manifest.ErrInput),
+				err)
 		})
 	}
 }
@@ -226,8 +224,7 @@ func TestFetcher_LocalHelmFiles(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test replaces the process HTTP transport and restores it afterward.
-//nolint:paralleltest // The test replaces the process HTTP transport and restores it afterward.
+//nolint:paralleltest // Helm continuation fixtures change process environment and transport state.
 func TestFetcher_LocalHelmContinuation(t *testing.T) {
 	chart := buildChartTarGz(t, "app-template", "1.0.0")
 	var requests atomic.Int32
@@ -236,9 +233,13 @@ func TestFetcher_LocalHelmContinuation(t *testing.T) {
 	helmPipe(t, func(r *http.Request) (*http.Response, error) {
 		requests.Add(1)
 		user, password, auth := r.BasicAuth()
-		if username == "" && auth || username != "" && (!auth || user != username || password != "password-canary") {
-			t.Error("request used the wrong credential tier")
-		}
+		assert.ErrorIf(
+			t,
+			username == "" && auth || username != "" && (!auth || user != username || password != "password-canary"),
+			"%s",
+			"request used the wrong credential tier",
+		)
+
 		if rejected {
 			return helmReply(r, http.StatusUnauthorized, []byte("credential-canary")), nil
 		}
@@ -249,19 +250,131 @@ func TestFetcher_LocalHelmContinuation(t *testing.T) {
 	})
 	for _, tier := range []string{"repository", "supply", "partial supply", "machine", "public", "rejected"} {
 		t.Run(tier, func(t *testing.T) {
-			testFetcherLocalHelmContinuationCase(
+			testFetcherLocalHelmContinuationCase1(
 				t,
-				testFetcherLocalHelmContinuationCaseInputs{
-					chart:    &chart,
-					requests: &requests,
+				&testFetcherLocalHelmContinuationCase1Inputs{
 					username: &username,
 					rejected: &rejected,
 					tier:     &tier,
+					requests: &requests,
+					chart:    &chart,
 				},
 			)
-		},
-		)
+		})
 	}
+}
+
+func testFetcherLocalHelmContinuationCase1(
+	t *testing.T, inputs *testFetcherLocalHelmContinuationCase1Inputs,
+) {
+	t.Helper()
+	t.Setenv("HELM_CONFIG_HOME", t.TempDir())
+	r := httpRepo("https://charts.invalid")
+	r.SecretRef = &manifest.LocalObjectReference{Name: "auth"}
+	hc := helmChart(r.Name, "app-template", "1.0.0")
+	st := store.New()
+	(*inputs.username), (*inputs.rejected) = "repository", (*inputs.tier) == "rejected"
+	var path string
+	switch *inputs.tier {
+	case "machine":
+		(*inputs.username) = "machine-canary"
+		path = helmLogin(
+			t,
+			nil,
+			&repo.Entry{URL: r.URL, Username: "incomplete-canary"},
+			&repo.Entry{URL: r.URL, Username: "", Password: "ignored"},
+			&repo.Entry{
+				URL:                   r.URL + "/./",
+				Username:              (*inputs.username),
+				Password:              "password-canary",
+				CAFile:                "/invalid-ca",
+				CertFile:              "/invalid-cert",
+				KeyFile:               "/invalid-key",
+				InsecureSkipTLSVerify: true,
+				PassCredentialsAll:    true,
+			},
+			&repo.Entry{URL: r.URL, Username: "later-canary", Password: "ignored"},
+		)
+		customPath := filepath.Join(filepath.Dir(path), "custom-repositories.yaml")
+		assert.NoError(t, os.Rename(path, customPath))
+		path = customPath
+		t.Setenv("HELM_REPOSITORY_CONFIG", path)
+	case "public":
+		r.SecretRef = nil
+		(*inputs.username) = ""
+	default:
+		secret := &manifest.Secret{
+			Name:       "auth",
+			Namespace:  r.Namespace,
+			StringData: map[string]any{"username": (*inputs.username), "password": "password-canary"},
+		}
+		if (*inputs.tier) == "partial supply" {
+			delete(secret.StringData, "password")
+		}
+		if (*inputs.tier) != "supply" {
+			st.AddObject(secret)
+		}
+		if (*inputs.tier) == "supply" || (*inputs.tier) == "partial supply" {
+			supplied := []store.Declaration{
+				{
+					Doc: testutil.ObjectDocument(
+						&manifest.Secret{
+							Name:       "auth",
+							Namespace:  r.Namespace,
+							StringData: map[string]any{"username": "supply", "password": "password-canary"},
+						},
+					),
+					Obj: &manifest.Secret{
+						Name:       "auth",
+						Namespace:  r.Namespace,
+						StringData: map[string]any{"username": "supply", "password": "password-canary"},
+					},
+					Origin: manifest.SuppliedDeclaration,
+				},
+			}
+			for _, declaration := range supplied {
+				st.AddDeclaration(declaration)
+			}
+			if (*inputs.tier) == "supply" {
+				(*inputs.username) = "supply"
+			}
+		}
+	}
+	st.AddObject(r)
+	st.AddObject(hc)
+	var reads store.ReadSet
+	reads.Init(st, hc.Named(), nil)
+	defer reads.Close()
+	root := t.TempDir()
+	f := New(nil, Config{Cache: cachetest.New(t, root, cache.New), Network: newTestNetwork(t)})
+	before := inputs.requests.Load()
+	artifact, err := f.Fetch(t.Context(), hc, &reads, cache.Policy{})
+	if *inputs.rejected {
+		response, ok := errors.AsType[*fetcherr.ResponseError](err)
+		assert.FatalIf(t, artifact != nil || !ok || response.StatusCode != http.StatusUnauthorized ||
+			!errors.Is(err, manifest.ErrMissingSecret) || inputs.requests.
+			Load() != before+1 ||
+			strings.Contains(err.Error(), "canary"),
+			"explicit rejection advanced credential tiers or leaked payload: %v", err)
+
+		return
+	}
+	testFetcherLocalHelmContinuationCase1Tail(
+		t,
+		&testFetcherLocalHelmContinuationCase1TailInputs{
+			tier:     &inputs.tier,
+			err:      &err,
+			artifact: &artifact,
+			requests: &inputs.requests,
+			before:   &before,
+			f:        &f,
+			reads:    &reads,
+			r:        &r,
+			path:     &path,
+			chart:    &inputs.chart,
+			root:     &root,
+		},
+	)
 }
 
 //nolint:paralleltest // Credential fixture helpers change the process environment.
@@ -301,244 +414,6 @@ func TestFetcher_LocalHelmAcquisitionFailures(t *testing.T) {
 		},
 		)
 	}
-}
-
-type testFetcherLocalHelmContinuationCaseInputs struct {
-	chart    *[]byte
-	requests *atomic.Int32
-	username *string
-	rejected *bool
-	tier     *string
-}
-
-func testFetcherLocalHelmContinuationCase(t *testing.T, testCaseInput testFetcherLocalHelmContinuationCaseInputs) {
-	t.Helper()
-	t.Setenv("HELM_CONFIG_HOME", t.TempDir())
-	r := httpRepo("https://charts.invalid")
-	r.SecretRef = &manifest.LocalObjectReference{Name: "auth"}
-	hc := helmChart(r.Name, "app-template", "1.0.0")
-	st := store.New()
-	(*testCaseInput.username), (*testCaseInput.rejected) = "repository", (*testCaseInput.tier) == "rejected"
-	var path string
-	switch *testCaseInput.tier {
-	case "machine":
-		(*testCaseInput.username) = "machine-canary"
-		path = helmLogin(
-			t,
-			nil,
-			&repo.Entry{URL: r.URL, Username: "incomplete-canary"},
-			&repo.Entry{URL: r.URL, Username: manifest.ValuePlaceholder("username"), Password: "ignored"},
-			&repo.Entry{
-				URL:                   r.URL + "/./",
-				Username:              (*testCaseInput.username),
-				Password:              "password-canary",
-				CAFile:                "/invalid-ca",
-				CertFile:              "/invalid-cert",
-				KeyFile:               "/invalid-key",
-				InsecureSkipTLSVerify: true,
-				PassCredentialsAll:    true,
-			},
-			&repo.Entry{URL: r.URL, Username: "later-canary", Password: "ignored"},
-		)
-		customPath := filepath.Join(filepath.Dir(path), "custom-repositories.yaml")
-		assert.NoError(t, os.Rename(path, customPath))
-		path = customPath
-		t.Setenv("HELM_REPOSITORY_CONFIG", path)
-	case "public":
-		r.SecretRef = nil
-		(*testCaseInput.username) = ""
-	default:
-		secret := &manifest.Secret{
-			Name:       "auth",
-			Namespace:  r.Namespace,
-			StringData: map[string]any{"username": (*testCaseInput.username), "password": "password-canary"},
-		}
-		if (*testCaseInput.tier) == "partial supply" {
-			secret.StringData["password"] = manifest.ValuePlaceholder("password")
-		}
-		if (*testCaseInput.tier) != "supply" {
-			st.AddObject(secret)
-		}
-		if (*testCaseInput.tier) == "supply" || (*testCaseInput.tier) == "partial supply" {
-			supplied := []store.Declaration{
-				{
-					Obj: &manifest.Secret{
-						Name:       "auth",
-						Namespace:  r.Namespace,
-						StringData: map[string]any{"username": "supply", "password": "password-canary"},
-					}, Doc: testutil.ObjectDocument(&manifest.Secret{
-						Name:       "auth",
-						Namespace:  r.Namespace,
-						StringData: map[string]any{"username": "supply", "password": "password-canary"},
-					}), Origin: manifest.SuppliedDeclaration,
-				},
-			}
-			for _, declaration := range supplied {
-				st.AddDeclaration(declaration)
-			}
-			if (*testCaseInput.tier) == "supply" {
-				(*testCaseInput.username) = "supply"
-			}
-		}
-	}
-	st.AddObject(r)
-	st.AddObject(hc)
-	var reads store.ReadSet
-	reads.Init(st, hc.Named(), nil)
-	defer reads.Close()
-	root := t.TempDir()
-	f := New(nil, Config{Cache: cachetest.New(t, root, cache.New), Network: newTestNetwork(t)})
-	before := testCaseInput.requests.Load()
-	artifact, err := f.Fetch(t.Context(), hc, &reads, cache.Policy{})
-	if *testCaseInput.rejected {
-		response, ok := errors.AsType[*fetcherr.ResponseError](err)
-		assert.FatalIf(t, artifact != nil || !ok || response.StatusCode != http.StatusUnauthorized ||
-			!errors.Is(err, manifest.ErrMissingSecret) || testCaseInput.requests.
-			Load() != before+1 ||
-			strings.Contains(
-				err.Error(),
-				"canary",
-			), "explicit rejection advanced credential tiers or leaked payload: %v", err)
-		return
-	}
-	shouldReturn := testFetcherLocalHelmContinuationCaseCompletion(
-		t,
-		&testFetcherLocalHelmContinuationCaseCompletionInputs{
-			testCaseInput: &testCaseInput,
-			err:           &err,
-			artifact:      &artifact,
-			before:        &before,
-			f:             &f,
-			reads:         &reads,
-			r:             &r,
-			path:          &path,
-			root:          &root,
-		},
-	)
-	if shouldReturn {
-		return
-	}
-}
-
-func testFetcherLocalHelmContinuationCaseCompletion(
-	t *testing.T,
-	captures *testFetcherLocalHelmContinuationCaseCompletionInputs,
-) bool {
-	t.Helper()
-	var retry func(context.Context) (*store.SourceArtifact, error)
-	if (*captures.testCaseInput.tier) == "machine" {
-		missing, ok := errors.AsType[*source.MissingSecretError]((*captures.err))
-		assert.FatalIf(
-			t,
-			!ok || missing.RetryAmbient == nil || (*captures.artifact) != nil ||
-				captures.testCaseInput.requests.Load() != (*captures.before),
-			"missing auth did not retain a lazy continuation: %v",
-			(*captures.err),
-		)
-		prepared, prepErr := (&operation{Fetcher: (*captures.f), secrets: source.SecretLookup(captures.reads)}).prepareHTTP(
-			(*captures.r),
-		)
-		assert.Equal(t, errors.Is(prepErr, manifest.ErrMissingSecret), true)
-		transport, transportErr := (*captures.f).network.HTTPTransport(
-			source.HTTPTransportConfig{DisableCompression: true},
-		)
-		assert.NoError(t, transportErr)
-		assert.FatalIf(
-			t,
-			prepared.material != nil || prepared.client.Transport != transport || prepared.username != "" ||
-				prepared.password != "",
-			"%s",
-			"machine values entered captured identity or transport",
-		)
-
-		retry = missing.RetryAmbient
-		(*captures.artifact), (*captures.err) = retry(t.Context())
-	}
-	assert.NoError(t, (*captures.err))
-	assert.FatalIf(t, (*captures.artifact) == nil, "%s", "successful acquisition returned no artifact")
-
-	if len((*captures.artifact).Warnings) != 0 {
-		t.Fatalf("warnings=%+v, want %d", (*captures.artifact).Warnings, 0)
-	}
-	if (*captures.testCaseInput.tier) != "machine" {
-		return true
-	}
-	assert.FatalIf(t, strings.Contains(
-		fmt.Sprint(
-			(*captures.artifact).Key,
-			(*captures.artifact).Content,
-			(*captures.artifact).Metadata,
-			(*captures.artifact).Warnings,
-		),
-		"canary",
-	), "%s", "local Helm values entered identity or output")
-	(*captures.before) = captures.testCaseInput.requests.Load()
-	var warm *store.SourceArtifact
-
-	warm, (*captures.err) = retry(t.Context())
-	assert.NoError(t, (*captures.err))
-	assert.FatalIf(
-		t,
-		warm.Key != (*captures.artifact).Key || warm.Content != (*captures.artifact).Content || len(warm.Warnings) != 0 ||
-			captures.testCaseInput.
-				requests.
-				Load() != (*captures.before),
-		"%s",
-		"warm cache consulted credentials, changed identity or manufactured an advisory",
-	)
-
-	var concurrent sync.WaitGroup
-	start := make(chan struct{})
-	for range 2 {
-		concurrent.Go(func() {
-			<-start
-			artifact, retryErr := retry(t.Context())
-			assert.ErrorIf(
-				t,
-				retryErr != nil || artifact == nil || artifact.Key != warm.Key,
-				"concurrent prepared chart: %v %v",
-				artifact,
-				retryErr,
-			)
-		})
-	}
-	close(start)
-	concurrent.Wait()
-	assert.FatalIf(
-		t,
-		captures.testCaseInput.requests.Load() != (*captures.before),
-		"%s",
-		"concurrent warm acquisitions repeated HTTP",
-	)
-
-	assert.NoError(t, os.Remove((*captures.path)))
-	var failed *store.SourceArtifact
-
-	failed, (*captures.err) = retry(t.Context())
-	assert.FatalIf(
-		t,
-		failed != nil || !errors.Is((*captures.err), manifest.ErrMissingSecret) ||
-			captures.testCaseInput.requests.Load() != (*captures.before),
-		"unavailable login reused warm artifact: %v",
-		(*captures.err),
-	)
-	var data []byte
-
-	data, (*captures.err) = fs.ReadFile(warm.FS, source.HelmChartArchiveFilename)
-	assert.NoError(t, (*captures.err))
-	assert.FatalIf(t, !bytes.Equal(data, (*captures.testCaseInput.chart)), "%s", "warm acquisition changed chart bytes")
-
-	assert.NoError(t, filepath.WalkDir((*captures.root), func(path string, entry fs.DirEntry, err error) error {
-		if err != nil || entry.IsDir() {
-			return err
-		}
-		data, err := os.ReadFile(path)
-		if bytes.Contains(data, []byte("canary")) {
-			t.Error("machine credentials entered persistent cache data")
-		}
-		return err
-	}))
-	return false
 }
 
 func testFetcherLocalHelmAuthenticatedRequestsCase(
@@ -591,15 +466,13 @@ func testFetcherLocalHelmAuthenticatedRequestsCase(
 	assert.FatalIf(t, !ok || missing.RetryAmbient == nil, "missing continuation: %v", err)
 	artifact, err := missing.RetryAmbient(t.Context())
 	assert.NoError(t, err)
-	if len(artifact.Warnings) != 0 || (signedCharts.Load() == 1) != (*pass) ||
-		indexRequests.Load() != map[bool]int32{false: 1, true: 2}[(*warmIndex)] {
-		t.Fatalf(
-			"warnings=%d signed charts=%d index=%d",
-			len(artifact.Warnings),
-			signedCharts.Load(),
-			indexRequests.Load(),
-		)
-	}
+	assert.FatalIf(t, len(artifact.Warnings) != 0 || (signedCharts.Load() == 1) != (*pass) ||
+		indexRequests.Load() != map[bool]int32{false: 1, true: 2}[(*warmIndex)],
+
+		"warnings=%d signed charts=%d index=%d",
+		len(artifact.Warnings),
+		signedCharts.Load(),
+		indexRequests.Load())
 }
 
 func testFetcherLocalHelmAcquisitionFailuresCase(
@@ -682,25 +555,28 @@ func testFetcherLocalHelmAcquisitionFailuresCase(
 	if (*stage) == "retry index" {
 		terminal, ok := errors.AsType[*cache.TerminalError](err)
 		response, typed := errors.AsType[*fetcherr.ResponseError](err)
-		if !ok || !terminal.Attempted || !typed || response.StatusCode != http.StatusServiceUnavailable ||
-			requests.Load() != 2 {
-			t.Fatalf("nested retry budget/cause: requests=%d %v", requests.Load(), err)
-		}
+		assert.FatalIf(
+			t,
+			!ok || !terminal.Attempted || !typed || response.StatusCode != http.StatusServiceUnavailable ||
+				requests.Load() != 2,
+			"nested retry budget/cause: requests=%d %v",
+			requests.Load(),
+			err,
+		)
+
 		assert.NoError(t, c.Close())
 		reopened := cachetest.New(t, root, cache.New)
 		replay := New(nil, Config{Cache: reopened, Network: newTestNetwork(t)})
 		_, err = replay.Fetch(ctx, hc, inputs.readSet(hc), policy)
 		pending, ok := errors.AsType[*source.MissingSecretError](err)
-		if !ok {
-			t.Fatal(err)
-		}
+		assert.FatalIf(t, !ok, "%s", err)
+
 		_, err = pending.RetryMachine(ctx, nil)
 		terminal, ok = errors.AsType[*cache.TerminalError](err)
 		response, typed = errors.AsType[*fetcherr.ResponseError](err)
-		if !ok || terminal.Attempted || !typed || response.StatusCode != http.StatusServiceUnavailable ||
-			requests.Load() != 2 {
-			t.Fatalf("nested replay lost cause or repeated HTTP: requests=%d %v", requests.Load(), err)
-		}
+		assert.FatalIf(t, !ok || terminal.Attempted || !typed || response.StatusCode != http.StatusServiceUnavailable ||
+			requests.Load() != 2,
+			"nested replay lost cause or repeated HTTP: requests=%d %v", requests.Load(), err)
 	}
 	assert.NoError(t, c.Close())
 	assert.FatalIf(
@@ -789,14 +665,151 @@ func testFetcherLocalHelmAcquisitionFailuresCaseCallback2(
 	return err
 }
 
-type testFetcherLocalHelmContinuationCaseCompletionInputs struct {
-	testCaseInput *testFetcherLocalHelmContinuationCaseInputs
-	err           *error
-	artifact      **store.SourceArtifact
-	before        *int32
-	f             **Fetcher
-	reads         *store.ReadSet
-	r             **manifest.HelmRepository
-	path          *string
-	root          *string
+type testFetcherLocalHelmContinuationCase1TailInputs struct {
+	tier **string
+
+	err *error
+
+	artifact **store.
+			SourceArtifact
+
+	requests **atomic.
+			Int32
+
+	before *int32
+
+	f **Fetcher
+
+	reads *store.
+		ReadSet
+
+	r **manifest.
+		HelmRepository
+
+	path *string
+
+	chart **[]byte
+
+	root *string
+}
+
+func testFetcherLocalHelmContinuationCase1Tail(t *testing.T, inputs *testFetcherLocalHelmContinuationCase1TailInputs) {
+	t.Helper()
+
+	var retry func(context.Context) (*store.SourceArtifact, error)
+	if (*(*inputs.tier)) == "machine" {
+		missing, ok := errors.AsType[*source.MissingSecretError]((*inputs.err))
+		assert.FatalIf(
+			t,
+			!ok || missing.RetryAmbient == nil || (*inputs.artifact) != nil ||
+				(*inputs.requests).Load() != (*inputs.before),
+			"missing auth did not retain a lazy continuation: %v",
+			(*inputs.err),
+		)
+
+		prepared, prepErr := (&operation{Fetcher: (*inputs.f), secrets: source.SecretLookup(inputs.reads)}).prepareHTTP(
+			(*inputs.r),
+		)
+		assert.Equal(t, errors.Is(prepErr, manifest.ErrMissingSecret), true)
+		transport, transportErr := (*inputs.f).network.HTTPTransport(
+			source.HTTPTransportConfig{DisableCompression: true},
+		)
+		assert.NoError(t, transportErr)
+		assert.FatalIf(
+			t,
+			prepared.material != nil || prepared.client.Transport != transport || prepared.username != "" ||
+				prepared.password != "",
+			"%s",
+			"machine values entered captured identity or transport",
+		)
+
+		retry = missing.RetryAmbient
+		(*inputs.artifact), (*inputs.err) = retry(t.Context())
+	}
+	assert.NoError(t, (*inputs.err))
+	assert.FatalIf(t, (*inputs.artifact) == nil, "%s", "successful acquisition returned no artifact")
+	assert.FatalIf(t, len((*inputs.artifact).Warnings) != 0,
+		"warnings=%+v, want %d", (*inputs.artifact).Warnings, 0)
+
+	if (*(*inputs.tier)) != "machine" {
+		return
+	}
+	assert.FatalIf(t, strings.Contains(
+		fmt.Sprint(
+			(*inputs.artifact).Key,
+			(*inputs.artifact).Content,
+			(*inputs.artifact).Metadata,
+			(*inputs.artifact).Warnings,
+		),
+		"canary",
+	), "%s", "local Helm values entered identity or output")
+	(*inputs.before) = (*inputs.requests).Load()
+	var warm *store.
+		SourceArtifact
+
+	warm, (*inputs.err) = retry(t.Context())
+	assert.NoError(t, (*inputs.err))
+	assert.FatalIf(
+		t,
+		warm.Key != (*inputs.artifact).Key || warm.Content != (*inputs.artifact).Content || len(warm.Warnings) != 0 ||
+			(*inputs.requests).
+				Load() != (*inputs.before),
+		"%s",
+		"warm cache consulted credentials, changed identity or manufactured an advisory",
+	)
+
+	var concurrent sync.WaitGroup
+	start := make(chan struct{})
+	for range 2 {
+		concurrent.Go(func() {
+			<-start
+			artifact, err := retry(t.Context())
+			assert.ErrorIf(t, err != nil || artifact == nil || artifact.Key != warm.Key,
+				"concurrent prepared chart: %v %v", artifact, err)
+		})
+	}
+	close(start)
+	concurrent.Wait()
+	assert.FatalIf(t, (*inputs.requests).Load() != (*inputs.before), "%s", "concurrent warm acquisitions repeated HTTP")
+
+	assert.NoError(t, os.Remove((*inputs.path)))
+	var failed *store.
+		SourceArtifact
+
+	failed, (*inputs.err) = retry(t.Context())
+	assert.FatalIf(
+		t,
+		failed != nil || !errors.Is((*inputs.err), manifest.ErrMissingSecret) ||
+			(*inputs.requests).Load() != (*inputs.before),
+		"unavailable login reused warm artifact: %v",
+		(*inputs.err),
+	)
+	var data []byte
+
+	data, (*inputs.err) = fs.ReadFile(warm.FS, source.HelmChartArchiveFilename)
+	assert.NoError(t, (*inputs.err))
+	assert.FatalIf(t, !bytes.Equal(data, (*(*inputs.chart))), "%s", "warm acquisition changed chart bytes")
+
+	assert.NoError(t, filepath.WalkDir((*inputs.root), func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		assert.ErrorIf(
+			t,
+			bytes.Contains(data, []byte("canary")),
+			"%s",
+			"machine credentials entered persistent cache data",
+		)
+
+		return err
+	}))
+}
+
+type testFetcherLocalHelmContinuationCase1Inputs struct {
+	username *string
+	rejected *bool
+	tier     *string
+	requests *atomic.Int32
+	chart    *[]byte
 }

@@ -34,8 +34,8 @@ func TestResolveProxy(t *testing.T) {
 			wantError: "proxy secret ns/px missing required 'address' key",
 		},
 		{
-			name: "malformed address wiped password", kind: manifest.KindGitRepository,
-			secret:    &manifest.Secret{StringData: map[string]any{"address": "http://proxy-credential-marker@proxy.invalid/%", "password": "..PLACEHOLDER_password.."}},
+			name: "malformed address empty password", kind: manifest.KindGitRepository,
+			secret:    &manifest.Secret{StringData: map[string]any{"address": "http://proxy-credential-marker@proxy.invalid/%", "password": ""}},
 			wantError: "proxySecretRef ns/px: invalid proxy address",
 		},
 		{
@@ -43,14 +43,14 @@ func TestResolveProxy(t *testing.T) {
 			secret: &manifest.Secret{StringData: map[string]any{"address": "http://proxy.example.com:8080", "username": "alice", "password": "hunter2"}},
 		},
 	} {
-		t.Run(
-			tc.name,
-			func(t *testing.T) { t.Parallel(); testResolveProxyCase(t, &tc) },
-		)
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			testResolveProxyCase1(t, tc)
+		})
 	}
 }
 
-func testResolveProxyCase(t *testing.T, tc *struct {
+func testResolveProxyCase1(t *testing.T, tc struct {
 	name      string
 	kind      string
 	wantError string
@@ -70,12 +70,7 @@ func testResolveProxyCase(t *testing.T, tc *struct {
 			return tc.secret
 		}
 	}
-	owner := manifest.NamedResource{
-		Group:     manifest.SourceDomain,
-		Kind:      tc.kind,
-		Namespace: "ns",
-		Name:      "r",
-	}
+	owner := manifest.NamedResource{Group: manifest.SourceDomain, Kind: tc.kind, Namespace: "ns", Name: "r"}
 	material, err := ResolveTransport(
 		getter,
 		manifest.DiagnosticFor(owner, nil),
@@ -86,17 +81,14 @@ func testResolveProxyCase(t *testing.T, tc *struct {
 		assert.Equal(t, calls, 1)
 	}
 	if tc.wantError != "" {
-		if err == nil || err.Error() != tc.wantError {
-			t.Fatalf("ResolveProxy: %v, want %q", err, tc.wantError)
-		}
+		assert.FatalIf(t, err == nil || err.Error() != tc.wantError,
+			"ResolveProxy: %v, want %q", err, tc.wantError)
+
 		if !tc.unwired && tc.secret == nil {
 			missing, ok := errors.AsType[*MissingSecretError](err)
-			assert.FatalIf(
-				t,
-				!ok || !errors.Is(err, manifest.ErrMissingSecret),
-				"expected missing-secret error: %v",
-				err,
-			)
+			assert.FatalIf(t, !ok || !errors.Is(err, manifest.ErrMissingSecret),
+				"expected missing-secret error: %v", err)
+
 			assert.Equal(t, missing.Owner, owner)
 			assert.Equal(
 				t,

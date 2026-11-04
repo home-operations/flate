@@ -1,6 +1,9 @@
 package loader
 
 import (
+	"cmp"
+	"slices"
+
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -46,15 +49,20 @@ func (p *childDocumentParser) parse() store.ChildDocuments {
 	var failures []manifest.DocOccurrence
 	for i, doc := range p.docs {
 		output, admit := p.policy.SelectDocument(doc.Document, p.skipKinds)
-		outcome := doc
-		changed := false
+		var outcome manifest.DocOccurrence
+		var changed bool
+		var child store.Child
 		if admit {
-			var child store.Child
 			child, outcome, changed = p.prepare(doc)
-			if child.Obj != nil {
-				children = append(children, child)
-			}
+		} else {
+			outcome, changed = manifest.SanitizeDocument(doc)
 		}
+		p.bindWarnings(&outcome)
+		if child.Obj != nil && child.Obj.Named() != p.parent.Named() {
+			child.Warnings = outcome.Warnings
+			children = append(children, child)
+		}
+		p.docs[i] = outcome
 		if outcome.Err != nil {
 			failures = append(failures, outcome)
 		}
@@ -84,4 +92,23 @@ func (p *childDocumentParser) prepare(doc manifest.DocOccurrence) (store.Child, 
 		return store.Child{}, outcome, changed
 	}
 	return child, outcome, changed
+}
+
+func (p *childDocumentParser) bindWarnings(outcome *manifest.DocOccurrence) {
+	if len(outcome.Warnings) != 0 {
+		resource := manifest.DocIdentity(outcome.Document)
+		if resource.Namespace == "" && resource.KindInfo().Namespaced() {
+			resource.Namespace = cmp.Or(p.opts.DefaultNamespace, p.policy.Namespace)
+		}
+		for warningIndex := range outcome.Warnings {
+			warning := outcome.Warnings[warningIndex]
+			if warning.Resource != resource {
+				outcome.Warnings = slices.Clone(outcome.Warnings)
+				for j := range outcome.Warnings {
+					outcome.Warnings[j].Resource = resource
+				}
+				break
+			}
+		}
+	}
 }

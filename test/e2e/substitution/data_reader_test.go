@@ -102,12 +102,15 @@ func (s *suppliedSSHTransport) NewUploadPackSession(
 
 func TestE2E_DataReader_SuppliedSSHOnBothDiffSides(t *testing.T) {
 	public, key, err := ed25519.GenerateKey(nil)
-	assert.NoError(t, err)
+	assert.FatalIf(t, err != nil, "%s", err)
+
 	block, err := ssh.MarshalPrivateKey(key, "fixture")
-	assert.NoError(t, err)
+	assert.FatalIf(t, err != nil, "%s", err)
+
 	identity := string(pem.EncodeToMemory(block))
 	allowed, err := ssh.NewPublicKey(public)
-	assert.NoError(t, err)
+	assert.FatalIf(t, err != nil, "%s", err)
+
 	tr := &suppliedSSHTransport{Transport: server.DefaultServer, allowed: allowed}
 	previous := client.Protocols["ssh"]
 	client.InstallProtocol("ssh", tr)
@@ -116,7 +119,7 @@ func TestE2E_DataReader_SuppliedSSHOnBothDiffSides(t *testing.T) {
 	remote := t.TempDir()
 	repository := testutil.GitInit(t, remote)
 	author := &object.Signature{Name: "fixture", Email: "fixture@example.test", When: time.Unix(1, 0)}
-	var roots []string
+	roots := make([]string, 0, 2)
 	for _, value := range []string{"before", "after"} {
 		for _, name := range []string{"one", "two"} {
 			testutil.WriteFile(t, remote, name+"/kustomization.yaml", "resources: [cm.yaml]\n")
@@ -130,27 +133,23 @@ func TestE2E_DataReader_SuppliedSSHOnBothDiffSides(t *testing.T) {
 		commit := testutil.GitCommitAll(t, repository, value, &gitlib.CommitOptions{Author: author})
 		root := t.TempDir()
 		local := testutil.GitInit(t, root)
-		{
-			_, err := local.CreateRemote(
-				&config.RemoteConfig{Name: "origin", URLs: []string{"https://local.invalid/cluster"}},
-			)
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
-		if roots == nil {
-			roots = make([]string, 0, 2)
+		if _, err := local.CreateRemote(
+			&config.RemoteConfig{Name: "origin", URLs: []string{"https://local.invalid/cluster"}},
+		); err != nil {
+			t.Fatal(err)
 		}
 		roots = append(roots, root)
 		declarations := "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: flux-system}\nspec: {url: 'https://local.invalid/cluster'}\n---\n" +
 			"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: private, namespace: flux-system}\nspec:\n  url: ssh://git@fixture" + remote + "\n  ref: {commit: " + commit.String() + "}\n  secretRef: {name: ursa-major-ssh}\n"
-		var declarationsSb143 strings.Builder
+		var declarationsSb147 strings.Builder
 		for _, name := range []string{"one", "two"} {
-			declarationsSb143.WriteString("---\n" + testutil.KustomizationYAML(
+			declarationsSb147.WriteString("---\n" + testutil.KustomizationYAML(
 				name,
 				"flux-system",
 				"  path: ./"+name+"\n  sourceRef: {kind: GitRepository, name: private}\n",
 			))
 		}
-		declarations += declarationsSb143.String()
+		declarations += declarationsSb147.String()
 		declarations += "---\n" + testutil.KustomizationYAML(
 			"credentials",
 			"flux-system",
@@ -175,11 +174,14 @@ func TestE2E_DataReader_SuppliedSSHOnBothDiffSides(t *testing.T) {
 			strings.TrimSpace(identity),
 			"\n",
 			"\n    ",
+		)+"\n  known_hosts: "+knownhosts.Line(
+			[]string{"fixture"},
+			allowed,
 		)+"\n",
 	)
 	input := filepath.Join(supplied, "credentials.yaml")
 	for i, root := range roots {
-		runCLIBuffersResult1 := harness.RunCLIBuffers(
+		result3 := harness.RunCLIBuffers(
 			"build",
 			"all",
 			"--path",
@@ -194,18 +196,18 @@ func TestE2E_DataReader_SuppliedSSHOnBothDiffSides(t *testing.T) {
 			"--skip-kinds",
 			"CustomResourceDefinition",
 		)
-		stdout, stderr, code := runCLIBuffersResult1.Stdout, runCLIBuffersResult1.Stderr, runCLIBuffersResult1.Code
-		assert.FatalIf(t, code != 0 || !strings.Contains(stdout, "..PLACEHOLDER_identity..") ||
-			strings.Contains(
-				stdout+stderr,
-				"BEGIN OPENSSH PRIVATE KEY",
-			), "supplied build: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+		stdout, stderr, code := result3.Stdout, result3.Stderr, result3.Code
 		assert.FatalIf(
 			t,
-			strings.Count(stdout, "value: "+[]string{"before", "after"}[i]) != 2,
-			"private consumers missing: %s",
+			code != 0 || !strings.Contains(stdout, "stringData: {}") || !strings.Contains(stderr, "[SOPSUnreadable]") ||
+				strings.Contains(stdout+stderr, "BEGIN OPENSSH PRIVATE KEY"),
+			"supplied build: exit=%d stdout=%s stderr=%s",
+			code,
 			stdout,
+			stderr,
 		)
+		assert.FatalIf(t, strings.Count(stdout, "value: "+[]string{"before", "after"}[i]) != 2,
+			"private consumers missing: %s", stdout)
 	}
 	before := tr.authenticated.Load()
 	var changed sync.Once
@@ -231,33 +233,111 @@ func TestE2E_DataReader_SuppliedSSHOnBothDiffSides(t *testing.T) {
 		"-o",
 		"diff",
 	}
-	runCLIBuffersResult2 := harness.RunCLIBuffers(append(args, "--cache-dir", t.TempDir(), "--supply", input)...)
-	stdout, stderr, code := runCLIBuffersResult2.Stdout, runCLIBuffersResult2.Stderr, runCLIBuffersResult2.Code
-	if code != 0 || strings.Count(stdout, "-  value: before") != 2 || strings.Count(stdout, "+  value: after") != 2 ||
-		tr.authenticated.Load()-before < 2 {
-		t.Fatalf(
-			"supplied diff: exit=%d authenticated=%d stdout=%s stderr=%s",
-			code,
-			tr.authenticated.Load()-before,
-			stdout,
-			stderr,
-		)
-	}
+	result1 := harness.RunCLIBuffers(append(args, "--cache-dir", t.TempDir(), "--supply", input)...)
+	stdout, stderr, code := result1.Stdout, result1.Stderr, result1.Code
+	assert.FatalIf(
+		t,
+		code != 0 || strings.Count(stdout, "-  value: before") != 2 || strings.Count(stdout, "+  value: after") != 2 ||
+			tr.authenticated.Load()-before < 2,
+		"supplied diff: exit=%d authenticated=%d stdout=%s stderr=%s",
+		code,
+		tr.authenticated.Load()-before,
+		stdout,
+		stderr,
+	)
+
 	tr.onAuth = nil
 	before = tr.authenticated.Load()
-	runCLIBuffersResult3 := harness.RunCLIBuffers(
+	result2 := harness.RunCLIBuffers(
 		append(args, "--cache-dir", t.TempDir(), "--allow-missing-kinds=Secret,ConfigMap")...)
-	stdout, stderr, code = runCLIBuffersResult3.Stdout, runCLIBuffersResult3.Stderr, runCLIBuffersResult3.Code
+	stdout, stderr, code = result2.Stdout, result2.Stderr, result2.Code
 	assert.FatalIf(t, code != 0 || !strings.Contains(stderr, "SourceCredentialsUnavailable") ||
 		!strings.Contains(stderr, "ursa-major-ssh") ||
 		strings.Contains(stderr, "ExternalSource") ||
-		tr.authenticated.Load() != before, "absent-agent cause: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+		tr.authenticated.Load() != before,
+		"absent-agent cause: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 }
 
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_DataReader_GeneratorEmbeddedCiphertext(t *testing.T) {
+	const value = "enabled: ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]"
 	for _, kind := range []string{"secretGenerator", "configMapGenerator"} {
-		t.Run(kind, func(t *testing.T) { e2EDataReaderGeneratorEmbeddedCiphertextKind(t, &kind) })
+		t.Run(kind, func(t *testing.T) {
+			testE2EDataReaderGeneratorEmbeddedCiphertextCase1(t, &kind, value)
+		})
+	}
+}
+
+func testE2EDataReaderGeneratorEmbeddedCiphertextCase1(t *testing.T, kind *string, value string) {
+	t.Helper()
+	root := t.TempDir()
+	refKind := "Secret"
+	if (*kind) == "configMapGenerator" {
+		refKind = "ConfigMap"
+	}
+	testutil.WriteFile(
+		t,
+		root,
+		"flux/ks.yaml",
+		testutil.KustomizationYAML(
+			"consumer",
+			"flux-system",
+			"  path: ./apps\n  postBuild: {substituteFrom: [{kind: "+refKind+", name: creds}]}\n",
+		),
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"kustomization.yaml",
+		"resources: [flux]\ngeneratorOptions: {disableNameSuffixHash: true}\n"+(*kind)+":\n- name: creds\n  namespace: flux-system\n  files: [VALUE=values.yaml]\n",
+	)
+	testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [ks.yaml]\n")
+	testutil.WriteFile(t, root, "values.yaml", value+"\n")
+	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"apps/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: result}\ndata:\n  value: |\n    ${VALUE}\n",
+	)
+	var first string
+	for i := range 2 {
+		result4 := harness.RunCLIBuffers(
+			"build",
+			"ks",
+			"consumer",
+			"--path",
+			root,
+			"--concurrency",
+			"2",
+			"--cache-dir",
+			t.TempDir(),
+			"--no-progress",
+		)
+		stdout, stderr, code := result4.Stdout, result4.Stderr, result4.Code
+		assert.FatalIf(t, code != 0,
+			"exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+
+		docs, err := testutil.DecodeDocs(strings.NewReader(stdout))
+		assert.FatalIf(t, err != nil, "%s", err)
+
+		found := 0
+		for _, doc := range docs {
+			result5 := manifest.DocMetadata(doc)
+			name := result5.Name
+			if manifest.DocKind(doc) != "ConfigMap" || name != "result" {
+				continue
+			}
+			found++
+			data, _ := doc["data"].(map[string]any)
+			assert.FatalIf(t, data["value"] != value+"\n",
+				"value=%v, want %q", data["value"], value+"\n")
+		}
+		assert.FatalIf(t, found != 1,
+			"result ConfigMaps=%d, want 1", found)
+		assert.FatalIf(t, i == 1 && stdout != first, "%s", "repeated build changed stdout")
+
+		first = stdout
 	}
 }
 
@@ -287,7 +367,7 @@ func TestE2E_DataReader_StringDataPrecedence(t *testing.T) {
 		"apps/cm.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: result}\ndata: {value: '${VALUE}', empty: '${EMPTY:=fallback}'}\n",
 	)
-	runCLIBuffersResult4 := harness.RunCLIBuffers(
+	result6 := harness.RunCLIBuffers(
 		"build",
 		"ks",
 		"consumer",
@@ -299,7 +379,8 @@ func TestE2E_DataReader_StringDataPrecedence(t *testing.T) {
 		t.TempDir(),
 		"--no-progress",
 	)
-	stdout, stderr, code := runCLIBuffersResult4.Stdout, runCLIBuffersResult4.Stderr, runCLIBuffersResult4.Code
+	stdout, stderr, code := result6.Stdout, result6.Stderr, result6.Code
+
 	assert.FatalIf(
 		t,
 		code != 0 || !strings.Contains(stdout, "value: B") || !strings.Contains(stdout, "empty: fallback"),
@@ -329,6 +410,9 @@ func TestE2E_DataReader_SuppliedSourceProducesCredential(t *testing.T) {
 		strings.TrimSpace(identity),
 		"\n",
 		"\n    ",
+	) + "\n  known_hosts: " + knownhosts.Line(
+		[]string{"fixture"},
+		allowed,
 	) + "\n"
 	testutil.WriteFile(t, remote, "credentials/kustomization.yaml", "resources: [auth.yaml]\n")
 	testutil.WriteFile(t, remote, "credentials/auth.yaml", secret)
@@ -370,7 +454,7 @@ func TestE2E_DataReader_SuppliedSourceProducesCredential(t *testing.T) {
 	testutil.WriteFileAt(t, input, secret)
 	var first string
 	for i := range 2 {
-		runCLIBuffersResult5 := harness.RunCLIBuffers(
+		result7 := harness.RunCLIBuffers(
 			"build",
 			"all",
 			"--path",
@@ -383,7 +467,8 @@ func TestE2E_DataReader_SuppliedSourceProducesCredential(t *testing.T) {
 			t.TempDir(),
 			"--no-progress",
 		)
-		stdout, stderr, code := runCLIBuffersResult5.Stdout, runCLIBuffersResult5.Stderr, runCLIBuffersResult5.Code
+		stdout, stderr, code := result7.Stdout, result7.Stderr, result7.Code
+
 		assert.FatalIf(t, code != 0 || !strings.Contains(stdout, "name: source-produced") ||
 			strings.Contains(stdout, "BEGIN OPENSSH PRIVATE KEY") ||
 			strings.Contains(
@@ -393,9 +478,8 @@ func TestE2E_DataReader_SuppliedSourceProducesCredential(t *testing.T) {
 		assert.FatalIf(t, i == 1 && stdout != first, "%v", "source-producing output varies across runs")
 		first = stdout
 	}
-	if tr.authenticated.Load() < 2 {
-		t.Fatalf("authenticated acquisitions = %d", tr.authenticated.Load())
-	}
+	assert.FatalIf(t, tr.authenticated.Load() < 2,
+		"authenticated acquisitions = %d", tr.authenticated.Load())
 }
 
 func TestE2E_DataReader_ClusterAdvisoriesOnBothBaseSides(t *testing.T) {
@@ -481,19 +565,20 @@ func TestE2E_DataReader_ClusterAdvisoriesOnBothBaseSides(t *testing.T) {
 	var previousOut, previousErr string
 	for run := range 2 {
 		before := tr.authenticated.Load()
-		runCLIBuffersResult6 := harness.RunCLIBuffers("diff", "all", "--path", root, "--base", base, "--supply", input,
+		result8 := harness.RunCLIBuffers("diff", "all", "--path", root, "--base", base, "--supply", input,
 			"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir(), "-o", "diff")
-		stdout, stderr, code := runCLIBuffersResult6.Stdout, runCLIBuffersResult6.Stderr, runCLIBuffersResult6.Code
-		if code != 0 || tr.authenticated.Load()-before < 2 || strings.Count(stdout, "-  value: before") != 1 ||
-			strings.Count(stdout, "+  value: after") != 1 {
-			t.Fatalf(
-				"base diff: exit=%d authentications=%d stdout=%s stderr=%s",
-				code,
-				tr.authenticated.Load()-before,
-				stdout,
-				stderr,
-			)
-		}
+		stdout, stderr, code := result8.Stdout, result8.Stderr, result8.Code
+		assert.FatalIf(
+			t,
+			code != 0 || tr.authenticated.Load()-before < 2 || strings.Count(stdout, "-  value: before") != 1 ||
+				strings.Count(stdout, "+  value: after") != 1,
+			"base diff: exit=%d authentications=%d stdout=%s stderr=%s",
+			code,
+			tr.authenticated.Load()-before,
+			stdout,
+			stderr,
+		)
+
 		assert.FatalIf(
 			t,
 			strings.Count(stderr, "[SuppliedPrecedence]") != 1 || strings.Contains(stderr, "authenticated with") ||
@@ -517,83 +602,5 @@ func TestE2E_DataReader_ClusterAdvisoriesOnBothBaseSides(t *testing.T) {
 			stderr,
 		)
 		previousOut, previousErr = stdout, stderr
-	}
-}
-
-func e2EDataReaderGeneratorEmbeddedCiphertextKind(t *testing.T, kind *string) {
-	t.Helper()
-	const value = "enabled: ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]"
-
-	root := t.TempDir()
-	refKind := "Secret"
-	if (*kind) == "configMapGenerator" {
-		refKind = "ConfigMap"
-	}
-	testutil.WriteFile(
-		t,
-		root,
-		"flux/ks.yaml",
-		testutil.KustomizationYAML(
-			"consumer",
-			"flux-system",
-			"  path: ./apps\n  postBuild: {substituteFrom: [{kind: "+refKind+", name: creds}]}\n",
-		),
-	)
-	testutil.WriteFile(
-		t,
-		root,
-		"kustomization.yaml",
-		"resources: [flux]\ngeneratorOptions: {disableNameSuffixHash: true}\n"+(*kind)+":\n- name: creds\n  namespace: flux-system\n  files: [VALUE=values.yaml]\n",
-	)
-	testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [ks.yaml]\n")
-	testutil.WriteFile(t, root, "values.yaml", value+"\n")
-	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
-	testutil.WriteFile(
-		t,
-		root,
-		"apps/cm.yaml",
-		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: result}\ndata:\n  value: |\n    ${VALUE}\n",
-	)
-	var first string
-	for i := range 2 {
-		runCLIBuffersResult7 := harness.RunCLIBuffers(
-			"build",
-			"ks",
-			"consumer",
-			"--path",
-			root,
-			"--concurrency",
-			"2",
-			"--cache-dir",
-			t.TempDir(),
-			"--no-progress",
-		)
-		stdout, stderr, code := runCLIBuffersResult7.Stdout, runCLIBuffersResult7.Stderr, runCLIBuffersResult7.Code
-		assert.FatalIf(
-			t,
-			code != 0 || strings.Contains(stdout, "..PLACEHOLDER_VALUE.."),
-			"exit=%d stdout=%s stderr=%s",
-			code,
-			stdout,
-			stderr,
-		)
-		docs, err := testutil.DecodeDocs(strings.NewReader(stdout))
-		assert.NoError(t, err)
-		found := 0
-		for _, doc := range docs {
-			metadata := manifest.DocMetadata(doc)
-			name := metadata.Name
-			if manifest.DocKind(doc) != "ConfigMap" || name != "result" {
-				continue
-			}
-			found++
-			data, _ := doc["data"].(map[string]any)
-			if data["value"] != value+"\n" {
-				t.Fatalf("value=%v, want %q", data["value"], value+"\n")
-			}
-		}
-		assert.FatalIf(t, found != 1, "result ConfigMaps=%d, want 1", found)
-		assert.FatalIf(t, i == 1 && stdout != first, "%v", "repeated build changed stdout")
-		first = stdout
 	}
 }

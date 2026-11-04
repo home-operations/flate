@@ -44,6 +44,7 @@ type DocOccurrence struct {
 	Document map[string]any `json:"Document"`
 	Ordinal  int            `json:"Ordinal"`
 	Err      error          `json:"Err"`
+	Warnings []Warning      `json:"-"`
 }
 
 // DocumentRole determines whether nonmapping documents are required manifests.

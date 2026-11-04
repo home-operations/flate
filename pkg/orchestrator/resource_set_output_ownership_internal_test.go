@@ -135,11 +135,14 @@ func testOrchestratorRenderResourceSetEffectiveOwnershipCaseTail(
 }
 
 type testOrchestratorRenderResourceSetEffectiveOwnershipCaseTailInputs struct {
-	root          *string
+	root *string
+
 	testCaseInput **struct {
-		name       string
+		name string
+
 		competitor bool
 	}
+
 	want *[]map[string]any
 }
 
@@ -191,14 +194,14 @@ func testOrchestratorRenderResourceSetDocumentBoundarySegment(
 		renderedSingleton3, err := RenderTrees(
 			t.Context(),
 			[]Tree{{Path: (*path), ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
-			Config{WipeSecrets: true, Concurrency: 2},
+			Config{Concurrency: 2},
 		)
 		assert.FatalIf(t, len(renderedSingleton3) != 1, "missing render: %v", err)
 		o := renderedSingleton3[0].Orchestrator
 		result := renderedSingleton3[0].Result
-		if !errors.Is(err, manifest.ErrFlux) || len(result.Failed) != 1 {
-			t.Fatalf("required malformed output = %v, failures=%v", err, result.Failed)
-		}
+		assert.FatalIf(t, !errors.Is(err, manifest.ErrFlux) || len(result.Failed) != 1,
+			"required malformed output = %v, failures=%v", err, result.Failed)
+
 		effective := manifest.NamedResource{Group: "apps", Kind: "Deployment", Namespace: "flux-system", Name: "raw"}
 		{
 			child := o.Store().GetObject(effective)
@@ -212,9 +215,8 @@ func testOrchestratorRenderResourceSetDocumentBoundarySegment(
 			}
 		}
 		for key, want := range map[string]int{"raw": 1, "duplicate": 2, "nameless-json": 1, "nameless-list": 1, "kindless-list": 1, "wrapper": 2, "directive": 2, "explicit": 1, "sanitized": 1, "nested": 0, "item-directive": 1, "child-result": 1, "rejected-yaml": 0, "rejected-directive": 0, "child": 0} {
-			if counts[key] != want {
-				t.Errorf("%s count=%d, want %d; all=%v", key, counts[key], want, counts)
-			}
+			assert.ErrorIf(t, counts[key] != want,
+				"%s count=%d, want %d; all=%v", key, counts[key], want, counts)
 		}
 		if previous != nil {
 			assert.Diff(t, outputByParent(result.Manifests), previous)
@@ -250,7 +252,7 @@ func recordResourceSetDocumentBoundary(t *testing.T, doc map[string]any, counts 
 		assert.Equal(t, ns, "other")
 	}
 	if name == "sanitized" {
-		assert.Diff(t, doc["data"], map[string]any{"encrypted": "..PLACEHOLDER_encrypted.."})
+		assert.Diff(t, doc["data"], map[string]any{})
 	}
 	if name == "kindless-list" {
 		assert.Equal(t, manifest.DocKind(doc), "")

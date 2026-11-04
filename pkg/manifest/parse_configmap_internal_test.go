@@ -17,10 +17,12 @@ metadata:
 data:
   DOMAIN: example.com
 `)
-	parsed, err := ParseDoc(doc, ParseDocOptions{WipeSecrets: true, DefaultNamespace: ""})
-	cmobj := parsed.Object
+	result1, err := ParseDoc(doc, ParseDocOptions{DefaultNamespace: ""})
+	cmobj := result1.Object
 	cm := cmobj.(*ConfigMap)
+
 	assert.FatalIf(t, err != nil, "parseConfigMap: %v", err)
+
 	assert.Diff(t, cm.Data, map[string]any{"DOMAIN": "example.com"})
 }
 
@@ -31,39 +33,3 @@ data:
 // otherwise leaks into envsubst and trips chart validation (Ingress
 // hosts, cert-manager dnsNames). Cleartext entries are left untouched,
 // and wipeSecrets=false preserves the ciphertext to track Secret wiping.
-func TestParseConfigMap_WipesSopsCiphertext(t *testing.T) {
-	t.Parallel()
-	const ciphertext = "ENC[AES256_GCM,data:NWahjtvi/hiAX9sVkctDGcmWOn0=,iv:2fxQddhm7pwpnO23VkFFgPPEXudfa7TgI0oxUkAjZtA=,tag:rS3MK2jGptzB3RyWOj+Amg==,type:str]"
-	src := `
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: cluster-config
-  namespace: flux-system
-data:
-  BASE_DOMAIN: ` + ciphertext + `
-  PLAINTEXT: keep-me
-`
-	t.Run("wiped", func(t *testing.T) {
-		t.Parallel()
-		parsed2, err := ParseDoc(mustYAML(t, src), ParseDocOptions{WipeSecrets: true, DefaultNamespace: ""})
-		cmobj := parsed2.Object
-		cm := cmobj.(*ConfigMap)
-		assert.FatalIf(t, err != nil, "parseConfigMap: %v", err)
-		assert.Diff(t, cm.Data, map[string]any{
-			"BASE_DOMAIN": ValuePlaceholder("BASE_DOMAIN"),
-			"PLAINTEXT":   "keep-me",
-		})
-	})
-	t.Run("preserved when wipeSecrets=false", func(t *testing.T) {
-		t.Parallel()
-		parsed3, err := ParseDoc(mustYAML(t, src), ParseDocOptions{WipeSecrets: false, DefaultNamespace: ""})
-		cmobj := parsed3.Object
-		cm := cmobj.(*ConfigMap)
-		assert.FatalIf(t, err != nil, "parseConfigMap: %v", err)
-		assert.Diff(t, cm.Data, map[string]any{
-			"BASE_DOMAIN": ciphertext,
-			"PLAINTEXT":   "keep-me",
-		})
-	})
-}

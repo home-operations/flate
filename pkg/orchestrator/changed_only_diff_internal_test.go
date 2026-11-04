@@ -332,7 +332,6 @@ func testRenderTreesChangedOnlyAndDiffCase(t *testing.T, testCaseInput *struct {
 			{RepoRoot: headDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}},
 		},
 		Config{
-			WipeSecrets: true,
 			Network:     new(source.Network),
 			Concurrency: 2,
 		},
@@ -443,10 +442,15 @@ func testRenderTreesChangedOnlyAndDiffCase(t *testing.T, testCaseInput *struct {
 }
 
 type testRenderTreesChangedOnlyAndDiffSelectorRelabelTailInputs struct {
-	full    *[]Rendered
-	compare *func(runs []Rendered) []byte
-	render  *func(trees []Tree) []Rendered
-	trees   *[]Tree
+	full *[]Rendered
+
+	compare *func(
+		runs []Rendered) []byte
+
+	render *func(
+		trees []Tree) []Rendered
+
+	trees *[]Tree
 }
 
 type testRenderTreesChangedOnlyAndDiffCaseSegmentInputs struct {
@@ -477,16 +481,16 @@ func testRenderTreesChangedOnlyAndDiffCaseSegment(
 				Kind:  manifest.KindGitRepository,
 				Name:  "flux-system",
 			}
-			if side.Err == nil || !slices.Contains(side.Result.Blocked[(*statementInput.consumer)], missing) ||
-				configMapNames(side.Result)["cfg-a"] {
-				t.Fatalf(
-					"side %d bare child: error=%v blockers=%v manifests=%v",
-					i,
-					side.Err,
-					side.Result.Blocked,
-					side.Result.Manifests,
-				)
-			}
+			assert.FatalIf(
+				t,
+				side.Err == nil || !slices.Contains(side.Result.Blocked[(*statementInput.consumer)], missing) ||
+					configMapNames(side.Result)["cfg-a"],
+				"side %d bare child: error=%v blockers=%v manifests=%v",
+				i,
+				side.Err,
+				side.Result.Blocked,
+				side.Result.Manifests,
+			)
 		} else {
 			values := manifest.NamedResource{
 				Kind:      manifest.KindConfigMap,
@@ -494,17 +498,15 @@ func testRenderTreesChangedOnlyAndDiffCaseSegment(
 				Name:      "render-values",
 			}
 			obj, ok := side.Store().Get[*manifest.ConfigMap](values)
-			if side.Err != nil || len(side.Result.Blocked) != 0 || !ok ||
-				obj.Data["VALUE"] != fmt.Sprintf("v%d", i+1) {
-				t.Fatalf(
-					"side %d producer %s: error=%v blockers=%v object=%v",
-					i,
-					values,
-					side.Err,
-					side.Result.Blocked,
-					obj,
-				)
-			}
+			assert.FatalIf(t, side.Err != nil || len(side.Result.Blocked) != 0 || !ok ||
+				obj.Data["VALUE"] != fmt.Sprintf("v%d", i+1),
+
+				"side %d producer %s: error=%v blockers=%v object=%v",
+				i,
+				values,
+				side.Err,
+				side.Result.Blocked,
+				obj)
 		}
 		assert.FatalIf(t, configMapNames(side.Result)["cfg-b"], "side %d rendered unchanged sibling", i)
 	}

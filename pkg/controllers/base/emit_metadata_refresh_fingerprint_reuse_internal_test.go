@@ -203,7 +203,7 @@ func TestEmit_PartialRetainsUnvisitedDocuments(t *testing.T) {
 	parseChildrenForTestResult5 := parseChildrenForTest(
 		root.Named(),
 		[]map[string]any{secret, valid, invalid},
-		manifest.ParseDocOptions{WipeSecrets: true},
+		manifest.ParseDocOptions{},
 	)
 	children, docs := parseChildrenForTestResult5.Children, parseChildrenForTestResult5.Documents
 	assert.FatalIf(t, len(children) != 3 || len(docs) != 3, "%v", "invalid predecessor fixture")
@@ -401,9 +401,9 @@ func TestKeepEmitted_InvalidatesCapturedExclusion(t *testing.T) {
 		s.SetIncluded(obj.Named(), false)
 		execution := newExecution(c, obj.Named())
 		t.Cleanup(execution.Close)
-		if execution.Reads.Admitted() {
-			t.Fatalf("%s was admitted before its consumer", obj.Named())
-		}
+		assert.FatalIf(t, execution.Reads.Admitted(),
+			"%s was admitted before its consumer", obj.Named())
+
 		captured[obj.Named()] = execution
 	}
 
@@ -414,14 +414,14 @@ func TestKeepEmitted_InvalidatesCapturedExclusion(t *testing.T) {
 		obj      manifest.BaseManifest
 		included bool
 	}{{producer, true}, {chart, true}, {foreignProducer, false}} {
-		if captured[tc.obj.Named()].Reads.Valid() == tc.included {
-			t.Errorf("%s captured exclusion invalidation does not match inclusion=%t", tc.obj.Named(), tc.included)
-		}
+		assert.ErrorIf(t, captured[tc.obj.Named()].Reads.Valid() == tc.included,
+			"%s captured exclusion invalidation does not match inclusion=%t", tc.obj.Named(), tc.included)
+
 		next := newExecution(c, tc.obj.Named())
 		t.Cleanup(next.Close)
-		if next.Reads.Admitted() != tc.included {
-			t.Errorf("%s successor admission does not match inclusion=%t", tc.obj.Named(), tc.included)
-		}
+		assert.ErrorIf(t, next.Reads.Admitted() != tc.included,
+			"%s successor admission does not match inclusion=%t", tc.obj.Named(), tc.included)
+
 		want := store.StatusReady
 		if tc.included {
 			want = store.StatusPending
@@ -507,9 +507,9 @@ func TestEmit_ChangedCompletePayloadDoesNotInheritKey(t *testing.T) {
 	c.emit(t.Context(), parent.Named(), &next, nil)
 	next.Finish()
 	accepted := s.GetArtifact(parent.Named(), store.ArtifactContent).(*store.Emission)
-	if accepted.Fingerprint != "" {
-		t.Errorf("changed complete output inherited key %q", accepted.Fingerprint)
-	}
+	assert.ErrorIf(t, accepted.Fingerprint != "",
+		"changed complete output inherited key %q", accepted.Fingerprint)
+
 	{
 		_, found := accepted.Replay(initial.Fingerprint)
 		assert.ErrorIf(t, found, "%v", "changed complete output retained a false render mapping")
@@ -591,7 +591,7 @@ func testEmitDefaultsNamespaceCase(t *testing.T, testCaseInput testEmitDefaultsN
 	for i, doc := range docs {
 		before[i] = manifest.DeepCopyMap(doc)
 	}
-	opts := manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: (*testCaseInput.fallback)}
+	opts := manifest.ParseDocOptions{DefaultNamespace: (*testCaseInput.fallback)}
 	s.AddObject(
 		&manifest.RawObject{
 			APIVersion: parent.Group + "/v1",

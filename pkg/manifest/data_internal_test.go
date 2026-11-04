@@ -16,9 +16,11 @@ func TestSecret_Value_ShadowedAndUnrequestedKeys(t *testing.T) {
 		StringData: map[string]any{"VALUE": ""},
 		Data:       map[string]any{"VALUE": "malformed!", "UNUSED": "malformed!"},
 	}
-	valueResult, err := s.Value("VALUE")
-	value, found := valueResult.Value, valueResult.Found
+	result1, err := s.Value("VALUE")
+	value, found := result1.Value, result1.Found
+
 	assert.FatalIf(t, value != "" || !found || err != nil, "value=%q found=%t err=%v", value, found, err)
+
 	keys := slices.Collect(s.Keys())
 	slices.Sort(keys)
 	assert.Diff(t, keys, []string{"UNUSED", "VALUE"})
@@ -32,26 +34,25 @@ func TestParseDoc_AuthoritativeSanitation(t *testing.T) {
 	t.Parallel()
 	const cipher = "ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]"
 	const embedded = "enabled: " + cipher + "\n"
-	const token = "..PLACEHOLDER_VALUE.."
 	for _, tc := range []struct {
-		name, kind, field, wantRead        string
-		raw                                any
-		encode, metadata, wiped, readError bool
+		name, kind, field, wantRead             string
+		raw                                     any
+		encode, metadata, unreadable, readError bool
 	}{
-		{name: "configmap data", kind: KindConfigMap, field: "data", raw: cipher, wiped: true, wantRead: token},
-		{name: "configmap binary", kind: KindConfigMap, field: "binaryData", raw: cipher, wiped: true},
-		{name: "secret stringData", kind: KindSecret, field: "stringData", raw: cipher, wiped: true, wantRead: token},
-		{name: "secret data", kind: KindSecret, field: "data", raw: cipher, metadata: true, wiped: true, wantRead: token},
+		{name: "configmap data", kind: KindConfigMap, field: "data", raw: cipher, unreadable: true},
+		{name: "configmap binary", kind: KindConfigMap, field: "binaryData", raw: cipher, unreadable: true},
+		{name: "secret stringData", kind: KindSecret, field: "stringData", raw: cipher, unreadable: true},
+		{name: "secret data", kind: KindSecret, field: "data", raw: cipher, metadata: true, unreadable: true},
 		{name: "embedded plaintext", kind: KindConfigMap, field: "data", raw: embedded, wantRead: embedded},
 		{name: "embedded encoded", kind: KindSecret, field: "data", raw: embedded, encode: true, metadata: true, wantRead: embedded},
 		{name: "clear metadata", kind: KindConfigMap, field: "data", raw: "short", metadata: true, wantRead: "short"},
 		{name: "clear encoded metadata", kind: KindSecret, field: "data", raw: "short", encode: true, metadata: true, wantRead: "short"},
 		{name: "malformed encoded metadata", kind: KindSecret, field: "data", raw: "malformed!", metadata: true, readError: true},
-		{name: "base64 ciphertext encoded field", kind: KindSecret, field: "data", raw: cipher, encode: true, metadata: true, wiped: true, wantRead: token},
-		{name: "yaml document", kind: KindSecret, field: "data", raw: "sops:\n  mac: ENC[fixture]\n", encode: true, wiped: true, wantRead: token},
-		{name: "json document", kind: KindSecret, field: "data", raw: `{"sops": {"mac": "ENC[fixture]"}}`, encode: true, wiped: true, wantRead: token},
-		{name: "dotenv document", kind: KindSecret, field: "data", raw: "sops_mac=ENC[fixture]", encode: true, wiped: true, wantRead: token},
-		{name: "shortest ini document", kind: KindSecret, field: "data", raw: "[sops]", encode: true, wiped: true, wantRead: token},
+		{name: "base64 ciphertext encoded field", kind: KindSecret, field: "data", raw: cipher, encode: true, metadata: true, unreadable: true},
+		{name: "yaml document", kind: KindSecret, field: "data", raw: "sops:\n  mac: ENC[fixture]\n", encode: true, unreadable: true},
+		{name: "json document", kind: KindSecret, field: "data", raw: `{"sops": {"mac": "ENC[fixture]"}}`, encode: true, unreadable: true},
+		{name: "dotenv document", kind: KindSecret, field: "data", raw: "sops_mac=ENC[fixture]", encode: true, unreadable: true},
+		{name: "shortest ini document", kind: KindSecret, field: "data", raw: "[sops]", encode: true, unreadable: true},
 		{name: "plaintext document", kind: KindSecret, field: "stringData", raw: "sops_mac=ENC[fixture]", wantRead: "sops_mac=ENC[fixture]"},
 		{name: "configmap encoded token", kind: KindConfigMap, field: "binaryData", raw: cipher, encode: true},
 		{name: "configmap encoded document", kind: KindConfigMap, field: "binaryData", raw: "[sops]", encode: true},
@@ -66,12 +67,105 @@ func TestParseDoc_AuthoritativeSanitation(t *testing.T) {
 			}
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
-				testParseDocAuthoritativeSanitationCase(
-					t,
-					&testParseDocAuthoritativeSanitationCaseInputs{tc: &tc, valid: &valid},
-				)
+				testParseDocAuthoritativeSanitationCase1(t, &tc, &valid)
+			})
+		}
+	}
+}
+
+func testParseDocAuthoritativeSanitationCase1(t *testing.T, tc *struct {
+	name       string
+	kind       string
+	field      string
+	wantRead   string
+	raw        any
+	encode     bool
+	metadata   bool
+	unreadable bool
+	readError  bool
+}, valid *bool,
+) {
+	t.Helper()
+
+	raw := tc.raw
+	if tc.encode {
+		raw = base64.StdEncoding.EncodeToString([]byte(raw.(string)))
+	}
+	want := raw
+	if tc.unreadable {
+		want = nil
+	}
+	clearValue := "readable"
+	if tc.field == "binaryData" || (tc.kind == KindSecret && tc.field == "data") {
+		clearValue = base64.StdEncoding.EncodeToString([]byte(clearValue))
+	}
+	doc := map[string]any{
+		"apiVersion": "v1",
+		"kind":       tc.kind, tc.
+				field: map[string]any{"VALUE": raw, "CLEAR": clearValue},
+	}
+	if tc.metadata {
+		doc["sops"] = map[string]any{"version": "3.13.3"}
+	}
+	if *valid {
+		doc["metadata"] = map[string]any{"name": "app"}
+	}
+	before := DeepCopyMap(doc)
+	result3, err := ParseDoc(doc, ParseDocOptions{DefaultNamespace: "apps"})
+	obj, authoritative, changed := result3.Object, result3.Document, result3.Changed
+	assert.Equal(t, changed, tc.unreadable || tc.metadata || (*valid))
+	if *valid {
+		testParseDocAuthoritativeSanitationCase1Part1(
+			t,
+			&testParseDocAuthoritativeSanitationCase1Part1Inputs{
+				err:           err,
+				obj:           obj,
+				authoritative: authoritative,
+				tc:            &tc,
 			},
-			)
+		)
+	} else if !errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux) {
+		t.Fatalf("metadata error = %v, want ErrInput/ErrFlux", err)
+	}
+	assert.Diff(t, authoritative[tc.field].(map[string]any)["VALUE"], want)
+	assert.Diff(t, authoritative[tc.field].(map[string]any)["CLEAR"], any(clearValue))
+	result4, _ := ParseDoc(authoritative, ParseDocOptions{DefaultNamespace: "apps"})
+	replay, replayChanged := result4.Document, result4.Changed
+	assert.FatalIf(t, replayChanged, "%s", "replay reported sanitation changes")
+
+	assert.Diff(t, replay, authoritative)
+	assert.Diff(t, doc, before)
+	if changed {
+		retained := DeepCopyMap(authoritative)
+		ReleaseDoc(doc)
+		next, err := decodeDocMaps(
+			strings.NewReader(
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: next}\ndata: {VALUE: next}\n",
+			),
+		)
+		assert.NoError(t, err)
+		ReleaseDoc(next[0])
+		assert.Diff(t, authoritative, retained)
+	}
+}
+
+func testParseDocAuthoritativeSanitationCase1Part1(
+	t *testing.T, inputs *testParseDocAuthoritativeSanitationCase1Part1Inputs,
+) {
+	t.Helper()
+	assert.NoError(t, inputs.err)
+	assert.Equal(t, inputs.obj.Named().Namespace, "apps")
+	assert.Equal(t, inputs.authoritative["metadata"].(map[string]any)["namespace"], any("apps"))
+	if (*inputs.tc).field != "binaryData" {
+		result5, valueErr := inputs.obj.(Data).Value("VALUE")
+		value, found := result5.Value, result5.Found
+		if (*inputs.tc).readError {
+			assert.FatalIf(t, value != "" || found || !errors.Is(valueErr, ErrInput) || !errors.Is(valueErr, ErrFlux),
+				"value=%q found=%t err=%v", value, found, valueErr)
+		} else {
+			assert.NoError(t, valueErr)
+			assert.Equal(t, found, !(*inputs.tc).unreadable)
+			assert.Equal(t, value, (*inputs.tc).wantRead)
 		}
 	}
 }
@@ -98,8 +192,9 @@ func TestDataValue_FieldErrors(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			valueResult3, err := tc.data.Value("VALUE")
-			value, found := valueResult3.Value, valueResult3.Found
+			result6, err := tc.data.Value("VALUE")
+			value, found := result6.Value, result6.Found
+
 			assert.FatalIf(
 				t,
 				value != "" || found || !errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux),
@@ -108,6 +203,7 @@ func TestDataValue_FieldErrors(t *testing.T) {
 				found,
 				err,
 			)
+
 			assert.FatalIf(
 				t,
 				!strings.HasPrefix(err.Error(), tc.field+": "),
@@ -119,144 +215,19 @@ func TestDataValue_FieldErrors(t *testing.T) {
 	}
 }
 
-type testParseDocAuthoritativeSanitationCaseInputs struct {
-	tc *struct {
-		name      string
-		kind      string
-		field     string
-		wantRead  string
-		raw       any
-		encode    bool
-		metadata  bool
-		wiped     bool
-		readError bool
-	}
-	valid *bool
-}
-
-func testParseDocAuthoritativeSanitationCase(
-	t *testing.T,
-	testCaseInput *testParseDocAuthoritativeSanitationCaseInputs,
-) {
-	t.Helper()
-	const token = "..PLACEHOLDER_VALUE.."
-
-	raw := testCaseInput.tc.raw
-	if testCaseInput.tc.encode {
-		raw = base64.StdEncoding.EncodeToString([]byte(raw.(string)))
-	}
-	want := raw
-	if testCaseInput.tc.wiped {
-		want = token
-		if testCaseInput.tc.field == "binaryData" ||
-			(testCaseInput.tc.kind == KindSecret && testCaseInput.tc.field == "data") {
-			want = base64.StdEncoding.EncodeToString([]byte(token))
-		}
-	}
-	clearValue := "readable"
-	if testCaseInput.tc.field == "binaryData" ||
-		(testCaseInput.tc.kind == KindSecret && testCaseInput.tc.field == "data") {
-		clearValue = base64.StdEncoding.EncodeToString([]byte(clearValue))
-	}
-	doc := map[string]any{
-		"apiVersion": "v1",
-		"kind":       testCaseInput.tc.kind, testCaseInput.tc.field: map[string]any{"VALUE": raw, "CLEAR": clearValue},
-	}
-	if testCaseInput.tc.metadata {
-		doc["sops"] = map[string]any{"version": "3.13.3"}
-	}
-	testParseDocAuthoritativeSanitationCaseCompletion(
-		t,
-		&testParseDocAuthoritativeSanitationCaseCompletionState{
-			testCaseInput: testCaseInput,
-			want:          &want,
-			clearValue:    &clearValue,
-			doc:           &doc,
-		},
-	)
-}
-
-type testParseDocAuthoritativeSanitationCaseCompletionState struct {
-	testCaseInput *testParseDocAuthoritativeSanitationCaseInputs
-	want          *any
-	clearValue    *string
-	doc           *map[string]any
-}
-
-func testParseDocAuthoritativeSanitationCaseCompletion(
-	t *testing.T,
-	scope *testParseDocAuthoritativeSanitationCaseCompletionState,
-) {
-	t.Helper()
-	if *scope.testCaseInput.valid {
-		(*scope.doc)["metadata"] = map[string]any{"name": "app"}
-	}
-	before := DeepCopyMap((*scope.doc))
-	parsed, err := ParseDoc(
-		(*scope.doc),
-		ParseDocOptions{WipeSecrets: true, DefaultNamespace: "apps"},
-	)
-	obj, authoritative, changed := parsed.Object, parsed.Document, parsed.Changed
-	assert.Equal(t, changed, scope.testCaseInput.tc.wiped || (*scope.testCaseInput.valid))
-	if *scope.testCaseInput.valid {
-		assert.NoError(t, err)
-		assert.Equal(t, obj.Named().Namespace, "apps")
-		assert.Equal(t, authoritative["metadata"].(map[string]any)["namespace"], any("apps"))
-		assertSanitizedDataValue(t, scope.testCaseInput, obj)
-	} else {
-		assert.FatalIf(
-			t,
-			!errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux),
-			"metadata error = %v, want ErrInput/ErrFlux",
-			err,
-		)
-	}
-	assert.Diff(t, authoritative[scope.testCaseInput.tc.field].(map[string]any)["VALUE"], (*scope.want))
-	assert.Diff(t, authoritative[scope.testCaseInput.tc.field].(map[string]any)["CLEAR"], any((*scope.clearValue)))
-	parsed2, _ := ParseDoc((*scope.doc), ParseDocOptions{DefaultNamespace: "apps"})
-	disabled := parsed2.Document
-	assert.Diff(t, disabled[scope.testCaseInput.tc.field], (*scope.doc)[scope.testCaseInput.tc.field])
-	parsed3, _ := ParseDoc(
-		authoritative,
-		ParseDocOptions{WipeSecrets: true, DefaultNamespace: "apps"},
-	)
-	replay, replayChanged := parsed3.Document, parsed3.Changed
-	assert.FatalIf(t, replayChanged, "%s", "replay reported sanitation changes")
-	assert.Diff(t, replay, authoritative)
-	assert.Diff(t, (*scope.doc), before)
-	if changed {
-		retained := DeepCopyMap(authoritative)
-		ReleaseDoc((*scope.doc))
-		next, err := decodeDocMaps(
-			strings.NewReader(
-				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: next}\ndata: {VALUE: next}\n",
-			),
-		)
-		assert.NoError(t, err)
-		ReleaseDoc(next[0])
-		assert.Diff(t, authoritative, retained)
-	}
-}
-
-func assertSanitizedDataValue(t *testing.T, input *testParseDocAuthoritativeSanitationCaseInputs, obj BaseManifest) {
-	t.Helper()
-	if input.tc.field != "binaryData" {
-		valueResult4, valueErr := obj.(Data).Value("VALUE")
-		value, found := valueResult4.Value, valueResult4.Found
-		if input.tc.readError {
-			assert.FatalIf(
-				t,
-				value != "" || found || !errors.Is(valueErr, ErrInput) ||
-					!errors.Is(valueErr, ErrFlux),
-				"value=%q found=%t err=%v",
-				value,
-				found,
-				valueErr,
-			)
-		} else {
-			assert.NoError(t, valueErr)
-			assert.Equal(t, found, true)
-			assert.Equal(t, value, input.tc.wantRead)
-		}
+type testParseDocAuthoritativeSanitationCase1Part1Inputs struct {
+	err           error
+	obj           BaseManifest
+	authoritative map[string]any
+	tc            **struct {
+		name       string
+		kind       string
+		field      string
+		wantRead   string
+		raw        any
+		encode     bool
+		metadata   bool
+		unreadable bool
+		readError  bool
 	}
 }

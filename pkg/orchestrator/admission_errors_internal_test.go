@@ -147,7 +147,7 @@ func testRenderAdmissionErrorPrecedesOptionalPolicyCase(
 	inputFS.armed.Store(true)
 	var execution base.Execution
 	execution.Init(controller, consumer)
-	_, err = execution.DataInputs(t.Context(), object, values.NewStoreProvider(&execution.Reads, false))
+	_, err = execution.DataInputs(t.Context(), object, values.NewStoreProvider(&execution.Reads))
 	assert.Equal(t, errors.Is(err, cause), true)
 	assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 	execution.Close()

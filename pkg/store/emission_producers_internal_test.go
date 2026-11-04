@@ -303,7 +303,7 @@ func testRecordEmittedConflictingProducersCase(
 		want, _ := s.GetStatus(id)
 		assert.Equal(t, info, want)
 		assert.Equal(t, conditions == nil, true)
-		checkEffectiveObject(t, s, id, child)
+		checkEffectiveObject(t, s, id, &child)
 	}
 	check(winner, owners[(*testCaseInput.workers)-1])
 	warnings := s.Warnings()

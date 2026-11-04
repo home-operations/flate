@@ -539,12 +539,17 @@ func testRenderTreesHelmStagePrecisionCase(t *testing.T, testCaseInput testRende
 type stagePrecisionRunTailInputs struct {
 	sides *[2]struct {
 		builds map[string]int
-		helm   int
+
+		helm int
 	}
-	run    *int
+
+	run *int
+
 	builds *map[string]int
-	helm   *int
-	runs   *[]Rendered
+
+	helm *int
+
+	runs *[]Rendered
 }
 
 type stagePrecisionRunSegmentInputs struct {

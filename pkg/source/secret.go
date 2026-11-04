@@ -153,7 +153,7 @@ func resolveSecretRef(
 	return sec, nil
 }
 
-// BasicAuthFromSecret rejects malformed credentials and reports absent or wiped
+// BasicAuthFromSecret rejects malformed credentials and reports absent
 // credentials through MissingSecretError.
 //
 //nolint:gocritic // The SDK accepts a value snapshot; a pointer parameter would change its call and aliasing contracts.
@@ -171,8 +171,7 @@ func BasicAuthFromSecret(
 	if err != nil {
 		return "", "", fmt.Errorf("secret %s/%s: %w", owner.ID.Namespace, secretRef, err)
 	}
-	if username == "" || password.Value == "" || manifest.HasValuePlaceholder(username) ||
-		manifest.HasValuePlaceholder(password.Value) {
+	if username == "" || password.Value == "" {
 		return "", "", MissingSecretErr(owner, secretRef, "missing username/password")
 	}
 	return username, password.Value, nil
@@ -183,7 +182,7 @@ func SecretLookup(reads *store.ReadSet) SecretGetter {
 	if reads == nil {
 		return nil
 	}
-	provider := values.NewStoreProvider(reads, true)
+	provider := values.NewStoreProvider(reads)
 	return func(namespace, name string) *manifest.Secret {
 		secret, _ := provider.Data(manifest.NamedResource{Kind: manifest.KindSecret, Namespace: namespace, Name: name}).(*manifest.Secret)
 		return secret

@@ -24,7 +24,7 @@ func BenchmarkPlan_RepeatedIdentity(b *testing.B) {
 			}
 			b.ReportAllocs()
 			for b.Loop() {
-				entries, err := Plan(b.Context(), Config{Path: root, WipeSecrets: true})
+				entries, err := Plan(b.Context(), Config{Path: root})
 				if err != nil {
 					b.Fatal(err)
 				}

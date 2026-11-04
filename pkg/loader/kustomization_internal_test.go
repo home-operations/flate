@@ -358,7 +358,7 @@ func testFinalizeIndexResourceMembershipCase2(
 		err := l.FinalizeIndex(t.Context(), root, true)
 		assert.NoError(t, err)
 	}
-	if len(retainedErrorsForTest(l)) != 0 ||
+	assert.FatalIf(t, len(retainedErrorsForTest(l)) != 0 ||
 		l.Store.GetObject(
 			manifest.NamedResource{
 				Group:     manifest.SourceDomain,
@@ -366,9 +366,8 @@ func testFinalizeIndexResourceMembershipCase2(
 				Namespace: "apps",
 				Name:      "selected",
 			},
-		) == nil {
-		t.Fatalf("unlisted input affected selected source: errors=%v", retainedErrorsForTest(l))
-	}
+		) == nil,
+		"unlisted input affected selected source: errors=%v", retainedErrorsForTest(l))
 }
 
 func testDocumentReaderSourceViewsAndReuseRetainedObjectsThroughSkipsAndErrors(t *testing.T) {
@@ -413,7 +412,7 @@ kind: ConfigMap
 metadata: {name: pending}
 `)
 	var objects []manifest.BaseManifest
-	opts := manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: "apps"}
+	opts := manifest.ParseDocOptions{DefaultNamespace: "apps"}
 	var ordinals []int
 	var failures []manifest.DocOccurrence
 	err := reader.decodeFileObjects(filepath.Join(root, "mixed.yaml"), opts, false, func(child parsedObject) {

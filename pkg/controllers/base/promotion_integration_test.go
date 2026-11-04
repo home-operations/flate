@@ -114,8 +114,7 @@ spec: {url: https://example.test/excluded.git}
 	controller.Configure(base.Options{Filter: filter, Loader: filterLoader, Index: index})
 	promote := func(id manifest.NamedResource) (bool, error) {
 		return loader.Promote(t.Context(), st, id, loader.PromoteOptions{
-			Record: index.Records[id].Productions[0], WipeSecrets: true,
-			Admit: func(object manifest.BaseManifest) (bool, error) {
+			Record: index.Records[id].Productions[0], Admit: func(object manifest.BaseManifest) (bool, error) {
 				return controller.KeepEmitted(t.Context(), manifest.NamedResource{}, store.Child{Obj: object}, nil)
 			},
 		})

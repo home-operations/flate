@@ -83,7 +83,7 @@ data: {value: rendered}
 				"fixture K unexpectedly emitted",
 			)
 			var publications atomic.Int64
-			c := resourceset.New(s, tasks, nil, true)
+			c := resourceset.New(s, tasks, nil)
 			c.Configure(base.Options{})
 			c.StartLifecycle()
 			d := dagDispatcher{&Orchestrator{store: s, rsc: c, controllers: base.Controllers{ResourceSet: c}}}
@@ -115,11 +115,11 @@ data: {value: rendered}
 				Namespace: l.Namespace,
 				Name:      "withdrawn-output",
 			}
-			if tasks.Failures() != 0 || publications.Load() != 0 || s.GetObject(l.Named()) != nil ||
+			assert.FatalIf(t, tasks.Failures() != 0 || publications.Load() != 0 || s.GetObject(l.Named()) != nil ||
 				s.GetArtifact(l.Named(), store.ArtifactContent) != nil ||
-				s.GetObject(output) != nil {
-				t.Fatalf("withdrawn body/artifact leaked: publications=%d", publications.Load())
-			}
+				s.GetObject(output) != nil,
+				"withdrawn body/artifact leaked: publications=%d", publications.Load())
+
 			s.AddObject(l)
 			tasks.Go(t.Context(), "dispatch-restored", func(ctx context.Context) {
 				d.Dispatch(ctx, l.Named(), manifest.DrainNone)

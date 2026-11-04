@@ -52,7 +52,7 @@ func TestEmitRenderedChildrenBatchesLeafDispatch(t *testing.T) {
 		},
 		fluxKustomizationDoc("a", "b"),
 		fluxKustomizationDoc("b", "a"),
-	}, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: parent.Namespace})
+	}, manifest.ParseDocOptions{DefaultNamespace: parent.Namespace})
 	assert.FatalIf(t, !sawRS, "%v", "render-only ResourceSet was not published")
 	assert.FatalIf(t, !sawBOnA, "%v", "first leaf dispatch did not see later emitted sibling")
 }
@@ -79,7 +79,7 @@ func TestEmitRenderedChildren_DropsKustomizeBuildDirective(t *testing.T) {
 	publishDocuments(c, parent, []map[string]any{
 		kustomizeConfigDoc(),                 // build directive — must be dropped
 		fluxKustomizationDoc("real", "real"), // real child — must be stored
-	}, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: parent.Namespace})
+	}, manifest.ParseDocOptions{DefaultNamespace: parent.Namespace})
 
 	assert.ErrorIf(
 		t,
@@ -99,7 +99,7 @@ func TestEmitRenderedChildren_EqualReplay(t *testing.T) {
 	t.Parallel()
 
 	s := store.New()
-	c := New(s, nil, nil, false)
+	c := New(s, nil, nil)
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 	s.AddObject(parent)
 	docs := []map[string]any{

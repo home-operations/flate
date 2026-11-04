@@ -14,6 +14,6 @@ func lookupDataForTest[T interface {
 	manifest.Data
 }](tb testing.TB, s *store.Store, id manifest.NamedResource) (T, bool) {
 	tb.Helper()
-	data, ok := values.NewStoreProvider(s, true).Data(id).(T)
+	data, ok := values.NewStoreProvider(s).Data(id).(T)
 	return data, ok
 }

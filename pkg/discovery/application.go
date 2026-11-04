@@ -97,7 +97,7 @@ func (c *entryCapture) collect() bool {
 
 func (c *entryCapture) visit(id manifest.NamedResource) bool {
 	st, q := c.store, c.qualification
-	if data := st.ReferenceFacts(id, q.loader.Index, false, manifest.NamedResource{}).Data; data != nil {
+	if data := st.ReferenceFacts(id, q.loader.Index, manifest.NamedResource{}).Data; data != nil {
 		c.inputs = append(c.inputs, kustomize.EntryInput{Resource: id, Data: data})
 	}
 	artifact, source := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
@@ -556,7 +556,6 @@ func (d *Session) entryReceipt(ctx context.Context, a *Admission) {
 			ApplyIgnore:             true,
 			SubPath:                 root.Path,
 			Spec:                    root,
-			WipeSecrets:             d.cfg.WipeSecrets,
 			StrictSubstitutions:     d.cfg.StrictSubstitutions,
 			SkipKinds:               d.cfg.SkipKinds,
 			DependencySubstitutions: d.substitutions,

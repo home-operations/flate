@@ -200,7 +200,7 @@ func (l *Loader) refreshSources() {
 		l.documents.projections = &l.projections
 	}
 	l.documents.parsed = nil
-	if inputs := l.Options.ParsedInputs; inputs != nil && inputs.wipeSecrets == l.Options.WipeSecrets &&
+	if inputs := l.Options.ParsedInputs; inputs != nil &&
 		inputs.compact == l.documents.compact {
 		l.documents.parsed = inputs
 	}

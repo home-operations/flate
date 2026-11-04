@@ -69,7 +69,7 @@ data:
 		doc := docs[0]
 		delete(doc["metadata"].(map[string]any), "namespace")
 		before := DeepCopyMap(doc)
-		opts := ParseDocOptions{WipeSecrets: true, DefaultNamespace: "apps"}
+		opts := ParseDocOptions{DefaultNamespace: "apps"}
 		parsed, err := ParseDoc(doc, opts)
 		obj, authoritative, changed := parsed.Object, parsed.Document, parsed.Changed
 		assert.NoError(t, err)

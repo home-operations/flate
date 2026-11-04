@@ -464,7 +464,7 @@ func testTemplateSourceRootValuesFilesCase(t *testing.T, testCaseInput *testTemp
 				}
 				selected.Chart.Source.Kind, selected.Chart.Source.Name = manifest.KindHelmChart, "standalone"
 				var err error
-				selected, _, err = Prepare(selected, func(id manifest.NamedResource) manifest.BaseManifest {
+				selected, err = Prepare(selected, func(id manifest.NamedResource) manifest.BaseManifest {
 					return &manifest.HelmChartSource{
 						Name:      id.Name,
 						Namespace: id.Namespace,

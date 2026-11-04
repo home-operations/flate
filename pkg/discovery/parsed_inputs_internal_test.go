@@ -43,41 +43,72 @@ func TestPlan_ParsedInputHandoff(t *testing.T) {
 	)
 	assert.NoError(t, err)
 	input := &store.SourceArtifact{LocalPath: root, FS: view}
-	entries, err := Plan(t.Context(), Config{Input: input, Path: root, WipeSecrets: true})
+	entries, err := Plan(t.Context(), Config{Input: input, Path: root})
 	assert.NoError(t, err)
-	assert.FatalIf(
-		t,
-		len(entries) != 1 || len(entries[0].prepared.aliasViews) == 0,
-		"expected one literal entry with prepared aliases: %+v",
-		entries,
-	)
+	assert.FatalIf(t, len(entries) != 1 || len(entries[0].prepared.aliasViews) == 0,
+		"expected one literal entry with prepared aliases: %+v", entries)
+
 	before := map[string]int64{}
 	for name, count := range reads {
 		before[name] = count.Load()
 	}
 	t.Cleanup(func() {
 		for name, count := range reads {
-			if count.Load() != before[name] {
-				t.Errorf("%s content reads = %d, want %d", name, count.Load(), before[name])
-			}
+			assert.ErrorIf(t, count.Load() != before[name],
+				"%s content reads = %d, want %d", name, count.Load(), before[name])
 		}
 	})
 	t.Run("different content", func(t *testing.T) {
 		t.Parallel()
-		testPlanParsedInputHandoffDifferentContent(
-			t,
-			testPlanParsedInputHandoffDifferentContentInputs{input: &input, entries: &entries},
-		)
-	},
-	)
+		changed := *input
+		changed.Content = "next-generation"
+		d := newDiscoverer(&Config{Input: &changed, Entry: &entries[0], Path: entries[0].Path, Store: store.New()})
+		assert.Equal(t, d.loader.Options.ParsedInputs == nil, true)
+	})
 	t.Run("native admissions", func(t *testing.T) {
 		t.Parallel()
-		testPlanParsedInputHandoffNativeAdmissions(
-			t,
-			testPlanParsedInputHandoffNativeAdmissionsInputs{root: &root, input: &input, entries: &entries},
-		)
-	},
-	)
+		testPlanParsedInputHandoffCase1(t, &entries, &input, &root)
+	})
+}
+
+func testPlanParsedInputHandoffCase1(t *testing.T, entries *[]Entry, input **store.SourceArtifact, root *string) {
+	t.Helper()
+
+	for _, entry := range *entries {
+		t.Run(entry.Path, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			d := newDiscoverer(&Config{Input: (*input), Entry: &entry, Path: entry.Path, Store: st})
+			assert.FatalIf(
+				t,
+				d.loader.Options.ParsedInputs == nil,
+				"%s",
+				"matching input did not borrow its parsed evidence",
+			)
+
+			_, err := d.resolveEntrySources(t.Context(), false)
+			assert.NoError(t, err)
+			assert.NoError(t, d.loadManifests(t.Context(), (*root), false))
+			assert.Equal(t, entry.Path, (*root))
+			for _, side := range []string{"left", "right"} {
+				if _, ok := d.loader.Index.Lookup(
+					manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "payload"},
+				); !ok {
+					t.Fatalf("%s leaf evidence missing", side)
+				}
+			}
+			for key, view := range entry.prepared.aliasViews {
+				assert.Equal(t, d.aliasViews[key], view)
+				delete(d.aliasViews, key)
+				assert.FatalIf(
+					t,
+					entry.prepared.aliasViews[key] == nil,
+					"%s",
+					"native admission mutated the prepared alias map",
+				)
+			}
+		})
+	}
 }
 
 func TestRun_PreparedInputAdmission(t *testing.T) {
@@ -104,26 +135,59 @@ func TestRun_PreparedInputAdmission(t *testing.T) {
 	)
 	assert.NoError(t, err)
 	input := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: view}
-	entries, err := Plan(t.Context(), Config{Input: input, WipeSecrets: true})
+	entries, err := Plan(t.Context(), Config{Input: input})
 	assert.NoError(t, err)
 	for _, tc := range []struct {
 		name     string
 		input    *store.SourceArtifact
-		wipe     bool
 		wantName string
 	}{
-		{name: "matching admission", input: input, wipe: true, wantName: "planned"},
-		{name: "parse policy", input: input, wantName: "planned"},
-		{name: "different source", wantName: "authoritative", wipe: true},
+		{name: "matching admission", input: input, wantName: "planned"},
+		{name: "different source", wantName: "authoritative"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			testRunPreparedInputAdmissionCase(
-				t,
-				testRunPreparedInputAdmissionCaseInputs{root: &root, entries: &entries, tc: &tc},
-			)
-		},
-		)
+			if tc.input == nil {
+				other, _, err := gittree.New(
+					t.Context(),
+					nil,
+					plumbing.ZeroHash,
+					gittree.ViewOptions{Mode: gittree.Direct, Current: fstest.MapFS{
+						"kustomization.yaml": {Data: []byte("resources: [owner.yaml]\n")},
+						"owner.yaml": {
+							Data: []byte(
+								"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: authoritative, namespace: apps}\nspec: {path: ./other}\n",
+							),
+						},
+					}},
+				)
+				assert.NoError(t, err)
+				tc.input = &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: other}
+			}
+			st := store.New()
+			result, err := Run(t.Context(), Config{Input: tc.input, Entry: &entries[0], Store: st, Trees: testTrees(t)})
+			assert.NoError(t, err)
+			id := manifest.NamedResource{
+				Group:     manifest.FluxKustomizeDomain,
+				Kind:      manifest.KindKustomization,
+				Namespace: "apps",
+				Name:      tc.wantName,
+			}
+			if record, ok := result.Index.Lookup(
+				id,
+			); !ok || record.Parent != result.Binding.Producer ||
+				st.GetObject(id) != nil {
+				t.Fatalf("authoritative input ownership lost: %+v", result.Index.Records)
+			}
+			if tc.name != "different source" {
+				secretID := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "secret"}
+				secret, ok := result.Index.Records[secretID].Declaration.(*manifest.Secret)
+				assert.FatalIf(t, !ok || st.GetObject(secretID) != nil,
+					"prepared secret = %+v, published=%v", secret, st.GetObject(secretID))
+
+				assert.Equal(t, secret.HasKeys(), false)
+			}
+		})
 	}
 }
 
@@ -143,153 +207,3 @@ func (f entryReadFS) Open(name string) (fs.File, error) {
 func (f entryReadFS) Stat(name string) (fs.FileInfo, error) { return fs.Stat(f.FS, name) }
 
 func (f entryReadFS) ReadDir(name string) ([]fs.DirEntry, error) { return fs.ReadDir(f.FS, name) }
-
-type testPlanParsedInputHandoffDifferentContentInputs struct {
-	input   **store.SourceArtifact
-	entries *[]Entry
-}
-
-func testPlanParsedInputHandoffDifferentContent(
-	t *testing.T,
-	testCaseInput testPlanParsedInputHandoffDifferentContentInputs,
-) {
-	t.Helper()
-
-	changed := *(*testCaseInput.input)
-	changed.Content = "next-generation"
-	d := newDiscoverer(
-		&Config{
-			Input:       &changed,
-			Entry:       &(*testCaseInput.entries)[0],
-			Path:        (*testCaseInput.entries)[0].Path,
-			Store:       store.New(),
-			WipeSecrets: true,
-		},
-	)
-	assert.Equal(t, d.loader.Options.ParsedInputs == nil, true)
-}
-
-type testPlanParsedInputHandoffNativeAdmissionsInputs struct {
-	root    *string
-	input   **store.SourceArtifact
-	entries *[]Entry
-}
-
-func testPlanParsedInputHandoffNativeAdmissions(
-	t *testing.T,
-	testCaseInput testPlanParsedInputHandoffNativeAdmissionsInputs,
-) {
-	t.Helper()
-
-	for _, entry := range *testCaseInput.entries {
-		t.Run(entry.Path, func(t *testing.T) {
-			t.Parallel()
-			st := store.New()
-			d := newDiscoverer(
-				&Config{Input: (*testCaseInput.input), Entry: &entry, Path: entry.Path, Store: st, WipeSecrets: true},
-			)
-			assert.FatalIf(
-				t,
-				d.loader.Options.ParsedInputs == nil,
-				"%v",
-				"matching input did not borrow its parsed evidence",
-			)
-			_, err := d.resolveEntrySources(t.Context(), false)
-			assert.NoError(t, err)
-			assert.NoError(t, d.loadManifests(t.Context(), (*testCaseInput.root), false))
-			assert.Equal(t, entry.Path, (*testCaseInput.root))
-			for _, side := range []string{"left", "right"} {
-				{
-					_, ok := d.loader.Index.Lookup(
-						manifest.NamedResource{
-							Kind:      manifest.KindConfigMap,
-							Namespace: "apps",
-							Name:      "payload",
-						},
-					)
-					assert.FatalIf(t, !ok, "%s leaf evidence missing", side)
-				}
-			}
-			for key, view := range entry.prepared.aliasViews {
-				assert.Equal(t, d.aliasViews[key], view)
-				delete(d.aliasViews, key)
-				assert.FatalIf(
-					t,
-					entry.prepared.aliasViews[key] == nil,
-					"%v",
-					"native admission mutated the prepared alias map",
-				)
-			}
-		})
-	}
-}
-
-type testRunPreparedInputAdmissionCaseInputs struct {
-	root    *string
-	entries *[]Entry
-	tc      *struct {
-		name string
-
-		input    *store.SourceArtifact
-		wipe     bool
-		wantName string
-	}
-}
-
-func testRunPreparedInputAdmissionCase(t *testing.T, testCaseInput testRunPreparedInputAdmissionCaseInputs) {
-	t.Helper()
-
-	if testCaseInput.tc.input == nil {
-		other, _, err := gittree.New(
-			t.Context(),
-			nil,
-			plumbing.ZeroHash,
-			gittree.ViewOptions{Mode: gittree.Direct, Current: fstest.MapFS{
-				"kustomization.yaml": {Data: []byte("resources: [owner.yaml]\n")},
-				"owner.yaml": {
-					Data: []byte(
-						"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: authoritative, namespace: apps}\nspec: {path: ./other}\n",
-					),
-				},
-			}},
-		)
-		assert.NoError(t, err)
-		testCaseInput.tc.input = &store.SourceArtifact{
-			LocalPath: (*testCaseInput.root),
-			LocalRoot: (*testCaseInput.root),
-			FS:        other,
-		}
-	}
-	st := store.New()
-	result, err := Run(
-		t.Context(),
-		Config{
-			Input:       testCaseInput.tc.input,
-			Entry:       &(*testCaseInput.entries)[0],
-			Store:       st,
-			Trees:       testTrees(t),
-			WipeSecrets: testCaseInput.tc.wipe,
-		},
-	)
-	assert.NoError(t, err)
-	id := manifest.NamedResource{
-		Group:     manifest.FluxKustomizeDomain,
-		Kind:      manifest.KindKustomization,
-		Namespace: "apps",
-		Name:      testCaseInput.tc.wantName,
-	}
-	if record, ok := result.Index.Lookup(
-		id,
-	); !ok || record.Parent != result.Binding.Producer ||
-		st.GetObject(id) != nil {
-		t.Fatalf("authoritative input ownership lost: %+v", result.Index.Records)
-	}
-	if testCaseInput.tc.name != "different source" {
-		secretID := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "secret"}
-		secret, ok := result.Index.Records[secretID].Declaration.(*manifest.Secret)
-		if !ok || st.GetObject(secretID) != nil {
-			t.Fatalf("prepared secret = %+v, published=%v", secret, st.GetObject(secretID))
-		}
-		assert.Equal(t, secret.HasPlaceholder(), testCaseInput.tc.wipe)
-	}
-}

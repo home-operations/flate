@@ -169,11 +169,10 @@ items:
 	assert.NoError(t, err)
 	id := testutil.HelmReleaseID("apps", "demo")
 	owner := testutil.KustomizationID("flux-system", "owner")
-	if !result.Binding.Producer.ReportHidden() || st.GetObject(result.Binding.Producer) == nil {
-		t.Fatalf("list member replaced the literal entry: %+v",
-			result.Binding,
-		)
-	}
+	assert.FatalIf(t, !result.Binding.Producer.ReportHidden() || st.GetObject(result.Binding.Producer) == nil,
+		"list member replaced the literal entry: %+v",
+		result.Binding)
+
 	for _, member := range []manifest.NamedResource{id, owner} {
 		record, ok := result.Index.Lookup(member)
 		assert.FatalIf(t, !ok || record.Builder != "app/kustomization.yaml" || record.File != record.Builder ||
@@ -336,11 +335,10 @@ metadata: {name: config, namespace: flux-system}
 data: {value: fixture}
 `)
 	cfg := discovery.Config{
-		Trees:       testTrees(t),
-		Path:        filepath.Join(dir, "flux"),
-		RepoRoot:    dir,
-		Store:       store.New(),
-		WipeSecrets: true,
+		Trees:    testTrees(t),
+		Path:     filepath.Join(dir, "flux"),
+		RepoRoot: dir,
+		Store:    store.New(),
 	}
 	var authored manifest.BaseManifest
 	if strings.HasPrefix((*testCaseInput), "declared_") {

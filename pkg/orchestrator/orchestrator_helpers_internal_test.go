@@ -185,7 +185,10 @@ func reconcileEntryForTest(t *testing.T, o *Orchestrator) {
 }
 
 type newTestOrchestratorTailInputs struct {
-	cfg  *Config
-	tb   *testing.TB
+	cfg *Config
+
+	tb *testing.
+		TB
+
 	tree *Tree
 }

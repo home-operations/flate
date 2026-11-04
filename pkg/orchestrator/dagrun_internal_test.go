@@ -304,7 +304,7 @@ func testDAGKeepBeforeLateDataPublicationCase(
 			},
 		},
 	}
-	parseChildrenResult1 := c.ParseChildren(
+	parseChildrenResult1 := (&base.Execution{Controller: c}).ParseChildren(
 		parent,
 		testutil.DocumentOccurrences(childDocs),
 		manifest.ParseDocOptions{},
@@ -545,29 +545,27 @@ func testDAGSuspensionAfterRefreshCase(t *testing.T, testCaseInput testDAGSuspen
 	)
 	t.Cleanup(unsubArrivals)
 	res, err := o.collectResult(o.run(t.Context()))
-	if err != nil || len(res.Failed) != 0 || len(res.Blocked) != 0 || o.tasks.Failures() != 0 {
-		t.Fatalf(
-			"scheduler failed to drain: error=%v failures=%v blocked=%v",
-			err,
-			res.Failed,
-			res.Blocked,
-		)
-	}
+	assert.FatalIf(t, err != nil || len(res.Failed) != 0 || len(res.Blocked) != 0 || o.tasks.Failures() != 0,
+
+		"scheduler failed to drain: error=%v failures=%v blocked=%v",
+		err,
+		res.Failed,
+		res.Blocked)
+
 	info, _ := o.store.GetStatus(child)
 	fresh, _ := o.store.Get[*manifest.Kustomization](child)
-	if publication.Load() != 1 || arrivals.Load() != 0 ||
+	assert.FatalIf(t, publication.Load() != 1 || arrivals.Load() != 0 ||
 		info.Outcome() != store.OutcomeSuspended ||
 		!fresh.Suspend ||
-		original.Suspend {
-		t.Fatalf(
-			"late suspension: publications=%d arrivals=%d status=%+v original=%+v fresh=%+v",
-			publication.Load(),
-			arrivals.Load(),
-			info,
-			original,
-			fresh,
-		)
-	}
+		original.Suspend,
+
+		"late suspension: publications=%d arrivals=%d status=%+v original=%+v fresh=%+v",
+		publication.Load(),
+		arrivals.Load(),
+		info,
+		original,
+		fresh)
+
 	{
 		owners := testutil.Owners(o.store.Productions(child, nil))
 		assert.FatalIf(
@@ -603,10 +601,16 @@ func testDAGSuspensionAfterRefreshCase(t *testing.T, testCaseInput testDAGSuspen
 }
 
 type renderScalePublicationsTailInputs struct {
-	root      *string
-	workers   *int
-	roots     *map[manifest.NamedResource]bool
-	ids       *[]manifest.NamedResource
+	root *string
+
+	workers *int
+
+	roots *map[manifest.
+		NamedResource]bool
+
+	ids *[]manifest.
+		NamedResource
+
 	producers *int
 }
 
@@ -693,7 +697,7 @@ func retainedSuspensionArtifact(
 			o.ksc.Controller,
 			child,
 			[]map[string]any{doc},
-			manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: child.Namespace},
+			manifest.ParseDocOptions{DefaultNamespace: child.Namespace},
 		)
 		artifact = o.store.GetArtifact(child, store.ArtifactContent).(*store.Emission)
 	}

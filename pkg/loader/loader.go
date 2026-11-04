@@ -38,10 +38,8 @@ type options struct {
 	Filter *change.Filter
 	// AllowMissingKinds borrows the values-input absence policy for this invocation.
 	AllowMissingKinds []string
-	// WipeSecrets controls Secret cleartext replacement. Default true.
-	WipeSecrets  bool
-	RemoteInputs *source.HTTPInputs
-	RemoteRetry  cache.RetryConfig
+	RemoteInputs      *source.HTTPInputs
+	RemoteRetry       cache.RetryConfig
 	// ParsedInputs reuses immutable content only from matching admitted source views.
 	ParsedInputs *ParsedInputs
 }
@@ -107,10 +105,10 @@ const (
 	entryKustomize
 )
 
-// New initializes discovery state and configures the Loader to wipe secrets.
+// New initializes discovery state.
 func New(s *store.Store) *Loader {
 	return &Loader{
-		Store: s, Options: options{WipeSecrets: true},
+		Store:     s,
 		Index:     &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}},
 		documents: documentReader{cache: map[string]document{}, views: map[string]fs.FS{}},
 	}
@@ -469,9 +467,9 @@ func (l *Loader) loadFile(ctx context.Context, path string) (int, error) {
 	var objs []parsedObject
 	var err error
 	if reader.compact {
-		objs, err = reader.censusFile(ctx, path, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets})
+		objs, err = reader.censusFile(ctx, path, manifest.ParseDocOptions{})
 	} else {
-		objs, err = reader.fileObjects(path, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets})
+		objs, err = reader.fileObjects(path, manifest.ParseDocOptions{})
 	}
 	if err != nil {
 		return 0, err
@@ -494,7 +492,7 @@ func (l *Loader) recordDataFile(ctx context.Context, absPath string) error {
 	}
 	objs, err := l.documents.fileObjects(
 		absPath,
-		manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets, DefaultNamespace: ""},
+		manifest.ParseDocOptions{DefaultNamespace: ""},
 	)
 	if err != nil {
 		return err
@@ -697,7 +695,7 @@ func (l *Loader) recordLoadedObjects(path string, objs []parsedObject) int {
 }
 
 func (l *Loader) recordCompactDataFile(ctx context.Context, absPath string) error {
-	facts, err := l.documents.censusFile(ctx, absPath, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets})
+	facts, err := l.documents.censusFile(ctx, absPath, manifest.ParseDocOptions{})
 	if err != nil {
 		return err
 	}

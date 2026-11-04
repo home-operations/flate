@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -29,68 +30,127 @@ func TestLoadInputs_Stdin(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
 		paths        []string
+		body         string
 		cancel, fail bool
 	}{
 		{name: "single", paths: []string{"-"}},
 		{name: "duplicate", paths: []string{"-", "-"}, fail: true},
 		{name: "canceled", paths: []string{"-"}, cancel: true, fail: true},
 		{name: "file"},
+		{name: "encrypted Secret", paths: []string{"-"}, body: "apiVersion: v1\nkind: Secret\nmetadata: {name: encrypted, namespace: apps}\nstringData: {Z: 'ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]', A: 'ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]', PLAIN: readable, EMPTY: ''}\n"},
+		{name: "encrypted ConfigMap", paths: []string{"-"}, body: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: encrypted, namespace: apps}\ndata: {Z: 'ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]', A: 'ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]', PLAIN: readable, EMPTY: ''}\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			if tc.cancel {
-				cancel()
-			}
-			input := &countedInput{reader: strings.NewReader(externalCM)}
-			paths := tc.paths
-			if paths == nil {
-				paths = []string{substitutionInput(t, externalCM)}
-			}
-			c := commonFlags{supply: paths}
-			err := c.loadInputs(ctx, input)
-			if (err != nil) != tc.fail {
-				t.Fatalf("load: %v", err)
-			}
-			want := 0
-			if tc.name == "single" {
-				want = len(externalCM)
-			}
-			if input.bytes != want {
-				t.Fatalf("stdin bytes=%d, want %d", input.bytes, want)
-			}
-			if !tc.fail && len(c.suppliedObjects) != 1 {
-				t.Fatalf("objects=%d", len(c.suppliedObjects))
-			}
+			testLoadInputsStdinCase1(t, &tc)
 		})
+	}
+}
+
+func testLoadInputsStdinCase1(t *testing.T, tc *struct {
+	name   string
+	paths  []string
+	body   string
+	cancel bool
+	fail   bool
+},
+) {
+	t.Helper()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	if tc.cancel {
+		cancel()
+	}
+	body := tc.body
+	if body == "" {
+		body = externalCM
+	}
+	input := &countedInput{reader: strings.NewReader(body)}
+	paths := tc.paths
+	if paths == nil {
+		paths = []string{substitutionInput(t, externalCM)}
+	}
+	c := commonFlags{supply: paths}
+	err := c.loadInputs(ctx, input)
+	assert.FatalIf(t, (err != nil) != tc.fail,
+		"load: %v", err)
+
+	want := 0
+	if tc.name == "single" || tc.body != "" {
+		want = len(body)
+	}
+	assert.FatalIf(t, input.bytes != want,
+		"stdin bytes=%d, want %d", input.bytes, want)
+	assert.FatalIf(t, !tc.fail && len(c.suppliedObjects) != 1,
+		"objects=%d", len(c.suppliedObjects))
+
+	if tc.body != "" {
+		child := c.suppliedObjects[0]
+		data := child.Obj.(manifest.Data)
+		for _, key := range []string{"A", "Z"} {
+			adaptedResult1, err := data.Value(key)
+			present := adaptedResult1.Found
+			assert.NoError(t, err)
+			assert.Equal(t, present, false)
+		}
+		for key, want := range map[string]string{"PLAIN": "readable", "EMPTY": ""} {
+			adaptedResult2, err := data.Value(key)
+			got, present := adaptedResult2.Value, adaptedResult2.Found
+			assert.NoError(t, err)
+			assert.Equal(t, present, true)
+			assert.Equal(t, got, want)
+		}
+		assert.Equal(t, len(child.Warnings), 1)
+		assert.Equal(t, child.Warnings[0].Category, manifest.WarnSOPSUnreadable)
+		assert.Diff(t, child.Warnings[0].Detail, []string{"A", "Z"})
 	}
 }
 
 func TestLoadInputs_AnyKind(t *testing.T) {
 	t.Parallel()
-	body := externalCM + "---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: r" +
-		"emote, namespace: apps}\nspec: {url: 'file:///fixture'}\n---\napiVersion: apiextensio" +
-		"ns.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata: {name: widgets.example.io}\ns" +
-		"pec: {group: example.io}\n---\napiVersion: example.io/v1\nkind: Widget\nmetadata: {na" +
-		"me: custom, namespace: apps}\nspec: {payload: retained}\n"
+	body := externalCM + "---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: remote, namespace: apps}\nspec: {url: 'file:///fixture'}\n---\napiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata: {name: widgets.example.io}\nspec: {group: example.io}\n---\napiVersion: example.io/v1\nkind: Widget\nmetadata: {name: custom, namespace: apps}\nspec: {payload: retained}\n"
 	cipher := "ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]"
-	body += "---\napiVersion: v1\nkind: Secret\nmetadata: {name: auth, namespace: apps}\nstringDat" +
-		"a: {VALUE: '" + cipher + "'}\nsops: {encrypted_regex: stringData}\n"
+	var bodySb112 strings.Builder
+	for _, kind := range []string{manifest.KindSecret, manifest.KindConfigMap} {
+		field := "data"
+		if kind == manifest.KindSecret {
+			field = "stringData"
+		}
+		bodySb112.WriteString(
+			"---\napiVersion: v1\nkind: " + kind + "\nmetadata: {name: auth, namespace: apps}\n" + field + ": {VALUE: '" + cipher + "', EMPTY: '', PLAIN: readable}\nsops: {encrypted_regex: " + field + "}\n",
+		)
+	}
+	body += bodySb112.String()
 	c := commonFlags{supply: []string{"-"}}
 	if err := c.loadInputs(t.Context(), strings.NewReader(body)); err != nil {
 		t.Fatal(err)
 	}
-	if len(c.suppliedObjects) != 5 {
-		t.Fatalf("objects=%d", len(c.suppliedObjects))
-	}
-	if c.suppliedObjects[3].Doc["spec"].(map[string]any)["payload"] != "retained" {
-		t.Fatal("raw payload lost")
-	}
-	value, err := c.suppliedObjects[4].Obj.(manifest.Data).Value("VALUE")
-	got := value.Value
-	if err != nil || got != cipher {
-		t.Fatalf("supplied ciphertext changed: %q, %v", got, err)
+	assert.FatalIf(t, len(c.suppliedObjects) != 6,
+		"objects=%d", len(c.suppliedObjects))
+	assert.FatalIf(
+		t,
+		c.suppliedObjects[3].Doc["spec"].(map[string]any)["payload"] != "retained",
+		"%s",
+		"raw payload lost",
+	)
+
+	for _, child := range c.suppliedObjects[4:] {
+		data := child.Obj.(manifest.Data)
+		adaptedResult3, err := data.Value("VALUE")
+		present := adaptedResult3.Found
+		assert.NoError(t, err)
+		assert.Equal(t, present, false)
+		for key, want := range map[string]string{"PLAIN": "readable", "EMPTY": ""} {
+			adaptedResult4, err := data.Value(key)
+			got, present := adaptedResult4.Value, adaptedResult4.Found
+			assert.NoError(t, err)
+			assert.Equal(t, present, true)
+			assert.Equal(t, got, want)
+		}
+		assert.Equal(t, len(child.Warnings), 1)
+		assert.Equal(t, child.Warnings[0].Category, manifest.WarnSOPSUnreadable)
+		assert.Diff(t, child.Warnings[0].Detail, []string{"VALUE"})
 	}
 }
 
@@ -101,9 +161,8 @@ func testLoadInputsDevStdin(t *testing.T) {
 	}
 	if os.Getenv("FLATE_TEST_DEV_STDIN") != "1" {
 		executable, err := os.Executable()
-		if err != nil {
-			t.Fatal(err)
-		}
+		assert.FatalIf(t, err != nil, "%s", err)
+
 		cmd := exec.CommandContext(t.Context(), executable, "-test.run=^"+regexp.QuoteMeta(t.Name())+"$")
 		cmd.Env = append(os.Environ(), "FLATE_TEST_DEV_STDIN=1")
 		cmd.Stdin = strings.NewReader(externalCM)
@@ -117,9 +176,12 @@ func testLoadInputsDevStdin(t *testing.T) {
 	if err := c.loadInputs(t.Context(), input); err != nil {
 		t.Fatal(err)
 	}
-	if len(c.suppliedObjects) != 1 || input.bytes != 0 {
-		t.Fatal("ordinary stdin path used the injected reader")
-	}
+	assert.FatalIf(
+		t,
+		len(c.suppliedObjects) != 1 || input.bytes != 0,
+		"%s",
+		"ordinary stdin path used the injected reader",
+	)
 }
 
 func testRunSupplyStdin(t *testing.T) {

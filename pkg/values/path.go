@@ -32,10 +32,9 @@ func ResolveStaticPath(path string, parent *manifest.Kustomization, provider Pro
 	incomplete := false
 	resolved, err := envsubst.Eval(path, func(name string) (string, bool) {
 		value, known := variables[name]
-		placeholder := manifest.HasValuePlaceholder(value)
 		_, fixed := inline[name]
-		incomplete = incomplete || placeholder || unknownInputs && !fixed
-		return value, known && !placeholder
+		incomplete = incomplete || unknownInputs && !fixed
+		return value, known
 	})
 	return resolved, err == nil && !incomplete
 }

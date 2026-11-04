@@ -93,9 +93,7 @@ func (r *httpRepository) localCredentials(ctx context.Context) error {
 		return manifest.NewError(manifest.ErrInput, fmt.Errorf("load Helm repository login: %w", err), "")
 	}
 	for _, entry := range config.Repositories {
-		if entry == nil || entry.Username == "" || entry.Password == "" ||
-			manifest.HasValuePlaceholder(entry.Username) ||
-			manifest.HasValuePlaceholder(entry.Password) {
+		if entry == nil || entry.Username == "" || entry.Password == "" {
 			continue
 		}
 		if repositoryURLEqual(r.URL, entry.URL) {

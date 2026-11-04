@@ -184,7 +184,7 @@ func testStoreProductionsScopedFileBridgeCase(
 		}
 	}
 	assert.Diff(t, s.Productions(target, nil), testCaseInput.tc.want)
-	assert.Diff(t, s.ReferenceFacts(target, nil, false, manifest.NamedResource{}).Productions, testCaseInput.tc.want)
+	assert.Diff(t, s.ReferenceFacts(target, nil, manifest.NamedResource{}).Productions, testCaseInput.tc.want)
 }
 
 func testStoreProductionsScopedFileBridgeHiddenBareOnlyAfterWithdrawal(t *testing.T) {
@@ -211,16 +211,15 @@ func testStoreProductionsScopedFileBridgeHiddenBareOnlyAfterWithdrawal(t *testin
 	sh.mu.RLock()
 	hidden, members := sh.cells[target].hidden, len(sh.members[target])
 	sh.mu.RUnlock()
-	if !hidden || members != 0 || len(index.Records[target].Productions) != 0 {
-		t.Fatalf(
-			"invalid withdrawal fixture: hidden=%t members=%d direct=%v",
-			hidden,
-			members,
-			index.Records[target].Productions,
-		)
-	}
+	assert.FatalIf(t, !hidden || members != 0 || len(index.Records[target].Productions) != 0,
+
+		"invalid withdrawal fixture: hidden=%t members=%d direct=%v",
+		hidden,
+		members,
+		index.Records[target].Productions)
+
 	assert.Equal(t, len(s.Productions(target, nil)), 0)
-	assert.Diff(t, s.ReferenceFacts(target, nil, false, manifest.NamedResource{}), ReferenceFacts{})
+	assert.Diff(t, s.ReferenceFacts(target, nil, manifest.NamedResource{}), ReferenceFacts{})
 	parent, ok := s.RenderedParent(target, nil)
 	assert.Equal(t, parent, manifest.NamedResource{})
 	assert.Equal(t, ok, false)
@@ -282,7 +281,7 @@ func testStoreProductionsScopedFileBridgeCase2(
 		s.coverage[fileOwner].binding.artifact = &SourceArtifact{Key: "other"}
 	}
 	result := s.Productions(target, index)
-	facts := s.ReferenceFacts(target, index, false, manifest.NamedResource{})
+	facts := s.ReferenceFacts(target, index, manifest.NamedResource{})
 	assert.Diff(t, facts.Productions, result)
 	parent, ok := s.RenderedParent(target, nil)
 	assert.FatalIf(

@@ -61,8 +61,8 @@ func substitutionOutput(t *testing.T, output string) string {
 		output,
 	)
 	declaration := docs[1]
-	metadata := manifest.DocMetadata(declaration)
-	name, namespace := metadata.Name, metadata.Namespace
+	result1 := manifest.DocMetadata(declaration)
+	name, namespace := result1.Name, result1.Namespace
 	spec, _ := declaration["spec"].(map[string]any)
 	assert.FatalIf(
 		t,
@@ -72,11 +72,11 @@ func substitutionOutput(t *testing.T, output string) string {
 		"unexpected applied consumer declaration: %v",
 		declaration,
 	)
-	metadata2 := manifest.DocMetadata(docs[0])
-	name, namespace = metadata2.Name, metadata2.Namespace
-	if manifest.DocKind(docs[0]) != manifest.KindConfigMap || name != "rendered" || namespace != "apps" {
-		t.Fatalf("unexpected emitted input: %v", docs[0])
-	}
+	result2 := manifest.DocMetadata(docs[0])
+	name, namespace = result2.Name, result2.Namespace
+	assert.FatalIf(t, manifest.DocKind(docs[0]) != manifest.KindConfigMap || name != "rendered" || namespace != "apps",
+		"unexpected emitted input: %v", docs[0])
+
 	value, _ := docs[0]["data"].(map[string]any)["value"].(string)
 	return value
 }
@@ -139,7 +139,7 @@ func TestRun_ExternalSubstitution(t *testing.T) {
 			want: "supplied",
 		},
 		{
-			name:      "supplied ciphertext sanitized in rendered output",
+			name:      "secret ciphertext empty",
 			postBuild: substitutionReference("Secret", false),
 			input: strings.Replace(
 				externalSecret,
@@ -147,7 +147,7 @@ func TestRun_ExternalSubstitution(t *testing.T) {
 				"'ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]'",
 				1,
 			) + "sops: {encrypted_regex: data}\n",
-			want: "..PLACEHOLDER_value..",
+			want: "${VALUE}",
 		},
 		{name: "missing unsupplied secret", postBuild: substitutionReference("Secret", false), fail: true},
 		{
@@ -167,43 +167,54 @@ func TestRun_ExternalSubstitution(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			root := substitutionFixture(t, tc.postBuild, "${VALUE}")
-			args := []string{
-				"build",
-				"all",
-				"--path",
-				root,
-				"--concurrency",
-				"2",
-				"--cache-dir",
-				t.TempDir(),
-				"--skip-kinds",
-				"CustomResourceDefinition",
-			}
-			if tc.input != "" {
-				args = append(args, "--supply", substitutionInput(t, tc.input))
-			}
-			if tc.strict {
-				args = append(args, "--strict-substitutions")
-			}
-			cli := runCLI(t, args...)
-			out, diagnostic, code := cli.stdout, cli.stderr, cli.code
-			assert.FatalIf(t, (code != 0) != tc.fail, "exit=%d: %s", code, diagnostic)
-			if tc.fail {
-				assert.FatalIf(
-					t,
-					!strings.Contains(diagnostic, "ConfigMap") && !strings.Contains(diagnostic, "Secret") ||
-						!strings.Contains(diagnostic, "apps/external"),
-					"missing reference diagnostic: %s",
-					diagnostic,
-				)
-				return
-			}
-			{
-				got := substitutionOutput(t, out)
-				assert.FatalIf(t, got != tc.want, "got %q, want %q", got, tc.want)
-			}
+			testRunExternalSubstitutionCase1(t, &tc)
 		})
+	}
+}
+
+func testRunExternalSubstitutionCase1(t *testing.T, tc *struct {
+	name      string
+	postBuild string
+	input     string
+	want      string
+	fail      bool
+	strict    bool
+},
+) {
+	t.Helper()
+	root := substitutionFixture(t, tc.postBuild, "${VALUE}")
+	args := []string{
+		"build",
+		"all",
+		"--path",
+		root,
+		"--concurrency",
+		"2",
+		"--cache-dir",
+		t.TempDir(),
+		"--skip-kinds",
+		"CustomResourceDefinition",
+	}
+	if tc.input != "" {
+		args = append(args, "--supply", substitutionInput(t, tc.input))
+	}
+	if tc.strict {
+		args = append(args, "--strict-substitutions")
+	}
+	migratedResult1 := runCLI(t, args...)
+	out, diagnostic, code := migratedResult1.stdout, migratedResult1.stderr, migratedResult1.code
+	assert.FatalIf(t, (code != 0) != tc.fail,
+		"exit=%d: %s", code, diagnostic)
+
+	if tc.fail {
+		assert.FatalIf(t, !strings.Contains(diagnostic, "ConfigMap") && !strings.Contains(diagnostic, "Secret") ||
+			!strings.Contains(diagnostic, "apps/external"),
+			"missing reference diagnostic: %s", diagnostic)
+
+		return
+	}
+	if got := substitutionOutput(t, out); got != tc.want {
+		t.Fatalf("got %q, want %q", got, tc.want)
 	}
 }
 
@@ -233,7 +244,7 @@ func TestRun_SubstitutionFilesAndDuplicates(t *testing.T) {
 			1,
 		),
 	)
-	cli := runCLI(
+	migratedResult2 := runCLI(
 		t,
 		"build",
 		"all",
@@ -248,7 +259,8 @@ func TestRun_SubstitutionFilesAndDuplicates(t *testing.T) {
 		"--supply",
 		"last.yaml",
 	)
-	out, diagnostic, code := cli.stdout, cli.stderr, cli.code
+	out, diagnostic, code := migratedResult2.stdout, migratedResult2.stderr, migratedResult2.code
+
 	assert.FatalIf(t, code != 0, "%v", diagnostic)
 	{
 		got := substitutionOutput(t, out)
@@ -278,8 +290,8 @@ func TestRun_SubstitutionEnvironment(t *testing.T) {
 			args := append(
 				[]string{"build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2"},
 				tc.flags...)
-			cli := runCLI(t, args...)
-			out, diagnostic, code := cli.stdout, cli.stderr, cli.code
+			migratedResult3 := runCLI(t, args...)
+			out, diagnostic, code := migratedResult3.stdout, migratedResult3.stderr, migratedResult3.code
 			assert.FatalIf(t, code != 0, "%v", diagnostic)
 			{
 				got := substitutionOutput(t, out)
@@ -330,8 +342,8 @@ func TestRun_StrictSubstitutions(t *testing.T) {
 			if tc.strict {
 				args = append(args, "--strict-substitutions")
 			}
-			cli := runCLI(t, args...)
-			out, diagnostic, code := cli.stdout, cli.stderr, cli.code
+			migratedResult4 := runCLI(t, args...)
+			out, diagnostic, code := migratedResult4.stdout, migratedResult4.stderr, migratedResult4.code
 			assert.FatalIf(t, (code != 0) != tc.fail, "exit=%d: %s", code, diagnostic)
 			if tc.fail {
 				for _, want := range []string{"apps/consumer", "VALUE", "variable not set (strict mode)"} {
@@ -388,7 +400,7 @@ func TestRun_SuppliedReaderValidation(t *testing.T) {
 			)
 			testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux.yaml, source.yaml]\n")
 			input := substitutionInput(t, externalSecret)
-			cli := runCLI(
+			migratedResult5 := runCLI(
 				t,
 				"build",
 				"all",
@@ -401,7 +413,8 @@ func TestRun_SuppliedReaderValidation(t *testing.T) {
 				"--supply",
 				input,
 			)
-			diagnostic, code := cli.stderr, cli.code
+			diagnostic, code := migratedResult5.stderr, migratedResult5.code
+
 			assert.FatalIf(
 				t,
 				code != 1 || !strings.Contains(diagnostic, "external") || strings.Contains(diagnostic, "not found"),
@@ -432,7 +445,7 @@ func TestRun_SuppliedReaderValidation(t *testing.T) {
 			if kind == "Secret" {
 				input = externalSecret
 			}
-			cli2 := runCLI(
+			migratedResult6 := runCLI(
 				t,
 				"build",
 				"all",
@@ -445,7 +458,8 @@ func TestRun_SuppliedReaderValidation(t *testing.T) {
 				"--supply",
 				substitutionInput(t, input),
 			)
-			diagnostic, code := cli2.stderr, cli2.code
+			diagnostic, code := migratedResult6.stderr, migratedResult6.code
+
 			assert.FatalIf(
 				t,
 				code != 1 || !strings.Contains(diagnostic, "values.yaml") || !strings.Contains(diagnostic, "external"),
@@ -474,8 +488,8 @@ func TestRun_StrictSubstitutionEnvironmentPrecedence(t *testing.T) {
 			if tc.override {
 				args = append(args, "--strict-substitutions=false")
 			}
-			cli := runCLI(t, args...)
-			out, diagnostic, code := cli.stdout, cli.stderr, cli.code
+			migratedResult7 := runCLI(t, args...)
+			out, diagnostic, code := migratedResult7.stdout, migratedResult7.stderr, migratedResult7.code
 			assert.FatalIf(t, (code != 0) != tc.fail, "exit=%d: %s", code, diagnostic)
 			assert.FatalIf(
 				t,
@@ -500,7 +514,7 @@ func TestRun_SubstitutionRepositoryCollision(t *testing.T) {
 	testutil.WriteFile(t, root, "producer/kustomization.yaml", "resources: [input.yaml]\n")
 	testutil.WriteFile(t, root, "producer/input.yaml", strings.Replace(externalCM, "supplied", "repository", 1))
 	input := substitutionInput(t, strings.Replace(externalCM, "supplied", "private-fixture-value", 1))
-	cli := runCLI(
+	migratedResult8 := runCLI(
 		t,
 		"build",
 		"all",
@@ -516,7 +530,8 @@ func TestRun_SubstitutionRepositoryCollision(t *testing.T) {
 		"--log-level",
 		"warn",
 	)
-	out, diagnostic, code := cli.stdout, cli.stderr, cli.code
+	out, diagnostic, code := migratedResult8.stdout, migratedResult8.stderr, migratedResult8.code
+
 	assert.FatalIf(t, code != 0, "%v", diagnostic)
 	assert.FatalIf(t, strings.Count(diagnostic, "repository data takes precedence over") != 1 ||
 		!strings.Contains(diagnostic, input) ||
@@ -526,8 +541,8 @@ func TestRun_SubstitutionRepositoryCollision(t *testing.T) {
 	docs, err := testutil.SplitDocs([]byte(out))
 	assert.NoError(t, err)
 	for _, doc := range docs {
-		metadata3 := manifest.DocMetadata(doc)
-		name := metadata3.Name
+		result3 := manifest.DocMetadata(doc)
+		name := result3.Name
 		assert.FatalIf(
 			t,
 			name == "rendered" && doc["data"].(map[string]any)["value"] != "repository",
@@ -540,7 +555,7 @@ func TestRun_SubstitutionRepositoryCollision(t *testing.T) {
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestRun_SubstitutionSecretReadableAdvisory(t *testing.T) {
 	root := substitutionFixture(t, substitutionReference("Secret", false), "${VALUE}")
-	cli := runCLI(
+	migratedResult9 := runCLI(
 		t,
 		"test",
 		"all",
@@ -554,7 +569,8 @@ func TestRun_SubstitutionSecretReadableAdvisory(t *testing.T) {
 		substitutionInput(t, externalSecret),
 		"--strict-substitutions",
 	)
-	out, diagnostic, code := cli.stdout, cli.stderr, cli.code
+	out, diagnostic, code := migratedResult9.stdout, migratedResult9.stderr, migratedResult9.code
+
 	assert.FatalIf(
 		t,
 		code != 0 || strings.Contains(out+diagnostic, "could not be read offline"),

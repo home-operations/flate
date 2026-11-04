@@ -59,7 +59,7 @@ func testReconcileParentUpdateDuringRenderCase(
 
 	st := store.New()
 	tasks := task.NewBounded(2)
-	c := New(st, tasks, nil, false)
+	c := New(st, tasks, nil)
 	started, resume, rendered := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	release := sync.OnceFunc(func() { close(resume) })
 	t.Cleanup(func() { release(); tasks.BlockTillDone() })
@@ -160,9 +160,9 @@ func testReconcileParentUpdateDuringRenderCase(
 		},
 	)
 	tasks.BlockTillDone()
-	if tasks.Failures() != 0 {
-		t.Fatalf("task failures = %d", tasks.Failures())
-	}
+	assert.FatalIf(t, tasks.Failures() != 0,
+		"task failures = %d", tasks.Failures())
+
 	if (*testCaseInput) == "render" {
 		assert.FatalIf(t, runState.run.Reads.Valid() || accepted.Load() != nil ||
 			st.GetArtifact(
@@ -188,9 +188,9 @@ func testReconcileParentUpdateDuringRenderCase(
 		current,
 	)
 	run := c.ReconcileNode(t.Context(), id, manifest.DrainNone)
-	if run.Outcome() == schedule.Blocked {
-		t.Fatalf("replacement blocked: %v", run.Blocked)
-	}
+	assert.FatalIf(t, run.Outcome() == schedule.Blocked,
+		"replacement blocked: %v", run.Blocked)
+
 	emission := accepted.Load()
 	assert.FatalIf(t, emission == nil || !emission.Complete || emission.Fingerprint == wantFingerprint ||
 		!hasRenderedDoc(emission, manifest.KindConfigMap, "from-b") ||
@@ -251,7 +251,7 @@ func testReconcileProviderInventorySettlementCase(
 			)
 		}
 		before.Finish()
-		c := New(st, tasks, nil, false)
+		c := New(st, tasks, nil)
 		c.Configure(base.Options{Filter: filter, Index: index, Loader: filterLoader})
 		c.StartLifecycle()
 
@@ -272,9 +272,8 @@ func testReconcileProviderInventorySettlementCase(
 		)
 		if status == store.StatusReady {
 			for _, child := range current.Children {
-				if !filter.ShouldReconcile(child.Obj.Named()) {
-					t.Fatalf("accepted child %s missing from changed-only selection", child.Obj.Named())
-				}
+				assert.FatalIf(t, !filter.ShouldReconcile(child.Obj.Named()),
+					"accepted child %s missing from changed-only selection", child.Obj.Named())
 			}
 		}
 		accepted, _ := st.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
@@ -378,11 +377,10 @@ func startReplacementRender(t *testing.T, scope *replacementRenderInputs) {
 			warningValues := warnings
 			for warningIndex := range warningValues {
 				warning := warningValues[warningIndex]
-
 				(*scope.runState).run.Reads.AddWarning(warning)
 			}
 		}
-		parsed := (*scope.c).ParseChildren(
+		parsed := (&base.Execution{Controller: (*scope.c).Controller}).ParseChildren(
 			(*scope.c).Store.GetObject((*scope.id)),
 			testutil.DocumentOccurrences(testutil.DocumentMaps(docs)),
 			manifest.ParseDocOptions{},

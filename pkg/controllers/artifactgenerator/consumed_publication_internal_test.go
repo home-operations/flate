@@ -12,6 +12,8 @@ import (
 	"testing/fstest"
 	"testing/synctest"
 
+	"github.com/home-operations/flate/pkg/controllers/base"
+
 	"github.com/home-operations/flate/internal/assert"
 
 	"github.com/home-operations/flate/internal/testutil"
@@ -151,7 +153,7 @@ func consumedPublicationCase(t *testing.T, publication, change *string, document
 	generator.StartLifecycle()
 	trees := kustomize.NewTreeCache(owner, nil, bodies)
 	defer trees.Close()
-	ks := kustomization.New(st, bodies, trees, false)
+	ks := kustomization.New(st, bodies, trees)
 	ks.StartLifecycle()
 	src := sourcecontroller.New(st, bodies)
 	src.Fetchers[manifest.KindExternalArtifact] = sources.Wrap(manifest.KindExternalArtifact, &external.Fetcher{})
@@ -170,7 +172,7 @@ func consumedPublicationCase(t *testing.T, publication, change *string, document
 				"kind":       repo.Kind,
 				"metadata":   map[string]any{"name": repo.Name, "namespace": repo.Namespace},
 			}
-			parsed6 := generator.ParseChildren(
+			parsed6 := (&base.Execution{Controller: generator.Controller}).ParseChildren(
 				supplier,
 				testutil.DocumentOccurrences([]map[string]any{childDoc}),
 				manifest.ParseDocOptions{},
@@ -404,15 +406,14 @@ func assertConsumedPublication(t *testing.T, statementInput *consumedPublication
 		)
 	}
 	before := statementInput.work.snapshot()
-	if statementInput.work.active.Load() != 0 || before.Admitted != 1 || before.Dispatched != 1 ||
+	assert.FatalIf(t, statementInput.work.active.Load() != 0 || before.Admitted != 1 || before.Dispatched != 1 ||
 		before.Settled != 0 ||
-		before.Acquires != 1 {
-		t.Fatalf(
-			"S1 boundary has outstanding or unexpected generator work: active=%d work=%+v",
-			statementInput.work.active.Load(),
-			before,
-		)
-	}
+		before.Acquires != 1,
+
+		"S1 boundary has outstanding or unexpected generator work: active=%d work=%+v",
+		statementInput.work.active.Load(),
+		before)
+
 	beforeSweep := (*statementInput.d).sweeps.Load()
 	close((*statementInput.startPublication))
 	if (*(*(*statementInput.statementInput).change)) == "selected-union" {
@@ -423,12 +424,10 @@ func assertConsumedPublication(t *testing.T, statementInput *consumedPublication
 			t.Fatal("S2 publication did not reach its paused notification")
 		}
 		assert.FatalIf(
-			t,
-			(*(*statementInput.statementInput).st).GetArtifact(
+			t, (*(*statementInput.statementInput).st).GetArtifact(
 				(*(*statementInput.statementInput).repo),
 				store.ArtifactContent,
-			) != (*(*statementInput.statementInput).s2),
-			"%v",
+			) != (*(*statementInput.statementInput).s2), "%v",
 			"publication listener ran before S2 commit/unlock",
 		)
 		inventory := (*(*statementInput.statementInput).st).GetArtifact((*(*statementInput.statementInput).consumer).Named(), store.ArtifactContent).(*store.Emission)
@@ -459,14 +458,13 @@ func assertConsumedPublication(t *testing.T, statementInput *consumedPublication
 		}
 	}
 	synctest.Wait()
+	(*
 
 	// An explicit publication requests an acknowledged real Sweep even when the descriptor deduplicates.
-	(*statementInput.s).OnPublication()
+	statementInput.s).OnPublication()
 	synctest.Wait()
 	assert.FatalIf(
-		t,
-		(*statementInput.d).sweeps.Load() <= beforeSweep,
-		"%v",
+		t, (*statementInput.d).sweeps.Load() <= beforeSweep, "%v",
 		"no acknowledged Sweep after publication",
 	)
 	want := before
@@ -504,10 +502,16 @@ func assertConsumedPublication(t *testing.T, statementInput *consumedPublication
 		)
 	}
 	(*(*statementInput.statementInput).bodies).BlockTillDone()
-	if (*(*statementInput.statementInput).bodies).Failures() != 0 || statementInput.work.active.Load() != 0 ||
-		len(slices.Collect((*(*statementInput.statementInput).st).Sweep())) != 0 {
-		t.Fatalf("undrained boundary: task failures=%d", (*(*statementInput.statementInput).bodies).Failures())
-	}
+	assert.FatalIf(
+		t,
+		(*(*statementInput.statementInput).bodies).Failures() != 0 || statementInput.work.active.Load() != 0 ||
+			len(
+				slices.Collect((*(*statementInput.statementInput).st).Sweep()),
+			) != 0,
+		"undrained boundary: task failures=%d",
+		(*(*statementInput.statementInput).bodies).Failures(),
+	)
+
 	after := statementInput.work.snapshot()
 	{
 		diff := cmp.Diff(atSweep, after)
@@ -663,11 +667,10 @@ func runConsumedScheduler(ctx context.Context, t *testing.T, statementInput *con
 	s := schedule.New((*statementInput.tasks), (*statementInput.d))
 	pause := func(id manifest.NamedResource, _ any) {
 		if (*(*(*statementInput.statementInput).change)) == "selected-union" &&
-			id == (*(*statementInput.statementInput).repo) &&
-			(*(*statementInput.statementInput).st).GetArtifact(
-				(*(*statementInput.statementInput).repo),
-				store.ArtifactContent,
-			) == (*(*statementInput.statementInput).s2) &&
+			id == (*(*statementInput.statementInput).repo) && (*(*statementInput.statementInput).st).GetArtifact(
+			(*(*statementInput.statementInput).repo),
+			store.ArtifactContent,
+		) == (*(*statementInput.statementInput).s2) &&
 			statementInput.paused.CompareAndSwap(false, true) {
 			close((*statementInput.committed))
 			select {

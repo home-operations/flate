@@ -32,20 +32,20 @@ type Provider interface {
 }
 
 type dataReader interface {
-	ReferenceFacts(manifest.NamedResource, *manifest.DiscoveryIndex, bool, manifest.NamedResource) store.ReferenceFacts
+	ReferenceFacts(manifest.NamedResource, *manifest.DiscoveryIndex, manifest.NamedResource) store.ReferenceFacts
 }
 
 // StoreProvider retains one execution's captured values and availability evidence.
 type StoreProvider struct {
-	s           dataReader
-	wipeSecrets bool
-	owner       manifest.NamedResource
-	inputs      []capturedInput
+	s dataReader
+
+	owner  manifest.NamedResource
+	inputs []capturedInput
 }
 
 // NewStoreProvider returns one execution's captured values and availability evidence.
-func NewStoreProvider(s dataReader, wipeSecrets bool) *StoreProvider {
-	p := &StoreProvider{s: s, wipeSecrets: wipeSecrets}
+func NewStoreProvider(s dataReader) *StoreProvider {
+	p := &StoreProvider{s: s}
 	if owner, ok := s.(interface{ ID() manifest.NamedResource }); ok {
 		p.owner = owner.ID()
 	}
@@ -71,7 +71,7 @@ func (p *StoreProvider) Lookup(id manifest.NamedResource) store.ReferenceFacts {
 		}
 		i++
 	}
-	input := p.s.ReferenceFacts(id, nil, p.wipeSecrets, p.owner)
+	input := p.s.ReferenceFacts(id, nil, p.owner)
 	p.inputs = slices.Insert(p.inputs, i, capturedInput{id: id, input: input})
 	return input
 }
@@ -134,7 +134,6 @@ func (c *Cache) put(key string, parsed map[string]any) {
 // Hard errors from the lookup itself — unsupported kind, malformed
 // binaryData — always bubble up; they are unrelated to whether the ref
 // is optional.
-// The returned identities name required wiped values files omitted during expansion.
 //
 // cache may be nil — tests and embedders without an orchestrator pass
 // nil and pay the (small) per-ref yaml.Unmarshal cost. Orchestrators
@@ -144,9 +143,9 @@ func ExpandValueReferences(
 	hr *manifest.HelmRelease,
 	provider Provider,
 	cache *Cache,
-) ([]manifest.NamedResource, error) {
+) error {
 	if hr == nil || len(hr.ValuesFrom) == 0 {
-		return nil, nil
+		return nil
 	}
 
 	ex := valueExpansion{values: map[string]any{}, owned: true}
@@ -156,12 +155,12 @@ func ExpandValueReferences(
 		}
 		ref := hr.ValuesFrom[edge.Position]
 		if err := ex.expand(&ref, &edge, provider, cache); err != nil {
-			return ex.omitted, err
+			return err
 		}
 	}
 	DeepMergeInto(ex.values, hr.Values)
 	hr.Values = ex.values
-	return ex.omitted, nil
+	return nil
 }
 
 // lookupValueRef reads only the requested key, preserving unrelated malformed siblings.
@@ -225,29 +224,25 @@ func (c *Cache) updateHelmReleaseValues(
 	ref manifest.ValuesReference,
 	found string,
 	values map[string]any,
-) (bool, error) {
+) error {
 	parsed, ok := c.lookup(found)
 	if !ok {
 		var decoded map[string]any
 		if err := yaml.Unmarshal([]byte(found), &decoded); err != nil {
-			// Wiped scalar placeholders MUST act as empty values files.
-			if manifest.HasValuePlaceholder(found) {
-				return true, nil
-			}
-			return false, manifest.NewError(
+			return manifest.NewError(
 				manifest.ErrInput,
 				fmt.Errorf("expected '%s' values key %q to be valid YAML: %w", ref.Name, ref.GetValuesKey(), err),
 				"",
 			)
 		}
 		if decoded == nil {
-			return false, nil
+			return nil
 		}
 		parsed = decoded
 		c.put(found, parsed)
 	}
 	DeepMergeInto(values, parsed)
-	return false, nil
+	return nil
 }
 
 // Matching quotes MUST force strings instead of Helm's ordinary type coercion.
@@ -371,9 +366,8 @@ func setValueReference(values map[string]any, ref *manifest.ValuesReference, fou
 }
 
 type valueExpansion struct {
-	values  map[string]any
-	omitted []manifest.NamedResource
-	owned   bool
+	values map[string]any
+	owned  bool
 }
 
 func (ex *valueExpansion) expand(
@@ -397,11 +391,7 @@ func (ex *valueExpansion) expand(
 		}
 		err = setValueReference(ex.values, ref, found)
 	} else {
-		var unavailable bool
-		unavailable, err = cache.updateHelmReleaseValues(*ref, found, ex.values)
-		if unavailable && !ref.Optional {
-			ex.omitted = append(ex.omitted, edge.NamedResource)
-		}
+		err = cache.updateHelmReleaseValues(*ref, found, ex.values)
 		ex.owned = false
 	}
 	if err != nil {

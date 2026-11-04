@@ -134,7 +134,7 @@ metadata:
 	renderedSingleton1, err := RenderTrees(
 		t.Context(),
 		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
-		Config{WipeSecrets: true, Concurrency: 2},
+		Config{Concurrency: 2},
 	)
 	assert.FatalIf(t, len(renderedSingleton1) != 1, "missing render: %v", err)
 	o := renderedSingleton1[0].Orchestrator

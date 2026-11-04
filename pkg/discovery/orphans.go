@@ -4,27 +4,13 @@ import (
 	"cmp"
 	"context"
 	"log/slog"
-	"slices"
 
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
 )
 
-func (d *Session) promoteOrphans(ctx context.Context, standaloneSecrets []manifest.NamedResource) error {
+func (d *Session) promoteOrphans(ctx context.Context) error {
 	index := d.loader.Index
-	// All admitted stand-ins MUST be removed before promotion so real sibling Secrets take precedence.
-	slices.SortFunc(standaloneSecrets, manifest.NamedResource.Compare)
-	var saved []store.Child
-	for _, id := range standaloneSecrets {
-		record, _ := index.Lookup(id)
-		if obj, ok := d.cfg.Store.GetObject(id).(*manifest.Secret); ok && d.loader.AdmitsRoot(obj, record.Path) {
-			_, doc, emission := d.cfg.Store.GetEmission(id)
-			emission.Finish()
-			saved = append(saved, store.Child{Obj: obj, Doc: doc})
-			d.cfg.Store.DeleteObject(id)
-		}
-	}
 	for id, record := range index.Files() { //nolint:gocritic // The iterator supplies independent value snapshots.
 		if obj, policy := d.cfg.Store.Lookup(id); obj != nil && policy.Root ||
 			record.Declaration != nil && !d.loader.AdmitsRoot(record.Declaration, record.Path) {
@@ -36,9 +22,8 @@ func (d *Session) promoteOrphans(ctx context.Context, standaloneSecrets []manife
 				d.loader.AdmitsRoot(obj, record.Path), nil
 		}
 		opts := loader.PromoteOptions{
-			Record:      manifest.Production{Authored: record.Authored, Path: record.Path, File: record.File},
-			WipeSecrets: d.cfg.WipeSecrets,
-			Admit:       admit,
+			Record: manifest.Production{Authored: record.Authored, Path: record.Path, File: record.File},
+			Admit:  admit,
 		}
 		opts.Documents = d.loader.PromotionDocuments(id)
 		promoted, err := loader.Promote(ctx, d.cfg.Store, id, opts)
@@ -47,12 +32,6 @@ func (d *Session) promoteOrphans(ctx context.Context, standaloneSecrets []manife
 		}
 		if !promoted {
 			slog.Debug("discovery: orphan promotion failed", "id", id.String())
-		}
-	}
-	for _, child := range saved {
-		obj := child.Obj
-		if existing, policy := d.cfg.Store.Lookup(obj.Named()); existing == nil || !policy.Root {
-			d.cfg.Store.AddObject(obj, child.Doc)
 		}
 	}
 	return nil

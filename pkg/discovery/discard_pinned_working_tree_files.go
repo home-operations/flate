@@ -211,6 +211,13 @@ func (d *Session) admitRequiredObjects(ctx context.Context, objects []store.Chil
 		if err := ctx.Err(); err != nil {
 			return requiredAdmission{changed: false, refresh: false}, fmt.Errorf("context: %w", err)
 		}
+		if child.Obj != nil {
+			for warningIndex := range child.Warnings {
+				warning := child.Warnings[warningIndex]
+				warning.Resource = child.Obj.Named()
+				d.cfg.Store.AddWarning(warning)
+			}
+		}
 		if child.Obj != nil && d.cfg.Store.GetObject(child.Obj.Named()) == nil {
 			d.cfg.Store.AddObject(child.Obj, child.Doc)
 			changed = true

@@ -35,26 +35,21 @@ func TestReferenceFacts_DataOnlyProviderPolicy(t *testing.T) {
 		},
 	)
 	st.AddObject(raw)
-	facts := st.ReferenceFacts(id, nil, false, manifest.NamedResource{})
-
-	assert.FatalIf(t, facts.Data != raw || facts.Accepted, "covered facts=%+v", facts)
-
-	assert.FatalIf(
-		t,
-		NewStoreProvider(st, true).Data(id) != raw,
-		"%s",
-		"data-only provider rejected visible prediction",
-	)
+	facts := st.ReferenceFacts(id, nil, manifest.NamedResource{})
+	assert.FatalIf(t, facts.Data != raw || facts.Accepted,
+		"covered facts=%+v", facts)
+	assert.FatalIf(t, NewStoreProvider(st).Data(id) != raw, "%s", "data-only provider rejected visible prediction")
 
 	var previous store.ReadSet
 	previous.Init(st, owner, nil)
 	defer previous.Retire()
 	assert.FatalIf(
 		t,
-		NewStoreProvider(&previous, true).Data(id) != raw,
+		NewStoreProvider(&previous).Data(id) != raw,
 		"%s",
 		"captured provider rejected visible prediction",
 	)
+
 	first, second := facts.Productions, facts.Productions
 	assert.Diff(t, second, first)
 	assert.Diff(t, st.Productions(id, nil), first)
@@ -80,6 +75,7 @@ func TestReferenceFacts_DataOnlyProviderPolicy(t *testing.T) {
 	next.Children, next.Complete = []store.Child{{Obj: external}}, true
 	st.RecordEmitted(owner, &next, nil)
 	assert.FatalIf(t, previous.Valid(), "%s", "replacement retained captured file authority")
+
 	var current store.ReadSet
 	current.Init(st, owner, nil)
 	defer current.Retire()
@@ -89,7 +85,7 @@ func TestReferenceFacts_DataOnlyProviderPolicy(t *testing.T) {
 		if reader == &current {
 			consumer = owner
 		}
-		facts := reader.ReferenceFacts(id, nil, false, consumer)
+		facts := reader.ReferenceFacts(id, nil, consumer)
 		wantFacts := store.ReferenceFacts{
 			Generated:     true,
 			Productions:   want,
@@ -101,16 +97,7 @@ func TestReferenceFacts_DataOnlyProviderPolicy(t *testing.T) {
 			wantFacts.Materializers = []manifest.NamedResource{owner}
 		}
 		assert.Diff(t, facts, wantFacts)
-		assert.Diff(t, NewStoreProvider(reader, true).Data(id), &manifest.Secret{
-			Name:       id.Name,
-			Namespace:  id.Namespace,
-			StringData: map[string]any{"VALUE": manifest.ValuePlaceholder("VALUE")},
-		})
-		assert.FatalIf(
-			t,
-			NewStoreProvider(reader, false).Data(id) != nil,
-			"%s",
-			"provider supplied declared placeholders with wiping disabled",
-		)
+		assert.Diff(t, NewStoreProvider(reader).Lookup(id), wantFacts)
+		assert.FatalIf(t, NewStoreProvider(reader).Data(id) != nil, "%s", "provider fabricated declared data")
 	}
 }

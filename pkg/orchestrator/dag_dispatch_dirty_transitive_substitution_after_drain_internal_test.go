@@ -141,15 +141,13 @@ func TestDAGDispatch_DirtyTransitiveSubstitutionAfterDrain(t *testing.T) {
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	output, ok := o.store.GetArtifact(consumer, store.ArtifactContent).(*store.Emission)
-	if !blocked.Load() || !settled.Load() || !ok || len(output.Manifests) != 1 ||
-		output.Manifests[0].Document["data"].(map[string]any)["value"] != "pinned" {
-		t.Fatalf(
-			"after-drain transitive output: blocked=%t settled=%t output=%+v",
-			blocked.Load(),
-			settled.Load(),
-			output,
-		)
-	}
+	assert.FatalIf(t, !blocked.Load() || !settled.Load() || !ok || len(output.Manifests) != 1 ||
+		output.Manifests[0].Document["data"].(map[string]any)["value"] != "pinned",
+
+		"after-drain transitive output: blocked=%t settled=%t output=%+v",
+		blocked.Load(),
+		settled.Load(),
+		output)
 }
 
 func TestDAGDispatch_CanceledCommittedNotificationHarvest(t *testing.T) {
@@ -181,8 +179,11 @@ func TestDAGDispatch_CanceledCommittedNotificationHarvest(t *testing.T) {
 			"metadata":   map[string]any{"name": "withdrawn", "namespace": "apps"},
 		}
 		_, _, accepted := s.GetEmission(child)
-		parsedChildren1 := base.New(s, tasks).
-			ParseChildren(s.GetObject(child), testutil.DocumentOccurrences([]map[string]any{doc}), manifest.ParseDocOptions{})
+		parsedChildren1 := (&base.Execution{Controller: base.New(s, tasks)}).ParseChildren(
+			s.GetObject(child),
+			testutil.DocumentOccurrences([]map[string]any{doc}),
+			manifest.ParseDocOptions{},
+		)
 		if err := manifest.DocumentFailure(parsedChildren1.Failures); err != nil {
 			panic(err)
 		}
@@ -246,8 +247,7 @@ func TestDAGDispatch_CanceledCommittedNotificationHarvest(t *testing.T) {
 			err := <-done
 			assert.FatalIf(t, !errors.Is(err, context.Canceled), "got %v, want cancellation", err)
 		}
-		if len(output) != 0 || tasks.Failures() != 0 {
-			t.Fatalf("withdrawn output survived final harvest: %v; task failures=%d", output, tasks.Failures())
-		}
+		assert.FatalIf(t, len(output) != 0 || tasks.Failures() != 0,
+			"withdrawn output survived final harvest: %v; task failures=%d", output, tasks.Failures())
 	})
 }

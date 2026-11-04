@@ -14,6 +14,7 @@ import (
 
 	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/tree"
 )
 
@@ -30,27 +31,26 @@ type generatorRecord struct {
 
 var errRemoteInputs = manifest.NewError(manifest.ErrInput, nil, "remote generator input requires HTTPInputs")
 
-//nolint:ireturn // Generator kind selects the concrete immutable manifest.
-func (r *generatorRecord) materialize(ctx context.Context, optsArg *options) (manifest.BaseManifest, error) {
+func (r *generatorRecord) materialize(ctx context.Context, optsArg *options) (store.Child, error) {
 	opts := *optsArg
 	var ldr ifc.Loader
 	if len(r.args.EnvSources)+len(r.args.FileSources) != 0 {
 		var err error
 		ldr, err = r.inputLoader(ctx, &opts)
 		if err != nil {
-			return nil, err
+			return store.Child{}, err
 		}
 	}
 
 	pairs, err := kv.NewLoader(ldr, provider.NewDefaultDepProvider().GetFieldValidator()).Load(r.args.KvPairSources)
 	if err != nil {
-		return nil, manifest.NewError(
+		return store.Child{}, manifest.NewError(
 			manifest.ErrInput,
 			fmt.Errorf("generator %s in %s: %w", r.args.Name, r.file, err),
 			"",
 		)
 	}
-	return materializeGeneratorData(r, &opts, pairs)
+	return materializeGeneratorData(r, pairs)
 }
 
 // KV loading is synchronous; the adapter binds only the current materialization.
@@ -62,8 +62,7 @@ type generatorFileLoader struct {
 
 func (l generatorFileLoader) Load(file string) ([]byte, error) { return l.load(file) }
 
-//nolint:ireturn // Generator kind selects the concrete immutable manifest.
-func materializeGeneratorData(r *generatorRecord, opts *options, pairs []types.Pair) (manifest.BaseManifest, error) {
+func materializeGeneratorData(r *generatorRecord, pairs []types.Pair) (store.Child, error) {
 	data := make(map[string]any, len(pairs))
 	for _, pair := range pairs {
 		value := pair.Value
@@ -72,15 +71,21 @@ func materializeGeneratorData(r *generatorRecord, opts *options, pairs []types.P
 			encoding = base64.StdEncoding
 			value = encoding.EncodeToString([]byte(value))
 		}
-		if opts.WipeSecrets {
-			value = manifest.WipeValue(pair.Key, value, encoding, !r.isConfigMap)
-		}
+
 		data[pair.Key] = value
 	}
+	kind := manifest.KindSecret
 	if r.isConfigMap {
-		return manifest.NewConfigMap(manifest.NamedResource{Name: r.args.Name, Namespace: r.namespace}, data), nil
+		kind = manifest.KindConfigMap
 	}
-	return manifest.NewSecret(manifest.NamedResource{Name: r.args.Name, Namespace: r.namespace}, data, nil), nil
+	doc := map[string]any{
+		"apiVersion": manifest.CoreAPIVersion,
+		"kind":       kind,
+		"metadata":   map[string]any{"name": r.args.Name, "namespace": r.namespace},
+		"data":       data,
+	}
+	child, outcome, _ := Prepare(manifest.DocOccurrence{Document: doc}, manifest.ParseDocOptions{})
+	return child, outcome.Err
 }
 
 //nolint:ireturn // Kustomize requires its loader interface for generator inputs.

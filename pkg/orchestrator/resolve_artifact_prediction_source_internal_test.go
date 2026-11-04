@@ -87,7 +87,7 @@ func TestResolve_ArtifactPredictionSource(t *testing.T) {
 
 			assert.FatalIf(t, info.Status != store.StatusReady, "producer did not settle: %+v", info)
 
-			facts := o.store.ReferenceFacts(target, o.index, false, manifest.NamedResource{})
+			facts := o.store.ReferenceFacts(target, o.index, manifest.NamedResource{})
 
 			assert.FatalIf(t, facts.Data != nil || facts.Accepted ||
 				!slices.ContainsFunc(facts.Productions, func(p manifest.Production) bool {
@@ -101,15 +101,15 @@ func TestResolve_ArtifactPredictionSource(t *testing.T) {
 
 			reader := d.Dispatch(t.Context(), testutil.KustomizationID("apps", "reader"), manifest.DrainNone).Assessment
 			defer reader.Close()
-			if reader.Outcome() != schedule.Blocked || !slices.Contains(reader.(*base.Execution).Blocked, target) {
-				t.Fatalf(
-					"prediction bypassed ordinary source wait: outcome=%v blocked=%v status=%v selected=%t",
-					reader.Outcome(),
-					reader.(*base.Execution).Blocked,
-					o.store.FailedResources(),
-					o.filter.ShouldReconcile(testutil.KustomizationID("apps", "reader")),
-				)
-			}
+			assert.FatalIf(
+				t,
+				reader.Outcome() != schedule.Blocked || !slices.Contains(reader.(*base.Execution).Blocked, target),
+				"prediction bypassed ordinary source wait: outcome=%v blocked=%v status=%v selected=%t",
+				reader.Outcome(),
+				reader.(*base.Execution).Blocked,
+				o.store.FailedResources(),
+				o.filter.ShouldReconcile(testutil.KustomizationID("apps", "reader")),
+			)
 		})
 	}
 }

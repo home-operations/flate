@@ -377,7 +377,7 @@ func assertAdmissionSuppliedDependency(
 	assert.Equal(t, slices.Contains(proposal.Selected, consumer), true)
 	assert.Equal(t, slices.Contains(proposal.Needed, dependency), true)
 	assert.Equal(t, slices.Contains(proposal.Selected, dependency), false)
-	data := l.Store.ReferenceFacts(dependency, l.Index, false, manifest.NamedResource{}).Data
+	data := l.Store.ReferenceFacts(dependency, l.Index, manifest.NamedResource{}).Data
 	if dependency.Name == "settings" {
 		var hydrated bool
 		for _, child := range proposal.Objects {
@@ -387,7 +387,7 @@ func assertAdmissionSuppliedDependency(
 			}
 		}
 		assert.Equal(t, hydrated, true)
-		data = l.Store.ReferenceFacts(dependency, l.Index, false, manifest.NamedResource{}).Data
+		data = l.Store.ReferenceFacts(dependency, l.Index, manifest.NamedResource{}).Data
 	}
 	valueResult, err := data.Value("VALUE")
 	value, found := valueResult.Value, valueResult.Found

@@ -32,10 +32,6 @@ type Controller struct {
 	// Trees shares remote fetches and persisted renders.
 	Trees *kustomize.TreeCache
 
-	// WipeSecrets controls whether Secret cleartext is wiped when
-	// parsing rendered manifests.
-	WipeSecrets bool
-
 	strictSubstitutions bool
 	restricted          bool
 }
@@ -59,16 +55,15 @@ type execution struct {
 func (c *Controller) newExecution(id manifest.NamedResource) *execution {
 	execution := &execution{Controller: c}
 	execution.run.Init(c.Controller, id)
-	execution.data = values.NewStoreProvider(&execution.run.Reads, c.WipeSecrets)
+	execution.data = values.NewStoreProvider(&execution.run.Reads)
 	return execution
 }
 
 // New constructs a Kustomization controller.
-func New(s *store.Store, t *task.Service, trees *kustomize.TreeCache, wipeSecrets bool) *Controller {
+func New(s *store.Store, t *task.Service, trees *kustomize.TreeCache) *Controller {
 	return &Controller{
-		Controller:  base.New(s, t),
-		Trees:       trees,
-		WipeSecrets: wipeSecrets,
+		Controller: base.New(s, t),
+		Trees:      trees,
 	}
 }
 
@@ -163,7 +158,6 @@ func (c *execution) render(
 		HeldSlot:                c.Tasks,
 		SkipKinds:               c.SkipKinds,
 		DependencySubstitutions: c.DependencySubstitutions,
-		WipeSecrets:             c.WipeSecrets,
 		StrictSubstitutions:     c.strictSubstitutions,
 	}
 	docs, receipt, err := kustomize.Render(ctx, c.Trees, request, c.retry)
@@ -192,10 +186,10 @@ func (c *execution) render(
 		return err
 	}
 
-	parseChildrenResult3 := c.ParseChildren(
+	parseChildrenResult3 := c.run.ParseChildren(
 		ks,
 		docs,
-		manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets},
+		manifest.ParseDocOptions{},
 	)
 	attempt.Children, attempt.Manifests, attempt.Failures = parseChildrenResult3.Children, parseChildrenResult3.Visible, parseChildrenResult3.Failures
 	attempt.Fingerprint, attempt.Complete, attempt.Render = fp, true, receipt
@@ -229,7 +223,7 @@ func (c *Controller) PreviousRender(
 	if !ok || ctx.Err() != nil {
 		return nil, false
 	}
-	data := values.NewStoreProvider(reads, c.WipeSecrets)
+	data := values.NewStoreProvider(reads)
 	waiter := depwait.Waiter{Store: reads, Parent: reads.ID(), AllowMissingCRDs: c.MissingCRDsAllowed()}
 	for ref := range manifest.References(ks, manifest.ReferenceRelations) {
 		if ref.Use != "substituteFrom" {
@@ -263,7 +257,6 @@ func (c *Controller) PreviousRender(
 		Spec:                    prepared,
 		SkipKinds:               c.SkipKinds,
 		DependencySubstitutions: c.DependencySubstitutions,
-		WipeSecrets:             c.WipeSecrets,
 		StrictSubstitutions:     c.strictSubstitutions,
 	}
 	docs, receipt, found := c.Trees.PreviousRender(ctx, request)

@@ -114,13 +114,19 @@ Both sides of a diff use the same supplied objects.
 
 Repository objects take precedence over supplied objects.
 For Secret and ConfigMap data, repository keys, including empty strings, win.
-Supply fills absent or wiped keys.
+Supply fills absent keys.
 
 Supplied objects satisfy references but never become render targets or appear as objects in output, selection or counts.
 Referenced values can still appear in rendered resources.
+Supplied Secret and ConfigMap data follows the same SOPS rule as repository data.
+Encrypted keys stay absent, and repository plaintext keys take precedence.
+Supply changes reference data only. It does not fill encrypted keys in emitted objects.
 
 A `substituteFrom` Secret that exists only on the cluster leaves its variables unavailable.
-Without defaults, Flux substitution replaces those `${VAR}` references with empty strings, and flate warns `UnresolvedSubstitution`.
+flate warns `UnresolvedSubstitution` for those unavailable variables.
+Flux substitution runs when a variable is readable or inline, or when the strategy is `Always`.
+Active substitution applies defaults or replaces unavailable `${VAR}` references with empty strings.
+If no variables are readable under the default strategy, `${VAR}` remains literal.
 Give those variables defaults (`${VAR:=value}`) or supply a dummy Secret with the keys.
 A missing required `substituteFrom` ConfigMap still fails.
 
@@ -129,7 +135,7 @@ A missing required `substituteFrom` ConfigMap still fails.
 flate looks for credentials in this order:
 
 1. Real repository Secret data.
-2. Supplied data for absent or wiped keys.
+2. Supplied data for absent keys.
 3. Machine credentials after no producer can provide the missing Secret.
 
 Machine credentials include the SSH agent with local `known_hosts`, OCI registry stores, AWS environment, shared-profile and IAM credentials, and Helm repository logins.
@@ -182,7 +188,10 @@ flate does not substitute the working tree for their content.
 
 ## Differences from a live cluster
 
-- SOPS ciphertext becomes placeholders. flate does not decrypt it.
+- SOPS-encrypted keys are absent. flate keeps readable keys and removes the `sops` metadata.
+  A `SOPSUnreadable` warning names the object and its unreadable keys.
+  Supply a dummy Secret or ConfigMap with those keys through `--supply`.
+  Re-encrypted ciphertext cannot produce a value diff.
 - flate does not verify Git and OCI signatures.
 - Helm renders fresh installs, without live release history.
 - `--kube-version` and `--api-versions` set cluster facts for Helm.
@@ -235,7 +244,7 @@ The `pkg/manifest` package provides resource types and identities.
 runs, err := orchestrator.RenderTrees(ctx, []orchestrator.Tree{{
     ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
     Path: ".",
-}}, orchestrator.Config{Concurrency: 4, WipeSecrets: true})
+}}, orchestrator.Config{Concurrency: 4})
 ```
 
 ## License

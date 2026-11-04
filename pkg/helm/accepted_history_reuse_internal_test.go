@@ -150,13 +150,12 @@ func testTemplateAcceptedHistoryDisabledPreparation(
 		assert.FatalIf(t, previous != nil ||
 			complete, "%s", "disabled renderer supplied history")
 	}
-	if sources.calls.Load() != 0 || counted.opens.Load() != 0 {
-		t.Fatalf(
-			"disabled history prepared chart: resolutions=%d, opens=%d",
-			sources.calls.Load(),
-			counted.opens.Load(),
-		)
-	}
+	assert.FatalIf(t, sources.calls.Load() != 0 || counted.opens.Load() != 0,
+
+		"disabled history prepared chart: resolutions=%d, opens=%d",
+		sources.calls.Load(),
+		counted.opens.Load())
+
 	_, err := fresh.describeChart(t.Context(), (*testCaseInput.hr), observed.Sources)
 	assert.NoError(t, err)
 	assert.FatalIf(
@@ -177,13 +176,12 @@ func testTemplateAcceptedHistoryDisabledPreparation(
 		assert.FatalIf(t, previous != nil ||
 			complete, "%s", "disabled resident renderer supplied history")
 	}
-	if sources.calls.Load() != 0 || counted.opens.Load() != 0 {
-		t.Fatalf(
-			"disabled resident history prepared chart: resolutions=%d, opens=%d",
-			sources.calls.Load(),
-			counted.opens.Load(),
-		)
-	}
+	assert.FatalIf(t, sources.calls.Load() != 0 || counted.opens.Load() != 0,
+
+		"disabled resident history prepared chart: resolutions=%d, opens=%d",
+		sources.calls.Load(),
+		counted.opens.Load())
+
 	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
 	{
@@ -302,7 +300,7 @@ func testTemplateAcceptedHistoryDurable(t *testing.T, testCaseInput *testTemplat
 		{"dependency substitutions", func(r *RenderOptions) {
 			r.DependencySubstitutions = values.NewDependencySubstitutions([]*manifest.Kustomization{{PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"DEP": "effective-child"}}}})
 		}},
-		{"wipe", func(o *RenderOptions) { o.WipeSecrets = true }},
+
 		{"skip kinds", func(o *RenderOptions) { o.SkipKinds = []string{manifest.KindKustomization} }},
 		{"source binding", func(o *RenderOptions) {
 			changed := *o.Sources.LocalSourceArtifact((*testCaseInput.hr).ChartSource(), store.ArtifactContent)
@@ -561,8 +559,7 @@ func testTemplateAcceptedHistoryDurableName(
 	prepared, encodeFrameErr := isolated.prepareTemplate(
 		t.Context(),
 		(*(*testCaseInput).hr),
-		nil,
-		(*testCaseInput).input,
+		nil, (*testCaseInput).input,
 	)
 	assert.NoError(t, encodeFrameErr)
 	defer func() {
@@ -613,8 +610,7 @@ func testTemplateAcceptedHistoryDurableTypedRecordKey(
 	prepared, prepareTemplateErr := isolated.prepareTemplate(
 		t.Context(),
 		(*(*testCaseInput).hr),
-		nil,
-		(*testCaseInput).input,
+		nil, (*testCaseInput).input,
 	)
 	assert.NoError(t, prepareTemplateErr)
 	remembered, prepareTemplateErr := isolated.lookupRender(t.Context(), &prepared.loaded, prepared.key)
@@ -747,7 +743,8 @@ func testTemplateAcceptedHistoryDurableUnacceptedPreparation(
 		),
 	)
 	changed := original
-	changed.WipeSecrets = true
+	changed.SkipKinds = []string{manifest.KindKustomization}
+
 	_, pending, renderMapsErr2 := testutil.RenderMaps(
 		renderer.Template(t.Context(), (*(*testCaseInput).hr), nil, changed),
 	)

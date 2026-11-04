@@ -139,7 +139,6 @@ func preparedRequest(
 		ApplyIgnore:         ks.SourceID() == manifest.BootstrapSourceID || source.InputAlias || source.Content == "",
 		SubPath:             prepared.Path,
 		Spec:                prepared,
-		WipeSecrets:         cfg.WipeSecrets,
 		StrictSubstitutions: cfg.StrictSubstitutions,
 		SkipKinds:           cfg.SkipKinds,
 	}
@@ -587,16 +586,13 @@ func testRunSelectedEntryAdmissionCaseTail(t *testing.T, tailCaseInput *testRunS
 			"fragment" ||
 		(*(*tailCaseInput.testCaseInput)) ==
 			"label collision"
-	if result.Binding.Producer.ReportHidden() != internal {
-		t.Fatalf("wrong entry representative: %+v",
-			result.Binding,
-		)
-	}
-	if !internal && result.Binding.Producer != (*tailCaseInput.authored).Named() {
-		t.Fatalf("authored owner not reused: %+v",
-			result.Binding,
-		)
-	}
+	assert.FatalIf(t, result.Binding.Producer.ReportHidden() != internal,
+		"wrong entry representative: %+v",
+		result.Binding)
+	assert.FatalIf(t, !internal && result.Binding.Producer != (*tailCaseInput.authored).Named(),
+		"authored owner not reused: %+v",
+		result.Binding)
+
 	assert.FatalIf(t, (*(*tailCaseInput.testCaseInput)) == "label collision" &&
 		((*tailCaseInput.authored).Named().ReportHidden() || (*tailCaseInput.st).GetObject((*tailCaseInput.authored).Named()) != (*tailCaseInput.authored)), "%v", "valid authored display name was hidden or replaced")
 	{
@@ -660,10 +656,18 @@ func testRunSelectedEntryAdmissionCaseTail(t *testing.T, tailCaseInput *testRunS
 }
 
 type testRunSelectedEntryAdmissionCaseTailInputs struct {
-	cacheDir      *string
-	st            **store.Store
-	root          string
-	input         *fstest.MapFS
+	cacheDir *string
+
+	st **store.
+		Store
+
+	root string
+
+	input *fstest.
+		MapFS
+
 	testCaseInput **string
-	authored      **manifest.Kustomization
+
+	authored **manifest.
+			Kustomization
 }

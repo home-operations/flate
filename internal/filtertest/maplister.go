@@ -69,6 +69,8 @@ func (m MapLister) GetStatus(manifest.NamedResource) (store.StatusInfo, bool) {
 }
 
 // IncomingProductions returns only the contribution evidence supplied by the fixture.
+//
+//nolint:gocritic // Immutable value inputs preserve snapshot semantics.
 func (m MapLister) IncomingProductions(child store.Child, _ *manifest.DiscoveryIndex) []manifest.Production {
 	return child.Productions
 }

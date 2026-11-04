@@ -35,7 +35,7 @@ func TestParsedInputs_DeclarationFingerprints(t *testing.T) {
 				})
 			l := New(st)
 			l.SourceRoot = root
-			l.Options.Selection.Changed, l.Options.WipeSecrets = true, true
+			l.Options.Selection.Changed = true
 			_, err = l.Load(t.Context(), root)
 			assert.NoError(t, err)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
@@ -48,18 +48,18 @@ func TestParsedInputs_DeclarationFingerprints(t *testing.T) {
 			assert.Equal(t, record.Declared, want)
 			assert.NoError(t,
 				(&documentReader{compact: true}).prepareStream(strings.NewReader(body),
-					manifest.ParseDocOptions{WipeSecrets: true},
+					manifest.ParseDocOptions{},
 					func(object parsedObject) {
 						assert.NoError(t, object.outcome.Err)
 						assert.Equal(
 							t,
 							object.Doc["data"].(map[string]any)["KEY"],
-							any(manifest.ValuePlaceholder("KEY")),
+							any(nil),
 						)
-						if object.declared == "" ||
-							object.declared == manifest.Fingerprint(manifest.WithoutOwnershipLabels(object.Doc)) {
-							t.Fatal("preparation lost the original declaration fingerprint")
-						}
+						assert.FatalIf(t, object.declared == "" ||
+							object.declared == manifest.Fingerprint(
+								manifest.WithoutOwnershipLabels(object.Doc),
+							), "%s", "preparation lost the original declaration fingerprint")
 					}))
 		})
 	}

@@ -205,12 +205,21 @@ func testControllerRenderedSecretWinsOverRegistryConfigCaseTail(
 }
 
 type testControllerRenderedSecretWinsOverRegistryConfigCaseTailInputs struct {
-	testCaseInput    **string
-	configJSON       *string
-	config           *string
-	host             *string
-	requests         *atomic.Int64
-	user             string
-	pass             string
-	wrongCredentials *atomic.Int64
+	testCaseInput **string
+
+	configJSON *string
+
+	config *string
+
+	host *string
+
+	requests *atomic.
+			Int64
+
+	user string
+
+	pass string
+
+	wrongCredentials *atomic.
+				Int64
 }

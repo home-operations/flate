@@ -83,9 +83,8 @@ func TestMissingSecretErr(t *testing.T) {
 }
 
 func TestBasicAuthFromSecret_UnavailableMaterial(t *testing.T) {
-	const cipher = "ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]"
 	t.Parallel()
-
+	const cipher = "ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]"
 	encodedCipher := base64.StdEncoding.EncodeToString([]byte(cipher))
 	owner := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
@@ -103,19 +102,19 @@ func TestBasicAuthFromSecret_UnavailableMaterial(t *testing.T) {
 		{name: "absent"},
 		{name: "empty username", stringData: map[string]any{"username": "", "password": "plain"}},
 		{name: "empty password", stringData: map[string]any{"username": "user", "password": ""}},
-		{name: "wiped username", stringData: map[string]any{"username": "..PLACEHOLDER_username..", "password": "plain"}},
-		{name: "wiped password", stringData: map[string]any{"username": "user", "password": "..PLACEHOLDER_password.."}},
-		{name: "encoded wiped username", data: map[string]any{"username": base64.StdEncoding.EncodeToString([]byte("..PLACEHOLDER_username.."))}, stringData: map[string]any{"password": "plain"}},
-		{name: "encoded wiped password", data: map[string]any{"password": base64.StdEncoding.EncodeToString([]byte("..PLACEHOLDER_password.."))}, stringData: map[string]any{"username": "user"}},
+		{name: "empty username", stringData: map[string]any{"username": "", "password": "plain"}},
+		{name: "empty password", stringData: map[string]any{"username": "user", "password": ""}},
+		{name: "encoded empty username", data: map[string]any{"username": base64.StdEncoding.EncodeToString([]byte(""))}, stringData: map[string]any{"password": "plain"}},
+		{name: "encoded empty password", data: map[string]any{"password": base64.StdEncoding.EncodeToString([]byte(""))}, stringData: map[string]any{"username": "user"}},
 		{name: "malformed username", data: map[string]any{"username": "credential-payload!"}, stringData: map[string]any{"password": "plain"}, field: "username"},
 		{name: "malformed password", data: map[string]any{"password": "credential-payload!"}, stringData: map[string]any{"username": "user"}, field: "password"},
 		{name: "nonscalar username", stringData: map[string]any{"username": []any{"credential-payload"}, "password": "plain"}, field: "username"},
 		{name: "nonscalar password", stringData: map[string]any{"username": "user", "password": map[string]any{"secret": "credential-payload"}}, field: "password"},
 		{name: "missing username malformed password", data: map[string]any{"password": "credential-payload!"}, field: "password"},
-		{name: "wiped username malformed password", data: map[string]any{"password": "credential-payload!"}, stringData: map[string]any{"username": "..PLACEHOLDER_username.."}, field: "password"},
-		{name: "malformed username wiped password", data: map[string]any{"username": "credential-payload!"}, stringData: map[string]any{"password": "..PLACEHOLDER_password.."}, field: "username"},
+		{name: "empty username malformed password", data: map[string]any{"password": "credential-payload!"}, stringData: map[string]any{"username": ""}, field: "password"},
+		{name: "malformed username empty password", data: map[string]any{"username": "credential-payload!"}, stringData: map[string]any{"password": ""}, field: "username"},
 		{name: "both malformed choose username", data: map[string]any{"username": "credential-payload!", "password": "credential-payload!"}, field: "username"},
-		{name: "raw placeholder is malformed", data: map[string]any{"username": "..PLACEHOLDER_username.."}, stringData: map[string]any{"password": "plain"}, field: "username"},
+		{name: "malformed raw data", data: map[string]any{"username": "%%%fixture"}, stringData: map[string]any{"password": "plain"}, field: "username"},
 		{name: "valid", stringData: map[string]any{"username": "user", "password": "plain"}, username: "user", password: "plain"},
 		{name: "valid encoded", data: map[string]any{"username": base64.StdEncoding.EncodeToString([]byte("user")), "password": base64.StdEncoding.EncodeToString([]byte("plain"))}, username: "user", password: "plain"},
 		{name: "shadowed malformed data", data: map[string]any{"username": "credential-payload!"}, stringData: map[string]any{"username": "user", "password": "plain"}, username: "user", password: "plain"},
@@ -124,19 +123,95 @@ func TestBasicAuthFromSecret_UnavailableMaterial(t *testing.T) {
 		{name: "ciphertext username", stringData: map[string]any{"username": cipher, "password": "plain"}, metadata: true},
 		{name: "ciphertext password", stringData: map[string]any{"username": "user", "password": cipher}},
 		{name: "encoded ciphertext username", data: map[string]any{"username": encodedCipher}, stringData: map[string]any{"password": "plain"}, metadata: true},
-		{name: "partial decode beside wiped password", data: map[string]any{"username": encodedCipher + "!"}, stringData: map[string]any{"password": cipher}, field: "username", metadata: true},
+		{name: "partial decode beside empty password", data: map[string]any{"username": encodedCipher + "!"}, stringData: map[string]any{"password": cipher}, field: "username", metadata: true},
 		{name: "raw ciphertext encoded field", data: map[string]any{"username": cipher}, stringData: map[string]any{"password": cipher}, metadata: true},
-		{name: "unsupported scalar beside wiped password", stringData: map[string]any{"username": []any{"credential-payload"}, "password": cipher}, field: "username", metadata: true},
+		{name: "unsupported scalar beside empty password", stringData: map[string]any{"username": []any{"credential-payload"}, "password": cipher}, field: "username", metadata: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			testBasicAuthFromSecretUnavailableMaterialCase(
-				t,
-				&owner, &tc,
-			)
-		},
-		)
+			testBasicAuthFromSecretUnavailableMaterialCase1(t, &tc, &owner)
+		})
 	}
+}
+
+func testBasicAuthFromSecretUnavailableMaterialCase1(t *testing.T, tc *struct {
+	name       string
+	data       map[string]any
+	stringData map[string]any
+	field      string
+	username   string
+	password   string
+	metadata   bool
+}, owner *manifest.NamedResource,
+) {
+	t.Helper()
+
+	doc := map[string]any{
+		"apiVersion": "v1",
+		"kind":       manifest.KindSecret,
+		"metadata":   map[string]any{"name": "metadata-secret", "namespace": "elsewhere"},
+		"data":       tc.data,
+		"stringData": tc.stringData,
+	}
+	if tc.metadata {
+		doc["sops"] = map[string]any{"version": "3.13.3", "mac": "metadata"}
+	}
+	result1, parseErr := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+	obj := result1.Object
+	assert.FatalIf(t, parseErr != nil, "%s", parseErr)
+
+	sec := obj.(*manifest.Secret)
+	username, password, err := BasicAuthFromSecret(sec, manifest.DiagnosticFor((*owner), nil), "creds")
+	if tc.username != "" {
+		assert.FatalIf(
+			t,
+			err != nil || username != tc.username || password != tc.password,
+			"%s",
+			"valid credentials were not preserved",
+		)
+
+		return
+	}
+	assert.FatalIf(t, username != "" || password != "", "%s", "credential failure returned partial credentials")
+
+	if tc.field != "" {
+		testBasicAuthFromSecretUnavailableMaterialCase1Part1(t, err, &tc)
+		return
+	}
+	missing, ok := errors.AsType[*MissingSecretError](err)
+	assert.FatalIf(t, !ok || !errors.Is(err, manifest.ErrMissingSecret),
+		"expected MissingSecretError, got %v", err)
+
+	wantSecret := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "creds"}
+	assert.FatalIf(t, missing.Owner != (*owner) || missing.Secret != wantSecret,
+		"credential identities = %+v", missing)
+}
+
+func testBasicAuthFromSecretUnavailableMaterialCase1Part1(t *testing.T, err error, tc **struct {
+	name       string
+	data       map[string]any
+	stringData map[string]any
+	field      string
+	username   string
+	password   string
+	metadata   bool
+},
+) {
+	t.Helper()
+	assert.FatalIf(t, !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) ||
+		errors.Is(err, manifest.ErrMissingSecret),
+		"expected hard input failure, got %v", err)
+
+	for _, context := range []string{"secret ns/creds", "[" + (*tc).field + "]"} {
+		assert.ErrorIf(t, !strings.Contains(err.Error(), context),
+			"input error missing context %q: %v", context, err)
+	}
+	assert.ErrorIf(
+		t,
+		strings.Contains(err.Error(), "credential-payload"),
+		"%s",
+		"input error exposed credential payload",
+	)
 }
 
 func TestSecretLookup_SuppliedAuthTLSAndProxy(t *testing.T) {
@@ -153,8 +228,9 @@ func TestSecretLookup_SuppliedAuthTLSAndProxy(t *testing.T) {
 		},
 	}
 	snapshot := []store.Declaration{
-		{Obj: supplied, Doc: testutil.ObjectDocument(supplied), Origin: manifest.SuppliedDeclaration},
+		{Doc: testutil.ObjectDocument(supplied), Obj: supplied, Origin: manifest.SuppliedDeclaration},
 	}
+
 	s := store.New()
 	for _, declaration := range snapshot {
 		s.AddDeclaration(declaration)
@@ -162,7 +238,7 @@ func TestSecretLookup_SuppliedAuthTLSAndProxy(t *testing.T) {
 	repository := &manifest.Secret{
 		Name:       supplied.Name,
 		Namespace:  supplied.Namespace,
-		StringData: map[string]any{"username": "repository", "password": manifest.ValuePlaceholder("password")},
+		StringData: map[string]any{"username": "repository"},
 	}
 	s.AddObject(repository)
 	owner := manifest.NamedResource{
@@ -192,10 +268,12 @@ func TestSecretLookup_SuppliedAuthTLSAndProxy(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, material.Certificate()[2], ca)
 	assert.Diff(t, material.ProxyComponents(), [3]string{"http://proxy.invalid", "repository", "filled"})
-	assert.FatalIf(t, s.GetObject(supplied.Named()) != repository ||
-		repository.StringData["password"] != manifest.ValuePlaceholder(
-			"password",
-		), "%s", "effective credential material entered canonical state")
+	assert.FatalIf(
+		t,
+		s.GetObject(supplied.Named()) != repository || len(repository.StringData) != 1,
+		"%s",
+		"effective credential material entered canonical state",
+	)
 }
 
 func TestAcquireMachine_Lifecycle(t *testing.T) {
@@ -239,9 +317,13 @@ func testMissingSecretErrCase(t *testing.T, tc *struct {
 	if got := err.Error(); got != tc.want {
 		t.Errorf("Error() = %q, want %q", got, tc.want)
 	}
-	if !errors.Is(err, manifest.ErrMissingSecret) {
-		t.Error("errors.Is(err, ErrMissingSecret) = false, want true")
-	}
+	assert.ErrorIf(
+		t,
+		!errors.Is(err, manifest.ErrMissingSecret),
+		"%s",
+		"errors.Is(err, ErrMissingSecret) = false, want true",
+	)
+
 	mse, ok := errors.AsType[*MissingSecretError](fmt.Errorf("git clone: %w", err))
 	assert.FatalIf(t, !ok, "%s", "errors.AsType did not recover *MissingSecretError through a wrap")
 
@@ -253,94 +335,17 @@ func testMissingSecretErrCase(t *testing.T, tc *struct {
 			Name:      tc.secret,
 		}
 	}
-	if mse.Secret != wantSecret {
-		t.Errorf("recovered Secret = %v, want %v", mse.Secret, wantSecret)
-	}
+	assert.ErrorIf(t, mse.Secret != wantSecret,
+		"recovered Secret = %v, want %v", mse.Secret, wantSecret)
+
 	wantOwner := manifest.NamedResource{
 		Group:     owner.Group,
 		Kind:      manifest.KindOCIRepository,
 		Namespace: "ns",
 		Name:      "r",
 	}
-	if mse.Owner != wantOwner || owner.Group != "input.example" {
-		t.Errorf("recovered Owner = %v, want %v; input = %v", mse.Owner, wantOwner, owner)
-	}
-}
-
-func testBasicAuthFromSecretUnavailableMaterialCase(
-	t *testing.T, owner *manifest.NamedResource,
-	tc *struct {
-		name       string
-		data       map[string]any
-		stringData map[string]any
-		field      string
-		username   string
-		password   string
-		metadata   bool
-	},
-) {
-	t.Helper()
-
-	doc := map[string]any{
-		"apiVersion": "v1",
-		"kind":       manifest.KindSecret,
-		"metadata":   map[string]any{"name": "metadata-secret", "namespace": "elsewhere"},
-		"data":       tc.data,
-		"stringData": tc.stringData,
-	}
-
-	if tc.metadata {
-		doc["sops"] = map[string]any{"version": "3.13.3", "mac": "metadata"}
-	}
-	parsed, parseErr := manifest.ParseDoc(doc, manifest.ParseDocOptions{WipeSecrets: true})
-	obj := parsed.Object
-	assert.NoError(t, parseErr)
-
-	sec := obj.(*manifest.Secret)
-	username, password, err := BasicAuthFromSecret(sec, manifest.DiagnosticFor((*owner), nil), "creds")
-	if tc.username != "" {
-		assert.FatalIf(
-			t,
-			err != nil || username != tc.username || password != tc.password,
-			"%s",
-			"valid credentials were not preserved",
-		)
-
-		return
-	}
-	assert.FatalIf(t, username != "" || password != "", "%s", "credential failure returned partial credentials")
-
-	if tc.field != "" {
-		assert.FatalIf(t, !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) ||
-			errors.Is(err, manifest.ErrMissingSecret), "expected hard input failure, got %v", err)
-		for _, context := range []string{"secret ns/creds", "[" + tc.field + "]"} {
-			assert.ErrorIf(
-				t,
-				!strings.Contains(err.Error(), context),
-				"input error missing context %q: %v",
-				context,
-				err,
-			)
-		}
-		if strings.Contains(err.Error(), "credential-payload") {
-			t.Error("input error exposed credential payload")
-		}
-		return
-	}
-	missing, ok := errors.AsType[*MissingSecretError](err)
-	assert.FatalIf(
-		t,
-		!ok || !errors.Is(err, manifest.ErrMissingSecret),
-		"expected MissingSecretError, got %v",
-		err,
-	)
-	wantSecret := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "creds"}
-	assert.FatalIf(
-		t,
-		missing.Owner != (*owner) || missing.Secret != wantSecret,
-		"credential identities = %+v",
-		missing,
-	)
+	assert.ErrorIf(t, mse.Owner != wantOwner || owner.Group != "input.example",
+		"recovered Owner = %v, want %v; input = %v", mse.Owner, wantOwner, owner)
 }
 
 func testAcquireMachineLifecycleCase(t *testing.T, cause **fs.PathError,

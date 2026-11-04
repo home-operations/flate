@@ -669,9 +669,11 @@ func testRenderTreesChangedOnlyAndDiffGeneratedInputsCaseTail(
 }
 
 type testRenderTreesChangedOnlyAndDiffGeneratedInputsCaseTailInputs struct {
-	dirs          *[2]string
+	dirs *[2]string
+
 	testCaseInput **string
-	values        *[2]string
+
+	values *[2]string
 }
 
 func testRenderTreesChangedOnlyAndDiffGeneratedInputsCaseTailSegment(

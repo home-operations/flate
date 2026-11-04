@@ -133,9 +133,19 @@ func (s *Store) compactWarnings(out []manifest.Warning) []manifest.Warning {
 			warning.Detail = nil
 		}
 		j := i + 1
-		for j < len(out) && manifest.CompareWarning(out[i], out[j]) == 0 {
-			warning.Count++
+		for j < len(out) && (warning.Category == manifest.WarnSOPSUnreadable &&
+			out[j].Category == warning.Category && out[j].Resource == warning.Resource ||
+			manifest.CompareWarning(out[i], out[j]) == 0) {
+			if warning.Category == manifest.WarnSOPSUnreadable {
+				warning.Detail = append(warning.Detail, out[j].Detail...)
+			} else {
+				warning.Count++
+			}
 			j++
+		}
+		if warning.Category == manifest.WarnSOPSUnreadable {
+			slices.Sort(warning.Detail)
+			warning.Detail = slices.Compact(warning.Detail)
 		}
 		out[n] = warning
 		n++

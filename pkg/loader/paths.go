@@ -22,13 +22,13 @@ import (
 // ReferenceFacts resolves data against the current discovery index before publication.
 func (l *Loader) ReferenceFacts(id manifest.NamedResource,
 	index *manifest.DiscoveryIndex,
-	wipeSecrets bool,
+
 	consumer manifest.NamedResource,
 ) store.ReferenceFacts {
 	if index == nil {
 		index = l.Index
 	}
-	return l.Store.ReferenceFacts(id, index, wipeSecrets, consumer)
+	return l.Store.ReferenceFacts(id, index, consumer)
 }
 
 func (l *Loader) resolvePaths(ctx context.Context) error {
@@ -271,9 +271,6 @@ func (l *Loader) projectionNames(
 		}
 	}
 	known = known && len(roots) != 0
-	for _, value := range prepared.PostBuild.Substitute {
-		known = known && !manifest.HasValuePlaceholder(value)
-	}
 	active := len(prepared.PostBuild.Substitute) != 0 ||
 		prepared.SubstituteStrategy() == kustomizev1.SubstituteStrategyAlways
 	names := values.SubstitutionNames(documents, active)
@@ -403,7 +400,7 @@ func (p *pathResolution) projectSubstitutions(
 		return ctx.Err() //nolint:wrapcheck // Cancellation preserves the caller context error identity.
 	}
 	if p.provider == nil {
-		p.provider = values.NewStoreProvider(l, l.Options.WipeSecrets)
+		p.provider = values.NewStoreProvider(l)
 	}
 	bindings := l.pathBindings(child, p.provider)
 	prepared := child.Clone()
@@ -466,7 +463,7 @@ func (p *pathResolution) resolveInheritedPath(
 		return ctx.Err() //nolint:wrapcheck // Cancellation preserves the caller context error identity.
 	}
 	if p.provider == nil {
-		p.provider = values.NewStoreProvider(l, l.Options.WipeSecrets)
+		p.provider = values.NewStoreProvider(l)
 	}
 	if !l.projectPathRoots(child, parent, &record, p.provider) {
 		return nil

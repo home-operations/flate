@@ -58,7 +58,6 @@ type occurrenceFacts struct {
 	roots                          []string
 	targets, authoredTargets       []manifest.ProducerTarget
 	needsCandidates                bool
-	placeholder                    bool
 	policy                         *manifest.EmissionPolicy
 	labels                         map[string]string
 	labeled                        bool
@@ -111,9 +110,6 @@ func compactOccurrence(obj manifest.BaseManifest, projection manifest.TemplatePr
 	}
 	facts.catalog = manifest.CatalogObject(obj, obj.Named())
 	facts.structural, _ = facts.catalog.(*manifest.Kustomization)
-	if data, ok := obj.(interface{ HasPlaceholder() bool }); ok {
-		facts.placeholder = data.HasPlaceholder()
-	}
 	if producer, ok := obj.(interface {
 		EmissionPolicy() manifest.EmissionPolicy
 	}); ok {
@@ -478,7 +474,7 @@ func (l *Loader) exactObject(
 		reader.setSources(map[string]*store.SourceArtifact{input.LocalPath: input})
 	}
 	file := filepath.Join(occurrence.Declaration.Source, filepath.FromSlash(occurrence.Declaration.File))
-	parsed, err := reader.fileObjects(file, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets})
+	parsed, err := reader.fileObjects(file, manifest.ParseDocOptions{})
 	if err != nil {
 		return store.Child{}, manifest.NewError(
 			manifest.ErrInput,
@@ -516,6 +512,9 @@ func (l *Loader) exactObject(
 	child := children[0]
 	if child.Obj.Named().Namespace != occurrence.Identity.Namespace {
 		child.Obj = child.Obj.WithNamespace(occurrence.Identity.Namespace)
+	}
+	for i := range child.Warnings {
+		child.Warnings[i].Resource = occurrence.Identity
 	}
 	return child, nil
 }

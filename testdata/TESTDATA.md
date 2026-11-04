@@ -42,9 +42,9 @@ with `go test -race ./test/e2e/...`.
   A top-level `cluster-apps` Flux Kustomization injects
   `postBuild.substituteFrom` via `spec.patches` into every child KS rendered
   from `./apps`. The fixture also ships a SOPS-encrypted Secret alongside the
-  patched leaf to exercise the wipe-to-PLACEHOLDER behavior end-to-end. Its raw data value uses complete SOPS AES256_GCM framing. Used
+  patched leaf to exercise the unreadable-key admission end-to-end. Its raw data value uses complete SOPS AES256_GCM framing. Used
   by `test/e2e/substitution` tests `TestE2E_ParentPatchesPropagateToChildren`,
-  `TestE2E_SOPSValueWipedToPlaceholder`, and
+  `TestE2E_SOPSUnreadableActiveSubstitution`, and
   `TestE2E_SubstituteDisabledAnnotation`.
 
 - `orphans/` — a parent kustomize tree that lists only one child
@@ -182,7 +182,7 @@ Missing input on that explicit invocation fails. Pin/source/chart validation and
 network availability are recorded by the external collector; the SDK test does
 not infer corpus identity from the path. The SDK workload explicitly matches the verified CLI defaults for Git depth,
 retry policy, concurrency, bundled Kubernetes version, test/CRD/Secret omission
-and secret wiping. It sets `Config.DisableChartDigestTracking=true`, matching
+and unreadable-key admission. It sets `Config.DisableChartDigestTracking=true`, matching
 the home-ops inventory; the ordinary SDK does not read CLI environment flags.
 
 The external row IDs below describe measurement regimes, not collected results.

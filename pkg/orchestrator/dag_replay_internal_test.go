@@ -74,16 +74,16 @@ data:
 	o, err := newTestOrchestrator(
 		t,
 		Tree{Path: dir, RepoRoot: dir},
-		Config{WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: 2},
+		Config{CacheDir: t.TempDir(), Concurrency: 2},
 	)
 	assert.FatalIf(t, err != nil, "%v", err)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	res, err := o.render(ctx)
 	assert.FatalIf(t, err != nil, "Render must converge: %v", err)
-	if ctx.Err() != nil || len(res.Failed) != 0 {
-		t.Fatalf("Render did not converge successfully: context=%v, failures=%v", ctx.Err(), res.Failed)
-	}
+	assert.FatalIf(t, ctx.Err() != nil || len(res.Failed) != 0,
+		"Render did not converge successfully: context=%v, failures=%v", ctx.Err(), res.Failed)
+
 	for _, id := range []manifest.NamedResource{testutil.KustomizationID("flux-system", "apps"), testutil.HelmReleaseID("flux-system", "app")} {
 		info, ok := o.Store().GetStatus(id)
 		assert.FatalIf(
@@ -135,13 +135,13 @@ data:
 		o.ksc.Controller,
 		testutil.KustomizationID("flux-system", "apps"),
 		testutil.DocumentMaps(ksArt.Manifests),
-		manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: "flux-system"},
+		manifest.ParseDocOptions{DefaultNamespace: "flux-system"},
 	)
 	publishDocumentsResult1 := publishDocuments(
 		o.hrc.Controller,
 		hrID,
 		testutil.DocumentMaps(hrArt.Manifests),
-		manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: hrID.Namespace},
+		manifest.ParseDocOptions{DefaultNamespace: hrID.Namespace},
 	)
 	_, replay := publishDocumentsResult1.Children, publishDocumentsResult1.Documents
 	assert.FatalIf(t, o.store.GetObject(bare) == nil, "%v", "replay lost release namespace identity")
@@ -206,7 +206,7 @@ func TestDAG_RenderEmittedDependencyResolves(t *testing.T) {
 		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: produced}\ndata: {k: v}\n",
 	)
 
-	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{WipeSecrets: true, Concurrency: 4})
+	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{Concurrency: 4})
 	assert.FatalIf(t, err != nil, "New: %v", err)
 	{
 		err := o.bootstrap(context.Background())
@@ -255,7 +255,7 @@ func TestDAG_DanglingDependencyCascadesAndTerminates(t *testing.T) {
 	testutil.WriteFile(t, dir, "mid/kustomization.yaml", "resources:\n- cm.yaml\n")
 	testutil.WriteFile(t, dir, "mid/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: mid}\ndata: {k: v}\n")
 
-	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{WipeSecrets: true, Concurrency: 4})
+	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{Concurrency: 4})
 	assert.FatalIf(t, err != nil, "New: %v", err)
 	// A short bounded context: the structural fixpoint must terminate well
 	// within it. A regression that reintroduces a
@@ -349,14 +349,14 @@ spec:
 		renderedSingleton1, err := RenderTrees(
 			ctx,
 			[]Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
-			Config{WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: 2},
+			Config{CacheDir: t.TempDir(), Concurrency: 2},
 		)
 		assert.FatalIf(t, len(renderedSingleton1) != 1, "missing render: %v", err)
 		o := renderedSingleton1[0].Orchestrator
 		res := renderedSingleton1[0].Result
-		if err != nil || len(res.Failed) != 0 {
-			t.Fatalf("selector chain failed: error=%v failures=%v", err, res.Failed)
-		}
+		assert.FatalIf(t, err != nil || len(res.Failed) != 0,
+			"selector chain failed: error=%v failures=%v", err, res.Failed)
+
 		for i := range depth + 1 {
 			nid := manifest.NamedResource{
 				Group:     "fluxcd.controlplane.io",
@@ -399,9 +399,8 @@ func TestDAG_SeedAdmissionPreservesSourceReaders(t *testing.T) {
 				Tree{Path: root, RepoRoot: root},
 				Config{CacheDir: t.TempDir(), Concurrency: 2},
 			)
-			if err != nil {
-				t.Fatal(err)
-			}
+			assert.FatalIf(t, err != nil, "%s", err)
+
 			t.Cleanup(func() {
 				o.stop()
 			})
@@ -437,18 +436,18 @@ func TestDAG_SeedAdmissionPreservesSourceReaders(t *testing.T) {
 			var reads store.ReadSet
 			reads.Init(o.store, consumer.Named(), nil)
 			defer reads.Close()
-			if reads.GetObject(source.Named()) != source {
-				t.Fatal("source metadata is unavailable")
-			}
+			assert.FatalIf(t, reads.GetObject(source.Named()) != source, "%s", "source metadata is unavailable")
+
 			var execution base.Execution
 			execution.Init(o.src.Controller, source.Named())
 			defer execution.Close()
-			if execution.Reads.Admitted() {
-				t.Fatal("unchanged source was admitted")
-			}
-			if !reads.Valid() {
-				t.Fatal("initial source admission invalidated a consumer that already captured its metadata")
-			}
+			assert.FatalIf(t, execution.Reads.Admitted(), "%s", "unchanged source was admitted")
+			assert.FatalIf(
+				t,
+				!reads.Valid(),
+				"%s",
+				"initial source admission invalidated a consumer that already captured its metadata",
+			)
 		})
 	}
 }

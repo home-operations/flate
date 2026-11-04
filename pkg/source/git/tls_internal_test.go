@@ -22,6 +22,10 @@ import (
 	"testing"
 	"time"
 
+	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
+
+	"github.com/home-operations/flate/pkg/store"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -37,6 +41,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
+
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/ssrfguard"
 )
@@ -264,15 +269,16 @@ func gitRepoWithSecret(name, url, secretName string) *manifest.GitRepository {
 func TestFetcher_ResolveTLS(t *testing.T) {
 	t.Parallel()
 	ca := testutil.SelfSignedCA(t)
-	certificate := testutil.SelfSignedClientCert(t)
-
+	migratedResult1 := testutil.SelfSignedClientCert(t)
+	crt, key := migratedResult1.Cert, migratedResult1.Key
 	_, private, err := ed25519.GenerateKey(nil)
 	assert.NoError(t, err)
 	block, err := ssh.MarshalPrivateKey(private, "fixture")
 	assert.NoError(t, err)
 	identity := string(pem.EncodeToMemory(block))
 
-	cases := append(make([]testFetcherResolveTLSTlsCase, 0, 34), []testFetcherResolveTLSTlsCase{
+	cases := make([]gitTLSCase, 0, 34)
+	cases = append(cases, []gitTLSCase{
 		{name: "anonymous", encodedData: map[string]any{"ca.crt": "%%%fixture"}},
 		{
 			name:        "ssh",
@@ -291,21 +297,16 @@ func TestFetcher_ResolveTLS(t *testing.T) {
 		{name: "ca.crt", secret: "tls", data: map[string]any{"ca.crt": ca}, wantCA: ca},
 		{name: "caFile", secret: "tls", data: map[string]any{"caFile": ca}, wantCA: ca},
 		{name: "ca.crt-precedence", secret: "tls", data: map[string]any{"ca.crt": ca, "caFile": "invalid"}, wantCA: ca},
-		{
-			name:   "ca.crt over wiped caFile",
-			secret: "tls",
-			data:   map[string]any{"ca.crt": ca, "caFile": "..PLACEHOLDER_caFile.."},
-			wantCA: ca,
-		},
+		{name: "ca.crt over empty caFile", secret: "tls", data: map[string]any{"ca.crt": ca, "caFile": ""}, wantCA: ca},
 		{
 			name:    "mtls",
 			secret:  "tls",
-			data:    map[string]any{"ca.crt": ca, "tls.crt": certificate.Cert, "tls.key": certificate.Key},
+			data:    map[string]any{"ca.crt": ca, "tls.crt": crt, "tls.key": key},
 			wantCA:  ca,
-			wantCRT: certificate.Cert,
-			wantKey: certificate.Key,
+			wantCRT: crt,
+			wantKey: key,
 		},
-		{name: "unpaired", secret: "tls", data: map[string]any{"tls.crt": certificate.Cert}, wantInput: true},
+		{name: "unpaired", secret: "tls", data: map[string]any{"tls.crt": crt}, wantInput: true},
 		{name: "invalid-ca", secret: "tls", data: map[string]any{"ca.crt": "invalid"}, wantInput: true},
 		{
 			name:      "invalid-client",
@@ -314,45 +315,45 @@ func TestFetcher_ResolveTLS(t *testing.T) {
 			wantInput: true,
 		},
 		{
-			name:      "wiped client invalid CA",
+			name:      "empty client invalid CA",
 			secret:    "tls",
-			data:      map[string]any{"tls.crt": "..PLACEHOLDER_crt..", "ca.crt": "invalid"},
+			data:      map[string]any{"tls.crt": "", "ca.crt": "invalid"},
 			wantInput: true,
 			errorKey:  "ca.crt",
 		},
 		{
-			name:      "invalid client wiped key",
+			name:      "invalid client empty key",
 			secret:    "tls",
-			data:      map[string]any{"tls.crt": "invalid", "tls.key": "..PLACEHOLDER_key.."},
+			data:      map[string]any{"tls.crt": "invalid", "tls.key": ""},
 			wantInput: true,
 			errorKey:  "tls.crt",
 		},
 		{
-			name:        "valid client wiped key",
-			secret:      "tls",
-			data:        map[string]any{"tls.crt": certificate.Cert, "tls.key": "..PLACEHOLDER_key.."},
-			wantMissing: true,
+			name:      "valid client empty key",
+			secret:    "tls",
+			data:      map[string]any{"tls.crt": crt, "tls.key": ""},
+			wantInput: true,
 		},
 		{
-			name:        "wiped crt malformed key",
+			name:        "empty crt malformed key",
 			secret:      "tls",
-			data:        map[string]any{"tls.crt": "..PLACEHOLDER_crt.."},
+			data:        map[string]any{"tls.crt": ""},
 			encodedData: map[string]any{"tls.key": "%%%fixture"},
 			wantInput:   true,
 			errorKey:    "tls.key",
 		},
 		{
-			name:        "wiped key malformed ca",
+			name:        "empty key malformed ca",
 			secret:      "tls",
-			data:        map[string]any{"tls.key": "..PLACEHOLDER_key.."},
+			data:        map[string]any{"tls.key": ""},
 			encodedData: map[string]any{"ca.crt": "%%%fixture"},
 			wantInput:   true,
 			errorKey:    "ca.crt",
 		},
 		{
-			name:        "wiped ca malformed caFile",
+			name:        "empty ca malformed caFile",
 			secret:      "tls",
-			data:        map[string]any{"ca.crt": "..PLACEHOLDER_ca.."},
+			data:        map[string]any{"ca.crt": ""},
 			encodedData: map[string]any{"caFile": "%%%fixture"},
 			wantInput:   true,
 			errorKey:    "caFile",
@@ -379,15 +380,7 @@ func TestFetcher_ResolveTLS(t *testing.T) {
 		},
 	}...)
 	for _, field := range []string{"tls.crt", "tls.key", "ca.crt", "caFile"} {
-		cases = append(
-			cases,
-			testFetcherResolveTLSTlsCase{
-				name:        field + "/wiped",
-				secret:      "tls",
-				data:        map[string]any{field: "..PLACEHOLDER_" + field + ".."},
-				wantMissing: true,
-			},
-		)
+		cases = append(cases, gitTLSCase{name: field + "/empty", secret: "tls", data: map[string]any{field: ""}})
 		for _, malformed := range []struct {
 			name  string
 			value any
@@ -396,7 +389,7 @@ func TestFetcher_ResolveTLS(t *testing.T) {
 		} {
 			cases = append(
 				cases,
-				testFetcherResolveTLSTlsCase{
+				gitTLSCase{
 					name:        field + "/" + malformed.name,
 					secret:      "tls",
 					encodedData: map[string]any{field: malformed.value},
@@ -409,9 +402,8 @@ func TestFetcher_ResolveTLS(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			testFetcherResolveTLSCase(t, testFetcherResolveTLSCaseInputs{identity: &identity, tc: &tc})
-		},
-		)
+			testFetcherResolveTLSCase(t, &testFetcherResolveTLSCaseInputs{tc: &tc, identity: &identity})
+		})
 	}
 }
 
@@ -460,24 +452,144 @@ func TestFetcher_ResolveTransport_SecretMaterial(t *testing.T) {
 		wantInput, wantMissing, wantBearer, proxyRead bool
 	}{
 		{name: "hard auth before hard TLS", encodedData: map[string]any{"bearerToken": "%%%fixture", "caFile": "%%%fixture"}, wantInput: true, errorKey: "bearerToken"},
-		{name: "hard auth before missing TLS", data: map[string]any{"ca.crt": "..PLACEHOLDER_ca.."}, encodedData: map[string]any{"bearerToken": "%%%fixture"}, wantInput: true, errorKey: "bearerToken"},
+		{name: "hard auth before missing TLS", data: map[string]any{"ca.crt": ""}, encodedData: map[string]any{"bearerToken": "%%%fixture"}, wantInput: true, errorKey: "bearerToken"},
 		{name: "malformed proxy before unavailable auth", data: map[string]any{"username": "u"}, wantInput: true, proxyRead: true, errorKey: "proxy"},
-		{name: "missing TLS before unavailable auth", data: map[string]any{"bearerToken": "..PLACEHOLDER_token..", "ca.crt": "..PLACEHOLDER_ca.."}, wantMissing: true, errorKey: "TLS material"},
+		{name: "optional TLS before invalid proxy", data: map[string]any{"bearerToken": "", "ca.crt": ""}, wantInput: true, proxyRead: true, errorKey: "proxy"},
 		{name: "hard TLS before missing auth", data: map[string]any{"username": "u"}, encodedData: map[string]any{"ca.crt": "%%%fixture"}, wantInput: true, errorKey: "ca.crt"},
-		{name: "real TLS before wiped auth", data: map[string]any{"bearerToken": "..PLACEHOLDER_token..", "ca.crt": "invalid"}, wantInput: true, errorKey: "ca.crt"},
+		{name: "real TLS before empty auth", data: map[string]any{"bearerToken": "", "ca.crt": "invalid"}, wantInput: true, errorKey: "ca.crt"},
 		{name: "valid auth hard TLS", data: map[string]any{"username": "u", "password": "p"}, encodedData: map[string]any{"caFile": "%%%fixture"}, wantInput: true, errorKey: "caFile"},
-		{name: "valid auth missing TLS", data: map[string]any{"username": "u", "password": "p", "ca.crt": "..PLACEHOLDER_ca.."}, wantMissing: true, errorKey: "TLS material"},
+		{name: "valid auth optional TLS invalid proxy", data: map[string]any{"username": "u", "password": "p", "ca.crt": ""}, wantInput: true, proxyRead: true, errorKey: "proxy"},
 		{name: "empty bearer uses malformed basic", data: map[string]any{"bearerToken": ""}, encodedData: map[string]any{"username": "%%%fixture"}, wantInput: true, errorKey: "username"},
 		{name: "valid basic", data: map[string]any{"username": "u", "password": "p", "ca.crt": ca}},
 		{name: "valid bearer ignores malformed basic", data: map[string]any{"bearerToken": "fixture-token", "ca.crt": ca}, encodedData: map[string]any{"username": "%%%fixture", "password": map[string]any{"credential-fixture": "payload"}}, wantBearer: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			testFetcherResolveTransportSecretMaterialCase(
-				t,
-				&ca, &tc,
-			)
+			testFetcherResolveTransportSecretMaterialCase1(t, &tc, &ca)
+		})
+	}
+}
+
+func testFetcherResolveTransportSecretMaterialCase1(t *testing.T, tc *struct {
+	name        string
+	errorKey    string
+	data        map[string]any
+	encodedData map[string]any
+	wantInput   bool
+	wantMissing bool
+	wantBearer  bool
+	proxyRead   bool
+}, ca *string,
+) {
+	t.Helper()
+
+	sec := &manifest.Secret{
+		Name:       "different",
+		Namespace:  "elsewhere",
+		StringData: tc.data,
+		Data:       tc.encodedData,
+	}
+	s := store.New()
+	captured := *sec
+	captured.Name, captured.Namespace = "creds", "ns"
+	s.AddObject(&captured)
+	s.AddObject(
+		&manifest.Secret{
+			Name:       "proxy",
+			Namespace:  "ns",
+			StringData: map[string]any{"address": "http://proxy.invalid/%"},
 		},
+	)
+
+	f := &Fetcher{}
+	repo := gitRepoWithSecret("g", "https://host/repo", "creds")
+	if tc.wantInput || tc.wantMissing {
+		repo.ProxySecretRef = &manifest.LocalObjectReference{Name: "proxy"}
+	}
+	var reads store.ReadSet
+	reads.Init(s, repo.Named(), nil)
+	request, err := (&operation{Fetcher: f, reads: &reads, secrets: source.SecretLookup(&reads)}).resolveTransport(
+		repo,
+		sourcecache.Policy{},
+	)
+	s.AddObject(
+		&manifest.Secret{
+			Name:       "proxy",
+			Namespace:  "ns",
+			StringData: map[string]any{"address": "http://changed.invalid"},
+		},
+	)
+	assert.Equal(t, reads.Valid(), !tc.proxyRead)
+	s.AddObject(&manifest.Secret{Name: "creds", Namespace: "ns"})
+	assert.Equal(t, reads.Valid(), false)
+	if tc.wantInput || tc.wantMissing {
+		testFetcherResolveTransportSecretMaterialCase1Part1(
+			t,
+			&testFetcherResolveTransportSecretMaterialCase1Part1Inputs{
+				request: &request,
+				err:     err,
+				tc:      &tc,
+				repo:    &repo,
+			},
+		)
+		return
+	}
+	assert.NoError(t, err)
+	assert.Equal(t, request.spec, repo)
+	assert.Equal(t, string(request.options.CABundle), (*ca))
+	assert.Equal(t, request.material != nil, true)
+	if tc.wantBearer {
+		auth, ok := request.options.Auth.(*githttp.TokenAuth)
+		assert.FatalIf(t, !ok,
+			"expected token auth; got %T", request.options.Auth)
+
+		assert.Equal(t, auth.Token, "fixture-token")
+	} else {
+		auth, ok := request.options.Auth.(*githttp.BasicAuth)
+		assert.FatalIf(t, !ok,
+			"expected basic auth; got %T", request.options.Auth)
+
+		assert.Equal(t, auth.Username, "u")
+		assert.Equal(t, auth.Password, "p")
+	}
+}
+
+func testFetcherResolveTransportSecretMaterialCase1Part1(
+	t *testing.T, inputs *testFetcherResolveTransportSecretMaterialCase1Part1Inputs,
+) {
+	t.Helper()
+	assert.Equal(t, inputs.request.spec == nil, true)
+	assert.Equal(t, inputs.request.material == nil, true)
+	assert.Diff(t, inputs.request.options, git.CloneOptions{})
+	assert.Equal(t, errors.Is(inputs.err, manifest.ErrInput), (*inputs.tc).wantInput)
+	assert.Equal(t, errors.Is(inputs.err, manifest.ErrFlux), true)
+	assert.Equal(t, errors.Is(inputs.err, manifest.ErrMissingSecret), (*inputs.tc).wantMissing)
+	secret, owner := "ns/creds", manifest.DiagnosticFor((*inputs.repo).Named(), (*inputs.repo)).Label()
+	if (*inputs.tc).proxyRead {
+		secret, owner = "ns/proxy", "GitRepository ns/g"
+	}
+	assert.FatalIf(t, inputs.err == nil || !strings.Contains(inputs.err.Error(), (*inputs.tc).errorKey) ||
+		!strings.Contains(inputs.err.Error(), secret) ||
+		strings.Contains(inputs.err.Error(), owner),
+		"wrong selected error context: %v", inputs.err)
+	assert.FatalIf(
+		t,
+		strings.Contains(inputs.err.Error(), "%%%fixture") ||
+			strings.Contains(inputs.err.Error(), "credential-fixture"),
+		"%s",
+		"credential payload leaked",
+	)
+
+	if (*inputs.tc).wantMissing {
+		missing, ok := errors.AsType[*source.MissingSecretError](inputs.err)
+		assert.FatalIf(t, !ok,
+			"expected MissingSecretError; got %v", inputs.err)
+
+		assert.Equal(t, missing.Owner, (*inputs.repo).Named())
+		assert.Equal(
+			t,
+			missing.Secret,
+			manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "creds"},
 		)
 	}
 }
@@ -574,9 +686,8 @@ func TestFetcher_HTTPSBasicAuth_SnapshotRotation(t *testing.T) {
 		},
 		)
 	}
-	if lookups.Load() != 15 {
-		t.Fatalf("auth and TLS reread Secrets: %d", lookups.Load())
-	}
+	assert.FatalIf(t, lookups.Load() != 15,
+		"auth and TLS reread Secrets: %d", lookups.Load())
 }
 
 type testFetcherHTTPSBasicAuthSnapshotRotationCallbackInputs struct {
@@ -595,8 +706,8 @@ func testFetcherHTTPSBasicAuthSnapshotRotationCallback(
 	testCaseInput.requests.
 		Add(1)
 	user, pass, _ := r.BasicAuth()
-	valueResult, _ := testCaseInput.expected.Load().Value("password")
-	want := valueResult.Value
+	result1, _ := testCaseInput.expected.Load().Value("password")
+	want := result1.Value
 	if user != "alice" || pass != want {
 		(*testCaseInput.t).
 			Error("producer used different credential snapshot")
@@ -621,50 +732,88 @@ func testFetcherHTTPSBasicAuthSnapshotRotationCallback(
 		ServeHTTP(w, r)
 }
 
-type testFetcherResolveTLSTlsCase struct {
+type gitTLSCase struct {
 	name, url, secret, wantCA, wantCRT, wantKey, errorKey string
 	data, encodedData                                     map[string]any
 	wantInput, wantMissing                                bool
 }
-type testFetcherResolveTLSCaseInputs struct {
-	identity *string
-	tc       *testFetcherResolveTLSTlsCase
+
+type gitCertificate struct {
+	certificate tls.Certificate
+	pem         string
+}
+type testFetcherResolveTLSTailInputs struct {
+	err *error
+
+	opts *git.
+		CloneOptions
+
+	tc *gitTLSCase
 }
 
-func testFetcherResolveTLSCase(t *testing.T, testCaseInput testFetcherResolveTLSCaseInputs) {
+func testFetcherResolveTLSTail(t *testing.T, inputs *testFetcherResolveTLSTailInputs) {
 	t.Helper()
 
-	data := maps.Clone(testCaseInput.tc.data)
+	assert.NoError(t, (*inputs.err))
+	assert.Equal(t, string(inputs.opts.CABundle), inputs.tc.wantCA)
+	assert.Equal(t, string(inputs.opts.ClientCert), inputs.tc.wantCRT)
+	assert.Equal(t, string(inputs.opts.ClientKey), inputs.tc.wantKey)
+}
+
+type testFetcherResolveTransportSecretMaterialCase1Part1Inputs struct {
+	request *gitAcquisition
+	err     error
+	tc      **struct {
+		name        string
+		errorKey    string
+		data        map[string]any
+		encodedData map[string]any
+		wantInput   bool
+		wantMissing bool
+		wantBearer  bool
+		proxyRead   bool
+	}
+	repo **manifest.GitRepository
+}
+type testFetcherResolveTLSCaseInputs struct {
+	tc       *gitTLSCase
+	identity *string
+}
+
+func testFetcherResolveTLSCase(t *testing.T, inputs *testFetcherResolveTLSCaseInputs) {
+	t.Helper()
+
+	data := maps.Clone(inputs.tc.data)
 	if data == nil {
 		data = map[string]any{}
 	}
-	data["username"], data["password"], data["identity"] = "alice", "p", (*testCaseInput.identity)
-	sec := &manifest.Secret{
-		Name:       "different",
-		Namespace:  "elsewhere",
-		StringData: data,
-		Data:       testCaseInput.tc.encodedData,
-	}
+	data["username"], data["password"], data["identity"] = "alice", "p", (*inputs.identity)
+	signer, keyErr := ssh.ParsePrivateKey([]byte(*inputs.identity))
+	assert.NoError(t, keyErr)
+	data["known_hosts"] = "host " + string(ssh.MarshalAuthorizedKey(signer.PublicKey()))
+	sec := &manifest.Secret{Name: "different", Namespace: "elsewhere", StringData: data, Data: inputs.tc.encodedData}
 	fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret { return sec }}
 	f := &Fetcher{}
-	url := testCaseInput.tc.url
+	url := inputs.tc.url
 	if url == "" {
 		url = "https://example.com/x.git"
 	}
-	repo := gitRepoWithSecret("g", url, testCaseInput.tc.secret)
+	repo := gitRepoWithSecret("g", url, inputs.tc.secret)
 	request, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveTransport(
 		repo,
 		sourcecache.Policy{},
 	)
 	opts := request.options
-	if testCaseInput.tc.wantInput || testCaseInput.tc.wantMissing {
+	if inputs.tc.wantInput || inputs.tc.wantMissing {
 		assert.Diff(t, opts, git.CloneOptions{})
-		assert.Equal(t, errors.Is(err, manifest.ErrInput), testCaseInput.tc.wantInput)
+		assert.Equal(t, errors.Is(err, manifest.ErrInput), inputs.tc.wantInput)
 		assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
-		assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), testCaseInput.tc.wantMissing)
-		if testCaseInput.tc.wantMissing {
+		assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), inputs.tc.wantMissing)
+		if inputs.tc.wantMissing {
 			missing, ok := errors.AsType[*source.MissingSecretError](err)
-			assert.FatalIf(t, !ok, "expected MissingSecretError; got %v", err)
+			assert.FatalIf(t, !ok,
+				"expected MissingSecretError; got %v", err)
+
 			assert.Equal(t, missing.Owner, repo.Named())
 			assert.Equal(
 				t,
@@ -672,24 +821,14 @@ func testFetcherResolveTLSCase(t *testing.T, testCaseInput testFetcherResolveTLS
 				manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "tls"},
 			)
 		} else {
-			assert.FatalIf(t, err == nil || !strings.Contains(err.Error(), testCaseInput.tc.errorKey) ||
+			assert.FatalIf(t, err == nil || !strings.Contains(err.Error(), inputs.tc.errorKey) ||
 				!strings.Contains(err.Error(), "ns/tls") ||
-				strings.Contains(
-					err.Error(),
-					manifest.DiagnosticFor(repo.Named(), repo).Label(),
-				), "missing input context: %v", err)
+				strings.Contains(err.Error(), manifest.DiagnosticFor(repo.Named(), repo).Label()),
+				"missing input context: %v", err)
 			assert.FatalIf(t, strings.Contains(err.Error(), "%%%fixture") ||
 				strings.Contains(err.Error(), "credential-fixture"), "%s", "TLS credential payload leaked")
 		}
 		return
 	}
-	assert.NoError(t, err)
-	assert.Equal(t, string(opts.CABundle), testCaseInput.tc.wantCA)
-	assert.Equal(t, string(opts.ClientCert), testCaseInput.tc.wantCRT)
-	assert.Equal(t, string(opts.ClientKey), testCaseInput.tc.wantKey)
-}
-
-type gitCertificate struct {
-	certificate tls.Certificate
-	pem         string
+	testFetcherResolveTLSTail(t, &testFetcherResolveTLSTailInputs{err: &err, opts: &opts, tc: inputs.tc})
 }

@@ -80,7 +80,7 @@ var (
 	ErrObjectNotFound             error = NewError(ErrFlux, nil, "object not found")
 	ErrInvalidValuesReference     error = NewError(ErrFlux, nil, "invalid values reference")
 	ErrInvalidSubstituteReference error = NewError(ErrFlux, nil, "invalid substitute reference")
-	// ErrMissingSecret marks absent or wiped source auth, cert or proxy material.
+	// ErrMissingSecret marks absent source auth, cert or proxy material.
 	// The source is skipped only under producer or --allow-missing-kinds Secret policy;
 	// configured TLS/proxy requirements are never discarded for a fetch.
 	// Malformed real material remains a failure. Signature refs are ignored.

@@ -29,7 +29,7 @@ func BenchmarkRunParentGates(b *testing.B) {
 	for b.Loop() {
 		if _, err := Run(
 			b.Context(),
-			Config{Path: root, RepoRoot: root, Store: store.New(), WipeSecrets: true},
+			Config{Path: root, RepoRoot: root, Store: store.New()},
 		); err != nil {
 			b.Fatal(err)
 		}
@@ -80,7 +80,7 @@ stringData: {HOST: fixture-value}
 	for b.Loop() {
 		if _, err := Run(
 			b.Context(),
-			Config{Path: root, RepoRoot: root, Store: store.New(), WipeSecrets: true},
+			Config{Path: root, RepoRoot: root, Store: store.New()},
 		); err != nil {
 			b.Fatal(err)
 		}
@@ -118,7 +118,7 @@ func BenchmarkRun_WideDirectory(b *testing.B) {
 	for b.Loop() {
 		if _, err := Run(
 			b.Context(),
-			Config{Path: filepath.Join(root, "flux"), RepoRoot: root, Store: store.New(), WipeSecrets: true},
+			Config{Path: filepath.Join(root, "flux"), RepoRoot: root, Store: store.New()},
 		); err != nil {
 			b.Fatal(err)
 		}
@@ -173,7 +173,7 @@ func benchmarkRunFollowedChain(b *testing.B, repo *struct{ name, url string }) {
 			"namespace: flux-system\nresources:\n"+resources.String())
 	}
 	testutil.WriteFile(b, root, fmt.Sprintf("level%d/kustomization.yaml", depth), "resources: []\n")
-	cfg := Config{Path: filepath.Join(root, "flux"), RepoRoot: root, WipeSecrets: true}
+	cfg := Config{Path: filepath.Join(root, "flux"), RepoRoot: root}
 	if repo.url != "" {
 		testutil.WriteFile(b, root, "flux/repo.yaml", fmt.Sprintf(`apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository

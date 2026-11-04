@@ -20,7 +20,9 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
+
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -59,7 +61,7 @@ func newSubstitutionOrchestrator(t *testing.T, cfg treeConfig) *Orchestrator {
 	}
 	cfg.CacheDir = t.TempDir()
 	cfg.Concurrency = 4
-	cfg.WipeSecrets = true
+
 	o, err := newTestOrchestrator(t, cfg.Tree, cfg.Config)
 	assert.FatalIf(t, err != nil, "%v", err)
 	t.Cleanup(func() {
@@ -95,42 +97,50 @@ func substitutionValue(t *testing.T, res *Result, id manifest.NamedResource) str
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestSnapshotSubstitutions_OwnsInputs(t *testing.T) {
-	t.Run("supplied custom scope", testSuppliedCustomScope)
+	const cipher = "ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]"
 	source := suppliedSubstitution("external")
 	cm := source.Obj.(*manifest.ConfigMap)
 	raw := []byte("owned")
 	cm.Data["BINARY"] = raw
+	cm.Data["Z"], cm.Data["A"], cm.Data["EMPTY"] = cipher, cipher, ""
 	source.Doc = testutil.ObjectDocument(cm)
 	secretData, secretStringData := []byte("b3duZWQ="), []byte("owned")
 	secret := &manifest.Secret{
 		Name:       "secret",
 		Namespace:  "apps",
-		Data:       map[string]any{"ENCODED": secretData},
-		StringData: map[string]any{"VALUE": secretStringData},
+		Data:       map[string]any{"ENCODED": secretData, "SECRET": cipher},
+		StringData: map[string]any{"VALUE": secretStringData, "EMPTY": ""},
 	}
+	secretChild, outcome, _ := loader.Prepare(
+		manifest.DocOccurrence{Document: testutil.ObjectDocument(secret)},
+		manifest.ParseDocOptions{RequiredIdentity: true},
+	)
+	assert.NoError(t, outcome.Err)
 	allowed := []string{manifest.KindSecret}
 	customDoc := map[string]any{
 		"apiVersion": "example.io/v1",
 		"kind":       "Widget",
-		"metadata": map[string]any{
-			"name":      "custom",
-			"namespace": "apps",
-		},
-		"spec":  map[string]any{"payload": map[string]any{"value": "owned"}},
-		"extra": map[string]any{"retained": true},
+		"metadata":   map[string]any{"name": "custom", "namespace": "apps"},
+		"spec":       map[string]any{"payload": map[string]any{"value": "owned"}},
+		"extra":      map[string]any{"retained": true},
 	}
 	sources := []store.Declaration{
 		source,
 		{
-			Doc:       testutil.ObjectDocument(secret),
-			Obj:       secret,
+			Doc:       secretChild.Doc,
+			Obj:       secretChild.Obj,
 			InputPath: "secret-values.yaml",
 			Origin:    manifest.SuppliedDeclaration,
+			Warnings:  secretChild.Warnings,
 		},
 		{Doc: customDoc},
 	}
 
 	o := newSubstitutionOrchestrator(t, treeConfig{Supply: sources, AllowMissingKinds: allowed, Path: t.TempDir()})
+	assert.Equal(t, cm.Data["A"], any(cipher))
+	assert.Equal(t, source.Doc["data"].(map[string]any)["Z"], any(cipher))
+	assert.Equal(t, secret.Data["SECRET"], any(cipher))
+	secretChild.Warnings[0].Detail[0] = "caller-change"
 	customDoc["spec"].(map[string]any)["payload"].(map[string]any)["value"] = "changed"
 	customDoc["extra"].(map[string]any)["retained"] = false
 	id := manifest.NamedResource{Group: "example.io", Kind: "Widget", Namespace: "apps", Name: "custom"}
@@ -144,33 +154,67 @@ func TestSnapshotSubstitutions_OwnsInputs(t *testing.T) {
 	cm.Name, cm.Data["VALUE"] = "changed", "changed"
 	raw[0], secretData[0], secretStringData[0] = 'x', 'x', 'x'
 	sources[0].InputPath, allowed[0] = "changed", manifest.KindConfigMap
-	facts := o.store.ReferenceFacts(manifest.NamedResource{
-		Kind:      manifest.KindConfigMap,
-		Namespace: "apps",
-		Name:      "external",
-	},
+	facts := o.store.ReferenceFacts(
+		manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "external"},
 		nil,
-		false,
-		manifest.NamedResource{})
+		manifest.NamedResource{},
+	)
 	assert.Equal(t, o.cfg.Supply[0].InputPath, "ci-values.yaml")
-	for key, want := range map[string]string{"VALUE": "supplied", "BINARY": "owned"} {
-		valueResult, err := facts.Data.Value(key)
-		got := valueResult.Value
+	for key, want := range map[string]string{"VALUE": "supplied", "BINARY": "owned", "EMPTY": ""} {
+		result3, err := facts.Data.Value(key)
+		got, present := result3.Value, result3.Found
 		assert.NoError(t, err)
+		assert.Equal(t, present, true)
 		assert.Equal(t, got, want)
 	}
-	secretFacts := o.store.ReferenceFacts(secret.Named(), nil, false, manifest.NamedResource{})
+	for _, key := range []string{"A", "Z"} {
+		result4, err := facts.Data.Value(key)
+		present := result4.Found
+		assert.NoError(t, err)
+		assert.Equal(t, present, false)
+	}
+	secretFacts := o.store.ReferenceFacts(secret.Named(), nil, manifest.NamedResource{})
 	for _, key := range []string{"ENCODED", "VALUE"} {
-		valueResult2, err := secretFacts.Data.Value(key)
-		got := valueResult2.Value
+		result5, err := secretFacts.Data.Value(key)
+		got := result5.Value
 		assert.NoError(t, err)
 		assert.Equal(t, got, "owned")
 	}
+	result1, err := secretFacts.Data.Value("SECRET")
+	present := result1.Found
+	assert.NoError(t, err)
+	assert.Equal(t, present, false)
+	result2, err := secretFacts.Data.Value("EMPTY")
+	empty, present := result2.Value, result2.Found
+	assert.NoError(t, err)
+	assert.Equal(t, present, true)
+	assert.Equal(t, empty, "")
+	warnings := o.store.Warnings()
+	assert.Equal(t, len(warnings), 2)
+	for _, warning := range warnings {
+		assert.Equal(t, warning.Category, manifest.WarnSOPSUnreadable)
+		assert.Equal(t, warning.Count, 1)
+		want := []string{"SECRET"}
+		if warning.Resource.Kind == manifest.KindConfigMap {
+			want = []string{"A", "Z"}
+		}
+		assert.Diff(t, warning.Detail, want)
+	}
+	prepared := o.cfg
+	assert.NoError(t, snapshotSubstitutions(&prepared.Config))
+	repeated := store.New()
+	for _, declaration := range prepared.Supply {
+		repeated.AddDeclaration(declaration)
+	}
+	assert.Diff(t, repeated.Warnings(), warnings)
 	assert.Diff(t, o.cfg.AllowMissingKinds, []string{manifest.KindSecret})
 	plain := newSubstitutionOrchestrator(t, treeConfig{Config: Config{}, Path: t.TempDir()})
-	if plain.cfg.AllowMissingKinds != nil || plain.cfg.Supply != nil {
-		t.Fatal("zero-input path allocated state")
-	}
+	assert.FatalIf(
+		t,
+		plain.cfg.AllowMissingKinds != nil || plain.cfg.Supply != nil,
+		"%s",
+		"zero-input path allocated state",
+	)
 }
 
 func TestRenderTrees_SubstitutionValidation(t *testing.T) {
@@ -234,7 +278,9 @@ func TestRenderTrees_SubstitutionValidation(t *testing.T) {
 						return sourcecache.ProducerResult{}, localErr
 					},
 				)
+
 				assert.FatalIf(t, localErr != nil, "constructor released borrowed owner: %v", localErr)
+
 				assert.NoError(t, cfg.Cache.Close())
 			}
 			res, err := sourcecache.Sweep(t.Context(), root, sourcecache.SweepOpts{})
@@ -260,17 +306,15 @@ func TestRender_SubstitutionOwnershipAndIsolation(t *testing.T) {
 	source.Obj.(*manifest.ConfigMap).Data["VALUE"] = "caller-change"
 	for _, o := range []*Orchestrator{first, second} {
 		res, err := o.render(t.Context())
-		if err != nil {
-			t.Fatal(err)
-		}
+		assert.FatalIf(t, err != nil, "%s", err)
+
 		id := testutil.KustomizationID("apps", "consumer")
 		if got := substitutionValue(t, res, id); got != "supplied" {
 			t.Fatalf("owned values changed: %q", got)
 		}
 		external := source.Obj.Named()
-		if !o.store.ReportHidden(external) {
-			t.Fatal("supplied declaration gained production visibility")
-		}
+		assert.FatalIf(t, !o.store.ReportHidden(external), "%s", "supplied declaration gained production visibility")
+
 		if record, ok := o.index.Lookup(external); !ok || record.Declaration == nil {
 			t.Fatal("supplied declaration missing from existence index")
 		}
@@ -284,189 +328,11 @@ func TestRender_SubstitutionOwnershipAndIsolation(t *testing.T) {
 			t.Fatal("supplied object entered producer indexes")
 		}
 		stored, _ := o.store.Get[*manifest.Kustomization](id)
-		if len(stored.PostBuild.Substitute) != 0 {
-			t.Fatal("preparation mutated stored Kustomization")
-		}
+		assert.FatalIf(t, len(stored.PostBuild.Substitute) != 0, "%s", "preparation mutated stored Kustomization")
+
 		if info, _ := o.store.GetStatus(id); info.Status != store.StatusReady {
 			t.Fatalf("consumer not ready: %+v", info)
 		}
-	}
-}
-
-func TestRender_SuppliedObjectsPreserveRequiredChartFailure(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name          string
-		references    string
-		sources       []store.Declaration
-		missingSecret string
-	}{
-		{
-			name:       "unrelated supplied Secret",
-			references: "[{kind: Secret, name: absent}]",
-			sources: []store.Declaration{
-				{
-					Doc: testutil.ObjectDocument(&manifest.Secret{
-						Name:       "missing",
-						Namespace:  "flux-system",
-						StringData: map[string]any{"OTHER": "unrelated"},
-					}), Origin: manifest.SuppliedDeclaration, Obj: &manifest.Secret{
-						Name:       "missing",
-						Namespace:  "flux-system",
-						StringData: map[string]any{"OTHER": "unrelated"},
-					},
-					InputPath: "ci.yaml",
-				},
-			},
-			missingSecret: "absent",
-		},
-		{
-			name:       "same name in another namespace",
-			references: "[{kind: Secret, name: missing}]",
-			sources: []store.Declaration{
-				{
-					Doc: testutil.ObjectDocument(&manifest.Secret{
-						Name:       "missing",
-						Namespace:  "elsewhere",
-						StringData: map[string]any{"OTHER": "unrelated"},
-					}), Origin: manifest.SuppliedDeclaration, Obj: &manifest.Secret{
-						Name:       "missing",
-						Namespace:  "elsewhere",
-						StringData: map[string]any{"OTHER": "unrelated"},
-					},
-					InputPath: "ci.yaml",
-				},
-			},
-			missingSecret: "missing",
-		},
-		{
-			name:       "supplied and missing references",
-			references: "[{kind: Secret, name: given}, {kind: Secret, name: missing}]",
-			sources: []store.Declaration{
-				{
-					Doc: testutil.ObjectDocument(&manifest.Secret{
-						Name:       "given",
-						Namespace:  "flux-system",
-						StringData: map[string]any{"OTHER": "unrelated"},
-					}), Origin: manifest.SuppliedDeclaration, Obj: &manifest.Secret{
-						Name:       "given",
-						Namespace:  "flux-system",
-						StringData: map[string]any{"OTHER": "unrelated"},
-					},
-					InputPath: "ci.yaml",
-				},
-			},
-			missingSecret: "missing",
-		},
-		{
-			name:       "only supplied reference",
-			references: "[{kind: Secret, name: missing}]",
-			sources: []store.Declaration{
-				{
-					Doc: testutil.ObjectDocument(&manifest.Secret{
-						Name:       "missing",
-						Namespace:  "flux-system",
-						StringData: map[string]any{"OTHER": "unrelated"},
-					}), Origin: manifest.SuppliedDeclaration, Obj: &manifest.Secret{
-						Name:       "missing",
-						Namespace:  "flux-system",
-						StringData: map[string]any{"OTHER": "unrelated"},
-					},
-					InputPath: "ci.yaml",
-				},
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			dir := t.TempDir()
-			testutil.WriteFile(t, dir, "flux/apps.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
-kind: GitRepository
-metadata: {name: flux-system, namespace: flux-system}
-spec:
-  url: https://example.test/cluster.git
-`+"---\n"+
-				testutil.KustomizationYAML("apps", "flux-system", `  path: ./apps
-  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
-  postBuild:
-    substitute: {KEEP: "ok"}
-    substituteFrom: `+tt.references+"\n"))
-			testutil.WriteFile(t, dir, "apps/kustomization.yaml",
-				"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ./hr.yaml\n")
-			testutil.WriteFile(t, dir, "apps/hr.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
-kind: HelmRelease
-metadata: {name: demo, namespace: apps}
-spec:
-  interval: 10m
-  chart:
-    spec:
-      chart: charts/req
-      sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
-  values:
-    greeting: "${MISSING}"
-`)
-			testutil.WriteFile(t, dir, "kustomization.yaml", "resources: [flux/apps.yaml]\n")
-			testutil.WriteFile(t, dir, "charts/req/Chart.yaml", "apiVersion: v2\nname: req\nversion: 0.1.0\n")
-			testutil.WriteFile(
-				t,
-				dir,
-				"charts/req/templates/cm.yaml",
-				"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\ndata:\n  g: {{ required \"greeting is required\" .Values.greeting | quote }}\n",
-			)
-
-			renderedSingleton1, err := RenderTrees(
-				t.Context(),
-				[]Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
-				Config{
-					CacheDir: t.TempDir(), WipeSecrets: true, Concurrency: 2,
-					Supply: tt.sources,
-				},
-			)
-			assert.FatalIf(t, len(renderedSingleton1) != 1, "missing render: %v", err)
-			res := renderedSingleton1[0].Result
-			{
-				_, ok := errors.AsType[*FailuresError](err)
-				assert.ErrorIf(t, !ok, "expected reconcile failure, got %v", err)
-			}
-			assert.FatalIf(t, res == nil, "%v", "missing render result")
-			demo := testutil.HelmReleaseID("apps", "demo")
-			if tt.missingSecret == "" {
-				{
-					info, failed := res.Failed[demo]
-					assert.ErrorIf(t, !failed ||
-						!strings.Contains(
-							info.Message,
-							"greeting is required",
-						), "required chart value failure lost: %+v", info)
-				}
-			} else {
-				consumer := testutil.KustomizationID("flux-system", "apps")
-				target := manifest.NamedResource{
-					Kind:      manifest.KindSecret,
-					Namespace: consumer.Namespace,
-					Name:      tt.missingSecret,
-				}
-				assert.ErrorIf(
-					t,
-					!slices.Contains(res.Blocked[consumer], target),
-					"missing required reference admitted: %+v",
-					res,
-				)
-			}
-			{
-				docs := outputByParent(res.Manifests)[demo]
-				assert.ErrorIf(t, len(docs) != 0, "failed input published chart output: %v", docs)
-			}
-			for _, warning := range res.Warnings {
-				assert.ErrorIf(
-					t,
-					warning.Category == manifest.WarnUnresolvedSubstitution,
-					"failed input reported successful substitution: %+v",
-					warning,
-				)
-			}
-		})
 	}
 }
 
@@ -490,9 +356,12 @@ func TestSupply_UnreadObjectsHaveNoPrecedenceWarning(t *testing.T) {
 	assert.NoError(t, o.bootstrap(t.Context()))
 	assert.Diff(t, o.store.AdvisoryEvidence(), store.AdvisoryEvidence{})
 	for _, warning := range o.store.Warnings() {
-		if warning.Category == manifest.WarnSuppliedPrecedence {
-			t.Fatal("unconsumed supply emitted precedence warning")
-		}
+		assert.FatalIf(
+			t,
+			warning.Category == manifest.WarnSuppliedPrecedence,
+			"%s",
+			"unconsumed supply emitted precedence warning",
+		)
 	}
 }
 
@@ -650,7 +519,7 @@ func testBootstrapSubstitutionCollisionsCase(
 	}
 	assert.FatalIf(
 		t,
-		o.store.ReferenceFacts(input.Obj.Named(), nil, false, manifest.NamedResource{}).Data == nil,
+		o.store.ReferenceFacts(input.Obj.Named(), nil, manifest.NamedResource{}).Data == nil,
 		"%v",
 		"repository evidence discarded supplied snapshot",
 	)
@@ -737,7 +606,6 @@ func testRenderSubstitutionLateProducerCase(t *testing.T, testCaseInput testRend
 	source := suppliedSubstitution("late-settings")
 	cfg := treeConfig{
 		CacheDir:            t.TempDir(),
-		WipeSecrets:         true,
 		Concurrency:         2,
 		Supply:              []store.Declaration{source},
 		StrictSubstitutions: true,
@@ -749,14 +617,16 @@ func testRenderSubstitutionLateProducerCase(t *testing.T, testCaseInput testRend
 	t.Cleanup(func() {
 		o.stop()
 	})
+
 	{
 		localErr := o.bootstrap(t.Context())
 		assert.FatalIf(t, localErr != nil, "%v", localErr)
 	}
+
 	external := source.Obj.Named()
 	assert.FatalIf(
 		t,
-		o.store.ReferenceFacts(external, nil, false, manifest.NamedResource{}).Data == nil || !o.store.ReportHidden(external) ||
+		o.store.ReferenceFacts(external, nil, manifest.NamedResource{}).Data == nil || !o.store.ReportHidden(external) ||
 			len(renderersForTest(o.index, external)) != 0,
 		"%v",
 		"test requires producer unknown at bootstrap",

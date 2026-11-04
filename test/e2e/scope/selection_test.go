@@ -4,15 +4,15 @@ package scope_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	gogit "github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing/object"
-
 	"github.com/go-git/go-git/v5/config"
+	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -66,9 +66,10 @@ spec: {url: https://fixture.invalid/cluster.git}
 			if tc.name == "resource" {
 				testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: [missing.yaml]\n")
 			}
-			runCLIBuffersResult1 := harness.RunCLIBuffers("build", "all", "--path", dir,
+			result1 := harness.RunCLIBuffers("build", "all", "--path", dir,
 				"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
-			_, stderr, code := runCLIBuffersResult1.Stdout, runCLIBuffersResult1.Stderr, runCLIBuffersResult1.Code
+			stderr, code := result1.Stderr, result1.Code
+
 			assert.FatalIf(t, code != 1, "got exit %d, want 1:\n%s", code, stderr)
 			assert.ErrorIf(
 				t,
@@ -105,9 +106,10 @@ func TestE2E_Diff_SameDirectoryFailure(t *testing.T) {
 		),
 	)
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [missing.yaml]\n")
-	runCLIBuffersResult2 := harness.RunCLIBuffers("diff", "all", "--path", root, "--path-orig", root,
+	result2 := harness.RunCLIBuffers("diff", "all", "--path", root, "--path-orig", root,
 		"--cache-dir", t.TempDir(), "--concurrency", "2", "--no-progress", "-o", "diff")
-	stdout, stderr, code := runCLIBuffersResult2.Stdout, runCLIBuffersResult2.Stderr, runCLIBuffersResult2.Code
+	stdout, stderr, code := result2.Stdout, result2.Stderr, result2.Code
+
 	assert.ErrorIf(t, code != 1, "exit=%d, want 1\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	for _, want := range []string{"Kustomization  flux-system/apps", "orig snapshot:", "current snapshot:", "missing.yaml"} {
 		assert.ErrorIf(t, !strings.Contains(stderr, want), "stderr missing %q:\n%s", want, stderr)
@@ -144,7 +146,7 @@ func TestE2E_Diff_SameDirectoryFailure(t *testing.T) {
 		)
 	}
 	for _, format := range []string{"html", "json"} {
-		runCLIBuffersResult3 := harness.RunCLIBuffers(
+		result4 := harness.RunCLIBuffers(
 			"diff",
 			"all",
 			"--path",
@@ -155,7 +157,8 @@ func TestE2E_Diff_SameDirectoryFailure(t *testing.T) {
 			"-o",
 			format,
 		)
-		product, diagnostic, exit := runCLIBuffersResult3.Stdout, runCLIBuffersResult3.Stderr, runCLIBuffersResult3.Code
+		product, diagnostic, exit := result4.Stdout, result4.Stderr, result4.Code
+
 		assert.FatalIf(
 			t,
 			exit != 1 || strings.Count(diagnostic, "[DiffSuppressed]") != 1,
@@ -195,7 +198,7 @@ func TestE2E_Diff_SameDirectoryFailure(t *testing.T) {
 			}
 		}
 	}
-	runCLIBuffersResult4 := harness.RunCLIBuffers(
+	result3 := harness.RunCLIBuffers(
 		"diff",
 		"images",
 		"--path",
@@ -206,7 +209,8 @@ func TestE2E_Diff_SameDirectoryFailure(t *testing.T) {
 		"-o",
 		"json",
 	)
-	images, imageDiagnostic, imageExit := runCLIBuffersResult4.Stdout, runCLIBuffersResult4.Stderr, runCLIBuffersResult4.Code
+	images, imageDiagnostic, imageExit := result3.Stdout, result3.Stderr, result3.Code
+
 	var imageProduct []string
 	{
 		err := json.Unmarshal(
@@ -260,9 +264,10 @@ data:
 	defer cancel()
 	stop := context.AfterFunc(ctx, func() { panic("diff ownership walk did not complete") })
 	defer stop()
-	requireCLIOKResult5 := harness.RequireCLIOK(t, "diff", "all", "--path", current, "--path-orig", orig,
+	migratedResult1 := harness.RequireCLIOK(t, "diff", "all", "--path", current, "--path-orig", orig,
 		"--concurrency", "2", "--cache-dir", t.TempDir(), "--no-progress", "-o", "diff")
-	out, stderr := requireCLIOKResult5.Stdout, requireCLIOKResult5.Stderr
+	out, stderr := migratedResult1.Stdout, migratedResult1.Stderr
+
 	assert.ErrorIf(
 		t,
 		!strings.Contains(out, "-  value: before") || !strings.Contains(out, "+  value: after"),
@@ -274,9 +279,11 @@ data:
 
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_DiffAutoBaseline_Base(t *testing.T) {
-	initGitFixtureResult1 := initGitFixture(t)
-	clusterPath, repoRoot := initGitFixtureResult1.path, initGitFixtureResult1.root
-	// Edit cm.yaml in the working tree; HEAD still has the original.
+	adaptedResult1 := initGitFixture(t)
+	clusterPath, repoRoot := adaptedResult1.path, adaptedResult1.
+		// Edit cm.yaml in the working tree; HEAD still has the original.
+		root
+
 	harness.MutateFile(t, filepath.Join(repoRoot, "kubernetes", "apps", "cm.yaml"), "value: original", "value: changed")
 	out := harness.RunCLI(t, "diff", "ks", "--path", clusterPath, "--base", "HEAD")
 	assert.ErrorIf(t, !strings.Contains(out, "changed"), "expected 'changed' to surface in diff body:\n%s", out)
@@ -297,8 +304,8 @@ func TestE2E_DiffAutoBaseline_CommittedMembership(t *testing.T) {
 		{name: "delete"}, {name: "rename", rename: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			initGitFixtureResult2 := initGitFixture(t)
-			clusterPath, root := initGitFixtureResult2.path, initGitFixtureResult2.root
+			adaptedResult2 := initGitFixture(t)
+			clusterPath, root := adaptedResult2.path, adaptedResult2.root
 			repo, err := gogit.PlainOpen(root)
 			assert.NoError(t, err)
 			base, err := repo.Head()
@@ -350,7 +357,7 @@ func TestE2E_DiffAutoBaseline_CommittedMembership(t *testing.T) {
 				"kubernetes/apps/stray.yaml",
 				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: dirty-unconsumed}\n",
 			)
-			requireCLIOKResult6 := harness.RequireCLIOK(
+			migratedResult2 := harness.RequireCLIOK(
 				t,
 				"diff",
 				"ks",
@@ -369,7 +376,8 @@ func TestE2E_DiffAutoBaseline_CommittedMembership(t *testing.T) {
 				"-o",
 				"diff",
 			)
-			stdout, stderr := requireCLIOKResult6.Stdout, requireCLIOKResult6.Stderr
+			stdout, stderr := migratedResult2.Stdout, migratedResult2.Stderr
+
 			assert.FatalIf(t, !strings.Contains(stdout, "hello") || strings.Contains(stdout, "peer-output") ||
 				strings.Contains(
 					stdout,
@@ -455,8 +463,8 @@ func TestE2E_DiffImagesRequiresBaselineWhenNoGit(t *testing.T) {
 	// chain stops at the OS temp root, which has no .git).
 	dir := t.TempDir()
 	testutil.CopyTree(t, harness.TestdataPath(t, "simple"), dir)
-	runCLIExpectErrResult7 := harness.RunCLIExpectErr(t, "diff", "images", "--path", dir)
-	out, code := runCLIExpectErrResult7.Output, runCLIExpectErrResult7.Code
+	migratedResult3 := harness.RunCLIExpectErr(t, "diff", "images", "--path", dir)
+	out, code := migratedResult3.Output, migratedResult3.Code
 	assert.FatalIf(t, code == 0, "expected non-zero exit with no baseline source, got 0:\n%s", out)
 	assert.ErrorIf(t, !strings.Contains(out, "--path-orig"), "error should mention --path-orig as an option:\n%s", out)
 	assert.ErrorIf(t, !strings.Contains(out, "--base"), "error should mention --base as an option:\n%s", out)
@@ -491,9 +499,8 @@ spec:
     kind: ConfigMap
     metadata: {name: << nope >>, namespace: ns}
 `)
-
-	runCLIExpectErrResult8 := harness.RunCLIExpectErr(t, "test", "all", "--path", dir)
-	out, code := runCLIExpectErrResult8.Output, runCLIExpectErrResult8.Code
+	migratedResult4 := harness.RunCLIExpectErr(t, "test", "all", "--path", dir)
+	out, code := migratedResult4.Output, migratedResult4.Code
 	assert.FatalIf(t, code == 0, "expected non-zero exit; got 0:\n%s", out)
 	// The template parse error mentions the undefined function.
 	assert.ErrorIf(
@@ -588,40 +595,65 @@ spec:
 
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_SecretMaterialPolicy(t *testing.T) {
-	selfSignedClientCertResult9 := testutil.SelfSignedClientCert(t)
-	_, identity := selfSignedClientCertResult9.Cert, selfSignedClientCertResult9.Key
-	for _, field := range []string{"known_hosts", "bearerToken"} {
-		type policyCase struct {
-			name            string
-			allowMissing    bool
-			producer        bool
-			malformed       bool
-			invalidIdentity bool
-			wantSkip        bool
-		}
-		cases := []policyCase{
-			{name: "strict"},
-			{name: "allowed", allowMissing: true, wantSkip: true},
-			{name: "producer", producer: true, wantSkip: true},
-			{name: "malformed allowed", malformed: true, allowMissing: true},
-			{name: "malformed producer", malformed: true, producer: true},
-		}
-		if field == "known_hosts" {
-			cases = append(cases,
-				policyCase{name: "invalid identity allowed", allowMissing: true, invalidIdentity: true},
-				policyCase{name: "invalid identity producer", producer: true, invalidIdentity: true},
-			)
-		}
-		for _, tc := range cases {
-			t.Run(field+"/"+tc.name, func(t *testing.T) {
-				e2ESecretMaterialPolicyCase(t, &field, (*struct {
-					name            string
-					allowMissing    bool
-					producer        bool
-					malformed       bool
-					invalidIdentity bool
-					wantSkip        bool
-				})(&tc), &identity)
+	for _, field := range []string{"username", "password"} {
+		for _, allow := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/allow=%t", field, allow), func(t *testing.T) {
+				root := t.TempDir()
+				testutil.GitInit(t, root)
+				testutil.WriteFile(
+					t,
+					root,
+					"flux/root.yaml",
+					testutil.KustomizationYAML(
+						"local",
+						"flux-system",
+						"  path: ./apps\n",
+					)+"---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: external, namespace: flux-system}\nspec:\n  provider: github\n  url: https://fixture.invalid/external.git\n  secretRef: {name: auth}\n",
+				)
+				username, password := "user", "password"
+				cipher := "ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]"
+				if field == "username" {
+					username = cipher
+				} else {
+					password = cipher
+				}
+				testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [secret.yaml, cm.yaml]\n")
+				testutil.WriteFile(
+					t,
+					root,
+					"apps/secret.yaml",
+					fmt.Sprintf(
+						"apiVersion: v1\nkind: Secret\nmetadata: {name: auth, namespace: flux-system}\nstringData: {username: '%s', password: '%s'}\n",
+						username,
+						password,
+					),
+				)
+				testutil.WriteFile(
+					t,
+					root,
+					"apps/cm.yaml",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: healthy-output}\ndata: {value: rendered}\n",
+				)
+				args := []string{
+					"build",
+					"all",
+					"--path",
+					filepath.Join(root, "flux"),
+					"--cache-dir",
+					t.TempDir(),
+					"--concurrency",
+					"2",
+				}
+				if allow {
+					args = append(args, "--allow-missing-kinds", "Secret")
+				}
+				result5 := harness.RunCLIBuffers(args...)
+				stdout, stderr, code := result5.Stdout, result5.Stderr, result5.Code
+				assert.FatalIf(t, (code == 0) != allow || !strings.Contains(stdout, "healthy-output") ||
+					strings.Contains(stdout+stderr, cipher) ||
+					strings.Contains(stderr, "dial tcp") ||
+					!strings.Contains(stderr, "[SOPSUnreadable]"),
+					"exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 			})
 		}
 	}

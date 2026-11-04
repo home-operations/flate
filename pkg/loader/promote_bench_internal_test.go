@@ -20,9 +20,8 @@ func BenchmarkPromoteAvailable(b *testing.B) {
 			idx.Store,
 			cm.Named(),
 			PromoteOptions{
-				Record:      productionForTest(new(idx.Index.Records[cm.Named()])),
-				WipeSecrets: true,
-				Admit:       func(manifest.BaseManifest) (bool, error) { return true, nil },
+				Record: productionForTest(new(idx.Index.Records[cm.Named()])),
+				Admit:  func(manifest.BaseManifest) (bool, error) { return true, nil },
 			},
 		); err != nil ||
 			!promoted {

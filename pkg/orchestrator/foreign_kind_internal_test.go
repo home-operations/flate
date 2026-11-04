@@ -49,15 +49,14 @@ spec:
 	renderedSingleton1, err := RenderTrees(
 		context.Background(),
 		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
-		Config{WipeSecrets: true},
+		Config{},
 	)
 	assert.FatalIf(t, len(renderedSingleton1) != 1, "missing render: %v", err)
 	o := renderedSingleton1[0].Orchestrator
 	res := renderedSingleton1[0].Result
 	assert.FatalIf(t, err != nil, "Render: %v", err)
-	if len(res.Failed) != 0 {
-		t.Errorf("foreign Bucket CRD must not fail the run; failed=%+v", res.Failed)
-	}
+	assert.ErrorIf(t, len(res.Failed) != 0,
+		"foreign Bucket CRD must not fail the run; failed=%+v", res.Failed)
 
 	id := manifest.NamedResource{
 		Group:     "seaweed.seaweedfs.com",
@@ -96,9 +95,9 @@ spec:
 			}
 		}
 	}
-	if !found {
-		t.Errorf("foreign Bucket missing from the parent's rendered output: %+v", outputByParent(res.Manifests)[ksID])
-	}
+	assert.ErrorIf(t, !found,
+		"foreign Bucket missing from the parent's rendered output: %+v", outputByParent(res.Manifests)[ksID])
+
 	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease, manifest.KindResourceSet} {
 		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
@@ -132,7 +131,7 @@ spec:
   insecure: true
 `)
 
-	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{WipeSecrets: true})
+	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{})
 	assert.FatalIf(t, err != nil, "New: %v", err)
 	{
 		_, err := o.render(context.Background())

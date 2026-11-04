@@ -12,16 +12,22 @@ import (
 
 // ParseChildren selects output and retains authoritative sanitized child documents.
 // The returned objects and maps MUST remain immutable after publication.
-func (c *Controller) ParseChildren(
+func (e *Execution) ParseChildren(
 	parent manifest.BaseManifest,
 	docs []manifest.DocOccurrence,
 	opts manifest.ParseDocOptions,
 ) store.ChildDocuments {
-	parseChildrenResult1 := loader.ParseChildren(parent, docs, opts, c.SkipKinds)
+	parseChildrenResult1 := loader.ParseChildren(parent, docs, opts, e.SkipKinds)
 	children, visible, failures := parseChildrenResult1.Children, parseChildrenResult1.Visible, parseChildrenResult1.Failures
-	if c.Store != nil {
+	for _, doc := range docs {
+		for warningIndex := range doc.Warnings {
+			warning := doc.Warnings[warningIndex]
+			e.Reads.AddWarning(warning)
+		}
+	}
+	if e.Store != nil {
 		for i, child := range children {
-			if existing := c.Store.GetObject(
+			if existing := e.Store.GetObject(
 				child.Obj.Named(),
 			); existing != nil &&
 				manifest.Equal(existing, child.Obj) {

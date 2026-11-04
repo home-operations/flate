@@ -18,7 +18,11 @@ func parseChildrenForTest(
 	opts manifest.ParseDocOptions,
 ) childMaps {
 	parent := &manifest.RawObject{APIVersion: id.Group + "/v1", Kind: id.Kind, Name: id.Name, Namespace: id.Namespace}
-	result := (&base.Controller{}).ParseChildren(parent, testutil.DocumentOccurrences(docs), opts)
+	result := (&base.Execution{Controller: &base.Controller{}}).ParseChildren(
+		parent,
+		testutil.DocumentOccurrences(docs),
+		opts,
+	)
 	if err := manifest.DocumentFailure(result.Failures); err != nil {
 		panic(err)
 	}

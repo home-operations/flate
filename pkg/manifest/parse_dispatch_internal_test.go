@@ -265,7 +265,7 @@ func testParseDocDispatchCase(t *testing.T, testCaseInput *testParseDocDispatchC
 	before := DeepCopyMap(doc)
 	parsed2, err := ParseDoc(
 		doc,
-		ParseDocOptions{WipeSecrets: true, DefaultNamespace: testCaseInput.ns.fallback},
+		ParseDocOptions{DefaultNamespace: testCaseInput.ns.fallback},
 	)
 	obj, authoritative, changed := parsed2.Object, parsed2.Document, parsed2.Changed
 	assert.NoError(t, err)
@@ -285,7 +285,7 @@ func testParseDocDispatchCase(t *testing.T, testCaseInput *testParseDocDispatchC
 	assert.Diff(t, authoritative, before)
 	parsed3, err := ParseDoc(
 		authoritative,
-		ParseDocOptions{WipeSecrets: true, DefaultNamespace: testCaseInput.ns.fallback},
+		ParseDocOptions{DefaultNamespace: testCaseInput.ns.fallback},
 	)
 	replayed, replayDoc, replayChanged := parsed3.Object, parsed3.Document, parsed3.Changed
 	assert.NoError(t, err)

@@ -58,11 +58,11 @@ generatorOptions:
 	for name, want := range map[string]map[string]any{
 		"env": {"VALUE": "stable"}, "file": {"payload": "VALUE=stable\n"},
 	} {
-		obj, ok := values.NewStoreProvider(o.store, true).Data(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: name}).(*manifest.ConfigMap)
+		obj, ok := values.NewStoreProvider(o.store).Data(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: name}).(*manifest.ConfigMap)
 		assert.FatalIf(t, !ok, "bootstrap ConfigMap %s missing", name)
 		assert.Diff(t, obj.Data, want)
 	}
-	secret, ok := values.NewStoreProvider(o.store, true).Data(manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "secret"}).(*manifest.Secret)
+	secret, ok := values.NewStoreProvider(o.store).Data(manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "secret"}).(*manifest.Secret)
 	assert.FatalIf(t, !ok, "%v", "bootstrap Secret missing")
 	assert.Diff(t, secret.Data, map[string]any{"VALUE": base64.StdEncoding.EncodeToString([]byte("stable"))})
 	ks, ok := o.store.Get[*manifest.Kustomization](testutil.KustomizationID("apps", "owner"))

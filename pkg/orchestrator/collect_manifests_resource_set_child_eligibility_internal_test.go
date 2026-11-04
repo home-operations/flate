@@ -64,7 +64,11 @@ spec:
 			assert.NoError(t, err)
 			parser := base.New(st, nil)
 			parser.Configure(base.Options{SkipKinds: skip})
-			parsedChildren1 := parser.ParseChildren(rs, testutil.DocumentOccurrences(batch), manifest.ParseDocOptions{})
+			parsedChildren1 := (&base.Execution{Controller: parser}).ParseChildren(
+				rs,
+				testutil.DocumentOccurrences(batch),
+				manifest.ParseDocOptions{},
+			)
 			if err := manifest.DocumentFailure(parsedChildren1.Failures); err != nil {
 				panic(err)
 			}
@@ -353,7 +357,7 @@ func testCollectManifestsArtifactGeneratorsCase(
 				"metadata":   map[string]any{"name": "own-" + generator.Name},
 			},
 		}
-		parsedChildren2 := parser.ParseChildren(
+		parsedChildren2 := (&base.Execution{Controller: parser}).ParseChildren(
 			st.GetObject(generator),
 			testutil.DocumentOccurrences(docs),
 			manifest.ParseDocOptions{DefaultNamespace: generator.Namespace},
@@ -464,8 +468,11 @@ func testCollectManifestsArtifactGeneratorsCaseTail(
 	(*tailCaseInput.st).
 		AddObject(entry)
 	bare := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "bare"}}
-	parseChildrenResult1 := base.New((*tailCaseInput.st), nil).
-		ParseChildren(entry, testutil.DocumentOccurrences([]map[string]any{bare}), manifest.ParseDocOptions{})
+	parseChildrenResult1 := (&base.Execution{Controller: base.New((*tailCaseInput.st), nil)}).ParseChildren(
+		entry,
+		testutil.DocumentOccurrences([]map[string]any{bare}),
+		manifest.ParseDocOptions{},
+	)
 	children, docs, failures := parseChildrenResult1.Children, parseChildrenResult1.Visible, parseChildrenResult1.Failures
 	(*tailCaseInput.st).
 		RecordEmitted(
@@ -480,19 +487,38 @@ func testCollectManifestsArtifactGeneratorsCaseTail(
 
 type testCollectManifestsArtifactGeneratorsCaseTailInputs struct {
 	testCaseInput **struct {
-		name    string
+		name string
+
 		emitted bool
-		orphan  bool
-		rival   bool
-		skip    bool
+
+		orphan bool
+
+		rival bool
+
+		skip bool
 	}
-	st            **store.Store
-	outputs       *map[string][]map[string]any
-	shared        *manifest.NamedResource
-	byteWinner    **store.SourceArtifact
-	parent        **manifest.Kustomization
+
+	st **store.
+		Store
+
+	outputs *map[string][]map[string]any
+
+	shared *manifest.
+		NamedResource
+
+	byteWinner **store.
+			SourceArtifact
+
+	parent **manifest.
+		Kustomization
+
 	generatorDocs *[]map[string]any
-	nested        *manifest.NamedResource
-	nestedDocs    *[]map[string]any
-	index         **manifest.DiscoveryIndex
+
+	nested *manifest.
+		NamedResource
+
+	nestedDocs *[]map[string]any
+
+	index **manifest.
+		DiscoveryIndex
 }

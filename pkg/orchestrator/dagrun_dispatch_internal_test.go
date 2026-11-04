@@ -31,7 +31,7 @@ func TestDAGDispatch_ResourceSetDedup(t *testing.T) {
 	t.Parallel()
 	s := store.New()
 	tasks := task.NewBounded(2)
-	c := resourceset.New(s, tasks, nil, true)
+	c := resourceset.New(s, tasks, nil)
 	c.Configure(base.Options{})
 	c.StartLifecycle()
 
@@ -47,9 +47,14 @@ data: {key: value}
 	d := dagDispatcher{&Orchestrator{store: s, rsc: c, controllers: base.Controllers{ResourceSet: c}}}
 	first := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
 	defer first.Assessment.Close()
-	if first.Assessment.Outcome() == schedule.Blocked || !first.Assessment.Valid() || arrivals.Load() != 1 {
-		t.Fatalf("fresh assessment=%+v arrivals=%d", first.Assessment, arrivals.Load())
-	}
+	assert.FatalIf(
+		t,
+		first.Assessment.Outcome() == schedule.Blocked || !first.Assessment.Valid() || arrivals.Load() != 1,
+		"fresh assessment=%+v arrivals=%d",
+		first.Assessment,
+		arrivals.Load(),
+	)
+
 	before := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 	var reader store.ReadSet
 	reader.Init(s, testutil.KustomizationID("ns", "reader"), nil)
@@ -71,34 +76,34 @@ data: {key: value}
 	second := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
 	defer second.Assessment.Close()
 	after := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
-	if second.Assessment.Outcome() == schedule.Blocked || !second.Assessment.Valid() || !reader.Valid() ||
-		arrivals.Load() != 1 ||
-		statusEvents.Load() != 0 ||
-		artifactEvents.Load() != 0 ||
-		before.Fingerprint != after.Fingerprint ||
-		!cmp.Equal(before.Manifests, after.Manifests) {
-		t.Fatalf(
-			"dedup assessment=%+v reader valid=%t object/status/artifact events=%d/%d/%d",
-			second.Assessment,
-			reader.Valid(),
-			arrivals.Load()-1,
-			statusEvents.Load(),
-			artifactEvents.Load(),
-		)
-	}
+	assert.FatalIf(
+		t,
+		second.Assessment.Outcome() == schedule.Blocked || !second.Assessment.Valid() || !reader.Valid() ||
+			arrivals.Load() != 1 ||
+			statusEvents.Load() != 0 ||
+			artifactEvents.Load() != 0 ||
+			before.Fingerprint != after.Fingerprint ||
+			!cmp.Equal(before.Manifests, after.Manifests),
+		"dedup assessment=%+v reader valid=%t object/status/artifact events=%d/%d/%d",
+		second.Assessment,
+		reader.Valid(),
+		arrivals.Load()-1,
+		statusEvents.Load(),
+		artifactEvents.Load(),
+	)
+
 	s.UpdateStatus(rs.Named(), store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: ""})
 	skipped := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
 	defer skipped.Assessment.Close()
 	info, _ := s.GetStatus(rs.Named())
 	after = s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
-	if skipped.Assessment.Outcome() == schedule.Blocked || info.Outcome() != store.OutcomeSkipped ||
+	assert.FatalIf(t, skipped.Assessment.Outcome() == schedule.Blocked || info.Outcome() != store.OutcomeSkipped ||
 		info.Message != "" ||
 		!reader.Valid() ||
 		arrivals.Load() != 1 ||
 		before.Fingerprint != after.Fingerprint ||
-		!cmp.Equal(before.Manifests, after.Manifests) {
-		t.Fatalf("typed skip lost its outcome: status=%+v arrivals=%d", info, arrivals.Load())
-	}
+		!cmp.Equal(before.Manifests, after.Manifests),
+		"typed skip lost its outcome: status=%+v arrivals=%d", info, arrivals.Load())
 }
 
 func TestDAGDispatch_ResourceSetClassification(t *testing.T) {
@@ -134,7 +139,7 @@ func TestDAGDispatch_ConcurrentResourceSetUpdate(t *testing.T) {
 	defer cancel()
 	s := store.New()
 	tasks := task.NewBounded(2)
-	c := resourceset.New(s, tasks, nil, true)
+	c := resourceset.New(s, tasks, nil)
 	c.Configure(base.Options{})
 	c.StartLifecycle()
 
@@ -208,9 +213,9 @@ data: {key: initial}
 		err := <-done
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
-	if dispatches.Load() != 2 {
-		t.Fatalf("captured attempts=%d, want 2", dispatches.Load())
-	}
+	assert.FatalIf(t, dispatches.Load() != 2,
+		"captured attempts=%d, want 2", dispatches.Load())
+
 	before := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 	var reader store.ReadSet
 	reader.Init(s, testutil.KustomizationID("ns", "reader"), nil)
@@ -249,7 +254,7 @@ func testDAGDispatchResourceSetClassificationCase(
 
 	s := store.New()
 	tasks := task.NewBounded(2)
-	c := resourceset.New(s, tasks, nil, true)
+	c := resourceset.New(s, tasks, nil)
 	c.Configure(base.Options{})
 	c.StartLifecycle()
 	rs := &manifest.ResourceSet{
@@ -400,7 +405,7 @@ func testDAGDispatchResourceSetClassificationCaseTail(
 	tailCaseInput *testDAGDispatchResourceSetClassificationCaseTailInputs,
 ) {
 	t.Helper()
-	(*tailCaseInput.c) = resourceset.New((*tailCaseInput.s), (*tailCaseInput.tasks), nil, true)
+	(*tailCaseInput.c) = resourceset.New((*tailCaseInput.s), (*tailCaseInput.tasks), nil)
 	(*tailCaseInput.c).
 		Configure((*tailCaseInput.opts))
 	(*tailCaseInput.c).
@@ -445,9 +450,9 @@ func testDAGDispatchResourceSetClassificationCaseTail(
 		result.Assessment,
 		(*tailCaseInput.wantUnresolved),
 	)
-	if (*tailCaseInput.testCaseInput.name) == "dedup" && arrivals.Load() != 0 {
-		t.Fatalf("no-op emitted %d arrivals", arrivals.Load())
-	}
+	assert.FatalIf(t, (*tailCaseInput.testCaseInput.name) == "dedup" && arrivals.Load() != 0,
+		"no-op emitted %d arrivals", arrivals.Load())
+
 	if (*tailCaseInput.testCaseInput.name) == "fresh fingerprint identical docs" {
 		after := (*tailCaseInput.s).GetArtifact((*tailCaseInput.rs).Named(), store.ArtifactContent).(*store.Emission)
 		assert.FatalIf(
@@ -486,18 +491,16 @@ func testDAGDispatchResourceSetClassificationCaseTail(
 			Namespace: (*tailCaseInput.rs).Namespace,
 			Name:      "output",
 		}
-		if info.Outcome() != store.OutcomeSuspended || len(retained.Manifests) != 0 ||
+		assert.FatalIf(t, info.Outcome() != store.OutcomeSuspended || len(retained.Manifests) != 0 ||
 			len(retained.Children) != 0 || (*tailCaseInput.s).
 			GetObject(output) != nil ||
 			outputArrivals.Load() != 0 ||
-			outputWithdrawals.Load() != 1 {
-			t.Fatalf(
-				"suspension retained or replayed stale output: status=%+v arrivals=%d withdrawals=%d",
-				info,
-				outputArrivals.Load(),
-				outputWithdrawals.Load(),
-			)
-		}
+			outputWithdrawals.Load() != 1,
+
+			"suspension retained or replayed stale output: status=%+v arrivals=%d withdrawals=%d",
+			info,
+			outputArrivals.Load(),
+			outputWithdrawals.Load())
 	}
 }
 
@@ -549,7 +552,7 @@ func testDAGDispatchResourceSetClassificationCase2(
 			s.AddObject(child)
 		}
 	}
-	c := resourceset.New(s, tasks, nil, true)
+	c := resourceset.New(s, tasks, nil)
 	c.Configure(base.Options{})
 	c.StartLifecycle()
 	result := (dagDispatcher{&Orchestrator{store: s, rsc: c, controllers: base.Controllers{ResourceSet: c}}}).Dispatch(
@@ -588,13 +591,27 @@ func testDAGDispatchResourceSetClassificationCase2(
 }
 
 type testDAGDispatchResourceSetClassificationCaseTailInputs struct {
-	c              **resourceset.Controller
-	s              **store.Store
-	tasks          **task.Service
-	opts           *base.Options
-	d              *dagDispatcher
-	rs             **manifest.ResourceSet
-	testCaseInput  *testDAGDispatchResourceSetClassificationCaseInputs
+	c **resourceset.
+		Controller
+
+	s **store.
+		Store
+
+	tasks **task.
+		Service
+
+	opts *base.
+		Options
+
+	d *dagDispatcher
+
+	rs **manifest.
+		ResourceSet
+
+	testCaseInput *testDAGDispatchResourceSetClassificationCaseInputs
+
 	wantUnresolved *bool
-	before         **store.Emission
+
+	before **store.
+		Emission
 }

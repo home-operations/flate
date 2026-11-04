@@ -170,7 +170,7 @@ func TestFetcher_LocalHelmContinuationEligibility(t *testing.T) {
 				return tc.cert
 			})
 			hc := helmChart(r.Name, "app-template", "1.0.0")
-			artifact, err := f.Fetch(t.Context(), hc, inputs.readSet(hc), cache.Policy{})
+			artifact, err := f.Fetch(t.Context(), hc, inputs.readSet(hc), &cache.Policy{})
 			missing, ok := errors.AsType[*source.MissingSecretError](err)
 			assert.FatalIf(t, err == nil || artifact != nil || (ok && missing.RetryAmbient != nil) != tc.wantAmbient ||
 				errors.Is(err, manifest.ErrInput) != tc.wantInput ||
@@ -208,7 +208,7 @@ func TestFetcher_LocalHelmFiles(t *testing.T) {
 			r.SecretRef = &manifest.LocalObjectReference{Name: "auth"}
 			f, inputs := newHTTPFetcher(t, r)
 			hc := helmChart(r.Name, "app-template", "1.0.0")
-			_, err := f.Fetch(t.Context(), hc, inputs.readSet(hc), cache.Policy{})
+			_, err := f.Fetch(t.Context(), hc, inputs.readSet(hc), &cache.Policy{})
 			missing, ok := errors.AsType[*source.MissingSecretError](err)
 			assert.FatalIf(t, !ok || missing.RetryAmbient == nil, "missing continuation: %v", err)
 			artifact, err := missing.RetryAmbient(t.Context())
@@ -348,7 +348,7 @@ func testFetcherLocalHelmContinuationCase1(
 	root := t.TempDir()
 	f := New(nil, Config{Cache: cachetest.New(t, root, cache.New), Network: newTestNetwork(t)})
 	before := inputs.requests.Load()
-	artifact, err := f.Fetch(t.Context(), hc, &reads, cache.Policy{})
+	artifact, err := f.Fetch(t.Context(), hc, &reads, &cache.Policy{})
 	if *inputs.rejected {
 		response, ok := errors.AsType[*fetcherr.ResponseError](err)
 		assert.FatalIf(t, artifact != nil || !ok || response.StatusCode != http.StatusUnauthorized ||
@@ -458,10 +458,10 @@ func testFetcherLocalHelmAuthenticatedRequestsCase(
 			r,
 		)
 		assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), true)
-		_, err = f.fetchIndex(t.Context(), prepared, cache.Policy{Retry: cache.RetryConfig{}})
+		_, err = f.fetchIndex(t.Context(), prepared, &cache.Policy{Retry: cache.RetryConfig{}})
 		assert.NoError(t, err)
 	}
-	_, err := f.Fetch(t.Context(), hc, inputs.readSet(hc), cache.Policy{})
+	_, err := f.Fetch(t.Context(), hc, inputs.readSet(hc), &cache.Policy{})
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	assert.FatalIf(t, !ok || missing.RetryAmbient == nil, "missing continuation: %v", err)
 	artifact, err := missing.RetryAmbient(t.Context())
@@ -511,7 +511,7 @@ func testFetcherLocalHelmAcquisitionFailuresCase(
 	f := New(nil, Config{Cache: c, Network: newTestNetwork(t)})
 	inputs := testInputs{repos: func(string, string) *manifest.HelmRepository { return r }}
 	hc := helmChart(r.Name, "app-template", "1.0.0")
-	policy := cache.Policy{
+	policy := &cache.Policy{
 		Retry: cache.RetryConfig{Attempts: 2, MinWait: time.Nanosecond, MaxWait: time.Nanosecond},
 	}
 	_, err := f.Fetch(ctx, hc, inputs.readSet(hc), policy)

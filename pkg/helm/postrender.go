@@ -15,6 +15,7 @@ import (
 
 	kustomizestate "github.com/home-operations/flate/internal/kustomize"
 	flatekustomize "github.com/home-operations/flate/pkg/kustomize"
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 // kustomizePostRenderer pipes helm's rendered output through one or
@@ -23,6 +24,7 @@ import (
 // the output of one feeds the next.
 type kustomizePostRenderer struct {
 	renderers []helmv2.PostRenderer
+	work      *manifest.WorkRecord
 }
 
 // newPostRenderer returns nil when rs has no usable entries — callers
@@ -44,7 +46,7 @@ func (k *kustomizePostRenderer) Run(in *bytes.Buffer) (*bytes.Buffer, error) {
 		if r.Kustomize == nil {
 			continue
 		}
-		out, err := runKustomizePostRender(current, r.Kustomize)
+		out, err := runKustomizePostRender(current, r.Kustomize, k.work)
 		if err != nil {
 			return nil, err
 		}
@@ -53,7 +55,7 @@ func (k *kustomizePostRenderer) Run(in *bytes.Buffer) (*bytes.Buffer, error) {
 	return current, nil
 }
 
-func runKustomizePostRender(in *bytes.Buffer, k *helmv2.Kustomize) (*bytes.Buffer, error) {
+func runKustomizePostRender(in *bytes.Buffer, k *helmv2.Kustomize, work *manifest.WorkRecord) (*bytes.Buffer, error) {
 	fs := filesys.MakeFsInMemory()
 	const inputFile = "helm-output.yaml"
 	if err := fs.WriteFile(inputFile, in.Bytes()); err != nil {
@@ -91,11 +93,13 @@ func runKustomizePostRender(in *bytes.Buffer, k *helmv2.Kustomize) (*bytes.Buffe
 	// not goroutine-safe. Hold the shared build mutex so this HR
 	// post-render never runs concurrently with a Kustomization's
 	// build (or another HR's post-render) — see kustomizestate.BuildMutex.
+	work.Add(&manifest.WorkCounts{Attempts: 1})
 	rm, err := func() (resmap.ResMap, error) {
 		kustomizestate.BuildMutex.Lock()
 		defer kustomizestate.BuildMutex.Unlock()
 		return krusty.MakeKustomizer(opts).Run(fs, ".")
 	}()
+	work.Finish(err)
 	if err != nil {
 		return nil, fmt.Errorf("postRenderer: kustomize build: %w", err)
 	}

@@ -27,7 +27,7 @@ func testRegisterBuiltStandaloneRootsInactivePackageBatch(t *testing.T) {
 	testutil.WriteFile(t, root, "target/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: raw}\n")
 	l := New(store.New())
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	obj := &manifest.ConfigMap{Name: "injected", Namespace: "apps"}
 	l.RegisterBuilt(
@@ -78,7 +78,7 @@ func testRegisterBuiltStandaloneRootsCase(t *testing.T, testCaseInput *struct {
 		entry = root
 	}
 	{
-		_, err := l.Load(t.Context(), entry)
+		_, err := l.Load(t.Context(), entry, nil)
 		assert.NoError(t, err)
 	}
 	var want []string

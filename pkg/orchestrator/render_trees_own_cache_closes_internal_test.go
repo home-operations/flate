@@ -31,6 +31,7 @@ func TestRenderTrees_OwnCacheCloses(t *testing.T) {
 			baseDir, headDir, root := t.TempDir(), t.TempDir(), t.TempDir()
 			writeCluster(t, baseDir, "v1", "same")
 			writeCluster(t, headDir, "v2", "same")
+
 			{
 				_, err := RenderTrees(
 					t.Context(),
@@ -42,7 +43,9 @@ func TestRenderTrees_OwnCacheCloses(t *testing.T) {
 				)
 				assert.FatalIf(t, err != nil, "%v", err)
 			}
+
 			res, err := sourcecache.Sweep(t.Context(), root, sourcecache.SweepOpts{})
+
 			assert.FatalIf(
 				t,
 				err != nil || len(res.Errors) != 0,
@@ -50,6 +53,7 @@ func TestRenderTrees_OwnCacheCloses(t *testing.T) {
 				res,
 				err,
 			)
+
 			{
 				_, localErr := RenderTrees(
 					t.Context(),
@@ -64,7 +68,9 @@ func TestRenderTrees_OwnCacheCloses(t *testing.T) {
 					manifest.ErrInput,
 				), "missing input error = %v", localErr)
 			}
+
 			res, err = sourcecache.Sweep(t.Context(), root, sourcecache.SweepOpts{})
+
 			assert.FatalIf(
 				t,
 				err != nil || len(res.Errors) != 0,
@@ -159,7 +165,7 @@ func testRenderTreesSameDirectoryKeepsFullRenderCase(
 	writeCluster(t, root, "same", "same")
 	alias := filepath.Join(t.TempDir(), "linked")
 	assert.NoError(t, os.Symlink(root, alias))
-	cfg := treeConfig{CacheDir: t.TempDir(), Concurrency: (*testCaseInput.workers), Tree: Tree{}}
+	cfg := treeConfig{RecordWork: true, CacheDir: t.TempDir(), Concurrency: (*testCaseInput.workers), Tree: Tree{}}
 	if testCaseInput.tc.base || testCaseInput.tc.head {
 		resolved, err := baseline.ResolvePaths(t.Context(), alias, root)
 		assert.NoError(t, err)
@@ -201,6 +207,7 @@ func testRenderTreesSameDirectoryKeepsFullRenderCase(
 	full := testCaseInput.tc.base == testCaseInput.tc.head && (*testCaseInput.external) == "automatic"
 	for side, rendered := range []Rendered{base, head} {
 		assert.FatalIf(t, rendered.Result == nil, "side %d has no result", side)
+
 		assert.NoError(t, rendered.Err)
 		assert.Equal(t, len(rendered.Result.Failed), 0)
 		names := configMapNames(rendered.Result)
@@ -211,6 +218,7 @@ func testRenderTreesSameDirectoryKeepsFullRenderCase(
 			assert.Equal(t, len(warnings), 0)
 			continue
 		}
+
 		assert.FatalIf(
 			t,
 			len(warnings) != 1 || warnings[0].Category != manifest.WarnPathConfig,
@@ -218,6 +226,7 @@ func testRenderTreesSameDirectoryKeepsFullRenderCase(
 			side,
 			warnings,
 		)
+
 		message := "no changes detected"
 		if full {
 			message = "resolve to the same root"
@@ -271,7 +280,7 @@ func testRenderTreesHeadOnlyCase(t *testing.T, testCaseInput *bool,
 		}
 	}
 	baseInput.FS, headInput.FS = before, after
-	cfg := Config{Concurrency: 2, HeadOnly: true}
+	cfg := Config{RecordWork: true, Concurrency: 2, HeadOnly: true}
 	baseTree := Tree{
 		ID:       manifest.TreeID{Cluster: ".", Side: manifest.TreeBase},
 		Input:    baseInput,
@@ -285,11 +294,15 @@ func testRenderTreesHeadOnlyCase(t *testing.T, testCaseInput *bool,
 		Path:     filepath.Join(headInput.LocalPath, "flux"),
 	}
 	runs, err := RenderTrees(t.Context(), []Tree{baseTree, headTree}, cfg)
+
 	assert.FatalIf(t, len(runs) != 2, "missing results: %v", err)
+
 	base, head := runs[0], runs[1]
-	assert.FatalIf(t, base != (Rendered{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}}) ||
-		head.Orchestrator == nil ||
+	assertHeadOnlyWork(t, base)
+
+	assert.FatalIf(t, head.Orchestrator == nil ||
 		head.Result == nil, "head-only completion = base=%+v head=%+v err=%v", base, head, err)
+
 	if *testCaseInput {
 		assert.FatalIf(
 			t,
@@ -304,6 +317,7 @@ func testRenderTreesHeadOnlyCase(t *testing.T, testCaseInput *bool,
 		assert.Diff(t, configMapNames(head.Result), map[string]bool{"surviving": true})
 		cfg.HeadOnly = false
 		_, err = RenderTrees(t.Context(), []Tree{baseTree, headTree}, cfg)
+
 		assert.FatalIf(
 			t,
 			err == nil || !strings.Contains(err.Error(), "baseline reconciliation ran"),
@@ -344,13 +358,14 @@ func testRenderTreesSameDirectoryKeepsFullRenderScanPathsCase(
 		)
 	}
 	cfg := treeConfig{
+		RecordWork:  true,
 		CacheDir:    t.TempDir(),
 		Concurrency: 2,
 		HeadOnly:    (*testCaseInput.mode) == "head_only",
 		Tree:        Tree{},
 	}
 	if (*testCaseInput.mode) != "directories" {
-		input, _, err := baseline.AdmitDirectory(t.Context(), root, root)
+		input, _, err := baseline.AdmitDirectory(t.Context(), root, root, manifest.WorkScope{})
 		assert.NoError(t, err)
 		cfg.BaseInput, cfg.Input = input, input
 	}
@@ -380,14 +395,12 @@ func testRenderTreesSameDirectoryKeepsFullRenderScanPathsCase(
 	assert.NoError(t, err)
 	for side, rendered := range []Rendered{base, head} {
 		if cfg.HeadOnly && side == 0 {
-			assert.Equal(
-				t,
-				rendered == (Rendered{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}}),
-				true,
-			)
+			assertHeadOnlyWork(t, rendered)
 			continue
 		}
+
 		assert.FatalIf(t, rendered.Result == nil, "side %d has no result", side)
+
 		assert.NoError(t, rendered.Err)
 		name, other := "a", "b"
 		if side == 1 {
@@ -395,6 +408,7 @@ func testRenderTreesSameDirectoryKeepsFullRenderScanPathsCase(
 		}
 		assert.Diff(t, configMapNames(rendered.Result), map[string]bool{"cfg-" + name: true})
 		foreign := testutil.KustomizationID("flux-system", "app-"+other)
+
 		assert.FatalIf(
 			t,
 			rendered.Store().GetObject(foreign) != nil,

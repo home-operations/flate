@@ -206,14 +206,14 @@ func testTemplateCacheTemplateIntegrationCase(
 			_, _, _, splitDocsErr = owner.Blob(
 				t.Context(),
 				key,
-				cache.Policy{},
+				&cache.Policy{},
 				func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 					return cache.ProducerResult{}, writeTestRecord(w, key, &record)
 				},
 			)
 			assert.NoError(t, splitDocsErr)
 		}
-		r, _, _, err := owner.Blob(t.Context(), key, cache.Policy{MaxAge: cache.Forever}, nil)
+		r, _, _, err := owner.Blob(t.Context(), key, &cache.Policy{MaxAge: cache.Forever}, nil)
 		assert.NoError(t, err)
 		var record renderRecord
 		assert.NoError(t, readTestRecord(r, &record))
@@ -228,7 +228,7 @@ func testTemplateCacheTemplateIntegrationCase(
 		_, _, _, err = owner.Blob(
 			t.Context(),
 			key,
-			cache.Policy{},
+			&cache.Policy{},
 			func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 				return cache.ProducerResult{}, writeTestRecord(w, key, &record)
 			},
@@ -420,7 +420,7 @@ func testTemplateCacheTemplateIntegrationEmptyStream(t *testing.T) {
 				Content: computeTemplateKey(&loaded, map[string]any{}, Options{}, newHR()),
 				Render:  cache.RenderAccepted,
 			}
-			r, _, _, err := cli.cache.Blob(t.Context(), key, cache.Policy{MaxAge: cache.Forever}, nil)
+			r, _, _, err := cli.cache.Blob(t.Context(), key, &cache.Policy{MaxAge: cache.Forever}, nil)
 			assert.NoError(t, err)
 			var record renderRecord
 			assert.NoError(t, readTestRecord(r, &record))
@@ -584,7 +584,7 @@ extra: {sequence: [{value: original}]}
 	_, _, _, err = owner.Blob(
 		t.Context(),
 		key,
-		cache.Policy{MaxAge: 0},
+		&cache.Policy{MaxAge: 0},
 		func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 			writeTestRecordErr := writeTestRecord(
 				w,

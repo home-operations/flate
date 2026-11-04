@@ -34,7 +34,7 @@ func (s *Store) RecordEmitted(
 		candidate := *next
 		candidate.origin = id
 		candidate.family = s.index.Load()
-		bindCandidatePayloads(&candidate, next, prev, payloads)
+		s.bindCandidatePayloads(&candidate, next, prev, payloads)
 		selectCandidateOutputReads(&candidate, next, prev, payloads)
 		unchanged := candidateAdmissionsUnchanged(&candidate, next, prev)
 		if prev != nil {
@@ -225,12 +225,15 @@ const (
 	publicationAccepted
 )
 
-func bindCandidatePayloads(candidate, next, prev *Emission, payloads map[manifest.NamedResource]*SourceArtifact) {
+func (s *Store) bindCandidatePayloads(
+	candidate, next, prev *Emission,
+	payloads map[manifest.NamedResource]*SourceArtifact,
+) {
 	for i, child := range candidate.Children {
 		if child.Obj == nil {
 			continue
 		}
-		payload, output := candidateChildPayload(next, prev, new(child), payloads)
+		payload, output := s.candidateChildPayload(next, prev, new(child), payloads)
 		if payload != child.payload || output != child.output {
 			if &candidate.Children[0] == &next.Children[0] {
 				candidate.Children = slices.Clone(candidate.Children)
@@ -303,13 +306,14 @@ func generatedAdmissionsRetained(candidate, prev *Emission) bool {
 	return unchanged
 }
 
-func candidateChildPayload(
+func (s *Store) candidateChildPayload(
 	next, prev *Emission,
 	childValue *Child,
 	payloads map[manifest.NamedResource]*SourceArtifact,
 ) (*SourceArtifact, *ReadSet) {
 	child := *childValue
-	payload, supplied := payloads[child.Obj.Named()]
+	childID := child.Obj.Named()
+	payload, supplied := payloads[childID]
 	output := child.output
 	if supplied {
 		output = next.Reads
@@ -317,12 +321,19 @@ func candidateChildPayload(
 		payload = child.payload
 	}
 	if payload == nil && !supplied && next.Reads != nil && prev != nil {
-		for _, old := range prev.Children {
-			if old.Obj.Named() == child.Obj.Named() && old.payload != nil && old.output == next.Reads {
+		sh := s.shardFor(childID)
+		sh.mu.RLock()
+		for _, member := range sh.members[childID] {
+			if member.declaration || member.slot.id != prev.origin || member.slot.current.Load() != prev {
+				continue
+			}
+			old := prev.entries[member.position].child
+			if old.payload != nil && old.output == next.Reads {
 				payload, output = old.payload, old.output
 				break
 			}
 		}
+		sh.mu.RUnlock()
 	}
 	if payload != nil && next.Complete && next.Reads != nil {
 		output = next.Reads

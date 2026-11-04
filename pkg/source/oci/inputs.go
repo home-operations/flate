@@ -19,8 +19,10 @@ func (f *Fetcher) FetchInputs(
 	ctx context.Context,
 	provider *manifest.ResourceSetInputProvider,
 	reads *store.ReadSet,
-	policy cache.Policy,
+	policyValue *cache.Policy,
 ) (*store.SourceArtifact, error) {
+	policy := *policyValue
+
 	plan, err := provider.InputPlan()
 	if err != nil {
 		return nil, err
@@ -29,7 +31,9 @@ func (f *Fetcher) FetchInputs(
 		return nil, manifest.NewError(manifest.ErrInput, nil, "provider does not supply registry inputs")
 	}
 	op := operation{Fetcher: f, reads: reads, secrets: source.SecretLookup(reads), allowAnonymousDenied: true}
-	op.produce = func(ctx context.Context, request registryAcquisition, policy cache.Policy) (*store.SourceArtifact, error) {
+	op.produce = func(ctx context.Context, request registryAcquisition, policyValue *cache.Policy) (*store.SourceArtifact, error) {
+		inputPolicy := *policyValue
+
 		content := struct {
 			Provider       manifest.NamedResource
 			Spec           fluxopv1.ResourceSetInputProviderSpec
@@ -39,7 +43,7 @@ func (f *Fetcher) FetchInputs(
 		input, _, key, err := f.Cache.Blob(
 			ctx,
 			cache.BlobKey{Content: content},
-			policy,
+			&inputPolicy,
 			func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 				return produceRegistryInputs(ctx, &request, provider, w)
 			},
@@ -56,7 +60,7 @@ func (f *Fetcher) FetchInputs(
 			Key:     key,
 		}, nil
 	}
-	return op.acquire(ctx, new(*plan.Registry), policy)
+	return op.acquire(ctx, new(*plan.Registry), &policy)
 }
 
 func produceRegistryInputs(
@@ -69,6 +73,7 @@ func produceRegistryInputs(
 	if err != nil {
 		return cache.ProducerResult{}, fmt.Errorf("list tags: %w", orasError(err))
 	}
+	w.Work().Physical().Add(&manifest.WorkCounts{RemoteTransfers: 1})
 	selected, err := provider.SelectTags(tags)
 	if err != nil {
 		return cache.ProducerResult{}, err

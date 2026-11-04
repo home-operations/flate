@@ -21,7 +21,6 @@ import (
 
 func TestRenderTrees_SharedHelmContext(t *testing.T) {
 	t.Parallel()
-
 	root := t.TempDir()
 	const selfURL = "https://fixture.invalid/cluster.git"
 	testutil.WriteFile(
@@ -63,7 +62,13 @@ spec:
 `, []string{"first", "second"}[i]))
 	}
 	owner := cachetest.New(t, "", sourcecache.New)
-	cfg := Config{Cache: owner, Network: new(source.Network), HelmClient: helm.NewClient(owner), Concurrency: 2}
+	cfg := Config{
+		RecordWork:  true,
+		Cache:       owner,
+		Network:     new(source.Network),
+		HelmClient:  helm.NewClient(owner),
+		Concurrency: 2,
+	}
 	t.Cleanup(cfg.Network.Close)
 	runs, err := RenderTrees(
 		t.Context(),
@@ -96,6 +101,29 @@ spec:
 		assert.Equal(t, run.cache == cfg.Cache, true)
 		assert.Equal(t, run.cfg.Network == cfg.Network, true)
 		assert.Equal(t, run.hrc.Helm == cfg.HelmClient, true)
+		assert.Equal(
+			t,
+			workCounts(run.Result.Work, id, manifest.WorkHelm),
+			manifest.WorkCounts{Attempts: 1, Completed: 1},
+		)
+		assert.Equal(
+
+			t,
+
+			workCounts(
+
+				run.Result.Work,
+
+				manifest.NamedResource{},
+
+				manifest.WorkKustomize,
+			),
+
+			manifest.WorkCounts{
+				Attempts:  1,
+				Completed: 1,
+			},
+		)
 		explicit, err := RenderTrees(
 			t.Context(),
 			[]Tree{
@@ -114,9 +142,24 @@ spec:
 			delta := cmp.Diff(
 				run.Result,
 				explicit[0].Result,
-				cmpopts.IgnoreUnexported(manifest.Kustomization{}, manifest.HelmRelease{}),
+				cmpopts.IgnoreUnexported(
+					manifest.Kustomization{},
+					manifest.HelmRelease{},
+				),
+				cmpopts.IgnoreFields(
+					Result{},
+					"Work",
+				),
 			)
 			assert.FatalIf(t, delta != "", "%v", delta)
+		}
+		for recordIndex := range run.Result.Work {
+			record := &run.Result.Work[recordIndex]
+			assert.Equal(t, record.Key.Tree, run.ID)
+		}
+		for recordIndex := range explicit[0].Result.Work {
+			record := &explicit[0].Result.Work[recordIndex]
+			assert.Equal(t, record.Key.Tree, explicit[0].ID)
 		}
 		for _, obj := range explicit[0].Store().ListObjects("", "") {
 			got, gotOK := run.Store().GetStatus(obj.Named())
@@ -136,9 +179,13 @@ spec:
 			slices.Clone(run.Result.Warnings),
 			func(w manifest.Warning) bool { return w.Category != manifest.WarnStaleValues },
 		)
-		if len(stale) != 1 || stale[0].Resource != id || stale[0].Count != 1 {
-			t.Fatalf("cluster %s lost warning ownership: %+v", entry, run.Result.Warnings)
-		}
+		assert.FatalIf(
+			t,
+			len(stale) != 1 || stale[0].Resource != id || stale[0].Count != 1,
+			"cluster %s lost warning ownership: %+v",
+			entry,
+			run.Result.Warnings,
+		)
 		warnings = append(warnings, stale)
 	}
 	assert.Diff(t, warnings[0], warnings[1])
@@ -160,7 +207,6 @@ spec:
 
 func TestRenderTrees_ClusterSecretAndDependencyIsolation(t *testing.T) {
 	t.Parallel()
-
 	root := t.TempDir()
 	for _, entry := range []string{"alpha", "omega"} {
 		testutil.WriteFile(t, root, entry+"/kustomization.yaml", "resources: [objects.yaml]\n")
@@ -203,17 +249,32 @@ func TestRenderTrees_ClusterSecretAndDependencyIsolation(t *testing.T) {
 		t.Context(),
 		[]Tree{
 			{
-				ID:       manifest.TreeID{Cluster: "alpha", Side: manifest.TreeHead},
+				ID: manifest.TreeID{
+					Cluster: "alpha",
+					Side:    manifest.TreeHead,
+				},
 				RepoRoot: root,
-				Path:     filepath.Join(root, "alpha"),
+				Path: filepath.Join(
+					root,
+					"alpha",
+				),
 			},
 			{
-				ID:       manifest.TreeID{Cluster: "omega", Side: manifest.TreeHead},
+				ID: manifest.TreeID{
+					Cluster: "omega",
+					Side:    manifest.TreeHead,
+				},
 				RepoRoot: root,
-				Path:     filepath.Join(root, "omega"),
+				Path: filepath.Join(
+					root,
+					"omega",
+				),
 			},
 		},
-		Config{Concurrency: 2},
+		Config{
+			RecordWork:  true,
+			Concurrency: 2,
+		},
 	)
 	assert.FatalIf(
 		t,
@@ -235,23 +296,24 @@ func TestRenderTrees_ClusterSecretAndDependencyIsolation(t *testing.T) {
 		"apps",
 		"wait-ready",
 	)
-	if runs[0].Store().GetObject(secret) != nil || runs[0].Store().GetObject(ready) != nil ||
-		!slices.Contains(runs[0].Result.Blocked[waitReady], ready) {
-		t.Fatalf(
-			"another cluster satisfied missing inputs: failed=%v blocked=%v",
-			runs[0].Result.Failed,
-			runs[0].Result.Blocked,
-		)
-	}
+	assert.FatalIf(t, runs[0].Store().GetObject(secret) != nil || runs[0].Store().GetObject(ready) != nil ||
+		!slices.Contains(
+			runs[0].Result.Blocked[waitReady],
+			ready,
+		), "another cluster satisfied missing inputs: failed=%v blocked=%v", runs[0].Result.Failed, runs[0].Result.Blocked)
 	assert.FatalIf(
 		t,
 		len(outputByParent(runs[0].Result.Manifests)[waitReady]) != 0,
 		"missing dependency emitted %s",
 		waitReady,
 	)
-	if docs := outputByParent(runs[0].Result.Manifests)[readSecret]; len(docs) != 0 ||
-		!slices.Contains(runs[0].Result.Blocked[readSecret], secret) {
-		t.Fatalf("another cluster satisfied the required Secret: docs=%v blocked=%v", docs, runs[0].Result.Blocked)
+	{
+		docs := outputByParent(runs[0].Result.Manifests)[readSecret]
+		assert.FatalIf(t, len(docs) != 0 ||
+			!slices.Contains(
+				runs[0].Result.Blocked[readSecret],
+				secret,
+			), "another cluster satisfied the required Secret: docs=%v blocked=%v", docs, runs[0].Result.Blocked)
 	}
 	for _, w := range runs[1].Result.Warnings {
 		assert.FatalIf(
@@ -271,5 +333,21 @@ func TestRenderTrees_ClusterSecretAndDependencyIsolation(t *testing.T) {
 		t,
 		outputByParent(runs[1].Result.Manifests)[readSecret][0]["data"].(map[string]any)["value"],
 		any("omega-only"),
+	)
+	var shared manifest.WorkCounts
+	for _, run := range runs {
+		for recordIndex := range run.Result.Work {
+			record := &run.Result.Work[recordIndex]
+			assert.Equal(t, record.Key.Tree, run.ID)
+		}
+		shared.Add(new(workCounts(run.Result.Work, testutil.KustomizationID("apps", "shared"), manifest.WorkKustomize)))
+	}
+	assert.Equal(t, shared, manifest.WorkCounts{Attempts: 1, Completed: 1})
+	assert.Equal(t, workCounts(runs[0].Result.Work, readSecret, manifest.WorkKustomize), manifest.WorkCounts{})
+	assert.Equal(t, workCounts(runs[0].Result.Work, waitReady, manifest.WorkKustomize), manifest.WorkCounts{})
+	assert.Equal(
+		t,
+		workCounts(runs[1].Result.Work, readSecret, manifest.WorkSubstitution),
+		manifest.WorkCounts{Attempts: 1, Completed: 1},
 	)
 }

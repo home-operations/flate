@@ -24,7 +24,7 @@ func (emptySourceFetcher) Fetch(
 	context.Context,
 	manifest.BaseManifest,
 	*store.ReadSet,
-	sourcecache.Policy,
+	*sourcecache.Policy,
 ) (*store.SourceArtifact, error) {
 	return nil, nil //nolint:nilnil // A nil result denotes successful absence.
 }

@@ -27,6 +27,7 @@ type AcceptedInventory[T io.WriterTo] struct {
 	Key, Lookup, Acceptance string
 	History                 RenderHistory
 	Content                 T
+	Work                    *manifest.AcquisitionWork
 }
 
 // RecordInventory atomically replaces accepted content and its searchable provenance.
@@ -35,7 +36,7 @@ func RecordInventory[T io.WriterTo](ctx context.Context, c *Cache, inventory Acc
 	if err != nil || !enabled {
 		return err
 	}
-	metadata, lookupErr := c.RenderMetadata(ctx, inventory.Key, inventory.Lookup)
+	metadata, lookupErr := c.RenderMetadata(ctx, inventory.Key, inventory.Lookup, inventory.Work)
 
 	if lookupErr != nil && !errors.Is(lookupErr, errdef.ErrNotFound) {
 		return lookupErr
@@ -64,7 +65,7 @@ func RecordInventory[T io.WriterTo](ctx context.Context, c *Cache, inventory Acc
 	_, _, err = c.acquire(
 		ctx,
 		new(acquireKey{producer: producer, id: inventory.Lookup, render: true}),
-		Policy{MaxAge: Forever, Retry: RetryConfig{Attempts: 1}},
+		&Policy{MaxAge: Forever, Retry: RetryConfig{Attempts: 1}, Work: inventory.Work},
 		acquisitionCallbacks{
 			validate: func(_ context.Context, e *entry) (bool, error) {
 				if e.descriptor.Annotations[acceptedRenderAnnotation] != inventory.Acceptance ||

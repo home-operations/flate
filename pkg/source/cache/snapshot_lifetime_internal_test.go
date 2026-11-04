@@ -32,7 +32,7 @@ func TestNew_SnapshotStartsAtOCIUse(t *testing.T) {
 	assert.NoError(t, err)
 	key := ArchiveKey{Content: "snapshot publication", Policy: "fixed"}
 	fill := producer(orderedArchive(t, "file", "content"), &ocispec.Descriptor{})
-	_, _, _, err = c.Acquire(t.Context(), key, Policy{MaxAge: Forever}, fill)
+	_, _, _, err = c.Acquire(t.Context(), key, &Policy{MaxAge: Forever}, fill)
 	assert.NoError(t, err)
 	snapshot := c.snapshot.Load()
 	assert.NoError(t, c.Close())
@@ -41,7 +41,7 @@ func TestNew_SnapshotStartsAtOCIUse(t *testing.T) {
 	assert.NoError(t, err)
 	assert.FatalIf(t, c.snapshot.Load() != snapshot, "%s", "unchanged index did not reuse the published snapshot")
 
-	_, _, _, err = c.Acquire(t.Context(), key, Policy{MaxAge: Forever}, nil)
+	_, _, _, err = c.Acquire(t.Context(), key, &Policy{MaxAge: Forever}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, c.Close())
 	assert.FatalIf(t, &snapshot.index[0] != &index[0], "%s", "read-only run captured the snapshot files again")

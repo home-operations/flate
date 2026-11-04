@@ -82,7 +82,12 @@ func TestRenderTrees_ParentIntervalExternalChart(t *testing.T) {
 			ID:       manifest.TreeID{Cluster: ".", Side: manifest.TreeSide(side)},
 		}
 	}
-	changes, err := change.Detect(t.Context(), testDirectoryInput(t, roots[0]), testDirectoryInput(t, roots[1]))
+	changes, err := change.Detect(
+		t.Context(),
+		testDirectoryInput(t, roots[0]),
+		testDirectoryInput(t, roots[1]),
+		manifest.WorkScope{},
+	)
 	assert.NoError(t, err)
 	assert.Diff(t, changes.Paths(), []string{"charts/demo/templates/cm.yaml", "flux/parent.yaml"})
 	child := testutil.HelmReleaseID("apps", "child")

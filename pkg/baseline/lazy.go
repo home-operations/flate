@@ -235,7 +235,7 @@ func (s selection) acquireBodies(
 	generation, _, err := s.owner.Git(
 		ctx,
 		sourcecache.GitKey{Content: content, Ref: s.base.Hash.String()},
-		sourcecache.Policy{MaxAge: sourcecache.Forever},
+		&sourcecache.Policy{MaxAge: sourcecache.Forever},
 		func(ctx context.Context, upper storage.Storer, _ billy.Filesystem) (plumbing.Hash, error) {
 			if err := copyMetadata(ctx, s.base.Repo.Storer, upper, s.base.Hash); err != nil {
 				return plumbing.ZeroHash, err

@@ -362,7 +362,7 @@ func testAcquireMachineLifecycleCase(t *testing.T, cause **fs.PathError,
 	if (*phase) == "expired preparation" {
 		timeout = -1
 	}
-	policy := cache.Policy{Timeout: &timeout, MaxAge: time.Hour, Retry: cache.RetryConfig{Attempts: 3}}
+	policy := &cache.Policy{Timeout: &timeout, MaxAge: time.Hour, Retry: cache.RetryConfig{Attempts: 3}}
 	if (*phase) == "unbounded" {
 		policy.Timeout = nil
 	}
@@ -381,7 +381,7 @@ func testAcquireMachineLifecycleCase(t *testing.T, cause **fs.PathError,
 			return (*cause)
 		}
 		return nil
-	}, func(got context.Context, p cache.Policy) (*store.SourceArtifact, error) {
+	}, func(got context.Context, p *cache.Policy) (*store.SourceArtifact, error) {
 		acquired++
 		assert.FatalIf(t, got != ctx || got.Err() != nil || preparation.Err() == nil || !p.Machine ||
 			p.Timeout != policy.Timeout ||

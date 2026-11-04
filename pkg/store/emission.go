@@ -191,6 +191,7 @@ type footprint struct {
 	record      manifest.DiscoveryRecord
 	independent bool
 }
+
 type sourceBinding struct {
 	source   manifest.NamedResource
 	artifact *SourceArtifact
@@ -237,6 +238,7 @@ type producerSlot struct {
 	visible atomic.Bool
 	hidden  atomic.Bool
 }
+
 type membership struct {
 	slot        *producerSlot
 	position    int
@@ -287,7 +289,7 @@ func footprintReferenceRoots(record *manifest.DiscoveryRecord, entry *admission)
 	for ref := range manifest.References(entry.child.Obj, manifest.ReferenceRelations) {
 		if ref.Name != "" {
 			record.Refs = append(record.Refs, ref.NamedResource)
-			if ref.Use == "source" {
+			if ref.Use == sourceReferenceUse {
 				source = ref.NamedResource
 			}
 		}

@@ -56,6 +56,7 @@ func Render(
 	rs *manifest.ResourceSet,
 	providers []ProviderInputs,
 	admit func(any) (bool, error),
+	work *manifest.WorkRecord,
 ) ([]manifest.DocOccurrence, []manifest.Warning, error) {
 	if rs == nil {
 		return nil, nil, nil
@@ -86,15 +87,19 @@ func Render(
 			return nil, warnings, err
 		}
 	}
+	work.Add(&manifest.WorkCounts{Attempts: 1})
 	inputs, err := buildInputSets(rs, providers)
 	if err != nil {
+		work.Finish(err)
 		return nil, warnings, err
 	}
 	if len(rs.InputsFrom) > 0 && len(inputs) == 0 {
+		work.Finish(nil)
 		return nil, warnings, nil
 	}
 
 	docs, err := renderSteps(rs, inputs)
+	work.Finish(err)
 	return docs, warnings, err
 }
 

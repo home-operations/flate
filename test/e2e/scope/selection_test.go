@@ -31,6 +31,7 @@ func TestE2E_GetKS_YAMLExposesProjectedFields(t *testing.T) {
 
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_MissingLocalInputDiagnostics(t *testing.T) {
+	t.Run("auxiliary_input_scope", testAuxiliaryInputScope)
 	for _, tc := range []struct {
 		name, manifest, diagnostic string
 	}{
@@ -656,5 +657,49 @@ func TestE2E_SecretMaterialPolicy(t *testing.T) {
 					"exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 			})
 		}
+	}
+}
+
+func testAuxiliaryInputScope(t *testing.T) {
+	t.Helper()
+	for _, tc := range []auxiliaryInputCase{
+		{name: "supplied", kind: "ConfigMap", unrelatedKind: "Secret", value: "supplied", supply: true},
+		{name: "allow ConfigMap", kind: "ConfigMap", unrelatedKind: "Secret", value: "fallback"},
+		{name: "allow Secret", kind: "Secret", unrelatedKind: "ConfigMap", value: "fallback"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			flags := auxiliaryInputFlags(t, tc)
+			for _, scope := range []struct {
+				name string
+				args []string
+			}{
+				{name: "named", args: []string{"hr", "selected"}},
+				{name: "namespace", args: []string{"all", "-n", "apps"}},
+			} {
+				t.Run(scope.name, func(t *testing.T) {
+					for _, verb := range []string{"build", "test"} {
+						t.Run(verb, func(t *testing.T) {
+							args := append([]string{verb}, scope.args...)
+							args = append(args, flags...)
+							if verb == "build" {
+								args = append(args, "--only-kinds", "ConfigMap")
+							}
+							runAuxiliaryInputScope(t, tc, args)
+						})
+					}
+				})
+			}
+			runCLIBuffersResult := harness.RunCLIBuffers(append([]string{"build", "all"}, flags...)...)
+			out, diagnostic, code := runCLIBuffersResult.Stdout, runCLIBuffersResult.Stderr, runCLIBuffersResult.Code
+			if code != 1 || !strings.Contains(diagnostic, "other/external") ||
+				strings.Contains(out, "unrelated-rendered") {
+				t.Fatalf(
+					"full build lost unrelated missing-kind failure: exit=%d stdout=%s stderr=%s",
+					code,
+					out,
+					diagnostic,
+				)
+			}
+		})
 	}
 }

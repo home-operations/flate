@@ -42,7 +42,7 @@ func testAcquireCancelAfterArchiveWorkersCase(
 		stored   ocispec.Descriptor
 	}, len(keys))
 	for i, key := range keys {
-		input, _, id, err := c.Acquire(t.Context(), key, Policy{}, producer(data, &want))
+		input, _, id, err := c.Acquire(t.Context(), key, &Policy{}, producer(data, &want))
 		assert.NoError(t, err)
 		ids[i], pins[i] = id, AcquisitionIdentity(input)
 		v, _ := c.entries.Load(id)
@@ -91,7 +91,7 @@ func testAcquireCancelAfterArchiveWorkersCase(
 				err,
 			)
 		}
-		input, desc, id, err := c.Acquire(t.Context(), key, Policy{MaxAge: Forever}, unexpected)
+		input, desc, id, err := c.Acquire(t.Context(), key, &Policy{MaxAge: Forever}, unexpected)
 		assert.FatalIf(t, err != nil || id != ids[i] || AcquisitionIdentity(input) != pins[i] ||
 			cmp.Diff(want, desc) != "", "retained acquisition: identity=%q, error=%v", id, err)
 		{
@@ -131,7 +131,7 @@ func testAcquireCancelAfterArchiveWorkersCaseCompletion(
 		(*captures.c) = cachetest.New(t, (*captures.root), New)
 	}
 	for i, key := range *captures.keys {
-		input, _, id, err := (*captures.c).Acquire(t.Context(), key, Policy{MaxAge: Forever}, (*captures.unexpected))
+		input, _, id, err := (*captures.c).Acquire(t.Context(), key, &Policy{MaxAge: Forever}, (*captures.unexpected))
 		assert.NoError(t, err)
 		assert.FatalIf(
 			t,
@@ -151,7 +151,7 @@ func testAcquireCancelAfterArchiveWorkersCaseCompletion(
 		input, _, id, err = (*captures.c).Acquire(
 			t.Context(),
 			key,
-			Policy{},
+			&Policy{},
 			func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 				prior, previousErr := w.Previous(ctx)
 				if previousErr != nil || prior == nil || cmp.Diff((*captures.want), *prior) != "" {
@@ -210,7 +210,7 @@ func testAcquireCancelAfterArchiveWorkersCaseCallback(
 			input, _, id, err := (*testCaseInput.c).Acquire(
 				callback,
 				key,
-				Policy{},
+				&Policy{},
 				func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 					prior, err := w.Previous(ctx)
 					assert.ErrorIf(

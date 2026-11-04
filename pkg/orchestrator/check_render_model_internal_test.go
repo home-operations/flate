@@ -28,6 +28,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
@@ -91,7 +92,7 @@ func checkRenderModel(t *testing.T, fixture *renderModelCase) ([]byte, error) {
 					SelfURLs: fixture.selfURLs,
 				},
 			},
-			cfg.Config,
+			Config{Concurrency: 2},
 		)
 		*side.out = runs[0]
 		side.out.Err = renderErr
@@ -350,6 +351,54 @@ func renderModelInputs() []renderModelInput {
 
 func TestRenderTrees_IndependentModel(t *testing.T) {
 	t.Parallel()
+	t.Run(
+		"work_final_and_retired",
+		func(t *testing.T) {
+			t.Parallel()
+			o := newOrchestrator(
+				t.Context(), &Config{RecordWork: true},
+				&Tree{ID: manifest.TreeID{Cluster: "cluster", Side: manifest.TreeHead}}, task.NewBounded(2),
+			)
+			defer o.stop()
+			o.index = &manifest.DiscoveryIndex{}
+			o.rsc.Configure(base.Options{})
+			o.rsc.StartLifecycle()
+			owner := &manifest.ResourceSet{
+				Name:              "owner",
+				Namespace:         "apps",
+				ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\ndata: {value: first}\n",
+			}
+			o.store.AddObject(owner)
+			first := o.rsc.ReconcileNode(t.Context(), owner.Named(), manifest.DrainNone)
+			next := *owner
+			next.ResourcesTemplate = strings.ReplaceAll(owner.ResourcesTemplate, "first", "final")
+			o.store.AddObject(&next)
+			assert.FatalIf(t, first.Valid(), "%v", "first execution retained superseded declaration authority")
+			final := o.rsc.ReconcileNode(t.Context(), owner.Named(), manifest.DrainNone)
+			first.Retire()
+			assert.FatalIf(t, !final.Valid(), "%v", "final live execution is invalid")
+			result, err := o.collectResult(nil)
+			assert.FatalIf(t, err != nil, "%v", err)
+			{
+				got := workCounts(result.Work, owner.Named(), manifest.WorkEvaluation)
+				assert.FatalIf(t, got !=
+					(manifest.WorkCounts{Attempts: 2, Completed: 2}), "retired and final work=%+v", got)
+			}
+			_, _, output := o.store.GetEmission(owner.Named())
+			defer output.Finish()
+			assert.FatalIf(
+				t,
+				len(output.Manifests) != 1 || output.Manifests[0].Document["data"].(map[string]any)["value"] != "final",
+				"accepted output=%+v",
+				output.Manifests,
+			)
+			final.Close()
+			{
+				got := workCounts(result.Work, owner.Named(), manifest.WorkEvaluation)
+				assert.FatalIf(t, got.Completed != 2, "result borrowed execution counters: %+v", got)
+			}
+		},
+	)
 	for _, tc := range renderModelInputs() {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -402,7 +451,7 @@ func TestIndependentModel_BaselineUnavailable(t *testing.T) {
 			root := t.TempDir()
 			repo := testutil.GitInit(t, root)
 			writeRenderModelWorld(t, root, fixture.before)
-			base := testutil.GitCommitAll(
+			baseInput := testutil.GitCommitAll(
 				t,
 				repo,
 				"before",
@@ -410,15 +459,15 @@ func TestIndependentModel_BaselineUnavailable(t *testing.T) {
 					Author: &object.Signature{Name: "fixture", Email: "fixture@example.test", When: time.Unix(0, 0)},
 				},
 			)
-			selected := base.String()
+			selected := baseInput.String()
 			if mode == "shallow" {
 				{
-					err := repo.Storer.SetShallow([]plumbing.Hash{base})
+					err := repo.Storer.SetShallow([]plumbing.Hash{baseInput})
 					assert.FatalIf(t, err != nil, "%v", err)
 				}
 				selected = ""
 			} else {
-				commit, err := repo.CommitObject(base)
+				commit, err := repo.CommitObject(baseInput)
 				assert.FatalIf(t, err != nil, "%v", err)
 				oid := commit.TreeHash.String()
 				{
@@ -539,9 +588,13 @@ func testIndependentModelStaticRootsCase(t *testing.T, testCaseInput *string,
 	}
 	got := renderModelStaticRoots(after, before)
 	if want {
-		if !reflect.DeepEqual(got, before.producers[owner].documents) {
-			t.Fatalf("orphan inventory: want=%+v got=%+v", before.producers[owner].documents, got)
-		}
+		assert.FatalIf(
+			t,
+			!reflect.DeepEqual(got, before.producers[owner].documents),
+			"orphan inventory: want=%+v got=%+v",
+			before.producers[owner].documents,
+			got,
+		)
 	} else {
 		assert.FatalIf(t, len(got) != 0, "owned package promoted: %+v", got)
 	}
@@ -742,14 +795,22 @@ func (c *treeConfig) prepareCommittedRenderModel(
 	if commitErr != nil {
 		return committedModel{before: Tree{}, after: Tree{}}, commitErr
 	}
-	base, resolveErr := baseline.AutoResolve(t.Context(), filepath.Join(root, scan), hash.String(), c.Cache)
+	baseInput, resolveErr := baseline.AutoResolve(t.Context(), filepath.Join(root, scan), hash.String(), c.Cache)
 	if resolveErr != nil {
 		return committedModel{before: Tree{}, after: Tree{}}, resolveErr
 	}
-	c.BaseInput, c.Input, c.ExternalChanges = base.BaseInput, base.Source, base.Changes
+	c.BaseInput, c.Input, c.ExternalChanges = baseInput.BaseInput, baseInput.Source, baseInput.Changes
 	return committedModel{
-		before: Tree{RepoRoot: base.BaseInput.LocalPath, Path: base.BaseScanPath, SelfURLs: base.SelfURLs},
-		after:  Tree{RepoRoot: base.Source.LocalPath, Path: base.ScanPath, SelfURLs: base.SelfURLs},
+		before: Tree{
+			RepoRoot: baseInput.BaseInput.LocalPath,
+			Path:     baseInput.BaseScanPath,
+			SelfURLs: baseInput.SelfURLs,
+		},
+		after: Tree{
+			RepoRoot: baseInput.Source.LocalPath,
+			Path:     baseInput.ScanPath,
+			SelfURLs: baseInput.SelfURLs,
+		},
 	}, nil
 }
 

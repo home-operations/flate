@@ -15,6 +15,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -570,7 +571,7 @@ func testPreflightRemoteResourcesReachableInputsCase(
 		len(testCaseInput.replies),
 	)
 	for path := range testCaseInput.replies {
-		_, _ = cache.remoteInputs.Acquire(t.Context(), url+path, sourcecache.RetryConfig{}, nil)
+		_, _ = cache.remoteInputs.Acquire(t.Context(), &source.HTTPRequest{URL: url + path})
 	}
 	assert.FatalIf(
 		t,

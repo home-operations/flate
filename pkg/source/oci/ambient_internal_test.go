@@ -45,7 +45,7 @@ func (f *ambientObserver) Fetch(
 	ctx context.Context,
 	repo *manifest.OCIRepository,
 	reads *store.ReadSet,
-	policy sourcecache.Policy,
+	policy *sourcecache.Policy,
 ) (*store.SourceArtifact, error) {
 	artifact, err := f.Fetcher.Fetch(ctx, repo, reads, policy)
 	if missing, ok := errors.AsType[*source.MissingSecretError](err); ok && missing.RetryAmbient != nil {
@@ -103,7 +103,7 @@ func TestFetcher_AmbientFailedAcquisition(t *testing.T) {
 	reads.Init(s, repo.Named(), nil)
 	defer reads.Close()
 	f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New), Network: newTestNetwork(t), RegistryConfig: config}
-	_, err := f.Fetch(t.Context(), repo, &reads, sourcecache.Policy{})
+	_, err := f.Fetch(t.Context(), repo, &reads, &sourcecache.Policy{})
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	assert.FatalIf(t, !ok || missing.RetryAmbient == nil, "prepare = %v", err)
 	artifact, err := missing.RetryAmbient(t.Context())
@@ -405,7 +405,7 @@ func testFetcherHelmAmbientReloadCase(t *testing.T, mode *string,
 	inputs := testInputs{secrets: func(_, _ string) *manifest.Secret { lookups.Add(1); return nil }}
 	f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New), Network: newTestNetwork(t)}
 	op := &operation{Fetcher: f, secrets: inputs.lookup(repo)}
-	_, err := op.fetchSource(t.Context(), repo, sourcecache.Policy{})
+	_, err := op.fetchSource(t.Context(), repo, &sourcecache.Policy{})
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	if !ok || missing.RetryAmbient == nil || lookups.Load() != 1 {
 		t.Fatalf("Helm eligibility: lookups=%d error=%v", lookups.Load(), err)
@@ -424,7 +424,7 @@ func testFetcherHelmAmbientReloadCase(t *testing.T, mode *string,
 	_, err = (&operation{Fetcher: f, secrets: inputs.lookup(repo)}).fetchSource(
 		t.Context(),
 		repo,
-		sourcecache.Policy{},
+		&sourcecache.Policy{},
 	)
 	missing, _ = errors.AsType[*source.MissingSecretError](err)
 	got, err := missing.RetryMachine(t.Context(), nil)
@@ -557,14 +557,14 @@ func testFetcherAmbientAcquisitionErrorsCaseCompletion(
 	var art *store.SourceArtifact
 	var err error
 	if *(*captures.deferred) {
-		_, err = (*captures.f).Fetch(t.Context(), (*captures.repo), captures.reads, sourcecache.Policy{})
+		_, err = (*captures.f).Fetch(t.Context(), (*captures.repo), captures.reads, &sourcecache.Policy{})
 		missing, ok := errors.AsType[*source.MissingSecretError](err)
 		assert.FatalIf(t, !ok || missing.RetryAmbient == nil, "missing continuation: %v", err)
 		art, err = missing.RetryMachine((*captures.ctx), captures.reads)
 		assert.FatalIf(t, ((*(*captures.stage)) == "producer" || (*(*captures.stage)) == "unavailable") &&
 			!errors.Is(err, missing), "%s", "unavailable selection changed missing identity")
 	} else {
-		art, err = (*captures.f).Fetch((*captures.ctx), (*captures.repo), captures.reads, sourcecache.Policy{})
+		art, err = (*captures.f).Fetch((*captures.ctx), (*captures.repo), captures.reads, &sourcecache.Policy{})
 	}
 	if art != nil || err == nil || captures.remote.
 		Load() != map[bool]int32{false: 0, true: 1}[(*(*captures.stage)) == "unavailable"] ||

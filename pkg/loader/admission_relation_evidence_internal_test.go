@@ -71,7 +71,7 @@ func TestFilter_CurrentSideEvidenceAmbiguity(t *testing.T) {
 				FS:        fstest.MapFS{"apps/cm.yaml": {Data: []byte(payload)}},
 			},
 		)
-		paths, err := change.Detect(t.Context(), input, current)
+		paths, err := change.Detect(t.Context(), input, current, manifest.WorkScope{})
 		assert.NoError(t, err)
 		assert.Diff(t, paths.Paths(), []string{"apps/cm.yaml"})
 		unqualified[i] = newAdmission(
@@ -79,7 +79,7 @@ func TestFilter_CurrentSideEvidenceAmbiguity(t *testing.T) {
 			admissionConfig{changes: paths, index: index, inventory: head, root: ""},
 		).KeepNames()
 		assert.Diff(t, unqualified[i], selectedNames)
-		evidence, err := change.Qualify(t.Context(), paths, before, head)
+		evidence, err := change.Qualify(t.Context(), paths, [2]*store.Store{before, head}, manifest.WorkScope{})
 		assert.NoError(t, err)
 		got := newAdmission(t, admissionConfig{changes: evidence, index: index, inventory: head, root: ""}).KeepNames()
 		want := []string{}

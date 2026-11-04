@@ -36,7 +36,7 @@ func testAdmitGraphProjectionInactiveUnresolvedSource(t *testing.T) {
 	)
 	l := New(store.New())
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	l.Admit(root)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
@@ -62,7 +62,7 @@ func testAdmitGraphProjectionPlainEntryUnderInactiveClaim(t *testing.T) {
 	)
 	l := New(store.New())
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	l.Admit(root)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
@@ -108,7 +108,7 @@ func testAdmitGraphProjectionInactiveAliasResourceOutsideClaim(t *testing.T) {
 		&store.SourceArtifact{LocalPath: mount, LocalRoot: root, InputAlias: true, FS: os.DirFS(root)},
 	)
 	for _, dir := range []string{root, filepath.Join(mount, "target")} {
-		_, err := l.Load(t.Context(), dir)
+		_, err := l.Load(t.Context(), dir, nil)
 		assert.NoError(t, err)
 	}
 	l.Admit(root)
@@ -162,7 +162,7 @@ func testAdmitGraphProjectionCase3(t *testing.T, testCaseInput *bool,
 	}
 	l := New(store.New())
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	l.Admit(root)
 	before := l.Kustomizations()
@@ -302,7 +302,7 @@ func testAdmitGraphProjectionSubtreeAvailability(t *testing.T) {
 		assert.FatalIf(t, external || got != mount, "available source = %s, external=%t", got, external)
 	}
 	{
-		_, err := l.Load(t.Context(), filepath.Join(mount, "apps"))
+		_, err := l.Load(t.Context(), filepath.Join(mount, "apps"), nil)
 		assert.NoError(t, err)
 	}
 	raw := map[string]manifest.DiscoveryRecord{}

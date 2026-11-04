@@ -32,6 +32,7 @@ const (
 )
 
 type bucketChunk struct {
+	work        *manifest.WorkRecord
 	object      *minio.ObjectInfo
 	name        string
 	start, size int64
@@ -43,7 +44,7 @@ func walkBucket(
 	ctx context.Context,
 	client *minio.Client,
 	b *manifest.Bucket,
-	w io.Writer,
+	w bucketOutput,
 ) (ocispec.Descriptor, error) {
 	var entries []minio.ObjectInfo
 	for obj := range client.ListObjects(ctx, b.BucketName, minio.ListObjectsOptions{Prefix: b.Prefix, Recursive: true}) {
@@ -71,7 +72,7 @@ func walkBucket(
 	entries = entries[:len(names)]
 	ranges := true
 	if i := slices.IndexFunc(entries, func(e minio.ObjectInfo) bool { return e.Size > chunkBytes }); i >= 0 {
-		probe := &bucketChunk{object: &entries[i], size: 1}
+		probe := &bucketChunk{work: w.work, object: &entries[i], size: 1}
 		body, header, err := probe.get(ctx, client, b.BucketName)
 		if err != nil {
 			return ocispec.Descriptor{}, err
@@ -79,7 +80,7 @@ func walkBucket(
 		_ = body.Close()
 		ranges = header.Get("Content-Range") != ""
 	}
-	chunks := bucketChunks(entries, names, ranges)
+	chunks := bucketChunks(entries, names, w.work, ranges)
 	budget := semaphore.NewWeighted(downloads * chunkBytes)
 	g, gctx := errgroup.WithContext(ctx)
 	const archiveWorkers = 2
@@ -124,6 +125,9 @@ func (c *bucketChunk) get(
 		_ = opts.SetRange(c.start, c.start+c.size-1)
 	}
 	body, _, header, err := (minio.Core{Client: client}).GetObject(ctx, bucket, c.object.Key, opts)
+	if err == nil {
+		c.work.Add(&manifest.WorkCounts{RemoteTransfers: 1})
+	}
 	return body, header, bucketResponseError(err)
 }
 
@@ -238,7 +242,7 @@ func bucketEntryName(e *minio.ObjectInfo, prefix string) (string, error) {
 	return name, nil
 }
 
-func bucketChunks(entries []minio.ObjectInfo, names []string, ranges bool) []*bucketChunk {
+func bucketChunks(entries []minio.ObjectInfo, names []string, work *manifest.WorkRecord, ranges bool) []*bucketChunk {
 	var chunks []*bucketChunk
 	for i := range entries {
 		step := chunkBytes
@@ -247,6 +251,7 @@ func bucketChunks(entries []minio.ObjectInfo, names []string, ranges bool) []*bu
 		}
 		for start := int64(0); start == 0 || start < entries[i].Size; start += step {
 			c := &bucketChunk{
+				work:   work,
 				object: &entries[i], name: names[i],
 				start: start, size: min(step, entries[i].Size-start),
 				ready: make(chan io.Reader, 1),
@@ -277,4 +282,10 @@ func writeBucketChunks(ctx context.Context, tw *tar.Writer, chunks []*bucketChun
 		}
 	}
 	return nil
+}
+
+type bucketOutput struct {
+	io.Writer
+
+	work *manifest.WorkRecord
 }

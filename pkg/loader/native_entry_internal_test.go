@@ -45,7 +45,7 @@ spec: {interval: 1h}
 			l.Options.Filter = change.NewFilter()
 			l.Options.Selection = manifest.Selection{Changed: true}
 			l.Options.Changes = change.NewSet([]string{file})
-			_, err := l.Load(t.Context(), filepath.Join(root, "entry"))
+			_, err := l.Load(t.Context(), filepath.Join(root, "entry"), nil)
 			assert.NoError(t, err)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 			proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
@@ -121,7 +121,7 @@ spec: {path: ./workload}
 			l.Options.Filter = change.NewFilter()
 			l.Options.Selection = manifest.Selection{Changed: true}
 			l.Options.Changes = change.NewSet([]string{"entry/unreferenced.yaml"})
-			_, err := l.Load(t.Context(), filepath.Join(root, "entry"))
+			_, err := l.Load(t.Context(), filepath.Join(root, "entry"), nil)
 			assert.NoError(t, err)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 			entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", manifest.NamedResource{})

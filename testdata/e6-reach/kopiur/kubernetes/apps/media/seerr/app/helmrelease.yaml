@@ -1,0 +1,14 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: seerr
+  namespace: media
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: charts/reach
+      sourceRef:
+        kind: GitRepository
+        name: cluster
+        namespace: flux-system

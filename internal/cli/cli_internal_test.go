@@ -15,7 +15,9 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// All CLI tests run in-process so coverage includes the Cobra tree.
+// runCLI drives cli.Run inside the test binary and returns
+// (stdout, stderr, exitCode). All tests use this so end-to-end
+// coverage of the cobra tree counts against pkg internal/cli.
 func runCLI(t *testing.T, args ...string) cliResult {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
@@ -98,8 +100,8 @@ data:
 //
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestRun_HelpExits0(t *testing.T) {
-	cli := runCLI(t, "--help")
-	stdout, code := cli.stdout, cli.code
+	runCLIResult := runCLI(t, "--help")
+	stdout, code := runCLIResult.stdout, runCLIResult.code
 	assert.FatalIf(t, code != 0, "--help exited %d", code)
 	for _, want := range []string{"build", "diff", "test", "get"} {
 		assert.ErrorIf(t, !strings.Contains(stdout, want), "--help output missing verb %q: %s", want, stdout)
@@ -122,10 +124,10 @@ func TestRun_GroupDefaultsToAll(t *testing.T) {
 				)
 				flags = append(flags, "--path-orig", orig)
 			}
-			cli := runCLI(t, append([]string{group, "all"}, flags...)...)
-			want, wantErr, wantCode := cli.stdout, cli.stderr, cli.code
-			cli2 := runCLI(t, append([]string{group}, flags...)...)
-			got, gotErr, gotCode := cli2.stdout, cli2.stderr, cli2.code
+			runCLIResult2 := runCLI(t, append([]string{group, "all"}, flags...)...)
+			want, wantErr, wantCode := runCLIResult2.stdout, runCLIResult2.stderr, runCLIResult2.code
+			runCLIResult3 := runCLI(t, append([]string{group}, flags...)...)
+			got, gotErr, gotCode := runCLIResult3.stdout, runCLIResult3.stderr, runCLIResult3.code
 			assert.FatalIf(
 				t,
 				wantCode != 0 || gotCode != wantCode || gotErr != wantErr,
@@ -136,8 +138,8 @@ func TestRun_GroupDefaultsToAll(t *testing.T) {
 				wantErr,
 			)
 			assert.Diff(t, elapsed.ReplaceAllString(got, ""), elapsed.ReplaceAllString(want, ""))
-			cli3 := runCLI(t, group, "frobnicate")
-			stderr, code := cli3.stderr, cli3.code
+			runCLIResult4 := runCLI(t, group, "frobnicate")
+			stderr, code := runCLIResult4.stderr, runCLIResult4.code
 			assert.ErrorIf(
 				t,
 				code != 1 || !strings.Contains(stderr, `unknown command "frobnicate"`),
@@ -145,8 +147,8 @@ func TestRun_GroupDefaultsToAll(t *testing.T) {
 				code,
 				stderr,
 			)
-			cli4 := runCLI(t, group, "--help")
-			help, stderr, code := cli4.stdout, cli4.stderr, cli4.code
+			runCLIResult5 := runCLI(t, group, "--help")
+			help, stderr, code := runCLIResult5.stdout, runCLIResult5.stderr, runCLIResult5.code
 			assert.FatalIf(t, code != 0 || stderr != "", "help: exit %d, stderr %q", code, stderr)
 			for _, text := range []string{"Available Commands:", "all", "--path", "defaults to all"} {
 				assert.ErrorIf(t, !strings.Contains(help, text), "help missing %q: %s", text, help)
@@ -163,8 +165,8 @@ func TestRun_GroupDefaultsToAll(t *testing.T) {
 //
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestRun_LogLevelFlag_RejectsInvalid(t *testing.T) {
-	cli := runCLI(t, "build", "all", "--log-level", "bogus", "--path", ".")
-	stderr, code := cli.stderr, cli.code
+	runCLIResult6 := runCLI(t, "build", "all", "--log-level", "bogus", "--path", ".")
+	stderr, code := runCLIResult6.stderr, runCLIResult6.code
 	assert.FatalIf(t, code == 0, "%v", "expected non-zero exit for invalid --log-level")
 	assert.ErrorIf(
 		t,
@@ -180,8 +182,8 @@ func TestRun_LogLevelFlag_RejectsInvalid(t *testing.T) {
 //
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestRun_MissingPathErrors(t *testing.T) {
-	cli := runCLI(t, "build", "all", "--path", "/nonexistent/path/here")
-	stderr, code := cli.stderr, cli.code
+	runCLIResult7 := runCLI(t, "build", "all", "--path", "/nonexistent/path/here")
+	stderr, code := runCLIResult7.stderr, runCLIResult7.code
 	assert.FatalIf(t, code == 0, "%v", "expected non-zero exit for missing path")
 	assert.ErrorIf(t, !strings.Contains(stderr, "flate error"), "error message missing prefix: %q", stderr)
 }
@@ -189,8 +191,8 @@ func TestRun_MissingPathErrors(t *testing.T) {
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestRun_BuildAll(t *testing.T) {
 	path := writeFixture(t)
-	cli := runCLI(t, "build", "all", "--path", path)
-	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
+	runCLIResult8 := runCLI(t, "build", "all", "--path", path)
+	stdout, stderr, code := runCLIResult8.stdout, runCLIResult8.stderr, runCLIResult8.code
 	assert.FatalIf(t, code != 0, "build all exited %d: stderr=%s", code, stderr)
 	for _, want := range []string{"kind: ConfigMap", "name: hello", "greeting: hi"} {
 		assert.ErrorIf(t, !strings.Contains(stdout, want), "build output missing %q:\n%s", want, stdout)
@@ -200,8 +202,8 @@ func TestRun_BuildAll(t *testing.T) {
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestRun_BuildAll_JSONSingleDocument(t *testing.T) {
 	path := writeMultiNamespaceFixture(t)
-	cli := runCLI(t, "build", "all", "--path", path, "-o", "json")
-	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
+	runCLIResult9 := runCLI(t, "build", "all", "--path", path, "-o", "json")
+	stdout, stderr, code := runCLIResult9.stdout, runCLIResult9.stderr, runCLIResult9.code
 	assert.FatalIf(t, code != 0, "build all -o json exited %d: stderr=%s", code, stderr)
 	var docs []map[string]any
 	{
@@ -226,8 +228,8 @@ func TestRun_BuildAll_JSONSingleDocument(t *testing.T) {
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestRun_BuildKS_RejectsBadOutput(t *testing.T) {
 	path := writeFixture(t)
-	cli := runCLI(t, "build", "ks", "--path", path, "-o", "name")
-	stderr, code := cli.stderr, cli.code
+	runCLIResult10 := runCLI(t, "build", "ks", "--path", path, "-o", "name")
+	stderr, code := runCLIResult10.stderr, runCLIResult10.code
 	assert.FatalIf(t, code == 0, "%v", "expected non-zero exit for -o name on build")
 	assert.ErrorIf(t, !strings.Contains(stderr, "must be one of"), "error message missing 'must be one of': %q", stderr)
 }
@@ -238,8 +240,8 @@ func TestRun_BuildKS_RejectsBadOutput(t *testing.T) {
 
 func TestRun_BuildAll_OnlyKinds(t *testing.T) {
 	path := writeFixture(t)
-	cli := runCLI(t, "build", "all", "--path", path, "--only-kinds", "CustomResourceDefinition")
-	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
+	runCLIResult11 := runCLI(t, "build", "all", "--path", path, "--only-kinds", "CustomResourceDefinition")
+	stdout, stderr, code := runCLIResult11.stdout, runCLIResult11.stderr, runCLIResult11.code
 	assert.FatalIf(t, code != 0, "build --only-kinds exited %d: %s", code, stderr)
 	assert.ErrorIf(
 		t,
@@ -263,9 +265,9 @@ func TestRun_BuildAll_OnlyKinds(t *testing.T) {
 			if tc.empty {
 				testutil.WriteFile(t, path, "apps/kustomization.yaml", "resources: []\n")
 			}
-			cli2 := runCLI(t, "build", "ks", "apps", "--path", path,
+			runCLIResult12 := runCLI(t, "build", "ks", "apps", "--path", path,
 				"--only-kinds", "CustomResourceDefinition", "--cache-dir", t.TempDir(), "--concurrency", "2")
-			stdout, stderr, code := cli2.stdout, cli2.stderr, cli2.code
+			stdout, stderr, code := runCLIResult12.stdout, runCLIResult12.stderr, runCLIResult12.code
 			assert.FatalIf(
 				t,
 				code != tc.code || stdout != "" || strings.Contains(stderr, "no Kustomization named"),
@@ -304,8 +306,8 @@ func TestRun_BuildAll_OnlyKinds(t *testing.T) {
 			args := append(
 				[]string{"build", "all", "--path", path, "--concurrency=2", "--only-kinds=CustomResourceDefinition"},
 				tc.args...)
-			cli3 := runCLI(t, args...)
-			out, diagnostic, code := cli3.stdout, cli3.stderr, cli3.code
+			runCLIResult13 := runCLI(t, args...)
+			out, diagnostic, code := runCLIResult13.stdout, runCLIResult13.stderr, runCLIResult13.code
 			assert.FatalIf(
 				t,
 				code != 0 || strings.Contains(out, "kind: CustomResourceDefinition") != tc.want,
@@ -322,7 +324,7 @@ func TestRun_BuildAll_OnlyKinds(t *testing.T) {
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestRun_BuildAll_OnlyKinds_JSONEmptyArray(t *testing.T) {
 	path := writeFixture(t)
-	cli := runCLI(
+	runCLIResult14 := runCLI(
 		t,
 		"build",
 		"all",
@@ -333,7 +335,7 @@ func TestRun_BuildAll_OnlyKinds_JSONEmptyArray(t *testing.T) {
 		"-o",
 		"json",
 	)
-	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
+	stdout, stderr, code := runCLIResult14.stdout, runCLIResult14.stderr, runCLIResult14.code
 	assert.FatalIf(t, code != 0, "build --only-kinds -o json exited %d: %s", code, stderr)
 	assert.ErrorIf(t, strings.TrimSpace(stdout) != "[]", "empty JSON render = %q, want []", stdout)
 }
@@ -356,8 +358,8 @@ func TestRun_GetKS(t *testing.T) {
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestRun_GetKS_NameFilter(t *testing.T) {
 	path := writeFixture(t)
-	cli := runCLI(t, "get", "ks", "apps", "--path", path)
-	stdout, code := cli.stdout, cli.code
+	runCLIResult15 := runCLI(t, "get", "ks", "apps", "--path", path)
+	stdout, code := runCLIResult15.stdout, runCLIResult15.code
 	assert.FatalIf(t, code != 0, "get ks apps exited %d", code)
 	assert.ErrorIf(t, !strings.Contains(stdout, "apps"), "name filter dropped the matching object:\n%s", stdout)
 }
@@ -365,8 +367,8 @@ func TestRun_GetKS_NameFilter(t *testing.T) {
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestRun_GetKS_NameFilter_LabelMismatchIsEmpty(t *testing.T) {
 	path := writeFixture(t)
-	cli := runCLI(t, "get", "ks", "apps", "--path", path, "-l", "app.kubernetes.io/name=other")
-	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
+	runCLIResult16 := runCLI(t, "get", "ks", "apps", "--path", path, "-l", "app.kubernetes.io/name=other")
+	stdout, stderr, code := runCLIResult16.stdout, runCLIResult16.stderr, runCLIResult16.code
 	assert.FatalIf(t, code != 0, "get ks apps with non-matching label exited %d: %s", code, stderr)
 	assert.FatalIf(
 		t,
@@ -380,8 +382,8 @@ func TestRun_GetKS_NameFilter_LabelMismatchIsEmpty(t *testing.T) {
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestRun_GetKS_NameFilter_NamespaceMismatchFails(t *testing.T) {
 	path := writeFixture(t)
-	cli := runCLI(t, "get", "ks", "apps", "--path", path, "-n", "other")
-	stderr, code := cli.stderr, cli.code
+	runCLIResult17 := runCLI(t, "get", "ks", "apps", "--path", path, "-n", "other")
+	stderr, code := runCLIResult17.stderr, runCLIResult17.code
 	assert.FatalIf(t, code == 0, "%v", "expected non-zero for name outside namespace scope")
 	assert.ErrorIf(t, !strings.Contains(stderr, "apps"), "error should name the scoped-out argument: %q", stderr)
 }
@@ -397,15 +399,15 @@ func TestRun_GetKS_YAML(t *testing.T) {
 		"nosrc.yaml",
 		testutil.KustomizationYAML("nosrc", "flux-system", "  {path: ./apps, suspend: true}\n"),
 	)
-	cli := runCLI(t, "get", "ks", "--path", path, "-o", "yaml")
-	stdout, code := cli.stdout, cli.code
+	runCLIResult18 := runCLI(t, "get", "ks", "--path", path, "-o", "yaml")
+	stdout, code := runCLIResult18.stdout, runCLIResult18.code
 	assert.FatalIf(t, code != 0, "get ks -o yaml exited %d", code)
 	for _, want := range []string{"kind: Kustomization", "name: apps"} {
 		assert.ErrorIf(t, !strings.Contains(stdout, want), "yaml output missing %q:\n%s", want, stdout)
 	}
 	for _, output := range []string{"yaml", "json"} {
-		cli2 := runCLI(t, "get", "ks", "nosrc", "--path", path, "-o", output)
-		stdout, stderr, code := cli2.stdout, cli2.stderr, cli2.code
+		runCLIResult19 := runCLI(t, "get", "ks", "nosrc", "--path", path, "-o", output)
+		stdout, stderr, code := runCLIResult19.stdout, runCLIResult19.stderr, runCLIResult19.code
 		assert.FatalIf(
 			t,
 			code != 0 || !strings.Contains(stdout, "flux-system") || strings.Contains(stdout, `namespace: ""`) ||
@@ -425,8 +427,8 @@ func TestRun_GetKS_YAML(t *testing.T) {
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestRun_GetAll_RejectsBadOutput(t *testing.T) {
 	path := writeFixture(t)
-	cli := runCLI(t, "get", "all", "--path", path, "-o", "diff")
-	stderr, code := cli.stderr, cli.code
+	runCLIResult20 := runCLI(t, "get", "all", "--path", path, "-o", "diff")
+	stderr, code := runCLIResult20.stderr, runCLIResult20.code
 	assert.FatalIf(t, code == 0, "%v", "expected non-zero exit")
 	assert.ErrorIf(t, !strings.Contains(stderr, "must be one of"), "expected validation error, got %q", stderr)
 }
@@ -434,8 +436,8 @@ func TestRun_GetAll_RejectsBadOutput(t *testing.T) {
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestRun_GetAll_Yaml(t *testing.T) {
 	path := writeFixture(t)
-	cli := runCLI(t, "get", "all", "--path", path, "-o", "yaml")
-	stdout, code := cli.stdout, cli.code
+	runCLIResult21 := runCLI(t, "get", "all", "--path", path, "-o", "yaml")
+	stdout, code := runCLIResult21.stdout, runCLIResult21.code
 	assert.FatalIf(t, code != 0, "get all exited %d", code)
 	assert.ErrorIf(t, !strings.Contains(stdout, "kind: Kustomization\n") || !strings.Contains(stdout, "name: apps\n") ||
 		strings.Contains(stdout, "kustomizations:"), "object listing missing Kustomization:\n%s", stdout)
@@ -444,8 +446,8 @@ func TestRun_GetAll_Yaml(t *testing.T) {
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestRun_GetAll_RespectsNamespace(t *testing.T) {
 	path := writeMultiNamespaceFixture(t)
-	cli := runCLI(t, "get", "all", "--path", path, "-o", "json", "-n", "alpha")
-	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
+	runCLIResult22 := runCLI(t, "get", "all", "--path", path, "-o", "json", "-n", "alpha")
+	stdout, stderr, code := runCLIResult22.stdout, runCLIResult22.stderr, runCLIResult22.code
 	assert.FatalIf(t, code != 0, "get all -n alpha exited %d: %s", code, stderr)
 	var documents []map[string]any
 	{
@@ -466,8 +468,8 @@ func TestRun_GetAll_RespectsNamespace(t *testing.T) {
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestRun_GetImages_RejectsBadOutput(t *testing.T) {
 	path := writeFixture(t)
-	cli := runCLI(t, "get", "images", "--path", path, "-o", "diff")
-	stderr, code := cli.stderr, cli.code
+	runCLIResult23 := runCLI(t, "get", "images", "--path", path, "-o", "diff")
+	stderr, code := runCLIResult23.stderr, runCLIResult23.code
 	assert.FatalIf(t, code == 0, "%v", "expected non-zero exit")
 	assert.ErrorIf(t, !strings.Contains(stderr, "must be one of"), "expected validation error, got %q", stderr)
 }
@@ -515,8 +517,8 @@ func TestRun_AdvisoryDestinations(t *testing.T) {
 	for _, command := range [][]string{{"build", "all"}, {"get", "all"}, {"get", "ks"}, {"get", "images"}, {"test", "all"}} {
 		t.Run(strings.Join(command, "/"), func(t *testing.T) { runAdvisoryDestinationsCase(t, &command, &k8s) })
 	}
-	cli := runCLI(t, "test", "ks", "absent", "--path", k8s, "--concurrency=2")
-	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
+	runCLIResult24 := runCLI(t, "test", "ks", "absent", "--path", k8s, "--concurrency=2")
+	stdout, stderr, code := runCLIResult24.stdout, runCLIResult24.stderr, runCLIResult24.code
 	assert.FatalIf(
 		t,
 		code != 1 || stdout != "" || !strings.Contains(stderr, "no Kustomization named"),
@@ -536,8 +538,8 @@ func TestRun_TestAll(t *testing.T) {
 		"flux/hidden.yaml",
 		"apiVersion: source.toolkit.fluxcd.io/v1\nkind: ExternalArtifact\nmetadata: {name: hidden, namespace: flux-system}\nstatus: {artifact: {url: 'file://"+path+"'}}\n",
 	)
-	cli := runCLI(t, "test", "all", "--path", path)
-	stdout, code := cli.stdout, cli.code
+	runCLIResult25 := runCLI(t, "test", "all", "--path", path)
+	stdout, code := runCLIResult25.stdout, runCLIResult25.code
 	assert.Equal(t, code, 1)
 	assert.Equal(t, strings.Contains(stdout, "✓") && strings.Contains(stdout, "passed"), true)
 	assert.Equal(t, strings.Contains(stdout, "failed") && strings.Contains(stdout, "hidden"), true)
@@ -546,21 +548,44 @@ func TestRun_TestAll(t *testing.T) {
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestRun_TestAll_RespectsNamespace(t *testing.T) {
 	path := writeMultiNamespaceFixture(t)
-	cli := runCLI(t, "test", "all", "--path", path, "-n", "alpha")
-	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
-	assert.FatalIf(t, code != 0, "test all -n alpha exited %d: %s", code, stderr)
-	assert.ErrorIf(
-		t,
-		!strings.Contains(stdout, "alpha/apps-a"),
-		"namespace-scoped test output missing alpha KS:\n%s",
-		stdout,
-	)
-	assert.ErrorIf(
-		t,
-		strings.Contains(stdout, "beta/apps-b"),
-		"namespace-scoped test output included beta KS:\n%s",
-		stdout,
-	)
+	for _, tc := range []struct {
+		name, roster, counts string
+		selection            []string
+	}{
+		{name: "namespace", selection: []string{"all", "-n", "alpha"}, roster: "✓  Kustomization  alpha/apps-a", counts: "✓ 1 passed"},
+
+		{name: "named", selection: []string{"ks", "apps-a"}, roster: "✓  Kustomization  alpha/apps-a", counts: "✓ 1 passed"},
+
+		{
+			name: "all",
+			selection: []string{
+				"all",
+			},
+			roster: "✓  Kustomization  alpha/apps-a\n  ✓  Kustomization  beta/apps-b",
+			counts: "✓ 2 passed",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append([]string{"test"}, tc.selection...)
+			args = append(args, "--path", path, "--concurrency", "2", "--cache-dir", t.TempDir())
+			var priorWarnings string
+			for run := range 2 {
+				runCLIResult26 := runCLI(t, args...)
+				stdout, stderr, code := runCLIResult26.stdout, runCLIResult26.stderr, runCLIResult26.code
+				if code != 0 {
+					t.Fatalf("scoped test failed: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+				}
+				roster, verdict, _ := strings.Cut(strings.TrimSpace(stdout), "\n\n")
+				counts, _, _ := strings.Cut(strings.TrimSpace(verdict), "   ")
+				assert.Equal(t, roster, tc.roster)
+				assert.Equal(t, counts, tc.counts)
+				if run != 0 {
+					assert.Equal(t, stderr, priorWarnings)
+				}
+				priorWarnings = stderr
+			}
+		})
+	}
 }
 
 //nolint:paralleltest // CLI execution changes process-wide logging.
@@ -590,8 +615,8 @@ func TestRun_TestAll_JoinsVisibleFailuresWithRunError(t *testing.T) {
 	path := writeFixture(t)
 	assert.NoError(t, os.Remove(filepath.Join(path, "apps", "cm.yaml")))
 
-	cli := runCLI(t, "test", "all", "--path", path)
-	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
+	runCLIResult27 := runCLI(t, "test", "all", "--path", path)
+	stdout, stderr, code := runCLIResult27.stdout, runCLIResult27.stderr, runCLIResult27.code
 	assert.FatalIf(t, code == 0, "%v", "expected non-zero for failed reconcile")
 	assert.ErrorIf(t, !strings.Contains(stdout, "✗"), "stdout should still include failed test row:\n%s", stdout)
 	// `flate test` is one consolidated report on stdout: the failing resource
@@ -619,8 +644,8 @@ func TestRun_TestAll_JoinsVisibleFailuresWithRunError(t *testing.T) {
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestRun_DiffKS_NoOrigErrors(t *testing.T) {
 	path := writeFixture(t)
-	cli := runCLI(t, "diff", "ks", "--path", path)
-	stderr, code := cli.stderr, cli.code
+	runCLIResult28 := runCLI(t, "diff", "ks", "--path", path)
+	stderr, code := runCLIResult28.stderr, runCLIResult28.code
 	assert.FatalIf(t, code == 0, "%v", "expected non-zero exit for diff without --path-orig")
 	assert.ErrorIf(t, !strings.Contains(stderr, "path-orig"), "error should mention --path-orig: %q", stderr)
 }
@@ -644,14 +669,14 @@ func TestRun_RenderPersistenceNoticeInvocationScope(t *testing.T) {
 		"2",
 	}
 	renderPersistenceDisabledReason = ""
-	cli := runCLI(t, args...)
-	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
+	runCLIResult29 := runCLI(t, args...)
+	stdout, stderr, code := runCLIResult29.stdout, runCLIResult29.stderr, runCLIResult29.code
 	assert.FatalIf(t, code != 0, "identical-tree diff exited %d: %s", code, stderr)
 	assert.ErrorIf(t, strings.Contains(stdout, "@@"), "identical tree should produce no hunks:\n%s", stdout)
 	renderPersistenceDisabledReason = persistenceReason
 	for range 2 {
-		cli2 := runCLI(t, args...)
-		got, gotErr, gotCode := cli2.stdout, cli2.stderr, cli2.code
+		runCLIResult30 := runCLI(t, args...)
+		got, gotErr, gotCode := runCLIResult30.stdout, runCLIResult30.stderr, runCLIResult30.code
 		assert.Equal(t, gotCode, code)
 		assert.Equal(t, got, stdout)
 		assert.Equal(
@@ -667,18 +692,108 @@ func TestRun_DiffImages_RespectsNamespaceFailures(t *testing.T) {
 	current := writeMultiNamespaceFixture(t)
 	orig := t.TempDir()
 	testutil.CopyTree(t, current, orig)
-	assert.NoError(t, os.RemoveAll(filepath.Join(current, "apps-b")))
-	assert.NoError(t, os.RemoveAll(filepath.Join(orig, "apps-b")))
+	for _, side := range []struct{ root, version string }{{orig, "v1"}, {current, "v2"}} {
+		for _, app := range []struct{ path, namespace string }{{"apps-a", "alpha"}, {"apps-b", "beta"}} {
+			testutil.WriteFile(
+				t,
+				side.root,
+				app.path+"/cm.yaml",
+				"apiVersion: v1\nkind: Pod\n"+
+					"metadata: {name: image, namespace: "+app.namespace+"}\nspec:\n"+
+					"  containers: [{name: app, image: example.test/"+app.namespace+":"+side.version+"}]\n",
+			)
+		}
+	}
+	for _, tc := range []struct {
+		name, want string
+		flags      []string
+	}{
+		{name: "namespace/additions", flags: []string{"-n", "alpha"}, want: "example.test/alpha:v2\n"},
 
-	cli := runCLI(t, "diff", "images", "--path", current, "--path-orig", orig, "-n", "alpha")
-	stderr, code := cli.stderr, cli.code
-	assert.FatalIf(
+		{
+			name: "namespace/removals",
+			flags: []string{
+				"-n",
+				"alpha",
+				"--include-removed",
+			},
+			want: "example.test/alpha:v1\nexample.test/alpha:v2\n",
+		},
+
+		{name: "all", want: "example.test/alpha:v2\nexample.test/beta:v2\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := []string{
+				"diff",
+				"images",
+				"--path",
+				current,
+				"--path-orig",
+				orig,
+				"--concurrency",
+				"2",
+				"--cache-dir",
+				t.TempDir(),
+			}
+			args = append(args, tc.flags...)
+			var priorWarnings string
+			for run := range 2 {
+				runCLIResult31 := runCLI(t, args...)
+				stdout, stderr, code := runCLIResult31.stdout, runCLIResult31.stderr, runCLIResult31.code
+				assert.Equal(t, code, 0)
+				assert.Equal(t, stdout, tc.want)
+				if run != 0 {
+					assert.Equal(t, stderr, priorWarnings)
+				}
+				priorWarnings = stderr
+			}
+		})
+	}
+	if err := os.RemoveAll(filepath.Join(current, "apps-b")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(orig, "apps-b")); err != nil {
+		t.Fatal(err)
+	}
+	appendScopeSpec(t, current, "flux/apps-b.yaml", "  postBuild: {substitute: {TRIGGER: changed}}\n")
+
+	runCLIResult32 := runCLI(
 		t,
-		code != 0,
-		"diff images -n alpha should ignore beta reconcile failure, exited %d: %s",
-		code,
-		stderr,
+		"diff",
+		"images",
+		"--path",
+		current,
+		"--path-orig",
+		orig,
+		"-n",
+		"alpha",
+		"--concurrency",
+		"2",
+		"--cache-dir",
+		t.TempDir(),
 	)
+	stdout, stderr, code := runCLIResult32.stdout, runCLIResult32.stderr, runCLIResult32.code
+	if code != 0 || stdout != "example.test/alpha:v2\n" || strings.Contains(stderr, "beta") ||
+		strings.Contains(stderr, "apps-b") {
+		t.Fatalf("unrelated failure changed scoped images: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+	}
+	runCLIResult33 := runCLI(
+		t,
+		"diff",
+		"images",
+		"--path",
+		current,
+		"--path-orig",
+		orig,
+		"--concurrency",
+		"2",
+		"--cache-dir",
+		t.TempDir(),
+	)
+	stdout, stderr, code = runCLIResult33.stdout, runCLIResult33.stderr, runCLIResult33.code
+	if code != 1 || stdout != "example.test/alpha:v2\n" || !strings.Contains(stderr, "beta/apps-b") {
+		t.Fatalf("full image diff lost admitted failure: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+	}
 }
 
 // TestDiff_OutputStyles drives a non-trivial diff and asserts each dyff
@@ -710,9 +825,9 @@ data:
 	}
 	for _, tc := range cases {
 		t.Run(tc.style, func(t *testing.T) {
-			cli := runCLI(t, "diff", "ks", "-o", tc.style,
+			runCLIResult34 := runCLI(t, "diff", "ks", "-o", tc.style,
 				"--path", current, "--path-orig", origPath)
-			stdout, stderr, code := cli.stdout, cli.stderr, cli.code
+			stdout, stderr, code := runCLIResult34.stdout, runCLIResult34.stderr, runCLIResult34.code
 			assert.FatalIf(t, code != 0, "diff ks -o %s exited %d: %s", tc.style, code, stderr)
 			assert.ErrorIf(
 				t,
@@ -727,11 +842,11 @@ data:
 
 	// The default (no -o) is human — pins the breaking change away from
 	// github. Compare the no-flag output to an explicit -o human run.
-	cli2 := runCLI(t, "diff", "ks", "--path", current, "--path-orig", origPath)
-	def, code := cli2.stdout, cli2.code
+	runCLIResult35 := runCLI(t, "diff", "ks", "--path", current, "--path-orig", origPath)
+	def, code := runCLIResult35.stdout, runCLIResult35.code
 	assert.FatalIf(t, code != 0, "diff ks (default) exited %d", code)
-	cli3 := runCLI(t, "diff", "ks", "-o", "human", "--path", current, "--path-orig", origPath)
-	human := cli3.stdout
+	runCLIResult36 := runCLI(t, "diff", "ks", "-o", "human", "--path", current, "--path-orig", origPath)
+	human := runCLIResult36.stdout
 	assert.ErrorIf(
 		t,
 		def == "" || def != human,

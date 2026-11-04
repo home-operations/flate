@@ -43,7 +43,7 @@ func (f *materializerFetcher) Fetch(
 	context.Context,
 	manifest.BaseManifest,
 	*store.ReadSet,
-	sourcecache.Policy,
+	*sourcecache.Policy,
 ) (*store.SourceArtifact, error) {
 	f.calls.Add(1)
 	return nil, manifest.NewError(manifest.ErrInput, nil, "content unavailable")

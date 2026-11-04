@@ -34,13 +34,81 @@ func (f *declarationReadFS) Open(name string) (fs.File, error) {
 func TestWithReaders_ReusesCompleteDeclarations(t *testing.T) {
 	t.Parallel()
 	for _, changed := range []bool{false, true} {
-		t.Run(strconv.FormatBool(changed), func(t *testing.T) {
-			t.Parallel()
-			testWithReadersReusesCompleteDeclarationsCase(
-				t,
-				&changed,
-			)
-		},
+		t.Run(
+			strconv.FormatBool(changed),
+			func(t *testing.T) {
+				t.Parallel()
+				var loaders [2]*Loader
+				var stores [2]*store.Store
+				var inputs [2]*declarationReadFS
+				id := manifest.NamedResource{
+					Group:     manifest.SourceDomain,
+					Kind:      manifest.KindOCIRepository,
+					Namespace: "apps",
+					Name:      "chart",
+				}
+				for side := range loaders {
+					value := 0
+					if changed {
+						value = side
+					}
+					input := &declarationReadFS{FS: fstest.MapFS{
+						"entry/source.yaml": {
+							Data: fmt.Appendf(
+								nil,
+								"apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: "+
+									"{name: chart, namespace: apps}\nspec: {url: oci://fixture.invalid/chart"+
+									", undiscovered: %d}\n",
+								value,
+							),
+						},
+					}}
+					root := fmt.Sprintf("/virtual/declaration-reuse/%d", side)
+					st := store.New()
+					st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
+					l := New(st)
+					l.SourceRoot = root
+					l.Options.Selection.Changed = true
+					_, err := l.Load(t.Context(), filepath.Join(root, "entry"), nil)
+					assert.NoError(t, err)
+					l.Admit(root)
+					assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
+					loaders[side], stores[side], inputs[side] = l, st, input
+				}
+				changes, err := change.Qualify(
+					t.Context(),
+					change.NewSet([]string{"entry/source.yaml"}), [2]*store.Store{stores[0], stores[1]},
+					manifest.WorkScope{},
+				)
+				assert.NoError(t, err)
+				for _, input := range inputs {
+					input.opens.Store(0)
+				}
+				for range 2 {
+					changes, err = changes.WithReaders(
+						t.Context(),
+						[2]*manifest.DiscoveryIndex{loaders[0].Index, loaders[1].Index},
+						[2]map[manifest.NamedResource]inputprojection.Projection{
+							loaders[0].InputContent,
+							loaders[1].InputContent,
+						},
+						manifest.WorkScope{},
+					)
+					assert.NoError(t, err)
+					for _, input := range inputs {
+						assert.Equal(t, input.opens.Load(), int64(0))
+					}
+					declarationChangedResult := changes.DeclarationChanged(
+						manifest.TreeHead,
+						manifest.BootstrapSourceID,
+						id,
+						nil,
+					)
+					different, known := declarationChangedResult.Changed, declarationChangedResult.Known
+					assert.Equal(t, known, true)
+					assert.Equal(t, different, changed)
+				}
+			},
 		)
 	}
 }
@@ -50,56 +118,57 @@ func declarationMovePair(t *testing.T, scenario string, reverse bool) ([2]*Loade
 	var loaders [2]*Loader
 	var inputs [2]*store.SourceArtifact
 	for side := range loaders {
-		root := t.TempDir()
-		testutil.WriteFile(
-			t,
-			root,
-			"flux/owners.yaml",
-			testutil.KustomizationYAML(
-				"old-owner",
-				"apps",
-				"  path: ./old\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
-			)+"---\n"+testutil.KustomizationYAML(
-				"new-owner",
-				"apps",
-				"  path: ./new\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
-			)+"---\n"+testutil.KustomizationYAML(
-				"reader-owner",
-				"apps",
-				"  path: ./reader\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
-			),
-		)
-		writeDeclarationOwners(t, root, scenario, side)
-		testutil.WriteFile(t, root, "reader/kustomization.yaml", "resources: [release.yaml]\n")
-		body := "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: reader, namespace: apps}\nspec: {interval: 1h, chartRef: {kind: OCIRepository, name: chart}}\n"
-		if scenario == "mixed" {
-			body += "---\n" + strings.ReplaceAll(
-				strings.ReplaceAll(body, "name: reader", "name: data-reader"),
-				"interval: 1h,",
-				"interval: 1h, valuesFrom: [{kind: ConfigMap, name: settings}],",
-			)
-		}
-		testutil.WriteFile(t, root, "reader/release.yaml", body)
+		root := declarationMoveFiles(t, scenario, side)
 		st := store.New()
 		inputs[side] = &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)}
 		st.SetArtifact(manifest.BootstrapSourceID, inputs[side])
 		l := New(st)
 		l.SourceRoot = root
 		l.Options.Selection.Changed = true
-		_, err := l.Load(t.Context(), filepath.Join(root, "flux"))
+		_, err := l.Load(t.Context(), filepath.Join(root, "flux"), nil)
 		assert.NoError(t, err)
 		for _, directory := range []string{"old", "new", "reader"} {
-			_, err := l.Load(t.Context(), filepath.Join(root, directory))
+			_, err := l.Load(t.Context(), filepath.Join(root, directory), nil)
 			assert.NoError(t, err)
 		}
 		l.Admit(root)
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 		loaders[side] = l
 	}
-	return declarationMovePairCompletion(
-		t,
-		&declarationMovePairCompletionState{scenario: &scenario, reverse: &reverse, loaders: &loaders, inputs: &inputs},
+	if scenario == "source" {
+		id := manifest.NamedResource{
+			Group:     manifest.SourceDomain,
+			Kind:      manifest.KindOCIRepository,
+			Namespace: "apps",
+			Name:      "chart",
+		}
+		record := loaders[1].Index.Records[id]
+		for i := range record.Productions {
+			record.Productions[i].Source.Name = "foreign"
+		}
+		loaders[1].Index.Records[id] = record
+	}
+	if reverse {
+		loaders[0], loaders[1] = loaders[1], loaders[0]
+		inputs[0], inputs[1] = inputs[1], inputs[0]
+	}
+	if scenario == "partial" {
+		loaders[1].Index.CompleteSources = nil
+	}
+	changes, err := change.Detect(t.Context(), inputs[0], inputs[1], manifest.WorkScope{})
+	assert.NoError(t, err)
+	changes, err = changes.WithReaders(t.Context(),
+		[2]*manifest.DiscoveryIndex{loaders[0].Index, loaders[1].Index},
+		[2]map[manifest.NamedResource]inputprojection.Projection{loaders[0].InputContent, loaders[1].InputContent},
+		manifest.WorkScope{},
 	)
+	assert.NoError(t, err)
+	for side, l := range loaders {
+		l.side, l.sideKnown = manifest.TreeSide(side), true
+		l.Options.Changes, l.Options.Filter = changes, change.NewFilter()
+		assert.NoError(t, l.FinalizeIndex(t.Context(), l.SourceRoot, true))
+	}
+	return loaders, changes
 }
 
 func TestAdmission_UnchangedDeclarationMove(t *testing.T) {
@@ -107,12 +176,8 @@ func TestAdmission_UnchangedDeclarationMove(t *testing.T) {
 	for _, reverse := range []bool{false, true} {
 		t.Run(strconv.FormatBool(reverse), func(t *testing.T) {
 			t.Parallel()
-			testAdmissionUnchangedDeclarationMoveCase(
-				t,
-				&reverse,
-			)
-		},
-		)
+			testUnchangedDeclarationMove(t, reverse)
+		})
 	}
 }
 
@@ -140,7 +205,7 @@ func TestAdmission_DeclarationMoveChanges(t *testing.T) {
 					occurrence, ok := l.occurrence(id)
 					assert.Equal(t, ok, true)
 					input := l.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
-					child, err := l.exactObject(t.Context(), new(occurrence), input)
+					child, err := l.exactObject(t.Context(), &occurrence, input)
 					assert.NoError(t, err)
 					child.Doc["spec"].(map[string]any)["interval"] = "2h"
 					proposal, err = l.Prepare(t.Context(), child, nil, nil)
@@ -159,88 +224,66 @@ func TestAdmission_DeclarationMoveChanges(t *testing.T) {
 	}
 }
 
-func testWithReadersReusesCompleteDeclarationsCase(
-	t *testing.T,
-	testCaseInput *bool,
-) {
+func declarationMoveFiles(t *testing.T, scenario string, side int) string {
 	t.Helper()
-
-	var loaders [2]*Loader
-	var stores [2]*store.Store
-	var inputs [2]*declarationReadFS
-	id := manifest.NamedResource{
-		Group:     manifest.SourceDomain,
-		Kind:      manifest.KindOCIRepository,
-		Namespace: "apps",
-		Name:      "chart",
-	}
-	for side := range loaders {
-		value := 0
-		if *testCaseInput {
-			value = side
-		}
-		input := &declarationReadFS{FS: fstest.MapFS{
-			"entry/source.yaml": {
-				Data: fmt.Appendf(
-					nil,
-					"apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: chart, namespace: apps}\nspec: {url: oci://fixture.invalid/chart, undiscovered: %d}\n",
-					value,
-				),
-			},
-		}}
-		root := fmt.Sprintf("/virtual/declaration-reuse/%d", side)
-		st := store.New()
-		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
-		l := New(st)
-		l.SourceRoot = root
-		l.Options.Selection.Changed = true
-		_, err := l.Load(t.Context(), filepath.Join(root, "entry"))
-		assert.NoError(t, err)
-		l.Admit(root)
-		assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
-		loaders[side], stores[side], inputs[side] = l, st, input
-	}
-	changes, err := change.Qualify(
-		t.Context(),
-		change.NewSet([]string{"entry/source.yaml"}),
-		stores[0],
-		stores[1],
+	root := t.TempDir()
+	testutil.WriteFile(
+		t,
+		root,
+		"flux/owners.yaml",
+		testutil.KustomizationYAML(
+			"old-owner",
+			"apps",
+			"  path: ./old\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+		)+"---\n"+testutil.KustomizationYAML(
+			"new-owner",
+			"apps",
+			"  path: ./new\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+		)+"---\n"+testutil.KustomizationYAML(
+			"reader-owner",
+			"apps",
+			"  path: ./reader\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+		),
 	)
-	assert.NoError(t, err)
-	for _, input := range inputs {
-		input.opens.Store(0)
-	}
-	for range 2 {
-		changes, err = changes.WithReaders(
-			t.Context(),
-			loaders[0].Index,
-			loaders[1].Index,
-			[2]map[manifest.NamedResource]inputprojection.Projection{
-				loaders[0].InputContent,
-				loaders[1].InputContent,
-			},
+	writeDeclarationMoveSources(t, root, scenario, side)
+	testutil.WriteFile(t, root, "reader/kustomization.yaml", "resources: [release.yaml]\n")
+	body := "apiVersion: helm.toolkit.fluxcd.io/v2\n" + "kind: HelmRelease\n" + "metadata: {name: reader, namespace: apps}\n" +
+		"spec: {interval: 1h, chartRef: {kind: OCIRepository, name: chart}}\n"
+	if scenario == "mixed" {
+		body += "---\n" + strings.ReplaceAll(
+			strings.ReplaceAll(body, "name: reader", "name: data-reader"),
+			"interval: 1h,",
+			"interval: 1h, valuesFrom: [{kind: ConfigMap, name: settings}],",
 		)
-		assert.NoError(t, err)
-		for _, input := range inputs {
-			assert.Equal(t, input.opens.Load(), int64(0))
+	}
+	testutil.WriteFile(t, root, "reader/release.yaml", body)
+	return root
+}
+
+func writeDeclarationMoveSources(t *testing.T, root, scenario string, side int) {
+	t.Helper()
+	for i, owner := range []string{"old", "new"} {
+		resources := "resources: []\n"
+		if side == i && (scenario != "added" || side != 0) && (scenario != "removed" || side != 1) {
+			resources = "resources: [source.yaml]\n"
+			body := declarationMoveSource(scenario, side)
+			testutil.WriteFile(t, root, owner+"/source.yaml", body)
+			if scenario == "build_input" {
+				resources += fmt.Sprintf("patches:\n"+"- target: {kind: OCIRepository, name: chart}\n"+
+					"  patch: '[{\"op\":\"add\",\"path\":\"/spec/interval\",\"value\":\"%dh\"}]'\n", side+1)
+			}
 		}
-		comparison := changes.DeclarationChanged(manifest.TreeHead, manifest.BootstrapSourceID, id, nil)
-		different, known := comparison.Changed, comparison.Known
-		assert.Equal(t, known, true)
-		assert.Equal(t, different, (*testCaseInput))
+		testutil.WriteFile(t, root, owner+"/kustomization.yaml", resources)
 	}
 }
 
-func testAdmissionUnchangedDeclarationMoveCase(
-	t *testing.T,
-	testCaseInput *bool,
-) {
+func testUnchangedDeclarationMove(t *testing.T, reverse bool) {
 	t.Helper()
 
-	loaders, changes := declarationMovePair(t, "move", (*testCaseInput))
+	loaders, changes := declarationMovePair(t, "move", reverse)
 	for _, l := range loaders {
-		//nolint:gocritic // The iterator supplies filtered value snapshots through its callback.
-		for _, record := range l.Index.Files() {
+		for id := range l.Index.Files() {
+			record, _ := l.Index.Lookup(id)
 			assert.Equal(t, record.Declaration == nil, true)
 		}
 		for range 2 {
@@ -260,7 +303,7 @@ func testAdmissionUnchangedDeclarationMoveCase(
 					testutil.KustomizationID("apps", "old-owner"),
 				},
 			)
-			comparison2 := changes.DeclarationChanged(
+			declarationChangedResult2 := changes.DeclarationChanged(
 				l.side,
 				manifest.BootstrapSourceID,
 				manifest.NamedResource{
@@ -271,97 +314,30 @@ func testAdmissionUnchangedDeclarationMoveCase(
 				},
 				nil,
 			)
-			changed, known := comparison2.Changed, comparison2.Known
+			changed, known := declarationChangedResult2.Changed, declarationChangedResult2.Known
 			assert.Equal(t, known && !changed, true)
 		}
 	}
 }
 
-type declarationMovePairCompletionState struct {
-	scenario *string
-	reverse  *bool
-	loaders  *[2]*Loader
-	inputs   *[2]*store.SourceArtifact
-}
+func declarationMoveSource(scenario string, side int) string {
+	namespace, tag := "apps", "same"
+	if side == 1 && scenario == "changed" {
+		tag = "different"
+	}
+	if side == 1 && scenario == "namespace" {
+		namespace = "other"
+	}
+	body := fmt.Sprintf("apiVersion: source.toolkit.fluxcd.io/v1\n"+"kind: OCIRepository\n"+
+		"metadata: {name: chart, namespace: %s}\n"+
+		"spec: {url: oci://fixture.invalid/chart, ref: {tag: %s}}\n", namespace, tag)
+	if scenario == "mixed" {
+		body += fmt.Sprintf(
+			"---\n"+"apiVersion: v1\n"+"kind: ConfigMap\n"+"metadata: {name: settings, namespace: apps}\n"+
+				"data: {values.yaml: 'value: side-%d'}\n",
+			side,
+		)
+	}
 
-func declarationMovePairCompletion(t *testing.T, scope *declarationMovePairCompletionState) ([2]*Loader, *change.Set) {
-	t.Helper()
-	if (*scope.scenario) == "source" {
-		id := manifest.NamedResource{
-			Group:     manifest.SourceDomain,
-			Kind:      manifest.KindOCIRepository,
-			Namespace: "apps",
-			Name:      "chart",
-		}
-		record := scope.loaders[1].Index.Records[id]
-		for i := range record.Productions {
-			record.Productions[i].Source.Name = "foreign"
-		}
-		scope.loaders[1].Index.Records[id] = record
-	}
-	if *scope.reverse {
-		scope.loaders[0], scope.loaders[1] = scope.loaders[1], scope.loaders[0]
-		scope.inputs[0], scope.inputs[1] = scope.inputs[1], scope.inputs[0]
-	}
-	if (*scope.scenario) == "partial" {
-		scope.loaders[1].Index.CompleteSources = nil
-	}
-	changes, err := change.Detect(t.Context(), scope.inputs[0], scope.inputs[1])
-	assert.NoError(t, err)
-	changes, err = changes.WithReaders(
-		t.Context(),
-		scope.loaders[0].Index,
-		scope.loaders[1].Index,
-		[2]map[manifest.NamedResource]inputprojection.Projection{
-			scope.loaders[0].InputContent,
-			scope.loaders[1].InputContent,
-		},
-	)
-	assert.NoError(t, err)
-	for side, l := range *scope.loaders {
-		l.side, l.sideKnown = manifest.TreeSide(side), true
-		l.Options.Changes, l.Options.Filter = changes, change.NewFilter()
-		assert.NoError(t, l.FinalizeIndex(t.Context(), l.SourceRoot, true))
-	}
-	return (*scope.loaders), changes
-}
-
-func writeDeclarationOwners(t *testing.T, root, scenario string, side int) {
-	t.Helper()
-	for i, owner := range []string{"old", "new"} {
-		resources := "resources: []\n"
-		if hasDeclarationSource(scenario, side, i) {
-			resources = "resources: [source.yaml]\n"
-			namespace, tag := "apps", "same"
-			if side == 1 && scenario == "changed" {
-				tag = "different"
-			}
-			if side == 1 && scenario == "namespace" {
-				namespace = "other"
-			}
-			body := fmt.Sprintf(
-				"apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: chart, namespace: %s}\nspec: {url: oci://fixture.invalid/chart, ref: {tag: %s}}\n",
-				namespace,
-				tag,
-			)
-			if scenario == "mixed" {
-				body += fmt.Sprintf(
-					"---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {values.yaml: 'value: side-%d'}\n",
-					side,
-				)
-			}
-			testutil.WriteFile(t, root, owner+"/source.yaml", body)
-			if scenario == "build_input" {
-				resources += fmt.Sprintf(
-					"patches:\n- target: {kind: OCIRepository, name: chart}\n  patch: '[{\"op\":\"add\",\"path\":\"/spec/interval\",\"value\":\"%dh\"}]'\n",
-					side+1,
-				)
-			}
-		}
-		testutil.WriteFile(t, root, owner+"/kustomization.yaml", resources)
-	}
-}
-
-func hasDeclarationSource(scenario string, side, owner int) bool {
-	return side == owner && (scenario != "added" || side != 0) && (scenario != "removed" || side != 1)
+	return body
 }

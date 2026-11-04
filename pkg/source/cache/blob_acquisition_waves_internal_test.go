@@ -84,13 +84,13 @@ func testBlobAcquisitionWavesCaseCaseCallback(
 	var wg sync.WaitGroup
 	wg.Go(
 		func() {
-			generations[0], _, _, failures[0] = (*testCaseInput.c).Blob(t.Context(), key, Policy{}, produce)
+			generations[0], _, _, failures[0] = (*testCaseInput.c).Blob(t.Context(), key, &Policy{}, produce)
 		},
 	)
 	<-entered
 	wg.Go(
 		func() {
-			generations[1], _, _, failures[1] = (*testCaseInput.c).Blob(t.Context(), key, Policy{}, produce)
+			generations[1], _, _, failures[1] = (*testCaseInput.c).Blob(t.Context(), key, &Policy{}, produce)
 		},
 	)
 	synctest.Wait()
@@ -109,7 +109,7 @@ func testBlobAcquisitionWavesCaseCaseCallback(
 		assert.NoError(t, err)
 		assert.Equal(t, string(body), "1")
 	}
-	generation, _, _, err := (*testCaseInput.c).Blob(t.Context(), key, Policy{}, produce)
+	generation, _, _, err := (*testCaseInput.c).Blob(t.Context(), key, &Policy{}, produce)
 	assert.Equal(t, calls.Load(), int64(2))
 	if *testCaseInput.testCaseInput.failed {
 		assert.FatalIf(

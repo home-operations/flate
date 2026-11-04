@@ -145,12 +145,13 @@ func (c *execution) render(
 		if handled || innerLocalErr != nil {
 			return innerLocalErr
 		}
-	} else if innerInnerLocalErr := c.run.Checkpoint(); innerInnerLocalErr != nil {
-		return innerInnerLocalErr
+	} else if checkpointErr := c.run.Checkpoint(); checkpointErr != nil {
+		return checkpointErr
 	}
 
 	_, _, attempt = c.run.Reads.GetEmission(id)
 	request := kustomize.RenderRequest{
+		Work:                    c.run.Reads.Work().Scope().RenderWork(),
 		Source:                  source,
 		ApplyIgnore:             applyIgnore,
 		SubPath:                 ks.Path,
@@ -167,6 +168,7 @@ func (c *execution) render(
 	attempt.Render = receipt
 	content := request.Content(docs)
 	acceptance := kustomize.RenderAcceptance{
+		Work:                    c.run.Reads.Work().Scope().RenderWork(),
 		Owner:                   id,
 		Entry:                   ks.EntryReceipt,
 		Source:                  source.HistoryIdentity(ks.SourceID()),
@@ -182,7 +184,15 @@ func (c *execution) render(
 		return c.recordRender(ctx, &attempt, &acceptance)
 	}
 
-	if err := kustomize.Shape(ks, docs, c.strictSubstitutions); err != nil {
+	if err := kustomize.Shape(
+		ctx,
+		ks,
+		docs,
+		kustomize.ShapeOptions{
+			Strict: c.strictSubstitutions,
+			Work:   c.run.Reads.Work().Scope().RenderWork().Substitution(),
+		},
+	); err != nil {
 		return err
 	}
 
@@ -251,6 +261,7 @@ func (c *Controller) PreviousRender(
 		return nil, false
 	}
 	request := kustomize.RenderRequest{
+		Work:                    reads.Work().Scope().RenderWork(),
 		Source:                  source,
 		ApplyIgnore:             ignore,
 		SubPath:                 prepared.Path,

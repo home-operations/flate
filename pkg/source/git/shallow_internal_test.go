@@ -32,14 +32,14 @@ func openGeneration(
 	if label := (*manifest.GitRepositoryRef)(spec.Reference).Label(); label != "" {
 		ref = label
 	}
-	request, err := (&operation{Fetcher: f}).resolveTransport(spec, sourcecache.Policy{})
+	request, err := (&operation{Fetcher: f}).resolveTransport(spec, &sourcecache.Policy{})
 	assert.NoError(t, err)
 
 	key := sourcecache.GitKey{Content: struct {
 		Source, Transport any
 		Depth             int
 	}{spec.Content((*manifest.GitRepositoryRef)(spec.Reference).Normalized()), request.material, f.Depth}, Ref: ref, RecurseSubmodules: spec.RecurseSubmodules}
-	generation, id, err := f.Cache.Git(t.Context(), key, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
+	generation, id, err := f.Cache.Git(t.Context(), key, &sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
 	assert.NoError(t, err)
 
 	if id != artifact.Key {
@@ -98,7 +98,7 @@ func TestFetcher_NarrowInitialFetchSkipsOtherRefs(t *testing.T) {
 		t.Context(),
 		repo,
 		(testInputs{}).readSet(repo),
-		sourcecache.Policy{MaxAge: repo.SourceInterval()},
+		&sourcecache.Policy{MaxAge: repo.SourceInterval()},
 	)
 	assert.FatalIf(t, err != nil, "Fetch tag: %v", err)
 
@@ -162,7 +162,7 @@ func TestResolveTransport_Depth(t *testing.T) {
 			f := &Fetcher{Depth: tc.depth}
 			request, err := (&operation{Fetcher: f}).resolveTransport(
 				&manifest.GitRepository{URL: "file:///repo", Reference: tc.ref},
-				sourcecache.Policy{},
+				&sourcecache.Policy{},
 			)
 			assert.NoError(t, err)
 

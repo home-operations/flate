@@ -25,20 +25,27 @@ func TestClaims_RefreshDoesNotPublish(t *testing.T) {
 	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [owner.yaml]\n")
 	testutil.WriteFile(t, root, "owner.yaml", testutil.KustomizationYAML("owner", "apps", "  path: ./leaf\n"))
 	l := New(st)
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	id := testutil.KustomizationID("apps", "owner")
 	l.Claims(root)
+
 	assert.FatalIf(t, st.GetObject(id) != nil, "%s", "claims published an indexed owner")
+
 	l.Admit(root)
 	owner := st.GetObject(id)
+
 	assert.FatalIf(t, owner == nil, "%s", "admission did not publish the owner")
+
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
 		"kustomization.yaml": {Data: []byte("resources: []\n")},
 	}})
 	l.Claims(root)
+
 	assert.FatalIf(t, st.GetObject(id) != owner, "%s", "claims retired an owner after reader replacement")
+
 	l.Admit(root)
+
 	assert.FatalIf(t, st.GetObject(id) != nil, "%s", "admission retained the replaced reader's owner")
 }
 
@@ -75,13 +82,16 @@ func TestClaims_ReadinessViews(t *testing.T) {
 	claims[0].Prefix = "caller/"
 	assert.Diff(t, l.Claims(root), []manifest.KSClaim{{ID: ks.Named(), Prefix: "apps/"}})
 	assert.Equal(t, reads.Load(), int64(1))
+
 	assert.FatalIf(
 		t,
 		&l.scopes.inputs[0].ownerClaims.claims[0] != derived,
 		"%s",
 		"unchanged owner claims were derived again",
 	)
+
 	assert.FatalIf(t, len(l.Index.Claims) != 0, "%s", "unready local source established admission coverage")
+
 	earlier := *ks
 	earlier.Name = "earlier"
 	st.AddObject(&earlier)
@@ -92,22 +102,26 @@ func TestClaims_ReadinessViews(t *testing.T) {
 		l.Claims(root),
 		[]manifest.KSClaim{{ID: earlier.Named(), Prefix: "apps/"}, {ID: ks.Named(), Prefix: "apps/"}},
 	)
+
 	assert.FatalIf(
 		t,
 		&l.scopes.inputs[1].ownerClaims.claims[0] != derived,
 		"%s",
 		"owner insertion discarded unchanged claim derivation",
 	)
-	_, err := l.Load(t.Context(), filepath.Join(root, "apps"))
+
+	_, err := l.Load(t.Context(), filepath.Join(root, "apps"), nil)
 	assert.NoError(t, err)
 	l.Claims(root)
 	assert.Diff(t, l.Index.Claims["apps/"], []manifest.NamedResource{earlier.Named(), ks.Named()})
+
 	assert.FatalIf(
 		t,
 		st.GetObject(ks.Named()) != ks,
 		"%s",
 		"claim refresh replaced the owner's immutable declaration",
 	)
+
 	readsBefore, sourcesBefore := reads.Load(), len(l.scopes.sources)
 	later := *ks
 	later.Name, later.SourceRef.Name = "z-later", "other"
@@ -124,12 +138,14 @@ func TestClaims_ReadinessViews(t *testing.T) {
 	)
 	assert.Equal(t, len(l.scopes.sources), sourcesBefore+1)
 	assert.Equal(t, reads.Load(), readsBefore)
+
 	assert.FatalIf(
 		t,
 		&l.scopes.inputs[1].ownerClaims.claims[0] != derived,
 		"%s",
 		"source storage growth discarded unchanged claim derivation",
 	)
+
 	st.SetArtifact(later.SourceID(), nil)
 	assert.Diff(
 		t,
@@ -137,6 +153,7 @@ func TestClaims_ReadinessViews(t *testing.T) {
 		[]manifest.KSClaim{{ID: earlier.Named(), Prefix: "apps/"}, {ID: ks.Named(), Prefix: "apps/"}},
 	)
 	assert.Equal(t, reads.Load(), readsBefore)
+
 	assert.FatalIf(
 		t,
 		&l.scopes.inputs[1].ownerClaims.claims[0] != derived,
@@ -292,13 +309,16 @@ func TestClaims_DropsExternalSourced(t *testing.T) {
 	for _, p := range prefixes {
 		seen[p.ID] = true
 	}
+
 	assert.ErrorIf(t, seen[external.Named()], "external-sourced KS claim must be dropped from the prefix index")
+
 	assert.ErrorIf(
 		t,
 		!seen[bootstrap.Named()] || !seen[aliasedKS.Named()],
 		"local-sourced KS claims must be retained; seen=%v",
 		seen,
 	)
+
 	{
 		parent, ok := manifest.StrictParent(
 			Claims(
@@ -339,8 +359,9 @@ func TestSourceView_LocalRoot(t *testing.T) {
 					Name:       "entry",
 				},
 			}
-			location := SourceView(store.New(), ks.SourceID(), "/repo")
-			root, pinned, external := location.Path, location.Pinned, location.External
+			sourceViewResult := SourceView(store.New(), ks.SourceID(), "/repo")
+			root, pinned, external := sourceViewResult.Path, sourceViewResult.Pinned, sourceViewResult.External
+
 			assert.FatalIf(
 				t,
 				root != "/repo" || pinned || external != tc.external,
@@ -389,7 +410,9 @@ func TestSourceView_LocalRoot(t *testing.T) {
 				artifact.FS = nil
 			}
 			st.SetArtifact(repo.Named(), artifact)
-			external := SourceView(st, ks.SourceID(), tc.repoRoot).External
+			sourceViewResult2 := SourceView(st, ks.SourceID(), tc.repoRoot)
+			external := sourceViewResult2.External
+
 			assert.FatalIf(t, external != tc.external, "external = %v, want %v", external, tc.external)
 		})
 	}
@@ -635,7 +658,9 @@ func testFinalizeIndexParentSegmentsCase(t *testing.T, testCaseInput *struct {
 			assert.NoError(t, err)
 		}
 		input, err := b.Build()
+
 		assert.NoError(t, err)
+
 		if testCaseInput.pinned {
 			src := &manifest.GitRepository{Name: ks.SourceRef.Name, Namespace: ks.SourceRef.Namespace}
 			st.AddObject(src)
@@ -664,7 +689,8 @@ func testFinalizeIndexParentSegmentsCase(t *testing.T, testCaseInput *struct {
 		assert.NoError(t, err)
 	}
 	assert.Equal(t, l.Index.Records[child].Parent, ks.Named())
-	owners := l.Index.OwnersOfFile(prefix + "hr.yaml").Owners
+	ownersOfFileResult := l.Index.OwnersOfFile(prefix + "hr.yaml")
+	owners := ownersOfFileResult.Owners
 	assert.Diff(t, owners, []manifest.NamedResource{ks.Named()})
 	assert.Diff(t, testutil.Owners(l.Index.Records[data].Productions), []manifest.NamedResource{ks.Named()})
 	assert.Diff(t, testutil.Owners(l.Store.Productions(data, l.Index)), []manifest.NamedResource{ks.Named()})
@@ -718,7 +744,9 @@ func testBuildParentIndexIndexedChildrenWithoutStoreObjectsCase(
 			if !(*testCaseInput.eligible) {
 				want = manifest.NamedResource{}
 			}
+
 			assert.FatalIf(t, s.GetObject(id) != nil, "%s", "indexed child must stay absent from store")
+
 			{
 				got := parents[id]
 				assert.ErrorIf(t, got != want, "parent[%s] = %v, want %v", id, got, want)
@@ -729,6 +757,7 @@ func testBuildParentIndexIndexedChildrenWithoutStoreObjectsCase(
 	if *testCaseInput.eligible {
 		want = 2
 	}
+
 	assert.ErrorIf(
 		t,
 		len(parents) != want,

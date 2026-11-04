@@ -82,7 +82,7 @@ func testLoaderDotDotPathsCase(t *testing.T, testCaseInput *struct {
 	var wantRoots []string
 	if testCaseInput.accepted {
 		{
-			_, err := l.Load(t.Context(), dir)
+			_, err := l.Load(t.Context(), dir, nil)
 			assert.NoError(t, err)
 		}
 		wantRoots = []string{testCaseInput.path}

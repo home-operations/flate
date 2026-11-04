@@ -46,7 +46,7 @@ func (d *Session) admitBootstrapInput(ctx context.Context) (*store.SourceArtifac
 	}
 	if admitted == nil {
 		var err error
-		admitted, d.cfg.Path, err = baseline.AdmitDirectory(ctx, d.cfg.Path, d.cfg.RepoRoot)
+		admitted, d.cfg.Path, err = baseline.AdmitDirectory(ctx, d.cfg.Path, d.cfg.RepoRoot, d.cfg.Work)
 		if err != nil {
 			return nil, err
 		}
@@ -307,7 +307,7 @@ func (d *Session) resolveEntrySource(
 		}
 		return false, nil
 	}
-	candidate, err := admission.resolve(ctx, id, obj)
+	candidate, err := admission.resolve(ctx, id, obj, d.cfg.Work)
 	if err != nil {
 		return false, err
 	}
@@ -396,29 +396,33 @@ func (d *Session) admission() *Admission {
 
 // Resolve admits a known source or a missing Git bootstrap reference.
 // A nil artifact leaves normal acquisition responsible for the source.
-//
-//nolint:ireturn // Declarations retain their heterogeneous manifest types.
 func (a *Admission) Resolve(
 	ctx context.Context,
 	id manifest.NamedResource,
 	object manifest.BaseManifest,
-) (manifest.BaseManifest, *store.SourceArtifact, error) {
+	work manifest.WorkScope,
+) (
+	store.Child,
+	*store.SourceArtifact,
+	error,
+) {
 	if a == nil {
-		return nil, nil, nil
+		return store.Child{}, nil, nil
 	}
-	resolved, err := a.resolve(ctx, id, object)
+	resolved, err := a.resolve(ctx, id, object, work)
 	if resolved.artifact != nil && len(resolved.warnings) != 0 {
 		captured := *resolved.artifact
 		captured.Warnings = append(slices.Clone(captured.Warnings), resolved.warnings...)
 		resolved.artifact = &captured
 	}
-	return resolved.object, resolved.artifact, err
+	return store.Child{Obj: resolved.object}, resolved.artifact, err
 }
 
 func (a *Admission) resolve(
 	ctx context.Context,
 	id manifest.NamedResource,
 	obj manifest.BaseManifest,
+	work manifest.WorkScope,
 ) (entryResolution, error) {
 	bootstrap := a.input
 	candidate := entryResolution{object: obj, input: bootstrap, synthetic: obj == nil}
@@ -450,7 +454,12 @@ func (a *Admission) resolve(
 		if input, ok := bootstrap.FS.(*gittree.FS); ok {
 			location = input.Location()
 		}
-		artifacts, err := git.ResolveLocal(ctx, location, []*manifest.GitRepository{descriptor}, bootstrap.Revision)
+		artifacts, err := git.ResolveLocal(
+			ctx,
+			location,
+			[]*manifest.GitRepository{descriptor},
+			git.LocalOptions{Revision: bootstrap.Revision, Work: work},
+		)
 		if err != nil {
 			return candidate, err
 		}

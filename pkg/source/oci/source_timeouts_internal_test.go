@@ -74,7 +74,7 @@ func testFetcherSourceTimeoutCase(t *testing.T, tc *struct {
 			return nil, stop
 		}),
 	}
-	_, err = (&operation{Fetcher: f}).fetchLayer(t.Context(), r, new(request), sourcecache.Policy{})
+	_, err = (&operation{Fetcher: f}).fetchLayer(t.Context(), r, new(request), &sourcecache.Policy{})
 	if calls.Load() == 0 || !errors.Is(err, stop) {
 		t.Fatalf("controlled registry request not reached: calls=%d error=%v", calls.Load(), err)
 	}

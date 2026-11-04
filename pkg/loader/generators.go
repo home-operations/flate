@@ -14,6 +14,7 @@ import (
 
 	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/tree"
 )
@@ -103,7 +104,10 @@ func (r *generatorRecord) inputLoader(ctx context.Context, optsArg *options) (if
 			if opts.RemoteInputs == nil {
 				return nil, errRemoteInputs
 			}
-			acquired, err := opts.RemoteInputs.Acquire(ctx, file, opts.RemoteRetry, nil)
+			acquired, err := opts.RemoteInputs.Acquire(
+				ctx,
+				&source.HTTPRequest{URL: file, Retry: opts.RemoteRetry, Work: opts.Work},
+			)
 			if err != nil {
 				return nil, err
 			}

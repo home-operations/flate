@@ -3,11 +3,12 @@ package resourceset_test
 import (
 	"testing"
 
+	"github.com/home-operations/flate/pkg/resourceset"
+
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/resourceset"
 )
 
 func TestRender_NullInput(t *testing.T) {
@@ -82,18 +83,18 @@ func TestRender_EvaluatedInputsRemainImmutable(t *testing.T) {
 		},
 	}
 	for range 2 {
-		docs, warnings, err := resourceset.Render(rs, inputs, nil)
+		docs, warnings, err := resourceset.Render(rs, inputs, nil, nil)
 		assert.NoError(t, err)
 		assert.Equal(t, len(docs), 1)
 		assert.Equal(t, len(warnings), 0)
 		assert.Equal(t, inputs[0].Inputs[0]["nested"].(map[string]any)["value"], any("captured"))
 		{
 			_, exists := inputs[0].Inputs[0]["provider"]
-			assert.FatalIf(t, exists, "%s", "render mutated captured provider inputs")
+			assert.FatalIf(t, exists, "%v", "render mutated captured provider inputs")
 		}
 	}
 	inputs[0].Inputs = nil
-	docs, warnings, err := resourceset.Render(rs, inputs, nil)
+	docs, warnings, err := resourceset.Render(rs, inputs, nil, nil)
 	assert.NoError(t, err)
 	assert.Equal(t, len(docs), 0)
 	assert.Equal(t, len(warnings), 0)

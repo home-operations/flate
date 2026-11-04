@@ -18,7 +18,7 @@ func (*Fetcher) Fetch(
 	_ context.Context,
 	_ *manifest.ExternalArtifact,
 	_ *store.ReadSet,
-	_ cache.Policy,
+	_ *cache.Policy,
 ) (*store.SourceArtifact, error) {
 	return nil, manifest.NewError(manifest.ErrInput, nil, "no generated content")
 }

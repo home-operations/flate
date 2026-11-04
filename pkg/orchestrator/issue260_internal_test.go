@@ -26,7 +26,7 @@ func (f fakeOCIFetcher) Fetch(
 	_ context.Context,
 	_ manifest.BaseManifest,
 	_ *store.ReadSet,
-	_ sourcecache.Policy,
+	_ *sourcecache.Policy,
 ) (*store.SourceArtifact, error) {
 	return &store.SourceArtifact{
 		Kind:      manifest.KindOCIRepository,

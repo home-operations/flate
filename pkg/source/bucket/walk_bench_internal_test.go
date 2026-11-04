@@ -105,7 +105,7 @@ func BenchmarkWalkBucket(b *testing.B) {
 			bk := &manifest.Bucket{BucketName: "data"}
 			for b.Loop() {
 				{
-					_, err := walkBucket(b.Context(), client, bk, io.Discard)
+					_, err := walkBucket(b.Context(), client, bk, bucketOutput{Writer: io.Discard})
 					assert.NoError(b, err)
 				}
 			}

@@ -62,7 +62,10 @@ func testAcquireOwnerIsolationCase(t *testing.T, concurrency *int,
 	defer cancel()
 	adone, bdone := make(chan error, (*concurrency)), make(chan error, (*concurrency))
 	for range *concurrency {
-		go func() { _, err := a.Acquire(ctx, srv.URL, sourcecache.RetryConfig{}, nil); adone <- err }()
+		go func() {
+			_, err := a.Acquire(ctx, &HTTPRequest{URL: srv.URL, Retry: sourcecache.RetryConfig{}, HeldSlot: nil})
+			adone <- err
+		}()
 	}
 	<-entered
 	url := srv.URL
@@ -71,7 +74,10 @@ func testAcquireOwnerIsolationCase(t *testing.T, concurrency *int,
 	}
 	for range *concurrency {
 		go func() {
-			input, err := b.Acquire(t.Context(), url, sourcecache.RetryConfig{}, nil)
+			input, err := b.Acquire(
+				t.Context(),
+				&HTTPRequest{URL: url, Retry: sourcecache.RetryConfig{}, HeldSlot: nil},
+			)
 			var body []byte
 			if err == nil {
 				body, err = fs.ReadFile(input, "content")
@@ -97,18 +103,16 @@ func testAcquireOwnerIsolationCase(t *testing.T, concurrency *int,
 		}
 	}
 	{
-		_, err := a.Acquire(
-			t.Context(),
-			srv.URL,
-			sourcecache.RetryConfig{},
-			nil,
-		)
+		_, err := a.Acquire(t.Context(), &HTTPRequest{URL: srv.URL, Retry: sourcecache.RetryConfig{}, HeldSlot: nil})
 		assert.FatalIf(t, !errors.Is(
 			err,
 			fs.ErrClosed,
 		), "closed owner: %v", err)
 	}
-	input, err := b.Acquire(t.Context(), srv.URL+"/after", sourcecache.RetryConfig{}, nil)
+	input, err := b.Acquire(
+		t.Context(),
+		&HTTPRequest{URL: srv.URL + "/after", Retry: sourcecache.RetryConfig{}, HeldSlot: nil},
+	)
 	var body []byte
 	if err == nil {
 		body, err = fs.ReadFile(input, "content")

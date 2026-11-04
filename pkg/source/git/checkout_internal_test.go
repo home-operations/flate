@@ -263,7 +263,7 @@ func testFetcherExactPinBeforeRecursionCase(t *testing.T, parent *string,
 		Reference:         &sourcev1.GitRepositoryRef{Commit: pin.String()},
 		RecurseSubmodules: tc.name != "gitlink",
 	}
-	art, err := f.Fetch(t.Context(), spec, (testInputs{}).readSet(spec), sourcecache.Policy{})
+	art, err := f.Fetch(t.Context(), spec, (testInputs{}).readSet(spec), &sourcecache.Policy{})
 	if err == nil {
 		other := *spec
 		other.Name = "other"
@@ -272,7 +272,7 @@ func testFetcherExactPinBeforeRecursionCase(t *testing.T, parent *string,
 			t.Context(),
 			&other,
 			(testInputs{}).readSet(&other),
-			sourcecache.Policy{},
+			&sourcecache.Policy{},
 		)
 		assert.FatalIf(
 			t,
@@ -355,13 +355,13 @@ func testFetcherSubmoduleSchemesCaseCase(t *testing.T, testCaseInput testFetcher
 	if *testCaseInput.remote {
 		artifact, err = f.FetchRemoteBase(
 			t.Context(),
-			RemoteBaseRequest{
+			&RemoteBaseRequest{
 				URL:        (*testCaseInput.url),
 				Ref:        testCaseInput.hash.String(),
 				Timeout:    time.Minute,
 				Submodules: true,
 			},
-			sourcecache.Policy{},
+			&sourcecache.Policy{},
 		)
 	} else {
 		repo := &manifest.GitRepository{
@@ -383,7 +383,7 @@ func testFetcherSubmoduleSchemesCaseCase(t *testing.T, testCaseInput testFetcher
 					"known_hosts": "host " + string(ssh.MarshalAuthorizedKey(signer.PublicKey())),
 				}}
 			}}).readSet(repo),
-			sourcecache.Policy{},
+			&sourcecache.Policy{},
 		)
 	}
 	if (*testCaseInput.restrict) && (*(*testCaseInput.shape)) != "relative" {

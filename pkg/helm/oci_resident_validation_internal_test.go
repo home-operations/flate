@@ -66,7 +66,7 @@ func TestTemplate_OCIResidentGenerationValidation(t *testing.T) {
 	_, _, _, err = owner.Blob(
 		t.Context(),
 		cache.BlobKey{Content: resident.key, Render: cache.RenderAccepted},
-		cache.Policy{},
+		&cache.Policy{},
 		func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 			_, writeErr := w.Write(payload)
 			return cache.ProducerResult{}, writeErr

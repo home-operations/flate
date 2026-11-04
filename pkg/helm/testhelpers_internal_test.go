@@ -79,7 +79,7 @@ func acquireChartFS(tb testing.TB, owner *cache.Cache, input fs.FS) fs.FS {
 	acquired, _, _, err := owner.Acquire(
 		tb.Context(),
 		cache.ArchiveKey{Content: tb.Name()},
-		cache.Policy{MaxAge: cache.Forever},
+		&cache.Policy{MaxAge: cache.Forever},
 		func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 			_, writeErr := w.Write(data)
 			return cache.ProducerResult{}, writeErr
@@ -173,9 +173,8 @@ func chartFixtureFS(hr *manifest.HelmRelease, input fs.FS) fs.FS {
 func emptyRenderInventory(func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {}
 
 func writeTestRecord(w io.Writer, key cache.BlobKey, record *renderRecord) error {
-	output, analysis := record.Output, record.Analysis
-	identity, _ := key.Content.(string)
-	data, err := encodeFrame(renderHeader{Key: identity, Analysis: analysis}, output)
+	identity := key.Content.(string)
+	data, err := encodeFrame(renderHeader{Key: identity, Analysis: record.Analysis}, record.Output)
 	if err != nil {
 		return err
 	}

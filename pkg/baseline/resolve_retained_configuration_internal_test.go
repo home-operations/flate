@@ -9,8 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/home-operations/flate/pkg/source/gittree"
-
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -23,6 +21,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
+	"github.com/home-operations/flate/pkg/source/gittree"
 )
 
 func TestResolve_RetainedConfiguration(t *testing.T) {
@@ -55,7 +54,7 @@ func TestResolve_RetainedConfiguration(t *testing.T) {
 				addOrigin(t, root, filepath.Join(remote, ".git"))
 				explicit = "trunk"
 			}
-			input, _, err := AdmitDirectory(t.Context(), root, "")
+			input, _, err := AdmitDirectory(t.Context(), root, "", manifest.WorkScope{})
 			assert.NoError(t, err)
 			location := input.FS.(*gittree.FS).Location()
 			assert.NoError(t, os.Remove(filepath.Join(root, ".git", "config")))
@@ -82,7 +81,7 @@ func TestAdmitDirectory_ExplicitRootRetainsRepository(t *testing.T) {
 	const url = "https://example.invalid/cluster.git"
 	addOrigin(t, root, url)
 	content := filepath.Join(root, "cluster")
-	input, scan, err := AdmitDirectory(t.Context(), content, content)
+	input, scan, err := AdmitDirectory(t.Context(), content, content, manifest.WorkScope{})
 	assert.NoError(t, err)
 	location := input.FS.(*gittree.FS).Location()
 	assert.Equal(t, scan, content)
@@ -96,13 +95,10 @@ func TestAdmitDirectory_ExplicitRootRetainsRepository(t *testing.T) {
 	body, err := fs.ReadFile(input.FS, "a.yaml")
 	assert.NoError(t, err)
 	assert.Equal(t, string(body), "body")
-	_, _, err = AdmitDirectory(t.Context(), root, content)
-	assert.FatalIf(
-		t,
-		err == nil || !strings.Contains(err.Error(), "outside the source root"),
-		"escaped scan was admitted: %v",
-		err,
-	)
+	_, _, err = AdmitDirectory(t.Context(), root, content, manifest.WorkScope{})
+	if err == nil || !strings.Contains(err.Error(), "outside the source root") {
+		t.Fatalf("escaped scan was admitted: %v", err)
+	}
 }
 
 func TestResolvePaths_ReusesRoot(t *testing.T) {
@@ -124,7 +120,9 @@ func TestResolvePaths_ReusesRoot(t *testing.T) {
 			assert.Equal(t, result.BaseScanPath, original)
 			missing := filepath.Join(root, "missing")
 			_, err = ResolvePaths(t.Context(), missing, original)
+
 			assert.FatalIf(t, !errors.Is(err, fs.ErrNotExist), "missing same-root scan was admitted: %v", err)
+
 			assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 			assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 			assert.Equal(t, strings.Contains(err.Error(), missing), true)

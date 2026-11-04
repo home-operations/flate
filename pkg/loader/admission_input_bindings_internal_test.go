@@ -40,7 +40,7 @@ func TestAdmission_InputGate(t *testing.T) {
 	l.Options.Selection = manifest.Selection{
 		Roots: []manifest.NamedResource{(&manifest.ResourceSet{Name: "consumer", Namespace: "apps"}).Named()},
 	}
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
@@ -71,7 +71,7 @@ func TestAdmission_ChangedInputRequiresReaderHistory(t *testing.T) {
 	l.Options.Filter = change.NewFilter()
 	l.Options.Changes = change.NewSet([]string{"input.yaml"})
 	l.Options.Selection = manifest.Selection{Changed: true}
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
@@ -158,7 +158,7 @@ func TestAdmission_SourceBindingsCaptureOncePerEvaluation(t *testing.T) {
 			)
 		}
 	}
-	changes, err := change.Qualify(t.Context(), nil, stores[0], stores[1])
+	changes, err := change.Qualify(t.Context(), nil, [2]*store.Store{stores[0], stores[1]}, manifest.WorkScope{})
 	assert.NoError(t, err)
 	var observations [2]manifest.DiscoveryIndex
 	for _, source := range sources {
@@ -176,10 +176,11 @@ func TestAdmission_SourceBindingsCaptureOncePerEvaluation(t *testing.T) {
 		observations[1].Visibility = append(observations[1].Visibility, empty)
 	}
 	changes, err = changes.WithReaders(
-		t.Context(),
-		&observations[0],
-		&observations[1],
-		[2]map[manifest.NamedResource]inputprojection.Projection{},
+		t.Context(), [2]*manifest.DiscoveryIndex{
+			&observations[0],
+			&observations[1],
+		},
+		[2]map[manifest.NamedResource]inputprojection.Projection{}, manifest.WorkScope{},
 	)
 	assert.NoError(t, err)
 	consumer := &manifest.Kustomization{
@@ -231,7 +232,7 @@ func TestAdmission_SourceBindingsCaptureOncePerEvaluation(t *testing.T) {
 func TestAdmission_FrozenBindingsCaptureEachConsumer(t *testing.T) {
 	t.Parallel()
 	changes, stores, roots, source := optionalSupplierPair(t, "apps")
-	changes, err := change.Qualify(t.Context(), changes, stores[0], stores[1])
+	changes, err := change.Qualify(t.Context(), changes, [2]*store.Store{stores[0], stores[1]}, manifest.WorkScope{})
 	assert.NoError(t, err)
 	l := New(stores[1])
 	l.SourceRoot = roots[1]
@@ -380,13 +381,13 @@ func testAdmissionUnreferencedInputCollisionCase(
 		l.Options.Selection = manifest.Selection{Changed: true}
 		l.Options.Filter = change.NewFilter()
 		for _, dir := range []string{"flux", "decls", "app"} {
-			_, err := l.Load(t.Context(), filepath.Join(root, dir))
+			_, err := l.Load(t.Context(), filepath.Join(root, dir), nil)
 			assert.NoError(t, err)
 		}
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 		stores[side], loaders[side] = st, l
 	}
-	changes, err := change.Qualify(t.Context(), nil, stores[0], stores[1])
+	changes, err := change.Qualify(t.Context(), nil, [2]*store.Store{stores[0], stores[1]}, manifest.WorkScope{})
 	assert.NoError(t, err)
 	for side, l := range loaders {
 		l.Options.Changes = changes

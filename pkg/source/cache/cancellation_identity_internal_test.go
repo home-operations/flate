@@ -33,7 +33,7 @@ func testAcquireCancellationKeepsContextErrorCase(
 	_, _, _, err := c.Acquire(
 		ctx,
 		ArchiveKey{Content: "source-cancel"},
-		Policy{MaxAge: 0},
+		&Policy{MaxAge: 0},
 		func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 			var payloadTar bytes.Buffer
 			testutil.WriteTar(t, &payloadTar, map[string]string{"file": "x"}, 0o644)
@@ -51,14 +51,14 @@ func testAcquireCancellationKeepsContextErrorCase(
 	_, _, id, err := c.Acquire(
 		t.Context(),
 		key,
-		Policy{},
+		&Policy{},
 		producer(orderedArchive(t, "file", "same"), &ocispec.Descriptor{}),
 	)
 	assert.NoError(t, err)
 	_, _, _, err = c.Acquire(
 		t.Context(),
 		key,
-		Policy{},
+		&Policy{},
 		func(ctx context.Context, _ ProducerInput) (ProducerResult, error) {
 			child, cancel := context.WithCancel(ctx)
 			cancel()
@@ -93,7 +93,7 @@ func testAcquireCancellationKeepsContextErrorCompletedBlob(t *testing.T) {
 	_, _, _, err := c.Blob(
 		ctx,
 		key,
-		Policy{MaxAge: 0},
+		&Policy{MaxAge: 0},
 		func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 			desc, err := producer([]byte("completed"), &ocispec.Descriptor{})(ctx, w)
 			cancel()
@@ -102,7 +102,7 @@ func testAcquireCancellationKeepsContextErrorCompletedBlob(t *testing.T) {
 	)
 	assert.NoError(t, err)
 
-	r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+	r, _, _, err := c.Blob(t.Context(), key, &Policy{MaxAge: Forever}, nil)
 	assert.NoError(t, err)
 
 	_, err = fs.ReadFile(r, "content")

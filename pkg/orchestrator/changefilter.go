@@ -112,6 +112,7 @@ func (o *Orchestrator) prepareProducerHistory(
 	if obj == nil || currentInput && o.index.Records[id].StaticOutput {
 		return nil, false
 	}
+	reads.BeginExecution(obj)
 	records, canNarrow := o.controllers.PreviousRender(ctx, obj, reads)
 	if records == nil {
 		return nil, false

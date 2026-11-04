@@ -30,7 +30,7 @@ func testGitRetryDiscardsGenerationCase(t *testing.T, disk *bool,
 	g, _, err := c.Git(
 		t.Context(),
 		GitKey{Content: "partial-git", RecurseSubmodules: true},
-		Policy{MaxAge: Forever, Retry: fastRetry(2)},
+		&Policy{MaxAge: Forever, Retry: fastRetry(2)},
 		func(callbackArg1 context.Context, callbackArg2 storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
 			return testGitRetryDiscardsGenerationCaseCallback(
 				callbackArg1,
@@ -44,7 +44,7 @@ func testGitRetryDiscardsGenerationCase(t *testing.T, disk *bool,
 	held, _, err := c.Git(
 		t.Context(),
 		GitKey{Content: "partial-git", RecurseSubmodules: true},
-		Policy{MaxAge: Forever},
+		&Policy{MaxAge: Forever},
 		func(context.Context, storage.Storer, billy.Filesystem) (plumbing.Hash, error) {
 			calls++
 			return plumbing.ZeroHash, nil

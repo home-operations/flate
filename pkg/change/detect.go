@@ -69,11 +69,10 @@ type readerPair struct {
 
 // Qualify compares available admitted source pairs before reconciliation.
 // Supplied changes retain their bootstrap coordinates and are never mutated.
-func Qualify(ctx context.Context, changes *Set, before, after *store.Store) (*Set, error) {
+func Qualify(ctx context.Context, changes *Set, stores [2]*store.Store, work manifest.WorkScope) (*Set, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context: %w", err)
 	}
-	stores := [2]*store.Store{before, after}
 	ids := sourceIDs(stores)
 	out := &Set{sources: make(map[manifest.NamedResource]sourceDelta, len(ids))}
 	compared := map[readerPair]*Set{}
@@ -85,7 +84,11 @@ func Qualify(ctx context.Context, changes *Set, before, after *store.Store) (*Se
 			}
 			continue
 		}
-		delta, err := changes.qualifyDelta(ctx, id, &evidence, compared)
+		delta := changes.qualifyDelta(id, &evidence)
+		var err error
+		if delta == nil {
+			delta, err = evidence.compare(ctx, id, compared, work)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -133,28 +136,32 @@ func (e *sourceDelta) readable() bool {
 	return a != nil && b != nil && a.FS != nil && b.FS != nil
 }
 
-func (s *Set) qualifyDelta(
-	ctx context.Context,
-	id manifest.NamedResource,
-	evidence *sourceDelta,
-	compared map[readerPair]*Set,
-) (*Set, error) {
+func (s *Set) qualifyDelta(id manifest.NamedResource, evidence *sourceDelta) *Set {
 	var previous sourceDelta
 	if s != nil {
 		previous = s.sources[id]
 	}
 	if previous.changes != nil && previous.artifacts == evidence.artifacts &&
 		previous.declarations == evidence.declarations {
-		return previous.changes, nil
+		return previous.changes
 	}
 	if id == manifest.BootstrapSourceID && s != nil && previous.changes == nil {
-		return s, nil
+		return s
 	}
-	pair := evidence.readerPair()
+	return nil
+}
+
+func (e *sourceDelta) compare(
+	ctx context.Context,
+	id manifest.NamedResource,
+	compared map[readerPair]*Set,
+	work manifest.WorkScope,
+) (*Set, error) {
+	pair := e.readerPair()
 	if delta := compared[pair]; delta != nil {
 		return delta, nil
 	}
-	equal, err := evidence.contentEqual(ctx, id)
+	equal, err := e.contentEqual(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -162,7 +169,7 @@ func (s *Set) qualifyDelta(
 	if equal {
 		delta = &Set{}
 	} else {
-		delta, err = Detect(ctx, evidence.artifacts[0], evidence.artifacts[1])
+		delta, err = Detect(ctx, e.artifacts[0], e.artifacts[1], work.Source(id))
 		if err != nil {
 			return nil, fmt.Errorf("compare source %s: %w", id, err)
 		}
@@ -258,7 +265,7 @@ func (s *Set) Contains(rel string) bool {
 }
 
 // Detect compares admitted filesystems under each side's Flux ignore policy.
-func Detect(ctx context.Context, before, after *store.SourceArtifact) (*Set, error) {
+func Detect(ctx context.Context, before, after *store.SourceArtifact, work manifest.WorkScope) (*Set, error) {
 	if before == nil || after == nil || before.FS == nil || after.FS == nil {
 		return nil, manifest.NewError(manifest.ErrInput, nil, "both admitted inputs required")
 	}
@@ -271,7 +278,7 @@ func Detect(ctx context.Context, before, after *store.SourceArtifact) (*Set, err
 	if digests[0] == nil || digests[1] == nil {
 		digests = [2]map[string]string{}
 	}
-	scanned, err := scanInputs(ctx, before, after, digests)
+	scanned, err := scanInputs(ctx, [2]*store.SourceArtifact{before, after}, digests, work)
 	if err != nil {
 		return nil, err
 	}
@@ -311,19 +318,23 @@ type scannedInputs struct{ before, after map[string]fileMeta }
 
 func scanInputs(
 	ctx context.Context,
-	before, after *store.SourceArtifact,
+	inputs [2]*store.SourceArtifact,
 	digests [2]map[string]string,
+	work manifest.WorkScope,
 ) (scannedInputs, error) {
+	before, after := inputs[0], inputs[1]
+	beforeWork := work.Record(manifest.WorkPreparation, before.Key)
+	afterWork := work.Record(manifest.WorkPreparation, after.Key)
 	var bef, aft map[string]fileMeta
 	eg, scanCtx := errgroup.WithContext(ctx)
 	eg.Go(func() error {
 		var err error
-		bef, err = scanTree(scanCtx, before, after, digests[0])
+		bef, err = scanTree(scanCtx, inputs, digests[0], beforeWork)
 		return err
 	})
 	eg.Go(func() error {
 		var err error
-		aft, err = scanTree(scanCtx, after, before, digests[1])
+		aft, err = scanTree(scanCtx, [2]*store.SourceArtifact{after, before}, digests[1], afterWork)
 		return err
 	})
 	if err := eg.Wait(); err != nil {
@@ -454,8 +465,9 @@ func checkedInputReader(ctx context.Context, f fs.File, terminal, readErr *error
 // The receiver and both discovery indexes remain immutable.
 func (s *Set) WithReaders(
 	ctx context.Context,
-	before, after *manifest.DiscoveryIndex,
+	indexes [2]*manifest.DiscoveryIndex,
 	inputs [2]map[manifest.NamedResource]inputprojection.Projection,
+	scope manifest.WorkScope,
 ) (*Set, error) {
 	if s == nil {
 		return nil, nil //nolint:nilnil // A nil result denotes successful absence.
@@ -463,7 +475,6 @@ func (s *Set) WithReaders(
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context: %w", err)
 	}
-	indexes := [2]*manifest.DiscoveryIndex{before, after}
 	bindings := *s
 	bindings.declarations = maps.Clone(s.declarations)
 	origins := s.origins
@@ -475,6 +486,7 @@ func (s *Set) WithReaders(
 			indexes,
 			&bindings,
 			&readerComparison{artifacts: origins, source: manifest.BootstrapSourceID, inputs: inputs},
+			scope.Source(manifest.BootstrapSourceID).Record(manifest.WorkPreparation, "readers"),
 		)
 		out.declarations = bindings.declarations
 		return out, nil
@@ -487,6 +499,7 @@ func (s *Set) WithReaders(
 			indexes,
 			&bindings,
 			&readerComparison{artifacts: evidence.artifacts, source: ref, inputs: inputs},
+			scope.Source(ref).Record(manifest.WorkPreparation, "readers"),
 		)
 		evidence.changes = qualified
 		out.sources[ref] = evidence

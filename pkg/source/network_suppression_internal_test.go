@@ -46,7 +46,7 @@ func testAcquireNetworkSuppressionCase(t *testing.T, concurrency *int,
 	t.Cleanup(srv.Close)
 	target := strings.Replace(srv.URL, "127.0.0.1", "network.test", 1)
 	retry := sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour}
-	_, err := c.Acquire(t.Context(), target+"/first", retry, nil)
+	_, err := c.Acquire(t.Context(), &HTTPRequest{URL: target + "/first", Retry: retry, HeldSlot: nil})
 	first, ok := errors.AsType[*sourcecache.TerminalError](err)
 	assert.FatalIf(t, !ok || !first.Attempted, "first attempt: %v", err)
 	cause, before := first.Err, calls.Load()
@@ -55,7 +55,10 @@ func testAcquireNetworkSuppressionCase(t *testing.T, concurrency *int,
 	done := make(chan error, (*concurrency))
 	for i := range *concurrency {
 		go func() {
-			_, acquireErr := c.Acquire(t.Context(), fmt.Sprintf("%s/%d", target, i), retry, nil)
+			_, acquireErr := c.Acquire(
+				t.Context(),
+				&HTTPRequest{URL: fmt.Sprintf("%s/%d", target, i), Retry: retry, HeldSlot: nil},
+			)
 			done <- acquireErr
 		}()
 	}
@@ -73,7 +76,7 @@ func testAcquireNetworkSuppressionCase(t *testing.T, concurrency *int,
 	fresh := newHTTPInputs(t, c.owner, nil, task.NewBounded(2))
 	t.Cleanup(fresh.Close)
 	failing.Store(false)
-	input, err := fresh.Acquire(t.Context(), target+"/first", retry, nil)
+	input, err := fresh.Acquire(t.Context(), &HTTPRequest{URL: target + "/first", Retry: retry, HeldSlot: nil})
 	var body []byte
 	if err == nil {
 		body, err = fs.ReadFile(input, "content")
@@ -151,7 +154,10 @@ func testAcquireNetworkSuppressionOwnerCancellationCaseCallback(
 	retry := sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour}
 	for i := range *(*testCaseInput.concurrency) {
 		senders.Go(func() {
-			_, err := c.Acquire(t.Context(), fmt.Sprintf("http://wave.test/%d", i), retry, nil)
+			_, err := c.Acquire(
+				t.Context(),
+				&HTTPRequest{URL: fmt.Sprintf("http://wave.test/%d", i), Retry: retry, HeldSlot: nil},
+			)
 			done <- err
 		})
 	}
@@ -176,10 +182,10 @@ func testAcquireNetworkSuppressionOwnerCancellationCaseCallback(
 		}
 	}
 	senders.Wait()
-	_, err := other.Acquire(t.Context(), "http://wave.test/later", retry, nil)
+	_, err := other.Acquire(t.Context(), &HTTPRequest{URL: "http://wave.test/later", Retry: retry, HeldSlot: nil})
 	terminal, ok = errors.AsType[*sourcecache.TerminalError](err)
 	assert.FatalIf(t, !ok || terminal.Attempted || !errors.Is(err, cause), "suppressed request: %v", err)
-	input, err := other.Acquire(t.Context(), srv.URL, retry, nil)
+	input, err := other.Acquire(t.Context(), &HTTPRequest{URL: srv.URL, Retry: retry, HeldSlot: nil})
 	var body []byte
 	if err == nil {
 		body, err = fs.ReadFile(input, "content")

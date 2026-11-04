@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: envoy-gateway-operator
+  namespace: flux-system
+data:
+  value: unchanged

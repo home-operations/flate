@@ -33,11 +33,11 @@ func (s *stubTypedFetcher) Fetch(
 	_ context.Context,
 	obj *manifest.GitRepository,
 	reads *store.ReadSet,
-	policy sourcecache.Policy,
+	policy *sourcecache.Policy,
 ) (*store.SourceArtifact, error) {
 	s.called = obj
 	s.reads = reads
-	s.policy = policy
+	s.policy = *policy
 	return &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: obj.URL}, nil
 }
 
@@ -50,7 +50,7 @@ func TestWrap_DispatchesTypedPayload(t *testing.T) {
 
 	policy := sourcecache.Policy{MaxAge: time.Hour, Retry: sourcecache.RetryConfig{Attempts: 3, MinWait: time.Second}}
 	reads := testReadSet(repo)
-	art, err := f.Fetch(t.Context(), repo, reads, policy)
+	art, err := f.Fetch(t.Context(), repo, reads, &policy)
 	assert.FatalIf(t, inner.reads != reads, "%s", "ReadSet was not forwarded")
 
 	if inner.policy.MaxAge != policy.MaxAge || inner.policy.Retry != policy.Retry ||
@@ -71,7 +71,7 @@ func TestWrap_MismatchedPayloadReturnsInputError(t *testing.T) {
 	f := Wrap(manifest.KindGitRepository, inner)
 	wrong := &manifest.OCIRepository{Name: "o", Namespace: "ns"}
 
-	_, err := f.Fetch(context.Background(), wrong, testReadSet(wrong), sourcecache.Policy{})
+	_, err := f.Fetch(context.Background(), wrong, testReadSet(wrong), &sourcecache.Policy{})
 	assert.FatalIf(t, err == nil, "%s", "expected ErrInput on mismatched payload")
 
 	assert.ErrorIf(t, !errors.Is(err, manifest.ErrInput), "expected wrapped ErrInput; got %v", err)
@@ -87,7 +87,7 @@ func TestOperationView_AcquisitionBoundary(t *testing.T) {
 	acquired, _, _, err := owner.Acquire(
 		t.Context(),
 		sourcecache.ArchiveKey{Content: "admission"},
-		sourcecache.Policy{MaxAge: sourcecache.Forever},
+		&sourcecache.Policy{MaxAge: sourcecache.Forever},
 		func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 			_, err := w.Write(data)
 			return sourcecache.ProducerResult{}, err
@@ -97,7 +97,7 @@ func TestOperationView_AcquisitionBoundary(t *testing.T) {
 	r, _, _, err := owner.Blob(
 		t.Context(),
 		sourcecache.BlobKey{Content: "blob"},
-		sourcecache.Policy{MaxAge: 0},
+		&sourcecache.Policy{MaxAge: 0},
 		func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 			_, writeStringErr := io.WriteString(w, "content")
 			return sourcecache.ProducerResult{}, writeStringErr

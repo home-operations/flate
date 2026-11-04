@@ -13,7 +13,6 @@ import (
 	"testing/fstest"
 
 	"github.com/home-operations/flate/internal/assert"
-
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/controllers/kustomization"
@@ -37,7 +36,7 @@ func (p acquireProbe) Value(key any) any {
 	frames := runtime.CallersFrames(pcs[:runtime.Callers(2, pcs[:])])
 	for {
 		frame, more := frames.Next()
-		if strings.HasPrefix(frame.Function, "github.com/home-operations/flate/pkg/source/cache.") {
+		if !strings.HasPrefix(frame.Function, "context.") {
 			if frame.Function == "github.com/home-operations/flate/pkg/source/cache.(*Cache).acquire" && more {
 				parent, _ := frames.Next()
 				if parent.Function == "github.com/home-operations/flate/pkg/source/cache.(*Cache).Acquire" {
@@ -68,11 +67,13 @@ func TestArtifactGenerator_AcquireObservationControl(
 	t.Parallel()
 	// Valid fixed/extract keys, no cancellation and no producer retry keep every Acquire on the probed path.
 	owner, err := cache.New(t.Context(), "")
+
 	assert.FatalIf(t, err != nil, "%v", err)
+
 	t.Cleanup(func() {
 		{
-			err := owner.Close()
-			assert.ErrorIf(t, err != nil, "%v", err)
+			closeErr := owner.Close()
+			assert.ErrorIf(t, closeErr != nil, "%v", closeErr)
 		}
 	})
 	var calls, producers atomic.Int64
@@ -240,6 +241,7 @@ func TestArtifactGenerator_ConsumedInputConvergence(t *testing.T) {
 
 			first := consumedPublication(t, publication, "selected-union")
 			second := consumedPublication(t, publication, "selected-union")
+
 			assert.FatalIf(
 				t,
 				!bytes.Equal(first, second),
@@ -295,10 +297,12 @@ func testArtifactGeneratorAcquireObservationControlCase(
 	input, _, id, err := (*testCaseInput.owner).Acquire(
 		ctx,
 		(*testCaseInput.key),
-		cache.Policy{MaxAge: cache.Forever},
+		&cache.Policy{MaxAge: cache.Forever},
 		(*testCaseInput.produce),
 	)
+
 	assert.FatalIf(t, err != nil, "%v", err)
+
 	data, err := fs.ReadFile(input, "file")
 	if err != nil || string(data) != "input" || testCaseInput.calls.Load()-before != 1 ||
 		testCaseInput.producers.Load() != 1 {
@@ -344,8 +348,8 @@ func testArtifactGeneratorAcquireObservationControlCase2(
 			map[string]any{"from": "@repo/archive.tgz", "to": "@artifact/", "strategy": "Extract"},
 		}, 2
 	}
-	generatorForTestResult1 := generatorForTest(t, []any{map[string]any{"name": name, "copy": operations}})
-	obj, doc := generatorForTestResult1.object, generatorForTestResult1.document
+	generatorForTestResult := generatorForTest(t, []any{map[string]any{"name": name, "copy": operations}})
+	obj, doc := generatorForTestResult.object, generatorForTestResult.document
 	st.AddObject(obj, doc)
 	repo := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
@@ -396,6 +400,7 @@ func testArtifactGeneratorAcquireObservationControlCase2(
 	} else if (*testCaseInput.phase) == "fresh-controller-warm" && artifact.Key != (*testCaseInput.generatedKey) {
 		t.Fatalf("fresh controller missed the warm output key: %s != %s", artifact.Key, (*testCaseInput.generatedKey))
 	}
+
 	assert.FatalIf(
 		t,
 		(*testCaseInput.phase) == "fresh-controller-warm" && (*testCaseInput.observed).opens.Load() != beforeFiles ||
@@ -404,6 +409,7 @@ func testArtifactGeneratorAcquireObservationControlCase2(
 		"%v",
 		"warm Acquire invoked its suppressed producer",
 	)
+
 	assert.FatalIf(
 		t,
 		(*testCaseInput.phase) == "generator-cold" && (*testCaseInput.observed).opens.Load() <= beforeFiles ||

@@ -13,9 +13,11 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -89,13 +91,16 @@ func TestOrchestrator_ParentOfAllocations(t *testing.T) {
 	var parent manifest.NamedResource
 	var ok bool
 	allocs := testing.AllocsPerRun(10, func() { parent, ok = o.parentOf(child) })
+
 	assert.FatalIf(t, allocs != 0 || !ok || parent != owner, "parent=%v/%t allocations=%v", parent, ok, allocs)
 }
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestOrchestrator_ChildrenByParent(t *testing.T) {
 	o, err := newTestOrchestrator(t, Tree{Path: t.TempDir()}, Config{CacheDir: t.TempDir()})
+
 	assert.FatalIf(t, err != nil, "%v", err)
+
 	id := func(name string) manifest.NamedResource {
 		return testutil.KustomizationID("apps", name)
 	}
@@ -104,11 +109,14 @@ func TestOrchestrator_ChildrenByParent(t *testing.T) {
 	publishFixture(t, o.store, parent, []manifest.NamedResource{second})
 	publishFixture(t, o.store, other, []manifest.NamedResource{first})
 	got := o.childrenByParent()
+
 	assert.FatalIf(t, !slices.Equal(got[parent], []manifest.NamedResource{first, second}) ||
 		!slices.Equal(got[other], []manifest.NamedResource{first}), "ownership snapshot = %v", got)
+
 	got[parent][0] = other
 	delete(got, other)
 	fresh := o.childrenByParent()
+
 	assert.FatalIf(t, !slices.Equal(fresh[parent], []manifest.NamedResource{first, second}) ||
 		!slices.Equal(fresh[other], []manifest.NamedResource{first}), "caller mutated ownership: %v", fresh)
 }
@@ -469,6 +477,7 @@ func testOrchestratorParentOfCase(t *testing.T, testCaseInput testOrchestratorPa
 	if testCaseInput.tc.structural {
 		want = (*testCaseInput.structural)
 	}
+
 	assert.FatalIf(
 		t,
 		ok != testCaseInput.tc.want || (ok && got != want),
@@ -505,6 +514,7 @@ func testOrchestratorParentOfMinimumAcceptedOwner(
 	assert.Diff(t, o.store.Productions((*testCaseInput), nil), []manifest.Production{{Owner: a}, {Owner: z}})
 	o.store.RecordEmitted(a, &store.Emission{Complete: true}, nil)
 	parent, ok = o.parentOf((*testCaseInput))
+
 	assert.FatalIf(t, !ok || parent != z, "withdrawn parent=%v/%t, want %v/true", parent, ok, z)
 }
 
@@ -524,6 +534,7 @@ func testOrchestratorParentOfEmptyDoesNotEraseOwner(
 		Productions: []manifest.Production{{Owner: (*testCaseInput.rendered)}, {}},
 	}
 	parent, ok := o.parentOf((*testCaseInput.id))
+
 	assert.FatalIf(
 		t,
 		!ok || parent != (*testCaseInput.rendered),
@@ -532,6 +543,7 @@ func testOrchestratorParentOfEmptyDoesNotEraseOwner(
 		ok,
 		(*testCaseInput.rendered),
 	)
+
 	assert.Diff(
 		t,
 		o.store.Productions((*testCaseInput.id), o.index),
@@ -557,7 +569,9 @@ func testOrchestratorParentOfCase2(t *testing.T, testCaseInput testOrchestratorP
 		Productions: []manifest.Production{testCaseInput.proof.production},
 	}
 	parent, ok := o.parentOf((*testCaseInput.id))
+
 	assert.FatalIf(t, ok || parent != (manifest.NamedResource{}), "ineligible parent=%v/%t", parent, ok)
+
 	assert.Diff(
 		t,
 		o.store.Productions((*testCaseInput.id), o.index),
@@ -663,28 +677,36 @@ func testRenderTreesChangedOnlyAndDiffGeneratedInputsCaseTail(
 	tailCaseInput *testRenderTreesChangedOnlyAndDiffGeneratedInputsCaseTailInputs,
 ) {
 	t.Helper()
-	cache := t.TempDir()
+	for side, root := range tailCaseInput.dirs {
+		runs, err := RenderTrees(
+			t.Context(),
+			[]Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: root, RepoRoot: root}},
+			Config{RecordWork: true, Concurrency: 2},
+		)
+		assert.NoError(t, err)
+		tailCaseInput.full[side] = outputByParent(runs[0].Result.Manifests)
+	}
+	cache := cachetest.New(t, "", sourcecache.New)
 	var previous [2]string
 	testRenderTreesChangedOnlyAndDiffGeneratedInputsCaseTailSegment(t, &tailCaseInput, &cache, &previous)
 }
 
 type testRenderTreesChangedOnlyAndDiffGeneratedInputsCaseTailInputs struct {
-	dirs *[2]string
-
+	dirs          *[2]string
 	testCaseInput **string
-
-	values *[2]string
+	values        *[2]string
+	full          [2]map[manifest.NamedResource][]map[string]any
 }
 
 func testRenderTreesChangedOnlyAndDiffGeneratedInputsCaseTailSegment(
 	t *testing.T,
 	tailCaseInput **testRenderTreesChangedOnlyAndDiffGeneratedInputsCaseTailInputs,
-	cache *string,
+	cache **sourcecache.Cache,
 	previous *[2]string,
 ) {
 	t.Helper()
-	for run, state := range []string{"cold", "warm"} {
-		cfg := treeConfig{CacheDir: (*cache), Concurrency: 2}
+	for run, state := range []string{"cold", "edited-replay"} {
+		cfg := treeConfig{RecordWork: true, Cache: (*cache), Concurrency: 2}
 		renderedTrees1, err := RenderTrees(
 			t.Context(),
 			[]Tree{
@@ -707,9 +729,20 @@ func testRenderTreesChangedOnlyAndDiffGeneratedInputsCaseTailSegment(
 			},
 			cfg.Config,
 		)
-		baseRef, head := renderedTrees1[0], renderedTrees1[1]
+		baseline, head := renderedTrees1[0], renderedTrees1[1]
 		assert.NoError(t, err)
-		for side, rendered := range []Rendered{baseRef, head} {
+		for side, rendered := range []Rendered{baseline, head} {
+			assertGeneratedInputWork(
+				t,
+				&rendered,
+				generatedInputWork{
+					root:     (*tailCaseInput).dirs[side],
+					side:     side,
+					run:      run,
+					scenario: *(*(*tailCaseInput).testCaseInput),
+					full:     (*tailCaseInput).full[side],
+				},
+			)
 			producer := testutil.KustomizationID("flux-system", "producer")
 			consumer := testutil.KustomizationID("flux-system", "consumer")
 			sibling := testutil.KustomizationID("flux-system", "sibling")
@@ -743,8 +776,8 @@ func testRenderTreesChangedOnlyAndDiffGeneratedInputsCaseTailSegment(
 				assert.Equal(t, string(body), previous[side])
 			}
 			previous[side] = string(body)
-			generatedInputProducerKeysResult1 := generatedInputProducerKeys(tailCaseInput, side)
-			target, key := generatedInputProducerKeysResult1.target, generatedInputProducerKeysResult1.key
+			generatedInputProducerKeysResult := generatedInputProducerKeys(tailCaseInput, side)
+			target, key := generatedInputProducerKeysResult.target, generatedInputProducerKeysResult.key
 			producerBody, err := json.Marshal(outputByParent(rendered.Result.Manifests)[producer])
 			assert.NoError(t, err)
 			wantProducer := fmt.Sprintf(
@@ -787,11 +820,6 @@ func assertGeneratedInputDeclarations(
 	}
 }
 
-type producerKeys struct {
-	target string
-	key    string
-}
-
 func generatedInputProducerKeys(
 	tailCaseInput **testRenderTreesChangedOnlyAndDiffGeneratedInputsCaseTailInputs,
 	side int,
@@ -806,16 +834,7 @@ func generatedInputProducerKeys(
 	return producerKeys{target: target, key: key}
 }
 
-func generatedInputExpectedOwners(
-	scenario string,
-	owners []manifest.NamedResource,
-	entry manifest.NamedResource,
-) []manifest.NamedResource {
-	if scenario == "target" {
-		return append(owners, entry)
-	}
-	if scenario == "unrelated" {
-		return nil
-	}
-	return owners
+type producerKeys struct {
+	target string
+	key    string
 }

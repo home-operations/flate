@@ -46,7 +46,7 @@ func testBlobRepairFailureCleanupCase(t *testing.T, failure *bool,
 	r, _, id, err := c.Blob(
 		t.Context(),
 		BlobKey{Content: "repair-failure"},
-		Policy{Admit: func(context.Context) (func(), error) {
+		&Policy{Admit: func(context.Context) (func(), error) {
 			return func() { releases++ }, nil
 		}},
 		func(callbackArg1 context.Context, w ProducerInput) (ProducerResult, error) {

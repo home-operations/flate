@@ -59,7 +59,7 @@ func testFetcherEmptyArtifactCase(t *testing.T, operation *string,
 					t.Context(),
 					&selected,
 					(testInputs{}).readSet(&selected),
-					sourcecache.Policy{},
+					&sourcecache.Policy{},
 				)
 				assert.FatalIf(
 					t,

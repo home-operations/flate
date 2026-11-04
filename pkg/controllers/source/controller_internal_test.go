@@ -17,7 +17,6 @@ import (
 
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/internal/filtertest"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/change"
@@ -45,11 +44,11 @@ func (f *fakeFetcher) Fetch(
 	_ context.Context,
 	obj manifest.BaseManifest,
 	reads *store.ReadSet,
-	policy sourcecache.Policy,
+	policy *sourcecache.Policy,
 ) (*store.SourceArtifact, error) {
 	f.calls++
 	f.objects = append(f.objects, obj)
-	f.retry = policy
+	f.retry = *policy
 	if f.secret != "" {
 		src.SecretLookup(reads)(obj.Named().Namespace, f.secret)
 	}
@@ -152,16 +151,18 @@ func TestSource_CapturedMaterialRefresh(t *testing.T) {
 				},
 			},
 		)
+
 		assert.FatalIf(t, pending != 1, "pending transitions=%d, want only initial acquisition", pending)
-		if accepted.Outcome() == schedule.Blocked || !accepted.Valid() || f.calls != phase.calls {
-			t.Fatalf(
-				"assessment valid=%t unresolved=%t acquisitions=%d, want %d",
-				accepted.Valid(),
-				accepted.Outcome() == schedule.Blocked,
-				f.calls,
-				phase.calls,
-			)
-		}
+
+		assert.FatalIf(
+			t,
+			accepted.Outcome() == schedule.Blocked || !accepted.Valid() || f.calls != phase.calls,
+			"assessment valid=%t unresolved=%t acquisitions=%d, want %d",
+			accepted.Valid(),
+			accepted.Outcome() == schedule.Blocked,
+			f.calls,
+			phase.calls,
+		)
 	}
 	accepted.Close()
 }
@@ -213,13 +214,13 @@ func TestSource_DeclarationSettlement(t *testing.T) {
 			})
 			c.Tasks.Go(t.Context(), "producer", func(context.Context) {
 				<-attempted
-				if provisional.Outcome() != schedule.Blocked || f.calls != 0 {
-					t.Errorf(
-						"provisional unresolved=%t acquisitions=%d, want deferred with no acquisition",
-						provisional.Outcome() == schedule.Blocked,
-						f.calls,
-					)
-				}
+				assert.ErrorIf(
+					t,
+					provisional.Outcome() != schedule.Blocked || f.calls != 0,
+					"provisional unresolved=%t acquisitions=%d, want deferred with no acquisition",
+					provisional.Outcome() == schedule.Blocked,
+					f.calls,
+				)
 				controllertest.Emit(
 					t.Context(),
 					c.Controller,
@@ -235,14 +236,14 @@ func TestSource_DeclarationSettlement(t *testing.T) {
 				t,
 				controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode},
 			)
-			if info.Status != store.StatusReady || f.calls != 1 || len(f.objects) != 1 || f.objects[0] != &settled {
-				t.Fatalf(
-					"status=%v acquisitions=%d identities=%v, want exactly the settled declaration",
-					info,
-					f.calls,
-					f.objects,
-				)
-			}
+			assert.FatalIf(
+				t,
+				info.Status != store.StatusReady || f.calls != 1 || len(f.objects) != 1 || f.objects[0] != &settled,
+				"status=%v acquisitions=%d identities=%v, want exactly the settled declaration",
+				info,
+				f.calls,
+				f.objects,
+			)
 			t.Logf("acquired settled identity: %#v", f.objects[0])
 		})
 	}
@@ -330,10 +331,10 @@ func TestController_FetchErrorMarksFailed(t *testing.T) {
 		t,
 		controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode},
 	)
+
 	assert.FatalIf(t, info.Status != store.StatusFailed, "status = %+v, want StatusFailed", info)
-	if info.String() != "boom" {
-		t.Errorf("Failed reason = %q, want %q", info.String(), "boom")
-	}
+
+	assert.ErrorIf(t, info.String() != "boom", "Failed reason = %q, want %q", info.String(), "boom")
 }
 
 func TestController_ShortCircuitsToReady(t *testing.T) {
@@ -375,6 +376,7 @@ func TestController_UnregisteredKindIgnored(t *testing.T) {
 		URL: "oci://example/img",
 	}
 	st.AddObject(oci)
+
 	{
 		info := controllertest.DispatchToFixpoint(
 			t.Context(),
@@ -385,6 +387,7 @@ func TestController_UnregisteredKindIgnored(t *testing.T) {
 	}
 
 	// The unregistered kind was never dispatched, so it must have no status.
+
 	{
 		_, ok := st.GetStatus(unregistered.Named())
 		assert.ErrorIf(t, ok, "expected no status update for unregistered kind")
@@ -515,6 +518,7 @@ func testSourceDeclarationContributorsReuseCase(
 			"%v",
 			"changed content accepted the invalidated acquisition",
 		)
+
 		accepted.Retire()
 		c.Tasks.Go(t.Context(), "changed content", func(ctx context.Context) {
 			accepted = c.ReconcileNode(ctx, chart.Named(), manifest.DrainNone)
@@ -523,14 +527,14 @@ func testSourceDeclarationContributorsReuseCase(
 		wantCalls = 2
 	}
 	defer accepted.Close()
-	if accepted.Outcome() == schedule.Blocked || !accepted.Valid() || f.calls != wantCalls {
-		t.Fatalf(
-			"initial valid=%t unresolved=%t acquisitions=%d",
-			accepted.Valid(),
-			accepted.Outcome() == schedule.Blocked,
-			f.calls,
-		)
-	}
+	assert.FatalIf(
+		t,
+		accepted.Outcome() == schedule.Blocked || !accepted.Valid() || f.calls != wantCalls,
+		"initial valid=%t unresolved=%t acquisitions=%d",
+		accepted.Valid(),
+		accepted.Outcome() == schedule.Blocked,
+		f.calls,
+	)
 	wantEvidence := store.AdvisoryEvidence{
 		Overrides: []store.SuppliedOverride{
 			{Resource: secret.Named(), SupplyPath: "credentials.yaml", Keys: []string{"username"}},
@@ -544,23 +548,25 @@ func testSourceDeclarationContributorsReuseCase(
 		&store.Emission{Children: []store.Child{{Obj: chart}}, Complete: (*testCaseInput.complete)},
 	)
 	publish("changed again")
+
 	assert.FatalIf(
 		t,
 		accepted.Valid(),
 		"%v",
 		"producer publication did not invalidate the captured availability assessment",
 	)
+
 	c.Tasks.Go(t.Context(), "successor", func(ctx context.Context) {
 		next := c.ReconcileNode(ctx, chart.Named(), manifest.DrainNone)
 		defer next.Close()
-		if next.Outcome() == schedule.Blocked || !next.Valid() || f.calls != wantCalls {
-			t.Errorf(
-				"successor valid=%t unresolved=%t acquisitions=%d, want unchanged content reused",
-				next.Valid(),
-				next.Outcome() == schedule.Blocked,
-				f.calls,
-			)
-		}
+		assert.ErrorIf(
+			t,
+			next.Outcome() == schedule.Blocked || !next.Valid() || f.calls != wantCalls,
+			"successor valid=%t unresolved=%t acquisitions=%d, want unchanged content reused",
+			next.Valid(),
+			next.Outcome() == schedule.Blocked,
+			f.calls,
+		)
 	})
 	c.Tasks.BlockTillDone()
 	assert.Diff(t, st.AdvisoryEvidence(), wantEvidence)
@@ -608,12 +614,14 @@ func testSourceDeclarationProgressCase(t *testing.T, testCaseInput *string,
 					); err != nil {
 						return err
 					}
+
 					assert.ErrorIf(
 						t,
 						run.Reads.GetArtifact(repo.Named(), store.ArtifactContent) == nil,
 						"%v",
 						"producer did not receive source content",
 					)
+
 					run.Emit(
 						t.Context(),
 						id,
@@ -628,17 +636,30 @@ func testSourceDeclarationProgressCase(t *testing.T, testCaseInput *string,
 	}
 	scheduler := schedule.New(c.Tasks, dispatch)
 	scheduler.Seed(ids)
+
 	{
 		err := scheduler.Run(t.Context())
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
+
 	info, _ := st.GetStatus(repo.Named())
 	if (*testCaseInput) == "absent producer" {
-		if info.Status != store.StatusReady || f.calls != 1 {
-			t.Fatalf("independent source: status=%+v acquisitions=%d", info, f.calls)
-		}
-	} else if !info.IsDependencyFailure() || f.calls != 0 || !slices.Equal(info.BlockedBy(), []manifest.NamedResource{parent.Named()}) {
-		t.Fatalf("covered source acquired raw bytes or lost cause: status=%+v acquisitions=%d", info, f.calls)
+		assert.FatalIf(
+			t,
+			info.Status != store.StatusReady || f.calls != 1,
+			"independent source: status=%+v acquisitions=%d",
+			info,
+			f.calls,
+		)
+	} else {
+		assert.FatalIf(
+			t,
+			!info.IsDependencyFailure() || f.calls != 0 ||
+				!slices.Equal(info.BlockedBy(), []manifest.NamedResource{parent.Named()}),
+			"covered source acquired raw bytes or lost cause: status=%+v acquisitions=%d",
+			info,
+			f.calls,
+		)
 	}
 }
 
@@ -674,6 +695,7 @@ func testControllerFetchesAndStoresArtifactCase(
 		pin.FS = nil
 		(*testCaseInput.st).SetArtifact((*testCaseInput.repo).Named(), &pin)
 	}
+
 	{
 		info := controllertest.DispatchToFixpoint(
 			t.Context(),
@@ -687,13 +709,13 @@ func testControllerFetchesAndStoresArtifactCase(
 		)
 		assert.FatalIf(t, info.Status != store.StatusReady, "status = %+v, want StatusReady", info)
 	}
-	if (*testCaseInput.f).retry.MaxAge != time.Hour ||
+
+	assert.FatalIf(t, (*testCaseInput.f).retry.MaxAge != time.Hour ||
 		(*testCaseInput.f).retry.Retry != (sourcecache.RetryConfig{Attempts: 3}) ||
 		(*testCaseInput.f).retry.Timeout != nil ||
-		(*testCaseInput.f).retry.Admit != nil {
-		t.Fatalf("configured policy=%+v", (*testCaseInput.f).retry)
-	}
+		(*testCaseInput.f).retry.Admit != nil, "configured policy=%+v", (*testCaseInput.f).retry)
 	art, ok := (*testCaseInput.st).GetArtifact((*testCaseInput.repo).Named(), store.ArtifactContent).(*store.SourceArtifact)
+
 	assert.FatalIf(
 		t,
 		!ok || art.FS == nil || art.Kind != (*testCaseInput.f).artifact.Kind || art.URL != (*testCaseInput.f).artifact.URL || art.Key != "pin" ||
@@ -702,6 +724,7 @@ func testControllerFetchesAndStoresArtifactCase(
 		"artifact = %+v, want readable source with original identity",
 		art,
 	)
+
 	{
 		got, err := fs.ReadFile(art.FS, "source.txt")
 		assert.FatalIf(
@@ -751,9 +774,16 @@ func testControllerShortCircuitsToReadyCase(t *testing.T, testCaseInput *bool,
 				message, calls = "suspended", 0
 				outcome = store.OutcomeSuspended
 			}
-			if info.Outcome() != outcome || info.String() != message || f.calls != calls {
-				t.Fatalf("status=%+v fetch calls=%d, want Ready/%q calls=%d", info, f.calls, message, calls)
-			}
+			assert.FatalIf(
+				t,
+				info.Outcome() != outcome || info.String() != message || f.calls != calls,
+				"status=%+v fetch calls=%d, want Ready/%q calls=%d",
+				info,
+				f.calls,
+				message,
+				calls,
+			)
+
 			assert.FatalIf(
 				t,
 				st.GetArtifact(tc.obj.Named(), store.ArtifactContent) != nil,
@@ -777,7 +807,7 @@ func testControllerShortCircuitsToReadyUnchanged(t *testing.T) {
 		admissiontest.Config{
 			Changes:   change.NewSet(nil),
 			Index:     &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}},
-			Inventory: filtertest.MapLister{},
+			Inventory: st,
 			Root:      "",
 		},
 	)
@@ -789,13 +819,18 @@ func testControllerShortCircuitsToReadyUnchanged(t *testing.T) {
 	st.AddObject(repo)
 	c.StartLifecycle()
 	tasks.Go(t.Context(), repo.Named().String(), func(ctx context.Context) {
-		if deps := c.ReconcileNode(ctx, repo.Named(), manifest.DrainNone).Blocked; len(deps) != 0 {
-			t.Errorf("blocked source %s: %v", repo.Named(), deps)
+		{
+			deps := c.ReconcileNode(ctx, repo.Named(), manifest.DrainNone).Blocked
+			assert.ErrorIf(t, len(deps) != 0, "blocked source %s: %v", repo.Named(), deps)
 		}
 	})
 	tasks.BlockTillDone()
 	info, _ := st.GetStatus(repo.Named())
-	if info.Outcome() != store.OutcomeUnchanged || info.String() != "unchanged" || f.calls != 0 {
-		t.Fatalf("status=%+v fetch calls=%d, want Ready/unchanged calls=0", info, f.calls)
-	}
+	assert.FatalIf(
+		t,
+		info.Outcome() != store.OutcomeUnchanged || info.String() != "unchanged" || f.calls != 0,
+		"status=%+v fetch calls=%d, want Ready/unchanged calls=0",
+		info,
+		f.calls,
+	)
 }

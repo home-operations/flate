@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strconv"
 	"strings"
@@ -358,24 +359,36 @@ func TestUpdateDependencyGraphFor_HelmRelease(t *testing.T) {
 
 //nolint:paralleltest // This test changes process-global state.
 //nolint:paralleltest // The test calls a helper that changes process-global state.
-func TestSameKindDepTargets_CallerBuffer(t *testing.T) {
-	for _, count := range []int{1, 8, 12} {
-		t.Run(strconv.Itoa(count), func(t *testing.T) {
-			want := make([]manifest.NamedResource, count)
-			for i := range want {
-				want[i] = testutil.KustomizationID("ns", strconv.Itoa(i))
-			}
-			ks := makeKS("app", "ns", want...)
-			var buf [8]manifest.NamedResource
-			assert.Diff(t, sameKindDepTargets(ks, buf[:0]), want)
-			if count <= len(buf) {
-				allocs := testing.AllocsPerRun(100, func() {
-					_ = sameKindDepTargets(ks, buf[:0])
-				})
-				assert.Equal(t, allocs, float64(0))
-			}
+func TestOrchestrator_Allocations(t *testing.T) {
+	t.Run("SameKindDepTargets_CallerBuffer", func(t *testing.T) {
+		for _, count := range []int{1, 8, 12} {
+			t.Run(strconv.Itoa(count), func(t *testing.T) {
+				want := make([]manifest.NamedResource, count)
+				for i := range want {
+					want[i] = testutil.KustomizationID("ns", strconv.Itoa(i))
+				}
+				ks := makeKS("app", "ns", want...)
+				var buf [8]manifest.NamedResource
+				assert.Diff(t, sameKindDepTargets(ks, buf[:0]), want)
+				if count <= len(buf) {
+					allocs := testing.AllocsPerRun(100, func() {
+						_ = sameKindDepTargets(ks, buf[:0])
+					})
+					assert.Equal(t, allocs, float64(0))
+				}
+			})
+		}
+	})
+	t.Run("Work_DisabledDebugAllocations", func(t *testing.T) {
+		previous := slog.Default()
+		slog.SetDefault(slog.New(slog.DiscardHandler))
+		defer slog.SetDefault(previous)
+		o := &Orchestrator{work: manifest.WorkSummary{{Counts: manifest.WorkCounts{Attempts: 1}}}}
+		allocations := testing.AllocsPerRun(10, func() {
+			o.logSummary(nil, 1, 0)
 		})
-	}
+		assert.Equal(t, allocations, float64(0))
+	})
 }
 
 //nolint:paralleltest // This test changes process-global state.

@@ -101,6 +101,7 @@ func (c *admissionClosure) sourceRole(id manifest.NamedResource, role admissionR
 	}
 	//nolint:gocritic // The iterator supplies immutable value snapshots.
 	for target, record := range c.loader.Index.Files() {
+		c.objects.WorkScope().Admission().Add(&manifest.WorkCounts{FileEntries: 1})
 		needed := c.loader.Options.Filter.Membership(target).Needed
 		if !needed || record.BuilderOwner != (manifest.NamedResource{}) ||
 			!c.coversDeclaration(c.incoming.Obj, target) {

@@ -69,8 +69,11 @@ func testTemplateCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 		if (*testCaseInput) == "read" {
 			r, _, _, err := owner.Blob(
 				t.Context(),
-				cache.BlobKey{Content: d.record.key, Render: cache.RenderAccepted},
-				cache.Policy{MaxAge: cache.Forever},
+				cache.BlobKey{
+					Content: d.record.key,
+					Render:  cache.RenderAccepted,
+				},
+				&cache.Policy{MaxAge: cache.Forever},
 				nil,
 			)
 			assert.NoError(t, err)

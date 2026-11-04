@@ -91,7 +91,7 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 			_, _, _, err = renderer.cache.Blob(
 				t.Context(),
 				cache.BlobKey{Content: prepared.key, Render: cache.RenderAccepted},
-				cache.Policy{MaxAge: 0},
+				&cache.Policy{MaxAge: 0},
 				func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 					_, copyErr := io.Copy(w, io.MultiReader(bytes.NewReader(wire), bytes.NewReader(accepted)))
 					return cache.ProducerResult{}, copyErr

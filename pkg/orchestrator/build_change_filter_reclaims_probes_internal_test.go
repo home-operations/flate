@@ -632,18 +632,18 @@ spec:
 	changes, err := change.Qualify(
 		t.Context(),
 		change.NewSet([]string{"apps/blue/cm.yaml"}),
-		current[0].store,
-		current[1].store,
+		[2]*store.Store{current[0].store, current[1].store},
+		manifest.WorkScope{},
 	)
 	assert.NoError(t, err)
 	changes, err = changes.WithReaders(
 		t.Context(),
-		current[0].index,
-		current[1].index,
+		[2]*manifest.DiscoveryIndex{current[0].index, current[1].index},
 		[2]map[manifest.NamedResource]inputprojection.Projection{
 			current[0].loader.InputContent,
 			current[1].loader.InputContent,
 		},
+		manifest.WorkScope{},
 	)
 	assert.NoError(t, err)
 	owner := testutil.HelmReleaseID("apps", "emitter")

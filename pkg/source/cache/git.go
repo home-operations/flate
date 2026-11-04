@@ -52,12 +52,14 @@ func (p gitProducer) identity() string {
 func (c *Cache) Git(
 	ctx context.Context,
 	key GitKey,
-	policy Policy,
+	policyValue *Policy,
 	produce func(context.Context, storage.Storer, billy.Filesystem) (plumbing.Hash, error),
 ) (*GitGeneration, string, error) {
+	policy := *policyValue
+
 	producer := gitProducer{key: key}
 	e, id, err := c.acquire(
-		ctx, new(acquireKey{producer: producer}), policy,
+		ctx, new(acquireKey{producer: producer}), &policy,
 		acquisitionCallbacks{produce: func(ctx context.Context, c *Cache, staged *payload) (*entry, error) {
 			return producer.produce(ctx, c, staged, produce)
 		}},

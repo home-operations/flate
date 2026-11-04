@@ -121,7 +121,7 @@ func testDecodeRequiredMetadataCaseCase2(t *testing.T, testCaseInput testDecodeR
 	_, _, id, err := c.Blob(
 		t.Context(),
 		key,
-		Policy{MaxAge: Forever},
+		&Policy{MaxAge: Forever},
 		producer([]byte("payload"), &upstream),
 	)
 	assert.NoError(t, err)
@@ -144,7 +144,7 @@ func testDecodeRequiredMetadataCaseCase2(t *testing.T, testCaseInput testDecodeR
 		r, _, failedID, blobErr3 := c.Blob(
 			t.Context(),
 			key,
-			Policy{MaxAge: Forever},
+			&Policy{MaxAge: Forever},
 			nil,
 		)
 		assert.FatalIf(t, r != nil || failedID != "" ||
@@ -157,7 +157,7 @@ func testDecodeRequiredMetadataCaseCase2(t *testing.T, testCaseInput testDecodeR
 	r, _, restoredID, err := c.Blob(
 		t.Context(),
 		key,
-		Policy{MaxAge: Forever},
+		&Policy{MaxAge: Forever},
 		func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 			calls++
 			return producer([]byte("refilled"), &upstream)(ctx, w)

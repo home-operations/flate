@@ -80,7 +80,7 @@ func TestFetcher_SourceLinksOmitted(t *testing.T) {
 		t.Context(),
 		&manifest.GitRepository{Name: "links", URL: "file://" + src},
 		(testInputs{}).readSet(&manifest.GitRepository{Name: "links", URL: "file://" + src}),
-		sourcecache.Policy{},
+		&sourcecache.Policy{},
 	)
 	assert.NoError(t, err)
 
@@ -126,7 +126,7 @@ func TestFetcher_LocalFileURL(t *testing.T) {
 		context.Background(),
 		repo,
 		(testInputs{}).readSet(repo),
-		sourcecache.Policy{MaxAge: repo.SourceInterval()},
+		&sourcecache.Policy{MaxAge: repo.SourceInterval()},
 	)
 	assert.FatalIf(t, err != nil, "Fetch: %v", err)
 	_, pin, err := source.OperationView(t.Context(), art.FS)
@@ -143,7 +143,7 @@ func TestFetcher_LocalFileURL(t *testing.T) {
 		context.Background(),
 		repo,
 		(testInputs{}).readSet(repo),
-		sourcecache.Policy{MaxAge: repo.SourceInterval()},
+		&sourcecache.Policy{MaxAge: repo.SourceInterval()},
 	)
 	assert.FatalIf(t, err != nil, "Fetch second: %v", err)
 	_, nextPin, err := source.OperationView(t.Context(), art2.FS)
@@ -189,7 +189,7 @@ func TestFetcher_RestrictedEndpointSchemes(t *testing.T) {
 					t.Context(),
 					&manifest.GitRepository{URL: url},
 					(testInputs{}).readSet(&manifest.GitRepository{URL: url}),
-					sourcecache.Policy{},
+					&sourcecache.Policy{},
 				)
 				assert.FatalIf(
 					t,
@@ -247,37 +247,109 @@ func TestFetcher_References(t *testing.T) {
 	mustTagHEAD(t, src, "v2.0.0")
 	mustSetRefToHEAD(t, src, "refs/pull/1/head")
 	for _, tc := range []struct {
-		name          string
-		ref           *sourcev1.GitRepositoryRef
-		depth         int
-		sparse        []string
-		want          string
-		files, absent []string
-		warmCommit    string
-		recurse       bool
-		wantErr       bool
-		errText       string
+		name              string
+		ref               *sourcev1.GitRepositoryRef
+		depth             int
+		sparse            []string
+		want              string
+		files, absent     []string
+		warmCommit        string
+		recurse           bool
+		wantErr           bool
+		errText           string
+		localAcquisitions uint64
 	}{
-		{name: "HEAD", depth: 1, want: tip, files: []string{"hello.txt", "second.txt"}},
-		{name: "tag", ref: &sourcev1.GitRepositoryRef{Tag: "v2.0.0"}, depth: 1, want: tip, files: []string{"chart.yaml"}},
-		{name: "branch", ref: &sourcev1.GitRepositoryRef{Branch: "staging"}, depth: 1, want: first, files: []string{"hello.txt"}, absent: []string{"version.txt"}},
-		{name: "branch recursive checkout", ref: &sourcev1.GitRepositoryRef{Branch: "staging"}, recurse: true, want: first, files: []string{"hello.txt"}, absent: []string{"version.txt"}},
-		{name: "name", ref: &sourcev1.GitRepositoryRef{Name: "refs/tags/v1.0.0"}, want: first},
-		{name: "unresolvable name", ref: &sourcev1.GitRepositoryRef{Name: "refs/heads/does-not-exist"}, wantErr: true},
-		{name: "explicit name fallback", ref: &sourcev1.GitRepositoryRef{Name: "refs/pull/1/head"}, sparse: []string{"apps/a"}, want: tip, files: []string{"apps/a/manifest.yaml"}, absent: []string{"apps/b/manifest.yaml"}},
-		{name: "semver", ref: &sourcev1.GitRepositoryRef{Tag: "v1.0.0", SemVer: ">=1.1.0"}, want: tip, files: []string{"version.txt"}},
-		{name: "shallow semver", ref: &sourcev1.GitRepositoryRef{SemVer: ">=1.0.0"}, depth: 1, want: tip, files: []string{"version.txt"}},
-		{name: "commit", ref: &sourcev1.GitRepositoryRef{Commit: first}, want: first, absent: []string{"version.txt"}},
-		{name: "commit precedes name", ref: &sourcev1.GitRepositoryRef{Commit: first, Name: "refs/tags/v2.0.0"}, want: first, absent: []string{"version.txt"}},
-		{name: "commit precedes unresolvable name", ref: &sourcev1.GitRepositoryRef{Commit: first, Name: "refs/pull/does-not-exist/head"}, want: first},
-		{name: "commit branch reachability", ref: &sourcev1.GitRepositoryRef{Commit: tip, Branch: "staging"}, warmCommit: tip, wantErr: true, errText: "not reachable from branch"},
-		{name: "shallow sparse", depth: 1, sparse: []string{"apps/a"}, want: tip, files: []string{"apps/a/manifest.yaml"}, absent: []string{"apps/b/manifest.yaml"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			testFetcherReferencesCase(t, &src, &tc)
+		{name: "HEAD", depth: 1, want: tip, files: []string{"hello.txt", "second.txt"}, localAcquisitions: 1},
+		{
+			name:              "tag",
+			ref:               &sourcev1.GitRepositoryRef{Tag: "v2.0.0"},
+			depth:             1,
+			want:              tip,
+			files:             []string{"chart.yaml"},
+			localAcquisitions: 1,
 		},
-		)
+		{
+			name:              "branch",
+			ref:               &sourcev1.GitRepositoryRef{Branch: "staging"},
+			depth:             1,
+			want:              first,
+			files:             []string{"hello.txt"},
+			absent:            []string{"version.txt"},
+			localAcquisitions: 1,
+		},
+		{
+			name:              "branch recursive checkout",
+			ref:               &sourcev1.GitRepositoryRef{Branch: "staging"},
+			recurse:           true,
+			want:              first,
+			files:             []string{"hello.txt"},
+			absent:            []string{"version.txt"},
+			localAcquisitions: 1,
+		},
+		{name: "name", ref: &sourcev1.GitRepositoryRef{Name: "refs/tags/v1.0.0"}, want: first, localAcquisitions: 1},
+		{name: "unresolvable name", ref: &sourcev1.GitRepositoryRef{Name: "refs/heads/does-not-exist"}, wantErr: true},
+		{
+			name:              "explicit name fallback",
+			ref:               &sourcev1.GitRepositoryRef{Name: "refs/pull/1/head"},
+			sparse:            []string{"apps/a"},
+			want:              tip,
+			files:             []string{"apps/a/manifest.yaml"},
+			absent:            []string{"apps/b/manifest.yaml"},
+			localAcquisitions: 1,
+		},
+		{
+			name:              "semver",
+			ref:               &sourcev1.GitRepositoryRef{Tag: "v1.0.0", SemVer: ">=1.1.0"},
+			want:              tip,
+			files:             []string{"version.txt"},
+			localAcquisitions: 1,
+		},
+		{
+			name:              "shallow semver",
+			ref:               &sourcev1.GitRepositoryRef{SemVer: ">=1.0.0"},
+			depth:             1,
+			want:              tip,
+			files:             []string{"version.txt"},
+			localAcquisitions: 1,
+		},
+		{
+			name:              "commit",
+			ref:               &sourcev1.GitRepositoryRef{Commit: first},
+			want:              first,
+			absent:            []string{"version.txt"},
+			localAcquisitions: 2,
+		},
+		{
+			name:              "commit precedes name",
+			ref:               &sourcev1.GitRepositoryRef{Commit: first, Name: "refs/tags/v2.0.0"},
+			want:              first,
+			absent:            []string{"version.txt"},
+			localAcquisitions: 2,
+		},
+		{
+			name:              "commit precedes unresolvable name",
+			ref:               &sourcev1.GitRepositoryRef{Commit: first, Name: "refs/pull/does-not-exist/head"},
+			want:              first,
+			localAcquisitions: 2,
+		},
+		{
+			name:       "commit branch reachability",
+			ref:        &sourcev1.GitRepositoryRef{Commit: tip, Branch: "staging"},
+			warmCommit: tip,
+			wantErr:    true,
+			errText:    "not reachable from branch",
+		},
+		{
+			name:              "shallow sparse",
+			depth:             1,
+			sparse:            []string{"apps/a"},
+			want:              tip,
+			files:             []string{"apps/a/manifest.yaml"},
+			absent:            []string{"apps/b/manifest.yaml"},
+			localAcquisitions: 1,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) { t.Parallel(); testFetcherReferencesCase(t, &src, &tc) })
 	}
 }
 
@@ -306,16 +378,15 @@ func TestFetcher_SparseCheckout(t *testing.T) {
 				t.Parallel()
 				testFetcherSparseCheckoutCase(
 					t,
-					testFetcherSparseCheckoutCaseInputs{
-						src:       &src,
-						files:     &files,
+					&testFetcherSparseCheckoutCaseInputs{
 						f:         &f,
-						tc:        &tc,
+						files:     &files,
 						recursive: &recursive,
+						src:       &src,
+						tc:        &tc,
 					},
 				)
-			},
-			)
+			})
 		}
 	}
 }
@@ -344,7 +415,7 @@ func TestFetcher_AppliesSpecIgnore(t *testing.T) {
 		context.Background(),
 		repo,
 		(testInputs{}).readSet(repo),
-		sourcecache.Policy{MaxAge: repo.SourceInterval()},
+		&sourcecache.Policy{MaxAge: repo.SourceInterval()},
 	)
 	assert.FatalIf(t, err != nil, "Fetch: %v", err)
 	{
@@ -380,39 +451,72 @@ func TestFetcher_CommitHitSurvivesIgnore(t *testing.T) {
 		Ignore:    &patterns,
 	}
 	f := &Fetcher{Cache: cache}
-	art, err := f.Fetch(
-		context.Background(),
-		repo,
-		(testInputs{}).readSet(repo),
-		sourcecache.Policy{MaxAge: repo.SourceInterval()},
-	)
-	assert.FatalIf(t, err != nil, "Fetch: %v", err)
-	{
-		_, statErr4 := fs.Stat(art.FS, ".git")
-		assert.FatalIf(t, !errors.Is(statErr4, fs.ErrNotExist), "git metadata visible: %v", statErr4)
+	var work [2]manifest.WorkRecorder
+	for side := range work {
+		work[side].Key = manifest.WorkKey{
+			Tree:  manifest.TreeID{Cluster: "cluster", Side: manifest.TreeSide(side)},
+			Owner: repo.Named(), Source: manifest.BootstrapSourceID,
+		}
 	}
-	{
-		removeAllErr := os.RemoveAll(src)
-		assert.NoError(t, removeAllErr)
+	art, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), &sourcecache.Policy{
+		MaxAge: repo.SourceInterval(), Work: &manifest.AcquisitionWork{Scope: (&work[0]).Scope()},
+	})
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
 	}
-
-	art2, err := f.Fetch(
-		context.Background(),
-		repo,
-		(testInputs{}).readSet(repo),
-		sourcecache.Policy{MaxAge: repo.SourceInterval()},
-	)
-	assert.FatalIf(t, err != nil, "Fetch second: %v", err)
+	if _, statErr := fs.Stat(art.FS, ".git"); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Fatalf("git metadata visible: %v", statErr)
+	}
+	if removeErr := os.RemoveAll(src); removeErr != nil {
+		t.Fatal(removeErr)
+	}
+	art2, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), &sourcecache.Policy{
+		MaxAge: repo.SourceInterval(), Work: &manifest.AcquisitionWork{Scope: (&work[1]).Scope()},
+	})
+	if err != nil {
+		t.Fatalf("Fetch second: %v", err)
+	}
 	if art2.Revision != art.Revision {
 		t.Errorf("warm Fetch returned a different revision: %q vs %q", art2.Revision, art.Revision)
+	}
+	for _, artifact := range []*store.SourceArtifact{art, art2} {
+		data, err := fs.ReadFile(artifact.FS, "hello.txt")
+		assert.NoError(t, err)
+		assert.Equal(t, string(data), "hi")
+	}
+	for side := range work {
+		counts := map[string]manifest.WorkCounts{}
+		{
+			records := work[side].Scope().Snapshot(0).Normalize()
+			for recordIndex := range records {
+				record := &records[recordIndex]
+				assert.Equal(t, record.Key.Tree, work[side].Key.Tree)
+				assert.Equal(t, record.Key.Owner, repo.Named())
+				assert.Equal(t, record.Key.Source, repo.Named())
+				if record.Key.Phase == manifest.WorkAcquisition || record.Key.Phase == manifest.WorkCache {
+					assert.Equal(t, record.Key.Input, art.Key)
+				}
+				sum := counts[string(record.Key.Phase)]
+				sum.Add(&record.Counts)
+				counts[string(record.Key.Phase)] = sum
+			}
+		}
+		wantAcquisition := manifest.WorkCounts{Attempts: 1, Completed: 1, LocalAcquisitions: 2}
+		wantCache := manifest.WorkCounts{Attempts: 1, Completed: 1}
+		if side == 1 {
+			wantAcquisition = manifest.WorkCounts{}
+			wantCache.CacheService = 1
+		}
+		assert.Equal(t, counts[string(manifest.WorkAcquisition)], wantAcquisition)
+		assert.Equal(t, counts[string(manifest.WorkCache)], wantCache)
 	}
 }
 
 func mustInitRepoWithFiles(t *testing.T, dir string, files map[string]string) {
 	t.Helper()
 	r := testutil.GitInit(t, dir)
-	for path, content := range files {
-		testutil.WriteFile(t, dir, path, content)
+	for pathValue, content := range files {
+		testutil.WriteFile(t, dir, pathValue, content)
 	}
 	testutil.GitCommitAll(t, r, "init", &git.CommitOptions{
 		Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)},
@@ -539,14 +643,14 @@ func TestFetcher_GenerationAdmission(t *testing.T) {
 					f := &Fetcher{Cache: cachetest.New(t, root, sourcecache.New)}
 					repo := &manifest.GitRepository{URL: "file://" + src}
 					policy := sourcecache.Policy{MaxAge: time.Hour}
-					artifact, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), policy)
+					artifact, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), &policy)
 					assert.FatalIf(t, !errors.Is(err, manifest.ErrInput) ||
 						invalid == "metadata" &&
 							(artifact == nil || artifact.FS != nil || len(artifact.Warnings) != 1 || artifact.Warnings[0].Category != manifest.WarnSkippedSubmodule || artifact.Warnings[0].Resource != repo.Named()) ||
 						invalid == "ignore" && artifact != nil, "cold invalid view = %v, %v", artifact, err)
 					assert.NoError(t, os.RemoveAll(src))
 					mustInitRepo(t, src)
-					artifact, err = f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), policy)
+					artifact, err = f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), &policy)
 					assert.NoError(t, err)
 					assert.Equal(t, artifact.Revision, mustHead(t, src))
 					assertWorktree(t, artifact.FS, "hello.txt", "hi")
@@ -562,7 +666,7 @@ func TestFetcher_GenerationAdmission(t *testing.T) {
 							URL: url, SparseCheckout: []string{"apps"}, Ignore: new("*.tmp\n"),
 						}, (testInputs{}).readSet(&manifest.GitRepository{
 							URL: url, SparseCheckout: []string{"apps"}, Ignore: new("*.tmp\n"),
-						}), sourcecache.Policy{MaxAge: time.Hour})
+						}), &sourcecache.Policy{MaxAge: time.Hour})
 					},
 					[]string{"apps/keep.yaml"},
 				)

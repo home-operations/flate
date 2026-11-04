@@ -174,7 +174,7 @@ func TestPromoteOrphans_GraphOwnedSiblingsAndSelf(t *testing.T) {
 		l.SourceRoot = root
 
 		{
-			_, err := l.Load(t.Context(), root)
+			_, err := l.Load(t.Context(), root, nil)
 			assert.FatalIf(t, err != nil, "%v", err)
 		}
 
@@ -439,7 +439,7 @@ func testPromoteOrphansNamespaceAdmissionCase(
 	admitDiscoveryForTest(st, root)
 	l := loader.New(st)
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	if testCaseInput.indexed {
 		testutil.WriteFile(t, root, "kustomization.yaml", "resources: [bundle.yaml]\n")
@@ -536,7 +536,7 @@ func assertOrphanOccurrencesDistinct(t *testing.T, l *loader.Loader, root string
 	t.Helper()
 
 	{
-		_, err := l.Load(t.Context(), root)
+		_, err := l.Load(t.Context(), root, nil)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 
@@ -576,7 +576,7 @@ sops: {version: 3.9.0}
 	st := store.New()
 	l := loader.New(st)
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	l.Admit(root)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))

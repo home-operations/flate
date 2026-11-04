@@ -18,6 +18,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -80,16 +81,22 @@ data:
 		Tree{Path: dir, BaseInput: testDirectoryInput(t, origDir)},
 		Config{},
 	)
+
 	assert.FatalIf(t, err != nil, "New: %v", err)
+
 	t.Cleanup(func() {
 		o.stop()
 	})
+
 	{
 		err := o.bootstrap(context.Background())
 		assert.FatalIf(t, err != nil, "Bootstrap: %v", err)
 	}
+
 	f := o.filter
+
 	assert.FatalIf(t, f == nil, "%v", "expected non-nil change filter when PathOrig differs from Path")
+
 	apps := testutil.KustomizationID("flux-system", "apps")
 	assert.FatalIf(t, !f.ShouldReconcile(apps),
 		"KS reading the changed file via a resources: escape must be kept; keep=%v", f.KeepNames())
@@ -140,9 +147,12 @@ data: {k: v}
 	assert.NoError(t, err)
 	second, err := RenderTrees(t.Context(), []Tree{tree}, Config{Concurrency: 2})
 	assert.NoError(t, err)
+
 	assert.FatalIf(t, len(first) != 1 || len(second) != 1, "invocation results: %v %v", first, second)
+
 	for _, run := range []Rendered{first[0], second[0]} {
 		assert.FatalIf(t, run.filter == nil, "%v", "changed-only filter missing")
+
 		assert.FatalIf(
 			t,
 			run.Store().GetObject(testutil.KustomizationID("flux-system", "apps")) == nil,
@@ -210,12 +220,12 @@ data:
 		assert.NoError(t, err)
 		files[file] = string(body)
 	}
-	registry := newInlineChartRegistry(t, []map[string]string{files}, false)
+	registry := testutil.NewChartRegistry(t, []map[string]string{files}, false)
 	testutil.WriteFile(
 		t,
 		root,
 		"flux/source.yaml",
-		"apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: fixture, namespace: flux-system}\nspec:\n  url: "+registry.url+"\n  insecure: true\n  ref: {tag: 0.1.0}\n  layerSelector: {mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip, operation: copy}\n",
+		"apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: fixture, namespace: flux-system}\nspec:\n  url: "+registry.URL+"\n  insecure: true\n  ref: {tag: 0.1.0}\n  layerSelector: {mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip, operation: copy}\n",
 	)
 	writeDigestTrackingActive(t, root, "stable")
 	digest := "sha256:" + strings.Repeat("abcdef0123456789", 4)
@@ -236,7 +246,9 @@ spec:
 func assertDigestTrackingOutput(t *testing.T, run Rendered, disabled bool, marker string) {
 	t.Helper()
 	result := run.Result
+
 	assert.FatalIf(t, result == nil, "%v", "render result unavailable")
+
 	docs := outputByParent(result.Manifests)[testutil.HelmReleaseID("flux-system", "active")]
 	assert.Equal(t, len(docs), 1)
 	want := "fixture-0.1.0"
@@ -311,12 +323,16 @@ func TestRenderTrees_ChartDigestTrackingFailureRetry(t *testing.T) {
 	}
 	cfg := Config{CacheDir: t.TempDir(), Concurrency: 2}
 	_, err := RenderTrees(t.Context(), []Tree{tree}, cfg)
+
 	assert.FatalIf(t, err == nil, "%v", "expected unavailable baseline failure")
+
 	writeDigestTrackingRelease(t, root, "apps/hr.yaml", "false")
 	tree.BaseInput = nil
 	runs, err := RenderTrees(t.Context(), []Tree{tree}, cfg)
 	assert.NoError(t, err)
+
 	assert.FatalIf(t, len(runs) != 1 || runs[0].Orchestrator == nil, "retry lost render: %v", runs)
+
 	assert.Equal(t, runs[0].hrc.Options.DisableChartDigestTracking, false)
 }
 
@@ -396,7 +412,9 @@ func TestRenderTrees_InjectedCacheRemainsCallerOwned(t *testing.T) {
 				root = t.TempDir()
 			}
 			c, err := sourcecache.New(t.Context(), root)
+
 			assert.FatalIf(t, err != nil, "%v", err)
+
 			t.Cleanup(func() { _ = c.Close() })
 			calls := 0
 			key := sourcecache.BlobKey{Content: "blob-owner-test"}
@@ -405,8 +423,10 @@ func TestRenderTrees_InjectedCacheRemainsCallerOwned(t *testing.T) {
 				_, localErr := io.WriteString(w, "held")
 				return sourcecache.ProducerResult{}, localErr
 			}
-			_, _, _, err = c.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, produce)
+			_, _, _, err = c.Blob(t.Context(), key, &sourcecache.Policy{MaxAge: time.Hour}, produce)
+
 			assert.FatalIf(t, err != nil, "%v", err)
+
 			baseDir, headDir := t.TempDir(), t.TempDir()
 			for _, dir := range []string{baseDir, headDir} {
 				writeSubstitutionCluster(t, dir, "values", "value")
@@ -428,11 +448,15 @@ func TestRenderTrees_InjectedCacheRemainsCallerOwned(t *testing.T) {
 				Config{Cache: c, CacheDir: configuredRoot, Concurrency: 2},
 			)
 			base, head := renderedTrees2[0], renderedTrees2[1]
+
 			assert.FatalIf(t, err != nil, "%v", err)
+
 			assert.FatalIf(t, base.cache != c || head.cache != c || base.hrc.Helm == nil || head.hrc.Helm == nil ||
 				base.ksc.Trees == nil ||
 				head.ksc.Trees == nil, "%v", "diff sides did not wire both renderers through the selected owner")
+
 			entries, err := os.ReadDir(configuredRoot)
+
 			assert.FatalIf(
 				t,
 				err != nil || len(entries) != 0,
@@ -440,9 +464,13 @@ func TestRenderTrees_InjectedCacheRemainsCallerOwned(t *testing.T) {
 				entries,
 				err,
 			)
-			reader, _, _, err := c.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, produce)
+
+			reader, _, _, err := c.Blob(t.Context(), key, &sourcecache.Policy{MaxAge: time.Hour}, produce)
+
 			assert.FatalIf(t, err != nil, "%v", err)
+
 			data, err := fs.ReadFile(reader, "content")
+
 			assert.FatalIf(
 				t,
 				err != nil || string(data) != "held" || calls != 1,
@@ -451,6 +479,7 @@ func TestRenderTrees_InjectedCacheRemainsCallerOwned(t *testing.T) {
 				calls,
 				err,
 			)
+
 			assert.NoError(t, os.Remove(filepath.Join(baseDir, "app", "cm.yaml")))
 			renderedTrees3, err := RenderTrees(
 				t.Context(),
@@ -461,6 +490,7 @@ func TestRenderTrees_InjectedCacheRemainsCallerOwned(t *testing.T) {
 				Config{Cache: c, Concurrency: 2},
 			)
 			base, head = renderedTrees3[0], renderedTrees3[1]
+
 			{
 				_, ok := errors.AsType[*FailuresError](
 					err,
@@ -475,13 +505,12 @@ func TestRenderTrees_InjectedCacheRemainsCallerOwned(t *testing.T) {
 					err,
 				)
 			}
+
 			for _, side := range []Rendered{base, head} {
 				{
 					_, innerLocalErr := side.inputs.Acquire(
 						t.Context(),
-						"://closed",
-						sourcecache.RetryConfig{},
-						nil,
+						&source.HTTPRequest{URL: "://closed", Retry: sourcecache.RetryConfig{}, HeldSlot: nil},
 					)
 					assert.FatalIf(t, !errors.Is(
 						innerLocalErr,
@@ -489,7 +518,7 @@ func TestRenderTrees_InjectedCacheRemainsCallerOwned(t *testing.T) {
 					), "partial side left TreeCache open: %v", innerLocalErr)
 				}
 			}
-			_, _, _, err = c.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, nil)
+			_, _, _, err = c.Blob(t.Context(), key, &sourcecache.Policy{MaxAge: time.Hour}, nil)
 			assert.NoError(t, err)
 		})
 	}
@@ -548,7 +577,9 @@ spec:
 			assert.NoError(t, err)
 			assertDigestTrackingOutput(t, Rendered{Orchestrator: o, Result: res}, disabled, "stable")
 			hr, ok := o.store.Get[*manifest.HelmRelease](testutil.HelmReleaseID("flux-system", "flux-instance"))
+
 			assert.FatalIf(t, !ok, "%v", "matching rendered release missing")
+
 			instance := hr.Values["instance"].(map[string]any)
 			patches := instance["kustomize"].(map[string]any)["patches"].([]any)
 			assert.Equal(

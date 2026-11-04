@@ -252,7 +252,7 @@ func TestAcquire_RetryFreshArchive(t *testing.T) {
 			input, _, _, err := c.Acquire(
 				t.Context(),
 				ArchiveKey{Content: "partial"},
-				Policy{Retry: fastRetry(3)},
+				&Policy{Retry: fastRetry(3)},
 				func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 					calls++
 					if calls == 1 {
@@ -295,7 +295,7 @@ func TestAcquire_BackoffReleasesKey(t *testing.T) {
 			_, _, _, err := c.Blob(
 				t.Context(),
 				BlobKey{Content: "shared"},
-				Policy{MaxAge: Forever, Retry: RetryConfig{Attempts: 3, MinWait: time.Hour, MaxWait: time.Hour}},
+				&Policy{MaxAge: Forever, Retry: RetryConfig{Attempts: 3, MinWait: time.Hour, MaxWait: time.Hour}},
 				func(context.Context, ProducerInput) (ProducerResult, error) {
 					calls++
 					return ProducerResult{}, connReset()
@@ -307,7 +307,7 @@ func TestAcquire_BackoffReleasesKey(t *testing.T) {
 		_, _, _, err := c.Blob(
 			t.Context(),
 			BlobKey{Content: "shared"},
-			Policy{MaxAge: Forever},
+			&Policy{MaxAge: Forever},
 			producer([]byte("other fill"), &ocispec.Descriptor{}),
 		)
 		assert.NoError(t, err)
@@ -402,7 +402,7 @@ func TestAcquire_BackoffResets(t *testing.T) {
 			_, _, _, err := c.Blob(
 				t.Context(),
 				BlobKey{Content: "reset"},
-				Policy{Retry: RetryConfig{Attempts: 3}},
+				&Policy{Retry: RetryConfig{Attempts: 3}},
 				func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 					calls++
 					if calls == 1 {
@@ -485,7 +485,7 @@ func testAcquireRetrySequenceCase(t *testing.T, tc *struct {
 		r, _, _, err := c.Blob(
 			t.Context(),
 			BlobKey{Content: "retry"},
-			Policy{Retry: fastRetry(tc.attempts)},
+			&Policy{Retry: fastRetry(tc.attempts)},
 			func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 				calls++
 				if ctx.Err() != nil {
@@ -554,13 +554,13 @@ func testAcquireNestedTerminalCase(t *testing.T, attempted *bool,
 	_, _, _, err := c.Blob(
 		t.Context(),
 		BlobKey{Content: "outer"},
-		Policy{Retry: fastRetry(3)},
+		&Policy{Retry: fastRetry(3)},
 		func(ctx context.Context, _ ProducerInput) (ProducerResult, error) {
 			calls++
 			_, _, _, err := c.Blob(
 				ctx,
 				BlobKey{Content: "inner"},
-				Policy{Retry: fastRetry(3)},
+				&Policy{Retry: fastRetry(3)},
 				func(context.Context, ProducerInput) (ProducerResult, error) {
 					return ProducerResult{}, terminal
 				},
@@ -583,13 +583,13 @@ func testAcquireNestedTerminalCase2(t *testing.T, attempts *int,
 	_, _, _, err := c.Blob(
 		t.Context(),
 		BlobKey{Content: "outer"},
-		Policy{Retry: fastRetry(3)},
+		&Policy{Retry: fastRetry(3)},
 		func(ctx context.Context, _ ProducerInput) (ProducerResult, error) {
 			outer++
 			_, _, _, err := c.Blob(
 				ctx,
 				BlobKey{Content: "inner"},
-				Policy{Retry: fastRetry((*attempts))},
+				&Policy{Retry: fastRetry((*attempts))},
 				func(context.Context, ProducerInput) (ProducerResult, error) {
 					inner++
 					return ProducerResult{}, connReset()
@@ -613,6 +613,7 @@ type testRetryableRetryCase struct {
 	err  error
 	want bool
 }
+
 type testRetryableCaseInputs struct {
 	tc *testRetryableRetryCase
 }
@@ -622,5 +623,78 @@ func testRetryableCase(t *testing.T, testCaseInput testRetryableCaseInputs) {
 
 	if got := retryable(testCaseInput.tc.err); got != testCaseInput.tc.want {
 		t.Errorf("retryable(%v) = %v, want %v", testCaseInput.tc.err, got, testCaseInput.tc.want)
+	}
+}
+
+func TestAcquire_WorkAttempts(t *testing.T) {
+	t.Parallel()
+	t.Run("work_attempts", func(t *testing.T) { t.Parallel(); testAcquireWorkAttemptsCase(t) })
+}
+
+func testAcquireWorkAttemptsCase(t *testing.T) {
+	t.Helper()
+	for _, disk := range []bool{false, true} {
+		t.Run(fmt.Sprintf("disk=%t", disk), func(t *testing.T) { t.Parallel(); testAcquireWorkAttemptsDisk(t, &disk) })
+	}
+}
+
+func testAcquireWorkAttemptsDisk(t *testing.T, disk *bool) {
+	t.Helper()
+	synctest.Test(t, func(t *testing.T) { testAcquireWorkAttemptsRun(t, &disk) })
+}
+
+func testAcquireWorkAttemptsRun(t *testing.T, disk **bool) {
+	t.Helper()
+	root := ""
+	if *(*disk) {
+		root = t.TempDir()
+	}
+	c := cachetest.New(t, root, New)
+	work := manifest.WorkRecorder{
+		Key: manifest.WorkKey{Tree: manifest.TreeID{Cluster: "cluster", Side: manifest.TreeHead}},
+	}
+	ctx := t.Context()
+	accounting := manifest.AcquisitionWork{Scope: work.Scope()}
+	calls := 0
+	produce := func(_ context.Context, input ProducerInput) (ProducerResult, error) {
+		calls++
+		if *(*disk) {
+			return ProducerResult{}, &TerminalError{Err: connReset(), Attempted: true}
+		}
+		if calls < 3 {
+			return ProducerResult{}, connReset()
+		}
+		_, err := io.WriteString(input, "complete")
+		return ProducerResult{}, err
+	}
+	for range 2 {
+		_, _, id, err := c.Blob(
+			ctx,
+			BlobKey{
+				Content: "attempts",
+			},
+			&Policy{MaxAge: time.Hour, Retry: fastRetry(3), Work: &accounting},
+			produce,
+		)
+		if (*(*disk)) && (err == nil || id != "") {
+			t.Fatalf("failed acquisition published identity=%q error=%v", id, err)
+		}
+		if !(*(*disk)) && err != nil {
+			t.Fatal(err)
+		}
+	}
+	summary := work.Scope().Snapshot(0)
+	acquired := phaseWork(summary, manifest.WorkAcquisition)
+	want := manifest.WorkCounts{Attempts: 3, Completed: 1, Failures: 2}
+	if *(*disk) {
+		want = manifest.WorkCounts{Attempts: 1, Failures: 1}
+	}
+	if acquired != want || phaseWork(summary, manifest.WorkCache).CacheService != 1 {
+		t.Fatalf(
+			"attempts=%+v want=%+v cache=%+v",
+			acquired,
+			want,
+			phaseWork(summary, manifest.WorkCache),
+		)
 	}
 }

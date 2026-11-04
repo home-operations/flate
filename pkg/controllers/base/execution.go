@@ -47,6 +47,7 @@ func (e *Execution) Init(c *Controller, id manifest.NamedResource) {
 	}
 	e.Controller = c
 	e.Reads.Init(c.Store, id, nil)
+	e.Reads.BeginExecution(nil)
 }
 
 // Valid reports whether the assessment and its admitted output are current.
@@ -381,17 +382,20 @@ func (e *Execution) reconcile[T manifest.BaseManifest](
 	return reconcile(ctx, obj, level)
 }
 
-func (e *Execution) prepare(ctx context.Context, obj manifest.BaseManifest) error {
+func (e *Execution) prepare(ctx context.Context, obj manifest.BaseManifest) (resultErr error) {
 	e.prepared = true
 	objects, err := manifest.GeneratedObjects(obj)
+	if err == nil && len(objects) == 0 && !e.Store.HasGeneratedObjects(e.Reads.ID()) {
+		return nil
+	}
+	work := e.Reads.Work().Scope().Record(manifest.WorkPreparation, "")
+	work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
+	defer func() { work.Finish(resultErr) }()
 	if err != nil {
 		return err
 	}
 	for _, object := range objects {
 		e.generated = append(e.generated, store.Child{Obj: object, Generated: true})
-	}
-	if len(e.generated) == 0 && !e.Store.HasGeneratedObjects(e.Reads.ID()) {
-		return nil
 	}
 	_, _, inventory := e.Reads.GetEmission(e.Reads.ID())
 	defer inventory.Finish()
@@ -509,6 +513,7 @@ func (e *Execution) FingerprintDedup(
 		return Deduplication{Fingerprint: "", Reused: false}, e.admitRender()
 	}
 	fp := manifest.Fingerprint(content)
+	e.Reads.Work().Scope().Record(manifest.WorkPreparation, fp).Add(&manifest.WorkCounts{RawKeyPrepares: 1})
 	if err := e.Checkpoint(); err != nil {
 		return Deduplication{Fingerprint: "", Reused: true}, err
 	}
@@ -690,6 +695,7 @@ func (e *Execution) promoteData(ctx context.Context, id manifest.NamedResource) 
 	if e.filter.Enabled() {
 		var proof store.ReadSet
 		proof.Init(e.Store, e.Reads.ID(), nil)
+		proof.SetWork(e.Reads.Work())
 		defer proof.Retire()
 		proof.RequireData(id)
 		if _, err := e.KeepEmitted(ctx, manifest.NamedResource{}, store.Child{}, &proof); err != nil {

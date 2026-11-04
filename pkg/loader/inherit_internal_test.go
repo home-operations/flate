@@ -27,7 +27,7 @@ func TestAdmit_UnchangedInputs(t *testing.T) {
 	testutil.WriteFile(t, root, "app/peers.yaml", docs.String())
 	l := New(store.New())
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	l.Admit(root)
 	before := l.Kustomizations()
@@ -72,7 +72,7 @@ func TestAdmitsRoot_PlainDiscoveryShortcut(t *testing.T) {
 	)
 	l := New(store.New())
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	l.Admit(root)
 	id := testutil.KustomizationID("apps", "one")

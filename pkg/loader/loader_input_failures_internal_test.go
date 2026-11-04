@@ -133,15 +133,19 @@ func TestLoader_ComponentParseFailure(t *testing.T) {
 			l.SourceRoot = root
 			l.Options.Selection = tc.selection
 			l.Options.Filter = change.NewFilter()
-			count, err := l.Load(t.Context(), filepath.Join(root, "component"))
+			count, err := l.Load(t.Context(), filepath.Join(root, "component"), nil)
+
 			assert.FatalIf(t, err != nil || count != 0, "Load = (%d, %v), want retained parse failure", count, err)
+
 			failed := l.documents.cache[filepath.Join(root, "component", "bad.yaml")].objects
+
 			assert.FatalIf(
 				t,
 				len(failed) != 1 || failed[0].outcome.Err == nil || failed[0].fact != nil,
 				"component parse failure not retained: %+v",
 				failed,
 			)
+
 			assert.FatalIf(
 				t,
 				len(st.ListObjects("", manifest.KindConfigMap)) != 0 || len(st.Warnings()) != 0,
@@ -185,7 +189,7 @@ func TestLoader_InvalidBuilderStopsRawDescent(t *testing.T) {
 				testutil.KustomizationYAML("raw", "apps", "  path: ./leaf\n"),
 			)
 			l := New(store.New())
-			_, err := l.Load(t.Context(), root)
+			_, err := l.Load(t.Context(), root, nil)
 			assert.NoError(t, err)
 			l.Admit(root)
 			{
@@ -299,6 +303,7 @@ func testLoaderWarningConditionsCase(t *testing.T, testCaseInput *string,
 	if (*testCaseInput) == "sibling" || (*testCaseInput) == "component" ||
 		(*testCaseInput) == "kustomization" {
 		assert.FatalIf(t, len(warnings) != 0, "census failure produced warnings: %v", warnings)
+
 		file := "bad.yaml"
 		if (*testCaseInput) == "kustomization" {
 			file = "kustomization.yaml"
@@ -310,6 +315,7 @@ func testLoaderWarningConditionsCase(t *testing.T, testCaseInput *string,
 		}
 		return
 	}
+
 	assert.FatalIf(
 		t,
 		len(warnings) != 1 || warnings[0].Category != manifest.WarnInputReadFailed || warnings[0].Count != 1 ||
@@ -342,7 +348,8 @@ func testLoaderWarningConditionsFailedNestedResourcePreservesParentCount(t *test
 	l.SourceRoot = root
 	l.documents = readerForTest(root)
 	l.documents.views[root] = unreadableInputFS{FS: os.DirFS(root), denied: "nested/blocked.yaml"}
-	count, err := l.Load(t.Context(), root)
+	count, err := l.Load(t.Context(), root, nil)
+
 	assert.FatalIf(
 		t,
 		count != 1 || err != nil,
@@ -350,13 +357,16 @@ func testLoaderWarningConditionsFailedNestedResourcePreservesParentCount(t *test
 		count,
 		err,
 	)
+
 	failed := l.documents.cache[filepath.Join(root, "nested", "blocked.yaml")].objects
+
 	assert.FatalIf(
 		t,
 		len(failed) != 1 || !errors.Is(failed[0].outcome.Err, fs.ErrPermission),
 		"nested failure not retained: %+v",
 		failed,
 	)
+
 	{
 		_, found := l.Index.Lookup(testutil.KustomizationID("apps", "first"))
 		assert.FatalIf(t, !found, "%s", "failed successor removed previously read evidence")

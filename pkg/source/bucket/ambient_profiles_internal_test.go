@@ -148,7 +148,7 @@ func testFetcherMachineProfilesCaseCompletion(t *testing.T, captures *testFetche
 	reads := inputs.readSet(b)
 	defer reads.Close()
 	f := &Fetcher{Cache: cachetest.New(t, "", cache.New), Network: newTestNetwork(t)}
-	artifact, err := f.Fetch(t.Context(), b, reads, cache.Policy{MaxAge: time.Hour})
+	artifact, err := f.Fetch(t.Context(), b, reads, &cache.Policy{MaxAge: time.Hour})
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	assert.FatalIf(
 		t,

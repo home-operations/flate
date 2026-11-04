@@ -195,9 +195,9 @@ func (f *fallbackFetcher) Fetch(
 	_ context.Context,
 	_ manifest.BaseManifest,
 	_ *store.ReadSet,
-	policy sourcecache.Policy,
+	policy *sourcecache.Policy,
 ) (*store.SourceArtifact, error) {
-	f.retry = policy
+	f.retry = *policy
 	if f.rendered {
 		return &store.SourceArtifact{Kind: manifest.KindOCIRepository}, nil
 	}
@@ -218,7 +218,7 @@ func (f *fallbackFetcher) Fetch(
 	)
 	missing.RetryAmbient = func(_ context.Context) (*store.SourceArtifact, error) {
 		f.fallbackCalls++
-		f.fallbackRetry = policy
+		f.fallbackRetry = *policy
 		if f.fallbackErr != nil {
 			return nil, f.fallbackErr
 		}
@@ -307,15 +307,19 @@ func TestController_AmbientContextError(t *testing.T) {
 			defer c.run.Close()
 			var err error
 			c.Tasks.Go(t.Context(), "settle", func(ctx context.Context) {
-				err = c.run.Acquire(ctx, repo, base.Acquisition{
-					AllowMissingSecrets: true,
-					Fetch: func(context.Context) (*store.SourceArtifact, error) {
-						return nil, missing
+				err = c.run.Acquire(
+					ctx,
+					repo,
+					base.Acquisition{
+						AllowMissingSecrets: true,
+						Fetch: func(context.Context) (*store.SourceArtifact, error) {
+							return nil, missing
+						},
+						Complete: func(_ context.Context, artifact *store.SourceArtifact, unavailable error, _ manifest.DrainLevel) error {
+							return c.completeFetch(repo, artifact, unavailable)
+						},
 					},
-					Complete: func(_ context.Context, artifact *store.SourceArtifact, unavailable error, _ manifest.DrainLevel) error {
-						return c.completeFetch(repo, artifact, unavailable)
-					},
-				}, manifest.DrainCascade)
+					manifest.DrainCascade)
 			})
 			c.Tasks.BlockTillDone()
 			assert.FatalIf(t, !errors.Is(err, cause) || !errors.Is(err, manifest.ErrFlux) ||

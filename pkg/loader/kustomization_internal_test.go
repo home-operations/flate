@@ -180,7 +180,7 @@ func TestLoader_KustomizationFilenames(t *testing.T) {
 				)
 			}
 			{
-				loaded, err := New(store.New()).Load(t.Context(), root)
+				loaded, err := New(store.New()).Load(t.Context(), root, nil)
 				assert.FatalIf(
 					t,
 					err != nil || loaded != tc.loaded,
@@ -311,7 +311,7 @@ func testFinalizeIndexResourceMembershipCase(
 	testutil.WriteFile(t, root, "app/ks.yaml", testutil.KustomizationYAML("stray", "apps", "  path: ./leaf\n"))
 	l := New(store.New())
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	l.Admit(root)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))

@@ -100,7 +100,9 @@ func TestRun_GetNamed_UnrelatedFailureAndLabels(t *testing.T) {
 				file = "cluster/hr.yaml"
 			}
 			body, err := os.ReadFile(filepath.Join(root, file))
-			assert.NoError(t, err)
+			if err != nil {
+				t.Fatal(err)
+			}
 			body = []byte(
 				strings.Replace(string(body), "namespace: ", "labels: {area: selected, empty: ''}, namespace: ", 1),
 			)
@@ -120,31 +122,24 @@ func TestRun_GetNamed_UnrelatedFailureAndLabels(t *testing.T) {
 				"-l",
 				tc.label,
 			}
-			cli := runCLI(t, args...)
-			stdout, stderr, code := cli.stdout, cli.stderr, cli.code
-			assert.FatalIf(
-				t,
-				code != 0 || (stdout != "") != tc.visible || !strings.Contains(stderr, persistenceMessage) ||
-					strings.Contains(stderr, "unrelated") ||
-					strings.Contains(
-						stderr,
-						"outside",
-					),
-				"healthy named get: exit=%d stdout=%q stderr=%s",
-				code,
-				stdout,
-				stderr,
-			)
+			runCLIResult := runCLI(t, args...)
+			stdout, stderr, code := runCLIResult.stdout, runCLIResult.stderr, runCLIResult.code
+			if code != 0 || (stdout != "") != tc.visible || !strings.Contains(stderr, persistenceMessage) ||
+				strings.Contains(stderr, "unrelated") ||
+				strings.Contains(stderr, "outside") {
+				t.Fatalf("healthy named get: exit=%d stdout=%q stderr=%s", code, stdout, stderr)
+			}
+			want := ""
+			if tc.visible {
+				want = "selected\n"
+			}
+			assert.Equal(t, stdout, want)
 			appendScopeSpec(t, root, file, "  dependsOn: [{name: missing, namespace: other}]\n")
-			cli2 := runCLI(t, args...)
-			stderr, code = cli2.stderr, cli2.code
-			assert.FatalIf(
-				t,
-				code != 1 || !strings.Contains(stderr, "missing"),
-				"label hid named failure: exit=%d stderr=%s",
-				code,
-				stderr,
-			)
+			runCLIResult2 := runCLI(t, args...)
+			stderr, code = runCLIResult2.stderr, runCLIResult2.code
+			if code != 1 || !strings.Contains(stderr, "missing") {
+				t.Fatalf("label hid named failure: exit=%d stderr=%s", code, stderr)
+			}
 		})
 	}
 }

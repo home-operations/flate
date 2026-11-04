@@ -26,19 +26,19 @@ import (
 
 func TestResolveLocal_References(t *testing.T) {
 	t.Parallel()
-	fixture := localFixture(t)
-
+	localFixtureResult := localFixture(t)
+	root, repo, a, b := localFixtureResult.root, localFixtureResult.repo, localFixtureResult.base, localFixtureResult.head
 	for name, hash := range map[string]plumbing.Hash{
-		"refs/heads/pinned": fixture.base, "refs/remotes/origin/pinned": fixture.head,
-		"refs/remotes/origin/tracking": fixture.base, "refs/pull/1/head": fixture.base,
+		"refs/heads/pinned": a, "refs/remotes/origin/pinned": b,
+		"refs/remotes/origin/tracking": a, "refs/pull/1/head": a,
 	} {
 		{
-			err := fixture.repo.Storer.SetReference(plumbing.NewHashReference(plumbing.ReferenceName(name), hash))
+			err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.ReferenceName(name), hash))
 			assert.NoError(t, err)
 		}
 	}
 	{
-		_, err := fixture.repo.CreateTag("annotated", fixture.base, &git.CreateTagOptions{
+		_, err := repo.CreateTag("annotated", a, &git.CreateTagOptions{
 			Tagger: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}, Message: "pin",
 		})
 		assert.NoError(t, err)
@@ -50,35 +50,35 @@ func TestResolveLocal_References(t *testing.T) {
 		want plumbing.Hash
 		fail bool
 	}{
-		{"tag", sourcev1.GitRepositoryRef{Tag: "v1.0.0"}, fixture.base, false},
-		{"annotated", sourcev1.GitRepositoryRef{Tag: "annotated"}, fixture.base, false},
-		{"commit", sourcev1.GitRepositoryRef{Commit: fixture.base.String()}, fixture.base, false},
-		{"name", sourcev1.GitRepositoryRef{Name: "refs/pull/1/head"}, fixture.base, false},
-		{"branch-local-first", sourcev1.GitRepositoryRef{Branch: "pinned"}, fixture.base, false},
-		{"branch-origin", sourcev1.GitRepositoryRef{Branch: "tracking"}, fixture.base, false},
-		{"name-origin", sourcev1.GitRepositoryRef{Name: "refs/heads/tracking"}, fixture.base, false},
-		{"semver", sourcev1.GitRepositoryRef{SemVer: "<2.0.0"}, fixture.base, false},
-		{"commit-over-name", sourcev1.GitRepositoryRef{Commit: fixture.base.String(), Name: "bad name", SemVer: "invalid", Tag: "v2.0.0"}, fixture.base, false},
-		{"name-over-semver", sourcev1.GitRepositoryRef{Name: "refs/pull/1/head", SemVer: "invalid", Tag: "v2.0.0", Branch: "bad branch"}, fixture.base, false},
-		{"semver-over-tag", sourcev1.GitRepositoryRef{SemVer: "<2.0.0", Tag: "bad tag", Branch: "bad branch"}, fixture.base, false},
-		{"tag-over-branch", sourcev1.GitRepositoryRef{Tag: "v1.0.0", Branch: "bad branch"}, fixture.base, false},
-		{"head", sourcev1.GitRepositoryRef{Tag: "v2.0.0"}, fixture.head, false},
-		{"commit-branch-reachable", sourcev1.GitRepositoryRef{Commit: fixture.base.String(), Branch: "master"}, fixture.base, false},
-		{"commit-branch-unreachable", sourcev1.GitRepositoryRef{Commit: fixture.head.String(), Branch: "pinned"}, plumbing.ZeroHash, true},
-		{"commit-branch-missing", sourcev1.GitRepositoryRef{Commit: fixture.base.String(), Branch: "missing"}, plumbing.ZeroHash, false},
+		{"tag", sourcev1.GitRepositoryRef{Tag: "v1.0.0"}, a, false},
+		{"annotated", sourcev1.GitRepositoryRef{Tag: "annotated"}, a, false},
+		{"commit", sourcev1.GitRepositoryRef{Commit: a.String()}, a, false},
+		{"name", sourcev1.GitRepositoryRef{Name: "refs/pull/1/head"}, a, false},
+		{"branch-local-first", sourcev1.GitRepositoryRef{Branch: "pinned"}, a, false},
+		{"branch-origin", sourcev1.GitRepositoryRef{Branch: "tracking"}, a, false},
+		{"name-origin", sourcev1.GitRepositoryRef{Name: "refs/heads/tracking"}, a, false},
+		{"semver", sourcev1.GitRepositoryRef{SemVer: "<2.0.0"}, a, false},
+		{"commit-over-name", sourcev1.GitRepositoryRef{Commit: a.String(), Name: "bad name", SemVer: "invalid", Tag: "v2.0.0"}, a, false},
+		{"name-over-semver", sourcev1.GitRepositoryRef{Name: "refs/pull/1/head", SemVer: "invalid", Tag: "v2.0.0", Branch: "bad branch"}, a, false},
+		{"semver-over-tag", sourcev1.GitRepositoryRef{SemVer: "<2.0.0", Tag: "bad tag", Branch: "bad branch"}, a, false},
+		{"tag-over-branch", sourcev1.GitRepositoryRef{Tag: "v1.0.0", Branch: "bad branch"}, a, false},
+		{"head", sourcev1.GitRepositoryRef{Tag: "v2.0.0"}, b, false},
+		{"commit-branch-reachable", sourcev1.GitRepositoryRef{Commit: a.String(), Branch: "master"}, a, false},
+		{"commit-branch-unreachable", sourcev1.GitRepositoryRef{Commit: b.String(), Branch: "pinned"}, plumbing.ZeroHash, true},
+		{"commit-branch-missing", sourcev1.GitRepositoryRef{Commit: a.String(), Branch: "missing"}, plumbing.ZeroHash, false},
 		{"missing-tag", sourcev1.GitRepositoryRef{Tag: "missing"}, plumbing.ZeroHash, false},
 		{"missing-name", sourcev1.GitRepositoryRef{Name: "refs/heads/missing"}, plumbing.ZeroHash, false},
 		{"missing-branch", sourcev1.GitRepositoryRef{Branch: "missing"}, plumbing.ZeroHash, false},
 		{"unmatched-semver", sourcev1.GitRepositoryRef{SemVer: ">3.0.0"}, plumbing.ZeroHash, false},
 		{"invalid-semver", sourcev1.GitRepositoryRef{SemVer: "invalid"}, plumbing.ZeroHash, true},
-		{"short-commit", sourcev1.GitRepositoryRef{Commit: fixture.base.String()[:12]}, plumbing.ZeroHash, true},
+		{"short-commit", sourcev1.GitRepositoryRef{Commit: a.String()[:12]}, plumbing.ZeroHash, true},
 		{"nonhex-commit", sourcev1.GitRepositoryRef{Commit: strings.Repeat("g", 40)}, plumbing.ZeroHash, true},
 		{"missing-commit", sourcev1.GitRepositoryRef{Commit: strings.Repeat("f", 40)}, plumbing.ZeroHash, false},
 		{"missing-commit-branch", sourcev1.GitRepositoryRef{Commit: strings.Repeat("f", 40), Branch: "master"}, plumbing.ZeroHash, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			testResolveLocalReferencesCase(t, &fixture.root, &fixture.head, &tc)
+			testResolveLocalReferencesCase(t, &root, &b, &tc)
 		},
 		)
 	}
@@ -93,16 +93,16 @@ func TestResolveLocal_References(t *testing.T) {
 
 func TestResolveRefHash_ObjectClassification(t *testing.T) {
 	t.Parallel()
-	fixture := localFixture(t)
-
+	localFixtureResult2 := localFixture(t)
+	repo, hash := localFixtureResult2.repo, localFixtureResult2.base
 	missing := plumbing.NewHash(strings.Repeat("f", 40))
-	commit, err := fixture.repo.CommitObject(fixture.base)
+	commit, err := repo.CommitObject(hash)
 	assert.NoError(t, err)
 	tree := commit.TreeHash
 	commit.TreeHash = missing
-	encoded := fixture.repo.Storer.NewEncodedObject()
+	encoded := repo.Storer.NewEncodedObject()
 	assert.NoError(t, commit.Encode(encoded))
-	broken, err := fixture.repo.Storer.SetEncodedObject(encoded)
+	broken, err := repo.Storer.SetEncodedObject(encoded)
 	assert.NoError(t, err)
 	for _, tc := range []struct {
 		name        string
@@ -115,7 +115,7 @@ func TestResolveRefHash_ObjectClassification(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := resolveRefHash(fixture.repo, &sourcev1.GitRepositoryRef{Commit: tc.hash.String()}, false)
+			_, err := resolveRefHash(repo, &sourcev1.GitRepositoryRef{Commit: tc.hash.String()}, false)
 			if err == nil || errors.Is(err, errRefUnavailable) != tc.unavailable {
 				t.Fatalf("resolution error = %v, want unavailable=%t", err, tc.unavailable)
 			}
@@ -125,22 +125,22 @@ func TestResolveRefHash_ObjectClassification(t *testing.T) {
 
 func TestResolveLocal_IncompleteHistory(t *testing.T) {
 	t.Parallel()
-	fixture := localFixture(t)
-
-	commit, err := fixture.repo.CommitObject(fixture.head)
+	localFixtureResult3 := localFixture(t)
+	root, repo, a, b := localFixtureResult3.root, localFixtureResult3.repo, localFixtureResult3.base, localFixtureResult3.head
+	commit, err := repo.CommitObject(b)
 	assert.NoError(t, err)
 
 	commit.ParentHashes = []plumbing.Hash{plumbing.NewHash(strings.Repeat("f", 40))}
-	encoded := fixture.repo.Storer.NewEncodedObject()
+	encoded := repo.Storer.NewEncodedObject()
 	{
 		encodeErr := commit.Encode(encoded)
 		assert.NoError(t, encodeErr)
 	}
 
-	hash, err := fixture.repo.Storer.SetEncodedObject(encoded)
+	hash, err := repo.Storer.SetEncodedObject(encoded)
 	assert.NoError(t, err)
 	{
-		setReferenceErr := fixture.repo.Storer.SetReference(
+		setReferenceErr := repo.Storer.SetReference(
 			plumbing.NewHashReference(plumbing.NewBranchReferenceName("master"), hash),
 		)
 		assert.NoError(t, setReferenceErr)
@@ -148,8 +148,8 @@ func TestResolveLocal_IncompleteHistory(t *testing.T) {
 
 	{
 		_, resolveRefHashErr := resolveRefHash(
-			fixture.repo,
-			&sourcev1.GitRepositoryRef{Commit: fixture.base.String(), Branch: "master"},
+			repo,
+			&sourcev1.GitRepositoryRef{Commit: a.String(), Branch: "master"},
 			false,
 		)
 		assert.ErrorIf(t, !errors.Is(
@@ -157,8 +157,13 @@ func TestResolveLocal_IncompleteHistory(t *testing.T) {
 			errRefUnavailable,
 		), "incomplete history did not become unavailable: %v", resolveRefHashErr)
 	}
-	repository := localSource(&sourcev1.GitRepositoryRef{Commit: fixture.base.String(), Branch: "master"})
-	got, err := ResolveLocal(t.Context(), localLocation(t, fixture.root), []*manifest.GitRepository{repository}, "")
+	repository := localSource(&sourcev1.GitRepositoryRef{Commit: a.String(), Branch: "master"})
+	got, err := ResolveLocal(
+		t.Context(),
+		localLocation(t, root),
+		[]*manifest.GitRepository{repository},
+		LocalOptions{Revision: ""},
+	)
 	assert.FatalIf(t, err != nil || len(got) != 0, "incomplete history did not fall back: %v, %v", got, err)
 }
 
@@ -169,14 +174,14 @@ func TestResolveLocal_NoWarningAllocations(t *testing.T) {
 	authored := []*manifest.GitRepository{localSource(&sourcev1.GitRepositoryRef{Tag: "v1.0.0"})}
 	selected := (*manifest.GitRepositoryRef)(authored[0].Reference)
 	emptyAllocs := testing.AllocsPerRun(1000, func() {
-		_, err := ResolveLocal(t.Context(), nil, empty, "")
+		_, err := ResolveLocal(t.Context(), nil, empty, LocalOptions{Revision: ""})
 		assert.NoError(t, err)
 	})
 	validationAllocs := testing.AllocsPerRun(1000, func() {
 		assert.NoError(t, selected.Validate())
 	})
 	authoredAllocs := testing.AllocsPerRun(1000, func() {
-		_, err := ResolveLocal(t.Context(), nil, authored, "")
+		_, err := ResolveLocal(t.Context(), nil, authored, LocalOptions{Revision: ""})
 		assert.NoError(t, err)
 	})
 	{
@@ -203,7 +208,7 @@ func TestResolveLocal_NoStoreValidatesEffectiveSyntax(t *testing.T) {
 					t.Context(),
 					localLocation(t, t.TempDir()),
 					[]*manifest.GitRepository{localSource(&ref)},
-					"",
+					LocalOptions{Revision: ""},
 				)
 				assert.FatalIf(t, !errors.Is(
 					err,
@@ -212,21 +217,36 @@ func TestResolveLocal_NoStoreValidatesEffectiveSyntax(t *testing.T) {
 			}
 		})
 	}
-	fixture := localFixture(t)
-
-	child := filepath.Join(fixture.root, "exported")
+	localFixtureResult4 := localFixture(t)
+	parent := localFixtureResult4.root
+	child := filepath.Join(parent, "exported")
 	assert.Equal(t, os.Mkdir(child, 0o750), nil)
 	repository := localSource(&sourcev1.GitRepositoryRef{Tag: "v1.0.0"})
-	got, err := ResolveLocal(t.Context(), localLocation(t, child), []*manifest.GitRepository{repository}, "")
+	got, err := ResolveLocal(
+		t.Context(),
+		localLocation(t, child),
+		[]*manifest.GitRepository{repository},
+		LocalOptions{Revision: ""},
+	)
 	assert.Equal(t, err, nil)
 	assert.Equal(t, len(got), 0)
-	testutil.WriteFile(t, fixture.root, ".git/config", "[invalid\n")
-	got, err = ResolveLocal(t.Context(), localLocation(t, child), []*manifest.GitRepository{repository}, "")
+	testutil.WriteFile(t, parent, ".git/config", "[invalid\n")
+	got, err = ResolveLocal(
+		t.Context(),
+		localLocation(t, child),
+		[]*manifest.GitRepository{repository},
+		LocalOptions{Revision: ""},
+	)
 	assert.Equal(t, err, nil)
 	assert.Equal(t, len(got), 0)
-	assert.Equal(t, os.RemoveAll(filepath.Join(fixture.root, ".git")), nil)
-	assert.Equal(t, os.Symlink(".git", filepath.Join(fixture.root, ".git")), nil)
-	got, err = ResolveLocal(t.Context(), localLocation(t, child), []*manifest.GitRepository{repository}, "")
+	assert.Equal(t, os.RemoveAll(filepath.Join(parent, ".git")), nil)
+	assert.Equal(t, os.Symlink(".git", filepath.Join(parent, ".git")), nil)
+	got, err = ResolveLocal(
+		t.Context(),
+		localLocation(t, child),
+		[]*manifest.GitRepository{repository},
+		LocalOptions{Revision: ""},
+	)
 	assert.Equal(t, err, nil)
 	assert.Equal(t, len(got), 0)
 }
@@ -238,7 +258,7 @@ func TestResolveLocal_RejectsNilSource(t *testing.T) {
 			t.Context(),
 			localLocation(t, t.TempDir()),
 			[]*manifest.GitRepository{nil},
-			"",
+			LocalOptions{Revision: ""},
 		)
 		assert.FatalIf(t, !errors.Is(
 			err,
@@ -249,91 +269,85 @@ func TestResolveLocal_RejectsNilSource(t *testing.T) {
 
 func TestResolveLocal_CacheReuseIsolationAndMovedTags(t *testing.T) {
 	t.Parallel()
-	fixture := localFixture(t)
+	localFixtureResult5 := localFixture(t)
+	root, repo, a, b := localFixtureResult5.root, localFixtureResult5.repo, localFixtureResult5.base, localFixtureResult5.head
 
-	fixture.base = submoduleCommit(t, fixture.repo, fixture.base)
-	assert.NoError(
-		t,
-		fixture.repo.Storer.SetReference(
-			plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), fixture.base),
-		),
-	)
+	a = submoduleCommit(t, repo, a)
+	assert.NoError(t, repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), a)))
 
 	first := localSource(&sourcev1.GitRepositoryRef{Tag: "v1.0.0"})
-	second := localSource(&sourcev1.GitRepositoryRef{Commit: fixture.base.String()})
+	second := localSource(&sourcev1.GitRepositoryRef{Commit: a.String()})
 	second.Name = "second"
 	ignored := localSource(&sourcev1.GitRepositoryRef{Tag: "v1.0.0"})
 	ignored.Name = "ignored"
 	ignore := "/extra.txt\n"
 	ignored.Ignore = &ignore
+	var work manifest.WorkRecorder
 	got, err := ResolveLocal(
 		t.Context(),
-		localLocation(t, fixture.root),
+		localLocation(t, root),
 		[]*manifest.GitRepository{first, second, ignored},
-		"",
+		LocalOptions{Work: work.Scope()},
 	)
-	assert.NoError(t, err)
-
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, source := range []*manifest.GitRepository{first, second, ignored} {
 		artifact := got[source.Named()]
-		assert.FatalIf(t, len(artifact.Warnings) != 1 || artifact.Warnings[0].Resource != source.Named() ||
-			artifact.Warnings[0].Category != manifest.WarnSkippedSubmodule, "pin evidence lost: %+v", artifact)
+		if len(artifact.Warnings) != 1 || artifact.Warnings[0].Resource != source.Named() ||
+			artifact.Warnings[0].Category != manifest.WarnSkippedSubmodule {
+			t.Fatalf("pin evidence lost: %+v", artifact)
+		}
+	}
+	summary := work.Scope().Snapshot(0)
+	assert.Equal(t, len(summary), 3)
+	for recordIndex := range summary {
+		record := &summary[recordIndex]
+		assert.Equal(t, record.Counts, manifest.WorkCounts{Attempts: 1, Completed: 1, LocalAcquisitions: 1})
 	}
 	key := got[first.Named()].Key
-	assert.FatalIf(
-		t,
-		key != got[second.Named()].Key || key == got[ignored.Named()].Key,
-		"cache did not deduplicate commit/options or isolate ignores: %v",
-		got,
-	)
-	{
-		_, statErr := fs.Stat(got[ignored.Named()].FS, "extra.txt")
-		assert.FatalIf(t, !os.IsNotExist(statErr), "ignore not applied: %v", statErr)
+	if key != got[second.Named()].Key || key == got[ignored.Named()].Key {
+		t.Fatalf("cache did not deduplicate commit/options or isolate ignores: %v", got)
 	}
-	{
-		content, readFileErr := fs.ReadFile(got[first.Named()].FS, "value.txt")
-		assert.FatalIf(
-			t,
-			readFileErr != nil || string(content) != "A",
-			"dirty content leaked: %q, %v",
-			content,
-			readFileErr,
-		)
+	if _, statErr := fs.Stat(got[ignored.Named()].FS, "extra.txt"); !os.IsNotExist(statErr) {
+		t.Fatalf("ignore not applied: %v", statErr)
 	}
-	fixture2 := localFixture(t)
-
-	other, err := ResolveLocal(t.Context(), localLocation(t, fixture2.root), []*manifest.GitRepository{first}, "")
-	assert.FatalIf(
-		t,
-		err != nil || other[first.Named()].Key == key,
-		"repository identities share artifacts: %v, %v",
-		other,
-		err,
-	)
-	{
-		setReferenceErr2 := fixture.repo.Storer.SetReference(
-			plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), fixture.head),
-		)
-		assert.NoError(t, setReferenceErr2)
+	if content, readErr := fs.ReadFile(got[first.Named()].FS, "value.txt"); readErr != nil || string(content) != "A" {
+		t.Fatalf("dirty content leaked: %q, %v", content, readErr)
 	}
-
-	moved, err := ResolveLocal(t.Context(), localLocation(t, fixture.root), []*manifest.GitRepository{first}, "")
-	assert.FatalIf(
-		t,
-		err != nil || moved[first.Named()].LocalPath != fixture.root ||
-			moved[first.Named()].Revision != fixture.head.String(),
-		"moved tag used stale resolution: %v, %v",
-		moved,
-		err,
+	localFixtureResult6 := localFixture(t)
+	otherRoot := localFixtureResult6.root
+	other, err := ResolveLocal(
+		t.Context(),
+		localLocation(t, otherRoot),
+		[]*manifest.GitRepository{first},
+		LocalOptions{Revision: ""},
 	)
+	if err != nil || other[first.Named()].Key == key {
+		t.Fatalf("repository identities share artifacts: %v, %v", other, err)
+	}
+	if referenceErr := repo.Storer.SetReference(
+		plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), b),
+	); referenceErr != nil {
+		t.Fatal(referenceErr)
+	}
+	moved, err := ResolveLocal(
+		t.Context(),
+		localLocation(t, root),
+		[]*manifest.GitRepository{first},
+		LocalOptions{Revision: ""},
+	)
+	if err != nil || moved[first.Named()].LocalPath != root || moved[first.Named()].Revision != b.String() {
+		t.Fatalf("moved tag used stale resolution: %v, %v", moved, err)
+	}
 }
 
 func TestResolveLocal_AnnotatedSemverWinner(t *testing.T) {
 	t.Parallel()
-	fixture := localFixture(t)
-
+	localFixtureResult7 := localFixture(t)
+	root, repo, revision := localFixtureResult7.root, localFixtureResult7.repo, localFixtureResult7.base
 	{
-		_, err := fixture.repo.CreateTag("v1.5.0", fixture.base, &git.CreateTagOptions{
+		_, err := repo.CreateTag("v1.5.0", revision, &git.CreateTagOptions{
 			Tagger: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}, Message: "pin",
 		})
 		assert.NoError(t, err)
@@ -342,9 +356,9 @@ func TestResolveLocal_AnnotatedSemverWinner(t *testing.T) {
 	repository := localSource(&sourcev1.GitRepositoryRef{SemVer: ">=1.0.0 <2.0.0"})
 	artifacts, err := ResolveLocal(
 		t.Context(),
-		localLocation(t, fixture.root),
+		localLocation(t, root),
 		[]*manifest.GitRepository{repository},
-		"",
+		LocalOptions{Revision: ""},
 	)
 	assert.NoError(t, err)
 
@@ -352,10 +366,10 @@ func TestResolveLocal_AnnotatedSemverWinner(t *testing.T) {
 		artifact := artifacts[repository.Named()]
 		assert.FatalIf(
 			t,
-			artifact == nil || artifact.Revision != fixture.base.String(),
+			artifact == nil || artifact.Revision != revision.String(),
 			"annotated semver winner = %+v, want revision %s",
 			artifact,
-			fixture.base,
+			revision,
 		)
 	}
 }
@@ -365,9 +379,9 @@ func TestResolveSemver_EqualVersionCreationOrder(t *testing.T) {
 	for _, names := range [][]string{{"v1.0.0", "1.0.0"}, {"1.0.0", "v1.0.0"}} {
 		t.Run(strings.Join(names, "_"), func(t *testing.T) {
 			t.Parallel()
-			fixture := localFixture(t)
-
-			hashes := map[string]plumbing.Hash{"1.0.0": fixture.base, "v1.0.0": fixture.head}
+			localFixtureResult8 := localFixture(t)
+			repo, a, b := localFixtureResult8.repo, localFixtureResult8.base, localFixtureResult8.head
+			hashes := map[string]plumbing.Hash{"1.0.0": a, "v1.0.0": b}
 			var refs []*plumbing.Reference
 			if len(names) > 0 {
 				refs = make([]*plumbing.Reference, 0, len(names))
@@ -375,7 +389,7 @@ func TestResolveSemver_EqualVersionCreationOrder(t *testing.T) {
 			for _, name := range names {
 				ref := plumbing.NewHashReference(plumbing.NewTagReferenceName(name), hashes[name])
 				{
-					err := fixture.repo.Storer.SetReference(ref)
+					err := repo.Storer.SetReference(ref)
 					assert.NoError(t, err)
 				}
 
@@ -383,17 +397,10 @@ func TestResolveSemver_EqualVersionCreationOrder(t *testing.T) {
 			}
 			// Filesystem ref iteration can sort away creation order; force both
 			// orders so tie resolution cannot rely on the storage backend.
-			fixture.repo.Storer = &orderedTagStore{Storer: fixture.repo.Storer, refs: refs}
+			repo.Storer = &orderedTagStore{Storer: repo.Storer, refs: refs}
 			for range 10 {
-				got, err := resolveSemver(fixture.repo, ">=1.0.0 <2.0.0")
-				assert.FatalIf(
-					t,
-					err != nil || got != fixture.base,
-					"equal-version winner = %s, %v, want %s",
-					got,
-					err,
-					fixture.base,
-				)
+				got, err := resolveSemver(repo, ">=1.0.0 <2.0.0")
+				assert.FatalIf(t, err != nil || got != a, "equal-version winner = %s, %v, want %s", got, err, a)
 			}
 		})
 	}
@@ -412,7 +419,8 @@ func (s *orderedTagStore) IterReferences() (storer.ReferenceIter, error) {
 
 func TestResolveLocal_ConcurrentReuseAndCancellation(t *testing.T) {
 	t.Parallel()
-	fixture := localFixture(t)
+	localFixtureResult9 := localFixture(t)
+	root := localFixtureResult9.root
 
 	repository := localSource(&sourcev1.GitRepositoryRef{Tag: "v1.0.0"})
 	var paths [2]string
@@ -421,9 +429,9 @@ func TestResolveLocal_ConcurrentReuseAndCancellation(t *testing.T) {
 		wg.Go(func() {
 			got, err := ResolveLocal(
 				t.Context(),
-				localLocation(t, fixture.root),
+				localLocation(t, root),
 				[]*manifest.GitRepository{repository},
-				"",
+				LocalOptions{Revision: ""},
 			)
 			if err != nil {
 				t.Error(err)
@@ -450,9 +458,9 @@ func TestResolveLocal_ConcurrentReuseAndCancellation(t *testing.T) {
 	{
 		_, err := ResolveLocal(
 			ctx,
-			localLocation(t, fixture.root),
+			localLocation(t, root),
 			[]*manifest.GitRepository{repository},
-			"",
+			LocalOptions{Revision: ""},
 		)
 		assert.FatalIf(t, !errors.Is(
 			err,
@@ -479,66 +487,71 @@ func TestResolveLocal_UnusableObjectsAndStore(t *testing.T) {
 func TestResolveLocal_OptionsFallbackAndGitIndirection(t *testing.T) {
 	t.Parallel()
 
-	fixture := localFixture(t)
-
+	localFixtureResult10 := localFixture(t)
+	root := localFixtureResult10.root
 	for _, option := range []string{"sparse", "submodules"} {
 		t.Run(option, func(t *testing.T) {
 			testResolveLocalOptionsFallbackAndGitIndirectionCase(
 				t,
-				&fixture.root, &option,
+				&root, &option,
 			)
 		},
 		)
 	}
 	gitdir := filepath.Join(t.TempDir(), "objects")
 	{
-		err := os.Rename(filepath.Join(fixture.root, ".git"), gitdir)
+		err := os.Rename(filepath.Join(root, ".git"), gitdir)
 		assert.NoError(t, err)
 	}
 
-	testutil.WriteFile(t, fixture.root, ".git", "gitdir: "+gitdir+"\n")
+	testutil.WriteFile(t, root, ".git", "gitdir: "+gitdir+"\n")
 	got, err := ResolveLocal(
 		t.Context(),
-		localLocation(t, fixture.root),
+		localLocation(t, root),
 		[]*manifest.GitRepository{localSource(&sourcev1.GitRepositoryRef{Tag: "v2.0.0"})},
-		"",
+		LocalOptions{Revision: ""},
 	)
 	assert.FatalIf(t, err != nil || len(got) != 1, "gitdir indirection = %v, %v", got, err)
 }
 
 func TestResolveLocal_MissingBlobFailsOnRead(t *testing.T) {
 	t.Parallel()
-	fixture := localFixture(t)
-
+	localFixtureResult11 := localFixture(t)
+	root, repo, a := localFixtureResult11.root, localFixtureResult11.repo, localFixtureResult11.base
 	inputTree := &object.Tree{
 		Entries: []object.TreeEntry{
 			{Name: "missing", Mode: filemode.Regular, Hash: plumbing.NewHash(strings.Repeat("f", 40))},
 		},
 	}
-	encoded := fixture.repo.Storer.NewEncodedObject()
+	encoded := repo.Storer.NewEncodedObject()
 	{
 		err := inputTree.Encode(encoded)
 		assert.NoError(t, err)
 	}
 
-	treeHash, err := fixture.repo.Storer.SetEncodedObject(encoded)
+	treeHash, err := repo.Storer.SetEncodedObject(encoded)
 	assert.NoError(t, err)
 
-	commit, err := fixture.repo.CommitObject(fixture.base)
+	commit, err := repo.CommitObject(a)
 	assert.NoError(t, err)
 
 	commit.TreeHash = treeHash
-	encoded = fixture.repo.Storer.NewEncodedObject()
+	encoded = repo.Storer.NewEncodedObject()
 	{
 		encodeErr2 := commit.Encode(encoded)
 		assert.NoError(t, encodeErr2)
 	}
 
-	hash, err := fixture.repo.Storer.SetEncodedObject(encoded)
+	hash, err := repo.Storer.SetEncodedObject(encoded)
 	assert.NoError(t, err)
 
 	repository := localSource(&sourcev1.GitRepositoryRef{Commit: hash.String()})
-	got, err := ResolveLocal(t.Context(), localLocation(t, fixture.root), []*manifest.GitRepository{repository}, "")
+	got, err := ResolveLocal(
+		t.Context(),
+		localLocation(t, root),
+		[]*manifest.GitRepository{repository},
+		LocalOptions{Revision: ""},
+	)
 	assert.NoError(t, err)
 
 	{
@@ -549,45 +562,38 @@ func TestResolveLocal_MissingBlobFailsOnRead(t *testing.T) {
 
 func TestCheckoutRef_PreservesOriginFirstBranchLookup(t *testing.T) {
 	t.Parallel()
-	fixture := localFixture(t)
-
-	for name, hash := range map[string]plumbing.Hash{"refs/heads/pinned": fixture.base, "refs/remotes/origin/pinned": fixture.head} {
+	localFixtureResult12 := localFixture(t)
+	root, repo, a, b := localFixtureResult12.root, localFixtureResult12.repo, localFixtureResult12.base, localFixtureResult12.head
+	for name, hash := range map[string]plumbing.Hash{"refs/heads/pinned": a, "refs/remotes/origin/pinned": b} {
 		{
-			err := fixture.repo.Storer.SetReference(plumbing.NewHashReference(plumbing.ReferenceName(name), hash))
+			err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.ReferenceName(name), hash))
 			assert.NoError(t, err)
 		}
 	}
-	wt, err := fixture.repo.Worktree()
+	wt, err := repo.Worktree()
 	assert.NoError(t, err)
 	{
-		checkoutErr := wt.Checkout(&git.CheckoutOptions{Hash: fixture.head, Force: true})
+		checkoutErr := wt.Checkout(&git.CheckoutOptions{Hash: b, Force: true})
 		assert.NoError(t, checkoutErr)
 	}
 
-	resolved, err := resolveRefHash(fixture.repo, &sourcev1.GitRepositoryRef{Branch: "pinned"}, true)
-	assert.FatalIf(
-		t,
-		err != nil || resolved != fixture.head,
-		"acquired branch resolved %s, %v, want %s",
-		resolved,
-		err,
-		fixture.head,
-	)
+	resolved, err := resolveRefHash(repo, &sourcev1.GitRepositoryRef{Branch: "pinned"}, true)
+	assert.FatalIf(t, err != nil || resolved != b, "acquired branch resolved %s, %v, want %s", resolved, err, b)
 	{
-		checkoutRefErr := checkoutRef(fixture.repo, resolved, nil)
+		checkoutRefErr := checkoutRef(repo, resolved, nil)
 		assert.NoError(t, checkoutRefErr)
 	}
 
-	head, err := fixture.repo.Head()
+	head, err := repo.Head()
 	assert.FatalIf(
 		t,
 		err != nil || head.Hash() != resolved,
 		"checkout must use resolved hash: %v, %v (root %s)",
 		head,
 		err,
-		fixture.root,
+		root,
 	)
-	data, err := os.ReadFile(filepath.Join(fixture.root, "value.txt"))
+	data, err := os.ReadFile(filepath.Join(root, "value.txt"))
 	assert.FatalIf(t, err != nil || string(data) != "B", "checkout content = %q, %v, want B", data, err)
 
 	for _, kind := range []string{"name", "commit-branch"} {
@@ -604,45 +610,45 @@ func TestCheckoutRef_PreservesOriginFirstBranchLookup(t *testing.T) {
 
 func TestResolveSemver_IgnoresUnusableLowerTag(t *testing.T) {
 	t.Parallel()
-	fixture := localFixture(t)
-
-	commit, err := fixture.repo.CommitObject(fixture.base)
+	localFixtureResult13 := localFixture(t)
+	repo, a, b := localFixtureResult13.repo, localFixtureResult13.base, localFixtureResult13.head
+	commit, err := repo.CommitObject(a)
 	assert.NoError(t, err)
 	{
-		setReferenceErr3 := fixture.repo.Storer.SetReference(
+		setReferenceErr3 := repo.Storer.SetReference(
 			plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), commit.TreeHash),
 		)
 		assert.NoError(t, setReferenceErr3)
 	}
 
-	got, err := resolveSemver(fixture.repo, "*")
-	assert.FatalIf(t, err != nil || got != fixture.head, "higher usable tag = %s, %v, want %s", got, err, fixture.head)
+	got, err := resolveSemver(repo, "*")
+	assert.FatalIf(t, err != nil || got != b, "higher usable tag = %s, %v, want %s", got, err, b)
 }
 
 func TestResolveSemver_DeterministicTiesAndReadErrors(t *testing.T) {
 	t.Parallel()
-	fixture := localFixture(t)
-
-	for name, hash := range map[string]plumbing.Hash{"1.0.0": fixture.base, "v1.0.0": fixture.head} {
+	localFixtureResult14 := localFixture(t)
+	repo, a, b := localFixtureResult14.repo, localFixtureResult14.base, localFixtureResult14.head
+	for name, hash := range map[string]plumbing.Hash{"1.0.0": a, "v1.0.0": b} {
 		{
-			err := fixture.repo.Storer.SetReference(
+			err := repo.Storer.SetReference(
 				plumbing.NewHashReference(plumbing.NewTagReferenceName(name), hash),
 			)
 			assert.NoError(t, err)
 		}
 	}
 	for range 10 {
-		got, err := resolveSemver(fixture.repo, "<2.0.0")
-		assert.FatalIf(t, err != nil || got != fixture.base, "tie = %s, %v", got, err)
+		got, err := resolveSemver(repo, "<2.0.0")
+		assert.FatalIf(t, err != nil || got != a, "tie = %s, %v", got, err)
 	}
 	failure := errors.New("storage unavailable")
-	fixture.repo.Storer = &failingRefStore{Storer: fixture.repo.Storer, err: failure}
+	repo.Storer = &failingRefStore{Storer: repo.Storer, err: failure}
 	{
-		_, err := resolveSemver(fixture.repo, "*")
+		_, err := resolveSemver(repo, "*")
 		assert.FatalIf(t, !errors.Is(err, failure), "iterator error lost: %v", err)
 	}
 	{
-		_, err := lookupBranch(fixture.repo, "master", false)
+		_, err := lookupBranch(repo, "master", false)
 		assert.FatalIf(
 			t,
 			!errors.Is(err, failure) || errors.Is(err, errRefUnavailable),

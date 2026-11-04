@@ -12,36 +12,35 @@ import (
 )
 
 type testFetcherSparseCheckoutCaseInputs struct {
-	src   *string
-	files *map[string]string
-	f     **Fetcher
-	tc    *struct {
+	f         **Fetcher
+	files     *map[string]string
+	recursive *bool
+	src       *string
+	tc        *struct {
 		prefix string
 		want   []string
 	}
-	recursive *bool
 }
 
-func testFetcherSparseCheckoutCase(t *testing.T, testCaseInput testFetcherSparseCheckoutCaseInputs) {
+func testFetcherSparseCheckoutCase(t *testing.T, captures *testFetcherSparseCheckoutCaseInputs) {
 	t.Helper()
-
 	spec := &manifest.GitRepository{
-		Name: "test", Namespace: "flux-system", URL: "file://" + (*testCaseInput.src),
-		SparseCheckout: []string{testCaseInput.tc.prefix}, RecurseSubmodules: (*testCaseInput.recursive),
+		Name: "test", Namespace: "flux-system", URL: "file://" + (*captures.src),
+		SparseCheckout: []string{captures.tc.prefix}, RecurseSubmodules: (*captures.recursive),
 	}
 	before := *spec
 	before.SparseCheckout = slices.Clone(spec.SparseCheckout)
-	want := make(map[string]string, len(testCaseInput.tc.want))
-	for _, file := range testCaseInput.tc.want {
-		want[file] = (*testCaseInput.files)[file]
+	want := make(map[string]string, len(captures.tc.want))
+	for _, file := range captures.tc.want {
+		want[file] = (*captures.files)[file]
 	}
 	var previous map[string]string
 	for run := range 2 {
-		art, err := (*testCaseInput.f).Fetch(
+		art, err := (*captures.f).Fetch(
 			t.Context(),
 			spec,
 			(testInputs{}).readSet(spec),
-			sourcecache.Policy{MaxAge: time.Hour},
+			&sourcecache.Policy{MaxAge: time.Hour},
 		)
 		assert.NoError(t, err)
 		got := map[string]string{}
@@ -55,7 +54,7 @@ func testFetcherSparseCheckoutCase(t *testing.T, testCaseInput testFetcherSparse
 		})
 		assert.NoError(t, err)
 		assert.Diff(t, got, want)
-		assert.Diff(t, *spec, before)
+		assert.Equal(t, manifest.Equal(spec, &before), true)
 		if run > 0 {
 			assert.Diff(t, got, previous)
 		}

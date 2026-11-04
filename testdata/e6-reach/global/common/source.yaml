@@ -1,0 +1,13 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: reach
+  namespace: flux-system
+spec:
+  url: oci://reach.invalid/demo
+  ref:
+    tag: 0.1.0
+  insecure: true
+  layerSelector:
+    mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
+    operation: copy

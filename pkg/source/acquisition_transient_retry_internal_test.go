@@ -32,7 +32,7 @@ func testAcquireRetryTransientCacheClientErrorCase(
 	t.Cleanup(srv.Close)
 	cache := newTestHTTPInputs(t, "")
 	retry := sourcecache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}
-	input, err := cache.Acquire(t.Context(), srv.URL, retry, nil)
+	input, err := cache.Acquire(t.Context(), &HTTPRequest{URL: srv.URL, Retry: retry, HeldSlot: nil})
 	var body []byte
 	if err == nil {
 		body, err = fs.ReadFile(input, "content")
@@ -42,7 +42,7 @@ func testAcquireRetryTransientCacheClientErrorCase(
 		if !ok || status.StatusCode != tc.status || status.Op != http.MethodGet || hits.Load() != 1 {
 			t.Fatalf("initial status=%+v err=%v hits=%d", status, err, hits.Load())
 		}
-		input, err = cache.Acquire(t.Context(), srv.URL, retry, nil)
+		input, err = cache.Acquire(t.Context(), &HTTPRequest{URL: srv.URL, Retry: retry, HeldSlot: nil})
 		if err == nil {
 			body, err = fs.ReadFile(input, "content")
 		}

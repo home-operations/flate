@@ -47,7 +47,7 @@ func testAcquirePolicyIsolationCaseCallback(t *testing.T, testCaseInput testAcqu
 			_, _, _, err := c.Blob(
 				t.Context(),
 				BlobKey{Content: "shared"},
-				Policy{MaxAge: time.Hour, Retry: fastRetry(attempts)},
+				&Policy{MaxAge: time.Hour, Retry: fastRetry(attempts)},
 				func(context.Context, ProducerInput) (ProducerResult, error) {
 					calls[i]++
 					if (i == 0 && !(*(*testCaseInput.reverse)) || i == (*(*testCaseInput.concurrency))-1 && (*(*testCaseInput.reverse))) &&
@@ -99,7 +99,7 @@ func testAcquirePolicyIsolationCaseCallbackCompletion(
 		_, _, _, err := (*captures.c).Blob(
 			cancelCtx,
 			BlobKey{Content: "shared"},
-			Policy{Retry: fastRetry(3)},
+			&Policy{Retry: fastRetry(3)},
 			func(context.Context, ProducerInput) (ProducerResult, error) {
 				cancelCalls++
 				return ProducerResult{}, nil

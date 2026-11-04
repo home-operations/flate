@@ -10,12 +10,11 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/go-git/go-billy/v5"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
-
-	"github.com/go-git/go-billy/v5"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -77,11 +76,11 @@ func AutoResolve(ctx context.Context, path, base string, owner *sourcecache.Cach
 		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("baseline: open working tree: %w", err), "")
 	}
 	root := location.ContentRoot
-	input, err := admitLocation(ctx, location)
+	input, err := admitLocation(ctx, location, manifest.WorkScope{})
 	if err != nil {
 		return nil, err
 	}
-	current := input.FS.(*gittree.FS) //nolint:errcheck // AutoResolve admits the current source as a gittree filesystem.
+	current, _ := input.FS.(*gittree.FS)
 	s := selection{repo: repo, current: current, owner: owner}
 	r, err := s.resolve(ctx, location, base)
 	if err != nil {
@@ -112,7 +111,7 @@ func AutoResolve(ctx context.Context, path, base string, owner *sourcecache.Cach
 	label, _ := gittree.Label(gittree.LabelOptions{Root: root, Mode: gittree.Direct, Key: r.Hash.String()})
 	rel, err := filepath.Rel(root, location.ScanPath)
 	if err != nil {
-		return nil, fmt.Errorf("rel: %w", err)
+		return nil, fmt.Errorf("relative scan path: %w", err)
 	}
 	input.URL = ""
 	input.Metadata = map[string]string{"baseline-selection": r.Source}
@@ -190,13 +189,13 @@ func ResolvePaths(ctx context.Context, current, original string) (*Result, error
 		}
 		urls = after.URLs
 	}
-	baseInput, err := admitLocation(ctx, before)
+	baseInput, err := admitLocation(ctx, before, manifest.WorkScope{})
 	if err != nil {
 		return nil, err
 	}
 	input := baseInput
 	if after.ContentRoot != before.ContentRoot {
-		input, err = admitLocation(ctx, after)
+		input, err = admitLocation(ctx, after, manifest.WorkScope{})
 		if err != nil {
 			return nil, err
 		}

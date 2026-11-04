@@ -59,7 +59,7 @@ func testWalkBucketLargeListedSizeCase(t *testing.T, ranges *bool,
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := walkBucket(ctx, client, &manifest.Bucket{BucketName: "data"}, io.Discard)
+		_, err := walkBucket(ctx, client, &manifest.Bucket{BucketName: "data"}, bucketOutput{Writer: io.Discard})
 		done <- err
 	}()
 	for range 2 {

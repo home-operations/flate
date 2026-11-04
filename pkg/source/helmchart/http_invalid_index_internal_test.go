@@ -37,7 +37,7 @@ func testFetchIndexInvalidResponseDoesNotPublishCase(
 	fInputs := testInputs{}
 	f := New(nil, Config{Network: newTestNetwork(t), Cache: c})
 	{
-		_, fetchIndexErr := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, r), sourcecache.Policy{})
+		_, fetchIndexErr := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, r), &sourcecache.Policy{})
 		assert.FatalIf(t, fetchIndexErr == nil, "%s", "accepted invalid index")
 	}
 	{
@@ -45,7 +45,7 @@ func testFetchIndexInvalidResponseDoesNotPublishCase(
 		assert.FatalIf(t, ok, "%s", "invalid index entered parsed memo")
 	}
 
-	idx, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, r), sourcecache.Policy{})
+	idx, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, r), &sourcecache.Policy{})
 	assert.FatalIf(t, err != nil, "retry within repository interval: %v", err)
 	{
 		_, getErr3 := idx.Get("app-template", "1.0.0")
@@ -62,7 +62,7 @@ func testFetchIndexInvalidResponseDoesNotPublishCase(
 	warmInputs := testInputs{}
 	warm := New(nil, Config{Network: newTestNetwork(t), Cache: c})
 
-	cached, err := warm.fetchIndex(t.Context(), preparedHTTP(t, warm, warmInputs, r), sourcecache.Policy{})
+	cached, err := warm.fetchIndex(t.Context(), preparedHTTP(t, warm, warmInputs, r), &sourcecache.Policy{})
 	assert.FatalIf(t, err != nil, "disk-cached index: %v", err)
 	{
 		memo, ok := warm.indexCache.Load(

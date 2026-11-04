@@ -66,12 +66,18 @@ func testAcquireCancelDoesNotPoisonCacheCaseCallback(
 	retry := sourcecache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancelled := make(chan error, 1)
-	go func() { _, err := c.Acquire(ctx, "https://example.invalid/resource", retry, nil); cancelled <- err }()
+	go func() {
+		_, err := c.Acquire(ctx, &HTTPRequest{URL: "https://example.invalid/resource", Retry: retry, HeldSlot: nil})
+		cancelled <- err
+	}()
 	<-entered
 	done := make(chan error, (*(*testCaseInput.concurrency))-1)
 	for range (*(*testCaseInput.concurrency)) - 1 {
 		go func() {
-			input, err := c.Acquire(t.Context(), "https://example.invalid/resource", retry, nil)
+			input, err := c.Acquire(
+				t.Context(),
+				&HTTPRequest{URL: "https://example.invalid/resource", Retry: retry, HeldSlot: nil},
+			)
 			var body []byte
 			if err == nil {
 				body, err = fs.ReadFile(input, "content")
@@ -97,12 +103,7 @@ func testAcquireCancelDoesNotPoisonCacheCaseCallback(
 	}
 	assert.FatalIf(t, hits != 2, "requests=%d, want 2", hits)
 	{
-		_, err := c.Acquire(
-			ctx,
-			"https://example.invalid/resource",
-			retry,
-			nil,
-		)
+		_, err := c.Acquire(ctx, &HTTPRequest{URL: "https://example.invalid/resource", Retry: retry, HeldSlot: nil})
 		assert.FatalIf(t, !errors.Is(
 			err,
 			context.Canceled,

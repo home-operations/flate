@@ -35,7 +35,7 @@ func TestAdmission_OwnUnreadableInput(t *testing.T) {
 			{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "app"},
 		},
 	}
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)

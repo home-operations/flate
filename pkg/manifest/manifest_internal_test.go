@@ -141,8 +141,8 @@ func TestProjectionCompatible_ContentBoundary(t *testing.T) {
 		desired.URL = "https://fixture.invalid/desired"
 		previousSnapshot, desiredSnapshot := *previous, desired
 		assert.Equal(t, desired.ProjectionCompatible(previous), true)
-		assert.Diff(t, *previous, previousSnapshot)
-		assert.Diff(t, desired, desiredSnapshot)
+		assert.Equal(t, Equal(previous, &previousSnapshot), true)
+		assert.Equal(t, Equal(&desired, &desiredSnapshot), true)
 	})
 }
 
@@ -164,6 +164,8 @@ func TestEqual_Operands(t *testing.T) {
 		{"equal typed content", &ConfigMap{Name: "app", Data: map[string]any{"key": "value"}}, &ConfigMap{Name: "app", Data: map[string]any{"key": "value"}}, true},
 		{"changed typed content", &ConfigMap{Name: "app", Data: map[string]any{"key": "value"}}, &ConfigMap{Name: "app", Data: map[string]any{"key": "other"}}, false},
 		{"typed nil and empty", &ConfigMap{Name: "app"}, &ConfigMap{Name: "app", Data: map[string]any{}}, false},
+		{"repository nil and present", (*GitRepository)(nil), &GitRepository{Name: "app"}, false},
+		{"repository nil and empty labels", &GitRepository{Name: "app"}, &GitRepository{Name: "app", Labels: map[string]string{}}, false},
 		{"raw nil interface", nil, (*RawObject)(nil), false},
 		{"raw matching typed nil", (*RawObject)(nil), (*RawObject)(nil), true},
 		{"raw mismatched typed nil", (*RawObject)(nil), (*Kustomization)(nil), false},

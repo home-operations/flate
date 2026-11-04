@@ -22,7 +22,7 @@ func BenchmarkProjectAuthored_SharedBootstrapPath(b *testing.B) {
 	testutil.WriteFile(b, root, "app/peers.yaml", docs.String())
 	l := New(store.New())
 	l.SourceRoot = root
-	if _, err := l.Load(b.Context(), root); err != nil {
+	if _, err := l.Load(b.Context(), root, nil); err != nil {
 		b.Fatal(err)
 	}
 	l.Admit(root)

@@ -75,17 +75,18 @@ func TestIndependentModel(t *testing.T) {
 	}{
 		{"content-and-support-without-siblings", func(t *testing.T) {
 			t.Helper()
-			applyModelOperationsResult1 := applyModelOperations(
+			applyModelOperationsResult := applyModelOperations(
 				world,
 				[]modelOperation{{kind: "write", file: file, body: []byte("new"), included: true}},
 			)
-			after, _ := applyModelOperationsResult1.world, applyModelOperationsResult1.unsupported
+			after := applyModelOperationsResult.world
 			result := compareModelWorlds(world, after)
 			for _, side := range []modelSelection{result.before, result.after} {
 				if !maps.Equal(side.affected, modelSet{provider: true, consumer: true}) ||
 					!maps.Equal(side.support, modelSet{parent: true, sourceProvider: true}) {
 					t.Fatalf("affected=%v support=%v", modelIDs(side.affected), modelIDs(side.support))
 				}
+
 				assert.FatalIf(
 					t,
 					side.affected[sibling] || side.support[sibling],
@@ -93,11 +94,13 @@ func TestIndependentModel(t *testing.T) {
 					"support admitted unchanged sibling",
 				)
 			}
+
 			assert.FatalIf(t, string(world.files[file].body) != "old", "%v", "mutation changed the before world")
 		}},
 		{"omitted-consumer", func(t *testing.T) {
 			t.Helper()
 			want := modelSelection{affected: modelSet{provider: true, consumer: true}}
+
 			{
 				err := compareModelSelection(
 					want,
@@ -110,6 +113,7 @@ func TestIndependentModel(t *testing.T) {
 		{"extra-consumer", func(t *testing.T) {
 			t.Helper()
 			want := modelSelection{affected: modelSet{provider: true}}
+
 			{
 				err := compareModelSelection(
 					want,
@@ -125,15 +129,19 @@ func TestIndependentModel(t *testing.T) {
 				affected: modelSet{provider: true},
 				allowed:  map[modelID]string{sibling: "shared unclassified input"},
 			}
+
 			{
 				err := compareModelSelection(want, modelSet{provider: true, sibling: true})
 				assert.FatalIf(t, err != nil, "%v", err)
 			}
+
 			{
 				err := compareModelSelection(want, modelSet{provider: true, parent: true})
 				assert.FatalIf(t, err == nil, "%v", "uncertainty admitted an undeclared producer")
 			}
+
 			want.allowed[sibling] = ""
+
 			{
 				err := compareModelSelection(want, modelSet{provider: true, sibling: true})
 				assert.FatalIf(t, err == nil, "%v", "uncertainty without a reason accepted")
@@ -153,8 +161,9 @@ func TestIndependentModel(t *testing.T) {
 					{kind: "producer", producer: consumer, definition: before.producers[provider]},
 				},
 			)
-			after, _ := applyModelOperationsResult2.world, applyModelOperationsResult2.unsupported
+			after := applyModelOperationsResult2.world
 			result := compareModelWorlds(before, after)
+
 			assert.FatalIf(t, !maps.Equal(result.before.affected, modelSet{provider: true}) ||
 				!maps.Equal(result.after.affected, modelSet{consumer: true}) ||
 				!result.before.deleted[provider] ||
@@ -171,8 +180,9 @@ func TestIndependentModel(t *testing.T) {
 				before,
 				[]modelOperation{{kind: "write", file: file, included: true}},
 			)
-			after, _ := applyModelOperationsResult3.world, applyModelOperationsResult3.unsupported
+			after := applyModelOperationsResult3.world
 			result := compareModelWorlds(before, after)
+
 			assert.FatalIf(t, !maps.Equal(result.before.affected, modelSet{provider: true, consumer: true}) ||
 				len(result.before.unavailable) != 0, "optional absence/appearance: %+v", result.before)
 		}},
@@ -189,7 +199,8 @@ func TestIndependentModel(t *testing.T) {
 				before,
 				[]modelOperation{{kind: "write", file: file, body: []byte("a"), included: true}},
 			)
-			after, _ := applyModelOperationsResult4.world, applyModelOperationsResult4.unsupported
+			after := applyModelOperationsResult4.world
+
 			{
 				result := compareModelWorlds(
 					before,
@@ -198,11 +209,13 @@ func TestIndependentModel(t *testing.T) {
 				assert.FatalIf(t, !result.after.affected[provider] ||
 					len(result.before.unavailable) != 0, "negative listing ignored: %+v", result)
 			}
+
 			applyModelOperationsResult5 := applyModelOperations(
 				after,
 				[]modelOperation{{kind: "write", file: file, body: []byte("b"), included: true}},
 			)
-			changed, _ := applyModelOperationsResult5.world, applyModelOperationsResult5.unsupported
+			changed := applyModelOperationsResult5.world
+
 			{
 				result := compareModelWorlds(after, changed)
 				assert.FatalIf(
@@ -225,11 +238,13 @@ func TestIndependentModel(t *testing.T) {
 			after := cloneModelWorld(before)
 			delete(after.files, directory)
 			result := compareModelWorlds(before, after)
+
 			assert.FatalIf(t, !maps.Equal(result.before.affected, modelSet{provider: true}) ||
 				!maps.Equal(
 					result.after.affected,
 					modelSet{provider: true},
 				), "%v", "empty directory disappearance lost")
+
 			assert.FatalIf(
 				t,
 				len(result.before.unavailable)+len(result.after.unavailable) != 0,
@@ -245,16 +260,19 @@ func TestIndependentModel(t *testing.T) {
 				ignored,
 				[]modelOperation{{kind: "write", file: file, body: []byte("new"), included: false}},
 			)
-			dirty, _ := applyModelOperationsResult6.world, applyModelOperationsResult6.unsupported
+			dirty := applyModelOperationsResult6.world
+
 			{
 				result := compareModelWorlds(ignored, dirty)
 				assert.FatalIf(t, len(result.after.affected) != 0, "ignored bytes selected consumers: %+v", result)
 			}
+
 			applyModelOperationsResult7 := applyModelOperations(
 				dirty,
 				[]modelOperation{{kind: "include", file: file, included: true}},
 			)
-			included, _ := applyModelOperationsResult7.world, applyModelOperationsResult7.unsupported
+			included := applyModelOperationsResult7.world
+
 			{
 				result := compareModelWorlds(dirty, included)
 				assert.FatalIf(t, !result.after.affected[consumer], "%v", "inclusion change omitted consumer")
@@ -283,6 +301,7 @@ func TestIndependentModel(t *testing.T) {
 				},
 			}
 			after := modelWorld{producers: map[modelID]modelProducer{provider: {}}}
+
 			{
 				result := compareModelWorlds(
 					before,
@@ -372,6 +391,13 @@ func TestModelComparator(t *testing.T) {
 			id := producer
 			id.name = "extra"
 			got.producers[id] = modelStatus{terminal: true}
+		}, "producer membership"},
+		{"equal-count-wrong-producer", func(_, got *modelObservation) {
+			state := got.producers[producer]
+			delete(got.producers, producer)
+			id := producer
+			id.name = "unrelated"
+			got.producers[id] = state
 		}, "producer membership"},
 		{"missing-object", func(_, got *modelObservation) { got.documents = nil }, "object membership"},
 		{"extra-object", func(_, got *modelObservation) {
@@ -473,15 +499,11 @@ func TestModelComparator(t *testing.T) {
 			tc.edit(&want, &got)
 			err := compareModelObservation(want, got)
 			if tc.want == "" {
-				assert.FatalIf(t, err != nil, "%v", err)
-			} else {
-				assert.FatalIf(
-					t,
-					err == nil || !strings.Contains(err.Error(), tc.want),
-					"want diagnostic %q, got %v",
-					tc.want,
-					err,
-				)
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want diagnostic %q, got %v", tc.want, err)
 			}
 		})
 	}
@@ -498,7 +520,9 @@ func testIndependentModelWitnessesCase(t *testing.T, testCaseInput *struct {
 	t.Helper()
 
 	fixture := decodeRenderModelCase(testCaseInput.input)
+
 	assert.FatalIf(t, fixture.committed != testCaseInput.committed, "%v", "witness baseline route changed")
+
 	source := renderModelSource(fixture.before)
 	group := "kustomize.toolkit.fluxcd.io"
 	if testCaseInput.kind == "HelmRelease" {
@@ -523,10 +547,12 @@ func testIndependentModelWitnessesCase(t *testing.T, testCaseInput *struct {
 	}
 	if testCaseInput.kind == "Kustomization" {
 		file := modelPath{source: source, path: "flux/optional.yaml"}
+
 		{
 			_, exists := fixture.before.files[file]
 			assert.FatalIf(t, exists, "%v", "optional input no longer absent before")
 		}
+
 		assert.FatalIf(
 			t,
 			!bytes.Contains(fixture.after.files[file].body, []byte("VALUE: new")),
@@ -600,16 +626,19 @@ func testIndependentModelDecoderBounds(t *testing.T) {
 	}
 	for _, encoded := range [][]byte{nil, {1}, {1, 5, 2}, data} {
 		decoded := decodeRenderModelCase(encoded)
+
 		{
 			err := checkModelBounds(&decoded.modelCase)
 			assert.FatalIf(t, err != nil, "input=%x: %v", encoded, err)
 		}
+
 		assert.FatalIf(
 			t,
 			!reflect.DeepEqual(decoded, decodeRenderModelCase(encoded)),
 			"%v",
 			"truncated decoder is nondeterministic",
 		)
+
 		assert.FatalIf(
 			t,
 			decoded.unsupported["ResourceSet-frozen-semantics"] != 1,

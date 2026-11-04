@@ -74,13 +74,9 @@ func TestEntryApplication_FluxInstance(t *testing.T) {
 			assert.Equal(t, valid, true)
 			assert.Equal(t, application.Source, tc.expected.Named())
 			assert.Equal(t, application.Path, "./clusters")
-			assert.FatalIf(
-				t,
-				!Equal(application.Declaration, tc.expected),
-				"source projection differs: got %+v, want %+v",
-				application.Declaration,
-				tc.expected,
-			)
+			if !Equal(application.Declaration, tc.expected) {
+				t.Fatalf("source projection differs: got %+v, want %+v", application.Declaration, tc.expected)
+			}
 			source, path, present := object.SourcePath()
 			assert.Equal(t, source, application.Source)
 			assert.Equal(t, path, application.Path)
@@ -95,6 +91,36 @@ func TestEntryApplication_FluxInstance(t *testing.T) {
 			assert.Diff(t, object.Spec, before)
 		})
 	}
+	t.Run("patches-current-sync", func(t *testing.T) {
+		t.Parallel()
+		object := &RawObject{
+			APIVersion: FluxOperatorDomain + "/v1",
+			Kind:       "FluxInstance",
+			Namespace:  "control",
+			Name:       "flux",
+			Spec: map[string]any{
+				"sync": map[string]any{
+					"kind": KindGitRepository,
+					"url":  "https://fixture.invalid/self",
+					"ref":  "main",
+					"path": "./clusters",
+				},
+				"kustomize": map[string]any{"patches": []any{map[string]any{
+					"target": map[string]any{"kind": KindKustomization},
+					"patch": "- op: replace\n  path: /spec/path\n  value: ./patched\n" +
+						"- op: replace\n  path: /spec/sourceRef/name\n  value: patched\n",
+				}}},
+			},
+		}
+		before := DeepCopyMap(object.Spec)
+		application, valid := object.EntryApplication()
+		assert.Equal(t, valid, true)
+		assert.Equal(t, application.Path, "./clusters")
+		assert.Equal(t, application.Source, NamedResource{
+			Group: SourceDomain, Kind: KindGitRepository, Namespace: "control", Name: "control",
+		})
+		assert.Diff(t, object.Spec, before)
+	})
 	for _, missing := range []string{"kind", "url", "ref", "path"} {
 		t.Run("missing "+missing, func(t *testing.T) {
 			t.Parallel()

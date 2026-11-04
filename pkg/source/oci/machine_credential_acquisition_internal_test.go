@@ -212,7 +212,7 @@ func testFetcherMachineCredentialsAcquisitionCase(
 			}}
 		}
 	}
-	got, err := f.Fetch(t.Context(), repo, inputs.readSet(repo), sourcecache.Policy{MaxAge: time.Hour})
+	got, err := f.Fetch(t.Context(), repo, inputs.readSet(repo), &sourcecache.Policy{MaxAge: time.Hour})
 	if (*name) == "wrong Docker is authoritative" || (*name) == "explicit miss" ||
 		(*name) == "missing helper" ||
 		(*name) ==
@@ -229,7 +229,7 @@ func testFetcherMachineCredentialsAcquisitionCase(
 
 	if (*name) == "helper rotation" {
 		before := accepted.Load()
-		warm, err := f.Fetch(t.Context(), repo, inputs.readSet(repo), sourcecache.Policy{MaxAge: time.Hour})
+		warm, err := f.Fetch(t.Context(), repo, inputs.readSet(repo), &sourcecache.Policy{MaxAge: time.Hour})
 		assert.NoError(t, err)
 		assert.FatalIf(
 			t,
@@ -240,7 +240,7 @@ func testFetcherMachineCredentialsAcquisitionCase(
 
 		expectedPassword.Store("rotated")
 		t.Setenv("FLATE_HELPER_SECRET", "rotated")
-		rotated, err := f.Fetch(t.Context(), repo, inputs.readSet(repo), sourcecache.Policy{MaxAge: time.Hour})
+		rotated, err := f.Fetch(t.Context(), repo, inputs.readSet(repo), &sourcecache.Policy{MaxAge: time.Hour})
 		assert.NoError(t, err)
 		assert.FatalIf(
 			t,

@@ -99,7 +99,7 @@ func (f *countedChartFetcher) Fetch(
 	ctx context.Context,
 	object manifest.BaseManifest,
 	_ *store.ReadSet,
-	_ sourcecache.Policy,
+	_ *sourcecache.Policy,
 ) (*store.SourceArtifact, error) {
 	f.calls.Add(1)
 	const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
@@ -107,7 +107,7 @@ func (f *countedChartFetcher) Fetch(
 	if selected := f.charts[object.Named()]; selected != "" {
 		chart = selected
 	}
-	artifact, _, err := baseline.AdmitDirectory(ctx, chart, chart)
+	artifact, _, err := baseline.AdmitDirectory(ctx, chart, chart, manifest.WorkScope{})
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +161,7 @@ func TestRender_DeclarationOnlyExcludesUnrelatedWork(t *testing.T) {
 		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: from-chart}\n",
 	)
 	inputs := [2]*store.SourceArtifact{testDirectoryInput(t, roots[0]), testDirectoryInput(t, roots[1])}
-	changes, err := change.Detect(t.Context(), inputs[0], inputs[1])
+	changes, err := change.Detect(t.Context(), inputs[0], inputs[1], manifest.WorkScope{})
 	assert.NoError(t, err)
 	assert.Diff(t, changes.Paths(), []string{"ks-a.yaml"})
 	for side, root := range roots {
@@ -555,7 +555,7 @@ func testRenderTreesCancellationCaseBubble(
 			_, _, _, localErr := owner.Blob(
 				ctx,
 				sourcecache.BlobKey{Content: fmt.Sprintf("held-input-%d", i)},
-				sourcecache.Policy{},
+				&sourcecache.Policy{},
 				func(_ context.Context, _ sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 					entered <- struct{}{}
 					<-ctx.Done()
@@ -641,7 +641,7 @@ func testRenderTreesCancellationCaseBubble(
 	_, _, _, err = owner.Blob(
 		t.Context(),
 		key,
-		sourcecache.Policy{MaxAge: time.Hour},
+		&sourcecache.Policy{MaxAge: time.Hour},
 		func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 			_, innerInnerInnerInnerLocalErr := io.WriteString(w, "live")
 			return sourcecache.ProducerResult{}, innerInnerInnerInnerLocalErr
@@ -657,7 +657,7 @@ func testRenderTreesCancellationCaseBubble(
 		<-completed
 	}
 	if testCaseInput.tc.injected {
-		_, _, _, err = owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, nil)
+		_, _, _, err = owner.Blob(t.Context(), key, &sourcecache.Policy{MaxAge: time.Hour}, nil)
 		assert.NoError(t, err)
 
 		assert.NoError(t, owner.Close())
@@ -667,7 +667,7 @@ func testRenderTreesCancellationCaseBubble(
 	_, _, _, err = owner.Blob(
 		ctx,
 		sourcecache.BlobKey{Content: "post-close-canceled"},
-		sourcecache.Policy{},
+		&sourcecache.Policy{},
 		func(context.Context, sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 			reacquired.Add(1)
 			return sourcecache.ProducerResult{}, nil

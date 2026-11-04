@@ -85,7 +85,7 @@ func testAdmissionOrderingEmittedPathProofCase(
 	}
 	l.Options.Selection = manifest.Selection{Roots: []manifest.NamedResource{consumer}}
 	l.Options.Filter = change.NewFilter()
-	_, err := l.Load(t.Context(), filepath.Join(root, "entry"))
+	_, err := l.Load(t.Context(), filepath.Join(root, "entry"), nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	parent := &manifest.Kustomization{Name: "infra-parent", Namespace: "flux-system"}
@@ -153,7 +153,7 @@ func testAdmissionOrderingEmittedTemplateProofCase(
 	l.Options.Filter = change.NewFilter()
 	consumer := (&manifest.Kustomization{Name: "consumer", Namespace: "apps"}).Named()
 	l.Options.Selection = manifest.Selection{Roots: []manifest.NamedResource{consumer}}
-	_, err := l.Load(t.Context(), filepath.Join(root, "entry"))
+	_, err := l.Load(t.Context(), filepath.Join(root, "entry"), nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}

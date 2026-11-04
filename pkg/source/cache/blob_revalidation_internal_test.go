@@ -34,7 +34,7 @@ func testBlobRevalidationCase(t *testing.T, backing *string,
 		c := cachetest.New(t, root, New)
 		key := BlobKey{Content: "revalidated"}
 		original := ocispec.Descriptor{Size: 7, Annotations: map[string]string{"validator": "opaque"}}
-		r, _, id, err := c.Blob(t.Context(), key, Policy{}, producer([]byte("payload"), &original))
+		r, _, id, err := c.Blob(t.Context(), key, &Policy{}, producer([]byte("payload"), &original))
 		assert.NoError(t, err)
 
 		view := NameBlob("content", r)
@@ -54,7 +54,7 @@ func testBlobRevalidationCase(t *testing.T, backing *string,
 		r, desc, gotID, err := c.Blob(
 			t.Context(),
 			key,
-			Policy{},
+			&Policy{},
 			func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 				previous, previousErr2 := w.Previous(ctx)
 				assert.FatalIf(
@@ -102,7 +102,7 @@ func testBlobRevalidationCase(t *testing.T, backing *string,
 			assert.NoError(t, c.Close())
 			c = cachetest.New(t, root, New)
 		}
-		_, desc, _, err = c.Blob(t.Context(), key, Policy{MaxAge: time.Second}, nil)
+		_, desc, _, err = c.Blob(t.Context(), key, &Policy{MaxAge: time.Second}, nil)
 		assert.NoError(t, err)
 
 		assert.FatalIf(
@@ -123,7 +123,7 @@ func testBlobRevalidationAbsent(t *testing.T) {
 	r, _, _, err := c.Blob(
 		t.Context(),
 		BlobKey{Content: "absent"},
-		Policy{},
+		&Policy{},
 		func(context.Context, ProducerInput) (ProducerResult, error) {
 			return ProducerResult{Unchanged: true}, nil
 		},
@@ -142,7 +142,7 @@ func testBlobRevalidationUnchangedParentReplacement(t *testing.T) {
 		Size:        7,
 		Annotations: map[string]string{"validator": "opaque"},
 	}
-	r, _, id, err := c.Blob(t.Context(), key, Policy{}, producer([]byte("payload"), &upstream))
+	r, _, id, err := c.Blob(t.Context(), key, &Policy{}, producer([]byte("payload"), &upstream))
 	assert.NoError(t, err)
 	identity := AcquisitionIdentity(NameBlob("content", r))
 
@@ -153,7 +153,7 @@ func testBlobRevalidationUnchangedParentReplacement(t *testing.T) {
 	r, desc, gotID, err := c.Blob(
 		t.Context(),
 		key,
-		Policy{},
+		&Policy{},
 		func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 			previous, previousErr3 := w.Previous(ctx)
 			assert.FatalIf(t, previousErr3 != nil || previous == nil, "previous=%+v, error=%v", previous, previousErr3)
@@ -202,7 +202,7 @@ func testBlobRevalidationCase2(t *testing.T, invalid *string,
 	root := t.TempDir()
 	c := cachetest.New(t, root, New)
 	key := BlobKey{Content: "missing"}
-	_, _, id, err := c.Blob(t.Context(), key, Policy{}, producer([]byte("old"), &ocispec.Descriptor{}))
+	_, _, id, err := c.Blob(t.Context(), key, &Policy{}, producer([]byte("old"), &ocispec.Descriptor{}))
 	assert.NoError(t, err)
 
 	e, _ := c.entries.Load(id)
@@ -216,7 +216,7 @@ func testBlobRevalidationCase2(t *testing.T, invalid *string,
 	r, _, _, err := c.Blob(
 		t.Context(),
 		key,
-		Policy{},
+		&Policy{},
 		func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 			previous, previousErr4 := w.Previous(ctx)
 			assert.FatalIf(
@@ -280,7 +280,7 @@ func testBlobRevalidationFailuresCaseCallback(
 	r, _, id, err := c.Blob(
 		t.Context(),
 		key,
-		Policy{},
+		&Policy{},
 		producer(
 			[]byte("payload"), &ocispec.Descriptor{Annotations: map[string]string{"validator": "original"}},
 		),
@@ -292,7 +292,7 @@ func testBlobRevalidationFailuresCaseCallback(
 	r, _, _, err = c.Blob(
 		t.Context(),
 		key,
-		Policy{},
+		&Policy{},
 		func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 			previous, previousErr5 := w.Previous(ctx)
 			assert.FatalIf(
@@ -351,7 +351,7 @@ func testBlobRevalidationFailuresCaseCallback(
 			blobR, _, _, blobErr := c.Blob(
 				t.Context(),
 				key,
-				Policy{MaxAge: Forever},
+				&Policy{MaxAge: Forever},
 				nil,
 			)
 			assert.FatalIf(t, blobR != nil ||
@@ -362,7 +362,7 @@ func testBlobRevalidationFailuresCaseCallback(
 	r, _, _, err = c.Blob(
 		t.Context(),
 		key,
-		Policy{},
+		&Policy{},
 		producer([]byte("complete"), &ocispec.Descriptor{}),
 	)
 	assert.NoError(t, err)

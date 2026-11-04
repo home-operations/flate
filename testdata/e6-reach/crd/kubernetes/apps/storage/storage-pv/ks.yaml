@@ -1,0 +1,13 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: storage-pv
+  namespace: storage
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/storage/storage-pv/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system

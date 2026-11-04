@@ -104,8 +104,8 @@ func (d *Session) pinnedWorkingTreeFile(
 }
 
 // The Loader deduplicates unchanged views; unavailable followed paths fail during reconciliation.
-func (d *Session) loadAt(ctx context.Context, dir string, total *int) error {
-	n, err := d.loader.Load(ctx, dir)
+func (d *Session) loadAt(ctx context.Context, dir string, total *int, work *manifest.WorkRecord) error {
+	n, err := d.loader.Load(ctx, dir, work)
 	if d.loader.IgnoreFile == "" && errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
@@ -119,13 +119,13 @@ func (d *Session) loadAt(ctx context.Context, dir string, total *int) error {
 func (d *Session) loadSourcePath(
 	ctx context.Context,
 	dir string,
-	input *store.SourceArtifact,
 	total *int,
+	input sourceLoad,
 ) (bool, error) {
-	if err := d.loadAt(ctx, dir, total); err != nil {
-		if errors.Is(err, fs.ErrPermission) && input != nil && input.FS != nil {
-			name, _ := filepath.Rel(input.LocalPath, dir)
-			if _, statErr := fs.Stat(input.FS, filepath.ToSlash(name)); errors.Is(statErr, fs.ErrPermission) {
+	if err := d.loadAt(ctx, dir, total, input.work); err != nil {
+		if errors.Is(err, fs.ErrPermission) && input.input != nil && input.input.FS != nil {
+			name, _ := filepath.Rel(input.input.LocalPath, dir)
+			if _, statErr := fs.Stat(input.input.FS, filepath.ToSlash(name)); errors.Is(statErr, fs.ErrPermission) {
 				return false, nil
 			}
 		}
@@ -327,4 +327,9 @@ func (d *Session) Freeze(ctx context.Context) (*Result, error) {
 	}
 	d.result = result
 	return result, nil
+}
+
+type sourceLoad struct {
+	input *store.SourceArtifact
+	work  *manifest.WorkRecord
 }

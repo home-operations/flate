@@ -7,6 +7,7 @@ import (
 	"helm.sh/helm/v4/pkg/chart/common"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/task"
 	"github.com/home-operations/flate/pkg/values"
 )
 
@@ -14,8 +15,12 @@ import (
 type RenderOptions struct {
 	Options
 
-	Sources Sources `json:"Sources"`
-
+	// Work borrows stage counters from this render execution.
+	Work    *manifest.RenderWork `json:"-"`
+	Sources Sources              `json:"Sources"`
+	// PreparationTasks gates history decoding outside a task body.
+	// Callers already holding a task slot MUST leave it nil.
+	PreparationTasks *task.Service `json:"-"`
 	// DependencySubstitutions binds emitted dependency projection to accepted history.
 	DependencySubstitutions values.DependencySubstitutions `json:"DependencySubstitutions"`
 	// Admit receives the cache owner's content key; true returns empty output without rendering.

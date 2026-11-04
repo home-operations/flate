@@ -166,8 +166,8 @@ spec: {path: ./workload}
 			l.Options.Changes, err = change.Qualify(
 				t.Context(),
 				change.NewSet([]string{"workload/cm.yaml"}),
-				stores[0],
-				stores[1],
+				stores,
+				manifest.WorkScope{},
 			)
 			assert.NoError(t, err)
 			session, err := discovery.Begin(

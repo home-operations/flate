@@ -42,7 +42,7 @@ func testGitFailedAttemptRemovesDirectoriesCase(
 	g, _, err := c.Git(
 		ctx,
 		GitKey{Content: "source-git-failed", RecurseSubmodules: true},
-		Policy{MaxAge: 0},
+		&Policy{MaxAge: 0},
 		func(callbackArg1 context.Context, callbackArg2 storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
 			return testGitFailedAttemptRemovesDirectoriesCaseCallback(
 				callbackArg1,

@@ -376,6 +376,7 @@ func (c *admissionClosure) affectedSourceRoots(
 	for _, root := range roots {
 		root = c.affectedRoot(source, root)
 		for _, file := range files {
+			c.objects.WorkScope().Admission().Add(&manifest.WorkCounts{FileEntries: 1})
 			location := c.affectedCoordinates(root, file, input, paired)
 			if !location.known {
 				continue

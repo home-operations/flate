@@ -27,7 +27,7 @@ func testTemplateCachePayloadRecovery(t *testing.T, inputs *templateCacheIntegra
 	_, _, _, (*recovery.renderMapsErr) = (*inputs.cli).cache.Blob(
 		t.Context(),
 		recoveryKey,
-		cache.Policy{},
+		&cache.Policy{},
 		func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 			writeTestRecordErr3 := writeTestRecord(
 				w,
@@ -75,7 +75,7 @@ func testTemplateCachePayloadRecovery(t *testing.T, inputs *templateCacheIntegra
 	(*recovery.r), _, _, (*recovery.renderMapsErr) = (*inputs.cli).cache.Blob(
 		t.Context(),
 		recoveryKey,
-		cache.Policy{MaxAge: cache.Forever},
+		&cache.Policy{MaxAge: cache.Forever},
 		nil,
 	)
 	assert.NoError(t, (*recovery.renderMapsErr))

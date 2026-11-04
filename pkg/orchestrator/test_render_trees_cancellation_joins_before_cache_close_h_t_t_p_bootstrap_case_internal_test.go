@@ -109,7 +109,7 @@ func testRenderTreesCancellationJoinsBeforeCacheCloseHTTPBootstrapCase(
 		_, _, _, err := cfg.Cache.Blob(
 			t.Context(),
 			sourcecache.BlobKey{Content: "after-http-bootstrap"},
-			sourcecache.Policy{},
+			&sourcecache.Policy{},
 			func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 				_, err := io.WriteString(w, "live")
 				return sourcecache.ProducerResult{}, err

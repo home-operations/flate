@@ -41,7 +41,7 @@ func TestFetcher_ContentIsolation(t *testing.T) {
 	first, err := f.fetch(
 		t.Context(),
 		&gitAcquisition{spec: base, options: gitlib.CloneOptions{URL: base.URL, NoCheckout: true}},
-		sourcecache.Policy{Retry: sourcecache.RetryConfig{}},
+		&sourcecache.Policy{Retry: sourcecache.RetryConfig{}},
 	)
 	assert.NoError(t, err)
 
@@ -147,7 +147,7 @@ func TestFetcher_SourceTimeout(t *testing.T) {
 				r.Timeout = &metav1.Duration{Duration: tc.timeout}
 			}
 			f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
-			_, err := f.Fetch(t.Context(), r, (testInputs{}).readSet(r), sourcecache.Policy{})
+			_, err := f.Fetch(t.Context(), r, (testInputs{}).readSet(r), &sourcecache.Policy{})
 			assert.FatalIf(
 				t,
 				calls == 0 || !errors.Is(err, transport.ErrRepositoryNotFound),
@@ -192,7 +192,7 @@ func testFetcherContentIsolationCase(t *testing.T, testCaseInput testFetcherCont
 	art, err := fetcher.fetch(
 		t.Context(),
 		&gitAcquisition{spec: &r, options: gitlib.CloneOptions{URL: r.URL, NoCheckout: true}},
-		sourcecache.Policy{Retry: sourcecache.RetryConfig{}},
+		&sourcecache.Policy{Retry: sourcecache.RetryConfig{}},
 	)
 	assert.NoError(t, err)
 
@@ -222,7 +222,7 @@ func testFetcherContentIsolationCase(t *testing.T, testCaseInput testFetcherCont
 			t.Context(), &gitAcquisition{
 				spec:    (*testCaseInput.base),
 				options: gitlib.CloneOptions{URL: (*testCaseInput.base).URL, NoCheckout: true},
-			}, sourcecache.Policy{Retry: sourcecache.RetryConfig{}},
+			}, &sourcecache.Policy{Retry: sourcecache.RetryConfig{}},
 		)
 		assert.NoError(t, err)
 
@@ -259,7 +259,7 @@ func testFetcherAttemptTimeoutCase(t *testing.T, reopen *bool,
 			Timeout:           &metav1.Duration{Duration: 5 * time.Second},
 		}
 		start := time.Now()
-		_, err := f.Fetch(t.Context(), r, (testInputs{}).readSet(r), sourcecache.Policy{MaxAge: time.Hour})
+		_, err := f.Fetch(t.Context(), r, (testInputs{}).readSet(r), &sourcecache.Policy{MaxAge: time.Hour})
 		if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) != 5*time.Second || calls != 2 {
 			t.Fatalf("aggregate attempt: calls=%d elapsed=%v error=%v", calls, time.Since(start), err)
 		}
@@ -277,7 +277,7 @@ func testFetcherAttemptTimeoutCase(t *testing.T, reopen *bool,
 			t.Context(),
 			&longer,
 			(testInputs{}).readSet(&longer),
-			sourcecache.Policy{MaxAge: time.Hour},
+			&sourcecache.Policy{MaxAge: time.Hour},
 		)
 		assert.FatalIf(t, err != nil, "longer policy reused failure: %v", err)
 		body, err := fs.ReadFile(artifact.FS, "hello.txt")
@@ -295,7 +295,7 @@ func testFetcherAttemptTimeoutCase(t *testing.T, reopen *bool,
 			t.Context(),
 			&shorter,
 			(testInputs{}).readSet(&shorter),
-			sourcecache.Policy{MaxAge: time.Hour},
+			&sourcecache.Policy{MaxAge: time.Hour},
 		)
 		assert.FatalIf(
 			t,

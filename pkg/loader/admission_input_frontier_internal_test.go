@@ -48,7 +48,7 @@ func TestAdmission_GeneratedInputRetainsUnchangedConsumers(t *testing.T) {
 			l.SourceRoot = root
 			l.Options.Selection = manifest.Selection{Changed: true}
 			l.Options.Changes, l.Options.Filter = change.NewSet([]string{file}), change.NewFilter()
-			_, err := l.Load(t.Context(), root)
+			_, err := l.Load(t.Context(), root, nil)
 			assert.NoError(t, err)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 			proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
@@ -133,7 +133,7 @@ func TestAdmission_KnownInputDoesNotOpenUnrelatedRenderer(t *testing.T) {
 	l.Options.Filter = change.NewFilter()
 	l.Options.Changes = change.NewSet([]string{"input.yaml"})
 	l.Options.Selection = manifest.Selection{Changed: true}
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
@@ -219,7 +219,7 @@ func testAdmissionUnclaimedInput(t *testing.T, scenario string) {
 	}
 	l.Options.Changes = change.NewSet(changed)
 	l.Options.Selection = manifest.Selection{Changed: true}
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	templated := manifest.NamedResource{
@@ -304,7 +304,7 @@ func testAdmissionClosedRootFrontierCase(t *testing.T, testCaseInput *string,
 	}})
 	l := New(st)
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	provider := manifest.NamedResource{
 		Group:     manifest.FluxKustomizeDomain,

@@ -52,7 +52,7 @@ func testBlobRenderLifetimeCaseCase(t *testing.T, testCaseInput testBlobRenderLi
 		{Content: 1, Render: RenderAccepted},
 		{Content: "", Render: RenderAccepted},
 	} {
-		_, _, _, err := c.Blob(t.Context(), invalid, Policy{MaxAge: Forever}, nil)
+		_, _, _, err := c.Blob(t.Context(), invalid, &Policy{MaxAge: Forever}, nil)
 		{
 			_, ok := errors.AsType[*CacheError](err)
 			assert.FatalIf(
@@ -64,15 +64,15 @@ func testBlobRenderLifetimeCaseCase(t *testing.T, testCaseInput testBlobRenderLi
 			)
 		}
 	}
-	metadata, err := c.RenderMetadata(t.Context(), "", "")
-
+	renderMetadataResult, err := c.RenderMetadata(t.Context(), "", "", nil)
+	enabled := renderMetadataResult.Enabled
 	{
 		_, ok := errors.AsType[*CacheError](err)
 		assert.FatalIf(
 			t,
-			!ok || !errors.Is(err, manifest.ErrInput) || metadata.Enabled,
+			!ok || !errors.Is(err, manifest.ErrInput) || enabled,
 			"invalid metadata content: enabled=%t, %v",
-			metadata.Enabled,
+			enabled,
 			err,
 		)
 	}
@@ -81,28 +81,28 @@ func testBlobRenderLifetimeCaseCase(t *testing.T, testCaseInput testBlobRenderLi
 	_, _, _, err = c.Blob(
 		canceled,
 		BlobKey{Content: "render", Render: RenderAccepted},
-		Policy{MaxAge: Forever},
+		&Policy{MaxAge: Forever},
 		nil,
 	)
 	{
 		_, ok := errors.AsType[*CacheError](err)
 		assert.FatalIf(t, !ok || !errors.Is(err, context.Canceled), "canceled render lookup: %v", err)
 	}
-	metadata2, metadataErr := c.RenderMetadata(canceled, "render", "")
-	metadata.Enabled, err = metadata2.Enabled, metadataErr
+	renderMetadataResult2, renderMetadataResult2Err := c.RenderMetadata(canceled, "render", "", nil)
+	enabled, err = renderMetadataResult2.Enabled, renderMetadataResult2Err
 	{
 		_, ok := errors.AsType[*CacheError](
 			err,
 		)
 		assert.FatalIf(t, !ok || !errors.Is(err, context.Canceled) ||
-			metadata.Enabled != persisted, "canceled metadata lookup: enabled=%t, %v", metadata.Enabled, err)
+			enabled != persisted, "canceled metadata lookup: enabled=%t, %v", enabled, err)
 	}
 	assert.Equal(t, c.CanPersistRenders(), persisted)
 	raw := BlobKey{Content: "raw-source"}
 	_, _, _, err = c.Blob(
 		t.Context(),
 		raw,
-		Policy{MaxAge: Forever},
+		&Policy{MaxAge: Forever},
 		producer([]byte("source"), &ocispec.Descriptor{}),
 	)
 	assert.NoError(t, err)
@@ -150,7 +150,7 @@ func testBlobRenderLifetimeCaseCaseCompletion(t *testing.T, captures *testBlobRe
 			r, _, id, blobErr9 := (*captures.c).Blob(
 				t.Context(),
 				BlobKey{Content: content, Render: RenderPending},
-				Policy{MaxAge: Forever},
+				&Policy{MaxAge: Forever},
 				nil,
 			)
 			assert.FatalIf(t, r != nil || id != "" ||
@@ -159,7 +159,7 @@ func testBlobRenderLifetimeCaseCaseCompletion(t *testing.T, captures *testBlobRe
 	}
 	{
 		r, _, _, blobErr10 := (*captures.c).Blob(
-			t.Context(), (*captures.key), Policy{MaxAge: Forever},
+			t.Context(), (*captures.key), &Policy{MaxAge: Forever},
 			nil,
 		)
 		assert.FatalIf(t, r != nil ||
@@ -179,7 +179,7 @@ func testBlobRenderLifetimeCaseCaseCompletion(t *testing.T, captures *testBlobRe
 		return ProducerResult{}, previousErr
 	}
 	for _, age := range []time.Duration{Forever, Forever, 0} {
-		r, _, _, blobErr11 := (*captures.c).Blob(t.Context(), (*captures.key), Policy{MaxAge: age}, produce)
+		r, _, _, blobErr11 := (*captures.c).Blob(t.Context(), (*captures.key), &Policy{MaxAge: age}, produce)
 		assert.NoError(t, blobErr11)
 		data, _ := fs.ReadFile(r, "content")
 
@@ -191,7 +191,7 @@ func testBlobRenderLifetimeCaseCaseCompletion(t *testing.T, captures *testBlobRe
 	}
 	assert.NoError(t, (*captures.c).Close())
 	(*captures.c) = cachetest.New(t, (*captures.root), New)
-	r, _, _, err := (*captures.c).Blob(t.Context(), (*captures.key), Policy{MaxAge: Forever}, nil)
+	r, _, _, err := (*captures.c).Blob(t.Context(), (*captures.key), &Policy{MaxAge: Forever}, nil)
 	if *captures.persisted {
 		assert.NoError(t, err)
 		data, _ := fs.ReadFile(r, "content")
@@ -205,7 +205,7 @@ func testBlobRenderLifetimeCaseCaseCompletion(t *testing.T, captures *testBlobRe
 			err,
 		)
 	}
-	r, _, _, err = (*captures.c).Blob(t.Context(), (*captures.raw), Policy{MaxAge: Forever}, nil)
+	r, _, _, err = (*captures.c).Blob(t.Context(), (*captures.raw), &Policy{MaxAge: Forever}, nil)
 	if (*captures.root) != "" {
 		assert.NoError(t, err)
 		data, _ := fs.ReadFile(r, "content")

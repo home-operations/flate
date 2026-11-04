@@ -321,8 +321,11 @@ func (c *TreeCache) PreviousRender(
 	}
 	reader, _, lookup, err := c.owner.Blob(
 		ctx,
-		sourcecache.BlobKey{Content: prepared.key, Render: sourcecache.RenderAccepted},
-		sourcecache.Policy{MaxAge: sourcecache.Forever},
+		sourcecache.BlobKey{
+			Content: prepared.key,
+			Render:  sourcecache.RenderAccepted,
+		},
+		&sourcecache.Policy{MaxAge: sourcecache.Forever, Work: req.Work.History()},
 		nil,
 	)
 	if err != nil {
@@ -408,6 +411,7 @@ func (p renderPublication) WriteTo(w io.Writer) (int64, error) {
 
 // RenderAcceptance binds accepted output and optional entry inventory to its final owner.
 type RenderAcceptance struct {
+	Work *manifest.RenderWork `json:"-"`
 	// Source identifies the admitted filesystem used by the receipt.
 	Source  manifest.SourceIdentity   `json:"Source"`
 	Sources []manifest.SourceEvidence `json:"Sources"`
@@ -476,6 +480,7 @@ func (c *TreeCache) RecordRender(ctx context.Context, acceptance RenderAcceptanc
 			Key:        frame.header.Key,
 			Lookup:     frame.lookup,
 			Acceptance: content,
+			Work:       acceptance.Work.History(),
 			History:    sourcecache.RenderHistory{Owner: owner, Sources: sources},
 			Content:    publication,
 		},

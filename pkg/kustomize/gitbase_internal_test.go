@@ -501,13 +501,13 @@ func testRenderNestedGitBasesAndIntervalsCase(
 			}
 			return fetcher.FetchRemoteBase(
 				ctx,
-				sourcegit.RemoteBaseRequest{
+				&sourcegit.RemoteBaseRequest{
 					URL:        "file://" + dir,
 					Ref:        request.Ref,
 					Timeout:    request.Timeout,
 					Submodules: request.Submodules,
 				},
-				sourcecache.Policy{MaxAge: request.MaxAge, Retry: retry},
+				&sourcecache.Policy{MaxAge: request.MaxAge, Retry: retry},
 			)
 		},
 	)

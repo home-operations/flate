@@ -143,7 +143,9 @@ data:
 		t.Helper()
 		_, pin, err := source.OperationView(t.Context(), input)
 		assert.NoError(t, err)
+
 		assert.FatalIf(t, pin == "", "%s", "fixture did not acquire an immutable operation pin")
+
 		selector := manifest.Fingerprint(struct {
 			Pin  string `json:"Pin"`
 			Path string `json:"Path"`
@@ -194,12 +196,14 @@ data:
 		assert.NoError(t, err)
 		key := computeTemplateKey(&loaded, map[string]any{}, Options{}, hr)
 		t.Logf("chart fingerprint=%s template key=%s", loaded.fingerprint, key)
+
 		assert.FatalIf(t, key == "", "%s", "subchart fixture produced an empty completed-output key")
+
 		return cache.BlobKey{Content: key, Render: cache.RenderAccepted}
 	}
 	readBlob := func(t *testing.T, owner *cache.Cache, key cache.BlobKey) []map[string]any {
 		t.Helper()
-		r, _, _, err := owner.Blob(t.Context(), key, cache.Policy{MaxAge: cache.Forever}, nil)
+		r, _, _, err := owner.Blob(t.Context(), key, &cache.Policy{MaxAge: cache.Forever}, nil)
 		assert.NoError(t, err)
 		data, err := fs.ReadFile(r, "content")
 		assert.NoError(t, err)
@@ -225,7 +229,7 @@ data:
 		_, _, _, err = owner.Blob(
 			t.Context(),
 			key,
-			cache.Policy{},
+			&cache.Policy{},
 			func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 				writeTestRecordErr := writeTestRecord(
 					w,
@@ -241,8 +245,10 @@ data:
 	owner := cachetest.New(t, root, cache.New)
 	cli, cliSources := newClient(t, owner, false)
 	key := keyFor(t, cli, cliSources)
-	_, _, _, err := owner.Blob(t.Context(), key, cache.Policy{MaxAge: cache.Forever}, nil)
+	_, _, _, err := owner.Blob(t.Context(), key, &cache.Policy{MaxAge: cache.Forever}, nil)
+
 	assert.FatalIf(t, !errors.Is(err, errdef.ErrNotFound), "cold lookup: got %v, want not found", err)
+
 	t.Log("direct cold lookup: not found")
 	cold, receipt5, err := testutil.RenderMaps(
 		cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}),
@@ -300,7 +306,7 @@ data:
 	owner = cachetest.New(t, root, cache.New)
 	cli, cliSources = newClient(t, owner, true)
 	reopenedKey := keyFor(t, cli, cliSources)
-	_, _, _, lookupErr := owner.Blob(t.Context(), reopenedKey, cache.Policy{MaxAge: cache.Forever}, nil)
+	_, _, _, lookupErr := owner.Blob(t.Context(), reopenedKey, &cache.Policy{MaxAge: cache.Forever}, nil)
 	t.Logf("fresh-owner direct lookup: %v", lookupErr)
 	reopened, receipt8, err := testutil.RenderMaps(
 		cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}),
@@ -316,13 +322,13 @@ data:
 	}
 
 	assert.NoError(t, err)
-	if !reflect.DeepEqual(reopened, marked) {
-		t.Fatalf(
-			"fresh owner/client rerendered unchanged subcharts: marker absent=%v, fresh bytes equal cold=%v",
-			!hasRenderField(reopened, "witness", "persisted-subchart-hit"),
-			reflect.DeepEqual(reopened, cold),
-		)
-	}
+	assert.FatalIf(
+		t,
+		!reflect.DeepEqual(reopened, marked),
+		"fresh owner/client rerendered unchanged subcharts: marker absent=%v, fresh bytes equal cold=%v",
+		!hasRenderField(reopened, "witness", "persisted-subchart-hit"),
+		reflect.DeepEqual(reopened, cold),
+	)
 	writeBlob(t, owner, reopenedKey, cold)
 	restored, receipt9, err := testutil.RenderMaps(
 		cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}),
@@ -396,6 +402,7 @@ func TestComputeTemplateKey_StableSameInputs(t *testing.T) {
 		opts,
 		hr,
 	)
+
 	assert.ErrorIf(t, k1 != k2, "same logical values must produce same key:\nk1=%s\nk2=%s", k1, k2)
 }
 
@@ -448,8 +455,11 @@ func testTemplateCacheOCIIdentityCase(t *testing.T, testCaseInput *testTemplateC
 		}
 
 		assert.NoError(t, err)
+
 		loaded, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
+
 		assert.NoError(t, err)
+
 		if canonical == nil {
 			canonical = loaded.chart
 		}
@@ -465,12 +475,14 @@ func testTemplateCacheOCIIdentityCase(t *testing.T, testCaseInput *testTemplateC
 		}
 		valuesKey := chartValuesCacheKey(&loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles, "")
 		merged, ok := cli.chartValuesCache[valuesKey]
+
 		assert.FatalIf(
 			t,
 			!ok || valuesKey == "",
 			"%s",
 			"render did not cache values under its effective fingerprint",
 		)
+
 		key := computeTemplateKey(&loaded, merged.merged, opts, hr)
 		repeated, receipt2, err := testutil.RenderMaps(
 			cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources}),
@@ -491,13 +503,16 @@ func testTemplateCacheOCIIdentityCase(t *testing.T, testCaseInput *testTemplateC
 			"repeat render differs: %v",
 			err,
 		)
+
 		return out, key, valuesKey
 	}
 	first, key, valuesKey := render((*testCaseInput.initial))
 	assert.FatalIf(t, !hasRenderField(first, "marker", "original"), "%v", first)
 	if testCaseInput.tc.marker != "" {
 		template, err := os.ReadFile(filepath.Join(dir, "templates", "cm.yaml"))
+
 		assert.NoError(t, err)
+
 		dir = t.TempDir()
 		writeChartFiles(t, dir, "podinfo", "6.15.0")
 		testutil.WriteFile(t, dir, "values.yaml", "marker: default\n")
@@ -557,6 +572,7 @@ func testTemplateCacheOCIIdentityCase(t *testing.T, testCaseInput *testTemplateC
 				assert.NoError(t, recordErr)
 			}
 		}
+
 		assert.FatalIf(
 			t,
 			!errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux),

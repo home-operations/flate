@@ -29,7 +29,7 @@ func testAcquireCloseJoinsKeyWaitCase(t *testing.T, concurrency *int,
 			_, _, _, err := c.owner.Blob(
 				t.Context(),
 				key,
-				sourcecache.Policy{},
+				&sourcecache.Policy{},
 				func(context.Context, sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 					close(entered)
 					<-release
@@ -45,7 +45,13 @@ func testAcquireCloseJoinsKeyWaitCase(t *testing.T, concurrency *int,
 		})}
 		done := make(chan error, (*concurrency))
 		for range *concurrency {
-			go func() { _, err := c.Acquire(t.Context(), url, sourcecache.RetryConfig{}, nil); done <- err }()
+			go func() {
+				_, err := c.Acquire(
+					t.Context(),
+					&HTTPRequest{URL: url, Retry: sourcecache.RetryConfig{}, HeldSlot: nil},
+				)
+				done <- err
+			}()
 		}
 		synctest.Wait()
 		c.Close()

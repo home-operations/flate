@@ -163,17 +163,15 @@ func (c *admissionClosure) unchangedDeclaration(id, owner manifest.NamedResource
 		}
 		return true
 	}
-	if comparison := c.outputChanged(id, new(manifest.Reference{NamedResource: id}), object); comparison.Known {
-		if !comparison.Changed {
-			return remember()
-		}
+	declared := c.declarationChanged(id, object)
+	if declared.Known && declared.Changed {
 		return false
 	}
+	if comparison := c.outputChanged(id, new(manifest.Reference{NamedResource: id}), object); comparison.Known {
+		return !comparison.Changed && remember()
+	}
 	record := c.record(id)
-	if comparison := c.declarationChanged(
-		id,
-		object,
-	); comparison.Known && !comparison.Changed &&
+	if declared.Known &&
 		!c.inputsChanged(manifest.BootstrapSourceID, record.Inputs) {
 		return remember()
 	}

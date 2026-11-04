@@ -48,7 +48,6 @@ spec:
 
 func TestRenderTrees_CollectionPayloadIsolation(t *testing.T) {
 	t.Parallel()
-
 	root := t.TempDir()
 	writeCollectionEntry(t, root, "alpha", "first")
 	writeCollectionEntry(t, root, "omega", "second")
@@ -58,17 +57,32 @@ func TestRenderTrees_CollectionPayloadIsolation(t *testing.T) {
 			t.Context(),
 			[]Tree{
 				{
-					ID:       manifest.TreeID{Cluster: "alpha", Side: manifest.TreeHead},
+					ID: manifest.TreeID{
+						Cluster: "alpha",
+						Side:    manifest.TreeHead,
+					},
 					RepoRoot: root,
-					Path:     filepath.Join(root, "alpha"),
+					Path: filepath.Join(
+						root,
+						"alpha",
+					),
 				},
 				{
-					ID:       manifest.TreeID{Cluster: "omega", Side: manifest.TreeHead},
+					ID: manifest.TreeID{
+						Cluster: "omega",
+						Side:    manifest.TreeHead,
+					},
 					RepoRoot: root,
-					Path:     filepath.Join(root, "omega"),
+					Path: filepath.Join(
+						root,
+						"omega",
+					),
 				},
 			},
-			Config{Concurrency: 2},
+			Config{
+				RecordWork:  true,
+				Concurrency: 2,
+			},
 		)
 		assert.NoError(t, err)
 		assert.Equal(t, len(grouped), 2)
@@ -78,12 +92,21 @@ func TestRenderTrees_CollectionPayloadIsolation(t *testing.T) {
 				t.Context(),
 				[]Tree{
 					{
-						ID:       manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
-						Path:     filepath.Join(root, entry),
+						ID: manifest.TreeID{
+							Cluster: ".",
+							Side:    manifest.TreeHead,
+						},
+						Path: filepath.Join(
+							root,
+							entry,
+						),
 						RepoRoot: root,
 					},
 				},
-				Config{Concurrency: 2},
+				Config{
+					RecordWork:  true,
+					Concurrency: 2,
+				},
 			)
 			assert.NoError(t, err)
 			{
@@ -103,6 +126,39 @@ func TestRenderTrees_CollectionPayloadIsolation(t *testing.T) {
 			data, ok := grouped[i].Store().Get[*manifest.ConfigMap](vars)
 			assert.FatalIf(t, !ok, "%v", "entry lost its native variables")
 			assert.Equal(t, data.Data["value"], any([]string{"first", "second"}[i]))
+			assert.Equal(
+				t,
+				workCounts(
+					grouped[i].Result.Work,
+					manifest.NamedResource{},
+					manifest.WorkKustomize,
+				),
+				manifest.WorkCounts{
+					Attempts:  1,
+					Completed: 1,
+				},
+			)
+			assert.Equal(
+				t,
+				workCounts(
+					grouped[i].Result.Work,
+					manifest.NamedResource{
+						Group:     manifest.FluxOperatorDomain,
+						Kind:      manifest.KindResourceSet,
+						Namespace: "apps",
+						Name:      "workload",
+					},
+					manifest.WorkEvaluation,
+				),
+				manifest.WorkCounts{
+					Attempts:  1,
+					Completed: 1,
+				},
+			)
+			for recordIndex := range grouped[i].Result.Work {
+				record := &grouped[i].Result.Work[recordIndex]
+				assert.Equal(t, record.Key.Tree, grouped[i].ID)
+			}
 		}
 		results := []*Result{grouped[0].Result, grouped[1].Result}
 		if run == 0 {
@@ -126,7 +182,6 @@ func TestRenderTrees_CollectionPayloadIsolation(t *testing.T) {
 
 func TestRenderTrees_ClusterUnion(t *testing.T) {
 	t.Parallel()
-
 	for _, tc := range []struct {
 		name          string
 		before, after []string
@@ -134,18 +189,54 @@ func TestRenderTrees_ClusterUnion(t *testing.T) {
 		{"removed", []string{"alpha", "omega"}, []string{"alpha"}},
 		{"added", []string{"alpha"}, []string{"alpha", "omega"}},
 		{"renamed", []string{"alpha", "omega"}, []string{"alpha", "theta"}},
+		{"renamed_back", []string{"alpha", "theta"}, []string{"alpha", "omega"}},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			testRenderTreesClusterUnionCase(t, &tc)
-		},
+		t.Run(
+			tc.name,
+			func(t *testing.T) {
+				t.Parallel()
+				testRenderTreesClusterUnionCase(t, &tc)
+			},
 		)
 	}
 }
 
 func TestRenderTrees_IndependentBootstrapFailure(t *testing.T) {
 	t.Parallel()
-
+	t.Run(
+		"work_before_failure",
+		func(t *testing.T) {
+			t.Parallel()
+			tree := Tree{ID: manifest.TreeID{Cluster: "failed", Side: manifest.TreeHead}, RepoRoot: t.TempDir()}
+			tree.Path = filepath.Join(tree.RepoRoot, "missing")
+			runs, err := RenderTrees(t.Context(), []Tree{tree}, Config{RecordWork: true, Concurrency: 2})
+			assert.FatalIf(
+				t,
+				err == nil || len(runs) != 1 || runs[0].Result == nil || runs[0].Orchestrator != nil || runs[0].Absent,
+				"preparation failure lost its attempted side: runs=%+v error=%v",
+				runs,
+				err,
+			)
+			assert.Equal(
+				t,
+				workCounts(
+					runs[0].Result.Work,
+					manifest.NamedResource{},
+					manifest.WorkPreparation,
+				),
+				manifest.WorkCounts{
+					Attempts:      1,
+					Failures:      1,
+					OwnerPrepares: 1,
+				},
+			)
+			assert.Equal(
+				t,
+				workCounts(runs[0].Result.Work, manifest.NamedResource{}, manifest.WorkKustomize),
+				manifest.WorkCounts{},
+			)
+		},
+	)
 	failed, healthy := t.TempDir(), t.TempDir()
 	testutil.WriteFile(t, failed, "kustomization.yaml", "resources: [missing.yaml]\n")
 	testutil.WriteFile(t, healthy, "kustomization.yaml", "resources: [object.yaml]\n")
@@ -153,7 +244,7 @@ func TestRenderTrees_IndependentBootstrapFailure(t *testing.T) {
 	runs, err := RenderTrees(t.Context(), []Tree{
 		{ID: manifest.TreeID{Cluster: "failed", Side: manifest.TreeHead}, RepoRoot: failed},
 		{ID: manifest.TreeID{Cluster: "healthy", Side: manifest.TreeHead}, RepoRoot: healthy},
-	}, Config{Concurrency: 2})
+	}, Config{RecordWork: true, Concurrency: 2})
 	assert.FatalIf(t, err == nil || len(runs) != 2 || runs[0].Orchestrator == nil || runs[0].Result == nil ||
 		runs[1].Orchestrator == nil ||
 		runs[1].Err != nil ||
@@ -182,24 +273,22 @@ func TestRenderTrees_DuplicateBeforeLaunch(t *testing.T) {
 	)
 }
 
-func testRenderTreesClusterUnionCase(t *testing.T, testCaseInput *struct {
-	name string
-
-	before []string
-	after  []string
+func testRenderTreesClusterUnionCase(t *testing.T, tc *struct {
+	name          string
+	before, after []string
 },
 ) {
 	t.Helper()
 
 	before, after := t.TempDir(), t.TempDir()
-	for _, entry := range testCaseInput.before {
+	for _, entry := range tc.before {
 		writeCollectionEntry(t, before, entry, "old")
 	}
-	for _, entry := range testCaseInput.after {
+	for _, entry := range tc.after {
 		writeCollectionEntry(t, after, entry, "new")
 	}
 	var trees []Tree
-	for side, entries := range [][]string{testCaseInput.before, testCaseInput.after} {
+	for side, entries := range [][]string{tc.before, tc.after} {
 		root := before
 		if side == 1 {
 			root = after
@@ -209,16 +298,45 @@ func testRenderTreesClusterUnionCase(t *testing.T, testCaseInput *struct {
 				trees,
 				Tree{
 					ID: manifest.TreeID{
-						Cluster: manifest.ClusterID(entry),
-						Side:    manifest.TreeSide(side),
+						Cluster: manifest.ClusterID(
+							entry,
+						),
+						Side: manifest.TreeSide(
+							side,
+						),
 					},
 					RepoRoot: root,
-					Path:     filepath.Join(root, entry),
+					Path: filepath.Join(
+						root,
+						entry,
+					),
 				},
 			)
 		}
 	}
-	runs, err := RenderTrees(t.Context(), trees, Config{Concurrency: 2})
+	for _, order := range []string{"base_first", "current_first"} {
+		t.Run(
+			order,
+			func(t *testing.T) {
+				t.Parallel()
+				testRenderTreesClusterUnionOrder(t, tc, trees, order)
+			},
+		)
+	}
+}
+
+func testRenderTreesClusterUnionOrder(t *testing.T, tc *struct {
+	name          string
+	before, after []string
+}, trees []Tree, order string,
+) {
+	t.Helper()
+
+	inputs := slices.Clone(trees)
+	if order == "current_first" {
+		slices.Reverse(inputs)
+	}
+	runs, err := RenderTrees(t.Context(), inputs, Config{RecordWork: true, Concurrency: 2})
 	assert.NoError(t, err)
 	roots := []manifest.NamedResource{testutil.KustomizationID("", "")}
 	for i := 0; i < len(runs); i += 2 {
@@ -226,20 +344,60 @@ func testRenderTreesClusterUnionCase(t *testing.T, testCaseInput *struct {
 		assert.Equal(t, pair[0].ID.Cluster, pair[1].ID.Cluster)
 		assert.Equal(t, pair[0].ID.Side, manifest.TreeBase)
 		assert.Equal(t, pair[1].ID.Side, manifest.TreeHead)
-		for side, entries := range [][]string{testCaseInput.before, testCaseInput.after} {
+		for side, entries := range [][]string{tc.before, tc.after} {
 			absent := !slices.Contains(entries, string(pair[side].ID.Cluster))
 			assert.Equal(t, pair[side].Absent, absent)
 			assert.FatalIf(t, absent && pair[side].Orchestrator != nil, "%v", "absent side constructed a tree")
+			if absent {
+				assert.Diff(t, pair[side].Result, &Result{})
+				assert.NoError(t, pair[side].Err)
+				continue
+			}
+			assert.Equal(
+				t,
+				workCounts(
+					pair[side].Result.Work,
+					manifest.NamedResource{},
+					manifest.WorkKustomize,
+				),
+				manifest.WorkCounts{
+					Attempts:  1,
+					Completed: 1,
+				},
+			)
+			assert.Equal(
+				t,
+				workCounts(
+					pair[side].Result.Work,
+					manifest.NamedResource{
+						Group:     manifest.FluxOperatorDomain,
+						Kind:      manifest.KindResourceSet,
+						Namespace: "apps",
+						Name:      "workload",
+					},
+					manifest.WorkEvaluation,
+				),
+				manifest.WorkCounts{
+					Attempts:  1,
+					Completed: 1,
+				},
+			)
+			for recordIndex := range pair[side].Result.Work {
+				record := &pair[side].Result.Work[recordIndex]
+				assert.Equal(t, record.Key.Tree, pair[side].ID)
+			}
 		}
 		selected, err, _ := Select(pair, errors.Join(pair[0].Err, pair[1].Err), roots, nil)
 		assert.NoError(t, err)
 		changes, _, _, err := diff.Compare(
+
 			diff.Snapshot{
 				Subjects:     selected[0].Subjects,
 				Manifests:    selected[0].Manifests,
 				Unavailable:  selected[0].Unavailable,
 				ProducerKeys: selected[0].ProducerKeys,
 			},
+
 			diff.Snapshot{
 				Subjects:     selected[1].Subjects,
 				Manifests:    selected[1].Manifests,
@@ -247,7 +405,9 @@ func testRenderTreesClusterUnionCase(t *testing.T, testCaseInput *struct {
 				ProducerKeys: selected[1].ProducerKeys,
 			},
 			nil,
-			diff.Options{Format: diff.FormatJSON},
+			diff.Options{
+				Format: diff.FormatJSON,
+			},
 		)
 		assert.NoError(t, err)
 		if pair[0].Absent || pair[1].Absent {
@@ -255,12 +415,16 @@ func testRenderTreesClusterUnionCase(t *testing.T, testCaseInput *struct {
 			if pair[0].Absent {
 				want = "added"
 			}
-			assert.FatalIf(t, !strings.Contains(string(changes), `"status": "`+want+`"`) ||
-				len(
-					selected[0].Unavailable,
-				)+len(
-					selected[1].Unavailable,
-				) != 0, "absent group lost %s: %s", want, changes)
+			assert.FatalIf(t, !strings.Contains(
+				string(
+					changes,
+				),
+				`"status": "`+want+`"`,
+			) || len(
+				selected[0].Unavailable,
+			)+len(
+				selected[1].Unavailable,
+			) != 0, "absent group lost %s: %s", want, changes)
 		}
 	}
 }

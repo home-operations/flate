@@ -68,13 +68,13 @@ func testAcquireMemoryRetirementCase(t *testing.T, backing *string,
 		assert.NoError(t, err)
 		defer func() { assert.NoError(t, c.Close()) }()
 		key := ArchiveKey{Content: "E8 B11 retirement", Policy: "fixed"}
-		first, _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: Forever}, fill("a"))
+		first, _, _, err := c.Acquire(t.Context(), key, &Policy{MaxAge: Forever}, fill("a"))
 		assert.NoError(t, err)
-		warm, _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: Forever}, fill("a"))
+		warm, _, _, err := c.Acquire(t.Context(), key, &Policy{MaxAge: Forever}, fill("a"))
 		assert.NoError(t, err)
 		assert.Equal(t, calls, 1)
 		check(warm, 'a')
-		next, _, _, err := c.Acquire(t.Context(), key, Policy{}, fill("b"))
+		next, _, _, err := c.Acquire(t.Context(), key, &Policy{}, fill("b"))
 		assert.NoError(t, err)
 		assert.Equal(t, calls, 2)
 		check(first, 'a')
@@ -98,7 +98,7 @@ func testAcquireMemoryRetirementCase(t *testing.T, backing *string,
 		input, _, _, err := c.Acquire(
 			t.Context(),
 			ArchiveKey{Content: "E8 B11 retirement", Policy: "fixed"},
-			Policy{MaxAge: Forever},
+			&Policy{MaxAge: Forever},
 			fill("b"),
 		)
 		assert.NoError(t, err)

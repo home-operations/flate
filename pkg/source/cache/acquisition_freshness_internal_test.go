@@ -45,7 +45,7 @@ func testAcquireGenerationsAndFreshnessCase(t *testing.T, disk *bool,
 	first, got, id, err := c.Acquire(
 		t.Context(),
 		key,
-		Policy{MaxAge: time.Hour},
+		&Policy{MaxAge: time.Hour},
 		producer(initialArchive.Bytes(), &want),
 	)
 	assert.NoError(t, err)
@@ -68,7 +68,7 @@ func testAcquireGenerationsAndFreshnessCase(t *testing.T, disk *bool,
 
 		c = cachetest.New(t, root, New)
 	}
-	warm, got, warmID, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, unexpected)
+	warm, got, warmID, err := c.Acquire(t.Context(), key, &Policy{MaxAge: time.Hour}, unexpected)
 	assert.NoError(t, err)
 
 	if diff := cmp.Diff(want, got); diff != "" {
@@ -79,7 +79,7 @@ func testAcquireGenerationsAndFreshnessCase(t *testing.T, disk *bool,
 	if _, _, acquireInvalidID, acquireErr := c.Acquire(
 		t.Context(),
 		ArchiveKey{Content: invalid},
-		Policy{MaxAge: time.Hour},
+		&Policy{MaxAge: time.Hour},
 		unexpected,
 	); acquireInvalidID != "" ||
 		!errors.Is(acquireErr, manifest.ErrInput) {
@@ -94,7 +94,7 @@ func testAcquireGenerationsAndFreshnessCase(t *testing.T, disk *bool,
 		r, _, blobInvalidID, blobErr := c.Blob(
 			t.Context(),
 			BlobKey{Content: invalid},
-			Policy{MaxAge: time.Hour},
+			&Policy{MaxAge: time.Hour},
 			unexpected,
 		)
 		assert.FatalIf(t, r != nil || blobInvalidID != "" ||
@@ -104,7 +104,7 @@ func testAcquireGenerationsAndFreshnessCase(t *testing.T, disk *bool,
 		g, gitInvalidID, gitErr := c.Git(
 			t.Context(),
 			GitKey{Content: invalid},
-			Policy{MaxAge: time.Hour},
+			&Policy{MaxAge: time.Hour},
 			nil,
 		)
 		assert.FatalIf(t, g != nil || gitInvalidID != "" ||
@@ -156,7 +156,7 @@ func testAcquireGenerationsAndFreshnessCaseCompletion(
 		for range 8 {
 			warm.Go(func() {
 				if _, _, _, acquireErr2 := (*captures.c).Acquire(
-					t.Context(), (*captures.key), Policy{MaxAge: time.Hour}, (*captures.unexpected),
+					t.Context(), (*captures.key), &Policy{MaxAge: time.Hour}, (*captures.unexpected),
 				); acquireErr2 != nil {
 					t.Error(acquireErr2)
 				}
@@ -182,7 +182,7 @@ func testAcquireGenerationsAndFreshnessCaseCompletion(
 			_, _, _, acquireErr3 := (*captures.c).Acquire(
 				t.Context(),
 				(*captures.key),
-				Policy{MaxAge: time.Hour},
+				&Policy{MaxAge: time.Hour},
 				(*captures.unexpected),
 			)
 			assert.NoError(t, acquireErr3)
@@ -203,7 +203,7 @@ func testAcquireGenerationsAndFreshnessCaseCompletion(
 		}
 	}()
 	replacement, _, _, err := (*captures.c).Acquire(
-		t.Context(), (*captures.key), Policy{MaxAge: 0},
+		t.Context(), (*captures.key), &Policy{MaxAge: 0},
 		producer(replacementArchive.Bytes(), captures.want),
 	)
 	assert.NoError(t, err)
@@ -230,7 +230,7 @@ func testAcquireGenerationsAndFreshnessCaseCompletion(
 	failure := errors.New("verification failed")
 	{
 		_, _, _, err := (*captures.c).Acquire(
-			t.Context(), (*captures.key), Policy{MaxAge: 0},
+			t.Context(), (*captures.key), &Policy{MaxAge: 0},
 			func(_ context.Context, w ProducerInput) (ProducerResult, error) {
 				var partialArchive bytes.Buffer
 				testutil.WriteTar(t, &partialArchive, map[string]string{"file": "partial"}, 0o644)
@@ -244,7 +244,7 @@ func testAcquireGenerationsAndFreshnessCaseCompletion(
 	calls := 0
 	{
 		_, _, _, err := (*captures.c).Acquire(
-			t.Context(), (*captures.key), Policy{MaxAge: time.Hour},
+			t.Context(), (*captures.key), &Policy{MaxAge: time.Hour},
 			func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 				calls++
 				var recoveredArchive bytes.Buffer
@@ -276,6 +276,7 @@ type testAcquireGenerationsAndFreshnessCaseCorruptReopenInputs struct {
 	id         *string
 	unexpected *func(context.Context, ProducerInput) (ProducerResult, error)
 }
+
 type testAcquireGenerationsAndFreshnessCaseCompletionInputs struct {
 	c          **Cache
 	id         *string
@@ -311,7 +312,7 @@ func testAcquireGenerationsAndFreshnessCaseCorruptReopen(
 		_, _, _, err := (*testCaseInput.c).Acquire(
 			t.Context(),
 			(*testCaseInput.key),
-			Policy{MaxAge: Forever},
+			&Policy{MaxAge: Forever},
 			(*testCaseInput.unexpected),
 		)
 		{

@@ -196,7 +196,7 @@ func testFetcherLocalAgentSSHCase(t *testing.T, shape *string,
 	reads := inputs.readSet(repo)
 	defer reads.Close()
 	f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
-	artifact, err := f.Fetch(t.Context(), repo, reads, sourcecache.Policy{})
+	artifact, err := f.Fetch(t.Context(), repo, reads, &sourcecache.Policy{})
 	if (*shape) == "explicit rejected" {
 		if err == nil || errors.Is(err, manifest.ErrMissingSecret) != ((*shape) == "absent") ||
 			artifact != nil ||

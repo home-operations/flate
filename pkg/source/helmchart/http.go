@@ -30,8 +30,10 @@ func (f *Fetcher) fetchHTTPChart(
 	ctx context.Context,
 	r *httpRepository,
 	hc *manifest.HelmChartSource,
-	policy cache.Policy,
+	policyValue *cache.Policy,
 ) (*store.SourceArtifact, error) {
+	policy := *policyValue
+
 	chartName, version := hc.Chart, hc.Version
 	key := cache.BlobKey{
 		Content:  struct{ Repository, Chart, Transport any }{r.Content(), hc.Content(), r.material},
@@ -58,9 +60,9 @@ func (f *Fetcher) fetchHTTPChart(
 	generation, desc, id, err := f.cache.Blob(
 		ctx,
 		key,
-		policy,
+		&policy,
 		func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-			idx, err := f.fetchIndex(ctx, r, policy)
+			idx, err := f.fetchIndex(ctx, r, &policy)
 			releaseIndex()
 			if err != nil {
 				return cache.ProducerResult{}, err
@@ -84,7 +86,7 @@ func (f *Fetcher) fetchHTTPChart(
 			if err != nil {
 				return cache.ProducerResult{}, err
 			}
-			desc, err := r.get(ctx, chartURL, w)
+			desc, err := r.get(ctx, chartURL, w, w.Work().Physical())
 			if err != nil {
 				return cache.ProducerResult{Descriptor: desc}, err
 			}
@@ -125,19 +127,33 @@ func (f *Fetcher) fetchHTTPChart(
 	return artifact, nil
 }
 
-func (f *Fetcher) fetchIndex(ctx context.Context, r *httpRepository, policy cache.Policy) (*repo.IndexFile, error) {
+func (f *Fetcher) fetchIndex(
+	ctx context.Context,
+	r *httpRepository,
+	policyValue *cache.Policy,
+) (*repo.IndexFile, error) {
+	policy := *policyValue
+
+	indexWork := policy.HistoryWork
+	if indexWork == nil {
+		indexWork = policy.Work
+	}
+
 	indexURL := strings.TrimSuffix(r.URL, "/") + "/index.yaml"
-	generation, desc, _, err := f.cache.Blob(
-		ctx,
-		cache.BlobKey{Content: struct{ Repository, Transport any }{r.Content(), r.material}},
-		cache.Policy{MaxAge: r.Interval.Duration, Retry: policy.Retry, Machine: policy.Machine},
+	key := cache.BlobKey{Content: struct{ Repository, Transport any }{r.Content(), r.material}}
+	indexPolicy := cache.Policy{
+		MaxAge:  r.Interval.Duration,
+		Retry:   policy.Retry,
+		Machine: policy.Machine,
+		Work:    indexWork,
+	}
+	generation, desc, _, err := f.cache.Blob(ctx, key, &indexPolicy,
 		func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 			_, descriptor, err := f.loadIndex(ctx, indexURL, func(input io.Writer) (ocispec.Descriptor, error) {
-				return r.get(ctx, indexURL, io.MultiWriter(w, input))
-			})
+				return r.get(ctx, indexURL, io.MultiWriter(w, input), w.Work().Physical())
+			}, indexWork.Attribution())
 			return cache.ProducerResult{Descriptor: descriptor}, err
-		},
-	)
+		})
 	if err != nil {
 		return nil, err
 	}
@@ -151,7 +167,7 @@ func (f *Fetcher) fetchIndex(ctx context.Context, r *httpRepository, policy cach
 		}
 		_, openErr = io.Copy(w, input)
 		return desc, errors.Join(openErr, input.Close())
-	})
+	}, indexWork.Attribution())
 	return candidate, err
 }
 
@@ -159,6 +175,7 @@ func (f *Fetcher) loadIndex(
 	ctx context.Context,
 	indexURL string,
 	produce func(io.Writer) (ocispec.Descriptor, error),
+	scope manifest.WorkScope,
 ) (*repo.IndexFile, ocispec.Descriptor, error) {
 	var data bytes.Buffer
 	desc, err := produce(&data)
@@ -173,7 +190,9 @@ func (f *Fetcher) loadIndex(
 	if v, ok := f.indexCache.Load(desc.Digest.String()); ok {
 		return v.(*repo.IndexFile), desc, nil //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
 	}
-	idx := &repo.IndexFile{}
+	idx := new(repo.IndexFile)
+	work := scope.Record(manifest.WorkIndexDecode, desc.Digest.String())
+	work.Add(&manifest.WorkCounts{Attempts: 1})
 	switch {
 	case data.Len() == 0:
 		err = repo.ErrEmptyIndexYaml
@@ -185,6 +204,7 @@ func (f *Fetcher) loadIndex(
 	if err == nil && idx.APIVersion == "" {
 		err = repo.ErrNoAPIVersion
 	}
+	work.Finish(err)
 	if err != nil {
 		return nil, desc, manifest.NewError(manifest.ErrFlux, fmt.Errorf("parse %s: %w", indexURL, err), "")
 	}
@@ -232,7 +252,12 @@ func normalizeChartDigest(d string) string {
 	return strings.TrimPrefix(strings.TrimSpace(d), "sha256:")
 }
 
-func (r *httpRepository) get(ctx context.Context, target string, w io.Writer) (ocispec.Descriptor, error) {
+func (r *httpRepository) get(
+	ctx context.Context,
+	target string,
+	w io.Writer,
+	work *manifest.WorkRecord,
+) (ocispec.Descriptor, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
 	if err != nil {
 		return ocispec.Descriptor{}, fmt.Errorf("create source HTTP request: %w", err)
@@ -262,6 +287,7 @@ func (r *httpRepository) get(ctx context.Context, target string, w io.Writer) (o
 			),
 		}
 	}
+	work.Add(&manifest.WorkCounts{RemoteTransfers: 1})
 	h := digest.SHA256.Digester()
 	size, err := io.Copy(io.MultiWriter(w, h.Hash()), response.Body)
 	if err != nil {

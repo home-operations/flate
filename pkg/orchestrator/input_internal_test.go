@@ -88,10 +88,14 @@ func TestRenderTrees_EntrySubstitutionSelectsChangedChild(t *testing.T) {
 	for side, run := range runs {
 		want := []string{"before", "after"}[side]
 		obj, ok := run.store.Get[*manifest.Kustomization](child)
+
 		assert.FatalIf(t, !ok, "side %d: child declaration missing", side)
+
 		assert.Equal(t, obj.Path, "./workloads/"+want)
 		docs := outputByParent(run.Result.Manifests)[child]
+
 		assert.FatalIf(t, len(docs) != 1, "side %d: shaped child not rendered: %v", side, docs)
+
 		assert.Equal(t, docs[0]["data"].(map[string]any)["value"], any(want))
 	}
 }
@@ -161,7 +165,7 @@ func testRenderTreesPreparesEachSideOnce(t *testing.T) {
 				ExternalChanges: change.NewSet([]string{"apps/app-a/cm.yaml"}),
 			},
 		},
-		Config{Concurrency: 2},
+		Config{RecordWork: true, Concurrency: 2},
 	)
 	base, head := renderedTrees3[0], renderedTrees3[1]
 	assert.NoError(t, err)
@@ -219,6 +223,13 @@ func testRenderTreesPreparesEachSideOnce(t *testing.T) {
 		assert.Equal(t, admitted[entry].Load(), int64(0))
 		o.stop()
 	}
+	t.Run(
+		"work_visits",
+		func(t *testing.T) {
+			t.Parallel()
+			testPreparedSideWorkVisits(t, roots, &[2]Rendered{base, head})
+		},
+	)
 }
 
 func testRenderTreesAdmittedViewsCase(t *testing.T, testCaseInput *string,
@@ -270,14 +281,10 @@ func testRenderTreesAdmittedViewsCase(t *testing.T, testCaseInput *string,
 	assert.NoError(t, err)
 	if (*testCaseInput) == "equal_selected_pin" {
 		for side, rendered := range []Rendered{base, head} {
-			if len(outputByParent(rendered.Result.Manifests)[changed]) != 0 ||
-				len(outputByParent(rendered.Result.Manifests)[same]) != 0 {
-				t.Fatalf(
-					"side %d rendered dirty checkout changes behind equal selected pin: %v",
-					side,
-					rendered.Result.Manifests,
-				)
-			}
+			assert.FatalIf(t, len(outputByParent(rendered.Result.Manifests)[changed]) != 0 ||
+				len(
+					outputByParent(rendered.Result.Manifests)[same],
+				) != 0, "side %d rendered dirty checkout changes behind equal selected pin: %v", side, rendered.Result.Manifests)
 			selected := manifest.NamedResource{
 				Group:     manifest.SourceDomain,
 				Kind:      manifest.KindGitRepository,
@@ -285,7 +292,9 @@ func testRenderTreesAdmittedViewsCase(t *testing.T, testCaseInput *string,
 				Name:      "cluster",
 			}
 			art, ok := rendered.Store().GetArtifact(selected, store.ArtifactContent).(*store.SourceArtifact)
+
 			assert.FatalIf(t, !ok, "side %d has no selected pinned source", side)
+
 			body, err := fs.ReadFile(art.FS, "apps/app-a/cm.yaml")
 			assert.NoError(t, err)
 			assert.Equal(
@@ -298,21 +307,24 @@ func testRenderTreesAdmittedViewsCase(t *testing.T, testCaseInput *string,
 	}
 	for side, rendered := range []Rendered{base, head} {
 		docs := outputByParent(rendered.Result.Manifests)[changed]
-		if len(docs) != 1 || len(outputByParent(rendered.Result.Manifests)[same]) != 0 {
-			t.Fatalf(
-				"side %d lost producer ownership or unchanged selection: %v",
-				side,
-				rendered.Result.Manifests,
-			)
-		}
-		metadata := manifest.DocMetadata(docs[0])
-		name, ns := metadata.Name, metadata.Namespace
+		assert.FatalIf(
+			t,
+			len(docs) != 1 || len(outputByParent(rendered.Result.Manifests)[same]) != 0,
+			"side %d lost producer ownership or unchanged selection: %v",
+			side,
+			rendered.Result.Manifests,
+		)
+		docMetadataResult := manifest.DocMetadata(docs[0])
+		name, ns := docMetadataResult.Name, docMetadataResult.Namespace
+
 		assert.FatalIf(t, name != "cfg-a", "side %d producer emitted %q, want cfg-a", side, name)
+
 		assert.Equal(t, ns, "")
-		parsed2, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{DefaultNamespace: ""})
-		obj := parsed2.Object
+		parseDocResult, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{DefaultNamespace: ""})
+		obj := parseDocResult.Object
 		assert.NoError(t, err)
 		owners := testutil.Owners(rendered.Store().Productions(obj.Named(), nil))
+
 		assert.FatalIf(
 			t,
 			!slices.Contains(owners, changed),
@@ -321,6 +333,7 @@ func testRenderTreesAdmittedViewsCase(t *testing.T, testCaseInput *string,
 			owners,
 			changed,
 		)
+
 		{
 			value := docs[0]["data"].(map[string]any)["k"]
 			assert.FatalIf(
@@ -421,7 +434,7 @@ func testRenderTreesAdmittedViewsCaseCaseSegment(
 		} else {
 			testutil.WriteFile(t, root, "clusters/a/kustomization.yaml", "resources: []\n")
 		}
-		input, _, err := baseline.AdmitDirectory(t.Context(), root, root)
+		input, _, err := baseline.AdmitDirectory(t.Context(), root, root, manifest.WorkScope{})
 		assert.NoError(t, err)
 		if *testCaseInput.synthetic {
 			files := fstest.MapFS{}
@@ -452,6 +465,211 @@ func testRenderTreesAdmittedViewsCaseCaseSegment(
 		}
 		inputs[side] = input
 	}
+}
+
+func testPreparedSideWorkVisits(t *testing.T, roots [2]string, sides *[2]Rendered) {
+	t.Helper()
+
+	selected := manifest.NamedResource{
+		Group:     manifest.SourceDomain,
+		Kind:      manifest.KindGitRepository,
+		Namespace: "flux-system",
+		Name:      "selected",
+	}
+	for side, rendered := range sides {
+		want := map[string]manifest.WorkCounts{
+			"scope":      {FileEntries: 6, ReaderEdges: 4},
+			"root":       {Attempts: 1, Completed: 1, OwnerPrepares: 1, FileEntries: 3, ReaderEdges: 2},
+			"apps/app-a": {Attempts: 1, Completed: 1, OwnerPrepares: 1, FileEntries: 2, ReaderEdges: 1},
+			"apps/app-b": {Attempts: 1, Completed: 1, OwnerPrepares: 1, FileEntries: 2, ReaderEdges: 1},
+		}
+		got := map[string]manifest.WorkCounts{}
+		for recordIndex := range rendered.Result.Work {
+			record := &rendered.Result.Work[recordIndex]
+			assert.Equal(t, record.Key.Tree, rendered.ID)
+			recordPreparedSideVisit(record, roots[side], selected, got)
+		}
+		assert.Diff(t, got, want)
+	}
+}
+
+type generatedInputWork struct {
+	root, scenario string
+	side, run      int
+	full           map[manifest.NamedResource][]map[string]any
+}
+
+func assertGeneratedInputWork(t *testing.T, rendered *Rendered, state generatedInputWork) {
+	t.Helper()
+	producer := testutil.KustomizationID("flux-system", "producer")
+	consumer := testutil.KustomizationID("flux-system", "consumer")
+	entry := manifest.NamedResource{
+		Group:     manifest.FluxKustomizeDomain,
+		Kind:      manifest.KindKustomization,
+		Namespace: "\x00",
+		Name:      ".",
+	}
+	assert.Equal(t, rendered.entryBinding.Producer, entry)
+	generatedInputWorkObservedResult := generatedInputWorkObserved(t, rendered, state.root)
+	gotWork, admitted := generatedInputWorkObservedResult.work, generatedInputWorkObservedResult.admitted
+	wantAdmitted := map[manifest.NamedResource]manifest.WorkCounts{
+		manifest.BootstrapSourceID: {Attempts: 1, Completed: 1},
+		entry:                      {Attempts: 1, Completed: 1},
+	}
+	if state.scenario == "target" {
+		wantAdmitted[testutil.KustomizationID("flux-system", "sibling")] = manifest.WorkCounts{
+			Attempts:  1,
+			Completed: 1,
+		}
+	}
+	if state.scenario != "unrelated" {
+		wantAdmitted[producer] = manifest.WorkCounts{Attempts: 1, Completed: 1}
+		wantAdmitted[consumer] = manifest.WorkCounts{Attempts: 1, Completed: 1}
+		generated := manifest.NamedResource{
+			Kind:      manifest.KindConfigMap,
+			Namespace: "flux-system",
+			Name:      "settings",
+		}
+		if state.side == 1 && state.scenario == "target" {
+			generated.Name = "renamed-settings"
+		}
+		wantAdmitted[generated] = manifest.WorkCounts{Attempts: 1, Completed: 1}
+		wantAdmitted[manifest.NamedResource{
+			Kind: manifest.KindConfigMap,
+			Name: "result",
+		}] = manifest.WorkCounts{
+			Attempts:  1,
+			Completed: 1,
+		}
+	}
+	assert.Diff(t, admitted, wantAdmitted)
+	acquisition := make(map[manifest.WorkPhase]manifest.WorkCounts)
+	acquisition[manifest.WorkAcquisition] = manifest.WorkCounts{Attempts: 1, Completed: 1, LocalAcquisitions: 1}
+	wantWork := map[manifest.NamedResource]map[manifest.WorkPhase]manifest.WorkCounts{{}: acquisition}
+	if state.scenario == "target" {
+		acquisition[manifest.WorkCache] = manifest.WorkCounts{
+			Attempts:     1,
+			Completed:    1,
+			CacheService: uint64(state.run),
+		}
+		entryWork := make(map[manifest.WorkPhase]manifest.WorkCounts)
+		entryWork[manifest.WorkCache] = manifest.WorkCounts{Attempts: 1, Completed: 1, CacheService: 1}
+		wantWork[entry] = entryWork
+		if state.run == 0 {
+			acquisition[manifest.WorkKustomize] = manifest.WorkCounts{Attempts: 1, Completed: 1}
+		}
+	}
+	if state.scenario != "unrelated" {
+		phaseCounts3 := make(map[manifest.WorkPhase]manifest.WorkCounts)
+		phaseCounts3[manifest.WorkCache] = manifest.WorkCounts{
+			Attempts:  1,
+			Completed: 1,
+			CacheService: uint64(
+				state.run,
+			),
+		}
+		wantWork[producer] = phaseCounts3
+		phaseCounts4 := make(map[manifest.WorkPhase]manifest.WorkCounts)
+		phaseCounts4[manifest.WorkCache] = manifest.WorkCounts{
+			Attempts:     1,
+			Completed:    1,
+			CacheService: uint64(state.run),
+		}
+		phaseCounts4[manifest.WorkSubstitution] = manifest.WorkCounts{Attempts: 1, Completed: 1}
+		wantWork[consumer] = phaseCounts4
+		if state.run == 0 {
+			wantWork[producer][manifest.WorkKustomize] = manifest.WorkCounts{
+				Attempts:  1,
+				Completed: 1,
+			}
+			wantWork[consumer][manifest.WorkKustomize] = manifest.WorkCounts{
+				Attempts:  1,
+				Completed: 1,
+			}
+		}
+		for _, id := range []manifest.NamedResource{producer, consumer} {
+			assert.Diff(t, outputByParent(rendered.Result.Manifests)[id], state.full[id])
+		}
+	}
+	assert.Diff(t, gotWork, wantWork)
+}
+
+func recordPreparedSideVisit(
+	record *manifest.WorkRecord,
+	root string,
+	selected manifest.NamedResource,
+	got map[string]manifest.WorkCounts,
+) {
+	if record.Key.Phase != manifest.WorkPreparation {
+		return
+	}
+	key := record.Key
+	if key.Owner == (manifest.NamedResource{}) && key.Source == manifest.BootstrapSourceID {
+		if key.Input == "" {
+			got["scope"] = record.Counts
+		}
+		if key.Input == root {
+			got["root"] = record.Counts
+		}
+	}
+	if key.Owner == selected && key.Source == selected {
+		for _, path := range []string{"apps/app-a", "apps/app-b"} {
+			if strings.HasSuffix(filepath.ToSlash(key.Input), "/"+path) {
+				got[path] = record.Counts
+			}
+		}
+	}
+}
+
+type generatedInputWorkObservedResult struct {
+	work     map[manifest.NamedResource]map[manifest.WorkPhase]manifest.WorkCounts
+	admitted map[manifest.NamedResource]manifest.WorkCounts
+}
+
+func generatedInputWorkObserved(
+	t *testing.T,
+	rendered *Rendered,
+	root string,
+) generatedInputWorkObservedResult {
+	t.Helper()
+	gotWork := map[manifest.NamedResource]map[manifest.WorkPhase]manifest.WorkCounts{}
+	admitted := map[manifest.NamedResource]manifest.WorkCounts{}
+	for recordIndex := range rendered.Result.Work {
+		record := &rendered.Result.Work[recordIndex]
+		assert.Equal(t, record.Key.Tree, rendered.ID)
+		assert.Equal(t, record.Key.Source, manifest.BootstrapSourceID)
+		switch record.Key.Phase {
+		case manifest.WorkAdmission:
+			counts := admitted[record.Key.Owner]
+			counts.Add(&record.Counts)
+			admitted[record.Key.Owner] = counts
+		case manifest.WorkKustomize,
+			manifest.WorkSubstitution,
+			manifest.WorkAcquisition,
+			manifest.WorkCache,
+			manifest.WorkEvaluation,
+			manifest.WorkHelm,
+			manifest.WorkPostRender:
+			id := record.Key.Owner
+			if gotWork[id] == nil {
+				gotWork[id] = make(map[manifest.WorkPhase]manifest.WorkCounts)
+			}
+			counts := gotWork[id][record.Key.Phase]
+			counts.Add(&record.Counts)
+			gotWork[id][record.Key.Phase] = counts
+			if record.Key.Phase == manifest.WorkKustomize ||
+				record.Key.Phase == manifest.WorkCache {
+				assert.Equal(t, record.Key.Input != "", true)
+			}
+			if record.Key.Phase == manifest.WorkAcquisition {
+				assert.Equal(t, record.Key.Input, root)
+			}
+
+		case manifest.WorkPreparation, manifest.WorkValidation, manifest.WorkIndexDecode, manifest.WorkChartDecode:
+		}
+	}
+
+	return generatedInputWorkObservedResult{work: gotWork, admitted: admitted}
 }
 
 func testRenderTreesFluxInstanceSyncUnchangedRoot(t *testing.T) {
@@ -572,4 +790,18 @@ spec:
 			}
 		}
 	}
+}
+
+func generatedInputExpectedOwners(
+	scenario string,
+	owners []manifest.NamedResource,
+	entry manifest.NamedResource,
+) []manifest.NamedResource {
+	if scenario == "target" {
+		return append(owners, entry)
+	}
+	if scenario == "unrelated" {
+		return nil
+	}
+	return owners
 }

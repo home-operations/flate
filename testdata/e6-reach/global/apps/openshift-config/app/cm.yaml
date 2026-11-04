@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openshift-config
+  namespace: flux-system
+data:
+  value: unchanged

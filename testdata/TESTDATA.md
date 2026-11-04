@@ -247,3 +247,13 @@ env FLATE_E8_SLOW=1 mise exec -- go test -race ./pkg/schedule ./pkg/orchestrator
 
 E8-4 runs the routine package race proof. E8-5 owns the exact large race
 campaign, full repository gates and the final candidate commit.
+
+## E6 synthetic reach fixtures
+
+`e6-reach/` contains six small input graphs and one offline chart for `TestRenderTrees_Reach`.
+Its README describes the eight edits, structural reach, independent output oracle, and seven fixed `NFS_MUSIC` users.
+The test asserts both diff sides by identity, repeats cold requests, and bounds retained heap.
+Parallel subtests share immutable fixture inputs.
+The serial parent isolates process GC state and heap samples in the dedicated `test/reach` process.
+U1.2 owns precision for the three recorded broad-reach rows.
+Real repository inputs stay in the corpus and benchmark harness.

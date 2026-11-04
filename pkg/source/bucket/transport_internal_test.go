@@ -214,7 +214,7 @@ func testFetcherSecretReferencesCase1(t *testing.T, tc *struct {
 		if tc.unwired {
 			reads = nil
 		}
-		artifact, fetchErr := f.Fetch(t.Context(), b, reads, cache.Policy{MaxAge: b.SourceInterval()})
+		artifact, fetchErr := f.Fetch(t.Context(), b, reads, &cache.Policy{MaxAge: b.SourceInterval()})
 		if artifact != nil {
 			t.Fatal("credential failure returned an acquired artifact")
 		}
@@ -266,7 +266,7 @@ func TestFetcher_NetworkSuppressionSkipsBackoff(t *testing.T) {
 					Region:     "us-east-1",
 				},
 			),
-			cache.Policy{Retry: cache.RetryConfig{Attempts: 3, MinWait: time.Hour}},
+			&cache.Policy{Retry: cache.RetryConfig{Attempts: 3, MinWait: time.Hour}},
 		)
 		terminal, ok = errors.AsType[*cache.TerminalError](err)
 		assert.FatalIf(t, !ok || terminal.Attempted || !errors.Is(err, cause) || calls.Load() != before ||
@@ -371,7 +371,7 @@ func TestFetcher_ProviderTransportValidation(t *testing.T) {
 				}
 			}}
 			fetcher := &Fetcher{Network: newTestNetwork(t)}
-			_, err := fetcher.Fetch(t.Context(), repo, inputs.readSet(repo), cache.Policy{})
+			_, err := fetcher.Fetch(t.Context(), repo, inputs.readSet(repo), &cache.Policy{})
 			assert.FatalIf(
 				t,
 				!errors.Is(err, manifest.ErrInput) || errors.Is(err, manifest.ErrMissingSecret),
@@ -454,7 +454,7 @@ func testFetcherResolveTransportSnapshotRotationCase(
 	before := testCaseInput.requests.Load()
 	art, err := f.Fetch(
 		t.Context(), (*testCaseInput.b), fInputs.readSet((*testCaseInput.b)),
-		cache.Policy{MaxAge: (*testCaseInput.b).SourceInterval(), Retry: cache.RetryConfig{Attempts: 3}},
+		&cache.Policy{MaxAge: (*testCaseInput.b).SourceInterval(), Retry: cache.RetryConfig{Attempts: 3}},
 	)
 	assert.NoError(t, err)
 	assert.FatalIf(
@@ -469,7 +469,7 @@ func testFetcherResolveTransportSnapshotRotationCase(
 	{
 		_, fetchErr2 := f.Fetch(
 			t.Context(), (*testCaseInput.b), fInputs.readSet((*testCaseInput.b)),
-			cache.Policy{MaxAge: (*testCaseInput.b).SourceInterval()},
+			&cache.Policy{MaxAge: (*testCaseInput.b).SourceInterval()},
 		)
 		assert.FatalIf(t, fetchErr2 != nil || testCaseInput.requests.
 			Load() != before, "warm snapshot missed: %v", fetchErr2)
@@ -482,7 +482,7 @@ func testFetcherResolveTransportSnapshotRotationCase(
 		t.Context(),
 		&failed,
 		fInputs.readSet(&failed),
-		cache.Policy{MaxAge: failed.SourceInterval()},
+		&cache.Policy{MaxAge: failed.SourceInterval()},
 	)
 	terminal, ok := errors.AsType[*cache.TerminalError](err)
 	assert.FatalIf(t, !ok || !terminal.Attempted, "failed snapshot: %v", err)

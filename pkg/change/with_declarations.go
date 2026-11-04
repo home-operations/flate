@@ -16,8 +16,7 @@ import (
 // Missing preparation is unknown; the returned set retains no Store or captured read set.
 func (s *Set) WithDeclarations(
 	ctx context.Context,
-	before, after *store.Store,
-	prepared [2]map[manifest.NamedResource]store.Child,
+	input DeclarationInputs,
 ) (*Set, error) {
 	if s == nil {
 		return nil, nil //nolint:nilnil // A nil result denotes successful absence.
@@ -34,12 +33,12 @@ func (s *Set) WithDeclarations(
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context: %w", err)
 	}
-	if before == nil || after == nil {
+	if input.Stores[0] == nil || input.Stores[1] == nil {
 		return out.freezeSources(), nil
 	}
-	d := declarationScope{changes: s, stores: [2]*store.Store{before, after}, out: &out}
+	d := declarationScope{changes: s, stores: input.Stores, out: &out, work: input.Work}
 	for side := range d.stores {
-		if err := d.capture(ctx, side, prepared[side]); err != nil {
+		if err := d.capture(ctx, side, input.Prepared[side]); err != nil {
 			return nil, err
 		}
 	}
@@ -54,6 +53,7 @@ func (s *Set) WithDeclarations(
 }
 
 type declarationScope struct {
+	work    manifest.WorkScope
 	changes *Set
 	stores  [2]*store.Store
 	objects [2]map[manifest.NamedResource]store.Child
@@ -249,9 +249,11 @@ func (d *declarationScope) compareReferences(
 	children *[2]store.Child,
 	sameInputs bool,
 ) error {
+	work := d.work.Source(d.sources[0][id]).Record(manifest.WorkPreparation, "declarations")
 	refs := [2][]manifest.Reference{}
 	for side, child := range *children {
 		for ref := range manifest.References(child.Obj, manifest.ReferenceRelations) {
+			work.Add(&manifest.WorkCounts{ReaderEdges: 1})
 			refs[side] = append(refs[side], ref.Clone())
 		}
 	}

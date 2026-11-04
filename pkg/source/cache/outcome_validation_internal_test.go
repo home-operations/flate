@@ -206,7 +206,7 @@ func testOutcomeInvalidRecordsCase(t *testing.T, invalidCauses map[string]outcom
 	_, _, _, err = c.Blob(
 		t.Context(),
 		BlobKey{Content: "invalid"},
-		Policy{MaxAge: Forever},
+		&Policy{MaxAge: Forever},
 		func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 			calls++
 			return producer([]byte("replacement"), &ocispec.Descriptor{})(ctx, w)

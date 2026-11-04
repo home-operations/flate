@@ -65,7 +65,7 @@ func testAcquireCancelStopsContextIgnoringProducerCaseCallback(
 			_, _, _, err := (*testCaseInput.c).Acquire(
 				callbacks[i],
 				ArchiveKey{Content: fmt.Sprintf("source-ignore-context-%d", i)},
-				Policy{MaxAge: 0},
+				&Policy{MaxAge: 0},
 				func(_ context.Context, w ProducerInput) (ProducerResult, error) {
 					tw := tar.NewWriter(w)
 					if err := tw.WriteHeader(

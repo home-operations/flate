@@ -28,6 +28,8 @@ type Fetcher struct {
 type operation struct {
 	*Fetcher
 
+	work manifest.AcquisitionWork
+
 	reads   *store.ReadSet
 	secrets source.SecretGetter
 }
@@ -37,41 +39,54 @@ func (f *Fetcher) Fetch(
 	ctx context.Context,
 	b *manifest.Bucket,
 	reads *store.ReadSet,
-	policy cache.Policy,
+	policyValue *cache.Policy,
 ) (*store.SourceArtifact, error) {
+	policy := *policyValue
+
 	innerOperation := operation{Fetcher: f, reads: reads, secrets: source.SecretLookup(reads)}
-	return innerOperation.fetchSource(ctx, b, policy)
+	return innerOperation.fetchSource(ctx, b, &policy)
 }
 
 func (f *operation) fetchSource(
 	ctx context.Context,
 	b *manifest.Bucket,
-	policy cache.Policy,
+	policyValue *cache.Policy,
 ) (*store.SourceArtifact, error) {
+	policy := *policyValue
+
+	f.work.Scope = f.reads.Work().Scope().Source(b.Named())
+	if policy.Work != nil {
+		f.work.Scope = policy.Work.Attribution().Source(b.Named())
+	}
+	policy.Work = &f.work
 	if err := ctx.Err(); err != nil {
 		return nil, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 	}
 	request, err := f.prepare(b)
 	if missing, ok := errors.AsType[*source.MissingSecretError](err); ok && request.bucket != nil {
-		missing.RetryAmbient = func(ctx context.Context) (*store.SourceArtifact, error) { return f.machineFetch(ctx, &request, policy) }
+		missing.RetryAmbient = func(ctx context.Context) (*store.SourceArtifact, error) {
+			return f.machineFetch(ctx, &request, &policy)
+		}
 	}
 	if err != nil {
 		return nil, err
 	}
 	if b.Provider == sourcev1.BucketProviderAmazon && b.SecretRef == nil {
-		return f.machineFetch(ctx, &request, policy)
+		return f.machineFetch(ctx, &request, &policy)
 	}
-	return f.fetch(ctx, &request, policy)
+	return f.fetch(ctx, &request, &policy)
 }
 
 func (f *operation) machineFetch(
 	ctx context.Context, requestValue *bucketAcquisition,
-	policy cache.Policy,
+	policyValue *cache.Policy,
 ) (*store.SourceArtifact, error) {
+	policy := *policyValue
+
 	request := *requestValue
 	timeout := request.bucket.OperationTimeout()
 	policy.Timeout = &timeout
-	return source.AcquireMachine(ctx, policy, func(ctx context.Context) error {
+	return source.AcquireMachine(ctx, &policy, func(ctx context.Context) error {
 		if err := request.machineCredentials(
 			ctx,
 			[]credentials.Provider{&credentials.EnvAWS{}, &credentials.FileAWSCredentials{}, &credentials.IAM{}},
@@ -82,16 +97,22 @@ func (f *operation) machineFetch(
 		tr, err := f.Network.HTTPTransport(source.HTTPTransportConfig{Material: request.resolved, Credentials: value})
 		request.options.Transport = tr
 		return err
-	}, func(ctx context.Context, policy cache.Policy) (*store.SourceArtifact, error) {
-		return f.fetch(ctx, &request, policy)
+	}, func(ctx context.Context, policyValue *cache.Policy) (*store.SourceArtifact, error) {
+		policy := *policyValue
+
+		return f.fetch(ctx, &request, &policy)
 	})
 }
 
 func (f *operation) fetch(
 	ctx context.Context, requestValue *bucketAcquisition,
-	policy cache.Policy,
+	policyValue *cache.Policy,
 ) (*store.SourceArtifact, error) {
+	policy := *policyValue
+
 	request := *requestValue
+	request.work.Scope = f.work.Scope
+	policy.Work = &request.work
 	b := request.bucket
 	ignore := ""
 	if b.Ignore != nil {
@@ -111,13 +132,13 @@ func (f *operation) fetch(
 	input, desc, id, err := f.Cache.Acquire(
 		ctx,
 		key,
-		policy,
+		&policy,
 		func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 			client, err := minio.New(request.endpoint, &request.options)
 			if err != nil {
 				return cache.ProducerResult{}, fmt.Errorf("minio client: %w", err)
 			}
-			desc, err := walkBucket(ctx, client, b, w)
+			desc, err := walkBucket(ctx, client, b, bucketOutput{Writer: w, work: w.Work().Physical()})
 			return cache.ProducerResult{Descriptor: desc}, err
 		},
 	)

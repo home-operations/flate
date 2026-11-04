@@ -30,7 +30,7 @@ func (f *generatedOCIFetcher) Fetch(
 	ctx context.Context,
 	obj manifest.BaseManifest,
 	reads *store.ReadSet,
-	policy sourcecache.Policy,
+	policy *sourcecache.Policy,
 ) (*store.SourceArtifact, error) {
 	f.calls.Add(1)
 	if reads == nil {

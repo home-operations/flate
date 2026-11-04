@@ -65,11 +65,14 @@ func testFetcherResolveConfigRegistryFallbackSnapshotCase(
 		s.SecretRef = &manifest.LocalObjectReference{Name: "missing"}
 		s.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
 	})
+	var work manifest.WorkRecorder
+	reads := fInputs.readSet(repo)
+	reads.SetWork(&work)
 	_, err := f.Fetch(
 		t.Context(),
 		repo,
-		fInputs.readSet(repo),
-		sourcecache.Policy{MaxAge: repo.SourceInterval()},
+		reads,
+		&sourcecache.Policy{MaxAge: repo.SourceInterval()},
 	)
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	if !ok || missing.RetryAmbient == nil || lookups.Load() != 2 {
@@ -103,4 +106,14 @@ func testFetcherResolveConfigRegistryFallbackSnapshotCase(
 	if lookups.Load() != 2 {
 		t.Fatalf("retained fallback reread mutable Secrets: %d", lookups.Load())
 	}
+	var transfers uint64
+	{
+		records := work.Scope().Snapshot(0)
+		for recordIndex := range records {
+			record := &records[recordIndex]
+			assert.Equal(t, record.Key.Source, repo.Named())
+			transfers += record.Counts.RemoteTransfers
+		}
+	}
+	assert.Equal(t, transfers, uint64(1))
 }

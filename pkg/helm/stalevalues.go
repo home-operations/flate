@@ -43,14 +43,14 @@ func (c *Client) StaleValuePaths(
 	ctx context.Context,
 	hr *manifest.HelmRelease,
 	values map[string]any,
-	sources Sources,
+	input *RenderOptions,
 ) []string {
 	if len(values) == 0 {
 		return nil
 	}
-	loaded, err := c.describeChart(ctx, hr, sources)
+	loaded, err := c.describeChart(ctx, hr, input.Sources)
 	if err == nil && loaded.analysis == nil {
-		err = c.decodeChart(ctx, &loaded)
+		err = c.decodeChart(ctx, &loaded, &RenderOptions{Work: input.Work})
 	}
 	if err != nil {
 		return nil

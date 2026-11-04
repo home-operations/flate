@@ -49,7 +49,7 @@ func testFetcherPackedContentCase(t *testing.T, testCaseInput testFetcherPackedC
 		(testInputs{}).readSet(
 			&manifest.GitRepository{Name: "packed", Namespace: "flux-system", URL: srv.URL},
 		),
-		sourcecache.Policy{
+		&sourcecache.Policy{
 			Retry: sourcecache.RetryConfig{
 				Attempts: (*testCaseInput.attempts),
 				MinWait:  time.Nanosecond,

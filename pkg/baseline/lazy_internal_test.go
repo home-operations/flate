@@ -299,7 +299,7 @@ func TestSelection_AcquireBaseNoOrigin(t *testing.T) {
 	hash := initRepoWithFile(t, dir, "a.yaml", "base")
 	location, err := gitrepo.Locate(t.Context(), dir, "")
 	assert.NoError(t, err)
-	input, err := admitLocation(t.Context(), location)
+	input, err := admitLocation(t.Context(), location, manifest.WorkScope{})
 	assert.NoError(t, err)
 	s := selection{base: &resolution{Hash: hash}, current: input.FS.(*gittree.FS)}
 	err = s.acquireBase(t.Context())
@@ -330,7 +330,7 @@ func TestSelection_SharedIndexInitialization(t *testing.T) {
 			testutil.WriteFile(t, root, ".git/index", "invalid index")
 			location, err := gitrepo.Locate(t.Context(), root, "")
 			assert.NoError(t, err)
-			input, err := admitLocation(t.Context(), location)
+			input, err := admitLocation(t.Context(), location, manifest.WorkScope{})
 			assert.NoError(t, err)
 			shared := &sharedIndexStorage{Storer: location.Repository.Storer, err: tc.err}
 			location.Repository.Storer = shared
@@ -435,7 +435,7 @@ func TestCollectInputs_BaselineFailure(t *testing.T) {
 			testutil.WriteFile(t, root, ".git/index", "invalid index")
 			location, err := gitrepo.Locate(t.Context(), root, "")
 			assert.NoError(t, err)
-			input, err := admitLocation(t.Context(), location)
+			input, err := admitLocation(t.Context(), location, manifest.WorkScope{})
 			assert.NoError(t, err)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
@@ -559,7 +559,7 @@ func testAutoResolveLazyBaseReadsCase(t *testing.T, testCaseInput *struct {
 	if testCaseInput.name == "settled" || testCaseInput.name == "committed_deletion" {
 		location, localErr := gitrepo.Locate(t.Context(), root, "")
 		assert.NoError(t, localErr)
-		input, localErr := admitLocation(t.Context(), location)
+		input, localErr := admitLocation(t.Context(), location, manifest.WorkScope{})
 		assert.NoError(t, localErr)
 		entries, localErr := treeEntries(t.Context(), tree)
 		assert.NoError(t, localErr)
@@ -690,10 +690,11 @@ func testAutoResolveIgnoreMembershipFlipsCase(
 		indexes[side] = &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{observation}}
 	}
 	changes, err := res.Changes.WithReaders(
-		t.Context(),
-		indexes[0],
-		indexes[1],
-		[2]map[manifest.NamedResource]inputprojection.Projection{},
+		t.Context(), [2]*manifest.DiscoveryIndex{
+			indexes[0],
+			indexes[1],
+		},
+		[2]map[manifest.NamedResource]inputprojection.Projection{}, manifest.WorkScope{},
 	)
 	assert.NoError(t, err)
 	for side, input := range []*store.SourceArtifact{res.BaseInput, res.Source} {

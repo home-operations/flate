@@ -50,7 +50,9 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 	)
 	docs, receipt, err := testutil.RenderMaps(client.Template(t.Context(), hr, nil, input))
 	assert.NoError(t, err)
+
 	assert.FatalIf(t, receipt == nil, "%s", "successful raw template supplied no receipt")
+
 	frame := receipt.Value().(renderFrame)
 	frame.header.Binding = manifest.Fingerprint(frame.binding)
 	frame.header.Analysis = (&chartDescription{chart: frame.chart, analysis: frame.header.Analysis}).analyze()
@@ -68,7 +70,7 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 		_, _, _, blobErr := owner.Blob(
 			t.Context(),
 			key,
-			cache.Policy{MaxAge: cache.Forever},
+			&cache.Policy{MaxAge: cache.Forever},
 			nil,
 		)
 		assert.FatalIf(t, !errors.Is(
@@ -118,84 +120,6 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 		)
 	},
 	)
-}
-
-type testTemplateAcceptedHistoryDisabledPreparationInputs struct {
-	hr    **manifest.HelmRelease
-	input *RenderOptions
-}
-
-func testTemplateAcceptedHistoryDisabledPreparation(
-	t *testing.T,
-	testCaseInput *testTemplateAcceptedHistoryDisabledPreparationInputs,
-) {
-	t.Helper()
-
-	artifact := *testCaseInput.input.Sources.LocalSourceArtifact((*testCaseInput.hr).ChartSource(), store.ArtifactContent)
-	counted := &historyCountingFS{FS: artifact.FS}
-	artifact.FS = counted
-	objects := store.New()
-	objects.SetArtifact((*testCaseInput.hr).ChartSource(), &artifact)
-	sources := &historyCountingSources{sourceReader: objects}
-	observed := (*testCaseInput.input)
-	observed.Sources = NewSources(sources)
-	fresh := NewClient(cachetest.New(t, "", cache.New))
-	{
-		previous, complete := fresh.PreviousRender(
-			t.Context(),
-			(*testCaseInput.hr),
-			nil,
-			observed,
-		)
-		assert.FatalIf(t, previous != nil ||
-			complete, "%s", "disabled renderer supplied history")
-	}
-	assert.FatalIf(t, sources.calls.Load() != 0 || counted.opens.Load() != 0,
-
-		"disabled history prepared chart: resolutions=%d, opens=%d",
-		sources.calls.Load(),
-		counted.opens.Load())
-
-	_, err := fresh.describeChart(t.Context(), (*testCaseInput.hr), observed.Sources)
-	assert.NoError(t, err)
-	assert.FatalIf(
-		t,
-		sources.calls.Load() == 0 || counted.opens.Load() == 0 || len(fresh.chartCache) == 0,
-		"%s",
-		"chart description was not primed",
-	)
-	sources.calls.Store(0)
-	counted.opens.Store(0)
-	{
-		previous, complete := fresh.PreviousRender(
-			t.Context(),
-			(*testCaseInput.hr),
-			nil,
-			observed,
-		)
-		assert.FatalIf(t, previous != nil ||
-			complete, "%s", "disabled resident renderer supplied history")
-	}
-	assert.FatalIf(t, sources.calls.Load() != 0 || counted.opens.Load() != 0,
-
-		"disabled resident history prepared chart: resolutions=%d, opens=%d",
-		sources.calls.Load(),
-		counted.opens.Load())
-
-	canceled, cancel := context.WithCancel(t.Context())
-	cancel()
-	{
-		previous, complete := fresh.PreviousRender(
-			canceled,
-			(*testCaseInput.hr),
-			nil,
-			observed,
-		)
-		assert.FatalIf(t, previous != nil ||
-			complete, "%s", "canceled disabled renderer supplied history")
-	}
-	assert.Equal(t, sources.calls.Load(), 0)
-	assert.Equal(t, counted.opens.Load(), 0)
 }
 
 type testTemplateAcceptedHistoryDurableInputs struct {
@@ -300,7 +224,6 @@ func testTemplateAcceptedHistoryDurable(t *testing.T, testCaseInput *testTemplat
 		{"dependency substitutions", func(r *RenderOptions) {
 			r.DependencySubstitutions = values.NewDependencySubstitutions([]*manifest.Kustomization{{PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"DEP": "effective-child"}}}})
 		}},
-
 		{"skip kinds", func(o *RenderOptions) { o.SkipKinds = []string{manifest.KindKustomization} }},
 		{"source binding", func(o *RenderOptions) {
 			changed := *o.Sources.LocalSourceArtifact((*testCaseInput.hr).ChartSource(), store.ArtifactContent)
@@ -493,12 +416,14 @@ func testTemplateAcceptedHistoryDurablePreparation(
 	)
 	assert.Equal(t, previousRenderErr && previousRenderPrevious2 != nil, true)
 	assert.Diff(t, maps.Collect(previousRenderPrevious2), records)
+
 	assert.FatalIf(
 		t,
 		sources.calls.Load() == 0 || counted.opens.Load() == 0,
 		"%s",
 		"enabled history did not prepare chart",
 	)
+
 	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
 	sources.calls.Store(0)
@@ -548,7 +473,9 @@ func testTemplateAcceptedHistoryDurableName(
 	accepted, encodeFrameErr := encodeAccepted((*(*testCaseInput).hr).Named(), &invalidFrame, maps.All(records))
 	assert.NoError(t, encodeFrameErr)
 	_, _, _, encodeFrameErr = isolated.cache.Blob(
-		t.Context(), (*(*testCaseInput).key), cache.Policy{MaxAge: 0},
+		t.Context(),
+		(*(*testCaseInput).key),
+		&cache.Policy{MaxAge: 0},
 		func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 			_, copyErr := io.Copy(w, io.MultiReader(bytes.NewReader(invalidReceipt), bytes.NewReader(accepted)))
 			return cache.ProducerResult{}, copyErr
@@ -559,7 +486,8 @@ func testTemplateAcceptedHistoryDurableName(
 	prepared, encodeFrameErr := isolated.prepareTemplate(
 		t.Context(),
 		(*(*testCaseInput).hr),
-		nil, (*testCaseInput).input,
+		nil,
+		(*testCaseInput).input,
 	)
 	assert.NoError(t, encodeFrameErr)
 	defer func() {
@@ -573,9 +501,11 @@ func testTemplateAcceptedHistoryDurableName(
 			)
 		}
 	}()
-	found, encodeFrameErr := isolated.lookupRender(t.Context(), &prepared.loaded, prepared.key)
+	found, encodeFrameErr := isolated.lookupRender(t.Context(), &prepared.loaded, prepared.key, &RenderOptions{})
 	assert.NoError(t, encodeFrameErr)
+
 	assert.FatalIf(t, found != nil, "%s", "invalid raw request metadata reused cached output")
+
 	{
 		_, previousRenderComplete := isolated.PreviousRender(
 			t.Context(),
@@ -610,17 +540,25 @@ func testTemplateAcceptedHistoryDurableTypedRecordKey(
 	prepared, prepareTemplateErr := isolated.prepareTemplate(
 		t.Context(),
 		(*(*testCaseInput).hr),
-		nil, (*testCaseInput).input,
+		nil,
+		(*testCaseInput).input,
 	)
 	assert.NoError(t, prepareTemplateErr)
-	remembered, prepareTemplateErr := isolated.lookupRender(t.Context(), &prepared.loaded, prepared.key)
+	remembered, prepareTemplateErr := isolated.lookupRender(
+		t.Context(),
+		&prepared.loaded,
+		prepared.key,
+		&RenderOptions{},
+	)
 	assert.NoError(t, prepareTemplateErr)
+
 	assert.FatalIf(t, remembered == nil, "%s", "matching request did not load a typed record")
+
 	prepared.loaded.record = remembered
 	reader, _, _, prepareTemplateErr := isolated.cache.Blob(
 		t.Context(),
 		(*(*testCaseInput).key),
-		cache.Policy{MaxAge: cache.Forever},
+		&cache.Policy{MaxAge: cache.Forever},
 		nil,
 	)
 	assert.NoError(t, prepareTemplateErr)
@@ -631,7 +569,7 @@ func testTemplateAcceptedHistoryDurableTypedRecordKey(
 	reader, _, _, prepareTemplateErr = isolated.cache.Blob(
 		t.Context(),
 		foreign,
-		cache.Policy{MaxAge: 0},
+		&cache.Policy{MaxAge: 0},
 		func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 			_, writeErr := w.Write(data)
 			return cache.ProducerResult{}, writeErr
@@ -640,8 +578,9 @@ func testTemplateAcceptedHistoryDurableTypedRecordKey(
 	assert.NoError(t, prepareTemplateErr)
 	assert.Equal(t, cache.AcquisitionIdentity(reader), remembered.identity)
 
-	found, prepareTemplateErr := isolated.lookupRender(t.Context(), &prepared.loaded, "foreign")
+	found, prepareTemplateErr := isolated.lookupRender(t.Context(), &prepared.loaded, "foreign", &RenderOptions{})
 	assert.NoError(t, prepareTemplateErr)
+
 	assert.FatalIf(
 		t,
 		found != nil,
@@ -744,12 +683,13 @@ func testTemplateAcceptedHistoryDurableUnacceptedPreparation(
 	)
 	changed := original
 	changed.SkipKinds = []string{manifest.KindKustomization}
-
 	_, pending, renderMapsErr2 := testutil.RenderMaps(
 		renderer.Template(t.Context(), (*(*testCaseInput).hr), nil, changed),
 	)
 	assert.NoError(t, renderMapsErr2)
+
 	assert.FatalIf(t, pending == nil, "%s", "raw successor supplied no receipt")
+
 	{
 		_, previousRenderComplete5 := renderer.PreviousRender(
 			t.Context(),

@@ -83,7 +83,7 @@ func TestFetcher_InputsRequireRegistry(t *testing.T) {
 		Type:      fluxopv1.InputProviderStatic,
 		URL:       "oci://registry.test/app",
 	}
-	_, err := (&Fetcher{}).FetchInputs(t.Context(), provider, nil, cache.Policy{})
+	_, err := (&Fetcher{}).FetchInputs(t.Context(), provider, nil, &cache.Policy{})
 	assert.FatalIf(t, !errors.Is(err, manifest.ErrInput), "non-registry inputs: %v", err)
 }
 
@@ -115,39 +115,20 @@ func TestFetcher_InputsAcquisitionWaves(t *testing.T) {
 	f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, t.TempDir(), cache.New)}
 	var artifacts [2]*store.SourceArtifact
 	var failures [2]error
+	var work [3]manifest.WorkRecorder
 	synctest.Test(t, func(t *testing.T) {
-		entered, release := make(chan struct{}), make(chan struct{})
-		first := sync.OnceFunc(func() { close(entered); <-release })
-		policy := cache.Policy{Admit: func(context.Context) (func(), error) { first(); return func() {}, nil }}
-		var wg sync.WaitGroup
-		run := func(index int) {
-			reads := inputs.readSet(provider)
-			defer reads.Close()
-			artifacts[index], failures[index] = f.FetchInputs(t.Context(), provider, reads, policy)
-		}
-		wg.Go(func() { run(0) })
-		<-entered
-		wg.Go(func() { run(1) })
-		synctest.Wait()
-		close(release)
-		wg.Wait()
-		for i, err := range failures {
-			assert.NoError(t, err)
-			assert.FatalIf(t, artifacts[i] == nil, "acquisition %d returned no artifact", i)
-		}
-		{
-			got := lists.Load()
-			assert.FatalIf(t, got != 1, "one acquisition wave listed tags %d times, want 1", got)
-		}
-		reads := inputs.readSet(provider)
-		defer reads.Close()
-		_, err := f.FetchInputs(t.Context(), provider, reads, cache.Policy{})
-		assert.NoError(t, err)
-		{
-			got := lists.Load()
-			assert.FatalIf(t, got != 2, "new acquisition wave listed tags %d times, want 2", got)
-		}
-		f.Network.Close()
+		testFetcherInputsAcquisitionWave(
+			t,
+			&testFetcherInputsAcquisitionWaveInputs{
+				artifacts: &artifacts,
+				f:         &f,
+				failures:  &failures,
+				inputs:    &inputs,
+				lists:     &lists,
+				provider:  &provider,
+				work:      &work,
+			},
+		)
 	})
 }
 
@@ -242,7 +223,7 @@ func TestFetcher_InputsMachineCredentialsReuse(t *testing.T) {
 	repo := &manifest.OCIRepository{Name: "source", Namespace: "apps", URL: provider.URL, Insecure: true}
 	sourceReads := (testInputs{}).readSet(repo)
 	defer sourceReads.Close()
-	_, err := f.Fetch(t.Context(), repo, sourceReads, cache.Policy{})
+	_, err := f.Fetch(t.Context(), repo, sourceReads, &cache.Policy{})
 	assert.NoError(t, err)
 	var original *store.SourceArtifact
 	for invocation := range 3 {
@@ -251,7 +232,7 @@ func TestFetcher_InputsMachineCredentialsReuse(t *testing.T) {
 			t.Setenv("FLATE_HELPER_SECRET", "second")
 		}
 		reads := (testInputs{}).readSet(provider)
-		got, err := f.FetchInputs(t.Context(), provider, reads, cache.Policy{MaxAge: time.Hour})
+		got, err := f.FetchInputs(t.Context(), provider, reads, &cache.Policy{MaxAge: time.Hour})
 		reads.Close()
 		assert.NoError(t, err)
 		if invocation == 0 {
@@ -354,7 +335,7 @@ func testFetcherInputsSelectionAndRefreshCase(
 			changed.Store(true)
 		}
 		reads := (testInputs{}).readSet(provider)
-		artifact, err := f.FetchInputs(t.Context(), provider, reads, cache.Policy{})
+		artifact, err := f.FetchInputs(t.Context(), provider, reads, &cache.Policy{})
 		reads.Close()
 		assert.NoError(t, err)
 		var got []map[string]any
@@ -399,7 +380,7 @@ func testFetcherInputsSelectionAndRefreshCase(
 	empty.Filter = &fluxopv1.ResourceSetInputFilter{IncludeTag: "^absent$"}
 	reads := (testInputs{}).readSet(&empty)
 	defer reads.Close()
-	artifact, err := f.FetchInputs(t.Context(), &empty, reads, cache.Policy{})
+	artifact, err := f.FetchInputs(t.Context(), &empty, reads, &cache.Policy{})
 	assert.NoError(t, err)
 	assert.Equal(t, mustReadFile(t, artifact.FS, "inputs.json"), "[]\n")
 	assert.Equal(t, heads.Load(), int32(6))
@@ -518,7 +499,7 @@ func testFetcherInputsAuthenticationCaseCompletion(
 		ctx, done = context.WithDeadline(ctx, time.Unix(0, 0))
 		defer done()
 	}
-	artifact, err := (*captures.f).FetchInputs(ctx, (*captures.provider), (*captures.reads), cache.Policy{})
+	artifact, err := (*captures.f).FetchInputs(ctx, (*captures.provider), (*captures.reads), &cache.Policy{})
 	assert.FatalIf(
 		t,
 		artifact != nil || err == nil || errors.Is(err, manifest.ErrMissingSecret) != (*captures.tc).wantMissing,
@@ -630,7 +611,7 @@ func testFetcherInputsCanceledWorkCase(t *testing.T, stage *string,
 	defer cancel()
 	done := make(chan error)
 	go func() {
-		artifact, err := f.FetchInputs(ctx, provider, reads, cache.Policy{})
+		artifact, err := f.FetchInputs(ctx, provider, reads, &cache.Policy{})
 		if artifact != nil {
 			err = fmt.Errorf("partial artifact admitted: %v", artifact)
 		}
@@ -645,7 +626,7 @@ func testFetcherInputsCanceledWorkCase(t *testing.T, stage *string,
 		"canceled acquisition: %v",
 		err,
 	)
-	got, err := f.FetchInputs(t.Context(), provider, reads, cache.Policy{})
+	got, err := f.FetchInputs(t.Context(), provider, reads, &cache.Policy{})
 	assert.NoError(t, err)
 	var inputs []map[string]any
 	assert.NoError(t, json.Unmarshal([]byte(mustReadFile(t, got.FS, "inputs.json")), &inputs))
@@ -699,7 +680,7 @@ func testFetcherInputsRetryCase(t *testing.T, stage *string,
 		t.Context(),
 		provider,
 		reads,
-		cache.Policy{Retry: cache.RetryConfig{Attempts: 2, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}},
+		&cache.Policy{Retry: cache.RetryConfig{Attempts: 2, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}},
 	)
 	assert.NoError(t, err)
 	assert.FatalIf(
@@ -715,4 +696,90 @@ func testFetcherInputsRetryCase(t *testing.T, stage *string,
 		wantHeads = 2
 	}
 	assert.Equal(t, heads.Load(), wantHeads)
+}
+
+type testFetcherInputsAcquisitionWaveInputs struct {
+	artifacts *[2]*store.SourceArtifact
+	f         **Fetcher
+	failures  *[2]error
+	inputs    *testInputs
+	lists     *atomic.Int32
+	provider  **manifest.ResourceSetInputProvider
+	work      *[3]manifest.WorkRecorder
+}
+
+func testFetcherInputsAcquisitionWave(t *testing.T, captures *testFetcherInputsAcquisitionWaveInputs) {
+	t.Helper()
+	entered, release := make(chan struct{}), make(chan struct{})
+	first := sync.OnceFunc(func() { close(entered); <-release })
+	policy := cache.Policy{Admit: func(context.Context) (func(), error) { first(); return func() {}, nil }}
+	var wg sync.WaitGroup
+	run := func(index int) {
+		reads := captures.inputs.readSet((*captures.provider))
+		reads.SetWork(&captures.work[index])
+		defer reads.Close()
+		captures.artifacts[index], captures.failures[index] = (*captures.f).FetchInputs(
+			t.Context(),
+			(*captures.provider),
+			reads,
+			&policy,
+		)
+	}
+	wg.Go(func() { run(0) })
+	<-entered
+	wg.Go(func() { run(1) })
+	synctest.Wait()
+	close(release)
+	wg.Wait()
+	for i, err := range *captures.failures {
+		assert.NoError(t, err)
+		if captures.artifacts[i] == nil {
+			t.Fatalf("acquisition %d returned no artifact", i)
+		}
+	}
+	if got := captures.lists.Load(); got != 1 {
+		t.Fatalf("one acquisition wave listed tags %d times, want 1", got)
+	}
+
+	var produced, cached manifest.WorkCounts
+	for index := range 2 {
+		{
+			records := captures.work[index].Scope().Snapshot(0)
+			for recordIndex := range records {
+				record := &records[recordIndex]
+				assert.Equal(t, record.Key.Owner, (*captures.provider).Named())
+				assert.Equal(t, record.Key.Source, (*captures.provider).Named())
+				assert.Equal(t, record.Key.Input, captures.artifacts[index].Key)
+				switch string(record.Key.Phase) {
+				case string(manifest.WorkAcquisition):
+					produced.Add(&record.Counts)
+				case string(manifest.WorkCache):
+					cached.Add(&record.Counts)
+				}
+			}
+		}
+	}
+	assert.Equal(t, produced, manifest.WorkCounts{Attempts: 1, Completed: 1, RemoteTransfers: 1})
+	assert.Equal(t, cached, manifest.WorkCounts{Attempts: 2, Completed: 2, CacheService: 1})
+	reads := captures.inputs.readSet((*captures.provider))
+	defer reads.Close()
+	reads.SetWork(&captures.work[2])
+	_, err := (*captures.f).FetchInputs(t.Context(), (*captures.provider), reads, &cache.Policy{})
+	assert.NoError(t, err)
+	if got := captures.lists.Load(); got != 2 {
+		t.Fatalf("new acquisition wave listed tags %d times, want 2", got)
+	}
+
+	produced = manifest.WorkCounts{}
+	{
+		records := captures.work[2].Scope().Snapshot(0)
+		for recordIndex := range records {
+			record := &records[recordIndex]
+			if record.Key.Phase == manifest.WorkAcquisition {
+				produced.Add(&record.Counts)
+			}
+		}
+	}
+	assert.Equal(t, produced, manifest.WorkCounts{Attempts: 1, Completed: 1, RemoteTransfers: 1})
+	(*captures.f).Network.Close()
 }

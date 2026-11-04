@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
@@ -13,11 +14,12 @@ import (
 
 // GitBaseRequest carries effective Git policy and the referencing Flux interval.
 type GitBaseRequest struct {
-	URL        string        `json:"URL"`
-	Ref        string        `json:"Ref"`
-	MaxAge     time.Duration `json:"MaxAge"`
-	Timeout    time.Duration `json:"Timeout"`
-	Submodules bool          `json:"Submodules"`
+	Work       manifest.WorkScope `json:"-"`
+	URL        string             `json:"URL"`
+	Ref        string             `json:"Ref"`
+	MaxAge     time.Duration      `json:"MaxAge"`
+	Timeout    time.Duration      `json:"Timeout"`
+	Submodules bool               `json:"Submodules"`
 }
 
 // GitBaseFetcher acquires an immutable repository view for private render mounts.

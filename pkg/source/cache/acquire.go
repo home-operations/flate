@@ -124,6 +124,7 @@ func (e *CacheError) Error() string   { return "cache: " + e.Err.Error() }
 func (e *CacheError) Unwrap() []error { return []error{manifest.ErrFlux, e.Err} }
 
 type acquireKey struct {
+	lookup     *manifest.WorkRecord
 	producer   acquisitionProducer
 	id         string
 	required   []string
@@ -155,9 +156,11 @@ func (e *producerError) Unwrap() []error { return e.causes[:] }
 func (c *Cache) Acquire(
 	ctx context.Context,
 	key ArchiveKey,
-	policy Policy,
+	policyValue *Policy,
 	produce func(context.Context, ProducerInput) (ProducerResult, error),
 ) (fs.FS, ocispec.Descriptor, string, error) {
+	policy := *policyValue
+
 	switch key.Policy {
 	case "", "source", fixedPolicy, extractPolicy:
 	default:
@@ -167,7 +170,7 @@ func (c *Cache) Acquire(
 	}
 	producer := archiveProducer{key: key}
 	e, id, err := c.acquire(
-		ctx, new(acquireKey{producer: producer, required: key.Required}), policy,
+		ctx, new(acquireKey{producer: producer, required: key.Required}), &policy,
 		acquisitionCallbacks{produce: func(ctx context.Context, c *Cache, staged *payload) (*entry, error) {
 			return producer.produce(ctx, c, staged, produce)
 		}},
@@ -203,9 +206,11 @@ func (c *Cache) CanPersistRenders() bool { return c.persistBlob }
 func (c *Cache) Blob(
 	ctx context.Context,
 	key BlobKey,
-	policy Policy,
+	policyValue *Policy,
 	produce func(context.Context, ProducerInput) (ProducerResult, error),
 ) (fs.FS, ocispec.Descriptor, string, error) {
+	policy := *policyValue
+
 	switch key.Render {
 	case 0, RenderPending, RenderAccepted:
 	default:
@@ -236,7 +241,7 @@ func (c *Cache) Blob(
 		validate = func(ctx context.Context, e *entry) (bool, error) { return key.Validate(ctx, e.fs) }
 	}
 	e, id, err := c.acquire(
-		ctx, new(request), policy,
+		ctx, new(request), &policy,
 		acquisitionCallbacks{
 			validate: validate,
 			produce: func(ctx context.Context, c *Cache, staged *payload) (*entry, error) {
@@ -260,7 +265,11 @@ func (c *Cache) Blob(
 // RenderMetadata returns the current descriptor and generation without opening the payload.
 // Enabled reports whether this owner can persist renders. A nonempty lookup
 // MUST identify Blob accepted history for this content; an empty lookup derives it.
-func (c *Cache) RenderMetadata(ctx context.Context, content, lookup string) (RenderMetadata, error) {
+func (c *Cache) RenderMetadata(
+	ctx context.Context,
+	content, lookup string,
+	work *manifest.AcquisitionWork,
+) (RenderMetadata, error) {
 	enabled, err := c.renderEnabled(ctx, content)
 	if err != nil || !enabled {
 		return RenderMetadata{Enabled: enabled}, err
@@ -269,6 +278,7 @@ func (c *Cache) RenderMetadata(ctx context.Context, content, lookup string) (Ren
 		return RenderMetadata{Enabled: true}, &CacheError{errErr}
 	}
 	var e *entry
+	var memory *manifest.WorkRecord
 	if lookup != "" {
 		if current, ok := c.entries.Load(
 			lookup,
@@ -279,6 +289,8 @@ func (c *Cache) RenderMetadata(ctx context.Context, content, lookup string) (Ren
 				accessInterval,
 			) {
 			e = current.(*entry) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+			memory = work.Lookup(lookup)
+			memory.Add(&manifest.WorkCounts{Attempts: 1, CacheService: 1})
 		}
 	}
 	if e == nil {
@@ -287,10 +299,10 @@ func (c *Cache) RenderMetadata(ctx context.Context, content, lookup string) (Ren
 			producer:   blobProducer{content: key.Content, render: key.Render},
 			lookupOnly: true,
 			render:     true,
-			policy:     Policy{MaxAge: Forever},
+			policy:     Policy{MaxAge: Forever, Work: work},
 		}
 		if lookup == "" {
-			e, _, err = c.acquire(ctx, new(request), Policy{MaxAge: Forever}, acquisitionCallbacks{})
+			e, _, err = c.acquire(ctx, new(request), &Policy{MaxAge: Forever, Work: work}, acquisitionCallbacks{})
 		} else {
 			request.id = lookup
 			e, err = c.acquireOnce(ctx, &request, acquisitionCallbacks{})
@@ -302,6 +314,12 @@ func (c *Cache) RenderMetadata(ctx context.Context, content, lookup string) (Ren
 			return RenderMetadata{Enabled: true}, err
 		}
 	}
+	metadata, err := c.renderDescriptor(e)
+	memory.Finish(err)
+	return metadata, err
+}
+
+func (c *Cache) renderDescriptor(e *entry) (RenderMetadata, error) {
 	root := &c.blobRoots[slices.Index(blobAlgorithms[:], e.stored.Digest.Algorithm())]
 	current, temporary, err := root.current(c.root)
 	if err != nil {
@@ -336,7 +354,20 @@ func (c *Cache) renderEnabled(ctx context.Context, content string) (bool, error)
 	return c.CanPersistRenders(), nil
 }
 
-func (c *Cache) acquireOnce(ctx context.Context, keyValue *acquireKey, callbacks acquisitionCallbacks) (*entry, error) {
+func (c *Cache) acquireOnce(ctx context.Context, key *acquireKey, callbacks acquisitionCallbacks) (*entry, error) {
+	work := key.policy.Work.Lookup(key.id)
+	key.lookup = work
+	work.Add(&manifest.WorkCounts{Attempts: 1})
+	result, err := c.acquireCandidate(ctx, key, callbacks)
+	work.Finish(err)
+	return result, err
+}
+
+func (c *Cache) acquireCandidate(
+	ctx context.Context,
+	keyValue *acquireKey,
+	callbacks acquisitionCallbacks,
+) (*entry, error) {
 	key := *keyValue
 	if !key.memoryOnly {
 		c.prepareSnapshot()
@@ -392,13 +423,17 @@ func (c *Cache) acquireOnce(ctx context.Context, keyValue *acquireKey, callbacks
 
 func (c *Cache) validCandidate(
 	ctx context.Context,
+	work *manifest.AcquisitionWork,
 	validate func(context.Context, *entry) (bool, error),
 	e *entry,
 ) (bool, error) {
 	if validate == nil {
 		return true, nil
 	}
+	record := work.Validate()
+	record.Add(&manifest.WorkCounts{Attempts: 1})
 	valid, err := validate(ctx, e)
+	record.Finish(err)
 	if err != nil {
 		return false, &CacheError{err}
 	}
@@ -493,6 +528,15 @@ func (c *Cache) fill(
 		defer cancel()
 	}
 	staged := payload{key: key, previous: previous}
+	work := key.policy.Work.Physical()
+	defer func() {
+		if staged.attempted {
+			work.Finish(resultErr)
+		}
+		if staged.unchanged && resultErr == nil {
+			key.lookup.Add(&manifest.WorkCounts{CacheService: 1})
+		}
+	}()
 	staged.writer = &staged.memory
 	var repairName string
 	defer func() {
@@ -523,6 +567,8 @@ func (c *Cache) producePayload(
 	if err := ctx.Err(); err != nil {
 		return nil, repairName, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 	}
+	staged.attempted = true
+	key.policy.Work.Physical().Add(&manifest.WorkCounts{Attempts: 1})
 	e, err := callbacks.produce(ctx, c, staged)
 	if err != nil {
 		if producer, ok := errors.AsType[*producerError](
@@ -545,7 +591,7 @@ func (c *Cache) producePayload(
 		}
 	}
 
-	valid, err := c.validCandidate(ctx, callbacks.validate, e)
+	valid, err := c.validCandidate(ctx, key.policy.Work, callbacks.validate, e)
 	if key.policy.Timeout != nil && ctx.Err() != nil {
 		return nil, repairName, ctx.Err() //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 	}
@@ -636,6 +682,7 @@ func (c *Cache) replayOutcome(key *acquireKey, e *entry) error {
 		freshness := e.outcome.observe(time.Now().UTC())
 
 		if freshness.fresh {
+			key.lookup.Add(&manifest.WorkCounts{CacheService: 1})
 			if err := c.touch(key, e); err != nil {
 				return err
 			}

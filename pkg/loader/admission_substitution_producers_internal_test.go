@@ -550,7 +550,7 @@ func testFilterSubstitutionGeneratorProducersQualifiedDeclarations(t *testing.T)
 		)
 		l := New(st)
 		l.SourceRoot = roots[i]
-		_, err := l.Load(t.Context(), filepath.Join(mounted, "data"))
+		_, err := l.Load(t.Context(), filepath.Join(mounted, "data"), nil)
 		assert.NoError(t, err)
 		l.FinalizeIndex(t.Context(), roots[i], true)
 		indexes[i] = l.Index
@@ -568,7 +568,12 @@ func testFilterSubstitutionGeneratorProducersQualifiedDeclarations(t *testing.T)
 			}
 		}
 	}
-	changes, err := change.Qualify(t.Context(), change.NewSet(nil), stores[0], stores[1])
+	changes, err := change.Qualify(
+		t.Context(),
+		change.NewSet(nil),
+		[2]*store.Store{stores[0], stores[1]},
+		manifest.WorkScope{},
+	)
 	assert.NoError(t, err)
 	for i, st := range stores {
 		filter := newAdmission(

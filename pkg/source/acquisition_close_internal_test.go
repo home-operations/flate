@@ -120,7 +120,7 @@ func testAcquireCloseJoinsAcquisitionCaseCallback(
 	defer cancel()
 	callers := make(chan error, (*(*testCaseInput.concurrency)))
 	for range *(*testCaseInput.concurrency) {
-		go func() { _, err := c.Acquire(ctx, url, retry, nil); callers <- err }()
+		go func() { _, err := c.Acquire(ctx, &HTTPRequest{URL: url, Retry: retry, HeldSlot: nil}); callers <- err }()
 	}
 	<-entered
 	synctest.Wait()
@@ -202,7 +202,7 @@ func testAcquireCloseJoinsAcquisitionCaseCallbackCompletion(
 		reader, _, _, err := owner.Blob(
 			t.Context(),
 			sourcecache.BlobKey{Content: struct{ URL string }{(*captures.url)}},
-			sourcecache.Policy{MaxAge: sourcecache.Forever},
+			&sourcecache.Policy{MaxAge: sourcecache.Forever},
 			nil,
 		)
 		if err != nil {

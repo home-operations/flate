@@ -2,7 +2,6 @@ package bucket_test
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,12 +13,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/pkg/source/bucket"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/minio/minio-go/v7"
@@ -28,12 +26,12 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
-	"github.com/home-operations/flate/pkg/source/bucket"
 	"github.com/home-operations/flate/pkg/source/cache"
 )
 
@@ -54,7 +52,7 @@ func TestFetcher_ProviderMissingSecret(t *testing.T) {
 		BucketName: "x", Endpoint: "s3.amazonaws.com",
 		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 	}
-	_, err := f.Fetch(context.Background(), b, fInputs.readSet(b), cache.Policy{MaxAge: b.SourceInterval()})
+	_, err := f.Fetch(context.Background(), b, fInputs.readSet(b), &cache.Policy{MaxAge: b.SourceInterval()})
 	assert.FatalIf(t, err == nil, "expected missing-secret error")
 	assert.ErrorIf(
 		t,
@@ -68,13 +66,9 @@ func TestFetcher_ArchiveIsolationAndWarmHits(t *testing.T) {
 	t.Parallel()
 	for _, backing := range []string{"memory", "disk"} {
 		for _, attempts := range []int{1, 3} {
-			t.Run(fmt.Sprintf("%s/attempts-%d", backing, attempts), func(t *testing.T) {
-				t.Parallel()
-				testFetcherArchiveIsolationAndWarmHitsCase(
-					t,
-					&backing, &attempts,
-				)
-			},
+			t.Run(
+				fmt.Sprintf("%s/attempts-%d", backing, attempts),
+				func(t *testing.T) { t.Parallel(); testFetcherArchiveIsolationAndWarmHitsCase(t, &attempts, &backing) },
 			)
 		}
 	}
@@ -134,107 +128,6 @@ func TestFetcher_NetworkRoutes(t *testing.T) {
 	}
 }
 
-func testFetcherArchiveIsolationAndWarmHitsCase(
-	t *testing.T, backing *string,
-	attempts *int,
-) {
-	t.Helper()
-
-	var listings atomic.Int32
-	sequences := map[string]*atomic.Int32{"first": {}, "second": {}, "canceled": {}}
-	streaming, canceled := make(chan struct{}), make(chan struct{})
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		testFetcherArchiveIsolationAndWarmHitsCaseCallback(
-			w,
-			r,
-			testFetcherArchiveIsolationAndWarmHitsCaseCallbackInputs{
-				listings:  &listings,
-				sequences: &sequences,
-				streaming: &streaming,
-				canceled:  &canceled,
-			},
-		)
-	},
-	))
-	t.Cleanup(srv.Close)
-	root := ""
-	if (*backing) == "disk" {
-		root = t.TempDir()
-	}
-	c := cachetest.New(t, root, cache.New)
-	fInputs := testInputs{secrets: func(ns, _ string) *manifest.Secret {
-		return &manifest.Secret{StringData: map[string]any{"accesskey": ns, "secretkey": "test"}}
-	}}
-	f := &bucket.Fetcher{Network: newTestNetwork(t), Cache: c}
-	var wg sync.WaitGroup
-	for _, namespace := range []string{"first", "second"} {
-		wg.Go(func() {
-			testFetcherArchiveIsolationAndWarmHitsCaseCallback2(
-				testFetcherArchiveIsolationAndWarmHitsCaseCallback2Inputs{
-					t:         &t,
-					attempts:  &attempts,
-					srv:       &srv,
-					fInputs:   &fInputs,
-					f:         &f,
-					namespace: &namespace,
-				},
-			)
-		},
-		)
-	}
-	wg.Wait()
-	want := int32(2 * min((*attempts), 2))
-	if listings.Load() != want {
-		t.Fatalf("producer sequences=%d, want %d", listings.Load(), want)
-	}
-	if (*attempts) == 1 {
-		return
-	}
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() {
-		b := &manifest.Bucket{
-			Name:       "source",
-			Namespace:  "canceled",
-			BucketName: "data",
-			Prefix:     "prefix/",
-			Endpoint:   srv.URL,
-			Insecure:   true,
-			Region:     "us-east-1",
-			SecretRef:  &manifest.LocalObjectReference{Name: "creds"},
-		}
-		_, err := f.Fetch(
-			ctx,
-			b,
-			fInputs.readSet(b),
-			cache.Policy{
-				MaxAge: b.SourceInterval(),
-				Retry: cache.RetryConfig{
-					Attempts: (*attempts),
-					MinWait:  time.Nanosecond,
-					MaxWait:  time.Nanosecond,
-				},
-			},
-		)
-		done <- err
-	}()
-	select {
-	case <-streaming:
-	case err := <-done:
-		t.Fatalf("fetch ended before cancellation: %v", err)
-	}
-	cancel()
-	{
-		err := <-done
-		assert.FatalIf(t, !errors.Is(err, context.Canceled), "canceled fetch: %v", err)
-	}
-	<-canceled
-	if sequences["canceled"].Load() != 1 {
-		t.Fatalf("canceled producer sequences=%d, want 1", sequences["canceled"].Load())
-	}
-}
-
 func testFetcherTransientStatusRecoveryCase(t *testing.T, tc *struct {
 	status  int
 	code    string
@@ -270,7 +163,7 @@ func testFetcherTransientStatusRecoveryCase(t *testing.T, tc *struct {
 	}, (testInputs{}).readSet(&manifest.Bucket{
 		Name: "retry", Namespace: "test", BucketName: "data",
 		Endpoint: srv.URL, Insecure: true, Region: "us-east-1",
-	}), cache.Policy{Retry: cache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond}})
+	}), &cache.Policy{Retry: cache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond}})
 	if tc.status == http.StatusForbidden {
 		cause, ok := errors.AsType[minio.ErrorResponse](err)
 		response, typed := errors.AsType[*fetcherr.ResponseError](err)
@@ -330,7 +223,7 @@ func testFetcherTimeoutRecoveryCase(t *testing.T, reopen *bool,
 		Insecure: true, Region: "us-east-1", Timeout: &metav1.Duration{Duration: time.Second},
 	}
 	policy := cache.Policy{MaxAge: time.Hour}
-	artifact, err := f.Fetch(t.Context(), b, (testInputs{}).readSet(b), policy)
+	artifact, err := f.Fetch(t.Context(), b, (testInputs{}).readSet(b), &policy)
 	assert.FatalIf(
 		t,
 		!errors.Is(err, context.DeadlineExceeded) || artifact != nil,
@@ -355,7 +248,7 @@ func testFetcherTimeoutRecoveryCase(t *testing.T, reopen *bool,
 	blocked.Store(false)
 	longer := *b
 	longer.Timeout = &metav1.Duration{Duration: 10 * time.Second}
-	artifact, err = f.Fetch(t.Context(), &longer, (testInputs{}).readSet(&longer), policy)
+	artifact, err = f.Fetch(t.Context(), &longer, (testInputs{}).readSet(&longer), &policy)
 	assert.FatalIf(t, err != nil, "longer policy reused timeout: %v", err)
 	{
 		data, err := fs.ReadFile(artifact.FS, "hello.txt")
@@ -395,7 +288,7 @@ func testFetcherTerminalStatusReplayCase(t *testing.T, status *int,
 		t.Context(),
 		b,
 		(testInputs{}).readSet(b),
-		cache.Policy{MaxAge: b.SourceInterval(), Retry: retry},
+		&cache.Policy{MaxAge: b.SourceInterval(), Retry: retry},
 	)
 	terminal, ok := errors.AsType[*cache.TerminalError](err)
 	cause, typed := errors.AsType[*fetcherr.ResponseError](err)
@@ -483,7 +376,7 @@ func testFetcherTerminalStatusReplayCase(t *testing.T, status *int,
 		t.Context(),
 		b,
 		(testInputs{}).readSet(b),
-		cache.Policy{MaxAge: b.SourceInterval(), Retry: retry},
+		&cache.Policy{MaxAge: b.SourceInterval(), Retry: retry},
 	)
 	terminal, ok = errors.AsType[*cache.TerminalError](err)
 	cause, typed = errors.AsType[*fetcherr.ResponseError](err)
@@ -582,7 +475,7 @@ func testFetcherNetworkRoutesCase(t *testing.T, route *string,
 				Region:     "us-east-1",
 			},
 		),
-		cache.Policy{Retry: cache.RetryConfig{Attempts: 3, MinWait: time.Hour}},
+		&cache.Policy{Retry: cache.RetryConfig{Attempts: 3, MinWait: time.Hour}},
 	)
 	terminal, ok := errors.AsType[*cache.TerminalError](err)
 	wantLists := int32(0)
@@ -599,185 +492,5 @@ func testFetcherNetworkRoutesCase(t *testing.T, route *string,
 			lists.Load(),
 			objects.Load(),
 		)
-	}
-}
-
-type testFetcherArchiveIsolationAndWarmHitsCaseCallbackInputs struct {
-	listings  *atomic.Int32
-	sequences *map[string]*atomic.Int32
-	streaming *chan struct{}
-	canceled  *chan struct{}
-}
-
-func testFetcherArchiveIsolationAndWarmHitsCaseCallback(
-	w http.ResponseWriter,
-	r *http.Request,
-	testCaseInput testFetcherArchiveIsolationAndWarmHitsCaseCallbackInputs,
-) {
-	namespace := "first"
-	for _, name := range []string{"second", "canceled"} {
-		if strings.Contains(r.Header.Get("Authorization"), "Credential="+name+"/") {
-			namespace = name
-		}
-	}
-	sequence := (*testCaseInput.sequences)[namespace]
-	files := map[string]string{
-		"dir/file.yaml": "first",
-		"dir/drop.yaml": "drop",
-		".sourceignore": "dir/drop.yaml\n",
-		"image.png":     "image",
-		".git/config":   "git",
-	}
-	if namespace == "second" {
-		files["dir/file.yaml"] = "other"
-	}
-	listing := r.URL.Query().Get("list-type") != ""
-	if listing {
-		testCaseInput.listings.
-			Add(1)
-		sequence.Add(1)
-	}
-	if sequence.Load() == 1 {
-		files["attempt-only.yaml"] = "discard"
-	}
-	if listing {
-		names := []string{"dir/drop.yaml", "image.png", "dir/file.yaml", ".sourceignore", ".git/config"}
-		if sequence.Load() == 1 {
-			names = append(names, "attempt-only.yaml")
-		}
-		_, _ = fmt.Fprint(w, `<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated>`)
-		for _, name := range names {
-			data := files[name]
-			_, _ = fmt.Fprintf(
-				w,
-				`<Contents><Key>prefix/%s</Key><Size>%d</Size><ETag>"%x"</ETag></Contents>`,
-				name,
-				len(data),
-				sha256.Sum256([]byte(data)),
-			)
-		}
-		_, _ = fmt.Fprint(w, `</ListBucketResult>`)
-		return
-	}
-	name := strings.TrimPrefix(r.URL.Path, "/data/prefix/")
-	data, ok := files[name]
-	if !ok {
-		http.NotFound(w, r)
-		return
-	}
-	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
-	w.Header().Set("ETag", fmt.Sprintf(`"%x"`, sha256.Sum256([]byte(data))))
-	w.Header().Set("Last-Modified", "Mon, 02 Jan 2006 15:04:05 GMT")
-	if name == "image.png" {
-		if namespace == "canceled" {
-			_, _ = fmt.Fprint(w, data[:2])
-			w.(http.Flusher).Flush()
-			close((*testCaseInput.streaming))
-			<-r.Context().Done()
-			close((*testCaseInput.canceled))
-			return
-		}
-		if sequence.Load() == 1 {
-			_, _ = fmt.Fprint(w, data[:2])
-			return
-		}
-	}
-	_, _ = fmt.Fprint(w, data)
-}
-
-type testFetcherArchiveIsolationAndWarmHitsCaseCallback2Inputs struct {
-	t         **testing.T
-	attempts  **int
-	srv       **httptest.Server
-	fInputs   *testInputs
-	f         **bucket.Fetcher
-	namespace *string
-}
-
-func testFetcherArchiveIsolationAndWarmHitsCaseCallback2(
-	testCaseInput testFetcherArchiveIsolationAndWarmHitsCaseCallback2Inputs,
-) {
-	b := &manifest.Bucket{
-		Name:       "source",
-		Namespace:  (*testCaseInput.namespace),
-		BucketName: "data",
-		Prefix:     "prefix/",
-		Provider:   sourcev1.BucketProviderAmazon,
-		Endpoint:   (*testCaseInput.srv).URL,
-		Insecure:   true,
-		Region:     "us-east-1",
-		Interval:   metav1.Duration{Duration: time.Hour},
-		SecretRef:  &manifest.LocalObjectReference{Name: "creds"},
-	}
-	var family string
-	for range 2 {
-		art, err := (*testCaseInput.f).Fetch((*testCaseInput.t).
-			Context(), b, testCaseInput.fInputs.
-			readSet(b), cache.Policy{
-			MaxAge: b.SourceInterval(),
-			Retry: cache.RetryConfig{
-				Attempts: (*(*testCaseInput.attempts)),
-				MinWait:  time.Nanosecond,
-				MaxWait:  time.Nanosecond,
-			},
-		},
-		)
-		if (*(*testCaseInput.attempts)) == 1 {
-			assert.ErrorIf((*testCaseInput.t), err == nil || art != nil,
-				"%s retry-off artifact=%v, error=%v", (*testCaseInput.namespace), art,
-				err,
-			)
-			return
-		}
-		if err != nil {
-			(*testCaseInput.t).
-				Error(err)
-			return
-		}
-		assert.ErrorIf((*testCaseInput.t), art.Content == "" || art.Content != cache.AcquisitionIdentity(art.FS),
-			"content generation = %q", art.Content)
-		assert.ErrorIf((*testCaseInput.t), art.Key == "" || family != "" && art.Key != family,
-			"warm acquisition family = %q, first = %q", art.Key, family)
-		family = art.Key
-		want := (*testCaseInput.namespace)
-		if (*testCaseInput.namespace) == "second" {
-			want = "other"
-		}
-		{
-			data, err := fs.ReadFile(art.FS, "dir/file.yaml")
-			assert.ErrorIf((*testCaseInput.t), err != nil || string(data) != want,
-				"%s content=%q err=%v", (*testCaseInput.namespace), data,
-				err,
-			)
-		}
-		{
-			_, err := fs.Stat(art.FS, "attempt-only.yaml")
-			assert.ErrorIf((*testCaseInput.t), !errors.Is(err, fs.ErrNotExist),
-				"failed acquisition leaked a file: %v",
-				err,
-			)
-		}
-		{
-			_, err := fs.Stat(art.FS, "dir/drop.yaml")
-			assert.ErrorIf((*testCaseInput.t), !errors.Is(err, fs.ErrNotExist), "ignored file: %v", err)
-		}
-		{
-			data, err := fs.ReadFile(art.FS, "image.png")
-			assert.ErrorIf((*testCaseInput.t), err != nil || string(data) != "image",
-				"complete image=%q, error=%v",
-				data,
-				err,
-			)
-		}
-		{
-			data, err := fs.ReadFile(art.FS, ".git/config")
-			assert.ErrorIf((*testCaseInput.t), err != nil || string(data) != "git",
-				"bucket flavor excluded git content: %q %v",
-				data,
-				err,
-			)
-		}
-		assert.ErrorIf((*testCaseInput.t), art.Metadata["objectCount"] != "5" || art.Revision == "",
-			"bucket metadata: %v", art.Metadata)
 	}
 }

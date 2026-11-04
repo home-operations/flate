@@ -34,6 +34,7 @@ type Result struct { // Binding identifies the entry's actual producer and admit
 
 // Config is the input contract for Run. Store is mandatory.
 type Config struct {
+	Work manifest.WorkScope
 	// Projections shares source-free facts across concurrent Plan calls.
 	Projections *manifest.ProducerProjections
 	// Declarations contains immutable invocation references admitted before discovery.
@@ -87,6 +88,9 @@ type Config struct {
 func Run(ctx context.Context, cfg Config) (*Result, error) {
 	if cfg.Store == nil {
 		return nil, errors.New("discovery: Store is required")
+	}
+	if cfg.Loader == nil {
+		cfg.Loader = loader.New(cfg.Store)
 	}
 	if cfg.session == nil && (cfg.Selection.Changed || len(cfg.Selection.Roots) != 0) {
 		return runSelected(ctx, &cfg)
@@ -220,6 +224,7 @@ func (d *Session) finishDiscovery(
 }
 
 type declarationPreparation struct {
+	work       *manifest.RenderWork
 	source     *store.SourceArtifact
 	children   []store.Child
 	receipt    *manifest.RenderReceipt
@@ -240,6 +245,7 @@ func newDiscoverer(config *Config) *Session {
 	if cfg.Projections != nil {
 		l.Options.Projections = cfg.Projections
 	}
+	l.Options.Work = cfg.Work
 	d := &Session{cfg: cfg, loader: l, aliasViews: map[string]*store.SourceArtifact{}}
 	d.cfg.Entry = nil
 	if cfg.Entry == nil || cfg.Entry.prepared == nil {
@@ -596,7 +602,16 @@ func (d *Session) prepareDocuments(
 	if err != nil {
 		return declarationPreparation{}, err
 	}
+	sourceID := ks.SourceID()
+	if sourceID.Kind == "" || sourceID.Name == "" {
+		sourceID = manifest.BootstrapSourceID
+	}
+	work := d.cfg.Work.Source(sourceID)
+	if !ks.Named().ReportHidden() {
+		work = work.Recorder(&manifest.WorkKey{Tree: work.Identity().Tree, Owner: ks.Named(), Source: sourceID}).Scope()
+	}
 	request := kustomize.RenderRequest{
+		Work:                    work.RenderWork(),
 		Source:                  input,
 		ApplyIgnore:             ks.SourceID() == manifest.BootstrapSourceID || input.InputAlias || input.Content == "",
 		SubPath:                 prepared.Path,
@@ -614,7 +629,15 @@ func (d *Session) prepareDocuments(
 		}
 	}
 	content := request.Content(docs)
-	if err := kustomize.Shape(prepared, docs, d.cfg.StrictSubstitutions); err != nil {
+	if err := kustomize.Shape(
+		ctx,
+		prepared,
+		docs,
+		kustomize.ShapeOptions{
+			Strict: d.cfg.StrictSubstitutions,
+			Work:   request.Work.Substitution(),
+		},
+	); err != nil {
 		return declarationPreparation{}, err
 	}
 	parseChildrenResult2 := loader.ParseChildren(
@@ -630,7 +653,13 @@ func (d *Session) prepareDocuments(
 	if d.prepared == nil {
 		d.prepared = map[*manifest.Kustomization]declarationPreparation{}
 	}
-	result := declarationPreparation{source: input, children: built, receipt: receipt, content: content}
+	result := declarationPreparation{
+		work:     request.Work,
+		source:   input,
+		children: built,
+		receipt:  receipt,
+		content:  content,
+	}
 	for _, doc := range docs {
 		result.warnings = append(result.warnings, doc.Warnings...)
 	}
@@ -690,6 +719,7 @@ func (d *Session) acceptPrepared(ctx context.Context) error {
 		}
 		input := prepared.source
 		if err := d.cfg.Trees.RecordRender(ctx, kustomize.RenderAcceptance{
+			Work:  prepared.work,
 			Owner: ks.Named(), Receipt: prepared.receipt, Content: prepared.content, Entry: ks.EntryReceipt,
 			Source:                  input.HistoryIdentity(sourceID),
 			Records:                 d.cfg.Store.ChildFootprint(ks.Named(), children, d.loader.Index),

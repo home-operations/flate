@@ -22,7 +22,7 @@ func testRenderMetadataCurrentDirectoryCase(t *testing.T, name *string,
 	c := cachetest.New(t, t.TempDir(), New)
 	key := BlobKey{Content: "current-directory", Render: RenderAccepted}
 	payload := []byte("current-directory-payload")
-	r, _, lookup, err := c.Blob(t.Context(), key, Policy{}, producer(payload, &ocispec.Descriptor{}))
+	r, _, lookup, err := c.Blob(t.Context(), key, &Policy{}, producer(payload, &ocispec.Descriptor{}))
 	assert.NoError(t, err)
 	identity := AcquisitionIdentity(r)
 
@@ -54,30 +54,25 @@ func testRenderMetadataCurrentDirectoryCase(t *testing.T, name *string,
 	case "closed":
 		assert.NoError(t, c.Close())
 	}
-	metadata, err := c.RenderMetadata(ctx, "current-directory", lookup)
-
+	renderMetadataResult, err := c.RenderMetadata(ctx, "current-directory", "", nil)
+	current, enabled := renderMetadataResult.Identity, renderMetadataResult.Enabled
 	if (*name) == "replaced parent present" {
 		assert.NoError(t, err)
 		assert.FatalIf(
 			t,
-			!metadata.Enabled || metadata.Identity == "" || metadata.Identity != identity,
+			!enabled || current == "" || current != identity,
 			"%s",
 			"replaced current directory lost the published generation",
 		)
 
-		r, _, _, blobErr12 := c.Blob(ctx, key, Policy{MaxAge: Forever}, nil)
+		r, _, _, blobErr12 := c.Blob(ctx, key, &Policy{MaxAge: Forever}, nil)
 		assert.NoError(t, blobErr12)
 		data, blobErr12 := fs.ReadFile(r, "content")
 		assert.NoError(t, blobErr12)
 		assert.Equal(t, bytes.Equal(data, payload), true)
 		return
 	}
-	assert.FatalIf(
-		t,
-		err == nil || metadata.Identity != "",
-		"%s",
-		"invalid current directory authorized a metadata hit",
-	)
+	assert.FatalIf(t, err == nil || current != "", "%s", "invalid current directory authorized a metadata hit")
 
 	{
 		_, ok := errors.AsType[*CacheError](err)

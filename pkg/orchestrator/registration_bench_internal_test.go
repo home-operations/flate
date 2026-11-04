@@ -115,7 +115,7 @@ func benchmarkDirtyRerunDynamicEmissionChainCase(b *testing.B, root *string, wor
 	var renders int64
 	b.ReportAllocs()
 	for b.Loop() {
-		input, path, err := baseline.AdmitDirectory(b.Context(), cfg.Path, cfg.RepoRoot)
+		input, path, err := baseline.AdmitDirectory(b.Context(), cfg.Path, cfg.RepoRoot, manifest.WorkScope{})
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -135,7 +135,7 @@ func benchmarkDirtyRerunDynamicEmissionChainCase(b *testing.B, root *string, wor
 			},
 		)
 		tree.Input, tree.Path = input, path
-		o := newOrchestrator(new(config), new(tree), task.NewBounded(config.Concurrency))
+		o := newOrchestrator(b.Context(), new(config), new(tree), task.NewBounded(config.Concurrency))
 		if localErr := o.bootstrap(b.Context()); localErr != nil {
 			b.Fatal(localErr)
 		}

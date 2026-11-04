@@ -26,6 +26,7 @@ import (
 )
 
 type options struct {
+	Work manifest.WorkScope
 	// Projections shares source-free producer facts during paired planning.
 	Projections *manifest.ProducerProjections
 	// HistoryOwners supplies immutable positive owner reach from accepted source paths.
@@ -49,6 +50,7 @@ type options struct {
 // Load classifies the entry for all subsequent loads; independent entry policies
 // require separate loaders.
 type Loader struct {
+	work    *manifest.WorkRecord
 	Store   *store.Store
 	Options options
 	// SourceRoot anchors slash-separated discovery coordinates and bounds
@@ -108,7 +110,8 @@ const (
 // New initializes discovery state.
 func New(s *store.Store) *Loader {
 	return &Loader{
-		Store:     s,
+		work:  s.WorkScope().Traversal(manifest.BootstrapSourceID),
+		Store: s, Options: options{Work: s.WorkScope()},
 		Index:     &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}},
 		documents: documentReader{cache: map[string]document{}, views: map[string]fs.FS{}},
 	}
@@ -292,7 +295,14 @@ func (l *Loader) inactiveKustomization(id manifest.NamedResource) bool {
 
 func (l *Loader) kustomizations() []store.Child {
 	objects := l.Store.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)
-	out := make([]store.Child, 0, len(objects))
+	count := len(objects)
+	for id := range l.Index.Files() {
+		if id.Group == manifest.FluxKustomizeDomain && id.Kind == manifest.KindKustomization &&
+			l.Store.GetObject(id) == nil {
+			count++
+		}
+	}
+	out := make([]store.Child, 0, count)
 	l.eachKustomization(objects, func(child store.Child) { out = append(out, child) })
 	slices.SortFunc(out, func(a, b store.Child) int { return a.Obj.Named().Compare(b.Obj.Named()) })
 	return out
@@ -373,10 +383,14 @@ func (l *Loader) References(id manifest.NamedResource) iter.Seq[manifest.Referen
 // kustomize packages it encounters, loading every YAML otherwise.
 //
 // Honors ctx cancellation; visited-set protects against cycles.
-func (l *Loader) Load(ctx context.Context, root string) (int, error) {
+func (l *Loader) Load(ctx context.Context, root string, work *manifest.WorkRecord) (_ int, resultErr error) {
 	if l.Store == nil {
 		return 0, errors.New("loader: Store is nil")
 	}
+	defer func() {
+		work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
+		work.Finish(resultErr)
+	}()
 	l.documents.compact = l.Options.Selection.Changed || len(l.Options.Selection.Roots) != 0
 	l.mountSources()
 	abs, err := filepath.Abs(root)
@@ -406,6 +420,7 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 	builder := l.documents.read(abs).file
 	l.setEntry(abs, builder)
 	if _, scanned := l.scopes.scanned[abs]; scanned {
+		work = nil
 		return 0, nil
 	}
 	l.scopes.complete = false
@@ -418,12 +433,14 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 		}
 	}
 	w := traversal{
+		work:      work,
 		documents: l.documents, policy: traversalAdmission, loader: l,
 		ignore: ignore, directories: map[string]struct{}{},
 		build: builder != "", ignoreCache: map[ignoreKey]bool{},
 	}
 	if l.documents.compact {
 		l.loadCompact(ctx, abs, &w)
+		work = w.work
 	} else {
 		w.walk(ctx, graphVisit{root: abs, file: abs}, nil)
 	}
@@ -823,6 +840,7 @@ func (l *Loader) loadCompact(ctx context.Context, abs string, w *traversal) {
 	key := loadContext{path: abs, ignore: l.IgnoreFile}
 	facts, replay := sourceState.loads[key]
 	if replay && facts.complete {
+		w.work = nil
 		for file, directory := range facts.directories {
 			l.documents.restore(file)
 			doc := l.documents.cache[file]

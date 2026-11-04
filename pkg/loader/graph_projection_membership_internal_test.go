@@ -231,7 +231,7 @@ spec:
 	l.SourceRoot = root
 	l.Options.Selection.Changed = true
 	admitForTest(l.Store, root)
-	_, err := l.Load(t.Context(), filepath.Join(root, "flux"))
+	_, err := l.Load(t.Context(), filepath.Join(root, "flux"), nil)
 	assert.NoError(t, err)
 	child := testutil.KustomizationID("apps", "child")
 	owner := manifest.NamedResource{
@@ -325,7 +325,7 @@ func testAdmitGraphProjectionMembershipNamespaceAuthority(t *testing.T) {
 			testutil.WriteFile(t, root, "payload/kustomization.yaml", "resources: []\n")
 			l := New(store.New())
 			l.SourceRoot = root
-			_, err := l.Load(t.Context(), root)
+			_, err := l.Load(t.Context(), root, nil)
 			assert.NoError(t, err)
 			l.Admit(root)
 			ext := manifest.NamedResource{
@@ -334,8 +334,11 @@ func testAdmitGraphProjectionMembershipNamespaceAuthority(t *testing.T) {
 				Namespace: "flux-system",
 				Name:      "external",
 			}
-			external := SourceView(l.Store, ext, root).External
+			sourceViewResult := SourceView(l.Store, ext, root)
+			external := sourceViewResult.External
+
 			assert.FatalIf(t, !external, "%s", "foreign source was not classified external")
+
 			check := func() manifest.BaseManifest {
 				t.Helper()
 				id := checkMembershipNamespace(t, l)
@@ -418,7 +421,7 @@ func testAdmitGraphProjectionCase(t *testing.T, testCaseInput *struct {
 	testutil.WriteFile(t, root, "excluded/kustomization.yaml", "resources: []\n")
 	l := New(store.New())
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	l.Admit(root)
 	ext := manifest.NamedResource{
@@ -427,7 +430,8 @@ func testAdmitGraphProjectionCase(t *testing.T, testCaseInput *struct {
 		Namespace: "flux-system",
 		Name:      "external",
 	}
-	external := SourceView(l.Store, ext, root).External
+	sourceViewResult2 := SourceView(l.Store, ext, root)
+	external := sourceViewResult2.External
 	assert.Equal(t, external, true)
 	assert.Equal(t, slices.Contains(l.scopes.roots, entry), testCaseInput.listed)
 	assert.Equal(t, l.documents.cache[filepath.Join(root, entry)].buildExcluded, !testCaseInput.listed)
@@ -497,9 +501,9 @@ func testAdmitGraphProjectionCase2(t *testing.T, testCaseInput *struct {
 	)
 	l := New(store.New())
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
-	_, err = l.Load(t.Context(), filepath.Join(root, "apps", "component"))
+	_, err = l.Load(t.Context(), filepath.Join(root, "apps", "component"), nil)
 	assert.NoError(t, err)
 	l.Admit(root)
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "authored", Name: "child"}
@@ -511,6 +515,7 @@ func testAdmitGraphProjectionCase2(t *testing.T, testCaseInput *struct {
 		visits := l.scopes.visits[r.Path]
 		for i := range visits {
 			v := visits[i]
+
 			assert.FatalIf(
 				t,
 				v.source.Name == "external",
@@ -550,7 +555,7 @@ func testAdmitGraphProjectionProjectionCompatibility(t *testing.T) {
 	testutil.WriteFile(t, root, "app/ns.yaml", "apiVersion: v1\nkind: Namespace\nmetadata: {name: apps}\n")
 	l := New(store.New())
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	l.Admit(root)
 
@@ -578,12 +583,14 @@ func testAdmitGraphProjectionProjectionCompatibility(t *testing.T) {
 		Name:      "source",
 	}
 	source, ok := l.candidates[sourceID].Obj.(*manifest.GitRepository)
+
 	assert.FatalIf(
 		t,
 		!ok || l.Store.GetObject(sourceID) != source,
 		"%s",
 		"projected source missing from candidate or store",
 	)
+
 	publishedSource := source.WithNamespace(source.Namespace)
 	l.Store.DeleteObject(sourceID)
 	l.Store.AddObject(publishedSource)
@@ -651,7 +658,7 @@ func testAdmitGraphProjectionPathWitnessConstructionLifetime(t *testing.T) {
 	}
 	l := New(store.New())
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	witnesses := l.PathObjects()
 	assert.Equal(t, len(witnesses), 2)

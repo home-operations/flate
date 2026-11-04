@@ -34,7 +34,7 @@ func (d *Session) loadEntryInput(ctx context.Context, l *loader.Loader, total *i
 		return fmt.Errorf("--path %q is not a directory", d.cfg.Path)
 	}
 	l.IgnoreFile = d.cfg.KRMIgnoreFile
-	if err := d.loadAt(ctx, d.cfg.Path, total); err != nil {
+	if err := d.loadAt(ctx, d.cfg.Path, total, d.cfg.Work.Record(manifest.WorkPreparation, d.cfg.Path)); err != nil {
 		return err
 	}
 	l.IgnoreFile = ""
@@ -82,7 +82,15 @@ func (d *Session) loadExpansions(
 		if !safepath.Contains(sourceRoot, target) {
 			continue
 		}
-		loaded, loadErr := d.loadSourcePath(ctx, target, key.source, total)
+		loaded, loadErr := d.loadSourcePath(
+			ctx,
+			target,
+			total,
+			sourceLoad{
+				input: key.source,
+				work:  d.cfg.Work.Source(ks.SourceID()).Record(manifest.WorkPreparation, target),
+			},
+		)
 		if loadErr != nil {
 			return next, added, loadErr
 		}

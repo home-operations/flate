@@ -79,14 +79,14 @@ func TestAdmission_ParentPatchRemoval(t *testing.T) {
 		l.SourceRoot = root
 		l.Options.Selection = manifest.Selection{Changed: true}
 		l.Options.Filter = change.NewFilter()
-		_, err := l.Load(t.Context(), filepath.Join(root, "flux"))
+		_, err := l.Load(t.Context(), filepath.Join(root, "flux"), nil)
 		assert.NoError(t, err)
-		_, err = l.Load(t.Context(), filepath.Join(root, "app"))
+		_, err = l.Load(t.Context(), filepath.Join(root, "app"), nil)
 		assert.NoError(t, err)
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 		stores[side], loaders[side] = st, l
 	}
-	changes, err := change.Qualify(t.Context(), nil, stores[0], stores[1])
+	changes, err := change.Qualify(t.Context(), nil, [2]*store.Store{stores[0], stores[1]}, manifest.WorkScope{})
 	assert.NoError(t, err)
 	for side, l := range loaders {
 		l.Options.Changes = changes
@@ -167,56 +167,8 @@ func testAdmissionChangedDeclarationsPrepareLinearlyCase(
 ) {
 	t.Helper()
 
-	root := t.TempDir()
-	files := fstest.MapFS{}
-	paths := make([]string, (*testCaseInput))
-	for i := range paths {
-		name := fmt.Sprintf("item-%05d", i)
-		paths[i] = name + ".yaml"
-		files[paths[i]] = &fstest.MapFile{
-			Data: []byte(testutil.KustomizationYAML(name, "apps", "  suspend: true\n")),
-		}
-	}
-	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
-	l := New(st)
-	l.SourceRoot = root
-	l.Options.Selection = manifest.Selection{Changed: true}
-	l.Options.Changes = change.NewSet(paths)
-	l.Options.Filter = change.NewFilter()
-	_, err := l.Load(t.Context(), root)
-	assert.NoError(t, err)
-	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
-	for _, published := range []bool{false, true} {
-		reads := &admissionArtifactReads{admissionReader: st}
-		c := admissionClosure{loader: l, objects: reads}
-		c.proposal = &c.result
-		proposal, evaluateErr := c.evaluate(t.Context(), nil)
-		assert.NoError(t, evaluateErr)
-		assert.Equal(t, len(proposal.Selected), (*testCaseInput))
-		wantObjects := (*testCaseInput)
-		if published {
-			wantObjects = 0
-		}
-		assert.Equal(t, len(proposal.Objects), wantObjects)
-		t.Logf(
-			"%d declarations, published %v: %d artifact reads, %d inventories", (*testCaseInput), published,
-			reads.calls,
-			reads.lists,
-		)
-		if reads.calls > 32*(*testCaseInput)+32 {
-			t.Errorf(
-				"%d changed declarations caused %d artifact reads; want at most %d",
-				(*testCaseInput),
-				reads.calls,
-				32*(*testCaseInput)+32,
-			)
-		}
-		assert.Equal(t, reads.lists, 1)
-		for _, child := range proposal.Objects {
-			st.AddObject(child.Obj, child.Doc)
-		}
-	}
+	l := publishedAdmissionDeclarations(t, *testCaseInput)
+	st := l.Store
 	var required store.ReadSet
 	required.Init(st, manifest.NamedResource{}, nil)
 	defer required.Close()
@@ -310,7 +262,7 @@ func testAdmissionHistoryOwnerDeclarationAndInputsCase(
 	if *testCaseInput {
 		l.Options.HistoryOwners = []manifest.NamedResource{owner}
 	}
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 	for range 2 {

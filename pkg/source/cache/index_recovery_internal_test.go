@@ -38,7 +38,7 @@ func TestNew_UnreadableIndexRebuilds(t *testing.T) {
 		_, _, _, err := c.Acquire(
 			t.Context(),
 			key,
-			Policy{MaxAge: time.Hour},
+			&Policy{MaxAge: time.Hour},
 			producer(data, &ocispec.Descriptor{}),
 		)
 		assert.NoError(t, err)
@@ -64,7 +64,7 @@ func TestNew_UnreadableIndexRebuilds(t *testing.T) {
 	input, _, _, err := c.Acquire(
 		t.Context(),
 		key,
-		Policy{MaxAge: time.Hour},
+		&Policy{MaxAge: time.Hour},
 		func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 			calls++
 			return producer(data, &ocispec.Descriptor{})(ctx, w)

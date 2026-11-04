@@ -333,7 +333,7 @@ func (a *Admission) qualifyEntry(
 			continue
 		}
 		resolved := a.applicationSource(st, &application)
-		qualified, err := a.qualifyApplication(ctx, &application, &resolved)
+		qualified, err := a.qualifyApplication(ctx, &application, &resolved, st.WorkScope())
 		if err != nil {
 			return nil, err
 		}
@@ -351,7 +351,7 @@ func (a *Admission) qualifyEntry(
 			}
 		}
 		obj, application, resolved := evidence.object, evidence.application, evidence.source
-		qualified, err := a.qualifyApplication(ctx, &application, &resolved)
+		qualified, err := a.qualifyApplication(ctx, &application, &resolved, st.WorkScope())
 		if err != nil {
 			return nil, err
 		}
@@ -367,11 +367,12 @@ func (a *Admission) qualifyApplication(
 	ctx context.Context,
 	application *manifest.EntryApplication,
 	resolved *entryResolution,
+	work manifest.WorkScope,
 ) (bool, error) {
 	artifact := resolved.artifact
 	if artifact == nil {
 		var err error
-		*resolved, err = a.resolve(ctx, application.Source, resolved.object)
+		*resolved, err = a.resolve(ctx, application.Source, resolved.object, work)
 		if err != nil {
 			return false, err
 		}
@@ -552,6 +553,7 @@ func (d *Session) entryReceipt(ctx context.Context, a *Admission) {
 	q.previous = d.cfg.Trees.PreviousEntry(
 		ctx,
 		kustomize.RenderRequest{
+			Work:                    d.cfg.Work.RenderWork(),
 			Source:                  d.cfg.Input,
 			ApplyIgnore:             true,
 			SubPath:                 root.Path,

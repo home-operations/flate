@@ -5,14 +5,14 @@ import (
 	"testing"
 	"testing/fstest"
 
+	chartcommon "helm.sh/helm/v4/pkg/chart/common"
+	chart "helm.sh/helm/v4/pkg/chart/v2"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
-
-	chartcommon "helm.sh/helm/v4/pkg/chart/common"
-	chart "helm.sh/helm/v4/pkg/chart/v2"
 )
 
 // allow is the default top-level allowlist for walker tests (no chart deps).
@@ -305,9 +305,37 @@ func TestStaleValuePaths_MutableCapture(t *testing.T) {
 	}
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: input, Key: "misleading"})
 
-	assert.Diff(t, cli.StaleValuePaths(t.Context(), hr, vals("first", "second"), NewSources(st)), []string{"second"})
+	assert.Diff(
+
+		t,
+
+		cli.StaleValuePaths(
+			t.Context(),
+			hr,
+			vals(
+				"first",
+				"second",
+			), &RenderOptions{
+				Sources: NewSources(
+					st,
+				),
+			},
+		),
+
+		[]string{
+			"second",
+		},
+	)
 	input["templates/cm.yaml"].Data = []byte("{{ .Values.second }}")
-	assert.Diff(t, cli.StaleValuePaths(t.Context(), hr, vals("first", "second"), NewSources(st)), []string{"first"})
+	assert.Diff(
+		t,
+		cli.StaleValuePaths(t.Context(), hr, vals("first", "second"), &RenderOptions{Sources: NewSources(st)}),
+		[]string{"first"},
+	)
 	input["Chart.yaml"].Data = []byte("invalid")
-	assert.Equal(t, len(cli.StaleValuePaths(t.Context(), hr, vals("first", "second"), NewSources(st))), 0)
+	assert.Equal(
+		t,
+		len(cli.StaleValuePaths(t.Context(), hr, vals("first", "second"), &RenderOptions{Sources: NewSources(st)})),
+		0,
+	)
 }

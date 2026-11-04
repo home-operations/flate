@@ -36,7 +36,7 @@ func TestFetcher_ProviderTransportValidation(t *testing.T) {
 				}
 			}}
 			fetcher := &Fetcher{Network: newTestNetwork(t)}
-			_, err := fetcher.Fetch(t.Context(), repo, inputs.readSet(repo), sourcecache.Policy{})
+			_, err := fetcher.Fetch(t.Context(), repo, inputs.readSet(repo), &sourcecache.Policy{})
 			assert.FatalIf(
 				t,
 				!errors.Is(err, manifest.ErrInput) || errors.Is(err, manifest.ErrMissingSecret),
@@ -75,7 +75,7 @@ func TestFetcher_ProviderRegistryMatching(t *testing.T) {
 				}
 			}}
 			fetcher := &Fetcher{Network: newTestNetwork(t), RegistryConfig: config}
-			_, err := fetcher.Fetch(t.Context(), repo, inputs.readSet(repo), sourcecache.Policy{})
+			_, err := fetcher.Fetch(t.Context(), repo, inputs.readSet(repo), &sourcecache.Policy{})
 			missing, ok := errors.AsType[*source.MissingSecretError](err)
 			assert.FatalIf(
 				t,

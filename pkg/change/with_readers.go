@@ -22,6 +22,11 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
+type fileScan struct {
+	entries     map[string]fileMeta
+	ignoreFiles []string
+}
+
 type readerScope struct {
 	changes        *Set
 	bindings       *Set
@@ -31,11 +36,17 @@ type readerScope struct {
 	usable         [2]bool
 	qualified      [2]map[manifest.NamedResource]bool
 	contents       [2]map[string]map[manifest.NamedResource]string
+	work           *manifest.WorkRecord
 	out            *Set
 }
 
-func (s *Set) withReaders(indexes [2]*manifest.DiscoveryIndex, bindings *Set, evidence *readerComparison) *Set {
-	r := readerScope{changes: s, bindings: bindings, evidence: evidence, indexes: indexes}
+func (s *Set) withReaders(
+	indexes [2]*manifest.DiscoveryIndex,
+	bindings *Set,
+	evidence *readerComparison,
+	work *manifest.WorkRecord,
+) *Set {
+	r := readerScope{changes: s, bindings: bindings, evidence: evidence, indexes: indexes, work: work}
 	r.initialize()
 	r.resetDeclaredKnown()
 	r.contents = s.oneSided
@@ -141,6 +152,7 @@ func (r *readerScope) collectDeclaredContents() {
 	for side, index := range r.indexes {
 		r.contents[side] = maps.Clone(r.contents[side])
 		for id, record := range index.Files() { //nolint:gocritic // The iterator supplies independent value snapshots.
+			r.work.Add(&manifest.WorkCounts{FileEntries: 1})
 			file := r.fileAt(side, record.File)
 			if !r.changes.Contains(file) || !r.qualifiedRecord(side, &record) {
 				continue
@@ -169,6 +181,7 @@ func (r *readerScope) compareDeclarations() {
 	}
 	for side, index := range r.indexes {
 		for id, record := range index.Files() { //nolint:gocritic // The iterator supplies independent value snapshots.
+			r.work.Add(&manifest.WorkCounts{FileEntries: 1})
 			r.compareDeclared(side, id, &record)
 		}
 	}
@@ -328,6 +341,7 @@ func (r *readerScope) routeReaders() {
 			files[r.coordinate(side, name)] = name
 		}
 		for id, record := range index.Files() { //nolint:gocritic // The iterator supplies independent value snapshots.
+			r.work.Add(&manifest.WorkCounts{FileEntries: 1})
 			r.routeRecord(side, id, &record, files)
 		}
 		r.routeOneSided(side, index)
@@ -336,7 +350,9 @@ func (r *readerScope) routeReaders() {
 
 func (r *readerScope) routeOneSided(side int, index *manifest.DiscoveryIndex) {
 	for name := range r.changes.oneSided[side] {
+		r.work.Add(&manifest.WorkCounts{FileEntries: 1})
 		for reader := range index.ReadersOfFile(r.coordinate(side, name)) {
+			r.work.Add(&manifest.WorkCounts{ReaderEdges: 1})
 			r.routeInputReader(side, name, &reader)
 		}
 	}
@@ -521,9 +537,11 @@ type fileMeta struct {
 // survive, matching github.com/fluxcd/pkg/sourceignore v0.19.0 LoadIgnorePatterns.
 func scanTree(
 	ctx context.Context,
-	input, opposite *store.SourceArtifact,
+	inputs [2]*store.SourceArtifact,
 	digests map[string]string,
+	work *manifest.WorkRecord,
 ) (map[string]fileMeta, error) {
+	input, opposite := inputs[0], inputs[1]
 	out := make(map[string]fileMeta)
 	scoped := input.FS
 	oppositeName, err := filepath.Rel(input.LocalPath, opposite.LocalPath)
@@ -534,6 +552,7 @@ func scanTree(
 	if digests != nil {
 		oppositePrefix := oppositeName + "/"
 		for name := range digests {
+			work.Add(&manifest.WorkCounts{FileEntries: 1})
 			if name != oppositeName && !strings.HasPrefix(name, oppositePrefix) {
 				out[name] = fileMeta{}
 			}
@@ -541,7 +560,8 @@ func scanTree(
 		return out, nil
 	}
 
-	files, err := scanFiles(ctx, scoped, oppositeName, out)
+	scanned, err := scanFiles(ctx, scoped, oppositeName, work)
+	out, files := scanned.entries, scanned.ignoreFiles
 	if err != nil {
 		return nil, err
 	}
@@ -558,9 +578,16 @@ func scanTree(
 	return out, nil
 }
 
-func scanFiles(ctx context.Context, scoped fs.FS, oppositeName string, out map[string]fileMeta) ([]string, error) {
+func scanFiles(
+	ctx context.Context,
+	scoped fs.FS,
+	oppositeName string,
+	work *manifest.WorkRecord,
+) (fileScan, error) {
+	out := make(map[string]fileMeta)
 	files := []string{}
 	err := fs.WalkDir(scoped, ".", func(name string, d fs.DirEntry, err error) error {
+		work.Add(&manifest.WorkCounts{FileEntries: 1})
 		if err != nil {
 			return err
 		}
@@ -587,9 +614,9 @@ func scanFiles(ctx context.Context, scoped fs.FS, oppositeName string, out map[s
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("walk: %w", err)
+		return fileScan{}, fmt.Errorf("walk: %w", err)
 	}
-	return files, nil
+	return fileScan{entries: out, ignoreFiles: files}, nil
 }
 
 type hashBuffer struct {

@@ -275,7 +275,7 @@ spec: {url: "https://charts.example.invalid", interval: 24h}
 			}{repository.Content(), chart.Content(), nil},
 			Required: []string{"chart-version", "chart-url"},
 		},
-		sourcecache.Policy{MaxAge: time.Hour},
+		&sourcecache.Policy{MaxAge: time.Hour},
 		func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 			_, writeErr := w.Write(archive)
 			return sourcecache.ProducerResult{

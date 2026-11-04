@@ -53,13 +53,13 @@ func testRenderTreesAdmittedViewsCaseSegment(
 		statementInput.cfg.BaseInput, _, err = baseline.AdmitDirectory(
 			t.Context(),
 			(*statementInput.baseRoot),
-			(*statementInput.baseRoot),
+			(*statementInput.baseRoot), manifest.WorkScope{},
 		)
 		assert.NoError(t, err)
 		statementInput.cfg.Input, _, err = baseline.AdmitDirectory(
 			t.Context(),
 			(*statementInput.headRoot),
-			(*statementInput.headRoot),
+			(*statementInput.headRoot), manifest.WorkScope{},
 		)
 		assert.NoError(t, err)
 		statementInput.cfg.Input.LocalPath, statementInput.cfg.Input.LocalRoot = (*statementInput.baseRoot), (*statementInput.baseRoot)
@@ -151,7 +151,7 @@ func selectedAliasAdmittedViews(t *testing.T, statementInput *testRenderTreesAdm
 		source := (&manifest.GitRepository{Name: "cluster", Namespace: "flux-system"}).Named()
 		left := base.Store().GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
 		right := head.Store().GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
-		payload, err := change.Detect(t.Context(), left, right)
+		payload, err := change.Detect(t.Context(), left, right, manifest.WorkScope{})
 		assert.NoError(t, err)
 		if (*(*statementInput.testCaseInput)) != "selected_payload_only" {
 			assert.Equal(t, payload.Len(), 0)

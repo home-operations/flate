@@ -169,7 +169,9 @@ func newShard() *shard {
 // orchestrator (pkg/orchestrator/orchestrator.go) follow the
 // clone-then-AddObject pattern; any new mutation site should too.
 type Store struct {
-	shards [shardCount]*shard
+	workTree  manifest.TreeID
+	workScope manifest.WorkScope
+	shards    [shardCount]*shard
 
 	index    atomic.Pointer[manifest.DiscoveryIndex]
 	coverage map[manifest.NamedResource]*contributor

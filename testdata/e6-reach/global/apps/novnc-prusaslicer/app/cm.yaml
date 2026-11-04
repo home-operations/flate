@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: novnc-prusaslicer
+  namespace: flux-system
+data:
+  value: unchanged

@@ -576,8 +576,11 @@ func benchmarkSourceValuesPersistence(b *testing.B, inputs *benchmarkSourceValue
 	output := encodedRender(b, []map[string]any{witness})
 	_, _, _, err := (*inputs.owner).Blob(
 		b.Context(),
-		sourcecache.BlobKey{Content: inputs.loaded.record.key, Render: sourcecache.RenderAccepted},
-		sourcecache.Policy{},
+		sourcecache.BlobKey{
+			Content: inputs.loaded.record.key,
+			Render:  sourcecache.RenderAccepted,
+		},
+		&sourcecache.Policy{},
 		func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 			err := writeTestRecord(
 				w,

@@ -1,0 +1,16 @@
+{{ if .Values.provide }}
+apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata: {name: flux, namespace: flux-system}
+spec:
+  distribution: {version: 2.8.8, registry: ghcr.io/fluxcd}
+  sync: {name: cluster, kind: GitRepository, url: {{ .Values.url | quote }}, ref: refs/heads/main, path: ./kubernetes/apps}
+{{ else }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-reach
+  namespace: {{ .Release.Namespace }}
+data:
+  values: {{ toJson .Values | quote }}
+{{ end }}

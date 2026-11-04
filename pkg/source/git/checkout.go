@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/transport"
@@ -28,12 +27,7 @@ func checkoutRef(repo *git.Repository, hash plumbing.Hash, sparse []string) erro
 }
 
 // Flux reuses the parent's credentials for submodules on every host.
-func (f *Fetcher) updateSubmodules(
-	ctx context.Context,
-	repo *git.Repository,
-	auth transport.AuthMethod,
-	depth git.SubmoduleRescursivity,
-) error {
+func (f *Fetcher) updateSubmodules(ctx context.Context, repo *git.Repository, options submoduleOptions) error {
 	wt, err := repo.Worktree()
 	if err != nil {
 		return err //nolint:wrapcheck // The go-git checkout and submodule adapters retain upstream protocol errors for source classification.
@@ -57,21 +51,30 @@ func (f *Fetcher) updateSubmodules(
 		if err != nil {
 			return err //nolint:wrapcheck // The go-git checkout and submodule adapters retain upstream protocol errors for source classification.
 		}
-		if _, err := f.validateRepo(
-			manifest.NewGitRepository(
-				sourcev1.GitRepository{Spec: sourcev1.GitRepositorySpec{URL: remote.Config().URLs[0]}},
-			),
-		); err != nil {
+		endpoint, err := f.validateRepo(manifest.NewGitRepository(sourcev1.GitRepository{
+			Spec: sourcev1.GitRepositorySpec{URL: remote.Config().URLs[0]},
+		}))
+		if err != nil {
 			return fmt.Errorf("validate submodule %q: %w", sub.Config().Name, err)
 		}
-		if err := sub.UpdateContext(ctx, &git.SubmoduleUpdateOptions{Auth: auth}); err != nil {
+		err = sub.UpdateContext(ctx, &git.SubmoduleUpdateOptions{Auth: options.auth})
+		recordTransfer(options.work, endpoint.Protocol, err)
+		if err != nil {
 			return err //nolint:wrapcheck // The go-git checkout and submodule adapters retain upstream protocol errors for source classification.
 		}
-		if depth > 0 {
-			if err := f.updateSubmodules(ctx, child, auth, depth-1); err != nil {
+		if options.depth > 0 {
+			if err := f.updateSubmodules(ctx, child, submoduleOptions{
+				auth: options.auth, depth: options.depth - 1, work: options.work,
+			}); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+type submoduleOptions struct {
+	auth  transport.AuthMethod
+	depth git.SubmoduleRescursivity
+	work  *manifest.AcquisitionWork
 }

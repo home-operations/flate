@@ -20,6 +20,7 @@ import (
 )
 
 type bucketAcquisition struct {
+	work     manifest.AcquisitionWork
 	network  *source.Network
 	bucket   *manifest.Bucket
 	endpoint string

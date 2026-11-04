@@ -67,7 +67,7 @@ func TestResolveChart_DiskCacheSkipsIndexWarm(t *testing.T) {
 			t.Context(),
 			helmChart("repo", "app-template", "1.0.0"),
 			coldInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
-			sourcecache.Policy{},
+			&sourcecache.Policy{},
 		)
 		assert.FatalIf(t, err != nil, "cold Fetch: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestResolveChart_DiskCacheSkipsIndexWarm(t *testing.T) {
 			t.Context(),
 			helmChart("repo", "app-template", "1.0.0"),
 			warmInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
-			sourcecache.Policy{},
+			&sourcecache.Policy{},
 		)
 		assert.FatalIf(t, err != nil, "warm Fetch: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestResolveChart_StaleIntervalRefetches(t *testing.T) {
 				t.Context(),
 				helmChart("repo", "app-template", "1.0.0"),
 				fInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
-				sourcecache.Policy{},
+				&sourcecache.Policy{},
 			)
 			assert.FatalIf(t, err != nil, "Fetch %d: %v", i, err)
 		}
@@ -139,7 +139,7 @@ func TestResolveChart_DigestlessWarmSkipsIndex(t *testing.T) {
 			t.Context(),
 			helmChart("repo", "app-template", "1.0.0"),
 			coldInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
-			sourcecache.Policy{},
+			&sourcecache.Policy{},
 		)
 		assert.FatalIf(t, err != nil, "cold Fetch: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestResolveChart_DigestlessWarmSkipsIndex(t *testing.T) {
 			t.Context(),
 			helmChart("repo", "app-template", "1.0.0"),
 			warmInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
-			sourcecache.Policy{},
+			&sourcecache.Policy{},
 		)
 		assert.FatalIf(t, err != nil, "warm Fetch: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestResolveChart_ExactVersionForever(t *testing.T) {
 				t.Context(),
 				helmChart("repo", "app-template", "1.0.0"),
 				fInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
-				sourcecache.Policy{},
+				&sourcecache.Policy{},
 			)
 			assert.NoError(t, err)
 		}
@@ -192,7 +192,7 @@ func TestResolveChart_ExactVersionForever(t *testing.T) {
 			t.Context(),
 			helmChart("repo", "app-template", "*"),
 			fInputs.readSet(helmChart("repo", "app-template", "*")),
-			sourcecache.Policy{},
+			&sourcecache.Policy{},
 		)
 		assert.NoError(t, err)
 	}

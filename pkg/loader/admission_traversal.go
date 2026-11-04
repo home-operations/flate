@@ -380,6 +380,7 @@ func (c *admissionClosure) selectProductionReaders(
 	if owner != (manifest.NamedResource{}) && filepath.IsAbs(p.Path) {
 		file := c.coordinates(new(p)).indexed
 		for reader := range c.loader.Index.ReadersOfFile(file) {
+			c.objects.WorkScope().Admission().Add(&manifest.WorkCounts{ReaderEdges: 1})
 			if reader.Declaration != (manifest.NamedResource{}) {
 				continue
 			}

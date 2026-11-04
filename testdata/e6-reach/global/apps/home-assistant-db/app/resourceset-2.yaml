@@ -1,0 +1,7 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  name: home-assistant-db
+  namespace: home-assistant
+spec:
+  resources: []

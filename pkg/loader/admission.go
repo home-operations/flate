@@ -23,6 +23,7 @@ type Admission struct {
 
 type admissionReader interface {
 	Lookup(manifest.NamedResource) (manifest.BaseManifest, manifest.DeclarationPolicy)
+	WorkScope() manifest.WorkScope
 	GetObject(manifest.NamedResource) manifest.BaseManifest
 	GetDeclaration(manifest.NamedResource) manifest.BaseManifest
 	ReferenceFacts(manifest.NamedResource, *manifest.DiscoveryIndex, manifest.NamedResource) store.ReferenceFacts
@@ -118,6 +119,8 @@ func (l *Loader) Prepare(
 			}
 		}
 	}
+	work := objects.WorkScope().Admission()
+	work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 	closure.objects = objects
 	if !l.frozen && l.scopes != nil {
 		for _, root := range l.StandaloneRoots(l.SourceRoot) {
@@ -127,6 +130,7 @@ func (l *Loader) Prepare(
 		}
 	}
 	proposal, err := closure.evaluate(ctx, reads)
+	work.Finish(err)
 	if err != nil {
 		return nil, err
 	}

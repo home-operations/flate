@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"path/filepath"
 	"slices"
@@ -27,6 +28,7 @@ import (
 
 // Tree identifies an admitted repository side and its requested scan boundary.
 type Tree struct {
+	work            *manifest.WorkRecorder
 	ID              manifest.TreeID
 	RepoRoot        string
 	Path            string
@@ -86,7 +88,7 @@ func RenderTrees(
 		},
 	)
 	budget := task.NewBounded(cfg.Concurrency)
-	trees, err = prepareTrees(ctx, trees)
+	trees, err = prepareTrees(ctx, trees, &cfg)
 	if err != nil {
 		return failedTrees(trees, err), err
 	}
@@ -165,7 +167,7 @@ func failedTrees(trees []Tree, err error) []Rendered {
 		results = make([]Rendered, 0, len(trees))
 	}
 	for _, tree := range trees {
-		result := Rendered{ID: tree.ID, Result: &Result{}}
+		result := Rendered{ID: tree.ID, Result: &Result{Work: tree.work.Scope().Snapshot(0)}}
 		if tree.Input != nil {
 			result.Result.Warnings = tree.Input.Warnings
 		}
@@ -191,15 +193,15 @@ func (r *renderInvocation) discoverTrees(ctx context.Context) {
 			continue
 		}
 		r.wg.Go(func() {
-			o := newOrchestrator(new(*r.cfg), new(tree), r.budget.Fork())
+			o := newOrchestrator(ctx, new(*r.cfg), new(tree), r.budget.Fork())
 			r.stores[i] = o.store
 			r.results[i].Orchestrator = o
 			if failure := o.discover(ctx); failure != nil {
-				warnings := o.store.Warnings()
+				result := o.failureResult()
 				if o.loader != nil && o.session == nil {
-					warnings = tree.Input.Warnings
+					result.Warnings = tree.Input.Warnings
 				}
-				r.results[i].Result = &Result{Warnings: warnings}
+				r.results[i].Result = result
 				r.results[i].Err = &treeError{id: tree.ID, err: failure, attributed: len(r.results) > 1}
 			}
 		})
@@ -226,7 +228,7 @@ func (r *renderInvocation) stopFailedDiscovery() error {
 func (r *renderInvocation) stopRemaining() {
 	for i, result := range r.results {
 		if result.Orchestrator != nil {
-			r.results[i].Result = &Result{Warnings: result.store.Warnings()}
+			r.results[i].Result = result.failureResult()
 			result.stop()
 			r.results[i].Orchestrator = nil
 		}
@@ -244,7 +246,7 @@ func (r *renderInvocation) opposite(i int) (*Orchestrator, int, bool) {
 }
 
 func (r *renderInvocation) recordFailure(i int, err error) {
-	r.results[i].Result = &Result{Warnings: r.results[i].store.Warnings()}
+	r.results[i].Result = r.results[i].failureResult()
 	r.results[i].Err = &treeError{id: r.results[i].ID, err: err, attributed: len(r.results) > 1}
 	r.results[i].Orchestrator = nil
 }
@@ -321,7 +323,12 @@ func (r *renderInvocation) qualifyReaders(ctx context.Context, i int) error {
 		if current.cfg.ID.Side == manifest.TreeHead {
 			base, head = other, current
 		}
-		qualified, err := change.Qualify(ctx, changes, base.store, head.store)
+		qualified, err := change.Qualify(
+			ctx,
+			changes,
+			[2]*store.Store{base.store, head.store},
+			current.cfg.work.Scope(),
+		)
 		if err != nil {
 			for _, side := range []int{i, j} {
 				o := r.results[side].Orchestrator
@@ -332,7 +339,12 @@ func (r *renderInvocation) qualifyReaders(ctx context.Context, i int) error {
 		}
 		changes = qualified
 	}
-	resolved, err := changes.WithReaders(ctx, before, after, inputs)
+	resolved, err := changes.WithReaders(
+		ctx,
+		[2]*manifest.DiscoveryIndex{before, after},
+		inputs,
+		current.cfg.work.Scope(),
+	)
 	if err != nil {
 		return err
 	}
@@ -373,7 +385,7 @@ func (r *renderInvocation) completeDiscovery(ctx context.Context) {
 		r.wg.Go(func() {
 			if failure := o.discover(ctx); failure != nil {
 				r.results[i].Err = &treeError{id: r.results[i].ID, err: failure, attributed: len(r.results) > 1}
-				r.results[i].Result = &Result{Warnings: o.store.Warnings()}
+				r.results[i].Result = o.failureResult()
 				o.stop()
 				r.results[i].Orchestrator = nil
 			}
@@ -400,7 +412,10 @@ func (r *renderInvocation) qualifyDeclarations(ctx context.Context) error {
 			base, head = head, base
 		}
 		prepared := o.declarationChildren(other, base, head)
-		changes, err := o.cfg.ExternalChanges.WithDeclarations(ctx, base, head, prepared)
+		changes, err := o.cfg.ExternalChanges.WithDeclarations(
+			ctx,
+			change.DeclarationInputs{Stores: [2]*store.Store{base, head}, Prepared: prepared, Work: o.cfg.work.Scope()},
+		)
 		if err != nil {
 			r.stopDeclarationFailures(i, j, found, err)
 			continue
@@ -475,7 +490,12 @@ func (o *Orchestrator) bindDeclaredReaders(ctx context.Context, other *Orchestra
 			before, after = after, before
 			inputs[0], inputs[1] = inputs[1], inputs[0]
 		}
-		resolved, err := changes.WithReaders(ctx, before, after, inputs)
+		resolved, err := changes.WithReaders(
+			ctx,
+			[2]*manifest.DiscoveryIndex{before, after},
+			inputs,
+			o.cfg.work.Scope(),
+		)
 		if err != nil {
 			return err
 		}
@@ -490,7 +510,7 @@ func (o *Orchestrator) bindDeclaredReaders(ctx context.Context, other *Orchestra
 		before, after = after, before
 		inputs[0], inputs[1] = inputs[1], inputs[0]
 	}
-	resolved, err := changes.WithReaders(ctx, before, after, inputs)
+	resolved, err := changes.WithReaders(ctx, [2]*manifest.DiscoveryIndex{before, after}, inputs, o.cfg.work.Scope())
 	if err != nil {
 		return err
 	}
@@ -499,7 +519,7 @@ func (o *Orchestrator) bindDeclaredReaders(ctx context.Context, other *Orchestra
 	if o.cfg.ID.Side == manifest.TreeHead {
 		before, after = after, before
 	}
-	resolved, err = changes.WithReaders(ctx, before, after, inputs)
+	resolved, err = changes.WithReaders(ctx, [2]*manifest.DiscoveryIndex{before, after}, inputs, other.cfg.work.Scope())
 	if err != nil {
 		return err
 	}
@@ -520,7 +540,7 @@ func (r *renderInvocation) installAdmission(ctx context.Context) {
 				failure = o.installAdmission(ctx)
 			}
 			if failure != nil {
-				r.results[i].Result = &Result{Warnings: o.store.Warnings()}
+				r.results[i].Result = o.failureResult()
 				r.results[i].Err = &treeError{id: r.results[i].ID, err: failure, attributed: len(r.results) > 1}
 				o.stop()
 				r.results[i].Orchestrator = nil
@@ -537,6 +557,7 @@ func (r *renderInvocation) renderTrees(ctx context.Context) {
 			continue
 		}
 		if r.cfg.HeadOnly && r.results[i].ID.Side == manifest.TreeBase {
+			r.results[i].Result = &Result{Work: o.freezeWork()}
 			o.stop()
 			r.results[i].Orchestrator = nil
 			continue
@@ -547,7 +568,7 @@ func (r *renderInvocation) renderTrees(ctx context.Context) {
 				o.completeBootstrap()
 				if failure := o.buildChangeFilter(ctx); failure != nil {
 					r.results[i].Orchestrator = nil
-					r.results[i].Result = &Result{Warnings: o.store.Warnings()}
+					r.results[i].Result = o.failureResult()
 					r.results[i].Err = &treeError{id: r.results[i].ID, err: failure, attributed: len(r.results) > 1}
 					return
 				}
@@ -562,10 +583,10 @@ func (r *renderInvocation) renderTrees(ctx context.Context) {
 	r.wg.Wait()
 }
 
-func prepareTrees(ctx context.Context, trees []Tree) ([]Tree, error) {
+func prepareTrees(ctx context.Context, trees []Tree, cfg *Config) ([]Tree, error) {
 	trees = slices.Clone(trees)
 	admitted := make(map[string]*store.SourceArtifact)
-	if err := prepareTreeInputs(ctx, trees, admitted); err != nil {
+	if err := prepareTreeInputs(ctx, trees, admitted, cfg); err != nil {
 		return trees, err
 	}
 	changes := make(map[[2]*store.SourceArtifact]*change.Set)
@@ -616,7 +637,7 @@ func prepareTreeChanges(ctx context.Context, tree *Tree, changes map[[2]*store.S
 	if set, ok := changes[pair]; ok {
 		tree.ExternalChanges = set
 	} else {
-		set, err := change.Detect(ctx, pair[0], pair[1])
+		set, err := change.Detect(ctx, pair[0], pair[1], tree.work.Scope())
 		if err != nil {
 			return &treeError{id: tree.ID, err: err}
 		}
@@ -625,40 +646,58 @@ func prepareTreeChanges(ctx context.Context, tree *Tree, changes map[[2]*store.S
 	return nil
 }
 
-func prepareTreeInputs(ctx context.Context, trees []Tree, admitted map[string]*store.SourceArtifact) error {
+func prepareTreeInputs(
+	ctx context.Context,
+	trees []Tree,
+	admitted map[string]*store.SourceArtifact,
+	cfg *Config,
+) error {
+	if cfg.RecordWork || slog.Default().Enabled(ctx, slog.LevelDebug) {
+		for i := range trees {
+			tree := &trees[i]
+			tree.work = new(manifest.WorkRecorder)
+			tree.work.Init(&manifest.WorkKey{Tree: tree.ID, Source: manifest.BootstrapSourceID}, trees[0].work.Scope())
+		}
+	}
 	for i := range trees {
-		tree := &trees[i]
-		if tree.Input == nil {
-			scan := cmp.Or(tree.Path, tree.RepoRoot)
-			if scan == "" {
-				return &treeError{
-					id:  tree.ID,
-					err: manifest.NewError(manifest.ErrInput, nil, "tree path is required"),
-				}
-			}
-			input, path, err := baseline.AdmitDirectory(ctx, scan, tree.RepoRoot)
-			if err != nil {
-				return &treeError{id: tree.ID, err: err}
-			}
-			tree.Input, tree.Path = input, path
-			if previous := admitted[input.LocalPath]; previous != nil {
-				tree.Input = previous
-			} else {
-				admitted[input.LocalPath] = input
-			}
+		if err := trees[i].prepareInput(ctx, admitted); err != nil {
+			return err
 		}
-		if tree.Input.FS == nil || tree.Input.LocalPath == "" {
+	}
+	return nil
+}
+
+func (tr *Tree) prepareInput(ctx context.Context, admitted map[string]*store.SourceArtifact) error {
+	if tr.Input == nil {
+		scan := cmp.Or(tr.Path, tr.RepoRoot)
+		if scan == "" {
 			return &treeError{
-				id:  tree.ID,
-				err: manifest.NewError(manifest.ErrInput, nil, "tree input content unavailable"),
+				id:  tr.ID,
+				err: manifest.NewError(manifest.ErrInput, nil, "tree path is required"),
 			}
 		}
-		tree.RepoRoot = tree.Input.LocalPath
-		var err error
-		tree.Path, err = filepath.Abs(cmp.Or(tree.Path, tree.RepoRoot))
+		input, path, err := baseline.AdmitDirectory(ctx, scan, tr.RepoRoot, tr.work.Scope())
 		if err != nil {
-			return &treeError{id: tree.ID, err: err}
+			return &treeError{id: tr.ID, err: err}
 		}
+		tr.Input, tr.Path = input, path
+		if previous := admitted[input.LocalPath]; previous != nil {
+			tr.Input = previous
+		} else {
+			admitted[input.LocalPath] = input
+		}
+	}
+	if tr.Input.FS == nil || tr.Input.LocalPath == "" {
+		return &treeError{
+			id:  tr.ID,
+			err: manifest.NewError(manifest.ErrInput, nil, "tree input content unavailable"),
+		}
+	}
+	tr.RepoRoot = tr.Input.LocalPath
+	var err error
+	tr.Path, err = filepath.Abs(cmp.Or(tr.Path, tr.RepoRoot))
+	if err != nil {
+		return &treeError{id: tr.ID, err: err}
 	}
 	return nil
 }

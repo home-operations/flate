@@ -229,7 +229,7 @@ func (f *advisorySourceFetcher) Fetch(
 	context.Context,
 	manifest.BaseManifest,
 	*store.ReadSet,
-	sourcecache.Policy,
+	*sourcecache.Policy,
 ) (*store.SourceArtifact, error) {
 	f.calls.Add(1)
 	return &store.SourceArtifact{

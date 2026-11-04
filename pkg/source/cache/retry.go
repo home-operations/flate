@@ -30,6 +30,10 @@ type RetryConfig struct {
 
 // Policy is the caller's immutable freshness, retry, admission and operation timeout policy.
 type Policy struct {
+	// Work borrows counters owned by this acquisition caller.
+	Work *manifest.AcquisitionWork
+	// HistoryWork borrows separate cells for accepted render history.
+	HistoryWork *manifest.AcquisitionWork
 	// Machine classifies producer failures before retry diagnostics and persistence.
 	Machine bool
 	// Admit runs before each production attempt's timeout and staged storage.
@@ -63,12 +67,15 @@ type attemptCeilingKey struct{}
 func (c *Cache) acquire(
 	ctx context.Context,
 	keyValue *acquireKey,
-	policy Policy,
+	policyValue *Policy,
 	callbacks acquisitionCallbacks,
 ) (*entry, string, error) {
+	policy := *policyValue
+
 	key := *keyValue
 	if key.id == "" {
 		key.id = key.producer.identity()
+		policy.Work.Prepare(key.id, key.render)
 	}
 	if key.id == "" {
 		return nil, "", &CacheError{

@@ -21,14 +21,14 @@ func BenchmarkResolveLocal(b *testing.B) {
 			}
 			repositories := []*manifest.GitRepository{localSource(&sourcev1.GitRepositoryRef{Tag: tag})}
 			{
-				_, err := ResolveLocal(b.Context(), location, repositories, "")
+				_, err := ResolveLocal(b.Context(), location, repositories, LocalOptions{Revision: ""})
 				assert.NoError(b, err)
 			}
 
 			b.ReportAllocs()
 			for b.Loop() {
 				{
-					_, err := ResolveLocal(b.Context(), location, repositories, "")
+					_, err := ResolveLocal(b.Context(), location, repositories, LocalOptions{Revision: ""})
 					assert.NoError(b, err)
 				}
 			}

@@ -110,7 +110,7 @@ func testFilterEqualSelectedSourcesCase(t *testing.T, testCaseInput *string,
 		}},
 	}
 	configureSelectedSources(testCaseInput, selected)
-	delta, err := change.Detect(t.Context(), selected[0], selected[1])
+	delta, err := change.Detect(t.Context(), selected[0], selected[1], manifest.WorkScope{})
 	assert.NoError(t, err)
 	var wantDelta []string
 	if (*testCaseInput) == "payload_edit" || (*testCaseInput) == "ownership_only" {
@@ -196,7 +196,7 @@ func testQualifyContentFingerprintCaseCompletion(
 	if (*(*scope.testCaseInput)) == "bootstrap" {
 		changes = nil
 	}
-	qualified, err := change.Qualify(ctx, changes, scope.st[0], scope.st[1])
+	qualified, err := change.Qualify(ctx, changes, [2]*store.Store{scope.st[0], scope.st[1]}, manifest.WorkScope{})
 	if (*(*scope.testCaseInput)) == "error" || (*(*scope.testCaseInput)) == "canceled" ||
 		(*(*scope.testCaseInput)) == "callback_canceled" ||
 		(*(*scope.testCaseInput)) == "callback_deadline" {
@@ -261,7 +261,12 @@ func testFilterEqualSelectedSourcesCaseCompletion(
 	supplied := change.NewSet(paths)
 	if (*(*scope.testCaseInput)) == "missing_bootstrap" {
 		(*scope.stores)[0].SetArtifact(manifest.BootstrapSourceID, nil)
-		_, qualifyErr := change.Qualify(t.Context(), nil, (*scope.stores)[0], (*scope.stores)[1])
+		_, qualifyErr := change.Qualify(
+			t.Context(),
+			nil,
+			[2]*store.Store{(*scope.stores)[0], (*scope.stores)[1]},
+			manifest.WorkScope{},
+		)
 		assert.Equal(t, errors.Is(qualifyErr, manifest.ErrInput), true)
 		return
 	}
@@ -269,7 +274,12 @@ func testFilterEqualSelectedSourcesCaseCompletion(
 	if (*(*scope.testCaseInput)) == "comparison_policy" || (*(*scope.testCaseInput)) == "reader_reuse" {
 		compareInput = nil
 	}
-	changes, (*scope.err) = change.Qualify(t.Context(), compareInput, (*scope.stores)[0], (*scope.stores)[1])
+	changes, (*scope.err) = change.Qualify(
+		t.Context(),
+		compareInput,
+		[2]*store.Store{(*scope.stores)[0], (*scope.stores)[1]},
+		manifest.WorkScope{},
+	)
 	assert.NoError(t, (*scope.err))
 	assert.Diff(t, supplied.Paths(), change.NewSet(paths).Paths())
 	assert.Equal(t, sourceChanges(supplied, (*scope.source).Named()) == nil, true)

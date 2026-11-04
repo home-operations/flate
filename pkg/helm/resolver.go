@@ -16,7 +16,9 @@ type Sources struct {
 }
 
 // NewSources binds chart resolution to the supplied captured or completed inputs.
-func NewSources(reader sourceReader) Sources { return Sources{reader: reader} }
+func NewSources(reader sourceReader) Sources {
+	return Sources{reader: reader}
+}
 
 // LocalSourceArtifact returns the selected source content.
 func (s Sources) LocalSourceArtifact(id manifest.NamedResource, read store.ArtifactRead) *store.SourceArtifact {

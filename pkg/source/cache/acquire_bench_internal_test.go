@@ -29,7 +29,7 @@ func BenchmarkAcquire_Warm(b *testing.B) {
 			input, _, _, err := c.Acquire(
 				b.Context(),
 				key,
-				Policy{MaxAge: time.Hour},
+				&Policy{MaxAge: time.Hour},
 				producer(buf.Bytes(), &ocispec.Descriptor{}),
 			)
 			assert.NoError(b, err)
@@ -40,7 +40,7 @@ func BenchmarkAcquire_Warm(b *testing.B) {
 						_, _, _, err := c.Acquire(
 							b.Context(),
 							key,
-							Policy{MaxAge: time.Hour},
+							&Policy{MaxAge: time.Hour},
 							func(context.Context, ProducerInput) (ProducerResult, error) {
 								b.Fatal("warm acquisition called producer")
 								return ProducerResult{}, nil

@@ -178,7 +178,7 @@ func testAdmissionMaterializerInventoryAuthorityNamespaceGeneratedRoot(t *testin
 			{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps"},
 		},
 	}
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
@@ -237,7 +237,7 @@ func runMaterializerMode(t *testing.T, testCaseInput *string, mode string) {
 		input.FS.(fstest.MapFS)["entry/consumer.yaml"] = input.FS.(fstest.MapFS)["consumer.yaml"]
 		loadPath = filepath.Join(root, "entry")
 	}
-	_, err := l.Load(t.Context(), loadPath)
+	_, err := l.Load(t.Context(), loadPath, nil)
 	assert.NoError(t, err)
 	if mode == "prepared" || mode == "prepared_foreign" {
 		registerMaterializerPrepared(t, preparedMaterializerInput{root: root, mode: mode, store: st, loader: l})
@@ -368,9 +368,9 @@ spec:
 			l.SourceRoot = root
 			l.Options.Filter = change.NewFilter()
 			l.Options.Selection = manifest.Selection{Changed: compact}
-			_, err := l.Load(t.Context(), filepath.Join(root, "flux"))
+			_, err := l.Load(t.Context(), filepath.Join(root, "flux"), nil)
 			assert.NoError(t, err)
-			_, err = l.Load(t.Context(), filepath.Join(root, "application"))
+			_, err = l.Load(t.Context(), filepath.Join(root, "application"), nil)
 			assert.NoError(t, err)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 			entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "flux", manifest.NamedResource{}).
@@ -449,7 +449,7 @@ spec:
 				l.SourceRoot = root
 				l.Options.Filter = change.NewFilter()
 				l.Options.Selection = manifest.Selection{Changed: true}
-				_, err := l.Load(t.Context(), filepath.Join(root, "application"))
+				_, err := l.Load(t.Context(), filepath.Join(root, "application"), nil)
 				assert.NoError(t, err)
 				assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 				owner := manifest.NamedResource{

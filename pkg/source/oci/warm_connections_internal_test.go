@@ -58,7 +58,7 @@ func TestFetcher_Freshness_WarmConnections(t *testing.T) {
 				t.Context(),
 				&request,
 				(testInputs{}).readSet(&request),
-				sourcecache.Policy{MaxAge: request.SourceInterval()},
+				&sourcecache.Policy{MaxAge: request.SourceInterval()},
 			)
 			assert.NoError(t, err)
 

@@ -68,7 +68,7 @@ func testFetcherFreshnessCase(t *testing.T, tt *struct {
 		t.Context(),
 		repo,
 		(testInputs{}).readSet(repo),
-		sourcecache.Policy{MaxAge: tt.interval},
+		&sourcecache.Policy{MaxAge: tt.interval},
 	)
 	assert.NoError(t, err)
 
@@ -96,7 +96,7 @@ func testFetcherFreshnessCase(t *testing.T, tt *struct {
 		t.Context(),
 		repo,
 		(testInputs{}).readSet(repo),
-		sourcecache.Policy{MaxAge: tt.interval},
+		&sourcecache.Policy{MaxAge: tt.interval},
 	)
 	if tt.failRefresh {
 		assert.FatalIf(t, err == nil, "%s", "expected refresh to fail after registry shutdown")

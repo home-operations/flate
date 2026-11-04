@@ -245,7 +245,8 @@ func (o *Orchestrator) logSummary(failed map[manifest.NamedResource]store.Status
 	slog.Debug("orchestrator: reconcile complete",
 		"kustomizations", ksCount,
 		"helm_releases", hrCount,
-		"failed", len(failed))
+		"failed", len(failed),
+		"work", &o.work)
 	if o.loader != nil && ksCount == 0 && hrCount == 0 {
 		for id := range o.index.Records {
 			if id.KindInfo().Render && o.index.Records[id].Origin.Policy(id, nil).Root {

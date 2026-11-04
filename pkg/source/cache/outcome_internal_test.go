@@ -463,7 +463,7 @@ func TestOutcome_CanceledCallerIsNotRecorded(t *testing.T) {
 	_, _, _, err := c.Blob(
 		ctx,
 		BlobKey{Content: "cancel-record"},
-		Policy{},
+		&Policy{},
 		func(context.Context, ProducerInput) (ProducerResult, error) {
 			cancel()
 			return ProducerResult{}, connReset()
@@ -495,7 +495,7 @@ func TestOutcome_MachineCooldown(t *testing.T) {
 			calls++
 			return ProducerResult{}, connReset()
 		}
-		_, _, _, err := c.Blob(t.Context(), key, policy, produce)
+		_, _, _, err := c.Blob(t.Context(), key, &policy, produce)
 		{
 			terminal, ok := errors.AsType[*TerminalError](err)
 			assert.FatalIf(
@@ -512,7 +512,7 @@ func TestOutcome_MachineCooldown(t *testing.T) {
 		}
 
 		c = cachetest.New(t, root, New)
-		_, _, _, err = c.Blob(t.Context(), key, policy, produce)
+		_, _, _, err = c.Blob(t.Context(), key, &policy, produce)
 		{
 			terminal, ok := errors.AsType[*TerminalError](err)
 			assert.FatalIf(

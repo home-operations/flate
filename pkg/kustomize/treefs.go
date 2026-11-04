@@ -10,12 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/task"
-
 	fluxfilesys "github.com/fluxcd/pkg/kustomize/filesys"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 
+	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/task"
 	"github.com/home-operations/flate/pkg/tree"
 )
 
@@ -24,6 +24,7 @@ const overlayFileMode = 0o644
 // treeFS adapts the common resolver to kyaml's OS mount names. Mutable state
 // belongs to one render; only the sealed lower tree is shared.
 type treeFS struct {
+	work    manifest.WorkScope
 	upper   *tree.Builder
 	lower   fs.FS
 	root    string

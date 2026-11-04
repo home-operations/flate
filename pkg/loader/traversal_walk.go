@@ -22,6 +22,7 @@ func (w *traversal) walk(ctx context.Context, v graphVisit, yield func(graphVisi
 	if !w.proceed(ctx) {
 		return false
 	}
+	w.work.Add(&manifest.WorkCounts{FileEntries: 1})
 	abs := v.file
 	if w.policy != traversalAdmission {
 		abs = filepath.Join(v.root, v.dir)
@@ -64,6 +65,7 @@ func (w *traversal) walk(ctx context.Context, v graphVisit, yield func(graphVisi
 		d,
 		w.policy == traversalAdmission,
 		func(ref kustomizeinput.Reference, target string) bool {
+			w.work.Add(&manifest.WorkCounts{ReaderEdges: 1})
 			return w.reference(ctx, new(v), new(traversalReference{Reference: ref, target: target}), yield)
 		},
 	) {
@@ -221,6 +223,7 @@ func (w *traversal) walkDirectory(
 		return false
 	}
 	for _, entry := range entries {
+		w.work.Add(&manifest.WorkCounts{FileEntries: 1})
 		if !w.proceed(ctx) {
 			return false
 		}

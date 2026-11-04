@@ -311,8 +311,9 @@ func (rs readSetSnapshot) validateRemoteWaves(
 			}
 			for _, index := range wave {
 				results[index].done = make(chan struct{})
+				results[index].input = validationInput
 				cache.tasks.Go(context.WithoutCancel(ctx), "kustomize/validate-input", func(context.Context) {
-					results[index].validate(ctx, cache, &validationInput, &rs.Remotes[index])
+					results[index].validate(ctx, cache, &results[index].input, &rs.Remotes[index])
 				})
 			}
 			for _, index := range wave {
@@ -334,6 +335,7 @@ func (rs readSetSnapshot) validateRemoteWaves(
 }
 
 type remoteValidationResult struct {
+	input treeFS
 	done  chan struct{}
 	valid bool
 }

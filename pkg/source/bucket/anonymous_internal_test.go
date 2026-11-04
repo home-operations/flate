@@ -63,7 +63,7 @@ func TestFetcher_AnonymousBucketsShareIAM(t *testing.T) {
 		closers = append(closers, reads.Close)
 		workers.Go(func() {
 			<-start
-			artifact, err := f.Fetch(t.Context(), b, reads, cache.Policy{})
+			artifact, err := f.Fetch(t.Context(), b, reads, &cache.Policy{})
 			if err != nil || artifact == nil {
 				t.Errorf("Bucket %s: %v", b.Name, err)
 			}
@@ -149,7 +149,7 @@ func TestFetcher_SharedIAMTransport(t *testing.T) {
 		f := &Fetcher{Cache: cachetest.New(t, "", cache.New), Network: network}
 		workers.Go(func() {
 			<-start
-			artifact, err := f.Fetch(t.Context(), b, reads, cache.Policy{})
+			artifact, err := f.Fetch(t.Context(), b, reads, &cache.Policy{})
 			if err != nil || artifact == nil {
 				t.Errorf("Bucket %s: %v", b.Name, err)
 			}
@@ -223,7 +223,7 @@ func TestFetcher_MachineWebIdentityTransport(t *testing.T) {
 	reads := inputs.readSet(b)
 	defer reads.Close()
 	f := &Fetcher{Cache: cachetest.New(t, "", cache.New), Network: newTestNetwork(t)}
-	artifact, err := f.Fetch(t.Context(), b, reads, cache.Policy{})
+	artifact, err := f.Fetch(t.Context(), b, reads, &cache.Policy{})
 	if err != nil || artifact == nil || probes.Load() != 1 || acquisitions.Load() != 1 || leaked.Load() != 0 {
 		t.Fatalf(
 			"web identity: STS=%d S3=%d proxy leaks=%d error=%v",
@@ -277,7 +277,7 @@ func testFetcherMachineIAMCancellationCase(t *testing.T, after *string,
 	defer cancel()
 	finished := make(chan error, 1)
 	go func() {
-		_, err := f.Fetch(ctx, b, reads, cache.Policy{})
+		_, err := f.Fetch(ctx, b, reads, &cache.Policy{})
 		finished <- err
 	}()
 	<-entered
@@ -299,7 +299,7 @@ func testFetcherMachineIAMCancellationCase(t *testing.T, after *string,
 		return
 	}
 	releaseProbe()
-	artifact, err := f.Fetch(t.Context(), b, reads, cache.Policy{})
+	artifact, err := f.Fetch(t.Context(), b, reads, &cache.Policy{})
 	if err != nil || artifact == nil || probes.Load() != 1 || acquisitions.Load() != 1 {
 		t.Fatalf(
 			"cancelled caller poisoned shared discovery: %v probes=%d acquisitions=%d",
@@ -323,7 +323,7 @@ func testFetcherSharedIAMTransportRestrictedMetadataDial(
 	reads := (testInputs{}).readSet(b)
 	defer reads.Close()
 	f := &Fetcher{Cache: cachetest.New(t, "", cache.New), Network: newTestNetwork(t)}
-	artifact, err := f.Fetch(t.Context(), b, reads, cache.Policy{})
+	artifact, err := f.Fetch(t.Context(), b, reads, &cache.Policy{})
 	dial, ok := errors.AsType[*net.OpError](err)
 	if artifact != nil || !ok || dial.Op != "dial" || probes.Load() != 1 || acquisitions.
 		Load() != 2 || leaked.

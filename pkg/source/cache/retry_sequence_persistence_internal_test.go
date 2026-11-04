@@ -63,7 +63,7 @@ func testAcquireRetrySequencePersistenceCaseCallback(
 		_, _, _, err := c.Blob(
 			t.Context(),
 			BlobKey{Content: "eligibility"},
-			Policy{Retry: fastRetry(3)},
+			&Policy{Retry: fastRetry(3)},
 			func(_ context.Context, w ProducerInput) (ProducerResult, error) {
 				calls++
 				_, _ = io.WriteString(w, "partial")

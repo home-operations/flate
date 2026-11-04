@@ -59,7 +59,7 @@ func testFetchHTTPChartCancellationDoesNotPublishCase(
 			ctx,
 			helmChart("repo", "app-template", "1.0.0"),
 			fInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
-			sourcecache.Policy{},
+			&sourcecache.Policy{},
 		)
 		result <- err
 	}()
@@ -89,7 +89,7 @@ func testFetchHTTPChartCancellationDoesNotPublishCase(
 		t.Context(),
 		helmChart("repo", "app-template", "1.0.0"),
 		fInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
-		sourcecache.Policy{},
+		&sourcecache.Policy{},
 	)
 	assert.NoError(t, err)
 

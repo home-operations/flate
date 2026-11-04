@@ -21,6 +21,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -34,38 +35,86 @@ func (e *countedDetailError) Error() string {
 
 //nolint:paralleltest // This test changes process-global state.
 //nolint:paralleltest // The test calls a helper that changes process-global state.
-func TestDiscover_FailureDetailsEvaluation(t *testing.T) {
-	for _, level := range []slog.Level{slog.LevelInfo, slog.LevelDebug} {
-		t.Run(level.String(), func(t *testing.T) {
-			var logs bytes.Buffer
-			prior, writer, flags := slog.Default(), log.Writer(), log.Flags()
-			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: level})))
-			t.Cleanup(func() {
-				slog.SetDefault(prior)
-				log.SetOutput(writer)
-				log.SetFlags(flags)
+func TestOrchestrator_DebugSelection(t *testing.T) {
+	t.Run("Discover_FailureDetailsEvaluation", func(t *testing.T) {
+		for _, level := range []slog.Level{slog.LevelInfo, slog.LevelDebug} {
+			t.Run(level.String(), func(t *testing.T) {
+				var logs bytes.Buffer
+				prior, writer, flags := slog.Default(), log.Writer(), log.Flags()
+				slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: level})))
+				t.Cleanup(func() {
+					slog.SetDefault(prior)
+					log.SetOutput(writer)
+					log.SetFlags(flags)
+				})
+				root := t.TempDir()
+				testutil.WriteFile(t, root, "kustomization.yaml", "resources: []\n")
+				o, err := newTestOrchestrator(
+					t,
+					Tree{Path: root},
+					Config{Concurrency: 2, Selection: manifest.Selection{Changed: true}},
+				)
+				assert.NoError(t, err)
+				assert.NoError(t, o.prepareBootstrap(t.Context()))
+				detail := new(countedDetailError)
+				failure := manifest.NewError(manifest.ErrInput, detail, "entry failed")
+				result, err := o.session.Freeze(t.Context())
+				assert.NoError(t, err)
+				result.Binding.Failure = failure
+				assert.NoError(t, o.discover(t.Context()))
+				assert.Equal(t, o.entryBinding.Failure, error(failure))
+				assert.Equal(t, detail.calls > 0, level == slog.LevelDebug)
+				assert.Equal(t, strings.Contains(logs.String(), "orchestrator: entry failed"), level == slog.LevelDebug)
+				assert.Equal(t, strings.Contains(logs.String(), "upstream diagnostic"), level == slog.LevelDebug)
 			})
-			root := t.TempDir()
-			testutil.WriteFile(t, root, "kustomization.yaml", "resources: []\n")
-			o, err := newTestOrchestrator(
-				t,
-				Tree{Path: root},
-				Config{Concurrency: 2, Selection: manifest.Selection{Changed: true}},
+		}
+	})
+	t.Run("Work_Optional", func(t *testing.T) {
+		root := t.TempDir()
+		writeCluster(t, root, "one", "two")
+		for _, tc := range []struct {
+			name          string
+			record, debug bool
+		}{
+			{name: "disabled"}, {name: "requested", record: true}, {name: "debug", debug: true},
+		} {
+			t.Run(
+				tc.name,
+				func(t *testing.T) {
+					level := slog.LevelInfo
+					if tc.debug {
+						level = slog.LevelDebug
+					}
+					previous := slog.Default()
+					slog.SetDefault(
+						slog.New(slog.NewJSONHandler(new(bytes.Buffer), &slog.HandlerOptions{Level: level})),
+					)
+					defer slog.SetDefault(previous)
+					runs, err := RenderTrees(
+						t.Context(),
+						[]Tree{
+							{
+								ID: manifest.TreeID{
+									Cluster: ".",
+									Side:    manifest.TreeHead,
+								},
+								RepoRoot: root,
+							},
+						},
+						Config{
+							RecordWork:  tc.record,
+							Concurrency: 2,
+						},
+					)
+					assert.NoError(t, err)
+					requested := tc.record || tc.debug
+					assert.Equal(t, len(runs[0].Result.Work) != 0, requested)
+					assert.Equal(t, runs[0].cfg.work != nil, requested)
+					assert.Equal(t, runs[0].store.WorkScope() != (manifest.WorkScope{}), requested)
+				},
 			)
-			assert.NoError(t, err)
-			assert.NoError(t, o.prepareBootstrap(t.Context()))
-			detail := new(countedDetailError)
-			failure := manifest.NewError(manifest.ErrInput, detail, "entry failed")
-			result, err := o.session.Freeze(t.Context())
-			assert.NoError(t, err)
-			result.Binding.Failure = failure
-			assert.NoError(t, o.discover(t.Context()))
-			assert.Equal(t, o.entryBinding.Failure, error(failure))
-			assert.Equal(t, detail.calls > 0, level == slog.LevelDebug)
-			assert.Equal(t, strings.Contains(logs.String(), "orchestrator: entry failed"), level == slog.LevelDebug)
-			assert.Equal(t, strings.Contains(logs.String(), "upstream diagnostic"), level == slog.LevelDebug)
-		})
-	}
+		}
+	})
 }
 
 func TestRenderTrees_MissingPath(t *testing.T) {
@@ -260,7 +309,10 @@ func TestOrchestrator_StopBeforeBootstrapCompletion(t *testing.T) {
 	t.Cleanup(server.Close)
 	done := make(chan error, 1)
 	go func() {
-		_, localErr := o.inputs.Acquire(t.Context(), server.URL, sourcecache.RetryConfig{}, nil)
+		_, localErr := o.inputs.Acquire(
+			t.Context(),
+			&source.HTTPRequest{URL: server.URL, Retry: sourcecache.RetryConfig{}, HeldSlot: nil},
+		)
 		done <- localErr
 	}()
 	<-entered
@@ -276,7 +328,7 @@ func TestOrchestrator_StopBeforeBootstrapCompletion(t *testing.T) {
 		)
 	}
 	<-completed
-	_, _, _, err = owner.Blob(t.Context(), sourcecache.BlobKey{Content: "after-tree-close"}, sourcecache.Policy{},
+	_, _, _, err = owner.Blob(t.Context(), sourcecache.BlobKey{Content: "after-tree-close"}, &sourcecache.Policy{},
 		func(_ context.Context, input sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 			_, innerInnerLocalErr := io.WriteString(input, "caller-owned")
 			return sourcecache.ProducerResult{}, innerInnerLocalErr

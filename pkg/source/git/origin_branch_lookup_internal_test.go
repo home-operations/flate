@@ -51,7 +51,7 @@ func testCheckoutRefPreservesOriginFirstBranchLookupCase(
 		t.Context(),
 		spec,
 		(testInputs{}).readSet(spec),
-		sourcecache.Policy{MaxAge: time.Hour},
+		&sourcecache.Policy{MaxAge: time.Hour},
 	)
 	assert.NoError(t, err)
 	acquired := openGeneration(t, f, spec, artifact)

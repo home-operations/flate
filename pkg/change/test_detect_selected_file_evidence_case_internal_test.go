@@ -10,6 +10,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -82,7 +83,7 @@ func testDetectSelectedFileEvidenceCase(t *testing.T, testCaseInput *string,
 	if (*testCaseInput) == "canceled" {
 		cancel()
 	}
-	got, err := Detect(ctx, inputs[0], inputs[1])
+	got, err := Detect(ctx, inputs[0], inputs[1], manifest.WorkScope{})
 	if (*testCaseInput) == "canceled" {
 		assert.FatalIf(t, !errors.Is(err, context.Canceled), "Detect error = %v, want canceled", err)
 		return

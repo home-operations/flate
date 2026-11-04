@@ -272,7 +272,7 @@ func testRecordEmittedPayloadPrecedenceCase(t *testing.T, testCaseInput *struct 
 		input, descriptor, key, acquireErr := cache.Acquire(
 			t.Context(),
 			sourcecache.ArchiveKey{Content: value, Policy: "fixed"},
-			sourcecache.Policy{MaxAge: sourcecache.Forever},
+			&sourcecache.Policy{MaxAge: sourcecache.Forever},
 			func(_ context.Context, target sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 				writer := tar.NewWriter(target)
 				if addFSErr := writer.AddFS(fstest.MapFS{"file": {Data: []byte(value)}}); addFSErr != nil {

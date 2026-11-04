@@ -1,0 +1,10 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: {name: scale}
+spec:
+  minReplicas: 0
+  maxReplicas: 1
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: reach}
+  behavior:
+    scaleDown:
+      policies: [{type: Pods, value: 1, periodSeconds: 15}]

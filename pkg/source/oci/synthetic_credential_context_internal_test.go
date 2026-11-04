@@ -100,7 +100,7 @@ func testFetcherSyntheticCredentialContextCase1(t *testing.T, generated *bool, m
 			return sec
 		},
 	}
-	_, err := op.fetchSource(t.Context(), repo, sourcecache.Policy{})
+	_, err := op.fetchSource(t.Context(), repo, &sourcecache.Policy{})
 	label := expected.Kind + " " + expected.NamespacedName()
 	if (*material) == "provider" {
 		label = expected.String()

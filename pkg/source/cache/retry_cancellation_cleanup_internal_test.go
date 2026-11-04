@@ -36,7 +36,7 @@ func testAcquireRetryCancellationCase(t *testing.T, concurrency *int,
 				_, _, _, err := c.Blob(
 					ctx,
 					BlobKey{Content: fmt.Sprintf("cancel-%d", i)},
-					Policy{Retry: RetryConfig{Attempts: 3, MinWait: time.Hour}},
+					&Policy{Retry: RetryConfig{Attempts: 3, MinWait: time.Hour}},
 					func(context.Context, ProducerInput) (ProducerResult, error) {
 						calls[i]++
 						return ProducerResult{}, connReset()
@@ -58,7 +58,7 @@ func testAcquireRetryCancellationCase(t *testing.T, concurrency *int,
 			_, _, _, err := c.Blob(
 				ctx,
 				BlobKey{Content: fmt.Sprintf("cancel-%d", i)},
-				Policy{Retry: fastRetry(3)},
+				&Policy{Retry: fastRetry(3)},
 				func(context.Context, ProducerInput) (ProducerResult, error) {
 					calls[i]++
 					return ProducerResult{}, nil
@@ -170,7 +170,7 @@ func testAcquireReaderFailureCancelsAttemptCaseCallback(
 			_, _, _, err := (*testCaseInput.c).Acquire(
 				t.Context(),
 				ArchiveKey{Content: fmt.Sprintf("invalid-%d", i)},
-				Policy{Retry: fastRetry(3)},
+				&Policy{Retry: fastRetry(3)},
 				func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 					calls[i]++
 					_, _ = w.Write(bytes.Repeat([]byte("x"), 512))
@@ -233,7 +233,7 @@ func testAcquireCleanupFailureStopsRetryCaseCallback(
 	case "git":
 		_, _, err = (*testCaseInput.c).Git((*testCaseInput.t).
 			Context(), GitKey{Content: "cleanup"},
-			Policy{Retry: fastRetry(3)},
+			&Policy{Retry: fastRetry(3)},
 			func(context.Context, storage.Storer, billy.Filesystem) (plumbing.Hash, error) {
 				return plumbing.ZeroHash, fail()
 			},
@@ -241,7 +241,7 @@ func testAcquireCleanupFailureStopsRetryCaseCallback(
 	case "archive":
 		_, _, _, err = (*testCaseInput.c).Acquire((*testCaseInput.t).
 			Context(), ArchiveKey{Content: "cleanup"},
-			Policy{Retry: fastRetry(3)},
+			&Policy{Retry: fastRetry(3)},
 			func(context.Context, ProducerInput) (ProducerResult, error) {
 				return ProducerResult{}, fail()
 			},
@@ -249,7 +249,7 @@ func testAcquireCleanupFailureStopsRetryCaseCallback(
 	case "blob":
 		_, _, _, err = (*testCaseInput.c).Blob((*testCaseInput.t).
 			Context(), BlobKey{Content: "cleanup"},
-			Policy{Retry: fastRetry(3)},
+			&Policy{Retry: fastRetry(3)},
 			func(context.Context, ProducerInput) (ProducerResult, error) {
 				return ProducerResult{}, fail()
 			},

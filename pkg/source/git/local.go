@@ -25,14 +25,15 @@ func ResolveLocal(
 	ctx context.Context,
 	location *gitrepo.Location,
 	repositories []*manifest.GitRepository,
-	sideRevision string,
+	options LocalOptions,
 ) (map[manifest.NamedResource]*store.SourceArtifact, error) {
 	if len(repositories) == 0 {
 		return nil, nil //nolint:nilnil // An empty inventory has no locally resolved artifacts.
 	}
 	r := localResolver{
 		location:     location,
-		sideRevision: sideRevision,
+		sideRevision: options.Revision,
+		work:         options.Work,
 		resolved:     make(map[sourcev1.GitRepositoryRef]localResolution),
 	}
 	if location != nil {
@@ -57,6 +58,7 @@ type localResolution struct {
 }
 
 type localResolver struct {
+	work         manifest.WorkScope
 	location     *gitrepo.Location
 	sideRevision string
 	root         string
@@ -144,7 +146,10 @@ func (r *localResolver) directory(
 	hash plumbing.Hash,
 ) (*store.SourceArtifact, error) {
 	if r.local == nil {
+		work := r.work.Source(repository.Named()).Record(manifest.WorkAcquisition, "")
+		work.Add(&manifest.WorkCounts{Attempts: 1, LocalAcquisitions: 1})
 		input, err := gittree.AdmitDirectory(ctx, r.location)
+		work.Finish(err)
 		if err != nil {
 			return nil, localError(err)
 		}
@@ -163,6 +168,8 @@ func (r *localResolver) committed(
 	if repository.Ignore != nil {
 		ignore = *repository.Ignore
 	}
+	work := r.work.Source(repository.Named()).Record(manifest.WorkAcquisition, "")
+	work.Add(&manifest.WorkCounts{Attempts: 1, LocalAcquisitions: 1})
 	input, key, err := gittree.New(
 		ctx,
 		r.repo.Storer.(*filesystem.Storage).Filesystem(), //nolint:errcheck // The admitted repository uses the filesystem storage selected by discovery.
@@ -174,6 +181,7 @@ func (r *localResolver) committed(
 			Ignore:   ignore,
 		},
 	)
+	work.Finish(err)
 	var warnings []manifest.Warning
 	if input != nil && len(input.Warnings) > 0 {
 		warnings = gitWarnings(input, repository.Named(), repository.URL, selected.String())
@@ -213,4 +221,10 @@ func failedLocal(
 
 func localError(err error) error {
 	return manifest.NewError(manifest.ErrInput, fmt.Errorf("resolve local git: %w", err), "")
+}
+
+// LocalOptions carries the admitted revision and requesting operation's attribution.
+type LocalOptions struct {
+	Revision string
+	Work     manifest.WorkScope
 }

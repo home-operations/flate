@@ -64,7 +64,7 @@ func testCacheRootedWritesRejectEscapeCase(t *testing.T, sink *string,
 		_, _, id, err := c.Blob(
 			t.Context(),
 			key,
-			Policy{MaxAge: Forever},
+			&Policy{MaxAge: Forever},
 			producer([]byte("content"), &ocispec.Descriptor{}),
 		)
 		assert.NoError(t, err)
@@ -101,7 +101,7 @@ func testCacheRootedWritesRejectEscapeCase(t *testing.T, sink *string,
 	var err error
 	if (*sink) == "git-generation" {
 		var g *GitGeneration
-		g, _, err = c.Git(t.Context(), GitKey{Content: key.Content}, Policy{MaxAge: 0}, func(context.Context,
+		g, _, err = c.Git(t.Context(), GitKey{Content: key.Content}, &Policy{MaxAge: 0}, func(context.Context,
 
 			storage.Storer, billy.Filesystem,
 		) (plumbing.Hash, error) {
@@ -114,7 +114,7 @@ func testCacheRootedWritesRejectEscapeCase(t *testing.T, sink *string,
 		r, _, _, err = c.Blob(
 			t.Context(),
 			key,
-			Policy{MaxAge: Forever},
+			&Policy{MaxAge: Forever},
 			func(callbackArg1 context.Context, callbackArg2 ProducerInput) (ProducerResult, error) {
 				return testCacheRootedWritesRejectEscapeCaseCallback(
 					callbackArg1,
@@ -256,7 +256,7 @@ func testGitFailedCleanupRejectsEscapingParentCase(
 	g, _, err := c.Git(
 		t.Context(),
 		key,
-		Policy{MaxAge: 0},
+		&Policy{MaxAge: 0},
 		func(callbackArg1 context.Context, callbackArg2 storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
 			return testGitFailedCleanupRejectsEscapingParentCaseCallback(
 				callbackArg1,

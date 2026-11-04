@@ -35,12 +35,14 @@ func TestAdmit_SourceKinds(t *testing.T) {
 			l := loaderFixture(store.New(), nil)
 			l.SourceRoot = root
 			{
-				_, err := l.Load(t.Context(), root)
+				_, err := l.Load(t.Context(), root, nil)
 				assert.NoError(t, err)
 			}
 			raw := manifest.NamedResource{Group: manifest.SourceDomain, Kind: tc.kind, Name: "source"}
 			original := l.authoredObject(filepath.Join(root, "source.yaml"), raw).Obj
+
 			assert.FatalIf(t, original == nil, "%s", "source not loaded")
+
 			l.Admit(root)
 			projected := raw
 			projected.Namespace = "apps"
@@ -49,12 +51,14 @@ func TestAdmit_SourceKinds(t *testing.T) {
 				_, ok := l.Index.Lookup(projected)
 				assert.FatalIf(t, !ok, "projected source %s not indexed", projected)
 			}
+
 			assert.FatalIf(
 				t,
 				original.Named() != raw || l.Store.GetObject(raw) != nil,
 				"%s",
 				"raw source must remain immutable and leave the store",
 			)
+
 			{
 				_, ok := l.Index.Lookup(raw)
 				assert.FatalIf(t, ok, "%s", "stale raw source record")
@@ -83,7 +87,7 @@ func TestAdmit_ProjectionLifetime(t *testing.T) {
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)})
 	l := New(st)
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	before, err := l.Occurrences(t.Context(), root, "")
 	assert.NoError(t, err)
@@ -91,27 +95,25 @@ func TestAdmit_ProjectionLifetime(t *testing.T) {
 	assert.Equal(t, before[0].Identity.Name, "pre-before-post")
 	old := l.scopes
 	assert.Equal(t, len(old.projections[0])+len(old.projections[1]), 1)
+	oldProjections := old.projections
 	testutil.WriteFile(t, root, "object.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: after}\n")
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)})
 	l.mountSources()
-	assert.FatalIf(
-		t,
-		l.scopes == old || l.scopes == nil || l.scopes.projections[0] != nil || l.scopes.projections[1] != nil,
-		"%s",
-		"mounted replacement retained the old projection memo",
-	)
-	_, err = l.Load(t.Context(), root)
+	if l.scopes == old || l.scopes == nil || l.scopes.projections[0] != nil || l.scopes.projections[1] != nil {
+		t.Fatal("mounted replacement retained the old projection memo")
+	}
+	_, err = l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	after, err := l.Occurrences(t.Context(), root, "")
 	assert.NoError(t, err)
 	assert.Equal(t, len(after), 1)
 	assert.Equal(t, after[0].Identity.Name, "pre-after-post")
 	assert.Equal(t, len(l.scopes.projections[0])+len(l.scopes.projections[1]), 1)
-	for scope, projections := range old.projections {
+	assert.Equal(t, old.projections[0] == nil && old.projections[1] == nil, true)
+	for scope, projections := range oldProjections {
 		for key := range projections {
-			{
-				_, retained := l.scopes.projections[scope][key]
-				assert.FatalIf(t, retained, "%s", "replacement reused an old projection input")
+			if _, retained := l.scopes.projections[scope][key]; retained {
+				t.Fatal("replacement reused an old projection input")
 			}
 		}
 	}
@@ -159,7 +161,7 @@ spec: {chart: app, sourceRef: {kind: HelmRepository, name: repo}}
 			t.Errorf("%s namespace = %q, want %q", obj.Named().Kind, obj.Named().Namespace, want)
 		}
 	}
-	_, err := l.Load(t.Context(), filepath.Join(root, "apps"))
+	_, err := l.Load(t.Context(), filepath.Join(root, "apps"), nil)
 	assert.NoError(t, err)
 	l.Admit(root)
 	l.Store.AddObject(

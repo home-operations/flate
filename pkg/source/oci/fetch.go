@@ -35,8 +35,10 @@ func (f *operation) fetchLayer(
 	ctx context.Context,
 	repo *manifest.OCIRepository,
 	requestValue *registryAcquisition,
-	policy cache.Policy,
+	policyValue *cache.Policy,
 ) (*store.SourceArtifact, error) {
+	policy := *policyValue
+
 	request := *requestValue
 	var ref manifest.OCIRepositoryRef
 	if repo.Reference != nil {
@@ -60,7 +62,7 @@ func (f *operation) fetchLayer(
 	var input fs.FS
 	var descriptor ocispec.Descriptor
 	produce := func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-		selected, err := resolveRef(ctx, request.client, repo, ref)
+		selected, err := f.resolveRef(ctx, request.client, repo, ref)
 		if err != nil {
 			return cache.ProducerResult{}, err
 		}
@@ -73,7 +75,7 @@ func (f *operation) fetchLayer(
 		generation, desc, key, err := f.Cache.Blob(
 			ctx,
 			cache.BlobKey{Content: contentKey, Required: []string{"upstream-digest", "revision"}},
-			policy,
+			&policy,
 			produce,
 		)
 		if err != nil {
@@ -90,7 +92,7 @@ func (f *operation) fetchLayer(
 				Policy:   "source",
 				Required: []string{"upstream-digest", "revision"},
 			},
-			policy,
+			&policy,
 			produce,
 		)
 		if err != nil {
@@ -110,22 +112,6 @@ func (f *operation) fetchLayer(
 	}, nil
 }
 
-func resolveRef(
-	ctx context.Context,
-	client *remote.Repository,
-	repo *manifest.OCIRepository,
-	ref manifest.OCIRepositoryRef,
-) (manifest.OCIRepositoryRef, error) {
-	if ref.Digest != "" || ref.SemVer == "" {
-		return ref, nil
-	}
-	tag, err := resolveOCISemver(ctx, client, ref, repo.LayerMediaType())
-	if err != nil {
-		return ref, fmt.Errorf("semver: %w", err)
-	}
-	return manifest.OCIRepositoryRef{Tag: tag}, nil
-}
-
 func (f *operation) produceLayer(
 	ctx context.Context,
 	client *remote.Repository,
@@ -134,7 +120,10 @@ func (f *operation) produceLayer(
 ) (cache.ProducerResult, error) {
 	ref := manifest.OCIRepositoryRef(*repo.Reference)
 	tag := cmp.Or(versionTag(ref), latestTag)
+	work := f.work.Scope.Record(manifest.WorkValidation, "")
+	work.Add(&manifest.WorkCounts{Attempts: 1})
 	desc, err := client.Resolve(ctx, tag)
+	work.Finish(err)
 	if err != nil {
 		return cache.ProducerResult{}, fmt.Errorf("resolve %s: %w", tag, orasError(err))
 	}
@@ -147,12 +136,14 @@ func (f *operation) produceLayer(
 	if unchanged {
 		desc = *previous
 	} else {
-		data, fetchAllErr := content.FetchAll(ctx, client, desc)
-		if fetchAllErr != nil {
-			return cache.ProducerResult{}, fmt.Errorf("fetch manifest: %w", orasError(fetchAllErr))
+		work.Add(&manifest.WorkCounts{Attempts: 1})
+		data, err := content.FetchAll(ctx, client, desc)
+		work.Finish(err)
+		if err != nil {
+			return cache.ProducerResult{}, fmt.Errorf("fetch manifest: %w", orasError(err))
 		}
-		if unmarshalErr := json.Unmarshal(data, &m); unmarshalErr != nil {
-			return cache.ProducerResult{}, fmt.Errorf("decode OCI manifest: %w", unmarshalErr)
+		if err := json.Unmarshal(data, &m); err != nil {
+			return cache.ProducerResult{}, fmt.Errorf("decode OCI manifest: %w", err)
 		}
 		desc.Annotations = maps.Clone(m.Annotations)
 	}
@@ -176,7 +167,11 @@ func (f *operation) produceLayer(
 			len(m.Layers),
 		)
 	}
-	selected := selectedLayer{descriptor: layer, extract: repo.LayerOperation() == sourcev1.OCILayerExtract}
+	selected := selectedLayer{
+		descriptor: layer,
+		extract:    repo.LayerOperation() == sourcev1.OCILayerExtract,
+		work:       w.Work().Physical(),
+	}
 	if err := selected.write(ctx, client, w); err != nil {
 		return result, err
 	}
@@ -184,6 +179,7 @@ func (f *operation) produceLayer(
 }
 
 type selectedLayer struct {
+	work       *manifest.WorkRecord
 	descriptor ocispec.Descriptor
 	extract    bool
 }
@@ -193,6 +189,7 @@ func (l *selectedLayer) write(ctx context.Context, client *remote.Repository, w 
 	if err != nil {
 		return fmt.Errorf("fetch layer: %w", orasError(err))
 	}
+	l.work.Add(&manifest.WorkCounts{RemoteTransfers: 1})
 	defer func() { _ = r.Close() }()
 	verified := content.NewVerifyReader(r, l.descriptor)
 	var reader io.Reader = verified
@@ -229,4 +226,26 @@ func orasError(err error) error {
 		return &fetcherr.ResponseError{StatusCode: response.StatusCode, Op: response.Method, Err: err}
 	}
 	return err
+}
+
+func (f *operation) resolveRef(
+	ctx context.Context,
+	client *remote.Repository,
+	repo *manifest.OCIRepository,
+	ref manifest.OCIRepositoryRef,
+) (
+	manifest.OCIRepositoryRef,
+	error,
+) {
+	if ref.Digest != "" || ref.SemVer == "" {
+		return ref, nil
+	}
+	work := f.work.Scope.Record(manifest.WorkValidation, "")
+	work.Add(&manifest.WorkCounts{Attempts: 1})
+	tag, err := resolveOCISemver(ctx, client, ref, repo.LayerMediaType())
+	work.Finish(err)
+	if err != nil {
+		return ref, fmt.Errorf("semver: %w", err)
+	}
+	return manifest.OCIRepositoryRef{Tag: tag}, nil
 }

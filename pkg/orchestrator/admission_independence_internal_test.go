@@ -145,6 +145,7 @@ spec:
 		ready := map[manifest.NamedResource]bool{}
 		settled := make(chan struct{})
 		cfg := Config{
+			RecordWork:  true,
 			Concurrency: 2,
 			HeadOnly:    testCaseInput.headOnly,
 			StatusListener: func(tree manifest.TreeID, subject manifest.DiagnosticIdentity, info store.StatusInfo) {
@@ -214,6 +215,7 @@ spec:
 		documents := outputByParent(rendered[local].Result.Manifests)[waiting]
 		assert.FatalIf(t, len(documents) != 1, "local output=%v, want one document", documents)
 		assert.Diff(t, documents[0]["data"], map[string]any{"value": []string{"before", "after"}[local]})
+		assertIndependentAdmissionWork(t, rendered, local, &[2]manifest.NamedResource{selected, waiting})
 	})
 }
 
@@ -231,4 +233,44 @@ func recordAdmissionReady(
 		}
 	}
 	mu.Unlock()
+}
+
+func assertIndependentAdmissionWork(
+	t *testing.T,
+	rendered []Rendered,
+	local manifest.TreeSide,
+	ids *[2]manifest.NamedResource,
+) {
+	t.Helper()
+	selected, waiting := ids[0], ids[1]
+	assert.Equal(
+		t,
+		workCounts(
+			rendered[local].Result.Work,
+			selected,
+			manifest.WorkEvaluation,
+		),
+		manifest.WorkCounts{
+			Attempts:  1,
+			Completed: 1,
+		},
+	)
+	assert.Equal(
+		t,
+		workCounts(
+			rendered[local].Result.Work,
+			waiting,
+			manifest.WorkHelm,
+		),
+		manifest.WorkCounts{
+			Attempts:  1,
+			Completed: 1,
+		},
+	)
+	for _, side := range rendered {
+		for recordIndex := range side.Result.Work {
+			record := &side.Result.Work[recordIndex]
+			assert.Equal(t, record.Key.Tree, side.ID)
+		}
+	}
 }

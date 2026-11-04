@@ -48,21 +48,27 @@ func TestResolveEntrySources_MissingNonGit(t *testing.T) {
 			st.AddObject(consumer)
 			id := consumer.SourceID()
 			d := Session{cfg: Config{Path: root, Store: st}}
+
 			{
 				count, err := d.resolveEntrySources(t.Context(), true)
 				assert.FatalIf(t, err != nil || count != 0, "missing source discovery = %d, %v", count, err)
 			}
-			obj, artifact, err := d.admission().Resolve(t.Context(), id, nil)
+
+			obj, artifact, err := d.admission().Resolve(t.Context(), id, nil, manifest.WorkScope{})
+
 			assert.FatalIf(t, err != nil, "%v", err)
-			assert.FatalIf(t, obj != nil || artifact != nil || st.GetObject(id) != nil ||
+
+			assert.FatalIf(t, obj.Obj != nil || artifact != nil || st.GetObject(id) != nil ||
 				st.GetArtifact(
 					id,
 					store.ArtifactContent,
 				) != nil, "missing source resolved: object=%v artifact=%v error=%v", obj, artifact, err)
+
 			{
 				status, ok := st.GetStatus(id)
 				assert.FatalIf(t, ok && status.Status == store.StatusReady, "%v", "missing source became ready")
 			}
+
 			assert.FatalIf(
 				t,
 				st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != bootstrap,
@@ -79,7 +85,7 @@ func TestResolveEntrySources_Content(t *testing.T) {
 	input, _, key, err := owner.Acquire(
 		t.Context(),
 		cache.ArchiveKey{Policy: "fixed", Content: t.Name()},
-		cache.Policy{MaxAge: cache.Forever},
+		&cache.Policy{MaxAge: cache.Forever},
 		func(_ context.Context, target cache.ProducerInput) (cache.ProducerResult, error) {
 			writer := tar.NewWriter(target)
 			if err := writer.AddFS(
@@ -90,7 +96,9 @@ func TestResolveEntrySources_Content(t *testing.T) {
 			return cache.ProducerResult{}, writer.Close()
 		},
 	)
+
 	assert.FatalIf(t, err != nil, "%v", err)
+
 	bootstrap := &store.SourceArtifact{
 		FS:        input,
 		Key:       key,
@@ -147,7 +155,9 @@ func testResolveEntrySourcesContentCase(t *testing.T, testCaseInput testResolveE
 
 	d := Admission{aliasViews: map[string]*store.SourceArtifact{}}
 	first, key, err := d.entrySourceView(t.Context(), testCaseInput.candidate)
+
 	assert.FatalIf(t, err != nil, "%v", err)
+
 	d.aliasViews[key] = first
 	selected := (*testCaseInput.candidate)
 	cloned := *(*testCaseInput.bootstrap)
@@ -166,7 +176,9 @@ func testResolveEntrySourcesContentCase(t *testing.T, testCaseInput testResolveE
 		cloned.FS = fstest.MapFS{"apps/file": {Data: []byte("selected")}}
 	}
 	got, _, err := d.entrySourceView(t.Context(), &selected)
+
 	assert.FatalIf(t, err != nil, "%v", err)
+
 	_, identity, err := source.OperationView(t.Context(), got.FS)
 	if err != nil || got.Content != identity {
 		t.Fatalf("view identity = %q, want %q: %v", got.Content, identity, err)
@@ -219,7 +231,7 @@ func testResolveEntrySourcesIndexedDeclarationsCase(
 	var requester manifest.BaseManifest = &manifest.Kustomization{Name: "requester", Namespace: "apps", Path: "./payload", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: (*testCaseInput.kind), Name: id.Name, Namespace: id.Namespace}}
 	if (*testCaseInput.kind) == manifest.KindHelmRepository {
 		var err error
-		parsed, parsedErr := manifest.ParseDoc(
+		parseDocResult, parseDocResultErr := manifest.ParseDoc(
 			map[string]any{
 				"apiVersion": "helm.toolkit.fluxcd.io/v2",
 				"kind":       manifest.KindHelmRelease,
@@ -239,7 +251,8 @@ func testResolveEntrySourcesIndexedDeclarationsCase(
 			},
 			manifest.ParseDocOptions{},
 		)
-		requester, err = parsed.Object, parsedErr
+		requester, err = parseDocResult.Object, parseDocResultErr
+
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	cfg := Config{
@@ -253,39 +266,53 @@ func testResolveEntrySourcesIndexedDeclarationsCase(
 	}
 	l.Options.Selection = cfg.Selection
 	d := Session{cfg: cfg, loader: l}
+
 	{
 		_, err := d.resolveEntrySources(t.Context(), false)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
+
 	{
-		_, err := l.Load(t.Context(), cfg.Path)
+		_, err := l.Load(t.Context(), cfg.Path, nil)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
+
 	l.Admit(root)
 	record, indexed := l.Index.Lookup(id)
+
 	assert.FatalIf(
 		t,
 		!indexed || st.GetObject(id) != nil,
 		"%v",
 		"source was not indexed without publication",
 	)
+
 	body, err := os.ReadFile(record.Path)
+
 	assert.FatalIf(t, err != nil, "%v", err)
+
 	documents, err := manifest.DecodeDocs(strings.NewReader(string(body)), manifest.IncidentalDocuments)
+
 	assert.FatalIf(t, err != nil, "%v", err)
-	parsed2, err := manifest.ParseDoc(documents[0].Document, manifest.ParseDocOptions{})
-	expected := parsed2.Object
+
+	parseDocResult2, err := manifest.ParseDoc(documents[0].Document, manifest.ParseDocOptions{})
+	expected := parseDocResult2.Object
+
 	assert.FatalIf(t, err != nil, "%v", err)
+
 	before := manifest.Fingerprint(expected)
 	if !(*testCaseInput.independent) {
 		st.AddObject(requester)
 	}
+
 	{
 		count, err := d.resolveEntrySources(t.Context(), true)
 		assert.FatalIf(t, err != nil || count != 0, "declared source resolution = %d, %v", count, err)
 	}
+
 	obj, doc, emission := st.GetEmission(id)
 	emission.Finish()
+
 	assert.FatalIf(
 		t,
 		obj == nil || manifest.Fingerprint(obj) != before || doc == nil,
@@ -293,12 +320,14 @@ func testResolveEntrySourcesIndexedDeclarationsCase(
 		obj,
 		doc,
 	)
+
 	assert.FatalIf(
 		t,
 		doc["metadata"].(map[string]any)["uid"] != "authored-source",
 		"authored document changed: %v",
 		doc,
 	)
+
 	assert.FatalIf(
 		t,
 		st.GetArtifact(id, store.ArtifactContent) != nil,

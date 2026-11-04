@@ -8,7 +8,6 @@ import (
 	"testing/fstest"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
-
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/admissiontest"
@@ -107,36 +106,93 @@ func TestFingerprintDedup_IncomingSelectionEvidence(t *testing.T) {
 
 func TestRequire_PromotesPresentRuntimeInput(t *testing.T) {
 	t.Parallel()
-	st := store.New()
-	consumer := &manifest.HelmRelease{Name: "consumer", Namespace: "apps"}
-	input := &manifest.HelmChartSource{Name: "generated", Namespace: "apps"}
-	st.AddObjects([]manifest.BaseManifest{consumer, input})
-	l := admissiontest.New(t, admissiontest.Config{Inventory: st})
-	_, retry := l.Options.Filter.AddEmitted(
-		[]manifest.NamedResource{consumer.Named()},
-		[]manifest.NamedResource{consumer.Named()},
-		[]manifest.NamedResource{consumer.Named()},
-		0,
-	)
-	assert.Equal(t, retry, false)
-	st.SetIncluded(input.Named(), false)
-	c := New(st, task.NewBounded(2))
-	c.Configure(Options{Loader: l, Filter: l.Options.Filter, Index: l.Index})
-	var execution Execution
-	execution.Init(c, consumer.Named())
-	defer execution.Close()
-	err := execution.Require(
-		t.Context(),
-		[]manifest.DependencyRef{{NamedResource: input.Named(), Artifact: true, ChartSource: true}},
-		manifest.DrainNone,
-	)
-	assert.FatalIf(t, err == nil, "%v", "the input without acquired content did not block")
-	assert.FatalIf(
-		t,
-		!l.Options.Filter.ShouldReconcile(input.Named()),
-		"%v",
-		"a present runtime input was left excluded from acquisition",
-	)
+	for _, first := range []string{"readiness", "dispatch"} {
+		t.Run(
+
+			first,
+
+			func(t *testing.T) {
+				t.Parallel()
+				st := store.New()
+				var tree manifest.WorkRecorder
+				tree.Key.Tree = manifest.TreeID{Cluster: "cluster", Side: manifest.TreeHead}
+				st.SetWorkTree(tree.Key.Tree, tree.Scope())
+				consumer := &manifest.HelmRelease{Name: "consumer", Namespace: "apps"}
+				input := &manifest.HelmChartSource{Name: "generated", Namespace: "apps"}
+				st.AddObjects(
+					[]manifest.BaseManifest{
+						consumer,
+						input,
+					},
+				)
+				l := admissiontest.New(t, admissiontest.Config{Inventory: st})
+				_, retry := l.Options.Filter.AddEmitted(
+					[]manifest.NamedResource{
+						consumer.Named(),
+					},
+					[]manifest.NamedResource{
+						consumer.Named(),
+					},
+					[]manifest.NamedResource{
+						consumer.Named(),
+					},
+					0,
+				)
+				assert.Equal(t, retry, false)
+				st.SetIncluded(
+					input.Named(),
+					false,
+				)
+				c := New(st, task.NewBounded(2))
+				c.Configure(Options{Loader: l, Filter: l.Options.Filter, Index: l.Index})
+				var execution Execution
+				execution.Init(c, consumer.Named())
+				defer execution.Close()
+				dispatch := func() {
+					_, err := c.KeepEmitted(
+						t.Context(),
+						manifest.NamedResource{},
+						store.Child{Obj: consumer},
+						&execution.Reads,
+					)
+					assert.NoError(t, err)
+				}
+				if first == "dispatch" {
+					dispatch()
+				}
+				err := execution.Require(
+					t.Context(),
+					[]manifest.DependencyRef{
+						{
+							NamedResource: input.Named(),
+							Artifact:      true,
+							ChartSource:   true,
+						},
+					},
+					manifest.DrainNone,
+				)
+				assert.FatalIf(t, err == nil, "%v", "the input without acquired content did not block")
+				assert.FatalIf(
+					t,
+					!l.Options.Filter.ShouldReconcile(input.Named()),
+					"%v",
+					"a present runtime input was left excluded from acquisition",
+				)
+				if first == "readiness" {
+					dispatch()
+				}
+				assert.Equal(
+					t,
+					execution.Reads.Work().Scope().Admission().Counts,
+					manifest.WorkCounts{
+						Attempts:      3,
+						Completed:     3,
+						OwnerPrepares: 3,
+					},
+				)
+			},
+		)
+	}
 }
 
 func TestKeepEmitted_RequiredDeclarationSurvivesAdmissionRetry(t *testing.T) {
@@ -160,7 +216,7 @@ func TestKeepEmitted_RequiredDeclarationSurvivesAdmissionRetry(t *testing.T) {
 	l.SourceRoot = root
 	l.Options.Selection = manifest.Selection{Changed: true}
 	l.Options.Changes, l.Options.Filter = change.NewSet([]string{"unrelated.yaml"}), change.NewFilter()
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input"}
@@ -201,7 +257,7 @@ func TestKeepEmitted_DirtyInputDoesNotConsumeReaders(t *testing.T) {
 	l.Options.Filter = change.NewFilter()
 	l.Options.Selection = manifest.Selection{Changed: true}
 	l.Options.Changes = change.NewSet(nil)
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	input := &manifest.ConfigMap{Name: "input", Namespace: "apps", Data: map[string]any{"VALUE": "stable"}}
@@ -272,6 +328,7 @@ func TestDispatch_AdmissionDoesNotConsumeProducerInventory(t *testing.T) {
 	next.Children = []store.Child{{Obj: &manifest.ExternalArtifact{Name: "unrelated", Namespace: "apps"}}}
 	publication.Bind(&next)
 	st.RecordEmitted(producer.Named(), &next, nil)
+
 	assert.FatalIf(
 		t,
 		!execution.Reads.Valid(),
@@ -403,7 +460,9 @@ func testKeepEmittedLatePromotionConvergesCase(
 		assert.Equal(t, filter.ShouldReconcile(child.Named()), true)
 		assert.Equal(t, rendered, "late consumer reconciled\n")
 		output, ok := s.GetArtifact(child.Named(), store.ArtifactContent).(*store.Emission)
+
 		assert.FatalIf(t, !ok, "%v", "missing selected output")
+
 		assert.Diff(
 			t,
 			testutil.DocumentMaps(output.Manifests),
@@ -471,6 +530,7 @@ func testFingerprintDedupIncomingSelectionEvidenceCase(
 	stop := s.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, payload any) {
 		if id == child.Obj.Named() && payload != nil {
 			arrivals++
+
 			assert.ErrorIf(
 				t,
 				!filter.ShouldReconcile(id),
@@ -483,13 +543,8 @@ func testFingerprintDedupIncomingSelectionEvidenceCase(
 	if (*testCaseInput) == "emit" {
 		run.Emit(t.Context(), parent.Named(), attempt, nil)
 	} else {
-		fingerprintDedupResult1, fingerprintDedupResult1Err := run.FingerprintDedup(
-			t.Context(),
-			parent.Named(),
-			"same",
-			&store.Emission{},
-		)
-		_, handled, err := fingerprintDedupResult1.Fingerprint, fingerprintDedupResult1.Reused, fingerprintDedupResult1Err
+		fingerprintDedupResult, err := run.FingerprintDedup(t.Context(), parent.Named(), "same", &store.Emission{})
+		handled := fingerprintDedupResult.Reused
 		assert.NoError(t, err)
 		assert.Equal(t, handled, true)
 	}
@@ -501,6 +556,8 @@ func testFingerprintDedupIncomingSelectionEvidenceCase(
 		return
 	}
 	obj, ok := s.Get[*manifest.ConfigMap](child.Obj.Named())
+
 	assert.FatalIf(t, !ok, "%v", "selected incoming output is missing")
+
 	assert.Diff(t, obj.Data, map[string]any{"VALUE": "incoming"})
 }

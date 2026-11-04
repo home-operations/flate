@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: home-assistant
+  namespace: flux-system
+data:
+  value: unchanged

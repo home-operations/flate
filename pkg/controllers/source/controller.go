@@ -173,7 +173,7 @@ func (c *execution) reconcile(ctx context.Context, obj manifest.BaseManifest, le
 	}
 
 	if c.admission != nil {
-		_, artifact, err := c.admission.Resolve(ctx, obj.Named(), obj)
+		_, artifact, err := c.admission.Resolve(ctx, obj.Named(), obj, c.run.Reads.Work().Scope())
 		if err != nil {
 			return err
 		}
@@ -197,15 +197,24 @@ func (c *execution) reconcile(ctx context.Context, obj manifest.BaseManifest, le
 
 	c.SetPendingUnlessReady(id, "fetching")
 
-	return c.run.Acquire(ctx, obj, base.Acquisition{
-		AllowMissingSecrets: c.allowMissingSecrets,
-		Fetch: func(ctx context.Context) (*store.SourceArtifact, error) {
-			return fetcher.Fetch(ctx, obj, &c.run.Reads, cache.Policy{MaxAge: facts.SourceInterval(), Retry: c.retry})
+	return c.run.Acquire(
+		ctx,
+		obj,
+		base.Acquisition{
+			AllowMissingSecrets: c.allowMissingSecrets,
+			Fetch: func(ctx context.Context) (*store.SourceArtifact, error) {
+				return fetcher.Fetch(
+					ctx,
+					obj,
+					&c.run.Reads,
+					&cache.Policy{MaxAge: facts.SourceInterval(), Retry: c.retry},
+				)
+			},
+			Complete: func(_ context.Context, artifact *store.SourceArtifact, unavailable error, _ manifest.DrainLevel) error {
+				return c.completeFetch(obj, artifact, unavailable)
+			},
 		},
-		Complete: func(_ context.Context, artifact *store.SourceArtifact, unavailable error, _ manifest.DrainLevel) error {
-			return c.completeFetch(obj, artifact, unavailable)
-		},
-	}, level)
+		level)
 }
 
 func (c *execution) completeFetch(obj manifest.BaseManifest, artifact *store.SourceArtifact, err error) error {

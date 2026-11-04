@@ -56,7 +56,17 @@ func (l *Loader) scopeWalk(rootArg *graphVisit) []graphVisit {
 	if k := l.documents.cache[filepath.Join(root.root, root.dir)].body; k != nil {
 		visits = make([]graphVisit, 0, len(k.Resources)+len(k.Components)+1)
 	}
-	w := traversal{documents: l.documents}
+	var work *manifest.WorkRecord
+	if l.work != nil {
+		work = l.work
+		if root.input != 0 {
+			source := &l.scopes.sources[l.scopes.inputs[root.input-1].source]
+			if source.id == root.source && source.root == root.root {
+				work = l.Options.Work.Traversal(source.id)
+			}
+		}
+	}
+	w := traversal{work: work, documents: l.documents}
 	collect := func(v graphVisit) bool {
 		if origin := new(l.documents).localPath(v.file); origin != v.file {
 			v.origin = origin

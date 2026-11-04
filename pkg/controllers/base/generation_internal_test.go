@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
-
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
@@ -77,35 +76,54 @@ func TestGeneratedObjects_WithdrawalBeforeBlockedSource(t *testing.T) {
 			"%v",
 			"obsolete generated object remained visible at the source wait",
 		)
+
 		return &depwait.ErrBlocked{Deps: []manifest.NamedResource{blocked}}
 	}
 	run.Dispatch(t.Context(), manifest.DrainNone, struct{}{}, check)
+
 	assert.FatalIf(t, run.Outcome() != schedule.Blocked, "%v", "execution did not retain the source wait")
+
 	run.Settle(t.Context(), manifest.DrainNone)
-	assert.FatalIf(t, calls.Load() != 2 || run.Outcome() != schedule.Blocked,
-		"resumed rule evaluated again: %d", calls.Load())
+	assert.FatalIf(
+		t,
+		calls.Load() != 2 || run.Outcome() != schedule.Blocked,
+		"resumed rule evaluated again: %d",
+		calls.Load(),
+	)
 }
 
 //nolint:paralleltest // This test changes process-global state.
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestGeneratedObjects_NoRuleNoAllocations(t *testing.T) {
 	s := store.New()
+	var recording manifest.WorkRecorder
+	recording.Key.Tree = manifest.TreeID{Cluster: "cluster", Side: manifest.TreeHead}
+	s.SetWorkTree(recording.Key.Tree, recording.Scope())
 	object := &manifest.Kustomization{Name: "ordinary", Namespace: "apps"}
 	s.AddObject(object)
-	run := newExecution(New(s, task.NewBounded(2)), object.Named())
+	run := new(Execution)
+	run.Init(New(s, task.NewBounded(2)), object.Named())
 	defer run.Close()
 	run.Reads.GetDeclaration(object.Named())
 	reconcile := func(context.Context, *manifest.Kustomization, manifest.DrainLevel) error { return nil }
-	if allocations := testing.AllocsPerRun(100, func() {
-		run.prepared = false
-		{
-			err := run.reconcile(t.Context(), object, manifest.DrainNone, reconcile)
-			if err != nil {
-				t.Fatalf("%v", err)
+	{
+		allocations := testing.AllocsPerRun(100, func() {
+			run.prepared = false
+			if err := run.reconcile(t.Context(), object, manifest.DrainNone, reconcile); err != nil {
+				t.Fatal(err)
 			}
-		}
-	}); allocations != 0 || s.HasInventory(object.Named()) {
-		t.Fatalf("no-rule preparation allocations=%g inventory=%t", allocations, s.HasInventory(object.Named()))
+		})
+		assert.FatalIf(
+			t,
+			allocations != 0 || s.HasInventory(object.Named()),
+			"no-rule preparation allocations=%g inventory=%t",
+			allocations,
+			s.HasInventory(object.Named()),
+		)
+	}
+	{
+		records := run.Reads.Work().Scope().Snapshot(0)
+		assert.FatalIf(t, len(records) != 0, "no-rule preparation recorded physical work: %v", records)
 	}
 }
 
@@ -131,12 +149,14 @@ func TestGeneratedObjects_AdmissionWithdrawsPartialRule(t *testing.T) {
 				struct{}{},
 				func(struct{}, context.Context, *configGenerator, manifest.DrainLevel) error { return nil },
 			)
+
 			assert.FatalIf(
 				t,
 				s.GetObject(child.Named()) == nil,
 				"%v",
 				"initial provisional child was not published",
 			)
+
 			switch mode {
 			case "suspended":
 				next := *object
@@ -159,6 +179,7 @@ func TestGeneratedObjects_AdmissionWithdrawsPartialRule(t *testing.T) {
 					return nil
 				},
 			)
+
 			assert.FatalIf(
 				t,
 				s.GetObject(child.Named()) != nil || calls.Load() != 1,
@@ -225,12 +246,14 @@ func testGeneratedObjectsLifecycleCase(t *testing.T, testCaseInput *string,
 			return run.Emit(t.Context(), first.Named(), &next, nil)
 		},
 	)
+
 	assert.FatalIf(
 		t,
 		run.Outcome() != schedule.Terminal || s.GetObject(id) == nil,
 		"%v",
 		"first execution did not publish its generated object",
 	)
+
 	next := *first
 	next.Kustomization = first.Clone()
 	next.Path = "second"
@@ -253,14 +276,16 @@ func testGeneratedObjectsLifecycleCase(t *testing.T, testCaseInput *string,
 				return manifest.ErrInput
 			}
 			if (*testCaseInput) == "replay" {
-				fingerprintDedupResult1, fingerprintDedupResult1Err := run.FingerprintDedup(
+				fingerprintDedupResult, err := run.FingerprintDedup(
 					t.Context(),
 					next.Named(),
 					"same",
 					&store.Emission{},
 				)
-				_, handled, err := fingerprintDedupResult1.Fingerprint, fingerprintDedupResult1.Reused, fingerprintDedupResult1Err
+				handled := fingerprintDedupResult.Reused
+
 				assert.ErrorIf(t, !handled, "%v", "completed output was unavailable for replay")
+
 				return err
 			}
 			_, _, output := run.Reads.GetEmission(next.Named())
@@ -273,19 +298,17 @@ func testGeneratedObjectsLifecycleCase(t *testing.T, testCaseInput *string,
 					"metadata":   map[string]any{"name": id.Name, "namespace": id.Namespace},
 					"data":       map[string]any{"value": "authored"},
 				}
-				parseChildrenResult2 := (&Execution{Controller: c}).ParseChildren(
+				parseChildrenResult := run.ParseChildren(
 					&next,
 					[]manifest.DocOccurrence{{Document: doc}},
 					manifest.ParseDocOptions{},
 				)
-				output.Children, output.Manifests, output.Failures = parseChildrenResult2.Children, parseChildrenResult2.Visible, parseChildrenResult2.Failures
+				output.Children, output.Manifests, output.Failures = parseChildrenResult.Children, parseChildrenResult.Visible, parseChildrenResult.Failures
 			}
 			return run.Emit(t.Context(), next.Named(), &output, nil)
 		},
 	)
-	assert.FatalIf(t, calls.Load() != 2,
-		"rule evaluated %d times, want once per declaration", calls.Load())
-
+	assert.FatalIf(t, calls.Load() != 2, "rule evaluated %d times, want once per declaration", calls.Load())
 	_, _, output := s.GetEmission(next.Named())
 	defer output.Finish()
 	if (*testCaseInput) == "removed" || (*testCaseInput) == "invalid_rule" {
@@ -300,9 +323,15 @@ func testGeneratedObjectsLifecycleCase(t *testing.T, testCaseInput *string,
 		if (*testCaseInput) == "collision" {
 			want = "authored"
 		}
-		assert.FatalIf(t, value != want || s.ReportHidden(id) != ((*testCaseInput) != "collision"),
-			"representative=%v hidden=%t", value, s.ReportHidden(id))
+		assert.FatalIf(
+			t,
+			value != want || s.ReportHidden(id) != ((*testCaseInput) != "collision"),
+			"representative=%v hidden=%t",
+			value,
+			s.ReportHidden(id),
+		)
 	}
+
 	assert.FatalIf(
 		t, (*testCaseInput) ==
 			"failure" && s.GetObject(rendered.Obj.Named()) == nil, "%v",
@@ -367,6 +396,7 @@ func testGeneratedObjectsReplayReadinessAndReceiptCase(
 			store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged},
 		)
 		s.SetIncluded(object.Named(), true)
+
 		{
 			info, _ := s.GetStatus(object.Named())
 			assert.FatalIf(
@@ -395,37 +425,37 @@ func testGeneratedObjectsReplayReadinessAndReceiptCase(
 		manifest.DrainNone,
 		second,
 		func(run *Execution, _ context.Context, _ *configGenerator, _ manifest.DrainLevel) error {
-			fingerprintDedupResult3, fingerprintDedupResult3Err := run.FingerprintDedup(
-				t.Context(),
-				object.Named(),
-				"same",
-				&store.Emission{},
-			)
-			_, handled, err := fingerprintDedupResult3.Fingerprint, fingerprintDedupResult3.Reused, fingerprintDedupResult3Err
+			fingerprintDedupResult2, err := run.FingerprintDedup(t.Context(), object.Named(), "same", &store.Emission{})
+			handled := fingerprintDedupResult2.Reused
+
 			assert.ErrorIf(
 				t,
 				!handled,
 				"%v",
 				"completed render was unavailable after provisional publication",
 			)
+
 			return err
 		},
 	)
-	assert.FatalIf(t, !testCaseInput.readmitted && (!authority.Valid() || events.Load() != 0),
-
+	assert.FatalIf(
+		t,
+		!testCaseInput.readmitted && (!authority.Valid() || events.Load() != 0),
 		"unchanged generated preparation invalidated output: valid=%t events=%d",
 		authority.Valid(),
-		events.Load())
-
+		events.Load(),
+	)
 	wantReceipt := receipt
 	if testCaseInput.readmitted {
 		wantReceipt = nil
 	}
-	if output, _ := s.GetArtifact(object.Named(), store.ArtifactContent).(*store.Emission); output == nil ||
-		output.Render != wantReceipt ||
-		!second.Reused {
-		t.Fatalf("replay receipt = %v, reused = %t", output, second.Reused)
+	{
+		output, _ := s.GetArtifact(object.Named(), store.ArtifactContent).(*store.Emission)
+		assert.FatalIf(t, output == nil ||
+			output.Render != wantReceipt ||
+			!second.Reused, "replay receipt = %v, reused = %t", output, second.Reused)
 	}
+
 	{
 		info, _ := s.GetStatus(object.Named())
 		assert.FatalIf(

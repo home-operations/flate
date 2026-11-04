@@ -16,7 +16,7 @@ import (
 )
 
 type ociFetcher interface {
-	FetchChart(context.Context, *manifest.OCIRepository, *store.ReadSet, cache.Policy) (*store.SourceArtifact, error)
+	FetchChart(context.Context, *manifest.OCIRepository, *store.ReadSet, *cache.Policy) (*store.SourceArtifact, error)
 }
 
 // Fetcher resolves a HelmChart into an immutable source artifact.
@@ -59,6 +59,9 @@ func New(oci ociFetcher, cfg Config) *Fetcher {
 type operation struct {
 	*Fetcher
 
+	work      manifest.AcquisitionWork
+	indexWork manifest.AcquisitionWork
+
 	reads   *store.ReadSet
 	secrets source.SecretGetter
 }
@@ -68,17 +71,28 @@ func (f *Fetcher) Fetch(
 	ctx context.Context,
 	hc *manifest.HelmChartSource,
 	reads *store.ReadSet,
-	policy cache.Policy,
+	policyValue *cache.Policy,
 ) (*store.SourceArtifact, error) {
+	policy := *policyValue
+
 	innerOperation := operation{Fetcher: f, reads: reads, secrets: source.SecretLookup(reads)}
-	return innerOperation.fetchSource(ctx, hc, policy)
+	return innerOperation.fetchSource(ctx, hc, &policy)
 }
 
 func (f *operation) fetchSource(
 	ctx context.Context,
 	hc *manifest.HelmChartSource,
-	policy cache.Policy,
+	policyValue *cache.Policy,
 ) (*store.SourceArtifact, error) {
+	policy := *policyValue
+
+	f.work.Scope = f.reads.Work().Scope().Source(hc.Named())
+	if policy.Work != nil {
+		f.work.Scope = policy.Work.Attribution().Source(hc.Named())
+	}
+	policy.Work = &f.work
+	f.indexWork.Scope = f.work.Scope
+	policy.HistoryWork = &f.indexWork
 	id := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
 		Kind:      manifest.KindHelmRepository,
@@ -98,7 +112,7 @@ func (f *operation) fetchSource(
 		policy.MaxAge = cache.Forever
 	}
 	if r.IsOCI() {
-		return f.fetchOCIChart(ctx, hc, r, policy)
+		return f.fetchOCIChart(ctx, hc, r, &policy)
 	}
 
 	prepared, err := f.prepareHTTP(r)
@@ -107,8 +121,16 @@ func (f *operation) fetchSource(
 			timeout := r.OperationTimeout()
 			policy.Timeout = &timeout
 			missing.RetryAmbient = func(ctx context.Context) (*store.SourceArtifact, error) {
-				local := *prepared
-				return source.AcquireMachine(ctx, policy, func(ctx context.Context) error {
+				local := struct {
+					httpRepository
+
+					work, indexWork manifest.AcquisitionWork
+				}{httpRepository: *prepared}
+				local.work.Scope = f.work.Scope
+				local.indexWork.Scope = local.work.Scope
+				policy := policy
+				policy.Work, policy.HistoryWork = &local.work, &local.indexWork
+				return source.AcquireMachine(ctx, &policy, func(ctx context.Context) error {
 					if localCredentialsErr := local.localCredentials(ctx); localCredentialsErr != nil {
 						return localCredentialsErr
 					}
@@ -123,24 +145,28 @@ func (f *operation) fetchSource(
 					)
 					local.client = &http.Client{Transport: tr}
 					return httpTransportErr
-				}, func(ctx context.Context, policy cache.Policy) (*store.SourceArtifact, error) {
-					return f.fetchHTTPChart(ctx, &local, hc, policy)
+				}, func(ctx context.Context, policyValue *cache.Policy) (*store.SourceArtifact, error) {
+					policy := *policyValue
+
+					return f.fetchHTTPChart(ctx, &local.httpRepository, hc, &policy)
 				})
 			}
 		}
 		return nil, err
 	}
-	return f.fetchHTTPChart(ctx, prepared, hc, policy)
+	return f.fetchHTTPChart(ctx, prepared, hc, &policy)
 }
 
 func (f *operation) fetchOCIChart(
 	ctx context.Context,
 	hc *manifest.HelmChartSource,
 	r *manifest.HelmRepository,
-	policy cache.Policy,
+	policyValue *cache.Policy,
 ) (*store.SourceArtifact, error) {
+	policy := *policyValue
+
 	syn := hc.OCIRepository(r)
-	art, err := f.oci.FetchChart(ctx, syn, f.reads, policy)
+	art, err := f.oci.FetchChart(ctx, syn, f.reads, &policy)
 	if missing, ok := errors.AsType[*source.MissingSecretError](err); ok && missing.RetryAmbient != nil {
 		retry := missing.RetryAmbient
 		wrapped := *missing

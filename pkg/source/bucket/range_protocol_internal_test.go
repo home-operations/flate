@@ -123,7 +123,12 @@ func testWalkBucketRangesCase(t *testing.T, behavior *string,
 		ctx = gatedCancelContext{Context: copyCtx, gate: gate}
 		archive = &cancelArchiveWriter{cancel: cancelCopy}
 	}
-	desc, err := walkBucket(ctx, client, &manifest.Bucket{BucketName: "data", Prefix: "prefix/"}, archive)
+	desc, err := walkBucket(
+		ctx,
+		client,
+		&manifest.Bucket{BucketName: "data", Prefix: "prefix/"},
+		bucketOutput{Writer: archive},
+	)
 	if probeStatus != 0 {
 		response, ok := errors.AsType[*fetcherr.ResponseError](err)
 		if !ok || response.StatusCode != probeStatus || response.Op != http.MethodGet ||
@@ -402,6 +407,7 @@ type testWalkBucketRangesCaseCompletionInputs struct {
 	data       *bytes.Buffer
 	desc       *ocispec.Descriptor
 }
+
 type testWalkBucketRangesCaseCallbackCompletionInputs struct {
 	w             *http.ResponseWriter
 	length        *int64

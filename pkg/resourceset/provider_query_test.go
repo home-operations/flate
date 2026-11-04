@@ -4,11 +4,12 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/resourceset"
+
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/resourceset"
 )
 
 func TestRender_UsesOneProviderQuery(t *testing.T) {
@@ -62,5 +63,5 @@ func renderProviders(
 			input.State = resourceset.ProviderInputUnsupported
 		}
 	}
-	return resourceset.Render(rs, inputs, admit)
+	return resourceset.Render(rs, inputs, admit, nil)
 }

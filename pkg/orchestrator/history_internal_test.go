@@ -253,24 +253,28 @@ func testRenderEntryOwnerDependsOnSiblingCase(
 	assert.NoError(t, err)
 	t.Cleanup(o.stop)
 	assert.NoError(t, o.bootstrap(t.Context()))
-	assert.FatalIf(t, !o.entryBinding.Producer.ReportHidden(),
-		"entry prerequisite reused its owner: %+v", o.entryBinding)
-
+	if !o.entryBinding.Producer.ReportHidden() {
+		t.Fatalf("entry prerequisite reused its owner: %+v", o.entryBinding)
+	}
 	owner := testutil.KustomizationID("apps", "owner")
 	if (*testCaseInput) == "deferred_required" || (*testCaseInput) == "deferred_optional" {
 		record, _ := o.index.Lookup(owner)
+
 		assert.FatalIf(t, record.Declaration == nil, "%v", "deferred owner lost its declaration")
+
 		o.configureControllers()
 		var reads store.ReadSet
 		reads.Init(o.store, owner, nil)
 		records, _ := o.controllers.PreviousRender(t.Context(), record.Declaration, &reads)
 		reads.Retire()
+
 		assert.FatalIf(
 			t,
 			records != nil,
 			"%v",
 			"deferred owner accepted history before referenced substitution",
 		)
+
 		assert.FatalIf(
 			t,
 			o.store.GetObject(testutil.KustomizationID("apps", "sibling")) != nil,
@@ -281,6 +285,7 @@ func testRenderEntryOwnerDependsOnSiblingCase(
 	result, err := o.collectResult(o.run(t.Context()))
 	if (*testCaseInput) == "cycle" {
 		assert.FatalIf(t, err == nil, "%v", "authored cycle rendered successfully")
+
 		for _, name := range []string{"owner", "sibling"} {
 			{
 				message, ok := o.preflightFailure(
@@ -302,6 +307,7 @@ func testRenderEntryOwnerDependsOnSiblingCase(
 	}
 	for _, id := range []manifest.NamedResource{owner, sibling} {
 		status, ok := o.store.GetStatus(id)
+
 		assert.FatalIf(
 			t,
 			!ok || status.Status != store.StatusReady,
@@ -311,6 +317,7 @@ func testRenderEntryOwnerDependsOnSiblingCase(
 		)
 	}
 	docs := outputByParent(result.Manifests)[sibling]
+
 	assert.FatalIf(
 		t,
 		len(docs) != 1 || docs[0]["metadata"].(map[string]any)["name"] != "workload",
@@ -461,7 +468,9 @@ func testBootstrapEntryHistoryMatchesEmissionCase(
 		reads.Init(o.store, owner, nil)
 		defer reads.Retire()
 		records, complete := o.controllers.PreviousRender(t.Context(), o.store.GetObject(owner), &reads)
+
 		assert.FatalIf(t, records == nil || !complete, "%v", "entry lacks complete controller history")
+
 		return maps.Collect(records)
 	}
 	before := readHistory()
@@ -473,10 +482,12 @@ func testBootstrapEntryHistoryMatchesEmissionCase(
 	owners, err := reopened.ProducersForPaths(t.Context(), query)
 	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(owners, owner), true)
+
 	{
 		_, self := before[owner]
 		assert.FatalIf(t, self, "%v", "accepted entry history includes its own owner")
 	}
+
 	if (*testCaseInput) == "empty" {
 		assert.Equal(t, len(before), 0)
 	} else {
@@ -572,10 +583,14 @@ func testBootstrapEntryHistoryMatchesEmissionCase(
 	})
 	o.tasks.BlockTillDone()
 	assert.Equal(t, o.tasks.Failures(), int64(0))
+
 	assert.FatalIf(t, execution == nil, "%v", "entry reconciliation did not run")
+
 	defer execution.Close()
 	status, ok := o.store.GetStatus(owner)
+
 	assert.FatalIf(t, !ok || status.Status != store.StatusReady, "entry emission failed: %+v", status)
+
 	_, _, emitted := o.store.GetEmission(owner)
 	defer emitted.Finish()
 	assert.Equal(t, o.store.GetArtifact(owner, store.ArtifactContent).(*store.Emission).Complete, true)
@@ -631,17 +646,21 @@ func testBootstrapEntryReceiptDependencySubstitutionsCaseCase(
 	reads.Init(o.store, owner, nil)
 	defer reads.Retire()
 	records, narrow := o.controllers.PreviousRender(t.Context(), o.store.GetObject(owner), &reads)
+
 	assert.FatalIf(
 		t,
 		records == nil || !narrow,
 		"%v",
 		"controller rejected the receipt discovery saved",
 	)
+
 	found := false
 	for id := range records {
 		found = found || id == testutil.KustomizationID("apps", "child")
 	}
+
 	assert.FatalIf(t, !found, "%v", "entry receipt lost its child inventory")
+
 	o.ksc.Trees.Close()
 	reopened, err := sourcecache.New(t.Context(), (*testCaseInput.cacheDir))
 	assert.NoError(t, err)
@@ -660,12 +679,14 @@ func testBootstrapEntryReceiptDependencySubstitutionsCaseCase(
 	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(owners, owner), true)
 	again, complete := o.controllers.PreviousRender(t.Context(), o.store.GetObject(owner), &reads)
+
 	assert.FatalIf(
 		t,
 		again == nil || !complete,
 		"%v",
 		"controller rejected the receipt after reopening persistent cache",
 	)
+
 	assert.Diff(t, maps.Collect(again), maps.Collect(records))
 	assert.NoError(t, o.run(t.Context()))
 }
@@ -738,13 +759,13 @@ data: {VALUE: rendered}
 	documents, receipt, err := kustomize.Render(t.Context(), warm.ksc.Trees, request, cfg.SourceRetry)
 	assert.NoError(t, err)
 	content := request.Content(documents)
-	assert.NoError(t, kustomize.Shape(prepared, documents, true))
-	parseChildrenResult1 := (&base.Execution{Controller: warm.ksc.Controller}).ParseChildren(
+	assert.NoError(t, kustomize.Shape(t.Context(), prepared, documents, kustomize.ShapeOptions{Strict: true}))
+	parseChildrenResult := (&base.Execution{Controller: warm.ksc.Controller}).ParseChildren(
 		prepared,
 		documents,
 		manifest.ParseDocOptions{},
 	)
-	children, _, failures := parseChildrenResult1.Children, parseChildrenResult1.Visible, parseChildrenResult1.Failures
+	children, failures := parseChildrenResult.Children, parseChildrenResult.Failures
 	assert.Equal(t, len(failures), 0)
 	assert.NoError(
 		t,

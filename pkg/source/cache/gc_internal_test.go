@@ -34,7 +34,7 @@ import (
 
 func sweepGit(t *testing.T, c *Cache, key string) (*GitGeneration, ocispec.Descriptor, string) {
 	t.Helper()
-	g, id, err := c.Git(t.Context(), GitKey{Content: key, RecurseSubmodules: true}, Policy{MaxAge: 0},
+	g, id, err := c.Git(t.Context(), GitKey{Content: key, RecurseSubmodules: true}, &Policy{MaxAge: 0},
 		func(context.Context,
 
 			storage.Storer, billy.Filesystem,
@@ -114,7 +114,7 @@ func TestSweep_CoalescedAccessRetention(t *testing.T) {
 		_, _, id, err := c.Blob(
 			t.Context(),
 			key,
-			Policy{MaxAge: Forever},
+			&Policy{MaxAge: Forever},
 			producer([]byte("payload"), &ocispec.Descriptor{}),
 		)
 		assert.NoError(t, err)
@@ -126,7 +126,7 @@ func TestSweep_CoalescedAccessRetention(t *testing.T) {
 			assert.NoError(t, chtimesErr)
 		}
 
-		_, _, _, err = c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+		_, _, _, err = c.Blob(t.Context(), key, &Policy{MaxAge: Forever}, nil)
 		assert.NoError(t, err)
 		{
 			err := c.Close()
@@ -397,7 +397,7 @@ func testSweepGitGenerationsCase(t *testing.T, scenario *string,
 		_, _, _, err := c.Blob(
 			t.Context(),
 			BlobKey{Content: "a-expired"},
-			Policy{MaxAge: 0},
+			&Policy{MaxAge: 0},
 			producer([]byte("stale"), &ocispec.Descriptor{}),
 		)
 		assert.NoError(t, err)
@@ -613,7 +613,7 @@ func testSweepAgeUsesPayloadLastUseCase(t *testing.T, maxAge *time.Duration,
 				_, _, err := c.Git(
 					t.Context(),
 					GitKey{Content: id, RecurseSubmodules: true},
-					Policy{MaxAge: Forever},
+					&Policy{MaxAge: Forever},
 					nil,
 				)
 				assert.NoError(t, err)

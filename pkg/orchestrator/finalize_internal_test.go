@@ -162,52 +162,103 @@ func TestAggregateFailures_Deterministic(t *testing.T) {
 
 //nolint:paralleltest // This test changes process-global state.
 //nolint:paralleltest // The test calls a helper that changes process-global state.
-func TestFinalize_ProjectedDeclarationCount(t *testing.T) {
-	var logs bytes.Buffer
-	previous := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(previous) })
-	root := t.TempDir()
-	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [ks.yaml]\n")
-	testutil.WriteFile(
-		t,
-		root,
-		"ks.yaml",
-		testutil.KustomizationYAML("parent", "flux-system", "  path: ./app\n  targetNamespace: apps\n"),
-	)
-	testutil.WriteFile(
-		t,
-		root,
-		"app/hr.yaml",
-		"apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: child}\nspec: {suspend: true, chartRef: {kind: OCIRepository, name: missing}}\n",
-	)
-	o, err := newTestOrchestrator(t, Tree{Path: root, RepoRoot: root}, Config{Concurrency: 2})
-	assert.NoError(t, err)
-	_, err = o.render(t.Context())
-	assert.NoError(t, err)
-	assert.Equal(t, len(o.store.ListObjects(manifest.HelmReleaseDomain, manifest.KindHelmRelease)), 1)
-	projected := testutil.HelmReleaseID("apps", "child")
-	assert.Equal(t, o.store.GetObject(projected) != nil, true)
-	info, _ := o.store.GetStatus(projected)
-	assert.Equal(t, info.Outcome(), store.OutcomeSuspended)
-	raw := testutil.HelmReleaseID("", "child")
-	record, known := o.index.Lookup(projected)
-	assert.Equal(t, known && record.Declaration != nil, true)
-	assert.Equal(t, o.store.GetObject(raw) == nil, true)
-	parent, _ := o.store.GetStatus(record.Parent)
-	assert.Equal(t, parent.Outcome(), store.OutcomePassed)
-	var counts []int
-	for line := range bytes.Lines(logs.Bytes()) {
-		var event struct {
-			Message      string `json:"msg"`
-			HelmReleases int    `json:"helm_releases"`
+func TestFinalize_DebugSummary(t *testing.T) {
+	t.Run("projected_declaration_count", func(t *testing.T) {
+		var logs bytes.Buffer
+		previous := slog.Default()
+		slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+		t.Cleanup(func() { slog.SetDefault(previous) })
+		root := t.TempDir()
+		testutil.WriteFile(t, root, "kustomization.yaml", "resources: [ks.yaml]\n")
+		testutil.WriteFile(
+			t,
+			root,
+			"ks.yaml",
+			testutil.KustomizationYAML("parent", "flux-system", "  path: ./app\n  targetNamespace: apps\n"),
+		)
+		testutil.WriteFile(
+			t,
+			root,
+			"app/hr.yaml",
+			"apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: child}\nspec: {suspend: true, chartRef: {kind: OCIRepository, name: missing}}\n",
+		)
+		o, err := newTestOrchestrator(t, Tree{Path: root, RepoRoot: root}, Config{Concurrency: 2})
+		assert.NoError(t, err)
+		_, err = o.render(t.Context())
+		assert.NoError(t, err)
+		assert.Equal(t, len(o.store.ListObjects(manifest.HelmReleaseDomain, manifest.KindHelmRelease)), 1)
+		projected := testutil.HelmReleaseID("apps", "child")
+		assert.Equal(t, o.store.GetObject(projected) != nil, true)
+		info, _ := o.store.GetStatus(projected)
+		assert.Equal(t, info.Outcome(), store.OutcomeSuspended)
+		raw := testutil.HelmReleaseID("", "child")
+		record, known := o.index.Lookup(projected)
+		assert.Equal(t, known && record.Declaration != nil, true)
+		assert.Equal(t, o.store.GetObject(raw) == nil, true)
+		parent, _ := o.store.GetStatus(record.Parent)
+		assert.Equal(t, parent.Outcome(), store.OutcomePassed)
+		var counts []int
+		for line := range bytes.Lines(logs.Bytes()) {
+			var event struct {
+				Message      string `json:"msg"`
+				HelmReleases int    `json:"helm_releases"`
+			}
+			assert.NoError(t, json.Unmarshal(line, &event))
+			if event.Message == "orchestrator: reconcile complete" {
+				counts = append(counts, event.HelmReleases)
+			}
 		}
-		assert.NoError(t, json.Unmarshal(line, &event))
-		if event.Message == "orchestrator: reconcile complete" {
-			counts = append(counts, event.HelmReleases)
+		assert.Diff(t, counts, []int{1})
+	})
+	t.Run("work_result_matches_debug", func(t *testing.T) {
+		var log bytes.Buffer
+		previous := slog.Default()
+		slog.SetDefault(slog.New(slog.NewJSONHandler(&log, &slog.HandlerOptions{Level: slog.LevelDebug})))
+		defer slog.SetDefault(previous)
+		root := t.TempDir()
+		writeCluster(t, root, "one", "two")
+		runs, err := RenderTrees(
+			t.Context(),
+			[]Tree{
+				{
+					ID: manifest.TreeID{
+						Cluster: ".",
+						Side:    manifest.TreeHead,
+					},
+					RepoRoot: root,
+				},
+			},
+			Config{
+				RecordWork:  true,
+				Concurrency: 2,
+			},
+		)
+		assert.NoError(t, err)
+		assert.FatalIf(t, len(runs) != 1 || len(runs[0].Result.Work) == 0, "missing work summary: %+v", runs)
+		assert.FatalIf(
+			t,
+			&runs[0].Result.Work[0] != &runs[0].work[0],
+			"%v",
+			"collectResult copied the frozen work snapshot",
+		)
+		encoded, err := json.Marshal(runs[0].Result.Work)
+		assert.NoError(t, err)
+		var want any
+		assert.NoError(t, json.Unmarshal(encoded, &want))
+		found := false
+		for line := range strings.SplitSeq(log.String(), "\n") {
+			if line == "" {
+				continue
+			}
+			var record map[string]any
+			assert.NoError(t, json.Unmarshal([]byte(line), &record))
+			if record["msg"] == "orchestrator: reconcile complete" {
+				found = true
+				assert.Diff(t, record["work"], want)
+			}
 		}
-	}
-	assert.Diff(t, counts, []int{1})
+		assert.FatalIf(t, !found, "%v", "missing debug work summary")
+	})
 }
 
 func TestFinalize_DispatchPanic(t *testing.T) {

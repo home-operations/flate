@@ -1,0 +1,4 @@
+resources:
+- helmrelease.yaml
+components:
+- ../../../../components/kopiur/kopiur

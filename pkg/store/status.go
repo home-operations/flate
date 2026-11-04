@@ -357,24 +357,16 @@ func (sh *shard) setConditionLocked(
 	ready := cond.Type == ConditionReady
 	objects := record.applyingObjects
 	objectsChanged := ready && objects != applyingObjects
-	if ready && applyingObjects != 0 {
-		cond.Message = ""
-	}
+	clearApplyingMessage(&cond, ready, applyingObjects)
 	failureChanged := ready && !record.failure.same(failure)
 	for i := range record.conditions {
 		previous := &record.conditions[i]
 		if previous.Type != cond.Type {
 			continue
 		}
-		messageChanged := previous.Message != cond.Message
-		if ready {
-			messageChanged = !sameMessage(previous.Message, objects, cond.Message, applyingObjects)
-		}
-		changed := messageChanged || previous.Status != cond.Status || previous.Reason != cond.Reason ||
-			previous.ObservedGeneration != cond.ObservedGeneration
+		changed := record.conditionChanged(previous, &cond, ready, applyingObjects)
 		// An unchanged blocker set MUST retain its first diagnostic to bound cyclic propagation.
-		if failure != nil && !failureChanged && record.conditions[i].Status == cond.Status &&
-			record.conditions[i].Reason == cond.Reason {
+		if record.retainsFailure(failure, failureChanged, &cond, i) {
 			return record, false
 		}
 		if changed || failureChanged {
@@ -385,22 +377,12 @@ func (sh *shard) setConditionLocked(
 		}
 		if failureChanged || objectsChanged {
 			record.failure = failure
-			if ready {
-				record.applyingObjects = applyingObjects
-			}
+			record.applyingObjects = applyingObjects
 			sh.conditions[id] = record
 		}
 		return record, changed || failureChanged
 	}
-	if record.state == nil {
-		if !sh.canAdmit(1) {
-			sh.mu.Unlock()
-			panic("store: authority generation exhausted")
-		}
-		sh.admitAbsenceLocked(id, conditionFacet)
-		record.state = &conditionState{}
-		record.conditions = record.state.first[:0]
-	}
+	sh.initializeConditionsLocked(id, &record)
 	record.advanceLocked(sh)
 	if failureChanged {
 		record.failure = failure
@@ -496,5 +478,39 @@ func (r conditionRecord) project(conditions []Condition) {
 				conditions[i].Message = StatusInfo{applyingObjects: r.applyingObjects}.String()
 			}
 		}
+	}
+}
+
+func (sh *shard) initializeConditionsLocked(id manifest.NamedResource, record *conditionRecord) {
+	if record.state == nil {
+		if !sh.canAdmit(1) {
+			sh.mu.Unlock()
+			panic("store: authority generation exhausted")
+		}
+		sh.admitAbsenceLocked(id, conditionFacet)
+		record.state = &conditionState{}
+		record.conditions = record.state.first[:0]
+	}
+}
+
+func (r conditionRecord) conditionChanged(previous, cond *Condition, ready bool, applyingObjects int) bool {
+	objects := r.applyingObjects
+	messageChanged := previous.Message != cond.Message
+	if ready {
+		messageChanged = !sameMessage(previous.Message, objects, cond.Message, applyingObjects)
+	}
+	changed := messageChanged || previous.Status != cond.Status || previous.Reason != cond.Reason ||
+		previous.ObservedGeneration != cond.ObservedGeneration
+	return changed
+}
+
+func (r conditionRecord) retainsFailure(failure *dependencyFailure, failureChanged bool, cond *Condition, i int) bool {
+	return failure != nil && !failureChanged && r.conditions[i].Status == cond.Status &&
+		r.conditions[i].Reason == cond.Reason
+}
+
+func clearApplyingMessage(cond *Condition, ready bool, applyingObjects int) {
+	if ready && applyingObjects != 0 {
+		cond.Message = ""
 	}
 }

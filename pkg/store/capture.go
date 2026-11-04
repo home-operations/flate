@@ -713,49 +713,7 @@ func (r *ReadSet) Matches(previous *ReadSet) bool {
 		return false
 	}
 	for input := previous.inputs; input != nil; input = input.next {
-		id := input.Ref.NamedResource
-		details := input.details.Load()
-		if input.derived&capturedObject != 0 &&
-			!reconcileEqual(Child{Obj: r.GetObject(id), Doc: r.input(id).view.child.Doc}, input.view.child) {
-			return false
-		}
-		if input.declaration && (r.GetDeclaration(id) == nil) != (new(input.view).declaration() == nil) {
-			return false
-		}
-		if input.derived&capturedConditions != 0 {
-			var observed Observation
-			_, observed = r.Snapshot(id, true)
-			conditions := observed.Conditions
-			if !slices.EqualFunc(conditions, details.conditions, conditionEqual) {
-				return false
-			}
-		} else if input.derived&capturedStatus != 0 {
-			status, ok := r.GetStatus(id)
-			if ok != input.hasStatus || status.Status != details.status.Status ||
-				status.Reason != details.status.Reason ||
-				!sameMessage(
-					status.Message,
-					status.applyingObjects,
-					details.status.Message,
-					details.status.applyingObjects,
-				) ||
-				!slices.Equal(status.BlockedBy(), details.status.BlockedBy()) {
-				return false
-			}
-		}
-		if input.derived&capturedArtifact != 0 &&
-			!artifactReadEqual(details.artifact, r.GetArtifact(id, details.artifactRead), details.artifactRead) {
-			return false
-		}
-		if input.derived&capturedProductions != 0 {
-			if !slices.Equal(details.productions, r.Productions(id, nil)) {
-				return false
-			}
-		} else if details != nil && details.productions != nil {
-			r.UnsettledProducers(id)
-		}
-		if input.derived&capturedObjects != 0 &&
-			!slices.EqualFunc(details.objects, r.ListObjects(id.Group, id.Kind), manifest.Equal) {
+		if !r.matchesInput(input) {
 			return false
 		}
 	}
@@ -885,4 +843,60 @@ func (r *ReadSet) captureSourceAuthorities(view *capture) {
 			r.invalid.Store(true)
 		}
 	}
+}
+
+func (r *ReadSet) matchesInput(input *Input) bool {
+	id := input.Ref.NamedResource
+	details := input.details.Load()
+	if input.derived&capturedObject != 0 &&
+		!reconcileEqual(Child{Obj: r.GetObject(id), Doc: r.input(id).view.child.Doc}, input.view.child) {
+		return false
+	}
+	if input.declaration && (r.GetDeclaration(id) == nil) != (new(input.view).declaration() == nil) {
+		return false
+	}
+	if !r.matchesReadiness(id, input, details) {
+		return false
+	}
+	if input.derived&capturedArtifact != 0 &&
+		!artifactReadEqual(details.artifact, r.GetArtifact(id, details.artifactRead), details.artifactRead) {
+		return false
+	}
+	if input.derived&capturedProductions != 0 {
+		if !slices.Equal(details.productions, r.Productions(id, nil)) {
+			return false
+		}
+	} else if details != nil && details.productions != nil {
+		r.UnsettledProducers(id)
+	}
+	if input.derived&capturedObjects != 0 &&
+		!slices.EqualFunc(details.objects, r.ListObjects(id.Group, id.Kind), manifest.Equal) {
+		return false
+	}
+	return true
+}
+
+func (r *ReadSet) matchesReadiness(id manifest.NamedResource, input *Input, details *inputDetails) bool {
+	if input.derived&capturedConditions != 0 {
+		var observed Observation
+		_, observed = r.Snapshot(id, true)
+		conditions := observed.Conditions
+		if !slices.EqualFunc(conditions, details.conditions, conditionEqual) {
+			return false
+		}
+	} else if input.derived&capturedStatus != 0 {
+		status, ok := r.GetStatus(id)
+		if ok != input.hasStatus || status.Status != details.status.Status ||
+			status.Reason != details.status.Reason ||
+			!sameMessage(
+				status.Message,
+				status.applyingObjects,
+				details.status.Message,
+				details.status.applyingObjects,
+			) ||
+			!slices.Equal(status.BlockedBy(), details.status.BlockedBy()) {
+			return false
+		}
+	}
+	return true
 }

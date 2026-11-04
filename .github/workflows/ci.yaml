@@ -91,6 +91,9 @@ jobs:
       - name: Run unit tests
         run: mise run test
 
+      - name: Run allocation tests
+        run: mise run test-allocations
+
   goreleaser:
     name: GoReleaser
     uses: $/.github/workflows/goreleaser.yaml

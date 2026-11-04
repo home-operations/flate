@@ -107,7 +107,12 @@ func BuildKSClaims(kss []*Kustomization, components map[NamedResource][]string) 
 // StrictParent returns the deepest claimant other than self. selfPrefixes excludes
 // peers that share a claimed path, or their dependency gates would deadlock.
 // Claims must be ordered longest-prefix-first by BuildKSClaims.
-func StrictParent(claims []KSClaim, file string, self NamedResource, selfPrefixes map[string]struct{}) (NamedResource, bool) {
+func StrictParent(
+	claims []KSClaim,
+	file string,
+	self NamedResource,
+	selfPrefixes map[string]struct{},
+) (NamedResource, bool) {
 	for _, c := range claims {
 		if c.ID == self {
 			continue

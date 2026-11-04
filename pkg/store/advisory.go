@@ -19,6 +19,8 @@ type AdvisoryEvidence struct {
 }
 
 // RecordSuppliedOverride retains a copied precedence fact in this execution.
+//
+//nolint:gocritic // The SDK preserves this value input and its snapshot boundary.
 func (r *ReadSet) RecordSuppliedOverride(override SuppliedOverride) {
 	override.Keys = slices.Clone(override.Keys)
 	r.advisories.Overrides = append(r.advisories.Overrides, override)

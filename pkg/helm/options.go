@@ -13,13 +13,14 @@ import (
 // RenderOptions supplies one render's captured sources and template settings.
 type RenderOptions struct {
 	Options
-	Sources Sources
+
+	Sources Sources `json:"Sources"`
 	// WipeSecrets binds the emitted Secret policy to accepted history.
-	WipeSecrets bool
+	WipeSecrets bool `json:"WipeSecrets"`
 	// DependencySubstitutions binds emitted dependency projection to accepted history.
-	DependencySubstitutions values.DependencySubstitutions
+	DependencySubstitutions values.DependencySubstitutions `json:"DependencySubstitutions"`
 	// Admit receives the cache owner's content key; true returns empty output without rendering.
-	Admit func(string) (bool, error)
+	Admit func(string) (bool, error) `json:"Admit"`
 }
 
 // Options collects the helm template flags flate supports.
@@ -27,22 +28,22 @@ type Options struct {
 	// DisableChartDigestTracking preserves direct OCI chart versions when true.
 	// False enables tracking. Revision validation and full source cache identity
 	// apply in every mode.
-	DisableChartDigestTracking bool
+	DisableChartDigestTracking bool `json:"DisableChartDigestTracking"`
 	// SkipCRDs excludes CRDs from the rendered output.
-	SkipCRDs bool
+	SkipCRDs bool `json:"SkipCRDs"`
 	// SkipTests excludes templates that are helm test hooks.
-	SkipTests bool
+	SkipTests bool `json:"SkipTests"`
 	// SkipKinds is an arbitrary list of kinds to drop.
-	SkipKinds []string
+	SkipKinds []string `json:"SkipKinds"`
 
 	// KubeVersion overrides Capabilities.KubeVersion (.Capabilities.KubeVersion).
-	KubeVersion string
+	KubeVersion string `json:"KubeVersion"`
 	// APIVersions overrides Capabilities.APIVersions
 	// (.Capabilities.APIVersions). Comma-separated.
-	APIVersions string
+	APIVersions string `json:"APIVersions"`
 
 	// EnableDNS enables DNS lookups during templating.
-	EnableDNS bool
+	EnableDNS bool `json:"EnableDNS"`
 }
 
 // SkipResourceKinds returns the union of canonical and user-specified
@@ -65,6 +66,7 @@ func (o Options) capabilities() (*common.Capabilities, error) {
 	if o.KubeVersion != "" {
 		kv, err := common.ParseKubeVersion(o.KubeVersion)
 		if err != nil {
+			//nolint:wrapcheck // Template preserves Helm's exact Kubernetes-version diagnostic.
 			return nil, err
 		}
 		caps.KubeVersion = *kv

@@ -32,6 +32,7 @@ import (
 	"github.com/home-operations/flate/pkg/values"
 )
 
+//nolint:gochecknoglobals // The immutable render-kind registry is computed once before parallel rendering.
 var reconcilableKinds = func() []manifest.KindInfo {
 	var kinds []manifest.KindInfo
 	for info := range manifest.Kinds() {
@@ -186,10 +187,17 @@ type treeConfig struct {
 	Tree
 }
 
-func newOrchestrator(cfg Config, tree Tree, ts *task.Service) *Orchestrator {
+func newOrchestrator(cfg *Config, treeInput *Tree, ts *task.Service) *Orchestrator {
+	tree := *treeInput
 	st := store.New()
 	st.SetSupplied(cfg.supplied)
-	o := &Orchestrator{cfg: treeConfig{Config: cfg, Tree: tree}, inputs: source.NewHTTPInputs(cfg.Cache, cfg.Network, ts), store: st, cache: cfg.Cache, tasks: ts}
+	o := &Orchestrator{
+		cfg:    treeConfig{Config: *cfg, Tree: tree},
+		inputs: source.NewHTTPInputs(cfg.Cache, cfg.Network, ts),
+		store:  st,
+		cache:  cfg.Cache,
+		tasks:  ts,
+	}
 	o.cfg.Selection.Changed = cfg.Selection.Changed || tree.ExternalChanges != nil
 	if o.cfg.Selection.Changed || len(o.cfg.Selection.Roots) != 0 {
 		o.filter = change.NewFilter()
@@ -202,7 +210,11 @@ func newOrchestrator(cfg Config, tree Tree, ts *task.Service) *Orchestrator {
 			if st.ReportHidden(id) {
 				return
 			}
-			cfg.StatusListener(tree.ID, manifest.DiagnosticFor(id, st.GetObject(id)), value.(store.StatusInfo))
+			cfg.StatusListener(
+				tree.ID,
+				manifest.DiagnosticFor(id, st.GetObject(id)),
+				value.(store.StatusInfo), //nolint:errcheck // Status events always carry store.StatusInfo.
+			)
 		}, false)
 	}
 	trees := kustomize.NewTreeCache(cfg.Cache, &o.inputs, ts)
@@ -215,7 +227,13 @@ func newOrchestrator(cfg Config, tree Tree, ts *task.Service) *Orchestrator {
 	o.hrc = helmrelease.New(base.New(st, ts), cfg.HelmClient, cfg.HelmOptions, cfg.WipeSecrets)
 	o.rsc = resourcesetctrl.New(st, ts, cfg.Cache, cfg.WipeSecrets)
 	o.agc = artifactgenerator.New(st, ts, cfg.Cache)
-	o.controllers = base.Controllers{Kustomization: o.ksc, HelmRelease: o.hrc, ResourceSet: o.rsc, Source: o.src, ArtifactGenerator: o.agc}
+	o.controllers = base.Controllers{
+		Kustomization:     o.ksc,
+		HelmRelease:       o.hrc,
+		ResourceSet:       o.rsc,
+		Source:            o.src,
+		ArtifactGenerator: o.agc,
+	}
 	o.depGraph = newDependencyGraph()
 	return o
 }
@@ -236,14 +254,21 @@ func (o *Orchestrator) parentOf(id manifest.NamedResource) (manifest.NamedResour
 func (o *Orchestrator) childrenByParent() map[manifest.NamedResource][]manifest.NamedResource {
 	children := map[manifest.NamedResource][]manifest.NamedResource{}
 	for _, obj := range o.store.ListObjects("", "") {
-		for _, p := range o.store.Productions(obj.Named(), o.index) {
-			if p.Owner != (manifest.NamedResource{}) && p.Owner != obj.Named() && p.Authored == (manifest.NamedResource{}) && p.Declaration == (manifest.NamedResource{}) {
-				children[p.Owner] = append(children[p.Owner], obj.Named())
+		{
+			pValues := o.store.Productions(obj.Named(), o.index)
+			for pIndex := range pValues {
+				p := pValues[pIndex]
+
+				if p.Owner != (manifest.NamedResource{}) && p.Owner != obj.Named() &&
+					p.Authored == (manifest.NamedResource{}) &&
+					p.Declaration == (manifest.NamedResource{}) {
+					children[p.Owner] = append(children[p.Owner], obj.Named())
+				}
 			}
 		}
 	}
 	if o.index != nil {
-		for child, record := range o.index.Records {
+		for child, record := range o.index.Records { //nolint:gocritic // Map iteration preserves a value snapshot without an extra lookup.
 			if parent := record.Parent; parent != (manifest.NamedResource{}) {
 				children[parent] = append(children[parent], child)
 			}
@@ -261,15 +286,28 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 		Cache: o.cache, Depth: o.cfg.GitDepth,
 		RestrictSchemes: o.cfg.RestrictEgress,
 	}
-	o.ksc.Trees.SetGitBaseFetcher(func(ctx context.Context, request kustomize.GitBaseRequest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-		artifact, err := gitFetcher.FetchRemoteBase(ctx, git.RemoteBaseRequest{URL: request.URL, Ref: request.Ref, Timeout: request.Timeout, Submodules: request.Submodules}, sourcecache.Policy{MaxAge: request.MaxAge, Retry: retry})
-		if artifact != nil {
-			for _, warning := range artifact.Warnings {
-				o.store.AddWarning(warning)
+	o.ksc.Trees.SetGitBaseFetcher(
+		func(ctx context.Context, request kustomize.GitBaseRequest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+			artifact, err := gitFetcher.FetchRemoteBase(
+				ctx,
+				git.RemoteBaseRequest{
+					URL:        request.URL,
+					Ref:        request.Ref,
+					Timeout:    request.Timeout,
+					Submodules: request.Submodules,
+				},
+				sourcecache.Policy{MaxAge: request.MaxAge, Retry: retry},
+			)
+			if artifact != nil {
+				for itemIndex := range artifact.Warnings {
+					warning := artifact.Warnings[itemIndex]
+
+					o.store.AddWarning(warning)
+				}
 			}
-		}
-		return artifact, err
-	})
+			return artifact, err
+		},
+	)
 	if current, exists := o.src.Fetchers[manifest.KindGitRepository]; exists && current == nil {
 		o.src.Fetchers[manifest.KindGitRepository] = source.Wrap(manifest.KindGitRepository, gitFetcher)
 	}
@@ -284,20 +322,7 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 	var err error
 	if o.loader != nil {
 		if o.session == nil {
-			planning := config
-			planning.Loader, planning.Projections = nil, o.cfg.projections
-			entries, failure := discovery.Plan(ctx, planning)
-			if failure != nil {
-				return failure
-			}
-			config.Entry, config.Input = &entries[0], entries[0].Input
-			o.session, err = discovery.Begin(ctx, config)
-			if err != nil {
-				return err
-			}
-			o.cfg.Input = o.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
-			o.cfg.RepoRoot, o.repoRoot, o.index = o.cfg.Input.LocalPath, o.cfg.Input.LocalPath, o.loader.Index
-			return nil
+			return o.beginDiscovery(ctx, &config)
 		}
 		res, err = o.session.Freeze(ctx)
 	} else {
@@ -307,7 +332,7 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	o.cfg.Input = o.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
+	o.cfg.Input = o.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact) //nolint:errcheck // Bootstrap admission publishes a source artifact.
 	o.cfg.RepoRoot = res.RepoRoot
 	o.repoRoot = res.RepoRoot
 	o.index = res.Index
@@ -316,16 +341,44 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 	o.admission = res.Admission
 	o.dependencySubstitutions = res.DependencySubstitutions
 	if o.entryBinding.Failure != nil && slog.Default().Enabled(ctx, slog.LevelDebug) {
-		slog.DebugContext(ctx, "orchestrator: entry failed", "id", o.diagnostic(o.entryBinding.Producer).String(), "err", manifest.ErrorDetails(o.entryBinding.Failure))
+		slog.DebugContext(
+			ctx,
+			"orchestrator: entry failed",
+			"id",
+			o.diagnostic(o.entryBinding.Producer).String(),
+			"err",
+			manifest.ErrorDetails(o.entryBinding.Failure),
+		)
 	}
 
+	return nil
+}
+
+func (o *Orchestrator) beginDiscovery(ctx context.Context, config *discovery.Config) error {
+	planning := *config
+	planning.Loader, planning.Projections = nil, o.cfg.projections
+	entries, failure := discovery.Plan(ctx, planning)
+	if failure != nil {
+		return failure
+	}
+	config.Entry, config.Input = &entries[0], entries[0].Input
+	var err error
+	o.session, err = discovery.Begin(ctx, *config)
+	if err != nil {
+		return err
+	}
+	o.cfg.Input = o.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact) //nolint:errcheck // Bootstrap admission publishes a source artifact.
+	o.cfg.RepoRoot, o.repoRoot, o.index = o.cfg.Input.LocalPath, o.cfg.Input.LocalPath, o.loader.Index
 	return nil
 }
 
 func (o *Orchestrator) completeBootstrap() {
 	o.failDependsOnCycles()
 	if o.loader != nil && o.entryBinding.Failure != nil {
-		o.store.UpdateStatus(o.entryBinding.Producer, store.StatusInfo{Status: store.StatusFailed, Message: o.entryBinding.Failure.Error()})
+		o.store.UpdateStatus(
+			o.entryBinding.Producer,
+			store.StatusInfo{Status: store.StatusFailed, Message: o.entryBinding.Failure.Error()},
+		)
 	}
 	ociFetcher := &oci.Fetcher{Cache: o.cache, Network: o.cfg.Network, RegistryConfig: o.cfg.RegistryConfig}
 	o.rsc.Inputs = ociFetcher

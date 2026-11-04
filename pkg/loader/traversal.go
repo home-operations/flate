@@ -1,14 +1,10 @@
 package loader
 
 import (
-	"cmp"
 	"context"
 	"fmt"
 	"io/fs"
-	"log/slog"
-	"path"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"sigs.k8s.io/kustomize/api/types"
@@ -54,222 +50,16 @@ func (w *traversal) proceed(ctx context.Context) bool {
 	return w.err == nil
 }
 
-func (w *traversal) walk(ctx context.Context, v graphVisit, yield func(graphVisit) bool) bool {
-	if !w.proceed(ctx) {
-		return false
-	}
-	abs := v.file
-	if w.policy != traversalAdmission {
-		abs = filepath.Join(v.root, v.dir)
-	}
-	switch w.policy {
-	case traversalScope:
-		if _, ok := kustpath.Resolve("", v.dir, kustpath.Root); !ok || !safepath.Contains(v.root, abs) || w.documents.mountedRoot(abs) != w.documents.mountedRoot(v.root) {
-			return true
-		}
-		v.file, v.coordinate, v.document = abs, path.Join(v.prefix, v.dir), nil
-		if v.role == kustomizeinput.File {
-			return yield(v)
-		}
-	case traversalAdmission:
-		if v.deferMaterialization {
-			if w.shouldSkipDir(v.root, filepath.Base(abs), abs) {
-				return true
-			}
-			cached := w.documents.cache[abs]
-			cached.adHoc = true
-			w.documents.cache[abs] = cached
-		} else {
-			if _, seen := w.directories[abs]; seen {
-				return true
-			}
-			w.directories[abs] = struct{}{}
-		}
-	case traversalProof:
-		if w.depth > transformerScanMaxDepth {
-			return true
-		}
-		if _, seen := w.directories[v.dir]; seen {
-			return true
-		}
-		w.directories[v.dir] = struct{}{}
-	}
-	d, file := w.documents.read(abs)
-	cached := w.documents.cache[abs]
-	if !w.proceed(ctx) {
-		return false
-	}
-	switch w.policy {
-	case traversalScope:
-		if d != nil || cached.pathState == pathDirectory {
-			if slices.Contains(w.visitBuf[:w.visitCount], v.graphContext) {
-				return true
-			}
-			if _, seen := w.visited[v.graphContext]; seen {
-				return true
-			}
-			if w.visitCount < len(w.visitBuf) {
-				w.visitBuf[w.visitCount] = v.graphContext
-				w.visitCount++
-			} else {
-				if w.visited == nil {
-					w.visited = map[graphContext]struct{}{}
-				}
-				w.visited[v.graphContext] = struct{}{}
-			}
-		}
-	case traversalAdmission:
-		if v.role == kustomizeinput.Component && !isKustomizeComponent(d) {
-			return true
-		}
-		if file != "" {
-			if v.deferMaterialization {
-				if _, seen := w.directories[abs]; seen {
-					return true
-				}
-				w.directories[abs] = struct{}{}
-			}
-			cached.traversed = true
-			w.documents.cache[abs] = cached
-			if d == nil {
-				return true
-			}
-			if isKustomizeComponent(d) {
-				if v.role != kustomizeinput.Component {
-					slog.Debug("loader: skipping kustomize Component directory", "dir", abs)
-				}
-				v.role = kustomizeinput.Component
-			} else if !w.ignoreMatches(v.root, file, false) {
-				if w.files != nil {
-					*w.files = append(*w.files, fileAdmission{file: file, kind: admissionPackage})
-				}
-				n, err := w.loader.loadFile(ctx, file)
-				w.count += n
-				if err != nil {
-					w.loader.Store.AddWarning(manifest.Warning{
-						Category: manifest.WarnInputParseFailed, Message: "kustomization file failed to parse", Detail: []string{file, err.Error()},
-					})
-				}
-			}
-		}
-	case traversalProof:
-		if d == nil {
-			return true
-		}
-	}
-	if d == nil && (w.policy == traversalAdmission || cached.pathState == pathDirectory) {
-		if w.policy == traversalAdmission {
-			if w.shouldSkipDir(v.root, filepath.Base(abs), abs) {
-				return true
-			}
-			cached.adHoc = true
-			w.documents.cache[abs] = cached
-		}
-		if !w.proceed(ctx) {
-			return false
-		}
-		input, name := w.documents.input(abs)
-		entries, err := fs.ReadDir(input, name)
-		if err != nil && w.policy == traversalAdmission {
-			w.err = err
-			return false
-		}
-		for _, entry := range entries {
-			if !w.proceed(ctx) {
-				return false
-			}
-			if v.entryResources && entry.IsDir() || !entry.IsDir() && !isManifestFile(entry.Name()) {
-				continue
-			}
-			child := v
-			child.deferMaterialization = true
-			if w.policy == traversalAdmission {
-				child.file = filepath.Join(abs, entry.Name())
-			} else {
-				child.dir = path.Join(v.dir, entry.Name())
-			}
-			if w.policy == traversalAdmission && !entry.IsDir() {
-				if !w.admitFile(ctx, v.root, child.file, false) {
-					return false
-				}
-			} else {
-				count := w.count
-				if !w.walk(ctx, child, yield) {
-					if !w.canceled {
-						w.count = count
-					}
-					return false
-				}
-			}
-		}
-		return true
-	}
-	if w.policy == traversalScope {
-		if d == nil {
-			v.readable = cached.pathState != pathMissing && !v.deferDecode
-			if v.role != kustomizeinput.Configuration {
-				return yield(v)
-			}
-			if cached.plugins == nil {
-				var plugins []pluginInputs
-				input, name := w.documents.input(v.file)
-				body, readErr := fs.ReadFile(input, name)
-				resources, parseErr := kustomizeinput.Resources(body)
-				if readErr == nil && parseErr == nil {
-					for _, resource := range resources {
-						refs, known := kustomizeinput.Plugin(resource.YNode())
-						plugins = append(plugins, pluginInputs{references: refs, known: known, metadataOnly: kustomizeinput.MetadataOnly(resource.YNode())})
-					}
-				}
-				cached.plugins = &plugins
-				w.documents.cache[v.file] = cached
-			}
-			if !yield(v) {
-				return false
-			}
-			if len(*cached.plugins) == 0 {
-				return w.uncertain(v, "configuration content is unavailable or opaque", yield)
-			}
-			for _, config := range *cached.plugins {
-				if !w.configuration(ctx, v, config, yield) {
-					return false
-				}
-			}
-			return true
-		}
-		v.deferDecode = false
-		v.namespace = cmp.Or(v.namespace, d.Namespace)
-		v.namePrefix += d.NamePrefix
-		v.nameSuffix = d.NameSuffix + v.nameSuffix
-		if v.namespace == "" {
-			v.namespace = w.documents.transformerInjectedNamespace(v.root, v.dir).ns
-		}
-		v.file, v.document, v.readable = file, d, true
-		v.coordinate = path.Join(v.prefix, v.dir, filepath.Base(file))
-		if !yield(v) {
-			return false
-		}
-		d = w.documents.cache[abs].body
-		if v.role == kustomizeinput.Configuration && !kustomizeinput.PreservesOperands(d) {
-			if !w.uncertain(v, "configuration transformations may rewrite plugin file operands", yield) {
-				return false
-			}
-		}
-	}
-	if !w.documents.references(abs, d, w.policy == traversalAdmission, func(ref kustomizeinput.Reference, target string) bool {
-		return w.reference(ctx, v, traversalReference{Reference: ref, target: target}, yield)
-	}) {
-		return false
-	}
-	if w.policy == traversalAdmission && v.role != kustomizeinput.Component && !w.build {
-		w.count += w.scanBootstrapFluxKS(ctx, v.root, abs, file)
-	}
-	return w.proceed(ctx)
-}
-
-func (r documentReader) references(dir string, body *types.Kustomization, resolve bool, yield func(kustomizeinput.Reference, string) bool) bool {
+//nolint:gocritic // Keep immutable value-receiver semantics.
+func (r documentReader) references(
+	dir string,
+	body *types.Kustomization,
+	resolve bool,
+	yield func(kustomizeinput.Reference, string) bool,
+) bool {
 	doc := r.cache[dir]
-	record := !doc.edgesKnown && doc.traversed && body != nil && r.mountedRoot(dir) == r.mountedRoot(r.bootstrap)
+	record := !doc.edgesKnown && doc.traversed && body != nil &&
+		new(r).mountedRoot(dir) == new(r).mountedRoot(r.bootstrap)
 	for ref := range kustomizeinput.Kustomization(body) {
 		var target string
 		if (record || resolve) && ref.Role != kustomizeinput.File && !ref.Inline {
@@ -295,9 +85,12 @@ func (r documentReader) references(dir string, body *types.Kustomization, resolv
 func (r *documentReader) replayEdges() {
 	if r.edgesDirty {
 		var pending []string
-		for dir, doc := range r.cache {
-			if !doc.edgesKnown && doc.traversed && doc.body != nil {
-				pending = append(pending, dir)
+		{
+			//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+			for dir, doc := range r.cache {
+				if !doc.edgesKnown && doc.traversed && doc.body != nil {
+					pending = append(pending, dir)
+				}
 			}
 		}
 		for _, dir := range pending {
@@ -320,7 +113,9 @@ func (w *traversal) admitFile(ctx context.Context, root, file string, component 
 		}
 		if err := w.loader.recordDataFile(ctx, file); err != nil {
 			w.loader.Store.AddWarning(manifest.Warning{
-				Category: manifest.WarnInputParseFailed, Message: "component data file failed to parse", Detail: []string{file, err.Error()},
+				Category: manifest.WarnInputParseFailed,
+				Message:  "component data file failed to parse",
+				Detail:   []string{file, err.Error()},
 			})
 		}
 		return true
@@ -338,86 +133,52 @@ func (w *traversal) admitFile(ctx context.Context, root, file string, component 
 
 type traversalReference struct {
 	kustomizeinput.Reference
+
 	target string
 }
 
-func (w *traversal) reference(ctx context.Context, v graphVisit, ref traversalReference, yield func(graphVisit) bool) bool {
+type referenceVisit struct {
+	parent    *graphVisit
+	child     *graphVisit
+	reference *traversalReference
+}
+
+func (w *traversal) reference(
+	ctx context.Context,
+	visitValue *graphVisit,
+	refValue *traversalReference,
+	yield func(graphVisit) bool,
+) bool {
+	v := *visitValue
+	ref := *refValue
 	if !w.proceed(ctx) {
 		return false
 	}
 	child := v
 	child.document, child.readable, child.incomplete = nil, false, ""
+	visit := referenceVisit{parent: &v, child: &child, reference: &ref}
 	switch w.policy {
 	case traversalAdmission:
-		if ref.Role != kustomizeinput.Resource && ref.Role != kustomizeinput.Component {
-			return true
+		if done, more := w.admitReference(ctx, &visit); done {
+			return more
 		}
-		base, resolved := v.file, ref.target
-		if resolved == "" || filepath.IsAbs(ref.Path) {
-			return true
-		}
-		input, name := w.documents.input(resolved)
-		info, err := fs.Stat(input, name)
-		w.documents.rememberStat(resolved, info, err)
-		if err != nil {
-			return w.proceed(ctx)
-		}
-		if !info.IsDir() {
-			if _, ok := kustpath.Resolve(base, ref.Path, kustpath.File); !ok || ref.Role != kustomizeinput.Resource {
-				return true
-			}
-			return w.admitFile(ctx, v.root, resolved, v.role == kustomizeinput.Component)
-		}
-		child.role = kustomizeinput.Resource
-		if v.role == kustomizeinput.Component {
-			if ref.Role != kustomizeinput.Component {
-				return true
-			}
-			child.role = kustomizeinput.Component
-		}
-		child.file, child.deferMaterialization = resolved, false
 	case traversalProof:
-		if ref.Role != kustomizeinput.Resource && (ref.Role != kustomizeinput.Configuration || !strings.HasPrefix(ref.Field, ".transformers")) || ref.Inline {
+		if ref.Role != kustomizeinput.Resource &&
+			(ref.Role != kustomizeinput.Configuration || !strings.HasPrefix(ref.Field, ".transformers")) ||
+			ref.Inline {
 			return true
 		}
 		target, ok := kustomizeinput.Local(v.root, v.dir, ref.Path)
 		if !ok {
 			return true
 		}
-		if w.documents.fileHasNamespaceTransformer(v.root, target) {
+		if new(w.documents).fileHasNamespaceTransformer(v.root, target) {
 			return false
 		}
 		child.dir = target
 	case traversalScope:
-		if ref.Role == kustomizeinput.Configuration {
-			child.role, child.pluginRoot = kustomizeinput.Configuration, v.dir
-			child.checkMetadata = v.role == kustomizeinput.Configuration && strings.HasPrefix(ref.Field, ".transformers")
-			if ref.Inline {
-				for _, resource := range ref.Resources {
-					refs, known := kustomizeinput.Plugin(resource.YNode())
-					if !w.configuration(ctx, child, pluginInputs{references: refs, known: known, metadataOnly: kustomizeinput.MetadataOnly(resource.YNode())}, yield) {
-						return false
-					}
-				}
-				return true
-			}
-		} else if ref.Role == kustomizeinput.File {
-			child.role = kustomizeinput.File
-		} else if v.role != kustomizeinput.Configuration {
-			child.role = kustomizeinput.Resource
-		}
-		resolved, ok := kustpath.Resolve(filepath.Join(v.root, v.dir), ref.Path, kustpath.Dependency)
-		if !ok || !safepath.Contains(v.root, resolved) || w.documents.mountedRoot(resolved) != w.documents.mountedRoot(v.root) {
-			if child.role == kustomizeinput.Configuration {
-				return w.uncertain(v, ref.FieldPath()+": configuration reference cannot be inspected locally", yield)
-			}
-			return true
-		}
-		rel, _ := filepath.Rel(v.root, resolved)
-		child.dir = filepath.ToSlash(rel)
-		if child.role == kustomizeinput.Resource {
-			_, admitted := kustpath.Resolve(filepath.Join(v.root, v.dir), ref.Path, kustpath.File)
-			child.deferDecode = !admitted || filepath.IsAbs(ref.Path)
+		if done, more := w.scopeReference(ctx, &visit, yield); done {
+			return more
 		}
 	}
 	count := w.count
@@ -430,28 +191,137 @@ func (w *traversal) reference(ctx context.Context, v graphVisit, ref traversalRe
 	return more
 }
 
-func (w *traversal) configuration(ctx context.Context, v graphVisit, config pluginInputs, yield func(graphVisit) bool) bool {
-	if !config.known {
-		if !w.uncertain(v, "unknown plugin configuration may read additional files", yield) {
-			return false
-		}
+func (w *traversal) admitReference(ctx context.Context, visit *referenceVisit) (bool, bool) {
+	if visit.reference.Role != kustomizeinput.Resource && visit.reference.Role != kustomizeinput.Component {
+		return true, true
 	}
-	if v.checkMetadata && !config.metadataOnly {
-		if !w.uncertain(v, "configuration transformer may rewrite plugin file operands", yield) {
-			return false
-		}
+	base, resolved := visit.parent.file, visit.reference.target
+	if resolved == "" || filepath.IsAbs(visit.reference.Path) {
+		return true, true
 	}
-	for _, ref := range config.references {
-		child := v
-		child.dir = v.pluginRoot
-		if !w.reference(ctx, child, traversalReference{Reference: ref}, yield) {
+	input, name := new(w.documents).input(resolved)
+	info, err := fs.Stat(input, name)
+	new(w.documents).rememberStat(resolved, info, err)
+	if err != nil {
+		return true, w.proceed(ctx)
+	}
+	if !info.IsDir() {
+		if _, ok := kustpath.Resolve(
+			base,
+			visit.reference.Path,
+			kustpath.File,
+		); !ok ||
+			visit.reference.Role != kustomizeinput.Resource {
+			return true, true
+		}
+		return true, w.admitFile(ctx, visit.parent.root, resolved, visit.parent.role == kustomizeinput.Component)
+	}
+	visit.child.role = kustomizeinput.Resource
+	if visit.parent.role == kustomizeinput.Component {
+		if visit.reference.Role != kustomizeinput.Component {
+			return true, true
+		}
+		visit.child.role = kustomizeinput.Component
+	}
+	visit.child.file, visit.child.deferMaterialization = resolved, false
+	return false, false
+}
+
+func (w *traversal) scopeReference(
+	ctx context.Context,
+	visit *referenceVisit,
+	yield func(graphVisit) bool,
+) (bool, bool) {
+	switch {
+	case visit.reference.Role == kustomizeinput.Configuration:
+		visit.child.role, visit.child.pluginRoot = kustomizeinput.Configuration, visit.parent.dir
+		visit.child.checkMetadata = visit.parent.role == kustomizeinput.Configuration &&
+			strings.HasPrefix(visit.reference.Field, ".transformers")
+		if visit.reference.Inline {
+			return true, w.inlineReference(ctx, visit, yield)
+		}
+	case visit.reference.Role == kustomizeinput.File:
+		visit.child.role = kustomizeinput.File
+	case visit.parent.role != kustomizeinput.Configuration:
+		visit.child.role = kustomizeinput.Resource
+	}
+	resolved, ok := kustpath.Resolve(
+		filepath.Join(visit.parent.root, visit.parent.dir),
+		visit.reference.Path,
+		kustpath.Dependency,
+	)
+	if !ok || !safepath.Contains(visit.parent.root, resolved) ||
+		new(w.documents).mountedRoot(resolved) != new(w.documents).mountedRoot(visit.parent.root) {
+		if visit.child.role == kustomizeinput.Configuration {
+			return true, w.uncertain(
+				new(*visit.parent),
+				visit.reference.FieldPath()+": configuration reference cannot be inspected locally",
+				yield,
+			)
+		}
+		return true, true
+	}
+	rel, _ := filepath.Rel(visit.parent.root, resolved)
+	visit.child.dir = filepath.ToSlash(rel)
+	if visit.child.role == kustomizeinput.Resource {
+		_, admitted := kustpath.Resolve(
+			filepath.Join(visit.parent.root, visit.parent.dir),
+			visit.reference.Path,
+			kustpath.File,
+		)
+		visit.child.deferDecode = !admitted || filepath.IsAbs(visit.reference.Path)
+	}
+	return false, false
+}
+
+func (w *traversal) inlineReference(ctx context.Context, visit *referenceVisit, yield func(graphVisit) bool) bool {
+	for _, resource := range visit.reference.Resources {
+		refs, known := kustomizeinput.Plugin(resource.YNode())
+		if !w.configuration(
+			ctx,
+			new(*visit.child),
+			pluginInputs{
+				references:   refs,
+				known:        known,
+				metadataOnly: kustomizeinput.MetadataOnly(resource.YNode()),
+			},
+			yield,
+		) {
 			return false
 		}
 	}
 	return true
 }
 
-func (w *traversal) uncertain(v graphVisit, reason string, yield func(graphVisit) bool) bool {
+func (w *traversal) configuration(
+	ctx context.Context,
+	visitValue *graphVisit,
+	config pluginInputs,
+	yield func(graphVisit) bool,
+) bool {
+	v := *visitValue
+	if !config.known {
+		if !w.uncertain(new(v), "unknown plugin configuration may read additional files", yield) {
+			return false
+		}
+	}
+	if v.checkMetadata && !config.metadataOnly {
+		if !w.uncertain(new(v), "configuration transformer may rewrite plugin file operands", yield) {
+			return false
+		}
+	}
+	for _, ref := range config.references {
+		child := v
+		child.dir = v.pluginRoot
+		if !w.reference(ctx, new(child), new(traversalReference{Reference: ref}), yield) {
+			return false
+		}
+	}
+	return true
+}
+
+func (w *traversal) uncertain(visitValue *graphVisit, reason string, yield func(graphVisit) bool) bool {
+	v := *visitValue
 	v.document, v.readable, v.incomplete = nil, false, reason
 	return yield(v)
 }
@@ -485,21 +355,18 @@ func (w *traversal) scanBootstrapFluxKS(ctx context.Context, root, dir, kpath st
 	}
 	seen := map[string]struct{}{kpath: {}}
 	spec, _ := w.documents.read(dir)
-	for ref := range kustomizeinput.Kustomization(spec) {
-		if ref.Inline {
-			continue
-		}
-		if abs, ok := kustpath.Resolve(dir, ref.Path, kustpath.Dependency); ok {
-			seen[abs] = struct{}{}
-		}
-	}
+	includeBootstrapReferences(spec, dir, seen)
 	if !w.proceed(ctx) {
 		return 0
 	}
-	input, name := w.documents.input(dir)
+	input, name := new(w.documents).input(dir)
 	entries, err := fs.ReadDir(input, name)
 	if err != nil {
-		warning := manifest.Warning{Category: manifest.WarnInputReadFailed, Message: "bootstrap-sibling readdir failed", Detail: []string{dir, err.Error()}}
+		warning := manifest.Warning{
+			Category: manifest.WarnInputReadFailed,
+			Message:  "bootstrap-sibling readdir failed",
+			Detail:   []string{dir, err.Error()},
+		}
 		if w.files != nil {
 			*w.files = append(*w.files, fileAdmission{kind: admissionWarning, warning: warning})
 		}
@@ -523,23 +390,48 @@ func (w *traversal) scanBootstrapFluxKS(ctx context.Context, root, dir, kpath st
 		}
 		reader := w.documents
 		reader.regular = e.Type().IsRegular()
-		var objs []parsedObject
-		var err error
-		opts := manifest.ParseDocOptions{WipeSecrets: w.loader.Options.WipeSecrets}
-		if reader.compact {
-			objs, err = reader.censusFile(ctx, abs, opts)
-		} else {
-			objs, err = reader.fileObjects(abs, opts)
-		}
-		if err != nil {
-			warning := manifest.Warning{Category: manifest.WarnInputParseFailed, Message: "bootstrap-sibling parse failed", Detail: []string{abs, err.Error()}}
-			if w.files != nil {
-				*w.files = append(*w.files, fileAdmission{kind: admissionWarning, warning: warning})
-			}
-			w.loader.Store.AddWarning(warning)
+		count += w.scanBootstrapFile(ctx, abs, &reader)
+	}
+	return count
+}
+
+func includeBootstrapReferences(spec *types.Kustomization, dir string, seen map[string]struct{}) {
+	for ref := range kustomizeinput.Kustomization(spec) {
+		if ref.Inline {
 			continue
 		}
-		for _, child := range objs {
+		if abs, ok := kustpath.Resolve(dir, ref.Path, kustpath.Dependency); ok {
+			seen[abs] = struct{}{}
+		}
+	}
+}
+
+func (w *traversal) scanBootstrapFile(ctx context.Context, abs string, reader *documentReader) int {
+	count := 0
+	var objs []parsedObject
+	var err error
+	opts := manifest.ParseDocOptions{WipeSecrets: w.loader.Options.WipeSecrets}
+	if reader.compact {
+		objs, err = reader.censusFile(ctx, abs, opts)
+	} else {
+		objs, err = reader.fileObjects(abs, opts)
+	}
+	if err != nil {
+		warning := manifest.Warning{
+			Category: manifest.WarnInputParseFailed,
+			Message:  "bootstrap-sibling parse failed",
+			Detail:   []string{abs, err.Error()},
+		}
+		if w.files != nil {
+			*w.files = append(*w.files, fileAdmission{kind: admissionWarning, warning: warning})
+		}
+		w.loader.Store.AddWarning(warning)
+		return 0
+	}
+	{
+		childValues := objs
+		for childIndex := range childValues {
+			child := childValues[childIndex]
 			if child.fact != nil && child.fact.facts.uncertain {
 				continue
 			}
@@ -555,7 +447,10 @@ func (w *traversal) scanBootstrapFluxKS(ctx context.Context, root, dir, kpath st
 				continue
 			}
 			if w.files != nil && child.fact != nil {
-				*w.files = append(*w.files, fileAdmission{file: abs, kind: admissionBootstrap, coordinate: child.fact.Declaration})
+				*w.files = append(
+					*w.files,
+					fileAdmission{file: abs, kind: admissionBootstrap, coordinate: child.fact.Declaration},
+				)
 			}
 			if !w.loader.acceptObject(obj.Named()) {
 				continue

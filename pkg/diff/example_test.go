@@ -36,9 +36,12 @@ func Example() {
 		base, head,
 		diff.Options{StripAttrs: diff.DefaultStripAttrs, StripFields: diff.DefaultStripFields},
 	)
-
-	for _, c := range changes {
-		fmt.Printf("%s %s %s/%s (chart %s -> %s)\n", c.Status, c.Kind, c.Namespace, c.Name, c.OldChart, c.NewChart)
+	{
+		cValues := changes
+		for cIndex := range cValues {
+			c := cValues[cIndex]
+			fmt.Printf("%s %s %s/%s (chart %s -> %s)\n", c.Status, c.Kind, c.Namespace, c.Name, c.OldChart, c.NewChart)
+		}
 	}
 	// Output:
 	// changed Deployment media/sonarr (chart app-template-4.0.0 -> app-template-4.1.0)

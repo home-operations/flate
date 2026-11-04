@@ -144,32 +144,31 @@ Leaf packages (`tree`, `manifest`, `task`, `schedule` behind its `Dispatcher` se
 
 ## Code style
 
-Limits are 140 characters/line, 60 statements/function, 100 lines/function, nesting 4, cognitive-complexity 30, and 800 nonblank/noncomment lines/file, with long conditions using named predicates or owning-type methods, while fixed `new-from-rev` filtering can miss function-length, cognitive-complexity, and file-length findings outside changed lines during body-only edits.
+`.golangci.yml` (golden configuration plus flate rules) is the source of truth for mechanical style,
+and `mise run lint` must pass on the whole repo.
 
 - **Go.** The version is `go.mod`'s directive, pinned to the lowest patch; `.mise/config.toml`
   pins the toolchain. Write idiomatic Go for it: `slices`, `maps`, `cmp.Or`, `strings.Cut`,
   `for range N`, `min`/`max`, generics constrained on `manifest.BaseManifest`, `errors.AsType`.
-  Run `go fix` after touching a package. No `interface{}`, naked returns, or reflection on hot
-  paths. No cgo, ever: builds use `CGO_ENABLED=0`; the race detector needs cgo,
+  Run `go fix` after touching a package. No reflection on hot paths.
+  No cgo, ever: builds use `CGO_ENABLED=0`. The race detector needs cgo,
   so run `mise run test` as configured.
-- **Context.** `ctx context.Context` is the first parameter of anything doing I/O and is never
-  stored in a struct. `context.Background()` belongs to `internal/cli`; `forbidigo` enforces it and
-  its exclusion list is the record of shared work that outlives one caller.
+- **Context.** Pass `ctx context.Context` through I/O operations.
+  `context.Background()` belongs to `internal/cli`. The exclusions in `.golangci.yml` record
+  shared work that outlives one caller.
 - **Errors.** Classify domain errors structurally with `manifest.Error` and a `manifest.Err*`
   category. Its `Error()` returns the actionable cause. Every domain error wraps `manifest.ErrFlux`.
   Use `fmt.Errorf("<lowercase op>: %w", err)` only when the operation adds information absent from
   the resource row. Classify with `errors.Is`/`errors.AsType`, never by string. Panic only on impossible state.
-- **Logging.** Package-level `log/slog` (`slog.Debug/Warn`) with a `"pkg: "` message prefix; the
-  message is a constant and values are attrs. No logger threading.
-- **Signatures.** At most four parameters (median is one); beyond that an `Options`/`Config`
-  struct. No functional options. Receivers are one or two letters, consistent per type.
+- **Logging.** Use package-level `log/slog` (`slog.Debug/Warn`) with a `"pkg: "` message prefix and attrs.
+  No logger threading.
+- **Signatures.** Group larger signatures in an `Options`/`Config` struct. No functional options.
 - **Interfaces belong to the consumer.** A package declares a small unexported interface listing
   only the methods it calls; constructors return concrete types. An exported interface exists
   only where an SDK embedder must implement it (`schedule.Dispatcher`, `values.Provider`), and
   the PR names that embedder.
-- **Comments.** Package and exported docs are lint-enforced (one sentence starting with the
-  identifier). Default to no other comment; add one only for a constraint or
-  rationale (MUST, never, invariant, an upstream quirk with its issue). Banned: step narration,
+- **Comments.** Add a comment only for a constraint or rationale
+  (MUST, never, invariant, an upstream quirk with its issue). Banned: step narration,
   section banners, restating the name above a function, describing your own edit, commented-out
   code, unprompted TODO or FIXME. Delete narration you find in code you touch.
 - **Elegance.** Names state intent; small functions with one job and straight-line flow; types
@@ -181,7 +180,7 @@ Limits are 140 characters/line, 60 statements/function, 100 lines/function, nest
 
 - Stdlib `testing` only; never testify or Ginkgo. Names: `TestThing_Behavior`, `TestE2E_*`
   (in-process via `cli.Run`, no build tags, no network), `BenchmarkThing_Case` with `b.Loop()`.
-- Table-driven with `t.Run`; helpers call `t.Helper()`.
+- Table-driven with `t.Run`.
 - Tests and subtests call `t.Parallel` unless they touch process-global state: `t.Setenv`,
   `t.Chdir`, `slog.SetDefault` or `log.SetOutput` (including through `cli.Run`),
   `ssrfguard.Restrict`, go-git protocol registration, a package variable, or
@@ -211,5 +210,4 @@ mise run bench       # when touching a package with benchmarks; paste benchstat,
 
 CI runs the same except `mise run vulncheck`, plus a goreleaser snapshot and workflow lint;
 `.github/workflows/govulncheck.yaml` runs the vulncheck daily and on manual dispatch. "Build
-Success" is the merge gate behind a squash-only merge queue; lint enforces the shape of `//nolint`
-directives.
+Success" is the merge gate behind a squash-only merge queue.

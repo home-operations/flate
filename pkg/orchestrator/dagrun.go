@@ -39,30 +39,16 @@ func (d dagDispatcher) Sweep(ctx context.Context, quiescent bool) []schedule.Nod
 		return changed
 	}
 	// Raw root admission MUST wait for its possible owners' settled publications.
-	if d.o.loader != nil {
-		var reads *store.ReadSet
-		for id, record := range d.o.index.Files() {
-			_, selected, _, _ := d.o.filter.Membership(id)
-			if selected && record.Path != "" && record.Parent == (manifest.NamedResource{}) && record.BuilderOwner == (manifest.NamedResource{}) && d.o.loader.AdmitsRoot(d.o.loader.CatalogObject(id), record.Path) && d.o.store.GetObject(id) == nil {
-				if reads == nil {
-					reads = &store.ReadSet{}
-					reads.Init(d.o.store, manifest.NamedResource{}, nil)
-				}
-				reads.RequireData(id)
-			}
-		}
-		if reads != nil {
-			_, err := d.o.ksc.KeepEmitted(ctx, manifest.NamedResource{}, store.Child{}, reads)
-			reads.Retire()
-			if err != nil {
-				d.o.entryFailure = err
-			}
-			changed = slices.Collect(d.o.store.Sweep())
-			if len(changed) != 0 {
-				return changed
-			}
+	if d.o.loader != nil && d.admitRawRoots(ctx) {
+		changed = slices.Collect(d.o.store.Sweep())
+		if len(changed) != 0 {
+			return changed
 		}
 	}
+	return d.sweepEntry(ctx, changed)
+}
+
+func (d dagDispatcher) sweepEntry(ctx context.Context, changed []schedule.NodeID) []schedule.NodeID {
 	for d.o.entryBinding == (discovery.Binding{}) && d.o.entryFailure == nil {
 		root, binding, err := d.o.admission.BindEntry(ctx, d.o.store)
 		d.o.entryFailure = err
@@ -79,16 +65,7 @@ func (d dagDispatcher) Sweep(ctx context.Context, quiescent bool) []schedule.Nod
 			return slices.Collect(d.o.store.Sweep())
 		}
 		if producers := d.o.admission.EntryProducers(); len(producers) != 0 {
-			var reads store.ReadSet
-			reads.Init(d.o.store, manifest.NamedResource{}, nil)
-			for _, producer := range producers {
-				reads.RequireData(producer)
-			}
-			_, err := d.o.ksc.KeepEmitted(ctx, manifest.NamedResource{}, store.Child{}, &reads)
-			reads.Retire()
-			if err != nil {
-				d.o.entryFailure = err
-			}
+			d.requireEntryProducers(ctx, producers)
 			changed = slices.Collect(d.o.store.Sweep())
 			if len(changed) != 0 {
 				return changed
@@ -102,6 +79,19 @@ func (d dagDispatcher) Sweep(ctx context.Context, quiescent bool) []schedule.Nod
 	}
 	d.o.classifyCompleted()
 	return slices.Collect(d.o.store.Sweep())
+}
+
+func (d dagDispatcher) requireEntryProducers(ctx context.Context, producers []manifest.NamedResource) {
+	var reads store.ReadSet
+	reads.Init(d.o.store, manifest.NamedResource{}, nil)
+	for _, producer := range producers {
+		reads.RequireData(producer)
+	}
+	_, err := d.o.ksc.KeepEmitted(ctx, manifest.NamedResource{}, store.Child{}, &reads)
+	reads.Retire()
+	if err != nil {
+		d.o.entryFailure = err
+	}
 }
 
 func (o *Orchestrator) seedNodes() []manifest.NamedResource {
@@ -182,4 +172,30 @@ func (o *Orchestrator) includeNode(id manifest.NamedResource) bool {
 	included := o.filter.ShouldReconcile(id)
 	o.store.SetIncluded(id, included)
 	return included
+}
+
+func (d dagDispatcher) admitRawRoots(ctx context.Context) bool {
+	var reads *store.ReadSet
+	for id, record := range d.o.index.Files() { //nolint:gocritic // The iterator supplies independent value snapshots.
+		_, selected, _, _ := d.o.filter.Membership(id)
+		if selected && record.Path != "" && record.Parent == (manifest.NamedResource{}) &&
+			record.BuilderOwner == (manifest.NamedResource{}) &&
+			d.o.loader.AdmitsRoot(d.o.loader.CatalogObject(id), record.Path) &&
+			d.o.store.GetObject(id) == nil {
+			if reads == nil {
+				reads = &store.ReadSet{}
+				reads.Init(d.o.store, manifest.NamedResource{}, nil)
+			}
+			reads.RequireData(id)
+		}
+	}
+	if reads != nil {
+		_, err := d.o.ksc.KeepEmitted(ctx, manifest.NamedResource{}, store.Child{}, reads)
+		reads.Retire()
+		if err != nil {
+			d.o.entryFailure = err
+		}
+		return true
+	}
+	return false
 }

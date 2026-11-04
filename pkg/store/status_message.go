@@ -36,15 +36,18 @@ func sameMessage(left string, leftObjects int, right string, rightObjects int) b
 
 func appendApplying(buffer []byte, objects int) []byte {
 	buffer = append(buffer, "applying "...)
-	buffer = strconv.AppendInt(buffer, int64(objects-1), 10)
+	buffer = strconv.AppendInt(buffer, int64(objects-1), statusCountBase)
 	return append(buffer, " objects"...)
 }
 
 // MarshalJSON encodes the visible status message with its readiness and reason.
 func (i StatusInfo) MarshalJSON() ([]byte, error) {
+	//nolint:wrapcheck // These string fields cannot fail JSON encoding and preserve the Marshaler error contract.
 	return json.Marshal(struct {
-		Status  Status
-		Reason  StatusReason
-		Message string
+		Status  Status       `json:"Status"`
+		Reason  StatusReason `json:"Reason"`
+		Message string       `json:"Message"`
 	}{i.Status, i.Reason, i.String()})
 }
+
+const statusCountBase = 10

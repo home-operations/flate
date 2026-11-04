@@ -5,6 +5,7 @@ import "github.com/home-operations/flate/pkg/manifest"
 // Parent identifies a producer and its display path.
 type Parent struct {
 	manifest.NamedResource
+
 	Path string
 }
 

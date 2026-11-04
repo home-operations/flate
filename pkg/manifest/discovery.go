@@ -12,22 +12,24 @@ import (
 
 // Production identifies one source-qualified contribution to a queried target.
 type Production struct {
-	Owner       NamedResource
-	Declaration NamedResource
-	Authored    NamedResource
-	Source      NamedResource
-	Path        string
-	File        string
+	Owner       NamedResource `json:"Owner"`
+	Declaration NamedResource `json:"Declaration"`
+	Authored    NamedResource `json:"Authored"`
+	Source      NamedResource `json:"Source"`
+	Path        string        `json:"Path"`
+	File        string        `json:"File"`
 }
 
 // ReferenceData retains one production's lookup evidence without object authority.
 type ReferenceData struct {
-	Production   Production
-	DeclaredKeys []string
-	OfflineData  Data
+	Production   Production `json:"Production"`
+	DeclaredKeys []string   `json:"DeclaredKeys"`
+	OfflineData  Data       `json:"OfflineData"`
 }
 
 // Materializer returns the owner that can supply the target through this contribution.
+//
+//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (p Production) Materializer(target NamedResource) NamedResource {
 	if p.Declaration != (NamedResource{}) && p.File != "" && !filepath.IsLocal(p.File) {
 		return NamedResource{}
@@ -42,30 +44,34 @@ func (p Production) Materializer(target NamedResource) NamedResource {
 // Path is empty for generated or projected objects that have no raw resource file.
 // Slices are borrowed and MUST remain immutable after discovery publishes the index.
 type DiscoveryRecord struct {
-	Application   string                     // Accepted applier document; valid only for its owning render receipt.
-	Declaration   BaseManifest               `json:"-"` // Immutable parsed input; absence does not imply publication.
-	Declared      string                     `json:"-"` // Complete authored fingerprint; empty when declaration evidence is unknown.
-	Authored      NamedResource              // Proven raw identity; zero for generated records.
-	Path          string                     // Absolute raw resource path; empty for generated or projected records.
-	File          string                     // Diff coordinate; generator records use the declaration file.
-	BuilderOwner  NamedResource              // Actual owner of the immutable prepared declaration.
-	Builder       string                     // Authoritative package coordinate; empty for file-seeded objects.
-	Inputs        []string                   // Additional declaration inputs; these do not establish render ownership.
-	Refs          []NamedResource            // Authored chart/source references under the discovery identity.
-	Parent        NamedResource              // Strict structural parent, excluding peers with the same claimed path.
-	Productions   []Production               // Immutable source-qualified contributor evidence.
-	ReferenceData []ReferenceData            // Borrowed lookup candidates qualified by their production.
-	StaticOutput  bool                       // Discovery derives this producer's output without accepted history.
-	Pinned        bool                       // The Kustomization reads a committed local source artifact.
-	ContentRoots  map[NamedResource][]string `json:"-"` // Source-qualified render locations; no authored-file authority.
+	Application   string                     `json:"Application"`   // Accepted applier document; valid only for its owning render receipt.
+	Declaration   BaseManifest               `json:"-"`             // Immutable parsed input; absence does not imply publication.
+	Declared      string                     `json:"-"`             // Complete authored fingerprint; empty when declaration evidence is unknown.
+	Authored      NamedResource              `json:"Authored"`      // Proven raw identity; zero for generated records.
+	Path          string                     `json:"Path"`          // Absolute raw resource path; empty for generated or projected records.
+	File          string                     `json:"File"`          // Diff coordinate; generator records use the declaration file.
+	BuilderOwner  NamedResource              `json:"BuilderOwner"`  // Actual owner of the immutable prepared declaration.
+	Builder       string                     `json:"Builder"`       // Authoritative package coordinate; empty for file-seeded objects.
+	Inputs        []string                   `json:"Inputs"`        // Additional declaration inputs; these do not establish render ownership.
+	Refs          []NamedResource            `json:"Refs"`          // Authored chart/source references under the discovery identity.
+	Parent        NamedResource              `json:"Parent"`        // Strict structural parent, excluding peers with the same claimed path.
+	Productions   []Production               `json:"Productions"`   // Immutable source-qualified contributor evidence.
+	ReferenceData []ReferenceData            `json:"ReferenceData"` // Borrowed lookup candidates qualified by their production.
+	StaticOutput  bool                       `json:"StaticOutput"`  // Discovery derives this producer's output without accepted history.
+	Pinned        bool                       `json:"Pinned"`        // The Kustomization reads a committed local source artifact.
+	ContentRoots  map[NamedResource][]string `json:"-"`             // Source-qualified render locations; no authored-file authority.
 }
 
 // Equal compares the record facts retained by accepted renders.
+//
+//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (r DiscoveryRecord) Equal(other DiscoveryRecord) bool {
-	if r.Application != other.Application || r.Authored != other.Authored || r.Path != other.Path || r.File != other.File {
+	if r.Application != other.Application || r.Authored != other.Authored || r.Path != other.Path ||
+		r.File != other.File {
 		return false
 	}
-	if r.Parent != other.Parent || r.Builder != other.Builder || r.Pinned != other.Pinned || r.StaticOutput != other.StaticOutput {
+	if r.Parent != other.Parent || r.Builder != other.Builder || r.Pinned != other.Pinned ||
+		r.StaticOutput != other.StaticOutput {
 		return false
 	}
 	if (r.Inputs == nil) != (other.Inputs == nil) || !slices.Equal(r.Inputs, other.Inputs) {
@@ -134,9 +140,12 @@ func (i *DiscoveryIndex) Files() iter.Seq2[NamedResource, DiscoveryRecord] {
 		if i == nil {
 			return
 		}
-		for id, r := range i.Records {
-			if r.File != "" && !yield(id, r) {
-				return
+		{
+			//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+			for id, r := range i.Records {
+				if r.File != "" && !yield(id, r) {
+					return
+				}
 			}
 		}
 	}
@@ -144,7 +153,8 @@ func (i *DiscoveryIndex) Files() iter.Seq2[NamedResource, DiscoveryRecord] {
 
 // OwnersOfFile returns deepest claimants plus render graph readers, and strict ancestors.
 // Missing resource directories retain ownership of deleted descendant files.
-func (i *DiscoveryIndex) OwnersOfFile(file string) (owners, ancestors []NamedResource) {
+func (i *DiscoveryIndex) OwnersOfFile(file string) ([]NamedResource, []NamedResource) {
+	var owners, ancestors []NamedResource
 	if i == nil || file == "" {
 		return nil, nil
 	}
@@ -176,12 +186,16 @@ func (i *DiscoveryIndex) ReadersOfFile(file string) iter.Seq[FileReader] {
 			return
 		}
 		for current := file; current != "" && current != "/"; current = path.Dir(current) {
-			for _, id := range i.Readers[current] {
-				if id.Exact && current != file {
-					continue
-				}
-				if !yield(id) {
-					return
+			{
+				idValues := i.Readers[current]
+				for idIndex := range idValues {
+					id := idValues[idIndex]
+					if id.Exact && current != file {
+						continue
+					}
+					if !yield(id) {
+						return
+					}
 				}
 			}
 			if current == "." {

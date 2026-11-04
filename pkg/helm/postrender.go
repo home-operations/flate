@@ -27,6 +27,8 @@ type kustomizePostRenderer struct {
 
 // newPostRenderer returns nil when rs has no usable entries — callers
 // pass nil to action.Install.PostRenderer to mean "no post-render".
+//
+//nolint:ireturn // The interface result preserves a nil renderer when rendering is disabled.
 func newPostRenderer(rs []helmv2.PostRenderer) postrenderer.PostRenderer {
 	for _, r := range rs {
 		if r.Kustomize != nil {
@@ -77,8 +79,8 @@ func runKustomizePostRender(in *bytes.Buffer, k *helmv2.Kustomize) (*bytes.Buffe
 	if err != nil {
 		return nil, fmt.Errorf("postRenderer: marshal kustomization: %w", err)
 	}
-	if err := fs.WriteFile("kustomization.yaml", raw); err != nil {
-		return nil, fmt.Errorf("postRenderer: write kustomization: %w", err)
+	if writeFileErr := fs.WriteFile("kustomization.yaml", raw); writeFileErr != nil {
+		return nil, fmt.Errorf("postRenderer: write kustomization: %w", writeFileErr)
 	}
 
 	opts := &krusty.Options{

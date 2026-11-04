@@ -58,7 +58,9 @@ func (d *Session) admitBootstrapInput(ctx context.Context) (*store.SourceArtifac
 		}
 	}
 	if admitted != nil {
-		for _, warning := range admitted.Warnings {
+		for index := range admitted.Warnings {
+			warning := admitted.Warnings[index]
+
 			d.cfg.Store.AddWarning(warning)
 		}
 	}
@@ -84,110 +86,21 @@ func (d *Session) admitBootstrapInput(ctx context.Context) (*store.SourceArtifac
 	return admitted, nil
 }
 
-func (d *Session) resolveEntrySources(ctx context.Context, allowMissing bool) (int, error) {
-	restricted := d.cfg.Selection.Changed || len(d.cfg.Selection.Roots) != 0
-	if d.resolvedSources != nil {
-		if input, ok := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact); ok {
-			d.cfg.Input = input
-		}
-	}
-	bootstrap := d.cfg.Input
-	if d.resolvedSources == nil {
-		var err error
-		bootstrap, err = d.admitBootstrapInput(ctx)
-		if err != nil {
-			return 0, err
-		}
-		d.resolvedSources = map[manifest.NamedResource]entryResolution{}
-	}
-	if previous, ok := d.resolvedSources[manifest.BootstrapSourceID]; ok && previous.input != bootstrap {
-		d.aliasViews = nil
-	}
-	type sourceGroup struct {
-		refs     []manifest.NamedResource
-		evidence store.Child
-		required bool
-	}
-	groups := map[manifest.NamedResource]sourceGroup{manifest.BootstrapSourceID: {required: true}}
-	add := func(id manifest.NamedResource, requester manifest.NamedResource) {
-		group := groups[id]
-		group.required = true
-		if requester != (manifest.NamedResource{}) && !slices.Contains(group.refs, requester) {
-			group.refs = append(group.refs, requester)
-		}
-		groups[id] = group
-	}
-	for kind := range manifest.Kinds() {
-		if kind.Group != manifest.SourceDomain {
-			continue
-		}
-		for _, obj := range d.cfg.Store.ListObjects(kind.Group, kind.Kind) {
-			if _, ok := obj.(entrySource); ok {
-				add(obj.Named(), manifest.NamedResource{})
-			}
-		}
-	}
-	if d.loader != nil {
-		for child, err := range d.loader.Sources(ctx) {
-			if err != nil {
-				return 0, err
-			}
-			group := groups[child.Obj.Named()]
-			group.evidence = child
-			groups[child.Obj.Named()] = group
-			if restricted {
-				id := child.Obj.Named()
-				record, _ := d.loader.Index.Lookup(id)
-				if d.loader.AdmitsRoot(d.loader.CatalogObject(id), record.Path) {
-					add(id, manifest.NamedResource{})
-				}
-			}
-		}
-		for _, child := range d.loader.PathObjects() {
-			if applier, ok := d.loader.CatalogObject(child.Identity).(entryApplication); ok {
-				if application, valid := applier.EntryApplication(); valid && application.Declaration != nil {
-					continue
-				}
-			}
-			ref, _, _ := child.SourcePath()
-			if allowMissing || groups[ref].evidence.Obj != nil || d.cfg.Store.GetObject(ref) != nil {
-				add(ref, child.Identity)
-			}
-		}
-	}
-	if allowMissing {
-		addReferences := func(obj manifest.BaseManifest, requester manifest.NamedResource) {
-			for ref := range manifest.References(obj, manifest.ReferenceRelations) {
-				if ref.Group == manifest.SourceDomain && (ref.Use == "source" || ref.Use == "artifact") {
-					add(ref.NamedResource, requester)
-				}
-			}
-		}
-		for kind := range manifest.Kinds() {
-			if !kind.Runnable {
-				continue
-			}
-			for _, obj := range d.cfg.Store.ListObjects(kind.Group, kind.Kind) {
-				addReferences(obj, obj.Named())
-			}
-		}
-		if d.loader != nil {
-			for id, record := range d.loader.Index.Files() {
-				if !id.KindInfo().Runnable || d.cfg.Store.GetObject(id) != nil {
-					continue
-				}
-				if !d.loader.AdmitsRoot(d.loader.CatalogObject(id), record.Path) {
-					continue
-				}
-				for ref := range d.loader.References(id) {
-					if ref.Group == manifest.SourceDomain && (ref.Use == "source" || ref.Use == "artifact") {
-						add(ref.NamedResource, manifest.NamedResource{})
-					}
-				}
-			}
-		}
-	}
+type entrySourceGroup struct {
+	refs     []manifest.NamedResource
+	evidence store.Child
+	required bool
+}
 
+func (d *Session) resolveEntrySources(ctx context.Context, allowMissing bool) (int, error) {
+	bootstrap, err := d.resolveBootstrapInput(ctx)
+	if err != nil {
+		return 0, err
+	}
+	groups, err := d.entrySourceGroups(ctx, allowMissing)
+	if err != nil {
+		return 0, err
+	}
 	admission := d.admission()
 	admission.input = bootstrap
 	published := 0
@@ -201,81 +114,251 @@ func (d *Session) resolveEntrySources(ctx context.Context, allowMissing bool) (i
 	slices.SortFunc(ids, manifest.NamedResource.Compare)
 	for _, id := range ids {
 		group := groups[id]
-		obj := d.cfg.Store.GetObject(id)
-		if previous, seen := d.resolvedSources[id]; restricted && seen && previous.synthetic && obj == previous.object && group.evidence.Obj != nil {
-			obj = group.evidence.Obj
-		}
-		if obj == nil {
-			obj = group.evidence.Obj
-			independentlyAdmitted := false
-			if restricted && obj != nil {
-				record, _ := d.loader.Index.Lookup(id)
-				independentlyAdmitted = d.loader.AdmitsRoot(d.loader.CatalogObject(id), record.Path)
-			}
-			if obj != nil && (independentlyAdmitted || slices.ContainsFunc(group.refs, func(requester manifest.NamedResource) bool {
-				return d.cfg.Store.GetObject(requester) != nil
-			})) {
-				d.cfg.Store.AddObject(obj, group.evidence.Doc)
-			}
-		}
-		previous, seen := d.resolvedSources[id]
-		if seen && obj != nil && previous.object == obj && previous.input != bootstrap && previous.artifact != nil && (previous.synthetic || previous.artifact.InputAlias) {
-			previous.input = bootstrap
-			if id == manifest.BootstrapSourceID {
-				previous.artifact = bootstrap
-				d.publishEntrySource(previous, bootstrap)
-				continue
-			}
-			artifact, key, err := admission.entrySourceView(ctx, previous)
-			if err != nil {
-				return 0, err
-			}
-			previous.artifact, previous.viewKey = artifact, key
-			d.cfg.Store.SetArtifact(id, artifact)
-			d.cfg.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Message: "local entry source"})
-			d.resolvedSources[id] = previous
-			if id != manifest.BootstrapSourceID {
-				published++
-			}
-			continue
-		}
-		if seen && previous.input == bootstrap && previous.object == obj {
-			if previous.artifact != nil && obj != nil && d.cfg.Store.GetArtifact(id, store.ArtifactContent) == nil {
-				d.publishEntrySource(previous, previous.artifact)
-				if id != manifest.BootstrapSourceID {
-					published++
-				}
-			}
-			continue
-		}
-		candidate, err := admission.resolve(ctx, id, obj)
+		added, err := d.resolveEntrySource(ctx, admission, id, &group)
 		if err != nil {
 			return 0, err
 		}
-		d.resolvedSources[id] = candidate
-		for _, warning := range candidate.warnings {
-			d.cfg.Store.AddWarning(warning)
-		}
-		if candidate.artifact == nil {
-			continue
-		}
-		if candidate.pinned && !candidate.artifact.InputAlias {
-			d.hasPins = true
-		}
-		d.publishEntrySource(candidate, candidate.artifact)
-		if candidate.viewKey != "" {
-			if d.aliasViews == nil {
-				d.aliasViews = map[string]*store.SourceArtifact{}
-			}
-			if d.aliasViews[candidate.viewKey] == nil {
-				d.aliasViews[candidate.viewKey] = candidate.artifact
-			}
-		}
-		if id != manifest.BootstrapSourceID {
+		if added {
 			published++
 		}
 	}
 	return published, nil
+}
+
+func (d *Session) resolveBootstrapInput(ctx context.Context) (*store.SourceArtifact, error) {
+	if d.resolvedSources != nil {
+		if input, ok := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact); ok {
+			d.cfg.Input = input
+		}
+	}
+	bootstrap := d.cfg.Input
+	if d.resolvedSources == nil {
+		admitted, err := d.admitBootstrapInput(ctx)
+		if err != nil {
+			return nil, err
+		}
+		bootstrap = admitted
+		d.resolvedSources = map[manifest.NamedResource]entryResolution{}
+	}
+	if previous, ok := d.resolvedSources[manifest.BootstrapSourceID]; ok && previous.input != bootstrap {
+		d.aliasViews = nil
+	}
+	return bootstrap, nil
+}
+
+func addEntrySource(groups map[manifest.NamedResource]entrySourceGroup, id, requester manifest.NamedResource) {
+	group := groups[id]
+	group.required = true
+	if requester != (manifest.NamedResource{}) && !slices.Contains(group.refs, requester) {
+		group.refs = append(group.refs, requester)
+	}
+	groups[id] = group
+}
+
+func (d *Session) entrySourceGroups(
+	ctx context.Context,
+	allowMissing bool,
+) (map[manifest.NamedResource]entrySourceGroup, error) {
+	groups := map[manifest.NamedResource]entrySourceGroup{manifest.BootstrapSourceID: {required: true}}
+	for kind := range manifest.Kinds() {
+		if kind.Group != manifest.SourceDomain {
+			continue
+		}
+		for _, obj := range d.cfg.Store.ListObjects(kind.Group, kind.Kind) {
+			if _, ok := obj.(entrySource); ok {
+				addEntrySource(groups, obj.Named(), manifest.NamedResource{})
+			}
+		}
+	}
+	if err := d.addLoadedSources(ctx, groups, allowMissing); err != nil {
+		return nil, err
+	}
+	if allowMissing {
+		d.addMissingSources(groups)
+	}
+	return groups, nil
+}
+
+func (d *Session) addLoadedSources(
+	ctx context.Context,
+	groups map[manifest.NamedResource]entrySourceGroup,
+	allowMissing bool,
+) error {
+	if d.loader == nil {
+		return nil
+	}
+	restricted := d.cfg.Selection.Changed || len(d.cfg.Selection.Roots) != 0
+	for child, err := range d.loader.Sources(ctx) {
+		if err != nil {
+			return err
+		}
+		id := child.Obj.Named()
+		group := groups[id]
+		group.evidence = child
+		groups[id] = group
+		if restricted {
+			record, _ := d.loader.Index.Lookup(id)
+			if d.loader.AdmitsRoot(d.loader.CatalogObject(id), record.Path) {
+				addEntrySource(groups, id, manifest.NamedResource{})
+			}
+		}
+	}
+	{
+		childValues := d.loader.PathObjects()
+		for childIndex := range childValues {
+			child := childValues[childIndex]
+
+			if applier, ok := d.loader.CatalogObject(child.Identity).(entryApplication); ok {
+				if application, valid := applier.EntryApplication(); valid && application.Declaration != nil {
+					continue
+				}
+			}
+			ref, _, _ := child.SourcePath()
+			if allowMissing || groups[ref].evidence.Obj != nil || d.cfg.Store.GetObject(ref) != nil {
+				addEntrySource(groups, ref, child.Identity)
+			}
+		}
+	}
+	return nil
+}
+
+func (d *Session) addMissingSources(groups map[manifest.NamedResource]entrySourceGroup) {
+	for kind := range manifest.Kinds() {
+		if !kind.Runnable {
+			continue
+		}
+		for _, obj := range d.cfg.Store.ListObjects(kind.Group, kind.Kind) {
+			for ref := range manifest.References(obj, manifest.ReferenceRelations) {
+				if ref.Group == manifest.SourceDomain && (ref.Use == "source" || ref.Use == "artifact") {
+					addEntrySource(groups, ref.NamedResource, obj.Named())
+				}
+			}
+		}
+	}
+	d.addMissingIndexedSources(groups)
+}
+
+func (d *Session) addMissingIndexedSources(groups map[manifest.NamedResource]entrySourceGroup) {
+	if d.loader == nil {
+		return
+	}
+	for id, record := range d.loader.Index.Files() { //nolint:gocritic // The iterator yields records by value.
+		if !id.KindInfo().Runnable || d.cfg.Store.GetObject(id) != nil {
+			continue
+		}
+		if !d.loader.AdmitsRoot(d.loader.CatalogObject(id), record.Path) {
+			continue
+		}
+		for ref := range d.loader.References(id) {
+			if ref.Group == manifest.SourceDomain && (ref.Use == "source" || ref.Use == "artifact") {
+				addEntrySource(groups, ref.NamedResource, manifest.NamedResource{})
+			}
+		}
+	}
+}
+
+//nolint:ireturn // Sources retain their heterogeneous manifest types.
+func (d *Session) entrySourceObject(
+	id manifest.NamedResource,
+	group *entrySourceGroup,
+) manifest.BaseManifest {
+	restricted := d.cfg.Selection.Changed || len(d.cfg.Selection.Roots) != 0
+	obj := d.cfg.Store.GetObject(id)
+	if previous, seen := d.resolvedSources[id]; restricted && seen && previous.synthetic && obj == previous.object &&
+		group.evidence.Obj != nil {
+		obj = group.evidence.Obj
+	}
+	if obj != nil {
+		return obj
+	}
+	obj = group.evidence.Obj
+	independentlyAdmitted := false
+	if restricted && obj != nil {
+		record, _ := d.loader.Index.Lookup(id)
+		independentlyAdmitted = d.loader.AdmitsRoot(d.loader.CatalogObject(id), record.Path)
+	}
+	if obj != nil &&
+		(independentlyAdmitted || slices.ContainsFunc(group.refs, func(requester manifest.NamedResource) bool { return d.cfg.Store.GetObject(requester) != nil })) {
+		d.cfg.Store.AddObject(obj, group.evidence.Doc)
+	}
+	return obj
+}
+
+func (d *Session) resolveEntrySource(
+	ctx context.Context,
+	admission *Admission,
+	id manifest.NamedResource,
+	group *entrySourceGroup,
+) (bool, error) {
+	bootstrap := admission.input
+	obj := d.entrySourceObject(id, group)
+	previous, seen := d.resolvedSources[id]
+	if seen && obj != nil && previous.object == obj && previous.input != bootstrap && previous.artifact != nil &&
+		(previous.synthetic || previous.artifact.InputAlias) {
+		if err := d.refreshEntrySource(ctx, admission, id, &previous); err != nil {
+			return false, err
+		}
+		return id != manifest.BootstrapSourceID, nil
+	}
+	if seen && previous.input == bootstrap && previous.object == obj {
+		if previous.artifact != nil && obj != nil && d.cfg.Store.GetArtifact(id, store.ArtifactContent) == nil {
+			d.publishEntrySource(&previous, previous.artifact)
+			return id != manifest.BootstrapSourceID, nil
+		}
+		return false, nil
+	}
+	candidate, err := admission.resolve(ctx, id, obj)
+	if err != nil {
+		return false, err
+	}
+	d.resolvedSources[id] = candidate
+	for i := range candidate.warnings {
+		d.cfg.Store.AddWarning(candidate.warnings[i])
+	}
+	if candidate.artifact == nil {
+		return false, nil
+	}
+	d.publishResolvedSource(&candidate)
+	return id != manifest.BootstrapSourceID, nil
+}
+
+func (d *Session) refreshEntrySource(
+	ctx context.Context,
+	admission *Admission,
+	id manifest.NamedResource,
+	previous *entryResolution,
+) error {
+	previous.input = admission.input
+	if id == manifest.BootstrapSourceID {
+		previous.artifact = admission.input
+		d.publishEntrySource(previous, admission.input)
+		return nil
+	}
+	artifact, key, err := admission.entrySourceView(ctx, previous)
+	if err != nil {
+		return err
+	}
+	previous.artifact, previous.viewKey = artifact, key
+	d.cfg.Store.SetArtifact(id, artifact)
+	d.cfg.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Message: "local entry source"})
+	d.resolvedSources[id] = *previous
+	return nil
+}
+
+func (d *Session) publishResolvedSource(candidate *entryResolution) {
+	if candidate.pinned && !candidate.artifact.InputAlias {
+		d.hasPins = true
+	}
+	d.publishEntrySource(candidate, candidate.artifact)
+	if candidate.viewKey == "" {
+		return
+	}
+	if d.aliasViews == nil {
+		d.aliasViews = map[string]*store.SourceArtifact{}
+	}
+	if d.aliasViews[candidate.viewKey] == nil {
+		d.aliasViews[candidate.viewKey] = candidate.artifact
+	}
 }
 
 // Admission retains immutable bootstrap policy for early and runtime source decisions.
@@ -295,7 +378,13 @@ func (d *Session) admission() *Admission {
 	if input == nil {
 		input = d.cfg.Input
 	}
-	admission := &Admission{input: input, path: d.cfg.Path, remotes: maps.Clone(d.remotes), aliasViews: maps.Clone(d.aliasViews), sources: maps.Clone(d.resolvedSources)}
+	admission := &Admission{
+		input:      input,
+		path:       d.cfg.Path,
+		remotes:    maps.Clone(d.remotes),
+		aliasViews: maps.Clone(d.aliasViews),
+		sources:    maps.Clone(d.resolvedSources),
+	}
 	admission.entryBound.Store(d.binding != (Binding{}))
 	if d.cfg.Trees != nil && !admission.entryBound.Load() {
 		d.entryState.loader, d.entryState.trees = d.loader, d.cfg.Trees
@@ -306,7 +395,13 @@ func (d *Session) admission() *Admission {
 
 // Resolve admits a known source or a missing Git bootstrap reference.
 // A nil artifact leaves normal acquisition responsible for the source.
-func (a *Admission) Resolve(ctx context.Context, id manifest.NamedResource, object manifest.BaseManifest) (manifest.BaseManifest, *store.SourceArtifact, error) {
+//
+//nolint:ireturn // Declarations retain their heterogeneous manifest types.
+func (a *Admission) Resolve(
+	ctx context.Context,
+	id manifest.NamedResource,
+	object manifest.BaseManifest,
+) (manifest.BaseManifest, *store.SourceArtifact, error) {
 	if a == nil {
 		return nil, nil, nil
 	}
@@ -319,7 +414,11 @@ func (a *Admission) Resolve(ctx context.Context, id manifest.NamedResource, obje
 	return resolved.object, resolved.artifact, err
 }
 
-func (a *Admission) resolve(ctx context.Context, id manifest.NamedResource, obj manifest.BaseManifest) (entryResolution, error) {
+func (a *Admission) resolve(
+	ctx context.Context,
+	id manifest.NamedResource,
+	obj manifest.BaseManifest,
+) (entryResolution, error) {
 	bootstrap := a.input
 	candidate := entryResolution{object: obj, input: bootstrap, synthetic: obj == nil}
 	if obj == nil {
@@ -331,7 +430,8 @@ func (a *Admission) resolve(ctx context.Context, id manifest.NamedResource, obj 
 	}
 	alias, descriptor := behavior.BootstrapAlias(bootstrap.LocalPath)
 	candidate.git = descriptor
-	candidate.pinned = !candidate.synthetic && id != manifest.BootstrapSourceID && (*manifest.GitRepositoryRef)(descriptor.Reference).String() != ""
+	candidate.pinned = !candidate.synthetic && id != manifest.BootstrapSourceID &&
+		(*manifest.GitRepositoryRef)(descriptor.Reference).String() != ""
 	if id != manifest.BootstrapSourceID && !candidate.synthetic {
 		if _, match := a.remotes[normalizeGitURL(descriptor.URL)]; !match {
 			return candidate, nil
@@ -355,7 +455,17 @@ func (a *Admission) resolve(ctx context.Context, id manifest.NamedResource, obj 
 		}
 		artifact := artifacts[id]
 		if artifact == nil {
-			candidate.warnings = []manifest.Warning{{Resource: id, Category: manifest.WarnSourceRefUnavailable, Message: "declared source ref cannot be satisfied locally; using normal source fetch", Detail: []string{(*manifest.GitRepositoryRef)(descriptor.Reference).String(), "ref unavailable in this tree's repository or checkout options require fetching"}}}
+			candidate.warnings = []manifest.Warning{
+				{
+					Resource: id,
+					Category: manifest.WarnSourceRefUnavailable,
+					Message:  "declared source ref cannot be satisfied locally; using normal source fetch",
+					Detail: []string{
+						(*manifest.GitRepositoryRef)(descriptor.Reference).String(),
+						"ref unavailable in this tree's repository or checkout options require fetching",
+					},
+				},
+			}
 			return candidate, nil
 		}
 		candidate.warnings = artifact.Warnings
@@ -366,13 +476,16 @@ func (a *Admission) resolve(ctx context.Context, id manifest.NamedResource, obj 
 			return candidate, nil
 		}
 	}
-	artifact, key, err := a.entrySourceView(ctx, candidate)
+	artifact, key, err := a.entrySourceView(ctx, &candidate)
 	candidate.artifact, candidate.viewKey = artifact, key
 	return candidate, err
 }
 
 // Mutable aliases keep empty keys and source-qualified mounts; their input is immutable.
-func (a *Admission) entrySourceView(ctx context.Context, candidate entryResolution) (*store.SourceArtifact, string, error) {
+func (a *Admission) entrySourceView(
+	ctx context.Context,
+	candidate *entryResolution,
+) (*store.SourceArtifact, string, error) {
 	bootstrap := candidate.input
 	repoRoot := bootstrap.LocalPath
 	ignore := ""
@@ -384,12 +497,14 @@ func (a *Admission) entrySourceView(ctx context.Context, candidate entryResoluti
 		}
 		sparse, recurse = repo.SparseCheckout, repo.RecurseSubmodules
 	}
-	label, viewKey := gittree.Label(gittree.LabelOptions{Root: repoRoot, Mode: gittree.Source, Source: candidate.object.Named(), Content: struct {
-		Root, Origin, Key, Content, Digest string
-		Ignore                             string
-		Sparse                             []string `json:",omitempty"`
-		Recurse                            bool
-	}{repoRoot, bootstrap.LocalRoot, bootstrap.Key, bootstrap.Content, bootstrap.Digest, ignore, sparse, recurse}})
+	label, viewKey := gittree.Label(
+		gittree.LabelOptions{Root: repoRoot, Mode: gittree.Source, Source: candidate.object.Named(), Content: struct {
+			Root, Origin, Key, Content, Digest string
+			Ignore                             string
+			Sparse                             []string `json:",omitempty"`
+			Recurse                            bool
+		}{repoRoot, bootstrap.LocalRoot, bootstrap.Key, bootstrap.Content, bootstrap.Digest, ignore, sparse, recurse}},
+	)
 	var input fs.FS
 	var identity string
 	var err error
@@ -397,7 +512,18 @@ func (a *Admission) entrySourceView(ctx context.Context, candidate entryResoluti
 	if cached != nil {
 		input, identity, err = cached.FS, cached.Content, ctx.Err()
 	} else {
-		input, identity, err = gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: bootstrap.FS, CurrentContent: bootstrap.Content, Ignore: ignore, Sparse: sparse})
+		input, identity, err = gittree.New(
+			ctx,
+			nil,
+			plumbing.ZeroHash,
+			gittree.ViewOptions{
+				Mode:           gittree.Source,
+				Current:        bootstrap.FS,
+				CurrentContent: bootstrap.Content,
+				Ignore:         ignore,
+				Sparse:         sparse,
+			},
+		)
 	}
 	if err != nil {
 		return nil, "", err
@@ -413,15 +539,17 @@ func (a *Admission) entrySourceView(ctx context.Context, candidate entryResoluti
 	return &artifact, viewKey, nil
 }
 
-func (d *Session) publishEntrySource(candidate entryResolution, artifact *store.SourceArtifact) {
+func (d *Session) publishEntrySource(candidate *entryResolution, artifact *store.SourceArtifact) {
 	id := candidate.object.Named()
-	if candidate.synthetic || (d.cfg.Selection.Changed || len(d.cfg.Selection.Roots) != 0) && d.cfg.Store.GetObject(id) != nil && d.cfg.Store.GetObject(id) != candidate.object {
+	if candidate.synthetic ||
+		(d.cfg.Selection.Changed || len(d.cfg.Selection.Roots) != 0) && d.cfg.Store.GetObject(id) != nil &&
+			d.cfg.Store.GetObject(id) != candidate.object {
 		d.cfg.Store.AddObject(candidate.object)
 	}
 
 	d.cfg.Store.SetArtifact(id, artifact)
 	d.cfg.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "local entry source"})
-	d.resolvedSources[id] = candidate
+	d.resolvedSources[id] = *candidate
 }
 
 // Only working-input aliases contribute; canonical and independently committed artifacts do not.
@@ -437,9 +565,11 @@ func (d *Session) warnBootstrapAliases(repoRoot string) {
 		return
 	}
 	slices.Sort(names)
-	d.cfg.Store.AddWarning(manifest.Warning{Category: manifest.WarnBootstrapAliases,
-		Message: "aliased multiple bootstrap sources to the working tree; cross-repo refs render against the wrong tree",
-		Detail:  append(names, repoRoot)})
+	d.cfg.Store.AddWarning(manifest.Warning{
+		Category: manifest.WarnBootstrapAliases,
+		Message:  "aliased multiple bootstrap sources to the working tree; cross-repo refs render against the wrong tree",
+		Detail:   append(names, repoRoot),
+	})
 }
 
 func normalizeGitURL(raw string) string {

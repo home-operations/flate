@@ -15,11 +15,13 @@ import (
 // flate currently implements the "generic" provider only (S3-compatible
 // via minio-go). The aws/gcp/azure providers parse correctly but the
 // Fetcher returns a clear "provider X not implemented" error.
+//
+//nolint:embeddedstructfieldcheck // The SDK field order preserves serialized document order.
 type Bucket struct {
 	Name        string            `json:"name"                yaml:"name"`
 	Namespace   string            `json:"namespace,omitempty" yaml:"namespace,omitempty"`
-	Labels      map[string]string `json:"-" yaml:"-"`
-	Annotations map[string]string `json:"-" yaml:"-"`
+	Labels      map[string]string `json:"-"                   yaml:"-"`
+	Annotations map[string]string `json:"-"                   yaml:"-"`
 	// BucketSpec is the embedded upstream sourcev1.BucketSpec — all
 	// fields (Provider, BucketName, Endpoint, Region, Prefix, Insecure,
 	// SecretRef, CertSecretRef, ProxySecretRef, Suspend, ...) are
@@ -28,9 +30,17 @@ type Bucket struct {
 }
 
 // NewBucket normalizes an owned typed Bucket declaration.
+//
+//nolint:gocritic // The SDK preserves this value input and its snapshot boundary.
 func NewBucket(cr sourcev1.Bucket) *Bucket {
 	cr.Spec.Provider = cmp.Or(cr.Spec.Provider, sourcev1.BucketProviderGeneric)
-	return &Bucket{Name: cr.Name, Namespace: cr.Namespace, Labels: cr.Labels, Annotations: cr.Annotations, BucketSpec: cr.Spec}
+	return &Bucket{
+		Name:        cr.Name,
+		Namespace:   cr.Namespace,
+		Labels:      cr.Labels,
+		Annotations: cr.Annotations,
+		BucketSpec:  cr.Spec,
+	}
 }
 
 // GetLabels returns the Bucket's metadata.labels.
@@ -64,6 +74,8 @@ func (b *Bucket) Content(endpoint string, secure bool) any {
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (b *Bucket) WithNamespace(namespace string) BaseManifest {
 	out := *b
 	out.Namespace = namespace

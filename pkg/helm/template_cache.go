@@ -23,52 +23,57 @@ import (
 )
 
 type chartFileContent struct {
-	Name string
-	Data []byte
+	Name string `json:"Name"`
+	Data []byte `json:"Data"`
 }
 
 type chartAnalysis struct {
-	Version        string
-	Templates      string
-	Allowed        map[string]struct{}
-	RequiresLoader bool
+	Version        string              `json:"Version"`
+	Templates      string              `json:"Templates"`
+	Allowed        map[string]struct{} `json:"Allowed"`
+	RequiresLoader bool                `json:"RequiresLoader"`
 }
 
 type renderRecord struct {
 	key      string
 	identity string
-	Output   []byte
-	Analysis *chartAnalysis
+	Output   []byte         `json:"Output"`
+	Analysis *chartAnalysis `json:"Analysis"`
 	frame    renderFrame
 	receipt  *manifest.RenderReceipt
 	binding  templateBinding
 }
 
 type ociChartContent struct {
-	Digest          string
-	Revision        string
-	DisableTracking bool
+	Digest          string `json:"Digest"`
+	Revision        string `json:"Revision"`
+	DisableTracking bool   `json:"DisableTracking"`
 }
 
 // CommonMetadata is stamped after the cached pre-stamp render. Unsupported
 // content returns an empty key, which MUST bypass lookup and publication.
-func computeTemplateKey(loaded chartDescription, releaseValues map[string]any, opts Options, hr *manifest.HelmRelease) string {
+func computeTemplateKey(
+	loaded *chartDescription,
+	releaseValues map[string]any,
+	opts Options,
+	hr *manifest.HelmRelease,
+) string {
 	if loaded.fingerprint == "" {
 		return ""
 	}
 	type keyHR struct {
-		ReleaseName              string
-		ReleaseNamespace         string
-		CRDsPolicy               helmv2.CRDsPolicy
-		DisableSchemaValidation  bool
-		DisableOpenAPIValidation bool
-		InstallDisableHooks      bool
-		InstallReplace           bool
-		TestEnable               bool
-		ChartVersion             string
-		ChartValuesFiles         []string
-		IgnoreMissingValuesFiles bool
-		PostRenderers            []helmv2.PostRenderer
+		ReleaseName              string                `json:"ReleaseName"`
+		ReleaseNamespace         string                `json:"ReleaseNamespace"`
+		CRDsPolicy               helmv2.CRDsPolicy     `json:"CRDsPolicy"`
+		DisableSchemaValidation  bool                  `json:"DisableSchemaValidation"`
+		DisableOpenAPIValidation bool                  `json:"DisableOpenAPIValidation"`
+		InstallDisableHooks      bool                  `json:"InstallDisableHooks"`
+		InstallReplace           bool                  `json:"InstallReplace"`
+		TestEnable               bool                  `json:"TestEnable"`
+		ChartVersion             string                `json:"ChartVersion"`
+		ChartValuesFiles         []string              `json:"ChartValuesFiles"`
+		IgnoreMissingValuesFiles bool                  `json:"IgnoreMissingValuesFiles"`
+		PostRenderers            []helmv2.PostRenderer `json:"PostRenderers"`
 	}
 	policy := (&helmv2.HelmRelease{Spec: hr.HelmReleaseSpec}).GetInstall()
 	khr := keyHR{
@@ -92,17 +97,19 @@ func computeTemplateKey(loaded chartDescription, releaseValues map[string]any, o
 
 	inputs := loaded.values.fingerprint
 	type keyOptions struct {
-		SkipCRDs, SkipTests      bool
-		KubeVersion, APIVersions string
-		EnableDNS                bool
+		SkipCRDs    bool   `json:"SkipCRDs"`
+		SkipTests   bool   `json:"SkipTests"`
+		KubeVersion string `json:"KubeVersion"`
+		APIVersions string `json:"APIVersions"`
+		EnableDNS   bool   `json:"EnableDNS"`
 	}
 	return manifest.Fingerprint(struct {
-		Chart   string
-		OCI     *ociChartContent
-		Inputs  *string
-		Values  map[string]any
-		Options keyOptions
-		Release keyHR
+		Chart   string           `json:"Chart"`
+		OCI     *ociChartContent `json:"OCI"`
+		Inputs  *string          `json:"Inputs"`
+		Values  map[string]any   `json:"Values"`
+		Options keyOptions       `json:"Options"`
+		Release keyHR            `json:"Release"`
 	}{
 		Chart: loaded.fingerprint, OCI: loaded.oci, Inputs: inputs, Values: releaseValues,
 		Options: keyOptions{opts.SkipCRDs, opts.SkipTests, opts.KubeVersion, opts.APIVersions, opts.EnableDNS},
@@ -113,29 +120,49 @@ func computeTemplateKey(loaded chartDescription, releaseValues map[string]any, o
 const frameDomain = "flatehr2"
 
 type renderHeader struct {
-	Key, Binding, Output string
-	Size                 int
-	Analysis             *chartAnalysis
+	Key      string         `json:"Key"`
+	Binding  string         `json:"Binding"`
+	Output   string         `json:"Output"`
+	Size     int            `json:"Size"`
+	Analysis *chartAnalysis `json:"Analysis"`
 }
 
 const frameHeaderLimit = 16 << 20
 
 type templateBinding struct {
-	Policy                                       manifest.HelmReleaseHistoryPolicy
-	Source                                       manifest.NamedResource
-	Kind, URL, Path, Root, Key, Revision, Digest string
-	Alias                                        bool
-	Options                                      Options
-	Wipe                                         bool
-	Dependencies                                 values.DependencySubstitutions
+	Policy       manifest.HelmReleaseHistoryPolicy `json:"Policy"`
+	Source       manifest.NamedResource            `json:"Source"`
+	Kind         string                            `json:"Kind"`
+	URL          string                            `json:"URL"`
+	Path         string                            `json:"Path"`
+	Root         string                            `json:"Root"`
+	Key          string                            `json:"Key"`
+	Revision     string                            `json:"Revision"`
+	Digest       string                            `json:"Digest"`
+	Alias        bool                              `json:"Alias"`
+	Options      Options                           `json:"Options"`
+	Wipe         bool                              `json:"Wipe"`
+	Dependencies values.DependencySubstitutions    `json:"Dependencies"`
 }
 
-func (a templateBinding) same(b templateBinding) bool {
-	if !a.Policy.Equal(b.Policy) || a.Source != b.Source || a.Kind != b.Kind || a.URL != b.URL || a.Path != b.Path || a.Root != b.Root || a.Key != b.Key || a.Revision != b.Revision || a.Digest != b.Digest || a.Alias != b.Alias || a.Wipe != b.Wipe || !a.Dependencies.Equal(b.Dependencies) {
+func (a *templateBinding) same(b *templateBinding) bool {
+	if !a.Policy.Equal(b.Policy) || a.Source != b.Source || a.Kind != b.Kind || a.URL != b.URL || a.Path != b.Path ||
+		a.Root != b.Root ||
+		a.Key != b.Key ||
+		a.Revision != b.Revision ||
+		a.Digest != b.Digest ||
+		a.Alias != b.Alias ||
+		a.Wipe != b.Wipe ||
+		!a.Dependencies.Equal(b.Dependencies) {
 		return false
 	}
 	x, y := a.Options, b.Options
-	return x.DisableChartDigestTracking == y.DisableChartDigestTracking && x.SkipCRDs == y.SkipCRDs && x.SkipTests == y.SkipTests && x.KubeVersion == y.KubeVersion && x.APIVersions == y.APIVersions && x.EnableDNS == y.EnableDNS && slices.Equal(x.SkipKinds, y.SkipKinds)
+	return x.DisableChartDigestTracking == y.DisableChartDigestTracking && x.SkipCRDs == y.SkipCRDs &&
+		x.SkipTests == y.SkipTests &&
+		x.KubeVersion == y.KubeVersion &&
+		x.APIVersions == y.APIVersions &&
+		x.EnableDNS == y.EnableDNS &&
+		slices.Equal(x.SkipKinds, y.SkipKinds)
 }
 
 type renderFrame struct {
@@ -154,26 +181,26 @@ func equalRenderFrame(a, b any) bool {
 	if !ok || !other || left.header.Key != right.header.Key || !bytes.Equal(left.output, right.output) {
 		return false
 	}
-	return left.binding.same(right.binding)
+	return left.binding.same(&right.binding)
 }
 
 type acceptedRoot struct {
-	Source manifest.NamedResource
-	Paths  []string
+	Source manifest.NamedResource `json:"Source"`
+	Paths  []string               `json:"Paths"`
 }
 
 type acceptedRecord struct {
-	ID     manifest.NamedResource
-	Record manifest.DiscoveryRecord
-	Roots  []acceptedRoot
+	ID     manifest.NamedResource   `json:"ID"`
+	Record manifest.DiscoveryRecord `json:"Record"`
+	Roots  []acceptedRoot           `json:"Roots"`
 }
 
 type acceptedRender struct {
-	Version  int
-	Complete bool
-	Owner    manifest.NamedResource
-	Raw      string
-	Records  []acceptedRecord
+	Version  int                    `json:"Version"`
+	Complete bool                   `json:"Complete"`
+	Owner    manifest.NamedResource `json:"Owner"`
+	Raw      string                 `json:"Raw"`
+	Records  []acceptedRecord       `json:"Records"`
 }
 
 func (a *acceptedRender) equal(b *acceptedRender) bool {
@@ -186,15 +213,21 @@ func (a *acceptedRender) equal(b *acceptedRender) bool {
 	if (a.Records == nil) != (b.Records == nil) || len(a.Records) != len(b.Records) {
 		return false
 	}
-	for i, x := range a.Records {
-		y := b.Records[i]
-		if x.ID != y.ID || !x.Record.Equal(y.Record) || (x.Roots == nil) != (y.Roots == nil) || len(x.Roots) != len(y.Roots) {
-			return false
-		}
-		for j, root := range x.Roots {
-			other := y.Roots[j]
-			if root.Source != other.Source || (root.Paths == nil) != (other.Paths == nil) || !slices.Equal(root.Paths, other.Paths) {
+	{
+		xValues := a.Records
+		for i := range xValues {
+			x := xValues[i]
+			y := b.Records[i]
+			if x.ID != y.ID || !x.Record.Equal(y.Record) || (x.Roots == nil) != (y.Roots == nil) ||
+				len(x.Roots) != len(y.Roots) {
 				return false
+			}
+			for j, root := range x.Roots {
+				other := y.Roots[j]
+				if root.Source != other.Source || (root.Paths == nil) != (other.Paths == nil) ||
+					!slices.Equal(root.Paths, other.Paths) {
+					return false
+				}
 			}
 		}
 	}
@@ -208,32 +241,35 @@ func encodeFrame(header renderHeader, output []byte) ([]byte, error) {
 	header.Size, header.Output = len(output), manifest.Fingerprint(output)
 	data, err := json.Marshal(header)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("encode render frame: %w", err)
 	}
 	if len(data) > frameHeaderLimit {
 		return nil, errors.New("render header exceeds frame limit")
 	}
-	frame := make([]byte, 12+len(data)+len(output))
+	frame := make([]byte, framePrefixSize+len(data)+len(output))
 	copy(frame, frameDomain)
-	binary.BigEndian.PutUint32(frame[8:12], uint32(len(data))) //nolint:gosec // The header is bounded by frameHeaderLimit.
-	copy(frame[12:], data)
-	copy(frame[12+len(data):], output)
+	binary.BigEndian.PutUint32(
+		frame[8:framePrefixSize],
+		uint32(len(data)), //nolint:gosec // frameHeaderLimit bounds the header length below uint32 capacity.
+	)
+	copy(frame[framePrefixSize:], data)
+	copy(frame[framePrefixSize+len(data):], output)
 	return frame, nil
 }
 
 func decodeFrame(data []byte) (renderFrame, error) {
-	if len(data) < 12 || string(data[:8]) != frameDomain {
+	if len(data) < framePrefixSize || string(data[:8]) != frameDomain {
 		return renderFrame{}, errors.New("invalid render frame domain or version")
 	}
-	size := int(binary.BigEndian.Uint32(data[8:12]))
-	if size > frameHeaderLimit || size > len(data)-12 {
+	size := int(binary.BigEndian.Uint32(data[8:framePrefixSize]))
+	if size > frameHeaderLimit || size > len(data)-framePrefixSize {
 		return renderFrame{}, errors.New("invalid render header length")
 	}
 	var header renderHeader
-	if err := json.Unmarshal(data[12:12+size], &header); err != nil {
-		return renderFrame{}, err
+	if err := json.Unmarshal(data[framePrefixSize:framePrefixSize+size], &header); err != nil {
+		return renderFrame{}, fmt.Errorf("decode render frame: %w", err)
 	}
-	begin := 12 + size
+	begin := framePrefixSize + size
 	if header.Size < 0 || header.Size > len(data)-begin {
 		return renderFrame{}, errors.New("invalid render payload length")
 	}
@@ -242,50 +278,66 @@ func decodeFrame(data []byte) (renderFrame, error) {
 	if header.Output == "" || manifest.Fingerprint(output) != header.Output {
 		return renderFrame{}, errors.New("invalid render payload identity")
 	}
-	frame := renderFrame{header: header, output: bytes.Clone(output), raw: manifest.Fingerprint(data[12:begin])}
+	frame := renderFrame{
+		header: header,
+		output: bytes.Clone(output),
+		raw:    manifest.Fingerprint(data[framePrefixSize:begin]),
+	}
 	tail := data[end:]
 	if len(tail) == 0 || len(tail) > frameHeaderLimit {
 		return frame, nil
 	}
 	var accepted acceptedRender
-	if err := json.Unmarshal(tail, &accepted); err != nil || accepted.Version != 1 || !accepted.Complete || accepted.Raw != frame.raw {
+	if err := json.Unmarshal(
+		tail,
+		&accepted,
+	); err != nil || accepted.Version != 1 || !accepted.Complete ||
+		accepted.Raw != frame.raw {
+		//nolint:nilerr // Invalid cache metadata must remain a miss so the renderer can rebuild.
 		return frame, nil
 	}
-	for i, item := range accepted.Records {
-		if i > 0 && accepted.Records[i-1].ID.Compare(item.ID) >= 0 {
-			return frame, nil
-		}
-		for j, root := range item.Roots {
-			if j > 0 && item.Roots[j-1].Source.Compare(root.Source) >= 0 {
-				return frame, nil
-			}
-		}
+	if !accepted.ordered() {
+		return frame, nil
 	}
 	frame.accepted, frame.acceptedKey = &accepted, manifest.Fingerprint(accepted)
 	return frame, nil
 }
 
-func prepareAccepted(owner manifest.NamedResource, frame renderFrame, records iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]) (acceptedRender, error) {
+func prepareAccepted(
+	owner manifest.NamedResource,
+	frame *renderFrame,
+	records iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord],
+) (acceptedRender, error) {
 	accepted := acceptedRender{Version: 1, Complete: true, Owner: owner, Raw: frame.raw}
-	for id, record := range records {
-		item := acceptedRecord{ID: id, Record: record}
-		item.Record.ContentRoots = nil
-		item.Record.Inputs = slices.Clone(record.Inputs)
-		item.Record.Refs = slices.Clone(record.Refs)
-		slices.SortFunc(item.Record.Refs, manifest.NamedResource.Compare)
-		item.Record.Refs = slices.Compact(item.Record.Refs)
-		item.Record.Productions = slices.Clone(record.Productions)
-		slices.SortFunc(item.Record.Productions, func(a, b manifest.Production) int {
-			return cmp.Or(a.Owner.Compare(b.Owner), a.Declaration.Compare(b.Declaration), a.Authored.Compare(b.Authored), a.Source.Compare(b.Source), cmp.Compare(a.Path, b.Path), cmp.Compare(a.File, b.File))
-		})
-		item.Record.Productions = slices.Compact(item.Record.Productions)
-		for source, paths := range record.ContentRoots {
-			paths = slices.Clone(paths)
-			slices.Sort(paths)
-			item.Roots = append(item.Roots, acceptedRoot{Source: source, Paths: slices.Compact(paths)})
+	{
+		//nolint:gocritic // The iterator supplies immutable value snapshots.
+		for id, record := range records {
+			item := acceptedRecord{ID: id, Record: record}
+			item.Record.ContentRoots = nil
+			item.Record.Inputs = slices.Clone(record.Inputs)
+			item.Record.Refs = slices.Clone(record.Refs)
+			slices.SortFunc(item.Record.Refs, manifest.NamedResource.Compare)
+			item.Record.Refs = slices.Compact(item.Record.Refs)
+			item.Record.Productions = slices.Clone(record.Productions)
+			slices.SortFunc(item.Record.Productions, func(a, b manifest.Production) int {
+				return cmp.Or(
+					a.Owner.Compare(b.Owner),
+					a.Declaration.Compare(b.Declaration),
+					a.Authored.Compare(b.Authored),
+					a.Source.Compare(b.Source),
+					cmp.Compare(a.Path, b.Path),
+					cmp.Compare(a.File, b.File),
+				)
+			})
+			item.Record.Productions = slices.Compact(item.Record.Productions)
+			for source, paths := range record.ContentRoots {
+				paths = slices.Clone(paths)
+				slices.Sort(paths)
+				item.Roots = append(item.Roots, acceptedRoot{Source: source, Paths: slices.Compact(paths)})
+			}
+			slices.SortFunc(item.Roots, func(a, b acceptedRoot) int { return a.Source.Compare(b.Source) })
+			accepted.Records = append(accepted.Records, item)
 		}
-		slices.SortFunc(item.Roots, func(a, b acceptedRoot) int { return a.Source.Compare(b.Source) })
-		accepted.Records = append(accepted.Records, item)
 	}
 	slices.SortFunc(accepted.Records, func(a, b acceptedRecord) int { return a.ID.Compare(b.ID) })
 	for i := 1; i < len(accepted.Records); i++ {
@@ -296,24 +348,31 @@ func prepareAccepted(owner manifest.NamedResource, frame renderFrame, records it
 	return accepted, nil
 }
 
-func (f renderFrame) history(owner manifest.NamedResource) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
+//nolint:gocritic // Keep immutable value-receiver semantics.
+func (f renderFrame) history(
+	owner manifest.NamedResource,
+) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
 	if f.accepted == nil || f.accepted.Owner != owner {
 		return nil, false
 	}
 	return func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
-		for _, item := range f.accepted.Records {
-			record := item.Record
-			record.Inputs = slices.Clone(record.Inputs)
-			record.Refs = slices.Clone(record.Refs)
-			record.Productions = slices.Clone(record.Productions)
-			if len(item.Roots) > 0 {
-				record.ContentRoots = make(map[manifest.NamedResource][]string, len(item.Roots))
-			}
-			for _, root := range item.Roots {
-				record.ContentRoots[root.Source] = slices.Clone(root.Paths)
-			}
-			if !yield(item.ID, record) {
-				return
+		{
+			itemValues2 := f.accepted.Records
+			for itemIndex := range itemValues2 {
+				item := itemValues2[itemIndex]
+				record := item.Record
+				record.Inputs = slices.Clone(record.Inputs)
+				record.Refs = slices.Clone(record.Refs)
+				record.Productions = slices.Clone(record.Productions)
+				if len(item.Roots) > 0 {
+					record.ContentRoots = make(map[manifest.NamedResource][]string, len(item.Roots))
+				}
+				for _, root := range item.Roots {
+					record.ContentRoots[root.Source] = slices.Clone(root.Paths)
+				}
+				if !yield(item.ID, record) {
+					return
+				}
 			}
 		}
 	}, true
@@ -325,6 +384,8 @@ type renderPublication struct {
 }
 
 // WriteTo writes the render frame and accepted inventory.
+//
+//nolint:gocritic // A publication is a value snapshot so encoding never mutates its accepted frame.
 func (p renderPublication) WriteTo(w io.Writer) (int64, error) {
 	if p.frame.encoded == nil {
 		encoded, err := encodeFrame(p.frame.header, p.frame.output)
@@ -334,7 +395,11 @@ func (p renderPublication) WriteTo(w io.Writer) (int64, error) {
 		p.frame.encoded = encoded
 	}
 	if !p.accepted.Complete {
-		return io.Copy(w, bytes.NewReader(p.frame.encoded))
+		n, err := io.Copy(w, bytes.NewReader(p.frame.encoded))
+		if err != nil {
+			return n, fmt.Errorf("write helm render frame: %w", err)
+		}
+		return n, nil
 	}
 	data, err := json.Marshal(p.accepted)
 	if err != nil {
@@ -343,18 +408,24 @@ func (p renderPublication) WriteTo(w io.Writer) (int64, error) {
 	if len(data) > frameHeaderLimit {
 		return 0, manifest.NewError(manifest.ErrFlux, nil, "accepted helm render exceeds frame limit")
 	}
-	return io.Copy(w, io.MultiReader(bytes.NewReader(p.frame.encoded), bytes.NewReader(data)))
+	n, err := io.Copy(w, io.MultiReader(bytes.NewReader(p.frame.encoded), bytes.NewReader(data)))
+	if err != nil {
+		return n, fmt.Errorf("write accepted helm render: %w", err)
+	}
+	return n, nil
 }
 
 // RenderAcceptance binds an accepted inventory to its source paths.
 type RenderAcceptance struct {
-	Owner   manifest.NamedResource
-	Receipt *manifest.RenderReceipt
-	Records iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
-	Sources []manifest.SourceEvidence
+	Owner   manifest.NamedResource                                      `json:"Owner"`
+	Receipt *manifest.RenderReceipt                                     `json:"Receipt"`
+	Records iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord] `json:"Records"`
+	Sources []manifest.SourceEvidence                                   `json:"Sources"`
 }
 
 // RecordRender persists a receipt only with a complete accepted inventory.
+//
+//nolint:gocritic // Preserve the public value API and its accepted-inventory snapshot.
 func (c *Client) RecordRender(ctx context.Context, acceptance RenderAcceptance) error {
 	owner, receipt, records := acceptance.Owner, acceptance.Receipt, acceptance.Records
 	if receipt == nil || records == nil {
@@ -365,6 +436,7 @@ func (c *Client) RecordRender(ctx context.Context, acceptance RenderAcceptance) 
 		return manifest.NewError(manifest.ErrFlux, nil, "invalid helm receipt")
 	}
 	if !c.cache.CanPersistRenders() {
+		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return ctx.Err()
 	}
 	var err error
@@ -372,7 +444,7 @@ func (c *Client) RecordRender(ctx context.Context, acceptance RenderAcceptance) 
 		frame.header.Binding = manifest.Fingerprint(frame.binding)
 	}
 	if frame.header.Analysis == nil {
-		frame.header.Analysis = (chartDescription{chart: frame.chart}).analyze()
+		frame.header.Analysis = (&chartDescription{chart: frame.chart}).analyze()
 	}
 	if frame.encoded == nil && frame.raw == "" {
 		frame.encoded, err = encodeFrame(frame.header, frame.output)
@@ -381,12 +453,14 @@ func (c *Client) RecordRender(ctx context.Context, acceptance RenderAcceptance) 
 		}
 	}
 	if frame.raw == "" {
-		frame.raw = manifest.Fingerprint(frame.encoded[12 : 12+int(binary.BigEndian.Uint32(frame.encoded[8:12]))])
+		frame.raw = manifest.Fingerprint(
+			frame.encoded[12 : framePrefixSize+int(binary.BigEndian.Uint32(frame.encoded[8:framePrefixSize]))],
+		)
 	}
 	var accepted acceptedRender
 	content := frame.raw
 	if acceptance.Sources != nil {
-		accepted, err = prepareAccepted(owner, frame, records)
+		accepted, err = prepareAccepted(owner, &frame, records)
 		if err != nil {
 			return manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode accepted helm render: %w", err), "")
 		}
@@ -395,7 +469,17 @@ func (c *Client) RecordRender(ctx context.Context, acceptance RenderAcceptance) 
 			content = manifest.Fingerprint(accepted)
 		}
 	}
-	return cache.RecordInventory(ctx, c.cache, cache.AcceptedInventory[renderPublication]{Key: frame.header.Key, Lookup: frame.lookup, Acceptance: content, History: cache.RenderHistory{Owner: owner, Sources: acceptance.Sources}, Content: renderPublication{frame: frame, accepted: accepted}})
+	return cache.RecordInventory(
+		ctx,
+		c.cache,
+		cache.AcceptedInventory[renderPublication]{
+			Key:        frame.header.Key,
+			Lookup:     frame.lookup,
+			Acceptance: content,
+			History:    cache.RenderHistory{Owner: owner, Sources: acceptance.Sources},
+			Content:    renderPublication{frame: frame, accepted: accepted},
+		},
+	)
 }
 
 func (c *Client) lookupRender(ctx context.Context, loaded *chartDescription, key string) (*renderRecord, error) {
@@ -403,6 +487,7 @@ func (c *Client) lookupRender(ctx context.Context, loaded *chartDescription, key
 	if record != nil && record.key == key {
 		_, identity, enabled, err := c.cache.RenderMetadata(ctx, key, record.frame.lookup)
 		if errors.Is(err, errdef.ErrNotFound) {
+			//nolint:nilnil // An unavailable receipt is a cache miss, not a render failure.
 			return nil, nil
 		}
 		if err != nil {
@@ -415,29 +500,18 @@ func (c *Client) lookupRender(ctx context.Context, loaded *chartDescription, key
 		record = nil
 	}
 	if record == nil {
-		reader, _, lookup, err := c.cache.Blob(ctx, cache.BlobKey{Content: key, Render: cache.RenderAccepted}, cache.Policy{MaxAge: cache.Forever}, nil)
-		if errors.Is(err, errdef.ErrNotFound) {
-			return nil, nil
-		}
-		if err != nil {
-			return nil, fmt.Errorf("lookup helm render cache: %w", err)
-		}
-		identity := cache.AcquisitionIdentity(reader)
-		data, err := fs.ReadFile(reader, "content")
-		if err != nil {
-			return nil, manifest.NewError(manifest.ErrFlux, fmt.Errorf("read helm render cache: %w", err), "")
-		}
-		frame, err := decodeFrame(data)
-		if err != nil || frame.header.Key != key || frame.header.Analysis == nil {
-			return nil, nil
-		}
-		frame.lookup = lookup
-		record = &renderRecord{key: key, identity: identity, Output: frame.output, Analysis: frame.header.Analysis, frame: frame}
-	}
-	if record.Analysis.RequiresLoader {
-		if err := c.decodeChart(ctx, loaded); err != nil {
+		var err error
+		record, err = c.readRender(ctx, key)
+		if err != nil || record == nil {
 			return nil, err
 		}
+	}
+	var chartErr error
+	if record.Analysis.RequiresLoader {
+		chartErr = c.decodeChart(ctx, loaded)
+	}
+	if chartErr != nil {
+		return nil, chartErr
 	}
 	if loaded.oci != nil && record != loaded.record {
 		if _, err := ociChartVersion(record.Analysis.Version, loaded.artifact.Revision); err != nil {
@@ -448,11 +522,18 @@ func (c *Client) lookupRender(ctx context.Context, loaded *chartDescription, key
 }
 
 // PreviousRender returns complete accepted history without running an action or acquiring a chart.
-func (c *Client) PreviousRender(ctx context.Context, hr *manifest.HelmRelease, hrValues map[string]any, input RenderOptions) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
+//
+//nolint:gocritic // Preserve the existing value API and its snapshot semantics.
+func (c *Client) PreviousRender(
+	ctx context.Context,
+	hr *manifest.HelmRelease,
+	hrValues map[string]any,
+	input RenderOptions,
+) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
 	if ctx.Err() != nil || !c.cache.CanPersistRenders() {
 		return nil, false
 	}
-	prepared, err := c.prepareTemplate(ctx, hr, hrValues, input)
+	prepared, err := c.prepareTemplate(ctx, hr, hrValues, &input)
 	if err != nil || prepared.key == "" || prepared.loaded.valuesErr != nil || prepared.capabilityErr != nil {
 		return nil, false
 	}
@@ -468,7 +549,60 @@ func (c *Client) PreviousRender(ctx context.Context, hr *manifest.HelmRelease, h
 	}
 	records, complete := record.frame.history(hr.Named())
 	if complete && record != prepared.loaded.record {
-		c.rememberDescription(prepared.loaded, record)
+		c.rememberDescription(&prepared.loaded, record)
 	}
 	return records, complete
+}
+
+const framePrefixSize = 12
+
+func (a *acceptedRender) ordered() bool {
+	itemValues := a.Records
+	for i := range itemValues {
+		item := itemValues[i]
+		if i > 0 && a.Records[i-1].ID.Compare(item.ID) >= 0 {
+			return false
+		}
+		for j, root := range item.Roots {
+			if j > 0 && item.Roots[j-1].Source.Compare(root.Source) >= 0 {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func (c *Client) readRender(ctx context.Context, key string) (*renderRecord, error) {
+	reader, _, lookup, err := c.cache.Blob(
+		ctx,
+		cache.BlobKey{Content: key, Render: cache.RenderAccepted},
+		cache.Policy{MaxAge: cache.Forever},
+		nil,
+	)
+	if errors.Is(err, errdef.ErrNotFound) {
+		//nolint:nilnil // An unavailable receipt is a cache miss, not a render failure.
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("lookup helm render cache: %w", err)
+	}
+	identity := cache.AcquisitionIdentity(reader)
+	data, err := fs.ReadFile(reader, "content")
+	if err != nil {
+		return nil, manifest.NewError(manifest.ErrFlux, fmt.Errorf("read helm render cache: %w", err), "")
+	}
+	frame, err := decodeFrame(data)
+	if err != nil || frame.header.Key != key || frame.header.Analysis == nil {
+		//nolint:nilerr,nilnil // Invalid frame metadata is an ordinary cache miss.
+		return nil, nil
+	}
+	frame.lookup = lookup
+	record := &renderRecord{
+		key:      key,
+		identity: identity,
+		Output:   frame.output,
+		Analysis: frame.header.Analysis,
+		frame:    frame,
+	}
+	return record, nil
 }

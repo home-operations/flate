@@ -57,7 +57,14 @@ func (o *Orchestrator) syncPreflightFailures() {
 		unique[cycle] = struct{}{}
 	}
 	for cycle := range unique {
-		o.store.AddWarning(manifest.Warning{Related: cycle.path, Category: manifest.WarnDependencyCycle, Message: "dependency cycle detected", Detail: []string{cycle.diagnostic(o)}})
+		o.store.AddWarning(
+			manifest.Warning{
+				Related:  cycle.path,
+				Category: manifest.WarnDependencyCycle,
+				Message:  "dependency cycle detected",
+				Detail:   []string{cycle.diagnostic(o)},
+			},
+		)
 	}
 
 	for id, message := range failures {

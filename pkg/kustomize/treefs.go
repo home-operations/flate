@@ -19,6 +19,8 @@ import (
 	"github.com/home-operations/flate/pkg/tree"
 )
 
+const overlayFileMode = 0o644
+
 // treeFS adapts the common resolver to kyaml's OS mount names. Mutable state
 // belongs to one render; only the sealed lower tree is shared.
 type treeFS struct {
@@ -179,9 +181,9 @@ func (t *treeFS) observed(name, rel string) (string, string, bool) {
 	return origin, t.mount(origin), true
 }
 
-func (t *treeFS) mark(rel string) {
+func (t *treeFS) mark(relResult string) {
 	if t.rec != nil && !t.rec.immutable {
-		if rel, local := t.origin(rel); local {
+		if rel, local := t.origin(relResult); local {
 			if t.changed == nil {
 				t.changed = make(map[string]struct{})
 			}
@@ -238,11 +240,13 @@ func (t *treeFS) ReadFile(name string) ([]byte, error) {
 
 type readOnlyFile struct {
 	fs.File
+
 	name string
 }
 
 type namedInfo struct {
 	fs.FileInfo
+
 	name string
 }
 
@@ -253,19 +257,21 @@ func (f readOnlyFile) Stat() (fs.FileInfo, error) {
 	if err == nil && info.Name() != f.name {
 		return namedInfo{FileInfo: info, name: f.name}, nil
 	}
+	//nolint:wrapcheck // The file adapter must preserve the underlying Stat error and FileInfo result.
 	return info, err
 }
 
 func (f readOnlyFile) Write([]byte) (int, error) { return 0, fs.ErrPermission }
 
+//nolint:ireturn // The filesystem interface requires this result type.
 func (t *treeFS) Open(name string) (filesys.File, error) {
 	rel, err := t.resolve(name)
 	if err != nil {
 		return nil, err
 	}
 	if _, recorded, local := t.observed(name, rel); local {
-		data, err := t.upper.ReadFile(rel)
-		t.rec.recordFile(recorded, data, err)
+		data, readFileErr := t.upper.ReadFile(rel)
+		t.rec.recordFile(recorded, data, readFileErr)
 	}
 	file, err := t.upper.Open(rel)
 	if err != nil {
@@ -324,8 +330,8 @@ func (t *treeFS) Walk(name string, fn filepath.WalkFunc) error {
 		if err != nil {
 			return fn(mounted, nil, err)
 		}
-		if _, err := t.upper.Resolve(p); errors.Is(err, tree.ErrEscape) {
-			return treeError("walk", mounted, err)
+		if _, resolveErr := t.upper.Resolve(p); errors.Is(resolveErr, tree.ErrEscape) {
+			return treeError("walk", mounted, resolveErr)
 		}
 		info, err := entry.Info()
 		if origin, recorded, local := t.observed(mounted, p); err == nil && info.IsDir() && local {
@@ -342,7 +348,7 @@ func (t *treeFS) WriteFile(name string, data []byte) error {
 	if err != nil {
 		return err
 	}
-	if err := t.upper.AddFile(rel, data, 0o644); err != nil {
+	if err := t.upper.AddFile(rel, data, overlayFileMode); err != nil {
 		return treeError("write", name, err)
 	}
 	t.mark(path.Clean(rel))
@@ -352,6 +358,8 @@ func (t *treeFS) WriteFile(name string, data []byte) error {
 func (t *treeFS) Mkdir(string) error     { return fs.ErrPermission }
 func (t *treeFS) MkdirAll(string) error  { return fs.ErrPermission }
 func (t *treeFS) RemoveAll(string) error { return fs.ErrPermission }
+
+//nolint:ireturn // The filesystem interface requires this result type.
 func (t *treeFS) Create(string) (filesys.File, error) {
 	return nil, fs.ErrPermission
 }

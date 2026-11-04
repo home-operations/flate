@@ -10,9 +10,9 @@ import (
 
 // ConfigMap is the core/v1 ConfigMap.
 type ConfigMap struct {
-	Name      string         `json:"name" yaml:"name"`
+	Name      string         `json:"name"                yaml:"name"`
 	Namespace string         `json:"namespace,omitempty" yaml:"namespace,omitempty"`
-	Data      map[string]any `json:"-" yaml:"-"`
+	Data      map[string]any `json:"-"                   yaml:"-"`
 }
 
 // NewConfigMap constructs lookup data at the given identity without converting its payload.
@@ -22,13 +22,20 @@ func NewConfigMap(id NamedResource, data map[string]any) *ConfigMap {
 
 // Named identifies the ConfigMap.
 func (c *ConfigMap) Named() NamedResource {
-	return NamedResource{Group: kindTable[kindConfigMap].Group, Kind: KindConfigMap, Namespace: c.Namespace, Name: c.Name}
+	return NamedResource{
+		Group:     kindTable[kindConfigMap].Group,
+		Kind:      KindConfigMap,
+		Namespace: c.Namespace,
+		Name:      c.Name,
+	}
 }
 
 // Suspended reports whether reconciliation is paused on this resource.
 func (c *ConfigMap) Suspended() bool { return false }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (c *ConfigMap) WithNamespace(namespace string) BaseManifest {
 	out := *c
 	out.Namespace = namespace
@@ -58,6 +65,8 @@ func (c *ConfigMap) HasKeys() bool { return len(c.Data) != 0 }
 func (c *ConfigMap) Keys() iter.Seq[string] { return maps.Keys(c.Data) }
 
 // WithSupplied fills absent or wiped logical keys without changing repository data.
+//
+//nolint:ireturn // The values contract supports multiple data implementations.
 func (c *ConfigMap) WithSupplied(supplied Data) (Data, []string) {
 	out := *c
 	out.Data = nil
@@ -78,9 +87,11 @@ func (c *ConfigMap) WithSupplied(supplied Data) (Data, []string) {
 
 // Snapshot returns an owned document for sanitation through ParseDoc.
 func (c *ConfigMap) Snapshot() map[string]any {
-	return map[string]any{"apiVersion": "v1", "kind": KindConfigMap,
-		"metadata": map[string]any{"name": c.Name, "namespace": c.Namespace},
-		"data":     copyData(c.Data)}
+	return map[string]any{
+		apiVersionKey: "v1", kindKey: KindConfigMap,
+		metadataKey: map[string]any{nameKey: c.Name, namespaceKey: c.Namespace},
+		dataKey:     copyData(c.Data),
+	}
 }
 
 func parseConfigMap(doc map[string]any) (*ConfigMap, error) {
@@ -88,16 +99,16 @@ func parseConfigMap(doc map[string]any) (*ConfigMap, error) {
 	if missing != "" {
 		return nil, inputf("%s missing %s", KindConfigMap, missing)
 	}
-	data, _ := doc["data"].(map[string]any)
+	data, _ := doc[dataKey].(map[string]any)
 	return NewConfigMap(NamedResource{Name: name, Namespace: ns}, data), nil
 }
 
 // Secret is the core/v1 Secret.
 type Secret struct {
-	Name       string         `json:"name" yaml:"name"`
+	Name       string         `json:"name"                yaml:"name"`
 	Namespace  string         `json:"namespace,omitempty" yaml:"namespace,omitempty"`
-	Data       map[string]any `json:"-" yaml:"-"`
-	StringData map[string]any `json:"-" yaml:"-"`
+	Data       map[string]any `json:"-"                   yaml:"-"`
+	StringData map[string]any `json:"-"                   yaml:"-"`
 }
 
 // NewSecret constructs lookup data at the given identity without converting its payload.
@@ -114,6 +125,8 @@ func (s *Secret) Named() NamedResource {
 func (s *Secret) Suspended() bool { return false }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (s *Secret) WithNamespace(namespace string) BaseManifest {
 	out := *s
 	out.Namespace = namespace
@@ -168,6 +181,8 @@ func (s *Secret) Keys() iter.Seq[string] {
 }
 
 // WithSupplied fills absent or wiped logical keys while preserving lazy decoding.
+//
+//nolint:ireturn // The values contract supports multiple data implementations.
 func (s *Secret) WithSupplied(supplied Data) (Data, []string) {
 	out := *s
 	out.Data = nil
@@ -206,9 +221,11 @@ func (s *Secret) HasPlaceholder() bool {
 
 // Snapshot returns an owned document for sanitation through ParseDoc.
 func (s *Secret) Snapshot() map[string]any {
-	return map[string]any{"apiVersion": "v1", "kind": KindSecret,
-		"metadata": map[string]any{"name": s.Name, "namespace": s.Namespace},
-		"data":     copyData(s.Data), "stringData": copyData(s.StringData)}
+	return map[string]any{
+		apiVersionKey: "v1", kindKey: KindSecret,
+		metadataKey: map[string]any{nameKey: s.Name, namespaceKey: s.Namespace},
+		dataKey:     copyData(s.Data), stringDataKey: copyData(s.StringData),
+	}
 }
 
 func copyData(data map[string]any) map[string]any {
@@ -226,8 +243,8 @@ func parseSecret(doc map[string]any) (*Secret, error) {
 	if missing != "" {
 		return nil, inputf("%s missing %s", KindSecret, missing)
 	}
-	data, _ := doc["data"].(map[string]any)
-	stringData, _ := doc["stringData"].(map[string]any)
+	data, _ := doc[dataKey].(map[string]any)
+	stringData, _ := doc[stringDataKey].(map[string]any)
 	return NewSecret(NamedResource{Name: name, Namespace: ns}, data, stringData), nil
 }
 

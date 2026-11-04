@@ -42,34 +42,7 @@ func equalChartTemplate(a, b *helmv2.HelmChartTemplate) bool {
 		return false
 	}
 	x, y := &a.Spec.OCIRepositorySpec, &b.Spec.OCIRepositorySpec
-	ociIdentity := x.URL == y.URL && x.Provider == y.Provider && x.ServiceAccountName == y.ServiceAccountName
-	if !ociIdentity {
-		return false
-	}
-	ociPolicy := x.Insecure == y.Insecure && x.Suspend == y.Suspend
-	if !ociPolicy {
-		return false
-	}
-	references := equalValue(x.Reference, y.Reference) && equalValue(x.LayerSelector, y.LayerSelector)
-	if !references {
-		return false
-	}
-	credentials := equalValue(x.SecretRef, y.SecretRef) && equalValue(x.CertSecretRef, y.CertSecretRef) &&
-		equalValue(x.ProxySecretRef, y.ProxySecretRef)
-	if !credentials {
-		return false
-	}
-	timing := equalValue(x.Interval, y.Interval) && equalValue(x.Timeout, y.Timeout) && equalValue(x.Ignore, y.Ignore)
-	if !timing {
-		return false
-	}
-	if x.Verify == nil || y.Verify == nil {
-		return x.Verify == y.Verify
-	}
-	verification := x.Verify.Provider == y.Verify.Provider && equalValue(x.Verify.SecretRef, y.Verify.SecretRef) &&
-		equalValue(x.Verify.TrustedRootSecretRef, y.Verify.TrustedRootSecretRef) &&
-		slices.Equal(x.Verify.MatchOIDCIdentity, y.Verify.MatchOIDCIdentity)
-	return verification
+	return equalChartOCI(x, y)
 }
 
 func equalValue[T comparable](a, b *T) bool {
@@ -98,22 +71,52 @@ func (h *HelmRelease) normalizeChartSource() error {
 func (h *HelmRelease) deriveChartSource() chartSource {
 	source := chartSource{}
 	if ref := h.ChartRef; ref != nil {
-		source.declared = Resolve(NamedResource{Group: referenceGroup(ref.Kind, ref.APIVersion), Kind: ref.Kind, Namespace: ref.Namespace, Name: ref.Name}, "", h.Namespace)
+		source.declared = Resolve(
+			NamedResource{
+				Group:     referenceGroup(ref.Kind, ref.APIVersion),
+				Kind:      ref.Kind,
+				Namespace: ref.Namespace,
+				Name:      ref.Name,
+			},
+			"",
+			h.Namespace,
+		)
 	} else if template := h.HelmReleaseSpec.Chart; template != nil {
 		source.declared = h.source
 		if source.declared.Name == "" {
 			release := helmv2.HelmRelease{Name: h.Name, Namespace: h.Namespace, Spec: h.HelmReleaseSpec}
 			ref := release.GetHelmChartTemplateReference()
-			source.declared = NamedResource{Group: SourceDomain, Kind: ref.Kind, Namespace: ref.Namespace, Name: ref.Name}
+			source.declared = NamedResource{
+				Group:     SourceDomain,
+				Kind:      ref.Kind,
+				Namespace: ref.Namespace,
+				Name:      ref.Name,
+			}
 		}
 		if source.declared.Kind == KindHelmChart && template.Spec.SourceRef != nil {
 			backing := template.Spec.SourceRef
-			source.backing = HelmChart{Name: template.Spec.Chart, Version: template.Spec.GetVersion(),
-				Source: Resolve(NamedResource{Group: referenceGroup(backing.Kind, backing.APIVersion), Kind: backing.Kind, Name: backing.Name, Namespace: backing.Namespace}, "", h.Namespace)}
+			source.backing = HelmChart{
+				Name:    template.Spec.Chart,
+				Version: template.Spec.GetVersion(),
+				Source: Resolve(
+					NamedResource{
+						Group:     referenceGroup(backing.Kind, backing.APIVersion),
+						Kind:      backing.Kind,
+						Name:      backing.Name,
+						Namespace: backing.Namespace,
+					},
+					"",
+					h.Namespace,
+				),
+			}
 			source.version = source.backing.Version
 		} else if source.declared.Kind == KindOCIRepository {
 			source.version = ociReferenceVersion(template.Spec.Reference)
-			source.credentials = [3]*LocalObjectReference{template.Spec.SecretRef, template.Spec.CertSecretRef, template.Spec.ProxySecretRef}
+			source.credentials = [3]*LocalObjectReference{
+				template.Spec.SecretRef,
+				template.Spec.CertSecretRef,
+				template.Spec.ProxySecretRef,
+			}
 		}
 	}
 	return source
@@ -165,10 +168,14 @@ func (h *HelmRelease) GeneratedObjects() ([]BaseManifest, error) {
 	id := view.source
 	metadata := metav1.ObjectMeta{Name: id.Name, Namespace: id.Namespace}
 	if template.ObjectMeta != nil {
-		metadata.Labels, metadata.Annotations = maps.Clone(template.ObjectMeta.Labels), maps.Clone(template.ObjectMeta.Annotations)
+		metadata.Labels, metadata.Annotations = maps.Clone(
+			template.ObjectMeta.Labels,
+		), maps.Clone(
+			template.ObjectMeta.Annotations,
+		)
 	}
 	if metadata.Labels == nil {
-		metadata.Labels = make(map[string]string, 2)
+		metadata.Labels = make(map[string]string, chartOwnerLabelCount)
 	}
 	metadata.Labels[HelmReleaseDomain+"/name"], metadata.Labels[HelmReleaseDomain+"/namespace"] = h.Name, h.Namespace
 	release := helmv2.HelmRelease{Spec: view.HelmReleaseSpec}
@@ -178,17 +185,32 @@ func (h *HelmRelease) GeneratedObjects() ([]BaseManifest, error) {
 		spec := template.Spec.OCIRepositorySpec
 		spec.Interval = &interval
 		if spec.LayerSelector == nil {
-			spec.LayerSelector = &sourcev1.OCILayerSelector{MediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip", Operation: sourcev1.OCILayerCopy}
+			spec.LayerSelector = &sourcev1.OCILayerSelector{
+				MediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip",
+				Operation: sourcev1.OCILayerCopy,
+			}
 		}
 		generated := NewOCIRepository(sourcev1.OCIRepository{ObjectMeta: metadata, Spec: spec})
 		generated.diagnosticOwner, generated.hasDiagnostic = h.Named(), true
 		object = generated
 	} else {
-		spec := sourcev1.HelmChartSpec{Chart: template.Spec.Chart, Version: template.Spec.GetVersion(), Interval: interval,
-			ReconcileStrategy: template.Spec.GetReconcileStrategy(), ValuesFiles: template.Spec.ValuesFiles, IgnoreMissingValuesFiles: template.Spec.IgnoreMissingValuesFiles,
-			SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: template.Spec.SourceRef.Kind, Name: template.Spec.SourceRef.Name}}
+		spec := sourcev1.HelmChartSpec{
+			Chart:                    template.Spec.Chart,
+			Version:                  template.Spec.GetVersion(),
+			Interval:                 interval,
+			ReconcileStrategy:        template.Spec.GetReconcileStrategy(),
+			ValuesFiles:              template.Spec.ValuesFiles,
+			IgnoreMissingValuesFiles: template.Spec.IgnoreMissingValuesFiles,
+			SourceRef: sourcev1.LocalHelmChartSourceReference{
+				Kind: template.Spec.SourceRef.Kind,
+				Name: template.Spec.SourceRef.Name,
+			},
+		}
 		if verify := template.Spec.Verify; verify != nil {
-			spec.Verify = &sourcev1.HelmChartVerification{Provider: cmp.Or(verify.Provider, "cosign"), SecretRef: verify.SecretRef}
+			spec.Verify = &sourcev1.HelmChartVerification{
+				Provider:  cmp.Or(verify.Provider, "cosign"),
+				SecretRef: verify.SecretRef,
+			}
 		}
 		generated := NewHelmChartSource(sourcev1.HelmChart{ObjectMeta: metadata, Spec: spec})
 		generated.diagnosticOwner, generated.hasDiagnostic = h.Named(), true
@@ -229,3 +251,36 @@ func (h *HelmChartSource) OCIRepository(repository *HelmRepository) *OCIReposito
 	repo.diagnosticOwner, repo.diagnosticPath, repo.hasDiagnostic = subject.Resource, subject.Path, true
 	return repo
 }
+
+func equalChartOCI(x, y *sourcev1.OCIRepositorySpec) bool {
+	ociIdentity := x.URL == y.URL && x.Provider == y.Provider && x.ServiceAccountName == y.ServiceAccountName
+	if !ociIdentity {
+		return false
+	}
+	ociPolicy := x.Insecure == y.Insecure && x.Suspend == y.Suspend
+	if !ociPolicy {
+		return false
+	}
+	references := equalValue(x.Reference, y.Reference) && equalValue(x.LayerSelector, y.LayerSelector)
+	if !references {
+		return false
+	}
+	credentials := equalValue(x.SecretRef, y.SecretRef) && equalValue(x.CertSecretRef, y.CertSecretRef) &&
+		equalValue(x.ProxySecretRef, y.ProxySecretRef)
+	if !credentials {
+		return false
+	}
+	timing := equalValue(x.Interval, y.Interval) && equalValue(x.Timeout, y.Timeout) && equalValue(x.Ignore, y.Ignore)
+	if !timing {
+		return false
+	}
+	if x.Verify == nil || y.Verify == nil {
+		return x.Verify == y.Verify
+	}
+	verification := x.Verify.Provider == y.Verify.Provider && equalValue(x.Verify.SecretRef, y.Verify.SecretRef) &&
+		equalValue(x.Verify.TrustedRootSecretRef, y.Verify.TrustedRootSecretRef) &&
+		slices.Equal(x.Verify.MatchOIDCIdentity, y.Verify.MatchOIDCIdentity)
+	return verification
+}
+
+const chartOwnerLabelCount = 2

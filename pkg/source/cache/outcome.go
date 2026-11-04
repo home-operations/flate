@@ -17,12 +17,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/home-operations/flate/internal/fetcherr"
-	"github.com/home-operations/flate/pkg/manifest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/content"
 	"oras.land/oras-go/v2/errdef"
 	"oras.land/oras-go/v2/registry/remote/errcode"
+
+	"github.com/home-operations/flate/internal/fetcherr"
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 const (
@@ -35,6 +36,8 @@ const (
 )
 
 // Standard wrapper identity is inspected only during bounded failure encoding.
+//
+//nolint:gochecknoglobals // Concrete stdlib wrapper types are cached without allocating wrappers for every encoded error.
 var (
 	fmtWrapType  = reflect.TypeOf(fmt.Errorf("%w", io.EOF))
 	fmtWrapsType = reflect.TypeOf(fmt.Errorf("%w %w", io.EOF, io.ErrUnexpectedEOF))
@@ -85,7 +88,7 @@ func outcomeDeadline(completed time.Time, count uint32) (time.Time, bool) {
 
 // Observation is protected by the acquisition's existing key lock. Rollback invalidation
 // MUST survive subsequent observations, even when the clock remains after completion.
-func (o *outcome) observe(now time.Time) (fresh, valid bool) {
+func (o *outcome) observe(now time.Time) (bool, bool) {
 	deadline, valid := outcomeDeadline(o.record.Completed, o.record.Count)
 	if !valid || now.Before(o.record.Completed) || !o.observed.IsZero() && now.Before(o.observed) {
 		o.invalid = true
@@ -94,7 +97,8 @@ func (o *outcome) observe(now time.Time) (fresh, valid bool) {
 	return !o.invalid && now.Before(deadline), !o.invalid
 }
 
-func newOutcome(err error, completed time.Time, count uint32, lastGood ocispec.Descriptor) *outcome {
+func newOutcome(err error, completed time.Time, count uint32, lastGoodValue *ocispec.Descriptor) *outcome {
+	lastGood := *lastGoodValue
 	if _, valid := outcomeDeadline(completed, count); !valid {
 		return nil
 	}
@@ -103,16 +107,20 @@ func newOutcome(err error, completed time.Time, count uint32, lastGood ocispec.D
 	if !ok || !codec.terminal || !codec.remote {
 		return nil
 	}
-	lastGood, ok = outcomeLayer(lastGood)
+	lastGood, ok = outcomeLayer(&lastGood)
 	if !ok {
 		return nil
 	}
-	return &outcome{record: outcomeRecord{Version: 1, Completed: completed, Count: count, Cause: cause}, lastGood: lastGood}
+	return &outcome{
+		record:   outcomeRecord{Version: 1, Completed: completed, Count: count, Cause: cause},
+		lastGood: lastGood,
+	}
 }
 
 // Only the anchor's generation ID is needed by existing graph maintenance. No
 // upstream diagnostics, URLs, inline data or platform metadata enter a failure.
-func outcomeLayer(desc ocispec.Descriptor) (ocispec.Descriptor, bool) {
+func outcomeLayer(descValue *ocispec.Descriptor) (ocispec.Descriptor, bool) {
+	desc := *descValue
 	if desc.Digest == "" {
 		return ocispec.Descriptor{}, true
 	}
@@ -145,66 +153,124 @@ type outcomeCodec struct {
 	build                             func(outcomeCause, []error) (error, bool)
 }
 
+//nolint:gochecknoglobals // One immutable codec table owns encoding, decoding, and concrete sentinel recognition.
 var outcomeCodecs = map[string]outcomeCodec{
-	"terminal": {minChildren: 1, maxChildren: 1, terminal: true, build: func(_ outcomeCause, children []error) (error, bool) {
-		return &TerminalError{Err: children[0], Attempted: false}, true
-	}},
-	"producer": {minChildren: 1, maxChildren: 1, build: func(_ outcomeCause, children []error) (error, bool) { return newProducerError(children[0]), true }},
-	"machine":  {minChildren: 1, maxChildren: 1, build: func(_ outcomeCause, children []error) (error, bool) { return MachineCredentialErr(children[0]), true }},
-	"url": {minChildren: 1, maxChildren: 1, enter: outcomeTransport, build: func(n outcomeCause, children []error) (error, bool) {
-		return &url.Error{Op: n.Op, Err: children[0]}, true
-	}},
-	"net": {minChildren: 1, maxChildren: 1, enter: outcomeTransport, build: func(n outcomeCause, children []error) (error, bool) {
-		return &net.OpError{Op: n.Op, Net: n.Network, Err: children[0]}, true
-	}},
+	"terminal": {
+		minChildren: 1,
+		maxChildren: 1,
+		terminal:    true,
+		build: func(_ outcomeCause, children []error) (error, bool) {
+			return &TerminalError{Err: children[0], Attempted: false}, true
+		},
+	},
+	"producer": {
+		minChildren: 1,
+		maxChildren: 1,
+		build:       func(_ outcomeCause, children []error) (error, bool) { return newProducerError(children[0]), true },
+	},
+	"machine": {
+		minChildren: 1,
+		maxChildren: 1,
+		build:       func(_ outcomeCause, children []error) (error, bool) { return MachineCredentialErr(children[0]), true },
+	},
+	"url": {
+		minChildren: 1,
+		maxChildren: 1,
+		enter:       outcomeTransport,
+		build: func(n outcomeCause, children []error) (error, bool) {
+			return &url.Error{Op: n.Op, Err: children[0]}, true
+		},
+	},
+	"net": {
+		minChildren: 1,
+		maxChildren: 1,
+		enter:       outcomeTransport,
+		build: func(n outcomeCause, children []error) (error, bool) {
+			return &net.OpError{Op: n.Op, Net: n.Network, Err: children[0]}, true
+		},
+	},
 	"syscall": {minChildren: 1, maxChildren: 1, build: func(n outcomeCause, children []error) (error, bool) {
 		return &os.SyscallError{Syscall: n.Op, Err: children[0]}, true
 	}},
-	"wrap": {minChildren: 1, maxChildren: 1, build: func(_ outcomeCause, children []error) (error, bool) {
+	wrapOutcome: {minChildren: 1, maxChildren: 1, build: func(_ outcomeCause, children []error) (error, bool) {
 		return fmt.Errorf("remote acquisition: %w", children[0]), true
 	}},
-	"join": {minChildren: 1, maxChildren: outcomeNodeLimit, build: func(_ outcomeCause, children []error) (error, bool) {
-		if len(children) == 2 && children[0] == manifest.ErrFlux { //nolint:errorlint // The codec preserves concrete classification-node order.
-			return manifest.NewError(children[0], children[1], ""), true
-		}
-		return errors.Join(children...), true
-	}},
+	joinOutcome: {
+		minChildren: 1,
+		maxChildren: outcomeNodeLimit,
+		build: func(_ outcomeCause, children []error) (error, bool) {
+			if len(children) == 2 &&
+				children[0] == manifest.ErrFlux { //nolint:errorlint // The codec preserves concrete classification-node order.
+				return manifest.NewError(children[0], children[1], ""), true
+			}
+			return errors.Join(children...), true
+		},
+	},
 	"dns": {maxChildren: 1, remote: true, build: func(n outcomeCause, children []error) (error, bool) {
-		return &net.DNSError{Err: "remote timeout", IsTimeout: true, IsTemporary: n.Temporary, IsNotFound: n.NotFound, UnwrapErr: children[0]}, true
+		return &net.DNSError{
+			Err:         "remote timeout",
+			IsTimeout:   true,
+			IsTemporary: n.Temporary,
+			IsNotFound:  n.NotFound,
+			UnwrapErr:   children[0],
+		}, true
 	}},
-	"status": {maxChildren: 1, enter: outcomeStatus, remote: true, transient: true, build: func(n outcomeCause, children []error) (error, bool) {
-		return &fetcherr.ResponseError{StatusCode: n.Status, Op: n.Op, Err: children[0]}, true
-	}},
-	"response": {maxChildren: 1, require: outcomeStatus, transient: true, build: func(n outcomeCause, children []error) (error, bool) {
-		e := &errcode.ErrorResponse{StatusCode: n.Status, Method: n.Op}
-		if children[0] != nil {
-			var ok bool
-			e.Errors, ok = children[0].(errcode.Errors) //nolint:errorlint // the codec encodes concrete node identity, not a wrapped match
-			if !ok {
-				return nil, false
+	"status": {
+		maxChildren: 1,
+		enter:       outcomeStatus,
+		remote:      true,
+		transient:   true,
+		build: func(n outcomeCause, children []error) (error, bool) {
+			return &fetcherr.ResponseError{StatusCode: n.Status, Op: n.Op, Err: children[0]}, true
+		},
+	},
+	"response": {
+		maxChildren: 1,
+		require:     outcomeStatus,
+		transient:   true,
+		build: func(n outcomeCause, children []error) (error, bool) {
+			e := &errcode.ErrorResponse{StatusCode: n.Status, Method: n.Op}
+			if children[0] != nil {
+				var ok bool
+				e.Errors, ok = children[0].(errcode.Errors) //nolint:errorlint // the codec encodes concrete node identity, not a wrapped match
+				if !ok {
+					return nil, false
+				}
 			}
-		}
-		return e, true
-	}},
-	"codes": {maxChildren: outcomeNodeLimit, require: outcomeStatus, build: func(_ outcomeCause, children []error) (error, bool) {
-		codes := make(errcode.Errors, 0, len(children))
-		for _, child := range children {
-			code, ok := child.(errcode.Error) //nolint:errorlint // the codec encodes concrete node identity, not a wrapped match
-			if !ok {
-				return nil, false
+			return e, true
+		},
+	},
+	"codes": {
+		maxChildren: outcomeNodeLimit,
+		require:     outcomeStatus,
+		build: func(_ outcomeCause, children []error) (error, bool) {
+			codes := make(errcode.Errors, 0, len(children))
+			for _, child := range children {
+				code, ok := child.(errcode.Error) //nolint:errorlint // the codec encodes concrete node identity, not a wrapped match
+				if !ok {
+					return nil, false
+				}
+				codes = append(codes, code)
 			}
-			codes = append(codes, code)
-		}
-		return codes, true
-	}},
-	"code":         {require: outcomeStatus, code: true, build: func(n outcomeCause, _ []error) (error, bool) { return errcode.Error{Code: n.Code}, true }},
-	"code-pointer": {require: outcomeStatus, code: true, build: func(n outcomeCause, _ []error) (error, bool) { return &errcode.Error{Code: n.Code}, true }},
-	"reset":        {remote: true, sentinel: syscall.ECONNRESET},
-	"refused":      {remote: true, sentinel: syscall.ECONNREFUSED},
-	"timeout":      {remote: true, sentinel: syscall.ETIMEDOUT},
-	"deadline":     {remote: true, sentinel: os.ErrDeadlineExceeded},
-	"eof":          {remote: true, require: outcomeTransport, sentinel: io.ErrUnexpectedEOF},
-	"flux":         {sentinel: manifest.ErrFlux},
+			return codes, true
+		},
+	},
+	"code": {
+		require: outcomeStatus,
+		code:    true,
+		build:   func(n outcomeCause, _ []error) (error, bool) { return errcode.Error{Code: n.Code}, true },
+	},
+	"code-pointer": {
+		require: outcomeStatus,
+		code:    true,
+		build:   func(n outcomeCause, _ []error) (error, bool) { return &errcode.Error{Code: n.Code}, true },
+	},
+	"reset":    {remote: true, sentinel: syscall.ECONNRESET},
+	"refused":  {remote: true, sentinel: syscall.ECONNREFUSED},
+	"timeout":  {remote: true, sentinel: syscall.ETIMEDOUT},
+	"deadline": {remote: true, sentinel: os.ErrDeadlineExceeded},
+	"eof":      {remote: true, require: outcomeTransport, sentinel: io.ErrUnexpectedEOF},
+	"flux":     {sentinel: manifest.ErrFlux},
 }
 
 type outcomeCodecState struct {
@@ -212,10 +278,20 @@ type outcomeCodecState struct {
 	terminal, remote bool
 }
 
-func (c *outcomeCodecState) kind(n outcomeCause, children int, context outcomeContext, depth int) (outcomeCodec, bool) {
+func (c *outcomeCodecState) kind(
+	nValue *outcomeCause,
+	children int,
+	context outcomeContext,
+	depth int,
+) (outcomeCodec, bool) {
+	n := *nValue
 	c.nodes++
 	k, ok := outcomeCodecs[n.Kind]
-	if !ok || depth > outcomeDepthLimit || children < k.minChildren || children > k.maxChildren || children > outcomeNodeLimit-c.nodes || context&k.require != k.require || k.transient && fetcherr.Classify(n.Status) != fetcherr.Transient || k.code && !outcomeCode(n.Code) {
+	if !ok || depth > outcomeDepthLimit || children < k.minChildren || children > k.maxChildren ||
+		children > outcomeNodeLimit-c.nodes ||
+		context&k.require != k.require ||
+		k.transient && fetcherr.Classify(n.Status) != fetcherr.Transient ||
+		k.code && !outcomeCode(n.Code) {
 		return k, false
 	}
 	c.terminal, c.remote = c.terminal || k.terminal, c.remote || k.remote
@@ -223,16 +299,19 @@ func (c *outcomeCodecState) kind(n outcomeCause, children int, context outcomeCo
 }
 
 func (c *outcomeCodecState) encode(err error, context outcomeContext, depth int) (outcomeCause, bool) {
-	if e, ok := err.(*TerminalError); ok && (e == nil || !e.Attempted) || //nolint:errorlint // the codec encodes concrete node identity, not a wrapped match
-		err == manifest.ErrInput || err == manifest.ErrObjectNotFound || //nolint:errorlint // the codec encodes concrete node identity, not a wrapped match
-		err == manifest.ErrMissingSecret || err == manifest.ErrSourceSkipped { //nolint:errorlint // the codec encodes concrete node identity, not a wrapped match
+	if e, ok := err.(*TerminalError); ok && //nolint:errorlint // The outcome codec preserves concrete node identity and tree positions.
+		(e == nil || !e.Attempted) ||
+		err == manifest.ErrInput || //nolint:errorlint // The outcome codec preserves concrete node identity and tree positions.
+		err == manifest.ErrObjectNotFound || //nolint:errorlint // the codec encodes concrete node identity, not a wrapped match
+		err == manifest.ErrMissingSecret || //nolint:errorlint // The outcome codec preserves concrete node identity and tree positions.
+		err == manifest.ErrSourceSkipped { //nolint:errorlint // the codec encodes concrete node identity, not a wrapped match
 		return outcomeCause{}, false
 	}
 	n, children, ok := outcomeNode(err)
 	if !ok {
 		return n, false
 	}
-	k, ok := c.kind(n, len(children), context, depth)
+	k, ok := c.kind(new(n), len(children), context, depth)
 	if !ok {
 		return n, false
 	}
@@ -247,15 +326,16 @@ func (c *outcomeCodecState) encode(err error, context outcomeContext, depth int)
 }
 
 //nolint:revive // The returned error is decoded data; the boolean reports validity.
-func (c *outcomeCodecState) decode(n outcomeCause, context outcomeContext, depth int) (error, bool) {
-	k, ok := c.kind(n, len(n.Children), context, depth)
+func (c *outcomeCodecState) decode(nValue *outcomeCause, context outcomeContext, depth int) (error, bool) {
+	n := *nValue
+	k, ok := c.kind(new(n), len(n.Children), context, depth)
 	if !ok {
 		return nil, false
 	}
 	children := make([]error, 0, len(n.Children))
 	for _, child := range n.Children {
-		err, ok := c.decode(child, context|k.enter, depth+1)
-		if !ok {
+		err, decodeOk := c.decode(&child, context|k.enter, depth+1)
+		if !decodeOk {
 			return nil, false
 		}
 		children = append(children, err)
@@ -277,13 +357,7 @@ func outcomeNode(err error) (outcomeCause, []error, bool) {
 	var children []error
 	switch e := err.(type) { //nolint:errorlint // the codec encodes concrete node identity, not a wrapped match
 	case *manifest.Error:
-		if e.Cause() == nil {
-			return outcomeCause{Kind: "wrap"}, []error{e.Category()}, true
-		}
-		if e.Category() == nil {
-			return outcomeCause{Kind: "wrap"}, []error{e.Cause()}, true
-		}
-		return outcomeCause{Kind: "join"}, []error{e.Category(), e.Cause()}, true
+		return manifestOutcomeNode(e)
 	case *TerminalError:
 		n.Kind, children = "terminal", []error{e.Err}
 	case *producerError:
@@ -327,24 +401,38 @@ func outcomeNode(err error) (outcomeCause, []error, bool) {
 	case *errcode.Error:
 		n.Kind, n.Code = "code-pointer", e.Code
 	default:
-		for kind, codec := range outcomeCodecs {
-			if codec.sentinel != nil && err == codec.sentinel { //nolint:errorlint // the codec encodes concrete node identity, not a wrapped match
-				return outcomeCause{Kind: kind}, nil, true
-			}
-		}
-		if reflect.TypeOf(err) == fmtWrapType {
-			return outcomeCause{Kind: "wrap"}, []error{err.(interface{ Unwrap() error }).Unwrap()}, true
-		}
-		if reflect.TypeOf(err) == fmtWrapsType || reflect.TypeOf(err) == joinType {
-			return outcomeCause{Kind: "join"}, err.(interface{ Unwrap() []error }).Unwrap(), true
-		}
-		return n, nil, false
+		return wrappedOutcomeNode(err)
 	}
 	return n, children, true
 }
 
 func outcomeOp(op string) string {
-	if slices.Contains([]string{"GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "Get", "Head", "Post", "Put", "Delete", "Patch", "read", "write", "dial", "connect", "accept", "readfrom", "writeto", "recvfrom", "sendto"}, op) {
+	if slices.Contains(
+		[]string{
+			"GET",
+			"HEAD",
+			"POST",
+			"PUT",
+			"DELETE",
+			"PATCH",
+			"Get",
+			"Head",
+			"Post",
+			"Put",
+			"Delete",
+			"Patch",
+			"read",
+			"write",
+			"dial",
+			"connect",
+			"accept",
+			"readfrom",
+			"writeto",
+			"recvfrom",
+			"sendto",
+		},
+		op,
+	) {
 		return op
 	}
 	return ""
@@ -358,24 +446,33 @@ func outcomeNetwork(network string) string {
 }
 
 func outcomeCode(code string) bool {
-	return slices.Contains([]string{errcode.ErrorCodeBlobUnknown, errcode.ErrorCodeBlobUploadUnknown, errcode.ErrorCodeManifestBlobUnknown, errcode.ErrorCodeManifestUnknown, errcode.ErrorCodeNameUnknown}, code)
+	return slices.Contains(
+		[]string{
+			errcode.ErrorCodeBlobUnknown,
+			errcode.ErrorCodeBlobUploadUnknown,
+			errcode.ErrorCodeManifestBlobUnknown,
+			errcode.ErrorCodeManifestUnknown,
+			errcode.ErrorCodeNameUnknown,
+		},
+		code,
+	)
 }
 
 func (o *outcome) replay() error {
 	codec := outcomeCodecState{}
-	err, _ := codec.decode(o.record.Cause, 0, 1)
+	err, _ := codec.decode(&o.record.Cause, 0, 1)
 	return err
 }
 
 func (o *outcome) encode() ([]byte, []byte, bool) {
 	codec := outcomeCodecState{}
-	if _, ok := codec.decode(o.record.Cause, 0, 1); !ok || !codec.terminal || !codec.remote || o.record.Version != 1 {
+	if _, ok := codec.decode(&o.record.Cause, 0, 1); !ok || !codec.terminal || !codec.remote || o.record.Version != 1 {
 		return nil, nil, false
 	}
 	if _, ok := outcomeDeadline(o.record.Completed, o.record.Count); !ok {
 		return nil, nil, false
 	}
-	layer, ok := outcomeLayer(o.lastGood)
+	layer, ok := outcomeLayer(&o.lastGood)
 	if !ok {
 		return nil, nil, false
 	}
@@ -383,8 +480,10 @@ func (o *outcome) encode() ([]byte, []byte, bool) {
 	if err != nil || len(config) > outcomeConfigLimit {
 		return nil, nil, false
 	}
-	m := ocispec.Manifest{SchemaVersion: 2, MediaType: ocispec.MediaTypeImageManifest, ArtifactType: outcomeArtifact,
-		Config: content.NewDescriptorFromBytes(outcomeConfig, config), Layers: []ocispec.Descriptor{}}
+	m := ocispec.Manifest{
+		SchemaVersion: manifestSchemaVersion, MediaType: ocispec.MediaTypeImageManifest, ArtifactType: outcomeArtifact,
+		Config: content.NewDescriptorFromBytes(outcomeConfig, config), Layers: []ocispec.Descriptor{},
+	}
 	if o.lastGood.Digest != "" {
 		m.Layers = append(m.Layers, layer)
 	}
@@ -421,7 +520,7 @@ func (c *Cache) pushOutcomeBlob(ctx context.Context, mediaType string, data []by
 	desc := content.NewDescriptorFromBytes(mediaType, data)
 	if err := c.store.Push(ctx, desc, bytes.NewReader(data)); err != nil {
 		if errors.Is(err, errdef.ErrAlreadyExists) {
-			_, err = c.readOutcomeBlob(ctx, desc)
+			_, err = c.readOutcomeBlob(ctx, &desc)
 		}
 		if err != nil {
 			return ocispec.Descriptor{}, err
@@ -432,38 +531,45 @@ func (c *Cache) pushOutcomeBlob(ctx context.Context, mediaType string, data []by
 	return desc, nil
 }
 
-func (c *Cache) readOutcome(ctx context.Context, desc ocispec.Descriptor) (*outcome, error) {
+func (c *Cache) readOutcome(ctx context.Context, descValue *ocispec.Descriptor) (*outcome, error) {
+	desc := *descValue
 	if desc.MediaType != ocispec.MediaTypeImageManifest || desc.Size < 0 || desc.Size > outcomeManifestLimit {
-		return nil, nil
+		return nil, nil //nolint:nilnil // A nil value and nil error represent an optional absence or a reusable-cache miss.
 	}
-	data, err := c.readOutcomeBlob(ctx, desc)
+	data, err := c.readOutcomeBlob(ctx, &desc)
 	if err != nil {
 		return nil, err
 	}
 	var m ocispec.Manifest
-	if !outcomeJSON(data, &m) || m.SchemaVersion != 2 || m.MediaType != ocispec.MediaTypeImageManifest || m.ArtifactType != outcomeArtifact || m.Config.MediaType != outcomeConfig || len(m.Layers) > 1 || m.Config.Size < 0 || m.Config.Size > outcomeConfigLimit || m.Subject != nil {
-		return nil, nil
+	if !outcomeJSON(data, &m) || m.SchemaVersion != 2 || m.MediaType != ocispec.MediaTypeImageManifest ||
+		m.ArtifactType != outcomeArtifact ||
+		m.Config.MediaType != outcomeConfig ||
+		len(m.Layers) > 1 ||
+		m.Config.Size < 0 ||
+		m.Config.Size > outcomeConfigLimit ||
+		m.Subject != nil {
+		return nil, nil //nolint:nilnil // A nil value and nil error represent an optional absence or a reusable-cache miss.
 	}
-	config, err := c.readOutcomeBlob(ctx, m.Config)
+	config, err := c.readOutcomeBlob(ctx, &m.Config)
 	if err != nil {
 		return nil, err
 	}
 	o := &outcome{}
 	if !outcomeJSON(config, &o.record) || o.record.Version != 1 {
-		return nil, nil
+		return nil, nil //nolint:nilnil // A nil value and nil error represent an optional absence or a reusable-cache miss.
 	}
 	if _, valid := outcomeDeadline(o.record.Completed, o.record.Count); !valid {
-		return nil, nil
+		return nil, nil //nolint:nilnil // A nil value and nil error represent an optional absence or a reusable-cache miss.
 	}
 	codec := outcomeCodecState{}
-	if _, ok := codec.decode(o.record.Cause, 0, 1); !ok || !codec.terminal || !codec.remote {
-		return nil, nil
+	if _, ok := codec.decode(&o.record.Cause, 0, 1); !ok || !codec.terminal || !codec.remote {
+		return nil, nil //nolint:nilnil // A nil value and nil error represent an optional absence or a reusable-cache miss.
 	}
 	if len(m.Layers) == 1 {
 		var ok bool
-		o.lastGood, ok = outcomeLayer(m.Layers[0])
+		o.lastGood, ok = outcomeLayer(&m.Layers[0])
 		if !ok || o.lastGood.Digest == "" {
-			return nil, nil
+			return nil, nil //nolint:nilnil // A nil value and nil error represent an optional absence or a reusable-cache miss.
 		}
 		if _, err := c.root.Stat(blobPath(o.lastGood.Digest)); err != nil {
 			return nil, &CacheError{err}
@@ -478,7 +584,8 @@ func outcomeJSON(data []byte, target any) bool {
 	return d.Decode(target) == nil && d.Decode(new(any)) == io.EOF
 }
 
-func (c *Cache) readOutcomeBlob(ctx context.Context, desc ocispec.Descriptor) ([]byte, error) {
+func (c *Cache) readOutcomeBlob(ctx context.Context, descValue *ocispec.Descriptor) ([]byte, error) {
+	desc := *descValue
 	if err := ctx.Err(); err != nil {
 		return nil, &CacheError{err}
 	}
@@ -494,4 +601,36 @@ func (c *Cache) readOutcomeBlob(ctx context.Context, desc ocispec.Descriptor) ([
 		return nil, &CacheError{err}
 	}
 	return data, nil
+}
+
+func manifestOutcomeNode(e *manifest.Error) (outcomeCause, []error, bool) {
+	if e.Cause() == nil {
+		return outcomeCause{Kind: wrapOutcome}, []error{e.Category()}, true
+	}
+	if e.Category() == nil {
+		return outcomeCause{Kind: wrapOutcome}, []error{e.Cause()}, true
+	}
+	return outcomeCause{Kind: joinOutcome}, []error{e.Category(), e.Cause()}, true
+}
+
+func wrappedOutcomeNode(err error) (outcomeCause, []error, bool) {
+	for kind, codec := range outcomeCodecs {
+		if codec.sentinel != nil &&
+			err == codec.sentinel { //nolint:errorlint // the codec encodes concrete node identity, not a wrapped match
+			return outcomeCause{Kind: kind}, nil, true
+		}
+	}
+	if reflect.TypeOf(err) == fmtWrapType {
+		return outcomeCause{
+			Kind: wrapOutcome,
+		}, []error{
+			err.(interface{ Unwrap() error }).Unwrap(), //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+		}, true
+	}
+	if reflect.TypeOf(err) == fmtWrapsType || reflect.TypeOf(err) == joinType {
+		return outcomeCause{
+			Kind: joinOutcome,
+		}, err.(interface{ Unwrap() []error }).Unwrap(), true //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+	}
+	return outcomeCause{}, nil, false
 }

@@ -12,7 +12,7 @@ import (
 
 // NameBlob gives an acquired Blob generation a filename and shaping identity.
 func NameBlob(name string, generation fs.FS) fs.FS {
-	input := generation.(fileFS)
+	input := generation.(fileFS) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
 	input.name = name
 	input.identity = manifest.Fingerprint([2]string{input.identity, name})
 	return input
@@ -34,21 +34,27 @@ type fileFS struct {
 
 func (f fileFS) Open(name string) (fs.File, error) {
 	if !fs.ValidPath(name) {
-		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrInvalid}
+		return nil, &fs.PathError{Op: openOperation, Path: name, Err: fs.ErrInvalid}
 	}
 	if name == "." {
-		node := &tarNode{FileInfo: (&tar.Header{Name: f.name, Mode: 0o600, Size: f.size}).FileInfo()}
-		root := &tarNode{FileInfo: (&tar.Header{Name: ".", Mode: 0o750, Typeflag: tar.TypeDir}).FileInfo(), children: []fs.DirEntry{node}}
+		node := &tarNode{FileInfo: (&tar.Header{Name: f.name, Mode: privateFileMode, Size: f.size}).FileInfo()}
+		root := &tarNode{
+			FileInfo: (&tar.Header{Name: ".", Mode: cacheDirectoryMode, Typeflag: tar.TypeDir}).FileInfo(),
+			children: []fs.DirEntry{node},
+		}
 		return &tarFile{tarNode: root, Reader: bytes.NewReader(nil)}, nil
 	}
 	if name != f.name {
-		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
+		return nil, &fs.PathError{Op: openOperation, Path: name, Err: fs.ErrNotExist}
 	}
 	r, err := f.open()
 	if err != nil {
 		return nil, &CacheError{err}
 	}
-	return &blobFile{ReadCloser: r, FileInfo: (&tar.Header{Name: f.name, Mode: 0o600, Size: f.size}).FileInfo()}, nil
+	return &blobFile{
+		ReadCloser: r,
+		FileInfo:   (&tar.Header{Name: f.name, Mode: privateFileMode, Size: f.size}).FileInfo(),
+	}, nil
 }
 
 func (f fileFS) ReadFile(name string) ([]byte, error) {

@@ -17,19 +17,21 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log" //nolint:depguard // Standard-log routing must capture or suppress dependency log output.
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/spf13/cobra"
+
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/spf13/cobra"
 )
 
 type renderNoticeKey struct{}
 
+//nolint:gochecknoglobals // The startup reason is fixed once and replaced by serial diagnostic tests.
 var renderPersistenceDisabledReason = sourcecache.RenderPersistenceDisabledReason()
 
 // New constructs the root command and wires every subcommand into it.
@@ -46,35 +48,7 @@ func New(version string) *cobra.Command {
 	}
 	root.PersistentFlags().String("log-level", "error", "Set log level: debug,info,warn,error")
 	root.PersistentFlags().Bool("no-progress", false, "Hide live progress on stderr")
-	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
-		if err := applyEnvVars(cmd); err != nil {
-			return err
-		}
-		// The live status bar paints to stderr only when it is an
-		// interactive terminal (pipes/CI/e2e buffers stay clean), --no-progress
-		// is unset. Logs share the progress renderer when it is active.
-		barSink = nil
-		logSink := cmd.ErrOrStderr()
-		noProgress, _ := cmd.Flags().GetBool("no-progress")
-		if progressBarEnabled(noProgress, writerIsTTY(cmd.ErrOrStderr())) {
-			barSink = newBarWriter(cmd.ErrOrStderr())
-			logSink = barSink
-		}
-		lvl, _ := cmd.Flags().GetString("log-level")
-		if err := setLogLevel(lvl, logSink); err != nil {
-			return err
-		}
-		var notice manifest.Warning
-		if cmd.Flags().Lookup("path") != nil && renderPersistenceDisabledReason != "" {
-			dir, _ := cmd.Flags().GetString("cache-dir")
-			if dir != "" {
-				notice = manifest.Warning{Category: manifest.WarnRenderPersistenceDisabled,
-					Message: "render persistence is disabled: " + renderPersistenceDisabledReason + "; source caching remains available"}
-			}
-		}
-		cmd.SetContext(context.WithValue(cmd.Context(), renderNoticeKey{}, notice))
-		return nil
-	}
+	root.PersistentPreRunE = prepareCommand
 
 	root.AddCommand(
 		newGetCmd(),
@@ -83,32 +57,13 @@ func New(version string) *cobra.Command {
 		newTestCmd(),
 		newCacheCmd(),
 	)
-	var wrapProfiles func(*cobra.Command)
-	wrapProfiles = func(cmd *cobra.Command) {
-		if cmd.RunE != nil && cmd.Flags().Lookup("path") != nil {
-			run := cmd.RunE
-			cmd.RunE = func(cmd *cobra.Command, args []string) error {
-				stopProfile, err := startProfile()
-				if err != nil {
-					notice, _ := cmd.Context().Value(renderNoticeKey{}).(manifest.Warning)
-					return finishSelected(selectedRequest{notice: notice,
-						stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr()},
-						&selectedInvocation{err: err, remainder: err}, selectedPayload{})
-				}
-				defer stopProfile()
-				return run(cmd, args)
-			}
-		}
-		for _, child := range cmd.Commands() {
-			wrapProfiles(child)
-		}
-	}
+
 	wrapProfiles(root)
 	annotateEnvUsage(root)
 	return root
 }
 
-// Execute runs the root command against os.Args and returns the
+// Execute runs the root command against [os.Args] and returns the
 // suggested process exit code. version is the build identifier
 // surfaced via --version.
 func Execute(version string) int {
@@ -168,4 +123,58 @@ func setLogLevel(lvl string, w io.Writer) error {
 		log.SetOutput(io.Discard)
 	}
 	return nil
+}
+
+func prepareCommand(cmd *cobra.Command, _ []string) error {
+	if err := applyEnvVars(cmd); err != nil {
+		return err
+	}
+	// The live status bar paints to stderr only when it is an
+	// interactive terminal (pipes/CI/e2e buffers stay clean), --no-progress
+	// is unset. Logs share the progress renderer when it is active.
+	barSink = nil
+	logSink := cmd.ErrOrStderr()
+	noProgress, _ := cmd.Flags().GetBool("no-progress")
+	if progressBarEnabled(noProgress, writerIsTTY(cmd.ErrOrStderr())) {
+		barSink = newBarWriter(cmd.ErrOrStderr())
+		logSink = barSink
+	}
+	lvl, _ := cmd.Flags().GetString("log-level")
+	if err := setLogLevel(lvl, logSink); err != nil {
+		return err
+	}
+	var notice manifest.Warning
+	if cmd.Flags().Lookup(pathKey) != nil && renderPersistenceDisabledReason != "" {
+		dir, _ := cmd.Flags().GetString("cache-dir")
+		if dir != "" {
+			notice = manifest.Warning{
+				Category: manifest.WarnRenderPersistenceDisabled,
+				Message:  "render persistence is disabled: " + renderPersistenceDisabledReason + "; source caching remains available",
+			}
+		}
+	}
+	cmd.SetContext(context.WithValue(cmd.Context(), renderNoticeKey{}, notice))
+	return nil
+}
+
+func wrapProfiles(cmd *cobra.Command) {
+	if cmd.RunE != nil && cmd.Flags().Lookup(pathKey) != nil {
+		run := cmd.RunE
+		cmd.RunE = func(cmd *cobra.Command, args []string) error {
+			stopProfile, err := startProfile()
+			if err != nil {
+				notice, _ := cmd.Context().Value(renderNoticeKey{}).(manifest.Warning)
+				return finishSelected(&selectedRequest{
+					notice: notice,
+					stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(),
+				},
+					&selectedInvocation{err: err, remainder: err}, &selectedPayload{})
+			}
+			defer stopProfile()
+			return run(cmd, args)
+		}
+	}
+	for _, child := range cmd.Commands() {
+		wrapProfiles(child)
+	}
 }

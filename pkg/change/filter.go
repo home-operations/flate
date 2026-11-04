@@ -52,7 +52,10 @@ func (f *Filter) ShouldReconcile(id manifest.NamedResource) bool {
 
 // AddEmitted commits prepared roles if revision still applies, returning newly needed identities and retry.
 // Callers MUST perform capture validation, inclusion arrivals and publication outside this lock.
-func (f *Filter) AddEmitted(needs, selects, dirties []manifest.NamedResource, revision uint64) ([]manifest.NamedResource, bool) {
+func (f *Filter) AddEmitted(
+	needs, selects, dirties []manifest.NamedResource,
+	revision uint64,
+) ([]manifest.NamedResource, bool) {
 	if f == nil {
 		return nil, false
 	}
@@ -65,20 +68,12 @@ func (f *Filter) AddEmitted(needs, selects, dirties []manifest.NamedResource, re
 	changed := false
 	for axis, ids := range [3][]manifest.NamedResource{needs, selects, dirties} {
 		for _, id := range ids {
-			if id == (manifest.NamedResource{}) {
+			newlyNeeded, updated := f.addRoles(id, uint8(axis), max(len(needs), len(selects), len(dirties)))
+			if !updated {
 				continue
 			}
-			previous := f.keep[id]
-			roles := previous | needed | 1<<axis
-			if roles == previous {
-				continue
-			}
-			if f.keep == nil {
-				f.keep = make(map[manifest.NamedResource]uint8, max(len(needs), len(selects), len(dirties)))
-			}
-			f.keep[id] = roles
 			changed = true
-			if previous&needed == 0 {
+			if newlyNeeded {
 				if added == nil {
 					added = make([]manifest.NamedResource, 0, max(len(needs), len(selects), len(dirties)))
 				}
@@ -92,6 +87,23 @@ func (f *Filter) AddEmitted(needs, selects, dirties []manifest.NamedResource, re
 	f.mu.Unlock()
 	slices.SortFunc(added, manifest.NamedResource.Compare)
 	return added, false
+}
+
+// f.mu MUST be held by the caller.
+func (f *Filter) addRoles(id manifest.NamedResource, axis uint8, capacity int) (bool, bool) {
+	if id == (manifest.NamedResource{}) {
+		return false, false
+	}
+	previous := f.keep[id]
+	roles := previous | needed | 1<<axis
+	if roles == previous {
+		return false, false
+	}
+	if f.keep == nil {
+		f.keep = make(map[manifest.NamedResource]uint8, capacity)
+	}
+	f.keep[id] = roles
+	return previous&needed == 0, true
 }
 
 // LogValue snapshots membership when the log handler requests it.

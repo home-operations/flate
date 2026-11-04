@@ -48,17 +48,8 @@ func Permute(groups []Group, includeEmpty bool) ([]map[string]any, error) {
 		perm["id"] = permID(strings.Join(idParts, "/"))
 		out = append(out, perm)
 
-		i := len(scoped) - 1
-		for i >= 0 {
-			sel[i]++
-			if sel[i] < len(scoped[i].sets) {
-				break
-			}
-			sel[i] = 0
-			i--
-		}
-		if i < 0 {
-			break // overflowed the leftmost — done.
+		if !advancePermutation(sel, scoped) {
+			break
 		}
 	}
 	return out, nil
@@ -93,4 +84,15 @@ func normalizeKeyForTemplate(s string) string {
 		}
 	}
 	return b.String()
+}
+
+func advancePermutation(selected []int, scoped []scopedProvider) bool {
+	for i := len(scoped) - 1; i >= 0; i-- {
+		selected[i]++
+		if selected[i] < len(scoped[i].sets) {
+			return true
+		}
+		selected[i] = 0
+	}
+	return false
 }

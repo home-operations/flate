@@ -12,19 +12,29 @@ import (
 // sourcev1.GitRepositorySpec promotes URL, Reference, Verification,
 // Provider, SecretRef, ProxySecretRef, RecurseSubmodules,
 // SparseCheckout, Suspend etc. to the top level.
+//
+//nolint:embeddedstructfieldcheck // The SDK field order preserves serialized document order.
 type GitRepository struct {
 	Name        string            `json:"name"      yaml:"name"`
 	Namespace   string            `json:"namespace" yaml:"namespace"`
-	Labels      map[string]string `json:"-" yaml:"-"`
-	Annotations map[string]string `json:"-" yaml:"-"`
+	Labels      map[string]string `json:"-"         yaml:"-"`
+	Annotations map[string]string `json:"-"         yaml:"-"`
 
 	sourcev1.GitRepositorySpec `json:",inline" yaml:",inline"`
 }
 
 // NewGitRepository normalizes an owned typed GitRepository declaration.
+//
+//nolint:gocritic // The SDK preserves this value input and its snapshot boundary.
 func NewGitRepository(cr sourcev1.GitRepository) *GitRepository {
 	cr.Spec.Provider = cmp.Or(cr.Spec.Provider, sourcev1.GitProviderGeneric)
-	return &GitRepository{Name: cr.Name, Namespace: cr.Namespace, Labels: cr.Labels, Annotations: cr.Annotations, GitRepositorySpec: cr.Spec}
+	return &GitRepository{
+		Name:              cr.Name,
+		Namespace:         cr.Namespace,
+		Labels:            cr.Labels,
+		Annotations:       cr.Annotations,
+		GitRepositorySpec: cr.Spec,
+	}
 }
 
 // GetLabels returns the GitRepository's metadata.labels.
@@ -35,18 +45,35 @@ func (g *GitRepository) GetAnnotations() map[string]string { return g.Annotation
 
 // Named identifies the GitRepository.
 func (g *GitRepository) Named() NamedResource {
-	return NamedResource{Group: kindTable[kindGitRepository].Group, Kind: KindGitRepository, Namespace: g.Namespace, Name: g.Name}
+	return NamedResource{
+		Group:     kindTable[kindGitRepository].Group,
+		Kind:      KindGitRepository,
+		Namespace: g.Namespace,
+		Name:      g.Name,
+	}
 }
 
 // BootstrapAlias returns a local copy and the borrowed immutable Git descriptor.
 // A non-nil descriptor selects repository-root policy and supplies ref/view inputs.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (g *GitRepository) BootstrapAlias(root string) (BaseManifest, *GitRepository) {
 	spec := g.GitRepositorySpec
 	spec.URL = "file://" + root
-	return NewGitRepository(sourcev1.GitRepository{Name: g.Name, Namespace: g.Namespace, Labels: g.Labels, Annotations: g.Annotations, Spec: spec}), g
+	return NewGitRepository(
+		sourcev1.GitRepository{
+			Name:        g.Name,
+			Namespace:   g.Namespace,
+			Labels:      g.Labels,
+			Annotations: g.Annotations,
+			Spec:        spec,
+		},
+	), g
 }
 
 // Content returns the source inputs that define the selected Git content.
+//
+//nolint:gocritic // The SDK preserves this value input and its snapshot boundary.
 func (g *GitRepository) Content(ref sourcev1.GitRepositoryRef) any {
 	var auth []NamedResource
 	g.references(func(ref Reference) bool {
@@ -70,6 +97,8 @@ func (g *GitRepository) Content(ref sourcev1.GitRepositoryRef) any {
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (g *GitRepository) WithNamespace(namespace string) BaseManifest {
 	out := *g
 	out.Namespace = namespace
@@ -129,14 +158,16 @@ func (r *OCIRepositoryRef) Pinned() bool { return r != nil && r.Digest != "" }
 // sourcev1.OCIRepositorySpec promotes URL, Reference, LayerSelector,
 // Provider, SecretRef, CertSecretRef, ProxySecretRef, Verify, Insecure,
 // Suspend etc. to the top level.
+//
+//nolint:embeddedstructfieldcheck // The SDK field order preserves serialized document order.
 type OCIRepository struct {
 	diagnosticOwner NamedResource
 	diagnosticPath  string
 	hasDiagnostic   bool
 	Name            string            `json:"name"      yaml:"name"`
 	Namespace       string            `json:"namespace" yaml:"namespace"`
-	Labels          map[string]string `json:"-" yaml:"-"`
-	Annotations     map[string]string `json:"-" yaml:"-"`
+	Labels          map[string]string `json:"-"         yaml:"-"`
+	Annotations     map[string]string `json:"-"         yaml:"-"`
 
 	sourcev1.OCIRepositorySpec `json:",inline" yaml:",inline"`
 }
@@ -153,16 +184,9 @@ type RegistryAccess struct {
 	Timeout        time.Duration
 }
 
-// RegistryAccess returns the repository's registry acquisition requirements.
-func (o *OCIRepository) RegistryAccess() RegistryAccess {
-	return RegistryAccess{
-		Owner: DiagnosticFor(o.Named(), o), URL: o.URL, Namespace: o.Namespace,
-		SecretRef: o.SecretRef, CertSecretRef: o.CertSecretRef, ProxySecretRef: o.ProxySecretRef,
-		Insecure: o.Insecure, Timeout: o.OperationTimeout(),
-	}
-}
-
 // NewOCIRepository normalizes an owned typed OCIRepository declaration.
+//
+//nolint:gocritic // The SDK preserves this value input and its snapshot boundary.
 func NewOCIRepository(cr sourcev1.OCIRepository) *OCIRepository {
 	cr.Spec.Provider = cmp.Or(cr.Spec.Provider, sourcev1.GenericOCIProvider)
 	if cr.Spec.Verify != nil && cr.Spec.Verify.Provider == "" {
@@ -170,7 +194,22 @@ func NewOCIRepository(cr sourcev1.OCIRepository) *OCIRepository {
 		verify.Provider = "cosign"
 		cr.Spec.Verify = &verify
 	}
-	return &OCIRepository{Name: cr.Name, Namespace: cr.Namespace, Labels: cr.Labels, Annotations: cr.Annotations, OCIRepositorySpec: cr.Spec}
+	return &OCIRepository{
+		Name:              cr.Name,
+		Namespace:         cr.Namespace,
+		Labels:            cr.Labels,
+		Annotations:       cr.Annotations,
+		OCIRepositorySpec: cr.Spec,
+	}
+}
+
+// RegistryAccess returns the repository's registry acquisition requirements.
+func (o *OCIRepository) RegistryAccess() RegistryAccess {
+	return RegistryAccess{
+		Owner: DiagnosticFor(o.Named(), o), URL: o.URL, Namespace: o.Namespace,
+		SecretRef: o.SecretRef, CertSecretRef: o.CertSecretRef, ProxySecretRef: o.ProxySecretRef,
+		Insecure: o.Insecure, Timeout: o.OperationTimeout(),
+	}
 }
 
 // LayerOperation returns the Flux layer operation, defaulting to extraction.
@@ -197,7 +236,12 @@ func (o *OCIRepository) GetAnnotations() map[string]string { return o.Annotation
 
 // Named identifies the OCIRepository.
 func (o *OCIRepository) Named() NamedResource {
-	return NamedResource{Group: kindTable[kindOCIRepository].Group, Kind: KindOCIRepository, Namespace: o.Namespace, Name: o.Name}
+	return NamedResource{
+		Group:     kindTable[kindOCIRepository].Group,
+		Kind:      KindOCIRepository,
+		Namespace: o.Namespace,
+		Name:      o.Name,
+	}
 }
 
 // Content returns the source inputs that define the selected OCI content.
@@ -224,6 +268,8 @@ func (o *OCIRepository) Content(ref sourcev1.OCIRepositoryRef) any {
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (o *OCIRepository) WithNamespace(namespace string) BaseManifest {
 	out := *o
 	out.Namespace = namespace
@@ -232,8 +278,10 @@ func (o *OCIRepository) WithNamespace(namespace string) BaseManifest {
 
 // ProjectionCompatible reports whether an eligible previous projection can be reused.
 func (o *OCIRepository) ProjectionCompatible(previous BaseManifest) bool {
+	//nolint:errcheck // The owning path guarantees the concrete type and panics on a broken invariant.
 	p := previous.(*OCIRepository)
-	return o.diagnosticOwner == p.diagnosticOwner && o.diagnosticPath == p.diagnosticPath && o.hasDiagnostic == p.hasDiagnostic
+	return o.diagnosticOwner == p.diagnosticOwner && o.diagnosticPath == p.diagnosticPath &&
+		o.hasDiagnostic == p.hasDiagnostic
 }
 
 // Suspended reports whether reconciliation is paused on this resource.
@@ -280,11 +328,13 @@ func parseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 }
 
 // ExternalArtifact is a source whose content is published by its materializer.
+//
+//nolint:embeddedstructfieldcheck // The SDK field order preserves serialized document order.
 type ExternalArtifact struct {
 	Name        string            `json:"name"                yaml:"name"`
 	Namespace   string            `json:"namespace,omitempty" yaml:"namespace,omitempty"`
-	Labels      map[string]string `json:"-" yaml:"-"`
-	Annotations map[string]string `json:"-" yaml:"-"`
+	Labels      map[string]string `json:"-"                   yaml:"-"`
+	Annotations map[string]string `json:"-"                   yaml:"-"`
 
 	// ExternalArtifactSpec embeds the upstream spec, exposing
 	// SourceRef at the top level.
@@ -292,8 +342,16 @@ type ExternalArtifact struct {
 }
 
 // NewExternalArtifact constructs an owned typed ExternalArtifact declaration.
+//
+//nolint:gocritic // The SDK preserves this value input and its snapshot boundary.
 func NewExternalArtifact(cr sourcev1.ExternalArtifact) *ExternalArtifact {
-	return &ExternalArtifact{Name: cr.Name, Namespace: cr.Namespace, Labels: cr.Labels, Annotations: cr.Annotations, ExternalArtifactSpec: cr.Spec}
+	return &ExternalArtifact{
+		Name:                 cr.Name,
+		Namespace:            cr.Namespace,
+		Labels:               cr.Labels,
+		Annotations:          cr.Annotations,
+		ExternalArtifactSpec: cr.Spec,
+	}
 }
 
 // GetLabels returns the ExternalArtifact's metadata.labels.
@@ -304,10 +362,17 @@ func (e *ExternalArtifact) GetAnnotations() map[string]string { return e.Annotat
 
 // Named identifies the ExternalArtifact.
 func (e *ExternalArtifact) Named() NamedResource {
-	return NamedResource{Group: kindTable[kindExternalArtifact].Group, Kind: KindExternalArtifact, Namespace: e.Namespace, Name: e.Name}
+	return NamedResource{
+		Group:     kindTable[kindExternalArtifact].Group,
+		Kind:      KindExternalArtifact,
+		Namespace: e.Namespace,
+		Name:      e.Name,
+	}
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (e *ExternalArtifact) WithNamespace(namespace string) BaseManifest {
 	out := *e
 	out.Namespace = namespace
@@ -353,7 +418,22 @@ func (e *ExternalArtifact) references(yield func(Reference) bool) {
 		return
 	}
 	ref := e.SourceRef
-	yield(Reference{NamedResource: Resolve(NamedResource{Group: referenceGroup(ref.Kind, ref.APIVersion), Kind: ref.Kind, Name: ref.Name, Namespace: ref.Namespace}, "", e.Namespace), Use: "materializer", Gate: GateInputs})
+	yield(
+		Reference{
+			NamedResource: Resolve(
+				NamedResource{
+					Group:     referenceGroup(ref.Kind, ref.APIVersion),
+					Kind:      ref.Kind,
+					Name:      ref.Name,
+					Namespace: ref.Namespace,
+				},
+				"",
+				e.Namespace,
+			),
+			Use:  "materializer",
+			Gate: GateInputs,
+		},
+	)
 }
 
 func operationTimeout(timeout *metav1.Duration) time.Duration {

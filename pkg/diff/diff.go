@@ -16,6 +16,7 @@ import (
 // resources from different producers and attributes structured output.
 type Parent struct {
 	manifest.NamedResource
+
 	// Path is the Flux Kustomization spec.path (only set for KS
 	// parents), with the conventional `./` prefix stripped. It is display
 	// metadata, not part of producer identity.
@@ -70,13 +71,16 @@ type Options struct {
 // Native formats use dyff for content comparison and Kubernetes resource labels;
 // unified, HTML and JSON formats present the same canonical pairs.
 // Discovered warnings are returned even when formatting fails.
+//
+//nolint:gocritic // The SDK takes a value snapshot of rendering options.
 func RenderDocs(left, right []Doc, opts Options) ([]byte, []manifest.Warning, error) {
-	prepared := diffprep.Prepare(prepareDocs(left), prepareDocs(right), prepareOptions(opts))
-	out, err := renderPrepared(prepared, opts)
+	prepared := diffprep.Prepare(prepareDocs(left), prepareDocs(right), prepareOptions(new(opts)))
+	out, err := renderPrepared(prepared, new(opts))
 	return out, prepared.Warnings, err
 }
 
-func renderPrepared(prepared diffprep.Prepared, opts Options) ([]byte, error) {
+func renderPrepared(prepared diffprep.Prepared, optsValue *Options) ([]byte, error) {
+	opts := *optsValue
 	opts.Format = cmp.Or(opts.Format, FormatHuman)
 	var out []byte
 	var err error
@@ -94,7 +98,11 @@ func renderPrepared(prepared diffprep.Prepared, opts Options) ([]byte, error) {
 				subjects = maps.Clone(subjects)
 				maps.Copy(subjects, prepared.Subjects[1])
 			}
-			names := output.PrepareNames([]string{""}, [][]manifest.NamedResource{output.LineSubjects(lines, encoder.Format)}, []map[manifest.NamedResource]manifest.DiagnosticIdentity{subjects})
+			names := output.PrepareNames(
+				[]string{""},
+				[][]manifest.NamedResource{output.LineSubjects(lines, encoder.Format)},
+				[]map[manifest.NamedResource]manifest.DiagnosticIdentity{subjects},
+			)
 			output.NameLines(lines, names[0])
 			err = encoder.Lines(lines)
 		}
@@ -108,7 +116,7 @@ func renderPrepared(prepared diffprep.Prepared, opts Options) ([]byte, error) {
 		err = nativeErr
 		if err == nil {
 			var buf bytes.Buffer
-			err = (output.Encoder{Writer: &buf, Format: output.Format(opts.Format)}).Native(report)
+			err = (output.Encoder{Writer: &buf, Format: output.Format(opts.Format)}).Native(&report)
 			if err == nil {
 				out = buf.Bytes()
 			}
@@ -127,6 +135,12 @@ func prepareDocs(docs []Doc) []diffprep.Doc {
 	return out
 }
 
-func prepareOptions(opts Options) diffprep.Options {
-	return diffprep.Options{StripAttrs: opts.StripAttrs, StripFields: opts.StripFields, Normalize: opts.Normalize, Subjects: opts.subjects}
+func prepareOptions(optsValue *Options) diffprep.Options {
+	opts := *optsValue
+	return diffprep.Options{
+		StripAttrs:  opts.StripAttrs,
+		StripFields: opts.StripFields,
+		Normalize:   opts.Normalize,
+		Subjects:    opts.subjects,
+	}
 }

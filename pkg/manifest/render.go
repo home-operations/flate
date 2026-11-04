@@ -26,7 +26,7 @@ const (
 
 // EncodeRender encodes constructed render documents without changing scalar types.
 func EncodeRender(docs []DocOccurrence) ([]byte, error) {
-	data := binary.AppendUvarint(make([]byte, 0, 256*len(docs)), uint64(len(docs)))
+	data := binary.AppendUvarint(make([]byte, 0, initialRenderDocumentCapacity*len(docs)), uint64(len(docs)))
 	for _, doc := range docs {
 		if doc.Err != nil {
 			return nil, doc.Err
@@ -68,6 +68,7 @@ func appendRender(data []byte, value any) ([]byte, error) {
 		var buf [16]byte
 		encoded, err := v.AppendBinary(buf[:0])
 		if err != nil {
+			//nolint:wrapcheck // EncodeRender supplies the operation and preserves the time encoder error text.
 			return nil, err
 		}
 		data = binary.AppendUvarint(append(data, renderTime), uint64(len(encoded)))
@@ -82,41 +83,9 @@ func appendRender(data []byte, value any) ([]byte, error) {
 			}
 		}
 	case map[string]any:
-		data = binary.AppendUvarint(append(data, renderStringMap), uint64(len(v)))
-		var storage [16]string
-		keys := storage[:0]
-		for key := range v {
-			keys = append(keys, key)
-		}
-		slices.Sort(keys)
-		for _, key := range keys {
-			data = binary.AppendUvarint(data, uint64(len(key)))
-			data = append(data, key...)
-			var err error
-			data, err = appendRender(data, v[key])
-			if err != nil {
-				return nil, err
-			}
-		}
+		return appendRenderStringMap(data, v)
 	case map[any]any:
-		// Complete entries also order repeated NaN keys, which cannot be looked up.
-		entries := make([][]byte, 0, len(v))
-		for key, item := range v {
-			entry, err := appendRender(nil, key)
-			if err != nil {
-				return nil, err
-			}
-			entry, err = appendRender(entry, item)
-			if err != nil {
-				return nil, err
-			}
-			entries = append(entries, entry)
-		}
-		slices.SortFunc(entries, bytes.Compare)
-		data = binary.AppendUvarint(append(data, renderAnyMap), uint64(len(v)))
-		for _, entry := range entries {
-			data = append(data, entry...)
-		}
+		return appendRenderAnyMap(data, v)
 	default:
 		return nil, fmt.Errorf("unsupported render value %T", value)
 	}
@@ -235,100 +204,172 @@ func (d *renderDecoder) value(depth int) any {
 	case renderTrue:
 		return true
 	case renderInt, renderInt64:
-		v, n := binary.Varint(d.data)
-		if n <= 0 {
-			d.err = fmt.Errorf("invalid render integer")
-			return nil
-		}
-		d.data = d.data[n:]
-		if tag == renderInt {
-			return int(v)
-		}
-		return v
+		return d.decodeInteger(tag)
 	case renderUint64:
 		return d.unsigned()
 	case renderFloat64:
-		if len(d.data) < 8 {
-			d.err = fmt.Errorf("truncated render float")
-			return nil
-		}
-		v := math.Float64frombits(binary.LittleEndian.Uint64(d.data))
-		d.data = d.data[8:]
-		return v
+		return d.decodeFloat()
 	case renderString, renderTime:
-		n := d.count()
-		if d.err != nil {
-			return nil
-		}
-		data := d.data[:n]
-		d.data = d.data[n:]
-		if tag == renderString {
-			return d.text(data)
-		}
-		var v time.Time
-		if err := v.UnmarshalBinary(data); err != nil {
-			d.err = err
-			return nil
-		}
-		return v
+		return d.decodeText(tag)
 	case renderSequence:
-		n := d.reserve(1)
-		if d.err != nil {
-			return nil
-		}
-		v := make([]any, n)
-		for i := range v {
-			v[i] = d.value(depth + 1)
-			if d.err != nil {
-				return nil
-			}
-		}
-		return v
+		return d.decodeSequence(depth)
 	case renderStringMap:
-		n := d.reserve(2)
-		if d.err != nil {
-			return nil
-		}
-		v := make(map[string]any, n)
-		for range n {
-			size := d.count()
-			if d.err != nil {
-				return nil
-			}
-			key := d.text(d.data[:size])
-			d.data = d.data[size:]
-			value := d.value(depth + 1)
-			if d.err != nil {
-				return nil
-			}
-			v[key] = value
-		}
-		return v
+		return d.decodeStringMap(depth)
 	case renderAnyMap:
-		n := d.reserve(2)
-		if d.err != nil {
-			return nil
-		}
-		v := make(map[any]any, n)
-		for range n {
-			key := d.value(depth + 1)
-			if d.err != nil {
-				return nil
-			}
-			switch key.(type) {
-			case []any, map[string]any, map[any]any:
-				d.err = fmt.Errorf("invalid render map key")
-				return nil
-			}
-			value := d.value(depth + 1)
-			if d.err != nil {
-				return nil
-			}
-			v[key] = value
-		}
-		return v
+		return d.decodeAnyMap(depth)
 	default:
 		d.err = fmt.Errorf("unknown render tag %d", tag)
 		return nil
 	}
+}
+
+const (
+	initialRenderDocumentCapacity = 256
+	renderFloatBytes              = 8
+	renderMapEntryWidth           = 2
+)
+
+func appendRenderStringMap(data []byte, v map[string]any) ([]byte, error) {
+	data = binary.AppendUvarint(append(data, renderStringMap), uint64(len(v)))
+	var storage [16]string
+	keys := storage[:0]
+	for key := range v {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	for _, key := range keys {
+		data = binary.AppendUvarint(data, uint64(len(key)))
+		data = append(data, key...)
+		var err error
+		data, err = appendRender(data, v[key])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return data, nil
+}
+
+func appendRenderAnyMap(data []byte, v map[any]any) ([]byte, error) {
+	// Complete entries also order repeated NaN keys, which cannot be looked up.
+	entries := make([][]byte, 0, len(v))
+	for key, item := range v {
+		entry, err := appendRender(nil, key)
+		if err != nil {
+			return nil, err
+		}
+		entry, err = appendRender(entry, item)
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, entry)
+	}
+	slices.SortFunc(entries, bytes.Compare)
+	data = binary.AppendUvarint(append(data, renderAnyMap), uint64(len(v)))
+	for _, entry := range entries {
+		data = append(data, entry...)
+	}
+	return data, nil
+}
+
+func (d *renderDecoder) decodeInteger(tag byte) any {
+	v, n := binary.Varint(d.data)
+	if n <= 0 {
+		d.err = fmt.Errorf("invalid render integer")
+		return nil
+	}
+	d.data = d.data[n:]
+	if tag == renderInt {
+		return int(v)
+	}
+	return v
+}
+
+func (d *renderDecoder) decodeFloat() any {
+	if len(d.data) < renderFloatBytes {
+		d.err = fmt.Errorf("truncated render float")
+		return nil
+	}
+	v := math.Float64frombits(binary.LittleEndian.Uint64(d.data))
+	d.data = d.data[renderFloatBytes:]
+	return v
+}
+
+func (d *renderDecoder) decodeText(tag byte) any {
+	n := d.count()
+	if d.err != nil {
+		return nil
+	}
+	data := d.data[:n]
+	d.data = d.data[n:]
+	if tag == renderString {
+		return d.text(data)
+	}
+	var v time.Time
+	if err := v.UnmarshalBinary(data); err != nil {
+		d.err = err
+		return nil
+	}
+	return v
+}
+
+func (d *renderDecoder) decodeSequence(depth int) any {
+	n := d.reserve(1)
+	if d.err != nil {
+		return nil
+	}
+	v := make([]any, n)
+	for i := range v {
+		v[i] = d.value(depth + 1)
+		if d.err != nil {
+			return nil
+		}
+	}
+	return v
+}
+
+func (d *renderDecoder) decodeStringMap(depth int) any {
+	n := d.reserve(renderMapEntryWidth)
+	if d.err != nil {
+		return nil
+	}
+	v := make(map[string]any, n)
+	for range n {
+		size := d.count()
+		if d.err != nil {
+			return nil
+		}
+		key := d.text(d.data[:size])
+		d.data = d.data[size:]
+		value := d.value(depth + 1)
+		if d.err != nil {
+			return nil
+		}
+		v[key] = value
+	}
+	return v
+}
+
+func (d *renderDecoder) decodeAnyMap(depth int) any {
+	n := d.reserve(renderMapEntryWidth)
+	if d.err != nil {
+		return nil
+	}
+	v := make(map[any]any, n)
+	for range n {
+		key := d.value(depth + 1)
+		if d.err != nil {
+			return nil
+		}
+		switch key.(type) {
+		case []any, map[string]any, map[any]any:
+			d.err = fmt.Errorf("invalid render map key")
+			return nil
+		}
+		value := d.value(depth + 1)
+		if d.err != nil {
+			return nil
+		}
+		v[key] = value
+	}
+	return v
 }

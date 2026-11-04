@@ -29,6 +29,8 @@ func (r NamedResource) Matcher(selector *metav1.LabelSelector) (ReferenceMatcher
 }
 
 // Matches reports whether the identity and labels satisfy the reference.
+//
+//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (m ReferenceMatcher) Matches(id NamedResource, values map[string]string) bool {
 	if m.id.Name != "" {
 		return id == m.id

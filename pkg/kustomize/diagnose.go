@@ -21,6 +21,8 @@ import (
 // reached on the failure path.
 const dupDiagBuildLimit = 256
 
+const minimumDuplicateProducers = 2
+
 // duplicateProducers turns a krusty "already registered id" build failure into a
 // report naming every accumulated path that emits the colliding resource.
 //
@@ -45,7 +47,6 @@ func duplicateProducers(memFS filesys.FileSystem, subDir, subPath string, kustom
 		return ""
 	}
 
-	// Invert each child's resource ids into id → the paths that emit it.
 	pathsByID := map[string][]string{}
 	attempted := 0
 	for ref := range kustomizeinput.Kustomization(&kus) {
@@ -70,9 +71,7 @@ func duplicateProducers(memFS filesys.FileSystem, subDir, subPath string, kustom
 		}
 	}
 
-	// Keep only the ids two or more paths emit — the collisions the merged build
-	// rejects — then render them deterministically.
-	maps.DeleteFunc(pathsByID, func(_ string, paths []string) bool { return len(paths) < 2 })
+	maps.DeleteFunc(pathsByID, func(_ string, paths []string) bool { return len(paths) < minimumDuplicateProducers })
 	if len(pathsByID) == 0 {
 		return ""
 	}

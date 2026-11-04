@@ -28,7 +28,13 @@ import (
 // running away even though visited already breaks true cycles.
 const transformerScanMaxDepth = 6
 
-func (l *Loader) predictNamespaces(ks *manifest.Kustomization, repoRoot string, record manifest.DiscoveryRecord, cache map[string]nsResolution) (*manifest.Kustomization, string) {
+func (l *Loader) predictNamespaces(
+	ks *manifest.Kustomization,
+	repoRoot string,
+	inputRecord *manifest.DiscoveryRecord,
+	cache map[string]nsResolution,
+) (*manifest.Kustomization, string) {
+	record := *inputRecord
 	file := record.File
 	for root := filepath.Dir(record.Path); record.Path != "" && root != filepath.Dir(root); root = filepath.Dir(root) {
 		if l.documents.views[root] != nil {
@@ -38,7 +44,7 @@ func (l *Loader) predictNamespaces(ks *manifest.Kustomization, repoRoot string, 
 			break
 		}
 	}
-	res := l.documents.resolveOverlayInjectedNamespace(repoRoot, file, cache)
+	res := new(l.documents).resolveOverlayInjectedNamespace(repoRoot, file, cache)
 	forced := ""
 	if res.transformer {
 		// The builtin namespace filter also sets metadata.namespace.
@@ -65,15 +71,19 @@ type nsResolution struct {
 // targetNamespace-injecting `replacements:` rule. Deepest enclosing overlay
 // wins (first hit walking up), matching kustomize's "closest overlay"
 // semantics.
-func (reader documentReader) resolveOverlayInjectedNamespace(repoRoot, file string, cache map[string]nsResolution) nsResolution {
+func (r *documentReader) resolveOverlayInjectedNamespace(
+	repoRoot, file string,
+	cache map[string]nsResolution,
+) nsResolution {
+	dr := *r
 	for dir := path.Dir(filepath.ToSlash(file)); dir != "." && dir != "/" && dir != ""; dir = path.Dir(dir) {
 		key := filepath.Join(repoRoot, filepath.FromSlash(dir))
-		if reader.cache[key].body == nil {
+		if dr.cache[key].body == nil {
 			continue
 		}
 		res, ok := cache[key]
 		if !ok {
-			res = reader.resolveInjectedTargetNamespace(repoRoot, dir)
+			res = new(dr).resolveInjectedTargetNamespace(repoRoot, dir)
 			cache[key] = res
 		}
 		if res.ok {
@@ -83,11 +93,12 @@ func (reader documentReader) resolveOverlayInjectedNamespace(repoRoot, file stri
 	return nsResolution{}
 }
 
-func (reader documentReader) resolveInjectedTargetNamespace(repoRoot, overlayDir string) nsResolution {
-	if r := reader.transformerInjectedNamespace(repoRoot, overlayDir); r.ok {
+func (r *documentReader) resolveInjectedTargetNamespace(repoRoot, overlayDir string) nsResolution {
+	dr := *r
+	if r := new(dr).transformerInjectedNamespace(repoRoot, overlayDir); r.ok {
 		return r
 	}
-	return reader.replacementInjectedNamespace(repoRoot, overlayDir)
+	return new(dr).replacementInjectedNamespace(repoRoot, overlayDir)
 }
 
 // transformerInjectedNamespace inspects the kustomization.yaml at overlayDir.
@@ -95,8 +106,9 @@ func (reader documentReader) resolveInjectedTargetNamespace(repoRoot, overlayDir
 // `namespace:` directive and resolves to a builtin NamespaceTransformer that
 // sets Kustomization spec/targetNamespace, the directive value is the namespace
 // that transformer injects.
-func (reader documentReader) transformerInjectedNamespace(repoRoot, overlayDir string) nsResolution {
-	spec, _ := reader.read(filepath.Join(repoRoot, overlayDir))
+func (r *documentReader) transformerInjectedNamespace(repoRoot, overlayDir string) nsResolution {
+	dr := *r
+	spec, _ := dr.read(filepath.Join(repoRoot, overlayDir))
 	for ref := range kustomizeinput.Kustomization(spec) {
 		if ref.Role != kustomizeinput.Configuration || !strings.HasPrefix(ref.Field, ".transformers") || ref.Inline {
 			continue
@@ -105,11 +117,11 @@ func (reader documentReader) transformerInjectedNamespace(repoRoot, overlayDir s
 		if !ok {
 			continue
 		}
-		td, _ := reader.read(filepath.Join(repoRoot, transformerDir))
+		td, _ := dr.read(filepath.Join(repoRoot, transformerDir))
 		if td == nil || td.Namespace == "" {
 			continue
 		}
-		if reader.subtreeHasNamespaceTransformer(repoRoot, transformerDir, map[string]struct{}{}) {
+		if new(dr).subtreeHasNamespaceTransformer(repoRoot, transformerDir, map[string]struct{}{}) {
 			return nsResolution{ns: td.Namespace, ok: true, transformer: true}
 		}
 	}
@@ -125,21 +137,23 @@ func (reader documentReader) transformerInjectedNamespace(repoRoot, overlayDir s
 // rule but no directive (the Namespace would keep a literal component name) is
 // left unstamped rather than guessed, and a bare `namespace:` directive with no
 // targetNamespace rule is owned by metadata.namespace inheritance, not us.
-func (reader documentReader) replacementInjectedNamespace(repoRoot, overlayDir string) nsResolution {
-	d, _ := reader.read(filepath.Join(repoRoot, overlayDir))
+func (r *documentReader) replacementInjectedNamespace(repoRoot, overlayDir string) nsResolution {
+	dr := *r
+	d, _ := dr.read(filepath.Join(repoRoot, overlayDir))
 	if d == nil || d.Namespace == "" || len(d.Replacements) == 0 {
 		return nsResolution{}
 	}
 	for _, r := range d.Replacements {
-		if replacementInjectsTargetNamespace(r, reader, repoRoot, overlayDir) {
+		if replacementInjectsTargetNamespace(r, new(dr), repoRoot, overlayDir) {
 			return nsResolution{ns: d.Namespace, ok: true}
 		}
 	}
 	return nsResolution{}
 }
 
-func (reader documentReader) subtreeHasNamespaceTransformer(repoRoot, dir string, visited map[string]struct{}) bool {
-	w := traversal{documents: reader, policy: traversalProof, directories: visited}
+func (r *documentReader) subtreeHasNamespaceTransformer(repoRoot, dir string, visited map[string]struct{}) bool {
+	dr := *r
+	w := traversal{documents: dr, policy: traversalProof, directories: visited}
 	return !w.walk(context.TODO(), graphVisit{root: repoRoot, dir: dir}, nil)
 }
 
@@ -147,8 +161,9 @@ func (reader documentReader) subtreeHasNamespaceTransformer(repoRoot, dir string
 // manifest file and reports whether any document is a qualifying
 // NamespaceTransformer. Returns false when target is a directory, unreadable, or
 // any document is malformed (all-or-nothing, matching a whole-file parse).
-func (reader documentReader) fileHasNamespaceTransformer(repoRoot, target string) bool {
-	input, name := reader.input(filepath.Join(repoRoot, target))
+func (r *documentReader) fileHasNamespaceTransformer(repoRoot, target string) bool {
+	dr := *r
+	input, name := new(dr).input(filepath.Join(repoRoot, target))
 	data, err := fs.ReadFile(input, name)
 	if err != nil {
 		return false
@@ -202,7 +217,12 @@ func (d namespaceTransformerDoc) injectsKustomizationTargetNamespace() bool {
 	})
 }
 
-func replacementInjectsTargetNamespace(r types.ReplacementField, reader documentReader, repoRoot, overlayDir string) bool {
+func replacementInjectsTargetNamespace(
+	r types.ReplacementField,
+	inputReader *documentReader,
+	repoRoot, overlayDir string,
+) bool {
+	dr := *inputReader
 	if r.Path == "" {
 		return copiesNamespaceNameToTargetNamespace(r.Replacement)
 	}
@@ -210,7 +230,7 @@ func replacementInjectsTargetNamespace(r types.ReplacementField, reader document
 		return false
 	}
 	var ref string
-	spec, _ := reader.read(filepath.Join(repoRoot, overlayDir))
+	spec, _ := dr.read(filepath.Join(repoRoot, overlayDir))
 	for input := range kustomizeinput.Kustomization(spec) {
 		if !strings.HasPrefix(input.Field, ".replacements.*") || input.Path != r.Path {
 			continue
@@ -225,7 +245,7 @@ func replacementInjectsTargetNamespace(r types.ReplacementField, reader document
 	if ref == "" {
 		return false
 	}
-	input, name := reader.input(filepath.Join(repoRoot, ref))
+	input, name := new(dr).input(filepath.Join(repoRoot, ref))
 	data, err := fs.ReadFile(input, name)
 	if err != nil {
 		return false

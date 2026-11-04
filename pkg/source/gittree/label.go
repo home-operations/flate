@@ -15,6 +15,8 @@ type LabelOptions struct {
 }
 
 // Label returns an ownership coordinate and its key without accessing the filesystem.
+//
+//nolint:gocritic // The SDK accepts a value snapshot; a pointer parameter would change its call and aliasing contracts.
 func Label(opts LabelOptions) (string, string) {
 	key := opts.Key
 	if opts.Content != nil {

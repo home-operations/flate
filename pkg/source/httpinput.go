@@ -11,6 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+
 	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
@@ -30,6 +32,7 @@ type HTTPInputs struct {
 
 const remoteClosed uint64 = 1 << 63
 
+//nolint:gochecknoglobals // This pointer is the shared identity sentinel for terminal worker admission.
 var closedRemoteWorkers = &remoteWorkers{}
 
 type remoteWorkers struct {
@@ -47,7 +50,8 @@ const (
 func NewHTTPInputs(owner *cache.Cache, network *Network, tasks *task.Service) HTTPInputs {
 	client := &http.Client{Transport: network}
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-		if len(via) >= 10 {
+		const maxRedirects = 10
+		if len(via) >= maxRedirects {
 			return errors.New("stopped after 10 redirects")
 		}
 		req.Header.Del("If-None-Match")
@@ -69,7 +73,7 @@ func (h *HTTPInputs) Close() {
 				close(workers.drain)
 			}
 			h.remoteFetches.Range(func(_, value any) bool {
-				if cancel := value.(*remoteFetch).cancel.Load(); cancel != nil {
+				if cancel := value.(*remoteFetch).cancel.Load(); cancel != nil { //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
 					(*cancel)()
 				}
 				return true
@@ -100,29 +104,23 @@ type remoteKey struct {
 // Shared work outlives individual waiters. Only
 // Close guarantees worker cleanup; an Acquire return does not join the owner.
 // heldSlot is the borrowed service when the caller holds its slot, or nil.
-func (h *HTTPInputs) Acquire(ctx context.Context, urlStr string, retry cache.RetryConfig, heldSlot *task.Service) (fs.FS, error) {
+func (h *HTTPInputs) Acquire(
+	ctx context.Context,
+	urlStr string,
+	retry cache.RetryConfig,
+	heldSlot *task.Service,
+) (fs.FS, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 	}
-	workers := h.workers.Load()
-	if workers == nil {
-		workers = &remoteWorkers{drain: make(chan struct{})}
-		if !h.workers.CompareAndSwap(nil, workers) {
-			workers = h.workers.Load()
-		}
-	}
+	workers := h.remoteWorkers()
 	if workers == closedRemoteWorkers {
 		return nil, manifest.NewError(manifest.ErrFlux, fmt.Errorf("remote fetch: %w", fs.ErrClosed), "")
 	}
 	key := remoteKey{url: urlStr, retry: retry}
-	// NaN cannot be a comparable dictionary key value.
-	if math.IsNaN(retry.Jitter) || math.IsInf(retry.Jitter, 0) {
-		key.retry.Jitter = 0
-	} else {
-		key.retry.Jitter = max(0, min(1, retry.Jitter))
-	}
+	key.normalize()
 	loaded, _ := h.remoteFetches.LoadOrStore(key, &remoteFetch{done: make(chan struct{})})
-	rf := loaded.(*remoteFetch)
+	rf := loaded.(*remoteFetch) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
 	rf.start.Do(func() {
 		// Shared acquisition MUST outlive any one waiter's cancellation.
 		workerCtx, cancel := context.WithCancel(context.Background())
@@ -152,21 +150,7 @@ func (h *HTTPInputs) Acquire(ctx context.Context, urlStr string, retry cache.Ret
 				rf.cancel.Store(nil)
 				close(rf.done)
 			}()
-			if err := workerCtx.Err(); err != nil {
-				rf.err = manifest.NewError(manifest.ErrFlux, fmt.Errorf("remote fetch: %w", err), "")
-				h.remoteFetches.CompareAndDelete(key, rf)
-				return
-			}
-			generation, _, _, err := h.owner.Blob(workerCtx, cache.BlobKey{Content: struct{ URL string }{urlStr}}, cache.Policy{Retry: retry}, func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-				return h.httpGetURL(ctx, urlStr, w)
-			})
-			if err == nil {
-				rf.input = cache.NameBlob("content", generation)
-			}
-			rf.err = err
-			if err != nil && fetcherr.Classes(err)&fetcherr.Client == 0 {
-				h.remoteFetches.CompareAndDelete(key, rf)
-			}
+			rf.acquire(workerCtx, h, &key, retry)
 		})
 	})
 	var input fs.FS
@@ -184,16 +168,22 @@ func (h *HTTPInputs) Acquire(ctx context.Context, urlStr string, retry cache.Ret
 	} else {
 		heldSlot.YieldSlot(wait)
 	}
-	return input, err
+	return input, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 }
-func (h *HTTPInputs) httpGetURL(ctx context.Context, urlStr string, w cache.ProducerInput) (result cache.ProducerResult, resultErr error) {
+
+//nolint:nonamedreturns // Deferred body Close must join the returned error, including during panic unwinding.
+func (h *HTTPInputs) httpGetURL(
+	ctx context.Context,
+	urlStr string,
+	w cache.ProducerInput,
+) (result cache.ProducerResult, resultErr error) {
 	previous, err := w.Previous(ctx)
 	if err != nil {
 		return cache.ProducerResult{}, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlStr, nil)
 	if err != nil {
-		return cache.ProducerResult{}, err
+		return cache.ProducerResult{}, fmt.Errorf("create source HTTP request: %w", err)
 	}
 	if previous != nil && previous.Annotations[httpOriginalURLAnnotation] == "true" {
 		if etag := previous.Annotations[httpETagAnnotation]; etag != "" {
@@ -205,14 +195,82 @@ func (h *HTTPInputs) httpGetURL(ctx context.Context, urlStr string, w cache.Prod
 	}
 	resp, err := h.httpClient.Do(req)
 	if err != nil {
-		return cache.ProducerResult{}, err
+		return cache.ProducerResult{}, err //nolint:wrapcheck // The HTTP client already returns a URL error identifying method and target, including net.Error behavior.
 	}
 	defer func() { resultErr = errors.Join(resultErr, resp.Body.Close()) }()
-	if resp.StatusCode == http.StatusNotModified && previous != nil && (resp.Request.Header.Get("If-None-Match") != "" || resp.Request.Header.Get("If-Modified-Since") != "") {
-		result.Descriptor, result.Unchanged = *previous, true
-	} else if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return cache.ProducerResult{}, &fetcherr.ResponseError{StatusCode: resp.StatusCode, Op: http.MethodGet}
+	result, err = httpResponseMetadata(req, resp, previous)
+	if err != nil {
+		return cache.ProducerResult{}, err
+	}
+	if result.Unchanged {
+		return result, nil
+	}
+	size, err := io.Copy(w, resp.Body)
+	if err != nil {
+		return cache.ProducerResult{}, fmt.Errorf("copy source content: %w", err)
+	}
+	result.Size = size
+	return result, nil
+}
+
+func (h *HTTPInputs) remoteWorkers() *remoteWorkers {
+	workers := h.workers.Load()
+	if workers == nil {
+		workers = &remoteWorkers{drain: make(chan struct{})}
+		if !h.workers.CompareAndSwap(nil, workers) {
+			workers = h.workers.Load()
+		}
+	}
+	return workers
+}
+
+func (rf *remoteFetch) acquire(ctx context.Context, h *HTTPInputs, key *remoteKey, retry cache.RetryConfig) {
+	if err := ctx.Err(); err != nil {
+		rf.err = manifest.NewError(manifest.ErrFlux, fmt.Errorf("remote fetch: %w", err), "")
+		h.remoteFetches.CompareAndDelete(*key, rf)
+		return
+	}
+	generation, _, _, err := h.owner.Blob(
+		ctx,
+		cache.BlobKey{Content: struct{ URL string }{key.url}},
+		cache.Policy{Retry: retry},
+		func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+			return h.httpGetURL(ctx, key.url, w)
+		},
+	)
+	if err == nil {
+		rf.input = cache.NameBlob("content", generation)
+	}
+	rf.err = err
+	if err != nil && fetcherr.Classes(err)&fetcherr.Client == 0 {
+		h.remoteFetches.CompareAndDelete(*key, rf)
+	}
+}
+
+func (k *remoteKey) normalize() {
+	// NaN cannot be a comparable dictionary key value.
+	if math.IsNaN(k.retry.Jitter) || math.IsInf(k.retry.Jitter, 0) {
+		k.retry.Jitter = 0
 	} else {
+		k.retry.Jitter = max(0, min(1, k.retry.Jitter))
+	}
+}
+
+func httpResponseMetadata(
+	req *http.Request,
+	resp *http.Response,
+	previous *ocispec.Descriptor,
+) (cache.ProducerResult, error) {
+	var result cache.ProducerResult
+	switch {
+	case resp.StatusCode == http.StatusNotModified && previous != nil &&
+		(resp.Request.Header.Get("If-None-Match") != "" || resp.Request.Header.Get("If-Modified-Since") != ""):
+		result.Descriptor, result.Unchanged = *previous, true
+	case resp.StatusCode < 200 ||
+		resp.StatusCode > 299:
+		return cache.ProducerResult{}, &fetcherr.ResponseError{StatusCode: resp.StatusCode, Op: http.MethodGet}
+	default:
+
 		result.Annotations = make(map[string]string)
 		requestURL, responseURL := *req.URL, *resp.Request.URL
 		if requestURL.User != nil && responseURL.User != nil && *requestURL.User == *responseURL.User {
@@ -222,18 +280,11 @@ func (h *HTTPInputs) httpGetURL(ctx context.Context, urlStr string, w cache.Prod
 			result.Annotations[httpOriginalURLAnnotation] = "true"
 		}
 	}
+
 	for _, validator := range [...]struct{ header, annotation string }{{"ETag", httpETagAnnotation}, {"Last-Modified", httpLastModifiedAnnotation}} {
 		if _, supplied := resp.Header[http.CanonicalHeaderKey(validator.header)]; supplied {
 			result.Annotations[validator.annotation] = resp.Header.Get(validator.header)
 		}
 	}
-	if result.Unchanged {
-		return result, nil
-	}
-	size, err := io.Copy(w, resp.Body)
-	if err != nil {
-		return cache.ProducerResult{}, err
-	}
-	result.Size = size
 	return result, nil
 }

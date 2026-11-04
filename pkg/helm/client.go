@@ -67,7 +67,11 @@ type chartDescription struct {
 	valuesPin     string
 }
 
-func (c *Client) describeChart(ctx context.Context, hr *manifest.HelmRelease, sources Sources) (chartDescription, error) {
+func (c *Client) describeChart(
+	ctx context.Context,
+	hr *manifest.HelmRelease,
+	sources Sources,
+) (chartDescription, error) {
 	if hr == nil {
 		return chartDescription{}, errors.New("nil HelmRelease")
 	}
@@ -81,49 +85,53 @@ func (c *Client) describeChart(ctx context.Context, hr *manifest.HelmRelease, so
 	}
 	art := sources.LocalSourceArtifact(hr.ChartSource(), read)
 	if art == nil || art.FS == nil {
-		return chartDescription{}, manifest.NewError(manifest.ErrObjectNotFound, nil, fmt.Sprintf("%s %s artifact content unavailable", hr.Chart.Source.Kind, hr.Chart.RepoFullName()))
+		return chartDescription{}, manifest.NewError(
+			manifest.ErrObjectNotFound,
+			nil,
+			fmt.Sprintf("%s %s artifact content unavailable", hr.Chart.Source.Kind, hr.Chart.RepoFullName()),
+		)
 	}
 	input, pin, err := source.OperationView(ctx, art.FS)
 	if err != nil {
 		return chartDescription{}, err
 	}
-	selector := struct {
-		Pin, Path string
-		Auto      bool
-	}{Pin: pin, Path: location, Auto: auto}
+	selector := chartSelector{Pin: pin, Path: location, Auto: auto}
+	loaded, err := c.describeInput(ctx, input, selector, art.LocalPath)
+	if err != nil {
+		return chartDescription{}, err
+	}
+	loaded.artifact = *art
+	if hr.Chart.UsesSourceValuesFiles() {
+		loaded.valuesFS, loaded.valuesPin = input, pin
+	}
+	return loaded, nil
+}
+
+func (c *Client) describeInput(
+	ctx context.Context,
+	input fs.FS,
+	selector chartSelector,
+	root string,
+) (chartDescription, error) {
+	location := selector.Path
+	var err error
 	var captured capturedChart
+	var fingerprint string
 	capture := func() error {
-		location = selector.Path
-		archiveShape := false
-		if selector.Auto {
-			location = cache.FileName(input)
-			archiveShape = location == ""
-			if archiveShape {
-				location = "."
-			}
+		captured, location, err = selector.capture(ctx, input, root)
+		if err == nil {
+			fingerprint = captured.fingerprint()
 		}
-		label := location
-		if art.LocalPath != "" {
-			label = filepath.Join(art.LocalPath, filepath.FromSlash(location))
-		}
-		var missing bool
-		captured, missing, err = captureChart(ctx, input, location, archiveShape)
-		if missing {
-			return err
-		}
-		if err != nil {
-			return fmt.Errorf("load chart %s: %w", label, err)
-		}
-		return nil
+		return err
 	}
 	var cacheKey string
-	if pin != "" {
+	if selector.Pin != "" {
 		cacheKey = manifest.Fingerprint(selector)
 	} else {
 		if err := capture(); err != nil {
 			return chartDescription{}, err
 		}
-		cacheKey = captured.fingerprint()
+		cacheKey = fingerprint
 	}
 	c.chartMu.RLock()
 	loaded, cached := c.chartCache[cacheKey]
@@ -137,31 +145,25 @@ func (c *Client) describeChart(ctx context.Context, hr *manifest.HelmRelease, so
 		c.chartMu.RLock()
 		loaded, cached = c.chartCache[cacheKey]
 		c.chartMu.RUnlock()
+		if !cached && selector.Pin != "" {
+			err = capture()
+		}
+		if err != nil {
+			return chartDescription{}, err
+		}
 		if !cached {
-			if pin != "" {
-				if err := capture(); err != nil {
-					return chartDescription{}, err
-				}
-			}
-			fingerprint := cacheKey
-			if pin != "" {
-				fingerprint = captured.fingerprint()
-			}
 			loaded = chartDescription{captured: captured, fingerprint: fingerprint, key: cacheKey, location: location}
-			loaded = c.rememberDescription(loaded, nil)
+			loaded = c.rememberDescription(&loaded, nil)
 		}
 	}
-	if pin == "" {
+	if selector.Pin == "" {
 		loaded.location = location
-	}
-	loaded.artifact = *art
-	if hr.Chart.UsesSourceValuesFiles() {
-		loaded.valuesFS, loaded.valuesPin = input, pin
 	}
 	return loaded, nil
 }
 
-func (c *Client) rememberDescription(d chartDescription, fresh *renderRecord) chartDescription {
+func (c *Client) rememberDescription(description *chartDescription, fresh *renderRecord) chartDescription {
+	d := *description
 	c.chartMu.Lock()
 	if previous := c.chartCache[d.key]; previous.chart != nil {
 		d.chart, d.analysis = previous.chart, previous.analysis
@@ -180,7 +182,15 @@ func (c *Client) rememberDescription(d chartDescription, fresh *renderRecord) ch
 	if d.chart != nil {
 		d.captured = capturedChart{}
 	}
-	c.chartCache[d.key] = chartDescription{captured: d.captured, fingerprint: d.fingerprint, key: d.key, location: d.location, chart: d.chart, analysis: d.analysis, record: d.record}
+	c.chartCache[d.key] = chartDescription{
+		captured:    d.captured,
+		fingerprint: d.fingerprint,
+		key:         d.key,
+		location:    d.location,
+		chart:       d.chart,
+		analysis:    d.analysis,
+		record:      d.record,
+	}
 	c.chartMu.Unlock()
 	return d
 }
@@ -213,15 +223,19 @@ func (c *Client) decodeChart(ctx context.Context, d *chartDescription) error {
 		}
 		return fmt.Errorf("load chart %s: %w", label, err)
 	}
-	*d = c.rememberDescription(*d, nil)
+	*d = c.rememberDescription(d, nil)
 	return nil
 }
 
-func (d chartDescription) analyze() *chartAnalysis {
+func (d *chartDescription) analyze() *chartAnalysis {
 	if d.analysis != nil {
 		return d.analysis
 	}
-	analysis := &chartAnalysis{Templates: chartTemplateText(d.chart), Allowed: knownTopLevelKeys(d.chart), RequiresLoader: requiresChartLoader(d.chart)}
+	analysis := &chartAnalysis{
+		Templates:      chartTemplateText(d.chart),
+		Allowed:        knownTopLevelKeys(d.chart),
+		RequiresLoader: requiresChartLoader(d.chart),
+	}
 	if d.chart.Metadata != nil {
 		analysis.Version = d.chart.Metadata.Version
 	}
@@ -271,4 +285,34 @@ func cloneChartForRender(src *chart.Chart) *chart.Chart {
 		out.SetDependencies(clones...)
 	}
 	return &out
+}
+
+type chartSelector struct {
+	Pin  string `json:"Pin"`
+	Path string `json:"Path"`
+	Auto bool   `json:"Auto"`
+}
+
+func (s chartSelector) capture(ctx context.Context, input fs.FS, root string) (capturedChart, string, error) {
+	location := s.Path
+	archiveShape := false
+	if s.Auto {
+		location = cache.FileName(input)
+		archiveShape = location == ""
+		if archiveShape {
+			location = "."
+		}
+	}
+	label := location
+	if root != "" {
+		label = filepath.Join(root, filepath.FromSlash(location))
+	}
+	captured, missing, err := captureChart(ctx, input, location, archiveShape)
+	if missing {
+		return captured, location, err
+	}
+	if err != nil {
+		return captured, location, fmt.Errorf("load chart %s: %w", label, err)
+	}
+	return captured, location, nil
 }

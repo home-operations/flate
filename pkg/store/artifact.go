@@ -87,11 +87,18 @@ const (
 
 // ArtifactInput is the comparable projection of selected source facts.
 type ArtifactInput struct {
-	Present, Readable                                bool
-	Kind, Key, Content, Digest, LocalRoot, LocalPath string
-	InputAlias                                       bool
-	Revision, Origin                                 string
-	OriginPresent                                    bool
+	Present       bool   `json:"Present"`
+	Readable      bool   `json:"Readable"`
+	Kind          string `json:"Kind"`
+	Key           string `json:"Key"`
+	Content       string `json:"Content"`
+	Digest        string `json:"Digest"`
+	LocalRoot     string `json:"LocalRoot"`
+	LocalPath     string `json:"LocalPath"`
+	InputAlias    bool   `json:"InputAlias"`
+	Revision      string `json:"Revision"`
+	Origin        string `json:"Origin"`
+	OriginPresent bool   `json:"OriginPresent"`
 }
 
 // Input returns the selected facts without retaining filesystem handles or metadata maps.
@@ -101,7 +108,17 @@ func (a *SourceArtifact) Input(read ArtifactRead) ArtifactInput {
 	}
 	var input ArtifactInput
 	if read&ArtifactContent != 0 {
-		input = ArtifactInput{Present: true, Readable: a.FS != nil, Kind: a.Kind, Key: a.Key, Content: a.Content, Digest: a.Digest, LocalRoot: a.LocalRoot, LocalPath: a.LocalPath, InputAlias: a.InputAlias}
+		input = ArtifactInput{
+			Present:    true,
+			Readable:   a.FS != nil,
+			Kind:       a.Kind,
+			Key:        a.Key,
+			Content:    a.Content,
+			Digest:     a.Digest,
+			LocalRoot:  a.LocalRoot,
+			LocalPath:  a.LocalPath,
+			InputAlias: a.InputAlias,
+		}
 	}
 	if read&ArtifactRevision != 0 {
 		input.Revision = a.Revision
@@ -113,11 +130,12 @@ func (a *SourceArtifact) Input(read ArtifactRead) ArtifactInput {
 }
 
 type artifactRecord struct {
-	value            *SourceArtifact
-	publication      uint64
-	effective        Artifact
-	inventoryVisible bool
 	authority
+
+	value                    *SourceArtifact
+	publication              uint64
+	effective                Artifact
+	inventoryVisible         bool
 	revisionHead, originHead authority
 }
 
@@ -139,8 +157,8 @@ func (s *Store) SetArtifact(id manifest.NamedResource, artifact *SourceArtifact)
 	}
 	prev.value = artifact
 	var view capture
-	sh.captureLocked(id, sh.cells[id], &view)
-	visible := sh.projectArtifactLocked(id, &view, prev)
+	sh.captureLocked(id, new(sh.cells[id]), &view)
+	visible := sh.projectArtifactLocked(id, &view, new(prev))
 	changed := sh.publishArtifactLocked(id, &prev, visible)
 	sh.artifacts[id] = prev
 	var dispatch eventDispatch
@@ -174,7 +192,8 @@ func (sh *shard) publishArtifactLocked(id manifest.NamedResource, record *artifa
 	before.Revision, before.Origin, before.OriginPresent = "", "", false
 	after.Revision, after.Origin, after.OriginPresent = "", "", false
 	changed := ArtifactRead(0)
-	if before != after || input.Readable && input.Content == "" && mutableMaterial(record.effective) != mutableMaterial(value) {
+	if before != after ||
+		input.Readable && input.Content == "" && mutableMaterial(record.effective) != mutableMaterial(value) {
 		changed |= ArtifactContent
 	}
 	if _, source := value.(*SourceArtifact); !source && record.effective != value {
@@ -186,34 +205,14 @@ func (sh *shard) publishArtifactLocked(id manifest.NamedResource, record *artifa
 	if origin != input.Origin || originPresent != input.OriginPresent {
 		changed |= ArtifactOrigin
 	}
-	heads := [3]*authority{&record.authority, &record.revisionHead, &record.originHead}
-	var admissions uint64
-	for i, head := range heads {
-		if changed&(1<<i) != 0 {
-			sh.requireCapacityLocked(*head)
-			if head.generation == 0 {
-				admissions++
-			}
-		}
-	}
-	if record.publication == ^uint64(0) || !sh.canAdmit(admissions) {
-		sh.mu.Unlock()
-		panic("store: authority generation exhausted")
-	}
-	record.publication++
-	for i, head := range heads {
-		if changed&(1<<i) != 0 {
-			if head.generation == 0 {
-				sh.admitAbsenceLocked(id, contentFacet+facet(i))
-			}
-			*head = sh.advanceLocked(*head)
-		}
-	}
+	sh.advanceArtifactLocked(id, record, changed)
 	record.effective = value
 	return changed != 0
 }
 
 // GetArtifact returns the artifact for id, or nil if none was set.
+//
+//nolint:ireturn // The store contract supports multiple artifact implementations.
 func (s *Store) GetArtifact(id manifest.NamedResource, _ ArtifactRead) Artifact {
 	sh := s.shardFor(id)
 	sh.mu.RLock()
@@ -222,17 +221,19 @@ func (s *Store) GetArtifact(id manifest.NamedResource, _ ArtifactRead) Artifact 
 		return nil
 	}
 	var view capture
-	sh.captureLocked(id, sh.cells[id], &view)
+	sh.captureLocked(id, new(sh.cells[id]), &view)
 	artifact := sh.artifacts[id].effective
 	e, emitted := artifact.(*Emission)
 	sh.mu.RUnlock()
-	if emitted && !emissionCurrent(e, view) {
+	if emitted && !emissionCurrent(e, new(view)) {
 		return nil
 	}
 	return artifact
 }
 
-func (sh *shard) projectArtifactLocked(id manifest.NamedResource, view *capture, record artifactRecord) Artifact {
+//nolint:ireturn // The store contract supports multiple artifact implementations.
+func (sh *shard) projectArtifactLocked(id manifest.NamedResource, view *capture, recordValue *artifactRecord) Artifact {
+	record := *recordValue
 	if sh.cells[id].hidden {
 		return nil
 	}
@@ -298,10 +299,12 @@ func artifactValueEqual(prev, next Artifact) bool {
 	ac.material, bc.material = nil, nil
 	ac.Warnings, bc.Warnings = nil, nil
 	ac.ContentFingerprint, bc.ContentFingerprint = nil, nil
+	//nolint:govet // The projection clears error-bearing warnings and filesystem handles before comparing metadata.
 	return reflect.DeepEqual(ac, bc)
 }
 
-func emissionCurrent(e *Emission, view capture) bool {
+func emissionCurrent(e *Emission, viewValue *capture) bool {
+	view := *viewValue
 	input := view.child
 	binding := view.sourceBinding()
 	equal, _ := reconcileInputEqual(e.input, e.inputDoc, input.Doc)
@@ -328,7 +331,12 @@ func emissionCurrent(e *Emission, view capture) bool {
 }
 
 func (sh *shard) clearFacetsLocked(id manifest.NamedResource) {
-	sh.requireCapacityLocked(sh.conditions[id].stamp(), sh.artifacts[id].authority, sh.artifacts[id].revisionHead, sh.artifacts[id].originHead)
+	sh.requireCapacityLocked(
+		sh.conditions[id].stamp(),
+		sh.artifacts[id].authority,
+		sh.artifacts[id].revisionHead,
+		sh.artifacts[id].originHead,
+	)
 	if record := sh.conditions[id]; len(record.conditions) > 0 || record.failure != nil {
 		record.advanceLocked(sh)
 		record.conditions, record.failure = record.conditions[:0], nil
@@ -371,4 +379,30 @@ func (a *SourceArtifact) HistoryIdentity(source manifest.NamedResource) manifest
 		identity.Root = a.OriginPath(a.LocalPath)
 	}
 	return identity
+}
+
+func (sh *shard) advanceArtifactLocked(id manifest.NamedResource, record *artifactRecord, changed ArtifactRead) {
+	heads := [3]*authority{&record.authority, &record.revisionHead, &record.originHead}
+	var admissions uint64
+	for i, head := range heads {
+		if changed&(1<<i) != 0 {
+			sh.requireCapacityLocked(*head)
+			if head.generation == 0 {
+				admissions++
+			}
+		}
+	}
+	if record.publication == ^uint64(0) || !sh.canAdmit(admissions) {
+		sh.mu.Unlock()
+		panic("store: authority generation exhausted")
+	}
+	record.publication++
+	for i, head := range heads {
+		if changed&(1<<i) != 0 {
+			if head.generation == 0 {
+				sh.admitAbsenceLocked(id, contentFacet+facet(i))
+			}
+			*head = sh.advanceLocked(*head)
+		}
+	}
 }

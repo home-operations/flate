@@ -7,6 +7,7 @@ type scopeResolver interface {
 	LookupScope(yaml.TypeMeta) (bool, bool)
 }
 
+//nolint:gochecknoglobals // The registry shares discovered immutable resource scopes.
 var scopes scopeResolver
 
 // RegisterScopeResolver installs the process scope owner once during initialization.

@@ -9,6 +9,8 @@ import (
 )
 
 // AddWarning retains each complete direct warning payload once, ignoring incoming Count.
+//
+//nolint:gocritic // The SDK preserves this value input and its snapshot boundary.
 func (s *Store) AddWarning(w manifest.Warning) {
 	detail := ""
 	if len(w.Detail) > 0 {
@@ -18,6 +20,7 @@ func (s *Store) AddWarning(w manifest.Warning) {
 	}
 	related := ""
 	if len(w.Related) > 0 {
+		//nolint:errchkjson // Related contains only string resource identities with no custom JSON methods.
 		encoded, _ := json.Marshal(w.Related)
 		related = string(encoded)
 	} else {
@@ -46,49 +49,30 @@ func (s *Store) Warnings() []manifest.Warning {
 	s.warnMu.Lock()
 	out := slices.Clone(s.warnOrder)
 	s.warnMu.Unlock()
-	for _, reads := range s.assessments() {
-		start := len(out)
-		for _, warning := range reads.warnings {
-			if !slices.ContainsFunc(out[start:], func(w manifest.Warning) bool { return manifest.CompareWarning(w, warning) == 0 }) {
-				out = append(out, warning)
-			}
-		}
-	}
-	type contribution struct {
-		owner manifest.NamedResource
-		child Child
-	}
+	out = s.appendAssessmentWarnings(out)
 	for _, sh := range s.shards {
-		byID := map[manifest.NamedResource][]contribution{}
-		sh.mu.RLock()
-		for id, members := range sh.members {
-			if sh.derived && sh.cells[id].hidden {
-				continue
-			}
-			for _, m := range members {
-				if !m.declaration && m.slot.visible.Load() {
-					child := m.slot.current.Load().entries[m.position].child
-					byID[id] = append(byID[id], contribution{m.slot.id, child})
-				}
-			}
-		}
-		sh.mu.RUnlock()
+		byID := sh.warningContributions()
 		for id, contributions := range byID {
 			payload := contributions[0].child.payload
-			if len(contributions) < 2 || !slices.ContainsFunc(contributions[1:], func(c contribution) bool {
+			if len(contributions) < 2 || !slices.ContainsFunc(contributions[1:], func(c warningContribution) bool {
 				if payload == nil {
 					payload = c.child.payload
 				}
-				return !semanticEqual(contributions[0].child, c.child) || payload != nil && c.child.payload != nil && !artifactValueEqual(payload, c.child.payload)
+				return !semanticEqual(contributions[0].child, c.child) ||
+					payload != nil && c.child.payload != nil && !artifactValueEqual(payload, c.child.payload)
 			}) {
 				continue
 			}
-			slices.SortFunc(contributions, func(a, b contribution) int { return a.owner.Compare(b.owner) })
+			slices.SortFunc(contributions, func(a, b warningContribution) int { return a.owner.Compare(b.owner) })
 			owners := make([]string, len(contributions))
 			related := make([]manifest.NamedResource, 0, len(contributions)+1)
-			for i, c := range contributions {
-				owners[i] = manifest.DiagnosticFor(c.owner, s.GetObject(c.owner)).String()
-				related = append(related, c.owner)
+			{
+				cValues := contributions
+				for i := range cValues {
+					c := cValues[i]
+					owners[i] = manifest.DiagnosticFor(c.owner, s.GetObject(c.owner)).String()
+					related = append(related, c.owner)
+				}
 			}
 			winner := "static object"
 			if owner := s.EmissionOwner(id); owner != (manifest.NamedResource{}) {
@@ -103,6 +87,36 @@ func (s *Store) Warnings() []manifest.Warning {
 		}
 	}
 	slices.SortFunc(out, manifest.CompareWarning)
+	return s.compactWarnings(out)
+}
+
+func (s *Store) assessments() []*ReadSet {
+	var bundles []*ReadSet
+	for _, sh := range s.shards {
+		sh.mu.RLock()
+		for _, cell := range sh.cells {
+			if cell.links != nil {
+				if reads := cell.links.assessment.Load(); reads != nil {
+					bundles = append(bundles, reads)
+				}
+			}
+		}
+		sh.mu.RUnlock()
+	}
+	return slices.DeleteFunc(bundles, func(reads *ReadSet) bool { return !reads.Valid() })
+}
+
+type warningKey struct {
+	resource                           manifest.NamedResource
+	category, message, detail, related string
+}
+
+type warningContribution struct {
+	owner manifest.NamedResource
+	child Child
+}
+
+func (s *Store) compactWarnings(out []manifest.Warning) []manifest.Warning {
 	n := 0
 	for i := 0; i < len(out); {
 		warning := out[i]
@@ -130,23 +144,39 @@ func (s *Store) Warnings() []manifest.Warning {
 	return out[:n]
 }
 
-func (s *Store) assessments() []*ReadSet {
-	var bundles []*ReadSet
-	for _, sh := range s.shards {
-		sh.mu.RLock()
-		for _, cell := range sh.cells {
-			if cell.links != nil {
-				if reads := cell.links.assessment.Load(); reads != nil {
-					bundles = append(bundles, reads)
+func (s *Store) appendAssessmentWarnings(out []manifest.Warning) []manifest.Warning {
+	for _, reads := range s.assessments() {
+		start := len(out)
+		{
+			warningValues := reads.warnings
+			for warningIndex := range warningValues {
+				warning := warningValues[warningIndex]
+				if !slices.ContainsFunc(
+					out[start:],
+					func(w manifest.Warning) bool { return manifest.CompareWarning(w, warning) == 0 },
+				) {
+					out = append(out, warning)
 				}
 			}
 		}
-		sh.mu.RUnlock()
 	}
-	return slices.DeleteFunc(bundles, func(reads *ReadSet) bool { return !reads.Valid() })
+	return out
 }
 
-type warningKey struct {
-	resource                           manifest.NamedResource
-	category, message, detail, related string
+func (sh *shard) warningContributions() map[manifest.NamedResource][]warningContribution {
+	byID := map[manifest.NamedResource][]warningContribution{}
+	sh.mu.RLock()
+	for id, members := range sh.members {
+		if sh.derived && sh.cells[id].hidden {
+			continue
+		}
+		for _, m := range members {
+			if !m.declaration && m.slot.visible.Load() {
+				child := m.slot.current.Load().entries[m.position].child
+				byID[id] = append(byID[id], warningContribution{m.slot.id, child})
+			}
+		}
+	}
+	sh.mu.RUnlock()
+	return byID
 }

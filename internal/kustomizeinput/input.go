@@ -2,6 +2,7 @@
 package kustomizeinput
 
 import (
+	"fmt"
 	"iter"
 	"path/filepath"
 	"strconv"
@@ -42,7 +43,7 @@ type Reference struct {
 }
 
 // Rewrite updates a private render input, retaining any generator key.
-func (r Reference) Rewrite(value string) {
+func (r *Reference) Rewrite(value string) {
 	if r.key != "" {
 		value = r.key + "=" + value
 	}
@@ -68,7 +69,7 @@ func (r *Reference) Bind(doc *yaml.Node) {
 }
 
 // FieldPath returns the indexed selector for a diagnostic.
-func (r Reference) FieldPath() string {
+func (r *Reference) FieldPath() string {
 	label := r.Field
 	for _, index := range r.Indices {
 		before, after, indexed := strings.Cut(label, ".*")
@@ -94,101 +95,117 @@ type field struct {
 	kind operandKind
 }
 
-var generatorFields = []field{{".files.*", File, generator}, {".envs.*", File, plain}}
-
 // Kustomization returns direct inputs without mutating the typed document.
-//
-//nolint:staticcheck // Deprecated Kustomize fields still contribute read dependencies.
 func Kustomization(k *types.Kustomization) iter.Seq[Reference] {
 	return func(yield func(Reference) bool) {
 		if k == nil {
 			return
 		}
-		add := func(value string, f field, indices [2]int) bool {
-			if r, ok := inputReference(Reference{Path: value, Field: f.path, Role: f.role, Indices: indices}, f.kind); ok {
-				return yield(r)
-			}
-			return true
-		}
-		list := func(values []string, f field) bool {
-			for i := range values {
-				if !add(values[i], f, [2]int{i}) {
-					return false
-				}
-			}
-			return true
-		}
-		if !list(k.Resources, field{".resources.*", Resource, plain}) {
+		if !yieldResources(k, yield) || !yieldPatches(k, yield) || !yieldConfiguration(k, yield) ||
+			!yieldGenerators(k, yield) {
 			return
 		}
-		if !list(k.Bases, field{".bases.*", Resource, plain}) {
+		if !yieldList(yield, k.Generators, field{".generators.*", Configuration, plain}) ||
+			!yieldList(yield, k.Transformers, field{".transformers.*", Configuration, plain}) {
 			return
 		}
-		if !list(k.Components, field{".components.*", Component, plain}) {
-			return
-		}
-		for i := range k.Patches {
-			if !add(k.Patches[i].Path, field{".patches.*.path", File, plain}, [2]int{i}) {
-				return
-			}
-		}
-		for i := range k.PatchesJson6902 {
-			if !add(k.PatchesJson6902[i].Path, field{".patchesJson6902.*.path", File, plain}, [2]int{i}) {
-				return
-			}
-		}
-		for i := range k.PatchesStrategicMerge {
-			if !add(string(k.PatchesStrategicMerge[i]), field{".patchesStrategicMerge.*", File, strategic}, [2]int{i}) {
-				return
-			}
-		}
-		for i := range k.Replacements {
-			if !add(k.Replacements[i].Path, field{".replacements.*.path", File, plain}, [2]int{i}) {
-				return
-			}
-		}
-		if !list(k.Configurations, field{".configurations.*", File, plain}) {
-			return
-		}
-		if !list(k.Crds, field{".crds.*", File, plain}) {
-			return
-		}
-		if !add(k.OpenAPI["path"], field{".openapi.path", File, plain}, [2]int{}) {
-			return
-		}
-		generatorInputs := func(g *types.KvPairSources, inventory [3]field, index int) bool {
-			for i := range g.FileSources {
-				if !add(g.FileSources[i], inventory[0], [2]int{index, i}) {
-					return false
-				}
-			}
-			for i := range g.EnvSources {
-				if !add(g.EnvSources[i], inventory[1], [2]int{index, i}) {
-					return false
-				}
-			}
-			return add(g.EnvSource, inventory[2], [2]int{index})
-		}
-		for i := range k.ConfigMapGenerator {
-			if !generatorInputs(&k.ConfigMapGenerator[i].KvPairSources, [3]field{{".configMapGenerator.*.files.*", File, generator}, {".configMapGenerator.*.envs.*", File, plain}, {".configMapGenerator.*.env", File, plain}}, i) {
-				return
-			}
-		}
-		for i := range k.SecretGenerator {
-			if !generatorInputs(&k.SecretGenerator[i].KvPairSources, [3]field{{".secretGenerator.*.files.*", File, generator}, {".secretGenerator.*.envs.*", File, plain}, {".secretGenerator.*.env", File, plain}}, i) {
-				return
-			}
-		}
-		if !list(k.Generators, field{".generators.*", Configuration, plain}) {
-			return
-		}
-		if !list(k.Transformers, field{".transformers.*", Configuration, plain}) {
-			return
-		}
-		if !list(k.Validators, field{".validators.*", Configuration, plain}) {
-			return
+		yieldList(yield, k.Validators, field{".validators.*", Configuration, plain})
+	}
+}
+
+func yieldReference(yield func(Reference) bool, value string, f field, indices [2]int) bool {
+	if r, ok := inputReference(Reference{Path: value, Field: f.path, Role: f.role, Indices: indices}, f.kind); ok {
+		return yield(r)
+	}
+	return true
+}
+
+func yieldList(yield func(Reference) bool, values []string, f field) bool {
+	for i := range values {
+		if !yieldReference(yield, values[i], f, [2]int{i}) {
+			return false
 		}
 	}
+	return true
+}
+
+//nolint:staticcheck // Deprecated Kustomize bases still contribute read dependencies.
+func yieldResources(k *types.Kustomization, yield func(Reference) bool) bool {
+	return yieldList(yield, k.Resources, field{".resources.*", Resource, plain}) &&
+		yieldList(yield, k.Bases, field{".bases.*", Resource, plain}) &&
+		yieldList(yield, k.Components, field{".components.*", Component, plain})
+}
+
+//nolint:staticcheck // Deprecated Kustomize patch fields still contribute read dependencies.
+func yieldPatches(k *types.Kustomization, yield func(Reference) bool) bool {
+	for i := range k.Patches {
+		if !yieldReference(yield, k.Patches[i].Path, field{".patches.*.path", File, plain}, [2]int{i}) {
+			return false
+		}
+	}
+	for i := range k.PatchesJson6902 {
+		if !yieldReference(yield, k.PatchesJson6902[i].Path, field{".patchesJson6902.*.path", File, plain}, [2]int{i}) {
+			return false
+		}
+	}
+	for i := range k.PatchesStrategicMerge {
+		if !yieldReference(
+			yield,
+			string(k.PatchesStrategicMerge[i]),
+			field{".patchesStrategicMerge.*", File, strategic},
+			[2]int{i},
+		) {
+			return false
+		}
+	}
+	for i := range k.Replacements {
+		if !yieldReference(yield, k.Replacements[i].Path, field{".replacements.*.path", File, plain}, [2]int{i}) {
+			return false
+		}
+	}
+	return true
+}
+
+func yieldConfiguration(k *types.Kustomization, yield func(Reference) bool) bool {
+	return yieldList(yield, k.Configurations, field{".configurations.*", File, plain}) &&
+		yieldList(yield, k.Crds, field{".crds.*", File, plain}) &&
+		yieldReference(yield, k.OpenAPI["path"], field{".openapi.path", File, plain}, [2]int{})
+}
+
+func yieldGenerator(yield func(Reference) bool, g *types.KvPairSources, inventory [3]field, index int) bool {
+	for i := range g.FileSources {
+		if !yieldReference(yield, g.FileSources[i], inventory[0], [2]int{index, i}) {
+			return false
+		}
+	}
+	for i := range g.EnvSources {
+		if !yieldReference(yield, g.EnvSources[i], inventory[1], [2]int{index, i}) {
+			return false
+		}
+	}
+	return yieldReference(yield, g.EnvSource, inventory[2], [2]int{index})
+}
+
+func yieldGenerators(k *types.Kustomization, yield func(Reference) bool) bool {
+	for i := range k.ConfigMapGenerator {
+		if !yieldGenerator(yield, &k.ConfigMapGenerator[i].KvPairSources, [3]field{
+			{".configMapGenerator.*.files.*", File, generator},
+			{".configMapGenerator.*.envs.*", File, plain},
+			{".configMapGenerator.*.env", File, plain},
+		}, i) {
+			return false
+		}
+	}
+	for i := range k.SecretGenerator {
+		if !yieldGenerator(yield, &k.SecretGenerator[i].KvPairSources, [3]field{
+			{".secretGenerator.*.files.*", File, generator},
+			{".secretGenerator.*.envs.*", File, plain},
+			{".secretGenerator.*.env", File, plain},
+		}, i) {
+			return false
+		}
+	}
+	return true
 }
 
 // Plugin returns builtin configuration operands and whether the kind is known.
@@ -200,7 +217,7 @@ func Plugin(doc *yaml.Node) ([]Reference, bool) {
 	var inventory []field
 	switch kind.Value {
 	case "ConfigMapGenerator", "SecretGenerator":
-		inventory = generatorFields
+		inventory = []field{{".files.*", File, generator}, {".envs.*", File, plain}}
 	case "PatchTransformer", "PatchJson6902Transformer":
 		inventory = []field{{".path", File, plain}}
 	case "PatchStrategicMergeTransformer":
@@ -220,40 +237,53 @@ func Plugin(doc *yaml.Node) ([]Reference, bool) {
 func fields(doc *yaml.Node, inventory []field) []Reference {
 	var refs []Reference
 	for _, f := range inventory {
-		path := strings.TrimPrefix(f.path, ".")
-		name, rest, indexed := strings.Cut(path, ".*")
-		node := MappingValue(doc, name)
-		if node == nil {
-			continue
+		refs = appendFieldReferences(refs, doc, f)
+	}
+	return refs
+}
+
+func appendFieldReferences(refs []Reference, doc *yaml.Node, f field) []Reference {
+	path := strings.TrimPrefix(f.path, ".")
+	name, rest, indexed := strings.Cut(path, ".*")
+	node := MappingValue(doc, name)
+	if node == nil {
+		return refs
+	}
+	if !indexed {
+		if r, ok := inputReference(
+			Reference{Node: node, Path: node.Value, Field: f.path, Role: f.role},
+			f.kind,
+		); ok {
+			refs = append(refs, r)
 		}
-		if !indexed {
-			if r, ok := inputReference(Reference{Node: node, Path: node.Value, Field: f.path, Role: f.role}, f.kind); ok {
+		return refs
+	}
+	if node.Kind != yaml.SequenceNode {
+		return refs
+	}
+	for i, child := range node.Content {
+		if rest != "" {
+			child = MappingValue(child, strings.TrimPrefix(rest, "."))
+		}
+		if child != nil {
+			if r, ok := inputReference(
+				Reference{Node: child, Path: child.Value, Field: f.path, Role: f.role, Indices: [2]int{i}},
+				f.kind,
+			); ok {
 				refs = append(refs, r)
-			}
-			continue
-		}
-		if node.Kind != yaml.SequenceNode {
-			continue
-		}
-		for i, child := range node.Content {
-			if rest != "" {
-				child = MappingValue(child, strings.TrimPrefix(rest, "."))
-			}
-			if child != nil {
-				if r, ok := inputReference(Reference{Node: child, Path: child.Value, Field: f.path, Role: f.role, Indices: [2]int{i}}, f.kind); ok {
-					refs = append(refs, r)
-				}
 			}
 		}
 	}
 	return refs
 }
 
+//nolint:gocritic // Classification modifies a private copy and retains the caller's reference.
 func inputReference(r Reference, kind operandKind) (Reference, bool) {
 	if r.Path == "" || r.Node != nil && r.Node.Kind != yaml.ScalarNode {
 		return r, false
 	}
 	switch kind {
+	case plain:
 	case generator:
 		if strings.Count(r.Path, "=") > 1 {
 			return r, false // Upstream owns invalid file-source diagnostics.
@@ -282,7 +312,11 @@ func inputReference(r Reference, kind operandKind) (Reference, bool) {
 
 // Resources uses the same inline resource grammar as Kustomize's plugin loader.
 func Resources(body []byte) ([]*resource.Resource, error) {
-	return provider.NewDefaultDepProvider().GetResourceFactory().SliceFromBytes(body)
+	resources, err := provider.NewDefaultDepProvider().GetResourceFactory().SliceFromBytes(body)
+	if err != nil {
+		return nil, fmt.Errorf("parse inline resources: %w", err)
+	}
+	return resources, nil
 }
 
 // MappingValue follows upstream's case-insensitive JSON field precedence.
@@ -309,25 +343,9 @@ func MappingValue(node *yaml.Node, key string) *yaml.Node {
 		}
 	}
 	if found == nil && hasMerge {
-		for i := 0; i+1 < len(node.Content); i += 2 {
-			name, value := node.Content[i], node.Content[i+1]
-			if name.Tag != "!!merge" {
-				continue
-			}
-			if value.Kind == yaml.SequenceNode {
-				for _, merged := range value.Content {
-					if found = MappingValue(merged, key); found != nil {
-						break
-					}
-				}
-			} else {
-				found = MappingValue(value, key)
-			}
-			if found != nil {
-				break
-			}
-		}
+		found = mergedMappingValue(node, key)
 	}
+
 	if found != nil && found.Kind == yaml.AliasNode {
 		return found.Alias
 	}
@@ -373,7 +391,12 @@ func MetadataOnly(doc *yaml.Node) bool {
 		return false
 	}
 	switch kind.Value {
-	case "NamespaceTransformer", "AnnotationsTransformer", "LabelTransformer", "PrefixSuffixTransformer", "PrefixTransformer", "SuffixTransformer":
+	case "NamespaceTransformer",
+		"AnnotationsTransformer",
+		"LabelTransformer",
+		"PrefixSuffixTransformer",
+		"PrefixTransformer",
+		"SuffixTransformer":
 	default:
 		return false
 	}
@@ -390,4 +413,28 @@ func metadataFields(specs *yaml.Node) bool {
 		}
 	}
 	return true
+}
+
+func mergedMappingValue(node *yaml.Node, key string) *yaml.Node {
+	var found *yaml.Node
+
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		name, value := node.Content[i], node.Content[i+1]
+		if name.Tag != "!!merge" {
+			continue
+		}
+		if value.Kind == yaml.SequenceNode {
+			for _, merged := range value.Content {
+				if found = MappingValue(merged, key); found != nil {
+					break
+				}
+			}
+		} else {
+			found = MappingValue(value, key)
+		}
+		if found != nil {
+			break
+		}
+	}
+	return found
 }

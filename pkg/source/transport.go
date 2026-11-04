@@ -50,12 +50,18 @@ type TransportMaterial struct {
 }
 
 // ResolveTransport resolves ordered inputs using one operation's Secret snapshot.
-func ResolveTransport(secrets SecretGetter, owner manifest.DiagnosticIdentity, inputs []TransportInput) (TransportMaterial, error) {
+//
+//nolint:gocritic // The SDK accepts a value snapshot; a pointer parameter would change its call and aliasing contracts.
+func ResolveTransport(
+	secrets SecretGetter,
+	owner manifest.DiagnosticIdentity,
+	inputs []TransportInput,
+) (TransportMaterial, error) {
 	var material TransportMaterial
 	for _, input := range inputs {
 		switch input.Use {
 		case TransportProxy:
-			proxy, selected, err := resolveProxy(secrets, owner, input.Reference)
+			proxy, selected, err := resolveProxy(secrets, &owner, input.Reference)
 			if err != nil {
 				return TransportMaterial{}, err
 			}
@@ -64,7 +70,7 @@ func ResolveTransport(secrets SecretGetter, owner manifest.DiagnosticIdentity, i
 			if input.Reference == nil {
 				continue
 			}
-			cfg, certificate, identity, err := resolveTLS(secrets, owner, input)
+			cfg, certificate, identity, err := resolveTLS(secrets, &owner, input)
 			if err != nil {
 				return TransportMaterial{}, err
 			}
@@ -73,10 +79,11 @@ func ResolveTransport(secrets SecretGetter, owner manifest.DiagnosticIdentity, i
 			panic("invalid transport input use")
 		}
 	}
-	return material.captureEnvironment(), nil
+	return captureTransportEnvironment(new(material)), nil
 }
 
-func (m TransportMaterial) captureEnvironment() TransportMaterial {
+func captureTransportEnvironment(materialValue *TransportMaterial) TransportMaterial {
+	m := *materialValue
 	if m.proxyURL == nil && m.environment == nil {
 		m.environment = httpproxy.FromEnvironment()
 	}
@@ -85,6 +92,8 @@ func (m TransportMaterial) captureEnvironment() TransportMaterial {
 
 // Identity combines protocol credentials with full certificate and proxy acquisition material.
 // Returned Secret maps remain read-only.
+//
+//nolint:gocritic // SDK value methods retain bound-method snapshots and the TransportMaterial value method set.
 func (m TransportMaterial) Identity(credentials any) any {
 	var proxy any
 	if m.proxyURL != nil {
@@ -99,9 +108,13 @@ func (m TransportMaterial) Identity(credentials any) any {
 }
 
 // Certificate returns the validated client certificate, key and CA bytes.
+//
+//nolint:gocritic // SDK value methods retain bound-method snapshots and the TransportMaterial value method set.
 func (m TransportMaterial) Certificate() [3]string { return m.certificate }
 
 // ProxyComponents returns explicit proxy address, username and password for Git.
+//
+//nolint:gocritic // SDK value methods retain bound-method snapshots and the TransportMaterial value method set.
 func (m TransportMaterial) ProxyComponents() [3]string {
 	if m.proxy == nil {
 		return [3]string{}
@@ -110,21 +123,25 @@ func (m TransportMaterial) ProxyComponents() [3]string {
 }
 
 // ProxyURL selects the captured route for an actual request or redirect URL.
+//
+//nolint:gocritic // SDK value methods retain bound-method snapshots and the TransportMaterial value method set.
 func (m TransportMaterial) ProxyURL(target *url.URL) (*url.URL, error) {
 	if m.proxyURL != nil {
 		selected := *m.proxyURL
 		return &selected, nil
 	}
 	if m.environment == nil {
-		return nil, nil
+		return nil, nil //nolint:nilnil // A nil value and nil error represent an optional absence or a reusable-cache miss.
 	}
 	return m.environment.ProxyFunc()(target)
 }
 
 // NewHTTPTransport builds the concrete guarded kernel required by HTTP libraries.
+//
+//nolint:gocritic // The SDK accepts a value snapshot; a pointer parameter would change its call and aliasing contracts.
 func NewHTTPTransport(material TransportMaterial) *http.Transport {
-	material = material.captureEnvironment()
-	tr := http.DefaultTransport.(*http.Transport).Clone()
+	material = captureTransportEnvironment(new(material))
+	tr := http.DefaultTransport.(*http.Transport).Clone() //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
 	if material.config != nil {
 		tr.TLSClientConfig = material.config.Clone()
 	}
@@ -134,7 +151,8 @@ func NewHTTPTransport(material TransportMaterial) *http.Transport {
 		selectProxy := material.environment.ProxyFunc()
 		tr.Proxy = func(r *http.Request) (*url.URL, error) { return selectProxy(r.URL) }
 	}
-	ssrfguard.WrapTransport(tr, &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second})
+	const dialTimeout = 30 * time.Second
+	ssrfguard.WrapTransport(tr, &net.Dialer{Timeout: dialTimeout, KeepAlive: dialTimeout})
 	return tr
 }
 
@@ -151,8 +169,10 @@ type HTTPTransportConfig struct {
 
 // HTTPTransport selects a fully configured, guarded transport for this invocation.
 // The Network MUST be non-nil and outlive every borrower.
+//
+//nolint:gocritic // The SDK accepts a value snapshot; a pointer parameter would change its call and aliasing contracts.
 func (n *Network) HTTPTransport(cfg HTTPTransportConfig) (http.RoundTripper, error) {
-	material := cfg.Material.captureEnvironment()
+	material := captureTransportEnvironment(new(cfg.Material))
 	environment := httpproxy.Config{}
 	if material.environment != nil {
 		environment = *material.environment
@@ -203,7 +223,7 @@ func (n *Network) HTTPTransport(cfg HTTPTransportConfig) (http.RoundTripper, err
 			}
 			next = maps.Clone(*current)
 		}
-		next[key] = selected.(*networkTransport)
+		next[key] = selected.(*networkTransport) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
 		if n.transports.CompareAndSwap(current, &next) {
 			return selected, nil
 		}

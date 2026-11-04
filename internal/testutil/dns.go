@@ -20,10 +20,13 @@ func StubDNS(t *testing.T, lookup func(context.Context, string) error) {
 		t.Setenv(name, "")
 	}
 	previous := net.DefaultResolver
+	//nolint:reassign // Fixture hostnames must resolve through the process-wide DNS resolver.
 	net.DefaultResolver = &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return &dnsConn{lookup: func(name string) error { return lookup(ctx, name) }}, nil
 	}}
-	t.Cleanup(func() { net.DefaultResolver = previous })
+	t.Cleanup(func() {
+		net.DefaultResolver = previous //nolint:reassign // Restore the original process-wide DNS resolver.
+	})
 }
 
 type dnsConn struct {
@@ -34,18 +37,23 @@ type dnsConn struct {
 func (c *dnsConn) Write(p []byte) (int, error) {
 	var query dnsmessage.Message
 	if err := query.Unpack(p[2:]); err != nil {
-		return 0, err
+		return 0, fmt.Errorf("fixture DNS: %w", err)
 	}
 	if err := c.lookup(query.Questions[0].Name.String()); err != nil {
 		return 0, err
 	}
 	response := dnsmessage.Message{ID: query.ID, Response: true, RecursionAvailable: true, Questions: query.Questions}
 	if q := query.Questions[0]; q.Type == dnsmessage.TypeA {
-		response.Answers = []dnsmessage.Resource{{Header: dnsmessage.ResourceHeader{Name: q.Name, Type: q.Type, Class: q.Class}, Body: &dnsmessage.AResource{A: [4]byte{127, 0, 0, 1}}}}
+		response.Answers = []dnsmessage.Resource{
+			{
+				Header: dnsmessage.ResourceHeader{Name: q.Name, Type: q.Type, Class: q.Class},
+				Body:   &dnsmessage.AResource{A: [4]byte{127, 0, 0, 1}},
+			},
+		}
 	}
 	data, err := response.Pack()
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("fixture DNS: %w", err)
 	}
 	size := len(data)
 	if size > 1<<16-1 {
@@ -56,6 +64,7 @@ func (c *dnsConn) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+//nolint:wrapcheck // io.Reader requires the original io.EOF sentinel.
 func (c *dnsConn) Read(p []byte) (int, error) { return c.response.Read(p) }
 
 func (*dnsConn) Close() error                     { return nil }

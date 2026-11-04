@@ -17,8 +17,9 @@ import (
 	"github.com/go-git/go-git/v5/storage"
 	"github.com/go-git/go-git/v5/storage/filesystem"
 	"github.com/google/uuid"
-	"github.com/home-operations/flate/pkg/manifest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 // GitKey identifies a Git family, its normalized requested ref and recursion policy.
@@ -48,43 +49,36 @@ func (p gitProducer) identity() string {
 
 // Git acquires a private generation through the common freshness and publication path.
 // Its acquisition identity is empty on failure.
-func (c *Cache) Git(ctx context.Context, key GitKey, policy Policy, produce func(context.Context, storage.Storer, billy.Filesystem) (plumbing.Hash, error)) (*GitGeneration, string, error) {
+func (c *Cache) Git(
+	ctx context.Context,
+	key GitKey,
+	policy Policy,
+	produce func(context.Context, storage.Storer, billy.Filesystem) (plumbing.Hash, error),
+) (*GitGeneration, string, error) {
 	producer := gitProducer{key: key}
-	e, id, err := c.acquire(ctx, acquireKey{producer: producer}, policy, acquisitionCallbacks{produce: func(ctx context.Context, c *Cache, staged *payload) (*entry, error) {
-		return producer.produce(ctx, c, staged, produce)
-	}})
+	e, id, err := c.acquire(
+		ctx, new(acquireKey{producer: producer}), policy,
+		acquisitionCallbacks{produce: func(ctx context.Context, c *Cache, staged *payload) (*entry, error) {
+			return producer.produce(ctx, c, staged, produce)
+		}},
+	)
 	if err != nil {
 		return nil, "", err
 	}
 	return e.git, id, nil
 }
 
-func (p gitProducer) produce(ctx context.Context, c *Cache, staged *payload, fetch func(context.Context, storage.Storer, billy.Filesystem) (plumbing.Hash, error)) (*entry, error) {
-	g := &GitGeneration{id: uuid.NewString()}
-	e := &entry{git: g}
-	if c.store == nil {
-		g.Backing = memfs.New()
-		if p.key.RecurseSubmodules {
-			g.Worktree = memfs.New()
-		}
-	} else {
-		staged.discard = func() error {
-			if e.stored.Digest == "" {
-				return c.root.RemoveAll(generationPath(g.id))
-			}
-			return nil
-		}
-		g.Backing = osfs.New(filepath.Join(c.root.Name(), gitObjectsPath(g.id)))
-		if err := c.root.MkdirAll(gitObjectsPath(g.id), 0o750); err != nil {
-			return nil, err
-		}
-		if p.key.RecurseSubmodules {
-			g.Worktree = osfs.New(filepath.Join(c.root.Name(), gitWorktreePath(g.id)))
-			if err := c.root.MkdirAll(gitWorktreePath(g.id), 0o750); err != nil {
-				return nil, err
-			}
-		}
+func (p gitProducer) produce(
+	ctx context.Context,
+	c *Cache,
+	staged *payload,
+	fetch func(context.Context, storage.Storer, billy.Filesystem) (plumbing.Hash, error),
+) (*entry, error) {
+	e, prepareErr := p.prepareGeneration(c, staged)
+	if prepareErr != nil {
+		return nil, prepareErr
 	}
+	g := e.git
 	storer := filesystem.NewStorageWithOptions(g.Backing, objectcache.NewObjectLRU(0), filesystem.Options{})
 	if err := ctx.Err(); err != nil {
 		return nil, errors.Join(err, storer.Close())
@@ -105,11 +99,42 @@ func (p gitProducer) produce(ctx context.Context, c *Cache, staged *payload, fet
 		prefix + "revision": hash.String(), prefix + "git-ref": p.key.Ref, prefix + "git-generation": g.id,
 	}}
 	if _, err := io.WriteString(staged.writer, g.id); err != nil {
-		return nil, err
+		return nil, err //nolint:wrapcheck // The cache producer and stream adapters preserve the original error tree for replay and io sentinel handling.
 	}
 	return e, nil
 }
 
+func (p gitProducer) prepareGeneration(c *Cache, staged *payload) (*entry, error) {
+	g := &GitGeneration{id: uuid.NewString()}
+	e := &entry{git: g}
+	if c.store == nil {
+		g.Backing = memfs.New()
+		if p.key.RecurseSubmodules {
+			g.Worktree = memfs.New()
+		}
+		return e, nil
+	}
+	staged.discard = func() error {
+		if e.stored.Digest == "" {
+			return c.root.RemoveAll(generationPath(g.id))
+		}
+		return nil
+	}
+	g.Backing = osfs.New(filepath.Join(c.root.Name(), gitObjectsPath(g.id)))
+	if err := c.root.MkdirAll(gitObjectsPath(g.id), cacheDirectoryMode); err != nil {
+		return nil, err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
+	}
+	if !p.key.RecurseSubmodules {
+		return e, nil
+	}
+	g.Worktree = osfs.New(filepath.Join(c.root.Name(), gitWorktreePath(g.id)))
+	if err := c.root.MkdirAll(gitWorktreePath(g.id), cacheDirectoryMode); err != nil {
+		return nil, err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
+	}
+	return e, nil
+}
+
+//nolint:gocritic // A value descriptor preserves its snapshot without allocating through the dynamic producer interface.
 func (p gitProducer) restore(_ context.Context, c *Cache, desc ocispec.Descriptor, e *entry) error {
 	if e.git != nil {
 		return nil
@@ -120,22 +145,26 @@ func (p gitProducer) restore(_ context.Context, c *Cache, desc ocispec.Descripto
 	id, revision := a[prefix+"git-generation"], a[prefix+"revision"]
 	parsed, err := uuid.Parse(id)
 	if err != nil || parsed.String() != id || !plumbing.IsHash(revision) || a[prefix+"git-ref"] != p.key.Ref {
-		return nil
+		return nil //nolint:nilerr // This optional cache miss deliberately discards an unavailable prior result.
 	}
-	g := &GitGeneration{id: id, Commit: plumbing.NewHash(revision), Backing: osfs.New(filepath.Join(c.root.Name(), gitObjectsPath(id)))}
-	if _, err := c.root.Stat(gitObjectDataPath(id)); err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
+	g := &GitGeneration{
+		id:      id,
+		Commit:  plumbing.NewHash(revision),
+		Backing: osfs.New(filepath.Join(c.root.Name(), gitObjectsPath(id))),
+	}
+	if _, statErr := c.root.Stat(gitObjectDataPath(id)); statErr != nil {
+		if errors.Is(statErr, fs.ErrNotExist) {
 			return nil
 		}
-		return err
+		return statErr //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
 	}
 	if p.key.RecurseSubmodules {
 		g.Worktree = osfs.New(filepath.Join(c.root.Name(), gitWorktreePath(id)))
-		if _, err := c.root.Stat(gitWorktreePath(id)); err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
+		if _, statErr2 := c.root.Stat(gitWorktreePath(id)); statErr2 != nil {
+			if errors.Is(statErr2, fs.ErrNotExist) {
 				return nil
 			}
-			return err
+			return statErr2 //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
 		}
 	}
 	storer := filesystem.NewStorageWithOptions(g.Backing, objectcache.NewObjectLRU(0), filesystem.Options{})
@@ -145,10 +174,10 @@ func (p gitProducer) restore(_ context.Context, c *Cache, desc ocispec.Descripto
 	}
 	closeErr := storer.Close()
 	if errors.Is(err, plumbing.ErrObjectNotFound) || errors.Is(err, io.EOF) {
-		return closeErr
+		return closeErr //nolint:wrapcheck // The cache producer and stream adapters preserve the original error tree for replay and io sentinel handling.
 	}
-	if err := errors.Join(err, closeErr); err != nil {
-		return err
+	if joinErr := errors.Join(err, closeErr); joinErr != nil {
+		return joinErr
 	}
 	e.git, e.resolved = g, resolved
 	return nil

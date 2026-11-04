@@ -31,6 +31,7 @@ type remoteInput struct {
 
 type remoteIdentity struct {
 	store.ArtifactInput
+
 	HTTPStatus int `json:"httpStatus,omitempty"`
 }
 
@@ -41,16 +42,34 @@ func (r remoteInput) acquire(ctx context.Context, c *TreeCache, input *treeFS) (
 		if err != nil {
 			return nil, httpFailureIdentity(err), err
 		}
-		return acquired, remoteIdentity{ArtifactInput: (&store.SourceArtifact{FS: acquired, Content: cache.AcquisitionIdentity(acquired)}).Input(store.ArtifactContent)}, nil
+		return acquired, remoteIdentity{
+			ArtifactInput: (&store.SourceArtifact{FS: acquired, Content: cache.AcquisitionIdentity(acquired)}).Input(
+				store.ArtifactContent,
+			),
+		}, nil
 	case remoteGit:
 		if c.gitBase == nil {
-			return nil, remoteIdentity{}, manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("kustomization references remote git base %q but no git fetcher is wired", r.URL))
+			return nil, remoteIdentity{}, manifest.NewError(
+				manifest.ErrInput,
+				nil,
+				fmt.Sprintf("kustomization references remote git base %q but no git fetcher is wired", r.URL),
+			)
 		}
 		var artifact *store.SourceArtifact
 		var err error
 		fetch := func() {
 			if err = ctx.Err(); err == nil {
-				artifact, err = c.gitBase(ctx, GitBaseRequest{URL: r.URL, Ref: r.Ref, MaxAge: input.maxAge, Timeout: r.Timeout, Submodules: r.Submodules}, input.retry)
+				artifact, err = c.gitBase(
+					ctx,
+					GitBaseRequest{
+						URL:        r.URL,
+						Ref:        r.Ref,
+						MaxAge:     input.maxAge,
+						Timeout:    r.Timeout,
+						Submodules: r.Submodules,
+					},
+					input.retry,
+				)
 			}
 		}
 		if input.slot == nil {
@@ -67,11 +86,19 @@ func (r remoteInput) acquire(ctx context.Context, c *TreeCache, input *treeFS) (
 			return nil, remoteIdentity{}, err
 		}
 		if artifact == nil || artifact.FS == nil || artifact.Content == "" {
-			return nil, remoteIdentity{}, manifest.NewError(manifest.ErrInput, nil, "remote git base has no immutable content")
+			return nil, remoteIdentity{}, manifest.NewError(
+				manifest.ErrInput,
+				nil,
+				"remote git base has no immutable content",
+			)
 		}
 		return artifact.FS, remoteIdentity{ArtifactInput: artifact.Input(store.ArtifactContent)}, nil
 	default:
-		return nil, remoteIdentity{}, manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("unknown remote operation %d", r.Operation))
+		return nil, remoteIdentity{}, manifest.NewError(
+			manifest.ErrInput,
+			nil,
+			fmt.Sprintf("unknown remote operation %d", r.Operation),
+		)
 	}
 }
 

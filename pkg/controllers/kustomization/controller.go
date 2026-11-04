@@ -26,6 +26,7 @@ import (
 // encoded in the embedded *base.Controller, not just in code review.
 type Controller struct {
 	*base.Controller
+
 	retry cache.RetryConfig
 
 	// Trees shares remote fetches and persisted renders.
@@ -43,12 +44,14 @@ type Controller struct {
 // controller before StartLifecycle. base.Options holds the common reconcile config.
 type Options struct {
 	base.Options
+
 	// StrictSubstitutions rejects undefined variables without defaults.
 	StrictSubstitutions bool
 }
 
 type execution struct {
 	*Controller
+
 	run  base.Execution
 	data *values.StoreProvider
 }
@@ -72,18 +75,23 @@ func New(s *store.Store, t *task.Service, trees *kustomize.TreeCache, wipeSecret
 // Configure installs the post-bootstrap state. Panics if called after
 // StartLifecycle — encodes the invariant that reconcile-shaping config is
 // read-only once the controller is dispatching.
+//
+//nolint:gocritic // Configure snapshots the public value options before concurrent dispatch.
 func (c *Controller) Configure(opts Options, retry cache.RetryConfig) {
 	c.Controller.Configure(opts.Options)
 	c.retry = retry
 	c.strictSubstitutions = opts.StrictSubstitutions
 	c.restricted = opts.Filter != nil
-
 }
 
 // ReconcileNode runs id's reconcile under the dag engine, returning the blocked
 // dependency set (nil = terminalized). The
 // orchestrator's scheduler Dispatcher calls this for Kustomization nodes.
-func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
+func (c *Controller) ReconcileNode(
+	ctx context.Context,
+	id manifest.NamedResource,
+	level manifest.DrainLevel,
+) *base.Execution {
 	ex := c.newExecution(id)
 	ex.run.Dispatch(ctx, level, ex, (*execution).reconcile)
 	return &ex.run
@@ -100,8 +108,8 @@ func (c *execution) reconcile(ctx context.Context, ks *manifest.Kustomization, l
 	if err != nil {
 		return err
 	}
-	if _, err := c.run.RequireRefresh(ctx, ks, manifest.GateArtifacts, level); err != nil {
-		return err
+	if _, localErr := c.run.RequireRefresh(ctx, ks, manifest.GateArtifacts, level); localErr != nil {
+		return localErr
 	}
 	source, applyIgnore, err := kustomize.SourceInput(&c.run.Reads, ks)
 	if err != nil {
@@ -111,12 +119,24 @@ func (c *execution) reconcile(ctx context.Context, ks *manifest.Kustomization, l
 	if err != nil {
 		return err
 	}
-	return c.run.AwaitData(ctx, base.DataWait{Inputs: inputs, Resume: func(ctx context.Context, _ manifest.DrainLevel, _ []manifest.NamedResource) error {
-		return c.render(ctx, ks, source, applyIgnore)
-	}}, level)
+	return c.run.AwaitData(
+		ctx,
+		base.DataWait{
+			Inputs: inputs,
+			Resume: func(ctx context.Context, _ manifest.DrainLevel, _ []manifest.NamedResource) error {
+				return c.render(ctx, ks, source, applyIgnore)
+			},
+		},
+		level,
+	)
 }
 
-func (c *execution) render(ctx context.Context, ks *manifest.Kustomization, source *store.SourceArtifact, applyIgnore bool) error {
+func (c *execution) render(
+	ctx context.Context,
+	ks *manifest.Kustomization,
+	source *store.SourceArtifact,
+	applyIgnore bool,
+) error {
 	id := ks.Named()
 	ks, err := kustomize.Prepare(ks, c.data)
 	if err != nil {
@@ -125,18 +145,25 @@ func (c *execution) render(ctx context.Context, ks *manifest.Kustomization, sour
 	var attempt store.Emission
 	defer attempt.Finish()
 	if c.restricted {
-		_, handled, err := c.run.FingerprintDedup(ctx, id, nil, &attempt)
-		if handled || err != nil {
-			return err
+		_, handled, innerLocalErr := c.run.FingerprintDedup(ctx, id, nil, &attempt)
+		if handled || innerLocalErr != nil {
+			return innerLocalErr
 		}
-	} else if err := c.run.Checkpoint(); err != nil {
-		return err
+	} else if innerInnerLocalErr := c.run.Checkpoint(); innerInnerLocalErr != nil {
+		return innerInnerLocalErr
 	}
 
 	_, _, attempt = c.run.Reads.GetEmission(id)
 	request := kustomize.RenderRequest{
-		Source: source, ApplyIgnore: applyIgnore, SubPath: ks.Path, Spec: ks, HeldSlot: c.Tasks,
-		SkipKinds: c.SkipKinds, DependencySubstitutions: c.DependencySubstitutions, WipeSecrets: c.WipeSecrets, StrictSubstitutions: c.strictSubstitutions,
+		Source:                  source,
+		ApplyIgnore:             applyIgnore,
+		SubPath:                 ks.Path,
+		Spec:                    ks,
+		HeldSlot:                c.Tasks,
+		SkipKinds:               c.SkipKinds,
+		DependencySubstitutions: c.DependencySubstitutions,
+		WipeSecrets:             c.WipeSecrets,
+		StrictSubstitutions:     c.strictSubstitutions,
 	}
 	docs, receipt, err := kustomize.Render(ctx, c.Trees, request, c.retry)
 	if err != nil {
@@ -156,33 +183,45 @@ func (c *execution) render(ctx context.Context, ks *manifest.Kustomization, sour
 		if err != nil {
 			return err
 		}
-		return c.recordRender(ctx, &attempt, acceptance)
+		return c.recordRender(ctx, &attempt, &acceptance)
 	}
 
 	if err := kustomize.Shape(ks, docs, c.strictSubstitutions); err != nil {
 		return err
 	}
 
-	attempt.Children, attempt.Manifests, attempt.Failures = c.ParseChildren(ks, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets})
+	attempt.Children, attempt.Manifests, attempt.Failures = c.ParseChildren(
+		ks,
+		docs,
+		manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets},
+	)
 	attempt.Fingerprint, attempt.Complete, attempt.Render = fp, true, receipt
 	if err := c.run.Emit(ctx, id, &attempt, nil); err != nil {
 		return err
 	}
-	return c.recordRender(ctx, &attempt, acceptance)
+	return c.recordRender(ctx, &attempt, &acceptance)
 }
 
-func (c *execution) recordRender(ctx context.Context, attempt *store.Emission, acceptance kustomize.RenderAcceptance) error {
+func (c *execution) recordRender(
+	ctx context.Context,
+	attempt *store.Emission,
+	acceptance *kustomize.RenderAcceptance,
+) error {
 	acceptance.Receipt, acceptance.Reads, acceptance.OutputReads = attempt.Render, attempt.Reads, attempt.OutputReads
 	acceptance.Records = attempt.Footprint()
 	acceptance.Sources = attempt.SourcePaths()
 	if acceptance.Entry != nil {
 		acceptance.Sources = c.Store.ChildSourcePaths(acceptance.Owner, attempt.Children, nil)
 	}
-	return c.Trees.RecordRender(ctx, acceptance)
+	return c.Trees.RecordRender(ctx, *acceptance)
 }
 
 // PreviousRender prepares the immutable candidate with captured inputs without reconciling or acquiring sources.
-func (c *Controller) PreviousRender(ctx context.Context, obj manifest.BaseManifest, reads *store.ReadSet) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
+func (c *Controller) PreviousRender(
+	ctx context.Context,
+	obj manifest.BaseManifest,
+	reads *store.ReadSet,
+) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
 	ks, ok := obj.(*manifest.Kustomization)
 	if !ok || ctx.Err() != nil {
 		return nil, false
@@ -193,7 +232,15 @@ func (c *Controller) PreviousRender(ctx context.Context, obj manifest.BaseManife
 		if ref.Use != "substituteFrom" {
 			continue
 		}
-		availability := waiter.Available(ctx, depwait.DataDependency{DependencyRef: ref.DependencyRef, Input: data.Lookup(ref.NamedResource), Optional: ref.Optional}, manifest.DrainNone)
+		availability := waiter.Available(
+			ctx,
+			depwait.DataDependency{
+				DependencyRef: ref.DependencyRef,
+				Input:         data.Lookup(ref.NamedResource),
+				Optional:      ref.Optional,
+			},
+			manifest.DrainNone,
+		)
 		if availability.Err != nil || availability.Kind != schedule.Terminal {
 			return nil, false
 		}
@@ -207,8 +254,14 @@ func (c *Controller) PreviousRender(ctx context.Context, obj manifest.BaseManife
 		return nil, false
 	}
 	request := kustomize.RenderRequest{
-		Source: source, ApplyIgnore: ignore, SubPath: prepared.Path, Spec: prepared,
-		SkipKinds: c.SkipKinds, DependencySubstitutions: c.DependencySubstitutions, WipeSecrets: c.WipeSecrets, StrictSubstitutions: c.strictSubstitutions,
+		Source:                  source,
+		ApplyIgnore:             ignore,
+		SubPath:                 prepared.Path,
+		Spec:                    prepared,
+		SkipKinds:               c.SkipKinds,
+		DependencySubstitutions: c.DependencySubstitutions,
+		WipeSecrets:             c.WipeSecrets,
+		StrictSubstitutions:     c.strictSubstitutions,
 	}
 	docs, receipt, found := c.Trees.PreviousRender(ctx, request)
 	if !found {

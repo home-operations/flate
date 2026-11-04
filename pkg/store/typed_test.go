@@ -3,6 +3,8 @@ package store_test
 import (
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
+
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -17,11 +19,11 @@ func TestGet_ReturnsTypedObject(t *testing.T) {
 	s.AddObject(ks)
 
 	got, ok := s.Get[*manifest.Kustomization](ks.Named())
-	if !ok {
-		t.Fatalf("expected hit; got miss")
+	{
+		assert.FatalIf(t, !ok, "expected hit; got miss")
 	}
-	if got != ks {
-		t.Errorf("Get returned a different pointer; want %p got %p", ks, got)
+	{
+		assert.ErrorIf(t, got != ks, "Get returned a different pointer; want %p got %p", ks, got)
 	}
 }
 
@@ -33,11 +35,11 @@ func TestGet_MissReturnsZeroFalse(t *testing.T) {
 	id := testutil.KustomizationID("flux-system", "ghost")
 
 	got, ok := s.Get[*manifest.Kustomization](id)
-	if ok {
-		t.Fatalf("expected miss; got hit")
+	{
+		assert.FatalIf(t, ok, "expected miss; got hit")
 	}
-	if got != nil {
-		t.Errorf("missed Get should return nil pointer; got %v", got)
+	{
+		assert.ErrorIf(t, got != nil, "missed Get should return nil pointer; got %v", got)
 	}
 }
 
@@ -53,8 +55,8 @@ func TestGet_WrongTypeReturnsZeroFalse(t *testing.T) {
 
 	id := testutil.HelmReleaseID("default", "demo")
 	got, ok := s.Get[*manifest.Kustomization](id)
-	if ok {
-		t.Errorf("Get with wrong type should miss; got hit %v", got)
+	{
+		assert.ErrorIf(t, ok, "Get with wrong type should miss; got hit %v", got)
 	}
 }
 
@@ -64,8 +66,9 @@ func TestGet_WrongTypeReturnsZeroFalse(t *testing.T) {
 func TestGet_NilStoreSafe(t *testing.T) {
 	t.Parallel()
 	id := testutil.KustomizationID("flux-system", "x")
-	if got, ok := (*store.Store)(nil).Get[*manifest.Kustomization](id); ok || got != nil {
-		t.Errorf("nil store: want (nil, false); got (%v, %v)", got, ok)
+	{
+		got, ok := (*store.Store)(nil).Get[*manifest.Kustomization](id)
+		assert.ErrorIf(t, ok || got != nil, "nil store: want (nil, false); got (%v, %v)", got, ok)
 	}
 }
 
@@ -81,36 +84,53 @@ func TestListAs_TypedSlice(t *testing.T) {
 	// Add a HelmRelease to confirm kind filtering excludes other kinds.
 	s.AddObject(&manifest.HelmRelease{Name: "noisy", Namespace: "flux-system"})
 
-	s.AddObject(&manifest.RawObject{APIVersion: "example.test/v1", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "a"})
-	foreign := manifest.NamedResource{Group: "example.test", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "a"}
-	if got := s.ListAs[manifest.BaseManifest](foreign.Group, foreign.Kind); len(got) != 1 || got[0].Named() != foreign {
-		t.Fatalf("foreign collection = %v", got)
+	s.AddObject(
+		&manifest.RawObject{
+			APIVersion: "example.test/v1",
+			Kind:       manifest.KindKustomization,
+			Namespace:  "flux-system",
+			Name:       "a",
+		},
+	)
+	foreign := manifest.NamedResource{
+		Group:     "example.test",
+		Kind:      manifest.KindKustomization,
+		Namespace: "flux-system",
+		Name:      "a",
 	}
-	if got := s.ListAs[manifest.BaseManifest]("", manifest.KindKustomization); len(got) != 0 {
-		t.Fatalf("core collection borrowed noncore objects: %v", got)
+	{
+		got := s.ListAs[manifest.BaseManifest](foreign.Group, foreign.Kind)
+		assert.FatalIf(t, len(got) != 1 || got[0].Named() != foreign, "foreign collection = %v", got)
+	}
+	{
+		got := s.ListAs[manifest.BaseManifest]("", manifest.KindKustomization)
+		assert.FatalIf(t, len(got) != 0, "core collection borrowed noncore objects: %v", got)
 	}
 	core := &manifest.RawObject{APIVersion: "v1", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "a"}
 	s.AddObject(core)
-	if got := s.ListAs[*manifest.RawObject]("", manifest.KindKustomization); len(got) != 1 || got[0] != core {
-		t.Fatalf("exact core collection = %v", got)
+	{
+		got := s.ListAs[*manifest.RawObject]("", manifest.KindKustomization)
+		assert.FatalIf(t, len(got) != 1 || got[0] != core, "exact core collection = %v", got)
 	}
-	if got := s.ListAs[manifest.BaseManifest]("", ""); len(got) != 6 {
-		t.Fatalf("typed inventory = %v", got)
+	{
+		got := s.ListAs[manifest.BaseManifest]("", "")
+		assert.FatalIf(t, len(got) != 6, "typed inventory = %v", got)
 	}
-	if got := s.ListAs[manifest.BaseManifest](foreign.Group, ""); len(got) != 0 {
-		t.Fatalf("group-only collection = %v", got)
+	{
+		got := s.ListAs[manifest.BaseManifest](foreign.Group, "")
+		assert.FatalIf(t, len(got) != 0, "group-only collection = %v", got)
 	}
 	got := s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)
-	if len(got) != 3 {
-		t.Fatalf("expected 3 KSes; got %d", len(got))
+	{
+		assert.FatalIf(t, len(got) != 3, "expected 3 KSes; got %d", len(got))
 	}
 	seen := map[string]bool{}
 	for _, ks := range got {
 		seen[ks.Name] = true
 	}
 	for _, n := range []string{"a", "b", "c"} {
-		if !seen[n] {
-			t.Errorf("missing KS %q", n)
+		{
+			assert.ErrorIf(t, !seen[n], "missing KS %q", n)
 		}
 	}
 }
@@ -118,8 +138,12 @@ func TestListAs_TypedSlice(t *testing.T) {
 // TestListAs_NilStoreReturnsNil mirrors Get's nil-store guard.
 func TestListAs_NilStoreReturnsNil(t *testing.T) {
 	t.Parallel()
-	if got := (*store.Store)(nil).ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization); got != nil {
-		t.Errorf("nil store: want nil slice; got %v", got)
+	{
+		got := (*store.Store)(nil).ListAs[*manifest.Kustomization](
+			manifest.FluxKustomizeDomain,
+			manifest.KindKustomization,
+		)
+		assert.ErrorIf(t, got != nil, "nil store: want nil slice; got %v", got)
 	}
 }
 
@@ -130,10 +154,10 @@ func TestListAs_EmptyKindReturnsEmpty(t *testing.T) {
 	t.Parallel()
 	s := store.New()
 	got := s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)
-	if got == nil {
-		t.Errorf("want empty slice, not nil")
+	{
+		assert.ErrorIf(t, got == nil, "want empty slice, not nil")
 	}
-	if len(got) != 0 {
-		t.Errorf("want length 0; got %d", len(got))
+	{
+		assert.ErrorIf(t, len(got) != 0, "want length 0; got %d", len(got))
 	}
 }

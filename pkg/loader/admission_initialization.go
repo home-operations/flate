@@ -1,0 +1,629 @@
+package loader
+
+import (
+	"context"
+	"maps"
+	"path/filepath"
+	"slices"
+
+	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/safepath"
+	"github.com/home-operations/flate/pkg/store"
+)
+
+//nolint:funlen // Claims and restoration worklists MUST grow in this frame to retain stack allocation.
+func (c *admissionClosure) start(
+	ctx context.Context,
+	materializers func(materializerDemand, manifest.NamedResource) bool,
+) error {
+	c.collecting = true
+	c.queue = c.queue[:0]
+	if err := c.admitChangedRoots(ctx); err != nil {
+		return err
+	}
+	objects := c.loader.Store.Objects()
+	c.indexStartObjects(objects)
+
+	edges := make([]admissionStartEdge, 0, len(c.identities))
+	link := func(from, to manifest.NamedResource) {
+		state := c.states[from]
+		edges = append(
+			edges,
+			admissionStartEdge{consumer: to, next: state.consumer, generation: c.states[to].generation},
+		)
+		state.consumer = len(edges)
+		c.states[from] = state
+	}
+
+	var restorations []admissionStartRestoration
+
+	var seeds admissionSeeds
+
+	var claims []admissionStartClaim
+	claimFile := func(id manifest.NamedResource, file string, ancestor bool) {
+		state := c.states[id]
+		claims = append(claims, admissionStartClaim{file: file, next: state.claim, ancestor: ancestor})
+		state.claim = len(claims)
+		c.states[id] = state
+	}
+	for i := range c.comparisonSources().names {
+		source := c.comparisons.names[i].source
+		for file := range c.sourceFiles(source) {
+			c.seedChangedReaders(file)
+			index := *c.loader.Index
+			index.Readers = nil
+			owners, ancestors := index.OwnersOfFile(file)
+			for _, owner := range owners {
+				claimFile(owner, file, false)
+			}
+			for _, ancestor := range ancestors {
+				claimFile(ancestor, file, true)
+			}
+		}
+	}
+	known := make([]bool, len(c.loader.Options.Selection.Roots))
+	scan := func(id manifest.NamedResource) {
+		obj, record, changed := c.prepareInitialIdentity(id)
+		seeds.scanReferences(c, id, obj, link)
+		c.linkInitialParent(id, &record, obj, link)
+		productions := seeds.scanProductions(c, id, obj, link)
+		c.recordDirectState(id, &record, changed, claims)
+		c.noteKnownSelection(id, obj, productions, known)
+	}
+	for _, identity := range c.identities {
+		id := identity.id
+		if err := ctx.Err(); err != nil {
+			return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		}
+		scan(id)
+		restorations = c.recordInitialRestorations(id, restorations)
+	}
+	c.queue = slices.Grow(c.queue, len(c.states))
+	for {
+		c.prepareInitialChanges(seeds, edges)
+		//nolint:intrange // Change propagation MUST extend the worklist during traversal.
+		for cursor := 0; cursor < len(c.queue); cursor++ {
+			id := c.queue[cursor]
+			c.propagateInitialChange(id, edges)
+		}
+		{
+			rescanned, err := c.rescanInitialChanges(ctx, edges, restorations, scan)
+			if err != nil {
+				return err
+			}
+			if !rescanned {
+				break
+			}
+		}
+	}
+	c.admitInitialStates(claims)
+	c.finishStart(known, materializers)
+
+	return nil
+}
+
+func (c *admissionClosure) admitChangedRoots(ctx context.Context) error {
+	for _, root := range c.roots {
+		occurrences, err := c.loader.Occurrences(ctx, filepath.Join(c.loader.SourceRoot, filepath.FromSlash(root)), "")
+		if err != nil {
+			return err
+		}
+		matches := c.rootMatches(root, occurrences)
+		entry := filepath.Join(c.loader.SourceRoot, filepath.FromSlash(root)) == c.loader.entryPath &&
+			c.loader.Options.Selection.Matches(manifest.NamedResource{})
+		if !matches && !entry {
+			continue
+		}
+		changed := entry || !c.loader.Options.Selection.Changed || c.loader.Options.Changes == nil
+		{
+			visitValues := c.loader.scopeWalk(new(graphVisit{root: c.loader.SourceRoot, dir: root}))
+			for visitIndex := range visitValues {
+				visit := visitValues[visitIndex]
+				changed = changed || c.fileChanged(manifest.BootstrapSourceID, visit.coordinate)
+			}
+		}
+		if changed {
+			c.proposal.Blocked = append(c.proposal.Blocked, root)
+		}
+	}
+	return nil
+}
+
+func (c *admissionClosure) rootMatches(root string, occurrences []Occurrence) bool {
+	matches := slices.ContainsFunc(
+		occurrences,
+		func(o Occurrence) bool { return c.loader.Options.Selection.Matches(o.Identity) },
+	)
+	if !matches {
+		delta, _, _ := c.delta(manifest.BootstrapSourceID)
+		for id, input := range delta.Inputs(manifest.NamedResource{}) {
+			if c.loader.Options.Selection.Matches(id) &&
+				slices.ContainsFunc(input.Declarations, func(file string) bool {
+					return safepath.Contains(c.loader.SourceRoot, filepath.Join(c.loader.SourceRoot, root)) &&
+						safepath.Contains(
+							filepath.Join(c.loader.SourceRoot, root),
+							filepath.Join(c.loader.SourceRoot, filepath.FromSlash(file)),
+						)
+				}) {
+				matches = true
+				break
+			}
+		}
+	}
+
+	return matches
+}
+
+func (c *admissionClosure) resetComparisons() {
+	if c.comparisons != nil {
+		if c.comparisons.changed {
+			c.publishComparisonBindings()
+			c.comparisons.changed = false
+		}
+		clear(c.comparisons.bindings)
+		clear(c.comparisons.storage[len(c.comparisons.names):])
+		c.comparisons.storage = c.comparisons.storage[:len(c.comparisons.names)]
+		for i := range c.comparisons.names {
+			evidence := c.comparisons.names[i]
+			evidence.bound, evidence.paths = false, nil
+			c.comparisons.bindings[evidence.source] = evidence
+		}
+	}
+}
+
+func (c *admissionClosure) finishStart(
+	known []bool,
+	materializers func(materializerDemand, manifest.NamedResource) bool,
+) {
+	slices.Sort(c.proposal.Namespaces)
+	c.proposal.Namespaces = slices.Compact(c.proposal.Namespaces)
+	for i, target := range c.loader.Options.Selection.Roots {
+		if !known[i] || target.Name == "" && target.Namespace != "" {
+			materializers(materializerDemand{target: target, source: c.loader.SourceRoot}, manifest.NamedResource{})
+		}
+	}
+	for _, id := range c.loader.Options.HistoryOwners {
+		if !c.replace[id] {
+			c.add(id, admissionRole{needed: true})
+		}
+	}
+	c.queue = c.queue[:0]
+	c.collecting = false
+	for id, state := range c.states {
+		if state.role.needed {
+			c.queue = append(c.queue, id)
+		}
+	}
+}
+
+func (c *admissionClosure) publishComparisonBindings() {
+	for {
+		previous := c.loader.bindings.Load()
+		next := make(map[manifest.NamedResource]admissionSource, len(c.comparisons.bindings))
+		if previous != nil {
+			maps.Copy(next, *previous)
+		}
+		for source, evidence := range c.comparisons.bindings {
+			if evidence.bound {
+				next[source] = *evidence
+			}
+		}
+		if c.loader.bindings.CompareAndSwap(previous, &next) {
+			break
+		}
+	}
+}
+
+func (c *admissionClosure) indexStartObjects(objects []manifest.BaseManifest) {
+	capacity := max(len(c.loader.Index.Records), len(objects))
+	if c.states == nil {
+		c.states = make(map[manifest.NamedResource]admissionState, capacity)
+	}
+	c.identities = make([]admissionIdentity, 0, capacity)
+	index := func(id manifest.NamedResource) {
+		state := c.states[id]
+		if state.listed {
+			return
+		}
+		state.listed = true
+		state.ordinal = len(c.identities) + 1
+		c.states[id] = state
+		c.identities = append(c.identities, admissionIdentity{id: id})
+	}
+	for id := range c.loader.Index.Records {
+		index(id)
+	}
+	for _, records := range c.accepted {
+		for id := range records {
+			index(id)
+		}
+	}
+	for _, obj := range objects {
+		index(obj.Named())
+	}
+	delta, _, _ := c.delta(manifest.BootstrapSourceID)
+	for id := range delta.Inputs(manifest.NamedResource{}) {
+		if c.changedInput(id, id) {
+			index(id)
+		}
+	}
+}
+
+type admissionStartEdge struct {
+	consumer         manifest.NamedResource
+	next, generation int
+}
+
+type admissionStartRestoration struct {
+	child manifest.NamedResource
+	next  int
+}
+
+type admissionStartSeed struct {
+	target, origin   manifest.NamedResource
+	generation       int
+	requiresConsumer bool
+}
+
+type admissionStartClaim struct {
+	file     string
+	next     int
+	ancestor bool
+}
+
+func (s *admissionSeeds) scanReferences(
+	c *admissionClosure,
+	id manifest.NamedResource,
+	obj manifest.BaseManifest,
+	link func(from, to manifest.NamedResource),
+) {
+	for ref := range c.references(id, obj) {
+		if !c.reverse(id, obj, new(ref)) {
+			continue
+		}
+		inputs, err := c.matchingInputs(new(ref), true)
+		if err != nil {
+			continue
+		}
+		for _, input := range inputs {
+			if c.changedInput(id, input) {
+				*s = append(
+					*s,
+					admissionStartSeed{target: input, origin: id, generation: c.states[id].generation},
+				)
+			}
+			link(input, id)
+		}
+	}
+}
+
+func (s *admissionSeeds) scanProductions(
+	c *admissionClosure,
+	id manifest.NamedResource,
+	obj manifest.BaseManifest,
+	link func(from, to manifest.NamedResource),
+) []manifest.Production {
+	productions := c.productions(id)
+	{
+		pValues := productions
+		for pIndex := range pValues {
+			p := pValues[pIndex]
+			owner := p.Materializer(id)
+			if owner == (manifest.NamedResource{}) && p.Owner != (manifest.NamedResource{}) {
+				continue
+			}
+			if p.Declaration != (manifest.NamedResource{}) {
+				if p.Authored == id && p.Declaration != id {
+					continue
+				}
+				owner = p.Declaration
+				if c.changedProduction(p) {
+					*s = append(
+						*s,
+						admissionStartSeed{
+							target:           owner,
+							origin:           id,
+							generation:       c.states[id].generation,
+							requiresConsumer: true,
+						},
+					)
+				}
+			}
+			if owner != id && owner != (manifest.NamedResource{}) && !owner.ReportHidden() &&
+				!c.unchangedDeclaration(id, p.Owner, obj) {
+				link(owner, id)
+			}
+		}
+	}
+	return productions
+}
+
+type admissionSeeds []admissionStartSeed
+
+func (c *admissionClosure) recordDirectState(
+	id manifest.NamedResource,
+	record *manifest.DiscoveryRecord,
+	changed bool,
+	claims []admissionStartClaim,
+) {
+	state := c.states[id]
+	state.direct = changed
+	state.eligible = c.loader.Options.Selection.Matches(id)
+	state.declarationChanged = state.eligible && !changed &&
+		(c.fileChanged(c.source(id), record.File) || c.inputsChanged(c.source(id), record.Inputs))
+	for next := state.claim; next != 0; next = claims[next-1].next {
+		claim := claims[next-1]
+		if claim.ancestor {
+			continue
+		}
+		for source := range c.sources(id) {
+			state.direct = state.direct ||
+				c.changedClaim(new(manifest.FileReader{Reader: id, Source: source}), claim.file)
+		}
+	}
+	c.states[id] = state
+}
+
+func (c *admissionClosure) noteKnownSelection(
+	id manifest.NamedResource,
+	obj manifest.BaseManifest,
+	productions []manifest.Production,
+	known []bool,
+) {
+	for i, target := range c.loader.Options.Selection.Roots {
+		if !known[i] && id.Group == target.Group && id.Kind == target.Kind &&
+			(target.Name == "" || id.Name == target.Name) &&
+			(target.Namespace == "" || id.Namespace == target.Namespace) &&
+			(c.loader.IsFileIndexed(id) || obj != nil || len(productions) != 0) {
+			known[i] = true
+		}
+	}
+}
+
+func (c *admissionClosure) activateInitialSeeds(seeds admissionSeeds, edges []admissionStartEdge) {
+	{
+		seedValues := seeds
+		for seedIndex := range seedValues {
+			seed := seedValues[seedIndex]
+			state := c.states[seed.origin]
+			if seed.generation != state.generation {
+				continue
+			}
+			if !seed.requiresConsumer {
+				c.markChanged(seed.target)
+				continue
+			}
+			for next := state.consumer; next != 0; next = edges[next-1].next {
+				edge := edges[next-1]
+				if edge.generation == c.states[edge.consumer].generation {
+					c.markChanged(seed.target)
+					break
+				}
+			}
+		}
+	}
+}
+
+func (c *admissionClosure) propagateInitialChange(id manifest.NamedResource, edges []admissionStartEdge) {
+	for next := c.states[id].consumer; next != 0; next = edges[next-1].next {
+		edge := edges[next-1]
+		consumer := edge.consumer
+		if edge.generation != c.states[consumer].generation || c.states[consumer].changed {
+			continue
+		}
+		obj := c.object(consumer)
+		unchanged := false
+		for ref := range c.references(consumer, obj) {
+			if ref.NamedResource != id {
+				continue
+			}
+			changed, known := c.outputChanged(consumer, new(ref), obj)
+			unchanged = known && !changed
+			if !unchanged {
+				break
+			}
+		}
+		if !unchanged {
+			c.markChanged(consumer)
+			c.queue = append(c.queue, consumer)
+		}
+	}
+}
+
+func (c *admissionClosure) seedChangedReaders(file string) {
+	for reader := range c.loader.Index.ReadersOfFile(file) {
+		if c.changedClaim(new(reader), file) {
+			if reader.Materialize {
+				if !c.replace[reader.Reader] {
+					c.add(reader.Reader, admissionRole{needed: true})
+				}
+				continue
+			}
+			state := c.states[reader.Reader]
+			state.seed = true
+			c.states[reader.Reader] = state
+		}
+	}
+}
+
+func (c *admissionClosure) admitAncestorClaims(
+	id manifest.NamedResource,
+	state *admissionState,
+	claims []admissionStartClaim,
+) {
+	for next := state.claim; next != 0; next = claims[next-1].next {
+		claim := claims[next-1]
+		if !claim.ancestor {
+			continue
+		}
+		for source := range c.sources(id) {
+			if c.changedClaim(new(manifest.FileReader{Reader: id, Source: source}), claim.file) {
+				c.add(id, admissionRole{needed: true})
+			}
+		}
+	}
+}
+
+func (c *admissionClosure) selectInitialState(id manifest.NamedResource, state *admissionState) {
+	if !state.listed {
+		return
+	}
+	if state.changed && c.loader.Options.Selection.MatchesScope(id) {
+		c.add(id, admissionRole{needed: true, selected: state.eligible && !id.ReportHidden(), dirty: true})
+		return
+	}
+	if !state.eligible {
+		return
+	}
+	if state.changed || !c.loader.Options.Selection.Changed || c.loader.Options.Changes == nil {
+		c.add(id, admissionRole{needed: true, selected: !id.ReportHidden(), dirty: true})
+	} else if state.declarationChanged {
+		c.add(id, admissionRole{needed: true, selected: true})
+	}
+}
+
+func (c *admissionClosure) recordInitialEntry(id manifest.NamedResource, entry *manifest.NamedResource) {
+	if id.ReportHidden() {
+		if producer, ok := c.object(id).(interface {
+			EmissionPolicy() manifest.EmissionPolicy
+		}); ok {
+			policy := producer.EmissionPolicy()
+			if policy.DocumentScope {
+				*entry = id
+			}
+		}
+	}
+}
+
+func (c *admissionClosure) rescanInitialChanges(
+	ctx context.Context,
+	edges []admissionStartEdge,
+	restorations []admissionStartRestoration,
+	scan func(manifest.NamedResource),
+) (bool, error) {
+	c.queue = c.queue[:0]
+	rescan := func(id manifest.NamedResource) {
+		state := c.states[id]
+		if state.rescan {
+			return
+		}
+		state.rescan = true
+		c.states[id] = state
+		c.queue = append(c.queue, id)
+	}
+	for owner, replacing := range c.replace {
+		if !replacing || !c.states[owner].changed {
+			continue
+		}
+		c.replace[owner] = false
+		rescan(owner)
+		for next := c.states[owner].restoration; next != 0; next = restorations[next-1].next {
+			rescan(restorations[next-1].child)
+		}
+	}
+	if len(c.queue) == 0 {
+		return false, nil
+	}
+	c.resetComparisons()
+	for i := range c.identities {
+		identity := &c.identities[i]
+		identity.stableOwner, identity.stableObject = 0, nil
+	}
+	clear(c.historyProductions)
+	//nolint:intrange // rescan MUST extend the worklist during traversal.
+	for cursor := 0; cursor < len(c.queue); cursor++ {
+		for next := c.states[c.queue[cursor]].consumer; next != 0; next = edges[next-1].next {
+			edge := edges[next-1]
+			if edge.generation == c.states[edge.consumer].generation {
+				rescan(edge.consumer)
+			}
+		}
+	}
+	for _, id := range c.queue {
+		if err := ctx.Err(); err != nil {
+			return false, err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		}
+		scan(id)
+		state := c.states[id]
+		state.rescan = false
+		c.states[id] = state
+	}
+	return true, nil
+}
+
+func (c *admissionClosure) prepareInitialChanges(seeds admissionSeeds, edges []admissionStartEdge) {
+	c.queue = c.queue[:0]
+	for id, state := range c.states {
+		state.changed = state.seed || state.direct
+		c.states[id] = state
+	}
+	c.activateInitialSeeds(seeds, edges)
+	for id, state := range c.states {
+		if state.changed {
+			c.queue = append(c.queue, id)
+		}
+	}
+}
+
+func (c *admissionClosure) admitInitialStates(claims []admissionStartClaim) {
+	var entry manifest.NamedResource
+	for id, state := range c.states {
+		c.recordInitialEntry(id, &entry)
+		if state.changed && !id.ReportHidden() && id.Namespace != "" {
+			c.proposal.Namespaces = append(c.proposal.Namespaces, id.Namespace)
+		}
+		c.admitAncestorClaims(id, &state, claims)
+		c.selectInitialState(id, &state)
+	}
+	if entry != (manifest.NamedResource{}) {
+		status, _ := c.objects.GetStatus(entry)
+		if status.Outcome() == store.OutcomeFailed {
+			c.add(entry, admissionRole{needed: true})
+		}
+	}
+}
+
+func (c *admissionClosure) linkInitialParent(
+	id manifest.NamedResource,
+	record *manifest.DiscoveryRecord,
+	obj manifest.BaseManifest,
+	link func(from, to manifest.NamedResource),
+) {
+	if parent := record.Parent; parent != (manifest.NamedResource{}) && parent != id && !parent.ReportHidden() &&
+		!c.unchangedDeclaration(id, parent, obj) {
+		link(parent, id)
+	}
+}
+
+//nolint:ireturn // Identity preparation MUST preserve the polymorphic manifest contract.
+func (c *admissionClosure) prepareInitialIdentity(
+	id manifest.NamedResource,
+) (manifest.BaseManifest, manifest.DiscoveryRecord, bool) {
+	state := c.states[id]
+	state.generation++
+	c.states[id] = state
+	obj := c.object(id)
+	record := c.record(id)
+	changed := c.affected(id, obj) || c.changedInput(id, id)
+	return obj, record, changed
+}
+
+func (c *admissionClosure) recordInitialRestorations(
+	id manifest.NamedResource,
+	restorations []admissionStartRestoration,
+) []admissionStartRestoration {
+	{
+		productionValues2 := c.states[id].productions
+		for productionIndex2 := range productionValues2 {
+			production := productionValues2[productionIndex2]
+			if !c.replace[production.Owner] {
+				continue
+			}
+			state := c.states[production.Owner]
+			restorations = append(restorations, admissionStartRestoration{child: id, next: state.restoration})
+			state.restoration = len(restorations)
+			c.states[production.Owner] = state
+		}
+	}
+	return restorations
+}

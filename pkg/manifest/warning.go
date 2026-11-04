@@ -111,6 +111,8 @@ const (
 )
 
 // CompareWarning orders warnings by category, resource, message and ordered detail.
+//
+//nolint:gocritic // The SDK preserves this value input and its snapshot boundary.
 func CompareWarning(a, b Warning) int {
 	return cmp.Or(
 		cmp.Compare(a.Category, b.Category),

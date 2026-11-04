@@ -9,7 +9,9 @@ import (
 
 // normalizeEndpoint splits a Flux-style endpoint into the
 // host[:port] form minio-go expects and a tls flag.
-func normalizeEndpoint(endpoint string, insecure bool) (host string, secure bool, err error) {
+func normalizeEndpoint(endpoint string, insecure bool) (string, bool, error) {
+	var host string
+	var secure bool
 	switch {
 	case strings.HasPrefix(endpoint, "https://"):
 		host, secure = strings.TrimPrefix(endpoint, "https://"), true

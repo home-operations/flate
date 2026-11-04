@@ -28,6 +28,8 @@ import (
 // Inputs, InputsFrom, Resources, ResourcesTemplate, InputStrategy,
 // DependsOn, ServiceAccountName, Wait to the top level for ergonomic
 // access.
+//
+//nolint:embeddedstructfieldcheck // The SDK field order preserves serialized document order.
 type ResourceSet struct {
 	Name      string `json:"name"                yaml:"name"`
 	Namespace string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
@@ -48,10 +50,17 @@ func (r *ResourceSet) Suspended() bool { return r.Suspend }
 
 // Named identifies the ResourceSet.
 func (r *ResourceSet) Named() NamedResource {
-	return NamedResource{Group: kindTable[kindResourceSet].Group, Kind: KindResourceSet, Namespace: r.Namespace, Name: r.Name}
+	return NamedResource{
+		Group:     kindTable[kindResourceSet].Group,
+		Kind:      KindResourceSet,
+		Namespace: r.Namespace,
+		Name:      r.Name,
+	}
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (r *ResourceSet) WithNamespace(namespace string) BaseManifest {
 	out := *r
 	out.Namespace = namespace
@@ -74,24 +83,46 @@ func parseResourceSet(doc map[string]any) (*ResourceSet, error) {
 	for i, dep := range cr.Spec.DependsOn {
 		gv, err := schema.ParseGroupVersion(dep.APIVersion)
 		if err != nil || gv.Version == "" {
-			return nil, NewError(ErrInput, fmt.Errorf("ResourceSet %w", field.Invalid(field.NewPath("spec", "dependsOn").Index(i).Child("apiVersion"), dep.APIVersion, "must have a valid version")), "")
+			return nil, NewError(
+				ErrInput,
+				fmt.Errorf(
+					"ResourceSet %w",
+					field.Invalid(
+						field.NewPath(specKey, dependsOnKey).Index(i).Child(apiVersionKey),
+						dep.APIVersion,
+						"must have a valid version",
+					),
+				),
+				"",
+			)
 		}
 		scopes.ResolveScope(yaml.TypeMeta{APIVersion: dep.APIVersion, Kind: dep.Kind})
 	}
-	spec, _ := doc["spec"].(map[string]any)
+	spec, _ := doc[specKey].(map[string]any)
 	inputsFrom, _ := spec["inputsFrom"].([]any)
 	for i, ref := range cr.Spec.InputsFrom {
 		explicit := ref.APIVersion != ""
 		if i < len(inputsFrom) {
 			raw, _ := inputsFrom[i].(map[string]any)
-			_, explicit = raw["apiVersion"]
+			_, explicit = raw[apiVersionKey]
 		}
 		if !explicit {
 			continue
 		}
 		gv, err := schema.ParseGroupVersion(ref.APIVersion)
 		if err != nil || gv.Version == "" {
-			return nil, NewError(ErrInput, fmt.Errorf("ResourceSet %w", field.Invalid(field.NewPath("spec", "inputsFrom").Index(i).Child("apiVersion"), ref.APIVersion, "must have a valid version")), "")
+			return nil, NewError(
+				ErrInput,
+				fmt.Errorf(
+					"ResourceSet %w",
+					field.Invalid(
+						field.NewPath(specKey, "inputsFrom").Index(i).Child(apiVersionKey),
+						ref.APIVersion,
+						"must have a valid version",
+					),
+				),
+				"",
+			)
 		}
 	}
 	return &ResourceSet{
@@ -109,6 +140,8 @@ func parseResourceSet(doc map[string]any) (*ResourceSet, error) {
 //
 // Static inputs use defaultValues, and OCIArtifactTag inputs use registry tags.
 // Other dynamic types require pre-baked status.exportedInputs.
+//
+//nolint:embeddedstructfieldcheck // The SDK field order preserves serialized document order.
 type ResourceSetInputProvider struct {
 	Name      string `json:"name"                yaml:"name"`
 	Namespace string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
@@ -121,13 +154,20 @@ type ResourceSetInputProvider struct {
 
 // Named identifies the ResourceSetInputProvider.
 func (p *ResourceSetInputProvider) Named() NamedResource {
-	return NamedResource{Group: kindTable[kindResourceSetInputProvider].Group, Kind: KindResourceSetInputProvider, Namespace: p.Namespace, Name: p.Name}
+	return NamedResource{
+		Group:     kindTable[kindResourceSetInputProvider].Group,
+		Kind:      KindResourceSetInputProvider,
+		Namespace: p.Namespace,
+		Name:      p.Name,
+	}
 }
 
 // Suspended reports whether reconciliation is paused on this resource.
 func (p *ResourceSetInputProvider) Suspended() bool { return false }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (p *ResourceSetInputProvider) WithNamespace(namespace string) BaseManifest {
 	out := *p
 	out.Namespace = namespace
@@ -216,36 +256,9 @@ func (p *ResourceSetInputProvider) InputPlan() (ProviderInputPlan, error) {
 
 // SelectTags applies flux-operator's filters, stable ordering and limit to registry tags.
 func (p *ResourceSetInputProvider) SelectTags(tags []string) ([]string, error) {
-	var include, exclude *regexp.Regexp
-	var constraint *semver.Constraints
-	if filter := p.Filter; filter != nil {
-		for _, field := range []struct {
-			name, pattern string
-			target        **regexp.Regexp
-		}{
-			{"includeBranch", filter.IncludeBranch, &include},
-			{"includeTag", filter.IncludeTag, &include},
-			{"includeEnvironment", filter.IncludeEnvironment, &include},
-			{"excludeBranch", filter.ExcludeBranch, &exclude},
-			{"excludeTag", filter.ExcludeTag, &exclude},
-			{"excludeEnvironment", filter.ExcludeEnvironment, &exclude},
-		} {
-			if field.pattern == "" {
-				continue
-			}
-			compiled, err := regexp.Compile(field.pattern)
-			if err != nil {
-				return nil, NewError(ErrInput, fmt.Errorf("invalid %s regex: %w", field.name, err), "")
-			}
-			*field.target = compiled
-		}
-		if filter.Semver != "" {
-			var err error
-			constraint, err = semver.NewConstraint(filter.Semver)
-			if err != nil {
-				return nil, NewError(ErrInput, fmt.Errorf("invalid semver expression: %w", err), "")
-			}
-		}
+	include, exclude, constraint, err := p.tagFilters()
+	if err != nil {
+		return nil, err
 	}
 	type parsedTag struct {
 		name    string
@@ -259,7 +272,7 @@ func (p *ResourceSetInputProvider) SelectTags(tags []string) ([]string, error) {
 		parsed := parsedTag{name: tag}
 		if constraint != nil {
 			// Flux ParseVersion requires three dot-separated components before SemVer parsing.
-			if strings.Count(tag, ".") < 2 {
+			if strings.Count(tag, ".") < semverSeparatorCount {
 				continue
 			}
 			v, err := semver.NewVersion(tag)
@@ -290,7 +303,7 @@ func (p *ResourceSetInputProvider) TagInputs(tag, digest string) (fluxopv1.Resou
 		return nil, NewError(ErrInput, fmt.Errorf("defaultValues: %w", err), "")
 	}
 	inputs, err := fluxopv1.NewResourceSetInput(defaults, map[string]any{
-		"id": strconv.FormatUint(uint64(adler32.Checksum([]byte(tag))), 10), "tag": tag, "digest": digest,
+		"id": strconv.FormatUint(uint64(adler32.Checksum([]byte(tag))), 10), tagKey: tag, "digest": digest,
 	})
 	if err != nil {
 		return nil, NewError(ErrInput, fmt.Errorf("tag %q inputs: %w", tag, err), "")
@@ -345,7 +358,7 @@ func (r *ResourceSet) references(yield func(Reference) bool) {
 		}
 		if !yield(Reference{
 			NamedResource: id,
-			Use:           "dependsOn", Position: i, ReadyExpr: referenceExpression(&dep.ReadyExpr), Gate: GateInputs,
+			Use:           dependsOnKey, Position: i, ReadyExpr: referenceExpression(&dep.ReadyExpr), Gate: GateInputs,
 		}) {
 			return
 		}
@@ -357,8 +370,17 @@ func (r *ResourceSet) references(yield func(Reference) bool) {
 			gate = GateInputs
 		}
 		if !yield(Reference{
-			NamedResource: Resolve(NamedResource{Group: referenceGroup(kind, ref.APIVersion), Kind: kind, Name: ref.Name}, "", r.Namespace),
-			Use:           "inputsFrom", Position: i, Content: true, Gate: gate, Selector: ref.Selector, NamespaceDefault: true,
+			NamedResource: Resolve(
+				NamedResource{Group: referenceGroup(kind, ref.APIVersion), Kind: kind, Name: ref.Name},
+				"",
+				r.Namespace,
+			),
+			Use:              "inputsFrom",
+			Position:         i,
+			Content:          true,
+			Gate:             gate,
+			Selector:         ref.Selector,
+			NamespaceDefault: true,
 		}) {
 			return
 		}
@@ -369,4 +391,45 @@ func (r *ResourceSet) kind() KindInfo { return kindTable[kindResourceSet].KindIn
 
 func (p *ResourceSetInputProvider) kind() KindInfo {
 	return kindTable[kindResourceSetInputProvider].KindInfo
+}
+
+const (
+	semverSeparatorCount = 2
+)
+
+func (p *ResourceSetInputProvider) tagFilters() (*regexp.Regexp, *regexp.Regexp, *semver.Constraints, error) {
+	var include, exclude *regexp.Regexp
+	var constraint *semver.Constraints
+	filter := p.Filter
+	if filter == nil {
+		return nil, nil, nil, nil
+	}
+	for _, field := range []struct {
+		name, pattern string
+		target        **regexp.Regexp
+	}{
+		{"includeBranch", filter.IncludeBranch, &include},
+		{"includeTag", filter.IncludeTag, &include},
+		{"includeEnvironment", filter.IncludeEnvironment, &include},
+		{"excludeBranch", filter.ExcludeBranch, &exclude},
+		{"excludeTag", filter.ExcludeTag, &exclude},
+		{"excludeEnvironment", filter.ExcludeEnvironment, &exclude},
+	} {
+		if field.pattern == "" {
+			continue
+		}
+		compiled, err := regexp.Compile(field.pattern)
+		if err != nil {
+			return nil, nil, nil, NewError(ErrInput, fmt.Errorf("invalid %s regex: %w", field.name, err), "")
+		}
+		*field.target = compiled
+	}
+	if filter.Semver != "" {
+		var err error
+		constraint, err = semver.NewConstraint(filter.Semver)
+		if err != nil {
+			return nil, nil, nil, NewError(ErrInput, fmt.Errorf("invalid semver expression: %w", err), "")
+		}
+	}
+	return include, exclude, constraint, nil
 }

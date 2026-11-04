@@ -16,9 +16,13 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func resolveTLS(secrets SecretGetter, owner manifest.DiagnosticIdentity, input TransportInput) (*tls.Config, [3]string, any, error) {
+func resolveTLS(
+	secrets SecretGetter, ownerValue *manifest.DiagnosticIdentity,
+	input TransportInput,
+) (*tls.Config, [3]string, any, error) {
+	owner := *ownerValue
 	ref := input.Reference
-	sec, err := resolveSecretRef(secrets, owner, input.Use.label(), ref)
+	sec, err := resolveSecretRef(secrets, new(owner), input.Use.label(), ref)
 	if err != nil {
 		if input.OptionalTLS && errors.Is(err, manifest.ErrMissingSecret) {
 			return nil, [3]string{}, nil, nil
@@ -27,16 +31,28 @@ func resolveTLS(secrets SecretGetter, owner manifest.DiagnosticIdentity, input T
 	}
 	var material [3]string
 	for i, key := range []string{"tls.crt", "tls.key", "ca.crt"} {
-		value, _, err := sec.Value(key)
-		if err != nil {
-			return nil, [3]string{}, nil, fmt.Errorf("secret %s/%s (%s): %w", owner.ID.Namespace, ref.Name, input.Use.label(), err)
+		value, _, valueErr := sec.Value(key)
+		if valueErr != nil {
+			return nil, [3]string{}, nil, fmt.Errorf(
+				"secret %s/%s (%s): %w",
+				owner.ID.Namespace,
+				ref.Name,
+				input.Use.label(),
+				valueErr,
+			)
 		}
 		material[i] = value
 	}
 	if input.CAFallback {
-		caFile, _, err := sec.Value("caFile")
-		if err != nil {
-			return nil, [3]string{}, nil, fmt.Errorf("secret %s/%s (%s): %w", owner.ID.Namespace, ref.Name, input.Use.label(), err)
+		caFile, _, valueErr2 := sec.Value("caFile")
+		if valueErr2 != nil {
+			return nil, [3]string{}, nil, fmt.Errorf(
+				"secret %s/%s (%s): %w",
+				owner.ID.Namespace,
+				ref.Name,
+				input.Use.label(),
+				valueErr2,
+			)
 		}
 		material[2] = cmp.Or(material[2], caFile)
 	}
@@ -51,7 +67,13 @@ func resolveTLS(secrets SecretGetter, owner manifest.DiagnosticIdentity, input T
 		return nil, [3]string{}, nil, MissingSecretErr(owner, ref.Name, "TLS material unavailable")
 	}
 	if err != nil {
-		return nil, [3]string{}, nil, fmt.Errorf("secret %s/%s (%s): %w", owner.ID.Namespace, ref.Name, input.Use.label(), err)
+		return nil, [3]string{}, nil, fmt.Errorf(
+			"secret %s/%s (%s): %w",
+			owner.ID.Namespace,
+			ref.Name,
+			input.Use.label(),
+			err,
+		)
 	}
 	return cfg, material, [2]any{sec.Data, sec.StringData}, nil
 }
@@ -75,10 +97,75 @@ func buildTLSConfig(crt, key, ca string) (*tls.Config, error) {
 		}
 		cfg.RootCAs = pool
 	}
+	if err := configureTLSClient(cfg, crt, key); err != nil {
+		return nil, err
+	}
+	if manifest.HasValuePlaceholder(crt) || manifest.HasValuePlaceholder(key) || manifest.HasValuePlaceholder(ca) {
+		return nil, manifest.ErrMissingSecret
+	}
+	return cfg, nil
+}
+
+func matchingPEM(material string, certificate bool) *pem.Block {
+	for remaining := []byte(material); len(remaining) > 0; {
+		block, rest := pem.Decode(remaining)
+		if block == nil {
+			return nil
+		}
+		if certificate && block.Type == "CERTIFICATE" ||
+			!certificate && (block.Type == "PRIVATE KEY" || strings.HasSuffix(block.Type, " PRIVATE KEY")) {
+			return block
+		}
+		remaining = rest
+	}
+	return nil
+}
+
+func validateTLSComponent(material string, certificate bool) error {
+	block := matchingPEM(material, certificate)
+	if block == nil {
+		return manifest.NewError(manifest.ErrInput, nil, "parse tls.crt/tls.key: no matching PEM block")
+	}
+	if !certificate {
+		return validatePrivateKey(block.Bytes)
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return manifest.NewError(manifest.ErrInput, nil, "parse tls.crt: invalid certificate")
+	}
+	switch cert.PublicKey.(type) {
+	case *rsa.PublicKey, *ecdsa.PublicKey, ed25519.PublicKey, *mldsa.PublicKey:
+		return nil
+	default:
+		return manifest.NewError(manifest.ErrInput, nil, "tls.crt: unsupported public key algorithm")
+	}
+}
+
+func validatePrivateKey(data []byte) error {
+	// crypto/tls.parsePrivateKey is unexported; preserve its DER forms and key types.
+	key, err := x509.ParsePKCS8PrivateKey(data)
+	if err != nil {
+		key, err = x509.ParsePKCS1PrivateKey(data)
+	}
+	if err != nil {
+		key, err = x509.ParseECPrivateKey(data)
+	}
+	if err != nil {
+		return manifest.NewError(manifest.ErrInput, nil, "parse tls.key: invalid private key")
+	}
+	switch key.(type) {
+	case *rsa.PrivateKey, *ecdsa.PrivateKey, ed25519.PrivateKey, *mldsa.PrivateKey:
+		return nil
+	default:
+		return manifest.NewError(manifest.ErrInput, nil, "tls.key: unsupported private key type")
+	}
+}
+
+func configureTLSClient(cfg *tls.Config, crt, key string) error {
 	if crt != "" && key != "" && !manifest.HasValuePlaceholder(crt) && !manifest.HasValuePlaceholder(key) {
 		cert, err := tls.X509KeyPair([]byte(crt), []byte(key))
 		if err != nil {
-			return nil, manifest.NewError(manifest.ErrInput, nil, "parse tls.crt/tls.key: invalid client pair")
+			return manifest.NewError(manifest.ErrInput, nil, "parse tls.crt/tls.key: invalid client pair")
 		}
 		cfg.Certificates = []tls.Certificate{cert}
 	} else {
@@ -86,53 +173,10 @@ func buildTLSConfig(crt, key, ca string) (*tls.Config, error) {
 			if material == "" || manifest.HasValuePlaceholder(material) {
 				continue
 			}
-			var block *pem.Block
-			for remaining := []byte(material); len(remaining) > 0; {
-				block, remaining = pem.Decode(remaining)
-				if block == nil {
-					break
-				}
-				if (i == 0 && block.Type == "CERTIFICATE") ||
-					(i == 1 && (block.Type == "PRIVATE KEY" || strings.HasSuffix(block.Type, " PRIVATE KEY"))) {
-					break
-				}
-				block = nil
-			}
-			if block == nil {
-				return nil, manifest.NewError(manifest.ErrInput, nil, "parse tls.crt/tls.key: no matching PEM block")
-			}
-			if i == 0 {
-				cert, err := x509.ParseCertificate(block.Bytes)
-				if err != nil {
-					return nil, manifest.NewError(manifest.ErrInput, nil, "parse tls.crt: invalid certificate")
-				}
-				switch cert.PublicKey.(type) {
-				case *rsa.PublicKey, *ecdsa.PublicKey, ed25519.PublicKey, *mldsa.PublicKey:
-				default:
-					return nil, manifest.NewError(manifest.ErrInput, nil, "tls.crt: unsupported public key algorithm")
-				}
-			} else {
-				// crypto/tls.parsePrivateKey is unexported; keep its DER forms and key types.
-				privateKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-				if err != nil {
-					privateKey, err = x509.ParsePKCS1PrivateKey(block.Bytes)
-				}
-				if err != nil {
-					privateKey, err = x509.ParseECPrivateKey(block.Bytes)
-				}
-				if err != nil {
-					return nil, manifest.NewError(manifest.ErrInput, nil, "parse tls.key: invalid private key")
-				}
-				switch privateKey.(type) {
-				case *rsa.PrivateKey, *ecdsa.PrivateKey, ed25519.PrivateKey, *mldsa.PrivateKey:
-				default:
-					return nil, manifest.NewError(manifest.ErrInput, nil, "tls.key: unsupported private key type")
-				}
+			if err := validateTLSComponent(material, i == 0); err != nil {
+				return err
 			}
 		}
 	}
-	if manifest.HasValuePlaceholder(crt) || manifest.HasValuePlaceholder(key) || manifest.HasValuePlaceholder(ca) {
-		return nil, manifest.ErrMissingSecret
-	}
-	return cfg, nil
+	return nil
 }

@@ -16,7 +16,9 @@ func WriteTar(tb testing.TB, dst io.Writer, files map[string]string, mode int64)
 	tw := tar.NewWriter(dst)
 	for _, name := range slices.Sorted(maps.Keys(files)) {
 		body := files[name]
-		if err := tw.WriteHeader(&tar.Header{Name: name, Typeflag: tar.TypeReg, Size: int64(len(body)), Mode: mode}); err != nil {
+		if err := tw.WriteHeader(
+			&tar.Header{Name: name, Typeflag: tar.TypeReg, Size: int64(len(body)), Mode: mode},
+		); err != nil {
 			tb.Fatal(err)
 		}
 		if _, err := io.WriteString(tw, body); err != nil {

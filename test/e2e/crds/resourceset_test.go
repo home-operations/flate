@@ -1,5 +1,5 @@
 // Package crds tests resource expansion and CRD availability.
-package crds
+package crds_test
 
 import (
 	"encoding/base64"
@@ -21,32 +21,59 @@ import (
 	"github.com/home-operations/flate/test/e2e/internal/harness"
 )
 
+//nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_ResourceSetExpandsIntoChildKustomizations(t *testing.T) {
 	root := t.TempDir()
 	testutil.CopyTree(t, harness.TestdataPath(t, "resourceset"), root)
 	inputFile := filepath.Join(root, "tenants", "apps.yaml")
 	body, err := os.ReadFile(inputFile)
 	assert.NoError(t, err)
-	testutil.WriteFile(t, root, "tenants/apps.yaml", strings.Replace(string(body), "  inputs:", "  inputsFrom: [{name: branches}]\n  inputs:", 1))
-	testutil.WriteFile(t, root, "tenants/provider.yaml", "apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSetInputProvider\nmetadata: {name: branches, namespace: flux-system}\nspec: {type: GitHubBranch, url: https://example.invalid/branches}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"tenants/apps.yaml",
+		strings.Replace(string(body), "  inputs:", "  inputsFrom: [{name: branches}]\n  inputs:", 1),
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"tenants/provider.yaml",
+		"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSetInputProvider\nmetadata: {name: branches, namespace: flux-system}\nspec: {type: GitHubBranch, url: https://example.invalid/branches}\n",
+	)
 	testutil.WriteFile(t, root, "tenants/kustomization.yaml", "resources: [apps.yaml, provider.yaml]\n")
 	var out string
 	for _, verb := range []string{"get", "build", "test"} {
 		for range 2 {
-			args := []string{verb, "all", "--path", root, "--concurrency=2", "--allow-missing-kinds=CustomResourceDefinition"}
+			args := []string{
+				verb,
+				"all",
+				"--path",
+				root,
+				"--concurrency=2",
+				"--allow-missing-kinds=CustomResourceDefinition",
+			}
 			if verb == "get" {
 				args[1] = "ks"
 			}
 			stdout, stderr := harness.RequireCLIOK(t, args...)
-			if strings.Count(stderr, "[OfflineInputProvider]") != 1 || !strings.Contains(stderr, "branches") || strings.Contains(stdout, "warnings (") {
-				t.Fatalf("provider warning: stdout=%s stderr=%s", stdout, stderr)
-			}
+			assert.FatalIf(
+				t,
+				strings.Count(stderr, "[OfflineInputProvider]") != 1 || !strings.Contains(stderr, "branches") ||
+					strings.Contains(stdout, "warnings ("),
+				"provider warning: stdout=%s stderr=%s",
+				stdout,
+				stderr,
+			)
 			if verb == "get" {
 				out = stdout
 			}
-			if verb == "build" && (!strings.Contains(stdout, "frontend") || !strings.Contains(stdout, "backend")) || verb == "test" && !strings.Contains(stdout, "passed") {
-				t.Fatalf("provider product: %s", stdout)
-			}
+			assert.FatalIf(
+				t,
+				verb == "build" && (!strings.Contains(stdout, "frontend") || !strings.Contains(stdout, "backend")) ||
+					verb == "test" && !strings.Contains(stdout, "passed"),
+				"provider product: %s",
+				stdout,
+			)
 		}
 	}
 	for _, want := range []string{
@@ -54,12 +81,11 @@ func TestE2E_ResourceSetExpandsIntoChildKustomizations(t *testing.T) {
 		"apps-frontend",   // emitted by ResourceSet for tenant=frontend
 		"apps-backend",    // emitted by ResourceSet for tenant=backend
 	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("missing %q in ks listing:\n%s", want, out)
-		}
+		assert.ErrorIf(t, !strings.Contains(out, want), "missing %q in ks listing:\n%s", want, out)
 	}
 }
 
+//nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_ResourceSetGeneratedData(t *testing.T) {
 	const (
 		cm         = "ConfigMap/default/cm-one"
@@ -84,7 +110,12 @@ func TestE2E_ResourceSetGeneratedData(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
 			testutil.GitInit(t, root)
-			testutil.WriteFile(t, root, "entry/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources: [root.yaml]\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"entry/kustomization.yaml",
+				"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources: [root.yaml]\n",
+			)
 			testutil.WriteFile(t, root, "entry/root.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: flux-system, namespace: flux-system}
@@ -99,7 +130,12 @@ spec:
   path: ./app
   sourceRef: {kind: GitRepository, name: flux-system}
 `)
-			testutil.WriteFile(t, root, "app/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources: [resourceset.yaml]\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"app/kustomization.yaml",
+				"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources: [resourceset.yaml]\n",
+			)
 			fields, secretData := "{key: value}", ""
 			wantFields := map[string]any{"key": "value"}
 			if tc.encrypted {
@@ -126,7 +162,19 @@ spec:
       kind: ServiceAccount
       metadata: {name: sa-<< inputs.name >>, namespace: default}
 `, fields, secretData, fields))
-			args := append([]string{"build", "ks", "app", "--path", filepath.Join(root, "entry"), "--concurrency=2", "--no-progress", "--cache-dir", t.TempDir()}, tc.flags...)
+			args := append(
+				[]string{
+					"build",
+					"ks",
+					"app",
+					"--path",
+					filepath.Join(root, "entry"),
+					"--concurrency=2",
+					"--no-progress",
+					"--cache-dir",
+					t.TempDir(),
+				},
+				tc.flags...)
 			stdout, _ := harness.RequireCLIOK(t, args...)
 			if tc.name == "all" {
 				again, _ := harness.RequireCLIOK(t, args...)
@@ -158,6 +206,7 @@ spec:
 	}
 }
 
+//nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_ResourceSetDocumentBoundary(t *testing.T) {
 	path := t.TempDir()
 	testutil.CopyTree(t, harness.TestdataPath(t, "resourceset-documents"), path)
@@ -165,46 +214,18 @@ func TestE2E_ResourceSetDocumentBoundary(t *testing.T) {
 	var previous string
 	for range 2 {
 		out, stderr, code := harness.RunCLIBuffers(args...)
-		if code != 1 || !strings.Contains(stderr, "flux-system/documents") || !strings.Contains(stderr, "document 1:") || !strings.Contains(stderr, "missing metadata.name for List") {
-			t.Fatalf("invalid ResourceSet output: exit=%d stderr=%s", code, stderr)
-		}
+		assert.FatalIf(t, code != 1 || !strings.Contains(stderr, "flux-system/documents") ||
+			!strings.Contains(stderr, "document 1:") ||
+			!strings.Contains(
+				stderr,
+				"missing metadata.name for List",
+			), "invalid ResourceSet output: exit=%d stderr=%s", code, stderr)
 		counts := map[string]int{}
 		decoder := yamlutil.NewYAMLOrJSONDecoder(strings.NewReader(out), 2048)
-		for {
-			var doc map[string]any
-			err := decoder.Decode(&doc)
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			assert.NoError(t, err)
-			name, ns := manifest.DocMetadata(doc)
-			if name == "raw" || name == "duplicate" {
-				assert.Equal(t, ns, "")
-			}
-			if name == "explicit" {
-				assert.Equal(t, ns, "other")
-			}
-			if name == "sanitized" {
-				assert.Diff(t, doc["data"], map[string]any{"encrypted": "..PLACEHOLDER_encrypted.."})
-			}
-			if name == "kindless-list" {
-				assert.Equal(t, manifest.DocKind(doc), "")
-				assert.Equal(t, manifest.DocAPIVersion(doc), "")
-			}
-			counts[name]++
-			if data, ok := doc["data"].(map[string]any); ok {
-				counts[fmt.Sprint(data["value"])]++
-			}
-			if spec, ok := doc["spec"].(map[string]any); ok {
-				counts[fmt.Sprint(spec["value"])]++
-			}
-			if manifest.DocKind(doc) == "List" {
-				counts["wrapper"]++
-			}
-			if manifest.DocAPIVersion(doc) == "kustomize.config.k8s.io/v1beta1" {
-				counts["directive"]++
-			}
-		}
+		e2EResourceSetDocumentBoundaryLoop(t, struct {
+			decoder **yamlutil.YAMLOrJSONDecoder
+			counts  *map[string]int
+		}{decoder: &decoder, counts: &counts})
 		for key, want := range map[string]int{"raw": 1, "duplicate": 2, "nameless-json": 1, "nameless-list": 1, "kindless-list": 1, "wrapper": 2, "directive": 2, "explicit": 1, "sanitized": 1, "nested": 0, "item-directive": 1, "child-result": 1, "rejected-yaml": 0, "rejected-directive": 0, "child": 0} {
 			if counts[key] != want {
 				t.Errorf("%s count=%d, want %d; all=%v", key, counts[key], want, counts)
@@ -220,33 +241,72 @@ func TestE2E_ResourceSetDocumentBoundary(t *testing.T) {
 	testutil.CopyTree(t, path, original)
 	body, err := os.ReadFile(filepath.Join(path, "apps/rs.yaml"))
 	assert.NoError(t, err)
-	testutil.WriteFile(t, path, "apps/rs.yaml", strings.ReplaceAll(string(body), "metadata: {name: duplicate, annotations: {fluxcd.controlplane.io/reconcile: disabled}}", "metadata: {name: duplicate, annotations: {fluxcd.controlplane.io/reconcile: disabled}}\n      spec: {replicas: 2}"))
+	testutil.WriteFile(
+		t,
+		path,
+		"apps/rs.yaml",
+		strings.ReplaceAll(
+			string(body),
+			"metadata: {name: duplicate, annotations: {fluxcd.controlplane.io/reconcile: disabled}}",
+			"metadata: {name: duplicate, annotations: {fluxcd.controlplane.io/reconcile: disabled}}\n      spec: {replicas: 2}",
+		),
+	)
 	var previousDiff, previousWarnings string
 	for run := range 2 {
-		product, diagnostics, code := harness.RunCLIBuffers("diff", "all", "--path", path, "--path-orig", original, "--output=json", "--concurrency=2")
-		if code != 1 || !strings.Contains(diagnostics, "missing metadata.name for List") {
-			t.Fatalf("invalid ResourceSet diff: exit=%d stderr=%s", code, diagnostics)
-		}
-		if strings.Count(diagnostics, "[DuplicateDocument]") != 2 || !strings.Contains(diagnostics, "duplicate") || !strings.Contains(diagnostics, "orig") || !strings.Contains(diagnostics, "current") || strings.Contains(product, "[DuplicateDocument]") {
-			t.Fatalf("duplicate diff: stdout=%s stderr=%s", product, diagnostics)
-		}
+		product, diagnostics, code := harness.RunCLIBuffers(
+			"diff",
+			"all",
+			"--path",
+			path,
+			"--path-orig",
+			original,
+			"--output=json",
+			"--concurrency=2",
+		)
+		assert.FatalIf(
+			t,
+			code != 1 || !strings.Contains(diagnostics, "missing metadata.name for List"),
+			"invalid ResourceSet diff: exit=%d stderr=%s",
+			code,
+			diagnostics,
+		)
+		assert.FatalIf(
+			t,
+			strings.Count(diagnostics, "[DuplicateDocument]") != 2 || !strings.Contains(diagnostics, "duplicate") ||
+				!strings.Contains(diagnostics, "orig") ||
+				!strings.Contains(diagnostics, "current") ||
+				strings.Contains(
+					product,
+					"[DuplicateDocument]",
+				),
+			"duplicate diff: stdout=%s stderr=%s",
+			product,
+			diagnostics,
+		)
 		var changes struct {
-			Changes    []map[string]any
+			Changes    []map[string]any `json:"Changes"`
 			Suppressed []struct {
-				Parent struct{ Name string }
-				Side   string
-				Count  int
-				Reason string
-			}
+				Parent struct {
+					Name string `json:"Name"`
+				} `json:"Parent"`
+				Side   string `json:"Side"`
+				Count  int    `json:"Count"`
+				Reason string `json:"Reason"`
+			} `json:"Suppressed"`
 		}
 		assert.NoError(t, json.Unmarshal([]byte(product), &changes))
-		if len(changes.Changes) == 0 || len(changes.Suppressed) != 1 {
-			t.Fatalf("duplicate product changed: %s", product)
-		}
+		assert.FatalIf(
+			t,
+			len(changes.Changes) == 0 || len(changes.Suppressed) != 1,
+			"duplicate product changed: %s",
+			product,
+		)
 		suppressed := changes.Suppressed[0]
-		if suppressed.Parent.Name != "child" || suppressed.Side != "both" || suppressed.Count != 2 || !strings.Contains(suppressed.Reason, "missing metadata.name for List") {
-			t.Fatalf("failed ResourceSet descendant was not suppressed: %+v", suppressed)
-		}
+		assert.FatalIf(t, suppressed.Parent.Name != "child" || suppressed.Side != "both" || suppressed.Count != 2 ||
+			!strings.Contains(
+				suppressed.Reason,
+				"missing metadata.name for List",
+			), "failed ResourceSet descendant was not suppressed: %+v", suppressed)
 		if run == 0 {
 			previousDiff, previousWarnings = product, diagnostics
 		} else {
@@ -255,10 +315,57 @@ func TestE2E_ResourceSetDocumentBoundary(t *testing.T) {
 		}
 	}
 
-	testutil.WriteFile(t, path, "apps/rs.yaml", "apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: documents, namespace: flux-system}\nspec:\n resourcesTemplate: |\n  items: [null]\n")
+	testutil.WriteFile(
+		t,
+		path,
+		"apps/rs.yaml",
+		"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: documents, namespace: flux-system}\nspec:\n resourcesTemplate: |\n  items: [null]\n",
+	)
 	out, code := harness.RunCLIExpectErr(t, args...)
 	assert.Equal(t, code, 1)
-	if !strings.Contains(out, "read rendered list") {
-		t.Fatalf("malformed member failure missing: %s", out)
+	assert.FatalIf(t, !strings.Contains(out, "read rendered list"), "malformed member failure missing: %s", out)
+}
+
+func e2EResourceSetDocumentBoundaryLoop(t *testing.T, loopInputs struct {
+	decoder **yamlutil.YAMLOrJSONDecoder
+	counts  *map[string]int
+},
+) {
+	t.Helper()
+
+	for {
+		var doc map[string]any
+		err := (*loopInputs.decoder).Decode(&doc)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		assert.NoError(t, err)
+		name, ns := manifest.DocMetadata(doc)
+		if name == "raw" || name == "duplicate" {
+			assert.Equal(t, ns, "")
+		}
+		if name == "explicit" {
+			assert.Equal(t, ns, "other")
+		}
+		if name == "sanitized" {
+			assert.Diff(t, doc["data"], map[string]any{"encrypted": "..PLACEHOLDER_encrypted.."})
+		}
+		if name == "kindless-list" {
+			assert.Equal(t, manifest.DocKind(doc), "")
+			assert.Equal(t, manifest.DocAPIVersion(doc), "")
+		}
+		(*loopInputs.counts)[name]++
+		if data, ok := doc["data"].(map[string]any); ok {
+			(*loopInputs.counts)[fmt.Sprint(data["value"])]++
+		}
+		if spec, ok := doc["spec"].(map[string]any); ok {
+			(*loopInputs.counts)[fmt.Sprint(spec["value"])]++
+		}
+		if manifest.DocKind(doc) == "List" {
+			(*loopInputs.counts)["wrapper"]++
+		}
+		if manifest.DocAPIVersion(doc) == "kustomize.config.k8s.io/v1beta1" {
+			(*loopInputs.counts)["directive"]++
+		}
 	}
 }

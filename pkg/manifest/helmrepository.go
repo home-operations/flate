@@ -11,6 +11,8 @@ import (
 // HelmRepository is the Flux HelmRepository CR. The embedded
 // sourcev1.HelmRepositorySpec promotes URL, Type, Provider, Interval,
 // Suspend, SecretRef, CertSecretRef, etc. to the top level.
+//
+//nolint:embeddedstructfieldcheck // The SDK field order preserves serialized document order.
 type HelmRepository struct {
 	Name      string `json:"name"      yaml:"name"`
 	Namespace string `json:"namespace" yaml:"namespace"`
@@ -20,7 +22,12 @@ type HelmRepository struct {
 
 // Named identifies the repo.
 func (h *HelmRepository) Named() NamedResource {
-	return NamedResource{Group: kindTable[kindHelmRepository].Group, Kind: KindHelmRepository, Namespace: h.Namespace, Name: h.Name}
+	return NamedResource{
+		Group:     kindTable[kindHelmRepository].Group,
+		Kind:      KindHelmRepository,
+		Namespace: h.Namespace,
+		Name:      h.Name,
+	}
 }
 
 // Suspended reports whether reconciliation is paused on this resource.
@@ -54,6 +61,8 @@ func (h *HelmRepository) Content() any {
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (h *HelmRepository) WithNamespace(namespace string) BaseManifest {
 	out := *h
 	out.Namespace = namespace

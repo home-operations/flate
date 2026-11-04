@@ -76,7 +76,12 @@ func ociRevision(ref manifest.OCIRepositoryRef, digest string) string {
 }
 
 // Mirrors source-controller's getTagBySemver (ocirepository_controller.go).
-func resolveOCISemver(ctx context.Context, repoClient *remote.Repository, ref manifest.OCIRepositoryRef, mediaType string) (string, error) {
+func resolveOCISemver(
+	ctx context.Context,
+	repoClient *remote.Repository,
+	ref manifest.OCIRepositoryRef,
+	mediaType string,
+) (string, error) {
 	var collected []string
 	if err := repoClient.Tags(ctx, "", func(batch []string) error {
 		collected = append(collected, batch...)

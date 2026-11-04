@@ -41,16 +41,19 @@ type parsedDocument struct {
 
 type physicalContext struct {
 	graphContext
+
 	sourceRoot, prefix, localBase string
 }
 
-type loadContext struct{ path, ignore string }
-type loadDirectory struct{ adHoc, traversed bool }
-type loadFacts struct {
-	complete, observed bool
-	files              []fileAdmission
-	directories        map[string]loadDirectory
-}
+type (
+	loadContext   struct{ path, ignore string }
+	loadDirectory struct{ adHoc, traversed bool }
+	loadFacts     struct {
+		complete, observed bool
+		files              []fileAdmission
+		directories        map[string]loadDirectory
+	}
+)
 
 type admissionKind uint8
 
@@ -73,7 +76,7 @@ func (l *Loader) sourceFacts(root string) parsedSource {
 	if l.facts == nil {
 		l.facts = &ParsedInputs{sources: map[string]parsedSource{}}
 	}
-	root = l.documents.mountedRoot(root)
+	root = new(l.documents).mountedRoot(root)
 	artifact := l.documents.artifacts[root]
 	var identity any
 	if artifact != nil {
@@ -84,7 +87,12 @@ func (l *Loader) sourceFacts(root string) parsedSource {
 		return source
 	}
 	sourceBinding := binding
-	source := parsedSource{input: identity, binding: &sourceBinding, walks: map[physicalContext][]graphVisit{}, loads: map[loadContext]loadFacts{}}
+	source := parsedSource{
+		input:   identity,
+		binding: &sourceBinding,
+		walks:   map[physicalContext][]graphVisit{},
+		loads:   map[loadContext]loadFacts{},
+	}
 	if prepared := l.documents.parsed; prepared != nil && prepared.compact {
 		if prior, ok := prepared.sources[root]; ok && prior.input == identity && *prior.binding == binding {
 			source.walks, source.loads = maps.Clone(prior.walks), maps.Clone(prior.loads)
@@ -100,7 +108,11 @@ func (l *Loader) sourceFacts(root string) parsedSource {
 
 // ParsedInputs snapshots parsed bodies without retaining entry admission state.
 func (l *Loader) ParsedInputs() *ParsedInputs {
-	inputs := &ParsedInputs{sources: map[string]parsedSource{}, wipeSecrets: l.Options.WipeSecrets, compact: l.documents.compact}
+	inputs := &ParsedInputs{
+		sources:     map[string]parsedSource{},
+		wipeSecrets: l.Options.WipeSecrets,
+		compact:     l.documents.compact,
+	}
 	for root, artifact := range l.documents.artifacts {
 		source := parsedSource{input: parsedInputIdentity(artifact)}
 		if inputs.compact {
@@ -110,14 +122,18 @@ func (l *Loader) ParsedInputs() *ParsedInputs {
 		source.documents = map[string]parsedDocument{}
 		inputs.sources[root] = source
 	}
-	for file, doc := range l.documents.cache {
-		if doc.body == nil && doc.objects == nil && (!inputs.compact || !doc.searched && doc.pathState == pathUnknown && doc.decodeErr == nil) {
-			continue
-		}
-		if source, ok := inputs.sources[l.documents.mountedRoot(file)]; ok {
-			source.documents[file] = parsedDocument{
-				body: doc.body, file: doc.file, objects: cloneInputObjects(doc.objects),
-				state: doc.pathState, searched: doc.searched, plugins: doc.plugins, decodeErr: doc.decodeErr,
+	{
+		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+		for file, doc := range l.documents.cache {
+			if doc.body == nil && doc.objects == nil &&
+				(!inputs.compact || !doc.searched && doc.pathState == pathUnknown && doc.decodeErr == nil) {
+				continue
+			}
+			if source, ok := inputs.sources[new(l.documents).mountedRoot(file)]; ok {
+				source.documents[file] = parsedDocument{
+					body: doc.body, file: doc.file, objects: cloneInputObjects(doc.objects),
+					state: doc.pathState, searched: doc.searched, plugins: doc.plugins, decodeErr: doc.decodeErr,
+				}
 			}
 		}
 	}
@@ -127,7 +143,8 @@ func (l *Loader) ParsedInputs() *ParsedInputs {
 // Matches reports whether input owns a source view retained by these parsed facts.
 func (p *ParsedInputs) Matches(input *store.SourceArtifact) bool {
 	source, ok := p.sources[input.LocalPath]
-	return ok && source.input == parsedInputIdentity(input) && (!p.compact || *source.binding == input.Input(store.ArtifactContent|store.ArtifactRevision))
+	return ok && source.input == parsedInputIdentity(input) &&
+		(!p.compact || *source.binding == input.Input(store.ArtifactContent|store.ArtifactRevision))
 }
 
 func parsedInputIdentity(input *store.SourceArtifact) any {
@@ -137,6 +154,7 @@ func parsedInputIdentity(input *store.SourceArtifact) any {
 	return input
 }
 
+//nolint:gocritic // Immutable reader values retain their original snapshot semantics.
 func (r documentReader) restore(file string) {
 	if r.parsed == nil || r.parsed.compact != r.compact {
 		return
@@ -145,13 +163,14 @@ func (r documentReader) restore(file string) {
 	if cached.body != nil || cached.objects != nil {
 		return
 	}
-	root := r.mountedRoot(file)
+	root := new(r).mountedRoot(file)
 	source, ok := r.parsed.sources[root]
 	artifact := r.artifacts[root]
 	if !ok || artifact == nil {
 		return
 	}
-	if parsedInputIdentity(artifact) != source.input || r.compact && artifact.Input(store.ArtifactContent|store.ArtifactRevision) != *source.binding {
+	if parsedInputIdentity(artifact) != source.input ||
+		r.compact && artifact.Input(store.ArtifactContent|store.ArtifactRevision) != *source.binding {
 		return
 	}
 	if doc, ok := source.documents[file]; ok {
@@ -191,69 +210,127 @@ func (l *Loader) inputVisibility() []manifest.InputVisibility {
 		if root == l.documents.bootstrap {
 			sources = append(sources, manifest.BootstrapSourceID)
 		}
-		for _, scope := range l.scopes.sources {
-			if scope.root != root || scope.artifact == nil || slices.Contains(sources, scope.id) {
-				continue
+		{
+			scopeValues := l.scopes.sources
+			for scopeIndex := range scopeValues {
+				scope := scopeValues[scopeIndex]
+				if !new(scope).matchesVisibility(root, sources, identity, new(facts)) {
+					continue
+				}
+				sources = append(sources, scope.id)
 			}
-			if parsedInputIdentity(scope.artifact) != identity || scope.artifact.Input(store.ArtifactContent|store.ArtifactRevision) != *facts.binding {
-				continue
-			}
-			sources = append(sources, scope.id)
 		}
 		for domain, load := range facts.loads {
 			if !load.observed {
 				continue
 			}
-			relative, _ := filepath.Rel(root, domain.path)
-			observation := manifest.InputVisibility{Root: filepath.ToSlash(relative), Complete: load.complete}
-			if domain.ignore != "" {
-				relative, _ := filepath.Rel(root, domain.ignore)
-				observation.Ignore = filepath.ToSlash(relative)
-			}
-			for _, file := range load.files {
-				if file.kind == admissionWarning || l.terminalInput(file.file) || l.documents.cache[file.file].eligible == fileInactive {
-					continue
-				}
-				for _, child := range l.documents.cache[file.file].objects {
-					if child.outcome.Err != nil {
-						continue
-					}
-					var id manifest.NamedResource
-					if child.fact != nil {
-						if child.fact.facts.uncertain || file.kind == admissionBootstrap && child.fact.Declaration != file.coordinate {
-							continue
-						}
-						id = child.fact.Authored
-					} else if child.Obj != nil {
-						id = child.Obj.Named()
-					}
-					if id.Name == "" || !id.KindInfo().Tracked || file.kind == admissionData && !id.KindInfo().Data {
-						continue
-					}
-					record := manifest.DiscoveryRecord{Authored: id, Path: file.file, File: l.fileCoordinate(file.file)}
-					relative, _ := filepath.Rel(root, file.file)
-					for _, namespace := range l.recordNamespaces(record, "") {
-						effective := id
-						effective.Namespace = namespace
-						if observation.Inputs == nil {
-							observation.Inputs = map[manifest.NamedResource][]string{}
-						}
-						observation.Inputs[effective] = append(observation.Inputs[effective], filepath.ToSlash(relative))
-					}
-				}
-			}
-			for id, files := range observation.Inputs {
-				slices.Sort(files)
-				observation.Inputs[id] = slices.Compact(files)
-			}
-			for _, source := range sources {
-				observation.Source = source
-				observations = append(observations, observation)
-			}
+			observation := l.loadInputVisibility(root, domain, new(load))
+			observations = appendSourceVisibilities(observations, sources, new(observation))
 		}
 	}
 	slices.SortFunc(observations, func(a, b manifest.InputVisibility) int {
 		return cmp.Or(a.Source.Compare(b.Source), strings.Compare(a.Root, b.Root), strings.Compare(a.Ignore, b.Ignore))
 	})
+	return observations
+}
+
+func (l *Loader) loadInputVisibility(root string, domain loadContext, loadValue *loadFacts) manifest.InputVisibility {
+	load := *loadValue
+	relative, _ := filepath.Rel(root, domain.path)
+	observation := manifest.InputVisibility{Root: filepath.ToSlash(relative), Complete: load.complete}
+	if domain.ignore != "" {
+		relative, _ := filepath.Rel(root, domain.ignore)
+		observation.Ignore = filepath.ToSlash(relative)
+	}
+	{
+		fileValues := load.files
+		for fileIndex := range fileValues {
+			file := fileValues[fileIndex]
+			if file.kind == admissionWarning || l.terminalInput(file.file) ||
+				l.documents.cache[file.file].eligible == fileInactive {
+				continue
+			}
+			l.appendInputVisibility(&observation, root, new(file))
+		}
+	}
+	for id, files := range observation.Inputs {
+		slices.Sort(files)
+		observation.Inputs[id] = slices.Compact(files)
+	}
+	return observation
+}
+
+func (l *Loader) appendInputVisibility(observation *manifest.InputVisibility, root string, fileValue *fileAdmission) {
+	file := *fileValue
+	{
+		childValues := l.documents.cache[file.file].objects
+		for childIndex := range childValues {
+			child := childValues[childIndex]
+			if child.outcome.Err != nil {
+				continue
+			}
+			var id manifest.NamedResource
+			if child.fact != nil {
+				if child.fact.facts.uncertain ||
+					file.kind == admissionBootstrap && child.fact.Declaration != file.coordinate {
+					continue
+				}
+				id = child.fact.Authored
+			} else if child.Obj != nil {
+				id = child.Obj.Named()
+			}
+			if id.Name == "" || !id.KindInfo().Tracked ||
+				file.kind == admissionData && !id.KindInfo().Data {
+				continue
+			}
+			record := manifest.DiscoveryRecord{
+				Authored: id,
+				Path:     file.file,
+				File:     l.fileCoordinate(file.file),
+			}
+			relative, _ := filepath.Rel(root, file.file)
+			for _, namespace := range l.recordNamespaces(new(record), "") {
+				effective := id
+				effective.Namespace = namespace
+				if observation.Inputs == nil {
+					observation.Inputs = map[manifest.NamedResource][]string{}
+				}
+				observation.Inputs[effective] = append(
+					observation.Inputs[effective],
+					filepath.ToSlash(relative),
+				)
+			}
+		}
+	}
+}
+
+func (s *sourceScope) matchesVisibility(
+	root string,
+	sources []manifest.NamedResource,
+	identity any,
+	factsValue *parsedSource,
+) bool {
+	scope := *s
+	facts := *factsValue
+	if scope.root != root || scope.artifact == nil || slices.Contains(sources, scope.id) {
+		return false
+	}
+	if parsedInputIdentity(scope.artifact) != identity ||
+		scope.artifact.Input(store.ArtifactContent|store.ArtifactRevision) != *facts.binding {
+		return false
+	}
+	return true
+}
+
+func appendSourceVisibilities(
+	observations []manifest.InputVisibility,
+	sources []manifest.NamedResource,
+	observationValue *manifest.InputVisibility,
+) []manifest.InputVisibility {
+	observation := *observationValue
+	for _, source := range sources {
+		observation.Source = source
+		observations = append(observations, observation)
+	}
 	return observations
 }

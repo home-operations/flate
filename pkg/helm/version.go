@@ -10,6 +10,8 @@ import (
 
 // BundledKubeVersion returns the Kubernetes version from the k8s.io/api build
 // dependency, or Helm's default when detection fails.
+//
+//nolint:gochecknoglobals // Preserve the public memoized function value and one build-info lookup.
 var BundledKubeVersion = sync.OnceValue(func() string {
 	return detectBundledKubeVersion(debug.ReadBuildInfo())
 })

@@ -16,12 +16,12 @@ import (
 )
 
 // certFuncs registers deterministic overrides for sprig's certificate and
-// private-key generators. All generated material is ed25519: ed25519.GenerateKey
+// private-key generators. All generated material is ed25519: [ed25519.GenerateKey]
 // reads the seeded stream directly (unlike rsa/ecdsa.GenerateKey, which route
 // through crypto/rand's CustomReader and discard a custom reader), and ed25519
 // signatures are deterministic (RFC 8032). Combined with a stream-derived serial
 // and fixedTime validity, every cert/key renders identically run to run — with
-// no hand-rolled crypto and no seeded reader handed to x509.CreateCertificate.
+// no hand-rolled crypto and no seeded reader handed to [x509.CreateCertificate].
 //
 // flate renders for offline review and never applies its output, so an ed25519
 // caBundle/key is a valid, deterministic stand-in for the random RSA material the
@@ -52,8 +52,8 @@ func certFuncs(s *stream, fm template.FuncMap) {
 // certificate mirrors sprig's type: an unexported type with exported fields, so
 // templates read .Cert/.Key and a genCA value flows into genSignedCert's ca arg.
 type certificate struct {
-	Cert string
-	Key  string
+	Cert string `json:"Cert"`
+	Key  string `json:"Key"`
 }
 
 type certConfig struct {
@@ -62,14 +62,15 @@ type certConfig struct {
 	days              int
 }
 
-// A nil signerKey means self-signed. x509.CreateCertificate never reads the
+// A nil signerKey means self-signed. [[x509.CreateCertificate]] never reads the
 // stream: the serial is pre-set and ed25519 signing consumes no randomness.
 func (s *stream) issue(tmpl, parent *x509.Certificate, signerKey ed25519.PrivateKey, days int) (certificate, error) {
 	pub, priv, err := ed25519.GenerateKey(s)
 	if err != nil {
 		return certificate{}, fmt.Errorf("generating ed25519 key: %w", err)
 	}
-	serial, err := rand.Int(s, new(big.Int).Lsh(big.NewInt(1), 128))
+	const serialBits = 128
+	serial, err := rand.Int(s, new(big.Int).Lsh(big.NewInt(1), serialBits))
 	if err != nil {
 		return certificate{}, fmt.Errorf("generating serial: %w", err)
 	}

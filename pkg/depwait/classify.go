@@ -9,6 +9,8 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
+const dependencyNotFound = "dependency not found"
+
 // Classification retains one dependency's readiness decision.
 // Successful decisions MUST not carry an expanded DiagnosticReason.
 type Classification struct {
@@ -32,7 +34,12 @@ func (c Classification) DiagnosticReason(id manifest.NamedResource) manifest.Dia
 	return manifest.DiagnosticReason{Subject: subject, Message: c.Message, Causes: c.Causes}
 }
 
-func failedClassification(id manifest.NamedResource, obj manifest.BaseManifest, message string, info *store.Observation) Classification {
+func failedClassification(
+	id manifest.NamedResource,
+	obj manifest.BaseManifest,
+	message string,
+	info *store.Observation,
+) Classification {
 	reason := manifest.DiagnosticReason{Subject: manifest.DiagnosticFor(id, obj), Message: message}
 	if info != nil {
 		reason = info.DependencyReason(reason.Subject)
@@ -46,81 +53,114 @@ func failedClassification(id manifest.NamedResource, obj manifest.BaseManifest, 
 }
 
 // Classify resolves readiness and required content from one captured snapshot.
+//
+//nolint:gocritic // DependencyRef remains a value in the SDK so callers retain ownership.
 func (w *Waiter) Classify(ctx context.Context, dep manifest.DependencyRef, level manifest.DrainLevel) Classification {
 	existence := w.Existence
+	for {
+		result, promoted := w.classify(ctx, &dep, level, existence)
+		if !promoted {
+			return result
+		}
+		existence = nil
+	}
+}
+
+func (w *Waiter) classify(
+	ctx context.Context,
+	dep *manifest.DependencyRef,
+	level manifest.DrainLevel,
+	existence ExistenceLookup,
+) (Classification, bool) {
 	reads, _ := w.Store.(*store.ReadSet)
 	id := dep.NamedResource
 	hasExpr := dep.ReadyExpr != nil && *dep.ReadyExpr != ""
-	for {
-		if dep.ArtifactOnly {
-			if art, ok := w.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact); ok && art.FS != nil {
-				return Classification{Kind: schedule.Terminal}
-			}
+	if dep.ArtifactOnly && w.sourceAvailable(id) {
+		return Classification{Kind: schedule.Terminal}, false
+	}
+	obj, info := w.Store.Snapshot(id, hasExpr || w.Materializer)
+	present := obj != nil || info.Status != ""
+	if !w.Materializer && present && !info.Statusful {
+		return w.artifactReady(dep, level), false
+	}
+	ready := false
+	if hasExpr {
+		var failMsg string
+		ready, failMsg = w.tryReadyExpr(dep, obj, info.Conditions)
+		if failMsg != "" {
+			return failedClassification(id, obj, failMsg, nil), false
 		}
-		obj, info := w.Store.Snapshot(id, hasExpr || w.Materializer)
-		present := obj != nil || info.Status != ""
-		if !w.Materializer && present && !info.Statusful {
+	}
+	if !present && existence != nil {
+		promoted, err := existence.Promote(ctx, reads, id)
+		if err != nil {
+			return Classification{Err: err}, false
+		}
+		if promoted {
+			return Classification{}, true
+		}
+	}
+	if present && ready {
+		return w.artifactReady(dep, level), false
+	}
+	if !present {
+		return w.classifyAbsent(dep, level), false
+	}
+	return w.classifyPresent(dep, obj, &info, level), false
+}
+
+func (w *Waiter) sourceAvailable(id manifest.NamedResource) bool {
+	art, ok := w.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
+	return ok && art.FS != nil
+}
+
+func (w *Waiter) classifyAbsent(dep *manifest.DependencyRef, level manifest.DrainLevel) Classification {
+	id := dep.NamedResource
+	if dep.Artifact {
+		if _, ok := w.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact); ok {
 			return w.artifactReady(dep, level)
 		}
-		ready := false
-		if hasExpr {
-			var failMsg string
-			ready, failMsg = w.tryReadyExpr(dep, obj, info.Conditions)
-			if failMsg != "" {
-				return failedClassification(id, obj, failMsg, nil)
-			}
-		}
-		if !present && existence != nil {
-			promoted, err := existence.Promote(ctx, reads, id)
-			if err != nil {
-				return Classification{Err: err}
-			}
-			if promoted {
-				existence = nil
-				continue
-			}
-		}
-		if present && ready {
-			return w.artifactReady(dep, level)
-		}
-		if !present && dep.Artifact {
-			if _, ok := w.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact); ok {
-				return w.artifactReady(dep, level)
-			}
-		}
-		if !present {
-			if level < manifest.DrainCascade {
-				return Classification{Kind: schedule.Blocked}
-			}
-			if w.AllowMissingCRDs && id.IsCRD() {
-				return w.artifactReady(dep, level)
-			}
-			return Classification{Kind: schedule.DependencyFailed, Message: "dependency not found"}
-		}
-		if !hasExpr && info.Status == store.StatusReady {
-			return w.artifactReady(dep, level)
-		}
-		if info.Status == store.StatusFailed {
-			if w.Materializer && info.IsDependencyFailure() {
-				return failedClassification(id, obj, "declaration not emitted", nil)
-			}
-			return failedClassification(id, obj, "", &info)
-		}
-		if hasExpr && level >= manifest.DrainCascade {
-			return failedClassification(id, obj, "readyExpr timeout: context deadline exceeded", nil)
-		}
-		if !hasExpr && level >= manifest.DrainForce {
-			return failedClassification(id, obj, "not ready", nil)
-		}
+	}
+	if level < manifest.DrainCascade {
 		return Classification{Kind: schedule.Blocked}
 	}
+	if w.AllowMissingCRDs && id.IsCRD() {
+		return w.artifactReady(dep, level)
+	}
+	return Classification{Kind: schedule.DependencyFailed, Message: dependencyNotFound}
+}
+
+func (w *Waiter) classifyPresent(
+	dep *manifest.DependencyRef,
+	obj manifest.BaseManifest,
+	info *store.Observation,
+	level manifest.DrainLevel,
+) Classification {
+	id := dep.NamedResource
+	hasExpr := dep.ReadyExpr != nil && *dep.ReadyExpr != ""
+	if !hasExpr && info.Status == store.StatusReady {
+		return w.artifactReady(dep, level)
+	}
+	if info.Status == store.StatusFailed {
+		if w.Materializer && info.IsDependencyFailure() {
+			return failedClassification(id, obj, "declaration not emitted", nil)
+		}
+		return failedClassification(id, obj, "", info)
+	}
+	if hasExpr && level >= manifest.DrainCascade {
+		return failedClassification(id, obj, "readyExpr timeout: context deadline exceeded", nil)
+	}
+	if !hasExpr && level >= manifest.DrainForce {
+		return failedClassification(id, obj, "not ready", nil)
+	}
+	return Classification{Kind: schedule.Blocked}
 }
 
 type existenceOnly interface {
 	ExistenceOnly() bool
 }
 
-func (w *Waiter) artifactReady(dep manifest.DependencyRef, level manifest.DrainLevel) Classification {
+func (w *Waiter) artifactReady(dep *manifest.DependencyRef, level manifest.DrainLevel) Classification {
 	if !dep.Artifact {
 		return Classification{Kind: schedule.Terminal}
 	}
@@ -131,7 +171,13 @@ func (w *Waiter) artifactReady(dep manifest.DependencyRef, level manifest.DrainL
 		label = "chart source"
 	}
 	if info, ok := w.Store.GetStatus(id); ok && info.Outcome() == store.OutcomeSkipped {
-		return Classification{Err: manifest.NewError(manifest.ErrSourceSkipped, nil, fmt.Sprintf("%s %s skipped: %s", label, manifest.DiagnosticFor(id, obj), info.String()))}
+		return Classification{
+			Err: manifest.NewError(
+				manifest.ErrSourceSkipped,
+				nil,
+				fmt.Sprintf("%s %s skipped: %s", label, manifest.DiagnosticFor(id, obj), info.String()),
+			),
+		}
 	}
 	if descriptor, ok := obj.(existenceOnly); ok && descriptor.ExistenceOnly() && !dep.ArtifactOnly {
 		return Classification{Kind: schedule.Terminal}
@@ -141,7 +187,13 @@ func (w *Waiter) artifactReady(dep manifest.DependencyRef, level manifest.DrainL
 		return Classification{Kind: schedule.Terminal}
 	}
 	if dep.ArtifactOnly {
-		return Classification{Err: manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("source %s has no readable content", manifest.DiagnosticFor(id, obj)))}
+		return Classification{
+			Err: manifest.NewError(
+				manifest.ErrInput,
+				nil,
+				fmt.Sprintf("source %s has no readable content", manifest.DiagnosticFor(id, obj)),
+			),
+		}
 	}
 	if level >= manifest.DrainCascade {
 		message := fmt.Sprintf("%s %s artifact content unavailable", label, manifest.DiagnosticFor(id, obj))

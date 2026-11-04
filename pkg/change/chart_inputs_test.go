@@ -22,6 +22,7 @@ import (
 
 type chartInputFS struct {
 	fs.FS
+
 	opens, directories map[string]int
 	deny               string
 	cancel             func()
@@ -55,115 +56,9 @@ func TestFinalizeIndex_ChartInputs(t *testing.T) {
 	for _, mode := range []string{"directory", "root", "archive", "absent policy", "self-excluded policy", "malformed policy", "unreadable policy", "unreadable payload", "unreadable directory", "irregular", "missing chart", "canceled"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
-			root := t.TempDir()
-			location := "charts/demo"
-			input := fstest.MapFS{
-				"Chart.yaml": {Data: []byte("metadata")}, "values.yaml": {Data: []byte("defaults")},
-				"templates/cm.yaml": {Data: []byte("payload")}, "charts/child.tgz": {Data: []byte("archive")},
-				".helmignore": {Data: []byte("excluded/\n")}, "excluded/invalid.yaml": {Data: []byte("excluded")},
-			}
-			want := []string{"Chart.yaml", "values.yaml", "templates/cm.yaml", "charts/child.tgz", ".helmignore"}
-			switch mode {
-			case "root":
-				location = "."
-			case "archive":
-				location = "charts/demo.tgz"
-			case "absent policy":
-				delete(input, ".helmignore")
-				delete(input, "excluded/invalid.yaml")
-			case "self-excluded policy":
-				input[".helmignore"].Data = []byte(".helmignore\nexcluded/\n")
-			case "malformed policy":
-				input[".helmignore"].Data = []byte("**\n")
-				want = []string{".helmignore"}
-			case "unreadable policy", "unreadable directory":
-				want = []string{".helmignore"}
-			case "irregular":
-				input["z-irregular"] = &fstest.MapFile{Mode: fs.ModeSymlink}
-			case "missing chart":
-				want = nil
-			}
-			mounted := fstest.MapFS{}
-			for name, file := range input {
-				mounted[path.Join(location, name)] = file
-			}
-			switch mode {
-			case "archive":
-				mounted = fstest.MapFS{location: {Data: []byte("physical archive")}}
-				want = []string{location}
-			case "missing chart":
-				mounted = fstest.MapFS{}
-			default:
-				for i, name := range want {
-					want[i] = path.Join(location, name)
-				}
-			}
-			want = append(want, "config/explicit.yaml", "source.yaml")
-			slices.Sort(want)
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			observed := chartInputFS{FS: mounted, opens: map[string]int{}, directories: map[string]int{}}
-			if mode == "unreadable policy" {
-				observed.deny = path.Join(location, ".helmignore")
-			}
-			if mode == "unreadable directory" {
-				observed.deny = location
-			}
-			if mode == "unreadable payload" {
-				observed.deny = path.Join(location, "templates/cm.yaml")
-			}
-			if mode == "canceled" {
-				observed.cancel = cancel
-			}
-			st := store.New()
-			source := &manifest.GitRepository{Name: "source", Namespace: "apps"}
-			st.AddObject(source)
-			st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: observed})
-			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: observed})
-			release := &manifest.HelmRelease{Name: "demo", Namespace: "apps", Chart: manifest.HelmChart{Name: location, Source: source.Named()}, ChartValuesFiles: []string{"config/explicit.yaml"}, HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: location, Version: "", SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: (source.Named()).Kind, Name: (source.Named()).Name, Namespace: (source.Named()).Namespace, APIVersion: ""}, ValuesFiles: []string{"config/explicit.yaml"}}}}}
-			second := release.Clone()
-			second.Name = "second"
-			sibling := &manifest.ConfigMap{Name: "independent", Namespace: "apps"}
-			st.AddObjects([]manifest.BaseManifest{release, second, sibling})
-			l := readerLoaderForFilter(st, map[manifest.NamedResource]string{release.Named(): "hr.yaml", second.Named(): "second.yaml", sibling.Named(): "independent.yaml", source.Named(): "source.yaml"})
-			for _, id := range []manifest.NamedResource{release.Named(), second.Named()} {
-				r := l.Index.Records[id]
-				r.Refs = []manifest.NamedResource{source.Named()}
-				l.Index.Records[id] = r
-			}
-			err := l.FinalizeIndex(ctx, root, true)
-			if mode == "canceled" {
-				assert.Equal(t, errors.Is(err, context.Canceled), true)
-				return
-			}
-			assert.NoError(t, err)
-			for _, id := range []manifest.NamedResource{release.Named(), second.Named()} {
-				r, _ := l.Index.Lookup(id)
-				assert.Diff(t, readFilesForFilter(l.Index, id), want)
-				assert.Equal(t, len(r.Productions), 0)
-			}
-			r, _ := l.Index.Lookup(source.Named())
-			assert.Equal(t, len(r.Inputs), 0)
-			assert.Equal(t, len(l.Index.Records[release.Named()].Inputs), 0)
-			templateReads := 0
-			if slices.Contains(want, path.Join(location, "templates/cm.yaml")) {
-				templateReads = 1
-			}
-			assert.Equal(t, observed.opens[path.Join(location, "templates/cm.yaml")], templateReads)
-			assert.Equal(t, observed.directories[location] <= 1, true)
-			if mode != "archive" && mode != "missing chart" {
-				assert.Equal(t, observed.opens[path.Join(location, ".helmignore")], 1)
-			}
-			for _, file := range want {
-				assert.Equal(t, len(ownersForFilter(l.Index, file)), 0)
-				filter := admissiontest.Filter(t, admissiontest.Config{Changes: change.NewSet([]string{file}), Index: l.Index, Inventory: st, Root: ""})
-				assert.Equal(t, filter.ShouldReconcile(release.Named()), true)
-				assert.Equal(t, filter.ShouldReconcile(source.Named()), true)
-				assert.Equal(t, filter.ShouldReconcile(sibling.Named()), false)
-			}
-			filter := admissiontest.Filter(t, admissiontest.Config{Changes: change.NewSet([]string{path.Join(location, "excluded/invalid.yaml")}), Index: l.Index, Inventory: st, Root: ""})
-			assert.Equal(t, filter.ShouldReconcile(release.Named()), false)
-		})
+			testFinalizeIndexChartInputsCase(t, &mode)
+		},
+		)
 	}
 }
 
@@ -171,15 +66,44 @@ func TestFinalizeIndex_TransitiveChartInputs(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	source := &manifest.GitRepository{Name: "source", Namespace: "apps"}
-	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps", Chart: ".", SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: manifest.KindGitRepository, Name: "source"}}
-	first := &manifest.HelmRelease{Name: "first", Namespace: "apps", Chart: manifest.HelmChart{Name: ".", Source: source.Named()}, ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindHelmChart, Name: "chart"}}
-	second := &manifest.HelmRelease{Name: "second", Namespace: "apps", Chart: manifest.HelmChart{Name: ".", Source: source.Named()}, ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindHelmChart, Name: "chart"}}
+	chart := &manifest.HelmChartSource{
+		Name:      "chart",
+		Namespace: "apps",
+		Chart:     ".",
+		SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: manifest.KindGitRepository, Name: "source"},
+	}
+	first := &manifest.HelmRelease{
+		Name:      "first",
+		Namespace: "apps",
+		Chart:     manifest.HelmChart{Name: ".", Source: source.Named()},
+		ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindHelmChart, Name: "chart"},
+	}
+	second := &manifest.HelmRelease{
+		Name:      "second",
+		Namespace: "apps",
+		Chart:     manifest.HelmChart{Name: ".", Source: source.Named()},
+		ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindHelmChart, Name: "chart"},
+	}
 	build := func() *loader.Loader {
 		t.Helper()
 		st := store.New()
 		st.AddObjects([]manifest.BaseManifest{source, chart, first, second})
-		st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{"Chart.yaml": {}, "templates/cm.yaml": {}}})
-		l := readerLoaderForFilter(st, map[manifest.NamedResource]string{first.Named(): "first.yaml", second.Named(): "second.yaml", chart.Named(): "chart.yaml"})
+		st.SetArtifact(
+			source.Named(),
+			&store.SourceArtifact{
+				LocalPath: root,
+				LocalRoot: root,
+				FS:        fstest.MapFS{"Chart.yaml": {}, "templates/cm.yaml": {}},
+			},
+		)
+		l := readerLoaderForFilter(
+			st,
+			map[manifest.NamedResource]string{
+				first.Named():  "first.yaml",
+				second.Named(): "second.yaml",
+				chart.Named():  "chart.yaml",
+			},
+		)
 		for id, r := range l.Index.Records {
 			r.Refs = []manifest.NamedResource{chart.Named()}
 			r.Inputs = []string{id.Name + ".input"}
@@ -216,4 +140,168 @@ func readFilesForFilter(index *manifest.DiscoveryIndex, id manifest.NamedResourc
 	}
 	slices.Sort(files)
 	return files
+}
+
+func testFinalizeIndexChartInputsCase(t *testing.T, testCaseInput *string,
+) {
+	t.Helper()
+
+	root := t.TempDir()
+	location := "charts/demo"
+	input := fstest.MapFS{
+		"Chart.yaml": {Data: []byte("metadata")}, "values.yaml": {Data: []byte("defaults")},
+		"templates/cm.yaml": {Data: []byte("payload")}, "charts/child.tgz": {Data: []byte("archive")},
+		".helmignore": {Data: []byte("excluded/\n")}, "excluded/invalid.yaml": {Data: []byte("excluded")},
+	}
+	want := slices.Grow(
+		[]string{"Chart.yaml", "values.yaml", "templates/cm.yaml", "charts/child.tgz", ".helmignore"},
+		7-5,
+	)
+	switch *testCaseInput {
+	case "root":
+		location = "."
+	case "archive":
+		location = "charts/demo.tgz"
+	case "absent policy":
+		delete(input, ".helmignore")
+		delete(input, "excluded/invalid.yaml")
+	case "self-excluded policy":
+		input[".helmignore"].Data = []byte(".helmignore\nexcluded/\n")
+	case "malformed policy":
+		input[".helmignore"].Data = []byte("**\n")
+		want = []string{".helmignore"}
+	case "unreadable policy", "unreadable directory":
+		want = []string{".helmignore"}
+	case "irregular":
+		input["z-irregular"] = &fstest.MapFile{Mode: fs.ModeSymlink}
+	case "missing chart":
+		want = nil
+	}
+	mounted := fstest.MapFS{}
+	for name, file := range input {
+		mounted[path.Join(location, name)] = file
+	}
+	switch *testCaseInput {
+	case "archive":
+		mounted = fstest.MapFS{location: {Data: []byte("physical archive")}}
+		want = []string{location}
+	case "missing chart":
+		mounted = fstest.MapFS{}
+	default:
+		for i, name := range want {
+			want[i] = path.Join(location, name)
+		}
+	}
+	want = append(want, "config/explicit.yaml", "source.yaml")
+	slices.Sort(want)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	observed := chartInputFS{FS: mounted, opens: map[string]int{}, directories: map[string]int{}}
+	if (*testCaseInput) == "unreadable policy" {
+		observed.deny = path.Join(location, ".helmignore")
+	}
+	if (*testCaseInput) == "unreadable directory" {
+		observed.deny = location
+	}
+	if (*testCaseInput) == "unreadable payload" {
+		observed.deny = path.Join(location, "templates/cm.yaml")
+	}
+	if (*testCaseInput) == "canceled" {
+		observed.cancel = cancel
+	}
+	st := store.New()
+	source := &manifest.GitRepository{Name: "source", Namespace: "apps"}
+	st.AddObject(source)
+	st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: observed})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: observed},
+	)
+	release := &manifest.HelmRelease{
+		Name:             "demo",
+		Namespace:        "apps",
+		Chart:            manifest.HelmChart{Name: location, Source: source.Named()},
+		ChartValuesFiles: []string{"config/explicit.yaml"},
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{
+			Chart: &helmv2.HelmChartTemplate{
+				Spec: helmv2.HelmChartTemplateSpec{
+					Chart:   location,
+					Version: "",
+					SourceRef: &helmv2.CrossNamespaceObjectReference{
+						Kind:       source.Named().Kind,
+						Name:       source.Named().Name,
+						Namespace:  source.Named().Namespace,
+						APIVersion: "",
+					},
+					ValuesFiles: []string{"config/explicit.yaml"},
+				},
+			},
+		},
+	}
+	second := release.Clone()
+	second.Name = "second"
+	sibling := &manifest.ConfigMap{Name: "independent", Namespace: "apps"}
+	st.AddObjects([]manifest.BaseManifest{release, second, sibling})
+	l := readerLoaderForFilter(
+		st,
+		map[manifest.NamedResource]string{
+			release.Named(): "hr.yaml",
+			second.Named():  "second.yaml",
+			sibling.Named(): "independent.yaml",
+			source.Named():  "source.yaml",
+		},
+	)
+	for _, id := range []manifest.NamedResource{release.Named(), second.Named()} {
+		r := l.Index.Records[id]
+		r.Refs = []manifest.NamedResource{source.Named()}
+		l.Index.Records[id] = r
+	}
+	err := l.FinalizeIndex(ctx, root, true)
+	if (*testCaseInput) == "canceled" {
+		assert.Equal(t, errors.Is(err, context.Canceled), true)
+		return
+	}
+	assert.NoError(t, err)
+	for _, id := range []manifest.NamedResource{release.Named(), second.Named()} {
+		r, _ := l.Index.Lookup(id)
+		assert.Diff(t, readFilesForFilter(l.Index, id), want)
+		assert.Equal(t, len(r.Productions), 0)
+	}
+	r, _ := l.Index.Lookup(source.Named())
+	assert.Equal(t, len(r.Inputs), 0)
+	assert.Equal(t, len(l.Index.Records[release.Named()].Inputs), 0)
+	templateReads := 0
+	if slices.Contains(want, path.Join(location, "templates/cm.yaml")) {
+		templateReads = 1
+	}
+	assert.Equal(t, observed.opens[path.Join(location, "templates/cm.yaml")], templateReads)
+	assert.Equal(t, observed.directories[location] <= 1, true)
+	if (*testCaseInput) != "archive" && (*testCaseInput) != "missing chart" {
+		assert.Equal(t, observed.opens[path.Join(location, ".helmignore")], 1)
+	}
+	for _, file := range want {
+		assert.Equal(t, len(ownersForFilter(l.Index, file)), 0)
+		filter := admissiontest.Filter(
+			t,
+			admissiontest.Config{
+				Changes:   change.NewSet([]string{file}),
+				Index:     l.Index,
+				Inventory: st,
+				Root:      "",
+			},
+		)
+		assert.Equal(t, filter.ShouldReconcile(release.Named()), true)
+		assert.Equal(t, filter.ShouldReconcile(source.Named()), true)
+		assert.Equal(t, filter.ShouldReconcile(sibling.Named()), false)
+	}
+	filter := admissiontest.Filter(
+		t,
+		admissiontest.Config{
+			Changes:   change.NewSet([]string{path.Join(location, "excluded/invalid.yaml")}),
+			Index:     l.Index,
+			Inventory: st,
+			Root:      "",
+		},
+	)
+	assert.Equal(t, filter.ShouldReconcile(release.Named()), false)
 }

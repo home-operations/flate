@@ -31,13 +31,22 @@ func Prepare(doc manifest.DocOccurrence, opts manifest.ParseDocOptions) (store.C
 	return store.Child{Obj: obj, Doc: authoritative}, doc, changed
 }
 
-func (r documentReader) parseFile(ctx context.Context, path string, opts manifest.ParseDocOptions) ([]store.Child, error) {
+//nolint:gocritic // Keep immutable value-receiver semantics.
+func (r documentReader) parseFile(
+	ctx context.Context,
+	path string,
+	opts manifest.ParseDocOptions,
+) ([]store.Child, error) {
 	if r.compact && r.coordinate == nil {
 		facts, err := r.censusFile(ctx, path, opts)
 		var children []store.Child
-		for _, fact := range facts {
-			if fact.Obj != nil && fact.outcome.Err == nil && !fact.fact.facts.uncertain {
-				children = append(children, fact.Child)
+		{
+			factValues := facts
+			for factIndex := range factValues {
+				fact := factValues[factIndex]
+				if fact.Obj != nil && fact.outcome.Err == nil && !fact.fact.facts.uncertain {
+					children = append(children, fact.Child)
+				}
 			}
 		}
 		return children, err
@@ -50,14 +59,19 @@ func (r documentReader) parseFile(ctx context.Context, path string, opts manifes
 	if len(out) != 0 {
 		tracked = make([]store.Child, 0, len(out))
 	}
-	for _, child := range out {
-		if child.Obj != nil && child.outcome.Err == nil && manifest.KindOf(child.Obj).Tracked {
-			tracked = append(tracked, child.Child)
+	{
+		childValues := out
+		for childIndex := range childValues {
+			child := childValues[childIndex]
+			if child.Obj != nil && child.outcome.Err == nil && manifest.KindOf(child.Obj).Tracked {
+				tracked = append(tracked, child.Child)
+			}
 		}
 	}
 	return tracked, nil
 }
 
+//nolint:gocritic // Immutable reader values retain their original snapshot semantics.
 func (r documentReader) fileObjects(path string, opts manifest.ParseDocOptions) ([]parsedObject, error) {
 	r.restore(path)
 	out := r.cache[path].objects
@@ -78,9 +92,15 @@ func (r documentReader) fileObjects(path string, opts manifest.ParseDocOptions) 
 	return out, nil
 }
 
-func (r documentReader) decodeFileObjects(path string, opts manifest.ParseDocOptions, keepRaw bool, yield func(parsedObject)) error {
-	input, name := r.input(path)
-	path = r.localPath(path)
+//nolint:gocritic // Immutable reader values retain their original snapshot semantics.
+func (r documentReader) decodeFileObjects(
+	path string,
+	opts manifest.ParseDocOptions,
+	keepRaw bool,
+	yield func(parsedObject),
+) error {
+	input, name := new(r).input(path)
+	path = new(r).localPath(path)
 	var f fs.File
 	var err error
 	if local, ok := input.(*gittree.FS); ok && r.regular {
@@ -89,66 +109,31 @@ func (r documentReader) decodeFileObjects(path string, opts manifest.ParseDocOpt
 		f, err = input.Open(name)
 	}
 	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, errSourceUnavailable) {
-			return fmt.Errorf("open %s: %w", path, err)
-		}
-		yield(parsedObject{outcome: manifest.DocOccurrence{Err: manifest.NewError(manifest.ErrInput, fmt.Errorf("open %s: %w", path, err), "")}})
-		return nil
+		return fileOpenFailure(path, err, yield)
 	}
 	defer func() { _ = f.Close() }()
 	docs, err := manifest.DecodeDocs(f, manifest.IncidentalDocuments)
 	for _, occurrence := range docs {
-		if r.coordinate != nil && occurrence.Ordinal != r.coordinate.Document {
-			manifest.ReleaseDoc(occurrence.Document)
-			continue
-		}
-		if occurrence.Err != nil {
-			yield(parsedObject{outcome: occurrence})
+		if new(r).skipFileOccurrence(new(occurrence), yield) {
 			continue
 		}
 		leaves := []manifest.DocOccurrence{occurrence}
-		collection := false
-		if r.compact {
-			var expandErr error
-			leaves, collection, expandErr = expandDocuments(occurrence)
-			if expandErr != nil {
-				occurrence.Err = expandErr
-				yield(parsedObject{outcome: occurrence})
+		var collection bool
+		{
+			var skip bool
+			leaves, collection, skip = new(r).expandFileOccurrence(new(occurrence), leaves, yield)
+			if skip {
 				continue
 			}
 		}
 		for item, leaf := range leaves {
-			if r.coordinate != nil && (leaf.Ordinal != r.coordinate.Document || item != r.coordinate.item) {
-				manifest.ReleaseDoc(leaf.Document)
+			if new(r).skipFileLeaf(item, new(leaf)) {
 				continue
 			}
-			version := manifest.DocAPIVersion(leaf.Document)
-			declared := ""
-			if r.compact && r.coordinate == nil {
-				declared = manifest.Fingerprint(manifest.WithoutOwnershipLabels(leaf.Document))
+			if child, emit := new(r).prepareFileObject(path, opts, keepRaw, new(leaf)); emit {
+				child.item = item
+				yield(child)
 			}
-			child, outcome, _ := Prepare(leaf, opts)
-			if outcome.Err != nil {
-				yield(parsedObject{Child: child, outcome: outcome, item: item, version: version})
-				continue
-			}
-			obj := child.Obj
-			tracked := obj != nil && manifest.KindOf(obj).Tracked
-			if obj == nil || !tracked && !keepRaw {
-				manifest.ReleaseDoc(leaf.Document)
-				continue
-			}
-			id := obj.Named()
-			if (!r.compact || r.coordinate != nil) && (manifest.HasEnvsubstReference(id.Name) || manifest.HasEnvsubstReference(id.Namespace)) {
-				slog.Debug("loader: skipped template doc (unresolved envsubst in name/namespace)", "path", path, "id", id.String())
-				manifest.ReleaseDoc(leaf.Document)
-				continue
-			}
-			if !tracked {
-				manifest.ReleaseDoc(leaf.Document)
-				child.Doc, outcome.Document = nil, nil
-			}
-			yield(parsedObject{Child: child, outcome: outcome, item: item, version: version, declared: declared})
 		}
 		if collection {
 			manifest.ReleaseDoc(occurrence.Document)
@@ -160,7 +145,12 @@ func (r documentReader) decodeFileObjects(path string, opts manifest.ParseDocOpt
 	return nil
 }
 
-func (r documentReader) censusFile(ctx context.Context, path string, opts manifest.ParseDocOptions) ([]parsedObject, error) {
+//nolint:gocritic // Immutable reader values retain their original snapshot semantics.
+func (r documentReader) censusFile(
+	ctx context.Context,
+	path string,
+	opts manifest.ParseDocOptions,
+) ([]parsedObject, error) {
 	r.restore(path)
 	if cached := r.cache[path]; cached.objects != nil || cached.decodeErr != nil {
 		return cached.objects, cached.decodeErr
@@ -180,10 +170,15 @@ func (r documentReader) censusFile(ctx context.Context, path string, opts manife
 		}
 		o := compactOccurrence(child.Obj, projection)
 		o.facts.declared = child.declared
-		origin := r.localPath(path)
-		root := r.mountedRoot(origin)
+		origin := new(r).localPath(path)
+		root := new(r).mountedRoot(origin)
 		file, _ := filepath.Rel(root, origin)
-		o.Declaration = OccurrenceID{Source: root, File: filepath.ToSlash(file), Document: child.outcome.Ordinal, item: child.item}
+		o.Declaration = OccurrenceID{
+			Source:   root,
+			File:     filepath.ToSlash(file),
+			Document: child.outcome.Ordinal,
+			item:     child.item,
+		}
 		var structural manifest.BaseManifest
 		if o.facts.structural != nil {
 			structural = o.facts.structural
@@ -197,22 +192,7 @@ func (r documentReader) censusFile(ctx context.Context, path string, opts manife
 		err = projectionErr
 	}
 	if len(facts) > 1 {
-		declared := map[manifest.NamedResource]string{}
-		for _, child := range facts {
-			if child.fact == nil {
-				continue
-			}
-			id, fingerprint := child.fact.Authored, child.fact.facts.declared
-			if previous, known := declared[id]; known && previous != fingerprint {
-				fingerprint = ""
-			}
-			declared[id] = fingerprint
-		}
-		for _, child := range facts {
-			if child.fact != nil {
-				child.fact.facts.declared = declared[child.fact.Authored]
-			}
-		}
+		resolveDeclaredFingerprints(facts)
 	}
 	cached := r.cache[path]
 	cached.objects, cached.decodeErr = facts, err
@@ -244,4 +224,129 @@ func expandDocuments(o manifest.DocOccurrence) ([]manifest.DocOccurrence, bool, 
 		out = append(out, manifest.DocOccurrence{Document: doc, Ordinal: o.Ordinal})
 	}
 	return out, true, nil
+}
+
+func resolveDeclaredFingerprints(facts []parsedObject) {
+	declared := map[manifest.NamedResource]string{}
+	{
+		childValues2 := facts
+		for childIndex2 := range childValues2 {
+			child := childValues2[childIndex2]
+			if child.fact == nil {
+				continue
+			}
+			id, fingerprint := child.fact.Authored, child.fact.facts.declared
+			if previous, known := declared[id]; known && previous != fingerprint {
+				fingerprint = ""
+			}
+			declared[id] = fingerprint
+		}
+	}
+	{
+		childValues3 := facts
+		for childIndex3 := range childValues3 {
+			child := childValues3[childIndex3]
+			if child.fact != nil {
+				child.fact.facts.declared = declared[child.fact.Authored]
+			}
+		}
+	}
+}
+
+func (r *documentReader) prepareFileObject(
+	path string,
+	opts manifest.ParseDocOptions,
+	keepRaw bool,
+	leafValue *manifest.DocOccurrence,
+) (parsedObject, bool) {
+	leaf := *leafValue
+	version := manifest.DocAPIVersion(leaf.Document)
+	declared := ""
+	if r.compact && r.coordinate == nil {
+		declared = manifest.Fingerprint(manifest.WithoutOwnershipLabels(leaf.Document))
+	}
+	child, outcome, _ := Prepare(leaf, opts)
+	if outcome.Err != nil {
+		return parsedObject{Child: child, outcome: outcome, version: version}, true
+	}
+	obj := child.Obj
+	tracked := obj != nil && manifest.KindOf(obj).Tracked
+	if obj == nil || !tracked && !keepRaw {
+		manifest.ReleaseDoc(leaf.Document)
+		return parsedObject{}, false
+	}
+	id := obj.Named()
+	if (!r.compact || r.coordinate != nil) &&
+		(manifest.HasEnvsubstReference(id.Name) || manifest.HasEnvsubstReference(id.Namespace)) {
+		slog.Debug(
+			"loader: skipped template doc (unresolved envsubst in name/namespace)",
+			"path",
+			path,
+			"id",
+			id.String(),
+		)
+		manifest.ReleaseDoc(leaf.Document)
+		return parsedObject{}, false
+	}
+	if !tracked {
+		manifest.ReleaseDoc(leaf.Document)
+		child.Doc, outcome.Document = nil, nil
+	}
+	return parsedObject{Child: child, outcome: outcome, version: version, declared: declared}, true
+}
+
+func fileOpenFailure(path string, err error, yield func(parsedObject)) error {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, errSourceUnavailable) {
+		return fmt.Errorf("open %s: %w", path, err)
+	}
+	yield(
+		parsedObject{
+			outcome: manifest.DocOccurrence{
+				Err: manifest.NewError(manifest.ErrInput, fmt.Errorf("open %s: %w", path, err), ""),
+			},
+		},
+	)
+	return nil
+}
+
+func (r *documentReader) skipFileOccurrence(occurrenceValue *manifest.DocOccurrence, yield func(parsedObject)) bool {
+	occurrence := *occurrenceValue
+	if r.coordinate != nil && occurrence.Ordinal != r.coordinate.Document {
+		manifest.ReleaseDoc(occurrence.Document)
+		return true
+	}
+	if occurrence.Err != nil {
+		yield(parsedObject{outcome: occurrence})
+		return true
+	}
+	return false
+}
+
+func (r *documentReader) expandFileOccurrence(
+	occurrenceValue *manifest.DocOccurrence,
+	leaves []manifest.DocOccurrence,
+	yield func(parsedObject),
+) ([]manifest.DocOccurrence, bool, bool) {
+	occurrence := *occurrenceValue
+	collection := false
+	if r.compact {
+		var expandErr error
+		leaves, collection, expandErr = expandDocuments(occurrence)
+		if expandErr != nil {
+			occurrence.Err = expandErr
+			yield(parsedObject{outcome: occurrence})
+			return leaves, collection, true
+		}
+	}
+	return leaves, collection, false
+}
+
+func (r *documentReader) skipFileLeaf(item int, leafValue *manifest.DocOccurrence) bool {
+	leaf := *leafValue
+	if r.coordinate != nil && (leaf.Ordinal != r.coordinate.Document || item != r.coordinate.item) {
+		manifest.ReleaseDoc(leaf.Document)
+		return true
+	}
+	return false
 }

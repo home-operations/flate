@@ -127,7 +127,11 @@ func (s *Scheduler) requeueLocked(n *node, charge bool) {
 	}
 	if charge && n.progressed {
 		if n.redispatches >= maxRedispatches {
-			s.err = manifest.NewError(manifest.ErrFlux, nil, fmt.Sprintf("schedule: %s exceeded %d redispatches; reconcile did not converge", n.id, maxRedispatches))
+			s.err = manifest.NewError(
+				manifest.ErrFlux,
+				nil,
+				fmt.Sprintf("schedule: %s exceeded %d redispatches; reconcile did not converge", n.id, maxRedispatches),
+			)
 			return
 		}
 		n.redispatches++
@@ -204,14 +208,7 @@ func (s *Scheduler) invalidate(ids []NodeID) {
 func (s *Scheduler) Run(ctx context.Context) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	stop := context.AfterFunc(ctx, func() {
-		s.mu.Lock()
-		if s.err == nil {
-			s.err = ctx.Err()
-		}
-		s.cond.Broadcast()
-		s.mu.Unlock()
-	})
+	stop := context.AfterFunc(ctx, func() { s.notifyCancellation(ctx) })
 	defer stop()
 	level := manifest.DrainNone
 	s.mu.Lock()
@@ -220,23 +217,8 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	}
 	for s.err == nil {
 		if len(s.runq) > 0 {
-			if s.unsorted {
-				slices.SortFunc(s.runq, NodeID.Compare)
-				s.unsorted = false
-			}
-			id := s.runq[0]
-			s.runq = s.runq[1:]
-			n := s.nodes[id]
-			n.state = stateRunning
-			s.inFlight++
 			level = manifest.DrainNone
-			s.mu.Unlock()
-			s.tasks.Go(runCtx, "schedule/"+id.String(), func(ctx context.Context) {
-				var result Result
-				defer func() { s.complete(n, result, true) }()
-				result = s.disp.Dispatch(ctx, id, manifest.DrainNone)
-			})
-			s.mu.Lock()
+			s.dispatchNextLocked(runCtx)
 			continue
 		}
 		if s.inFlight != 0 {
@@ -257,37 +239,21 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		if len(s.runq) > 0 || s.err != nil {
 			continue
 		}
-		var parked []*node
-		for _, n := range s.nodes {
-			if n.state == stateParked {
-				parked = append(parked, n)
-			}
-		}
+		parked := s.parkedLocked()
 		if len(parked) == 0 {
 			break
 		}
 		if level == manifest.DrainForce {
-			s.err = manifest.NewError(manifest.ErrFlux, nil, "schedule: unresolved assessment after structural classification")
+			s.err = manifest.NewError(
+				manifest.ErrFlux,
+				nil,
+				"schedule: unresolved assessment after structural classification",
+			)
 			break
 		}
 		level++
 		slices.SortFunc(parked, func(a, b *node) int { return a.id.Compare(b.id) })
-		for _, n := range parked {
-			if s.err != nil {
-				break
-			}
-			n.state = stateRunning
-			s.inFlight++
-			current, drain := n.assessment, level
-			s.mu.Unlock()
-			s.tasks.Go(runCtx, "schedule/settle/"+n.id.String(), func(ctx context.Context) {
-				defer func() { s.complete(n, Result{Assessment: current}, false) }()
-				if current.Valid() {
-					current.Settle(ctx, drain)
-				}
-			})
-			s.mu.Lock()
-		}
+		s.settleLocked(runCtx, parked, level)
 	}
 	s.stopped = true
 	s.mu.Unlock()
@@ -316,4 +282,61 @@ func (s *Scheduler) Results() map[NodeID]Result {
 		}
 	}
 	return results
+}
+
+func (s *Scheduler) dispatchNextLocked(ctx context.Context) {
+	if s.unsorted {
+		slices.SortFunc(s.runq, NodeID.Compare)
+		s.unsorted = false
+	}
+	id := s.runq[0]
+	s.runq = s.runq[1:]
+	n := s.nodes[id]
+	n.state = stateRunning
+	s.inFlight++
+	s.mu.Unlock()
+	s.tasks.Go(ctx, "schedule/"+id.String(), func(ctx context.Context) {
+		var result Result
+		defer func() { s.complete(n, result, true) }()
+		result = s.disp.Dispatch(ctx, id, manifest.DrainNone)
+	})
+	s.mu.Lock()
+}
+
+func (s *Scheduler) parkedLocked() []*node {
+	var parked []*node
+	for _, n := range s.nodes {
+		if n.state == stateParked {
+			parked = append(parked, n)
+		}
+	}
+	return parked
+}
+
+func (s *Scheduler) settleLocked(ctx context.Context, parked []*node, level manifest.DrainLevel) {
+	for _, n := range parked {
+		if s.err != nil {
+			break
+		}
+		n.state = stateRunning
+		s.inFlight++
+		current, drain := n.assessment, level
+		s.mu.Unlock()
+		s.tasks.Go(ctx, "schedule/settle/"+n.id.String(), func(ctx context.Context) {
+			defer func() { s.complete(n, Result{Assessment: current}, false) }()
+			if current.Valid() {
+				current.Settle(ctx, drain)
+			}
+		})
+		s.mu.Lock()
+	}
+}
+
+func (s *Scheduler) notifyCancellation(ctx context.Context) {
+	s.mu.Lock()
+	if s.err == nil {
+		s.err = ctx.Err()
+	}
+	s.cond.Broadcast()
+	s.mu.Unlock()
 }

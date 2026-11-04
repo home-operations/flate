@@ -17,12 +17,30 @@ func TestSession_OnlyRequiredStandaloneConstruction(t *testing.T) {
 	input := fstest.MapFS{
 		"one/kustomization.yaml": {Data: []byte("resources: [cm.yaml]\n")},
 		"two/kustomization.yaml": {Data: []byte("resources: [cm.yaml]\n")},
-		"one/cm.yaml":            {Data: []byte("apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: one, namespace: apps}\nspec: {resources: []}\n")},
-		"two/cm.yaml":            {Data: []byte("apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: two, namespace: apps}\nspec: {resources: []}\n")},
+		"one/cm.yaml": {
+			Data: []byte(
+				"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: one, namespace: apps}\nspec: {resources: []}\n",
+			),
+		},
+		"two/cm.yaml": {
+			Data: []byte(
+				"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: two, namespace: apps}\nspec: {resources: []}\n",
+			),
+		},
 	}
 	st := store.New()
 	l := loader.New(st)
-	session, err := discovery.Begin(t.Context(), discovery.Config{Input: &store.SourceArtifact{LocalPath: root, FS: input}, Path: root, Store: st, Loader: l, Trees: testTrees(t), Selection: manifest.Selection{Changed: true}})
+	session, err := discovery.Begin(
+		t.Context(),
+		discovery.Config{
+			Input:     &store.SourceArtifact{LocalPath: root, FS: input},
+			Path:      root,
+			Store:     st,
+			Loader:    l,
+			Trees:     testTrees(t),
+			Selection: manifest.Selection{Changed: true},
+		},
+	)
 	assert.NoError(t, err)
 	for _, object := range st.Objects() {
 		if !manifest.KindOf(object).SourceArtifact {
@@ -32,10 +50,22 @@ func TestSession_OnlyRequiredStandaloneConstruction(t *testing.T) {
 	advanced, err := session.Advance(t.Context(), &loader.Admission{Blocked: []string{"one"}})
 	assert.NoError(t, err)
 	assert.Equal(t, advanced, true)
-	if st.GetObject(manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "apps", Name: "two"}) != nil {
-		t.Fatal("unrelated package was hydrated")
+	{
+		assert.FatalIf(t, st.GetObject(
+			manifest.NamedResource{
+				Group:     manifest.FluxOperatorDomain,
+				Kind:      manifest.KindResourceSet,
+				Namespace: "apps",
+				Name:      "two",
+			},
+		) != nil, "%v", "unrelated package was hydrated")
 	}
-	one := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "apps", Name: "one"}
+	one := manifest.NamedResource{
+		Group:     manifest.FluxOperatorDomain,
+		Kind:      manifest.KindResourceSet,
+		Namespace: "apps",
+		Name:      "one",
+	}
 	built := l.PromotionDocuments(one)
 	assert.Equal(t, len(built), 1)
 	advanced, err = session.Advance(t.Context(), &loader.Admission{Objects: built})
@@ -48,8 +78,15 @@ func TestSession_OnlyRequiredStandaloneConstruction(t *testing.T) {
 	assert.Equal(t, result, again)
 	assert.Equal(t, result.Index, l.Index)
 	assert.Equal(t, st.GetObject(one) != nil, true)
-	if st.GetObject(manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "apps", Name: "two"}) != nil {
-		t.Fatal("freeze hydrated an unrelated package")
+	{
+		assert.FatalIf(t, st.GetObject(
+			manifest.NamedResource{
+				Group:     manifest.FluxOperatorDomain,
+				Kind:      manifest.KindResourceSet,
+				Namespace: "apps",
+				Name:      "two",
+			},
+		) != nil, "%v", "freeze hydrated an unrelated package")
 	}
 }
 
@@ -59,8 +96,16 @@ func TestRun_RestrictedUsesSession(t *testing.T) {
 	input := fstest.MapFS{
 		"one/kustomization.yaml": {Data: []byte("resources: [cm.yaml]\n")},
 		"two/kustomization.yaml": {Data: []byte("resources: [cm.yaml]\n")},
-		"one/cm.yaml":            {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: one, namespace: apps}\ndata: {value: selected}\n")},
-		"two/cm.yaml":            {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: two, namespace: apps}\ndata: {value: unrelated}\n")},
+		"one/cm.yaml": {
+			Data: []byte(
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: one, namespace: apps}\ndata: {value: selected}\n",
+			),
+		},
+		"two/cm.yaml": {
+			Data: []byte(
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: two, namespace: apps}\ndata: {value: unrelated}\n",
+			),
+		},
 	}
 	st := store.New()
 	l := loader.New(st)

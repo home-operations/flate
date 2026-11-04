@@ -26,7 +26,10 @@ func (n *Network) RegistryCredentials(ctx context.Context, configPath, hostname 
 			n.registryErr = err
 			return
 		}
-		helm, err := credentials.NewStore(cmp.Or(os.Getenv("HELM_REGISTRY_CONFIG"), helmpath.ConfigPath("registry/config.json")), opts)
+		helm, err := credentials.NewStore(
+			cmp.Or(os.Getenv("HELM_REGISTRY_CONFIG"), helmpath.ConfigPath("registry/config.json")),
+			opts,
+		)
 		if err != nil {
 			n.registryErr = err
 			return
@@ -44,7 +47,7 @@ func (n *Network) RegistryCredentials(ctx context.Context, configPath, hostname 
 // IAM discovery outlives caller cancellation and MUST be joined by Close.
 func (n *Network) AWSCredentials(ctx context.Context, provider aws.Provider) (aws.Value, error) {
 	if err := ctx.Err(); err != nil {
-		return aws.Value{}, err
+		return aws.Value{}, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 	}
 	retrieve := func(ctx context.Context, provider aws.Provider) (aws.Value, error) {
 		return provider.RetrieveWithCredContext(&aws.CredContext{Context: ctx, Client: &http.Client{Transport: n}})
@@ -64,7 +67,7 @@ func (n *Network) AWSCredentials(ctx context.Context, provider aws.Provider) (aw
 	})
 	select {
 	case <-ctx.Done():
-		return aws.Value{}, ctx.Err()
+		return aws.Value{}, ctx.Err() //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 	case <-n.iamDone:
 		return n.iamValue, n.iamErr
 	}

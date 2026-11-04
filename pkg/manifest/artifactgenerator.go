@@ -12,9 +12,16 @@ import (
 )
 
 // ExternalArtifact constructs a declaration after evaluation resolves its output metadata.
+//
+//nolint:gocritic // The SDK preserves this value input and its snapshot boundary.
 func (r *RawObject) ExternalArtifact(metadata metav1.ObjectMeta) *ExternalArtifact {
 	return NewExternalArtifact(sourcev1.ExternalArtifact{ObjectMeta: metadata, Spec: sourcev1.ExternalArtifactSpec{
-		SourceRef: &meta.NamespacedObjectKindReference{APIVersion: r.APIVersion, Kind: r.Kind, Name: r.Name, Namespace: r.Namespace},
+		SourceRef: &meta.NamespacedObjectKindReference{
+			APIVersion: r.APIVersion,
+			Kind:       r.Kind,
+			Name:       r.Name,
+			Namespace:  r.Namespace,
+		},
 	}})
 }
 
@@ -38,12 +45,15 @@ func (r *RawObject) artifactTargets(candidates []NamedResource) []ProducerTarget
 	}
 	for _, entry := range entries {
 		m, _ := entry.(map[string]any)
-		name, _ := m["name"].(string)
+		name, _ := m[nameKey].(string)
 		if name == "" {
 			continue
 		}
 		if !strings.ContainsAny(name, "{}") {
-			targets = append(targets, ProducerTarget{Group: SourceDomain, Kind: KindExternalArtifact, Namespace: r.Namespace, Name: name})
+			targets = append(
+				targets,
+				ProducerTarget{Group: SourceDomain, Kind: KindExternalArtifact, Namespace: r.Namespace, Name: name},
+			)
 			continue
 		}
 		if len(captures) == 0 {
@@ -53,17 +63,7 @@ func (r *RawObject) artifactTargets(candidates []NamedResource) []ProducerTarget
 		if !ok {
 			continue
 		}
-		bound := make([]string, len(captures))
-		for _, candidate := range candidates {
-			if candidate.Group != SourceDomain || candidate.Kind != KindExternalArtifact || candidate.Namespace != r.Namespace || len(apivalidation.NameIsDNSSubdomain(candidate.Name, false)) != 0 {
-				continue
-			}
-			clear(bound)
-			budget := artifactMatchBudget
-			if artifactMatch(tokens, candidate.Name, bound, &budget) {
-				targets = append(targets, ProducerTarget{NamedResource: candidate})
-			}
-		}
+		targets = r.appendArtifactMatches(targets, candidates, tokens, len(captures))
 	}
 	slices.SortFunc(targets, func(a, b ProducerTarget) int { return a.Compare(b.NamedResource) })
 	return slices.CompactFunc(targets, func(a, b ProducerTarget) bool { return a.NamedResource == b.NamedResource })
@@ -84,9 +84,7 @@ func artifactTokens(template string, captures []string, declare bool) ([]artifac
 			tokens = append(tokens, artifactToken{literal: template[:i]})
 		}
 		name, rest, ok := strings.Cut(template[i+1:], "}")
-		if !ok || name == "" || strings.IndexFunc(name, func(r rune) bool {
-			return r != '_' && (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9')
-		}) >= 0 || name[0] >= '0' && name[0] <= '9' {
+		if !ok || !validArtifactCapture(name) {
 			return nil, nil, false
 		}
 		index := slices.Index(captures, name)
@@ -141,7 +139,7 @@ func artifactMatch(tokens []artifactToken, name string, bound []string, budget *
 			minimum++
 		}
 	}
-	for end := 1; end <= min(63, (len(name)-minimum)/occurrences); end++ {
+	for end := 1; end <= min(maxArtifactCaptureLength, (len(name)-minimum)/occurrences); end++ {
 		if *budget == 0 {
 			break
 		}
@@ -161,7 +159,7 @@ func artifactMatch(tokens []artifactToken, name string, bound []string, budget *
 
 func (r *RawObject) references(yield func(Reference) bool) {
 	if application, valid := r.EntryApplication(); valid {
-		if !yield(Reference{NamedResource: application.Source, Use: "source", Content: true}) {
+		if !yield(Reference{NamedResource: application.Source, Use: sourceKey, Content: true}) {
 			return
 		}
 	}
@@ -171,12 +169,59 @@ func (r *RawObject) references(yield func(Reference) bool) {
 	sources, _ := r.Spec["sources"].([]any)
 	for i, source := range sources {
 		fields, _ := source.(map[string]any)
-		kind, _ := fields["kind"].(string)
-		name, _ := fields["name"].(string)
-		namespace, _ := fields["namespace"].(string)
-		id := Resolve(NamedResource{Group: referenceGroup(kind, ""), Kind: kind, Name: name, Namespace: namespace}, "", r.Namespace)
-		if !yield(Reference{NamedResource: id, Use: "artifact", Position: i, Content: true, Gate: GateArtifacts, Artifact: true, ArtifactOnly: true, ArtifactStages: GateArtifacts}) {
+		kind, _ := fields[kindKey].(string)
+		name, _ := fields[nameKey].(string)
+		namespace, _ := fields[namespaceKey].(string)
+		id := Resolve(
+			NamedResource{Group: referenceGroup(kind, ""), Kind: kind, Name: name, Namespace: namespace},
+			"",
+			r.Namespace,
+		)
+		if !yield(
+			Reference{
+				NamedResource:  id,
+				Use:            "artifact",
+				Position:       i,
+				Content:        true,
+				Gate:           GateArtifacts,
+				Artifact:       true,
+				ArtifactOnly:   true,
+				ArtifactStages: GateArtifacts,
+			},
+		) {
 			return
 		}
 	}
+}
+
+const (
+	maxArtifactCaptureLength = 63
+)
+
+func (r *RawObject) appendArtifactMatches(
+	targets []ProducerTarget,
+	candidates []NamedResource,
+	tokens []artifactToken,
+	captureCount int,
+) []ProducerTarget {
+	bound := make([]string, captureCount)
+	for _, candidate := range candidates {
+		if candidate.Group != SourceDomain || candidate.Kind != KindExternalArtifact ||
+			candidate.Namespace != r.Namespace ||
+			len(apivalidation.NameIsDNSSubdomain(candidate.Name, false)) != 0 {
+			continue
+		}
+		clear(bound)
+		budget := artifactMatchBudget
+		if artifactMatch(tokens, candidate.Name, bound, &budget) {
+			targets = append(targets, ProducerTarget{NamedResource: candidate})
+		}
+	}
+	return targets
+}
+
+func validArtifactCapture(name string) bool {
+	return !(name == "" || strings.IndexFunc(name, func(r rune) bool {
+		return r != '_' && (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9')
+	}) >= 0 || name[0] >= '0' && name[0] <= '9')
 }

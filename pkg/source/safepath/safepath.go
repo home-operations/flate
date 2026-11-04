@@ -10,7 +10,7 @@ import (
 )
 
 // ArchiveName rejects absolute, drive-qualified, traversal and invalid-separator
-// names before cleaning. Errors wrap fs.ErrInvalid. The result "." is valid
+// names before cleaning. Errors wrap [fs.ErrInvalid]. The result "." is valid
 // only for a caller's non-file root entry.
 func ArchiveName(name string) (string, error) {
 	if name == "" || strings.ContainsAny(name, "\x00\\") {
@@ -32,7 +32,7 @@ func ArchiveName(name string) (string, error) {
 	return path.Clean(name), nil
 }
 
-// Escaped reports whether a filepath.Rel result leaves its base.
+// Escaped reports whether a [filepath.Rel] result leaves its base.
 func Escaped(rel string) bool {
 	return rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }

@@ -649,7 +649,7 @@ func testAdmissionEmittedNamespaceChildrenCase(
 	assert.NoError(t, err)
 	_, retry := l.Options.Filter.AddEmitted(initial.Needed, initial.Selected, initial.Dirty, initial.Revision)
 	assert.Equal(t, retry, false)
-	children := []store.Child{}
+	children := make([]store.Child, 0, 3)
 	for _, obj := range []manifest.BaseManifest{selected, excluded, required} {
 		incoming := store.Child{Obj: obj, Productions: []manifest.Production{{Owner: parent.Named()}}}
 		proposal, prepareErr := l.Prepare(t.Context(), incoming, nil, nil)

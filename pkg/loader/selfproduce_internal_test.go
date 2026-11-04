@@ -130,10 +130,8 @@ func TestPackageRoots_EdgeFactLifetime(t *testing.T) {
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestSelfProduceBuilder_RecordProducedReuse(t *testing.T) {
-
 	for _, prefix := range []string{"", "pre-"} {
 		t.Run("prefix="+prefix, func(t *testing.T) {
-
 			testSelfProduceBuilderRecordProducedReuseCase(
 				t,
 				&prefix,
@@ -574,7 +572,8 @@ func testFinalizeIndexBareDirComponentNamespaceCase(
 	testutil.WriteFile(
 		t,
 		dir,
-		"kubernetes/apps/bare/kustomization.yaml", testCaseInput.local+"resources: [child.yaml]\nconfigMapGenerator:\n  - name: generated\n    literals: [CLUSTER_NAME=home]\nsecretGenerator:\n  - name: generated-secret\n    literals: [KEY=value]\n",
+		"kubernetes/apps/bare/kustomization.yaml",
+		testCaseInput.local+"resources: [child.yaml]\nconfigMapGenerator:\n  - name: generated\n    literals: [CLUSTER_NAME=home]\nsecretGenerator:\n  - name: generated-secret\n    literals: [KEY=value]\n",
 	)
 	testutil.WriteFile(
 		t,

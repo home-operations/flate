@@ -8,6 +8,7 @@ import (
 	"github.com/home-operations/flate/pkg/values"
 )
 
+//nolint:ireturn // The requested manifest type parameter must remain the return type.
 func lookupDataForTest[T interface {
 	manifest.BaseManifest
 	manifest.Data

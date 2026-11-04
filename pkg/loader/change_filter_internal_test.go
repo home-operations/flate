@@ -42,7 +42,7 @@ func (f *admissionFixture) productionOwners(id manifest.NamedResource) []manifes
 	return owners
 }
 
-func refObj(id manifest.NamedResource) manifest.BaseManifest {
+func refObj(id manifest.NamedResource) *manifest.RawObject {
 	apiVersion := "v1"
 	if id.Group != "" {
 		apiVersion = id.Group + "/v1"
@@ -626,7 +626,13 @@ func testFilterAncestorKSDoesNotPullInUnrelatedSiblingsCase(
 	t.Helper()
 
 	index := filterFixture{files: map[manifest.NamedResource]string{
-		(*testCaseInput.meta).Named(): "flux/cluster/ks.yaml", (*testCaseInput.plex).Named(): "apps/media/plex/app/ks.yaml", (*testCaseInput.atuin).Named(): "apps/default/atuin/app/ks.yaml", (*testCaseInput.hrAtuin): "apps/default/atuin/app/helmrelease.yaml", (*testCaseInput.release).Named(): "apps/media/plex/app/helmrelease.yaml", (*testCaseInput.source).Named(): "flux/source.yaml", (*testCaseInput.independent).Named(): "charts/plex/independent.yaml",
+		(*testCaseInput.meta).Named():        "flux/cluster/ks.yaml",
+		(*testCaseInput.plex).Named():        "apps/media/plex/app/ks.yaml",
+		(*testCaseInput.atuin).Named():       "apps/default/atuin/app/ks.yaml",
+		(*testCaseInput.hrAtuin):             "apps/default/atuin/app/helmrelease.yaml",
+		(*testCaseInput.release).Named():     "apps/media/plex/app/helmrelease.yaml",
+		(*testCaseInput.source).Named():      "flux/source.yaml",
+		(*testCaseInput.independent).Named(): "charts/plex/independent.yaml",
 	}, root: "/repo", objects: (*testCaseInput.objects), refs: map[manifest.NamedResource][]manifest.NamedResource{(*testCaseInput.release).Named(): {(*testCaseInput.source).Named()}}}.index()
 	index.Readers["charts/plex/templates/cm.yaml"] = []manifest.FileReader{
 		{Reader: (*testCaseInput.release).Named(), Source: (*testCaseInput.source).Named(), Exact: true},

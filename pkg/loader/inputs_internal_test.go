@@ -350,15 +350,14 @@ func TestAdmit_FluxComponentInputContexts(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
-//nolint:paralleltest // This test changes process-global state.
+//nolint:paralleltest // The transport trap changes process-global HTTP and Git clients.
 func TestFinalizeIndex_ConfigurationCoverage(t *testing.T) {
 	trap := &configurationReadTrap{}
 	previousHTTP, previousGit := http.DefaultTransport, client.Protocols["https"]
-	http.DefaultTransport = trap
+	http.DefaultTransport = trap //nolint:reassign // The trap proves discovery never uses the process-global transport.
 	client.InstallProtocol("https", server.NewClient(trap))
 	t.Cleanup(func() {
-		http.DefaultTransport = previousHTTP
+		http.DefaultTransport = previousHTTP //nolint:reassign // Restore the process-global transport after the trap.
 		client.InstallProtocol("https", previousGit)
 	})
 	for _, tc := range []struct {
@@ -390,6 +389,7 @@ func (r *configurationReadTrap) RoundTrip(*http.Request) (*http.Response, error)
 	return nil, transport.ErrRepositoryNotFound
 }
 
+//nolint:ireturn // The go-git loader contract requires a storer interface return.
 func (r *configurationReadTrap) Load(*transport.Endpoint) (storer.Storer, error) {
 	r.calls++
 	return nil, transport.ErrRepositoryNotFound
@@ -760,9 +760,11 @@ func testFinalizeIndexConfigurationCoverageCase(
 	}
 	{
 		assert.FatalIf(
-			t, testCaseInput.name == "unknown plugin" && !slices.ContainsFunc(first[0].Detail, func(detail string) bool {
+			t,
+			testCaseInput.name == "unknown plugin" && !slices.ContainsFunc(first[0].Detail, func(detail string) bool {
 				return strings.Contains(detail, "unknown plugin configuration may read additional files")
-			}), "missing unknown-plugin uncertainty: %+v",
+			}),
+			"missing unknown-plugin uncertainty: %+v",
 			first,
 		)
 	}

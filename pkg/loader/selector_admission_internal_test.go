@@ -58,7 +58,7 @@ func TestAdmission_SelectorInputs(t *testing.T) {
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
 	assert.NoError(t, err)
-	names := []string{}
+	names := make([]string, 0, len(proposal.Objects))
 	for _, child := range proposal.Objects {
 		names = append(names, child.Obj.Named().Name)
 	}
@@ -484,7 +484,20 @@ func testSelectorVisibilityCase(t *testing.T, testCaseInput *testSelectorVisibil
 		st.SetDiscoveryIndex(l.Index)
 		indexes[side], loaders[side] = l.Index, l
 	}
-	testSelectorVisibilityCaseCompletion(t, &testSelectorVisibilityCaseCompletionState{testCaseInput: &testCaseInput, stores: &stores, loaders: &loaders, prepared: &prepared, indexes: &indexes, app: &app, other: &other, provider: &provider, controls: &controls})
+	testSelectorVisibilityCaseCompletion(
+		t,
+		&testSelectorVisibilityCaseCompletionState{
+			testCaseInput: &testCaseInput,
+			stores:        &stores,
+			loaders:       &loaders,
+			prepared:      &prepared,
+			indexes:       &indexes,
+			app:           &app,
+			other:         &other,
+			provider:      &provider,
+			controls:      &controls,
+		},
+	)
 }
 
 type testSelectorVisibilityCaseCompletionState struct {
@@ -501,7 +514,12 @@ type testSelectorVisibilityCaseCompletionState struct {
 
 func testSelectorVisibilityCaseCompletion(t *testing.T, scope *testSelectorVisibilityCaseCompletionState) {
 	t.Helper()
-	changes, err := change.Qualify(t.Context(), change.NewSet([]string{".krmignore"}), (*scope.stores)[0], (*scope.stores)[1])
+	changes, err := change.Qualify(
+		t.Context(),
+		change.NewSet([]string{".krmignore"}),
+		(*scope.stores)[0],
+		(*scope.stores)[1],
+	)
 	assert.NoError(t, err)
 	changes, err = changes.WithReaders(
 		t.Context(),

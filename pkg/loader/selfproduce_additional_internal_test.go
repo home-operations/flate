@@ -242,7 +242,14 @@ func TestFinalizeIndex_RecordsProducers(t *testing.T) {
 		}
 		got := declarations[0]
 		{
-			assert.ErrorIf(t, got.Name != prodName || got.Namespace != target.Namespace, "Producer(%v).Name = %q, want %q", target, got.Name, prodName)
+			assert.ErrorIf(
+				t,
+				got.Name != prodName || got.Namespace != target.Namespace,
+				"Producer(%v).Name = %q, want %q",
+				target,
+				got.Name,
+				prodName,
+			)
 		}
 	}
 }
@@ -346,13 +353,21 @@ func TestFinalizeIndex_DeclaredKeysStayUnpublished(t *testing.T) {
 		[]manifest.FileReader{{Reader: deferred.Named(), Source: manifest.BootstrapSourceID}},
 	)
 	{
-		assert.FatalIf(t, s.GetObject(secretID("secure", "deferred-secret")) != nil ||
-			len(idx.Records[secretID("secure", "deferred-secret")].Productions) != 0, "%v", "implicit producer was registered or synthesized before rendering")
+		assert.FatalIf(
+			t,
+			s.GetObject(secretID("secure", "deferred-secret")) != nil ||
+				len(idx.Records[secretID("secure", "deferred-secret")].Productions) != 0,
+			"%v", "implicit producer was registered or synthesized before rendering",
+		)
 	}
 
 	{
-		assert.FatalIf(t, s.GetObject(secretID("secure", "app-secret")) != nil ||
-			len(s.Productions(secretID("secure", "app-secret"), idx)) == 0, "%v", "declared keys must retain production evidence without canonical publication")
+		assert.FatalIf(
+			t,
+			s.GetObject(secretID("secure", "app-secret")) != nil ||
+				len(s.Productions(secretID("secure", "app-secret"), idx)) == 0,
+			"%v", "declared keys must retain production evidence without canonical publication",
+		)
 	}
 	{
 		obj := s.GetObject(secretID("secure", "dyn-secret"))
@@ -360,7 +375,12 @@ func TestFinalizeIndex_DeclaredKeysStayUnpublished(t *testing.T) {
 	}
 	{
 		obj := s.GetObject(secretID("secure", "pre-secret"))
-		assert.ErrorIf(t, obj != manifest.BaseManifest(existing), "a real Secret on the target id must not be clobbered; got %#v", obj)
+		assert.ErrorIf(
+			t,
+			obj != manifest.BaseManifest(existing),
+			"a real Secret on the target id must not be clobbered; got %#v",
+			obj,
+		)
 	}
 }
 
@@ -465,7 +485,12 @@ func TestFinalizeIndex_LookupReferenceData(t *testing.T) {
 
 	got, _ := lookupDataForTest[*manifest.Secret](t, s, secretID("flux-system", "cluster-secrets"))
 	{
-		assert.FatalIf(t, s.GetObject(secretID("flux-system", "cluster-secrets")) != nil, "%v", "SOPS lookup entered canonical inventory")
+		assert.FatalIf(
+			t,
+			s.GetObject(secretID("flux-system", "cluster-secrets")) != nil,
+			"%v",
+			"SOPS lookup entered canonical inventory",
+		)
 	}
 	{
 		assert.FatalIf(t, got == nil, "%v", "SOPS cluster-secrets was unavailable through lookup")
@@ -518,7 +543,7 @@ func TestFinalizeIndex_ProducerOwners(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			s := store.New()
-			var want []manifest.NamedResource
+			want := make([]manifest.NamedResource, 0, 2)
 			for _, name := range []string{"b", "a"} {
 				ks := &manifest.Kustomization{Name: name, Namespace: "flux-system", Path: "./" + name}
 				s.AddObject(ks)

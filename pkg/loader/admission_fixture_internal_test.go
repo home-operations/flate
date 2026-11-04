@@ -178,6 +178,9 @@ func (f *admissionFixture) AddEmitted(
 ) []manifest.NamedResource {
 	f.mu.Lock()
 	var needs, selected []manifest.NamedResource
+	if len(f.keep) != 0 {
+		needs = make([]manifest.NamedResource, 0, len(f.keep))
+	}
 	for id, role := range f.keep {
 		needs = append(needs, id)
 		if role == primary {

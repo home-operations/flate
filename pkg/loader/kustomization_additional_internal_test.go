@@ -78,8 +78,8 @@ components: [component]
 		testutil.WriteFile(t, dir, "kustomization.yaml", input)
 		invalid := readerForTest(dir)
 		{
-			body, _ := invalid.read(dir)
-			assert.FatalIf(t, body != nil, "invalid typed document was decoded: %s", input)
+			invalidBody, _ := invalid.read(dir)
+			assert.FatalIf(t, invalidBody != nil, "invalid typed document was decoded: %s", input)
 		}
 	}
 	componentDir := t.TempDir()
@@ -110,7 +110,13 @@ func TestDocumentReader_UnreadableBuilder(t *testing.T) {
 	dir := filepath.Join(root, "plain/unreadable")
 	body, file := l.documents.read(dir)
 	{
-		assert.FatalIf(t, body != nil || file != filepath.Join(dir, "kustomization.yaml"), "unreadable builder classified as absent: %v, %q", body, file)
+		assert.FatalIf(
+			t,
+			body != nil || file != filepath.Join(dir, "kustomization.yaml"),
+			"unreadable builder classified as absent: %v, %q",
+			body,
+			file,
+		)
 	}
 	{
 		_, absent := l.documents.read(filepath.Join(root, "absent"))
@@ -146,7 +152,12 @@ func TestDocumentReader_IndexedSource(t *testing.T) {
 	reader.mountSources(st, index)
 	body, _ := reader.read(root)
 	{
-		assert.FatalIf(t, body == nil || body.Namespace != "authoritative" || st.GetObject(id) != nil, "indexed-only source mount = %v", body)
+		assert.FatalIf(
+			t,
+			body == nil || body.Namespace != "authoritative" || st.GetObject(id) != nil,
+			"indexed-only source mount = %v",
+			body,
+		)
 	}
 }
 
@@ -218,7 +229,12 @@ func TestLoader_ReplacedProjectedEvidence(t *testing.T) {
 			sources++
 			repo := source.Obj.(*manifest.GitRepository)
 			{
-				assert.FatalIf(t, repo.Namespace != "apps" || repo.URL != "https://fixture.invalid/"+version, "replacement kept stale source: %+v", repo)
+				assert.FatalIf(
+					t,
+					repo.Namespace != "apps" || repo.URL != "https://fixture.invalid/"+version,
+					"replacement kept stale source: %+v",
+					repo,
+				)
 			}
 		}
 		assert.Equal(t, sources, 1)
@@ -250,6 +266,12 @@ func TestDocumentReader_CopiedSourceViews(t *testing.T) {
 	view, name := l.documents.input(filepath.Join(root, "probe"))
 	data, err := fs.ReadFile(view, name)
 	{
-		assert.FatalIf(t, err != nil || string(data) != "shared", "copied reader lost its mounted source view: %q, %v", data, err)
+		assert.FatalIf(
+			t,
+			err != nil || string(data) != "shared",
+			"copied reader lost its mounted source view: %q, %v",
+			data,
+			err,
+		)
 	}
 }

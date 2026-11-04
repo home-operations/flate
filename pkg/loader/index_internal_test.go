@@ -27,6 +27,7 @@ func loadForTest(ctx context.Context, t *testing.T, l *Loader, dir string) (int,
 	return n, err
 }
 
+//nolint:ireturn // Candidates retain the concrete manifest type needed by each caller.
 func candidateForTest(t *testing.T, l *Loader, id manifest.NamedResource) manifest.BaseManifest {
 	t.Helper()
 	r, _ := l.Index.Lookup(id)

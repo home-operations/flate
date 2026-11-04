@@ -315,13 +315,6 @@ spec:
 
 func TestPromote_AuthoredDocumentProjection(t *testing.T) {
 	t.Parallel()
-	const doc = `apiVersion: helm.toolkit.fluxcd.io/v2
-kind: HelmRelease
-metadata: {name: podinfo, namespace: %q}
-spec:
-  interval: 1h
-  chart: {spec: {chart: podinfo, version: %s, sourceRef: {kind: HelmRepository, name: podinfo}}}
-`
 	for _, tc := range []struct {
 		name, authored, namespace, version string
 		evidence                           bool
@@ -340,7 +333,6 @@ spec:
 
 func TestPromote_SourceView(t *testing.T) {
 	t.Parallel()
-	const doc = "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected, namespace: authored}\ndata: {source: %s}\n"
 	for _, present := range []bool{true, false} {
 		t.Run(fmt.Sprintf("present=%v", present), func(t *testing.T) {
 			t.Parallel()

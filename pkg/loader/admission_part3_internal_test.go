@@ -97,6 +97,7 @@ type admissionArtifactReads struct {
 	bySource map[manifest.NamedResource]int
 }
 
+//nolint:ireturn // The reader contract returns heterogeneous artifact implementations.
 func (r *admissionArtifactReads) GetArtifact(id manifest.NamedResource, read store.ArtifactRead) store.Artifact {
 	r.calls++
 	if r.bySource != nil {
@@ -557,9 +558,9 @@ func testAdmissionChangedDeclarationsPrepareLinearlyCase(
 			incoming: store.Child{Obj: object, Productions: st.Productions(object.Named(), l.Index)},
 		}
 		cResult.proposal = &cResult.result
-		evaluateProposal, err := cResult.evaluate(t.Context(), &proof)
+		evaluateProposal, evaluateErr := cResult.evaluate(t.Context(), &proof)
 		proof.Close()
-		assert.NoError(t, err)
+		assert.NoError(t, evaluateErr)
 		assert.Equal(t, len(evaluateProposal.Objects), 0)
 		assert.Equal(t, readsResult.lists, 1)
 		calls += readsResult.calls

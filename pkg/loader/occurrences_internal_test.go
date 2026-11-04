@@ -89,7 +89,7 @@ func TestOccurrenceClaims_CapturedSubsetAndIdentity(t *testing.T) {
 	before := slices.Clone(captured)
 	objects := st.ListObjects("", "")
 	claims := l.OccurrenceClaims(root, captured)
-	var want []manifest.KSClaim
+	want := make([]manifest.KSClaim, 0, 6)
 	for _, prefix := range []string{".artifacts/pin/", ""} {
 		for i, path := range []string{"captured-a", "captured-b", "captured-c"} {
 			want = append(want, manifest.KSClaim{ID: captured[i].Identity, Prefix: prefix + path + "/"})
@@ -211,7 +211,12 @@ func TestProjectIdentity_NamespaceOnly(t *testing.T) {
 				assert.NoError(t, err)
 				assert.Equal(t, got, tc.want)
 				{
-					assert.FatalIf(t, l.scopes.projections[0] != nil || l.scopes.projections[1] != nil, "%v", "cheap projection initialized the memo")
+					assert.FatalIf(
+						t,
+						l.scopes.projections[0] != nil || l.scopes.projections[1] != nil,
+						"%v",
+						"cheap projection initialized the memo",
+					)
 				}
 			}
 		})
@@ -391,7 +396,10 @@ func testProjectIdentityCompleteInputsCase(t *testing.T, testCaseInput *struct {
 	authored := testCaseInput.object.Named()
 	for range 2 {
 		got, err := l.projectIdentity(
-			(&testCaseInput.object).Named(), testCaseInput.view, testCaseInput.version, manifest.KindOf(&testCaseInput.object).Namespaced(),
+			(&testCaseInput.object).Named(),
+			testCaseInput.view,
+			testCaseInput.version,
+			manifest.KindOf(&testCaseInput.object).Namespaced(),
 		)
 		assert.NoError(t, err)
 		assert.Equal(t, got, testCaseInput.want)

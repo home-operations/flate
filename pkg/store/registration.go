@@ -273,62 +273,7 @@ func (s *Store) Sweep() iter.Seq[manifest.NamedResource] {
 		for _, sh := range s.shards {
 			pending := sh.pending.Swap(nil)
 			for pending != nil {
-				head := pending
-				sh.mu.Lock()
-				pending = head.next
-				head.next = nil
-				head.detached.Store(true)
-				first, cutoff := head.first.Swap(nil), head.stamp()
-				if head == &sh.absence {
-					head.watch = first
-				}
-				head.pending.Store(false)
-				sh.mu.Unlock()
-				var live, tail *registration
-				requeue := false
-				for cell := first; cell != nil; {
-					next := cell.next.Load()
-					changed := cell.generation.Load() != cutoff
-					if cell.absent != nil {
-						generation := cell.generation.Load()
-						changed = generation != 0 && generation <= cutoff
-					}
-					if !cell.owner.retired.Load() {
-						if changed && !cell.owner.invalid.Load() {
-							if deliver {
-								if cell.owner.invalid.CompareAndSwap(false, true) {
-									deliver = yield(cell.owner.id)
-								}
-							} else {
-								requeue = true
-							}
-						}
-						if live == nil {
-							live = cell
-						} else {
-							tail.next.Store(cell)
-						}
-						tail = cell
-					} else if cell.absent == nil {
-						cell.next.Store(nil)
-					}
-					cell = next
-				}
-				if tail == nil && head != &sh.absence {
-					head.detached.Store(false)
-					continue
-				}
-				sh.mu.Lock()
-				if tail != nil {
-					tail.next.Store(head.first.Load())
-					head.first.Store(live)
-				}
-				head.watch = nil
-				head.detached.Store(false)
-				if requeue {
-					sh.queue(head)
-				}
-				sh.mu.Unlock()
+				pending = sh.sweepHead(pending, &deliver, yield)
 			}
 		}
 	}
@@ -337,3 +282,94 @@ func (s *Store) Sweep() iter.Seq[manifest.NamedResource] {
 const (
 	minRegistrationHeadBlock = 2
 )
+
+func (sh *shard) sweepHead(
+	pending *registrationHead,
+	deliver *bool,
+	yield func(manifest.NamedResource) bool,
+) *registrationHead {
+	head := pending
+	sh.mu.Lock()
+	pending = head.next
+	head.next = nil
+	head.detached.Store(true)
+	first, cutoff := head.first.Swap(nil), head.stamp()
+	if head == &sh.absence {
+		head.watch = first
+	}
+	head.pending.Store(false)
+	sh.mu.Unlock()
+	live, tail, requeue := sweepRegistrations(first, cutoff, deliver, yield)
+	if tail == nil && head != &sh.absence {
+		head.detached.Store(false)
+		return pending
+	}
+	sh.mu.Lock()
+	if tail != nil {
+		tail.next.Store(head.first.Load())
+		head.first.Store(live)
+	}
+	head.watch = nil
+	head.detached.Store(false)
+	if requeue {
+		sh.queue(head)
+	}
+	sh.mu.Unlock()
+	return pending
+}
+
+func sweepRegistrations(
+	first *registration,
+	cutoff uint64,
+	deliver *bool,
+	yield func(manifest.NamedResource) bool,
+) (*registration, *registration, bool) {
+	var live, tail *registration
+	requeue := false
+	for cell := first; cell != nil; {
+		next := cell.next.Load()
+		changed := cell.generation.Load() != cutoff
+		if cell.absent != nil {
+			generation := cell.generation.Load()
+			changed = generation != 0 && generation <= cutoff
+		}
+		if !cell.owner.retired.Load() {
+			if deliverRegistrationChange(cell, changed, deliver, yield) {
+				requeue = true
+			}
+			if live == nil {
+				live = cell
+			} else {
+				tail.next.Store(cell)
+			}
+			tail = cell
+		} else if cell.absent == nil {
+			cell.next.Store(nil)
+		}
+		cell = next
+	}
+	return live, tail, requeue
+}
+
+func deliverRegistrationChange(
+	cell *registration,
+	changed bool,
+	deliver *bool,
+	yield func(manifest.NamedResource) bool,
+) bool {
+	requeue := false
+	if changed && !cell.owner.invalid.Load() {
+		if *deliver {
+			completeRegistrationChange(cell, deliver, yield)
+		} else {
+			requeue = true
+		}
+	}
+	return requeue
+}
+
+func completeRegistrationChange(cell *registration, deliver *bool, yield func(manifest.NamedResource) bool) {
+	if cell.owner.invalid.CompareAndSwap(false, true) {
+		*deliver = yield(cell.owner.id)
+	}
+}

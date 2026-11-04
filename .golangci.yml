@@ -332,7 +332,6 @@ linters:
           skipRecvDeref: false
       enabled-tags: [diagnostic, style]
       enabled-checks:
-        - commentedOutCode
         - hugeParam
         - rangeValCopy
     godoclint:
@@ -469,18 +468,6 @@ linters:
       - std-error-handling
       - common-false-positives
     rules:
-      - source: TODO
-        linters:
-          - godot
-      - text: package comment should be of the form ".+"
-        source: // ?(nolint|TODO)
-        linters:
-          - revive
-      - text: comment on exported \S+ \S+ should be of the form ".+"
-        source: // ?(nolint|TODO)
-        linters:
-          - revive
-          - staticcheck
       - path: _test\.go
         linters:
           - bodyclose
@@ -508,8 +495,6 @@ linters:
       - path: (_test\.go|^test/e2e/internal/harness/)
         linters:
           - gosec
-      - path: _test\.go
-        text: SA5011
   default: standard
 formatters:
   enable:

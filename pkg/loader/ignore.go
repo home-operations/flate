@@ -25,30 +25,38 @@ type ignoreSet struct {
 	hasNegation bool
 }
 
-func (r documentReader) loadIgnore(root string) (*ignoreSet, error) {
-	input, name := r.input(filepath.Join(root, ".krmignore"))
+func (r *documentReader) loadIgnore(root string) (*ignoreSet, error) {
+	dr := *r
+	file := filepath.Join(root, ".krmignore")
+	input, name := new(dr).input(file)
 	f, err := input.Open(name)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return &ignoreSet{}, nil
 		}
-		return &ignoreSet{}, err
+		return &ignoreSet{}, fmt.Errorf("loader: read krmignore %q: %w", file, err)
 	}
 	defer func() { _ = f.Close() }()
 	return parseIgnore(f, root)
 }
 
 // Explicit overrides retain the scan root's domain and missing-file errors.
-func (r documentReader) loadIgnoreFile(ctx context.Context, path, root string) (*ignoreSet, error) {
+func (r *documentReader) loadIgnoreFile(ctx context.Context, path, root string) (*ignoreSet, error) {
+	dr := *r
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return &ignoreSet{}, fmt.Errorf("loader: read krmignore %q: %w", path, err)
 	}
-	input, name := r.input(abs)
-	mounted := r.mountedRoot(abs)
+	input, name := new(dr).input(abs)
+	mounted := new(dr).mountedRoot(abs)
 	if mounted == "" {
 		// Only the explicitly named option may admit a file outside source mounts.
-		input, _, err = gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Worktree: osfs.New(filepath.Dir(abs), osfs.WithBoundOS())})
+		input, _, err = gittree.New(
+			ctx,
+			nil,
+			plumbing.ZeroHash,
+			gittree.ViewOptions{Mode: gittree.Direct, Worktree: osfs.New(filepath.Dir(abs), osfs.WithBoundOS())},
+		)
 		if err != nil {
 			return &ignoreSet{}, fmt.Errorf("loader: read krmignore %q: %w", path, err)
 		}
@@ -79,7 +87,7 @@ func parseIgnore(f io.Reader, root string) (*ignoreSet, error) {
 		normalized.WriteByte('\n')
 	}
 	if err := sc.Err(); err != nil {
-		return out, err
+		return out, fmt.Errorf("loader: scan krmignore: %w", err)
 	}
 	patterns := flux.ReadPatterns(strings.NewReader(normalized.String()), domain)
 	if len(patterns) > 0 {

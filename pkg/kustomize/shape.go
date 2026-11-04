@@ -8,6 +8,7 @@ import (
 	sigsyaml "sigs.k8s.io/yaml"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/values"
@@ -16,7 +17,8 @@ import (
 // Shape applies producer metadata and effective substitutions to private decoded documents.
 func Shape(ks *manifest.Kustomization, docs []manifest.DocOccurrence, strict bool) error {
 	ks.EmissionPolicy().Stamp(docs)
-	if (ks.PostBuild == nil || len(ks.PostBuild.Substitute) == 0) && ks.SubstituteStrategy() != kustomizev1.SubstituteStrategyAlways {
+	if (ks.PostBuild == nil || len(ks.PostBuild.Substitute) == 0) &&
+		ks.SubstituteStrategy() != kustomizev1.SubstituteStrategyAlways {
 		return nil
 	}
 	var vars map[string]string
@@ -64,17 +66,18 @@ func substituteDoc(doc map[string]any, vars map[string]string, strict bool) (map
 }
 
 type renderContent struct {
-	Manifest     any
-	Dependencies values.DependencySubstitutions
+	Manifest     any                            `json:"Manifest"`
+	Dependencies values.DependencySubstitutions `json:"Dependencies"`
 }
 
 // Content projects validated raw documents and effective variables into immutable final inputs.
 //
-//nolint:ireturn // Fingerprint accepts type-specific render identities.
+//nolint:gocritic // Preserve the public value receiver and its render-input snapshot.
 func (r RenderRequest) Content(docs []manifest.DocOccurrence) any {
 	ks := r.Spec
 	ks.EmissionPolicy().Stamp(docs)
-	active := ks.PostBuild != nil && len(ks.PostBuild.Substitute) > 0 || ks.SubstituteStrategy() == kustomizev1.SubstituteStrategyAlways
+	active := ks.PostBuild != nil && len(ks.PostBuild.Substitute) > 0 ||
+		ks.SubstituteStrategy() == kustomizev1.SubstituteStrategyAlways
 	names := values.SubstitutionNames(docs, active)
 	if names == nil {
 		names = make(map[string]struct{}, len(ks.PostBuild.Substitute))
@@ -83,11 +86,12 @@ func (r RenderRequest) Content(docs []manifest.DocOccurrence) any {
 		}
 	}
 	source := struct {
-		Input        store.ArtifactInput
-		ApplyIgnore  bool
-		Output       string
-		Wipe, Strict bool
-		Skip         []string
+		Input       store.ArtifactInput `json:"Input"`
+		ApplyIgnore bool                `json:"ApplyIgnore"`
+		Output      string              `json:"Output"`
+		Wipe        bool                `json:"Wipe"`
+		Strict      bool                `json:"Strict"`
+		Skip        []string            `json:"Skip"`
 	}{
 		r.Source.Input(store.ArtifactContent), r.ApplyIgnore, manifest.Fingerprint(docs),
 		r.WipeSecrets, r.StrictSubstitutions, r.SkipKinds,

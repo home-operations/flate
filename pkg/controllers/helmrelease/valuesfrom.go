@@ -9,20 +9,37 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func (c *execution) resolvePreRenderValuesFrom(ctx context.Context, hr *manifest.HelmRelease, level manifest.DrainLevel) error {
+func (c *execution) resolvePreRenderValuesFrom(
+	ctx context.Context,
+	hr *manifest.HelmRelease,
+	level manifest.DrainLevel,
+) error {
 	inputs, err := c.run.DataInputs(ctx, hr, c.data)
 	if err != nil {
 		return err
 	}
-	return c.run.AwaitData(ctx, base.DataWait{Inputs: inputs, Resume: func(ctx context.Context, level manifest.DrainLevel, omitted []manifest.NamedResource) error {
-		hr = omitValues(hr, omitted)
-		return c.render(ctx, hr, level, omitted)
-	}}, level)
+	return c.run.AwaitData(
+		ctx,
+		base.DataWait{
+			Inputs: inputs,
+			Resume: func(ctx context.Context, level manifest.DrainLevel, omitted []manifest.NamedResource) error {
+				hr = omitValues(hr, omitted)
+				return c.render(ctx, hr, level, omitted)
+			},
+		},
+		level,
+	)
 }
 
 func (c *execution) recordOmittedValues(id manifest.NamedResource, refs []manifest.NamedResource) {
 	for _, ref := range refs {
-		c.run.Reads.AddWarning(manifest.Warning{Resource: id, Category: manifest.WarnOmittedValues, Message: fmt.Sprintf("required valuesFrom %s omitted from offline render", ref)})
+		c.run.Reads.AddWarning(
+			manifest.Warning{
+				Resource: id,
+				Category: manifest.WarnOmittedValues,
+				Message:  fmt.Sprintf("required valuesFrom %s omitted from offline render", ref),
+			},
+		)
 	}
 }
 

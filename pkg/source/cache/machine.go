@@ -33,13 +33,20 @@ func MachineCredentialErr(cause error) error {
 }
 
 func credentialsUnavailable(err error) bool {
-	if errors.Is(err, transport.ErrAuthenticationRequired) || errors.Is(err, transport.ErrAuthorizationFailed) || errors.Is(err, auth.ErrBasicCredentialNotFound) {
+	if errors.Is(err, transport.ErrAuthenticationRequired) || errors.Is(err, transport.ErrAuthorizationFailed) ||
+		errors.Is(err, auth.ErrBasicCredentialNotFound) {
 		return true
 	}
-	if response, ok := errors.AsType[*fetcherr.ResponseError](err); ok && (response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden) {
+	if response, ok := errors.AsType[*fetcherr.ResponseError](
+		err,
+	); ok &&
+		(response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden) {
 		return true
 	}
-	if response, ok := errors.AsType[*errcode.ErrorResponse](err); ok && (response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden) {
+	if response, ok := errors.AsType[*errcode.ErrorResponse](
+		err,
+	); ok &&
+		(response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden) {
 		return true
 	}
 	if codes, ok := errors.AsType[errcode.Errors](err); ok {
@@ -49,7 +56,10 @@ func credentialsUnavailable(err error) bool {
 			}
 		}
 	}
-	if code, ok := errors.AsType[errcode.Error](err); ok && (code.Code == errcode.ErrorCodeUnauthorized || code.Code == errcode.ErrorCodeDenied) {
+	if code, ok := errors.AsType[errcode.Error](
+		err,
+	); ok &&
+		(code.Code == errcode.ErrorCodeUnauthorized || code.Code == errcode.ErrorCodeDenied) {
 		return true
 	}
 	response, ok := errors.AsType[minio.ErrorResponse](err)

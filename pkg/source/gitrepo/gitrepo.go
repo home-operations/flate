@@ -31,21 +31,7 @@ type Location struct {
 // Mandatory path errors are returned separately from optional repository metadata errors.
 func Locate(ctx context.Context, path, contentRoot string) (*Location, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	canonical := func(name string) (string, error) {
-		abs, err := filepath.Abs(name)
-		if err != nil {
-			return "", err
-		}
-		resolved, err := filepath.EvalSymlinks(abs)
-		if errors.Is(err, fs.ErrNotExist) {
-			return abs, nil
-		}
-		if err != nil {
-			return "", fmt.Errorf("resolve input %q: %w", name, err)
-		}
-		return resolved, nil
+		return nil, fmt.Errorf("locate input: %w", err)
 	}
 	scan, err := canonical(path)
 	if err != nil {
@@ -65,30 +51,46 @@ func Locate(ctx context.Context, path, contentRoot string) (*Location, error) {
 	if search == "" {
 		search = scan
 	}
+	location.selectRepository(search)
+	if location.ContentRoot == "" {
+		location.ContentRoot = location.RepositoryRoot
+		if location.ContentRoot == "" {
+			location.ContentRoot = scan
+		}
+	}
+	location.loadConfig()
+	return location, nil
+}
+
+func canonical(name string) (string, error) {
+	abs, err := filepath.Abs(name)
+	if err != nil {
+		return "", fmt.Errorf("absolute input %q: %w", name, err)
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if errors.Is(err, fs.ErrNotExist) {
+		return abs, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve input %q: %w", name, err)
+	}
+	return resolved, nil
+}
+
+func (l *Location) selectRepository(search string) {
 	root := search
 	for {
-		dot := filepath.Join(root, ".git")
-		info, err := os.Stat(dot)
-		selected := err == nil && info.Mode().IsRegular()
-		if err == nil && info.IsDir() {
-			for _, name := range []string{"HEAD", "objects"} {
-				_, err = os.Stat(filepath.Join(dot, name))
-				if err != nil {
-					break
-				}
-			}
-			selected = err == nil
-		}
+		selected, err := repositoryMarker(root)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			if root == search {
-				location.LookupErr = err
+				l.LookupErr = err
 			}
 			break
 		}
 		if selected {
 			repo, err := git.PlainOpenWithOptions(root, &git.PlainOpenOptions{EnableDotGitCommonDir: true})
 			if err == nil || root == search {
-				location.RepositoryRoot, location.Repository, location.LookupErr = root, repo, err
+				l.RepositoryRoot, l.Repository, l.LookupErr = root, repo, err
 			}
 			break
 		}
@@ -98,20 +100,32 @@ func Locate(ctx context.Context, path, contentRoot string) (*Location, error) {
 		}
 		root = parent
 	}
-	if location.ContentRoot == "" {
-		location.ContentRoot = location.RepositoryRoot
-		if location.ContentRoot == "" {
-			location.ContentRoot = scan
-		}
-	}
-	if location.Repository != nil {
-		location.Config, location.ConfigErr = location.Repository.Config()
-		if location.ConfigErr == nil {
-			for _, remote := range location.Config.Remotes {
-				location.URLs = append(location.URLs, remote.URLs...)
+}
+
+func (l *Location) loadConfig() {
+	if l.Repository != nil {
+		l.Config, l.ConfigErr = l.Repository.Config()
+		if l.ConfigErr == nil {
+			for _, remote := range l.Config.Remotes {
+				l.URLs = append(l.URLs, remote.URLs...)
 			}
-			slices.Sort(location.URLs)
+			slices.Sort(l.URLs)
 		}
 	}
-	return location, nil
+}
+
+func repositoryMarker(root string) (bool, error) {
+	dot := filepath.Join(root, ".git")
+	info, err := os.Stat(dot)
+	selected := err == nil && info.Mode().IsRegular()
+	if err == nil && info.IsDir() {
+		for _, name := range []string{"HEAD", "objects"} {
+			_, err = os.Stat(filepath.Join(dot, name))
+			if err != nil {
+				break
+			}
+		}
+		selected = err == nil
+	}
+	return selected, err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
 }

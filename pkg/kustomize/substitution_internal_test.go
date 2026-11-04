@@ -1,0 +1,173 @@
+package kustomize
+
+import (
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/home-operations/flate/internal/assert"
+
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+
+	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/values"
+)
+
+func TestSubstitute_StrictOperators(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, input, want string
+		vars              map[string]string
+		fail              bool
+	}{
+		{name: "undefined", input: "${VALUE}", fail: true},
+		{name: "defined", input: "${VALUE}", vars: map[string]string{"VALUE": "provided"}, want: "provided"},
+		{name: "defined empty", input: "${VALUE}", vars: map[string]string{"VALUE": ""}},
+		{name: "colon default", input: "${VALUE:-fallback}", want: "fallback"},
+		{name: "assignment default", input: "${VALUE:=fallback}", want: "fallback"},
+		{name: "empty default", input: "${VALUE:=fallback}", vars: map[string]string{"VALUE": ""}, want: "fallback"},
+		{name: "escape", input: "$${VALUE}", want: "${VALUE}"},
+		{name: "missing transform", input: "${VALUE^^}", fail: true},
+		{name: "defined transform", input: "${VALUE^^}", vars: map[string]string{"VALUE": "provided"}, want: "PROVIDED"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := Substitute([]byte(tc.input), tc.vars, true)
+			{
+				assert.FatalIf(t, (err != nil) != tc.fail, "error=%v", err)
+			}
+			if tc.fail {
+				{
+					assert.FatalIf(t, !strings.Contains(err.Error(), "variable not set (strict mode)") ||
+						!strings.Contains(err.Error(), "VALUE"), "engine diagnostic changed: %v", err)
+				}
+			} else if string(got) != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+	out, err := Substitute([]byte("${UNDEFINED}"), nil, false)
+	{
+		assert.FatalIf(t, err != nil || len(out) != 0, "default exported caller changed: %q, %v", out, err)
+	}
+}
+
+func TestPrepare_LayersAndImmutability(t *testing.T) {
+	t.Parallel()
+	docs, err := testutil.SplitDocs([]byte(testutil.KustomizationYAML("consumer", "apps", `  path: ./app
+  postBuild:
+    substitute: {VALUE: inline, EXTRA: "one\ntwo"}
+    substituteFrom: [{kind: ConfigMap, name: first}, {kind: ConfigMap, name: second}]
+`)))
+	{
+		assert.NoError(t, err)
+	}
+	obj, _, _, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{DefaultNamespace: ""})
+	{
+		assert.NoError(t, err)
+	}
+	original := obj.(*manifest.Kustomization)
+	snapshot := original.Clone()
+	projected := original.WithNamespace("effective").(*manifest.Kustomization)
+	st := store.New()
+	for _, cm := range []*manifest.ConfigMap{
+		{Name: "first", Namespace: "effective", Data: map[string]any{"VALUE": "first", "REF": "first", "NORMALIZED": "one\ntwo"}},
+		{Name: "second", Namespace: "effective", Data: map[string]any{"VALUE": "second", "REF": "second"}},
+	} {
+		st.AddObject(cm)
+	}
+	provider := values.NewStoreProvider(st, true)
+	prepared, err := Prepare(projected, provider)
+	{
+		assert.NoError(t, err)
+	}
+	want := map[string]string{"VALUE": "inline", "REF": "second", "NORMALIZED": "onetwo", "EXTRA": "one\ntwo"}
+	{
+		d := cmp.Diff(want, prepared.PostBuild.Substitute)
+		assert.FatalIf(t, d != "", "layers (-want +got): %s", d)
+	}
+	{
+		got := prepared.Namespace
+		assert.FatalIf(t, got != projected.Namespace, "prepared namespace = %v, want %s", got, projected.Namespace)
+	}
+	{
+		d := cmp.Diff(
+			snapshot,
+			original,
+			cmp.AllowUnexported(manifest.Kustomization{}),
+			cmpopts.IgnoreFields(manifest.Kustomization{}, "projection"),
+		)
+		assert.FatalIf(t, d != "", "stored input mutated (-want +got): %s", d)
+	}
+	for _, tc := range []struct {
+		name      string
+		postBuild *kustomizev1.PostBuild
+		want      bool
+	}{
+		{name: "absent"}, {name: "empty", postBuild: &kustomizev1.PostBuild{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ks := &manifest.Kustomization{Name: "plain", Namespace: "apps"}
+			ks.PostBuild = tc.postBuild
+			got, prepareErr := Prepare(ks, provider)
+			{
+				assert.NoError(t, prepareErr)
+			}
+			{
+				assert.FatalIf(
+					t,
+					(got.PostBuild != nil && len(got.PostBuild.Substitute) > 0) != tc.want,
+					"%s",
+					"empty authored postBuild enabled substitution",
+				)
+			}
+		})
+	}
+	bad := original.Clone()
+	bad.PostBuild.Substitute = map[string]string{"z-invalid": "private", "a-invalid": "private"}
+	invalid, err := Prepare(bad, provider)
+	{
+		assert.FatalIf(t, invalid != nil || !errors.Is(err, manifest.ErrInvalidSubstituteReference) ||
+			err.Error() != "invalid substitute variables a-invalid, z-invalid", "invalid keys not classified/sorted: %v", err)
+	}
+}
+
+func TestPrepare_EntrySubstitutionContext(t *testing.T) {
+	t.Parallel()
+	owner := testutil.KustomizationID("flux-system", "sync")
+	entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "clusters/test", owner).WithNamespace("sources").(*manifest.Kustomization)
+	entry.PostBuild = &kustomizev1.PostBuild{
+		SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "vars"}},
+	}
+	st := store.New()
+	st.AddObject(
+		&manifest.ConfigMap{Name: "vars", Namespace: "sources", Data: map[string]any{"INVALID": []any{"nested"}}},
+	)
+	_, err := Prepare(entry, values.NewStoreProvider(st, true))
+	{
+		assert.FatalIf(t, err == nil || strings.Contains(err.Error(), owner.String()) ||
+			strings.Contains(err.Error(), `entry path "clusters/test"`) ||
+			strings.Contains(err.Error(), entry.Named().String()), "substituteFrom repeated its owner: %v", err)
+	}
+	entry.PostBuild = &kustomizev1.PostBuild{Substitute: map[string]string{"ENABLED": "yes"}}
+	prepared, err := Prepare(entry, nil)
+	{
+		assert.NoError(t, err)
+	}
+	documents := []manifest.DocOccurrence{{Document: map[string]any{"data": map[string]any{"value": "${MISSING}"}}}}
+	err = Shape(prepared, documents, true)
+	{
+		assert.FatalIf(
+			t,
+			!errors.Is(err, manifest.ErrInvalidSubstituteReference) || strings.Contains(err.Error(), owner.String()) ||
+				strings.Contains(err.Error(), entry.Named().String()),
+			"shape lost copied provenance or sentinel: %v",
+			err,
+		)
+	}
+}

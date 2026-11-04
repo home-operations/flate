@@ -4,6 +4,8 @@ import "github.com/home-operations/flate/pkg/manifest"
 
 // Get fetches the object at id and asserts it to T.
 // Returns (zero, false) when absent, stored under another type, or s is nil.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (s *Store) Get[T manifest.BaseManifest](id manifest.NamedResource) (T, bool) {
 	if s == nil {
 		var zero T

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"strconv"
 	"sync"
 	"testing"
 	"testing/fstest"
@@ -72,14 +73,22 @@ func TestBuilder_FileDirConflictErrors(t *testing.T) {
 		first  func(*tree.Builder) error
 		second func(*tree.Builder) error
 	}{
-		{name: "file-then-child", first: func(b *tree.Builder) error { return b.AddFile("a", nil, 0o600) },
-			second: func(b *tree.Builder) error { return b.AddFile("a/b", nil, 0o600) }},
-		{name: "child-then-file", first: func(b *tree.Builder) error { return b.AddFile("a/b", nil, 0o600) },
-			second: func(b *tree.Builder) error { return b.AddFile("a", nil, 0o600) }},
-		{name: "link-then-child", first: func(b *tree.Builder) error { return b.AddSymlink("a", ".") },
-			second: func(b *tree.Builder) error { return b.AddFile("a/b", nil, 0o600) }},
-		{name: "dir-then-link", first: func(b *tree.Builder) error { return b.AddFile("a/b", nil, 0o600) },
-			second: func(b *tree.Builder) error { return b.AddSymlink("a", ".") }},
+		{
+			name: "file-then-child", first: func(b *tree.Builder) error { return b.AddFile("a", nil, 0o600) },
+			second: func(b *tree.Builder) error { return b.AddFile("a/b", nil, 0o600) },
+		},
+		{
+			name: "child-then-file", first: func(b *tree.Builder) error { return b.AddFile("a/b", nil, 0o600) },
+			second: func(b *tree.Builder) error { return b.AddFile("a", nil, 0o600) },
+		},
+		{
+			name: "link-then-child", first: func(b *tree.Builder) error { return b.AddSymlink("a", ".") },
+			second: func(b *tree.Builder) error { return b.AddFile("a/b", nil, 0o600) },
+		},
+		{
+			name: "dir-then-link", first: func(b *tree.Builder) error { return b.AddFile("a/b", nil, 0o600) },
+			second: func(b *tree.Builder) error { return b.AddSymlink("a", ".") },
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -189,43 +198,11 @@ func TestOverlay_RemoveRecreate(t *testing.T) {
 func TestOverlay_ConcurrentBuilders(t *testing.T) {
 	t.Parallel()
 	for _, workers := range []int{2, 4} {
-		t.Run(fmt.Sprint(workers), func(t *testing.T) {
+		t.Run(strconv.Itoa(workers), func(t *testing.T) {
 			t.Parallel()
-			lower := fixture(t)
-			start := make(chan struct{})
-			var wg sync.WaitGroup
-			for i := range workers {
-				wg.Go(func() {
-					<-start
-					b := tree.NewBuilder(lower)
-					want := fmt.Sprintf("render-%d", i)
-					if err := b.AddFile("dir/z.yaml", []byte(want), 0o600); err != nil {
-						t.Error(err)
-						return
-					}
-					if err := b.RemoveAll("empty"); err != nil {
-						t.Error(err)
-						return
-					}
-					tr, err := b.Build()
-					if err != nil {
-						t.Error(err)
-						return
-					}
-					data, err := tr.ReadFile("dir/z.yaml")
-					if err != nil || string(data) != want {
-						t.Errorf("private render: %q, %v; want %q", data, err, want)
-					}
-				})
-			}
-			close(start)
-			wg.Wait()
-			data, err := lower.ReadFile("dir/z.yaml")
-			must(t, err)
-			assert.Equal(t, string(data), "zulu")
-			_, err = lower.Stat("empty")
-			must(t, err)
-		})
+			testOverlayConcurrentBuildersCase(t, &workers)
+		},
+		)
 	}
 }
 
@@ -235,43 +212,9 @@ func TestOverlay_RemoveAllIsExact(t *testing.T) {
 		name := map[bool]string{false: "source", true: "overlay"}[overlay]
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			var b *tree.Builder
-			if overlay {
-				b = tree.NewBuilder(fixture(t))
-			} else {
-				b = tree.NewBuilder(nil)
-				must(t, b.Mount("empty", fstest.MapFS{".": {Mode: fs.ModeDir | 0o750}}))
-			}
-			must(t, b.AddFile("dir/a", []byte("a"), 0o600))
-			must(t, b.AddFile("dir2/b", []byte("b"), 0o600))
-			must(t, b.AddFile("dir.yaml", []byte("y"), 0o600))
-			must(t, b.RemoveAll("dir"))
-			for p, want := range map[string]string{"dir2/b": "b", "dir.yaml": "y"} {
-				data, err := b.ReadFile(p)
-				must(t, err)
-				assert.Equal(t, string(data), want)
-			}
-			_, err := b.Stat("dir/a")
-			assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
-			must(t, b.RemoveAll("empty"))
-			if overlay {
-				must(t, b.RemoveAll("alias"))
-			}
-			entries, err := b.ReadDir(".")
-			must(t, err)
-			for _, e := range entries {
-				assert.Equal(t, e.Name() != "dir" && e.Name() != "empty", true)
-			}
-			var visited []string
-			must(t, b.WalkRaw(".", func(p string, _ fs.DirEntry, err error) error {
-				visited = append(visited, p)
-				return err
-			}))
-			for _, p := range visited {
-				assert.Equal(t, p != "dir" && p != "empty", true)
-			}
-			must(t, fstest.TestFS(build(t, b), "dir2/b", "dir.yaml"))
-		})
+			testOverlayRemoveAllIsExactCase(t, &overlay)
+		},
+		)
 	}
 }
 
@@ -354,7 +297,10 @@ func TestBuilder_Metadata(t *testing.T) {
 	check(t, lower)
 	o := tree.NewBuilder(lower)
 	must(t, o.Mount("empty", fstest.MapFS{".": {Mode: fs.ModeDir | 0o700}}))
-	must(t, o.Mount("implicit", fstest.MapFS{".": {Mode: fs.ModeDir | 0o710}, "file": {Data: []byte("x"), Mode: 0o600}}))
+	must(
+		t,
+		o.Mount("implicit", fstest.MapFS{".": {Mode: fs.ModeDir | 0o710}, "file": {Data: []byte("x"), Mode: 0o600}}),
+	)
 	over := build(t, o)
 	info, err := over.Stat("empty")
 	must(t, err)
@@ -365,4 +311,93 @@ func TestBuilder_Metadata(t *testing.T) {
 	_, err = over.Stat("implicit/file")
 	must(t, err)
 	check(t, lower)
+}
+
+func testOverlayConcurrentBuildersCase(t *testing.T, testCaseInput *int,
+) {
+	t.Helper()
+
+	lower := fixture(t)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range *testCaseInput {
+		wg.Go(func() {
+			<-start
+			b := tree.NewBuilder(lower)
+			want := fmt.Sprintf("render-%d", i)
+			if err := b.AddFile("dir/z.yaml", []byte(want), 0o600); err != nil {
+				t.Error(err)
+				return
+			}
+			if err := b.RemoveAll("empty"); err != nil {
+				t.Error(err)
+				return
+			}
+			tr, err := b.Build()
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			data, err := tr.ReadFile("dir/z.yaml")
+			{
+				assert.ErrorIf(
+					t,
+					err != nil || string(data) != want,
+					"private render: %q, %v; want %q",
+					data,
+					err,
+					want,
+				)
+			}
+		})
+	}
+	close(start)
+	wg.Wait()
+	data, err := lower.ReadFile("dir/z.yaml")
+	must(t, err)
+	assert.Equal(t, string(data), "zulu")
+	_, err = lower.Stat("empty")
+	must(t, err)
+}
+
+func testOverlayRemoveAllIsExactCase(t *testing.T, testCaseInput *bool,
+) {
+	t.Helper()
+
+	var b *tree.Builder
+	if *testCaseInput {
+		b = tree.NewBuilder(fixture(t))
+	} else {
+		b = tree.NewBuilder(nil)
+		must(t, b.Mount("empty", fstest.MapFS{".": {Mode: fs.ModeDir | 0o750}}))
+	}
+	must(t, b.AddFile("dir/a", []byte("a"), 0o600))
+	must(t, b.AddFile("dir2/b", []byte("b"), 0o600))
+	must(t, b.AddFile("dir.yaml", []byte("y"), 0o600))
+	must(t, b.RemoveAll("dir"))
+	for p, want := range map[string]string{"dir2/b": "b", "dir.yaml": "y"} {
+		data, err := b.ReadFile(p)
+		must(t, err)
+		assert.Equal(t, string(data), want)
+	}
+	_, err := b.Stat("dir/a")
+	assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
+	must(t, b.RemoveAll("empty"))
+	if *testCaseInput {
+		must(t, b.RemoveAll("alias"))
+	}
+	entries, err := b.ReadDir(".")
+	must(t, err)
+	for _, e := range entries {
+		assert.Equal(t, e.Name() != "dir" && e.Name() != "empty", true)
+	}
+	var visited []string
+	must(t, b.WalkRaw(".", func(p string, _ fs.DirEntry, err error) error {
+		visited = append(visited, p)
+		return err
+	}))
+	for _, p := range visited {
+		assert.Equal(t, p != "dir" && p != "empty", true)
+	}
+	must(t, fstest.TestFS(build(t, b), "dir2/b", "dir.yaml"))
 }

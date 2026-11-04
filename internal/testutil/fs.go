@@ -3,6 +3,7 @@
 package testutil
 
 import (
+	"fmt"
 	"io/fs"
 	"maps"
 	"os"
@@ -14,7 +15,7 @@ import (
 // WriteFile writes body to root/rel, creating any missing parent
 // directories. Fails the test on any I/O error.
 //
-// Accepts testing.TB so benchmarks (*testing.B) can share the same
+// Accepts [testing.TB] so benchmarks (*testing.B) can share the same
 // fixture helper as unit tests (*testing.T) — fixture building is
 // part of the bench's setup phase, not the measured loop.
 func WriteFile(tb testing.TB, root, rel, body string) {
@@ -55,7 +56,7 @@ func CopyTree(tb testing.TB, src, dst string) {
 		}
 		data, err := fs.ReadFile(os.DirFS(src), filepath.ToSlash(rel))
 		if err != nil {
-			return err
+			return fmt.Errorf("read fixture file: %w", err)
 		}
 		WriteFileAt(tb, target, string(data))
 		return nil

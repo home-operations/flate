@@ -25,9 +25,14 @@ type PromoteOptions struct {
 // Promote materializes admitted documents and reports whether id is available.
 // Authored proves which raw identity may be projected; absent evidence requires an exact id.
 // Existing objects take precedence over raw files.
-func Promote(ctx context.Context, st *store.Store, id manifest.NamedResource, opts PromoteOptions) (bool, error) {
+func Promote(
+	ctx context.Context,
+	st *store.Store,
+	id manifest.NamedResource,
+	opts PromoteOptions, //nolint:gocritic // The SDK requires an independent options value for each promotion.
+) (bool, error) {
 	if err := ctx.Err(); err != nil {
-		return false, err
+		return false, err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
 	}
 	record := opts.Record
 	path := record.Path
@@ -52,10 +57,14 @@ func Promote(ctx context.Context, st *store.Store, id manifest.NamedResource, op
 		mountSource(mounted, sources.GetArtifact(source, store.ArtifactContent))
 		reader.setSources(mounted)
 		var err error
-		objs, err = reader.parseFile(ctx, path, manifest.ParseDocOptions{WipeSecrets: opts.WipeSecrets, DefaultNamespace: ""})
+		objs, err = reader.parseFile(
+			ctx,
+			path,
+			manifest.ParseDocOptions{WipeSecrets: opts.WipeSecrets, DefaultNamespace: ""},
+		)
 		if err != nil {
 			if ctx.Err() != nil {
-				return false, ctx.Err()
+				return false, ctx.Err() //nolint:wrapcheck // Cancellation preserves the caller context error identity.
 			}
 			slog.Debug("loader: promote re-parse failed", "id", id.String(), "path", path, "err", err)
 			return false, nil
@@ -65,30 +74,9 @@ func Promote(ctx context.Context, st *store.Store, id manifest.NamedResource, op
 	if authored == (manifest.NamedResource{}) {
 		authored = id
 	}
-	for _, child := range objs {
-		obj := child.Obj
-		if opts.Documents == nil && obj.Named() == authored {
-			if authored.Namespace != id.Namespace {
-				obj = obj.WithNamespace(id.Namespace)
-			}
-		} else if opts.Documents == nil && obj.Named() == id {
-			continue
-		}
-		admitted, err := opts.Admit(obj)
-		if err != nil {
-			return false, err
-		}
-		if !admitted || st.GetObject(obj.Named()) != nil {
-			continue
-		}
-		if err := ctx.Err(); err != nil {
-			return false, err
-		}
-		if opts.Reads != nil {
-			opts.Reads.Admit(obj, source, record.Owner, child.Doc)
-		} else {
-			st.AddObject(obj, child.Doc)
-		}
+	opts.Record.Source, opts.Record.Authored = source, authored
+	if err := opts.admitDocuments(ctx, st, id, objs); err != nil {
+		return false, err
 	}
 	obj := st.GetObject(id)
 	if obj == nil {
@@ -106,46 +94,24 @@ type BuiltInput struct {
 
 // RegisterBuilt replaces package resource evidence with authoritative producer-bound documents.
 // Documents MUST be sanitized immutable build output.
-func (l *Loader) RegisterBuilt(input BuiltInput, docs []store.Child) {
+func (l *Loader) RegisterBuilt(
+	input BuiltInput, //nolint:gocritic // The SDK requires an independent input value for each registration.
+	docs []store.Child,
+) {
 	root := input.Root
-	if l.documents.compact {
-		l.construction++
-	}
-	l.ensureScopes()
-	sourceRoot := cmp.Or(l.documents.mountedRoot(root), l.SourceRoot, root)
-	l.Admit(sourceRoot)
-	_, packageFile := l.documents.read(root)
-	if packageFile != "" && l.documents.cache[packageFile].eligible == fileInactive {
-		return
+	var sourceRoot string
+	{
+		var admitted bool
+		sourceRoot, admitted = l.admitBuiltRoot(root)
+		if !admitted {
+			return
+		}
 	}
 	rel, _ := filepath.Rel(sourceRoot, root)
 	var inputs, shared []string
 	selected := map[string]bool{}
-	for _, visit := range l.scopeWalk(graphVisit{root: sourceRoot, dir: filepath.ToSlash(rel), source: input.Source, owner: input.Owner}) {
-		for _, file := range []string{visit.coordinate, visit.localCoordinate()} {
-			if file == "" {
-				continue
-			}
-			inputs = append(inputs, file)
-			if visit.role != kustomizeinput.Resource || visit.document != nil {
-				shared = append(shared, file)
-			}
-		}
-		if visit.role != kustomizeinput.Resource {
-			continue
-		}
+	inputs, shared = l.selectBuiltInputs(sourceRoot, rel, new(input), selected)
 
-		selected[visit.file] = true
-		cached := l.documents.cache[visit.file]
-		cached.selected = true
-		l.documents.cache[visit.file] = cached
-		if visit.document != nil {
-			dir := filepath.Dir(visit.file)
-			cached := l.documents.cache[dir]
-			cached.selected = true
-			l.documents.cache[dir] = cached
-		}
-	}
 	slices.Sort(inputs)
 	inputs = slices.Compact(inputs)
 	slices.Sort(shared)
@@ -157,73 +123,40 @@ func (l *Loader) RegisterBuilt(input BuiltInput, docs []store.Child) {
 	for i, child := range docs {
 		obj := child.Obj
 		id := obj.Named()
-		record := manifest.DiscoveryRecord{Declaration: obj, File: builder, Builder: builder, BuilderOwner: input.Owner, Inputs: inputs}
+		record := manifest.DiscoveryRecord{
+			Declaration:  obj,
+			File:         builder,
+			Builder:      builder,
+			BuilderOwner: input.Owner,
+			Inputs:       inputs,
+		}
 		if raw, ok := l.Index.Lookup(id); ok {
 			original := l.IndexedObject(id, raw)
 			if raw.Authored != (manifest.NamedResource{}) && original.Obj != nil {
 				authored[id] = original
-				if l.documents.compact {
-					record.Authored, record.Path = raw.Authored, raw.Path
-					if raw.Authored != id {
-						record.File = raw.File
-					}
-					record.Productions = slices.Clone(raw.Productions)
-				}
+				l.retainBuiltDeclaration(&record, new(raw), id)
 			}
 			same := manifest.Equal(obj, original.Obj)
-			if !same && l.documents.compact && l.Options.Changes != nil && raw.Path != "" {
+			if l.canCompareBuiltInputs(same, &raw) {
 				evidence := admissionClosure{loader: l, objects: l.Store}
 				delta, _, _ := evidence.delta(input.Source)
-				same = delta != nil && !evidence.fileChanged(input.Source, raw.File) && !slices.ContainsFunc(shared, func(file string) bool { return evidence.fileChanged(input.Source, file) })
+				same = delta != nil && !evidence.fileChanged(input.Source, raw.File) &&
+					!slices.ContainsFunc(
+						shared,
+						func(file string) bool { return evidence.fileChanged(input.Source, file) },
+					)
 			}
 			if !same && original.Doc != nil {
-				if producer, ok := l.Store.GetObject(input.Owner).(interface {
-					EmissionPolicy() manifest.EmissionPolicy
-				}); ok {
-					doc := manifest.DeepCopyMap(original.Doc)
-					producer.EmissionPolicy().Stamp([]manifest.DocOccurrence{{Document: doc}})
-					projected, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets})
-					same = err == nil && manifest.Equal(obj, projected)
-				}
+				same = l.stampedBuiltEqual(obj, new(original), new(input))
 			}
 			if same {
 				record.File, record.Inputs = raw.File, shared
 			}
 		}
-		record.Refs = discoveryReferences(nil, obj)
-		if id != input.Owner {
-			record.Parent = input.Owner
-			production := manifest.Production{Owner: input.Owner, Source: input.Source, File: record.File}
-			if record.File != builder {
-				production.Authored = record.Authored
-				if production.Authored == (manifest.NamedResource{}) {
-					production.Authored = id
-				}
-			}
-			if !slices.Contains(record.Productions, production) {
-				record.Productions = append(record.Productions, production)
-			}
-		}
+		setBuiltProduction(&record, obj, id, new(input))
 		records[i] = record
 	}
-	for id, record := range l.Index.Files() {
-		if id == input.Owner {
-			continue
-		}
-		if _, retained := authored[id]; retained {
-			continue
-		}
-		if record.Path == "" || !selected[record.Path] {
-			continue
-		}
-		if existing := l.Store.GetObject(id); existing != nil && l.Store.GetArtifact(id, store.ArtifactContent) == nil && (existing == l.admitted[id] || existing == l.IndexedObject(id, record).Obj) {
-			l.Store.DeleteObject(id)
-		}
-		delete(l.Index.Records, id)
-		delete(l.locations, id)
-		delete(l.candidates, id)
-		delete(l.admitted, id)
-	}
+	l.removeReplacedRecords(new(input), authored, selected)
 	cached := l.documents.cache[root]
 	cached.built = append([]store.Child{}, docs...)
 	input.Reads = maps.Clone(input.Reads)
@@ -232,22 +165,7 @@ func (l *Loader) RegisterBuilt(input BuiltInput, docs []store.Child) {
 	if l.candidates == nil {
 		l.candidates = map[manifest.NamedResource]store.Child{}
 	}
-	for i, child := range docs {
-		obj := child.Obj
-		id := obj.Named()
-		if id == input.Owner {
-			continue
-		}
-		if existing := l.Store.GetObject(id); existing != nil && l.Store.GetArtifact(id, store.ArtifactContent) == nil && (existing == l.candidates[id].Obj || existing == l.admitted[id]) {
-			l.Store.DeleteObject(id)
-		}
-		delete(l.admitted, id)
-		l.Index.Records[id] = records[i]
-		if original, retained := authored[id]; retained {
-			child = original
-		}
-		l.candidates[id] = child
-	}
+	l.publishBuiltRecords(&input, docs, records, authored)
 	l.scopes.complete = false
 	l.admit(sourceRoot)
 }
@@ -266,9 +184,12 @@ func (l *Loader) PromotionDocuments(id manifest.NamedResource) []store.Child {
 		}
 		return nil
 	}
-	for root, doc := range l.documents.cache {
-		if doc.built != nil && (l.fileCoordinate(root) == r.Builder || l.fileCoordinate(doc.file) == r.Builder) {
-			return doc.built
+	{
+		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+		for root, doc := range l.documents.cache {
+			if doc.built != nil && (l.fileCoordinate(root) == r.Builder || l.fileCoordinate(doc.file) == r.Builder) {
+				return doc.built
+			}
 		}
 	}
 	return nil
@@ -287,4 +208,215 @@ func (l *Loader) preparedObject(id manifest.NamedResource) store.Child {
 		}
 	}
 	return store.Child{}
+}
+
+func (o *PromoteOptions) admitDocuments(
+	ctx context.Context,
+	st *store.Store,
+	id manifest.NamedResource,
+	objs []store.Child,
+) error {
+	source := o.Record.Source
+	authored := o.Record.Authored
+	record := o.Record
+	for _, child := range objs {
+		obj := child.Obj
+		if o.Documents == nil && obj.Named() == authored {
+			if authored.Namespace != id.Namespace {
+				obj = obj.WithNamespace(id.Namespace)
+			}
+		} else if o.Documents == nil && obj.Named() == id {
+			continue
+		}
+		admitted, err := o.Admit(obj)
+		if err != nil {
+			return err
+		}
+		if !admitted || st.GetObject(obj.Named()) != nil {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		}
+		if o.Reads != nil {
+			o.Reads.Admit(obj, source, record.Owner, child.Doc)
+		} else {
+			st.AddObject(obj, child.Doc)
+		}
+	}
+	return nil
+}
+
+func (l *Loader) selectBuiltInputs(
+	sourceRoot, rel string,
+	inputValue *BuiltInput,
+	selected map[string]bool,
+) ([]string, []string) {
+	input := *inputValue
+	var inputs, shared []string
+	{
+		walkVisits := l.scopeWalk(
+			new(graphVisit{root: sourceRoot, dir: filepath.ToSlash(rel), source: input.Source, owner: input.Owner}),
+		)
+		for walkIndex := range walkVisits {
+			visit := walkVisits[walkIndex]
+
+			for _, file := range []string{visit.coordinate, visit.localCoordinate()} {
+				if file == "" {
+					continue
+				}
+				inputs = append(inputs, file)
+				if visit.role != kustomizeinput.Resource || visit.document != nil {
+					shared = append(shared, file)
+				}
+			}
+			if visit.role != kustomizeinput.Resource {
+				continue
+			}
+
+			selected[visit.file] = true
+			cached := l.documents.cache[visit.file]
+			cached.selected = true
+			l.documents.cache[visit.file] = cached
+			if visit.document != nil {
+				dir := filepath.Dir(visit.file)
+				cached := l.documents.cache[dir]
+				cached.selected = true
+				l.documents.cache[dir] = cached
+			}
+		}
+	}
+	return inputs, shared
+}
+
+func (l *Loader) removeReplacedRecords(
+	inputValue *BuiltInput,
+	authored map[manifest.NamedResource]store.Child,
+	selected map[string]bool,
+) {
+	input := *inputValue
+	//nolint:gocritic // The iterator supplies filtered value snapshots through its callback.
+	for id, record := range l.Index.Files() {
+		if id == input.Owner {
+			continue
+		}
+		if _, retained := authored[id]; retained {
+			continue
+		}
+		if record.Path == "" || !selected[record.Path] {
+			continue
+		}
+		if existing := l.Store.GetObject(
+			id,
+		); existing != nil && l.Store.GetArtifact(id, store.ArtifactContent) == nil &&
+			(existing == l.admitted[id] || existing == l.IndexedObject(id, record).Obj) {
+			l.Store.DeleteObject(id)
+		}
+		delete(l.Index.Records, id)
+		delete(l.locations, id)
+		delete(l.candidates, id)
+		delete(l.admitted, id)
+	}
+}
+
+func (l *Loader) retainBuiltDeclaration(
+	record *manifest.DiscoveryRecord,
+	rawValue *manifest.DiscoveryRecord,
+	id manifest.NamedResource,
+) {
+	raw := *rawValue
+	if l.documents.compact {
+		record.Authored, record.Path = raw.Authored, raw.Path
+		if raw.Authored != id {
+			record.File = raw.File
+		}
+		record.Productions = slices.Clone(raw.Productions)
+	}
+}
+
+func (l *Loader) stampedBuiltEqual(obj manifest.BaseManifest, originalValue *store.Child, inputValue *BuiltInput) bool {
+	same := false
+	original := *originalValue
+	input := *inputValue
+	if producer, ok := l.Store.GetObject(input.Owner).(interface {
+		EmissionPolicy() manifest.EmissionPolicy
+	}); ok {
+		doc := manifest.DeepCopyMap(original.Doc)
+		producer.EmissionPolicy().Stamp([]manifest.DocOccurrence{{Document: doc}})
+		projected, _, _, err := manifest.ParseDoc(
+			doc,
+			manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets},
+		)
+		same = err == nil && manifest.Equal(obj, projected)
+	}
+	return same
+}
+
+func setBuiltProduction(
+	record *manifest.DiscoveryRecord,
+	obj manifest.BaseManifest,
+	id manifest.NamedResource,
+	inputValue *BuiltInput,
+) {
+	builder := record.Builder
+	input := *inputValue
+	record.Refs = discoveryReferences(nil, obj)
+	if id != input.Owner {
+		record.Parent = input.Owner
+		production := manifest.Production{Owner: input.Owner, Source: input.Source, File: record.File}
+		if record.File != builder {
+			production.Authored = record.Authored
+			if production.Authored == (manifest.NamedResource{}) {
+				production.Authored = id
+			}
+		}
+		if !slices.Contains(record.Productions, production) {
+			record.Productions = append(record.Productions, production)
+		}
+	}
+}
+
+func (l *Loader) publishBuiltRecords(
+	input *BuiltInput,
+	docs []store.Child,
+	records []manifest.DiscoveryRecord,
+	authored map[manifest.NamedResource]store.Child,
+) {
+	for i, child := range docs {
+		obj := child.Obj
+		id := obj.Named()
+		if id == input.Owner {
+			continue
+		}
+		if existing := l.Store.GetObject(
+			id,
+		); existing != nil && l.Store.GetArtifact(id, store.ArtifactContent) == nil &&
+			(existing == l.candidates[id].Obj || existing == l.admitted[id]) {
+			l.Store.DeleteObject(id)
+		}
+		delete(l.admitted, id)
+		l.Index.Records[id] = records[i]
+		if original, retained := authored[id]; retained {
+			child = original
+		}
+		l.candidates[id] = child
+	}
+}
+
+func (l *Loader) admitBuiltRoot(root string) (string, bool) {
+	if l.documents.compact {
+		l.construction++
+	}
+	l.ensureScopes()
+	sourceRoot := cmp.Or(new(l.documents).mountedRoot(root), l.SourceRoot, root)
+	l.Admit(sourceRoot)
+	_, packageFile := l.documents.read(root)
+	if packageFile != "" && l.documents.cache[packageFile].eligible == fileInactive {
+		return "", false
+	}
+	return sourceRoot, true
+}
+
+func (l *Loader) canCompareBuiltInputs(same bool, raw *manifest.DiscoveryRecord) bool {
+	return !same && l.documents.compact && l.Options.Changes != nil && raw.Path != ""
 }

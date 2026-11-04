@@ -1,0 +1,320 @@
+package loader
+
+import (
+	"slices"
+	"testing"
+	"testing/fstest"
+
+	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
+)
+
+func TestAdmission_GeneratedInputRetainsUnchangedConsumers(t *testing.T) {
+	t.Parallel()
+	for _, file := range []string{"apps/changed.yaml", "apps/kustomization.yaml", "apps/vars.yaml"} {
+		t.Run(file, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			st := store.New()
+			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+				"parent.yaml": {
+					Data: []byte(
+						"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: parent, namespace: apps}\nspec:\n  path: ./apps\n  postBuild: {substituteFrom: [{kind: Secret, name: vars}]}\n",
+					),
+				},
+				"apps/kustomization.yaml": {Data: []byte("resources: [changed.yaml, stable.yaml, vars.yaml]\n")},
+				"apps/changed.yaml": {
+					Data: []byte(
+						"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: changed, namespace: apps}\nspec: {path: ./payload}\n",
+					),
+				},
+				"apps/stable.yaml": {
+					Data: []byte(
+						"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: stable, namespace: apps}\nspec:\n  path: ./payload\n  postBuild: {substituteFrom: [{kind: Secret, name: vars}]}\n",
+					),
+				},
+				"apps/vars.yaml": {
+					Data: []byte(
+						"apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: declaration, namespace: apps}\nspec:\n  target: {name: vars}\n  data: [{secretKey: VALUE, remoteRef: {key: fixture}}]\n",
+					),
+				},
+				"payload/kustomization.yaml": {Data: []byte("resources: []\n")},
+			}})
+			l := New(st)
+			l.SourceRoot = root
+			l.Options.Selection = manifest.Selection{Changed: true}
+			l.Options.Changes, l.Options.Filter = change.NewSet([]string{file}), change.NewFilter()
+			_, err := l.Load(t.Context(), root)
+			assert.NoError(t, err)
+			assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
+			proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+			assert.NoError(t, err)
+			_, retry := l.Options.Filter.AddEmitted(
+				proposal.Needed,
+				proposal.Selected,
+				proposal.Dirty,
+				proposal.Revision,
+			)
+			assert.Equal(t, retry, false)
+			parent := manifest.NamedResource{
+				Group:     manifest.FluxKustomizeDomain,
+				Kind:      manifest.KindKustomization,
+				Name:      "parent",
+				Namespace: "apps",
+			}
+			input := manifest.NamedResource{Kind: manifest.KindSecret, Name: "vars", Namespace: "apps"}
+			declaration := manifest.NamedResource{
+				Group:     "external-secrets.io",
+				Kind:      "ExternalSecret",
+				Name:      "declaration",
+				Namespace: "apps",
+			}
+			proposal, err = l.Prepare(
+				t.Context(),
+				store.Child{
+					Obj: manifest.NewSecret(input, nil, map[string]any{"VALUE": "current"}),
+					Productions: []manifest.Production{
+						{
+							Owner:       parent,
+							Declaration: declaration,
+							Authored:    declaration,
+							Source:      manifest.BootstrapSourceID,
+							File:        "apps/vars.yaml",
+						},
+					},
+				},
+				nil,
+				nil,
+			)
+			assert.NoError(t, err)
+			want := file != "apps/changed.yaml"
+			assert.Equal(t, slices.Contains(proposal.Dirty, input), want)
+			stable := parent
+			stable.Name = "stable"
+			assert.Equal(t, slices.Contains(proposal.Selected, stable), want)
+			assert.Equal(t, slices.Contains(proposal.Dirty, stable), want)
+		})
+	}
+}
+
+func TestAdmission_ClosedRootFrontier(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"published", "unpublished", "incoming"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			testAdmissionClosedRootFrontierCase(t, &mode)
+		},
+		)
+	}
+}
+
+func TestAdmission_KnownInputDoesNotOpenUnrelatedRenderer(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	st := store.New()
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		"input.yaml": {
+			Data: []byte(
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: changed}\n",
+			),
+		},
+		"unrelated.yaml": {
+			Data: []byte(
+				"apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: unrelated, namespace: apps}\nspec:\n  chartRef: {kind: OCIRepository, name: chart}\n  interval: 1m\n",
+			),
+		},
+	}})
+	l := New(st)
+	l.SourceRoot = root
+	l.Options.Filter = change.NewFilter()
+	l.Options.Changes = change.NewSet([]string{"input.yaml"})
+	l.Options.Selection = manifest.Selection{Changed: true}
+	_, err := l.Load(t.Context(), root)
+	assert.NoError(t, err)
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
+	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+	assert.NoError(t, err)
+	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "settings", Namespace: "apps"}
+	renderer := manifest.NamedResource{
+		Group:     manifest.HelmReleaseDomain,
+		Kind:      manifest.KindHelmRelease,
+		Name:      "unrelated",
+		Namespace: "apps",
+	}
+	assert.Equal(t, slices.Contains(proposal.Selected, input), true)
+	assert.Equal(t, slices.Contains(proposal.Needed, renderer), false)
+}
+
+func TestAdmission_UnclaimedInputDoesNotOpenUnrelatedRenderer(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	st := store.New()
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		"input.yaml": {
+			Data: []byte(
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: changed}\n",
+			),
+		},
+		"unrelated.yaml": {
+			Data: []byte(
+				"apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: unrelated, namespace: apps}\nspec:\n  chartRef: {kind: OCIRepository, name: chart}\n  interval: 1m\n",
+			),
+		},
+		"templated.yaml": {
+			Data: []byte(
+				"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: templated, namespace: apps}\nspec: {path: './payload/${APP}'}\n",
+			),
+		},
+		"producer.yaml": {
+			Data: []byte(
+				"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: producer, namespace: apps}\nspec: {resourcesTemplate: unexecuted}\n",
+			),
+		},
+	}})
+	l := New(st)
+	l.SourceRoot = root
+	l.Options.Filter = change.NewFilter()
+	l.Options.Changes = change.NewSet([]string{"unclaimed/notes.txt"})
+	l.Options.Selection = manifest.Selection{Changed: true}
+	_, err := l.Load(t.Context(), root)
+	assert.NoError(t, err)
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
+	templated := manifest.NamedResource{
+		Group:     manifest.FluxKustomizeDomain,
+		Kind:      manifest.KindKustomization,
+		Name:      "templated",
+		Namespace: "apps",
+	}
+	producer := manifest.NamedResource{
+		Group:     manifest.FluxOperatorDomain,
+		Kind:      manifest.KindResourceSet,
+		Name:      "producer",
+		Namespace: "apps",
+	}
+	record := l.Index.Records[templated]
+	record.Productions = []manifest.Production{{Owner: producer}}
+	l.Index.Records[templated] = record
+	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+	assert.NoError(t, err)
+	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "settings", Namespace: "apps"}
+	renderer := manifest.NamedResource{
+		Group:     manifest.HelmReleaseDomain,
+		Kind:      manifest.KindHelmRelease,
+		Name:      "unrelated",
+		Namespace: "apps",
+	}
+	assert.Equal(t, slices.Contains(proposal.Selected, input), false)
+	assert.Equal(t, slices.Contains(proposal.Needed, renderer), false)
+	assert.Equal(t, slices.Contains(proposal.Selected, renderer), false)
+	assert.Equal(t, slices.Contains(proposal.Dirty, renderer), false)
+	assert.Equal(t, slices.Contains(proposal.Needed, templated), false)
+	assert.Equal(t, slices.Contains(proposal.Selected, templated), false)
+	assert.Equal(t, slices.Contains(proposal.Dirty, templated), false)
+	assert.Equal(t, slices.Contains(proposal.Needed, producer), false)
+	assert.Equal(t, slices.Contains(proposal.Selected, producer), false)
+	assert.Equal(t, slices.Contains(proposal.Dirty, producer), false)
+	l.Options.HistoryOwners = []manifest.NamedResource{producer}
+	proposal, err = l.Prepare(t.Context(), store.Child{}, nil, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, slices.Contains(proposal.Needed, producer), true)
+	assert.Equal(t, slices.Contains(proposal.Selected, producer), false)
+	assert.Equal(t, slices.Contains(proposal.Dirty, producer), false)
+}
+
+func testAdmissionClosedRootFrontierCase(t *testing.T, testCaseInput *string,
+) {
+	t.Helper()
+
+	root := t.TempDir()
+	st := store.New()
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		"provider.yaml": {
+			Data: []byte(
+				"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: provider, namespace: apps}\nspec:\n  path: ./provider\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: settings}]}\n",
+			),
+		},
+		"consumer.yaml": {
+			Data: []byte(
+				"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: apps}\nspec:\n  path: ./consumer\n  dependsOn: [{name: provider}]\n",
+			),
+		},
+		"settings.yaml": {
+			Data: []byte(
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: old}\n",
+			),
+		},
+		"new-settings.yaml": {
+			Data: []byte(
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: new-settings, namespace: apps}\ndata: {VALUE: current}\n",
+			),
+		},
+		"provider/kustomization.yaml": {Data: []byte("resources: []\n")},
+		"consumer/kustomization.yaml": {Data: []byte("resources: []\n")},
+	}})
+	l := New(st)
+	l.SourceRoot = root
+	_, err := l.Load(t.Context(), root)
+	assert.NoError(t, err)
+	provider := manifest.NamedResource{
+		Group:     manifest.FluxKustomizeDomain,
+		Kind:      manifest.KindKustomization,
+		Name:      "provider",
+		Namespace: "apps",
+	}
+	consumer := provider
+	consumer.Name = "consumer"
+	settings := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "settings", Namespace: "apps"}
+	providerChild := l.IndexedObject(provider, l.Index.Records[provider])
+	consumerChild := l.IndexedObject(consumer, l.Index.Records[consumer])
+	{
+		assert.FatalIf(
+			t,
+			providerChild.Obj == nil || consumerChild.Obj == nil,
+			"%s",
+			"fixture declarations are unavailable",
+		)
+	}
+	l.Options.Selection = manifest.Selection{Roots: []manifest.NamedResource{consumer}}
+	l.Options.Filter = change.NewFilter()
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
+	l.roots = map[manifest.NamedResource]bool{provider: true}
+	st.AddObjects(
+		[]manifest.BaseManifest{
+			providerChild.Obj,
+			consumerChild.Obj,
+			manifest.NewConfigMap(settings, map[string]any{"VALUE": "old"}),
+		},
+	)
+	fresh := settings
+	fresh.Name = "new-settings"
+	st.AddObject(manifest.NewConfigMap(fresh, map[string]any{"VALUE": "current"}))
+	_, _, _, revision := l.Options.Filter.Membership(provider)
+	_, retry := l.Options.Filter.AddEmitted(
+		[]manifest.NamedResource{provider, settings, manifest.BootstrapSourceID},
+		nil,
+		nil,
+		revision,
+	)
+	assert.Equal(t, retry, false)
+	incoming := store.Child{Obj: st.GetObject(consumer)}
+	switch *testCaseInput {
+	case "unpublished":
+		st.DeleteObject(provider)
+	case "incoming":
+		updated := st.GetObject(provider).(*manifest.Kustomization).Clone()
+		updated.PostBuild.SubstituteFrom[0].Name = "new-settings"
+		incoming.Obj = updated
+	}
+	var reads store.ReadSet
+	reads.Init(st, consumer, nil)
+	defer reads.Close()
+	proposal, err := l.Prepare(t.Context(), incoming, &reads, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, slices.Contains(proposal.Needed, provider), (*testCaseInput) != "published")
+	if (*testCaseInput) == "incoming" {
+		settings.Name = "new-settings"
+		assert.Equal(t, slices.Contains(proposal.Needed, settings), true)
+	}
+}

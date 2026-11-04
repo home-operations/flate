@@ -21,19 +21,40 @@ func (f failedPreparationFS) ReadDir(name string) ([]fs.DirEntry, error) {
 func TestRenderTrees_BootstrapWarnings(t *testing.T) {
 	t.Parallel()
 	roots := [2]string{t.TempDir(), t.TempDir()}
-	warning := manifest.Warning{Category: manifest.WarnBaselineStatusUnavailable, Message: "before preparation failure", Count: 1}
+	warning := manifest.Warning{
+		Category: manifest.WarnBaselineStatusUnavailable,
+		Message:  "before preparation failure",
+		Count:    1,
+	}
 	inputs := [2]*store.SourceArtifact{}
 	for side, root := range roots {
-		inputs[side] = &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: failedPreparationFS{fstest.MapFS{}}, Warnings: []manifest.Warning{warning}}
+		inputs[side] = &store.SourceArtifact{
+			LocalPath: root,
+			LocalRoot: root,
+			FS:        failedPreparationFS{fstest.MapFS{}},
+			Warnings:  []manifest.Warning{warning},
+		}
 	}
-	runs, err := orchestrator.RenderTrees(t.Context(), []orchestrator.Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, RepoRoot: roots[0], Input: inputs[0]}, {ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, RepoRoot: roots[1], Input: inputs[1]}}, orchestrator.Config{Concurrency: 2})
+	runs, err := orchestrator.RenderTrees(
+		t.Context(),
+		[]orchestrator.Tree{
+			{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, RepoRoot: roots[0], Input: inputs[0]},
+			{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, RepoRoot: roots[1], Input: inputs[1]},
+		},
+		orchestrator.Config{Concurrency: 2},
+	)
 	base, head := runs[0], runs[1]
-	if !errors.Is(err, fs.ErrPermission) {
-		t.Fatalf("preparation error: %v", err)
+	{
+		assert.FatalIf(t, !errors.Is(err, fs.ErrPermission), "preparation error: %v", err)
 	}
 	for _, side := range []orchestrator.Rendered{base, head} {
-		if side.Orchestrator != nil || side.Result == nil || len(side.Result.Manifests) != 0 {
-			t.Fatalf("fatal preparation exposed content: %+v", side)
+		{
+			assert.FatalIf(
+				t,
+				side.Orchestrator != nil || side.Result == nil || len(side.Result.Manifests) != 0,
+				"fatal preparation exposed content: %+v",
+				side,
+			)
 		}
 		assert.Diff(t, side.Result.Warnings, []manifest.Warning{warning})
 	}

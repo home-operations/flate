@@ -13,8 +13,11 @@ import (
 // plausibly in the future for any normal validity window, and the value
 // reads as a recognizable sentinel in rendered output. It must never
 // derive from the wall clock — reproducibility is the whole point.
+//
+//nolint:gochecknoglobals // Time-based template functions and certificate generation share one immutable epoch.
 var fixedTime = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 
+//nolint:errcheck,gochecknoglobals // Sprig's fixed function signature is memoized to avoid rebuilding the function map per call.
 var sprigDurationRound = sprig.TxtFuncMap()["durationRound"].(func(any) string)
 
 // Unrecognized date arguments MUST use fixedTime rather than the wall clock.
@@ -46,7 +49,7 @@ func clockFuncs() template.FuncMap {
 }
 
 // dateInZone mirrors sprig.dateInZone but (1) defaults to fixedTime rather
-// than time.Now() for an unrecognized date argument and (2) treats an empty
+// than [time.Now]() for an unrecognized date argument and (2) treats an empty
 // or "Local" zone as UTC, so formatting never depends on $TZ.
 func dateInZone(format string, date any, zone string) string {
 	var t time.Time

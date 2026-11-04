@@ -29,9 +29,12 @@ type KindInfo struct {
 }
 
 var (
+	//nolint:gochecknoglobals // API versions are derived once from upstream schemes.
 	kustomizeAPIVersion = kustomizev1.GroupVersion.String()
-	helmAPIVersion      = helmv2.GroupVersion.String()
-	sourceAPIVersion    = sourcev1.GroupVersion.String()
+	//nolint:gochecknoglobals // API versions are derived once from upstream schemes.
+	helmAPIVersion = helmv2.GroupVersion.String()
+	//nolint:gochecknoglobals // API versions are derived once from upstream schemes.
+	sourceAPIVersion = sourcev1.GroupVersion.String()
 )
 
 // APIVersion returns the Flux API version used by readiness projections.
@@ -50,6 +53,7 @@ func (k KindInfo) APIVersion() string {
 
 type kindEntry struct {
 	KindInfo
+
 	decode    func(map[string]any) (BaseManifest, error)
 	bindLocal func(NamedResource, string) BaseManifest
 }
@@ -71,39 +75,46 @@ const (
 )
 
 var (
+	//nolint:gochecknoglobals // Kind metadata forms an immutable shared inventory.
 	kindTable [kindArtifactGenerator + 1]kindEntry
+	//nolint:gochecknoglobals // The immutable index shares the kind inventory.
 	kindIndex map[string]int
 )
 
 // Decoders initialize after package variables because parsing reads this registry.
+//
+//nolint:gochecknoinits // Decoder registration depends on initialized manifest metadata.
 func init() {
-	kindTable = [...]kindEntry{
-		kindKustomization:    {KindInfo: KindInfo{Group: FluxKustomizeDomain, Kind: KindKustomization, Tracked: true, Runnable: true, Status: true, Discovery: true, Test: true, Parent: true, Structural: true, Render: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseKustomization(d) }},
-		kindHelmRelease:      {KindInfo: KindInfo{Group: HelmReleaseDomain, Kind: KindHelmRelease, Tracked: true, Runnable: true, Status: true, Test: true, Parent: true, SourceOnly: true, TransientOutput: true, Render: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseHelmRelease(d) }},
-		kindGitRepository:    {KindInfo: KindInfo{Group: SourceDomain, Kind: KindGitRepository, Tracked: true, Runnable: true, Status: true, Discovery: true, Test: true, SourceArtifact: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseGitRepository(d) }},
-		kindOCIRepository:    {KindInfo: KindInfo{Group: SourceDomain, Kind: KindOCIRepository, Tracked: true, Runnable: true, Status: true, Discovery: true, Test: true, SourceArtifact: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseOCIRepository(d) }},
-		kindHelmRepository:   {KindInfo: KindInfo{Group: SourceDomain, Kind: KindHelmRepository, Tracked: true, Runnable: true, Status: true, Discovery: true, Test: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseHelmRepository(d) }},
-		kindHelmChartSource:  {KindInfo: KindInfo{Group: SourceDomain, Kind: KindHelmChart, Tracked: true, Runnable: true, Status: true, Discovery: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseHelmChartSource(d) }},
-		kindExternalArtifact: {KindInfo: KindInfo{Group: SourceDomain, Kind: KindExternalArtifact, Tracked: true, Runnable: true, Status: true, Discovery: true, SourceArtifact: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseExternalArtifact(d) }},
-		kindBucket:           {KindInfo: KindInfo{Group: SourceDomain, Kind: KindBucket, Tracked: true, Runnable: true, Status: true, Discovery: true, Test: true, SourceArtifact: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseBucket(d) }},
-		kindResourceSet:      {KindInfo: KindInfo{Group: FluxOperatorDomain, Kind: KindResourceSet, Tracked: true, Runnable: true, Status: false, Discovery: true, Parent: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseResourceSet(d) }},
-		kindResourceSetInputProvider: {KindInfo: KindInfo{Group: FluxOperatorDomain, Kind: KindResourceSetInputProvider, Tracked: true, Runnable: false, Status: false, Discovery: true}, decode: func(d map[string]any) (BaseManifest, error) {
-			return parseResourceSetInputProvider(d)
-		}},
-		kindConfigMap: {KindInfo: KindInfo{Group: "", Kind: KindConfigMap, Tracked: true, Runnable: false, Status: false, Data: true}, decode: func(d map[string]any) (BaseManifest, error) {
-			return parseConfigMap(d)
-		}},
-		kindArtifactGenerator: {KindInfo: KindInfo{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Tracked: true, Runnable: true, Status: true, Discovery: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseRawObject(d) }},
-		kindSecret:            {KindInfo: KindInfo{Group: "", Kind: KindSecret, Tracked: true, Runnable: false, Status: false, Data: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseSecret(d) }},
-	}
+	initializeRenderKinds()
+	initializeSourceKinds()
+	initializeInputKinds()
+
 	kindTable[kindGitRepository].bindLocal = func(id NamedResource, root string) BaseManifest {
-		return NewGitRepository(sourcev1.GitRepository{Name: id.Name, Namespace: id.Namespace, Spec: sourcev1.GitRepositorySpec{URL: "file://" + root}})
+		return NewGitRepository(
+			sourcev1.GitRepository{
+				Name:      id.Name,
+				Namespace: id.Namespace,
+				Spec:      sourcev1.GitRepositorySpec{URL: "file://" + root},
+			},
+		)
 	}
 	kindTable[kindOCIRepository].bindLocal = func(id NamedResource, root string) BaseManifest {
-		return NewOCIRepository(sourcev1.OCIRepository{Name: id.Name, Namespace: id.Namespace, Spec: sourcev1.OCIRepositorySpec{URL: "file://" + root}})
+		return NewOCIRepository(
+			sourcev1.OCIRepository{
+				Name:      id.Name,
+				Namespace: id.Namespace,
+				Spec:      sourcev1.OCIRepositorySpec{URL: "file://" + root},
+			},
+		)
 	}
 	kindTable[kindBucket].bindLocal = func(id NamedResource, root string) BaseManifest {
-		return NewBucket(sourcev1.Bucket{Name: id.Name, Namespace: id.Namespace, Spec: sourcev1.BucketSpec{Endpoint: "file://" + root, BucketName: id.Name}})
+		return NewBucket(
+			sourcev1.Bucket{
+				Name:      id.Name,
+				Namespace: id.Namespace,
+				Spec:      sourcev1.BucketSpec{Endpoint: "file://" + root, BucketName: id.Name},
+			},
+		)
 	}
 
 	kindIndex = make(map[string]int, len(kindTable))
@@ -148,6 +159,8 @@ func (n NamedResource) CanBindLocal() bool {
 }
 
 // BindLocal constructs this source's actual local artifact binding.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (n NamedResource) BindLocal(root string) (BaseManifest, error) {
 	if !n.CanBindLocal() {
 		return nil, inputf("invalid local source identity %s", n)
@@ -173,4 +186,146 @@ func referenceGroup(kind, apiVersion string) string {
 		return kindTable[i].Group
 	}
 	return ""
+}
+
+func initializeRenderKinds() {
+	kindTable[kindKustomization] = kindEntry{
+		Group:      FluxKustomizeDomain,
+		Kind:       KindKustomization,
+		Tracked:    true,
+		Runnable:   true,
+		Status:     true,
+		Discovery:  true,
+		Test:       true,
+		Parent:     true,
+		Structural: true,
+		Render:     true,
+		decode:     func(d map[string]any) (BaseManifest, error) { return parseKustomization(d) },
+	}
+	kindTable[kindHelmRelease] = kindEntry{
+		Group:           HelmReleaseDomain,
+		Kind:            KindHelmRelease,
+		Tracked:         true,
+		Runnable:        true,
+		Status:          true,
+		Test:            true,
+		Parent:          true,
+		SourceOnly:      true,
+		TransientOutput: true,
+		Render:          true,
+		decode:          func(d map[string]any) (BaseManifest, error) { return parseHelmRelease(d) },
+	}
+}
+
+func initializeSourceKinds() {
+	kindTable[kindGitRepository] = kindEntry{
+		Group:          SourceDomain,
+		Kind:           KindGitRepository,
+		Tracked:        true,
+		Runnable:       true,
+		Status:         true,
+		Discovery:      true,
+		Test:           true,
+		SourceArtifact: true,
+		decode:         func(d map[string]any) (BaseManifest, error) { return parseGitRepository(d) },
+	}
+	kindTable[kindOCIRepository] = kindEntry{
+		Group:          SourceDomain,
+		Kind:           KindOCIRepository,
+		Tracked:        true,
+		Runnable:       true,
+		Status:         true,
+		Discovery:      true,
+		Test:           true,
+		SourceArtifact: true,
+		decode:         func(d map[string]any) (BaseManifest, error) { return parseOCIRepository(d) },
+	}
+	kindTable[kindHelmRepository] = kindEntry{
+		Group:     SourceDomain,
+		Kind:      KindHelmRepository,
+		Tracked:   true,
+		Runnable:  true,
+		Status:    true,
+		Discovery: true,
+		Test:      true,
+		decode:    func(d map[string]any) (BaseManifest, error) { return parseHelmRepository(d) },
+	}
+	kindTable[kindHelmChartSource] = kindEntry{
+		Group:     SourceDomain,
+		Kind:      KindHelmChart,
+		Tracked:   true,
+		Runnable:  true,
+		Status:    true,
+		Discovery: true,
+		decode:    func(d map[string]any) (BaseManifest, error) { return parseHelmChartSource(d) },
+	}
+	kindTable[kindExternalArtifact] = kindEntry{
+		Group:          SourceDomain,
+		Kind:           KindExternalArtifact,
+		Tracked:        true,
+		Runnable:       true,
+		Status:         true,
+		Discovery:      true,
+		SourceArtifact: true,
+		decode:         func(d map[string]any) (BaseManifest, error) { return parseExternalArtifact(d) },
+	}
+	kindTable[kindBucket] = kindEntry{
+		Group:          SourceDomain,
+		Kind:           KindBucket,
+		Tracked:        true,
+		Runnable:       true,
+		Status:         true,
+		Discovery:      true,
+		Test:           true,
+		SourceArtifact: true,
+		decode:         func(d map[string]any) (BaseManifest, error) { return parseBucket(d) },
+	}
+}
+
+func initializeInputKinds() {
+	kindTable[kindResourceSet] = kindEntry{
+		Group:     FluxOperatorDomain,
+		Kind:      KindResourceSet,
+		Tracked:   true,
+		Runnable:  true,
+		Status:    false,
+		Discovery: true,
+		Parent:    true,
+		decode:    func(d map[string]any) (BaseManifest, error) { return parseResourceSet(d) },
+	}
+	kindTable[kindResourceSetInputProvider] = kindEntry{
+		Group:     FluxOperatorDomain,
+		Kind:      KindResourceSetInputProvider,
+		Tracked:   true,
+		Runnable:  false,
+		Status:    false,
+		Discovery: true,
+		decode: func(d map[string]any) (BaseManifest, error) {
+			return parseResourceSetInputProvider(d)
+		},
+	}
+	kindTable[kindConfigMap] = kindEntry{
+		Group:    "",
+		Kind:     KindConfigMap,
+		Tracked:  true,
+		Runnable: false,
+		Status:   false,
+		Data:     true,
+		decode: func(d map[string]any) (BaseManifest, error) {
+			return parseConfigMap(d)
+		},
+	}
+	kindTable[kindArtifactGenerator] = kindEntry{
+		Group:     "source.extensions.fluxcd.io",
+		Kind:      "ArtifactGenerator",
+		Tracked:   true,
+		Runnable:  true,
+		Status:    true,
+		Discovery: true,
+		decode:    func(d map[string]any) (BaseManifest, error) { return parseRawObject(d) },
+	}
+	kindTable[kindSecret] = kindEntry{
+		Group: "", Kind: KindSecret, Tracked: true, Runnable: false, Status: false, Data: true,
+		decode: func(d map[string]any) (BaseManifest, error) { return parseSecret(d) },
+	}
 }

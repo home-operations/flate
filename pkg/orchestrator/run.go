@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"maps"
 	"slices"
 
@@ -16,6 +17,7 @@ import (
 
 type orchestratorExistence struct {
 	*manifest.DiscoveryIndex
+
 	o *Orchestrator
 }
 
@@ -26,16 +28,13 @@ func (e *orchestratorExistence) IsFileIndexed(id manifest.NamedResource) bool {
 	return e.DiscoveryIndex.IsFileIndexed(id)
 }
 
-func (e *orchestratorExistence) Promote(ctx context.Context, reads *store.ReadSet, id manifest.NamedResource) (bool, error) {
+func (e *orchestratorExistence) Promote(
+	ctx context.Context,
+	reads *store.ReadSet,
+	id manifest.NamedResource,
+) (bool, error) {
 	if e.o.preparation != nil {
-		if err := ctx.Err(); err != nil {
-			return false, err
-		}
-		obj := e.o.store.GetDeclaration(id)
-		if reads != nil {
-			obj = reads.GetDeclaration(id)
-		}
-		return obj != nil && slices.Contains(e.o.preparation.Needed, id), nil
+		return e.promotePrepared(ctx, reads, id)
 	}
 	if e.o.loader != nil {
 		captured := reads
@@ -62,34 +61,69 @@ func (e *orchestratorExistence) Promote(ctx context.Context, reads *store.ReadSe
 	if obj != nil {
 		return e.admit(ctx, store.Child{Obj: obj, Productions: productions}, reads)
 	}
-	for _, p := range productions {
-		admit := func(obj manifest.BaseManifest) (bool, error) {
-			return e.admit(ctx, store.Child{Obj: obj, Productions: []manifest.Production{p}}, reads)
-		}
-		promoted, err := loader.Promote(ctx, e.o.store, id, loader.PromoteOptions{Record: p, Reads: reads, WipeSecrets: e.o.cfg.WipeSecrets, Admit: admit})
-		if err != nil {
-			return false, err
-		}
-		if promoted {
+	{
+		pValues := productions
+		for pIndex := range pValues {
+			p := pValues[pIndex]
+
+			admit := func(obj manifest.BaseManifest) (bool, error) {
+				return e.admit(ctx, store.Child{Obj: obj, Productions: []manifest.Production{p}}, reads)
+			}
+			promoted, err := loader.Promote(
+				ctx,
+				e.o.store,
+				id,
+				loader.PromoteOptions{Record: p, Reads: reads, WipeSecrets: e.o.cfg.WipeSecrets, Admit: admit},
+			)
+			if err != nil {
+				return false, err
+			}
+			if !promoted {
+				continue
+			}
 			if reads != nil {
 				reads.Productions(id, e.o.index)
 			}
 			return true, nil
 		}
 	}
-	if e.o.admission != nil && reads != nil && reads.GetDeclaration(reads.ID()) != nil {
-		object, artifact, err := e.o.admission.Resolve(ctx, id, nil)
-		if err == nil && object != nil && artifact != nil && reads.Valid() {
-			accepted, admissionErr := e.admit(ctx, store.Child{Obj: object}, reads)
-			if admissionErr != nil {
-				return false, admissionErr
-			}
-			if accepted {
-				e.o.store.AddObject(object)
-				e.o.store.SetArtifact(id, artifact)
-				e.o.store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Message: "local entry source"})
-				return true, nil
-			}
+	return e.promoteAdmission(ctx, reads, id)
+}
+
+func (e *orchestratorExistence) promotePrepared(
+	ctx context.Context,
+	reads *store.ReadSet,
+	id manifest.NamedResource,
+) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, fmt.Errorf("context: %w", err)
+	}
+	obj := e.o.store.GetDeclaration(id)
+	if reads != nil {
+		obj = reads.GetDeclaration(id)
+	}
+	return obj != nil && slices.Contains(e.o.preparation.Needed, id), nil
+}
+
+func (e *orchestratorExistence) promoteAdmission(
+	ctx context.Context,
+	reads *store.ReadSet,
+	id manifest.NamedResource,
+) (bool, error) {
+	if e.o.admission == nil || reads == nil || reads.GetDeclaration(reads.ID()) == nil {
+		return false, nil
+	}
+	object, artifact, err := e.o.admission.Resolve(ctx, id, nil)
+	if err == nil && object != nil && artifact != nil && reads.Valid() {
+		accepted, admissionErr := e.admit(ctx, store.Child{Obj: object}, reads)
+		if admissionErr != nil {
+			return false, admissionErr
+		}
+		if accepted {
+			e.o.store.AddObject(object)
+			e.o.store.SetArtifact(id, artifact)
+			e.o.store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Message: "local entry source"})
+			return true, nil
 		}
 	}
 	return false, nil
@@ -189,67 +223,119 @@ func (o *Orchestrator) collectManifests() []manifest.DocumentBatch {
 	positions := make(map[manifest.NamedResource]int, len(objects))
 	for _, obj := range objects {
 		id := obj.Named()
-		parent := id
 		parentAttributed := !manifest.KindOf(obj).Render
-		if parentAttributed {
-			var ok bool
-			parent, ok = o.parentOf(id)
-			if !ok {
-				if manifest.KindOf(obj).Parent {
-					continue
-				}
-				parent = id
-			}
-			if o.store.GetObject(parent) == nil {
-				continue
-			}
+		parent, eligible := o.collectionParent(obj, id, parentAttributed)
+		if !eligible {
+			continue
 		}
 		effective, _, attempt := o.store.GetEmission(id)
 		attempt.Finish()
 		if effective == nil {
 			continue
 		}
-		documentScope := false
-		filterOwnership := parentAttributed
-		if producer, ok := obj.(interface {
-			EmissionPolicy() manifest.EmissionPolicy
-		}); ok {
-			documentScope = producer.EmissionPolicy().DocumentScope
-			filterOwnership = filterOwnership || documentScope
-		}
+		documentScope, filterOwnership := emissionOwnership(obj, parentAttributed)
 		selected := make(map[manifest.NamedResource]bool, len(attempt.Children))
-		for _, child := range attempt.Children {
-			if child.Doc != nil {
-				target := child.Obj.Named()
-				selected[target] = (!parentAttributed || !manifest.KindOf(child.Obj).Render) && o.store.EmissionOwner(target) == id
-			}
-		}
+		o.selectCollectionChildren(id, parentAttributed, attempt.Children, selected)
 		for _, occurrence := range attempt.Manifests {
 			doc := occurrence.Document
 			target := resourceset.DedupKey(doc)
-			if o.filter != nil && !documentScope {
-				_, ownerSelected, _, _ := o.filter.Membership(id)
-				if !ownerSelected && !o.filter.ShouldReconcile(target) {
-					continue
-				}
+			if !o.collectionDocumentSelected(id, target, documentScope) {
+				continue
 			}
-			apiVersion := manifest.DocAPIVersion(doc)
-			identifiable := apiVersion != "" && target.Kind != "" && target.Name != "" && target.Group != manifest.KustomizeDomain
-			if parentAttributed && identifiable && target.Namespace == "" && manifest.KindOf(&manifest.RawObject{APIVersion: apiVersion, Kind: target.Kind}).Namespaced() {
-				target.Namespace = id.Namespace
+			target, identifiable := collectionDocumentTarget(doc, target, id.Namespace, parentAttributed)
+			if filterOwnership && identifiable && !selected[target] &&
+				!o.collectionOwnershipAllows(target, parentAttributed) {
+				continue
 			}
-			if !filterOwnership || !identifiable || selected[target] || !parentAttributed && o.store.EmissionOwner(target) == (manifest.NamedResource{}) {
-				position, ok := positions[parent]
-				if !ok {
-					position = len(out)
-					positions[parent] = position
-					out = append(out, manifest.DocumentBatch{Parent: o.store.GetObject(parent)})
-				}
-				out[position].Documents = append(out[position].Documents, doc)
+			position, ok := positions[parent]
+			if !ok {
+				position = len(out)
+				positions[parent] = position
+				out = append(out, manifest.DocumentBatch{Parent: o.store.GetObject(parent)})
 			}
+			out[position].Documents = append(out[position].Documents, doc)
 		}
 	}
 	return out
+}
+
+func (o *Orchestrator) collectionOwnershipAllows(target manifest.NamedResource, parentAttributed bool) bool {
+	return !parentAttributed && o.store.EmissionOwner(target) == (manifest.NamedResource{})
+}
+
+func collectionDocumentTarget(
+	doc map[string]any,
+	target manifest.NamedResource,
+	namespace string,
+	parentAttributed bool,
+) (manifest.NamedResource, bool) {
+	apiVersion := manifest.DocAPIVersion(doc)
+	identifiable := apiVersion != "" && target.Kind != "" && target.Name != "" &&
+		target.Group != manifest.KustomizeDomain
+	if parentAttributed && identifiable && target.Namespace == "" &&
+		manifest.KindOf(&manifest.RawObject{APIVersion: apiVersion, Kind: target.Kind}).Namespaced() {
+		target.Namespace = namespace
+	}
+	return target, identifiable
+}
+
+func (o *Orchestrator) selectCollectionChildren(
+	id manifest.NamedResource,
+	parentAttributed bool,
+	children []store.Child,
+	selected map[manifest.NamedResource]bool,
+) {
+	for _, child := range children {
+		if child.Doc != nil {
+			target := child.Obj.Named()
+			selected[target] = (!parentAttributed || !manifest.KindOf(child.Obj).Render) &&
+				o.store.EmissionOwner(target) == id
+		}
+	}
+}
+
+func (o *Orchestrator) collectionDocumentSelected(id, target manifest.NamedResource, documentScope bool) bool {
+	if o.filter != nil && !documentScope {
+		_, ownerSelected, _, _ := o.filter.Membership(id)
+		if !ownerSelected && !o.filter.ShouldReconcile(target) {
+			return false
+		}
+	}
+	return true
+}
+
+func (o *Orchestrator) collectionParent(
+	obj manifest.BaseManifest,
+	id manifest.NamedResource,
+	parentAttributed bool,
+) (manifest.NamedResource, bool) {
+	parent := id
+	if parentAttributed {
+		var ok bool
+		parent, ok = o.parentOf(id)
+		if !ok {
+			if manifest.KindOf(obj).Parent {
+				return parent, false
+			}
+			parent = id
+		}
+		if o.store.GetObject(parent) == nil {
+			return parent, false
+		}
+	}
+	return parent, true
+}
+
+func emissionOwnership(obj manifest.BaseManifest, parentAttributed bool) (bool, bool) {
+	documentScope := false
+	filterOwnership := parentAttributed
+	if producer, ok := obj.(interface {
+		EmissionPolicy() manifest.EmissionPolicy
+	}); ok {
+		documentScope = producer.EmissionPolicy().DocumentScope
+		filterOwnership = filterOwnership || documentScope
+	}
+	return documentScope, filterOwnership
 }
 
 func (o *Orchestrator) stop() {

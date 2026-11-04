@@ -90,24 +90,10 @@ func (t *view) lookup(name string) (*node, error) {
 		return nil, fs.ErrNotExist
 	}
 	if t.input != nil {
-		for prefix := path.Dir(name); ; prefix = path.Dir(prefix) {
-			input := t.input.mounts[prefix]
-			if input == nil {
-				if prefix == "." {
-					break
-				}
-				continue
-			}
+		prefix, input := t.mountedInput(name)
+		if input != nil {
 			rel := strings.TrimPrefix(name, prefix+"/")
-			info, err := fs.Lstat(input, rel)
-			if err != nil {
-				return nil, err
-			}
-			n := &node{name: path.Base(name), mode: info.Mode(), foreign: &foreignNode{source: input, path: rel, info: info, mount: prefix}}
-			if n.mode&fs.ModeSymlink != 0 {
-				n.target, err = fs.ReadLink(input, rel)
-			}
-			return n, err
+			return readForeignNode(input, name, rel, prefix)
 		}
 	}
 
@@ -120,14 +106,7 @@ func (t *view) lookup(name string) (*node, error) {
 	if n := t.input.memo[name]; n != nil {
 		return n, nil
 	}
-	info, err := fs.Lstat(t.input.lower, name)
-	if err != nil {
-		return nil, err
-	}
-	n := &node{name: path.Base(name), mode: info.Mode(), foreign: &foreignNode{source: t.input.lower, path: name, info: info}}
-	if n.mode&fs.ModeSymlink != 0 {
-		n.target, err = fs.ReadLink(t.input.lower, name)
-	}
+	n, err := readForeignNode(t.input.lower, name, name, "")
 	if err == nil && t.input.memo != nil {
 		t.input.memo[name] = n
 	}
@@ -179,67 +158,89 @@ func (t *view) resolve(name string, follow bool) (string, *node, error) {
 			return "", nil, err
 		}
 	}
-	current := "."
-	n, err := t.lookup(current)
+	r := pathResolution{view: t, current: ".", remaining: name}
+	return r.resolve(follow)
+}
+
+type pathResolution struct {
+	view      *view
+	current   string
+	remaining string
+	node      *node
+	hops      int
+}
+
+func (r *pathResolution) resolve(follow bool) (string, *node, error) {
+	var err error
+	r.node, err = r.view.lookup(r.current)
 	if err != nil {
 		return "", nil, err
 	}
-	hops := 0
-	for remaining := name; remaining != ""; {
-		part, rest, slash := strings.Cut(remaining, "/")
-		remaining = rest
+	for r.remaining != "" {
+		part, rest, slash := strings.Cut(r.remaining, "/")
+		r.remaining = rest
 		switch part {
 		case "", ".":
 			continue
 		case "..":
-			if current == "." {
+			if r.current == "." {
 				return "", nil, ErrEscape
 			}
-			current = path.Dir(current)
-			n, err = t.lookup(current)
+			r.current = path.Dir(r.current)
+			r.node, err = r.view.lookup(r.current)
 			if err != nil {
 				return "", nil, err
 			}
 			continue
 		}
-		next := part
-		if current != "." {
-			next = current + "/" + part
+		if advanceErr := r.advance(part, rest, slash, follow); advanceErr != nil {
+			return "", nil, advanceErr
 		}
-		n, err = t.lookup(next)
-		if err != nil {
-			return "", nil, err
-		}
-		if n.mode&fs.ModeSymlink != 0 && (follow || slash) {
-			if path.IsAbs(n.target) {
-				return "", nil, ErrEscape
-			}
-			hops++
-			if hops > 8 {
-				return "", nil, ErrLoop
-			}
-			remaining = n.target
-			if slash {
-				remaining += "/" + rest
-			}
-			if n.target == "" {
-				return "", nil, fs.ErrNotExist
-			}
-			n, err = t.lookup(current)
-			if err != nil {
-				return "", nil, err
-			}
-			continue
-		}
-		if slash && !n.IsDir() {
-			return "", nil, fs.ErrInvalid
-		}
-		current = next
 	}
-	if n == nil {
+	if r.node == nil {
 		return "", nil, fs.ErrNotExist
 	}
-	return current, n, nil
+	return r.current, r.node, nil
+}
+
+func (r *pathResolution) advance(part, rest string, slash, follow bool) error {
+	next := part
+	if r.current != "." {
+		next = r.current + "/" + part
+	}
+	var err error
+	r.node, err = r.view.lookup(next)
+	if err != nil {
+		return err
+	}
+	if r.node.mode&fs.ModeSymlink != 0 && (follow || slash) {
+		return r.followLink(rest, slash)
+	}
+	if slash && !r.node.IsDir() {
+		return fs.ErrInvalid
+	}
+	r.current = next
+	return nil
+}
+
+func (r *pathResolution) followLink(rest string, slash bool) error {
+	if path.IsAbs(r.node.target) {
+		return ErrEscape
+	}
+	r.hops++
+	if r.hops > maxSymbolicLinkDepth {
+		return ErrLoop
+	}
+	r.remaining = r.node.target
+	if slash {
+		r.remaining += "/" + rest
+	}
+	if r.node.target == "" {
+		return fs.ErrNotExist
+	}
+	var err error
+	r.node, err = r.view.lookup(r.current)
+	return err
 }
 
 func (t *view) readNode(op, name string, follow bool) (*node, error) {
@@ -266,6 +267,7 @@ func (t *view) Open(name string) (fs.File, error) {
 	}
 	if n.foreign != nil {
 		if !n.IsDir() {
+			//nolint:wrapcheck // The io/fs adapter preserves upstream errors and their PathError structure.
 			return n.foreign.source.Open(n.foreign.path)
 		}
 		entries, err := t.entries(n)
@@ -290,6 +292,7 @@ func (t *view) ReadFile(name string) ([]byte, error) {
 		return nil, &fs.PathError{Op: "readfile", Path: name, Err: fs.ErrInvalid}
 	}
 	if n.foreign != nil {
+		//nolint:wrapcheck // The io/fs adapter preserves upstream errors and their PathError structure.
 		return fs.ReadFile(n.foreign.source, n.foreign.path)
 	}
 	return bytes.Clone(n.data), nil
@@ -297,12 +300,12 @@ func (t *view) ReadFile(name string) ([]byte, error) {
 
 // ReadDir returns caller-owned entries sorted by name, following a link root.
 func (t *view) ReadDir(name string) ([]fs.DirEntry, error) {
-	n, err := t.readNode("readdir", name, true)
+	n, err := t.readNode(readDirOperation, name, true)
 	if err != nil {
 		return nil, err
 	}
 	if !n.IsDir() {
-		return nil, &fs.PathError{Op: "readdir", Path: name, Err: fs.ErrInvalid}
+		return nil, &fs.PathError{Op: readDirOperation, Path: name, Err: fs.ErrInvalid}
 	}
 	entries, err := t.entries(n)
 	return slices.Clone(entries), err
@@ -327,6 +330,7 @@ func (t *view) entries(n *node) ([]fs.DirEntry, error) {
 		var err error
 		entries, err = fs.ReadDir(n.foreign.source, n.foreign.path)
 		if err != nil {
+			//nolint:wrapcheck // The io/fs adapter preserves upstream errors and their PathError structure.
 			return nil, err
 		}
 		if cached := memo[n.foreign.path]; cached != nil {
@@ -412,6 +416,10 @@ func (t *view) walk(name string, n *node, fn fs.WalkDirFunc) error {
 			return fn(name, n, err)
 		}
 	}
+	return t.walkChildren(name, entries, fn)
+}
+
+func (t *view) walkChildren(name string, entries []fs.DirEntry, fn fs.WalkDirFunc) error {
 	for _, entry := range entries {
 		p := entry.Name()
 		if name != "." {
@@ -422,8 +430,8 @@ func (t *view) walk(name string, n *node, fn fs.WalkDirFunc) error {
 			var err error
 			child, err = t.lookup(p)
 			if err != nil {
-				if err := fn(p, entry, err); err != nil {
-					return err
+				if fnErr := fn(p, entry, err); fnErr != nil {
+					return fnErr
 				}
 				continue
 			}
@@ -436,4 +444,44 @@ func (t *view) walk(name string, n *node, fn fs.WalkDirFunc) error {
 		}
 	}
 	return nil
+}
+
+const (
+	addFileOperation    = "addfile"
+	addSymlinkOperation = "addsymlink"
+	readDirOperation    = "readdir"
+)
+
+const (
+	maxSymbolicLinkDepth = 8
+)
+
+func (t *view) mountedInput(name string) (string, fs.FS) {
+	for prefix := path.Dir(name); ; prefix = path.Dir(prefix) {
+		input := t.input.mounts[prefix]
+		if input != nil {
+			return prefix, input
+		}
+		if prefix == "." {
+			return "", nil
+		}
+	}
+}
+
+func readForeignNode(input fs.FS, name, rel, mount string) (*node, error) {
+	info, err := fs.Lstat(input, rel)
+	if err != nil {
+		//nolint:wrapcheck // The io/fs adapter preserves upstream errors and their PathError structure.
+		return nil, err
+	}
+	n := &node{
+		name:    path.Base(name),
+		mode:    info.Mode(),
+		foreign: &foreignNode{source: input, path: rel, info: info, mount: mount},
+	}
+	if n.mode&fs.ModeSymlink != 0 {
+		n.target, err = fs.ReadLink(input, rel)
+	}
+	//nolint:wrapcheck // The io/fs adapter preserves upstream errors and their PathError structure.
+	return n, err
 }

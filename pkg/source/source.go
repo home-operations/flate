@@ -38,7 +38,12 @@ const (
 // dispatches via this untyped interface. Concrete implementations
 // satisfy it through Wrap[T] — see TypedFetcher.
 type Fetcher interface {
-	Fetch(ctx context.Context, obj manifest.BaseManifest, reads *store.ReadSet, policy sourcecache.Policy) (*store.SourceArtifact, error)
+	Fetch(
+		ctx context.Context,
+		obj manifest.BaseManifest,
+		reads *store.ReadSet,
+		policy sourcecache.Policy,
+	) (*store.SourceArtifact, error)
 }
 
 // TypedFetcher acquires artifacts of one manifest type with explicit freshness and retries.
@@ -51,6 +56,8 @@ type TypedFetcher[T manifest.BaseManifest] interface {
 // type-assertion site is here — a mismatched payload returns
 // ErrInput rather than panicking. Embeds the Kind label so the
 // error message names the responsible fetcher.
+//
+//nolint:ireturn // The SDK dispatcher contract returns Fetcher; exposing its private adapter would change the public signature.
 func Wrap[T manifest.BaseManifest](kindLabel string, f TypedFetcher[T]) Fetcher {
 	return typedAdapter[T]{label: kindLabel, inner: f}
 }
@@ -60,10 +67,19 @@ type typedAdapter[T manifest.BaseManifest] struct {
 	inner TypedFetcher[T]
 }
 
-func (a typedAdapter[T]) Fetch(ctx context.Context, obj manifest.BaseManifest, reads *store.ReadSet, policy sourcecache.Policy) (*store.SourceArtifact, error) {
+func (a typedAdapter[T]) Fetch(
+	ctx context.Context,
+	obj manifest.BaseManifest,
+	reads *store.ReadSet,
+	policy sourcecache.Policy,
+) (*store.SourceArtifact, error) {
 	typed, ok := obj.(T)
 	if !ok {
-		return nil, manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("%s fetcher: unexpected payload %T", a.label, obj))
+		return nil, manifest.NewError(
+			manifest.ErrInput,
+			nil,
+			fmt.Sprintf("%s fetcher: unexpected payload %T", a.label, obj),
+		)
 	}
 	return a.inner.Fetch(ctx, typed, reads, policy)
 }
@@ -79,7 +95,7 @@ type SecretGetter func(namespace, name string) *manifest.Secret
 // OperationView refreshes admitted mutable observations and retains cache acquisition identity.
 func OperationView(ctx context.Context, input fs.FS) (fs.FS, string, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, "", err
+		return nil, "", err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 	}
 	if current, ok := input.(*gittree.FS); ok {
 		return gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: current})

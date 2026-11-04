@@ -31,6 +31,8 @@ func Funcs(seed []byte) template.FuncMap {
 const streamFuncCount = 18
 
 // staticFuncs MUST remain private and immutable after initialization.
+//
+//nolint:gochecknoglobals // An immutable function table is copied into each per-render function map.
 var staticFuncs = func() template.FuncMap {
 	fm := clockFuncs()
 	fm["buildCustomCert"] = buildCustomCert

@@ -19,7 +19,7 @@ func insecureIgnoreHostKey(_ string, _ net.Addr, _ ssh.PublicKey) error {
 
 // knownHostsCallback returns an SSH HostKeyCallback that validates
 // against the provided known_hosts data. It feeds the data through an
-// os.Pipe so no temp file is written to disk; the write side is closed
+// [os.Pipe] so no temp file is written to disk; the write side is closed
 // before New returns so New reads all data synchronously.
 func knownHostsCallback(data []byte) (ssh.HostKeyCallback, error) {
 	r, w, err := os.Pipe()
@@ -37,5 +37,8 @@ func knownHostsCallback(data []byte) (ssh.HostKeyCallback, error) {
 	if werr := <-writeErr; werr != nil && parseErr == nil {
 		return nil, fmt.Errorf("write known_hosts pipe: %w", werr)
 	}
-	return cb, parseErr
+	if parseErr != nil {
+		return cb, fmt.Errorf("parse SSH known hosts: %w", parseErr)
+	}
+	return cb, nil
 }

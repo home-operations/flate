@@ -9,7 +9,6 @@ import (
 	"io/fs"
 	"maps"
 	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -17,14 +16,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/home-operations/flate/internal/keylock"
-	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/content/oci"
 	"oras.land/oras-go/v2/errdef"
+
+	"github.com/home-operations/flate/internal/keylock"
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 const prefix = "flate."
@@ -70,6 +68,7 @@ type BlobKey struct {
 
 type blobRoot struct {
 	*os.Root
+
 	once sync.Once
 	path string
 	info fs.FileInfo
@@ -79,13 +78,13 @@ type blobRoot struct {
 func (r *blobRoot) current(owner *os.Root) (*os.Root, bool, error) {
 	info, err := owner.Stat(r.path)
 	if err != nil {
-		return nil, false, err
+		return nil, false, err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
 	}
 	if os.SameFile(info, r.info) {
 		return r.Root, false, nil
 	}
 	current, err := owner.OpenRoot(r.path)
-	return current, true, err
+	return current, true, err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
 }
 
 // Cache owns acquired generations until Close. Readers MUST finish before Close.
@@ -137,6 +136,7 @@ type acquireKey struct {
 
 type producerError struct {
 	error
+
 	causes [2]error
 }
 
@@ -152,23 +152,35 @@ func (e *producerError) Unwrap() []error { return e.causes[:] }
 
 // Acquire publishes a complete archive or revalidates its previous generation after produce succeeds.
 // Its acquisition identity is empty on failure.
-func (c *Cache) Acquire(ctx context.Context, key ArchiveKey, policy Policy, produce func(context.Context, ProducerInput) (ProducerResult, error)) (fs.FS, ocispec.Descriptor, string, error) {
+func (c *Cache) Acquire(
+	ctx context.Context,
+	key ArchiveKey,
+	policy Policy,
+	produce func(context.Context, ProducerInput) (ProducerResult, error),
+) (fs.FS, ocispec.Descriptor, string, error) {
 	switch key.Policy {
-	case "", "source", "fixed", "extract":
+	case "", "source", fixedPolicy, extractPolicy:
 	default:
-		return nil, ocispec.Descriptor{}, "", &CacheError{manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("unknown archive policy %q", key.Policy))}
+		return nil, ocispec.Descriptor{}, "", &CacheError{
+			manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("unknown archive policy %q", key.Policy)),
+		}
 	}
 	producer := archiveProducer{key: key}
-	e, id, err := c.acquire(ctx, acquireKey{producer: producer, required: key.Required}, policy, acquisitionCallbacks{produce: func(ctx context.Context, c *Cache, staged *payload) (*entry, error) {
-		return producer.produce(ctx, c, staged, produce)
-	}})
+	e, id, err := c.acquire(
+		ctx, new(acquireKey{producer: producer, required: key.Required}), policy,
+		acquisitionCallbacks{produce: func(ctx context.Context, c *Cache, staged *payload) (*entry, error) {
+			return producer.produce(ctx, c, staged, produce)
+		}},
+	)
 	if err != nil {
 		return nil, ocispec.Descriptor{}, "", err
 	}
 	descriptor := e.descriptor
 	descriptor.Annotations = maps.Clone(descriptor.Annotations)
-	if key.Policy == "fixed" {
-		fingerprint, err := e.fs.(*tarFS).treeIdentity(ctx)
+	if key.Policy == fixedPolicy {
+		fingerprint, err := e.fs.(*tarFS).treeIdentity( //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+			ctx,
+		)
 		if err != nil {
 			return nil, ocispec.Descriptor{}, "", &CacheError{err}
 		}
@@ -188,48 +200,57 @@ func (c *Cache) CanPersistRenders() bool { return c.persistBlob }
 // Unchanged production retains the previous payload and replaces its upstream metadata.
 // A successful generation rejected by Validate is returned once without being retained for reuse.
 // Its acquisition identity is empty on failure.
-func (c *Cache) Blob(ctx context.Context, key BlobKey, policy Policy, produce func(context.Context, ProducerInput) (ProducerResult, error)) (fs.FS, ocispec.Descriptor, string, error) {
+func (c *Cache) Blob(
+	ctx context.Context,
+	key BlobKey,
+	policy Policy,
+	produce func(context.Context, ProducerInput) (ProducerResult, error),
+) (fs.FS, ocispec.Descriptor, string, error) {
 	switch key.Render {
 	case 0, RenderPending, RenderAccepted:
 	default:
-		return nil, ocispec.Descriptor{}, "", &CacheError{manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("unknown render mode %d", key.Render))}
+		return nil, ocispec.Descriptor{}, "", &CacheError{
+			manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("unknown render mode %d", key.Render)),
+		}
 	}
 	if key.Render != 0 {
-		id, ok := key.Content.(string)
-		if !ok || id == "" {
-			return nil, ocispec.Descriptor{}, "", &CacheError{manifest.NewError(manifest.ErrInput, nil, "render blob content must be a nonempty identity")}
-		}
-		if key.Render == RenderAccepted {
-			enabled, err := c.renderEnabled(ctx, id)
-			if err != nil {
-				return nil, ocispec.Descriptor{}, "", err
-			}
-			if !enabled {
-				if produce == nil {
-					return nil, ocispec.Descriptor{}, "", &CacheError{errdef.ErrNotFound}
-				}
-				return fileFS{name: "content", open: func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader("")), nil }}, ocispec.Descriptor{}, id, nil
-			}
+		stub, identity, err := c.prepareRenderBlob(ctx, &key, produce == nil)
+		if err != nil || stub != nil {
+			return stub, ocispec.Descriptor{}, identity, err
 		}
 		key.Required = nil
 	}
 	producer := blobProducer{content: key.Content, render: key.Render}
-	request := acquireKey{producer: producer, required: key.Required, lookupOnly: produce == nil, memoryOnly: key.Render == RenderPending, render: key.Render != 0}
+	request := acquireKey{
+		producer:   producer,
+		required:   key.Required,
+		lookupOnly: produce == nil,
+		memoryOnly: key.Render == RenderPending,
+		render:     key.Render != 0,
+	}
 	if key.Render == RenderPending && c.CanPersistRenders() && policy.MaxAge != 0 {
-		request.accepted = key.Content.(string)
+		request.accepted = key.Content.(string) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
 	}
 	var validate func(context.Context, *entry) (bool, error)
 	if key.Validate != nil {
 		validate = func(ctx context.Context, e *entry) (bool, error) { return key.Validate(ctx, e.fs) }
 	}
-	e, id, err := c.acquire(ctx, request, policy, acquisitionCallbacks{validate: validate, produce: func(ctx context.Context, c *Cache, staged *payload) (*entry, error) {
-		return producer.produce(ctx, c, staged, produce)
-	}})
+	e, id, err := c.acquire(
+		ctx, new(request), policy,
+		acquisitionCallbacks{
+			validate: validate,
+			produce: func(ctx context.Context, c *Cache, staged *payload) (*entry, error) {
+				return producer.produce(ctx, c, staged, produce)
+			},
+		},
+	)
 	if err != nil {
 		return nil, ocispec.Descriptor{}, "", err
 	}
 	if c.store != nil && !request.memoryOnly {
-		if _, err := c.root.Stat(e.fs.(fileFS).backingPath); err != nil {
+		if _, err := c.root.Stat(
+			e.fs.(fileFS).backingPath, //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+		); err != nil {
 			return nil, ocispec.Descriptor{}, "", &CacheError{err}
 		}
 	}
@@ -244,23 +265,35 @@ func (c *Cache) RenderMetadata(ctx context.Context, content, lookup string) (oci
 	if err != nil || !enabled {
 		return ocispec.Descriptor{}, "", enabled, err
 	}
-	if err := ctx.Err(); err != nil {
-		return ocispec.Descriptor{}, "", true, &CacheError{err}
+	if errErr := ctx.Err(); errErr != nil {
+		return ocispec.Descriptor{}, "", true, &CacheError{errErr}
 	}
 	var e *entry
 	if lookup != "" {
-		if current, ok := c.entries.Load(lookup); ok && current.(*entry).ready.Load() && time.Now().UnixNano()-current.(*entry).touched.Load() < int64(accessInterval) {
-			e = current.(*entry)
+		if current, ok := c.entries.Load(
+			lookup,
+		); ok && current.(*entry).ready.Load() && //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+			time.Now().
+				UnixNano()-
+				current.(*entry).touched.Load() < int64( //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+				accessInterval,
+			) {
+			e = current.(*entry) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
 		}
 	}
 	if e == nil {
 		key := BlobKey{Content: content, Render: RenderAccepted}
-		request := acquireKey{producer: blobProducer{content: key.Content, render: key.Render}, lookupOnly: true, render: true, policy: Policy{MaxAge: Forever}}
+		request := acquireKey{
+			producer:   blobProducer{content: key.Content, render: key.Render},
+			lookupOnly: true,
+			render:     true,
+			policy:     Policy{MaxAge: Forever},
+		}
 		if lookup == "" {
-			e, _, err = c.acquire(ctx, request, Policy{MaxAge: Forever}, acquisitionCallbacks{})
+			e, _, err = c.acquire(ctx, new(request), Policy{MaxAge: Forever}, acquisitionCallbacks{})
 		} else {
 			request.id = lookup
-			e, err = c.acquireOnce(ctx, request, acquisitionCallbacks{})
+			e, err = c.acquireOnce(ctx, &request, acquisitionCallbacks{})
 		}
 		if err == nil && !e.ready.Load() {
 			e.ready.Store(true)
@@ -282,14 +315,18 @@ func (c *Cache) RenderMetadata(ctx context.Context, content, lookup string) (oci
 		return ocispec.Descriptor{}, "", true, &CacheError{err}
 	}
 	if !info.Mode().IsRegular() {
-		return ocispec.Descriptor{}, "", true, &CacheError{fmt.Errorf("%w: render blob is not a regular file", fs.ErrInvalid)}
+		return ocispec.Descriptor{}, "", true, &CacheError{
+			fmt.Errorf("%w: render blob is not a regular file", fs.ErrInvalid),
+		}
 	}
 	return e.descriptor, e.stored.Digest.String(), true, nil
 }
 
 func (c *Cache) renderEnabled(ctx context.Context, content string) (bool, error) {
 	if content == "" {
-		return false, &CacheError{manifest.NewError(manifest.ErrInput, nil, "render blob content must be a nonempty identity")}
+		return false, &CacheError{
+			manifest.NewError(manifest.ErrInput, nil, "render blob content must be a nonempty identity"),
+		}
 	}
 	if !c.CanPersistRenders() {
 		if err := ctx.Err(); err != nil {
@@ -299,93 +336,64 @@ func (c *Cache) renderEnabled(ctx context.Context, content string) (bool, error)
 	return c.CanPersistRenders(), nil
 }
 
-func (c *Cache) acquireOnce(ctx context.Context, key acquireKey, callbacks acquisitionCallbacks) (*entry, error) {
+func (c *Cache) acquireOnce(ctx context.Context, keyValue *acquireKey, callbacks acquisitionCallbacks) (*entry, error) {
+	key := *keyValue
 	if !key.memoryOnly {
 		c.prepareSnapshot()
 	}
-	var observed, rejected *entry
+	var observed *entry
 	if v, ok := c.entries.Load(key.id); ok {
-		observed = v.(*entry)
+		observed = v.(*entry) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
 	} else {
 		v, _ := c.entries.LoadOrStore(key.id, &entry{unloaded: c.store != nil && !key.memoryOnly})
-		observed = v.(*entry)
+		observed = v.(*entry) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
 	}
 	release, err := c.locks.Acquire(ctx, key.id)
 	if err != nil {
 		return nil, &CacheError{err}
 	}
 	defer release()
-	if key.accepted != "" {
-		generation, descriptor, _, err := c.Blob(ctx, BlobKey{Content: key.accepted, Render: RenderAccepted}, Policy{MaxAge: Forever}, nil)
-		if err != nil && !errors.Is(err, errdef.ErrNotFound) {
-			return nil, err
-		}
-		if err == nil {
-			accepted := &entry{fs: generation, descriptor: descriptor}
-			valid, err := c.validCandidate(ctx, callbacks.validate, accepted)
-			if err != nil || valid {
-				return accepted, err
-			}
-		}
+	candidate, err := c.acceptedCandidate(ctx, &key, callbacks.validate)
+	if candidate != nil || err != nil {
+		return candidate, err
 	}
-	if observed != nil && !key.lookupOnly {
-		if observed.waveErr != nil {
-			if observed.outcome != nil {
-				return nil, &TerminalError{Err: observed.waveErr, Attempted: false}
-			}
-			return nil, observed.waveErr
-		}
-		if observed.waveResult != nil {
-			valid, err := c.validCandidate(ctx, callbacks.validate, observed.waveResult)
-			if err != nil || valid {
-				return observed.waveResult, err
-			}
-			rejected = observed.waveResult
-		}
+	candidate, rejected, err := c.waveCandidate(ctx, &key, observed, callbacks.validate)
+	if candidate != nil || err != nil {
+		return candidate, err
 	}
+
 	var e *entry
 	if v, ok := c.entries.Load(key.id); ok {
-		e = v.(*entry)
+		e = v.(*entry) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
 	} else {
 		e = observed
 		c.entries.Store(key.id, e)
 	}
-	if e != nil && e.unloaded && !key.memoryOnly {
-		if err := c.loadEntry(ctx, key, key.policy.MaxAge, e); err != nil {
-			return nil, err
-		}
+	if err := c.restoreCandidate(ctx, &key, e); err != nil {
+		return nil, err
 	}
-	if e != nil && e.outcome != nil {
-		isFresh, _ := e.outcome.observe(time.Now().UTC())
-		if isFresh {
-			if err := c.touch(key, e); err != nil {
-				return nil, err
-			}
-			return nil, e.outcome.replay()
-		}
+
+	if err := c.replayOutcome(&key, e); err != nil {
+		return nil, err
 	}
 	if e != nil && e != rejected && fresh(e.resolved, key.policy.MaxAge) {
-		if err := c.touch(key, e); err != nil {
-			if !key.lookupOnly {
-				c.entries.Store(key.id, &entry{stored: e.stored})
-			}
-			return nil, err
-		}
-		valid, err := c.validCandidate(ctx, callbacks.validate, e)
-		if err != nil || valid {
-			return e, err
+		candidate, candidateErr := c.freshCandidate(ctx, &key, e, callbacks.validate)
+		if candidate != nil || candidateErr != nil {
+			return candidate, candidateErr
 		}
 	}
+
 	if key.lookupOnly {
-		if e != nil && e.stored.Digest == "" && e.resolved.IsZero() {
-			c.entries.CompareAndDelete(key.id, e)
-		}
-		return nil, &CacheError{errdef.ErrNotFound}
+		return nil, c.missingGeneration(&key, e)
 	}
-	return c.attempt(ctx, key, e, callbacks)
+	return c.attempt(ctx, &key, e, callbacks)
 }
 
-func (c *Cache) validCandidate(ctx context.Context, validate func(context.Context, *entry) (bool, error), e *entry) (bool, error) {
+func (c *Cache) validCandidate(
+	ctx context.Context,
+	validate func(context.Context, *entry) (bool, error),
+	e *entry,
+) (bool, error) {
 	if validate == nil {
 		return true, nil
 	}
@@ -396,73 +404,8 @@ func (c *Cache) validCandidate(ctx context.Context, validate func(context.Contex
 	return valid, nil
 }
 
-func (c *Cache) attempt(ctx context.Context, key acquireKey, e *entry, callbacks acquisitionCallbacks) (*entry, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, &CacheError{err}
-	}
-	var lastGood ocispec.Descriptor
-	var count uint32
-	due := false
-	if e != nil {
-		lastGood = e.stored
-		if e.outcome != nil {
-			// acquireOnce MUST observe this outcome under the same key lock.
-			due = !e.outcome.invalid
-			lastGood = e.outcome.lastGood
-			if due {
-				count = e.outcome.record.Count
-			}
-		}
-	}
-	if due {
-		key.policy.Retry.Attempts = 1
-		ctx = context.WithValue(ctx, attemptCeilingKey{}, true)
-	}
-	result, err := c.fill(ctx, key, e, callbacks)
-	if result != nil && result.resolved.IsZero() {
-		return result, err
-	}
-	if err != nil {
-		// A joined cleanup failure MUST retain cache failure attribution.
-		if producer, ok := errors.AsType[*producerError](err); !ok || !errors.Is(producer, err) {
-			err = &CacheError{err}
-		} else if _, terminal := errors.AsType[*TerminalError](err); !terminal && retryable(err) && key.policy.Retry.Attempts <= 1 {
-			err = &TerminalError{Err: err, Attempted: true}
-		}
-		// Caller cancellation MUST retain the previous generation and its freshness.
-		if ctx.Err() != nil || due && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
-			return nil, err
-		}
-		next := &entry{stored: lastGood}
-		if due {
-			next.stored, next.outcome = e.stored, e.outcome
-		}
-		if c.store != nil && !key.memoryOnly && ctx.Err() == nil {
-			if _, producer := errors.AsType[*producerError](err); producer {
-				if o := newOutcome(err, time.Now().UTC(), nextOutcomeCount(count), lastGood); o != nil {
-					stored, saveErr := c.publishOutcome(ctx, key.id, o, err)
-					if saveErr != nil {
-						err = saveErr
-					} else if stored.Digest != "" {
-						next.stored, next.outcome = stored, o
-					}
-				}
-			}
-		}
-		// Retry and deadline failures MUST retain each caller's policy.
-		shareFailure := !retryable(err) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)
-		if _, terminal := errors.AsType[*TerminalError](err); due || shareFailure && !terminal {
-			e.waveErr = err
-		}
-		c.entries.Store(key.id, next)
-		return nil, err
-	}
-	e.waveResult = result
-	c.entries.Store(key.id, result)
-	return result, nil
-}
-
-func (c *Cache) loadEntry(ctx context.Context, key acquireKey, maxAge time.Duration, e *entry) error {
+func (c *Cache) loadEntry(ctx context.Context, keyValue *acquireKey, maxAge time.Duration, e *entry) error {
+	key := *keyValue
 	desc, err := c.store.Resolve(ctx, key.id)
 	if errors.Is(err, errdef.ErrNotFound) {
 		e.unloaded = false
@@ -472,7 +415,7 @@ func (c *Cache) loadEntry(ctx context.Context, key acquireKey, maxAge time.Durat
 		return &CacheError{err}
 	}
 	if desc.MediaType == ocispec.MediaTypeImageManifest {
-		o, err := c.readOutcome(ctx, desc)
+		o, err := c.readOutcome(ctx, &desc)
 		if err != nil {
 			return err
 		}
@@ -482,7 +425,7 @@ func (c *Cache) loadEntry(ctx context.Context, key acquireKey, maxAge time.Durat
 		}
 		return nil
 	}
-	upstream, at, valid := decode(desc, key.required)
+	upstream, at, valid := decode(&desc, key.required)
 	if valid {
 		e.stored = desc
 	}
@@ -496,27 +439,29 @@ func (c *Cache) loadEntry(ctx context.Context, key acquireKey, maxAge time.Durat
 	return nil
 }
 
-func (c *Cache) touch(key acquireKey, e *entry) error {
-	if c.store != nil && !key.memoryOnly {
-		touched := e.touched.Load()
-		if touched == 0 {
-			info, err := c.root.Stat(blobPath(e.stored.Digest))
-			if err != nil {
-				return &CacheError{err}
-			}
-			touched = info.ModTime().UnixNano()
-			e.touched.Store(touched)
-		}
-		now := time.Now()
-		// Sweep allows the same interval so coalescing never retires a recent access early.
-		if now.UnixNano()-touched < int64(accessInterval) {
-			return nil
-		}
-		if err := c.root.Chtimes(blobPath(e.stored.Digest), now, now); err != nil {
+func (c *Cache) touch(keyValue *acquireKey, e *entry) error {
+	key := *keyValue
+	if c.store == nil || key.memoryOnly {
+		return nil
+	}
+	touched := e.touched.Load()
+	if touched == 0 {
+		info, err := c.root.Stat(blobPath(e.stored.Digest))
+		if err != nil {
 			return &CacheError{err}
 		}
-		e.touched.Store(now.UnixNano())
+		touched = info.ModTime().UnixNano()
+		e.touched.Store(touched)
 	}
+	now := time.Now()
+	// Sweep allows the same interval so coalescing never retires a recent access early.
+	if now.UnixNano()-touched < int64(accessInterval) {
+		return nil
+	}
+	if err := c.root.Chtimes(blobPath(e.stored.Digest), now, now); err != nil {
+		return &CacheError{err}
+	}
+	e.touched.Store(now.UnixNano())
 	return nil
 }
 
@@ -527,7 +472,13 @@ func fresh(at time.Time, maxAge time.Duration) bool {
 	return !at.IsZero() && (maxAge < 0 || maxAge > 0 && time.Since(at) < maxAge)
 }
 
-func (c *Cache) fill(ctx context.Context, key acquireKey, previous *entry, callbacks acquisitionCallbacks) (result *entry, resultErr error) {
+//nolint:nonamedreturns // Deferred cleanup must clear successful results and join cleanup errors, including during panic unwinding.
+func (c *Cache) fill(
+	ctx context.Context, keyValue *acquireKey,
+	previous *entry,
+	callbacks acquisitionCallbacks,
+) (result *entry, resultErr error) {
+	key := *keyValue
 	if key.policy.Admit != nil {
 		release, err := key.policy.Admit(ctx)
 		if err != nil {
@@ -544,18 +495,7 @@ func (c *Cache) fill(ctx context.Context, key acquireKey, previous *entry, callb
 	staged.writer = &staged.memory
 	var repairName string
 	defer func() {
-		var cleanup error
-		if staged.discard != nil {
-			cleanup = staged.discard()
-		}
-		if staged.file != nil {
-			cleanup = errors.Join(cleanup, staged.file.Close())
-		}
-		for _, name := range [2]string{staged.name, repairName} {
-			if name != "" {
-				cleanup = errors.Join(cleanup, c.root.Remove(name))
-			}
-		}
+		cleanup := staged.cleanup(c.root, repairName)
 		if cleanup != nil {
 			result = nil
 			resultErr = errors.Join(resultErr, cleanup)
@@ -569,135 +509,79 @@ func (c *Cache) fill(ctx context.Context, key acquireKey, previous *entry, callb
 			}
 		}
 	}
+	e, repair, err := c.producePayload(ctx, &staged, callbacks)
+	repairName = repair
+	return e, err
+}
+
+func (c *Cache) producePayload(
+	ctx context.Context, staged *payload, callbacks acquisitionCallbacks,
+) (*entry, string, error) {
+	key := &staged.key
+	var repairName string
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, repairName, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 	}
-	e, err := callbacks.produce(ctx, c, &staged)
+	e, err := callbacks.produce(ctx, c, staged)
 	if err != nil {
-		if producer, ok := errors.AsType[*producerError](err); ok && errors.Is(producer, err) && (key.policy.Machine || credentialsUnavailable(producer.error)) {
+		if producer, ok := errors.AsType[*producerError](
+			err,
+		); ok && errors.Is(producer, err) &&
+			(key.policy.Machine || credentialsUnavailable(producer.error)) {
 			err = newProducerError(MachineCredentialErr(producer.error))
 		}
-		return nil, err
+		return nil, repairName, err
 	}
 	if key.policy.Timeout != nil && ctx.Err() != nil {
-		return nil, ctx.Err()
+		return nil, repairName, ctx.Err() //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 	}
 	e.resolved = time.Now().UTC()
 	var stored ocispec.Descriptor
 	if c.store != nil && !key.memoryOnly {
-		if staged.writer == nil {
-			if err := staged.stage(); err != nil {
-				return nil, err
-			}
-		}
-		if staged.unchanged {
-			stored = e.storedDescriptor(e.stored.Digest, e.stored.Size)
-		} else {
-			stored, repairName, err = c.publish(ctx, staged.file, staged.hash.Digest(), e)
-			if err != nil {
-				return nil, err
-			}
-			if err := key.producer.restore(ctx, c, stored, e); err != nil {
-				return nil, err
-			}
-		}
-		closeErr := staged.file.Close()
-		staged.file = nil
-		removeErr := c.root.Remove(staged.name)
-		if removeErr == nil {
-			staged.name = ""
-		}
-		if err := errors.Join(closeErr, removeErr); err != nil {
-			return nil, err
+		stored, repairName, err = c.persistPayload(ctx, key, staged, e)
+		if err != nil {
+			return nil, repairName, err
 		}
 	}
+
 	valid, err := c.validCandidate(ctx, callbacks.validate, e)
 	if key.policy.Timeout != nil && ctx.Err() != nil {
-		return nil, ctx.Err()
+		return nil, repairName, ctx.Err() //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 	}
 	if !valid {
 		e.resolved = time.Time{}
-		return e, err
+		return e, repairName, err
 	}
+	if err := c.tagPayload(ctx, key, e, &stored); err != nil {
+		return nil, repairName, err
+	}
+
+	return e, repairName, nil
+}
+
+func (c *Cache) tagPayload(ctx context.Context, key *acquireKey, e *entry, stored *ocispec.Descriptor) error {
 	if c.store != nil && !key.memoryOnly {
 		c.snapshotDirty.Store(true)
-		if err := c.store.Tag(ctx, stored, key.id); err != nil {
+		if err := c.store.Tag(ctx, *stored, key.id); err != nil {
 			if snapshot := c.snapshot.Load(); snapshot != nil {
 				snapshot.failed.Store(true)
 			}
-			return nil, err
+			return fmt.Errorf("tag cache generation: %w", err)
 		}
-		e.stored = stored
+		e.stored = *stored
 	}
-	return e, nil
+	return nil
 }
 
-func (c *Cache) publish(ctx context.Context, tmp *os.File, payload digest.Digest, e *entry) (ocispec.Descriptor, string, error) {
-	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
-		return ocispec.Descriptor{}, "", err
-	}
-	info, err := tmp.Stat()
-	if err != nil {
-		return ocispec.Descriptor{}, "", err
-	}
-	stored := e.storedDescriptor(payload, info.Size())
-	if err := c.store.Push(ctx, stored, tmp); err != nil {
-		if !errors.Is(err, errdef.ErrAlreadyExists) {
-			return stored, "", err
-		}
-		info, err := os.Stat(filepath.Join(c.root.Name(), blobPath(stored.Digest)))
-		if err != nil {
-			return stored, "", err
-		}
-		if info.Size() != stored.Size {
-			name, err := filepath.Rel(c.root.Name(), tmp.Name())
-			if err != nil {
-				return stored, "", err
-			}
-			name, err = safepath.ArchiveName(name)
-			if err != nil {
-				return stored, "", err
-			}
-			if err := tmp.Chmod(0o444); err != nil {
-				return stored, "", err
-			}
-			repair := acquirePath(uuid.NewString())
-			if err := c.root.Link(name, repair); err != nil {
-				return stored, "", err
-			}
-			if err := c.root.Rename(repair, blobPath(stored.Digest)); err != nil {
-				return stored, repair, err
-			}
-		}
-	} else {
-		c.snapshotDirty.Store(true)
-	}
-	return stored, "", nil
-}
-
-func (e *entry) storedDescriptor(payload digest.Digest, size int64) ocispec.Descriptor {
-	stored := ocispec.Descriptor{MediaType: "application/octet-stream", Digest: payload, Size: size, Annotations: maps.Clone(e.descriptor.Annotations)}
-	if stored.Annotations == nil {
-		stored.Annotations = make(map[string]string)
-	}
-	for k, v := range map[string]string{
-		"resolved-at":         e.resolved.Format(time.RFC3339Nano),
-		"upstream-digest":     e.descriptor.Digest.String(),
-		"upstream-size":       strconv.FormatInt(e.descriptor.Size, 10),
-		"upstream-media-type": e.descriptor.MediaType,
-	} {
-		stored.Annotations[prefix+k] = v
-	}
-	return stored
-}
-
-func decode(stored ocispec.Descriptor, required []string) (ocispec.Descriptor, time.Time, bool) {
+func decode(storedValue *ocispec.Descriptor, required []string) (ocispec.Descriptor, time.Time, bool) {
+	stored := *storedValue
 	a := maps.Clone(stored.Annotations)
 	delete(a, ocispec.AnnotationRefName)
 	at, err := time.Parse(time.RFC3339Nano, a[prefix+"resolved-at"])
 	size, sizeErr := strconv.ParseInt(a[prefix+"upstream-size"], 10, 64)
 	d := digest.Digest(a[prefix+"upstream-digest"])
-	valid := stored.Digest.Validate() == nil && err == nil && sizeErr == nil && size >= 0 && (d == "" || d.Validate() == nil)
+	valid := stored.Digest.Validate() == nil && err == nil && sizeErr == nil && size >= 0 &&
+		(d == "" || d.Validate() == nil)
 	for _, field := range required {
 		valid = valid && a[prefix+field] != ""
 		if field == "object-count" {
@@ -710,4 +594,58 @@ func decode(stored ocispec.Descriptor, required []string) (ocispec.Descriptor, t
 		delete(a, prefix+k)
 	}
 	return ocispec.Descriptor{Digest: d, Size: size, MediaType: mediaType, Annotations: a}, at, valid
+}
+
+func (c *Cache) restoreCandidate(ctx context.Context, key *acquireKey, e *entry) error {
+	if e != nil && e.unloaded && !key.memoryOnly {
+		if err := c.loadEntry(ctx, key, key.policy.MaxAge, e); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *Cache) prepareRenderBlob(ctx context.Context, key *BlobKey, lookupOnly bool) (fs.FS, string, error) {
+	id, ok := key.Content.(string)
+	if !ok || id == "" {
+		return nil, "", &CacheError{
+			manifest.NewError(manifest.ErrInput, nil, "render blob content must be a nonempty identity"),
+		}
+	}
+	if key.Render == RenderAccepted {
+		enabled, err := c.renderEnabled(ctx, id)
+		if err != nil {
+			return nil, "", err
+		}
+		if !enabled {
+			if lookupOnly {
+				return nil, "", &CacheError{errdef.ErrNotFound}
+			}
+			return fileFS{
+				name: payloadName,
+				open: func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader("")), nil },
+			}, id, nil
+		}
+	}
+	return nil, "", nil
+}
+
+func (c *Cache) replayOutcome(key *acquireKey, e *entry) error {
+	if e != nil && e.outcome != nil {
+		isFresh, _ := e.outcome.observe(time.Now().UTC())
+		if isFresh {
+			if err := c.touch(key, e); err != nil {
+				return err
+			}
+			return e.outcome.replay()
+		}
+	}
+	return nil
+}
+
+func (c *Cache) missingGeneration(key *acquireKey, e *entry) error {
+	if e != nil && e.stored.Digest == "" && e.resolved.IsZero() {
+		c.entries.CompareAndDelete(key.id, e)
+	}
+	return &CacheError{errdef.ErrNotFound}
 }

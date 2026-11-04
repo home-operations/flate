@@ -24,7 +24,12 @@ type Acquisition struct {
 }
 
 // Acquire fetches content or retains credential settlement before completing its consumer.
-func (e *Execution) Acquire(ctx context.Context, obj manifest.BaseManifest, acquisition Acquisition, level manifest.DrainLevel) error {
+func (e *Execution) Acquire(
+	ctx context.Context,
+	obj manifest.BaseManifest,
+	acquisition Acquisition,
+	level manifest.DrainLevel,
+) error {
 	var artifact *store.SourceArtifact
 	var err error
 	e.Tasks.YieldSlot(func() { artifact, err = acquisition.Fetch(ctx) })
@@ -32,28 +37,37 @@ func (e *Execution) Acquire(ctx context.Context, obj manifest.BaseManifest, acqu
 		return err
 	}
 	if missing, ok := errors.AsType[*source.MissingSecretError](err); ok {
-		pending := &pendingAcquisition{execution: e, object: obj, acquisition: acquisition, missing: missing}
+		pending := &pendingAcquisitionError{execution: e, object: obj, acquisition: acquisition, missing: missing}
 		if level == manifest.DrainNone && missing.Secret != (manifest.NamedResource{}) {
-			e.Store.UpdateStatus(e.Reads.ID(), store.StatusInfo{Status: store.StatusPending, Message: "waiting for source Secret"})
+			e.Store.UpdateStatus(
+				e.Reads.ID(),
+				store.StatusInfo{Status: store.StatusPending, Message: "waiting for source Secret"},
+			)
 			return pending
 		}
 		return pending.Settle(ctx, level)
 	}
-	return (&pendingAcquisition{execution: e, object: obj, acquisition: acquisition}).complete(ctx, artifact, err, level)
+	return (&pendingAcquisitionError{execution: e, object: obj, acquisition: acquisition}).complete(
+		ctx,
+		artifact,
+		err,
+		level,
+	)
 }
 
-type pendingAcquisition struct {
+type pendingAcquisitionError struct {
 	execution   *Execution
 	object      manifest.BaseManifest
 	acquisition Acquisition
 	missing     *source.MissingSecretError
 }
 
-func (p *pendingAcquisition) Error() string { return p.missing.Error() }
-func (p *pendingAcquisition) Unwrap() error {
+func (p *pendingAcquisitionError) Error() string { return p.missing.Error() }
+func (p *pendingAcquisitionError) Unwrap() error {
 	return &depwait.ErrBlocked{Deps: []manifest.NamedResource{p.missing.Secret}}
 }
-func (p *pendingAcquisition) Settle(ctx context.Context, level manifest.DrainLevel) error {
+
+func (p *pendingAcquisitionError) Settle(ctx context.Context, level manifest.DrainLevel) error {
 	var artifact *store.SourceArtifact
 	var err error
 	p.execution.Tasks.YieldSlot(func() { artifact, err = p.missing.RetryMachine(ctx, &p.execution.Reads) })
@@ -63,24 +77,44 @@ func (p *pendingAcquisition) Settle(ctx context.Context, level manifest.DrainLev
 	return p.complete(ctx, artifact, err, level)
 }
 
-func (p *pendingAcquisition) complete(ctx context.Context, artifact *store.SourceArtifact, err error, level manifest.DrainLevel) error {
+func (p *pendingAcquisitionError) complete(
+	ctx context.Context,
+	artifact *store.SourceArtifact,
+	err error,
+	level manifest.DrainLevel,
+) error {
 	e, obj := p.execution, p.object
 	if err != nil {
 		missing, hasMissing := errors.AsType[*source.MissingSecretError](err)
-		anonymousDenied := hasMissing && p.acquisition.AllowAnonymousDenied && missing.AnonymousDenied && missing.Secret == (manifest.NamedResource{})
-		allowed := p.acquisition.AllowMissingSecrets || anonymousDenied || hasMissing && missing.ProducerBacked(&e.Reads)
-		if !errors.Is(err, manifest.ErrMissingSecret) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || !allowed {
+		anonymousDenied := hasMissing && p.acquisition.AllowAnonymousDenied && missing.AnonymousDenied &&
+			missing.Secret == (manifest.NamedResource{})
+		allowed := p.acquisition.AllowMissingSecrets || anonymousDenied ||
+			hasMissing && missing.ProducerBacked(&e.Reads)
+		if !errors.Is(err, manifest.ErrMissingSecret) || errors.Is(err, context.Canceled) ||
+			errors.Is(err, context.DeadlineExceeded) ||
+			!allowed {
 			return err
 		}
 		if e.Reads.Valid() {
-			slog.Info("base: credentials unavailable", "id", manifest.DiagnosticFor(obj.Named(), obj).String(), "err", err)
+			slog.Info(
+				"base: credentials unavailable",
+				"id",
+				manifest.DiagnosticFor(obj.Named(), obj).String(),
+				"err",
+				err,
+			)
 		}
 		var related []manifest.NamedResource
 		if hasMissing && missing.Secret != (manifest.NamedResource{}) {
 			related = []manifest.NamedResource{missing.Secret}
 		}
-		e.Reads.AddWarning(manifest.Warning{Resource: obj.Named(), Related: related, Subject: manifest.DiagnosticFor(obj.Named(), obj), Category: manifest.WarnSourceCredentialsUnavailable,
-			Message: err.Error()})
+		e.Reads.AddWarning(manifest.Warning{
+			Resource: obj.Named(),
+			Related:  related,
+			Subject:  manifest.DiagnosticFor(obj.Named(), obj),
+			Category: manifest.WarnSourceCredentialsUnavailable,
+			Message:  err.Error(),
+		})
 	}
 	return p.acquisition.Complete(ctx, artifact, err, level)
 }

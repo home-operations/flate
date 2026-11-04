@@ -65,7 +65,11 @@ func (p *ProducerProjections) Project(ctx context.Context, object BaseManifest) 
 }
 
 // ProjectTemplate derives immutable references and identities once per template content and namespace.
-func (p *ProducerProjections) ProjectTemplate(ctx context.Context, data []byte, namespace string) (TemplateProjection, error) {
+func (p *ProducerProjections) ProjectTemplate(
+	ctx context.Context,
+	data []byte,
+	namespace string,
+) (TemplateProjection, error) {
 	build := func() TemplateProjection {
 		var projection TemplateProjection
 		projectTemplate(data, namespace, true, func(object BaseManifest, authoredNamespace string) {
@@ -83,7 +87,11 @@ func (p *ProducerProjections) ProjectTemplate(ctx context.Context, data []byte, 
 	return p.project(ctx, key, build)
 }
 
-func (p *ProducerProjections) project(ctx context.Context, key string, build func() TemplateProjection) (TemplateProjection, error) {
+func (p *ProducerProjections) project(
+	ctx context.Context,
+	key string,
+	build func() TemplateProjection,
+) (TemplateProjection, error) {
 	if key == "" {
 		return build(), nil
 	}
@@ -95,6 +103,7 @@ func (p *ProducerProjections) project(ctx context.Context, key string, build fun
 		}
 	}
 	if projection, ok := cache.facts.Load(key); ok {
+		//nolint:errcheck // The owning path guarantees the concrete type and panics on a broken invariant.
 		return projection.(TemplateProjection), nil
 	}
 	release, err := cache.locks.Acquire(ctx, key)
@@ -103,6 +112,7 @@ func (p *ProducerProjections) project(ctx context.Context, key string, build fun
 	}
 	defer release()
 	if projection, ok := cache.facts.Load(key); ok {
+		//nolint:errcheck // The owning path guarantees the concrete type and panics on a broken invariant.
 		return projection.(TemplateProjection), nil
 	}
 	projection := build()
@@ -142,82 +152,7 @@ func projectTemplate(data []byte, namespace string, projected bool, yield func(B
 		if err != nil {
 			return
 		}
-		var fields struct {
-			APIVersion string `yaml:"apiVersion"`
-			Kind       string `yaml:"kind"`
-			Metadata   struct {
-				Name      string `yaml:"name"`
-				Namespace string `yaml:"namespace"`
-			} `yaml:"metadata"`
-			Spec map[string]any `yaml:"spec"`
-		}
-		if projected {
-			if err := yamlv3.Unmarshal(document, &fields); err != nil {
-				continue
-			}
-			if !strings.HasSuffix(fields.Kind, "List") {
-				doc := map[string]any{"apiVersion": fields.APIVersion, "kind": fields.Kind,
-					"metadata": map[string]any{"name": fields.Metadata.Name, "namespace": fields.Metadata.Namespace}, "spec": fields.Spec}
-				object, _, _, err := ParseDoc(doc, ParseDocOptions{DefaultNamespace: namespace})
-				if err == nil && object != nil {
-					yield(object, fields.Metadata.Namespace)
-				}
-				continue
-			}
-		}
-		node, err := kyaml.Parse(string(document))
-		if err != nil || kyaml.IsMissingOrNull(node) {
-			continue
-		}
-		if _, err := node.GetMeta(); err != nil && !errors.Is(err, kyaml.ErrMissingMetadata) {
-			continue
-		}
-		var header struct {
-			Kind string `yaml:"kind"`
-		}
-		if err := node.YNode().Decode(&header); err != nil {
-			continue
-		}
-		nodes := []*kyaml.RNode{node}
-		if strings.HasSuffix(header.Kind, "List") {
-			nodes, err = resource.NewFactory(nil).RNodesFromBytes(document)
-			if err != nil {
-				continue
-			}
-		}
-		for _, node := range nodes {
-			var doc map[string]any
-			if projected {
-				var fields struct {
-					APIVersion string `yaml:"apiVersion"`
-					Kind       string `yaml:"kind"`
-					Metadata   struct {
-						Name      string `yaml:"name"`
-						Namespace string `yaml:"namespace"`
-					} `yaml:"metadata"`
-					Spec map[string]any `yaml:"spec"`
-				}
-				if err := node.YNode().Decode(&fields); err != nil {
-					continue
-				}
-				doc = map[string]any{
-					"apiVersion": fields.APIVersion, "kind": fields.Kind,
-					"metadata": map[string]any{"name": fields.Metadata.Name, "namespace": fields.Metadata.Namespace},
-					"spec":     fields.Spec,
-				}
-			} else {
-				doc, err = node.Map()
-				if err != nil {
-					continue
-				}
-			}
-			_, authoredNamespace := DocMetadata(doc)
-			object, _, _, err := ParseDoc(doc, ParseDocOptions{DefaultNamespace: namespace})
-			if err != nil || object == nil {
-				continue
-			}
-			yield(object, authoredNamespace)
-		}
+		projectTemplateDocument(document, namespace, projected, yield)
 	}
 }
 
@@ -237,14 +172,15 @@ func (p *TemplateProjection) addObject(object BaseManifest, authoredNamespace st
 		p.Objects = append(p.Objects, nested.Objects...)
 	}
 	for ref := range References(object, ReferenceRelations) {
-		if !ref.ContentInput() || ref.Ordering || !concreteTemplateOperand(ref.Name) || !concreteTemplateOperand(ref.Namespace) {
+		if !ref.ContentInput() || ref.Ordering || !concreteTemplateOperand(ref.Name) ||
+			!concreteTemplateOperand(ref.Namespace) {
 			continue
 		}
 		ref.NamespaceDefault = ref.NamespaceDefault && authoredNamespace == ""
 		ref.Gate, ref.ArtifactStages = 0, 0
 		ref.Artifact, ref.ChartSource = false, false
 		unresolved := false
-		if ref.Use == "source" {
+		if ref.Use == sourceKey {
 			for root := range SourceRoots(object) {
 				if concreteTemplateOperand(root) {
 					ref.Files = append(ref.Files, root)
@@ -267,75 +203,176 @@ func (r *ResourceSet) templateProjection() TemplateProjection {
 	if len(r.Resources) == 0 && r.ResourcesTemplate == "" && len(r.Steps) == 0 {
 		return projection
 	}
-	type child struct {
-		object    BaseManifest
-		namespace string
-		evaluated bool
-	}
-	var children []child
-	winners := map[NamedResource]int{}
-	collect := func(data []byte, evaluated bool) {
-		projectTemplate(data, r.Namespace, false, func(object BaseManifest, namespace string) {
-			id := object.Named()
-			if i, known := winners[id]; known {
-				if evaluated && !children[i].evaluated {
-					children[i] = child{object, namespace, true}
-				}
-				return
-			}
-			winners[id] = len(children)
-			children = append(children, child{object, namespace, evaluated})
-		})
-	}
-	var inputs []map[string]any
-	inputsKnown := false
-	visit := func(data []byte, jsonDocument bool) {
-		collect(data, false)
-		if jsonDocument {
-			converted, err := yaml.JSONToYAML(data)
-			if err != nil {
-				return
-			}
-			data = converted
-		}
-		if !strings.Contains(string(data), "<<") {
-			return
-		}
-		if !inputsKnown {
-			inputsKnown = true
-			var err error
-			inputs, err = resourcesetinput.Combine([]resourcesetinput.Group{resourcesetinput.Inline(r.Name, r.Namespace, r.Inputs)}, r.InputStrategy)
-			if err != nil {
-				return
-			}
-			if len(inputs) == 0 {
-				inputs = []map[string]any{nil}
-			}
-		}
-		template, err := resourcesetinput.Parse(string(data))
-		if err != nil {
-			return
-		}
-		for _, input := range inputs {
-			rendered, err := template.Execute(input)
-			if err != nil {
-				continue
-			}
-			collect(rendered, true)
-		}
-	}
+	templates := resourceSetTemplates{winners: map[NamedResource]int{}}
 	for _, resource := range r.Resources {
-		visit(resource.Raw, true)
+		templates.visit(r, resource.Raw, true)
 	}
-	visit([]byte(r.ResourcesTemplate), false)
+	templates.visit(r, []byte(r.ResourcesTemplate), false)
 	for _, step := range r.Steps {
 		for _, resource := range step.Resources {
-			visit(resource.Raw, true)
+			templates.visit(r, resource.Raw, true)
 		}
-		visit([]byte(step.ResourcesTemplate), false)
+		templates.visit(r, []byte(step.ResourcesTemplate), false)
 	}
-	for _, child := range children {
+	for _, child := range templates.children {
 		projection.addObject(child.object, child.namespace, true)
 	}
 	return projection
+}
+
+func projectTemplateDocument(document []byte, namespace string, projected bool, yield func(BaseManifest, string)) {
+	var fields struct {
+		APIVersion string `yaml:"apiVersion"`
+		Kind       string `yaml:"kind"`
+		Metadata   struct {
+			Name      string `yaml:"name"`
+			Namespace string `yaml:"namespace"`
+		} `yaml:"metadata"`
+		Spec map[string]any `yaml:"spec"`
+	}
+	if projected {
+		if unmarshalErr := yamlv3.Unmarshal(document, &fields); unmarshalErr != nil {
+			return
+		}
+		if !strings.HasSuffix(fields.Kind, "List") {
+			doc := map[string]any{
+				apiVersionKey: fields.APIVersion,
+				kindKey:       fields.Kind,
+				metadataKey: map[string]any{
+					nameKey:      fields.Metadata.Name,
+					namespaceKey: fields.Metadata.Namespace,
+				},
+				specKey: fields.Spec,
+			}
+			object, _, _, parseDocErr := ParseDoc(doc, ParseDocOptions{DefaultNamespace: namespace})
+			if parseDocErr == nil && object != nil {
+				yield(object, fields.Metadata.Namespace)
+			}
+			return
+		}
+	}
+	node, err := kyaml.Parse(string(document))
+	if err != nil || kyaml.IsMissingOrNull(node) {
+		return
+	}
+	if _, getMetaErr := node.GetMeta(); getMetaErr != nil && !errors.Is(getMetaErr, kyaml.ErrMissingMetadata) {
+		return
+	}
+	var header struct {
+		Kind string `yaml:"kind"`
+	}
+	if decodeErr := node.YNode().Decode(&header); decodeErr != nil {
+		return
+	}
+	nodes := []*kyaml.RNode{node}
+	if strings.HasSuffix(header.Kind, "List") {
+		nodes, err = resource.NewFactory(nil).RNodesFromBytes(document)
+		if err != nil {
+			return
+		}
+	}
+	for _, node := range nodes {
+		projectTemplateNode(node, namespace, projected, yield)
+	}
+}
+
+func projectTemplateNode(node *kyaml.RNode, namespace string, projected bool, yield func(BaseManifest, string)) {
+	var err error
+	var doc map[string]any
+	if projected {
+		var fields struct {
+			APIVersion string `yaml:"apiVersion"`
+			Kind       string `yaml:"kind"`
+			Metadata   struct {
+				Name      string `yaml:"name"`
+				Namespace string `yaml:"namespace"`
+			} `yaml:"metadata"`
+			Spec map[string]any `yaml:"spec"`
+		}
+		if decodeErr2 := node.YNode().Decode(&fields); decodeErr2 != nil {
+			return
+		}
+		doc = map[string]any{
+			apiVersionKey: fields.APIVersion, kindKey: fields.Kind,
+			metadataKey: map[string]any{nameKey: fields.Metadata.Name, namespaceKey: fields.Metadata.Namespace},
+			specKey:     fields.Spec,
+		}
+	} else {
+		doc, err = node.Map()
+		if err != nil {
+			return
+		}
+	}
+	_, authoredNamespace := DocMetadata(doc)
+	object, _, _, err := ParseDoc(doc, ParseDocOptions{DefaultNamespace: namespace})
+	if err != nil || object == nil {
+		return
+	}
+	yield(object, authoredNamespace)
+}
+
+type projectedTemplateChild struct {
+	object    BaseManifest
+	namespace string
+	evaluated bool
+}
+
+type resourceSetTemplates struct {
+	children    []projectedTemplateChild
+	winners     map[NamedResource]int
+	inputs      []map[string]any
+	inputsKnown bool
+}
+
+func (p *resourceSetTemplates) collect(data []byte, defaultNamespace string, evaluated bool) {
+	projectTemplate(data, defaultNamespace, false, func(object BaseManifest, namespace string) {
+		id := object.Named()
+		if i, known := p.winners[id]; known {
+			if evaluated && !p.children[i].evaluated {
+				p.children[i] = projectedTemplateChild{object, namespace, true}
+			}
+			return
+		}
+		p.winners[id] = len(p.children)
+		p.children = append(p.children, projectedTemplateChild{object, namespace, evaluated})
+	})
+}
+
+func (p *resourceSetTemplates) visit(r *ResourceSet, data []byte, jsonDocument bool) {
+	p.collect(data, r.Namespace, false)
+	if jsonDocument {
+		converted, err := yaml.JSONToYAML(data)
+		if err != nil {
+			return
+		}
+		data = converted
+	}
+	if !strings.Contains(string(data), "<<") {
+		return
+	}
+	if !p.inputsKnown {
+		p.inputsKnown = true
+		var err error
+		p.inputs, err = resourcesetinput.Combine(
+			[]resourcesetinput.Group{resourcesetinput.Inline(r.Name, r.Namespace, r.Inputs)},
+			r.InputStrategy,
+		)
+		if err != nil {
+			return
+		}
+		if len(p.inputs) == 0 {
+			p.inputs = []map[string]any{nil}
+		}
+	}
+	template, err := resourcesetinput.Parse(string(data))
+	if err != nil {
+		return
+	}
+	for _, input := range p.inputs {
+		rendered, err := template.Execute(input)
+		if err != nil {
+			continue
+		}
+		p.collect(rendered, r.Namespace, true)
+	}
 }

@@ -10,15 +10,19 @@ import (
 )
 
 // RunCLIBuffers runs the CLI in process and returns separate stdout, stderr and exit status.
-func RunCLIBuffers(args ...string) (stdout, stderr string, code int) {
+func RunCLIBuffers(args ...string) (string, string, int) {
+	var code int
+
 	var out, err bytes.Buffer
 	code = cli.Run(args, &out, &err)
 	return out.String(), err.String(), code
 }
 
 // RequireCLIOK requires a successful CLI exit and returns separate stdout and stderr.
-func RequireCLIOK(t *testing.T, args ...string) (stdout, stderr string) {
+func RequireCLIOK(t *testing.T, args ...string) (string, string) {
 	t.Helper()
+	var stdout string
+	var stderr string
 	stdout, stderr, code := RunCLIBuffers(args...)
 	if code != 0 {
 		t.Fatalf("flate %s exited %d\nstdout:\n%s\nstderr:\n%s",

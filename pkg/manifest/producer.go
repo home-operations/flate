@@ -16,6 +16,7 @@ import (
 // remain unreadable and can still produce the unresolved-substitution advisory.
 type ProducerTarget struct {
 	NamedResource
+
 	DeclaredKeys []string
 }
 
@@ -50,7 +51,7 @@ func (r *RawObject) producerNeedsCandidates() bool {
 	entries, _ := r.Spec["artifacts"].([]any)
 	for _, entry := range entries {
 		m, _ := entry.(map[string]any)
-		if name, _ := m["name"].(string); strings.ContainsAny(name, "{}") {
+		if name, _ := m[nameKey].(string); strings.ContainsAny(name, "{}") {
 			return true
 		}
 	}
@@ -63,16 +64,16 @@ func (r *RawObject) producerTargets(candidates []NamedResource) []ProducerTarget
 	case r.isArtifactGenerator():
 		return r.artifactTargets(candidates)
 	case r.Kind == "ExternalSecret" && apiGroup(r.APIVersion) == "external-secrets.io":
-		name := cmp.Or(spec.child("target").str("name"), r.Name)
+		name := cmp.Or(spec.child("target").str(nameKey), r.Name)
 		// Template output keys take precedence over explicit data inputs; an empty
 		// template falls back to data[].secretKey, never remote dataFrom keys.
-		keys := spec.child("target").child("template").mapKeys("data")
+		keys := spec.child("target").child("template").mapKeys(dataKey)
 		if keys == nil {
-			keys = spec.entryKeys("data", "secretKey")
+			keys = spec.entryKeys(dataKey, "secretKey")
 		}
 		return []ProducerTarget{r.secret(name, keys)}
 	case r.Kind == "SealedSecret" && apiGroup(r.APIVersion) == "bitnami.com":
-		name := cmp.Or(spec.child("template").child("metadata").str("name"), r.Name)
+		name := cmp.Or(spec.child("template").child(metadataKey).str(nameKey), r.Name)
 		return []ProducerTarget{r.secret(name, spec.mapKeys("encryptedData"))}
 	case r.Kind == "ObjectBucketClaim" && apiGroup(r.APIVersion) == "objectbucket.io":
 		return []ProducerTarget{r.secret(r.Name, nil), r.target(KindConfigMap, r.Name, nil)}

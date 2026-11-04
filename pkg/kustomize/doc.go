@@ -2,7 +2,7 @@
 // flate never invokes the `kustomize` CLI. It provides:
 //
 //   - Render: return unstamped output from disk inputs through Flux's secure FS,
-//     or immutable source artifacts through their authoritative fs.FS. Generated
+//     or immutable source artifacts through their authoritative [fs.FS]. Generated
 //     files use one private overlay; artifact labels need not exist on disk.
 //   - Prepare: the standard pre-render dance (Clone + expand
 //     postBuild.substituteFrom + authored inline values) for embedders rendering a single

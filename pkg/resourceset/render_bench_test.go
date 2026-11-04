@@ -16,12 +16,24 @@ import (
 func BenchmarkRender_Matrix(b *testing.B) {
 	for _, strategy := range []string{fluxopv1.InputStrategyFlatten, fluxopv1.InputStrategyPermute} {
 		b.Run(strategy, func(b *testing.B) {
-			rs := &manifest.ResourceSet{Name: "apps", Namespace: "default", InputStrategy: &fluxopv1.InputStrategySpec{Name: strategy}, Resources: []*apix.JSON{{Raw: []byte(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"<< inputs.name >>"}}`)}}}
+			rs := &manifest.ResourceSet{
+				Name:          "apps",
+				Namespace:     "default",
+				InputStrategy: &fluxopv1.InputStrategySpec{Name: strategy},
+				Resources: []*apix.JSON{
+					{Raw: []byte(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"<< inputs.name >>"}}`)},
+				},
+			}
 			if strategy == fluxopv1.InputStrategyPermute {
-				rs.Resources[0].Raw = []byte(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"<< inputs.apps.name >>"}}`)
+				rs.Resources[0].Raw = []byte(
+					`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"<< inputs.apps.name >>"}}`,
+				)
 			}
 			for i := range 10 {
-				rs.Inputs = append(rs.Inputs, fluxopv1.ResourceSetInput{"name": {Raw: []byte(fmt.Sprintf(`"app-%d"`, i))}})
+				rs.Inputs = append(
+					rs.Inputs,
+					fluxopv1.ResourceSetInput{"name": {Raw: []byte(fmt.Sprintf(`"app-%d"`, i))}},
+				)
 			}
 			b.ReportAllocs()
 			for b.Loop() {
@@ -31,8 +43,25 @@ func BenchmarkRender_Matrix(b *testing.B) {
 			}
 		})
 	}
+	benchmarkRenderMatrixCompletion(b)
+}
+
+func BenchmarkStoreResolver_SelectorCandidates(b *testing.B) {
+	for _, count := range []int{1, 1000} {
+		b.Run(fmt.Sprintf("candidates=%d", count), func(b *testing.B) {
+			benchmarkStoreResolverCandidates(b, count)
+		})
+	}
+}
+
+func benchmarkRenderMatrixCompletion(b *testing.B) {
+	b.Helper()
 	b.Run("resourcesTemplate", func(b *testing.B) {
-		rs := &manifest.ResourceSet{Name: "apps", Namespace: "default", ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '<< inputs.name >>'}\n---\napiVersion: v1\nkind: Service\nmetadata: {name: '<< inputs.name >>'}\n---\napiVersion: apps/v1\nkind: Deployment\nmetadata: {name: '<< inputs.name >>'}"}
+		rs := &manifest.ResourceSet{
+			Name:              "apps",
+			Namespace:         "default",
+			ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '<< inputs.name >>'}\n---\napiVersion: v1\nkind: Service\nmetadata: {name: '<< inputs.name >>'}\n---\napiVersion: apps/v1\nkind: Deployment\nmetadata: {name: '<< inputs.name >>'}",
+		}
 		for i := range 50 {
 			rs.Inputs = append(rs.Inputs, fluxopv1.ResourceSetInput{"name": {Raw: []byte(fmt.Sprintf(`"app-%d"`, i))}})
 		}
@@ -45,29 +74,38 @@ func BenchmarkRender_Matrix(b *testing.B) {
 	})
 }
 
-func BenchmarkStoreResolver_SelectorCandidates(b *testing.B) {
-	for _, count := range []int{1, 1000} {
-		b.Run(fmt.Sprintf("candidates=%d", count), func(b *testing.B) {
-			st := store.New()
-			for i := range count {
-				role := "db"
-				if i%2 != 0 {
-					role = "web"
-				}
-				st.AddObject(&manifest.ResourceSetInputProvider{Name: fmt.Sprintf("provider-%04d", i), Namespace: "apps", Labels: map[string]string{"role": role}})
+func benchmarkStoreResolverCandidates(b *testing.B, count int) {
+	b.Helper()
+	st := store.New()
+	for i := range count {
+		role := "db"
+		if i%2 != 0 {
+			role = "web"
+		}
+		st.AddObject(
+			&manifest.ResourceSetInputProvider{
+				Name:      fmt.Sprintf("provider-%04d", i),
+				Namespace: "apps",
+				Labels:    map[string]string{"role": role},
+			},
+		)
+	}
+	ref := fluxopv1.InputProviderReference{
+		Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"role": "db"}},
+	}
+	id := manifest.NamedResource{
+		Group:     manifest.FluxOperatorDomain,
+		Kind:      manifest.KindResourceSetInputProvider,
+		Namespace: "apps",
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		resolve := resourceset.StoreResolver(st)
+		for range 2 {
+			got, err := resolve(ref, id)
+			if err != nil || len(got) != (count+1)/2 {
+				b.Fatalf("matches=%d error=%v, want %d", len(got), err, (count+1)/2)
 			}
-			ref := fluxopv1.InputProviderReference{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"role": "db"}}}
-			id := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSetInputProvider, Namespace: "apps"}
-			b.ReportAllocs()
-			for b.Loop() {
-				resolve := resourceset.StoreResolver(st)
-				for range 2 {
-					got, err := resolve(ref, id)
-					if err != nil || len(got) != (count+1)/2 {
-						b.Fatalf("matches=%d error=%v, want %d", len(got), err, (count+1)/2)
-					}
-				}
-			}
-		})
+		}
 	}
 }

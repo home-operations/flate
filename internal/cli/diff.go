@@ -4,9 +4,10 @@ import (
 	"errors"
 	"slices"
 
-	"github.com/home-operations/flate/internal/diffprep"
 	"github.com/homeport/dyff/pkg/dyff"
 	"github.com/spf13/cobra"
+
+	"github.com/home-operations/flate/internal/diffprep"
 
 	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/pkg/diff"
@@ -18,9 +19,9 @@ func newDiffCmd() *cobra.Command {
 	cmd.AddCommand(
 		diffCmd("all", nil,
 			"Diff all Flux producer output against another path", ""),
-		diffCmd("ks [name]", []string{"kustomization", "kustomizations"},
+		diffCmd("ks [name]", []string{kustomizationAlias, kustomizationAliases},
 			"Diff Kustomizations against another path", manifest.KindKustomization),
-		diffCmd("hr [name]", []string{"helmrelease", "helmreleases"},
+		diffCmd("hr [name]", []string{helmReleaseAlias, helmReleaseAliases},
 			"Diff HelmReleases against another path", manifest.KindHelmRelease),
 		newDiffImagesCmd(),
 	)
@@ -33,8 +34,10 @@ type diffFlags struct {
 }
 
 func bindDiffFlags(cmd *cobra.Command, d *diffFlags) {
-	cmd.Flags().StringArrayVar(&d.stripAttrs, "strip-attr", diff.DefaultStripAttrs, "Ignore a metadata key in diffs (repeatable; replaces defaults)")
-	cmd.Flags().StringArrayVar(&d.stripFields, "strip-field", diff.DefaultStripFields, "Ignore a dotted field in diffs (repeatable; replaces defaults)")
+	cmd.Flags().
+		StringArrayVar(&d.stripAttrs, "strip-attr", diff.DefaultStripAttrs, "Ignore a metadata key in diffs (repeatable; replaces defaults)")
+	cmd.Flags().
+		StringArrayVar(&d.stripFields, "strip-field", diff.DefaultStripFields, "Ignore a dotted field in diffs (repeatable; replaces defaults)")
 }
 
 func diffCmd(use string, aliases []string, short, kind string) *cobra.Command {
@@ -55,7 +58,7 @@ func diffCmd(use string, aliases []string, short, kind string) *cobra.Command {
 		},
 	}
 	bindCommon(cmd.Flags(), c)
-	bindOutput(cmd.Flags(), &c.output, output.DiffFormats...)
+	bindOutput(cmd.Flags(), &c.output, output.DiffFormats()...)
 	bindDiffFlags(cmd, d)
 	return cmd
 }
@@ -86,11 +89,27 @@ func runDiffImages(cmd *cobra.Command, c *commonFlags, includeRemoved bool) erro
 		for i, group := range inv.groups {
 			orig, current := group.sides[0], group.sides[1]
 			imgs, suppressed, err := diff.CompareImages(
-				diff.Snapshot{Subjects: orig.Subjects, Manifests: orig.Manifests, Unavailable: orig.Unavailable, ProducerKeys: orig.ProducerKeys},
-				diff.Snapshot{Subjects: current.Subjects, Manifests: current.Manifests, Unavailable: current.Unavailable, ProducerKeys: current.ProducerKeys},
-				nil, includeRemoved,
+				diff.Snapshot{
+					Subjects:     orig.Subjects,
+					Manifests:    orig.Manifests,
+					Unavailable:  orig.Unavailable,
+					ProducerKeys: orig.ProducerKeys,
+				},
+				diff.Snapshot{
+					Subjects:     current.Subjects,
+					Manifests:    current.Manifests,
+					Unavailable:  current.Unavailable,
+					ProducerKeys: current.ProducerKeys,
+				},
+				nil,
+				includeRemoved,
 			)
-			groups[i] = output.ImageGroup{Cluster: group.cluster, Images: imgs, Added: group.absent[manifest.TreeBase], Removed: group.absent[manifest.TreeHead]}
+			groups[i] = output.ImageGroup{
+				Cluster: group.cluster,
+				Images:  imgs,
+				Added:   group.absent[manifest.TreeBase],
+				Removed: group.absent[manifest.TreeHead],
+			}
 			result.warnings[i], result.err = appendSuppressionWarnings(nil, suppressed), errors.Join(result.err, err)
 		}
 		result.prepare = func(names []output.Names) {
@@ -116,92 +135,7 @@ func (d *diffFlags) run(cmd *cobra.Command, c *commonFlags, root manifest.NamedR
 		flags: *c, roots: c.roots(root.Name, kinds...), pair: true,
 		stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(),
 	}, func(inv *selectedInvocation) selectedPayload {
-		format := output.Format(c.output)
-		encoder := output.Encoder{Writer: cmd.OutOrStdout(), Format: format}
-		groups := make([]output.DiffGroup, len(inv.groups))
-		lines := make([][]output.LineChange, len(inv.groups))
-		native := make([]dyff.Report, len(inv.groups))
-		nativeSubjects := make([][]manifest.NamedResource, len(inv.groups))
-		result := selectedPayload{warnings: make([][]manifest.Warning, len(groups)), subjects: make([][]manifest.NamedResource, len(groups))}
-		for i, group := range inv.groups {
-			orig, current := group.sides[0], group.sides[1]
-			if format == output.FormatJSON {
-				body, warnings, suppressed, err := diff.Compare(
-					diff.Snapshot{Subjects: orig.Subjects, Manifests: orig.Manifests, Unavailable: orig.Unavailable, ProducerKeys: orig.ProducerKeys},
-					diff.Snapshot{Subjects: current.Subjects, Manifests: current.Manifests, Unavailable: current.Unavailable, ProducerKeys: current.ProducerKeys}, nil,
-					diff.Options{Format: diff.FormatJSON, StripAttrs: d.stripAttrs, StripFields: d.stripFields})
-				groups[i] = output.DiffGroup{Cluster: group.cluster, Added: group.absent[manifest.TreeBase], Removed: group.absent[manifest.TreeHead], Body: body}
-				result.warnings[i] = appendSuppressionWarnings(warnings, suppressed)
-				result.err = errors.Join(result.err, err)
-				continue
-			}
-			left, right, notes := diffprep.Suppress(diffprep.Snapshot{Subjects: orig.Subjects, Manifests: orig.Manifests, Unavailable: orig.Unavailable, ProducerKeys: orig.ProducerKeys},
-				diffprep.Snapshot{Subjects: current.Subjects, Manifests: current.Manifests, Unavailable: current.Unavailable, ProducerKeys: current.ProducerKeys})
-			p := diffprep.Prepare(diffprep.Documents(left), diffprep.Documents(right), diffprep.Options{Subjects: [2]map[manifest.NamedResource]manifest.DiagnosticIdentity{orig.Subjects, current.Subjects}, StripAttrs: d.stripAttrs, StripFields: d.stripFields})
-			result.warnings[i] = slices.Grow(p.Warnings, len(notes))
-			for _, note := range notes {
-				result.warnings[i] = append(result.warnings[i], manifest.Warning{
-					Resource: note.Parent.NamedResource, Subject: note.Subject, Category: manifest.WarnDiffSuppressed, Message: note.String(),
-				})
-			}
-			slices.SortFunc(result.warnings[i], manifest.CompareWarning)
-			var err error
-			switch format {
-			case output.FormatDiff, output.FormatHTML:
-				lines[i], err = output.PrepareLines(p)
-				result.subjects[i] = output.LineSubjects(lines[i], format)
-			default:
-				native[i], err = p.Native()
-				if err == nil {
-					ids := [2][]manifest.NamedResource{make([]manifest.NamedResource, len(native[i].From.Documents)), make([]manifest.NamedResource, len(native[i].To.Documents))}
-					for _, pair := range p.Pairs {
-						if pair.Old != nil {
-							ids[0][pair.OldPos] = pair.Resource
-						}
-						if pair.New != nil {
-							ids[1][pair.NewPos] = pair.Resource
-						}
-					}
-					for _, delta := range native[i].Diffs {
-						side := 0
-						if delta.Path.Root.Location == "to" {
-							side = 1
-						}
-						nativeSubjects[i] = append(nativeSubjects[i], ids[side][delta.Path.DocumentIdx])
-					}
-				}
-			}
-			result.err = errors.Join(result.err, err)
-		}
-		aggregate := aggregateNative(native)
-		if format != output.FormatBrief && len(aggregate.From.Documents) > 1 {
-			copy(result.subjects, nativeSubjects)
-		}
-		result.prepare = func(names []output.Names) {
-			from, to := 0, 0
-			for i := range inv.groups {
-				output.NameLines(lines[i], names[i])
-				for j, name := range native[i].From.Names {
-					aggregate.From.Names[from+j] = names[i].Prefix + name
-				}
-				for j, name := range native[i].To.Names {
-					aggregate.To.Names[to+j] = names[i].Prefix + name
-				}
-				from += len(native[i].From.Names)
-				to += len(native[i].To.Names)
-			}
-		}
-		result.write = func() error {
-			switch format {
-			case output.FormatJSON:
-				return encoder.DiffGroups(groups)
-			case output.FormatDiff, output.FormatHTML:
-				return encoder.Lines(slices.Concat(lines...))
-			default:
-				return encoder.Native(*aggregate)
-			}
-		}
-		return result
+		return d.payload(inv, output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)})
 	})
 }
 
@@ -210,7 +144,8 @@ func appendSuppressionWarnings(warnings []manifest.Warning, suppressed []diff.Su
 		return warnings
 	}
 	warnings = slices.Grow(warnings, len(suppressed))
-	for _, note := range suppressed {
+	for noteIndex := range suppressed {
+		note := suppressed[noteIndex]
 		warnings = append(warnings, manifest.Warning{
 			Resource: note.Parent.NamedResource, Subject: note.Subject, Category: manifest.WarnDiffSuppressed,
 			Message: note.String(),
@@ -223,7 +158,8 @@ func appendSuppressionWarnings(warnings []manifest.Warning, suppressed []diff.Su
 func aggregateNative(groups []dyff.Report) *dyff.Report {
 	report := &dyff.Report{}
 	report.From.Location, report.To.Location = "from", "to"
-	for _, group := range groups {
+	for groupIndex := range groups {
+		group := groups[groupIndex]
 		from, to := len(report.From.Documents), len(report.To.Documents)
 		report.From.Documents = append(report.From.Documents, group.From.Documents...)
 		report.From.Names = append(report.From.Names, group.From.Names...)
@@ -241,4 +177,156 @@ func aggregateNative(groups []dyff.Report) *dyff.Report {
 		}
 	}
 	return report
+}
+
+func (d *diffFlags) payload(inv *selectedInvocation, encoder output.Encoder) selectedPayload {
+	format := encoder.Format
+	groups := make([]output.DiffGroup, len(inv.groups))
+	lines := make([][]output.LineChange, len(inv.groups))
+	native := make([]dyff.Report, len(inv.groups))
+	nativeSubjects := make([][]manifest.NamedResource, len(inv.groups))
+	result := selectedPayload{
+		warnings: make([][]manifest.Warning, len(groups)),
+		subjects: make([][]manifest.NamedResource, len(groups)),
+	}
+	for i, group := range inv.groups {
+		orig, current := group.sides[0], group.sides[1]
+		if format == output.FormatJSON {
+			body, warnings, suppressed, err := diff.Compare(
+				diff.Snapshot{
+					Subjects:     orig.Subjects,
+					Manifests:    orig.Manifests,
+					Unavailable:  orig.Unavailable,
+					ProducerKeys: orig.ProducerKeys,
+				},
+				diff.Snapshot{
+					Subjects:     current.Subjects,
+					Manifests:    current.Manifests,
+					Unavailable:  current.Unavailable,
+					ProducerKeys: current.ProducerKeys,
+				},
+				nil,
+				diff.Options{Format: diff.FormatJSON, StripAttrs: d.stripAttrs, StripFields: d.stripFields},
+			)
+			groups[i] = output.DiffGroup{
+				Cluster: group.cluster,
+				Added:   group.absent[manifest.TreeBase],
+				Removed: group.absent[manifest.TreeHead],
+				Body:    body,
+			}
+			result.warnings[i] = appendSuppressionWarnings(warnings, suppressed)
+			result.err = errors.Join(result.err, err)
+			continue
+		}
+		left, right, notes := diffprep.Suppress(
+			diffprep.Snapshot{
+				Subjects:     orig.Subjects,
+				Manifests:    orig.Manifests,
+				Unavailable:  orig.Unavailable,
+				ProducerKeys: orig.ProducerKeys,
+			},
+			diffprep.Snapshot{
+				Subjects:     current.Subjects,
+				Manifests:    current.Manifests,
+				Unavailable:  current.Unavailable,
+				ProducerKeys: current.ProducerKeys,
+			},
+		)
+		p := diffprep.Prepare(
+			diffprep.Documents(left),
+			diffprep.Documents(right),
+			diffprep.Options{
+				Subjects: [2]map[manifest.NamedResource]manifest.DiagnosticIdentity{
+					orig.Subjects,
+					current.Subjects,
+				},
+				StripAttrs:  d.stripAttrs,
+				StripFields: d.stripFields,
+			},
+		)
+		result.warnings[i] = preparedDiffWarnings(&p, notes)
+		var err error
+		if format == output.FormatDiff || format == output.FormatHTML {
+			lines[i], err = output.PrepareLines(p)
+			result.subjects[i] = output.LineSubjects(lines[i], format)
+		} else {
+			native[i], err = p.Native()
+			if err == nil {
+				nativeSubjects[i] = nativeDiffSubjects(&p, &native[i])
+			}
+		}
+		result.err = errors.Join(result.err, err)
+	}
+	aggregate := aggregateNative(native)
+	if format != output.FormatBrief && len(aggregate.From.Documents) > 1 {
+		copy(result.subjects, nativeSubjects)
+	}
+	result.prepare = func(names []output.Names) {
+		nameDiffGroups(aggregate, native, lines, names)
+	}
+	result.write = func() error {
+		if format == output.FormatJSON {
+			return encoder.DiffGroups(groups)
+		}
+		if format == output.FormatDiff || format == output.FormatHTML {
+			return encoder.Lines(slices.Concat(lines...))
+		}
+		return encoder.Native(aggregate)
+	}
+	return result
+}
+
+func nativeDiffSubjects(prepared *diffprep.Prepared, report *dyff.Report) []manifest.NamedResource {
+	subjects := slices.Grow([]manifest.NamedResource(nil), len(report.Diffs))
+	ids := [2][]manifest.NamedResource{
+		make([]manifest.NamedResource, len(report.From.Documents)),
+		make([]manifest.NamedResource, len(report.To.Documents)),
+	}
+	for pairIndex := range prepared.Pairs {
+		pair := prepared.Pairs[pairIndex]
+		if pair.Old != nil {
+			ids[0][pair.OldPos] = pair.Resource
+		}
+		if pair.New != nil {
+			ids[1][pair.NewPos] = pair.Resource
+		}
+	}
+	for _, delta := range report.Diffs {
+		side := 0
+		if delta.Path.Root.Location == "to" {
+			side = 1
+		}
+		subjects = append(subjects, ids[side][delta.Path.DocumentIdx])
+	}
+	return subjects
+}
+
+func nameDiffGroups(aggregate *dyff.Report, native []dyff.Report, lines [][]output.LineChange, names []output.Names) {
+	from, to := 0, 0
+	for i := range native {
+		output.NameLines(lines[i], names[i])
+		for j, name := range native[i].From.Names {
+			aggregate.From.Names[from+j] = names[i].Prefix + name
+		}
+		for j, name := range native[i].To.Names {
+			aggregate.To.Names[to+j] = names[i].Prefix + name
+		}
+		from += len(native[i].From.Names)
+		to += len(native[i].To.Names)
+	}
+}
+
+func preparedDiffWarnings(p *diffprep.Prepared, notes []diffprep.Suppression) []manifest.Warning {
+	warnings := slices.Grow(p.Warnings, len(notes))
+	for noteIndex := range notes {
+		note := notes[noteIndex]
+		warnings = append(warnings, manifest.Warning{
+			Resource: note.Parent.NamedResource,
+			Subject:  note.Subject,
+			Category: manifest.WarnDiffSuppressed,
+			Message:  note.String(),
+		})
+	}
+	slices.SortFunc(warnings, manifest.CompareWarning)
+	return warnings
 }

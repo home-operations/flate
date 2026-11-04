@@ -32,6 +32,7 @@ type Controller struct {
 
 type execution struct {
 	*Controller
+
 	run  base.Execution
 	data interface {
 		values.Provider
@@ -59,7 +60,11 @@ func New(controller *base.Controller, h *helm.Client, opts helm.Options, wipeSec
 // ReconcileNode runs id's reconcile under the dag engine, returning the blocked
 // dependency set (nil = terminalized). The
 // orchestrator's scheduler Dispatcher calls this for HelmRelease nodes.
-func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
+func (c *Controller) ReconcileNode(
+	ctx context.Context,
+	id manifest.NamedResource,
+	level manifest.DrainLevel,
+) *base.Execution {
 	ex := c.newExecution(id)
 	ex.run.Dispatch(ctx, level, ex, (*execution).reconcile)
 	return &ex.run
@@ -79,7 +84,12 @@ func (c *execution) reconcile(ctx context.Context, hr *manifest.HelmRelease, lev
 	return c.resolvePreRenderValuesFrom(ctx, hr, level)
 }
 
-func (c *execution) render(ctx context.Context, hr *manifest.HelmRelease, level manifest.DrainLevel, omitted []manifest.NamedResource) error {
+func (c *execution) render(
+	ctx context.Context,
+	hr *manifest.HelmRelease,
+	level manifest.DrainLevel,
+	omitted []manifest.NamedResource,
+) error {
 	id := hr.Named()
 
 	c.SetPendingUnlessReady(id, "resolving chart")
@@ -96,24 +106,29 @@ func (c *execution) render(ctx context.Context, hr *manifest.HelmRelease, level 
 	// dedup gate (a re-emit that finds the prior fingerprint cached must not
 	// replay stale docs over a source that has since failed or soft-skipped
 	// via --allow-missing-kinds Secret).
-	if _, err := c.run.RequireRefresh(ctx, hr, manifest.GateArtifacts, level); err != nil {
-		return err
+	if _, localErr := c.run.RequireRefresh(ctx, hr, manifest.GateArtifacts, level); localErr != nil {
+		return localErr
 	}
 
 	var fp string
 	var attempt store.Emission
 	defer attempt.Finish()
 	handled := false
-	input := helm.RenderOptions{Options: c.Options, DependencySubstitutions: c.DependencySubstitutions, Sources: helm.NewSources(&c.run.Reads), WipeSecrets: c.WipeSecrets}
+	input := helm.RenderOptions{
+		Options:                 c.Options,
+		DependencySubstitutions: c.DependencySubstitutions,
+		Sources:                 helm.NewSources(&c.run.Reads),
+		WipeSecrets:             c.WipeSecrets,
+	}
 	input.Admit = func(key string) (bool, error) {
 		var content any
 		if key != "" {
 			content = hr.Content(key, omitted)
 		}
-		var err error
-		fp, handled, err = c.run.FingerprintDedup(ctx, id, content, &attempt)
-		if handled || err != nil {
-			return handled, err
+		var innerLocalErr error
+		fp, handled, innerLocalErr = c.run.FingerprintDedup(ctx, id, content, &attempt)
+		if handled || innerLocalErr != nil {
+			return handled, innerLocalErr
 		}
 		attempt.Finish()
 		_, _, attempt = c.run.Reads.GetEmission(id)
@@ -132,20 +147,44 @@ func (c *execution) render(ctx context.Context, hr *manifest.HelmRelease, level 
 		})
 	}
 	if handled {
-		return c.Helm.RecordRender(ctx, helm.RenderAcceptance{Owner: id, Receipt: attempt.Render, Records: attempt.Footprint(), Sources: attempt.SourcePaths()})
+		return c.Helm.RecordRender(
+			ctx,
+			helm.RenderAcceptance{
+				Owner:   id,
+				Receipt: attempt.Render,
+				Records: attempt.Footprint(),
+				Sources: attempt.SourcePaths(),
+			},
+		)
 	}
 	hr.EmissionPolicy().Stamp(docs)
 
-	attempt.Children, attempt.Manifests, attempt.Failures = c.ParseChildren(hr, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets})
+	attempt.Children, attempt.Manifests, attempt.Failures = c.ParseChildren(
+		hr,
+		docs,
+		manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets},
+	)
 	attempt.Fingerprint, attempt.Complete, attempt.Render = fp, true, receipt
 	if err := c.run.Emit(ctx, id, &attempt, nil); err != nil {
 		return err
 	}
-	return c.Helm.RecordRender(ctx, helm.RenderAcceptance{Owner: id, Receipt: attempt.Render, Records: attempt.Footprint(), Sources: attempt.SourcePaths()})
+	return c.Helm.RecordRender(
+		ctx,
+		helm.RenderAcceptance{
+			Owner:   id,
+			Receipt: attempt.Render,
+			Records: attempt.Footprint(),
+			Sources: attempt.SourcePaths(),
+		},
+	)
 }
 
 // PreviousRender prepares the immutable candidate with captured values and admitted charts without runtime effects.
-func (c *Controller) PreviousRender(ctx context.Context, obj manifest.BaseManifest, reads *store.ReadSet) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
+func (c *Controller) PreviousRender(
+	ctx context.Context,
+	obj manifest.BaseManifest,
+	reads *store.ReadSet,
+) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
 	hr, ok := obj.(*manifest.HelmRelease)
 	if !ok || ctx.Err() != nil {
 		return nil, false
@@ -157,7 +196,16 @@ func (c *Controller) PreviousRender(ctx context.Context, obj manifest.BaseManife
 		if ref.Use != "valuesFrom" {
 			continue
 		}
-		availability := waiter.Available(ctx, depwait.DataDependency{DependencyRef: ref.DependencyRef, Input: data.Lookup(ref.NamedResource), Optional: ref.Optional, AllowMissing: slices.Contains(c.AllowMissingKinds, ref.Kind)}, manifest.DrainNone)
+		availability := waiter.Available(
+			ctx,
+			depwait.DataDependency{
+				DependencyRef: ref.DependencyRef,
+				Input:         data.Lookup(ref.NamedResource),
+				Optional:      ref.Optional,
+				AllowMissing:  slices.Contains(c.AllowMissingKinds, ref.Kind),
+			},
+			manifest.DrainNone,
+		)
 		if availability.Err != nil || availability.Kind != schedule.Terminal {
 			return nil, false
 		}
@@ -170,7 +218,17 @@ func (c *Controller) PreviousRender(ctx context.Context, obj manifest.BaseManife
 	if err != nil || len(omitted) != 0 {
 		return nil, false
 	}
-	records, found := c.Helm.PreviousRender(ctx, hr, hr.Values, helm.RenderOptions{Options: c.Options, DependencySubstitutions: c.DependencySubstitutions, Sources: helm.NewSources(reads), WipeSecrets: c.WipeSecrets})
+	records, found := c.Helm.PreviousRender(
+		ctx,
+		hr,
+		hr.Values,
+		helm.RenderOptions{
+			Options:                 c.Options,
+			DependencySubstitutions: c.DependencySubstitutions,
+			Sources:                 helm.NewSources(reads),
+			WipeSecrets:             c.WipeSecrets,
+		},
+	)
 	if !found {
 		return nil, false
 	}

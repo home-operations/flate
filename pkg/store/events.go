@@ -88,11 +88,15 @@ func (s *Store) AddListener(event EventKind, fn Listener, flush bool) Unsubscrib
 	handle := set.add(fn)
 	pairs := s.snapshotForReplay(event)
 	s.unlockAll()
-	for _, p := range pairs {
-		if e, ok := p.payload.(*Emission); ok && !emissionCurrent(e, p.input) {
-			continue
+	{
+		pValues := pairs
+		for pIndex := range pValues {
+			p := pValues[pIndex]
+			if e, ok := p.payload.(*Emission); ok && !emissionCurrent(e, new(p.input)) {
+				continue
+			}
+			safeInvoke(fn, p.id, p.payload)
 		}
-		safeInvoke(fn, p.id, p.payload)
 	}
 	return func() { set.remove(handle) }
 }
@@ -129,11 +133,11 @@ func (s *Store) snapshotForReplay(event EventKind) []idPayload {
 		for _, sh := range s.shards {
 			for id := range sh.cells {
 				var view capture
-				sh.captureLocked(id, sh.cells[id], &view)
+				sh.captureLocked(id, new(sh.cells[id]), &view)
 				if sh.cells[id].hidden {
 					continue
 				}
-				artifact := sh.projectArtifactLocked(id, &view, sh.artifacts[id])
+				artifact := sh.projectArtifactLocked(id, &view, new(sh.artifacts[id]))
 				if artifact != nil {
 					out = append(out, idPayload{id: id, payload: artifact, input: view})
 				}
@@ -151,7 +155,11 @@ func (s *Store) snapshotForReplay(event EventKind) []idPayload {
 // pre-sized to the summed map lengths so the common all-keep case never
 // re-grows. Caller MUST hold every shard's write lock (see
 // snapshotForReplay).
-func collectReplay[V any](shards []*shard, pick func(*shard) map[manifest.NamedResource]V, conv func(*shard, manifest.NamedResource, V) (any, bool)) []idPayload {
+func collectReplay[V any](
+	shards []*shard,
+	pick func(*shard) map[manifest.NamedResource]V,
+	conv func(*shard, manifest.NamedResource, V) (any, bool),
+) []idPayload {
 	total := 0
 	for _, sh := range shards {
 		total += len(pick(sh))
@@ -169,7 +177,7 @@ func collectReplay[V any](shards []*shard, pick func(*shard) map[manifest.NamedR
 			var input capture
 			if _, ok := payload.(*Emission); ok {
 				var view capture
-				sh.captureLocked(id, sh.cells[id], &view)
+				sh.captureLocked(id, new(sh.cells[id]), &view)
 				input = view
 			}
 
@@ -179,6 +187,7 @@ func collectReplay[V any](shards []*shard, pick func(*shard) map[manifest.NamedR
 	return out
 }
 
+//nolint:gochecknoglobals // The shared empty snapshot avoids per-store allocation.
 var emptyListenerSnapshot listenerSnapshot
 
 // fireUnderLock MUST capture the immutable listener set before the writer unlocks.

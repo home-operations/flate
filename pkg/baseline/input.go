@@ -29,7 +29,11 @@ func AdmitDirectory(ctx context.Context, path, root string) (*store.SourceArtifa
 
 func admitLocation(ctx context.Context, location *gitrepo.Location) (*store.SourceArtifact, error) {
 	if !safepath.Contains(location.ContentRoot, location.ScanPath) {
-		return nil, manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("--path %q is outside the source root at %q", location.ScanPath, location.ContentRoot))
+		return nil, manifest.NewError(
+			manifest.ErrInput,
+			nil,
+			fmt.Sprintf("--path %q is outside the source root at %q", location.ScanPath, location.ContentRoot),
+		)
 	}
 	input, err := gittree.AdmitDirectory(ctx, location)
 	if err != nil {

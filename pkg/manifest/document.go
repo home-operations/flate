@@ -6,12 +6,12 @@ import "maps"
 func (e *ExternalArtifact) RenderDocument() (map[string]any, error) {
 	metadata := map[string]any{}
 	if e.Name != "" {
-		metadata["name"] = e.Name
+		metadata[nameKey] = e.Name
 	}
 	if e.Namespace != "" {
-		metadata["namespace"] = e.Namespace
+		metadata[namespaceKey] = e.Namespace
 	}
-	for key, values := range map[string]map[string]string{"labels": e.Labels, "annotations": e.Annotations} {
+	for key, values := range map[string]map[string]string{labelsKey: e.Labels, annotationsKey: e.Annotations} {
 		if len(values) != 0 {
 			fields := make(map[string]any, len(values))
 			for key, value := range values {
@@ -22,16 +22,21 @@ func (e *ExternalArtifact) RenderDocument() (map[string]any, error) {
 	}
 	spec := map[string]any{}
 	if ref := e.SourceRef; ref != nil {
-		source := map[string]any{"kind": ref.Kind, "name": ref.Name}
+		source := map[string]any{kindKey: ref.Kind, nameKey: ref.Name}
 		if ref.APIVersion != "" {
-			source["apiVersion"] = ref.APIVersion
+			source[apiVersionKey] = ref.APIVersion
 		}
 		if ref.Namespace != "" {
-			source["namespace"] = ref.Namespace
+			source[namespaceKey] = ref.Namespace
 		}
 		spec["sourceRef"] = source
 	}
-	doc := map[string]any{"apiVersion": sourceAPIVersion, "kind": KindExternalArtifact, "metadata": metadata, "spec": spec}
+	doc := map[string]any{
+		apiVersionKey: sourceAPIVersion,
+		kindKey:       KindExternalArtifact,
+		metadataKey:   metadata,
+		specKey:       spec,
+	}
 	return doc, nil
 }
 
@@ -49,12 +54,14 @@ func ObjectDocument(id NamedResource, obj BaseManifest) (map[string]any, error) 
 			return nil, err
 		}
 		doc = maps.Clone(rendered)
-		doc["metadata"] = maps.Clone(rendered["metadata"].(map[string]any))
+		//nolint:errcheck // The owning path guarantees the concrete type and panics on a broken invariant.
+		doc[metadataKey] = maps.Clone(rendered[metadataKey].(map[string]any))
 	} else {
-		doc = map[string]any{"metadata": map[string]any{}}
+		doc = map[string]any{metadataKey: map[string]any{}}
 	}
-	meta := doc["metadata"].(map[string]any)
-	meta["name"], meta["namespace"] = id.Name, id.Namespace
-	doc["kind"], doc["apiVersion"] = id.Kind, id.KindInfo().APIVersion()
+	//nolint:errcheck // The owning path guarantees the concrete type and panics on a broken invariant.
+	meta := doc[metadataKey].(map[string]any)
+	meta[nameKey], meta[namespaceKey] = id.Name, id.Namespace
+	doc[kindKey], doc[apiVersionKey] = id.Kind, id.KindInfo().APIVersion()
 	return doc, nil
 }

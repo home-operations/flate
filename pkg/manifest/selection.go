@@ -30,21 +30,29 @@ func (s Selection) matches(id NamedResource, named bool) bool {
 			return true
 		}
 	}
+	if s.includesRenderKinds(named) {
+		return s.Roots[0].Namespace == "" || id.Namespace == "" || id.Namespace == s.Roots[0].Namespace
+	}
+
+	return false
+}
+
+func (s Selection) includesRenderKinds(named bool) bool {
 	all := !named || s.Roots[0].Name == ""
 	for _, root := range s.Roots {
 		all = all && (!named || root.Name == "") && root.Namespace == s.Roots[0].Namespace
 	}
-	if all {
-		for kind := range Kinds() {
-			if kind.Render && !slices.ContainsFunc(s.Roots, func(root NamedResource) bool { return root.Group == kind.Group && root.Kind == kind.Kind }) {
-				all = false
-				break
-			}
-		}
-		if all {
-			return s.Roots[0].Namespace == "" || id.Namespace == "" || id.Namespace == s.Roots[0].Namespace
+	if !all {
+		return false
+	}
+	for kind := range Kinds() {
+		if kind.Render &&
+			!slices.ContainsFunc(
+				s.Roots,
+				func(root NamedResource) bool { return root.Group == kind.Group && root.Kind == kind.Kind },
+			) {
+			return false
 		}
 	}
-
-	return false
+	return true
 }

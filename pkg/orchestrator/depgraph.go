@@ -77,7 +77,10 @@ func (g *dependencyGraph) ReplaceEdges(id manifest.NamedResource, deps []manifes
 }
 
 // Terminal destinations cannot close a cycle and must not allocate traversal state.
-func (g *dependencyGraph) closesCycleLocked(id manifest.NamedResource, oldSet map[manifest.NamedResource]struct{}) bool {
+func (g *dependencyGraph) closesCycleLocked(
+	id manifest.NamedResource,
+	oldSet map[manifest.NamedResource]struct{},
+) bool {
 	seen := map[manifest.NamedResource]bool{}
 	var queue []manifest.NamedResource
 	for dst := range g.outEdges[id] {

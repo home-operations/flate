@@ -20,9 +20,14 @@ import (
 
 const dockerConfigJSONKey = ".dockerconfigjson"
 
-func (f *operation) acquire(ctx context.Context, access manifest.RegistryAccess, policy cache.Policy) (*store.SourceArtifact, error) {
+func (f *operation) acquire(
+	ctx context.Context,
+	accessValue *manifest.RegistryAccess,
+	policy cache.Policy,
+) (*store.SourceArtifact, error) {
+	access := *accessValue
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 	}
 	if f.secrets != nil {
 		for _, ref := range []*manifest.LocalObjectReference{access.SecretRef, access.CertSecretRef, access.ProxySecretRef} {
@@ -32,18 +37,22 @@ func (f *operation) acquire(ctx context.Context, access manifest.RegistryAccess,
 		}
 	}
 	policy.Timeout = &access.Timeout
-	request, err := f.newRepoClient(ctx, access)
+	request, err := f.newRepoClient(ctx, new(access))
 	machine := func(ctx context.Context) (*store.SourceArtifact, error) {
 		machineRequest := request
 		machineRequest.client = &remote.Repository{Reference: request.client.Reference}
 		return source.AcquireMachine(ctx, policy, func(ctx context.Context) error {
-			selected, err := f.Network.RegistryCredentials(ctx, f.RegistryConfig, machineRequest.client.Reference.Host())
-			if err != nil {
-				return err
+			selected, registryCredentialsErr := f.Network.RegistryCredentials(
+				ctx,
+				f.RegistryConfig,
+				machineRequest.client.Reference.Host(),
+			)
+			if registryCredentialsErr != nil {
+				return registryCredentialsErr
 			}
-			return f.configure(access, &machineRequest, *selected)
+			return f.configure(new(access), &machineRequest, *selected)
 		}, func(ctx context.Context, policy cache.Policy) (*store.SourceArtifact, error) {
-			return f.acquirePrepared(ctx, access, machineRequest, policy)
+			return f.acquirePrepared(ctx, &access, &machineRequest, policy)
 		})
 	}
 	if missing, ok := errors.AsType[*source.MissingSecretError](err); ok && request.client != nil {
@@ -55,10 +64,14 @@ func (f *operation) acquire(ctx context.Context, access manifest.RegistryAccess,
 	if access.SecretRef == nil {
 		return machine(ctx)
 	}
-	return f.acquirePrepared(ctx, access, request, policy)
+	return f.acquirePrepared(ctx, &access, &request, policy)
 }
 
-func (f *operation) newRepoClient(ctx context.Context, access manifest.RegistryAccess) (registryAcquisition, error) {
+func (f *operation) newRepoClient(
+	ctx context.Context,
+	accessValue *manifest.RegistryAccess,
+) (registryAcquisition, error) {
+	access := *accessValue
 	owner := access.Owner
 	if access.URL == "" {
 		return registryAcquisition{}, manifest.NewError(manifest.ErrInput, nil, "missing url")
@@ -78,37 +91,59 @@ func (f *operation) newRepoClient(ctx context.Context, access manifest.RegistryA
 	if err != nil {
 		return registryAcquisition{}, err
 	}
-	if _, err := resolved.ProxyURL(&url.URL{Scheme: "https", Host: client.Reference.Host()}); err != nil {
-		return registryAcquisition{}, manifest.NewError(manifest.ErrInput, nil, "resolve registry proxy: invalid proxy configuration")
+	if _, proxyURLErr := resolved.ProxyURL(
+		&url.URL{Scheme: "https", Host: client.Reference.Host()},
+	); proxyURLErr != nil {
+		return registryAcquisition{}, manifest.NewError(
+			manifest.ErrInput,
+			nil,
+			"resolve registry proxy: invalid proxy configuration",
+		)
 	}
 	request := registryAcquisition{client: client, resolved: resolved}
-	selected, err := f.resolveRegistryConfig(ctx, access, client.Reference.Host())
+	selected, err := f.resolveRegistryConfig(ctx, new(access), client.Reference.Host())
 	if err == nil && *selected == auth.EmptyCredential && access.SecretRef != nil {
 		err = source.MissingSecretErr(owner, access.SecretRef.Name, "no credentials for the source registry")
 	}
 	if err != nil {
 		return request, err
 	}
-	err = f.configure(access, &request, *selected)
+	err = f.configure(new(access), &request, *selected)
 	return request, err
 }
 
-func (f *operation) configure(access manifest.RegistryAccess, request *registryAcquisition, cred auth.Credential) error {
+func (f *operation) configure(
+	accessValue *manifest.RegistryAccess,
+	request *registryAcquisition,
+	cred auth.Credential,
+) error {
+	access := *accessValue
 	var material any
 	request.anonymous = cred == auth.EmptyCredential
 	if !request.anonymous {
 		material = cred
 	}
 	request.material = request.resolved.Identity(material)
-	tr, err := f.Network.HTTPTransport(source.HTTPTransportConfig{Material: request.resolved, Insecure: access.Insecure, Credentials: material})
+	tr, err := f.Network.HTTPTransport(
+		source.HTTPTransportConfig{Material: request.resolved, Insecure: access.Insecure, Credentials: material},
+	)
 	if err != nil {
 		return err
 	}
-	request.client.Client = &auth.Client{Client: &http.Client{Transport: tr}, Cache: tr.(auth.Cache), Credential: auth.StaticCredential(request.client.Reference.Registry, cred)}
+	request.client.Client = &auth.Client{
+		Client:     &http.Client{Transport: tr},
+		Cache:      tr.(auth.Cache), //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+		Credential: auth.StaticCredential(request.client.Reference.Registry, cred),
+	}
 	return nil
 }
 
-func (f *operation) acquirePrepared(ctx context.Context, access manifest.RegistryAccess, request registryAcquisition, policy cache.Policy) (*store.SourceArtifact, error) {
+func (f *operation) acquirePrepared(
+	ctx context.Context, accessValue *manifest.RegistryAccess, requestValue *registryAcquisition,
+	policy cache.Policy,
+) (*store.SourceArtifact, error) {
+	access := *accessValue
+	request := *requestValue
 	artifact, err := f.produce(ctx, request, policy)
 	if access.Insecure && ctx.Err() == nil && errors.Is(err, http.ErrSchemeMismatch) {
 		if requestErr, ok := errors.AsType[*url.Error](err); ok {
@@ -119,20 +154,34 @@ func (f *operation) acquirePrepared(ctx context.Context, access manifest.Registr
 			}
 		}
 	}
-	if f.allowAnonymousDenied && access.SecretRef == nil && request.anonymous && err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+	if f.allowAnonymousDenied && access.SecretRef == nil && request.anonymous && err != nil &&
+		!errors.Is(err, context.Canceled) &&
+		!errors.Is(err, context.DeadlineExceeded) {
 		denied := errors.Is(err, auth.ErrBasicCredentialNotFound)
 		if response, ok := errors.AsType[*fetcherr.ResponseError](err); ok {
-			denied = denied || response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden
+			denied = denied || response.StatusCode == http.StatusUnauthorized ||
+				response.StatusCode == http.StatusForbidden
 		}
 		if denied {
-			return nil, &source.MissingSecretError{Owner: access.Owner.ID, Subject: access.Owner, Detail: "no registry credentials available", AnonymousDenied: true, Cause: err}
+			return nil, &source.MissingSecretError{
+				Owner:           access.Owner.ID,
+				Subject:         access.Owner,
+				Detail:          "no registry credentials available",
+				AnonymousDenied: true,
+				Cause:           err,
+			}
 		}
 	}
 	return artifact, err
 }
 
 // Machine credentials MUST wait for shared credential settlement to exhaust rendered Secrets.
-func (f *operation) resolveRegistryConfig(ctx context.Context, access manifest.RegistryAccess, hostname string) (*auth.Credential, error) {
+func (f *operation) resolveRegistryConfig(
+	ctx context.Context,
+	accessValue *manifest.RegistryAccess,
+	hostname string,
+) (*auth.Credential, error) {
+	access := *accessValue
 	if access.SecretRef == nil {
 		return &auth.Credential{}, nil
 	}
@@ -148,7 +197,11 @@ func (f *operation) resolveRegistryConfig(ctx context.Context, access manifest.R
 		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("read .dockerconfigjson: %w", err), "")
 	}
 	if configJSON == "" || manifest.HasValuePlaceholder(configJSON) {
-		return nil, source.MissingSecretErr(access.Owner, access.SecretRef.Name, "missing .dockerconfigjson (must be type kubernetes.io/dockerconfigjson)")
+		return nil, source.MissingSecretErr(
+			access.Owner,
+			access.SecretRef.Name,
+			"missing .dockerconfigjson (must be type kubernetes.io/dockerconfigjson)",
+		)
 	}
 	credStore, err := credentials.NewMemoryStoreFromDockerConfig([]byte(configJSON))
 	if err != nil {

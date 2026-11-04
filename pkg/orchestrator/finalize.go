@@ -15,11 +15,11 @@ import (
 
 func (o *Orchestrator) reportingClaims() []manifest.KSClaim {
 	candidates := o.store.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)
-	for id, record := range o.index.Files() {
+	for id, record := range o.index.Files() { //nolint:gocritic // The iterator supplies independent value snapshots.
 		if !id.KindInfo().Structural {
 			continue
 		}
-		if ks, ok := o.unchangedDeclaration(id, record).(*manifest.Kustomization); ok {
+		if ks, ok := o.unchangedDeclaration(id, &record).(*manifest.Kustomization); ok {
 			candidates = append(candidates, ks)
 		}
 	}
@@ -34,7 +34,7 @@ func (o *Orchestrator) reportOwnership(claims []manifest.KSClaim) []manifest.KSC
 		obj := o.store.GetObject(claim.ID)
 		if obj == nil {
 			record, _ := o.index.Lookup(claim.ID)
-			obj = o.unchangedDeclaration(claim.ID, record)
+			obj = o.unchangedDeclaration(claim.ID, &record)
 		}
 		source, _, _ := obj.SourcePath()
 		if _, _, external := loader.SourceView(o.store, source, o.repoRoot); !external {
@@ -46,7 +46,10 @@ func (o *Orchestrator) reportOwnership(claims []manifest.KSClaim) []manifest.KSC
 
 // detectOrphans finds failed resources a successful covering parent never emitted.
 // Flux never sees these local files; failed-parent cascade victims remain failures.
-func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.StatusInfo, prefixes []manifest.KSClaim) map[manifest.NamedResource]string {
+func (o *Orchestrator) detectOrphans(
+	failed map[manifest.NamedResource]store.StatusInfo,
+	prefixes []manifest.KSClaim,
+) map[manifest.NamedResource]string {
 	out := make(map[manifest.NamedResource]string)
 	for id, info := range failed {
 		if !id.KindInfo().Render {
@@ -54,7 +57,8 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 		}
 		// Any parent's emission proves that Flux saw this resource.
 		if slices.ContainsFunc(o.store.Productions(id, o.index), func(p manifest.Production) bool {
-			return p.Owner != (manifest.NamedResource{}) && p.Authored == (manifest.NamedResource{}) && p.Declaration == (manifest.NamedResource{})
+			return p.Owner != (manifest.NamedResource{}) && p.Authored == (manifest.NamedResource{}) &&
+				p.Declaration == (manifest.NamedResource{})
 		}) {
 			continue
 		}
@@ -115,14 +119,21 @@ func (o *Orchestrator) finalize() error {
 			}
 		}
 	}
-	for id, record := range o.index.Files() {
-		if id.KindInfo().Render && !id.ReportHidden() && o.unchangedDeclaration(id, record) != nil {
+	for id, record := range o.index.Files() { //nolint:gocritic // The iterator supplies independent value snapshots.
+		if id.KindInfo().Render && !id.ReportHidden() && o.unchangedDeclaration(id, &record) != nil {
 			counts[id.Kind]++
 		}
 	}
 	ksCount, hrCount := counts[manifest.KindKustomization], counts[manifest.KindHelmRelease]
 	for _, id := range slices.SortedFunc(maps.Keys(o.orphans), manifest.NamedResource.Compare) {
-		o.store.AddWarning(manifest.Warning{Resource: id, Category: manifest.WarnOrphanedResource, Message: "resource orphaned", Detail: []string{o.fileOf(id), o.orphans[id]}})
+		o.store.AddWarning(
+			manifest.Warning{
+				Resource: id,
+				Category: manifest.WarnOrphanedResource,
+				Message:  "resource orphaned",
+				Detail:   []string{o.fileOf(id), o.orphans[id]},
+			},
+		)
 	}
 	o.warnMissingCRDs()
 	o.logSummary(failed, ksCount, hrCount)
@@ -145,14 +156,7 @@ func (o *Orchestrator) warnMissingCRDs() {
 	inputs, gated := inputBuf[:0], gatedBuf[:0]
 	for _, obj := range o.store.ListObjects("", "") {
 		id := obj.Named()
-		info, ok := o.store.GetStatus(id)
-		if !ok || info.Status != store.StatusReady {
-			continue
-		}
-		_, _, inventory := o.store.GetEmission(id)
-		valid := inventory.OutputReads.Valid()
-		inventory.Finish()
-		if !valid || !o.store.HasInventory(id) {
+		if !o.hasAcceptedCRDOutput(id) {
 			continue
 		}
 		inputs = inputs[:0]
@@ -171,22 +175,53 @@ func (o *Orchestrator) warnMissingCRDs() {
 		if len(inputs) == 0 {
 			continue
 		}
-		gated = gated[:0]
-		for ref := range manifest.References(obj, manifest.ReferenceAll) {
-			if ref.Gate != 0 && ref.IsCRD() {
-				gated = append(gated, ref.NamedResource)
-			}
-		}
-		for _, crd := range inputs {
-			if !slices.Contains(gated, crd) {
-				continue
-			}
-			if missing[crd] == nil {
-				missing[crd] = make(map[manifest.NamedResource]struct{})
-			}
-			missing[crd][id] = struct{}{}
+		gated = gatedCRDInputs(obj, gated)
+		addMissingCRDDependents(id, inputs, gated, missing)
+	}
+	o.emitMissingCRDWarnings(missing)
+}
+
+func (o *Orchestrator) hasAcceptedCRDOutput(id manifest.NamedResource) bool {
+	info, ok := o.store.GetStatus(id)
+	if !ok || info.Status != store.StatusReady {
+		return false
+	}
+	_, _, inventory := o.store.GetEmission(id)
+	valid := inventory.OutputReads.Valid()
+	inventory.Finish()
+	if !valid || !o.store.HasInventory(id) {
+		return false
+	}
+	return true
+}
+
+func gatedCRDInputs(obj manifest.BaseManifest, gated []manifest.NamedResource) []manifest.NamedResource {
+	gated = gated[:0]
+	for ref := range manifest.References(obj, manifest.ReferenceAll) {
+		if ref.Gate != 0 && ref.IsCRD() {
+			gated = append(gated, ref.NamedResource)
 		}
 	}
+	return gated
+}
+
+func addMissingCRDDependents(
+	id manifest.NamedResource,
+	inputs, gated []manifest.NamedResource,
+	missing map[manifest.NamedResource]map[manifest.NamedResource]struct{},
+) {
+	for _, crd := range inputs {
+		if !slices.Contains(gated, crd) {
+			continue
+		}
+		if missing[crd] == nil {
+			missing[crd] = make(map[manifest.NamedResource]struct{})
+		}
+		missing[crd][id] = struct{}{}
+	}
+}
+
+func (o *Orchestrator) emitMissingCRDWarnings(missing map[manifest.NamedResource]map[manifest.NamedResource]struct{}) {
 	for _, crd := range slices.SortedFunc(maps.Keys(missing), manifest.NamedResource.Compare) {
 		dependents := slices.SortedFunc(maps.Keys(missing[crd]), manifest.NamedResource.Compare)
 		names := make([]string, len(dependents))
@@ -194,9 +229,14 @@ func (o *Orchestrator) warnMissingCRDs() {
 			names[i] = o.diagnostic(id).String()
 		}
 		o.store.AddWarning(manifest.Warning{
-			Resource: crd, Related: dependents,
+			Resource: crd,
+			Related:  dependents,
 			Category: manifest.WarnMissingCRD,
-			Message:  fmt.Sprintf("CRD %s absent from offline inputs; accepted for %s", crd.String(), strings.Join(names, ", ")),
+			Message: fmt.Sprintf(
+				"CRD %s absent from offline inputs; accepted for %s",
+				crd.String(),
+				strings.Join(names, ", "),
+			),
 		})
 	}
 }
@@ -252,7 +292,7 @@ func (o *Orchestrator) diagnostic(id manifest.NamedResource) manifest.Diagnostic
 	obj := o.store.GetObject(id)
 	if obj == nil {
 		record, _ := o.index.Lookup(id)
-		obj = o.unchangedDeclaration(id, record)
+		obj = o.unchangedDeclaration(id, &record)
 	}
 	return manifest.DiagnosticFor(id, obj)
 }

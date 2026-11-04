@@ -42,100 +42,147 @@ func (s *selectionSide) prepareFailures(roots []manifest.NamedResource, other *s
 	s.result.Causes = s.failureCauses(s.result.Failed, s.result.Blocked)
 }
 
-func (s *selectionSide) requiredClosure(roots []manifest.NamedResource, other *selectionSide) map[manifest.NamedResource]struct{} {
-	seen := make(map[manifest.NamedResource]struct{})
-	var work []manifest.NamedResource
-	add := func(id manifest.NamedResource) {
-		if _, ok := seen[id]; !ok {
-			seen[id] = struct{}{}
-			work = append(work, id)
-		}
+func (s *selectionSide) requiredClosure(
+	roots []manifest.NamedResource,
+	other *selectionSide,
+) map[manifest.NamedResource]struct{} {
+	q := requiredSelection{
+		side:   s,
+		intent: manifest.Selection{Roots: roots},
+		seen:   make(map[manifest.NamedResource]struct{}),
 	}
-	intent := manifest.Selection{Roots: roots}
-	seed := func(id manifest.NamedResource) {
-		if roots[0].Name == "" && s.run.filter.Enabled() {
-			if _, selected, _, _ := s.run.filter.Membership(id); !selected {
-				return
-			}
-		}
-		if intent.Matches(id) && s.includes(id.Namespace) {
-			add(id)
-		}
-	}
-	for _, id := range s.roots {
-		seed(id)
-	}
-	if s.run.index != nil {
-		for id := range s.run.index.Records {
-			seed(id)
-		}
-	}
-	for id := range s.run.Result.Failed {
-		seed(id)
-	}
+	q.seedRoots()
 	children := s.run.childrenByParent()
 	for _, kids := range children {
 		for _, id := range kids {
-			seed(id)
+			q.seed(id)
 		}
 	}
 	// Prerequisites MUST NOT expand downward into unrelated siblings.
 	if roots[0].Name != "" || roots[0].Namespace != "" {
-		for i := 0; i < len(work); i++ { //nolint:intrange // Descendants extend this traversal.
-			for _, child := range children[work[i]] {
-				if roots[0].Name == "" {
-					if s.run.filter.Enabled() {
-						if _, selected, _, _ := s.run.filter.Membership(child); !selected {
-							continue
-						}
-					} else if !s.includes(child.Namespace) {
-						continue
-					}
-				}
-				add(child)
-			}
-		}
+		q.expandChildren(children)
 	}
-	if id := s.run.entryBinding.Producer; id != (manifest.NamedResource{}) && s.run.filter.Enabled() && s.run.filter.ShouldReconcile(id) {
-		add(id)
+	if id := s.run.entryBinding.Producer; id != (manifest.NamedResource{}) && s.run.filter.Enabled() &&
+		s.run.filter.ShouldReconcile(id) {
+		q.add(id)
 	}
 	if other != nil {
-		for _, id := range other.roots {
-			if s.run.filter.Enabled() {
-				if _, selected, _, _ := other.run.filter.Membership(id); selected {
-					add(id)
-				}
-			}
-			visited := make(map[manifest.NamedResource]bool)
-			for s.run.store.GetObject(id) == nil && !visited[id] {
-				visited[id] = true
-				parent, ok := other.run.parentOf(id)
-				if !ok {
-					break
-				}
-				actual := s.actualProducer(other.comparisonKey(parent))
-				add(actual)
-				if actual != parent {
-					break
-				}
-				id = parent
-			}
-		}
+		q.seedOther(other)
 	}
-	for len(work) > 0 {
-		id := work[len(work)-1]
-		work = work[:len(work)-1]
-		if parent, ok := s.run.parentOf(id); ok {
-			add(parent)
-		}
-		for dep := range s.run.store.RequiredInputs(id) {
-			add(dep)
-		}
-	}
-	return seen
+	q.expandPrerequisites()
+	return q.seen
 }
 
-func rootsOf(id manifest.NamedResource, blocked map[manifest.NamedResource][]manifest.NamedResource) []manifest.NamedResource {
+type requiredSelection struct {
+	side   *selectionSide
+	intent manifest.Selection
+	seen   map[manifest.NamedResource]struct{}
+	work   []manifest.NamedResource
+}
+
+func (q *requiredSelection) add(id manifest.NamedResource) {
+	if _, ok := q.seen[id]; !ok {
+		q.seen[id] = struct{}{}
+		q.work = append(q.work, id)
+	}
+}
+
+func (q *requiredSelection) seed(id manifest.NamedResource) {
+	s := q.side
+	if q.intent.Roots[0].Name == "" && s.run.filter.Enabled() {
+		if _, selected, _, _ := s.run.filter.Membership(id); !selected {
+			return
+		}
+	}
+	if q.intent.Matches(id) && s.includes(id.Namespace) {
+		q.add(id)
+	}
+}
+
+func (q *requiredSelection) seedRoots() {
+	s := q.side
+	for _, id := range s.roots {
+		q.seed(id)
+	}
+	if s.run.index != nil {
+		for id := range s.run.index.Records {
+			q.seed(id)
+		}
+	}
+	for id := range s.run.Result.Failed {
+		q.seed(id)
+	}
+}
+
+func (q *requiredSelection) expandChildren(children map[manifest.NamedResource][]manifest.NamedResource) {
+	for i := 0; i < len(q.work); i++ { //nolint:intrange // Descendants extend this traversal.
+		for _, child := range children[q.work[i]] {
+			if q.selectedChild(child) {
+				q.add(child)
+			}
+		}
+	}
+}
+
+func (q *requiredSelection) selectedChild(child manifest.NamedResource) bool {
+	if q.intent.Roots[0].Name != "" {
+		return true
+	}
+	s := q.side
+	if s.run.filter.Enabled() {
+		_, selected, _, _ := s.run.filter.Membership(child)
+		return selected
+	}
+	return s.includes(child.Namespace)
+}
+
+func (q *requiredSelection) seedOther(other *selectionSide) {
+	s := q.side
+	for _, id := range other.roots {
+		if s.run.filter.Enabled() {
+			if _, selected, _, _ := other.run.filter.Membership(id); selected {
+				q.add(id)
+			}
+		}
+		q.addOtherParents(other, id)
+	}
+}
+
+func (q *requiredSelection) addOtherParents(other *selectionSide, id manifest.NamedResource) {
+	s := q.side
+	visited := make(map[manifest.NamedResource]bool)
+	for s.run.store.GetObject(id) == nil && !visited[id] {
+		visited[id] = true
+		parent, ok := other.run.parentOf(id)
+		if !ok {
+			break
+		}
+		actual := s.actualProducer(other.comparisonKey(parent))
+		q.add(actual)
+		if actual != parent {
+			break
+		}
+		id = parent
+	}
+}
+
+func (q *requiredSelection) expandPrerequisites() {
+	for len(q.work) > 0 {
+		id := q.work[len(q.work)-1]
+		q.work = q.work[:len(q.work)-1]
+		if parent, ok := q.side.run.parentOf(id); ok {
+			q.add(parent)
+		}
+		for dep := range q.side.run.store.RequiredInputs(id) {
+			q.add(dep)
+		}
+	}
+}
+
+func rootsOf(
+	id manifest.NamedResource,
+	blocked map[manifest.NamedResource][]manifest.NamedResource,
+) []manifest.NamedResource {
 	var out []manifest.NamedResource
 	seen := map[manifest.NamedResource]bool{id: true}
 	var walk func(manifest.NamedResource)
@@ -156,7 +203,9 @@ func rootsOf(id manifest.NamedResource, blocked map[manifest.NamedResource][]man
 	return out
 }
 
-func rootVictims(blocked map[manifest.NamedResource][]manifest.NamedResource) map[manifest.NamedResource][]manifest.NamedResource {
+func rootVictims(
+	blocked map[manifest.NamedResource][]manifest.NamedResource,
+) map[manifest.NamedResource][]manifest.NamedResource {
 	byRoot := make(map[manifest.NamedResource][]manifest.NamedResource)
 	for id := range blocked {
 		for _, root := range rootsOf(id, blocked) {
@@ -170,7 +219,10 @@ func rootVictims(blocked map[manifest.NamedResource][]manifest.NamedResource) ma
 	return byRoot
 }
 
-func (s *selectionSide) failureCauses(failed map[manifest.NamedResource]store.StatusInfo, blocked map[manifest.NamedResource][]manifest.NamedResource) map[manifest.NamedResource][]manifest.NamedResource {
+func (s *selectionSide) failureCauses(
+	failed map[manifest.NamedResource]store.StatusInfo,
+	blocked map[manifest.NamedResource][]manifest.NamedResource,
+) map[manifest.NamedResource][]manifest.NamedResource {
 	byRoot := rootVictims(blocked)
 	covered := make(map[manifest.NamedResource]bool)
 	for root, ids := range byRoot {
@@ -185,26 +237,7 @@ func (s *selectionSide) failureCauses(failed map[manifest.NamedResource]store.St
 		}
 	}
 	cycles := make(map[manifest.NamedResource]bool)
-	for id := range failed {
-		if covered[id] {
-			continue
-		}
-		seen := make(map[manifest.NamedResource]bool)
-		var reaches func(manifest.NamedResource) bool
-		reaches = func(dep manifest.NamedResource) bool {
-			if dep == id {
-				return true
-			}
-			if seen[dep] {
-				return false
-			}
-			seen[dep] = true
-			return slices.ContainsFunc(blocked[dep], reaches)
-		}
-		if slices.ContainsFunc(blocked[id], reaches) {
-			cycles[id] = true
-		}
-	}
+	markDependencyCycles(failed, blocked, covered, cycles)
 	view := blocked
 	if len(cycles) > 0 {
 		view = maps.Clone(blocked)
@@ -232,30 +265,59 @@ func (s *selectionSide) failureCauses(failed map[manifest.NamedResource]store.St
 	return byRoot
 }
 
-func (s *selectionSide) unrelatedFailures(raw *Result, unrelated map[manifest.NamedResource]store.StatusInfo, required map[manifest.NamedResource]struct{}) []manifest.Warning {
+func markDependencyCycles(
+	failed map[manifest.NamedResource]store.StatusInfo,
+	blocked map[manifest.NamedResource][]manifest.NamedResource,
+	covered, cycles map[manifest.NamedResource]bool,
+) {
+	for id := range failed {
+		if covered[id] {
+			continue
+		}
+		seen := make(map[manifest.NamedResource]bool)
+		var reaches func(manifest.NamedResource) bool
+		reaches = func(dep manifest.NamedResource) bool {
+			if dep == id {
+				return true
+			}
+			if seen[dep] {
+				return false
+			}
+			seen[dep] = true
+			return slices.ContainsFunc(blocked[dep], reaches)
+		}
+		if slices.ContainsFunc(blocked[id], reaches) {
+			cycles[id] = true
+		}
+	}
+}
+
+func (s *selectionSide) unrelatedFailures(
+	raw *Result,
+	unrelated map[manifest.NamedResource]store.StatusInfo,
+	required map[manifest.NamedResource]struct{},
+) []manifest.Warning {
 	byRoot := rootVictims(raw.Blocked)
 	covered := make(map[manifest.NamedResource]bool)
 	var warnings []manifest.Warning
-	children := func(ids []manifest.NamedResource) ([]string, []manifest.NamedResource) {
-		var out []string
-		var related []manifest.NamedResource
-		for _, id := range ids {
-			if _, ok := unrelated[id]; ok {
-				out = append(out, s.result.Diagnostic(id).String())
-				related = append(related, id)
-				covered[id] = true
-			}
-		}
-		return out, related
-	}
 	for id, info := range raw.Failed {
 		if _, derived := raw.Blocked[id]; derived {
 			continue
 		}
 		if _, ok := unrelated[id]; ok {
 			covered[id] = true
-			detail, related := children(byRoot[id])
-			warnings = append(warnings, manifest.Warning{Resource: id, Subject: s.result.Diagnostic(id), Related: related, Category: manifest.WarnUnrelatedFailure, Message: info.Message, Detail: detail})
+			detail, related := s.unrelatedWarningChildren(byRoot[id], unrelated, covered)
+			warnings = append(
+				warnings,
+				manifest.Warning{
+					Resource: id,
+					Subject:  s.result.Diagnostic(id),
+					Related:  related,
+					Category: manifest.WarnUnrelatedFailure,
+					Message:  info.Message,
+					Detail:   detail,
+				},
+			)
 		}
 	}
 	for root, victims := range byRoot {
@@ -265,8 +327,18 @@ func (s *selectionSide) unrelatedFailures(raw *Result, unrelated map[manifest.Na
 		if _, needed := required[root]; needed {
 			continue
 		}
-		if detail, related := children(victims); len(detail) > 0 {
-			warnings = append(warnings, manifest.Warning{Resource: root, Subject: s.result.Diagnostic(root), Related: related, Category: manifest.WarnUnrelatedFailure, Message: "not found; required by", Detail: detail})
+		if detail, related := s.unrelatedWarningChildren(victims, unrelated, covered); len(detail) > 0 {
+			warnings = append(
+				warnings,
+				manifest.Warning{
+					Resource: root,
+					Subject:  s.result.Diagnostic(root),
+					Related:  related,
+					Category: manifest.WarnUnrelatedFailure,
+					Message:  "not found; required by",
+					Detail:   detail,
+				},
+			)
 		}
 	}
 	for id, info := range unrelated {
@@ -280,10 +352,37 @@ func (s *selectionSide) unrelatedFailures(raw *Result, unrelated map[manifest.Na
 		for _, dep := range deps {
 			detail = append(detail, "blocked by "+s.result.Diagnostic(dep).String())
 		}
-		warnings = append(warnings, manifest.Warning{Resource: id, Subject: s.result.Diagnostic(id), Related: deps, Category: manifest.WarnUnrelatedFailure, Message: info.Message, Detail: detail})
+		warnings = append(
+			warnings,
+			manifest.Warning{
+				Resource: id,
+				Subject:  s.result.Diagnostic(id),
+				Related:  deps,
+				Category: manifest.WarnUnrelatedFailure,
+				Message:  info.Message,
+				Detail:   detail,
+			},
+		)
 	}
 	slices.SortFunc(warnings, func(a, b manifest.Warning) int { return a.Resource.Compare(b.Resource) })
 	return warnings
+}
+
+func (s *selectionSide) unrelatedWarningChildren(
+	ids []manifest.NamedResource,
+	unrelated map[manifest.NamedResource]store.StatusInfo,
+	covered map[manifest.NamedResource]bool,
+) ([]string, []manifest.NamedResource) {
+	var out []string
+	var related []manifest.NamedResource
+	for _, id := range ids {
+		if _, ok := unrelated[id]; ok {
+			out = append(out, s.result.Diagnostic(id).String())
+			related = append(related, id)
+			covered[id] = true
+		}
+	}
+	return out, related
 }
 
 func (s *selectionSide) prepareStatuses(name string) {
@@ -317,6 +416,15 @@ func (s *selectionSide) prepareStatuses(name string) {
 		}
 		add(id, info)
 	}
+	s.prepareFailedStatuses(name, seen, add)
+	s.describeBlockedStatuses(seen, blocked)
+}
+
+func (s *selectionSide) prepareFailedStatuses(
+	name string,
+	seen map[manifest.NamedResource]bool,
+	add func(manifest.NamedResource, store.StatusInfo),
+) {
 	for id := range s.run.Result.Failed {
 		if seen[id] {
 			continue
@@ -333,6 +441,12 @@ func (s *selectionSide) prepareStatuses(name string) {
 			add(id, info)
 		}
 	}
+}
+
+func (s *selectionSide) describeBlockedStatuses(
+	seen map[manifest.NamedResource]bool,
+	blocked map[manifest.NamedResource][]manifest.NamedResource,
+) {
 	for victim, blockers := range blocked {
 		roots := rootsOf(victim, s.run.Result.Blocked)
 		if len(roots) == 0 {
@@ -409,7 +523,7 @@ func nonResourceErrors(err error) error {
 
 func selectionError(sides []selectionSide, runErr error) (error, error) {
 	if runErr == nil {
-		return nil, nil
+		return nil, nil //nolint:nilnil // A nil result denotes successful absence.
 	}
 	selected := make([]error, len(sides))
 	remainders := make([]error, len(sides))
@@ -421,68 +535,86 @@ func selectionError(sides []selectionSide, runErr error) (error, error) {
 		remainders[i] = nonResourceErrors(remainder)
 		selected[i] = errors.Join(selectedFailures(side.result), remainders[i])
 	}
-	projectSides := func(mask uint) (error, error) {
-		if len(sides) == 1 {
-			return selected[0], remainders[0]
-		}
-		var chosen, remaining [2]error
-		for i := range sides {
-			if mask&(1<<i) != 0 {
-				chosen[i], remaining[i] = selected[i], remainders[i]
-			}
-		}
-		return joinSelectedErrors(chosen[0], chosen[1]), joinSelectedErrors(remaining[0], remaining[1])
-	}
-	var project func(error) (uint, bool, error, error)
-	project = func(err error) (uint, bool, error, error) {
-		if err == nil {
-			return 0, true, nil, nil
-		}
-		var mask uint
-		for i, side := range sides {
-			if side.run.Err != nil && errors.Is(side.run.Err, err) && errors.Is(err, side.run.Err) {
-				mask |= 1 << i
-			}
-		}
-		if mask != 0 {
-			selected, remainder := projectSides(mask)
-			return mask, true, selected, remainder
-		}
-		if joined, ok := err.(interface{ Unwrap() []error }); ok {
-			var projected, remaining []error
-			clean := true
-			for _, child := range joined.Unwrap() {
-				found, onlyTrees, selected, remainder := project(child)
-				projected, remaining = append(projected, selected), append(remaining, remainder)
-				mask, clean = mask|found, clean && onlyTrees
-			}
-			if mask != 0 {
-				if clean {
-					selected, remainder := projectSides(mask)
-					return mask, true, selected, remainder
-				}
-				return mask, false, errors.Join(projected...), errors.Join(remaining...)
-			}
-		} else if child := errors.Unwrap(err); child != nil {
-			if found, clean, selected, remainder := project(child); found != 0 {
-				return found, clean, selected, remainder
-			}
-		}
-		remainder := nonResourceErrors(err)
-		return 0, false, remainder, remainder
-	}
-	mask, _, projected, remainder := project(runErr)
+	mask, _, projected, remainder := projectSelectionError(runErr, sides, selected, remainders)
 	if mask == 0 {
-		selected, remaining := projectSides((1 << len(sides)) - 1)
+		selected, remaining := projectSelectionSides((1<<len(sides))-1, sides, selected, remainders)
 		return errors.Join(selected, projected), errors.Join(remaining, remainder)
 	}
 	return projected, remainder
 }
 
+func projectSelectionSides(
+	mask uint,
+	sides []selectionSide,
+	selected, remainders []error,
+) (error, error) {
+	if len(sides) == 1 {
+		return selected[0], remainders[0]
+	}
+	var chosen, remaining [2]error
+	for i := range sides {
+		if mask&(1<<i) != 0 {
+			chosen[i], remaining[i] = selected[i], remainders[i]
+		}
+	}
+	return joinSelectedErrors(chosen[0], chosen[1]), joinSelectedErrors(remaining[0], remaining[1])
+}
+
+func matchingSelectionSides(err error, sides []selectionSide) uint {
+	var mask uint
+	for i, side := range sides {
+		if side.run.Err != nil && errors.Is(side.run.Err, err) && errors.Is(err, side.run.Err) {
+			mask |= 1 << i
+		}
+	}
+	return mask
+}
+
+func projectSelectionError(
+	err error,
+	sides []selectionSide,
+	selected, remainders []error,
+) (uint, bool, error, error) {
+	if err == nil {
+		return 0, true, nil, nil
+	}
+	mask := matchingSelectionSides(err, sides)
+	if mask != 0 {
+		selected, remainder := projectSelectionSides(mask, sides, selected, remainders)
+		return mask, true, selected, remainder
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		var projected, remaining []error
+		clean := true
+		for _, child := range joined.Unwrap() {
+			found, onlyTrees, selected, remainder := projectSelectionError(child, sides, selected, remainders)
+			projected, remaining = append(projected, selected), append(remaining, remainder)
+			mask, clean = mask|found, clean && onlyTrees
+		}
+		if mask != 0 && clean {
+			selected, remainder := projectSelectionSides(mask, sides, selected, remainders)
+			return mask, true, selected, remainder
+		}
+		if mask != 0 {
+			return mask, false, errors.Join(projected...), errors.Join(remaining...)
+		}
+	} else if child := errors.Unwrap(err); child != nil {
+		if found, clean, selected, remainder := projectSelectionError(child, sides, selected, remainders); found != 0 {
+			return found, clean, selected, remainder
+		}
+	}
+	remainder := nonResourceErrors(err)
+	return 0, false, remainder, remainder
+}
+
 func joinSelectedErrors(orig, current error) error {
 	switch {
 	case orig != nil && current != nil:
-		return errors.Join(errors.New("both snapshots had reconcile failures"), fmt.Errorf("orig snapshot: %w", orig), fmt.Errorf("current snapshot: %w", current))
+		return errors.Join(
+			errors.New("both snapshots had reconcile failures"),
+			fmt.Errorf("orig snapshot: %w", orig),
+			fmt.Errorf("current snapshot: %w", current),
+		)
 	case orig != nil:
 		return fmt.Errorf("orig snapshot: %w", orig)
 	case current != nil:

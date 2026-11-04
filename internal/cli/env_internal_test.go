@@ -1,0 +1,297 @@
+package cli
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/spf13/cobra"
+
+	"github.com/home-operations/flate/internal/assert"
+)
+
+// TestEnv_FlagFromEnv covers the happy path: a flag the user did not
+// pass on the command line is filled from FLATE_<NAME>. We point
+// FLATE_PATH at the fixture and run `build all` without `--path`;
+// the build succeeds and emits the fixture's ConfigMap, proving the
+// orchestrator saw the env-supplied path.
+//
+
+func TestEnv_FlagFromEnv(t *testing.T) {
+	path := writeFixture(t)
+	t.Setenv("FLATE_PATH", path)
+	stdout, stderr, code := runCLI(t, "build", "all")
+	assert.FatalIf(t, code != 0, "build all (FLATE_PATH) exited %d: %s", code, stderr)
+	assert.ErrorIf(
+		t,
+		!strings.Contains(stdout, "kind: ConfigMap"),
+		"expected ConfigMap in render via FLATE_PATH:\n%s",
+		stdout,
+	)
+}
+
+// TestEnv_CLIFlagOverridesEnv pins the precedence rule: a CLI flag
+// always wins over the env var, even when env points at something
+// broken. Without that rule the user can't override an ambient
+// FLATE_PATH set in their shell rc.
+//
+
+func TestEnv_CLIFlagOverridesEnv(t *testing.T) {
+	path := writeFixture(t)
+	t.Setenv("FLATE_PATH", "/nonexistent/path/here")
+	stdout, stderr, code := runCLI(t, "build", "all", "--path", path)
+	assert.FatalIf(t, code != 0, "build all --path (vs FLATE_PATH) exited %d: %s", code, stderr)
+	assert.ErrorIf(
+		t,
+		!strings.Contains(stdout, "kind: ConfigMap"),
+		"CLI --path should have won over bad FLATE_PATH:\n%s",
+		stdout,
+	)
+}
+
+// TestEnv_SliceFlagParsesCSV covers comma-separated parsing for
+// pflag.StringSliceVar (`--skip-kinds`). Setting FLATE_SKIP_KINDS to
+// "ConfigMap,Secret" should drop the fixture's only ConfigMap from
+// the render, leaving an empty stream.
+//
+
+func TestEnv_SliceFlagParsesCSV(t *testing.T) {
+	t.Run("render", func(t *testing.T) {
+		path := writeFixture(t)
+		t.Setenv("FLATE_SKIP_KINDS", "ConfigMap,Secret")
+		stdout, stderr, code := runCLI(t, "build", "all", "--path", path)
+		assert.FatalIf(t, code != 0, "build all FLATE_SKIP_KINDS=... exited %d: %s", code, stderr)
+		assert.ErrorIf(
+			t,
+			strings.Contains(stdout, "kind: ConfigMap"),
+			"FLATE_SKIP_KINDS=ConfigMap,Secret should have filtered ConfigMap:\n%s",
+			stdout,
+		)
+	})
+	for _, tc := range []struct {
+		name, env string
+		args      []string
+		want      []string
+		setEnv    bool
+		changed   bool
+	}{
+		{name: "defaults", want: []string{"Secret", "CustomResourceDefinition"}},
+		{name: "replacement flag", args: []string{"--skip-kinds", "Job"}, want: []string{"Job"}, changed: true},
+		{name: "empty flag", args: []string{"--skip-kinds", ""}, want: []string{}, changed: true},
+		{name: "environment", env: "ConfigMap,Secret", setEnv: true, want: []string{"ConfigMap", "Secret"}, changed: true},
+		{name: "empty environment", setEnv: true, want: []string{}, changed: true},
+		{name: "flag overrides environment", env: "ConfigMap", setEnv: true, args: []string{"--skip-kinds", "Secret"}, want: []string{"Secret"}, changed: true},
+		{name: "empty flag overrides environment", env: "ConfigMap", setEnv: true, args: []string{"--skip-kinds", ""}, want: []string{}, changed: true},
+		{name: "flag overrides empty environment", setEnv: true, args: []string{"--skip-kinds", "Job"}, want: []string{"Job"}, changed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.setEnv {
+				t.Setenv("FLATE_SKIP_KINDS", tc.env)
+			}
+			cmd := &cobra.Command{}
+			var flags commonFlags
+			bindCommon(cmd.Flags(), &flags)
+			assert.NoError(t, cmd.Flags().Parse(tc.args))
+			assert.NoError(t, applyEnvVars(cmd))
+			assert.Diff(t, flags.skipKinds, tc.want)
+			assert.Equal(t, cmd.Flags().Changed("skip-kinds"), tc.changed)
+		})
+	}
+}
+
+// TestEnv_InvalidValueReportsKey covers the loud-failure path: an
+// env-supplied value that pflag rejects must surface the FLATE_*
+// key in the error so the user can find the offending shell export.
+// We use FLATE_CONCURRENCY (an int) with a non-integer to drive
+// IntVar.Set into its error branch — that path returns a typed
+// error, unlike --log-level's enum check which runs after env
+// binding.
+//
+
+func TestEnv_InvalidValueReportsKey(t *testing.T) {
+	path := writeFixture(t)
+	t.Setenv("FLATE_CONCURRENCY", "notanint")
+	_, stderr, code := runCLI(t, "build", "all", "--path", path)
+	assert.FatalIf(t, code == 0, "%v", "expected non-zero exit for invalid FLATE_CONCURRENCY")
+	assert.ErrorIf(
+		t,
+		!strings.Contains(stderr, "FLATE_CONCURRENCY"),
+		"error should name the offending env key: %q",
+		stderr,
+	)
+}
+
+// TestEnv_PersistentFlagFromEnv exercises the root-level persistent
+// flag path (FLATE_LOG_LEVEL). An invalid level surfaces through the
+// existing setLogLevel validator, proving env binding happens
+// before validation runs.
+//
+
+func TestEnv_PersistentFlagFromEnv(t *testing.T) {
+	path := writeFixture(t)
+	t.Setenv("FLATE_LOG_LEVEL", "bogus")
+	_, stderr, code := runCLI(t, "build", "all", "--path", path)
+	assert.FatalIf(t, code == 0, "%v", "expected non-zero exit for FLATE_LOG_LEVEL=bogus")
+	assert.ErrorIf(
+		t,
+		!strings.Contains(stderr, "invalid --log-level"),
+		"env-bound log-level should still trip setLogLevel: %q",
+		stderr,
+	)
+}
+
+// TestEnv_HelpVersionAreSkipped guards against the worst-case footgun:
+// FLATE_HELP=true must not silently turn every invocation into a help
+// printout. The skip list keeps cobra's `--help` and `--version`
+// short-circuits CLI-only.
+//
+
+func TestEnv_HelpVersionAreSkipped(t *testing.T) {
+	path := writeFixture(t)
+	t.Setenv("FLATE_HELP", "true")
+	t.Setenv("FLATE_VERSION", "true")
+	stdout, stderr, code := runCLI(t, "build", "all", "--path", path)
+	assert.FatalIf(t, code != 0, "FLATE_HELP/VERSION should be ignored, but build exited %d: %s", code, stderr)
+	assert.ErrorIf(
+		t,
+		!strings.Contains(stdout, "kind: ConfigMap"),
+		"normal build output missing — env skip-list regressed:\n%s",
+		stdout,
+	)
+}
+
+// TestEnv_HelpAdvertisesEnvVars pins the discoverability requirement:
+// every documented flag should advertise its env key in `--help`.
+// Persistent flags that bubble through every subcommand (--log-level,
+// --path) are checked at the leaf-command help so we exercise the
+// shared-pointer dedupe in annotateEnvUsage (each annotation should
+// land exactly once even though the flag is inherited by every leaf).
+//
+//nolint:paralleltest // CLI execution changes process-wide logging.
+func TestEnv_HelpAdvertisesEnvVars(t *testing.T) {
+	stdout, _, code := runCLI(t, "build", "all", "--help")
+	assert.FatalIf(t, code != 0, "`build all --help` exited %d", code)
+	for _, want := range []string{
+		"[env: FLATE_PATH]",
+		"[env: FLATE_LOG_LEVEL]",
+		"[env: FLATE_ONLY_KINDS]",
+		"[env: FLATE_SKIP_KINDS]",
+		"[env: FLATE_CONCURRENCY]",
+		"[env: FLATE_CACHE_DIR]",
+	} {
+		assert.ErrorIf(t, !strings.Contains(stdout, want), "--help missing %q\n%s", want, stdout)
+		assert.ErrorIf(
+			t,
+			strings.Count(stdout, want) > 1,
+			"--help duplicated %q (annotateEnvUsage dedupe regressed)",
+			want,
+		)
+	}
+	for _, banned := range []string{"[env: FLATE_HELP]"} {
+		assert.ErrorIf(
+			t,
+			strings.Contains(stdout, banned),
+			"--help should not advertise %q — env binding is skipped for it",
+			banned,
+		)
+	}
+}
+
+// TestEnvKey pins the kebab→snake transform so future refactors don't
+// silently change which env vars users export.
+func TestEnvKey(t *testing.T) {
+	t.Parallel()
+	for in, want := range map[string]string{
+		"path":         "FLATE_PATH",
+		"path-orig":    "FLATE_PATH_ORIG",
+		"log-level":    "FLATE_LOG_LEVEL",
+		"skip-kinds":   "FLATE_SKIP_KINDS",
+		"api-versions": "FLATE_API_VERSIONS",
+	} {
+		{
+			got := envKey(in)
+			assert.ErrorIf(t, got != want, "envKey(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+//nolint:paralleltest // CLI execution changes process-wide logging.
+func TestRun_RemovedFlagsRejected(t *testing.T) {
+	for _, verb := range []string{"build", "test", "diff", "get"} {
+		flags := []string{
+			"substitute",
+			"no-hooks",
+			"show-only",
+			"force-generic-provider",
+			"is-upgrade",
+			"allow-missing-secrets",
+			"allow-missing-crds",
+			"stream",
+			"skip-crds",
+			"skip-secrets",
+			"only-crds",
+			"krmignore",
+			"profile",
+			"profile-out",
+			"skip-schema-validation",
+			"source-retry-attempts",
+			"source-retry-min-wait",
+			"source-retry-max-wait",
+			"source-retry-jitter",
+			"helm-template-cache-mb",
+			"helm-render-cache-mb",
+			"kustomize-render-cache-mb",
+		}
+		if verb != "build" {
+			flags = append(flags, "only-kinds")
+		}
+		for _, flag := range flags {
+			t.Run(verb+"/"+flag, func(t *testing.T) {
+				_, stderr, code := runCLI(t, verb, "all", "--"+flag)
+				assert.FatalIf(
+					t,
+					code != 1 || !strings.Contains(stderr, "unknown flag: --"+flag),
+					"removed flag: exit=%d stderr=%s",
+					code,
+					stderr,
+				)
+				help, _, code := runCLI(t, verb, "all", "--help")
+				assert.FatalIf(
+					t,
+					code != 0 || strings.Contains(help, "--"+flag) || strings.Contains(help, envKey(flag)),
+					"obsolete option advertised: exit=%d help=%s",
+					code,
+					help,
+				)
+			})
+		}
+	}
+}
+
+//nolint:paralleltest // CLI execution changes process-wide logging.
+func TestRun_RemovedShorthandRejected(t *testing.T) {
+	_, stderr, code := runCLI(t, "build", "all", "-s", "templates/main.yaml")
+	assert.FatalIf(
+		t,
+		code != 1 || !strings.Contains(stderr, "unknown shorthand flag"),
+		"removed shorthand: exit=%d stderr=%s",
+		code,
+		stderr,
+	)
+}
+
+//nolint:paralleltest // test changes the process environment or working directory.
+func TestEnv_RemovedOptionsIgnored(t *testing.T) {
+	path := writeFixture(t)
+	for _, key := range []string{"SUBSTITUTE", "NO_HOOKS", "SHOW_ONLY", "FORCE_GENERIC_PROVIDER", "IS_UPGRADE", "ALLOW_MISSING_SECRETS", "ALLOW_MISSING_CRDS", "STREAM", "SKIP_CRDS", "SKIP_SECRETS", "ONLY_CRDS", "KRMIGNORE", "SKIP_SCHEMA_VALIDATION", "SOURCE_RETRY_ATTEMPTS", "SOURCE_RETRY_MIN_WAIT", "SOURCE_RETRY_MAX_WAIT", "SOURCE_RETRY_JITTER", "HELM_TEMPLATE_CACHE_MB", "HELM_RENDER_CACHE_MB", "KUSTOMIZE_RENDER_CACHE_MB"} {
+		t.Setenv("FLATE_"+key, "invalid-value")
+	}
+	stdout, stderr, code := runCLI(t, "build", "all", "--path", path)
+	assert.FatalIf(
+		t,
+		code != 0 || !strings.Contains(stdout, "kind: ConfigMap"),
+		"obsolete environment keys affected render: exit=%d stdout=%s stderr=%s",
+		code,
+		stdout,
+		stderr,
+	)
+}

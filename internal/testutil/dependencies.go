@@ -76,15 +76,30 @@ spec:
 func WriteFilteredOrderingCluster(tb testing.TB, root, greeting string, brokenSource bool) {
 	tb.Helper()
 	WriteFile(tb, root, "kustomization.yaml", "resources: [flux]\n")
-	WriteFile(tb, root, "flux/kustomization.yaml", "resources: [selected.yaml, monitor-a.yaml, monitor-b.yaml, source.yaml]\n")
+	WriteFile(
+		tb,
+		root,
+		"flux/kustomization.yaml",
+		"resources: [selected.yaml, monitor-a.yaml, monitor-b.yaml, source.yaml]\n",
+	)
 	// Excluded resources are marked Ready, so a rejected CEL gate makes
 	// the dependsOn prune necessary even when the target is skipped.
 	selected := dependencyKS("selected", "apps/selected", "monitor-a")
-	selected = strings.Replace(selected, "  - name: monitor-a\n", "  - name: monitor-a\n    readyExpr: 'dep.isHealthy()'\n", 1)
+	selected = strings.Replace(
+		selected,
+		"  - name: monitor-a\n",
+		"  - name: monitor-a\n    readyExpr: 'dep.isHealthy()'\n",
+		1,
+	)
 	WriteFile(tb, root, "flux/selected.yaml", selected+"  postBuild:\n    substitute:\n      GREETING: "+greeting+"\n")
 	for _, name := range []string{"monitor-a", "monitor-b"} {
 		WriteFile(tb, root, "flux/"+name+".yaml", dependencyKS(name, "apps/"+name, ""))
-		WriteFile(tb, root, "apps/"+name+"/kustomization.yaml", "resources:\n- missing.yaml\n- "+map[string]string{"monitor-a": "bundle.yaml", "monitor-b": "hr.yaml"}[name]+"\n")
+		WriteFile(
+			tb,
+			root,
+			"apps/"+name+"/kustomization.yaml",
+			"resources:\n- missing.yaml\n- "+map[string]string{"monitor-a": "bundle.yaml", "monitor-b": "hr.yaml"}[name]+"\n",
+		)
 	}
 	chart := "  chartRef: {kind: HelmChart, name: shared-chart}\n"
 	if brokenSource {
@@ -190,7 +205,7 @@ func WriteSubstitutionProducerCluster(tb testing.TB, root, kind string) {
 	}
 	for _, ks := range []struct{ name, path, postBuild string }{
 		{"producer", "data", "  patches:\n  - target: {kind: " + kind + ", name: settings}\n    patch: |-\n      - op: replace\n        path: /data/VERSION\n        value: " + version + "\n"},
-		{"consumer", "app", "  postBuild: {substituteFrom: [{kind: " + kind + ", name: settings}]}\n"},
+		{"consumer", fixtureAppName, "  postBuild: {substituteFrom: [{kind: " + kind + ", name: settings}]}\n"},
 	} {
 		body := strings.Replace(dependencyKS(ks.name, ks.path, ""), "name: shared", "name: flux-system", 1)
 		WriteFile(tb, root, "flux/"+ks.name+".yaml", body+ks.postBuild)
@@ -199,10 +214,20 @@ func WriteSubstitutionProducerCluster(tb testing.TB, root, kind string) {
 	if kind == "Secret" {
 		generator = "secretGenerator"
 	}
-	WriteFile(tb, root, "data/kustomization.yaml", "namespace: flux-system\ngeneratorOptions: {disableNameSuffixHash: true}\n"+generator+":\n- name: settings\n  envs: [version.env]\n")
+	WriteFile(
+		tb,
+		root,
+		"data/kustomization.yaml",
+		"namespace: flux-system\ngeneratorOptions: {disableNameSuffixHash: true}\n"+generator+":\n- name: settings\n  envs: [version.env]\n",
+	)
 	WriteFile(tb, root, "data/version.env", "VERSION=discovered\n")
 	WriteFile(tb, root, "app/kustomization.yaml", "namespace: flux-system\nresources: [cm.yaml]\n")
-	WriteFile(tb, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\ndata: {version: '${VERSION:=empty}'}\n")
+	WriteFile(
+		tb,
+		root,
+		"app/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\ndata: {version: '${VERSION:=empty}'}\n",
+	)
 }
 
 // WriteSubstitutionCycleCluster creates mutually dependent file-backed substitution producers.
@@ -212,8 +237,20 @@ func WriteSubstitutionCycleCluster(tb testing.TB, root string) {
 	WriteFile(tb, root, "flux/kustomization.yaml", "resources: [a.yaml, b.yaml]\n")
 	for _, pair := range []struct{ name, peer string }{{"a", "b"}, {"b", "a"}} {
 		body := strings.Replace(dependencyKS(pair.name, pair.name, ""), "name: shared", "name: flux-system", 1)
-		WriteFile(tb, root, "flux/"+pair.name+".yaml", body+"  postBuild: {substituteFrom: [{kind: ConfigMap, name: "+pair.peer+"-settings}]}\n")
+		WriteFile(
+			tb,
+			root,
+			"flux/"+pair.name+".yaml",
+			body+"  postBuild: {substituteFrom: [{kind: ConfigMap, name: "+pair.peer+"-settings}]}\n",
+		)
 		WriteFile(tb, root, pair.name+"/kustomization.yaml", "namespace: flux-system\nresources: [settings.yaml]\n")
-		WriteFile(tb, root, pair.name+"/settings.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+pair.name+"-settings}\ndata: {VALUE: "+pair.name+"}\n")
+		WriteFile(
+			tb,
+			root,
+			pair.name+"/settings.yaml",
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+pair.name+"-settings}\ndata: {VALUE: "+pair.name+"}\n",
+		)
 	}
 }
+
+const fixtureAppName = "app"

@@ -144,34 +144,10 @@ func unavailableReason(info store.StatusInfo, side Side) string {
 // Producer identity excludes paths; counts measure withheld document entries.
 func Suppress(orig, current Snapshot) ([]manifest.DocumentBatch, []manifest.DocumentBatch, []Suppression) {
 	plans := selectedSuppressionPlans(orig, current)
-	keep := func(snapshot Snapshot, side Side) []manifest.DocumentBatch {
-		out := make([]manifest.DocumentBatch, 0, len(snapshot.Manifests))
-		for _, batch := range snapshot.Manifests {
-			if batch.Parent == nil {
-				out = append(out, batch)
-				continue
-			}
-			id := batch.Parent.Named()
-			key := id
-			if comparison, ok := snapshot.ProducerKeys[id]; ok {
-				key = comparison
-			}
-			plan, ok := plans[key]
-			if !ok {
-				out = append(out, batch)
-				continue
-			}
-			plan.parent = objectParent(batch.Parent)
-			if plan.side == SideBoth || plan.side != side {
-				plan.count += len(batch.Documents)
-			}
-			plans[key] = plan
-		}
-		return out
-	}
-	l, r := keep(orig, SideOrig), keep(current, SideCurrent)
+	l, r := orig.keep(plans, SideOrig), current.keep(plans, SideCurrent)
 	suppressed := slices.Grow([]Suppression(nil), len(plans))
-	for key, plan := range plans {
+	for key := range plans {
+		plan := plans[key]
 		if plan.count == 0 && !plan.discloseEmpty {
 			continue
 		}
@@ -190,4 +166,30 @@ func Suppress(orig, current Snapshot) ([]manifest.DocumentBatch, []manifest.Docu
 		return a.Parent.Compare(b.Parent.NamedResource)
 	})
 	return l, r, suppressed
+}
+
+func (s Snapshot) keep(plans map[manifest.NamedResource]suppressionPlan, side Side) []manifest.DocumentBatch {
+	out := make([]manifest.DocumentBatch, 0, len(s.Manifests))
+	for _, batch := range s.Manifests {
+		if batch.Parent == nil {
+			out = append(out, batch)
+			continue
+		}
+		id := batch.Parent.Named()
+		key := id
+		if comparison, ok := s.ProducerKeys[id]; ok {
+			key = comparison
+		}
+		plan, ok := plans[key]
+		if !ok {
+			out = append(out, batch)
+			continue
+		}
+		plan.parent = objectParent(batch.Parent)
+		if plan.side == SideBoth || plan.side != side {
+			plan.count += len(batch.Documents)
+		}
+		plans[key] = plan
+	}
+	return out
 }

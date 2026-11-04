@@ -20,7 +20,7 @@ func resolveRefHash(repo *git.Repository, ref *sourcev1.GitRepositoryRef, origin
 	selected := (*manifest.GitRepositoryRef)(ref)
 	kind, value := selected.Effective()
 	switch kind {
-	case "commit":
+	case commitReference:
 		if err := selected.Validate(); err != nil {
 			return plumbing.ZeroHash, manifest.NewError(manifest.ErrInput, err, "")
 		}
@@ -71,7 +71,12 @@ func validateCommitBranch(repo *git.Repository, commit *object.Commit, branch st
 	reachable, err := commit.IsAncestor(branchObj)
 	if err != nil {
 		if errors.Is(err, plumbing.ErrObjectNotFound) {
-			return fmt.Errorf("%w: incomplete history for commit %s from branch %q", errRefUnavailable, commit.Hash, branch)
+			return fmt.Errorf(
+				"%w: incomplete history for commit %s from branch %q",
+				errRefUnavailable,
+				commit.Hash,
+				branch,
+			)
 		}
 		return fmt.Errorf("check commit %s reachability from branch %q: %w", commit.Hash, branch, err)
 	}
@@ -83,7 +88,11 @@ func validateCommitBranch(repo *git.Repository, commit *object.Commit, branch st
 
 func lookupBranch(repo *git.Repository, name string, originFirst bool) (plumbing.Hash, error) {
 	if originFirst {
-		return lookupReference(repo, plumbing.NewRemoteReferenceName("origin", name), plumbing.NewBranchReferenceName(name))
+		return lookupReference(
+			repo,
+			plumbing.NewRemoteReferenceName("origin", name),
+			plumbing.NewBranchReferenceName(name),
+		)
 	}
 	return lookupReference(repo, plumbing.NewBranchReferenceName(name), plumbing.NewRemoteReferenceName("origin", name))
 }
@@ -165,7 +174,7 @@ func resolveSemver(repo *git.Repository, expr string) (plumbing.Hash, error) {
 		name := ref.Name().Short()
 		v, verr := semver.NewVersion(name)
 		if verr != nil {
-			return nil
+			return nil //nolint:nilerr // This optional cache miss deliberately discards an unavailable prior result.
 		}
 		if !constraint.Check(v) {
 			return nil
@@ -175,7 +184,7 @@ func resolveSemver(repo *git.Repository, expr string) (plumbing.Hash, error) {
 		}
 		return nil
 	}); err != nil {
-		return plumbing.ZeroHash, err
+		return plumbing.ZeroHash, fmt.Errorf("enumerate git references: %w", err)
 	}
 	if best == nil {
 		return plumbing.ZeroHash, fmt.Errorf("%w: no tag satisfies semver %q", errRefUnavailable, expr)

@@ -34,7 +34,11 @@ func documentMaps(docs []manifest.DocOccurrence, err error) ([]map[string]any, e
 }
 
 // RenderMaps projects successful renderer outcomes for map assertions.
-func RenderMaps(docs []manifest.DocOccurrence, receipt *manifest.RenderReceipt, err error) ([]map[string]any, *manifest.RenderReceipt, error) {
+func RenderMaps(
+	docs []manifest.DocOccurrence,
+	receipt *manifest.RenderReceipt,
+	err error,
+) ([]map[string]any, *manifest.RenderReceipt, error) {
 	maps, err := documentMaps(docs, err)
 	return maps, receipt, err
 }
@@ -51,9 +55,14 @@ func DecodeRender(data []byte) ([]map[string]any, error) {
 }
 
 // ParseChildren prepares mapping fixtures for inventory assertions.
-func ParseChildren[T any](parser interface {
-	ParseChildren(manifest.BaseManifest, []manifest.DocOccurrence, manifest.ParseDocOptions) ([]T, []manifest.DocOccurrence, []manifest.DocOccurrence)
-}, parent manifest.BaseManifest, docs []map[string]any, opts manifest.ParseDocOptions) ([]T, []map[string]any) {
+func ParseChildren[T any](
+	parser interface {
+		ParseChildren(manifest.BaseManifest, []manifest.DocOccurrence, manifest.ParseDocOptions) ([]T, []manifest.DocOccurrence, []manifest.DocOccurrence)
+	},
+	parent manifest.BaseManifest,
+	docs []map[string]any,
+	opts manifest.ParseDocOptions,
+) ([]T, []map[string]any) {
 	children, visible, failures := parser.ParseChildren(parent, DocumentOccurrences(docs), opts)
 	if err := manifest.DocumentFailure(failures); err != nil {
 		panic(err)

@@ -28,6 +28,8 @@ func (s Sources) LocalSourceArtifact(id manifest.NamedResource, read store.Artif
 }
 
 // Declaration returns the captured chart-source declaration.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (s Sources) Declaration(id manifest.NamedResource) manifest.BaseManifest {
 	return s.reader.GetDeclaration(id)
 }

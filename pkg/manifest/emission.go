@@ -7,6 +7,7 @@ import (
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 )
 
+//nolint:gochecknoglobals // Ownership keys form an immutable shared inventory.
 var ownershipKeys = [...][2]string{
 	{FluxKustomizeDomain + "/name", FluxKustomizeDomain + "/namespace"},
 	{HelmReleaseDomain + "/name", HelmReleaseDomain + "/namespace"},
@@ -30,6 +31,8 @@ type EmissionPolicy struct {
 }
 
 // SelectDocument reports output and child admission for a document.
+//
+//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (p EmissionPolicy) SelectDocument(doc map[string]any, skipKinds []string) (bool, bool) {
 	visible := len(skipKinds) == 0 || !slices.Contains(skipKinds, DocKind(doc))
 	return visible, visible || !p.ExcludeChildren
@@ -48,7 +51,7 @@ func IsOwnershipLabel(key string) bool {
 // WithoutOwnershipLabels removes reconciliation stamps from a borrowed declaration document.
 // The returned document MUST remain immutable and can share unchanged containers.
 func WithoutOwnershipLabels(document map[string]any) map[string]any {
-	metadata, _ := document["metadata"].(map[string]any)
+	metadata, _ := document[metadataKey].(map[string]any)
 	labels, _ := metadata["labels"].(map[string]any)
 	stamped := false
 	for key := range labels {
@@ -69,13 +72,18 @@ func WithoutOwnershipLabels(document map[string]any) map[string]any {
 		metadata["labels"] = labels
 	}
 	out := maps.Clone(document)
-	out["metadata"] = metadata
+	out[metadataKey] = metadata
 	return out
 }
 
 // EmissionPolicy returns Kustomization overlays and target-namespace admission.
 func (k *Kustomization) EmissionPolicy() EmissionPolicy {
-	p := EmissionPolicy{OwnerKeys: ownershipKeys[0], OwnerValues: [2]string{k.Name, k.Namespace}, Owner: k.Name != "" && !k.hasDiagnostic, Namespace: k.TargetNamespace}
+	p := EmissionPolicy{
+		OwnerKeys:   ownershipKeys[0],
+		OwnerValues: [2]string{k.Name, k.Namespace},
+		Owner:       k.Name != "" && !k.hasDiagnostic,
+		Namespace:   k.TargetNamespace,
+	}
 	p.DocumentScope = k.hasDiagnostic
 	if k.CommonMetadata != nil {
 		p.Labels, p.Annotations = k.CommonMetadata.Labels, k.CommonMetadata.Annotations
@@ -86,9 +94,11 @@ func (k *Kustomization) EmissionPolicy() EmissionPolicy {
 
 // EmissionPolicy returns HelmRelease overlays, hook exclusions and child admission.
 func (h *HelmRelease) EmissionPolicy() EmissionPolicy {
-	p := EmissionPolicy{OwnerKeys: ownershipKeys[1], OwnerValues: [2]string{h.Name, h.Namespace}, Owner: true,
+	p := EmissionPolicy{
+		OwnerKeys: ownershipKeys[1], OwnerValues: [2]string{h.Name, h.Namespace}, Owner: true,
 		CommonFirst: true, HookAnnotation: "helm.sh/hook", CommonExcludedKind: KindCustomResourceDefinition,
-		PreserveEmptyOwnerNamespace: true, Namespace: h.ReleaseNamespace(), ExcludeChildren: true}
+		PreserveEmptyOwnerNamespace: true, Namespace: h.ReleaseNamespace(), ExcludeChildren: true,
+	}
 	if h.CommonMetadata != nil {
 		p.Labels, p.Annotations = h.CommonMetadata.Labels, h.CommonMetadata.Annotations
 	}
@@ -97,8 +107,10 @@ func (h *HelmRelease) EmissionPolicy() EmissionPolicy {
 
 // EmissionPolicy returns ResourceSet overlays and internal-only namespace admission.
 func (r *ResourceSet) EmissionPolicy() EmissionPolicy {
-	p := EmissionPolicy{OwnerKeys: ownershipKeys[2], OwnerValues: [2]string{r.Name, r.Namespace}, Owner: true,
-		PreserveEmptyOwnerNamespace: true, Namespace: r.Namespace, InternalNamespace: true}
+	p := EmissionPolicy{
+		OwnerKeys: ownershipKeys[2], OwnerValues: [2]string{r.Name, r.Namespace}, Owner: true,
+		PreserveEmptyOwnerNamespace: true, Namespace: r.Namespace, InternalNamespace: true,
+	}
 	if r.CommonMetadata != nil {
 		p.Labels, p.Annotations = r.CommonMetadata.Labels, r.CommonMetadata.Annotations
 	}
@@ -106,12 +118,16 @@ func (r *ResourceSet) EmissionPolicy() EmissionPolicy {
 }
 
 // MatchesNamespace reports whether the target can belong to the producer's namespace projection.
+//
+//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (p EmissionPolicy) MatchesNamespace(target NamedResource) bool {
 	return p.InternalNamespace || p.ExcludeChildren || p.Namespace == "" || HasEnvsubstReference(p.Namespace) ||
 		target.Namespace == "" || !target.KindInfo().Namespaced() || target.Namespace == p.Namespace
 }
 
 // Stamp applies producer overlays to caller-owned decoded documents before substitution.
+//
+//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (p EmissionPolicy) Stamp(docs []DocOccurrence) {
 	if !p.Owner && len(p.Labels) == 0 && len(p.Annotations) == 0 {
 		return
@@ -120,45 +136,19 @@ func (p EmissionPolicy) Stamp(docs []DocOccurrence) {
 		if occurrence.Err != nil || occurrence.Document == nil {
 			continue
 		}
-		doc := occurrence.Document
-		md := EnsureMetadata(doc)
-		hook := func() bool {
-			if p.HookAnnotation == "" {
-				return false
-			}
-			annotations, _ := md["annotations"].(map[string]any)
-			_, found := annotations[p.HookAnnotation]
-			return found
-		}
-		owner := func() {
-			if !p.Owner || hook() {
-				return
-			}
-			labels, _ := md["labels"].(map[string]any)
-			if labels == nil {
-				labels = make(map[string]any, 2)
-				md["labels"] = labels
-			}
-			labels[p.OwnerKeys[0]] = p.OwnerValues[0]
-			if p.OwnerValues[1] != "" || p.PreserveEmptyOwnerNamespace {
-				labels[p.OwnerKeys[1]] = p.OwnerValues[1]
-			}
-		}
-		if !p.CommonFirst {
-			owner()
-		}
-		if !hook() && (p.CommonExcludedKind == "" || DocKind(doc) != p.CommonExcludedKind) {
-			MergeStringMap(md, "labels", p.Labels)
-			MergeStringMap(md, "annotations", p.Annotations)
-		}
-		if p.CommonFirst {
-			owner()
-		}
+		stampDocument(&p, occurrence.Document)
 	}
 }
 
 // SelectOutput reports whether this producer's batch or document matches requested output scope.
-func (p EmissionPolicy) SelectOutput(doc map[string]any, roots []NamedResource, namespaces map[string]struct{}, labels map[string]string) bool {
+//
+//nolint:gocritic // Preserve the existing value API and its snapshot semantics.
+func (p EmissionPolicy) SelectOutput(
+	doc map[string]any,
+	roots []NamedResource,
+	namespaces map[string]struct{},
+	labels map[string]string,
+) bool {
 	if !p.DocumentScope {
 		return true
 	}
@@ -173,7 +163,7 @@ func (p EmissionPolicy) SelectOutput(doc map[string]any, roots []NamedResource, 
 			return false
 		}
 	}
-	md, _ := doc["metadata"].(map[string]any)
+	md, _ := doc[metadataKey].(map[string]any)
 	actual, _ := md["labels"].(map[string]any)
 	for key, value := range labels {
 		if got, ok := actual[key]; !ok || got != value {
@@ -181,4 +171,44 @@ func (p EmissionPolicy) SelectOutput(doc map[string]any, roots []NamedResource, 
 		}
 	}
 	return true
+}
+
+const (
+	ownerLabelCount = 2
+)
+
+func stampDocument(p *EmissionPolicy, doc map[string]any) {
+	md := EnsureMetadata(doc)
+	hook := func() bool {
+		if p.HookAnnotation == "" {
+			return false
+		}
+		annotations, _ := md[annotationsKey].(map[string]any)
+		_, found := annotations[p.HookAnnotation]
+		return found
+	}
+	owner := func() {
+		if !p.Owner || hook() {
+			return
+		}
+		labels, _ := md["labels"].(map[string]any)
+		if labels == nil {
+			labels = make(map[string]any, ownerLabelCount)
+			md["labels"] = labels
+		}
+		labels[p.OwnerKeys[0]] = p.OwnerValues[0]
+		if p.OwnerValues[1] != "" || p.PreserveEmptyOwnerNamespace {
+			labels[p.OwnerKeys[1]] = p.OwnerValues[1]
+		}
+	}
+	if !p.CommonFirst {
+		owner()
+	}
+	if !hook() && (p.CommonExcludedKind == "" || DocKind(doc) != p.CommonExcludedKind) {
+		MergeStringMap(md, "labels", p.Labels)
+		MergeStringMap(md, annotationsKey, p.Annotations)
+	}
+	if p.CommonFirst {
+		owner()
+	}
 }

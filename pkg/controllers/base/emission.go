@@ -2,6 +2,7 @@ package base
 
 import (
 	"context"
+	"fmt"
 	"slices"
 
 	"github.com/home-operations/flate/pkg/loader"
@@ -11,11 +12,18 @@ import (
 
 // ParseChildren selects output and retains authoritative sanitized child documents.
 // The returned objects and maps MUST remain immutable after publication.
-func (c *Controller) ParseChildren(parent manifest.BaseManifest, docs []manifest.DocOccurrence, opts manifest.ParseDocOptions) ([]store.Child, []manifest.DocOccurrence, []manifest.DocOccurrence) {
+func (c *Controller) ParseChildren(
+	parent manifest.BaseManifest,
+	docs []manifest.DocOccurrence,
+	opts manifest.ParseDocOptions,
+) ([]store.Child, []manifest.DocOccurrence, []manifest.DocOccurrence) {
 	children, visible, failures := loader.ParseChildren(parent, docs, opts, c.SkipKinds)
 	if c.Store != nil {
 		for i, child := range children {
-			if existing := c.Store.GetObject(child.Obj.Named()); existing != nil && manifest.Equal(existing, child.Obj) {
+			if existing := c.Store.GetObject(
+				child.Obj.Named(),
+			); existing != nil &&
+				manifest.Equal(existing, child.Obj) {
 				children[i].Obj = existing
 			}
 		}
@@ -23,29 +31,47 @@ func (c *Controller) ParseChildren(parent manifest.BaseManifest, docs []manifest
 	return children, visible, failures
 }
 
-func (c *Controller) emit(ctx context.Context, id manifest.NamedResource, next *store.Emission, payloads map[manifest.NamedResource]*store.SourceArtifact) error {
+func (c *Controller) admitChildren(
+	ctx context.Context,
+	id manifest.NamedResource,
+	next *store.Emission,
+) ([]store.Child, bool, error) {
 	children := next.Children
 	cloned := false
-	if next.Reads.Valid() {
-		for i, child := range next.Children {
-			if child.Obj == nil || child.Obj.Named() == id {
-				continue
+	if !next.Reads.Valid() {
+		return children, cloned, nil
+	}
+	for i, child := range next.Children {
+		if child.Obj == nil || child.Obj.Named() == id {
+			continue
+		}
+		obj := manifest.MapDependsOn(child.Obj, c.DependencySubstitutions.Resolve, nil)
+		if obj != child.Obj {
+			if !cloned {
+				next.Children = slices.Clone(children)
+				cloned = true
 			}
-			obj := manifest.MapDependsOn(child.Obj, c.DependencySubstitutions.Resolve, nil)
-			if obj != child.Obj {
-				if !cloned {
-					next.Children = slices.Clone(children)
-					cloned = true
-				}
-				next.Children[i].Obj = obj
-			}
-			if _, err := c.KeepEmitted(ctx, id, next.Children[i], next.Reads); err != nil {
-				return err
-			}
+			next.Children[i].Obj = obj
+		}
+		if _, err := c.KeepEmitted(ctx, id, next.Children[i], next.Reads); err != nil {
+			return nil, false, err
 		}
 	}
-	if err := ctx.Err(); err != nil {
+	return children, cloned, nil
+}
+
+func (c *Controller) emit(
+	ctx context.Context,
+	id manifest.NamedResource,
+	next *store.Emission,
+	payloads map[manifest.NamedResource]*store.SourceArtifact,
+) error {
+	children, cloned, err := c.admitChildren(ctx, id, next)
+	if err != nil {
 		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context: %w", err)
 	}
 	c.Store.RecordEmitted(id, next, payloads)
 	if cloned && !next.Complete {

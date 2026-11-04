@@ -73,9 +73,9 @@ func (i StatusInfo) Outcome() Outcome {
 		default:
 			return OutcomePassed
 		}
-	default:
-		return OutcomePending
+	case StatusPending:
 	}
+	return OutcomePending
 }
 
 // IsUnavailable reports whether a producer's output cannot be compared.
@@ -83,9 +83,9 @@ func (i StatusInfo) IsUnavailable() bool {
 	switch i.Outcome() {
 	case OutcomeFailed, OutcomeBlocked, OutcomeSkipped, OutcomeSuspended:
 		return true
-	default:
-		return false
+	case OutcomePending, OutcomePassed, OutcomeUnchanged:
 	}
+	return false
 }
 
 // IsDependencyFailure reports whether the Failed status came from failed dependencies.
@@ -106,6 +106,8 @@ func (i StatusInfo) BlockedBy() []manifest.NamedResource {
 }
 
 // DependencyReason returns detached failure context for nested dependency propagation.
+//
+//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (i StatusInfo) DependencyReason(subject manifest.DiagnosticIdentity) manifest.DiagnosticReason {
 	reason := manifest.DiagnosticReason{Subject: subject, Message: i.String()}
 	if i.failure != nil {
@@ -128,6 +130,7 @@ type conditionRecord struct {
 
 type conditionState struct {
 	authority
+
 	first [1]Condition
 }
 
@@ -213,6 +216,8 @@ func readyCondition(status Status, reason StatusReason, message string) Conditio
 	c := Condition{
 		Type:    ConditionReady,
 		Message: message,
+		Status:  metav1.ConditionUnknown,
+		Reason:  ReasonReconciling,
 	}
 	switch status {
 	case StatusReady:
@@ -221,9 +226,7 @@ func readyCondition(status Status, reason StatusReason, message string) Conditio
 	case StatusFailed:
 		c.Status = metav1.ConditionFalse
 		c.Reason = ReasonFailed
-	default: // StatusPending or unknown
-		c.Status = metav1.ConditionUnknown
-		c.Reason = ReasonReconciling
+	case StatusPending:
 	}
 	if reason != "" {
 		c.Reason = string(reason)
@@ -242,12 +245,28 @@ func (r conditionRecord) statusInfo() (StatusInfo, bool) {
 		}
 		switch c.Status {
 		case metav1.ConditionTrue:
-			return StatusInfo{Status: StatusReady, Reason: StatusReason(c.Reason), Message: c.Message, applyingObjects: r.applyingObjects}, true
+			return StatusInfo{
+				Status:          StatusReady,
+				Reason:          StatusReason(c.Reason),
+				Message:         c.Message,
+				applyingObjects: r.applyingObjects,
+			}, true
 		case metav1.ConditionFalse:
-			return StatusInfo{Status: StatusFailed, Reason: StatusReason(c.Reason), Message: c.Message, applyingObjects: r.applyingObjects, failure: r.failure}, true
-		default:
-			return StatusInfo{Status: StatusPending, Reason: StatusReason(c.Reason), Message: c.Message, applyingObjects: r.applyingObjects}, true
+			return StatusInfo{
+				Status:          StatusFailed,
+				Reason:          StatusReason(c.Reason),
+				Message:         c.Message,
+				applyingObjects: r.applyingObjects,
+				failure:         r.failure,
+			}, true
+		case metav1.ConditionUnknown:
 		}
+		return StatusInfo{
+			Status:          StatusPending,
+			Reason:          StatusReason(c.Reason),
+			Message:         c.Message,
+			applyingObjects: r.applyingObjects,
+		}, true
 	}
 	return StatusInfo{}, false
 }
@@ -256,7 +275,7 @@ func (r conditionRecord) statusInfo() (StatusInfo, bool) {
 // StatusUpdated event when the StatusInfo rollup changes. Snapshot
 // exposes the full condition state. An empty reason derives the normal reason from status.
 func (s *Store) UpdateStatus(id manifest.NamedResource, info StatusInfo) {
-	s.setCondition(id, readyCondition(info.Status, info.Reason, info.Message), info.applyingObjects, nil)
+	s.setCondition(id, new(readyCondition(info.Status, info.Reason, info.Message)), info.applyingObjects, nil)
 }
 
 // ReportProgress dispatches transient phase text without changing Ready conditions.
@@ -275,7 +294,7 @@ func (s *Store) UpdateFailure(id manifest.NamedResource, err error) {
 	if dep, ok := errors.AsType[*manifest.DependencyFailedError](err); ok {
 		failure = newDependencyFailure(dep)
 	}
-	s.setCondition(id, readyCondition(StatusFailed, "", message), 0, failure)
+	s.setCondition(id, new(readyCondition(StatusFailed, "", message)), 0, failure)
 }
 
 // SetCondition upserts cond into the resource's condition list keyed
@@ -292,14 +311,21 @@ func (s *Store) UpdateFailure(id manifest.NamedResource, err error) {
 // callers may legitimately establish initial state before AddObject
 // lands (e.g. tests). The FailedResources rollup filters phantoms
 // by intersecting against the object map at read time.
+//
+//nolint:gocritic // The SDK preserves this value input and its snapshot boundary.
 func (s *Store) SetCondition(id manifest.NamedResource, cond Condition) {
-	s.setCondition(id, cond, 0, nil)
+	s.setCondition(id, new(cond), 0, nil)
 }
 
-func (s *Store) setCondition(id manifest.NamedResource, cond Condition, applyingObjects int, failure *dependencyFailure) {
+func (s *Store) setCondition(
+	id manifest.NamedResource, condValue *Condition,
+	applyingObjects int,
+	failure *dependencyFailure,
+) {
+	cond := *condValue
 	sh := s.shardFor(id)
 	sh.mu.Lock()
-	updated, changed := sh.setConditionLocked(id, cond, applyingObjects, failure)
+	updated, changed := sh.setConditionLocked(id, new(cond), applyingObjects, failure)
 	if !changed {
 		sh.mu.Unlock()
 		return
@@ -321,27 +347,26 @@ func (s *Store) setCondition(id manifest.NamedResource, cond Condition, applying
 // record aliases the live condition slice. Failure IDs remain immutable.
 // Existing conditions with unchanged provenance MUST be overwritten in place
 // without reassigning the map entry, preserving the allocation-free hot path.
-func (sh *shard) setConditionLocked(id manifest.NamedResource, cond Condition, applyingObjects int, failure *dependencyFailure) (conditionRecord, bool) {
+func (sh *shard) setConditionLocked(
+	id manifest.NamedResource, condValue *Condition,
+	applyingObjects int,
+	failure *dependencyFailure,
+) (conditionRecord, bool) {
+	cond := *condValue
 	record := sh.conditions[id]
 	ready := cond.Type == ConditionReady
 	objects := record.applyingObjects
 	objectsChanged := ready && objects != applyingObjects
-	if ready && applyingObjects != 0 {
-		cond.Message = ""
-	}
+	clearApplyingMessage(&cond, ready, applyingObjects)
 	failureChanged := ready && !record.failure.same(failure)
 	for i := range record.conditions {
 		previous := &record.conditions[i]
 		if previous.Type != cond.Type {
 			continue
 		}
-		messageChanged := previous.Message != cond.Message
-		if ready {
-			messageChanged = !sameMessage(previous.Message, objects, cond.Message, applyingObjects)
-		}
-		changed := messageChanged || previous.Status != cond.Status || previous.Reason != cond.Reason || previous.ObservedGeneration != cond.ObservedGeneration
+		changed := record.conditionChanged(previous, &cond, ready, applyingObjects)
 		// An unchanged blocker set MUST retain its first diagnostic to bound cyclic propagation.
-		if failure != nil && !failureChanged && record.conditions[i].Status == cond.Status && record.conditions[i].Reason == cond.Reason {
+		if record.retainsFailure(failure, failureChanged, &cond, i) {
 			return record, false
 		}
 		if changed || failureChanged {
@@ -352,22 +377,12 @@ func (sh *shard) setConditionLocked(id manifest.NamedResource, cond Condition, a
 		}
 		if failureChanged || objectsChanged {
 			record.failure = failure
-			if ready {
-				record.applyingObjects = applyingObjects
-			}
+			record.applyingObjects = applyingObjects
 			sh.conditions[id] = record
 		}
 		return record, changed || failureChanged
 	}
-	if record.state == nil {
-		if !sh.canAdmit(1) {
-			sh.mu.Unlock()
-			panic("store: authority generation exhausted")
-		}
-		sh.admitAbsenceLocked(id, conditionFacet)
-		record.state = &conditionState{}
-		record.conditions = record.state.first[:0]
-	}
+	sh.initializeConditionsLocked(id, &record)
 	record.advanceLocked(sh)
 	if failureChanged {
 		record.failure = failure
@@ -410,6 +425,8 @@ func (s *Store) ReportStatus(id manifest.NamedResource) (StatusInfo, bool) {
 // observable state. LastTransitionTime is intentionally ignored — it
 // is reset on every transition by the controller-runtime libraries
 // and would otherwise prevent the no-op short-circuit from firing.
+//
+//nolint:gocritic // The slices callback contract requires value parameters.
 func conditionEqual(a, b Condition) bool {
 	return a.Type == b.Type &&
 		a.Status == b.Status &&
@@ -461,5 +478,39 @@ func (r conditionRecord) project(conditions []Condition) {
 				conditions[i].Message = StatusInfo{applyingObjects: r.applyingObjects}.String()
 			}
 		}
+	}
+}
+
+func (sh *shard) initializeConditionsLocked(id manifest.NamedResource, record *conditionRecord) {
+	if record.state == nil {
+		if !sh.canAdmit(1) {
+			sh.mu.Unlock()
+			panic("store: authority generation exhausted")
+		}
+		sh.admitAbsenceLocked(id, conditionFacet)
+		record.state = &conditionState{}
+		record.conditions = record.state.first[:0]
+	}
+}
+
+func (r conditionRecord) conditionChanged(previous, cond *Condition, ready bool, applyingObjects int) bool {
+	objects := r.applyingObjects
+	messageChanged := previous.Message != cond.Message
+	if ready {
+		messageChanged = !sameMessage(previous.Message, objects, cond.Message, applyingObjects)
+	}
+	changed := messageChanged || previous.Status != cond.Status || previous.Reason != cond.Reason ||
+		previous.ObservedGeneration != cond.ObservedGeneration
+	return changed
+}
+
+func (r conditionRecord) retainsFailure(failure *dependencyFailure, failureChanged bool, cond *Condition, i int) bool {
+	return failure != nil && !failureChanged && r.conditions[i].Status == cond.Status &&
+		r.conditions[i].Reason == cond.Reason
+}
+
+func clearApplyingMessage(cond *Condition, ready bool, applyingObjects int) {
+	if ready && applyingObjects != 0 {
+		cond.Message = ""
 	}
 }

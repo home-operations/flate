@@ -23,24 +23,41 @@ type Supplied struct {
 // NewSupplied validates and snapshots inputs with whole-object last-input precedence.
 func NewSupplied(inputs []SuppliedObject) (*Supplied, error) {
 	if len(inputs) == 0 {
-		return nil, nil
+		return nil, nil //nolint:nilnil // No supplied inputs means successful absence of a snapshot.
 	}
 	s := &Supplied{objects: make(map[manifest.NamedResource]SuppliedObject, len(inputs))}
 	for i, input := range inputs {
 		data, ok := input.Object.(manifest.Data)
 		origin := fmt.Sprintf("supply %q input %d", cmp.Or(input.Path, "SDK input"), i+1)
-		if !ok || reflect.ValueOf(data).Kind() == reflect.Pointer && reflect.ValueOf(data).IsNil() || input.Object.Named().Name == "" || input.Object.Named().Namespace == "" {
-			return nil, manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("%s: expected a core v1 Secret or ConfigMap with name and namespace", origin))
+		if !ok || reflect.ValueOf(data).Kind() == reflect.Pointer && reflect.ValueOf(data).IsNil() ||
+			input.Object.Named().Name == "" ||
+			input.Object.Named().Namespace == "" {
+			return nil, manifest.NewError(
+				manifest.ErrInput,
+				nil,
+				fmt.Sprintf("%s: expected a core v1 Secret or ConfigMap with name and namespace", origin),
+			)
 		}
 		id := input.Object.Named()
 		for _, key := range slices.Sorted(data.Keys()) {
 			if _, _, err := data.Value(key); err != nil {
-				return nil, manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("%s %s key %q: invalid supplied data", origin, id, key))
+				return nil, manifest.NewError(
+					manifest.ErrInput,
+					nil,
+					fmt.Sprintf("%s %s key %q: invalid supplied data", origin, id, key),
+				)
 			}
 		}
-		obj, _, _, err := manifest.ParseDoc(data.Snapshot(), manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: ""})
+		obj, _, _, err := manifest.ParseDoc(
+			data.Snapshot(),
+			manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: ""},
+		)
 		if err != nil {
-			return nil, manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("%s %s: invalid supplied object", origin, id))
+			return nil, manifest.NewError(
+				manifest.ErrInput,
+				nil,
+				fmt.Sprintf("%s %s: invalid supplied object", origin, id),
+			)
 		}
 		s.objects[id] = SuppliedObject{Object: obj, Path: cmp.Or(input.Path, "SDK input")}
 	}
@@ -50,6 +67,7 @@ func NewSupplied(inputs []SuppliedObject) (*Supplied, error) {
 // SetSupplied installs the immutable snapshot before publication or concurrent reads.
 func (s *Store) SetSupplied(supplied *Supplied) { s.supplied = supplied }
 
+//nolint:ireturn // The values contract supports multiple data implementations.
 func (s *Store) suppliedObject(id manifest.NamedResource) (manifest.Data, string) {
 	if s.supplied == nil {
 		return nil, ""

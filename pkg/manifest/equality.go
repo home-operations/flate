@@ -28,7 +28,7 @@ func Equal(a, b BaseManifest) bool {
 }
 
 // ValueEqual compares JSON-shaped values directly, preserving container nilness and scalar types.
-// Other values retain reflect.DeepEqual semantics.
+// Other values retain [reflect.DeepEqual] semantics.
 func ValueEqual(a, b any) bool {
 	switch v := a.(type) {
 	case map[string]any:
@@ -64,7 +64,7 @@ func labels(obj BaseManifest, input map[string]any) map[string]any {
 	if raw, ok := obj.(*RawObject); ok && input == nil {
 		input = raw.labelInput()
 	}
-	metadata, _ := input["metadata"].(map[string]any)
+	metadata, _ := input[metadataKey].(map[string]any)
 	labels, _ := metadata["labels"].(map[string]any)
 	return labels
 }

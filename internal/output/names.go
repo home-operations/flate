@@ -19,13 +19,22 @@ type Names struct {
 }
 
 // PrepareNames resolves cluster qualifiers and kind collisions across printed subjects.
-func PrepareNames(clusters []string, inventory [][]manifest.NamedResource, subjects []map[manifest.NamedResource]manifest.DiagnosticIdentity) []Names {
+func PrepareNames(
+	clusters []string,
+	inventory [][]manifest.NamedResource,
+	subjects []map[manifest.NamedResource]manifest.DiagnosticIdentity,
+) []Names {
 	collisions, update := nameOccurrenceUpdater()
 	collectNameOccurrences(inventory, subjects, update)
 	return prepareNames(clusters, inventory, subjects, collisions)
 }
 
-func prepareNames(clusters []string, inventory [][]manifest.NamedResource, subjects []map[manifest.NamedResource]manifest.DiagnosticIdentity, collisions map[string]bool) []Names {
+func prepareNames(
+	clusters []string,
+	inventory [][]manifest.NamedResource,
+	subjects []map[manifest.NamedResource]manifest.DiagnosticIdentity,
+	collisions map[string]bool,
+) []Names {
 	out := make([]Names, len(clusters))
 	for i, cluster := range clusters {
 		prefix := ""
@@ -43,44 +52,18 @@ func prepareNames(clusters []string, inventory [][]manifest.NamedResource, subje
 
 func nameOccurrenceUpdater() (map[string]bool, func(string, string, int)) {
 	indices := make(map[string]int)
-	counts := make([]struct {
-		group           string
-		count, distinct int
-		others          map[string]int
-	}, 0, 8)
+	counts := make([]nameCount, 0, initialKindCapacity)
 	collisions := make(map[string]bool)
 	update := func(kind, group string, delta int) {
 		index, exists := indices[kind]
 		if !exists {
 			index = len(counts)
 			indices[kind] = index
-			counts = append(counts, struct {
-				group           string
-				count, distinct int
-				others          map[string]int
-			}{group: group})
+			counts = append(counts, nameCount{group: group})
 		}
 		entry := &counts[index]
-		before := entry.count
-		if entry.group != group {
-			if entry.others == nil {
-				entry.others = make(map[string]int)
-			}
-			before = entry.others[group]
-		}
-		after := before + delta
-		if entry.group == group {
-			entry.count = after
-		} else {
-			entry.others[group] = after
-		}
-		distinct := entry.distinct
-		if before == 0 && after > 0 {
-			entry.distinct++
-		} else if before > 0 && after == 0 {
-			entry.distinct--
-		}
-		if entry.distinct > 1 != (distinct > 1) {
+
+		if entry.adjust(group, delta) {
 			if entry.distinct > 1 {
 				collisions[kind] = true
 			} else {
@@ -91,7 +74,11 @@ func nameOccurrenceUpdater() (map[string]bool, func(string, string, int)) {
 	return collisions, update
 }
 
-func collectNameOccurrences(inventory [][]manifest.NamedResource, subjects []map[manifest.NamedResource]manifest.DiagnosticIdentity, update func(string, string, int)) {
+func collectNameOccurrences(
+	inventory [][]manifest.NamedResource,
+	subjects []map[manifest.NamedResource]manifest.DiagnosticIdentity,
+	update func(string, string, int),
+) {
 	for i, ids := range inventory {
 		for _, raw := range ids {
 			id := raw
@@ -105,7 +92,11 @@ func collectNameOccurrences(inventory [][]manifest.NamedResource, subjects []map
 	}
 }
 
-func adjustNameOccurrences(occurrences map[manifest.NamedResource]int, from, to map[manifest.NamedResource]manifest.DiagnosticIdentity, update func(string, string, int)) {
+func adjustNameOccurrences(
+	occurrences map[manifest.NamedResource]int,
+	from, to map[manifest.NamedResource]manifest.DiagnosticIdentity,
+	update func(string, string, int),
+) {
 	for raw, count := range occurrences {
 		before, after := raw, raw
 		if subject, ok := from[raw]; ok {
@@ -121,7 +112,12 @@ func adjustNameOccurrences(occurrences map[manifest.NamedResource]int, from, to 
 	}
 }
 
-func prepareGroupNames(prefix string, inventory []manifest.NamedResource, subjects map[manifest.NamedResource]manifest.DiagnosticIdentity, collisions map[string]bool) Names {
+func prepareGroupNames(
+	prefix string,
+	inventory []manifest.NamedResource,
+	subjects map[manifest.NamedResource]manifest.DiagnosticIdentity,
+	collisions map[string]bool,
+) Names {
 	names := Names{Prefix: prefix, Subjects: make(map[manifest.NamedResource]Subject, len(inventory))}
 	for _, id := range inventory {
 		if id == (manifest.NamedResource{}) {
@@ -148,4 +144,35 @@ func subjectLabels(resource *manifest.NamedResource, path, prefix string, collis
 		kind = resource.KindLabel()
 	}
 	return kind, prefix + name
+}
+
+const initialKindCapacity = 8
+
+type nameCount struct {
+	group           string
+	count, distinct int
+	others          map[string]int
+}
+
+func (e *nameCount) adjust(group string, delta int) bool {
+	before := e.count
+	if e.group != group {
+		if e.others == nil {
+			e.others = make(map[string]int)
+		}
+		before = e.others[group]
+	}
+	after := before + delta
+	if e.group == group {
+		e.count = after
+	} else {
+		e.others[group] = after
+	}
+	distinct := e.distinct
+	if before == 0 && after > 0 {
+		e.distinct++
+	} else if before > 0 && after == 0 {
+		e.distinct--
+	}
+	return e.distinct > 1 != (distinct > 1)
 }

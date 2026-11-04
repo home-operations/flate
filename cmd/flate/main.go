@@ -6,6 +6,7 @@ import (
 	"runtime/debug"
 
 	"github.com/KimMachineGun/automemlimit/memlimit"
+
 	"github.com/home-operations/flate/internal/cli"
 )
 
@@ -13,9 +14,17 @@ import (
 // sets version for release binaries, and the container Dockerfile sets both.
 // With a plain `go build` / `go install` they keep their defaults and we
 // fall back to the module BuildInfo for a useful version display.
+//
+//nolint:gochecknoglobals // Release builds inject version and commit with linker flags.
 var (
 	version = "dev"
 	commit  = "unknown"
+)
+
+const (
+	shortCommitLength = 7
+	gcPercent         = 400
+	memoryLimitRatio  = 0.8
 )
 
 func main() {
@@ -30,7 +39,7 @@ func versionString() string {
 	if commit == "unknown" {
 		return v
 	}
-	return v + " (" + commit[:min(len(commit), 7)] + ")"
+	return v + " (" + commit[:min(len(commit), shortCommitLength)] + ")"
 }
 
 // tuneGC raises the GC target for flate's short-lived, allocation-heavy
@@ -42,10 +51,14 @@ func versionString() string {
 // the soft memory limit.
 func tuneGC(setMemoryLimit func(...memlimit.Option) (int64, error)) {
 	if os.Getenv("GOGC") == "" {
-		debug.SetGCPercent(400)
+		debug.SetGCPercent(gcPercent)
 	}
 	// Cgroup detection is best effort, including on unsupported platforms.
-	_, _ = setMemoryLimit(memlimit.WithProvider(memlimit.FromCgroup), memlimit.WithRatio(0.8), memlimit.WithLogger(nil))
+	_, _ = setMemoryLimit(
+		memlimit.WithProvider(memlimit.FromCgroup),
+		memlimit.WithRatio(memoryLimitRatio),
+		memlimit.WithLogger(nil),
+	)
 }
 
 func resolvedVersion() string {

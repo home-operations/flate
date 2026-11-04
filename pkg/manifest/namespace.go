@@ -8,10 +8,10 @@ import "maps"
 // should prefer a direct type-assert + nil-tolerant access so we
 // don't allocate when nothing will be written.
 func EnsureMetadata(doc map[string]any) map[string]any {
-	metadata, _ := doc["metadata"].(map[string]any)
+	metadata, _ := doc[metadataKey].(map[string]any)
 	if metadata == nil {
 		metadata = make(map[string]any)
-		doc["metadata"] = metadata
+		doc[metadataKey] = metadata
 	}
 	return metadata
 }
@@ -37,17 +37,25 @@ func MergeStringMap(md map[string]any, key string, in map[string]string) {
 	md[key] = out
 }
 
-func defaultNamespace(obj BaseManifest, doc map[string]any, namespace string, changed bool) (BaseManifest, map[string]any, bool) {
-	if obj == nil || namespace == "" || obj.Named().Namespace != "" || !(KindInfo{Kind: DocKind(doc), apiVersion: DocAPIVersion(doc)}).Namespaced() {
+//nolint:ireturn // The manifest contract requires polymorphic results.
+func defaultNamespace(
+	obj BaseManifest,
+	doc map[string]any,
+	namespace string,
+	changed bool,
+) (BaseManifest, map[string]any, bool) {
+	if obj == nil || namespace == "" || obj.Named().Namespace != "" ||
+		!(KindInfo{Kind: DocKind(doc), apiVersion: DocAPIVersion(doc)}).Namespaced() {
 		return obj, doc, changed
 	}
 	obj = obj.WithNamespace(namespace)
 	if !changed {
 		doc = maps.Clone(doc)
 	}
-	metadata := maps.Clone(doc["metadata"].(map[string]any))
-	metadata["namespace"] = namespace
-	doc["metadata"] = metadata
+	//nolint:errcheck // The owning path guarantees the concrete type and panics on a broken invariant.
+	metadata := maps.Clone(doc[metadataKey].(map[string]any))
+	metadata[namespaceKey] = namespace
+	doc[metadataKey] = metadata
 	return obj, doc, true
 }
 

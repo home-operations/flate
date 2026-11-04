@@ -3,6 +3,7 @@ package base
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"sync/atomic"
 
@@ -78,6 +79,8 @@ type Options struct {
 }
 
 // Configure installs immutable setup before dispatch.
+//
+//nolint:gocritic // Configure snapshots the public value options before concurrent dispatch.
 func (c *Controller) Configure(opts Options) {
 	c.requireNotStarted("Configure")
 	c.DependencySubstitutions = opts.DependencySubstitutions
@@ -93,87 +96,79 @@ func (c *Controller) Configure(opts Options) {
 
 // KeepEmitted admits the incoming child and reports whether it is selected.
 // Admission MUST precede publication; a nil child admits the captured required inputs only.
-func (c *Controller) KeepEmitted(ctx context.Context, parent manifest.NamedResource, child store.Child, reads *store.ReadSet) (bool, error) {
-	if f := c.filter; f.Enabled() {
-		if err := ctx.Err(); err != nil {
+func (c *Controller) KeepEmitted(
+	ctx context.Context,
+	parent manifest.NamedResource,
+	child store.Child,
+	reads *store.ReadSet,
+) (bool, error) {
+	f := c.filter
+	if !f.Enabled() {
+		return true, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return false, fmt.Errorf("context: %w", err)
+	}
+	if c.loader == nil {
+		return false, manifest.NewError(
+			manifest.ErrInput,
+			nil,
+			"restricted controller requires its invocation loader",
+		)
+	}
+	if reads == nil {
+		reads = &store.ReadSet{}
+		reads.Init(c.Store, parent, nil)
+		defer reads.Retire()
+	}
+	admission := emittedAdmission{
+		controller:       c,
+		filter:           f,
+		reads:            reads,
+		incoming:         child,
+		inferProductions: child.Obj != nil && parent == (manifest.NamedResource{}) && len(child.Productions) == 0,
+	}
+	if child.Obj != nil && parent != (manifest.NamedResource{}) && parent != child.Obj.Named() {
+		admission.incoming.Productions = append(slices.Clone(child.Productions), manifest.Production{Owner: parent})
+	}
+	defer func() { admission.proof.Retire() }()
+	for {
+		ready, retry, err := admission.prepare(ctx)
+		if retry {
+			continue
+		}
+		if err != nil || !ready {
 			return false, err
 		}
-		if c.loader == nil {
-			return false, manifest.NewError(manifest.ErrInput, nil, "restricted controller requires its invocation loader")
-		}
-		if reads == nil {
-			reads = &store.ReadSet{}
-			reads.Init(c.Store, parent, nil)
-			defer reads.Retire()
-		}
-		incoming := child
-		if child.Obj != nil && parent != (manifest.NamedResource{}) && parent != child.Obj.Named() {
-			incoming.Productions = append(slices.Clone(child.Productions), manifest.Production{Owner: parent})
-		}
-		var proof *store.ReadSet
-		defer func() { proof.Retire() }()
-	prepare:
-		for {
-			proof.Retire()
-			proof = &store.ReadSet{}
-			proof.Init(c.Store, reads.ID(), nil)
-			for id := range reads.Required() {
-				proof.RequireData(id)
-			}
-			if incoming.Obj != nil && parent == (manifest.NamedResource{}) && len(child.Productions) == 0 {
-				incoming.Productions = proof.Promotions(incoming.Obj.Named(), nil)
-			}
-			proposal, err := c.loader.Prepare(ctx, incoming, proof, nil)
-			if err != nil {
-				return false, err
-			}
-			if !reads.Valid() {
-				return false, nil
-			}
-			if !proof.Valid() {
-				continue
-			}
-			if err := ctx.Err(); err != nil {
-				return false, err
-			}
-			added, retry := f.AddEmitted(proposal.Needed, proposal.Selected, proposal.Dirty, proposal.Revision)
-			if retry {
-				continue
-			}
-			for _, id := range added {
-				c.Store.SetIncluded(id, true)
-			}
-			for _, input := range proposal.Objects {
-				if err := ctx.Err(); err != nil {
-					return false, err
-				}
-				if !reads.Valid() {
-					return false, nil
-				}
-				if !proof.Valid() {
-					continue prepare
-				}
-				source := manifest.BootstrapSourceID
-				for _, proof := range input.Productions {
-					if proof.Source != (manifest.NamedResource{}) {
-						source = proof.Source
-						break
-					}
-				}
-				proof.Admit(input.Obj, source, manifest.NamedResource{}, input.Doc)
-			}
-			if !proof.Valid() {
-				continue
-			}
+		break
+	}
+	if child.Obj == nil {
+		return true, nil
+	}
+	c.Store.SetIncluded(child.Obj.Named(), f.ShouldReconcile(child.Obj.Named()))
+	return f.ShouldReconcile(child.Obj.Named()), nil
+}
+
+func (c *Controller) admissionProof(reads *store.ReadSet) *store.ReadSet {
+	proof := &store.ReadSet{}
+	proof.Init(c.Store, reads.ID(), nil)
+	for id := range reads.Required() {
+		proof.RequireData(id)
+	}
+	return proof
+}
+
+func admitEmittedInput(proof *store.ReadSet, input *store.Child) {
+	source := manifest.BootstrapSourceID
+	for itemIndex := range input.Productions {
+		proof := input.Productions[itemIndex]
+
+		if proof.Source != (manifest.NamedResource{}) {
+			source = proof.Source
 			break
 		}
-		if child.Obj == nil {
-			return true, nil
-		}
-		c.Store.SetIncluded(child.Obj.Named(), f.ShouldReconcile(child.Obj.Named()))
-		return f.ShouldReconcile(child.Obj.Named()), nil
 	}
-	return true, nil
+	proof.Admit(input.Obj, source, manifest.NamedResource{}, input.Doc)
 }
 
 // SetPendingUnlessReady initializes progress without changing an existing condition.
@@ -195,7 +190,10 @@ func (c *Controller) StartLifecycle() {
 // preGate marks suspended objects Ready; refresh MUST never apply changed-only filtering.
 func (c *Controller) preGate(obj manifest.BaseManifest) bool {
 	if obj.Suspended() {
-		c.Store.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSuspended, Message: "suspended"})
+		c.Store.UpdateStatus(
+			obj.Named(),
+			store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSuspended, Message: "suspended"},
+		)
 		return true
 	}
 	return false
@@ -204,4 +202,57 @@ func (c *Controller) preGate(obj manifest.BaseManifest) bool {
 // filterActive reports whether a non-nil, enabled change filter is configured.
 func (c *Controller) filterActive() bool {
 	return c.filter != nil && c.filter.Enabled()
+}
+
+type emittedAdmission struct {
+	controller       *Controller
+	filter           *change.Filter
+	reads            *store.ReadSet
+	incoming         store.Child
+	proof            *store.ReadSet
+	inferProductions bool
+}
+
+func (a *emittedAdmission) prepare(ctx context.Context) (bool, bool, error) {
+	a.proof.Retire()
+	a.proof = a.controller.admissionProof(a.reads)
+	if a.inferProductions {
+		a.incoming.Productions = a.proof.Promotions(a.incoming.Obj.Named(), nil)
+	}
+	proposal, err := a.controller.loader.Prepare(ctx, a.incoming, a.proof, nil)
+	if err != nil {
+		return false, false, err
+	}
+	if !a.reads.Valid() {
+		return false, false, nil
+	}
+	if !a.proof.Valid() {
+		return false, true, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return false, false, fmt.Errorf("context: %w", err)
+	}
+	added, retry := a.filter.AddEmitted(proposal.Needed, proposal.Selected, proposal.Dirty, proposal.Revision)
+	if retry {
+		return false, true, nil
+	}
+	for _, id := range added {
+		a.controller.Store.SetIncluded(id, true)
+	}
+	for _, input := range proposal.Objects {
+		if err := ctx.Err(); err != nil {
+			return false, false, fmt.Errorf("context: %w", err)
+		}
+		if !a.reads.Valid() {
+			return false, false, nil
+		}
+		if !a.proof.Valid() {
+			return false, true, nil
+		}
+		admitEmittedInput(a.proof, &input)
+	}
+	if !a.proof.Valid() {
+		return false, true, nil
+	}
+	return true, false, nil
 }

@@ -1,4 +1,4 @@
-package crds
+package crds_test
 
 import (
 	"path/filepath"
@@ -11,6 +11,7 @@ import (
 	"github.com/home-operations/flate/test/e2e/internal/harness"
 )
 
+//nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_ControllerMetadataOwnership(t *testing.T) {
 	root := t.TempDir()
 	testutil.GitInit(t, root)
@@ -69,8 +70,23 @@ spec:
       metadata: {name: from-rs}
 `)
 	testutil.WriteFile(t, root, "chart/Chart.yaml", "apiVersion: v2\nname: metadata\nversion: 1.0.0\n")
-	testutil.WriteFile(t, root, "chart/templates/config.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: from-hr}\n")
-	args := []string{"build", "all", "--path", filepath.Join(root, "entry"), "--cache-dir", t.TempDir(), "--concurrency=2", "--no-progress", "--skip-kinds="}
+	testutil.WriteFile(
+		t,
+		root,
+		"chart/templates/config.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: from-hr}\n",
+	)
+	args := []string{
+		"build",
+		"all",
+		"--path",
+		filepath.Join(root, "entry"),
+		"--cache-dir",
+		t.TempDir(),
+		"--concurrency=2",
+		"--no-progress",
+		"--skip-kinds=",
+	}
 	first, _ := harness.RequireCLIOK(t, args...)
 	second, _ := harness.RequireCLIOK(t, args...)
 	assert.Equal(t, second, first)
@@ -109,9 +125,7 @@ spec:
 		default:
 			t.Fatalf("unexpected ConfigMap %s", name)
 		}
-		if seen[name] {
-			t.Fatalf("duplicate ConfigMap %s", name)
-		}
+		assert.FatalIf(t, seen[name], "duplicate ConfigMap %s", name)
 		seen[name] = true
 	}
 	assert.Diff(t, seen, map[string]bool{"from-ks": true, "disabled": true, "from-hr": true, "from-rs": true})

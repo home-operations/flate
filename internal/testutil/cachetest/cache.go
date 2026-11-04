@@ -7,6 +7,8 @@ import (
 )
 
 // New opens a cache and registers checked cleanup with the caller.
+//
+//nolint:ireturn // The result retains the caller's concrete generic cache type.
 func New[C interface{ Close() error }](tb testing.TB, root string, open func(context.Context, string) (C, error)) C {
 	tb.Helper()
 	c, err := open(tb.Context(), root)

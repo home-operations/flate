@@ -1,15 +1,18 @@
 // Package substitution tests data reading, substitution and inherited patches.
-package substitution
+package substitution_test
 
 import (
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
+
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/test/e2e/internal/harness"
 )
 
+//nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_ParentPatchesPropagateToChildren(t *testing.T) {
 	src := harness.TestdataPath(t, "parent-patches")
 	root := t.TempDir()
@@ -18,18 +21,28 @@ func TestE2E_ParentPatchesPropagateToChildren(t *testing.T) {
 	out := harness.RunCLI(t, "test", "ks", "--path", root)
 
 	leafLine := harness.MustExtractLine(t, out, "flux-system/leaf")
-	if !strings.Contains(leafLine, "✓") {
-		t.Errorf("leaf should pass once parent patches inject substituteFrom; got: %s", leafLine)
-	}
+	assert.ErrorIf(
+		t,
+		!strings.Contains(leafLine, "✓"),
+		"leaf should pass once parent patches inject substituteFrom; got: %s",
+		leafLine,
+	)
 	clusterLine := harness.MustExtractLine(t, out, "flux-system/cluster-apps")
-	if !strings.Contains(clusterLine, "✓") {
-		t.Errorf("cluster-apps should pass; SOPS values are wiped to placeholder, not fail-loud; got: %s", clusterLine)
-	}
-	if strings.Contains(out, `is undefined and has no default`) {
-		t.Errorf("no postBuild variable should be reported undefined:\n%s", out)
-	}
+	assert.ErrorIf(
+		t,
+		!strings.Contains(clusterLine, "✓"),
+		"cluster-apps should pass; SOPS values are wiped to placeholder, not fail-loud; got: %s",
+		clusterLine,
+	)
+	assert.ErrorIf(
+		t,
+		strings.Contains(out, `is undefined and has no default`),
+		"no postBuild variable should be reported undefined:\n%s",
+		out,
+	)
 }
 
+//nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_SOPSValueWipedToPlaceholder(t *testing.T) {
 	src := harness.TestdataPath(t, "parent-patches")
 	root := t.TempDir()
@@ -39,18 +52,23 @@ func TestE2E_SOPSValueWipedToPlaceholder(t *testing.T) {
 		"--path", root, "--concurrency", "2", "-o", "yaml")
 	again := harness.RunCLIStdout(t, "build", "ks", "leaf", "-n", "flux-system",
 		"--path", root, "--concurrency", "2", "-o", "yaml")
-	if again != out {
-		t.Fatal("SOPS substitution output changed between runs")
-	}
+	assert.FatalIf(t, again != out, "%v", "SOPS substitution output changed between runs")
 
-	if !strings.Contains(out, "secret: ..PLACEHOLDER_MY_SECRET..") {
-		t.Errorf("expected SOPS-derived MY_SECRET to substitute to its placeholder:\n%s", out)
-	}
-	if !strings.Contains(out, "value: from-cluster-settings") {
-		t.Errorf("cleartext cluster-settings value should substitute normally:\n%s", out)
-	}
+	assert.ErrorIf(
+		t,
+		!strings.Contains(out, "secret: ..PLACEHOLDER_MY_SECRET.."),
+		"expected SOPS-derived MY_SECRET to substitute to its placeholder:\n%s",
+		out,
+	)
+	assert.ErrorIf(
+		t,
+		!strings.Contains(out, "value: from-cluster-settings"),
+		"cleartext cluster-settings value should substitute normally:\n%s",
+		out,
+	)
 }
 
+//nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_SubstituteDisabledAnnotation(t *testing.T) {
 	src := harness.TestdataPath(t, "parent-patches")
 	root := t.TempDir()
@@ -59,14 +77,21 @@ func TestE2E_SubstituteDisabledAnnotation(t *testing.T) {
 	out := harness.RunCLI(t, "test", "ks", "--path", root)
 
 	leafLine := harness.MustExtractLine(t, out, "flux-system/leaf")
-	if !strings.Contains(leafLine, "✓") {
-		t.Errorf("leaf should pass — the script ConfigMap opts out of substitution; got: %s", leafLine)
-	}
-	if strings.Contains(out, "missing closing brace") {
-		t.Errorf("substitute-disabled annotation should prevent the parse error:\n%s", out)
-	}
+	assert.ErrorIf(
+		t,
+		!strings.Contains(leafLine, "✓"),
+		"leaf should pass — the script ConfigMap opts out of substitution; got: %s",
+		leafLine,
+	)
+	assert.ErrorIf(
+		t,
+		strings.Contains(out, "missing closing brace"),
+		"substitute-disabled annotation should prevent the parse error:\n%s",
+		out,
+	)
 }
 
+//nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_BootstrapGeneratorEnvAndFileSubstitution(t *testing.T) {
 	root := t.TempDir()
 	for _, file := range []struct{ path, body string }{
@@ -91,40 +116,81 @@ data:
 	for _, concurrency := range []string{"2", "8"} {
 		out := harness.RunCLIStdout(t, "build", "all", "--path", root, "--concurrency", concurrency, "--no-progress")
 		for _, want := range []string{"env-value", "file-value", "literal-value"} {
-			if !strings.Contains(out, want) {
-				t.Fatalf("missing substituted %q in %s", want, out)
-			}
+			assert.FatalIf(t, !strings.Contains(out, want), "missing substituted %q in %s", want, out)
 		}
-		if previous != "" && out != previous {
-			t.Fatal("generator substitution output differs across concurrency levels")
-		}
+		assert.FatalIf(
+			t,
+			previous != "" && out != previous,
+			"%v",
+			"generator substitution output differs across concurrency levels",
+		)
 		previous = out
 	}
 }
 
+//nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_SubstitutionPrecedence(t *testing.T) {
 	root, external := t.TempDir(), t.TempDir()
 	testutil.GitInit(t, root)
-	testutil.WriteFile(t, root, "flux/consumer.yaml", testutil.KustomizationYAML("consumer", "apps", "  path: ./app\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: settings}]}\n"))
-	testutil.WriteFile(t, root, "flux/settings.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: repository}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"flux/consumer.yaml",
+		testutil.KustomizationYAML(
+			"consumer",
+			"apps",
+			"  path: ./app\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: settings}]}\n",
+		),
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"flux/settings.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: repository}\n",
+	)
 	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [cm.yaml]\n")
-	testutil.WriteFile(t, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: rendered}\ndata: {value: '${VALUE}'}\n")
-	testutil.WriteFile(t, external, "settings.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: private-value}\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"app/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: rendered}\ndata: {value: '${VALUE}'}\n",
+	)
+	testutil.WriteFile(
+		t,
+		external,
+		"settings.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: private-value}\n",
+	)
 	for _, verb := range []string{"build", "test"} {
 		t.Run(verb, func(t *testing.T) {
 			for range 2 {
-				stdout, stderr := harness.RequireCLIOK(t, verb, "all", "--path", filepath.Join(root, "flux"), "--supply", filepath.Join(external, "settings.yaml"), "--concurrency=2", "--log-level=info")
-				if strings.Count(stderr, "[SuppliedPrecedence]") != 1 || !strings.Contains(stderr, "ConfigMap/apps/settings: VALUE") || strings.Contains(stdout, "repository data takes precedence") || strings.Contains(stdout+stderr, "private-value") || strings.Contains(stderr, "level=WARN") {
-					t.Fatalf("precedence destination: stdout=%s stderr=%s", stdout, stderr)
-				}
-				if verb == "build" && !strings.Contains(stdout, "value: repository") || verb == "test" && !strings.Contains(stdout, "passed") {
-					t.Fatalf("precedence product: %s", stdout)
-				}
+				stdout, stderr := harness.RequireCLIOK(
+					t,
+					verb,
+					"all",
+					"--path",
+					filepath.Join(root, "flux"),
+					"--supply",
+					filepath.Join(external, "settings.yaml"),
+					"--concurrency=2",
+					"--log-level=info",
+				)
+				assert.FatalIf(t, strings.Count(stderr, "[SuppliedPrecedence]") != 1 ||
+					!strings.Contains(stderr, "ConfigMap/apps/settings: VALUE") ||
+					strings.Contains(stdout, "repository data takes precedence") ||
+					strings.Contains(stdout+stderr, "private-value") ||
+					strings.Contains(
+						stderr,
+						"level=WARN",
+					), "precedence destination: stdout=%s stderr=%s", stdout, stderr)
+				assert.FatalIf(t, verb == "build" && !strings.Contains(stdout, "value: repository") ||
+					verb == "test" && !strings.Contains(stdout, "passed"), "precedence product: %s", stdout)
 			}
 		})
 	}
 }
 
+//nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_UnappliedPackagePatches(t *testing.T) {
 	for _, applied := range []bool{false, true} {
 		t.Run(map[bool]string{false: "unapplied", true: "applied"}[applied], func(t *testing.T) {
@@ -188,7 +254,16 @@ data:
 				testutil.WriteFile(t, root, file.path, file.body)
 			}
 			if applied {
-				testutil.WriteFile(t, root, "cluster/vars-ks.yaml", testutil.KustomizationYAML("vars", "flux-system", "  path: ./cluster/vars\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
+				testutil.WriteFile(
+					t,
+					root,
+					"cluster/vars-ks.yaml",
+					testutil.KustomizationYAML(
+						"vars",
+						"flux-system",
+						"  path: ./cluster/vars\n  sourceRef: {kind: GitRepository, name: flux-system}\n",
+					),
+				)
 			}
 			wantValues := []string{"a: base-value", "b: null"}
 			if applied {
@@ -196,15 +271,21 @@ data:
 			}
 			var previous string
 			for range 2 {
-				out := harness.RunCLIStdout(t, "build", "ks", "app", "--path", filepath.Join(root, "cluster"), "--concurrency", "2", "--no-progress")
+				out := harness.RunCLIStdout(
+					t,
+					"build",
+					"ks",
+					"app",
+					"--path",
+					filepath.Join(root, "cluster"),
+					"--concurrency",
+					"2",
+					"--no-progress",
+				)
 				for _, want := range wantValues {
-					if !strings.Contains(out, want) {
-						t.Fatalf("missing %q in app output:\n%s", want, out)
-					}
+					assert.FatalIf(t, !strings.Contains(out, want), "missing %q in app output:\n%s", want, out)
 				}
-				if previous != "" && out != previous {
-					t.Fatal("equivalent renders differ")
-				}
+				assert.FatalIf(t, previous != "" && out != previous, "%v", "equivalent renders differ")
 				previous = out
 			}
 		})

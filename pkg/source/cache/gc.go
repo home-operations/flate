@@ -61,18 +61,18 @@ func Sweep(ctx context.Context, root string, opts SweepOpts) (SweepResult, error
 		return res, &CacheError{fmt.Errorf("open sweep root: %w", err)}
 	}
 	defer func() { _ = r.Close() }()
-	if _, err := r.Stat(ociDir); err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
+	if _, statErr := r.Stat(ociDir); statErr != nil {
+		if errors.Is(statErr, fs.ErrNotExist) {
 			return res, nil
 		}
-		return res, &CacheError{fmt.Errorf("stat store: %w", err)}
+		return res, &CacheError{fmt.Errorf("stat store: %w", statErr)}
 	}
 	if !opts.DryRun {
-		lock := flock.New(filepath.Join(r.Name(), ociLock), flock.SetPermissions(0o600))
+		lock := flock.New(filepath.Join(r.Name(), ociLock), flock.SetPermissions(privateFileMode))
 		defer func() { _ = lock.Close() }()
-		locked, err := lock.TryLock()
-		if err != nil {
-			return res, &CacheError{fmt.Errorf("lock sweep store: %w", err)}
+		locked, tryLockErr := lock.TryLock()
+		if tryLockErr != nil {
+			return res, &CacheError{fmt.Errorf("lock sweep store: %w", tryLockErr)}
 		}
 		if !locked {
 			return res, &CacheError{errors.New("sweep: store is busy")}
@@ -86,11 +86,16 @@ func Sweep(ctx context.Context, root string, opts SweepOpts) (SweepResult, error
 	if opts.DryRun {
 		return res, nil
 	}
+	return selection.apply(ctx)
+}
+
+func (s *sweepSelection) apply(ctx context.Context) (SweepResult, error) {
+	res, r := s.result, s.root
 	writable, err := oci.NewWithContext(ctx, filepath.Join(r.Name(), ociDir))
 	if err != nil {
 		return res, &CacheError{fmt.Errorf("open sweep store: %w", err)}
 	}
-	for _, tag := range selection.tags {
+	for _, tag := range s.tags {
 		if err := writable.Untag(ctx, tag); err != nil {
 			res.Errors = append(res.Errors, fmt.Errorf("untag %q: %w", tag, err))
 		}
@@ -107,7 +112,7 @@ func Sweep(ctx context.Context, root string, opts SweepOpts) (SweepResult, error
 		res.Errors = append(res.Errors, fmt.Errorf("save swept index: %w", err))
 		return res, nil
 	}
-	for _, path := range selection.generations {
+	for _, path := range s.generations {
 		if err := r.RemoveAll(path); err != nil {
 			res.Errors = append(res.Errors, fmt.Errorf("remove git generation: %w", err))
 		}
@@ -135,72 +140,39 @@ func selectSweep(ctx context.Context, r *os.Root, maxAge time.Duration) (sweepSe
 	if err != nil {
 		return sweepSelection{}, &CacheError{fmt.Errorf("read sweep store: %w", err)}
 	}
-	selection := sweepSelection{root: r, store: store, retained: make(map[string]struct{}), seen: make(map[digest.Digest]bool)}
+	selection := sweepSelection{
+		root:     r,
+		store:    store,
+		retained: make(map[string]struct{}),
+		seen:     make(map[digest.Digest]bool),
+	}
 	var tags []string
-	if err := store.Tags(ctx, "", func(names []string) error {
+	if tagsErr := store.Tags(ctx, "", func(names []string) error {
 		tags = append(tags, names...)
 		return nil
-	}); err != nil {
-		return sweepSelection{}, &CacheError{fmt.Errorf("list sweep tags: %w", err)}
+	}); tagsErr != nil {
+		return sweepSelection{}, &CacheError{fmt.Errorf("list sweep tags: %w", tagsErr)}
 	}
 	cutoff := time.Time{}
 	if maxAge > 0 {
 		cutoff = time.Now().Add(-maxAge).Add(-accessInterval)
 	}
 	for _, tag := range tags {
-		desc, err := store.Resolve(ctx, tag)
-		if err != nil {
-			return sweepSelection{}, &CacheError{fmt.Errorf("resolve sweep tag %q: %w", tag, err)}
-		}
-		if err := desc.Digest.Validate(); err != nil {
-			return sweepSelection{}, &CacheError{fmt.Errorf("validate sweep tag %q: %w", tag, err)}
-		}
-		info, err := r.Stat(blobPath(desc.Digest))
-		if err != nil {
-			return sweepSelection{}, &CacheError{fmt.Errorf("stat sweep tag %q: %w", tag, err)}
-		}
-		keep := cutoff.IsZero() || info.ModTime().After(cutoff)
-		if err := selection.visit(ctx, desc, keep); err != nil {
-			return sweepSelection{}, &CacheError{fmt.Errorf("walk sweep tag %q: %w", tag, err)}
-		}
-		if !keep {
-			selection.tags = append(selection.tags, tag)
+		if selectErr := selection.selectTag(ctx, tag, cutoff); selectErr != nil {
+			return sweepSelection{}, selectErr
 		}
 	}
+
 	entries, err := fs.ReadDir(r.FS(), generationPath(""))
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return sweepSelection{}, &CacheError{fmt.Errorf("read git generations: %w", err)}
 	}
 	for _, entry := range entries {
-		id := entry.Name()
-		parsed, err := uuid.Parse(id)
-		if err != nil || parsed.String() != id || !entry.IsDir() {
-			continue
+		if selectErr := selection.selectGeneration(ctx, entry); selectErr != nil {
+			return sweepSelection{}, selectErr
 		}
-		if _, ok := selection.retained[id]; ok {
-			continue
-		}
-		path := generationPath(id)
-		if err := fs.WalkDir(r.FS(), path, func(_ string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if !d.IsDir() {
-				info, err := d.Info()
-				if err != nil {
-					return err
-				}
-				selection.result.Bytes += info.Size()
-			}
-			return nil
-		}); err != nil {
-			return sweepSelection{}, &CacheError{fmt.Errorf("size git generation: %w", err)}
-		}
-		selection.generations = append(selection.generations, path)
 	}
+
 	if err := ctx.Err(); err != nil {
 		return sweepSelection{}, &CacheError{err}
 	}
@@ -212,9 +184,10 @@ func selectSweep(ctx context.Context, r *os.Root, maxAge time.Duration) (sweepSe
 	return selection, nil
 }
 
-func (s *sweepSelection) visit(ctx context.Context, desc ocispec.Descriptor, keep bool) error {
+func (s *sweepSelection) visit(ctx context.Context, descValue *ocispec.Descriptor, keep bool) error {
+	desc := *descValue
 	if err := ctx.Err(); err != nil {
-		return err
+		return err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 	}
 	if id := desc.Annotations[prefix+"git-generation"]; id != "" {
 		parsed, err := uuid.Parse(id)
@@ -231,19 +204,73 @@ func (s *sweepSelection) visit(ctx context.Context, desc ocispec.Descriptor, kee
 	}
 	s.seen[desc.Digest] = keep
 	if err := desc.Digest.Validate(); err != nil {
-		return err
+		return fmt.Errorf("validate cache payload digest: %w", err)
 	}
 	if _, err := s.root.Stat(blobPath(desc.Digest)); err != nil {
-		return err
+		return err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
 	}
 	children, err := content.Successors(ctx, s.store, desc)
 	if err != nil {
-		return err
+		return fmt.Errorf("read cache successors: %w", err)
 	}
 	for _, child := range children {
-		if err := s.visit(ctx, child, keep); err != nil {
+		if err := s.visit(ctx, &child, keep); err != nil {
 			return err
 		}
 	}
+	return nil
+}
+
+func (s *sweepSelection) selectTag(ctx context.Context, tag string, cutoff time.Time) error {
+	desc, resolveErr := s.store.Resolve(ctx, tag)
+	if resolveErr != nil {
+		return &CacheError{fmt.Errorf("resolve sweep tag %q: %w", tag, resolveErr)}
+	}
+	if validateErr := desc.Digest.Validate(); validateErr != nil {
+		return &CacheError{fmt.Errorf("validate sweep tag %q: %w", tag, validateErr)}
+	}
+	info, resolveErr := s.root.Stat(blobPath(desc.Digest))
+	if resolveErr != nil {
+		return &CacheError{fmt.Errorf("stat sweep tag %q: %w", tag, resolveErr)}
+	}
+	keep := cutoff.IsZero() || info.ModTime().After(cutoff)
+	if visitErr := s.visit(ctx, &desc, keep); visitErr != nil {
+		return &CacheError{fmt.Errorf("walk sweep tag %q: %w", tag, visitErr)}
+	}
+	if !keep {
+		s.tags = append(s.tags, tag)
+	}
+	return nil
+}
+
+func (s *sweepSelection) selectGeneration(ctx context.Context, entry fs.DirEntry) error {
+	id := entry.Name()
+	parsed, err := uuid.Parse(id)
+	if err != nil || parsed.String() != id || !entry.IsDir() {
+		return nil //nolint:nilerr // Malformed generation names are excluded from garbage collection.
+	}
+	if _, ok := s.retained[id]; ok {
+		return nil
+	}
+	path := generationPath(id)
+	if err := fs.WalkDir(s.root.FS(), path, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
+		}
+		if !d.IsDir() {
+			info, err := d.Info()
+			if err != nil {
+				return fmt.Errorf("inspect cache generation entry: %w", err)
+			}
+			s.result.Bytes += info.Size()
+		}
+		return nil
+	}); err != nil {
+		return &CacheError{fmt.Errorf("size git generation: %w", err)}
+	}
+	s.generations = append(s.generations, path)
 	return nil
 }

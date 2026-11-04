@@ -3,6 +3,8 @@ package loaderscope_test
 import (
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
+
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -10,6 +12,7 @@ import (
 )
 
 func TestScopeStartup(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "set.yaml", `apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSet
@@ -23,20 +26,27 @@ spec:
 `)
 	s := store.New()
 	l := loader.New(s)
-	if _, err := l.Load(t.Context(), root); err != nil {
-		t.Fatal(err)
+	{
+		_, err := l.Load(t.Context(), root)
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	l.Admit(root)
-	rs, ok := s.Get[*manifest.ResourceSet](manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Name: "set", Namespace: "authored"})
-	if !ok {
-		t.Fatal("standalone loader did not admit the ResourceSet")
-	}
+	rs, ok := s.Get[*manifest.ResourceSet](
+		manifest.NamedResource{
+			Group:     manifest.FluxOperatorDomain,
+			Kind:      manifest.KindResourceSet,
+			Name:      "set",
+			Namespace: "authored",
+		},
+	)
+	assert.FatalIf(t, !ok, "%v", "standalone loader did not admit the ResourceSet")
 	for ref := range manifest.References(rs, manifest.ReferenceRelations) {
-		if ref.Namespace != "" {
-			t.Fatalf("cluster dependency namespace = %q", ref.Namespace)
-		}
+		assert.FatalIf(t, ref.Namespace != "", "cluster dependency namespace = %q", ref.Namespace)
 	}
-	if manifest.KindOf(&manifest.RawObject{APIVersion: "v1", Kind: "Namespace"}).Namespaced() {
-		t.Fatal("loader startup did not install builtin scope authority")
-	}
+	assert.FatalIf(
+		t,
+		manifest.KindOf(&manifest.RawObject{APIVersion: "v1", Kind: "Namespace"}).Namespaced(),
+		"%v",
+		"loader startup did not install builtin scope authority",
+	)
 }

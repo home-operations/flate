@@ -19,6 +19,8 @@ import (
 // Kustomization is the Flux Kustomization CR. It bundles the path of a
 // local kustomize tree together with the in-cluster materials it produces
 // (HelmReleases, HelmRepositories, ConfigMaps, ...).
+//
+//nolint:embeddedstructfieldcheck // The SDK field order preserves serialized document order.
 type Kustomization struct {
 	Name      string `json:"name"                yaml:"name"`
 	Namespace string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
@@ -39,10 +41,17 @@ type Kustomization struct {
 // NewEntryKustomization constructs an internal producer for an admitted literal entry.
 func NewEntryKustomization(source NamedResource, path string, applier NamedResource) *Kustomization {
 	return &Kustomization{
-		Name: cmp.Or(NormalizeClaimBase(path), "."), Namespace: internalKustomizationNamespace,
+		Name:            cmp.Or(NormalizeClaimBase(path), "."),
+		Namespace:       internalKustomizationNamespace,
 		Path:            path,
-		diagnosticOwner: applier, diagnosticPath: path, hasDiagnostic: true,
-		SourceRef:  kustomizev1.CrossNamespaceSourceReference{Kind: source.Kind, Name: source.Name, Namespace: source.Namespace},
+		diagnosticOwner: applier,
+		diagnosticPath:  path,
+		hasDiagnostic:   true,
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{
+			Kind:      source.Kind,
+			Name:      source.Name,
+			Namespace: source.Namespace,
+		},
 		projection: new(atomic.Pointer[kustomizationProjection]),
 	}
 }
@@ -58,10 +67,17 @@ func (k *Kustomization) Suspended() bool { return k.Suspend }
 
 // Named identifies the Kustomization.
 func (k *Kustomization) Named() NamedResource {
-	return NamedResource{Group: kindTable[kindKustomization].Group, Kind: KindKustomization, Namespace: k.Namespace, Name: k.Name}
+	return NamedResource{
+		Group:     kindTable[kindKustomization].Group,
+		Kind:      KindKustomization,
+		Namespace: k.Namespace,
+		Name:      k.Name,
+	}
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (k *Kustomization) WithNamespace(namespace string) BaseManifest {
 	out := *k
 	out.Namespace = namespace
@@ -70,8 +86,11 @@ func (k *Kustomization) WithNamespace(namespace string) BaseManifest {
 
 // ProjectionCompatible reports whether an eligible previous projection can be reused.
 func (k *Kustomization) ProjectionCompatible(previous BaseManifest) bool {
+	//nolint:errcheck // The owning path guarantees the concrete type and panics on a broken invariant.
 	p := previous.(*Kustomization)
-	return k.TargetNamespace == p.TargetNamespace && k.diagnosticOwner == p.diagnosticOwner && k.diagnosticPath == p.diagnosticPath && k.hasDiagnostic == p.hasDiagnostic
+	return k.TargetNamespace == p.TargetNamespace && k.diagnosticOwner == p.diagnosticOwner &&
+		k.diagnosticPath == p.diagnosticPath &&
+		k.hasDiagnostic == p.hasDiagnostic
 }
 
 // Clone deep-copies mutable fields; store-owned specs MUST remain immutable.
@@ -87,9 +106,13 @@ func (k *Kustomization) equal(other *Kustomization) bool {
 	if k == other {
 		return true
 	}
-	return k != nil && other != nil && k.Name == other.Name && k.Namespace == other.Namespace && k.diagnosticOwner == other.diagnosticOwner && k.diagnosticPath == other.diagnosticPath && k.hasDiagnostic == other.hasDiagnostic &&
+	return k != nil && other != nil && k.Name == other.Name && k.Namespace == other.Namespace &&
+		k.diagnosticOwner == other.diagnosticOwner &&
+		k.diagnosticPath == other.diagnosticPath &&
+		k.hasDiagnostic == other.hasDiagnostic &&
 		reflect.DeepEqual(&k.KustomizationSpec, &other.KustomizationSpec) &&
-		reflect.DeepEqual(k.Labels, other.Labels) && reflect.DeepEqual(k.Annotations, other.Annotations)
+		reflect.DeepEqual(k.Labels, other.Labels) &&
+		reflect.DeepEqual(k.Annotations, other.Annotations)
 }
 
 func parseKustomization(doc map[string]any) (*Kustomization, error) {
@@ -103,8 +126,12 @@ func parseKustomization(doc map[string]any) (*Kustomization, error) {
 	// misleading "kustomization path does not exist" 30 lines later
 	// in the reconcile flow.
 	if cr.Spec.SourceRef.Kind != "" && cr.Spec.SourceRef.Name == "" {
-		return nil, inputf("Kustomization %s/%s: spec.sourceRef.kind=%q but spec.sourceRef.name is empty (check for truncated YAML)",
-			cr.Namespace, cr.Name, cr.Spec.SourceRef.Kind)
+		return nil, inputf(
+			"Kustomization %s/%s: spec.sourceRef.kind=%q but spec.sourceRef.name is empty (check for truncated YAML)",
+			cr.Namespace,
+			cr.Name,
+			cr.Spec.SourceRef.Kind,
+		)
 	}
 
 	for _, dep := range cr.Spec.DependsOn {
@@ -125,7 +152,16 @@ func parseKustomization(doc map[string]any) (*Kustomization, error) {
 
 // SourceID resolves the authored source against the effective namespace.
 func (k *Kustomization) SourceID() NamedResource {
-	return Resolve(NamedResource{Group: referenceGroup(k.SourceRef.Kind, k.SourceRef.APIVersion), Kind: k.SourceRef.Kind, Namespace: k.SourceRef.Namespace, Name: k.SourceRef.Name}, "", k.Namespace)
+	return Resolve(
+		NamedResource{
+			Group:     referenceGroup(k.SourceRef.Kind, k.SourceRef.APIVersion),
+			Kind:      k.SourceRef.Kind,
+			Namespace: k.SourceRef.Namespace,
+			Name:      k.SourceRef.Name,
+		},
+		"",
+		k.Namespace,
+	)
 }
 
 // IsFragment identifies patch fragments without a render path or source name.
@@ -160,31 +196,28 @@ func (k *Kustomization) mapDependsOn(name, namespace func(string) string) *Kusto
 }
 
 func (k *Kustomization) references(yield func(Reference) bool, view ReferenceView) {
-	authoredSource := k.SourceRef.Kind != "" || k.SourceRef.Name != ""
-	implicitSource := view == ReferenceAll && k.Path != ""
-	if authoredSource || implicitSource {
-		src := k.SourceID()
-		content := src.Kind != "" && src.Name != ""
-		use := "source"
-		if !content && k.Path != "" {
-			src = BootstrapSourceID
-			use = ""
-		}
-		if (view == ReferenceAll || use != "") && !yield(Reference{
-			NamedResource: src,
-			Use:           use, Content: content, Gate: GateInputs | GateArtifacts, Artifact: true,
-			ArtifactStages: GateInputs | GateArtifacts,
-
-			NamespaceDefault: use != "" && k.SourceRef.Namespace == "",
-		}) {
-			return
-		}
+	if !k.sourceReference(yield, view) {
+		return
 	}
 	for i := range k.DependsOn {
 		dep := &k.DependsOn[i]
 		if !yield(Reference{
-			NamedResource: Resolve(NamedResource{Group: kindTable[kindKustomization].Group, Kind: KindKustomization, Namespace: dep.Namespace, Name: dep.Name}, "", k.Namespace),
-			Use:           "dependsOn", Position: i, ReadyExpr: referenceExpression(&dep.ReadyExpr), Gate: GateInputs, Ordering: true, NamespaceDefault: dep.Namespace == "",
+			NamedResource: Resolve(
+				NamedResource{
+					Group:     kindTable[kindKustomization].Group,
+					Kind:      KindKustomization,
+					Namespace: dep.Namespace,
+					Name:      dep.Name,
+				},
+				"",
+				k.Namespace,
+			),
+			Use:              dependsOnKey,
+			Position:         i,
+			ReadyExpr:        referenceExpression(&dep.ReadyExpr),
+			Gate:             GateInputs,
+			Ordering:         true,
+			NamespaceDefault: dep.Namespace == "",
 		}) {
 			return
 		}
@@ -198,8 +231,12 @@ func (k *Kustomization) references(yield func(Reference) bool, view ReferenceVie
 		}
 		content := !ref.Optional && ref.Name != ""
 		if !yield(Reference{
-			NamedResource: Resolve(NamedResource{Kind: ref.Kind, Name: ref.Name}, "", k.Namespace),
-			Use:           "substituteFrom", Position: i, Optional: ref.Optional, Content: content, NamespaceDefault: true,
+			NamedResource:    Resolve(NamedResource{Kind: ref.Kind, Name: ref.Name}, "", k.Namespace),
+			Use:              substituteFromKey,
+			Position:         i,
+			Optional:         ref.Optional,
+			Content:          content,
+			NamespaceDefault: true,
 		}) {
 			return
 		}
@@ -209,8 +246,6 @@ func (k *Kustomization) references(yield func(Reference) bool, view ReferenceVie
 func (k *Kustomization) kind() KindInfo { return kindTable[kindKustomization].KindInfo }
 
 // Content returns raw inputs for nil names, or final inputs projected to effective substitutions.
-//
-//nolint:ireturn // Fingerprint accepts type-specific render identities.
 func (k *Kustomization) Content(source any, names map[string]struct{}, active bool) any {
 	spec := k.KustomizationSpec
 	spec.PostBuild, spec.DependsOn = nil, nil
@@ -254,6 +289,7 @@ type kustomizationEncoder struct {
 	object  kustomizev1.Kustomization
 }
 
+//nolint:gochecknoglobals // A process-wide pool reuses render encoders.
 var kustomizationEncoders = sync.Pool{New: func() any {
 	state := new(kustomizationEncoder)
 	state.encoder = jsontext.NewEncoder(&state.buffer)
@@ -262,6 +298,7 @@ var kustomizationEncoders = sync.Pool{New: func() any {
 
 // RenderDocument derives a Flux desired document; callers MUST keep it immutable.
 func (k *Kustomization) RenderDocument() (map[string]any, error) {
+	//nolint:errcheck // The owning path guarantees the concrete type and panics on a broken invariant.
 	state := kustomizationEncoders.Get().(*kustomizationEncoder)
 	state.buffer.Reset()
 	state.encoder.Reset(&state.buffer)
@@ -300,4 +337,28 @@ func (*Kustomization) outputFields() string {
 		"spec.healthCheckExprs.apiVersion spec.healthCheckExprs.kind spec.healthCheckExprs.current " +
 		"spec.healthCheckExprs.failed spec.healthCheckExprs.inProgress\n" +
 		" spec.dependsOn.name spec.dependsOn.namespace spec.dependsOn.readyExpr"
+}
+
+func (k *Kustomization) sourceReference(yield func(Reference) bool, view ReferenceView) bool {
+	authoredSource := k.SourceRef.Kind != "" || k.SourceRef.Name != ""
+	implicitSource := view == ReferenceAll && k.Path != ""
+	if authoredSource || implicitSource {
+		src := k.SourceID()
+		content := src.Kind != "" && src.Name != ""
+		use := sourceKey
+		if !content && k.Path != "" {
+			src = BootstrapSourceID
+			use = ""
+		}
+		if (view == ReferenceAll || use != "") && !yield(Reference{
+			NamedResource: src,
+			Use:           use, Content: content, Gate: GateInputs | GateArtifacts, Artifact: true,
+			ArtifactStages: GateInputs | GateArtifacts,
+
+			NamespaceDefault: use != "" && k.SourceRef.Namespace == "",
+		}) {
+			return false
+		}
+	}
+	return true
 }

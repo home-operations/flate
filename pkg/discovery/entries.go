@@ -24,17 +24,19 @@ type entryInputs struct {
 }
 
 // Plan establishes entries without publishing seeds into the caller's store.
+//
+//nolint:gocritic // Public entry planning preserves its configuration value snapshot.
 func Plan(ctx context.Context, cfg Config) ([]Entry, error) {
 	if cfg.Input == nil && cfg.Store != nil {
 		cfg.Input, _ = cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	}
 	cfg.Store = store.New()
-	d := newDiscoverer(cfg)
+	d := newDiscoverer(&cfg)
 	l := d.loader
 	if _, err := d.resolveEntrySources(ctx, false); err != nil {
 		return nil, err
 	}
-	input := cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
+	input := cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact) //nolint:errcheck // Entry admission provides a source artifact.
 	l.SourceRoot = input.LocalPath
 	l.IgnoreFile = cfg.KRMIgnoreFile
 	if _, err := l.Load(ctx, d.cfg.Path); err != nil {
@@ -45,6 +47,11 @@ func Plan(ctx context.Context, cfg Config) ([]Entry, error) {
 	if err := d.loadManifests(ctx, input.LocalPath, false); err != nil {
 		return nil, err
 	}
-	prepared := &entryInputs{input: *input, parsed: l.ParsedInputs(), aliasViews: maps.Clone(d.aliasViews), wipeSecrets: cfg.WipeSecrets}
+	prepared := &entryInputs{
+		input:       *input,
+		parsed:      l.ParsedInputs(),
+		aliasViews:  maps.Clone(d.aliasViews),
+		wipeSecrets: cfg.WipeSecrets,
+	}
 	return []Entry{{Path: d.cfg.Path, Input: input, prepared: prepared}}, nil
 }

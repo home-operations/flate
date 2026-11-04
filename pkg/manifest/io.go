@@ -12,13 +12,16 @@ import (
 )
 
 // yaml.v4 reuses non-nil maps; only unretained documents may return here.
+//
+//nolint:gochecknoglobals // A process-wide pool reuses decoded document maps.
 var decodedMapPool = sync.Pool{
 	New: func() any {
-		return make(map[string]any, 8)
+		return make(map[string]any, initialDocumentCapacity)
 	},
 }
 
 func getDecodedMap() map[string]any {
+	//nolint:errcheck // The owning path guarantees the concrete type and panics on a broken invariant.
 	return decodedMapPool.Get().(map[string]any)
 }
 
@@ -38,9 +41,9 @@ func ReleaseDoc(m map[string]any) {
 
 // DocOccurrence retains a constructed document or failure at its original stream ordinal.
 type DocOccurrence struct {
-	Document map[string]any
-	Ordinal  int
-	Err      error
+	Document map[string]any `json:"Document"`
+	Ordinal  int            `json:"Ordinal"`
+	Err      error          `json:"Err"`
 }
 
 // DocumentRole determines whether nonmapping documents are required manifests.
@@ -75,37 +78,10 @@ func DecodeDocs(r io.Reader, role DocumentRole) ([]DocOccurrence, error) {
 		var node yaml.Node
 		err := dec.Decode(&node)
 		if err != nil {
-			if stream.err != nil {
-				failure := NewError(ErrInput, fmt.Errorf("read documents: %w", stream.err), "")
-				if errors.Is(stream.err, context.Canceled) || errors.Is(stream.err, context.DeadlineExceeded) {
-					return out, failure
-				}
-				return append(out, DocOccurrence{Ordinal: ordinal, Err: failure}), nil
-			}
-			if errors.Is(err, io.EOF) {
-				return out, nil
-			}
-			out = append(out, DocOccurrence{Ordinal: ordinal, Err: NewError(ErrInput, err, "")})
-			return out, nil
+			return stream.finishDecode(out, err, ordinal)
 		}
 		preserveTimestampStrings(&node)
-		mapping := &node
-		if mapping.Kind == yaml.DocumentNode && len(mapping.Content) != 0 {
-			mapping = mapping.Content[0]
-		}
-		var m map[string]any
-		shapeFailure := false
-		if mapping.Kind == yaml.MappingNode {
-			m = getDecodedMap()
-			err = node.Load(&m, constructionOption)
-		} else {
-			var value any
-			err = node.Load(&value, constructionOption)
-			if err == nil && value != nil && role == RequiredDocuments {
-				err = fmt.Errorf("document must be a mapping")
-				shapeFailure = true
-			}
-		}
+		m, shapeFailure, err := loadDocumentNode(&node, role, constructionOption)
 		if err != nil {
 			ReleaseDoc(m)
 			out = append(out, DocOccurrence{Ordinal: ordinal, Err: NewError(ErrInput, err, "")})
@@ -134,6 +110,7 @@ func preserveTimestampStrings(n *yaml.Node) {
 
 type documentStream struct {
 	io.Reader
+
 	err error
 }
 
@@ -142,6 +119,7 @@ func (s *documentStream) Read(p []byte) (int, error) {
 	if err != nil && err != io.EOF {
 		s.err = err
 	}
+	//nolint:wrapcheck // Reader errors and EOF retain their identity at this transparent observation boundary.
 	return n, err
 }
 
@@ -156,4 +134,49 @@ func DocumentFailure(docs []DocOccurrence) error {
 		}
 	}
 	return nil
+}
+
+const (
+	initialDocumentCapacity = 8
+)
+
+func (s *documentStream) finishDecode(out []DocOccurrence, err error, ordinal int) ([]DocOccurrence, error) {
+	if s.err != nil {
+		failure := NewError(ErrInput, fmt.Errorf("read documents: %w", s.err), "")
+		if errors.Is(s.err, context.Canceled) || errors.Is(s.err, context.DeadlineExceeded) {
+			return out, failure
+		}
+		return append(out, DocOccurrence{Ordinal: ordinal, Err: failure}), nil
+	}
+	if errors.Is(err, io.EOF) {
+		return out, nil
+	}
+	out = append(out, DocOccurrence{Ordinal: ordinal, Err: NewError(ErrInput, err, "")})
+	return out, nil
+}
+
+func loadDocumentNode(
+	node *yaml.Node,
+	role DocumentRole,
+	constructionOption yaml.Option,
+) (map[string]any, bool, error) {
+	mapping := node
+	if mapping.Kind == yaml.DocumentNode && len(mapping.Content) != 0 {
+		mapping = mapping.Content[0]
+	}
+	var m map[string]any
+	var err error
+	shapeFailure := false
+	if mapping.Kind == yaml.MappingNode {
+		m = getDecodedMap()
+		err = node.Load(&m, constructionOption)
+	} else {
+		var value any
+		err = node.Load(&value, constructionOption)
+		if err == nil && value != nil && role == RequiredDocuments {
+			err = fmt.Errorf("document must be a mapping")
+			shapeFailure = true
+		}
+	}
+	return m, shapeFailure, err
 }

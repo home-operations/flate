@@ -23,12 +23,18 @@ type Snapshot struct {
 // Compare compares two selected snapshots in orig/current order. Selected errors
 // remain errors even when the snapshots produce a usable partial diff; discovered
 // warnings and structured suppressions remain available alongside those errors.
-func Compare(orig, current Snapshot, selectedErr error, opts Options) ([]byte, []manifest.Warning, []Suppression, error) {
+//
+//nolint:gocritic // Preserve the existing value API and its snapshot semantics.
+func Compare(
+	orig, current Snapshot,
+	selectedErr error,
+	opts Options,
+) ([]byte, []manifest.Warning, []Suppression, error) {
 	left, right, suppressed := diffprep.Suppress(diffprep.Snapshot(orig), diffprep.Snapshot(current))
 	opts.subjects = [2]map[manifest.NamedResource]manifest.DiagnosticIdentity{orig.Subjects, current.Subjects}
 	opts.Suppressed = append(slices.Clone(opts.Suppressed), publicSuppressions(suppressed)...)
-	prepared := diffprep.Prepare(diffprep.Documents(left), diffprep.Documents(right), prepareOptions(opts))
-	out, err := renderPrepared(prepared, opts)
+	prepared := diffprep.Prepare(diffprep.Documents(left), diffprep.Documents(right), prepareOptions(new(opts)))
+	out, err := renderPrepared(prepared, new(opts))
 	warnings := prepared.Warnings
 	return out, warnings, opts.Suppressed, errors.Join(err, selectedErr)
 }
@@ -59,8 +65,21 @@ func CompareImages(orig, current Snapshot, selectedErr error, includeRemoved boo
 
 func publicSuppressions(notes []diffprep.Suppression) []Suppression {
 	out := slices.Grow([]Suppression(nil), len(notes))
-	for _, n := range notes {
-		out = append(out, Suppression{Parent: Parent(n.Parent), Subject: n.Subject, Side: Side(n.Side), Count: n.Count, Reason: n.Reason})
+	{
+		nValues := notes
+		for nIndex := range nValues {
+			n := nValues[nIndex]
+			out = append(
+				out,
+				Suppression{
+					Parent:  Parent(n.Parent),
+					Subject: n.Subject,
+					Side:    Side(n.Side),
+					Count:   n.Count,
+					Reason:  n.Reason,
+				},
+			)
+		}
 	}
 	return out
 }

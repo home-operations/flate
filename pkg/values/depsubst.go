@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
+	"fmt"
 	"maps"
 	"strings"
 
@@ -60,10 +61,16 @@ func (d DependencySubstitutions) Resolve(text string) string {
 
 // MarshalJSONTo encodes immutable substitution content for renderer policy identity.
 func (d DependencySubstitutions) MarshalJSONTo(encoder *jsontext.Encoder) error {
+	var err error
 	if len(d.values) == 0 {
-		return encoder.WriteToken(jsontext.Null)
+		err = encoder.WriteToken(jsontext.Null)
+	} else {
+		err = jsonv2.MarshalEncode(encoder, d.values, json.DefaultOptionsV1())
 	}
-	return jsonv2.MarshalEncode(encoder, d.values, json.DefaultOptionsV1())
+	if err != nil {
+		return fmt.Errorf("encode dependency substitutions: %w", err)
+	}
+	return nil
 }
 
 // Equal compares immutable substitution content.

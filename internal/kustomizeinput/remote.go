@@ -33,7 +33,7 @@ func ParseGitBase(raw string) (GitBase, bool) {
 	ref, timeout, submodules := parseQuery(query)
 	n, _ = trimPrefixFold(n, "git::")
 	var scheme string
-	for _, prefix := range []string{"ssh://", "https://", "http://", "file://"} {
+	for _, prefix := range []string{"ssh://", httpsScheme, "http://", fileScheme} {
 		if rest, ok := trimPrefixFold(n, prefix); ok {
 			scheme, n = prefix, rest
 			break
@@ -41,38 +41,9 @@ func ParseGitBase(raw string) (GitBase, bool) {
 	}
 	username := gitUsername.FindString(n)
 	n = strings.TrimPrefix(n, username)
-	lower := strings.ToLower(n)
-	github := strings.HasPrefix(lower, "github.com/") || strings.HasPrefix(lower, "github.com:")
-	scp := scheme == "" && (username != "" || github)
-	if scheme == "" && !scp {
+	host, repoPath, ok := remoteHost(scheme, username, n)
+	if !ok {
 		return GitBase{}, false
-	}
-	var host, repoPath string
-	if scheme == "file://" {
-		host, repoPath = scheme, username+n
-	} else {
-		sep := strings.Index(n, "/")
-		if scp {
-			colon := strings.Index(n, ":")
-			if sep == -1 || colon > 0 && colon < sep {
-				sep = colon
-			}
-		}
-		host = n
-		if sep >= 0 {
-			host, repoPath = n[:sep+1], n[sep+1:]
-		}
-		if github {
-			if scheme == "ssh://" || username != "" {
-				scheme, host = "", "github.com:"
-			} else {
-				scheme, username, host = "https://", "", "github.com/"
-			}
-		}
-		if host == "" {
-			return GitBase{}, false
-		}
-		host = scheme + username + host
 	}
 	var subpath string
 	switch {
@@ -85,19 +56,31 @@ func ParseGitBase(raw string) (GitBase, bool) {
 	case strings.Contains(repoPath, ".git"):
 		before, after, _ := strings.Cut(repoPath, ".git")
 		repoPath, subpath = before+".git", after
-	case scheme != "file://":
+	case scheme != fileScheme:
 		segments := strings.Split(repoPath, "/")
-		if len(segments) < 2 {
+		if len(segments) < repositoryPathSegments {
 			return GitBase{}, false
 		}
-		repoPath, subpath = strings.Join(segments[:2], "/"), strings.Join(segments[2:], "/")
+		repoPath, subpath = strings.Join(
+			segments[:repositoryPathSegments],
+			"/",
+		), strings.Join(
+			segments[repositoryPathSegments:],
+			"/",
+		)
 	}
 	clean := filepath.Clean(strings.TrimPrefix(subpath, string(filepath.Separator)))
 	first, _, _ := strings.Cut(clean, string(filepath.Separator))
 	if repoPath == "" || first == ".." {
 		return GitBase{}, false
 	}
-	return GitBase{RepoURL: host + repoPath, SubPath: strings.TrimPrefix(subpath, "/"), Ref: ref, Timeout: timeout, Submodules: submodules}, true
+	return GitBase{
+		RepoURL:    host + repoPath,
+		SubPath:    strings.TrimPrefix(subpath, "/"),
+		Ref:        ref,
+		Timeout:    timeout,
+		Submodules: submodules,
+	}, true
 }
 
 func parseQuery(query string) (string, time.Duration, bool) {
@@ -129,7 +112,7 @@ func parseQuery(query string) (string, time.Duration, bool) {
 
 // CutHTTPScheme splits the HTTP scheme used by file acquisition.
 func CutHTTPScheme(s string) (string, string, bool) {
-	for _, scheme := range []string{"https://", "http://"} {
+	for _, scheme := range []string{httpsScheme, "http://"} {
 		if rest, ok := trimPrefixFold(s, scheme); ok {
 			return scheme, rest, true
 		}
@@ -143,3 +126,45 @@ func trimPrefixFold(s, prefix string) (string, bool) {
 	}
 	return s, false
 }
+
+func remoteHost(scheme, username, n string) (string, string, bool) {
+	lower := strings.ToLower(n)
+	github := strings.HasPrefix(lower, "github.com/") || strings.HasPrefix(lower, "github.com:")
+	scp := scheme == "" && (username != "" || github)
+	if scheme == "" && !scp {
+		return "", "", false
+	}
+	var host, repoPath string
+	if scheme == fileScheme {
+		return scheme, username + n, true
+	}
+	sep := strings.Index(n, "/")
+	if scp {
+		colon := strings.Index(n, ":")
+		if sep == -1 || colon > 0 && colon < sep {
+			sep = colon
+		}
+	}
+	host = n
+	if sep >= 0 {
+		host, repoPath = n[:sep+1], n[sep+1:]
+	}
+	if github {
+		if scheme == "ssh://" || username != "" {
+			scheme, host = "", "github.com:"
+		} else {
+			scheme, username, host = httpsScheme, "", "github.com/"
+		}
+	}
+	if host == "" {
+		return "", "", false
+	}
+	host = scheme + username + host
+	return host, repoPath, true
+}
+
+const fileScheme = "file://"
+
+const repositoryPathSegments = 2
+
+const httpsScheme = "https://"

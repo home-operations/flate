@@ -73,17 +73,18 @@ func (sh *shard) requireCapacityLocked(heads ...authority) {
 }
 
 type objectCell struct {
+	authority
+
 	static   manifest.BaseManifest
 	document map[string]any
 	// Direct writes use this revision; emitted values use the immutable producer record.
-	publication                                    uint64
-	binding                                        *Input
-	support                                        *Input
+	publication                                              uint64
+	binding                                                  *Input
+	support                                                  *Input
 	excluded, included, rooted, retired, hidden, independent bool
 	// Auxiliary follows the emitted contender; current static authority still wins.
 	auxiliary bool
 	preflight string
-	authority
 }
 
 func (c *objectCell) bound() bool {
@@ -91,8 +92,9 @@ func (c *objectCell) bound() bool {
 }
 
 type objectBucket struct {
-	names map[nameID]struct{}
 	authority
+
+	names map[nameID]struct{}
 }
 
 type shard struct {
@@ -292,7 +294,8 @@ func (u *objectUpdate) compare() {
 		}
 	}
 	u.staticEqual = u.cell.binding == u.binding && u.cell.support == u.support && equal
-	u.membershipEqual = u.staticEqual || u.cell.static != nil && manifest.LabelsEqual(u.cell.static, u.obj, [2]map[string]any{}, nil)
+	u.membershipEqual = u.staticEqual ||
+		u.cell.static != nil && manifest.LabelsEqual(u.cell.static, u.obj, [2]map[string]any{}, nil)
 	u.effectiveEqual = equal
 	if u.effectiveEqual {
 		u.effectiveEqual, _ = reconcileInputEqual(u.obj, u.cell.document, u.document)
@@ -306,9 +309,11 @@ func (u *objectUpdate) compare() {
 }
 
 // currentLocked MUST hold the effective producer's shard as well as the target's.
-func (u objectUpdate) currentLocked(sh *shard) bool {
-	return sh.cells[u.obj.Named()].publication == u.cell.publication && sh.cells[u.obj.Named()].generation == u.cell.generation &&
-		(u.effective.owner == nil || u.effective.owner.current.Load() == u.effective.record)
+func (u *objectUpdate) currentLocked(sh *shard) bool {
+	v := *u
+	return sh.cells[v.obj.Named()].publication == v.cell.publication &&
+		sh.cells[v.obj.Named()].generation == v.cell.generation &&
+		(v.effective.owner == nil || v.effective.owner.current.Load() == v.effective.record)
 }
 
 // AddObject inserts a manifest. Equal content with unchanged authority is a no-op.
@@ -326,47 +331,40 @@ func (s *Store) addObject(obj manifest.BaseManifest, binding, support *Input, do
 		sh.mu.RLock()
 		cell := sh.cells[id]
 		needsRoot := !cell.rooted && (len(sh.members[id]) > 0 || sh.slots[id] != nil)
-		if len(docs) == 0 && cell.static == obj && cell.binding == binding && cell.support == support && !cell.hidden && !cell.retired && !needsRoot {
+		if len(docs) == 0 && cell.static == obj && cell.binding == binding && cell.support == support && !cell.hidden &&
+			!cell.retired &&
+			!needsRoot {
 			sh.mu.RUnlock()
 			return
 		}
-		u := objectUpdate{obj: obj, binding: binding, support: support, cell: cell, needsRoot: needsRoot, explicit: len(docs) != 0}
+		u := objectUpdate{
+			obj:       obj,
+			binding:   binding,
+			support:   support,
+			cell:      cell,
+			needsRoot: needsRoot,
+			explicit:  len(docs) != 0,
+		}
 		if u.explicit {
 			u.document = docs[0]
 		}
 		if sh.derived {
-			sh.captureLocked(id, cell, &u.effective)
+			sh.captureLocked(id, new(cell), &u.effective)
 		} else {
 			u.effective.child.Obj, u.effective.child.Doc = cell.static, cell.document
 		}
 		sh.mu.RUnlock()
 		u.compare()
-		if u.staticEqual && u.effectiveEqual && (!u.explicit || manifest.ValueEqual(u.cell.document, u.document)) && !u.cell.hidden && !u.cell.retired && !u.needsRoot {
+		if u.staticEqual && u.effectiveEqual && (!u.explicit || manifest.ValueEqual(u.cell.document, u.document)) &&
+			!u.cell.hidden &&
+			!u.cell.retired &&
+			!u.needsRoot {
 			return
 		}
 		u.independent = declarationIndependent(s.index.Load(), id)
-		sh.mu.Lock()
-		if binding != nil && !binding.current() || support != nil && !support.productionCurrent() {
-			sh.mu.Unlock()
+		if s.commitObjectUpdate(sh, id, &u) != publicationRetry {
 			return
 		}
-		current := sh.cells[id]
-		if current.publication != u.cell.publication || current.generation != u.cell.generation {
-			sh.mu.Unlock()
-			continue
-		}
-		if u.cell.hidden || !u.cell.rooted && (len(sh.members[id]) > 0 || sh.slots[id] != nil) {
-			sh.mu.Unlock()
-			if s.addAnchor(u) {
-				return
-			}
-			continue
-		}
-		u.cell.authority = current.authority
-		dispatch := s.admitLocked(sh, id, &u)
-		sh.mu.Unlock()
-		dispatch.run()
-		return
 	}
 }
 
@@ -435,7 +433,10 @@ func (s *Store) AddObjects(objs []manifest.BaseManifest) {
 	var buckets [shardCount][]objectUpdate
 	for _, obj := range objs {
 		i := kindShardIndex(obj.Named().Kind)
-		buckets[i] = append(buckets[i], objectUpdate{obj: obj, independent: declarationIndependent(s.index.Load(), obj.Named())})
+		buckets[i] = append(
+			buckets[i],
+			objectUpdate{obj: obj, independent: declarationIndependent(s.index.Load(), obj.Named())},
+		)
 	}
 	var anchors []objectUpdate
 	dispatches := make([]eventDispatch, 0, len(objs))
@@ -443,42 +444,13 @@ func (s *Store) AddObjects(objs []manifest.BaseManifest) {
 		if len(bucket) == 0 {
 			continue
 		}
-		slices.SortStableFunc(bucket, func(a, b objectUpdate) int { return a.obj.Named().Compare(b.obj.Named()) })
-		compacted := bucket[:0]
-		for j, u := range bucket {
-			if j+1 == len(bucket) || u.obj.Named() != bucket[j+1].obj.Named() {
-				compacted = append(compacted, u)
-			}
-		}
-		bucket = compacted
+		bucket = compactObjectBucket(bucket)
 		sh := s.shards[i]
-		for {
-			sh.mu.RLock()
-			for j := range bucket {
-				id := bucket[j].obj.Named()
-				bucket[j].cell = sh.cells[id]
-				sh.captureLocked(id, bucket[j].cell, &bucket[j].effective)
-			}
-			sh.mu.RUnlock()
-			for j := range bucket {
-				bucket[j].compare()
-			}
-			sh.mu.Lock()
-			current := true
-			for j := range bucket {
-				u := &bucket[j]
-				cell := sh.cells[u.obj.Named()]
-				if cell.publication != u.cell.publication || cell.generation != u.cell.generation {
-					current = false
-					break
-				}
-				u.cell.authority = cell.authority
-			}
-			if !current {
-				sh.mu.Unlock()
-				continue
-			}
-			for _, u := range bucket {
+		lockObjectBucket(sh, bucket)
+		{
+			uValues2 := bucket
+			for uIndex := range uValues2 {
+				u := uValues2[uIndex]
 				id := u.obj.Named()
 				if u.cell.hidden || !u.cell.rooted && (len(sh.members[id]) > 0 || sh.slots[id] != nil) {
 					anchors = append(anchors, u)
@@ -486,56 +458,25 @@ func (s *Store) AddObjects(objs []manifest.BaseManifest) {
 				}
 				dispatches = append(dispatches, s.admitLocked(sh, id, &u))
 			}
-			sh.mu.Unlock()
-			break
 		}
+		sh.mu.Unlock()
 	}
 	for len(anchors) > 0 {
 		var storage [4]regionState
 		changed := newObjectRegion(len(anchors), storage[:])
-		for _, u := range anchors {
-			changed = changed.add(u.obj.Named(), !u.effectiveEqual || u.cell.static == nil, u.independent)
-		}
+		changed = extendObjectAnchorRegion(anchors, changed)
 		s.lockAll()
-		current := true
-		for _, u := range anchors {
-			if !u.currentLocked(s.shardFor(u.obj.Named())) {
-				current = false
-				break
-			}
-		}
+		current := s.objectAnchorsCurrentLocked(anchors)
 		if !current {
 			s.unlockAll()
-			for i := range anchors {
-				u := &anchors[i]
-				id := u.obj.Named()
-				sh := s.shardFor(id)
-				sh.mu.RLock()
-				u.cell = sh.cells[id]
-				sh.captureLocked(id, u.cell, &u.effective)
-				u.needsRoot = !u.cell.rooted && (len(sh.members[id]) > 0 || sh.slots[id] != nil)
-				sh.mu.RUnlock()
-				u.compare()
-			}
-			anchors = slices.DeleteFunc(anchors, func(u objectUpdate) bool {
-				return u.staticEqual && u.effectiveEqual && !u.cell.hidden && !u.cell.retired && !u.needsRoot
-			})
+			anchors = s.refreshObjectAnchors(anchors)
 			continue
 		}
 		region := s.affectedLocked(changed, manifest.NamedResource{})
-		for _, u := range anchors {
-			obj := u.obj
-			if u.effectiveEqual && u.cell.static != nil {
-				obj = u.cell.static
-			}
-			id := obj.Named()
-			sh := s.shardFor(id)
-			cell := sh.cells[id]
-			cell.static, cell.rooted, cell.retired, cell.document = obj, true, false, u.document
-			cell.publication++
-			sh.cells[id] = cell
-		}
-		for _, p := range s.reachabilityLocked(region) {
+		s.installObjectAnchorsLocked(anchors)
+		publications := s.reachabilityLocked(region)
+		for i := range publications {
+			p := publications[i]
 			dispatches = append(dispatches, p.event)
 		}
 		s.unlockAll()
@@ -574,7 +515,14 @@ func (sh *shard) deleteLocked(id manifest.NamedResource) bool {
 		sh.mu.Unlock()
 		panic("store: publication revision exhausted")
 	}
-	sh.requireCapacityLocked(cell.authority, sh.conditions[id].stamp(), sh.artifacts[id].authority, sh.artifacts[id].revisionHead, sh.artifacts[id].originHead, bucket.authority)
+	sh.requireCapacityLocked(
+		cell.authority,
+		sh.conditions[id].stamp(),
+		sh.artifacts[id].authority,
+		sh.artifacts[id].revisionHead,
+		sh.artifacts[id].originHead,
+		bucket.authority,
+	)
 	cell.authority = cell.current().nextGeneration()
 	if cell.links != nil {
 		cell.authority = sh.enqueueLocked(cell.authority)
@@ -590,6 +538,8 @@ func (sh *shard) deleteLocked(id manifest.NamedResource) bool {
 }
 
 // GetObject returns the manifest for id, or nil if not present.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (s *Store) GetObject(id manifest.NamedResource) manifest.BaseManifest {
 	sh := s.shardFor(id)
 	sh.mu.RLock()
@@ -600,16 +550,19 @@ func (s *Store) GetObject(id manifest.NamedResource) manifest.BaseManifest {
 // Observation holds the requested readiness facts from a coherent Snapshot.
 type Observation struct {
 	StatusInfo
+
 	Conditions []Condition
 	Statusful  bool
 }
 
 // Snapshot reads an effective object and its requested readiness observation.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (s *Store) Snapshot(id manifest.NamedResource, conditions bool) (manifest.BaseManifest, Observation) {
 	sh := s.shardFor(id)
 	sh.mu.RLock()
 	cell := sh.cells[id]
-	obj := sh.captureLocked(id, cell, nil)
+	obj := sh.captureLocked(id, new(cell), nil)
 	var observed Observation
 	var record conditionRecord
 	if !cell.hidden {
@@ -671,7 +624,9 @@ func (s *Store) ListObjects(group, kind string) []manifest.BaseManifest {
 		inner := sh.byName[kindID{group, kind}].names
 		out := make([]manifest.BaseManifest, 0, len(inner))
 		for name := range inner {
-			if obj := sh.objectLocked(manifest.NamedResource{Group: group, Kind: kind, Namespace: name.namespace, Name: name.name}); obj != nil {
+			if obj := sh.objectLocked(
+				manifest.NamedResource{Group: group, Kind: kind, Namespace: name.namespace, Name: name.name},
+			); obj != nil {
 				out = append(out, obj)
 			}
 		}
@@ -710,14 +665,16 @@ func (s *Store) Objects() []manifest.BaseManifest {
 	return out
 }
 
-func (s *Store) addAnchor(u objectUpdate) bool {
+func (s *Store) addAnchor(uValue *objectUpdate) bool {
+	u := *uValue
 	id := u.obj.Named()
 	sh := s.shardFor(id)
 	var storage [4]regionState
 	changed := newObjectRegion(1, storage[:])
 	changed = changed.add(id, !u.effectiveEqual || u.cell.static == nil, u.independent)
 	s.lockAll()
-	if !u.currentLocked(sh) || u.binding != nil && !u.binding.current() || u.support != nil && !u.support.productionCurrent() {
+	if !new(u).currentLocked(sh) || u.binding != nil && !u.binding.current() ||
+		u.support != nil && !u.support.productionCurrent() {
 		s.unlockAll()
 		return false
 	}
@@ -745,14 +702,18 @@ type objectPublication struct {
 
 func dispatchPublications(publications []objectPublication) {
 	slices.SortStableFunc(publications, func(a, b objectPublication) int { return a.event.id.Compare(b.event.id) })
-	for _, p := range publications {
-		changed := p.force || p.before == nil || p.after == nil || !manifest.Equal(p.before, p.after)
-		if !changed && p.document != nil {
-			equal, _ := reconcileInputEqual(p.after, p.document, p.nextDocument)
-			changed = !equal
-		}
-		if changed {
-			p.event.run()
+	{
+		pValues := publications
+		for pIndex := range pValues {
+			p := pValues[pIndex]
+			changed := p.force || p.before == nil || p.after == nil || !manifest.Equal(p.before, p.after)
+			if !changed && p.document != nil {
+				equal, _ := reconcileInputEqual(p.after, p.document, p.nextDocument)
+				changed = !equal
+			}
+			if changed {
+				p.event.run()
+			}
 		}
 	}
 }
@@ -790,7 +751,153 @@ func artifactReadEqual(a, b Artifact, read ArtifactRead) bool {
 	x, xok := a.(*SourceArtifact)
 	y, yok := b.(*SourceArtifact)
 	if xok || yok {
-		return (x == nil || x.Content != "" || x.FS == nil) && (y == nil || y.Content != "" || y.FS == nil) && x.Input(read) == y.Input(read)
+		return (x == nil || x.Content != "" || x.FS == nil) && (y == nil || y.Content != "" || y.FS == nil) &&
+			x.Input(read) == y.Input(read)
 	}
 	return artifactValueEqual(a, b)
+}
+
+func (s *Store) commitObjectUpdate(sh *shard, id manifest.NamedResource, update *objectUpdate) publicationResult {
+	u := *update
+	sh.mu.Lock()
+	if u.binding != nil && !u.binding.current() || u.support != nil && !u.support.productionCurrent() {
+		sh.mu.Unlock()
+		return publicationRejected
+	}
+	current := sh.cells[id]
+	if current.publication != u.cell.publication || current.generation != u.cell.generation {
+		sh.mu.Unlock()
+		return publicationRetry
+	}
+	if u.cell.hidden || !u.cell.rooted && (len(sh.members[id]) > 0 || sh.slots[id] != nil) {
+		sh.mu.Unlock()
+		if s.addAnchor(new(u)) {
+			return publicationAccepted
+		}
+		return publicationRetry
+	}
+	u.cell.authority = current.authority
+	dispatch := s.admitLocked(sh, id, &u)
+	sh.mu.Unlock()
+	dispatch.run()
+	return publicationAccepted
+}
+
+func compactObjectBucket(bucket []objectUpdate) []objectUpdate {
+	slices.SortStableFunc(bucket, func(a, b objectUpdate) int { return a.obj.Named().Compare(b.obj.Named()) })
+	compacted := bucket[:0]
+	{
+		uValues := bucket
+		for j := range uValues {
+			u := uValues[j]
+			if j+1 == len(bucket) || u.obj.Named() != bucket[j+1].obj.Named() {
+				compacted = append(compacted, u)
+			}
+		}
+	}
+	bucket = compacted
+	return bucket
+}
+
+func (s *Store) refreshObjectAnchors(anchors []objectUpdate) []objectUpdate {
+	for i := range anchors {
+		u := &anchors[i]
+		id := u.obj.Named()
+		sh := s.shardFor(id)
+		sh.mu.RLock()
+		u.cell = sh.cells[id]
+		sh.captureLocked(id, new(u.cell), &u.effective)
+		u.needsRoot = !u.cell.rooted && (len(sh.members[id]) > 0 || sh.slots[id] != nil)
+		sh.mu.RUnlock()
+		u.compare()
+	}
+	anchors = slices.DeleteFunc(anchors, func(u objectUpdate) bool {
+		return u.staticEqual && u.effectiveEqual && !u.cell.hidden && !u.cell.retired && !u.needsRoot
+	})
+	return anchors
+}
+
+func (s *Store) installObjectAnchorsLocked(anchors []objectUpdate) {
+	{
+		uValues5 := anchors
+		for uIndex4 := range uValues5 {
+			u := uValues5[uIndex4]
+			obj := u.obj
+			if u.effectiveEqual && u.cell.static != nil {
+				obj = u.cell.static
+			}
+			id := obj.Named()
+			sh := s.shardFor(id)
+			cell := sh.cells[id]
+			cell.static, cell.rooted, cell.retired, cell.document = obj, true, false, u.document
+			cell.publication++
+			sh.cells[id] = cell
+		}
+	}
+}
+
+func objectBucketCurrentLocked(sh *shard, bucket []objectUpdate) bool {
+	current := true
+	for j := range bucket {
+		u := &bucket[j]
+		cell := sh.cells[u.obj.Named()]
+		if cell.publication != u.cell.publication || cell.generation != u.cell.generation {
+			current = false
+			break
+		}
+		u.cell.authority = cell.authority
+	}
+	return current
+}
+
+func captureObjectBucket(sh *shard, bucket []objectUpdate) {
+	sh.mu.RLock()
+	for j := range bucket {
+		id := bucket[j].obj.Named()
+		bucket[j].cell = sh.cells[id]
+		sh.captureLocked(id, new(bucket[j].cell), &bucket[j].effective)
+	}
+	sh.mu.RUnlock()
+	for j := range bucket {
+		bucket[j].compare()
+	}
+}
+
+func (s *Store) objectAnchorsCurrentLocked(anchors []objectUpdate) bool {
+	current := true
+	{
+		uValues4 := anchors
+		for uIndex3 := range uValues4 {
+			u := uValues4[uIndex3]
+			if !new(u).currentLocked(s.shardFor(u.obj.Named())) {
+				current = false
+				break
+			}
+		}
+	}
+	return current
+}
+
+func extendObjectAnchorRegion(anchors []objectUpdate, changed objectRegion) objectRegion {
+	{
+		uValues3 := anchors
+		for uIndex2 := range uValues3 {
+			u := uValues3[uIndex2]
+			changed = changed.add(u.obj.Named(), !u.effectiveEqual || u.cell.static == nil, u.independent)
+		}
+	}
+	return changed
+}
+
+func lockObjectBucket(sh *shard, bucket []objectUpdate) {
+	for {
+		captureObjectBucket(sh, bucket)
+		sh.mu.Lock()
+		current := objectBucketCurrentLocked(sh, bucket)
+		if !current {
+			sh.mu.Unlock()
+			continue
+		}
+		return
+	}
 }

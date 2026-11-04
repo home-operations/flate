@@ -83,7 +83,7 @@ func (sh *shard) admitAbsenceLocked(id manifest.NamedResource, kind facet) {
 
 func (sh *shard) newHeadLocked(generation uint64) *registrationHead {
 	if len(sh.spareHeads) == 0 {
-		sh.headCapacity = max(2, 2*sh.headCapacity)
+		sh.headCapacity = max(minRegistrationHeadBlock, allocationGrowthFactor*sh.headCapacity)
 		sh.spareHeads = make([]registrationHead, sh.headCapacity)
 	}
 	head := &sh.spareHeads[0]
@@ -200,15 +200,15 @@ func (c *registration) current() bool {
 	return c.head.generation.Load() == c.generation.Load()
 }
 
-func (input *Input) current() bool {
-	if cell := &input.object; input.view.owner != nil && cell.head != nil && cell.absent == nil {
+func (in *Input) current() bool {
+	if cell := &in.object; in.view.owner != nil && cell.head != nil && cell.absent == nil {
 		if cell.head.stamp() != cell.generation.Load() {
 			return false
 		}
 	} else if !cell.current() {
 		return false
 	}
-	if details := input.details.Load(); details != nil {
+	if details := in.details.Load(); details != nil {
 		for i := range details.cells {
 			if !details.cells[i].current() {
 				return false
@@ -218,9 +218,10 @@ func (input *Input) current() bool {
 	return true
 }
 
-func (input *Input) productionCurrent() bool {
-	cell := input.cell(producerFacet)
-	return cell == nil || cell.head == nil || cell.absent == nil && cell.head.generation.Load() == cell.generation.Load()
+func (in *Input) productionCurrent() bool {
+	cell := in.cell(producerFacet)
+	return cell == nil || cell.head == nil ||
+		cell.absent == nil && cell.head.generation.Load() == cell.generation.Load()
 }
 
 // Valid reports whether every consumed authority still has its original stamp.
@@ -232,7 +233,9 @@ func (r *ReadSet) Valid() bool {
 		return false
 	}
 	for input := r.inputs; input != nil; input = input.next {
-		if !input.current() || input.view.bound && (input.view.binding != nil && !input.view.binding.current() || input.view.support != nil && !input.view.support.productionCurrent()) {
+		if !input.current() ||
+			input.view.bound &&
+				(input.view.binding != nil && !input.view.binding.current() || input.view.support != nil && !input.view.support.productionCurrent()) {
 			if !r.accepted.Load() {
 				r.invalid.Store(true)
 			}
@@ -270,63 +273,103 @@ func (s *Store) Sweep() iter.Seq[manifest.NamedResource] {
 		for _, sh := range s.shards {
 			pending := sh.pending.Swap(nil)
 			for pending != nil {
-				head := pending
-				sh.mu.Lock()
-				pending = head.next
-				head.next = nil
-				head.detached.Store(true)
-				first, cutoff := head.first.Swap(nil), head.stamp()
-				if head == &sh.absence {
-					head.watch = first
-				}
-				head.pending.Store(false)
-				sh.mu.Unlock()
-				var live, tail *registration
-				requeue := false
-				for cell := first; cell != nil; {
-					next := cell.next.Load()
-					changed := cell.generation.Load() != cutoff
-					if cell.absent != nil {
-						generation := cell.generation.Load()
-						changed = generation != 0 && generation <= cutoff
-					}
-					if !cell.owner.retired.Load() {
-						if changed && !cell.owner.invalid.Load() {
-							if deliver {
-								if cell.owner.invalid.CompareAndSwap(false, true) {
-									deliver = yield(cell.owner.id)
-								}
-							} else {
-								requeue = true
-							}
-						}
-						if live == nil {
-							live = cell
-						} else {
-							tail.next.Store(cell)
-						}
-						tail = cell
-					} else if cell.absent == nil {
-						cell.next.Store(nil)
-					}
-					cell = next
-				}
-				if tail == nil && head != &sh.absence {
-					head.detached.Store(false)
-					continue
-				}
-				sh.mu.Lock()
-				if tail != nil {
-					tail.next.Store(head.first.Load())
-					head.first.Store(live)
-				}
-				head.watch = nil
-				head.detached.Store(false)
-				if requeue {
-					sh.queue(head)
-				}
-				sh.mu.Unlock()
+				pending = sh.sweepHead(pending, &deliver, yield)
 			}
 		}
+	}
+}
+
+const (
+	minRegistrationHeadBlock = 2
+)
+
+func (sh *shard) sweepHead(
+	pending *registrationHead,
+	deliver *bool,
+	yield func(manifest.NamedResource) bool,
+) *registrationHead {
+	head := pending
+	sh.mu.Lock()
+	pending = head.next
+	head.next = nil
+	head.detached.Store(true)
+	first, cutoff := head.first.Swap(nil), head.stamp()
+	if head == &sh.absence {
+		head.watch = first
+	}
+	head.pending.Store(false)
+	sh.mu.Unlock()
+	live, tail, requeue := sweepRegistrations(first, cutoff, deliver, yield)
+	if tail == nil && head != &sh.absence {
+		head.detached.Store(false)
+		return pending
+	}
+	sh.mu.Lock()
+	if tail != nil {
+		tail.next.Store(head.first.Load())
+		head.first.Store(live)
+	}
+	head.watch = nil
+	head.detached.Store(false)
+	if requeue {
+		sh.queue(head)
+	}
+	sh.mu.Unlock()
+	return pending
+}
+
+func sweepRegistrations(
+	first *registration,
+	cutoff uint64,
+	deliver *bool,
+	yield func(manifest.NamedResource) bool,
+) (*registration, *registration, bool) {
+	var live, tail *registration
+	requeue := false
+	for cell := first; cell != nil; {
+		next := cell.next.Load()
+		changed := cell.generation.Load() != cutoff
+		if cell.absent != nil {
+			generation := cell.generation.Load()
+			changed = generation != 0 && generation <= cutoff
+		}
+		if !cell.owner.retired.Load() {
+			if deliverRegistrationChange(cell, changed, deliver, yield) {
+				requeue = true
+			}
+			if live == nil {
+				live = cell
+			} else {
+				tail.next.Store(cell)
+			}
+			tail = cell
+		} else if cell.absent == nil {
+			cell.next.Store(nil)
+		}
+		cell = next
+	}
+	return live, tail, requeue
+}
+
+func deliverRegistrationChange(
+	cell *registration,
+	changed bool,
+	deliver *bool,
+	yield func(manifest.NamedResource) bool,
+) bool {
+	requeue := false
+	if changed && !cell.owner.invalid.Load() {
+		if *deliver {
+			completeRegistrationChange(cell, deliver, yield)
+		} else {
+			requeue = true
+		}
+	}
+	return requeue
+}
+
+func completeRegistrationChange(cell *registration, deliver *bool, yield func(manifest.NamedResource) bool) {
+	if cell.owner.invalid.CompareAndSwap(false, true) {
+		*deliver = yield(cell.owner.id)
 	}
 }

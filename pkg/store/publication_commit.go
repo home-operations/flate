@@ -29,40 +29,9 @@ func (s *Store) commitStable(slot *producerSlot, prev, proposal *Emission, gener
 		return publicationAccepted
 	}
 	if proposal != prev && proposal.revision == prev.revision {
-		if ps.artifacts[slot.id].publication == ^uint64(0) {
-			ps.mu.Unlock()
-			panic("store: publication revision exhausted")
-		}
-		slot.current.Store(proposal)
-		if slot.visible.Load() {
-			record := ps.artifacts[slot.id]
-			record.inventoryVisible = true
-			var view capture
-			ps.captureLocked(slot.id, new(ps.cells[slot.id]), &view)
-			record.effective = ps.projectArtifactLocked(slot.id, &view, new(record))
-			record.publication++
-			ps.artifacts[slot.id] = record
-		}
-		ps.mu.Unlock()
-		return publicationAccepted
+		return s.commitRevisionLocked(ps, slot, proposal)
 	}
-	if slot.generation == ^uint64(0) || ps.artifacts[slot.id].publication == ^uint64(0) ||
-		ps.artifacts[slot.id].generation == ^uint64(0) ||
-		ps.artifacts[slot.id].generation == 0 && !ps.canAdmit(1) {
-		ps.mu.Unlock()
-		panic("store: authority generation exhausted")
-	}
-	{
-		aValues := proposal.entries
-		for aIndex := range aValues {
-			a := aValues[aIndex]
-			if a.objectChanged && a.objectHead != nil && a.objectHead.selected.Load() == slot &&
-				a.objectHead.stamp() == ^uint64(0) {
-				ps.mu.Unlock()
-				panic("store: authority generation exhausted")
-			}
-		}
-	}
+	checkStableCapacityLocked(ps, slot, proposal)
 	for i := range proposal.entries {
 		a := &proposal.entries[i]
 		if a.objectChanged && a.objectHead != nil && a.objectHead.selected.Load() == slot {
@@ -80,40 +49,7 @@ func (s *Store) commitStable(slot *producerSlot, prev, proposal *Emission, gener
 			}
 		}
 	}
-	var artifact eventDispatch
-	var events []eventDispatch
-	if slot.visible.Load() {
-		record := ps.artifacts[slot.id]
-		record.inventoryVisible = true
-		var view capture
-		ps.captureLocked(slot.id, new(ps.cells[slot.id]), &view)
-		visible := ps.projectArtifactLocked(slot.id, &view, new(record))
-		ps.publishArtifactLocked(slot.id, &record, visible)
-		ps.artifacts[slot.id] = record
-		artifact = fireUnderLock(s, EventArtifactUpdated, slot.id)
-		artifact.payload = visible
-		listeners := s.listeners[EventObjectAdded].snapshot.Load()
-		if len(listeners.entries) > 0 {
-			{
-				aValues3 := proposal.entries
-				for aIndex3 := range aValues3 {
-					a := aValues3[aIndex3]
-					if !a.changed {
-						continue
-					}
-					events = append(
-						events,
-						eventDispatch{id: a.child.Obj.Named(), payload: a.child.Obj, listeners: listeners},
-					)
-					for _, t := range a.targets {
-						events = append(events, eventDispatch{id: t.NamedResource, listeners: listeners})
-					}
-				}
-			}
-		}
-	} else {
-		events = nil
-	}
+	artifact, events := s.stableEventsLocked(ps, slot, proposal)
 	ps.mu.Unlock()
 	dispatchEvents(events)
 	artifact.run()
@@ -320,4 +256,81 @@ func (s *Store) changedTargets(prev, proposal *Emission, storage []regionState) 
 		add(entry, true)
 	}
 	return changed
+}
+
+func (s *Store) commitRevisionLocked(ps *shard, slot *producerSlot, proposal *Emission) publicationResult {
+	if ps.artifacts[slot.id].publication == ^uint64(0) {
+		ps.mu.Unlock()
+		panic("store: publication revision exhausted")
+	}
+	slot.current.Store(proposal)
+	if slot.visible.Load() {
+		record := ps.artifacts[slot.id]
+		record.inventoryVisible = true
+		var view capture
+		ps.captureLocked(slot.id, new(ps.cells[slot.id]), &view)
+		record.effective = ps.projectArtifactLocked(slot.id, &view, new(record))
+		record.publication++
+		ps.artifacts[slot.id] = record
+	}
+	ps.mu.Unlock()
+	return publicationAccepted
+}
+
+func (s *Store) stableEventsLocked(ps *shard, slot *producerSlot, proposal *Emission) (eventDispatch, []eventDispatch) {
+	var artifact eventDispatch
+	var events []eventDispatch
+	if slot.visible.Load() {
+		record := ps.artifacts[slot.id]
+		record.inventoryVisible = true
+		var view capture
+		ps.captureLocked(slot.id, new(ps.cells[slot.id]), &view)
+		visible := ps.projectArtifactLocked(slot.id, &view, new(record))
+		ps.publishArtifactLocked(slot.id, &record, visible)
+		ps.artifacts[slot.id] = record
+		artifact = fireUnderLock(s, EventArtifactUpdated, slot.id)
+		artifact.payload = visible
+		listeners := s.listeners[EventObjectAdded].snapshot.Load()
+		if len(listeners.entries) > 0 {
+			{
+				aValues3 := proposal.entries
+				for aIndex3 := range aValues3 {
+					a := aValues3[aIndex3]
+					if !a.changed {
+						continue
+					}
+					events = append(
+						events,
+						eventDispatch{id: a.child.Obj.Named(), payload: a.child.Obj, listeners: listeners},
+					)
+					for _, t := range a.targets {
+						events = append(events, eventDispatch{id: t.NamedResource, listeners: listeners})
+					}
+				}
+			}
+		}
+	} else {
+		events = nil
+	}
+	return artifact, events
+}
+
+func checkStableCapacityLocked(ps *shard, slot *producerSlot, proposal *Emission) {
+	if slot.generation == ^uint64(0) || ps.artifacts[slot.id].publication == ^uint64(0) ||
+		ps.artifacts[slot.id].generation == ^uint64(0) ||
+		ps.artifacts[slot.id].generation == 0 && !ps.canAdmit(1) {
+		ps.mu.Unlock()
+		panic("store: authority generation exhausted")
+	}
+	{
+		aValues := proposal.entries
+		for aIndex := range aValues {
+			a := aValues[aIndex]
+			if a.objectChanged && a.objectHead != nil && a.objectHead.selected.Load() == slot &&
+				a.objectHead.stamp() == ^uint64(0) {
+				ps.mu.Unlock()
+				panic("store: authority generation exhausted")
+			}
+		}
+	}
 }

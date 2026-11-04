@@ -150,28 +150,12 @@ func (r *documentReader) setSources(mounted map[string]*store.SourceArtifact) []
 			delete(r.views, root)
 		}
 	}
-	for _, root := range changed {
-		for file := range r.cache {
-			if file == root || strings.HasPrefix(file, root+string(filepath.Separator)) {
-				cached := r.cache[file]
-				if cached.selected || cached.built != nil {
-					r.cache[file] = document{
-						selected:   cached.selected,
-						built:      cached.built,
-						builtInput: cached.builtInput,
-					}
-				} else {
-					delete(r.cache, file)
-				}
-			}
-		}
-	}
+	r.invalidateSourceDocuments(changed)
 	if len(changed) != 0 {
 		r.edgesDirty = true
 		{
 			//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
 			for file, doc := range r.cache {
-
 				doc.incoming, doc.edgesKnown = false, false
 				r.cache[file] = doc
 			}
@@ -192,6 +176,25 @@ func (r *documentReader) setSources(mounted map[string]*store.SourceArtifact) []
 	r.artifacts = mounted
 	slices.Sort(changed)
 	return changed
+}
+
+func (r *documentReader) invalidateSourceDocuments(changed []string) {
+	for _, root := range changed {
+		for file := range r.cache {
+			if file == root || strings.HasPrefix(file, root+string(filepath.Separator)) {
+				cached := r.cache[file]
+				if cached.selected || cached.built != nil {
+					r.cache[file] = document{
+						selected:   cached.selected,
+						built:      cached.built,
+						builtInput: cached.builtInput,
+					}
+				} else {
+					delete(r.cache, file)
+				}
+			}
+		}
+	}
 }
 
 func (l *Loader) refreshSources() {
@@ -305,6 +308,11 @@ func (r *documentReader) read(dir string) (*types.Kustomization, string) {
 	if cached.pathState == pathFile || cached.pathState == pathMissing {
 		return nil, ""
 	}
+	return r.readBuilder(dir, new(cached))
+}
+
+func (r *documentReader) readBuilder(dir string, cachedValue *document) (*types.Kustomization, string) {
+	cached := *cachedValue
 	cached.searched = true
 	for _, name := range manifest.KustomizeBuilderFilenames {
 		file := filepath.Join(dir, name)
@@ -321,26 +329,7 @@ func (r *documentReader) read(dir string) (*types.Kustomization, string) {
 			}
 			return nil, file
 		}
-		//nolint:staticcheck // Kustomize still accepts these deprecated input fields.
-		fix := k.Kind == types.ComponentKind && k.APIVersion == "" ||
-			len(k.Bases)+len(k.ImageTags)+len(k.HelmChartInflationGenerator) != 0
-		{
-			gValues := k.ConfigMapGenerator
-			for gIndex := range gValues {
-				g := gValues[gIndex]
-				fix = fix || g.EnvSource != ""
-			}
-		}
-		{
-			gValues2 := k.SecretGenerator
-			for gIndex2 := range gValues2 {
-				g := gValues2[gIndex2]
-				fix = fix || g.EnvSource != ""
-			}
-		}
-		if fix {
-			k.FixKustomization()
-		}
+		normalizeKustomization(&k)
 		cached.body, cached.file, cached.pathState = &k, file, pathDirectory
 		if r.cache != nil {
 			r.cache[dir] = cached
@@ -351,6 +340,29 @@ func (r *documentReader) read(dir string) (*types.Kustomization, string) {
 		r.cache[dir] = cached
 	}
 	return nil, cached.file
+}
+
+func normalizeKustomization(k *types.Kustomization) {
+	//nolint:staticcheck // Kustomize still accepts these deprecated input fields.
+	fix := k.Kind == types.ComponentKind && k.APIVersion == "" ||
+		len(k.Bases)+len(k.ImageTags)+len(k.HelmChartInflationGenerator) != 0
+	{
+		gValues := k.ConfigMapGenerator
+		for gIndex := range gValues {
+			g := gValues[gIndex]
+			fix = fix || g.EnvSource != ""
+		}
+	}
+	{
+		gValues2 := k.SecretGenerator
+		for gIndex2 := range gValues2 {
+			g := gValues2[gIndex2]
+			fix = fix || g.EnvSource != ""
+		}
+	}
+	if fix {
+		k.FixKustomization()
+	}
 }
 
 func (r documentReader) rememberStat(file string, info fs.FileInfo, err error) document {

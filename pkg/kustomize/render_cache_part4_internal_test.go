@@ -401,7 +401,7 @@ func testRenderRemoteCacheLocalAttributionCase(
 			t,
 			c.owner,
 			sourcecache.BlobKey{Content: key, Render: sourcecache.RenderPending},
-			testRenderFrame(t, persisted, testRenderPayload(t, "SENTINEL")),
+			testRenderFrame(t, new(persisted), testRenderPayload(t, "SENTINEL")),
 		)
 	}
 	closeTestTreeCache(t, c)

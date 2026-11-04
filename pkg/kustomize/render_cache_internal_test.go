@@ -122,9 +122,9 @@ func publishTestFrame(tb testing.TB, owner *sourcecache.Cache, key sourcecache.B
 	}
 }
 
-func testRenderFrame(tb testing.TB, snap readSetSnapshot, output []byte) []byte {
+func testRenderFrame(tb testing.TB, snap *readSetSnapshot, output []byte) []byte {
 	tb.Helper()
-	frame, err := encodeFrame(&renderHeader{Reads: snap}, output)
+	frame, err := encodeFrame(&renderHeader{Reads: *snap}, output)
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 			t,
 			cache.owner,
 			sourcecache.BlobKey{Content: key, Render: sourcecache.RenderPending},
-			testRenderFrame(t, snap, testRenderPayload(t, "SENTINEL")),
+			testRenderFrame(t, new(snap), testRenderPayload(t, "SENTINEL")),
 		)
 	}
 	cache.Close()

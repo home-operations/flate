@@ -81,12 +81,12 @@ func TestReadSet_Snapshot(t *testing.T) {
 		diff := cmp.Diff(want, snap)
 		assert.FatalIf(t, diff != "", "snapshot (-want +got):\n%s", diff)
 	}
-	frame := testRenderFrame(t, snap, []byte("output"))
+	frame := testRenderFrame(t, new(snap), []byte("output"))
 	reversed := record([]string{"a", "z"})
 	{
 		assert.FatalIf(
 			t,
-			!bytes.Equal(frame, testRenderFrame(t, reversed.snapshot(), []byte("output"))),
+			!bytes.Equal(frame, testRenderFrame(t, new(reversed.snapshot()), []byte("output"))),
 			"%s",
 			"snapshot frame depends on observation order",
 		)
@@ -102,7 +102,7 @@ func TestReadSet_Snapshot(t *testing.T) {
 	{
 		assert.FatalIf(
 			t,
-			!bytes.Equal(frame, testRenderFrame(t, snap, []byte("output"))),
+			!bytes.Equal(frame, testRenderFrame(t, new(snap), []byte("output"))),
 			"%s",
 			"frozen snapshot frame changed after recording",
 		)

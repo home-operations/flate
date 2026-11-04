@@ -501,7 +501,7 @@ func testPreflightRemoteResourcesReachableInputsCase(
 	t.Cleanup(srv.Close)
 	url = srv.URL
 	files := map[string]string{
-		filepath.Join(testCaseInput.subpath, "kustomization.yaml"): (*testCaseInput).control,
+		filepath.Join(testCaseInput.subpath, "kustomization.yaml"): testCaseInput.control,
 		filepath.Join(testCaseInput.subpath, "cm.yaml"):            "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo}\ndata: {marker: initial}\n",
 		filepath.Join(testCaseInput.subpath, "local.txt"):          "owner",
 	}
@@ -587,7 +587,7 @@ func testPreflightRemoteResourcesReachableInputsCase(
 			err := preflightRemoteResources(t.Context(), cache, view, root)
 			assert.NoError(t, err)
 		}
-		snapFrame, err := decodeFrame(testRenderFrame(t, rec.snapshot(), testRenderEncoding(t, out)))
+		snapFrame, err := decodeFrame(testRenderFrame(t, new(rec.snapshot()), testRenderEncoding(t, out)))
 		snap := snapFrame.header.Reads
 		{
 			assert.FatalIf(

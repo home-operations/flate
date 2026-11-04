@@ -148,7 +148,7 @@ func TestRender_CacheIdentityIsolated(t *testing.T) {
 		sourcecache.BlobKey{Content: struct {
 			Render string `json:"Render"`
 		}{key}},
-		testRenderFrame(t, readSetSnapshot{}, []byte("ORDINARY\n")),
+		testRenderFrame(t, new(readSetSnapshot{}), []byte("ORDINARY\n")),
 	)
 	out, receipt20, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
 	if err == nil {
@@ -564,7 +564,7 @@ func testRenderRemoteCacheDependenciesCaseOrigin(
 			t,
 			cache.owner,
 			sourcecache.BlobKey{Content: key, Render: sourcecache.RenderPending},
-			testRenderFrame(t, snap, testRenderPayload(t, "SENTINEL")),
+			testRenderFrame(t, new(snap), testRenderPayload(t, "SENTINEL")),
 		)
 	}
 	closeTestTreeCache(t, cache)
@@ -675,7 +675,7 @@ func testRenderRemoteCacheDependenciesCaseOriginLoop(t *testing.T, loopInputs st
 	t.Helper()
 
 	if (*(*loopInputs.origin)) != "git" && (*(*loopInputs.origin)) != "nested-mount" {
-		got := (*loopInputs.trace).snapshot()[(*loopInputs.before):]
+		got := loopInputs.trace.snapshot()[(*loopInputs.before):]
 		if (*(*loopInputs.origin)) == "generator" {
 			t.Logf(
 				"bootstrap-primed persistence eligible=%t sentinel_reused=%t requests=%d",
@@ -684,7 +684,7 @@ func testRenderRemoteCacheDependenciesCaseOriginLoop(t *testing.T, loopInputs st
 				len(got),
 			)
 		}
-		t.Logf("unchanged render: requests=%+v accepted_connections=%d", got, (*loopInputs.trace).connections.Load())
+		t.Logf("unchanged render: requests=%+v accepted_connections=%d", got, loopInputs.trace.connections.Load())
 		{
 			assert.ErrorIf(t, len(got) != 1 || got[0].Method != http.MethodGet || got[0].ETag == "" ||
 				got[0].Modified == "" ||

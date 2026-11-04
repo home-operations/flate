@@ -463,7 +463,7 @@ func testRenderSourceignoreCacheReplaysFilteredViewCase(
 		t,
 		cache.owner,
 		sourcecache.BlobKey{Content: key, Render: sourcecache.RenderPending},
-		testRenderFrame(t, snap, testRenderPayload(t, "SENTINEL")),
+		testRenderFrame(t, new(snap), testRenderPayload(t, "SENTINEL")),
 	)
 	out2, _, err := testutil.RenderMaps(
 		Render(

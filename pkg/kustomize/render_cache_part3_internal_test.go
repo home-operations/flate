@@ -387,7 +387,7 @@ func testRenderRemoteCacheReachabilityCase(t *testing.T, testCaseInput *string,
 		preflightRemoteResourcesErr := preflightRemoteResources(t.Context(), c, view, root)
 		assert.NoError(t, preflightRemoteResourcesErr)
 	}
-	snapFrame, err := decodeFrame(testRenderFrame(t, rec.snapshot(), testRenderEncoding(t, out)))
+	snapFrame, err := decodeFrame(testRenderFrame(t, new(rec.snapshot()), testRenderEncoding(t, out)))
 	snap := snapFrame.header.Reads
 	{
 		assert.NoError(t, err)
@@ -410,7 +410,7 @@ func testRenderRemoteCacheReachabilityCase(t *testing.T, testCaseInput *string,
 			t,
 			c.owner,
 			sourcecache.BlobKey{Content: key, Render: sourcecache.RenderPending},
-			testRenderFrame(t, snap, testRenderPayload(t, "SENTINEL")),
+			testRenderFrame(t, new(snap), testRenderPayload(t, "SENTINEL")),
 		)
 	}
 	closeTestTreeCache(t, c)

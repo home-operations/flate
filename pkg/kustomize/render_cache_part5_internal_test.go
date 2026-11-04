@@ -246,7 +246,7 @@ func testRenderRemoteSelectionTransitionCase(
 			t,
 			c.owner,
 			sourcecache.BlobKey{Content: key, Render: sourcecache.RenderPending},
-			testRenderFrame(t, persisted, testRenderPayload(t, "REMOTE-SELECTION")),
+			testRenderFrame(t, new(persisted), testRenderPayload(t, "REMOTE-SELECTION")),
 		)
 	}
 	closeTestTreeCache(t, c)
@@ -324,9 +324,9 @@ func testRenderAcceptedCacheAcquisitionOverlapCase(
 	}
 	frame := testRenderFrame(
 		t,
-		readSetSnapshot{
+		new(readSetSnapshot{
 			Files: []localEntry{{Path: "cm.yaml", Hash: manifest.SHA256Hex([]byte(cmYAML("fresh")))}},
-		},
+		}),
 		testRenderPayload(t, "VALIDATED"),
 	)
 	if *testCaseInput {

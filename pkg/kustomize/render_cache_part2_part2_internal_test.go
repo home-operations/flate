@@ -35,13 +35,13 @@ func testRenderCacheFramesCase(t *testing.T, testCaseInput *testRenderCacheFrame
 		)
 	}
 	key := renderKey(&req, root, nil)
-	frame := testRenderFrame(t, testCaseInput.tc.snapshot, testRenderPayload(t, "STALE"))
+	frame := testRenderFrame(t, new(testCaseInput.tc.snapshot), testRenderPayload(t, "STALE"))
 	if (*testCaseInput.tc).malformed {
 		frame = []byte{0, 0, 0, 1, 'x'}
-	} else if testCaseInput.tc.corrupt || (*testCaseInput.tc).name == "mismatched" {
-		frame = testRenderFrame(t, testCaseInput.tc.snapshot, []byte("corrupt"))
+	} else if testCaseInput.tc.corrupt || testCaseInput.tc.name == "mismatched" {
+		frame = testRenderFrame(t, new(testCaseInput.tc.snapshot), []byte("corrupt"))
 	} else if testCaseInput.tc.empty {
-		frame = testRenderFrame(t, testCaseInput.tc.snapshot, testRenderEncoding(t, nil))
+		frame = testRenderFrame(t, new(testCaseInput.tc.snapshot), testRenderEncoding(t, nil))
 	}
 	publishTestFrame(
 		t,

@@ -200,15 +200,15 @@ func (c *registration) current() bool {
 	return c.head.generation.Load() == c.generation.Load()
 }
 
-func (input *Input) current() bool {
-	if cell := &input.object; input.view.owner != nil && cell.head != nil && cell.absent == nil {
+func (in *Input) current() bool {
+	if cell := &in.object; in.view.owner != nil && cell.head != nil && cell.absent == nil {
 		if cell.head.stamp() != cell.generation.Load() {
 			return false
 		}
 	} else if !cell.current() {
 		return false
 	}
-	if details := input.details.Load(); details != nil {
+	if details := in.details.Load(); details != nil {
 		for i := range details.cells {
 			if !details.cells[i].current() {
 				return false
@@ -218,8 +218,8 @@ func (input *Input) current() bool {
 	return true
 }
 
-func (input *Input) productionCurrent() bool {
-	cell := input.cell(producerFacet)
+func (in *Input) productionCurrent() bool {
+	cell := in.cell(producerFacet)
 	return cell == nil || cell.head == nil ||
 		cell.absent == nil && cell.head.generation.Load() == cell.generation.Load()
 }

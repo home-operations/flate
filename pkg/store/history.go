@@ -68,7 +68,7 @@ func sourcePaths(
 		}
 		for input := reads.inputs; input != nil; input = input.next {
 			if input.Ref.NamedResource == reads.ID() {
-				roots(input.view.declaration())
+				roots(new(input.view).declaration())
 			}
 			binding := input.view.sourceBinding()
 			{

@@ -253,6 +253,7 @@ func (s *Store) GetArtifact(id manifest.NamedResource, _ ArtifactRead) Artifact 
 	return artifact
 }
 
+//nolint:ireturn // The store contract supports multiple artifact implementations.
 func (sh *shard) projectArtifactLocked(id manifest.NamedResource, view *capture, recordValue *artifactRecord) Artifact {
 	record := *recordValue
 	if sh.cells[id].hidden {
@@ -320,6 +321,7 @@ func artifactValueEqual(prev, next Artifact) bool {
 	ac.material, bc.material = nil, nil
 	ac.Warnings, bc.Warnings = nil, nil
 	ac.ContentFingerprint, bc.ContentFingerprint = nil, nil
+	//nolint:govet // The projection clears error-bearing warnings and filesystem handles before comparing metadata.
 	return reflect.DeepEqual(ac, bc)
 }
 

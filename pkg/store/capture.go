@@ -166,11 +166,11 @@ func (r *ReadSet) details(input *Input) *inputDetails {
 	return details
 }
 
-func (input *Input) cell(kind facet) *registration {
+func (in *Input) cell(kind facet) *registration {
 	if kind == objectFacet {
-		return &input.object
+		return &in.object
 	}
-	if details := input.details.Load(); details != nil {
+	if details := in.details.Load(); details != nil {
 		return &details.cells[kind-conditionFacet]
 	}
 	return nil
@@ -266,7 +266,7 @@ func (r *ReadSet) GetDeclaration(id manifest.NamedResource) manifest.BaseManifes
 	input := r.input(id)
 	r.Capture(input)
 	input.declaration = true
-	return input.view.declaration()
+	return new(input.view).declaration()
 }
 
 // Capture records a caller-owned named input without reconstructing its identity index.
@@ -532,7 +532,7 @@ func (r *ReadSet) Materializer(id manifest.NamedResource, production manifest.Pr
 func (r *ReadSet) UnsettledProducers(id manifest.NamedResource) []manifest.NamedResource {
 	input := r.input(id)
 	productions := r.productions(input, nil)
-	if input.view.declaration() != nil {
+	if new(input.view).declaration() != nil {
 		return nil
 	}
 	var pending []manifest.NamedResource
@@ -776,7 +776,7 @@ func (r *ReadSet) Matches(previous *ReadSet) bool {
 			!reconcileEqual(Child{Obj: r.GetObject(id), Doc: r.input(id).view.child.Doc}, input.view.child) {
 			return false
 		}
-		if input.declaration && (r.GetDeclaration(id) == nil) != (input.view.declaration() == nil) {
+		if input.declaration && (r.GetDeclaration(id) == nil) != (new(input.view).declaration() == nil) {
 			return false
 		}
 		if input.derived&capturedConditions != 0 {

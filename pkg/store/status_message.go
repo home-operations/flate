@@ -42,6 +42,7 @@ func appendApplying(buffer []byte, objects int) []byte {
 
 // MarshalJSON encodes the visible status message with its readiness and reason.
 func (i StatusInfo) MarshalJSON() ([]byte, error) {
+	//nolint:wrapcheck // These string fields cannot fail JSON encoding and preserve the Marshaler error contract.
 	return json.Marshal(struct {
 		Status  Status       `json:"Status"`
 		Reason  StatusReason `json:"Reason"`

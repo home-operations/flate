@@ -309,7 +309,8 @@ func (u *objectUpdate) compare() {
 }
 
 // currentLocked MUST hold the effective producer's shard as well as the target's.
-func (u objectUpdate) currentLocked(sh *shard) bool {
+func (uValue *objectUpdate) currentLocked(sh *shard) bool {
+	u := *uValue
 	return sh.cells[u.obj.Named()].publication == u.cell.publication &&
 		sh.cells[u.obj.Named()].generation == u.cell.generation &&
 		(u.effective.owner == nil || u.effective.owner.current.Load() == u.effective.record)
@@ -533,7 +534,7 @@ func (s *Store) AddObjects(objs []manifest.BaseManifest) {
 			uValues4 := anchors
 			for uIndex3 := range uValues4 {
 				u := uValues4[uIndex3]
-				if !u.currentLocked(s.shardFor(u.obj.Named())) {
+				if !new(u).currentLocked(s.shardFor(u.obj.Named())) {
 					current = false
 					break
 				}
@@ -771,7 +772,7 @@ func (s *Store) addAnchor(uValue *objectUpdate) bool {
 	changed := newObjectRegion(1, storage[:])
 	changed = changed.add(id, !u.effectiveEqual || u.cell.static == nil, u.independent)
 	s.lockAll()
-	if !u.currentLocked(sh) || u.binding != nil && !u.binding.current() ||
+	if !new(u).currentLocked(sh) || u.binding != nil && !u.binding.current() ||
 		u.support != nil && !u.support.productionCurrent() {
 		s.unlockAll()
 		return false

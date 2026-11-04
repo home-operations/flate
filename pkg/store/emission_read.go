@@ -51,7 +51,7 @@ func (s *Store) GetDeclaration(id manifest.NamedResource) manifest.BaseManifest 
 	var view capture
 	sh.captureLocked(id, sh.cells[id], &view)
 	sh.mu.RUnlock()
-	return view.declaration()
+	return new(view).declaration()
 }
 
 func declarationIndependent(index *manifest.DiscoveryIndex, id manifest.NamedResource) bool {
@@ -61,7 +61,8 @@ func declarationIndependent(index *manifest.DiscoveryIndex, id manifest.NamedRes
 	})
 }
 
-func (c capture) declaration() manifest.BaseManifest {
+func (cValue *capture) declaration() manifest.BaseManifest {
+	c := *cValue
 	if c.independent || c.accepted || c.owner != nil {
 		return c.child.Obj
 	}
@@ -100,7 +101,7 @@ func (s *Store) getEmission(
 	}
 	sh.mu.RUnlock()
 	if reads == nil {
-		obj = view.declaration()
+		obj = new(view).declaration()
 	}
 	e := Emission{
 		Reads:    reads,

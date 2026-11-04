@@ -14,7 +14,8 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func (l *Loader) recordReader(file, local string, reader manifest.FileReader) {
+func (l *Loader) recordReader(file, local string, readerValue *manifest.FileReader) {
+	reader := *readerValue
 	add := func(file string) {
 		readers := l.Index.Readers[file]
 		i, found := slices.BinarySearchFunc(readers, reader, func(a, b manifest.FileReader) int {
@@ -73,7 +74,6 @@ func (l *Loader) finalizeRecords(
 	{
 		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
 		for id, r := range rf.loader.Index.Records {
-
 			occurrence, located := rf.loader.locations[id]
 			if rf.repoRoot == "" || len(r.Refs) == 0 && (!located || len(occurrence.facts.templateInputs) == 0) {
 				continue
@@ -88,7 +88,6 @@ func (l *Loader) finalizeRecords(
 	{
 		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
 		for id, r := range rf.loader.Index.Records {
-
 			rf.admitRecord(id, &r)
 			rf.setRecordOrigin(id, &r)
 			rf.compactOrigins(id, &r)
@@ -135,8 +134,9 @@ func (rf *readerFinalizer) object(id manifest.NamedResource) manifest.BaseManife
 
 func (rf *readerFinalizer) project(ctx context.Context,
 
-	input manifest.TemplateInput, consumer manifest.NamedResource,
+	inputValue *manifest.TemplateInput, consumer manifest.NamedResource,
 ) error {
+	input := *inputValue
 	if input.Reader.Namespace == "" && input.Reader.KindInfo().Namespaced() {
 		input.Reader.Namespace = consumer.Namespace
 	}
@@ -155,13 +155,14 @@ func (rf *readerFinalizer) project(ctx context.Context,
 	if ref.NamespaceDefault && ref.Namespace == "" {
 		ref.Namespace = consumer.Namespace
 	}
-	return rf.observe(ctx, ref, consumer, true)
+	return rf.observe(ctx, new(ref), consumer, true)
 }
 
 func (rf *readerFinalizer) observe(ctx context.Context,
 
-	ref manifest.Reference, consumer manifest.NamedResource, materialize bool,
+	refValue *manifest.Reference, consumer manifest.NamedResource, materialize bool,
 ) error {
+	ref := *refValue
 	if ref.ContentInput() && rf.loader.Store.ReferenceFacts(ref.NamedResource, rf.loader.Index).Supplied != nil {
 		return nil
 	}
@@ -181,12 +182,12 @@ func (rf *readerFinalizer) observe(ctx context.Context,
 	if v.root == "" {
 		return nil
 	}
-	rf.observeFiles(&ref, consumer, materialize, v)
+	rf.observeFiles(&ref, consumer, materialize, new(v))
 	return rf.observeChart(
 		ctx,
 		&ref,
-		manifest.FileReader{Reader: consumer, Source: ref.NamedResource, Exact: true, Materialize: materialize},
-		v,
+		new(manifest.FileReader{Reader: consumer, Source: ref.NamedResource, Exact: true, Materialize: materialize}),
+		new(v),
 	)
 }
 
@@ -204,19 +205,28 @@ func (rf *readerFinalizer) collect(ctx context.Context,
 	rf.visited[id] = struct{}{}
 	if rf.loader.documents.compact {
 		if occurrence, ok := rf.loader.locations[id]; ok {
-			if err := rf.projectOccurrence(ctx, &occurrence, consumer); err != nil {
-				return err
-			}
-			for ref := range occurrence.references() {
-				if err := rf.observe(ctx, ref, consumer, materialize); err != nil {
-					return err
-				}
-			}
-			return nil
+			return rf.collectOccurrence(ctx, &occurrence, consumer, materialize)
 		}
 	}
 	for ref := range manifest.References(rf.object(id), manifest.ReferenceRelations) {
-		if err := rf.observe(ctx, ref, consumer, materialize); err != nil {
+		if err := rf.observe(ctx, new(ref), consumer, materialize); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (rf *readerFinalizer) collectOccurrence(
+	ctx context.Context,
+	occurrence *Occurrence,
+	consumer manifest.NamedResource,
+	materialize bool,
+) error {
+	if err := rf.projectOccurrence(ctx, occurrence, consumer); err != nil {
+		return err
+	}
+	for ref := range occurrence.references() {
+		if err := rf.observe(ctx, new(ref), consumer, materialize); err != nil {
 			return err
 		}
 	}
@@ -234,26 +244,27 @@ func (rf *readerFinalizer) collectControls() {
 					!contribution.active {
 					continue
 				}
-				{
-					visitValues := contribution.visits
-					for visitIndex := range visitValues {
-						visit := visitValues[visitIndex]
-						if visit.role == kustomizeinput.Resource && visit.document == nil {
-							continue
-						}
-						for _, file := range []string{visit.coordinate, visit.localCoordinate()} {
-							if file != "" {
-								rf.controls[contribution.owner] = append(rf.controls[contribution.owner], file)
-							}
-						}
-					}
-				}
+				rf.collectControlVisits(contribution.owner, contribution.visits)
 			}
 		}
 	}
 	for owner, files := range rf.controls {
 		slices.Sort(files)
 		rf.controls[owner] = slices.Compact(files)
+	}
+}
+
+func (rf *readerFinalizer) collectControlVisits(owner manifest.NamedResource, visitValues []graphVisit) {
+	for visitIndex := range visitValues {
+		visit := visitValues[visitIndex]
+		if visit.role == kustomizeinput.Resource && visit.document == nil {
+			continue
+		}
+		for _, file := range []string{visit.coordinate, visit.localCoordinate()} {
+			if file != "" {
+				rf.controls[owner] = append(rf.controls[owner], file)
+			}
+		}
 	}
 }
 
@@ -398,13 +409,13 @@ func (rf *readerFinalizer) observeContent(ref *manifest.Reference, consumer mani
 			rf.loader.recordReader(
 				record.File,
 				"",
-				manifest.FileReader{
+				new(manifest.FileReader{
 					Reader:      consumer,
 					Source:      source,
 					Declaration: ref.NamedResource,
 					Exact:       true,
 					Materialize: materialize,
-				},
+				}),
 			)
 		}
 	}
@@ -415,12 +426,12 @@ func (rf *readerFinalizer) observeContent(ref *manifest.Reference, consumer mani
 		rf.loader.recordReader(
 			file,
 			"",
-			manifest.FileReader{
+			new(manifest.FileReader{
 				Reader:      consumer,
 				Source:      manifest.BootstrapSourceID,
 				Declaration: ref.NamedResource,
 				Materialize: materialize,
-			},
+			}),
 		)
 	}
 }
@@ -449,8 +460,9 @@ func (rf *readerFinalizer) observeFiles(
 	ref *manifest.Reference,
 	consumer manifest.NamedResource,
 	materialize bool,
-	v graphVisit,
+	visitValue *graphVisit,
 ) {
+	v := *visitValue
 	for _, name := range ref.Files {
 		clean := path.Clean(name)
 		if ref.Subtree {
@@ -466,12 +478,12 @@ func (rf *readerFinalizer) observeFiles(
 		rf.loader.recordReader(
 			v.coordinate,
 			v.localCoordinate(),
-			manifest.FileReader{
+			new(manifest.FileReader{
 				Reader:      consumer,
 				Source:      ref.NamedResource,
 				Exact:       !ref.Subtree,
 				Materialize: materialize,
-			},
+			}),
 		)
 	}
 }
@@ -504,9 +516,11 @@ func (rf *readerFinalizer) chartNames(ctx context.Context, location, chartPath s
 func (rf *readerFinalizer) observeChart(
 	ctx context.Context,
 	ref *manifest.Reference,
-	reader manifest.FileReader,
-	v graphVisit,
+	readerValue *manifest.FileReader,
+	visitValue *graphVisit,
 ) error {
+	reader := *readerValue
+	v := *visitValue
 	if ref.ChartPath == "" {
 		return nil
 	}
@@ -518,7 +532,7 @@ func (rf *readerFinalizer) observeChart(
 	}
 	for _, name := range names {
 		v.coordinate = path.Join(v.prefix, name)
-		rf.loader.recordReader(v.coordinate, v.localCoordinate(), reader)
+		rf.loader.recordReader(v.coordinate, v.localCoordinate(), new(reader))
 	}
 	namespace := reader.Reader.Namespace
 	if producer, ok := rf.object(reader.Reader).(emissionProducer); ok {
@@ -558,7 +572,7 @@ func (rf *readerFinalizer) observeChart(
 		inputValues := refs.Inputs
 		for inputIndex := range inputValues {
 			input := inputValues[inputIndex]
-			if err := rf.project(ctx, input, reader.Reader); err != nil {
+			if err := rf.project(ctx, new(input), reader.Reader); err != nil {
 				return err
 			}
 		}
@@ -591,8 +605,8 @@ func (rf *readerFinalizer) readChartFiles(ctx context.Context, input fs.FS, char
 	_ = chartinput.Walk(ctx, input, true, func(name string, _ fs.FileInfo, data []byte) error {
 		names = append(names, path.Join(chartPath, name))
 		if strings.HasPrefix(name, "templates/") || strings.Contains(name, "/templates/") {
-			if data, ok := readTemplateBody(ctx, input, name, data); ok {
-				rf.templateBodies[location] = append(rf.templateBodies[location], data)
+			if body, ok := readTemplateBody(ctx, input, name, data); ok {
+				rf.templateBodies[location] = append(rf.templateBodies[location], body)
 			}
 		}
 		return nil
@@ -615,7 +629,7 @@ func (rf *readerFinalizer) projectOccurrence(
 ) error {
 	for i := range occurrence.facts.templateInputs {
 		input := occurrence.facts.templateInputs[i]
-		if err := rf.project(ctx, input, consumer); err != nil {
+		if err := rf.project(ctx, new(input), consumer); err != nil {
 			return err
 		}
 	}

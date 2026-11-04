@@ -67,7 +67,11 @@ func (l *Loader) buildProductions(
 			}
 		}
 		if v.owner != (manifest.NamedResource{}) && v.coordinate != "" {
-			l.recordReader(v.coordinate, v.localCoordinate(), manifest.FileReader{Reader: v.owner, Source: v.source})
+			l.recordReader(
+				v.coordinate,
+				v.localCoordinate(),
+				new(manifest.FileReader{Reader: v.owner, Source: v.source}),
+			)
 		}
 		if v.incomplete != "" {
 			if v.owner != (manifest.NamedResource{}) {
@@ -199,7 +203,7 @@ func (l *Loader) buildProductions(
 			l.recordReader(
 				coordinate,
 				local,
-				manifest.FileReader{Reader: root.owner, Source: root.source, Exact: exact},
+				new(manifest.FileReader{Reader: root.owner, Source: root.source, Exact: exact}),
 			)
 		}
 		for _, child := range doc.built {

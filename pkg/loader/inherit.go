@@ -96,7 +96,7 @@ func (l *Loader) scopeSource(state sourceState) int {
 			root:        root,
 			pinned:      pinned,
 			external:    external,
-			origin:      l.documents.localBase(root, state.repoRoot),
+			origin:      new(l.documents).localBase(root, state.repoRoot),
 		},
 	)
 	return len(l.scopes.sources) - 1
@@ -156,7 +156,7 @@ func (l *Loader) claimView(repoRoot string, eligible func(scopeInput) bool) ([]m
 		}
 	}
 	var claimBuf [16]ownerClaims
-	built := l.documents.buildClaims(repoRoot, pending, func(id manifest.NamedResource) sourceScope {
+	built := new(l.documents).buildClaims(repoRoot, pending, func(id manifest.NamedResource) sourceScope {
 		return l.scopes.sources[l.scopeSource(l.sourceState(id, repoRoot))]
 	}, claimBuf[:0])
 	next := 0
@@ -221,7 +221,7 @@ func (l *Loader) admit(repoRoot string) {
 			if external {
 				v := graphVisit{
 					root:   repoRoot,
-					dir:    l.documents.claimBase(repoRoot, ks.Path),
+					dir:    new(l.documents).claimBase(repoRoot, ks.Path),
 					owner:  ks.Named(),
 					source: ref,
 					input:  i + 1,
@@ -231,7 +231,7 @@ func (l *Loader) admit(repoRoot string) {
 			}
 			v := graphVisit{
 				root:      root,
-				dir:       l.documents.claimBase(root, ks.Path),
+				dir:       new(l.documents).claimBase(root, ks.Path),
 				namespace: ks.TargetNamespace,
 				fallback:  ks.TargetNamespace,
 				owner:     ks.Named(),
@@ -301,7 +301,7 @@ func (l *Loader) anchorRoot(repoRoot, dir string) bool {
 			visits = l.scopeWalk(graphVisit{root: repoRoot, dir: dir, role: kustomizeinput.Resource})
 		}
 		owner, _ := l.Index.Lookup(claim.ID)
-		origin := l.documents.localPath(owner.Path)
+		origin := new(l.documents).localPath(owner.Path)
 		if owner.Path == "" || !slices.ContainsFunc(visits, func(visit graphVisit) bool {
 			return visit.role == kustomizeinput.Resource &&
 				(visit.file == owner.Path || visit.file == origin || visit.origin != "" && visit.origin == origin)
@@ -368,7 +368,7 @@ func (l *Loader) scopeWalk(root graphVisit) []graphVisit {
 		}
 		w := traversal{documents: l.documents}
 		collect := func(v graphVisit) bool {
-			if origin := l.documents.localPath(v.file); origin != v.file {
+			if origin := new(l.documents).localPath(v.file); origin != v.file {
 				v.origin = origin
 			}
 			if local := v.localCoordinate(); local != "" {
@@ -922,7 +922,7 @@ func (l *Loader) resolveEligibility() {
 				continue
 			}
 			unowned := true
-			coordinate := l.fileCoordinate(l.documents.localPath(file))
+			coordinate := l.fileCoordinate(new(l.documents).localPath(file))
 			for _, claim := range l.scopes.claims {
 				owner, _ := l.Index.Lookup(claim.ID)
 				if strings.HasPrefix(coordinate, claim.Prefix) && owner.Path != file {

@@ -220,7 +220,10 @@ func TestClaims_IncludesSpecComponents(t *testing.T) {
 		assert.FatalIf(t, !ok, "StrictParent missed component-dir child — components fold regression")
 	}
 	{
-		assert.ErrorIf(t, got.Name != "parent", "StrictParent = %q, want 'parent' (component-dir child should attribute to its containing KS)",
+		assert.ErrorIf(
+			t,
+			got.Name != "parent",
+			"StrictParent = %q, want 'parent' (component-dir child should attribute to its containing KS)",
 			got.Name,
 		)
 	}
@@ -384,10 +387,10 @@ func testSourceViewInputOriginCase(t *testing.T, testCaseInput *struct {
 	}
 	reader := documentReader{}
 	reader.mountSources(st)
-	assert.Equal(t, reader.localPath(file), origin)
+	assert.Equal(t, new(reader).localPath(file), origin)
 	base := "."
 	if testCaseInput.alias {
 		base = "subtree"
 	}
-	assert.Equal(t, reader.localBase(mount, repoRoot), base)
+	assert.Equal(t, new(reader).localBase(mount, repoRoot), base)
 }

@@ -217,7 +217,7 @@ func (l *Loader) fileOwners(file, coordinate string, yield func(manifest.NamedRe
 	if l.documents.cache[file].eligible == fileInactive {
 		return
 	}
-	if origin := l.documents.localPath(file); origin != file {
+	if origin := new(l.documents).localPath(file); origin != file {
 		coordinate = l.fileCoordinate(origin)
 	}
 	if l.scopes != nil {

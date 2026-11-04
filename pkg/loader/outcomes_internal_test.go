@@ -10,7 +10,7 @@ func retainedErrorsForTest(l *Loader) map[string]error {
 		for i := range doc.objects {
 			child := doc.objects[i]
 			if child.outcome.Err != nil {
-				errors[l.fileCoordinate(l.documents.localPath(file))] = child.outcome.Err
+				errors[l.fileCoordinate(new(l.documents).localPath(file))] = child.outcome.Err
 				break
 			}
 		}

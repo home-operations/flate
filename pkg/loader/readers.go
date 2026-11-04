@@ -182,7 +182,12 @@ func (rf *readerFinalizer) observe(ctx context.Context,
 		return nil
 	}
 	rf.observeFiles(&ref, consumer, materialize, v)
-	return rf.observeChart(ctx, &ref, manifest.FileReader{Reader: consumer, Source: ref.NamedResource, Exact: true, Materialize: materialize}, v)
+	return rf.observeChart(
+		ctx,
+		&ref,
+		manifest.FileReader{Reader: consumer, Source: ref.NamedResource, Exact: true, Materialize: materialize},
+		v,
+	)
 }
 
 func (rf *readerFinalizer) collect(ctx context.Context,
@@ -290,7 +295,6 @@ func (rf *readerFinalizer) setRecordOrigin(id manifest.NamedResource, r *manifes
 			}
 		}
 	}
-
 }
 
 func (rf *readerFinalizer) compactOrigins(id manifest.NamedResource, r *manifest.DiscoveryRecord) {
@@ -322,7 +326,6 @@ func (rf *readerFinalizer) compactOrigins(id manifest.NamedResource, r *manifest
 		}
 	}
 	slices.SortFunc(r.Productions, func(a, b manifest.Production) int { return a.Owner.Compare(b.Owner) })
-
 }
 
 func (rf *readerFinalizer) setRecordOutput(id manifest.NamedResource, r *manifest.DiscoveryRecord) {
@@ -337,7 +340,6 @@ func (rf *readerFinalizer) setRecordOutput(id manifest.NamedResource, r *manifes
 		}
 	}
 	r.StaticOutput = r.StaticOutput && !rf.unresolvedPaths[id]
-
 }
 
 func (rf *readerFinalizer) setRecordParent(id manifest.NamedResource, r *manifest.DiscoveryRecord) {
@@ -360,7 +362,6 @@ func (rf *readerFinalizer) setRecordParent(id manifest.NamedResource, r *manifes
 			r.Parent = owner
 		}
 	}
-
 }
 
 func (rf *readerFinalizer) setRecordInputs(id manifest.NamedResource, r *manifest.DiscoveryRecord) {
@@ -387,11 +388,9 @@ func (rf *readerFinalizer) setRecordInputs(id manifest.NamedResource, r *manifes
 			}
 		}
 	}
-
 }
 
 func (rf *readerFinalizer) observeContent(ref *manifest.Reference, consumer manifest.NamedResource, materialize bool) {
-
 	record, _ := rf.loader.Index.Lookup(ref.NamedResource)
 	if record.File != "" {
 		sources := productionSources(record.Productions)
@@ -438,7 +437,7 @@ func (rf *readerFinalizer) sourceVisit(id manifest.NamedResource) graphVisit {
 		if prefix != "." {
 			v.prefix = filepath.ToSlash(prefix)
 			if !pinned {
-				v.localBase = rf.loader.documents.localBase(root, rf.repoRoot)
+				v.localBase = new(rf.loader.documents).localBase(root, rf.repoRoot)
 			}
 		}
 	}
@@ -446,7 +445,12 @@ func (rf *readerFinalizer) sourceVisit(id manifest.NamedResource) graphVisit {
 	return v
 }
 
-func (rf *readerFinalizer) observeFiles(ref *manifest.Reference, consumer manifest.NamedResource, materialize bool, v graphVisit) {
+func (rf *readerFinalizer) observeFiles(
+	ref *manifest.Reference,
+	consumer manifest.NamedResource,
+	materialize bool,
+	v graphVisit,
+) {
 	for _, name := range ref.Files {
 		clean := path.Clean(name)
 		if ref.Subtree {
@@ -497,8 +501,12 @@ func (rf *readerFinalizer) chartNames(ctx context.Context, location, chartPath s
 	return names, nil
 }
 
-func (rf *readerFinalizer) observeChart(ctx context.Context, ref *manifest.Reference, reader manifest.FileReader, v graphVisit) error {
-
+func (rf *readerFinalizer) observeChart(
+	ctx context.Context,
+	ref *manifest.Reference,
+	reader manifest.FileReader,
+	v graphVisit,
+) error {
 	if ref.ChartPath == "" {
 		return nil
 	}
@@ -600,7 +608,11 @@ func readTemplateBody(_ context.Context, input fs.FS, name string, data []byte) 
 	return data, err == nil
 }
 
-func (rf *readerFinalizer) projectOccurrence(ctx context.Context, occurrence *Occurrence, consumer manifest.NamedResource) error {
+func (rf *readerFinalizer) projectOccurrence(
+	ctx context.Context,
+	occurrence *Occurrence,
+	consumer manifest.NamedResource,
+) error {
 	for i := range occurrence.facts.templateInputs {
 		input := occurrence.facts.templateInputs[i]
 		if err := rf.project(ctx, input, consumer); err != nil {

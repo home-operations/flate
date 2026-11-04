@@ -175,7 +175,7 @@ func (l *Loader) OccurrenceClaims(repoRoot string, occurrences []Occurrence) []m
 				ks = &projected
 			}
 			var claimBuf [1]ownerClaims
-			built := l.documents.buildClaims(
+			built := new(l.documents).buildClaims(
 				repoRoot,
 				[]*manifest.Kustomization{ks},
 				func(id manifest.NamedResource) sourceScope {
@@ -376,7 +376,7 @@ func (l *Loader) Occurrences(ctx context.Context, dir, namespace string) ([]Occu
 			if doc.eligible == fileInactive {
 				continue
 			}
-			origin := l.documents.localPath(v.file)
+			origin := new(l.documents).localPath(v.file)
 			source := l.documents.mountedRoot(origin)
 			file, _ := filepath.Rel(source, origin)
 			{
@@ -490,7 +490,7 @@ func (l *Loader) AdmitsOccurrence(occurrence Occurrence) bool {
 		if record.Authored != occurrence.Authored {
 			continue
 		}
-		origin := l.documents.localPath(record.Path)
+		origin := new(l.documents).localPath(record.Path)
 		if origin != filepath.Join(occurrence.Declaration.Source, filepath.FromSlash(occurrence.Declaration.File)) {
 			continue
 		}
@@ -552,7 +552,7 @@ func (l *Loader) EntryFailure(ctx context.Context, repoRoot string) error {
 				if child.outcome.Err != nil {
 					return fmt.Errorf(
 						"entry %s: %w (invalid YAML)",
-						l.fileCoordinate(l.documents.localPath(file)),
+						l.fileCoordinate(new(l.documents).localPath(file)),
 						manifest.DocumentFailure([]manifest.DocOccurrence{child.outcome}),
 					)
 				}

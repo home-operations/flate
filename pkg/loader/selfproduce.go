@@ -195,7 +195,7 @@ func (l *Loader) buildProductions(
 		for name, exact := range doc.builtInput.Reads {
 			file := filepath.Join(sourceRoot, filepath.FromSlash(name))
 			coordinate := l.fileCoordinate(file)
-			local := l.fileCoordinate(l.documents.localPath(file))
+			local := l.fileCoordinate(new(l.documents).localPath(file))
 			l.recordReader(
 				coordinate,
 				local,
@@ -481,12 +481,12 @@ func (l *Loader) packageRoots(repoRoot string, kss []store.Child) []string {
 		if ks.IsFragment() {
 			continue
 		}
-		base := l.documents.claimBase(root, ks.Path)
+		base := new(l.documents).claimBase(root, ks.Path)
 		local := filepath.Join(root, base)
 		if pinned {
 			local = filepath.Join(repoRoot, base)
 		} else if !external {
-			physical := l.documents.localPath(local)
+			physical := new(l.documents).localPath(local)
 			if doc, exists := l.documents.cache[physical]; exists && physical != local {
 				doc.buildExcluded = true
 				l.documents.cache[physical] = doc

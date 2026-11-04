@@ -105,61 +105,13 @@ func testRunBuiltPackagesCase(t *testing.T, testCaseInput *string,
 		}
 		assert.NoError(t, d.loadManifests(t.Context(), root, true))
 		assert.Equal(t, d.binding.Producer, owner.Named())
-		id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings-dev"}
-		batch := d.loader.PromotionDocuments(id)
-		wantCount := 4
-		if (*testCaseInput) == "a" {
-			wantCount = 3
-		}
-		assert.Equal(t, len(batch), wantCount)
-		wantHistory := map[manifest.NamedResource]manifest.DiscoveryRecord{}
-		var docs []map[string]any
-		if len(batch) != 0 {
-			docs = make([]map[string]any, 0, len(batch))
-		}
-		for _, child := range batch {
-			docs = append(docs, child.Doc)
-			record, ok := d.loader.Index.Lookup(child.Obj.Named())
-			assert.FatalIf(t, !ok || record.Parent != d.binding.Producer ||
-				!slices.ContainsFunc(
-					record.Productions,
-					func(p manifest.Production) bool { return p.Owner == d.binding.Producer },
-				), "unowned prepared output: %+v", record)
-			accepted := manifest.DiscoveryRecord{
-				Productions: []manifest.Production{{Owner: owner.Named(), Source: d.binding.Source}},
-			}
-			if child.Obj.Named() == testutil.KustomizationID("apps", "driver-dev") {
-				accepted.Application = `{"apiVersion":"kustomize.toolkit.fluxcd.io/v1","kind":"Kustomization","metadata":{"name":"driver-dev","namespace":"apps"},"spec":{"path":"./output","sourceRef":{"kind":"GitRepository","name":"cluster-dev"}}}`
-				source := manifest.NamedResource{
-					Group:     manifest.SourceDomain,
-					Kind:      manifest.KindGitRepository,
-					Namespace: "apps",
-					Name:      "cluster-dev",
-				}
-				accepted.Refs = []manifest.NamedResource{source}
-				accepted.ContentRoots = map[manifest.NamedResource][]string{source: {"output"}}
-			}
-			wantHistory[child.Obj.Named()] = accepted
-			if child.Obj.Named() == id {
-				cm := child.Obj.(*manifest.ConfigMap)
-				assert.Diff(t, cm.Data, map[string]any{"A": wantValue, "B": "patched"})
-			}
-		}
+		docs, wantHistory := d.assertPreparedPackageOutputs(t, testCaseInput, owner, wantValue)
 		assert.NoError(t, d.loader.FinalizeIndex(t.Context(), root, true))
 		assert.NoError(t, d.acceptPrepared(t.Context()))
 		if dir != "" {
 			assert.Diff(t, packageHistory(t, trees, &req, owner.Named()), wantHistory)
 		}
-		files := []string{"a/kustomization.yaml", "a/cm.yaml", "a/patch.yaml", "a/driver.yaml", "a/source.yaml"}
-		if (*testCaseInput) == "." {
-			files = append(files, "b/kustomization.yaml")
-		}
-		for _, file := range files {
-			assert.ErrorIf(t, !slices.ContainsFunc(
-				d.loader.Index.Readers[file],
-				func(r manifest.FileReader) bool { return r.Reader == d.binding.Producer },
-			), "root missing actual reader for %s", file)
-		}
+		d.assertPreparedPackageReaders(t, testCaseInput)
 		if lifetime == "uncached" || lifetime == "changed" {
 			previousDocs, previousIndex, previousWarnings = docs, d.loader.Index, st.Warnings()
 		} else {
@@ -182,4 +134,68 @@ type testRunEntryOwnerEligibilityCaseTailInputs struct {
 	owner         **manifest.Kustomization
 	st            **store.Store
 	root          string
+}
+
+func (d *Session) assertPreparedPackageOutputs(
+	t *testing.T,
+	testCaseInput *string,
+	owner *manifest.Kustomization,
+	wantValue string,
+) ([]map[string]any, map[manifest.NamedResource]manifest.DiscoveryRecord) {
+	t.Helper()
+	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings-dev"}
+	batch := d.loader.PromotionDocuments(id)
+	wantCount := 4
+	if (*testCaseInput) == "a" {
+		wantCount = 3
+	}
+	assert.Equal(t, len(batch), wantCount)
+	wantHistory := map[manifest.NamedResource]manifest.DiscoveryRecord{}
+	var docs []map[string]any
+	if len(batch) != 0 {
+		docs = make([]map[string]any, 0, len(batch))
+	}
+	for _, child := range batch {
+		docs = append(docs, child.Doc)
+		record, ok := d.loader.Index.Lookup(child.Obj.Named())
+		assert.FatalIf(t, !ok || record.Parent != d.binding.Producer ||
+			!slices.ContainsFunc(
+				record.Productions,
+				func(p manifest.Production) bool { return p.Owner == d.binding.Producer },
+			), "unowned prepared output: %+v", record)
+		accepted := manifest.DiscoveryRecord{
+			Productions: []manifest.Production{{Owner: owner.Named(), Source: d.binding.Source}},
+		}
+		if child.Obj.Named() == testutil.KustomizationID("apps", "driver-dev") {
+			accepted.Application = `{"apiVersion":"kustomize.toolkit.fluxcd.io/v1","kind":"Kustomization","metadata":{"name":"driver-dev","namespace":"apps"},"spec":{"path":"./output","sourceRef":{"kind":"GitRepository","name":"cluster-dev"}}}`
+			source := manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindGitRepository,
+				Namespace: "apps",
+				Name:      "cluster-dev",
+			}
+			accepted.Refs = []manifest.NamedResource{source}
+			accepted.ContentRoots = map[manifest.NamedResource][]string{source: {"output"}}
+		}
+		wantHistory[child.Obj.Named()] = accepted
+		if child.Obj.Named() == id {
+			cm := child.Obj.(*manifest.ConfigMap)
+			assert.Diff(t, cm.Data, map[string]any{"A": wantValue, "B": "patched"})
+		}
+	}
+	return docs, wantHistory
+}
+
+func (d *Session) assertPreparedPackageReaders(t *testing.T, testCaseInput *string) {
+	t.Helper()
+	files := []string{"a/kustomization.yaml", "a/cm.yaml", "a/patch.yaml", "a/driver.yaml", "a/source.yaml"}
+	if (*testCaseInput) == "." {
+		files = append(files, "b/kustomization.yaml")
+	}
+	for _, file := range files {
+		assert.ErrorIf(t, !slices.ContainsFunc(
+			d.loader.Index.Readers[file],
+			func(r manifest.FileReader) bool { return r.Reader == d.binding.Producer },
+		), "root missing actual reader for %s", file)
+	}
 }

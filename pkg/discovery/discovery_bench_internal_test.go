@@ -46,85 +46,7 @@ func BenchmarkRun_FollowedChain(b *testing.B) {
 		{"late_pin", "https://example.invalid/self.git"},
 	} {
 		b.Run(repo.name, func(b *testing.B) {
-			root := b.TempDir()
-			const depth, width = 8, 40
-			sourceName, ref := "flux-system", "{branch: main}"
-			if repo.name == "late_pin" {
-				sourceName, ref = "cluster", "{tag: fixture}"
-			}
-			testutil.WriteFile(
-				b,
-				root,
-				"flux/ks.yaml",
-				testutil.KustomizationYAML(
-					"top",
-					"flux-system",
-					"  {path: ./level0, sourceRef: {kind: GitRepository, name: "+sourceName+"}}\n",
-				),
-			)
-			for level := range depth {
-				var resources strings.Builder
-				for child := range width {
-					name := fmt.Sprintf("ks%d-%d", level, child)
-					fmt.Fprintf(&resources, "  - %s.yaml\n", name)
-					testutil.WriteFile(
-						b,
-						root,
-						fmt.Sprintf("level%d/%s.yaml", level, name),
-						testutil.KustomizationYAML(
-							name,
-							"",
-							"  {path: ./level"+strconv.Itoa(
-								level+1,
-							)+", sourceRef: {kind: GitRepository, name: "+sourceName+"}}\n",
-						),
-					)
-				}
-				testutil.WriteFile(b, root, fmt.Sprintf("level%d/kustomization.yaml", level),
-					"namespace: flux-system\nresources:\n"+resources.String())
-			}
-			testutil.WriteFile(b, root, fmt.Sprintf("level%d/kustomization.yaml", depth), "resources: []\n")
-			cfg := Config{Path: filepath.Join(root, "flux"), RepoRoot: root, WipeSecrets: true}
-			if repo.url != "" {
-				testutil.WriteFile(b, root, "flux/repo.yaml", fmt.Sprintf(`apiVersion: source.toolkit.fluxcd.io/v1
-kind: GitRepository
-metadata: {name: %s, namespace: flux-system}
-spec:
-  url: %s
-  ref: %s
-`, sourceName, repo.url, ref))
-				cfg.SelfURLs = []string{"https://example.invalid/self.git"}
-			}
-			if repo.name == "pinned" || repo.name == "late_pin" {
-				r := testutil.GitInit(b, root)
-				if err := r.Storer.SetReference(
-					plumbing.NewSymbolicReference(plumbing.HEAD, plumbing.NewBranchReferenceName("main")),
-				); err != nil {
-					b.Fatal(err)
-				}
-				commit := testutil.GitCommitAll(
-					b,
-					r,
-					"fixture",
-					&git.CommitOptions{Author: &object.Signature{Name: "b", Email: "b@e", When: time.Unix(0, 0)}},
-				)
-				if repo.name == "late_pin" {
-					if _, err := r.CreateTag("fixture", commit, nil); err != nil {
-						b.Fatal(err)
-					}
-					testutil.GitCommitAll(b, r, "head", &git.CommitOptions{
-						Author:            &object.Signature{Name: "b", Email: "b@e", When: time.Unix(1, 0)},
-						AllowEmptyCommits: true,
-					})
-				}
-			}
-			b.ReportAllocs()
-			for b.Loop() {
-				cfg.Store = store.New()
-				if _, err := Run(b.Context(), cfg); err != nil {
-					b.Fatal(err)
-				}
-			}
+			benchmarkRunFollowedChain(b, &repo)
 		})
 	}
 }
@@ -206,61 +128,149 @@ func BenchmarkRun_WideDirectory(b *testing.B) {
 func BenchmarkRun_BuiltPackage(b *testing.B) {
 	for _, existing := range []bool{false, true} {
 		b.Run(strconv.FormatBool(existing), func(b *testing.B) {
-			root := b.TempDir()
-			const count = 1000
-			var docs strings.Builder
-			for i := range count {
-				fmt.Fprintf(
-					&docs,
-					"---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: config-%04d, namespace: apps}\ndata: {value: fixture}\n",
-					i,
-				)
-			}
-			input := fstest.MapFS{
-				"package/kustomization.yaml": {Data: []byte("resources: [objects.yaml, secret.yaml]\n")},
-				"package/objects.yaml":       {Data: []byte(docs.String())},
-				"package/secret.yaml": {
-					Data: []byte(
-						"apiVersion: v1\nkind: Secret\nmetadata: {name: credentials, namespace: apps}\ntype: Opaque\nstringData: {token: authored}\n",
-					),
-				},
-			}
-			trees := kustomize.NewTreeCache(cachetest.New(b, "", cache.New), nil, task.NewBounded(2))
-			b.Cleanup(trees.Close)
-			cfg := Config{Input: &store.SourceArtifact{LocalPath: root, FS: input}, Path: root, Trees: trees}
-			secret := &manifest.Secret{
-				Name:       "credentials",
-				Namespace:  "apps",
-				StringData: map[string]any{"token": "preexisting"},
-			}
-			run := func() *Result {
-				cfg.Store = store.New()
-				if existing {
-					cfg.Store.AddObject(secret)
-				}
-				result, err := Run(b.Context(), cfg)
-				if err != nil {
-					b.Fatal(err)
-				}
-				return result
-			}
-			result := run()
-			children := 0
-			for _, record := range result.Index.Records { //nolint:gocritic // Map iteration preserves the value snapshot without an extra lookup.
-				if record.Parent == result.Binding.Producer {
-					children++
-				}
-			}
-			if children != count+1 {
-				b.Fatalf("prepared records=%d, want %d", children, count+1)
-			}
-			if existing && cfg.Store.GetObject(secret.Named()) != secret {
-				b.Fatal("preexisting secret replaced")
-			}
-			b.ReportAllocs()
-			for b.Loop() {
-				run()
-			}
+			benchmarkRunBuiltPackage(b, &existing)
 		})
+	}
+}
+
+func benchmarkRunFollowedChain(b *testing.B, repo *struct{ name, url string }) {
+	b.Helper()
+	root := b.TempDir()
+	const depth, width = 8, 40
+	sourceName, ref := "flux-system", "{branch: main}"
+	if repo.name == "late_pin" {
+		sourceName, ref = "cluster", "{tag: fixture}"
+	}
+	testutil.WriteFile(
+		b,
+		root,
+		"flux/ks.yaml",
+		testutil.KustomizationYAML(
+			"top",
+			"flux-system",
+			"  {path: ./level0, sourceRef: {kind: GitRepository, name: "+sourceName+"}}\n",
+		),
+	)
+	for level := range depth {
+		var resources strings.Builder
+		for child := range width {
+			name := fmt.Sprintf("ks%d-%d", level, child)
+			fmt.Fprintf(&resources, "  - %s.yaml\n", name)
+			testutil.WriteFile(
+				b,
+				root,
+				fmt.Sprintf("level%d/%s.yaml", level, name),
+				testutil.KustomizationYAML(
+					name,
+					"",
+					"  {path: ./level"+strconv.Itoa(
+						level+1,
+					)+", sourceRef: {kind: GitRepository, name: "+sourceName+"}}\n",
+				),
+			)
+		}
+		testutil.WriteFile(b, root, fmt.Sprintf("level%d/kustomization.yaml", level),
+			"namespace: flux-system\nresources:\n"+resources.String())
+	}
+	testutil.WriteFile(b, root, fmt.Sprintf("level%d/kustomization.yaml", depth), "resources: []\n")
+	cfg := Config{Path: filepath.Join(root, "flux"), RepoRoot: root, WipeSecrets: true}
+	if repo.url != "" {
+		testutil.WriteFile(b, root, "flux/repo.yaml", fmt.Sprintf(`apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: %s, namespace: flux-system}
+spec:
+  url: %s
+  ref: %s
+`, sourceName, repo.url, ref))
+		cfg.SelfURLs = []string{"https://example.invalid/self.git"}
+	}
+	if repo.name == "pinned" || repo.name == "late_pin" {
+		r := testutil.GitInit(b, root)
+		if err := r.Storer.SetReference(
+			plumbing.NewSymbolicReference(plumbing.HEAD, plumbing.NewBranchReferenceName("main")),
+		); err != nil {
+			b.Fatal(err)
+		}
+		commit := testutil.GitCommitAll(
+			b,
+			r,
+			"fixture",
+			&git.CommitOptions{Author: &object.Signature{Name: "b", Email: "b@e", When: time.Unix(0, 0)}},
+		)
+		if repo.name == "late_pin" {
+			if _, err := r.CreateTag("fixture", commit, nil); err != nil {
+				b.Fatal(err)
+			}
+			testutil.GitCommitAll(b, r, "head", &git.CommitOptions{
+				Author:            &object.Signature{Name: "b", Email: "b@e", When: time.Unix(1, 0)},
+				AllowEmptyCommits: true,
+			})
+		}
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		cfg.Store = store.New()
+		if _, err := Run(b.Context(), cfg); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func benchmarkRunBuiltPackage(b *testing.B, existing *bool) {
+	b.Helper()
+	root := b.TempDir()
+	const count = 1000
+	var docs strings.Builder
+	for i := range count {
+		fmt.Fprintf(
+			&docs,
+			"---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: config-%04d, namespace: apps}\ndata: {value: fixture}\n",
+			i,
+		)
+	}
+	input := fstest.MapFS{
+		"package/kustomization.yaml": {Data: []byte("resources: [objects.yaml, secret.yaml]\n")},
+		"package/objects.yaml":       {Data: []byte(docs.String())},
+		"package/secret.yaml": {
+			Data: []byte(
+				"apiVersion: v1\nkind: Secret\nmetadata: {name: credentials, namespace: apps}\ntype: Opaque\nstringData: {token: authored}\n",
+			),
+		},
+	}
+	trees := kustomize.NewTreeCache(cachetest.New(b, "", cache.New), nil, task.NewBounded(2))
+	b.Cleanup(trees.Close)
+	cfg := Config{Input: &store.SourceArtifact{LocalPath: root, FS: input}, Path: root, Trees: trees}
+	secret := &manifest.Secret{
+		Name:       "credentials",
+		Namespace:  "apps",
+		StringData: map[string]any{"token": "preexisting"},
+	}
+	run := func() *Result {
+		cfg.Store = store.New()
+		if *existing {
+			cfg.Store.AddObject(secret)
+		}
+		result, err := Run(b.Context(), cfg)
+		if err != nil {
+			b.Fatal(err)
+		}
+		return result
+	}
+	result := run()
+	children := 0
+	for _, record := range result.Index.Records { //nolint:gocritic // Map iteration preserves the value snapshot without an extra lookup.
+		if record.Parent == result.Binding.Producer {
+			children++
+		}
+	}
+	if children != count+1 {
+		b.Fatalf("prepared records=%d, want %d", children, count+1)
+	}
+	if (*existing) && cfg.Store.GetObject(secret.Named()) != secret {
+		b.Fatal("preexisting secret replaced")
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		run()
 	}
 }

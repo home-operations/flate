@@ -631,13 +631,7 @@ func (s *Store) SetIncluded(id manifest.NamedResource, included bool) {
 	sh.cells[id] = cell
 	var dispatch eventDispatch
 	if reset {
-		updated, _ := sh.setConditionLocked(id, new(readyCondition(StatusPending, "", "")), 0, nil)
-		if !sh.derived || !cell.hidden {
-			dispatch = fireUnderLock(s, EventStatusUpdated, id)
-			if dispatch.listeners != nil {
-				dispatch.payload, _ = updated.statusInfo()
-			}
-		}
+		dispatch = sh.resetInclusion(s, id, &cell)
 	} else if included && !cell.hidden {
 		if obj := sh.objectLocked(id); obj != nil {
 			dispatch = fireUnderLock(s, EventObjectAdded, id)
@@ -899,4 +893,16 @@ func (r *ReadSet) matchesReadiness(id manifest.NamedResource, input *Input, deta
 		}
 	}
 	return true
+}
+
+func (sh *shard) resetInclusion(s *Store, id manifest.NamedResource, cell *objectCell) eventDispatch {
+	var dispatch eventDispatch
+	updated, _ := sh.setConditionLocked(id, new(readyCondition(StatusPending, "", "")), 0, nil)
+	if !sh.derived || !cell.hidden {
+		dispatch = fireUnderLock(s, EventStatusUpdated, id)
+		if dispatch.listeners != nil {
+			dispatch.payload, _ = updated.statusInfo()
+		}
+	}
+	return dispatch
 }

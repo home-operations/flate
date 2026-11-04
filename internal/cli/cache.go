@@ -32,19 +32,11 @@ type cacheGCFlags struct {
 	dryRun   bool
 }
 
-// newCacheGCCmd retires tags and unreferenced Git generations.
 func newCacheGCCmd() *cobra.Command {
 	f := &cacheGCFlags{}
 	cmd := &cobra.Command{
 		Use:   "gc",
 		Short: "Prune stale cache tags and unused Git generations",
-		Long: `Retires named cache tags whose payloads were last used more than --max-age
-ago, then collects unreachable OCI blobs and Git generations. Shared
-payloads survive while reachable from a retained tag.
-
-Requires an explicit --cache-dir or FLATE_CACHE_DIR.
-
-Set --dry-run to see what would be removed without touching disk.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if f.maxAge < 0 {
 				return errors.New("--max-age must be non-negative")
@@ -93,7 +85,7 @@ Set --dry-run to see what would be removed without touching disk.`,
 	cmd.Flags().
 		DurationVar(&f.maxAge, "max-age", 30*24*time.Hour, "Prune cache entries unused for this duration (0 disables)")
 	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "List cache entries to prune without deleting them")
-	bindCacheDir(cmd.Flags(), &f.cacheDir, "Prune this cache directory")
+	bindCacheDir(cmd.Flags(), &f.cacheDir, "Prune this cache directory (required)")
 	return cmd
 }
 

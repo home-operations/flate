@@ -16,7 +16,7 @@ type buildFlags struct {
 }
 
 func bindBuildFlags(fs *pflag.FlagSet, b *buildFlags) {
-	fs.StringSliceVar(&b.onlyKinds, "only-kinds", nil, "Include only these output kinds (comma-separated)")
+	fs.StringSliceVar(&b.onlyKinds, "only-kinds", nil, "Include only output kinds (comma-separated values)")
 }
 
 func newBuildCmd() *cobra.Command {

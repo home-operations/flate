@@ -51,9 +51,15 @@ type acceptedHistoryCase struct {
 func TestRenderFlux_AcceptedHistory(t *testing.T) {
 	t.Parallel()
 	h := newAcceptedHistoryCase(t)
-	t.Run("disabled preparation", h.disabledPreparation)
+	t.Run("disabled preparation", func(t *testing.T) {
+		t.Parallel()
+		h.disabledPreparation(t)
+	})
 	h.unaccepted(t)
-	t.Run("durable", h.durable)
+	t.Run("durable", func(t *testing.T) {
+		t.Parallel()
+		h.durable(t)
+	})
 }
 
 func newAcceptedHistoryCase(t *testing.T) *acceptedHistoryCase {

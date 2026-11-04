@@ -24,6 +24,8 @@ type entryInputs struct {
 }
 
 // Plan establishes entries without publishing seeds into the caller's store.
+//
+//nolint:gocritic // Public entry planning preserves its configuration value snapshot.
 func Plan(ctx context.Context, cfg Config) ([]Entry, error) {
 	if cfg.Input == nil && cfg.Store != nil {
 		cfg.Input, _ = cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)

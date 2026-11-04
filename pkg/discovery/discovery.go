@@ -230,6 +230,25 @@ func (r *Result) PrepareEntry(ctx context.Context, changes *change.Set) error {
 	if err != nil || root == nil {
 		return err
 	}
+	d.loader.Index, d.binding = r.cloneIndex(), binding
+	d.cfg.Store.AddObject(root)
+	source, _, _ := kustomize.SourceInput(d.cfg.Store, root)
+	if source != nil && d.cfg.Trees != nil {
+		if err := d.prepareProducer(ctx, root, source); err != nil {
+			d.binding.Failure = err
+		}
+	}
+	if err := d.loader.FinalizeIndex(ctx, r.RepoRoot, true); err != nil {
+		return err
+	}
+	if err := d.acceptPrepared(ctx); err != nil {
+		return err
+	}
+	r.Index, r.Binding = d.loader.Index, d.binding
+	return nil
+}
+
+func (r *Result) cloneIndex() *manifest.DiscoveryIndex {
 	index := *r.Index
 	index.Records = maps.Clone(index.Records)
 	for id, record := range index.Records { //nolint:gocritic // Map iteration preserves a value snapshot without an extra lookup.
@@ -248,22 +267,7 @@ func (r *Result) PrepareEntry(ctx context.Context, changes *change.Set) error {
 	for path, readers := range index.Readers {
 		index.Readers[path] = slices.Clone(readers)
 	}
-	d.loader.Index, d.binding = &index, binding
-	d.cfg.Store.AddObject(root)
-	source, _, _ := kustomize.SourceInput(d.cfg.Store, root)
-	if source != nil && d.cfg.Trees != nil {
-		if err := d.prepareProducer(ctx, root, source); err != nil {
-			d.binding.Failure = err
-		}
-	}
-	if err := d.loader.FinalizeIndex(ctx, r.RepoRoot, true); err != nil {
-		return err
-	}
-	if err := d.acceptPrepared(ctx); err != nil {
-		return err
-	}
-	r.Index, r.Binding = d.loader.Index, d.binding
-	return nil
+	return &index
 }
 
 // Session retains invocation-local declaration construction until Freeze.
@@ -529,7 +533,7 @@ func (d *Session) bindEntry(ctx context.Context, repoRoot string) (*manifest.Kus
 	slices.SortFunc(matches, func(a, b store.Child) int { return a.Obj.Named().Compare(b.Obj.Named()) })
 	ks := internal
 	for _, child := range matches {
-		candidate := child.Obj.(*manifest.Kustomization)
+		candidate := child.Obj.(*manifest.Kustomization) //nolint:errcheck // Matches retain admitted Kustomization values.
 		if len(candidate.DependsOn) != 0 {
 			if d.cfg.Selection.Changed || len(d.cfg.Selection.Roots) != 0 {
 				continue

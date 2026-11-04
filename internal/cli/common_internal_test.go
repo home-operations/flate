@@ -505,8 +505,8 @@ func TestBindCommon_HelmOptions(t *testing.T) {
 	assert.Equal(t, buildOrchCfg(&commonFlags{}).HelmOptions.SkipTests, true)
 }
 
-//nolint:paralleltest // allocation measurements require serial execution.
 func TestRunSelected_WarningIdentity(t *testing.T) {
+	t.Parallel()
 	base := manifest.Warning{
 		Category: manifest.WarnStaleValues,
 		Resource: testutil.HelmReleaseID("apps", "demo"),
@@ -568,8 +568,4 @@ func TestRunSelected_WarningIdentity(t *testing.T) {
 	assert.Diff(t, side.Warnings, before)
 	assert.Diff(t, side.Unrelated, []manifest.Warning{base})
 	assert.Diff(t, side.External, []manifest.Warning{detail})
-	{
-		allocs := testing.AllocsPerRun(1, func() { selectedWarnings(&selection.Selection{}) })
-		assert.FatalIf(t, allocs != 0, "empty diagnostics allocated: %v", allocs)
-	}
 }

@@ -35,8 +35,7 @@ konflate embeds.
   exceptions: `automemlimit`, `doublestar/v4`.
 - **Replace, don't add.** A change that introduces a new way migrates every consumer and deletes
   the old path in the same PR; never land a new path beside the old one. In a planned series one
-  PR may grow when a later PR deletes; the series as a whole shrinks. PRs state production lines
-  as +added/-removed.
+  PR may grow when a later PR deletes; the series as a whole shrinks.
 - **Redesign on entry, never bolt on.** A change that adds a new case to a concern that already has
   a mechanism (a new source kind, producer, input or key) owns the unification: it redesigns the
   concern so every case goes through one seam (one classification, one derivation, one
@@ -144,8 +143,8 @@ Leaf packages (`tree`, `manifest`, `task`, `schedule` behind its `Dispatcher` se
 
 ## Code style
 
-`.golangci.yml` (golden configuration plus flate rules) is the source of truth for mechanical style,
-and `mise run lint` must pass on the whole repo.
+`.golangci.yml` is the source of truth for mechanical style, and
+`mise run lint` must pass on the whole repo.
 
 - **Go.** The version is `go.mod`'s directive, pinned to the lowest patch; `.mise/config.toml`
   pins the toolchain. Write idiomatic Go for it: `slices`, `maps`, `cmp.Or`, `strings.Cut`,
@@ -169,8 +168,8 @@ and `mise run lint` must pass on the whole repo.
   the PR names that embedder.
 - **Comments.** Add a comment only for a constraint or rationale
   (MUST, never, invariant, an upstream quirk with its issue). Banned: step narration,
-  section banners, restating the name above a function, describing your own edit, commented-out
-  code, unprompted TODO or FIXME. Delete narration you find in code you touch.
+  section banners, restating the name above a function, describing your own edit.
+  Delete narration you find in code you touch.
 - **Elegance.** Names state intent; small functions with one job and straight-line flow; types
   that make wrong states unrepresentable; no wrappers, single-use helpers or pass-through types;
   one obvious way, consistent with the surrounding code. Working but convoluted, repetitive or
@@ -178,14 +177,14 @@ and `mise run lint` must pass on the whole repo.
 
 ## Tests
 
-- Stdlib `testing` only; never testify or Ginkgo. Names: `TestThing_Behavior`, `TestE2E_*`
+- Names: `TestThing_Behavior`, `TestE2E_*`
   (in-process via `cli.Run`, no build tags, no network), `BenchmarkThing_Case` with `b.Loop()`.
 - Table-driven with `t.Run`.
-- Tests and subtests call `t.Parallel` unless they touch process-global state: `t.Setenv`,
-  `t.Chdir`, `slog.SetDefault` or `log.SetOutput` (including through `cli.Run`),
-  `ssrfguard.Restrict`, go-git protocol registration, a package variable, or
-  `testing.AllocsPerRun`. Such a test stays serial. Never call `t.Parallel` inside a
-  `synctest` bubble.
+- `paralleltest` requires `t.Parallel`. A test that touches process-global state (`t.Setenv`,
+  `t.Chdir`, `slog.SetDefault` or `log.SetOutput` including through `cli.Run`,
+  `ssrfguard.Restrict`, go-git protocol registration, a package variable, or `testing.AllocsPerRun`)
+  stays serial with `//nolint:paralleltest // <reason>`.
+  Never call `t.Parallel` inside a `synctest` bubble.
 - A matrix axis exists only where the code under test branches on it. Worker counts vary only
   where concurrency is the subject; elsewhere use one count >= 2. Determinism is shown with
   two runs. No iteration loops to provoke races: use explicit synchronization or

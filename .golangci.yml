@@ -1,4 +1,4 @@
-# Based on the golden config for golangci-lint v2.15.0, with flate rules on top.
+# golangci-lint v2.15.0 configuration with flate rules.
 # https://github.com/maratori/golangci-lint-config
 # Copyright (c) 2021-2025 Marat Reimers. MIT license: https://opensource.org/license/mit
 version: "2"

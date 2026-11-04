@@ -199,7 +199,7 @@ func TestRecordEmitted_NeverEmittedCoverageWithdrawal(t *testing.T) {
 		sh.mu.RLock()
 		defer sh.mu.RUnlock()
 		var view capture
-		sh.captureLocked(id, sh.cells[id], &view)
+		sh.captureLocked(id, new(sh.cells[id]), &view)
 		child := view.child
 		var owner manifest.NamedResource
 		if view.owner != nil {

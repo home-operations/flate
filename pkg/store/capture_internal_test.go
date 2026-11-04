@@ -577,7 +577,7 @@ func testReadRegistrationCrossShardLostWakeupCase(
 		sh := s.shardFor(old.Obj.Named())
 		sh.mu.RLock()
 		var view capture
-		sh.captureLocked(old.Obj.Named(), sh.cells[old.Obj.Named()], &view)
+		sh.captureLocked(old.Obj.Named(), new(sh.cells[old.Obj.Named()]), &view)
 		sh.mu.RUnlock()
 		if *testCaseInput.payload {
 			reads.sample(old.Obj.Named(), view.payloadOwner, view.payloadOwner.current.Load(), false)

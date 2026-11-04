@@ -266,7 +266,7 @@ func (r *ReadSet) Capture(input *Input) manifest.BaseManifest {
 	sh.mu.RLock()
 	var view capture
 	cell, present := sh.cells[id]
-	sh.captureLocked(id, cell, &view)
+	sh.captureLocked(id, new(cell), &view)
 	registration := &input.object
 	registration.generation.Store(view.generation)
 	registration.owner = r

@@ -349,7 +349,7 @@ func (s *Store) addObject(obj manifest.BaseManifest, binding, support *Input, do
 			u.document = docs[0]
 		}
 		if sh.derived {
-			sh.captureLocked(id, cell, &u.effective)
+			sh.captureLocked(id, new(cell), &u.effective)
 		} else {
 			u.effective.child.Obj, u.effective.child.Doc = cell.static, cell.document
 		}
@@ -481,7 +481,7 @@ func (s *Store) AddObjects(objs []manifest.BaseManifest) {
 			for j := range bucket {
 				id := bucket[j].obj.Named()
 				bucket[j].cell = sh.cells[id]
-				sh.captureLocked(id, bucket[j].cell, &bucket[j].effective)
+				sh.captureLocked(id, new(bucket[j].cell), &bucket[j].effective)
 			}
 			sh.mu.RUnlock()
 			for j := range bucket {
@@ -548,7 +548,7 @@ func (s *Store) AddObjects(objs []manifest.BaseManifest) {
 				sh := s.shardFor(id)
 				sh.mu.RLock()
 				u.cell = sh.cells[id]
-				sh.captureLocked(id, u.cell, &u.effective)
+				sh.captureLocked(id, new(u.cell), &u.effective)
 				u.needsRoot = !u.cell.rooted && (len(sh.members[id]) > 0 || sh.slots[id] != nil)
 				sh.mu.RUnlock()
 				u.compare()
@@ -661,7 +661,7 @@ func (s *Store) Snapshot(id manifest.NamedResource, conditions bool) (manifest.B
 	sh := s.shardFor(id)
 	sh.mu.RLock()
 	cell := sh.cells[id]
-	obj := sh.captureLocked(id, cell, nil)
+	obj := sh.captureLocked(id, new(cell), nil)
 	var observed Observation
 	var record conditionRecord
 	if !cell.hidden {

@@ -213,13 +213,13 @@ func testRecordEmittedCoverageAndStaticBoundaryAnchoringReadOrder(t *testing.T) 
 	sh.cells[id] = cell
 	assert.Equal(t, sh.objectLocked(id), nil)
 	var view capture
-	assert.Equal(t, sh.captureLocked(id, cell, &view), nil)
+	assert.Equal(t, sh.captureLocked(id, new(cell), &view), nil)
 	assert.Equal(t, view.child.Obj, nil)
 	assert.Equal(t, view.owner, (*producerSlot)(nil))
 	cell.hidden = false
 	sh.cells[id] = cell
 	assert.Equal(t, sh.objectLocked(id), child.Obj)
-	assert.Equal(t, sh.captureLocked(id, cell, &view), child.Obj)
+	assert.Equal(t, sh.captureLocked(id, new(cell), &view), child.Obj)
 	assert.Equal(t, view.child.Obj, child.Obj)
 	assert.Equal(t, view.accepted, true)
 }

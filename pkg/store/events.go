@@ -133,7 +133,7 @@ func (s *Store) snapshotForReplay(event EventKind) []idPayload {
 		for _, sh := range s.shards {
 			for id := range sh.cells {
 				var view capture
-				sh.captureLocked(id, sh.cells[id], &view)
+				sh.captureLocked(id, new(sh.cells[id]), &view)
 				if sh.cells[id].hidden {
 					continue
 				}
@@ -177,7 +177,7 @@ func collectReplay[V any](
 			var input capture
 			if _, ok := payload.(*Emission); ok {
 				var view capture
-				sh.captureLocked(id, sh.cells[id], &view)
+				sh.captureLocked(id, new(sh.cells[id]), &view)
 				input = view
 			}
 

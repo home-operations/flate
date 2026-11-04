@@ -157,7 +157,7 @@ func (s *Store) SetArtifact(id manifest.NamedResource, artifact *SourceArtifact)
 	}
 	prev.value = artifact
 	var view capture
-	sh.captureLocked(id, sh.cells[id], &view)
+	sh.captureLocked(id, new(sh.cells[id]), &view)
 	visible := sh.projectArtifactLocked(id, &view, new(prev))
 	changed := sh.publishArtifactLocked(id, &prev, visible)
 	sh.artifacts[id] = prev
@@ -221,7 +221,7 @@ func (s *Store) GetArtifact(id manifest.NamedResource, _ ArtifactRead) Artifact 
 		return nil
 	}
 	var view capture
-	sh.captureLocked(id, sh.cells[id], &view)
+	sh.captureLocked(id, new(sh.cells[id]), &view)
 	artifact := sh.artifacts[id].effective
 	e, emitted := artifact.(*Emission)
 	sh.mu.RUnlock()

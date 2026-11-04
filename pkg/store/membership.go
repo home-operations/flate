@@ -39,10 +39,11 @@ func (sh *shard) objectLocked(id manifest.NamedResource) manifest.BaseManifest {
 	if !sh.derived && sh.cells[id].binding == nil {
 		return sh.cells[id].static
 	}
-	return sh.captureLocked(id, sh.cells[id], nil)
+	return sh.captureLocked(id, new(sh.cells[id]), nil)
 }
 
-func (sh *shard) captureLocked(id manifest.NamedResource, cell objectCell, view *capture) manifest.BaseManifest {
+func (sh *shard) captureLocked(id manifest.NamedResource, cellValue *objectCell, view *capture) manifest.BaseManifest {
+	cell := *cellValue
 	if view != nil {
 		*view = capture{
 			independent: cell.independent,
@@ -243,7 +244,7 @@ func (s *Store) affectedLocked(region objectRegion, producer manifest.NamedResou
 			}
 		}
 		var view capture
-		sh.captureLocked(id, state.cell, &view)
+		sh.captureLocked(id, new(state.cell), &view)
 		before := view.child
 		state.before, state.document, state.payload = before.Obj, before.Doc, view.payload
 		state.owner, state.source = view.owner, view.source
@@ -384,7 +385,7 @@ func (s *Store) reachabilityLocked(region objectRegion) []objectPublication {
 			}
 			cell.retired, cell.hidden, cell.independent = !state.static, !state.live, state.independent
 			var view capture
-			sh.captureLocked(id, cell, &view)
+			sh.captureLocked(id, new(cell), &view)
 			after := view.child
 			cell.auxiliary = view.auxiliary
 			if state.direct || (state.before == nil) != (after.Obj == nil) || state.owner != view.owner ||

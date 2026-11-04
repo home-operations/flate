@@ -128,7 +128,7 @@ func TestEvidenceOwnerProof_StablePublicationCut(t *testing.T) {
 	sh := s.shardFor(old.Obj.Named())
 	sh.mu.RLock()
 	var before capture
-	sh.captureLocked(old.Obj.Named(), sh.cells[old.Obj.Named()], &before)
+	sh.captureLocked(old.Obj.Named(), new(sh.cells[old.Obj.Named()]), &before)
 	sh.mu.RUnlock()
 	paused, resume := make(chan struct{}), make(chan struct{})
 	unsub := s.AddListener(EventObjectAdded, func(id manifest.NamedResource, _ any) {
@@ -147,7 +147,7 @@ func TestEvidenceOwnerProof_StablePublicationCut(t *testing.T) {
 	assert.Equal(t, s.GetObject(fresh.Obj.Named()), fresh.Obj)
 	sh.mu.RLock()
 	var after capture
-	sh.captureLocked(fresh.Obj.Named(), sh.cells[fresh.Obj.Named()], &after)
+	sh.captureLocked(fresh.Obj.Named(), new(sh.cells[fresh.Obj.Named()]), &after)
 	sh.mu.RUnlock()
 	{
 		assert.ErrorIf(
@@ -337,7 +337,7 @@ func TestStore_AnchorRechecksEffective(t *testing.T) {
 	sh.mu.RLock()
 	cell := sh.cells[seed.Obj.Named()]
 	u := objectUpdate{obj: emitted.Obj, cell: cell}
-	sh.captureLocked(seed.Obj.Named(), cell, &u.effective)
+	sh.captureLocked(seed.Obj.Named(), new(cell), &u.effective)
 	sh.mu.RUnlock()
 	u.compare()
 	assert.Equal(t, u.effectiveEqual, true)
@@ -374,7 +374,7 @@ func TestStore_AnchorRechecksEffective(t *testing.T) {
 		shard := st.shardFor(obj.Named())
 		shard.mu.RLock()
 		update := objectUpdate{obj: obj, document: doc, cell: shard.cells[obj.Named()]}
-		shard.captureLocked(obj.Named(), update.cell, &update.effective)
+		shard.captureLocked(obj.Named(), new(update.cell), &update.effective)
 		shard.mu.RUnlock()
 		update.compare()
 		var reads ReadSet

@@ -38,7 +38,7 @@ func (s *Store) commitStable(slot *producerSlot, prev, proposal *Emission, gener
 			record := ps.artifacts[slot.id]
 			record.inventoryVisible = true
 			var view capture
-			ps.captureLocked(slot.id, ps.cells[slot.id], &view)
+			ps.captureLocked(slot.id, new(ps.cells[slot.id]), &view)
 			record.effective = ps.projectArtifactLocked(slot.id, &view, new(record))
 			record.publication++
 			ps.artifacts[slot.id] = record
@@ -86,7 +86,7 @@ func (s *Store) commitStable(slot *producerSlot, prev, proposal *Emission, gener
 		record := ps.artifacts[slot.id]
 		record.inventoryVisible = true
 		var view capture
-		ps.captureLocked(slot.id, ps.cells[slot.id], &view)
+		ps.captureLocked(slot.id, new(ps.cells[slot.id]), &view)
 		visible := ps.projectArtifactLocked(slot.id, &view, new(record))
 		ps.publishArtifactLocked(slot.id, &record, visible)
 		ps.artifacts[slot.id] = record
@@ -261,7 +261,7 @@ func (s *Store) commitReplacement(
 		record := ps.artifacts[id]
 		record.inventoryVisible = true
 		var view capture
-		ps.captureLocked(id, ps.cells[id], &view)
+		ps.captureLocked(id, new(ps.cells[id]), &view)
 		visible := ps.projectArtifactLocked(id, &view, new(record))
 		ps.publishArtifactLocked(id, &record, visible)
 		ps.artifacts[id] = record

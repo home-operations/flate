@@ -34,7 +34,7 @@ func (s *Store) EmissionOwner(id manifest.NamedResource) manifest.NamedResource 
 	sh := s.shardFor(id)
 	sh.mu.RLock()
 	var view capture
-	sh.captureLocked(id, sh.cells[id], &view)
+	sh.captureLocked(id, new(sh.cells[id]), &view)
 	sh.mu.RUnlock()
 	if view.owner != nil {
 		return view.owner.id
@@ -49,7 +49,7 @@ func (s *Store) GetDeclaration(id manifest.NamedResource) manifest.BaseManifest 
 	sh := s.shardFor(id)
 	sh.mu.RLock()
 	var view capture
-	sh.captureLocked(id, sh.cells[id], &view)
+	sh.captureLocked(id, new(sh.cells[id]), &view)
 	sh.mu.RUnlock()
 	return new(view).declaration()
 }
@@ -94,7 +94,7 @@ func (s *Store) getEmission(
 	sh := s.shardFor(id)
 	sh.mu.RLock()
 	if reads == nil {
-		sh.captureLocked(id, sh.cells[id], &view)
+		sh.captureLocked(id, new(sh.cells[id]), &view)
 	}
 	var prev *Emission
 	if slot := sh.slots[id]; slot != nil && slot.visible.Load() {
@@ -210,7 +210,7 @@ func (s *Store) referenceData(
 			} else {
 				sh := s.shardFor(p.Declaration)
 				sh.mu.RLock()
-				sh.captureLocked(p.Declaration, sh.cells[p.Declaration], &view)
+				sh.captureLocked(p.Declaration, new(sh.cells[p.Declaration]), &view)
 				sh.mu.RUnlock()
 			}
 			if object := view.child.Obj; object != nil {
@@ -437,7 +437,7 @@ func (s *Store) visitProductions(id manifest.NamedResource, index *manifest.Disc
 	}
 	if result.facts {
 		var view capture
-		sh.captureLocked(id, sh.cells[id], &view)
+		sh.captureLocked(id, new(sh.cells[id]), &view)
 		result.data, _ = view.child.Obj.(manifest.Data)
 		result.accepted = view.accepted || view.owner != nil
 	}

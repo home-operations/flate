@@ -508,45 +508,14 @@ func (d *Session) bindEntry(ctx context.Context, repoRoot string) (*manifest.Kus
 	if input == nil {
 		input, _ = d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	}
-	var internal *manifest.Kustomization
-	if d.binding == (Binding{}) {
-		var err error
-		internal, _, err = d.admission().entry(ctx, d.cfg.Store, d.applications())
-		if err != nil || internal == nil {
-			return nil, err
-		}
-		d.entryApplier = manifest.DiagnosticFor(internal.Named(), internal).Resource
-	} else {
-		subpath, _ := filepath.Rel(input.LocalPath, d.cfg.Path)
-		internal = manifest.NewEntryKustomization(manifest.BootstrapSourceID, filepath.ToSlash(subpath), d.entryApplier)
+	internal, err := d.entryRoot(ctx, input)
+	if err != nil || internal == nil {
+		return nil, err
 	}
 	var matches []store.Child
 	for _, child := range d.loader.Kustomizations() {
 		ks := child.Obj.(*manifest.Kustomization) //nolint:errcheck // This branch handles an admitted Kustomization.
-		if ks.IsFragment() || ks.Named().ReportHidden() {
-			continue
-		}
-		if record, indexed := d.loader.Index.Lookup(ks.Named()); indexed &&
-			(record.Builder == "" && record.Authored != ks.Named() || record.Builder != "" && record.File == record.Builder) {
-			continue
-		}
-		if source, ok := d.cfg.Store.GetObject(ks.SourceID()).(entrySource); ok {
-			_, descriptor := source.BootstrapAlias(input.LocalPath)
-			if descriptor != nil &&
-				(descriptor.Ignore != nil && *descriptor.Ignore != "" || len(descriptor.SparseCheckout) != 0) {
-				continue
-			}
-		}
-		art, _, err := kustomize.SourceInput(d.cfg.Store, ks)
-		if err != nil {
-			continue
-		}
-		root, pinned, external := loader.SourceView(d.cfg.Store, ks.SourceID(), repoRoot)
-		if pinned || external {
-			continue
-		}
-		target := art.OriginPath(filepath.Join(root, manifest.NormalizeClaimBase(ks.Path)))
-		if target == d.cfg.Path {
+		if d.matchesEntryPath(ks, input, repoRoot) {
 			matches = append(matches, child)
 		}
 	}
@@ -554,22 +523,8 @@ func (d *Session) bindEntry(ctx context.Context, repoRoot string) (*manifest.Kus
 	ks := internal
 	for _, child := range matches {
 		candidate := child.Obj.(*manifest.Kustomization) //nolint:errcheck // Matches retain admitted Kustomization values.
-		if len(candidate.DependsOn) != 0 {
-			if d.cfg.Selection.Changed || len(d.cfg.Selection.Roots) != 0 {
-				continue
-			}
-			if d.cfg.Trees == nil || candidate.PostBuild != nil && len(candidate.PostBuild.SubstituteFrom) != 0 {
-				continue
-			}
-			source, _, _ := kustomize.SourceInput(d.cfg.Store, candidate)
-			prepared, err := d.prepareDocuments(ctx, candidate, source)
-			if err != nil {
-				slog.Debug("discovery: entry candidate preparation deferred", "err", err)
-				continue
-			}
-			if !d.entryEligible(candidate, prepared.children) {
-				continue
-			}
+		if !d.entryCandidateReady(ctx, candidate) {
+			continue
 		}
 		ks = candidate
 		d.entryApplier = candidate.Named()
@@ -602,6 +557,72 @@ func (d *Session) bindEntry(ctx context.Context, repoRoot string) (*manifest.Kus
 		Failure:  failure,
 	}
 	return ks, nil
+}
+
+func (d *Session) entryRoot(ctx context.Context, input *store.SourceArtifact) (*manifest.Kustomization, error) {
+	var internal *manifest.Kustomization
+	if d.binding == (Binding{}) {
+		var err error
+		internal, _, err = d.admission().entry(ctx, d.cfg.Store, d.applications())
+		if err != nil || internal == nil {
+			return nil, err
+		}
+		d.entryApplier = manifest.DiagnosticFor(internal.Named(), internal).Resource
+	} else {
+		subpath, _ := filepath.Rel(input.LocalPath, d.cfg.Path)
+		internal = manifest.NewEntryKustomization(manifest.BootstrapSourceID, filepath.ToSlash(subpath), d.entryApplier)
+	}
+	return internal, nil
+}
+
+func (d *Session) matchesEntryPath(
+	ks *manifest.Kustomization,
+	input *store.SourceArtifact,
+	repoRoot string,
+) bool {
+	if ks.IsFragment() || ks.Named().ReportHidden() {
+		return false
+	}
+	if record, indexed := d.loader.Index.Lookup(ks.Named()); indexed &&
+		(record.Builder == "" && record.Authored != ks.Named() || record.Builder != "" && record.File == record.Builder) {
+		return false
+	}
+	if source, ok := d.cfg.Store.GetObject(ks.SourceID()).(entrySource); ok {
+		_, descriptor := source.BootstrapAlias(input.LocalPath)
+		if descriptor != nil &&
+			(descriptor.Ignore != nil && *descriptor.Ignore != "" || len(descriptor.SparseCheckout) != 0) {
+			return false
+		}
+	}
+	art, _, err := kustomize.SourceInput(d.cfg.Store, ks)
+	if err != nil {
+		return false
+	}
+	root, pinned, external := loader.SourceView(d.cfg.Store, ks.SourceID(), repoRoot)
+	if pinned || external {
+		return false
+	}
+	target := art.OriginPath(filepath.Join(root, manifest.NormalizeClaimBase(ks.Path)))
+	return target == d.cfg.Path
+}
+
+func (d *Session) entryCandidateReady(ctx context.Context, candidate *manifest.Kustomization) bool {
+	if len(candidate.DependsOn) == 0 {
+		return true
+	}
+	if d.cfg.Selection.Changed || len(d.cfg.Selection.Roots) != 0 {
+		return false
+	}
+	if d.cfg.Trees == nil || candidate.PostBuild != nil && len(candidate.PostBuild.SubstituteFrom) != 0 {
+		return false
+	}
+	source, _, _ := kustomize.SourceInput(d.cfg.Store, candidate)
+	prepared, err := d.prepareDocuments(ctx, candidate, source)
+	if err != nil {
+		slog.Debug("discovery: entry candidate preparation deferred", "err", err)
+		return false
+	}
+	return d.entryEligible(candidate, prepared.children)
 }
 
 func (d *Session) entryEligible(owner *manifest.Kustomization, children []store.Child) bool {

@@ -15,7 +15,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 
-	"go.yaml.in/yaml/v3"
+	"go.yaml.in/yaml/v4"
 )
 
 type modelSource struct {

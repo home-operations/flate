@@ -12,7 +12,7 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/fluxcd/pkg/envsubst"
 	fluxkustomize "github.com/fluxcd/pkg/kustomize"
-	yamlv3 "go.yaml.in/yaml/v3"
+	yamlv4 "go.yaml.in/yaml/v4"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/kustomize/api/resource"
 	kyaml "sigs.k8s.io/kustomize/kyaml/yaml"
@@ -143,7 +143,7 @@ func TestSubstitutionNames_EvaluatorReads(t *testing.T) {
 		t.Run(expression, func(t *testing.T) {
 			t.Parallel()
 			doc := map[string]any{"${KEY}": expression}
-			raw, err := yamlv3.Marshal(doc)
+			raw, err := yamlv4.Marshal(doc)
 			assert.NoError(t, err)
 			want := make(map[string]struct{})
 			_, err = envsubst.Eval(string(raw), func(name string) (string, bool) {

@@ -14,7 +14,7 @@ import (
 // defaultParseDocOptions returns the standard ParseDoc options — secrets wiped.
 // Test-only helper; production callers pass an explicit ParseDocOptions.
 func defaultParseDocOptions() ParseDocOptions {
-	return ParseDocOptions{WipeSecrets: true, DefaultNamespace: ""}
+	return ParseDocOptions{DefaultNamespace: ""}
 }
 
 // mustYAML decodes a single YAML document literal into a generic map.
@@ -422,9 +422,8 @@ spec:
   secretRef: {name: minio-creds}
 `))
 	assert.FatalIf(t, err != nil, "parseBucket: %v", err)
-	if b.Provider != "generic" {
-		t.Errorf("default Provider should be 'generic', got %q", b.Provider)
-	}
+	assert.ErrorIf(t, b.Provider != "generic",
+		"default Provider should be 'generic', got %q", b.Provider)
 }
 
 // TestParse_EmptySecretRefNameRejected pins the schema check that
@@ -495,9 +494,8 @@ spec:
 			doc := mustYAML(t, tc.yaml)
 			err := tc.parse(doc)
 			assert.FatalIf(t, err == nil, "expected error, got nil")
-			if !strings.Contains(err.Error(), tc.want) {
-				t.Errorf("expected error containing %q, got %q", tc.want, err.Error())
-			}
+			assert.ErrorIf(t, !strings.Contains(err.Error(), tc.want),
+				"expected error containing %q, got %q", tc.want, err.Error())
 		})
 	}
 }
@@ -522,15 +520,13 @@ spec:
 `)
 	rs, err := parseResourceSet(doc)
 	assert.FatalIf(t, err != nil, "parseResourceSet: %v", err)
-	if rs.Name != "apps" || rs.Namespace != "flux-system" {
-		t.Errorf("unexpected name/ns: %s/%s", rs.Namespace, rs.Name)
-	}
-	if len(rs.Inputs) != 2 {
-		t.Errorf("expected 2 inputs, got %d", len(rs.Inputs))
-	}
-	if len(rs.Resources) != 1 {
-		t.Errorf("expected 1 templated resource, got %d", len(rs.Resources))
-	}
+	assert.ErrorIf(t, rs.Name != "apps" || rs.Namespace != "flux-system",
+		"unexpected name/ns: %s/%s", rs.Namespace, rs.Name)
+	assert.ErrorIf(t, len(rs.Inputs) != 2,
+		"expected 2 inputs, got %d", len(rs.Inputs))
+	assert.ErrorIf(t, len(rs.Resources) != 1,
+		"expected 1 templated resource, got %d", len(rs.Resources))
+
 	for _, tc := range []struct {
 		name, field string
 		ref         map[string]any
@@ -568,9 +564,8 @@ spec: {}
 `)
 	rs, err := parseResourceSet(doc)
 	assert.FatalIf(t, err != nil, "parseResourceSet: %v", err)
-	if rs.Namespace != "" {
-		t.Errorf("namespace=%q want empty before loader inheritance/defaulting", rs.Namespace)
-	}
+	assert.ErrorIf(t, rs.Namespace != "",
+		"namespace=%q want empty before loader inheritance/defaulting", rs.Namespace)
 }
 
 func testParseDocPreservesEnvsubstFieldsCase(

@@ -78,8 +78,6 @@ func DocMetadata(doc map[string]any) Metadata {
 type ParseDocOptions struct {
 	// RequiredIdentity requires complete Kubernetes identity without namespace defaulting.
 	RequiredIdentity bool
-	// WipeSecrets replaces SOPS ciphertext with offline placeholders.
-	WipeSecrets bool
 	// DefaultNamespace fills omitted namespaced identity and authoritative document metadata.
 	DefaultNamespace string
 }
@@ -89,6 +87,7 @@ type ParsedDoc struct {
 	Object   BaseManifest
 	Document map[string]any
 	Changed  bool
+	Warnings []Warning
 }
 
 // ParseDoc decodes recognized group/kind pairs and returns the authoritative
@@ -101,7 +100,7 @@ func ParseDoc(doc map[string]any, opts ParseDocOptions) (ParsedDoc, error) {
 		if err := ValidateIdentity(doc, nil); err != nil {
 			return ParsedDoc{Document: doc}, err
 		}
-		opts.DefaultNamespace, opts.WipeSecrets = "", false
+		opts.DefaultNamespace = ""
 	}
 	if kind == "" || apiGroup(apiVersion) == KustomizeDomain {
 		return ParsedDoc{Document: doc}, nil
@@ -110,10 +109,7 @@ func ParseDoc(doc map[string]any, opts ParseDocOptions) (ParsedDoc, error) {
 		return ParsedDoc{Document: doc}, inputf("missing apiVersion for %s", kind)
 	}
 
-	changed := false
-	if opts.WipeSecrets && apiVersion == CoreAPIVersion && (kind == KindConfigMap || kind == KindSecret) {
-		doc, changed = sanitizeData(doc, kind)
-	}
+	doc, warnings, changed := sanitizeDocument(doc, nil, kind, apiVersion)
 	var obj BaseManifest
 	var err error
 	group := apiGroup(apiVersion)
@@ -130,7 +126,10 @@ func ParseDoc(doc map[string]any, opts ParseDocOptions) (ParsedDoc, error) {
 			}
 		}
 	}
-	return ParsedDoc{Object: obj, Document: doc, Changed: changed}, err
+	for i := range warnings {
+		warnings[i].Resource = DocIdentity(doc)
+	}
+	return ParsedDoc{Object: obj, Document: doc, Changed: changed, Warnings: warnings}, err
 }
 
 // checkAPIVersion requires an exact API group match on a raw document.

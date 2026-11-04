@@ -106,7 +106,8 @@ func (d *Session) resolveEntrySources(ctx context.Context, allowMissing bool) (i
 	published := 0
 	var sourceIDs [8]manifest.NamedResource
 	ids := sourceIDs[:0]
-	for id, group := range groups {
+	for id := range groups {
+		group := groups[id]
 		if group.required {
 			ids = append(ids, id)
 		}

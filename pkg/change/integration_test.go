@@ -122,7 +122,7 @@ data:
 			RepoRoot:        dir,
 			ExternalChanges: change.NewSet([]string{"kubernetes/apps/media/plex/app/cm.yaml"}),
 		},
-	}, orchestrator.Config{WipeSecrets: true, Concurrency: 2})
+	}, orchestrator.Config{Concurrency: 2})
 	assert.FatalIf(t, err != nil, "%v", err)
 	assert.FatalIf(t, len(runs) != 1 || runs[0].Orchestrator == nil, "%v", "missing completed tree")
 	o := runs[0].Orchestrator

@@ -122,8 +122,11 @@ func TestSelect_EntryBatchSubjects(t *testing.T) {
 func publishEntryForTest(run Rendered, docs []map[string]any) {
 	entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".", manifest.NamedResource{})
 	run.store.AddObject(entry)
-	parseChildrenResult1 := base.New(run.store, nil).
-		ParseChildren(entry, testutil.DocumentOccurrences(docs), manifest.ParseDocOptions{})
+	parseChildrenResult1 := (&base.Execution{Controller: base.New(run.store, nil)}).ParseChildren(
+		entry,
+		testutil.DocumentOccurrences(docs),
+		manifest.ParseDocOptions{},
+	)
 	children, retained, failures := parseChildrenResult1.Children, parseChildrenResult1.Visible, parseChildrenResult1.Failures
 	run.store.RecordEmitted(
 		entry.Named(),
@@ -176,10 +179,9 @@ func TestSelect_SyntheticFailureContext(t *testing.T) {
 				"real owner lost: %v",
 				err,
 			)
-			if len(selected[0].Failed) != 2 || len(selected[0].Objects) != 1 ||
-				selected[0].Objects[0].Named() != authored.Named() {
-				t.Fatalf("display changed selection: %+v", selected[0])
-			}
+			assert.FatalIf(t, len(selected[0].Failed) != 2 || len(selected[0].Objects) != 1 ||
+				selected[0].Objects[0].Named() != authored.Named(),
+				"display changed selection: %+v", selected[0])
 		})
 	}
 }
@@ -215,9 +217,9 @@ func testSelectEntryDocumentsCase(t *testing.T, testCaseInput *struct {
 	})
 	assert.Equal(t, len(res.Objects)+len(res.Statuses)+len(res.Counts), 0)
 	assert.Equal(t, len(res.Failed)+len(res.Blocked)+len(res.Warnings), 0)
-	if len(res.Manifests) != 1 {
-		t.Fatalf("selected batches: %+v", res.Manifests)
-	}
+	assert.FatalIf(t, len(res.Manifests) != 1,
+		"selected batches: %+v", res.Manifests)
+
 	assert.Equal(t, res.Manifests[0].Parent, manifest.BaseManifest(entry))
 	assert.Diff(t, res.Manifests[0].Documents, docs)
 	assert.Diff(
@@ -417,10 +419,9 @@ func testSelectEntryDocumentsFailedAndSkippedDeclarations(t *testing.T) {
 				"failure attribution: %v",
 				err,
 			)
-			if len(selected[0].Manifests) != 1 || selected[0].Manifests[0].Parent == nil ||
-				len(selected[0].Objects) != 1 {
-				t.Fatalf("real driver declaration lost: %+v", selected[0])
-			}
+			assert.FatalIf(t, len(selected[0].Manifests) != 1 || selected[0].Manifests[0].Parent == nil ||
+				len(selected[0].Objects) != 1,
+				"real driver declaration lost: %+v", selected[0])
 		})
 	}
 }
@@ -581,10 +582,10 @@ func testSelectEntryDocumentsChangedOnlyBothSides(t *testing.T) {
 	)
 	assert.NoError(t, err)
 	for i, name := range []string{"removed", "added"} {
-		if len(selected[i].Manifests) != 1 || len(selected[i].Manifests[0].Documents) != 2 ||
-			manifest.DocIdentity(selected[i].Manifests[0].Documents[0]).Name != name {
-			t.Fatalf("side %d selected wrong changed documents: %+v", i, selected[i].Manifests)
-		}
+		assert.FatalIf(t, len(selected[i].Manifests) != 1 || len(selected[i].Manifests[0].Documents) != 2 ||
+			manifest.DocIdentity(selected[i].Manifests[0].Documents[0]).Name != name,
+			"side %d selected wrong changed documents: %+v", i, selected[i].Manifests)
+
 		assert.Equal(t, len(selected[i].Objects), 0)
 		assert.Equal(t, len(selected[i].Statuses), 0)
 		assert.Equal(t, len(selected[i].Counts), 0)
@@ -662,9 +663,9 @@ func testEntryCorrespondenceCase(t *testing.T, testCaseInput testEntryCorrespond
 	if *testCaseInput.reverse {
 		failed = 0
 	}
-	if selected[failed].Unavailable[entry.Named()].String() != "entry failed" {
-		t.Fatalf("entry correspondence read an unrelated status: %+v", selected[failed].Unavailable)
-	}
+	assert.FatalIf(t, selected[failed].Unavailable[entry.Named()].String() != "entry failed",
+		"entry correspondence read an unrelated status: %+v", selected[failed].Unavailable)
+
 	left := diff.Snapshot{
 		Subjects:     selected[0].Subjects,
 		Manifests:    selected[0].Manifests,

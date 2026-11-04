@@ -346,23 +346,40 @@ func testAcquireOutcomesCaseTail(t *testing.T, tailCaseInput *testAcquireOutcome
 }
 
 type testAcquireOutcomesCaseTailInputs struct {
-	tasks         **task.Service
-	got           *error
+	tasks **task.
+		Service
+
+	got *error
+
 	testCaseInput **struct {
-		name        string
-		missing     bool
-		anonymous   bool
-		producer    bool
+		name string
+
+		missing bool
+
+		anonymous bool
+
+		producer bool
+
 		allow       bool
 		policy      bool
 		failure     error
 		unavailable bool
 		hard        bool
 	}
+
 	completed *int
-	failure   *error
-	st        **store.Store
-	provider  **manifest.ResourceSetInputProvider
-	missing   **source.MissingSecretError
-	owner     **manifest.ResourceSet
+
+	failure *error
+
+	st **store.
+		Store
+
+	provider **manifest.
+			ResourceSetInputProvider
+
+	missing **source.
+		MissingSecretError
+
+	owner **manifest.
+		ResourceSet
 }

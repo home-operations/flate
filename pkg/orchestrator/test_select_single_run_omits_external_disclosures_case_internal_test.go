@@ -183,11 +183,17 @@ func testSelectSingleRunOmitsExternalDisclosuresCaseTail(
 }
 
 type testSelectSingleRunOmitsExternalDisclosuresCaseTailInputs struct {
-	obj           *manifest.BaseManifest
+	obj *manifest.
+		BaseManifest
+
 	testCaseInput **struct {
-		name           string
-		reason         store.StatusReason
-		message        string
+		name string
+
+		reason store.
+			StatusReason
+
+		message string
+
 		requestedName  string
 		namespace      string
 		emptyNamespace bool
@@ -199,8 +205,13 @@ type testSelectSingleRunOmitsExternalDisclosuresCaseTailInputs struct {
 		failedParent   bool
 		want           bool
 	}
-	run    *Rendered
+
+	run *Rendered
+
 	labels *map[string]string
-	other  *Rendered
-	source *manifest.NamedResource
+
+	other *Rendered
+
+	source *manifest.
+		NamedResource
 }

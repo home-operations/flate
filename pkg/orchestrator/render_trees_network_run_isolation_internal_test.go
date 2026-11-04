@@ -373,9 +373,9 @@ func testRenderTreesNetworkRunIsolationCase(t *testing.T, testCaseInput *int,
 			innerLocalErr,
 		)
 	}
-	if hits.Load() != 0 {
-		t.Fatalf("suppressed requests=%d", hits.Load())
-	}
+	assert.FatalIf(t, hits.Load() != 0,
+		"suppressed requests=%d", hits.Load())
+
 	renderedTrees5, err := RenderTrees(
 		t.Context(),
 		[]Tree{
@@ -429,9 +429,8 @@ func testRenderTreesNetworkRunIsolationCase(t *testing.T, testCaseInput *int,
 	if err == nil {
 		body, err = fs.ReadFile(input, "content")
 	}
-	if err != nil || string(body) != "new run" || hits.Load() != 1 {
-		t.Fatalf("fresh run: %q %v hits=%d", body, err, hits.Load())
-	}
+	assert.FatalIf(t, err != nil || string(body) != "new run" || hits.Load() != 1,
+		"fresh run: %q %v hits=%d", body, err, hits.Load())
 }
 
 func testRenderTreesNetworkRunIsolationRemoteGenerators(t *testing.T) {
@@ -677,7 +676,7 @@ func testRSRawSinkDeterministicCollisionWinnerCaseSegment(
 			Name:       id.Name,
 			Namespace:  id.Namespace,
 		}
-		parseChildrenResult1 := (&base.Controller{}).ParseChildren(
+		parseChildrenResult1 := (&base.Execution{Controller: &base.Controller{}}).ParseChildren(
 			parent,
 			testutil.DocumentOccurrences(input),
 			manifest.ParseDocOptions{},

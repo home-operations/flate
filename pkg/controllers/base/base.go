@@ -96,6 +96,8 @@ func (c *Controller) Configure(opts Options) {
 
 // KeepEmitted admits the incoming child and reports whether it is selected.
 // Admission MUST precede publication; a nil child admits the captured required inputs only.
+//
+//nolint:gocritic // Immutable value inputs preserve snapshot semantics.
 func (c *Controller) KeepEmitted(
 	ctx context.Context,
 	parent manifest.NamedResource,

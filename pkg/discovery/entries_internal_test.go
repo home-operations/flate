@@ -157,7 +157,7 @@ func testPlanOccurrenceBoundariesCase(t *testing.T, testCaseInput *struct {
 		testutil.WriteFile(t, root, "kustomization.yaml", testCaseInput.outer)
 	}
 	for range 2 {
-		entries, err := Plan(t.Context(), Config{Path: root, WipeSecrets: true})
+		entries, err := Plan(t.Context(), Config{Path: root})
 		assert.NoError(t, err)
 		var paths []string
 		if len(entries) != 0 {
@@ -170,7 +170,7 @@ func testPlanOccurrenceBoundariesCase(t *testing.T, testCaseInput *struct {
 	}
 	entries, err := Plan(
 		t.Context(),
-		Config{Path: filepath.Join(root, "alpha"), RepoRoot: root, WipeSecrets: true},
+		Config{Path: filepath.Join(root, "alpha"), RepoRoot: root},
 	)
 	assert.NoError(t, err)
 	assert.FatalIf(

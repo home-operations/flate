@@ -203,15 +203,30 @@ func testGeneratedObjectsPublishBeforeSourceWaitCaseTail(
 
 type testGeneratedObjectsPublishBeforeSourceWaitCaseTailInputs struct {
 	testCaseInput **struct {
-		kind        string
+		kind string
+
 		replacement string
 	}
-	hr        **manifest.HelmRelease
-	st        **store.Store
-	id        *manifest.NamedResource
-	reconcile *func(level manifest.DrainLevel) *base.Execution
-	filter    **change.Filter
-	completed *store.Emission
+
+	hr **manifest.
+		HelmRelease
+
+	st **store.
+		Store
+
+	id *manifest.
+		NamedResource
+
+	reconcile *func(
+		level manifest.
+			DrainLevel) *base.
+		Execution
+
+	filter **change.
+		Filter
+
+	completed *store.
+			Emission
 }
 
 func checkGeneratedSourceReplacement(

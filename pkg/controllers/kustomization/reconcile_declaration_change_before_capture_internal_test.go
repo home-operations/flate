@@ -236,9 +236,14 @@ func testReconcileDeclarationChangeBeforeCaptureCase(
 	})
 	c.Tasks.BlockTillDone()
 	assert.FatalIf(t, c.Tasks.Failures() != 0, "%v", "capture worker panicked")
-	if run.Valid() || expansions.Load() != 0 || st.GetArtifact(input.Named(), store.ArtifactContent) != nil {
-		t.Fatalf("stale source capture continued: valid=%t expansions=%d", run.Valid(), expansions.Load())
-	}
+	assert.FatalIf(
+		t,
+		run.Valid() || expansions.Load() != 0 || st.GetArtifact(input.Named(), store.ArtifactContent) != nil,
+		"stale source capture continued: valid=%t expansions=%d",
+		run.Valid(),
+		expansions.Load(),
+	)
+
 	testReconcileDeclarationChangeBeforeCaptureCaseTail(
 		t,
 		&testReconcileDeclarationChangeBeforeCaptureCaseTailInputs{
@@ -266,9 +271,7 @@ func testReconcileDeclarationChangeBeforeCaptureCaseTail(
 		"reconcile-current",
 		func(ctx context.Context) {
 			(*tailCaseInput.run) = (*tailCaseInput.c).ReconcileNode(
-				ctx,
-				(*tailCaseInput.input).Named(),
-				manifest.DrainNone,
+				ctx, (*tailCaseInput.input).Named(), manifest.DrainNone,
 			)
 		},
 	)
@@ -278,9 +281,8 @@ func testReconcileDeclarationChangeBeforeCaptureCaseTail(
 	switch *(*tailCaseInput.testCaseInput) {
 	case "withdrawn":
 		if !slices.Equal((*tailCaseInput.run).Blocked, []manifest.NamedResource{(*tailCaseInput.parent).Named()}) ||
-			tailCaseInput.expansions.Load() != 0 ||
-			(*tailCaseInput.st).
-				GetArtifact((*tailCaseInput.input).Named(), store.ArtifactContent) != nil {
+			tailCaseInput.expansions.Load() != 0 || (*tailCaseInput.st).
+			GetArtifact((*tailCaseInput.input).Named(), store.ArtifactContent) != nil {
 			t.Fatalf(
 				"lost authority: blocked=%v expansions=%d",
 				(*tailCaseInput.run).Blocked,
@@ -331,7 +333,7 @@ func testReconcileRequiredPostBuildNotWaivedCase(
 			manifest.KindCustomResourceDefinition,
 		}
 	}
-	c := New(st, original.Tasks, trees, true)
+	c := New(st, original.Tasks, trees)
 	c.Configure(opts, sourcecache.RetryConfig{})
 	c.StartLifecycle()
 	ks := &manifest.Kustomization{
@@ -374,11 +376,22 @@ func testReconcileRequiredPostBuildNotWaivedCase(
 }
 
 type testReconcileDeclarationChangeBeforeCaptureCaseTailInputs struct {
-	run           **base.Execution
-	c             **Controller
-	input         **manifest.Kustomization
+	run **base.
+		Execution
+
+	c **Controller
+
+	input **manifest.
+		Kustomization
+
 	testCaseInput **string
-	parent        **manifest.Kustomization
-	expansions    *atomic.Int64
-	st            **store.Store
+
+	parent **manifest.
+		Kustomization
+
+	expansions *atomic.
+			Int64
+
+	st **store.
+		Store
 }

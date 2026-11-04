@@ -25,6 +25,7 @@ type ReferenceData struct {
 	Production   Production `json:"Production"`
 	DeclaredKeys []string   `json:"DeclaredKeys"`
 	OfflineData  Data       `json:"OfflineData"`
+	Warnings     []Warning  `json:"-"`
 }
 
 // Materializer returns the owner that can supply the target through this contribution.

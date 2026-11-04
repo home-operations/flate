@@ -282,10 +282,16 @@ func testDAGDispatchCoveredArrivalCase(t *testing.T, testCaseInput testDAGDispat
 }
 
 type testDAGSourceEffectiveWarmCacheTailInputs struct {
-	server    **httptest.Server
+	server **httptest.
+		Server
+
 	mediaType string
-	requests  *atomic.Int64
-	blocked   *atomic.Bool
+
+	requests *atomic.
+			Int64
+
+	blocked *atomic.
+		Bool
 }
 
 func testCoveredArrivalBubble(t *testing.T, testCaseInput testDAGDispatchCoveredArrivalCaseInputs) {

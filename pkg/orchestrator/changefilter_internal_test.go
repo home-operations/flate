@@ -29,9 +29,8 @@ func TestBuildChangeFilter_FluxExcludedWarning(t *testing.T) {
 	warnings := o.store.Warnings()
 	assert.FatalIf(t, len(warnings) != 1, "warnings = %v, want one", warnings)
 	assert.Equal(t, warnings[0].Category, manifest.WarnPathConfig)
-	if !strings.Contains(warnings[0].Message, "Flux-excluded files are not counted") {
-		t.Errorf("warning does not explain Flux exclusions: %q", warnings[0].Message)
-	}
+	assert.ErrorIf(t, !strings.Contains(warnings[0].Message, "Flux-excluded files are not counted"),
+		"warning does not explain Flux exclusions: %q", warnings[0].Message)
 }
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
@@ -106,7 +105,7 @@ data:
 	o, err := newTestOrchestrator(t, Tree{
 		Path:     currCluster,
 		RepoRoot: currRoot, BaseInput: testDirectoryInput(t, origRoot),
-	}, Config{WipeSecrets: true},
+	}, Config{},
 	)
 	assert.FatalIf(t, err != nil, "%v", err)
 	defer func() {

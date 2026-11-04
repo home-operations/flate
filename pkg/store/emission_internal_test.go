@@ -53,7 +53,7 @@ func ownerID(name string) manifest.NamedResource {
 	return testutil.KustomizationID("apps", name)
 }
 
-func checkEffectiveObject(t *testing.T, s *Store, id manifest.NamedResource, want Child) {
+func checkEffectiveObject(t *testing.T, s *Store, id manifest.NamedResource, want *Child) {
 	t.Helper()
 	assert.Equal(t, s.GetObject(id), want.Obj)
 	obj, _ := s.Snapshot(id, false)

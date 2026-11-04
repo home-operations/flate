@@ -145,7 +145,6 @@ func (c *Client) prepareTemplate(
 		Digest:       loaded.artifact.Digest,
 		Alias:        loaded.artifact.InputAlias,
 		Options:      input.Options,
-		Wipe:         input.WipeSecrets,
 		Dependencies: input.DependencySubstitutions,
 	}
 	if loaded.record != nil && loaded.record.key == key && loaded.record.binding.same(&binding) {
@@ -268,8 +267,8 @@ func crdReader(crd chart.CRD) io.Reader {
 }
 
 // Placeholder values cannot satisfy constraints intended for resolved secrets.
-func schemaValidationSkipped(hr *manifest.HelmRelease, renderValues map[string]any) bool {
-	return hr.DisableSchemaValidation || manifest.ContainsValuePlaceholder(renderValues)
+func schemaValidationSkipped(hr *manifest.HelmRelease) bool {
+	return hr.DisableSchemaValidation
 }
 
 func newInstallAction(
@@ -293,8 +292,6 @@ func newInstallAction(
 	inst.EnableDNS = opts.EnableDNS
 	inst.Replace = policy.Replace
 	inst.DisableOpenAPIValidation = policy.DisableOpenAPIValidation
-	// inst.SkipSchemaValidation is values-dependent, so Template sets it once
-	// the effective values are resolved (see schemaValidationSkipped).
 	// spec.postRenderers — pipe rendered output through one or more
 	// kustomize patch+image transforms. helm-controller does this via
 	// the same postrenderer.PostRenderer hook.
@@ -717,7 +714,7 @@ func (r *templateRequest) install(ctx context.Context, ch *chart.Chart, finalVal
 	)
 
 	inst, disableHooks := newInstallAction(cfg, r.release, r.options, r.caps)
-	inst.SkipSchemaValidation = schemaValidationSkipped(r.release, r.values)
+	inst.SkipSchemaValidation = schemaValidationSkipped(r.release)
 
 	if slog.Default().Enabled(ctx, slog.LevelDebug) {
 		slog.Debug("helm: render", "release", r.release.Named().String())

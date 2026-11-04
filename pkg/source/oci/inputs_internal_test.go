@@ -168,10 +168,10 @@ func TestFetcher_InputsSelectionAndRefresh(t *testing.T) {
 func TestFetcher_InputsAuthentication(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name                                                                                                                             string
-		status                                                                                                                           int
-		challenge, bearer, machine, badMachine, secret, missing, wiped, badAuth, badCert, missingCert, canceled, deadline, invalidFilter bool
-		wantMissing, wantAnonymous                                                                                                       bool
+		name                                                                                                                                 string
+		status                                                                                                                               int
+		challenge, bearer, machine, badMachine, secret, missing, emptyAuth, badAuth, badCert, missingCert, canceled, deadline, invalidFilter bool
+		wantMissing, wantAnonymous                                                                                                           bool
 	}{
 		{name: "anonymous basic denial", status: 401, challenge: true, wantMissing: true, wantAnonymous: true},
 		{name: "anonymous forbidden", status: 403, wantMissing: true, wantAnonymous: true},
@@ -181,7 +181,7 @@ func TestFetcher_InputsAuthentication(t *testing.T) {
 		{name: "machine rejected", status: 403, machine: true, wantMissing: true},
 		{name: "secret rejected", status: 403, secret: true, wantMissing: true},
 		{name: "explicit missing", missing: true, wantMissing: true},
-		{name: "wiped auth", secret: true, wiped: true, wantMissing: true},
+		{name: "empty auth", secret: true, emptyAuth: true, wantMissing: true},
 		{name: "malformed auth", secret: true, badAuth: true},
 		{name: "malformed cert", badCert: true},
 		{name: "missing cert", missingCert: true, wantMissing: true},
@@ -414,7 +414,7 @@ func testFetcherInputsAuthenticationCase(t *testing.T, tc *struct {
 	badMachine    bool
 	secret        bool
 	missing       bool
-	wiped         bool
+	emptyAuth     bool
 	badAuth       bool
 	badCert       bool
 	missingCert   bool
@@ -465,8 +465,8 @@ func testFetcherInputsAuthenticationCase(t *testing.T, tc *struct {
 			material = map[string]any{".dockerconfigjson": credentials}
 		}
 	}
-	if tc.wiped {
-		material[".dockerconfigjson"] = "..PLACEHOLDER_auth.."
+	if tc.emptyAuth {
+		delete(material, ".dockerconfigjson")
 	}
 	if tc.badAuth {
 		material[".dockerconfigjson"] = "{"
@@ -554,7 +554,7 @@ func testFetcherInputsAuthenticationCaseCompletion(
 			)
 		}
 	}
-	if (*captures.tc).missing || (*captures.tc).wiped {
+	if (*captures.tc).missing || (*captures.tc).emptyAuth {
 		assert.FatalIf(
 			t,
 			!hasMissing || missing.RetryAmbient == nil || missing.Secret.Name != "auth",
@@ -569,9 +569,12 @@ func testFetcherInputsAuthenticationCaseCompletion(
 		err,
 	)
 	wantRequests := int32(1)
-	skipRequests := (*captures.tc).missing || (*captures.tc).wiped ||
-		(*captures.tc).badAuth || (*captures.tc).badCert || (*captures.tc).missingCert ||
-		(*captures.tc).canceled || (*captures.tc).deadline || (*captures.tc).badMachine
+	skipRequests := (*captures.tc).missing || (*captures.tc).emptyAuth || (*captures.tc).badAuth ||
+		(*captures.tc).badCert ||
+		(*captures.tc).missingCert ||
+		(*captures.tc).canceled ||
+		(*captures.tc).deadline ||
+		(*captures.tc).badMachine
 	if skipRequests {
 		wantRequests = 0
 	}

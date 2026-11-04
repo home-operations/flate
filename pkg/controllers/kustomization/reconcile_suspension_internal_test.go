@@ -55,6 +55,7 @@ func TestReconcile_ReleasedPinWaitsForSource(t *testing.T) {
 	c, st, root := newControllerWithFixture(t)
 	ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps"}
 	st.AddObject(ks)
+
 	{
 		info := controllertest.DispatchToFixpoint(
 			t.Context(),
@@ -63,8 +64,10 @@ func TestReconcile_ReleasedPinWaitsForSource(t *testing.T) {
 		)
 		assert.FatalIf(t, info.Status != store.StatusReady, "first reconcile: %+v", info)
 	}
+
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, Key: "released"})
 	_, err := c.newExecution(ks.Named()).run.RequireRefresh(t.Context(), ks, manifest.GateArtifacts, manifest.DrainNone)
+
 	{
 		blocked, ok := errors.AsType[*depwait.ErrBlocked](
 			err,
@@ -72,6 +75,7 @@ func TestReconcile_ReleasedPinWaitsForSource(t *testing.T) {
 		assert.FatalIf(t, !ok || len(blocked.Deps) != 1 ||
 			blocked.Deps[0] != manifest.BootstrapSourceID, "released pin did not wait for source acquisition: %v", err)
 	}
+
 	{
 		_, err := c.newExecution(
 			ks.Named(),
@@ -135,10 +139,14 @@ func TestRender_RejectedCapturedInputsSkipsRender(t *testing.T) {
 		execution.run.Close()
 	}()
 	ks, ok := execution.run.Reads.Get[*manifest.Kustomization](ks.Named())
+
 	assert.FatalIf(t, !ok, "%v", "Kustomization not captured")
+
 	source, applyIgnore, err := kustomize.SourceInput(&execution.run.Reads, ks)
 	assert.NoError(t, err)
+
 	assert.FatalIf(t, !execution.run.Reads.Valid(), "%v", "initial capture is invalid")
+
 	before := guard.opened.Load()
 	type observation struct {
 		valid    bool
@@ -154,13 +162,8 @@ func TestRender_RejectedCapturedInputsSkipsRender(t *testing.T) {
 		valid := execution.run.Reads.Valid()
 		err := execution.render(ctx, ks, source, applyIgnore)
 		opens := guard.opened.Load() - before
-		fingerprintDedupResult1, fingerprintDedupResult1Err := execution.run.FingerprintDedup(
-			t.Context(),
-			ks.Named(),
-			nil,
-			&store.Emission{},
-		)
-		_, handled, dedupErr := fingerprintDedupResult1.Fingerprint, fingerprintDedupResult1.Reused, fingerprintDedupResult1Err
+		result1, dedupErr := execution.run.FingerprintDedup(t.Context(), ks.Named(), nil, &store.Emission{})
+		handled := result1.Reused
 		result <- observation{valid: valid, opens: opens, err: err, handled: handled, dedupErr: dedupErr}
 	})
 	c.Tasks.Go(t.Context(), "replace", func(context.Context) {
@@ -171,8 +174,11 @@ func TestRender_RejectedCapturedInputsSkipsRender(t *testing.T) {
 		s.AddObject(next)
 	})
 	got := <-result
+
 	assert.FatalIf(t, got.valid, "%v", "replacement did not invalidate captured inputs before rendering")
+
 	assert.FatalIf(t, got.opens != 0, "rejected render opened source %d times, want 0", got.opens)
+
 	assert.FatalIf(
 		t,
 		!got.handled || got.dedupErr == nil,
@@ -180,6 +186,7 @@ func TestRender_RejectedCapturedInputsSkipsRender(t *testing.T) {
 		got.handled,
 		got.dedupErr,
 	)
+
 	assert.FatalIf(
 		t,
 		got.err == nil || !errors.Is(got.err, got.dedupErr),
@@ -220,13 +227,16 @@ func testReconcileSuspensionInitialSuspension(t *testing.T) {
 		t,
 		controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode},
 	)
+
 	assert.FatalIf(t, info.Status != store.StatusReady, "status = %+v, want StatusReady", info)
+
 	assert.ErrorIf(
 		t,
 		info.Outcome() != store.OutcomeSuspended || info.Message != "suspended",
 		"expected Ready/suspended, got %+v",
 		info,
 	)
+
 	assert.ErrorIf(
 		t,
 		s.GetArtifact(ks.Named(), store.ArtifactContent) != nil,
@@ -278,9 +288,11 @@ data: {greeting: hi}
 			store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""},
 		)
 	}
-	parsed, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{DefaultNamespace: ""})
-	obj := parsed.Object
+	result2, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{DefaultNamespace: ""})
+	obj := result2.Object
+
 	assert.FatalIf(t, err != nil, "%v", err)
+
 	ks := obj.(*manifest.Kustomization)
 	original := ks.Clone()
 	controllertest.Emit(
@@ -309,7 +321,7 @@ data: {greeting: hi}
 			c,
 			parent.Named(),
 			[]map[string]any{replacement},
-			manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: parent.Named().Namespace},
+			manifest.ParseDocOptions{DefaultNamespace: parent.Named().Namespace},
 		)
 		published.Store(true)
 	}, false)
@@ -319,21 +331,22 @@ data: {greeting: hi}
 		t,
 		controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: ks.Named(), ReconcileNode: c.ReconcileNode},
 	)
-	if observations.Load() < 1 || !published.Load() || c.Tasks.Failures() != 0 {
-		t.Fatalf(
-			"observations=%d published=%t panics=%d",
-			observations.Load(),
-			published.Load(),
-			c.Tasks.Failures(),
-		)
-	}
+	assert.FatalIf(t, observations.Load() < 1 || !published.Load() || c.Tasks.Failures() != 0,
+
+		"observations=%d published=%t panics=%d",
+		observations.Load(),
+		published.Load(),
+		c.Tasks.Failures())
+
 	fresh, ok := st.Get[*manifest.Kustomization](ks.Named())
+
 	assert.FatalIf(
 		t,
 		!ok || fresh == ks || fresh.Suspend != suspended || fresh.TargetNamespace != "refreshed",
 		"canonical replacement = %+v",
 		fresh,
 	)
+
 	{
 		diff := cmp.Diff(
 			original,
@@ -343,6 +356,7 @@ data: {greeting: hi}
 		)
 		assert.FatalIf(t, diff != "", "original mutated (-want +got):\n%s", diff)
 	}
+
 	{
 		owners := testutil.Owners(st.Productions(ks.Named(), nil))
 		assert.FatalIf(
@@ -352,6 +366,7 @@ data: {greeting: hi}
 			owners,
 		)
 	}
+
 	info, _ := st.GetStatus(ks.Named())
 	art, _ := st.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission)
 	output := manifest.NamedResource{
@@ -366,10 +381,10 @@ data: {greeting: hi}
 			"status = %+v, want Ready/suspended",
 			info,
 		)
+
 		_, _, inventory := st.GetEmission(ks.Named())
-		if art != nil || st.GetObject(output) != nil || len(inventory.Children) != 0 {
-			t.Errorf("suspended replacement rendered: artifact=%+v output=%v", art, st.GetObject(output))
-		}
+		assert.ErrorIf(t, art != nil || st.GetObject(output) != nil || len(inventory.Children) != 0,
+			"suspended replacement rendered: artifact=%+v output=%v", art, st.GetObject(output))
 	} else {
 		assert.FatalIf(
 			t,
@@ -424,19 +439,21 @@ func testReconcileSourceCoverageUsesRenderedArtifactCase(
 		),
 	)
 	assert.NoError(t, err)
-	parsed2, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{})
-	obj := parsed2.Object
+	result3, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{})
+	obj := result3.Object
 	assert.NoError(t, err)
 	ks := obj.(*manifest.Kustomization)
 	s.AddObject(ks)
 	l := loader.New(s)
-	l.SourceRoot, l.Options.WipeSecrets = root, false
+	l.SourceRoot = root
 	_, err = l.Load(t.Context(), filepath.Join(root, "apps"))
 	assert.NoError(t, err)
 	l.FinalizeIndex(t.Context(), root, true)
 	shared := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "shared"}
 	exclusive := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "exclusive"}
+
 	assert.FatalIf(t, len(s.Productions(exclusive, l.Index)) == 0, "%v", "missing frozen coverage")
+
 	for _, id := range []manifest.NamedResource{shared, exclusive} {
 		promoteSourceCoverage(t, s, l.Index, id)
 	}
@@ -454,7 +471,7 @@ func testReconcileSourceCoverageUsesRenderedArtifactCase(
 	tasks := task.NewBounded(2)
 	trees := kustomize.NewTreeCache(owner, nil, tasks)
 	t.Cleanup(trees.Close)
-	c := New(s, tasks, trees, false)
+	c := New(s, tasks, trees)
 	c.Configure(Options{Index: l.Index}, sourcecache.RetryConfig{})
 	reconcile := func(obj *manifest.Kustomization) error {
 		var result error
@@ -471,6 +488,7 @@ func testReconcileSourceCoverageUsesRenderedArtifactCase(
 	} else {
 		s.SetArtifact(sourceID, &next)
 	}
+
 	{
 		info := controllertest.DispatchToFixpoint(
 			t.Context(),
@@ -484,12 +502,14 @@ func testReconcileSourceCoverageUsesRenderedArtifactCase(
 		)
 		assert.FatalIf(t, info.Status != store.StatusReady, "settled source render: %+v", info)
 	}
+
 	assert.FatalIf(
 		t,
 		s.GetObject(exclusive) == nil,
 		"%v",
 		"unaccepted source render retired prediction from another source view",
 	)
+
 	freshOutput := s.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission)
 	wantManifests := make([]map[string]any, len(freshOutput.Manifests))
 	for i, doc := range freshOutput.Manifests {
@@ -504,17 +524,21 @@ func testReconcileSourceCoverageUsesRenderedArtifactCase(
 	}
 
 	assert.FatalIf(t, s.GetObject(shared) == nil, "%v", "coverage retired Q support")
+
 	s.SetArtifact(sourceID, &initial)
+
 	{
 		localErr := reconcile(ks)
 		assert.FatalIf(t, localErr != nil, "%v", localErr)
 	}
+
 	assert.FatalIf(
 		t,
 		s.GetObject(exclusive) != nil,
 		"%v",
 		"matching source view did not retire its whole prediction",
 	)
+
 	_, _, empty := s.GetEmission(ks.Named())
 	empty.Children, empty.Manifests, empty.Fingerprint, empty.Complete = nil, nil, "", true
 	s.RecordEmitted(ks.Named(), &empty, nil)
@@ -557,25 +581,30 @@ func testReconcileSourceCoverageUsesRenderedArtifactCase(
 	for _, doc := range rendered {
 		metadata := doc["metadata"].(map[string]any)
 		labels, _ := metadata["labels"].(map[string]any)
+
 		{
 			_, stamped := labels["kustomize.toolkit.fluxcd.io/name"]
 			assert.FatalIf(t, stamped, "%v", "persisted renderer document already stamped")
 		}
+
 		metadata["name"] = "caller-mutation"
 		if data, ok := doc["data"].(map[string]any); ok {
 			data["value"] = "caller-mutation"
 		}
 	}
+
 	{
 		err := reconcile(ks)
 		assert.FatalIf(t, err != nil, "raw cache hit: %v", err)
 	}
+
 	assert.FatalIf(
 		t,
 		persistent && guard.opened.Load() != before,
 		"%v",
 		"expected immutable-source raw cache hit without input reads",
 	)
+
 	guard.deny.Store(false)
 	cachedOutput := s.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission)
 	assert.Diff(t, testutil.DocumentMaps(cachedOutput.Manifests), wantManifests)
@@ -589,25 +618,30 @@ func testReconcileSourceCoverageUsesRenderedArtifactCase(
 	fresh.NamePrefix = "arbitrary-second-"
 
 	s.AddObject(fresh)
+
 	{
 		err := reconcile(fresh)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
+
 	old := shared
 	old.Name = "first-shared"
 	newID := shared
 	newID.Name = "arbitrary-second-shared"
+
 	assert.FatalIf(
 		t,
 		s.GetObject(old) != nil || s.GetObject(newID) == nil,
 		"%v",
 		"repeated rename retained obsolete output",
 	)
+
 	failed := initial
 	failed.Key = "failed-pin"
 	failed.FS = &guardedSourceFS{FS: input.FS}
 	failed.FS.(*guardedSourceFS).deny.Store(true)
 	s.SetArtifact(sourceID, &failed)
+
 	{
 		err := reconcile(fresh)
 		assert.FatalIf(
@@ -617,9 +651,11 @@ func testReconcileSourceCoverageUsesRenderedArtifactCase(
 			"failed successor withdrew completed output",
 		)
 	}
+
 	_, _, empty = s.GetEmission(ks.Named())
 	empty.Children, empty.Manifests, empty.Complete = nil, nil, true
 	s.RecordEmitted(ks.Named(), &empty, nil)
+
 	assert.FatalIf(
 		t,
 		s.GetObject(newID) != nil || s.GetObject(shared) == nil,
@@ -648,5 +684,6 @@ func promoteSourceCoverage(t *testing.T, s *store.Store, index *manifest.Discove
 			}
 		}
 	}
+
 	assert.FatalIf(t, s.GetObject(id) == nil, "missing promoted seed %s", id)
 }

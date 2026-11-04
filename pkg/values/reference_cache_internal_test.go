@@ -121,7 +121,7 @@ func TestExpandValueReferences_ConcurrentSharedCache(t *testing.T) {
 			inlineBefore := manifest.DeepCopyMap(tc.inline)
 			ready.Done()
 			<-start
-			_, err := ExpandValueReferences(hr, provider, cache)
+			err := ExpandValueReferences(hr, provider, cache)
 			if (err != nil) != tc.wantErr {
 				t.Errorf("%s: error = %v, want error %v", tc.name, err, tc.wantErr)
 				return
@@ -162,7 +162,7 @@ func TestExpandValueReferences_TargetPathDoesNotCorruptSharedCache(t *testing.T)
 				Kind: "ConfigMap", Name: "inject", ValuesKey: "v",
 				TargetPath: "env[0].value=changed,broken[bad]", Literal: tc.literal,
 			})
-			_, err := ExpandValueReferences(hr, provider, cache)
+			err := ExpandValueReferences(hr, provider, cache)
 			assert.FatalIf(t, err == nil, "%s", "malformed target path succeeded")
 			assert.Diff(t, hr.Values, before)
 			after := wholeDocHR()

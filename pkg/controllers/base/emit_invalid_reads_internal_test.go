@@ -198,7 +198,7 @@ func TestParseChildren_RetainsRendererFailure(t *testing.T) {
 			}
 			failure := manifest.NewError(manifest.ErrInput, nil, "normalize helm list")
 			c := Controller{SkipKinds: tc.skipKinds}
-			parseChildrenResult1 := c.ParseChildren(
+			parseChildrenResult1 := (&Execution{Controller: &c}).ParseChildren(
 				owner,
 				[]manifest.DocOccurrence{
 					{Document: invalid, Ordinal: 2, Err: failure},
@@ -256,7 +256,7 @@ func testFingerprintDedupAcceptedReceiptCase(
 		"kind":       "ConfigMap",
 		"metadata":   map[string]any{"name": "output", "namespace": "apps"},
 	}
-	parsed := controller.ParseChildren(
+	parsed := (&Execution{Controller: controller}).ParseChildren(
 		owner,
 		testutil.DocumentOccurrences([]map[string]any{doc}),
 		manifest.ParseDocOptions{},
@@ -281,7 +281,7 @@ func testFingerprintDedupAcceptedReceiptCase(
 			"kind":       "ConfigMap",
 			"metadata":   map[string]any{"name": "progress", "namespace": "apps"},
 		}
-		parseChildrenResult2 := controller.ParseChildren(
+		parseChildrenResult2 := (&Execution{Controller: controller}).ParseChildren(
 			owner,
 			testutil.DocumentOccurrences([]map[string]any{partialDoc}),
 			manifest.ParseDocOptions{},
@@ -389,7 +389,7 @@ func testEmitFailedAuthorityReplacesSuccessCase(
 	}
 	first := newExecution(c, owner.Named())
 	defer first.Close()
-	parseChildrenResult4 := c.ParseChildren(
+	parseChildrenResult4 := (&Execution{Controller: c}).ParseChildren(
 		owner,
 		testutil.DocumentOccurrences([]map[string]any{valid}),
 		manifest.ParseDocOptions{},
@@ -441,7 +441,7 @@ func testEmitFailedAuthorityReplacesSuccessCase(
 			outcomes, err = manifest.DecodeRender(data)
 			assert.FatalIf(t, err != nil, "%v", err)
 		}
-		parseChildrenResult5 := c.ParseChildren(owner, outcomes, manifest.ParseDocOptions{})
+		parseChildrenResult5 := (&Execution{Controller: c}).ParseChildren(owner, outcomes, manifest.ParseDocOptions{})
 		children, docs, failures = parseChildrenResult5.Children, parseChildrenResult5.Visible, parseChildrenResult5.Failures
 		attempt = store.Emission{
 			Children:    children,
@@ -484,7 +484,7 @@ func testEmitFailedAuthorityReplacesSuccessCase(
 	)
 	_, hit, err := fingerprintDedupResult6.Fingerprint, fingerprintDedupResult6.Reused, fingerprintDedupResult6Err
 	assert.FatalIf(t, hit || err != nil, "failed fingerprint bypassed admission: %t %v", hit, err)
-	parseChildrenResult7 := c.ParseChildren(
+	parseChildrenResult7 := (&Execution{Controller: c}).ParseChildren(
 		owner,
 		testutil.DocumentOccurrences([]map[string]any{valid}),
 		manifest.ParseDocOptions{},

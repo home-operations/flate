@@ -335,13 +335,12 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}
 	phantom := testutil.KustomizationID("flux-system", "phantom")
 	cm := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "settings"}
 	artifact, available := st.GetArtifact(manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}, store.ArtifactContent).(*store.SourceArtifact)
-	if !available {
-		t.Fatalf(
-			"pinned artifact missing: records=%+v objects=%v",
-			result.Index.Records,
-			st.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization),
-		)
-	}
+	assert.FatalIf(t, !available,
+
+		"pinned artifact missing: records=%+v objects=%v",
+		result.Index.Records,
+		st.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization))
+
 	generator := manifest.NamedResource{
 		Group:     "source.extensions.fluxcd.io",
 		Kind:      "ArtifactGenerator",
@@ -381,17 +380,16 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}
 		"pinned generator productions = %+v",
 		productions,
 	)
-	if st.GetObject(phantom) != nil || st.GetObject(childID) == nil ||
-		parentsForTest(result.Index)[childID] != parent {
-		t.Fatalf(
-			"pinned children: phantom=%v child=%v parent=%v",
-			st.GetObject(phantom),
-			st.GetObject(childID),
-			parentsForTest(result.Index)[childID],
-		)
-	}
+	assert.FatalIf(t, st.GetObject(phantom) != nil || st.GetObject(childID) == nil ||
+		parentsForTest(result.Index)[childID] != parent,
+
+		"pinned children: phantom=%v child=%v parent=%v",
+		st.GetObject(phantom),
+		st.GetObject(childID),
+		parentsForTest(result.Index)[childID])
+
 	generated := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "generated"}
-	generatedCM, ok := values.NewStoreProvider(st, true).Data(generated).(*manifest.ConfigMap)
+	generatedCM, ok := values.NewStoreProvider(st).Data(generated).(*manifest.ConfigMap)
 	assert.FatalIf(
 		t,
 		st.GetObject(generated) != nil,
@@ -399,10 +397,10 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}
 		"pinned generator lookup entered canonical inventory",
 	)
 	assert.FatalIf(t, !ok || generatedCM.Data["value"] != "pinned" ||
-		values.NewStoreProvider(st, true).
+		values.NewStoreProvider(st).
 			Data(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "phantom-generated"}) !=
 			nil, "pinned generators = %v", generatedCM)
-	fileGenerated, ok := values.NewStoreProvider(st, true).Data(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "file-generated"}).(*manifest.ConfigMap)
+	fileGenerated, ok := values.NewStoreProvider(st).Data(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "file-generated"}).(*manifest.ConfigMap)
 	assert.FatalIf(
 		t,
 		!ok || fileGenerated.Data["value"] != "pinned",
@@ -411,9 +409,8 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}
 	)
 	for _, id := range []manifest.NamedResource{childID, cm, generated, generator} {
 		file := filepath.Join(root, filepath.FromSlash(filesForTest(result.Index)[id]))
-		if !safepath.Contains(artifact.LocalPath, file) {
-			t.Fatalf("source file for %s = %s, want under %s", id, file, artifact.LocalPath)
-		}
+		assert.FatalIf(t, !safepath.Contains(artifact.LocalPath, file),
+			"source file for %s = %s, want under %s", id, file, artifact.LocalPath)
 	}
 	{
 		got := renderersForTest(result.Index, cm)
@@ -517,10 +514,10 @@ func testAliasBootstrapSourcesDeclaredRefsCase(
 		)
 	}
 	if testCaseInput.fail {
-		if !errors.Is(err, manifest.ErrFlux) ||
-			st.GetArtifact(repository.Named(), store.ArtifactContent) != nil {
-			t.Fatalf("invalid source = %v, %v", err, st.GetArtifact(repository.Named(), store.ArtifactContent))
-		}
+		assert.FatalIf(t, !errors.Is(err, manifest.ErrFlux) ||
+			st.GetArtifact(repository.Named(), store.ArtifactContent) != nil,
+			"invalid source = %v, %v", err, st.GetArtifact(repository.Named(), store.ArtifactContent))
+
 		return
 	}
 	assert.FatalIf(t, err != nil, "%v", err)

@@ -129,9 +129,8 @@ data:
 			l.Store,
 			id,
 			PromoteOptions{
-				Record:      productionForTest(new(l.Index.Records[id])),
-				WipeSecrets: true,
-				Admit:       func(manifest.BaseManifest) (bool, error) { return true, nil },
+				Record: productionForTest(new(l.Index.Records[id])),
+				Admit:  func(manifest.BaseManifest) (bool, error) { return true, nil },
 			},
 		)
 		assert.FatalIf(t, err != nil ||
@@ -155,9 +154,8 @@ func TestPromote_UnknownIDReturnsFalse(t *testing.T) {
 			idx.Store,
 			id,
 			PromoteOptions{
-				Record:      productionForTest(new(idx.Index.Records[id])),
-				WipeSecrets: true,
-				Admit:       func(manifest.BaseManifest) (bool, error) { return true, nil },
+				Record: productionForTest(new(idx.Index.Records[id])),
+				Admit:  func(manifest.BaseManifest) (bool, error) { return true, nil },
 			},
 		)
 		assert.ErrorIf(t, err != nil ||
@@ -197,9 +195,8 @@ data:
 			l.Store,
 			id,
 			PromoteOptions{
-				Record:      productionForTest(new(l.Index.Records[id])),
-				WipeSecrets: true,
-				Admit:       func(manifest.BaseManifest) (bool, error) { return true, nil },
+				Record: productionForTest(new(l.Index.Records[id])),
+				Admit:  func(manifest.BaseManifest) (bool, error) { return true, nil },
 			},
 		)
 		assert.ErrorIf(t, err != nil ||
@@ -232,8 +229,7 @@ sops: {encrypted_regex: "^(data|stringData)$", version: 3.9.0}
 			secretID := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "app-secret"}
 			record := manifest.Production{Authored: cmID, Path: filepath.Join(dir, "bundle.yaml")}
 			opts := PromoteOptions{
-				WipeSecrets: true,
-				Admit:       func(manifest.BaseManifest) (bool, error) { return true, nil },
+				Admit: func(manifest.BaseManifest) (bool, error) { return true, nil },
 			}
 			if input == "built" {
 				record = manifest.Production{}
@@ -248,7 +244,7 @@ sops: {encrypted_regex: "^(data|stringData)$", version: 3.9.0}
 				assert.ErrorIf(t, st.GetObject(id) == nil, "admitted sibling %s was not promoted", id)
 			}
 			secret := st.GetObject(secretID).(*manifest.Secret)
-			assert.Diff(t, secret.StringData, map[string]any{"TOKEN": manifest.ValuePlaceholder("TOKEN")})
+			assert.Diff(t, secret.StringData, map[string]any{})
 		})
 	}
 }
@@ -307,9 +303,8 @@ spec:
 		{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "charts"},
 		{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindHelmRepository, Namespace: "default", Name: "podinfo"},
 	} {
-		if st.GetObject(want) == nil {
-			t.Errorf("source %s must stay in Store during discovery; got nil", want.String())
-		}
+		assert.ErrorIf(t, st.GetObject(want) == nil,
+			"source %s must stay in Store during discovery; got nil", want.String())
 	}
 }
 
@@ -481,8 +476,7 @@ stringData: {value: fixture}
 			}
 			record := manifest.Production{Authored: id, Path: filepath.Join(dir, "bundle.yaml")}
 			opts := PromoteOptions{
-				WipeSecrets: true,
-				Admit:       func(obj manifest.BaseManifest) (bool, error) { return obj.Named() == cm.Named(), nil },
+				Admit: func(obj manifest.BaseManifest) (bool, error) { return obj.Named() == cm.Named(), nil },
 			}
 			if (*testCaseInput) == "built" {
 				record = manifest.Production{}
@@ -640,10 +634,9 @@ func testPromoteSourceViewCase(t *testing.T, testCaseInput *bool,
 			pinned,
 			external,
 		)
-		if !admitted && st.GetArtifact(ks.SourceID(), store.ArtifactContent) != nil &&
-			version != "foreign.example/v1" {
-			t.Fatalf("missing source %s borrowed the real artifact", ks.SourceID())
-		}
+		assert.FatalIf(t, !admitted && st.GetArtifact(ks.SourceID(), store.ArtifactContent) != nil &&
+			version != "foreign.example/v1",
+			"missing source %s borrowed the real artifact", ks.SourceID())
 	}
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "selected"}
 	record := manifest.DiscoveryRecord{

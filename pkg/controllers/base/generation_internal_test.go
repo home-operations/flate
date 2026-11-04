@@ -82,9 +82,8 @@ func TestGeneratedObjects_WithdrawalBeforeBlockedSource(t *testing.T) {
 	run.Dispatch(t.Context(), manifest.DrainNone, struct{}{}, check)
 	assert.FatalIf(t, run.Outcome() != schedule.Blocked, "%v", "execution did not retain the source wait")
 	run.Settle(t.Context(), manifest.DrainNone)
-	if calls.Load() != 2 || run.Outcome() != schedule.Blocked {
-		t.Fatalf("resumed rule evaluated again: %d", calls.Load())
-	}
+	assert.FatalIf(t, calls.Load() != 2 || run.Outcome() != schedule.Blocked,
+		"resumed rule evaluated again: %d", calls.Load())
 }
 
 //nolint:paralleltest // This test changes process-global state.
@@ -274,7 +273,7 @@ func testGeneratedObjectsLifecycleCase(t *testing.T, testCaseInput *string,
 					"metadata":   map[string]any{"name": id.Name, "namespace": id.Namespace},
 					"data":       map[string]any{"value": "authored"},
 				}
-				parseChildrenResult2 := c.ParseChildren(
+				parseChildrenResult2 := (&Execution{Controller: c}).ParseChildren(
 					&next,
 					[]manifest.DocOccurrence{{Document: doc}},
 					manifest.ParseDocOptions{},
@@ -284,9 +283,9 @@ func testGeneratedObjectsLifecycleCase(t *testing.T, testCaseInput *string,
 			return run.Emit(t.Context(), next.Named(), &output, nil)
 		},
 	)
-	if calls.Load() != 2 {
-		t.Fatalf("rule evaluated %d times, want once per declaration", calls.Load())
-	}
+	assert.FatalIf(t, calls.Load() != 2,
+		"rule evaluated %d times, want once per declaration", calls.Load())
+
 	_, _, output := s.GetEmission(next.Named())
 	defer output.Finish()
 	if (*testCaseInput) == "removed" || (*testCaseInput) == "invalid_rule" {
@@ -301,9 +300,8 @@ func testGeneratedObjectsLifecycleCase(t *testing.T, testCaseInput *string,
 		if (*testCaseInput) == "collision" {
 			want = "authored"
 		}
-		if value != want || s.ReportHidden(id) != ((*testCaseInput) != "collision") {
-			t.Fatalf("representative=%v hidden=%t", value, s.ReportHidden(id))
-		}
+		assert.FatalIf(t, value != want || s.ReportHidden(id) != ((*testCaseInput) != "collision"),
+			"representative=%v hidden=%t", value, s.ReportHidden(id))
 	}
 	assert.FatalIf(
 		t, (*testCaseInput) ==
@@ -413,13 +411,12 @@ func testGeneratedObjectsReplayReadinessAndReceiptCase(
 			return err
 		},
 	)
-	if !testCaseInput.readmitted && (!authority.Valid() || events.Load() != 0) {
-		t.Fatalf(
-			"unchanged generated preparation invalidated output: valid=%t events=%d",
-			authority.Valid(),
-			events.Load(),
-		)
-	}
+	assert.FatalIf(t, !testCaseInput.readmitted && (!authority.Valid() || events.Load() != 0),
+
+		"unchanged generated preparation invalidated output: valid=%t events=%d",
+		authority.Valid(),
+		events.Load())
+
 	wantReceipt := receipt
 	if testCaseInput.readmitted {
 		wantReceipt = nil

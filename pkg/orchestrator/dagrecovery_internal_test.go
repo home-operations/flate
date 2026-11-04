@@ -55,7 +55,7 @@ func TestDAG_RedispatchErrorPropagates(t *testing.T) {
 	o, err := newTestOrchestrator(
 		t,
 		Tree{Path: dir, RepoRoot: dir},
-		Config{WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: 2},
+		Config{CacheDir: t.TempDir(), Concurrency: 2},
 	)
 	assert.FatalIf(t, err != nil, "%v", err)
 	victim := testutil.KustomizationID("flux-system", "app")
@@ -75,9 +75,8 @@ func TestDAG_RedispatchErrorPropagates(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	_, err = o.render(ctx)
-	if err == nil || !strings.Contains(err.Error(), "exceeded 32 redispatches") || ctx.Err() != nil {
-		t.Fatalf("Render error=%v context=%v, want scheduler redispatch error", err, ctx.Err())
-	}
+	assert.FatalIf(t, err == nil || !strings.Contains(err.Error(), "exceeded 32 redispatches") || ctx.Err() != nil,
+		"Render error=%v context=%v, want scheduler redispatch error", err, ctx.Err())
 }
 
 func testDAGDispatcherRecoveredAndPrimaryFailuresCase(
@@ -98,7 +97,7 @@ func testDAGDispatcherRecoveredAndPrimaryFailuresCase(
 	o, err := newTestOrchestrator(
 		t,
 		Tree{Path: dir, RepoRoot: dir},
-		Config{WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: (*testCaseInput)},
+		Config{CacheDir: t.TempDir(), Concurrency: (*testCaseInput)},
 	)
 	assert.FatalIf(t, err != nil, "%v", err)
 	{
@@ -137,16 +136,15 @@ func testDAGDispatcherRecoveredAndPrimaryFailuresCase(
 	)
 	o.tasks.BlockTillDone()
 	info, _ = o.store.GetStatus(victim)
-	if result.Assessment.Outcome() == schedule.Blocked || info.Status != store.StatusReady ||
+	assert.FatalIf(t, result.Assessment.Outcome() == schedule.Blocked || info.Status != store.StatusReady ||
 		len(info.BlockedBy()) != 0 ||
-		len(o.store.FailedResources()) != 0 {
-		t.Fatalf(
-			"recovery status=%+v blockers=%v failures=%v",
-			info,
-			info.BlockedBy(),
-			o.store.FailedResources(),
-		)
-	}
+		len(o.store.FailedResources()) != 0,
+
+		"recovery status=%+v blockers=%v failures=%v",
+		info,
+		info.BlockedBy(),
+		o.store.FailedResources())
+
 	ks, _ := o.store.Get[*manifest.Kustomization](victim)
 	ks = ks.Clone()
 	ks.Path = "./missing-directory"
@@ -162,10 +160,10 @@ func testDAGDispatcherRecoveredAndPrimaryFailuresCase(
 	)
 	o.tasks.BlockTillDone()
 	info, _ = o.store.GetStatus(victim)
-	if result.Assessment.Outcome() == schedule.Blocked || info.Status != store.StatusFailed ||
-		len(info.BlockedBy()) != 0 {
-		t.Fatalf("primary failure misclassified: status=%+v blockers=%v", info, info.BlockedBy())
-	}
+	assert.FatalIf(t, result.Assessment.Outcome() == schedule.Blocked || info.Status != store.StatusFailed ||
+		len(info.BlockedBy()) != 0,
+		"primary failure misclassified: status=%+v blockers=%v", info, info.BlockedBy())
+
 	t.Run("released pin recovery", func(t *testing.T) {
 		t.Parallel()
 		testDAGReleasedPinRecovery(t, dir, testCaseInput, ks)
@@ -178,7 +176,7 @@ func testDAGReleasedPinRecovery(t *testing.T, dir string, workers *int, ks *mani
 	localO, err := newTestOrchestrator(
 		t,
 		Tree{Path: dir, RepoRoot: dir},
-		Config{WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: (*workers)},
+		Config{CacheDir: t.TempDir(), Concurrency: (*workers)},
 	)
 	assert.FatalIf(t, err != nil, "%v", err)
 	defer localO.stop()

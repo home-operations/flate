@@ -199,10 +199,14 @@ func testRenderTreesRequiredOpaqueInputCaseTail(
 }
 
 type testRenderTreesRequiredOpaqueInputCaseTailInputs struct {
-	downloads     *[3]atomic.Int64
-	tier1         *bool
+	downloads *[3]atomic.
+			Int64
+
+	tier1 *bool
+
 	testCaseInput **string
-	trees         *[]Tree
+
+	trees *[]Tree
 }
 
 type testRenderTreesRequiredOpaqueInputCaseSegmentInputs struct {

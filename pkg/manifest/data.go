@@ -35,7 +35,7 @@ func fillSupplied(repository, supplied Data, write func(string, string)) []strin
 		if err != nil {
 			return true
 		}
-		if value.Found && !HasValuePlaceholder(value.Value) {
+		if value.Found {
 			overridden = append(overridden, key)
 			return true
 		}

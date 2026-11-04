@@ -197,7 +197,7 @@ func (f *operation) resolveRegistryConfig(
 	if err != nil {
 		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("read .dockerconfigjson: %w", err), "")
 	}
-	if configJSON == "" || manifest.HasValuePlaceholder(configJSON) {
+	if configJSON == "" {
 		return nil, source.MissingSecretErr(
 			access.Owner,
 			access.SecretRef.Name,

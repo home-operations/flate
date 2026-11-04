@@ -21,51 +21,16 @@ func TestE2E_ParentPatchesPropagateToChildren(t *testing.T) {
 	out := harness.RunCLI(t, "test", "ks", "--path", root)
 
 	leafLine := harness.MustExtractLine(t, out, "flux-system/leaf")
-	assert.ErrorIf(
-		t,
-		!strings.Contains(leafLine, "✓"),
-		"leaf should pass once parent patches inject substituteFrom; got: %s",
-		leafLine,
-	)
+	assert.ErrorIf(t, !strings.Contains(leafLine, "✓"),
+		"leaf should pass once parent patches inject substituteFrom; got: %s", leafLine)
+
 	clusterLine := harness.MustExtractLine(t, out, "flux-system/cluster-apps")
-	assert.ErrorIf(
-		t,
-		!strings.Contains(clusterLine, "✓"),
-		"cluster-apps should pass; SOPS values are wiped to placeholder, not fail-loud; got: %s",
-		clusterLine,
-	)
-	assert.ErrorIf(
-		t,
-		strings.Contains(out, `is undefined and has no default`),
-		"no postBuild variable should be reported undefined:\n%s",
-		out,
-	)
-}
+	assert.ErrorIf(t, !strings.Contains(clusterLine, "✓"),
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
-func TestE2E_SOPSValueWipedToPlaceholder(t *testing.T) {
-	src := harness.TestdataPath(t, "parent-patches")
-	root := t.TempDir()
-	testutil.CopyTree(t, src, root)
-
-	out := harness.RunCLIStdout(t, "build", "ks", "leaf", "-n", "flux-system",
-		"--path", root, "--concurrency", "2", "-o", "yaml")
-	again := harness.RunCLIStdout(t, "build", "ks", "leaf", "-n", "flux-system",
-		"--path", root, "--concurrency", "2", "-o", "yaml")
-	assert.FatalIf(t, again != out, "%v", "SOPS substitution output changed between runs")
-
-	assert.ErrorIf(
-		t,
-		!strings.Contains(out, "secret: ..PLACEHOLDER_MY_SECRET.."),
-		"expected SOPS-derived MY_SECRET to substitute to its placeholder:\n%s",
-		out,
-	)
-	assert.ErrorIf(
-		t,
-		!strings.Contains(out, "value: from-cluster-settings"),
-		"cleartext cluster-settings value should substitute normally:\n%s",
-		out,
-	)
+		"cluster-apps should pass; SOPS values are unavailable during active substitution; got: %s",
+		clusterLine)
+	assert.ErrorIf(t, strings.Contains(out, `is undefined and has no default`),
+		"no postBuild variable should be reported undefined:\n%s", out)
 }
 
 //nolint:paralleltest // CLI execution changes process-wide logging.

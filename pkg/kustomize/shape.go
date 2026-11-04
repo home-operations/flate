@@ -17,6 +17,9 @@ import (
 // Shape applies producer metadata and effective substitutions to private decoded documents.
 func Shape(ks *manifest.Kustomization, docs []manifest.DocOccurrence, strict bool) error {
 	ks.EmissionPolicy().Stamp(docs)
+	for i := range docs {
+		docs[i], _ = manifest.SanitizeDocument(docs[i])
+	}
 	if (ks.PostBuild == nil || len(ks.PostBuild.Substitute) == 0) &&
 		ks.SubstituteStrategy() != kustomizev1.SubstituteStrategyAlways {
 		return nil
@@ -89,12 +92,11 @@ func (r RenderRequest) Content(docs []manifest.DocOccurrence) any {
 		Input       store.ArtifactInput `json:"Input"`
 		ApplyIgnore bool                `json:"ApplyIgnore"`
 		Output      string              `json:"Output"`
-		Wipe        bool                `json:"Wipe"`
 		Strict      bool                `json:"Strict"`
 		Skip        []string            `json:"Skip"`
 	}{
 		r.Source.Input(store.ArtifactContent), r.ApplyIgnore, manifest.Fingerprint(docs),
-		r.WipeSecrets, r.StrictSubstitutions, r.SkipKinds,
+		r.StrictSubstitutions, r.SkipKinds,
 	}
 	return renderContent{ks.Content(source, names, active), r.DependencySubstitutions}
 }

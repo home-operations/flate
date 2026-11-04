@@ -11,7 +11,6 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/values"
 )
 
 func TestFinalizeIndex_EmissionParentByFile(t *testing.T) {
@@ -109,6 +108,7 @@ func TestFinalizeIndex_RecordsProducers(t *testing.T) {
 			continue
 		}
 		got := declarations[0]
+
 		assert.ErrorIf(
 			t,
 			got.Name != prodName || got.Namespace != target.Namespace,
@@ -160,89 +160,6 @@ func TestFinalizeIndex_ExplicitProducerTargetName(t *testing.T) {
 		assert.ErrorIf(t, len(
 			declarations,
 		) > 0, "%v", "explicit producer target was renamed without a nameReference")
-	}
-}
-
-func TestFinalizeIndex_DeclaredKeysStayUnpublished(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	testutil.WriteFile(
-		t,
-		dir,
-		"apps/kustomization.yaml",
-		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: secure\nresources:\n  - ./declared.yaml\n  - ./datafrom.yaml\n  - ./preexisting.yaml\n",
-	)
-	testutil.WriteFile(
-		t,
-		dir,
-		"apps/declared.yaml",
-		"apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata:\n  name: app\nspec:\n  target:\n    name: app-secret\n    template:\n      data:\n        HOST: \"{{ .h }}\"\n        TOKEN: \"{{ .t }}\"\n",
-	)
-	testutil.WriteFile(
-		t,
-		dir,
-		"apps/datafrom.yaml",
-		"apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata:\n  name: dyn\nspec:\n  target:\n    name: dyn-secret\n  dataFrom:\n    - extract:\n        key: vault/dyn\n",
-	)
-	testutil.WriteFile(
-		t,
-		dir,
-		"apps/preexisting.yaml",
-		"apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata:\n  name: pre\nspec:\n  target:\n    name: pre-secret\n    template:\n      data:\n        K: \"{{ .k }}\"\n",
-	)
-
-	s := store.New()
-	s.AddObject(&manifest.Kustomization{
-		Name: "apps", Namespace: "flux-system",
-		Path: "./apps",
-	})
-	existing := &manifest.Secret{Name: "pre-secret", Namespace: "secure", StringData: map[string]any{"K": "real"}}
-	s.AddObject(existing)
-
-	testutil.WriteFile(
-		t,
-		dir,
-		"implicit/deep/declared.yaml",
-		"apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: deferred}\nspec: {target: {name: deferred-secret, template: {data: {KEY: placeholder}}}}\n",
-	)
-	deferred := &manifest.Kustomization{
-		Name:            "deferred",
-		Namespace:       "flux-system",
-		Path:            "./implicit",
-		TargetNamespace: "secure",
-	}
-	s.AddObject(deferred)
-	idx := rendererFixture(t, loaderFixture(s, nil), dir)
-	assert.Diff(
-		t,
-		idx.Readers["implicit/deep/declared.yaml"],
-		[]manifest.FileReader{{Reader: deferred.Named(), Source: manifest.BootstrapSourceID}},
-	)
-	assert.FatalIf(
-		t,
-		s.GetObject(secretID("secure", "deferred-secret")) != nil ||
-			len(idx.Records[secretID("secure", "deferred-secret")].Productions) != 0,
-		"%v", "implicit producer was registered or synthesized before rendering",
-	)
-
-	assert.FatalIf(
-		t,
-		s.GetObject(secretID("secure", "app-secret")) != nil ||
-			len(s.Productions(secretID("secure", "app-secret"), idx)) == 0,
-		"%v", "declared keys must retain production evidence without canonical publication",
-	)
-	{
-		obj := s.GetObject(secretID("secure", "dyn-secret"))
-		assert.ErrorIf(t, obj != nil, "dataFrom-only ExternalSecret must NOT be synthesized; got %#v", obj)
-	}
-	{
-		obj := s.GetObject(secretID("secure", "pre-secret"))
-		assert.ErrorIf(
-			t,
-			obj != manifest.BaseManifest(existing),
-			"a real Secret on the target id must not be clobbered; got %#v",
-			obj,
-		)
 	}
 }
 
@@ -323,24 +240,21 @@ func TestFinalizeIndex_LookupReferenceData(t *testing.T) {
 		s,
 		manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "generated-data"},
 	)
-	if generated == nil ||
+	assert.FatalIf(t, generated == nil ||
 		generated.Data["payload"] != testutil.KustomizationYAML("terminal", "authored", "  path: ./hidden\n") ||
-		s.GetObject(testutil.KustomizationID("authored", "terminal")) != nil {
-		t.Fatalf(
-			"implicit generator data was lost or admitted as a resource: generated=%+v terminal=%+v",
-			generated,
-			s.GetObject(testutil.KustomizationID("authored", "terminal")),
-		)
-	}
-	{
-		obj := s.GetObject(secretID("flux-system", "deferred-secret"))
-		assert.ErrorIf(t, obj != nil, "generated Secret materialized before rendering: %#v", obj)
+		s.GetObject(testutil.KustomizationID("authored", "terminal")) != nil,
+
+		"implicit generator data was lost or admitted as a resource: generated=%+v terminal=%+v",
+		generated,
+		s.GetObject(testutil.KustomizationID("authored", "terminal")))
+
+	if obj := s.GetObject(secretID("flux-system", "deferred-secret")); obj != nil {
+		t.Errorf("generated Secret materialized before rendering: %#v", obj)
 	}
 	for _, name := range []string{"nested-secret", "nested-produced"} {
 		for _, namespace := range []string{"nested", "flux-system"} {
-			{
-				obj := s.GetObject(secretID(namespace, name))
-				assert.FatalIf(t, obj != nil, "implicit-boundary input materialized early: %v", obj)
+			if obj := s.GetObject(secretID(namespace, name)); obj != nil {
+				t.Fatalf("implicit-boundary input materialized early: %v", obj)
 			}
 		}
 	}
@@ -349,48 +263,13 @@ func TestFinalizeIndex_LookupReferenceData(t *testing.T) {
 	assert.FatalIf(
 		t,
 		s.GetObject(secretID("flux-system", "cluster-secrets")) != nil,
-		"%v",
+		"%s",
 		"SOPS lookup entered canonical inventory",
 	)
-	assert.FatalIf(t, got == nil, "%v", "SOPS cluster-secrets was unavailable through lookup")
-	if want := manifest.ValuePlaceholder("SECRET_DOMAIN"); got.StringData["SECRET_DOMAIN"] != want {
-		t.Errorf("materialized SECRET_DOMAIN = %v, want %q", got.StringData["SECRET_DOMAIN"], want)
-	}
-	{
-		obj := s.GetObject(secretID("flux-system", "plain-secret"))
-		assert.ErrorIf(t, obj != nil, "a cleartext Secret must not be materialized; got %#v", obj)
-	}
-}
+	assert.FatalIf(t, got != nil, "%s", "unadmitted data supplied a second reference path")
 
-func TestFinalizeIndex_NoSynthesisWithoutWipe(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	testutil.WriteFile(
-		t,
-		dir,
-		"apps/kustomization.yaml",
-		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: secure\nresources:\n  - ./es.yaml\n",
-	)
-	testutil.WriteFile(
-		t,
-		dir,
-		"apps/es.yaml",
-		"apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata:\n  name: app\nspec:\n  target:\n    name: app-secret\n    template:\n      data:\n        TOKEN: \"{{ .t }}\"\n",
-	)
-
-	s := store.New()
-	s.AddObject(&manifest.Kustomization{
-		Name: "apps", Namespace: "flux-system",
-		Path: "./apps",
-	})
-
-	l := loaderFixture(s, nil)
-	l.Options.WipeSecrets = false
-	rendererFixture(t, l, dir)
-
-	{
-		obj := s.GetObject(secretID("secure", "app-secret"))
-		assert.ErrorIf(t, obj != nil, "wipeSecrets=false must suppress synthesis; got %#v", obj)
+	if obj := s.GetObject(secretID("flux-system", "plain-secret")); obj != nil {
+		t.Errorf("a cleartext Secret must not be materialized; got %#v", obj)
 	}
 }
 
@@ -431,10 +310,13 @@ func TestFinalizeIndex_ProducerOwners(t *testing.T) {
 				}
 				got := declarationOwnersForTest(idx, id)
 				slices.SortFunc(got, manifest.NamedResource.Compare)
+
 				assert.FatalIf(t, !slices.Equal(got, want), "declaration %s owners = %v, want %v", id, got, want)
+
 				got[0] = manifest.NamedResource{}
 				fresh := declarationOwnersForTest(idx, id)
 				slices.SortFunc(fresh, manifest.NamedResource.Compare)
+
 				assert.FatalIf(t, !slices.Equal(fresh, want), "%v", "caller mutated index")
 			}
 			effective := manifest.NamedResource{
@@ -448,6 +330,7 @@ func TestFinalizeIndex_ProducerOwners(t *testing.T) {
 				assert.FatalIf(t, r.Authored.Namespace != namespace || r.Authored.Name != "producer" ||
 					r.File != "shared/producer.yaml", "producer lost authored file proof: %+v", r)
 			}
+
 			assert.FatalIf(t, len(
 				declarationOwnersForTest(
 					idx,
@@ -459,6 +342,7 @@ func TestFinalizeIndex_ProducerOwners(t *testing.T) {
 					},
 				),
 			) != 0, "%v", "foreign namespace inherited declaration owners")
+
 			{
 				got := renderers(
 					idx,
@@ -516,40 +400,6 @@ func TestFinalizeIndex_ProducerOwnersMultipleTargets(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestSelfProduceBuilder_AuthoredSecretReplacement(t *testing.T) {
-	t.Parallel()
-	id := secretID("apps", "input")
-	firstProof := manifest.Production{
-		Source:   manifest.BootstrapSourceID,
-		Authored: id,
-		Path:     "first.yaml",
-		File:     "first.yaml",
-	}
-	secondProof := firstProof
-	secondProof.Path, secondProof.File = "second.yaml", "second.yaml"
-	index := &manifest.DiscoveryIndex{
-		Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-			id: {Productions: []manifest.Production{firstProof, secondProof}},
-		},
-	}
-	b := &selfProduceBuilder{store: store.New(), wipeSecrets: true, idx: index}
-	first := &manifest.Secret{
-		Name:       id.Name,
-		Namespace:  id.Namespace,
-		StringData: map[string]any{"first": "..PLACEHOLDER_first.."},
-	}
-	second := &manifest.Secret{
-		Name:       id.Name,
-		Namespace:  id.Namespace,
-		StringData: map[string]any{"second": "..PLACEHOLDER_second.."},
-	}
-	b.recordSecret(first, id, new(firstProof))
-	b.recordSecret(second, id, new(secondProof))
-	b.store.SetDiscoveryIndex(index)
-	assert.Diff(t, values.NewStoreProvider(b.store, true).Data(id), second)
-	assert.FatalIf(t, b.store.GetObject(id) != nil, "%v", "lookup-only SOPS data acquired object authority")
 }
 
 type emissionParentCase struct {
@@ -615,8 +465,8 @@ func runEmissionParentCase(t *testing.T, scenario *emissionParentCase, ids *emis
 	if tc.strict {
 		wantOwners = []manifest.NamedResource{other, parent}
 	}
-	ownership := l.Index.OwnersOfFile(file)
-	owners, ancestors := ownership.Owners, ownership.Ancestors
+	result1 := l.Index.OwnersOfFile(file)
+	owners, ancestors := result1.Owners, result1.Ancestors
 	assert.Diff(t, owners, wantOwners)
 	assert.Equal(t, len(ancestors), 0)
 	snapshot := snapshotIndexForTest(l.Index)
@@ -629,8 +479,8 @@ func runEmissionParentCase(t *testing.T, scenario *emissionParentCase, ids *emis
 		assert.ErrorIf(t, diff != "", "discovery records differ (-want +got):\n%s", diff)
 	}
 	assert.Diff(t, l.Index.Readers, snapshot.Readers)
-	ownership2 := l.Index.OwnersOfFile(file)
-	owners, ancestors = ownership2.Owners, ownership2.Ancestors
+	result2 := l.Index.OwnersOfFile(file)
+	owners, ancestors = result2.Owners, result2.Ancestors
 	assert.Diff(t, owners, wantOwners)
 	assert.Equal(t, len(ancestors), 0)
 	fresh := newLoader()

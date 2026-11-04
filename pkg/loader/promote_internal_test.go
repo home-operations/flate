@@ -24,7 +24,7 @@ func builtObjectsForTest(t *testing.T, data string) []store.Child {
 	assert.NoError(t, err)
 	objects := make([]store.Child, 0, len(docs))
 	for _, doc := range docs {
-		child, outcome, _ := Prepare(doc, manifest.ParseDocOptions{WipeSecrets: true})
+		child, outcome, _ := Prepare(doc, manifest.ParseDocOptions{})
 		assert.NoError(t, outcome.Err)
 		if child.Obj != nil {
 			objects = append(objects, child)
@@ -203,10 +203,10 @@ spec:
 		err := l.FinalizeIndex(t.Context(), root, true)
 		assert.NoError(t, err)
 	}
-	if retainedErrorsForTest(l)[selectedFile] != nil ||
-		!errors.Is(retainedErrorsForTest(l)[independentFile], independentError) {
-		t.Fatalf("admission and finalization changed replacement errors: %v", retainedErrorsForTest(l))
-	}
+	assert.FatalIf(t, retainedErrorsForTest(l)[selectedFile] != nil ||
+		!errors.Is(retainedErrorsForTest(l)[independentFile], independentError),
+		"admission and finalization changed replacement errors: %v", retainedErrorsForTest(l))
+
 	admitForTest(st, root)
 	for _, dir := range []string{entry, filepath.Join(entry, "independent")} {
 		{
@@ -226,10 +226,10 @@ spec:
 		err := l.FinalizeIndex(t.Context(), root, true)
 		assert.NoError(t, err)
 	}
-	if retainedErrorsForTest(l)[selectedFile] != nil ||
-		!errors.Is(retainedErrorsForTest(l)[independentFile], independentError) {
-		t.Fatalf("remount and finalization changed replacement errors: %v", retainedErrorsForTest(l))
-	}
+	assert.FatalIf(t, retainedErrorsForTest(l)[selectedFile] != nil ||
+		!errors.Is(retainedErrorsForTest(l)[independentFile], independentError),
+		"remount and finalization changed replacement errors: %v", retainedErrorsForTest(l))
+
 	testRegisterBuiltTransformedEvidenceCompletion(
 		t,
 		&testRegisterBuiltTransformedEvidenceCompletionState{
@@ -466,9 +466,9 @@ spec:
 		err := l.FinalizeIndex(t.Context(), root, true)
 		assert.NoError(t, err)
 	}
-	if len(retainedErrorsForTest(l)) != 0 {
-		t.Fatalf("deleted resource raw errors resurrected: %v", retainedErrorsForTest(l))
-	}
+	assert.FatalIf(t, len(retainedErrorsForTest(l)) != 0,
+		"deleted resource raw errors resurrected: %v", retainedErrorsForTest(l))
+
 	{
 		_, exists := l.Index.Lookup(selected)
 		assert.FatalIf(t, exists || st.GetObject(selected) != nil, "%s", "deleted raw resource resurrected")
@@ -632,11 +632,13 @@ func testRegisterBuiltTransformedEvidenceCompletion(
 		record, exists := (*scope.l).Index.Lookup(id)
 		assert.FatalIf(t, !exists || record.Path != "" || record.Authored != (manifest.NamedResource{}) ||
 			record.File != "entry/kustomization.yaml", "built record %s lost authoritative evidence: %+v", id, record)
-		assert.ErrorIf(t, (*scope.st).GetObject(id) != obj || candidateForTest(t, (*scope.l), id) != obj ||
-			(*scope.l).AdmitsRoot(
-				(*scope.l).IndexedObject(id, (*scope.l).Index.Records[id]).Obj,
-				"",
-			), "built identity %s did not survive admission and source mounts", id)
+		assert.ErrorIf(
+			t,
+			(*scope.st).GetObject(id) != obj || candidateForTest(t, (*scope.l), id) != obj ||
+				(*scope.l).AdmitsRoot((*scope.l).IndexedObject(id, (*scope.l).Index.Records[id]).Obj, ""),
+			"built identity %s did not survive admission and source mounts",
+			id,
+		)
 		for _, file := range []string{"entry/kustomization.yaml", "entry/bundle.yaml", "entry/version.yaml", "entry/value.txt", (*scope.selectedFile)} {
 			assert.ErrorIf(t, !slices.Contains(record.Inputs, file), "%s does not retain built input %s", id, file)
 			assert.ErrorIf(
@@ -664,20 +666,18 @@ func testRegisterBuiltTransformedEvidenceCompletion(
 			)
 		}
 	}
-	if generated.Name == "" {
-		t.Fatalf("upstream generated hash missing from built output: %s", bytes.TrimSpace((*scope.data)))
-	}
+	assert.FatalIf(t, generated.Name == "",
+		"upstream generated hash missing from built output: %s", bytes.TrimSpace((*scope.data)))
+
 	//nolint:gocritic // The iterator supplies filtered value snapshots through its callback.
 	for id, record := range (*scope.l).Index.Files() {
-		{
-			assert.ErrorIf(
-				t,
-				record.File == "entry/bundle.yaml" || id.Name == "generated" || id.Name == "generated-dev",
-				"raw selected identity resurrected: %s %+v",
-				id,
-				record,
-			)
-		}
+		assert.ErrorIf(
+			t,
+			record.File == "entry/bundle.yaml" || id.Name == "generated" || id.Name == "generated-dev",
+			"raw selected identity resurrected: %s %+v",
+			id,
+			record,
+		)
 	}
 	hrID := testutil.HelmReleaseID("apps", "podinfo-dev")
 	hr := (*scope.st).GetObject(hrID).(*manifest.HelmRelease)

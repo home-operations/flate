@@ -84,10 +84,10 @@ func TestFetcher_SecretReferences(t *testing.T) {
 	}{
 		{name: "auth unwired", ref: "auth", secret: "creds", unwired: true, wantError: "SecretGetter"},
 		{name: "auth missing key", ref: "auth", secret: "creds", data: map[string]any{"accesskey": "k"}, missing: true, wantError: "missing accesskey/secretkey"},
-		{name: "accesskey/encoded=false", ref: "auth", secret: "creds", data: map[string]any{"accesskey": "..PLACEHOLDER_accesskey..", "secretkey": "secret"}, missing: true},
-		{name: "accesskey/encoded=true", ref: "auth", secret: "creds", data: map[string]any{"accesskey": "..PLACEHOLDER_accesskey..", "secretkey": "secret"}, encoded: true, missing: true},
-		{name: "secretkey/encoded=false", ref: "auth", secret: "creds", data: map[string]any{"accesskey": "access", "secretkey": "..PLACEHOLDER_secretkey.."}, missing: true},
-		{name: "secretkey/encoded=true", ref: "auth", secret: "creds", data: map[string]any{"accesskey": "access", "secretkey": "..PLACEHOLDER_secretkey.."}, encoded: true, missing: true},
+		{name: "accesskey/encoded=false", ref: "auth", secret: "creds", data: map[string]any{"accesskey": "", "secretkey": "secret"}, missing: true},
+		{name: "accesskey/encoded=true", ref: "auth", secret: "creds", data: map[string]any{"accesskey": "", "secretkey": "secret"}, encoded: true, missing: true},
+		{name: "secretkey/encoded=false", ref: "auth", secret: "creds", data: map[string]any{"accesskey": "access", "secretkey": ""}, missing: true},
+		{name: "secretkey/encoded=true", ref: "auth", secret: "creds", data: map[string]any{"accesskey": "access", "secretkey": ""}, encoded: true, missing: true},
 		{name: "auth absent", ref: "auth", secret: "creds", missing: true, wantError: "secret ns/creds not found"},
 		{name: "auth empty", ref: "auth", secret: "creds", data: map[string]any{}, missing: true},
 		{name: "malformed accesskey", ref: "auth", secret: "creds", rawData: map[string]any{"accesskey": "credential-payload!"}, data: map[string]any{"secretkey": "secret"}, field: "accesskey"},
@@ -95,8 +95,8 @@ func TestFetcher_SecretReferences(t *testing.T) {
 		{name: "nonscalar accesskey", ref: "auth", secret: "creds", data: map[string]any{"accesskey": []any{"credential-payload"}, "secretkey": "secret"}, field: "accesskey"},
 		{name: "nonscalar secretkey", ref: "auth", secret: "creds", data: map[string]any{"accesskey": "access", "secretkey": map[string]any{"secret": "credential-payload"}}, field: "secretkey"},
 		{name: "missing accesskey malformed secretkey", ref: "auth", secret: "creds", rawData: map[string]any{"secretkey": "credential-payload!"}, field: "secretkey"},
-		{name: "wiped accesskey malformed secretkey", ref: "auth", secret: "creds", data: map[string]any{"accesskey": "..PLACEHOLDER_accesskey.."}, rawData: map[string]any{"secretkey": "credential-payload!"}, field: "secretkey"},
-		{name: "malformed accesskey wiped secretkey", ref: "auth", secret: "creds", rawData: map[string]any{"accesskey": "credential-payload!"}, data: map[string]any{"secretkey": "..PLACEHOLDER_secretkey.."}, field: "accesskey"},
+		{name: "empty accesskey malformed secretkey", ref: "auth", secret: "creds", data: map[string]any{"accesskey": ""}, rawData: map[string]any{"secretkey": "credential-payload!"}, field: "secretkey"},
+		{name: "malformed accesskey empty secretkey", ref: "auth", secret: "creds", rawData: map[string]any{"accesskey": "credential-payload!"}, data: map[string]any{"secretkey": ""}, field: "accesskey"},
 		{name: "both malformed choose accesskey", ref: "auth", secret: "creds", rawData: map[string]any{"accesskey": "credential-payload!", "secretkey": "credential-payload!"}, field: "accesskey"},
 		{name: "cert partial pair", ref: "cert", secret: "tls", data: map[string]any{"tls.crt": "-only-cert-"}, wantError: "must provide both"},
 		{name: "cert empty", ref: "cert", secret: "tls", data: map[string]any{"unrelated": "x"}, missing: true},
@@ -106,14 +106,127 @@ func TestFetcher_SecretReferences(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			testFetcherSecretReferencesCase(t, &tc)
-		},
-		)
+			testFetcherSecretReferencesCase1(t, &tc)
+		})
 	}
-	t.Run(
-		"successful credentials",
-		func(t *testing.T) { t.Parallel(); testFetcherSecretReferencesSuccessfulCredentials(t) },
-	)
+	testFetcherSecretReferencesTail(t, &testFetcherSecretReferencesTailInputs{})
+}
+
+func testFetcherSecretReferencesPart1(t *testing.T) {
+	t.Helper()
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		auth bool
+	}{
+		{"anonymous", false},
+		{"valid", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			b := &manifest.Bucket{
+				Name:       "b",
+				Namespace:  "ns",
+				Endpoint:   "https://bucket.invalid",
+				BucketName: "fixture",
+			}
+			if tc.auth {
+				b.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
+			}
+			fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
+				assert.ErrorIf(t, !tc.auth, "%s", "anonymous credentials consulted a Secret")
+
+				return &manifest.Secret{StringData: map[string]any{"accesskey": "access", "secretkey": "secret"}}
+			}}
+			f := &Fetcher{}
+			creds, err := (&operation{Fetcher: f, secrets: fInputs.lookup(b)}).resolveCredentials(b)
+			assert.NoError(t, err)
+			value, err := creds.GetWithContext(nil)
+			assert.NoError(t, err)
+			access, secret := "", ""
+			if tc.auth {
+				access, secret = "access", "secret"
+			}
+			assert.ErrorIf(
+				t,
+				value.AccessKeyID != access || value.SecretAccessKey != secret,
+				"%s",
+				"credential values were not preserved",
+			)
+		})
+	}
+}
+
+func testFetcherSecretReferencesCase1(t *testing.T, tc *struct {
+	name      string
+	ref       string
+	secret    string
+	wantError string
+	data      map[string]any
+	rawData   map[string]any
+	unwired   bool
+	encoded   bool
+	missing   bool
+	field     string
+},
+) {
+	t.Helper()
+
+	fInputs := testInputs{}
+	f := &Fetcher{Network: newTestNetwork(t)}
+	if !tc.unwired {
+		fInputs.secrets = func(_, _ string) *manifest.Secret {
+			if tc.data == nil && tc.rawData == nil {
+				return nil
+			}
+			sec := &manifest.Secret{
+				Name:       "metadata-secret",
+				Namespace:  "elsewhere",
+				StringData: tc.data,
+				Data:       tc.rawData,
+			}
+			if tc.encoded {
+				sec.StringData, sec.Data = nil, map[string]any{}
+				for k, v := range tc.data {
+					sec.Data[k] = base64.StdEncoding.EncodeToString([]byte(v.(string)))
+				}
+			}
+			return sec
+		}
+	}
+	b := &manifest.Bucket{
+		Name:       "b",
+		Namespace:  "ns",
+		BucketName: "fixture",
+		Endpoint:   "127.0.0.1:1",
+		Insecure:   true,
+	}
+	ref := &manifest.LocalObjectReference{Name: tc.secret}
+	var err error
+	switch tc.ref {
+	case "auth":
+		b.SecretRef = ref
+		creds, credentialErr := (&operation{Fetcher: f, secrets: fInputs.lookup(b)}).resolveCredentials(b)
+		if creds != nil || credentialErr == nil {
+			t.Fatal("credential failure returned credentials or no error")
+		}
+		reads := fInputs.readSet(b)
+		if tc.unwired {
+			reads = nil
+		}
+		artifact, fetchErr := f.Fetch(t.Context(), b, reads, cache.Policy{MaxAge: b.SourceInterval()})
+		if artifact != nil {
+			t.Fatal("credential failure returned an acquired artifact")
+		}
+		err = fetchErr
+	case "cert":
+		b.CertSecretRef = ref
+		_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(b)}).prepare(b)
+	case "proxy":
+		b.ProxySecretRef = ref
+		_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(b)}).prepare(b)
+	}
+	testFetcherSecretReferencesCase1Tail(t, &testFetcherSecretReferencesCase1TailInputs{err: &err, tc: &tc, b: &b})
 }
 
 //nolint:paralleltest // Credential and DNS fixtures change process environment or resolver state.
@@ -156,10 +269,9 @@ func TestFetcher_NetworkSuppressionSkipsBackoff(t *testing.T) {
 			cache.Policy{Retry: cache.RetryConfig{Attempts: 3, MinWait: time.Hour}},
 		)
 		terminal, ok = errors.AsType[*cache.TerminalError](err)
-		if !ok || terminal.Attempted || !errors.Is(err, cause) || calls.Load() != before ||
-			time.Since(start) > minio.DefaultRetryUnit {
-			t.Fatalf("suppression: %v calls=%d elapsed=%v", err, calls.Load(), time.Since(start))
-		}
+		assert.FatalIf(t, !ok || terminal.Attempted || !errors.Is(err, cause) || calls.Load() != before ||
+			time.Since(start) > minio.DefaultRetryUnit,
+			"suppression: %v calls=%d elapsed=%v", err, calls.Load(), time.Since(start))
 	})
 }
 
@@ -232,9 +344,8 @@ func TestFetcher_ResolveTransport_SnapshotRotation(t *testing.T) {
 		},
 		)
 	}
-	if lookups.Load() != 15 {
-		t.Fatalf("credentials and cert reread Secrets: %d", lookups.Load())
-	}
+	assert.FatalIf(t, lookups.Load() != 15,
+		"credentials and cert reread Secrets: %d", lookups.Load())
 }
 
 func TestFetcher_ProviderTransportValidation(t *testing.T) {
@@ -287,129 +398,6 @@ func TestFetcher_ProviderCredentials(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			testFetcherProviderCredentialsCase(t, &tc)
-		},
-		)
-	}
-}
-
-func testFetcherSecretReferencesCase(t *testing.T, tc *struct {
-	name      string
-	ref       string
-	secret    string
-	wantError string
-	data      map[string]any
-	rawData   map[string]any
-	unwired   bool
-	encoded   bool
-	missing   bool
-	field     string
-},
-) {
-	t.Helper()
-
-	fInputs := testInputs{}
-	f := &Fetcher{Network: newTestNetwork(t)}
-	if !tc.unwired {
-		fInputs.secrets = func(callbackArg1, callbackArg2 string) *manifest.Secret {
-			return testFetcherSecretReferencesCaseCallback(
-				callbackArg1,
-				callbackArg2,
-				testFetcherSecretReferencesCaseCallbackInputs{tc: &tc},
-			)
-		}
-	}
-	b := &manifest.Bucket{
-		Name:       "b",
-		Namespace:  "ns",
-		BucketName: "fixture",
-		Endpoint:   "127.0.0.1:1",
-		Insecure:   true,
-	}
-	ref := &manifest.LocalObjectReference{Name: tc.secret}
-	var err error
-	switch tc.ref {
-	case "auth":
-		b.SecretRef = ref
-		creds, credentialErr := (&operation{Fetcher: f, secrets: fInputs.lookup(b)}).resolveCredentials(b)
-		assert.FatalIf(
-			t,
-			creds != nil || credentialErr == nil,
-			"%s",
-			"credential failure returned credentials or no error",
-		)
-
-		reads := fInputs.readSet(b)
-		if tc.unwired {
-			reads = nil
-		}
-		artifact, fetchErr := f.Fetch(t.Context(), b, reads, cache.Policy{MaxAge: b.SourceInterval()})
-		assert.FatalIf(t, artifact != nil, "%s", "credential failure returned an acquired artifact")
-
-		err = fetchErr
-	case "cert":
-		b.CertSecretRef = ref
-		_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(b)}).prepare(b)
-	case "proxy":
-		b.ProxySecretRef = ref
-		_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(b)}).prepare(b)
-	}
-	if err == nil || errors.Is(err, manifest.ErrMissingSecret) != tc.missing ||
-		!strings.Contains(err.Error(), tc.wantError) {
-		t.Fatalf("missing=%t, error=%v, want %q", tc.missing, err, tc.wantError)
-	}
-	if tc.field != "" {
-		assert.FatalIf(
-			t,
-			!errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux),
-			"expected hard input error, got %v",
-			err,
-		)
-		for _, context := range []string{"secret ns/creds", "[" + tc.field + "]"} {
-			assert.ErrorIf(
-				t,
-				!strings.Contains(err.Error(), context),
-				"input error missing context %q: %v",
-				context,
-				err,
-			)
-		}
-		if strings.Contains(err.Error(), "credential-payload") {
-			t.Error("input error exposed credential payload")
-		}
-	}
-	if tc.missing {
-		missing, ok := errors.AsType[*source.MissingSecretError](err)
-		assert.FatalIf(t, !ok, "expected MissingSecretError; got %T", err)
-		owner := b.Named()
-
-		assert.Equal(t, missing.Owner, owner)
-		assert.Equal(
-			t,
-			missing.Secret,
-			manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: tc.secret},
-		)
-		if tc.ref != "auth" && tc.data == nil {
-			assert.Equal(t, err.Error(), "secret ns/missing not found")
-		}
-	}
-}
-
-func testFetcherSecretReferencesSuccessfulCredentials(t *testing.T) {
-	t.Helper()
-
-	for _, tc := range []struct {
-		name string
-		auth bool
-	}{
-		{"anonymous", false},
-		{"valid", true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			testFetcherSecretReferencesSuccessfulCredentialsCase(
-				t,
-				testFetcherSecretReferencesSuccessfulCredentialsCaseInputs{tc: &tc},
-			)
 		},
 		)
 	}
@@ -550,48 +538,6 @@ func testFetcherProviderCredentialsCase(t *testing.T, tc *struct {
 	}
 }
 
-type testFetcherSecretReferencesSuccessfulCredentialsCaseInputs struct {
-	tc *struct {
-		name string
-		auth bool
-	}
-}
-
-func testFetcherSecretReferencesSuccessfulCredentialsCase(
-	t *testing.T,
-	testCaseInput testFetcherSecretReferencesSuccessfulCredentialsCaseInputs,
-) {
-	t.Helper()
-
-	b := &manifest.Bucket{
-		Name:       "b",
-		Namespace:  "ns",
-		Endpoint:   "https://bucket.invalid",
-		BucketName: "fixture",
-	}
-	if testCaseInput.tc.auth {
-		b.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
-	}
-	fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
-		if !testCaseInput.tc.auth {
-			t.Error("anonymous credentials consulted a Secret")
-		}
-		return &manifest.Secret{StringData: map[string]any{"accesskey": "access", "secretkey": "secret"}}
-	}}
-	f := &Fetcher{}
-	creds, err := (&operation{Fetcher: f, secrets: fInputs.lookup(b)}).resolveCredentials(b)
-	assert.NoError(t, err)
-	value, err := creds.GetWithContext(nil)
-	assert.NoError(t, err)
-	access, secret := "", ""
-	if testCaseInput.tc.auth {
-		access, secret = "access", "secret"
-	}
-	if value.AccessKeyID != access || value.SecretAccessKey != secret {
-		t.Error("credential values were not preserved")
-	}
-}
-
 type testFetcherResolveTransportSnapshotRotationCallbackInputs struct {
 	t             **testing.T
 	fail          *atomic.Bool
@@ -631,40 +577,85 @@ func testFetcherResolveTransportSnapshotRotationCallback(
 	)
 }
 
-type testFetcherSecretReferencesCaseCallbackInputs struct {
-	tc **struct {
-		name string
-		ref  string
+type testFetcherSecretReferencesTailInputs struct{}
 
-		secret    string
-		wantError string
-		data      map[string]any
-		rawData   map[string]any
-		unwired   bool
-		encoded   bool
-		missing   bool
-		field     string
-	}
+func testFetcherSecretReferencesTail(t *testing.T, _ *testFetcherSecretReferencesTailInputs) {
+	t.Helper()
+	t.Run("successful credentials", func(t *testing.T) {
+		testFetcherSecretReferencesPart1(t)
+	})
 }
 
-func testFetcherSecretReferencesCaseCallback(
-	_, _ string,
-	testCaseInput testFetcherSecretReferencesCaseCallbackInputs,
-) *manifest.Secret {
-	if (*testCaseInput.tc).data == nil && (*testCaseInput.tc).rawData == nil {
-		return nil
+type testFetcherSecretReferencesCase1TailInputs struct {
+	err *error
+
+	tc **struct {
+		name string
+
+		ref string
+
+		secret string
+
+		wantError string
+
+		data    map[string]any
+		rawData map[string]any
+		unwired bool
+		encoded bool
+		missing bool
+		field   string
 	}
-	sec := &manifest.Secret{
-		Name:       "metadata-secret",
-		Namespace:  "elsewhere",
-		StringData: (*testCaseInput.tc).data,
-		Data:       (*testCaseInput.tc).rawData,
+
+	b **manifest.
+		Bucket
+}
+
+func testFetcherSecretReferencesCase1Tail(t *testing.T, inputs *testFetcherSecretReferencesCase1TailInputs) {
+	t.Helper()
+
+	assert.FatalIf(
+		t,
+		(*inputs.err) == nil || errors.Is((*inputs.err), manifest.ErrMissingSecret) != (*inputs.tc).missing ||
+			!strings.Contains(
+				(*inputs.err).Error(),
+				(*inputs.tc).wantError,
+			),
+		"missing=%t, error=%v, want %q",
+		(*inputs.tc).missing,
+		(*inputs.err),
+		(*inputs.tc).wantError,
+	)
+
+	if (*inputs.tc).field != "" {
+		assert.FatalIf(t, !errors.Is((*inputs.err), manifest.ErrInput) || !errors.Is((*inputs.err), manifest.ErrFlux),
+			"expected hard input error, got %v", (*inputs.err))
+
+		for _, context := range []string{"secret ns/creds", "[" + (*inputs.tc).field + "]"} {
+			assert.ErrorIf(t, !strings.Contains((*inputs.err).Error(), context),
+				"input error missing context %q: %v", context, (*inputs.err))
+		}
+		assert.ErrorIf(
+			t,
+			strings.Contains((*inputs.err).Error(), "credential-payload"),
+			"%s",
+			"input error exposed credential payload",
+		)
 	}
-	if (*testCaseInput.tc).encoded {
-		sec.StringData, sec.Data = nil, map[string]any{}
-		for k, v := range (*testCaseInput.tc).data {
-			sec.Data[k] = base64.StdEncoding.EncodeToString([]byte(v.(string)))
+	if (*inputs.tc).missing {
+		missing, ok := errors.AsType[*source.MissingSecretError]((*inputs.err))
+		assert.FatalIf(t, !ok,
+			"expected MissingSecretError; got %T", (*inputs.err))
+
+		owner := (*inputs.b).Named()
+
+		assert.Equal(t, missing.Owner, owner)
+		assert.Equal(
+			t,
+			missing.Secret,
+			manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: (*inputs.tc).secret},
+		)
+		if (*inputs.tc).ref != "auth" && (*inputs.tc).data == nil {
+			assert.Equal(t, (*inputs.err).Error(), "secret ns/missing not found")
 		}
 	}
-	return sec
 }

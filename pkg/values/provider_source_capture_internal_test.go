@@ -18,12 +18,11 @@ type countedDataReader struct {
 func (r *countedDataReader) ReferenceFacts(
 	id manifest.NamedResource,
 	index *manifest.DiscoveryIndex,
-	wipeSecrets bool,
 	consumer manifest.NamedResource,
 ) store.ReferenceFacts {
 	r.objects++
 	r.productions++
-	return r.ReadSet.ReferenceFacts(id, index, wipeSecrets, consumer)
+	return r.ReadSet.ReferenceFacts(id, index, consumer)
 }
 
 func TestStoreProvider_LookupRetainsOneSource(t *testing.T) {
@@ -72,7 +71,7 @@ func TestStoreProvider_LookupRetainsOneSource(t *testing.T) {
 	reads.Init(s, reader, nil)
 	defer reads.Close()
 	counted := &countedDataReader{ReadSet: &reads}
-	provider := NewStoreProvider(counted, true)
+	provider := NewStoreProvider(counted)
 	input := provider.Lookup(first.Named())
 	assert.FatalIf(
 		t,
@@ -121,20 +120,25 @@ func TestStoreProvider_LookupRetainsOneSource(t *testing.T) {
 	next := *first
 	next.Data = map[string]any{"VALUE": "next"}
 	s.RecordEmitted(owner, &store.Emission{Children: []store.Child{{Obj: &next}}, Complete: true}, nil)
-	if provider.Data(first.Named()) != first || provider.Lookup(first.Named()).Data != first || counted.objects != 5 ||
-		counted.productions != 5 {
-		t.Fatalf("expansion rescanned captured input: object=%d productions=%d", counted.objects, counted.productions)
-	}
+	assert.FatalIf(
+		t,
+		provider.Data(first.Named()) != first || provider.Lookup(first.Named()).Data != first || counted.objects != 5 ||
+			counted.productions != 5,
+		"expansion rescanned captured input: object=%d productions=%d",
+		counted.objects,
+		counted.productions,
+	)
+
 	assert.FatalIf(t, reads.Valid(), "%s", "changed consumed data did not invalidate execution")
 	var fresh store.ReadSet
 	fresh.Init(s, reader, nil)
 	defer fresh.Close()
 	{
-		got := NewStoreProvider(&fresh, true).Data(first.Named())
+		got := NewStoreProvider(&fresh).Data(first.Named())
 		assert.FatalIf(t, got != &next, "next execution retained preceding value: %v", got)
 	}
 	{
-		got := NewStoreProvider(&fresh, true).Data(absent)
+		got := NewStoreProvider(&fresh).Data(absent)
 		assert.FatalIf(t, got == nil, "%s", "fresh execution retained frozen absence")
 	}
 }

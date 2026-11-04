@@ -75,7 +75,7 @@ func generatedWorkload(tb testing.TB, count int) (*manifest.RawObject, map[strin
 	return obj.(*manifest.RawObject), doc, input
 }
 
-func reconcileWorkload(tb testing.TB, owner *cache.Cache, child store.Child, input *workloadFS) *store.Store {
+func reconcileWorkload(tb testing.TB, owner *cache.Cache, child *store.Child, input *workloadFS) *store.Store {
 	tb.Helper()
 	st := store.New()
 	st.AddObject(child.Obj, child.Doc)
@@ -136,7 +136,7 @@ func benchmarkArtifactGeneratorOutputsSegmentCase(b *testing.B, count *int, back
 		}
 	})
 	if *warm {
-		reconcileWorkload(b, owner, store.Child{Obj: obj, Doc: doc}, input)
+		reconcileWorkload(b, owner, &store.Child{Obj: obj, Doc: doc}, input)
 	}
 	input.opens.Store(0)
 	input.bytes.Store(0)
@@ -162,7 +162,7 @@ func measureGeneratedOutputs(b *testing.B, statementInput *generatedOutputMeasur
 			reconcileWorkload(
 				b,
 				(*statementInput.owner),
-				store.Child{Obj: (*statementInput.obj), Doc: (*statementInput.doc)},
+				&store.Child{Obj: (*statementInput.obj), Doc: (*statementInput.doc)},
 				(*statementInput.input),
 			)
 			continue
@@ -177,9 +177,7 @@ func measureGeneratedOutputs(b *testing.B, statementInput *generatedOutputMeasur
 		}
 		reconcileWorkload(
 			b,
-			fresh,
-			store.Child{Obj: (*statementInput.obj), Doc: (*statementInput.doc)},
-			(*statementInput.input),
+			fresh, &store.Child{Obj: (*statementInput.obj), Doc: (*statementInput.doc)}, (*statementInput.input),
 		)
 		if err := fresh.Close(); err != nil {
 			b.Fatal(err)

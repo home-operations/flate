@@ -26,7 +26,7 @@ func (l *Loader) buildProductions(
 		return nil
 	}
 	b := &selfProduceBuilder{
-		idx: l.Index, store: l.Store, wipeSecrets: l.Options.WipeSecrets, reader: l.documents,
+		idx: l.Index, store: l.Store, reader: l.documents,
 		emittedFiles: emittedFiles, locations: l.locations,
 	}
 	var generators []generatorRecord
@@ -112,7 +112,7 @@ func (l *Loader) addGenerated(ctx context.Context, generators []generatorRecord)
 			if l.documents.compact {
 				continue
 			}
-			obj, err := r.materialize(ctx, &l.Options)
+			child, err := r.materialize(ctx, &l.Options)
 			if err != nil {
 				if ctx.Err() != nil || errors.Is(err, errRemoteInputs) {
 					return err
@@ -123,7 +123,7 @@ func (l *Loader) addGenerated(ctx context.Context, generators []generatorRecord)
 			record.ReferenceData = append(
 				record.ReferenceData,
 				//nolint:errcheck // Generator materialization must panic if it produces a non-Data object.
-				manifest.ReferenceData{Production: p, OfflineData: obj.(manifest.Data)},
+				manifest.ReferenceData{Production: p, OfflineData: child.Obj.(manifest.Data), Warnings: child.Warnings},
 			)
 			l.Index.Records[id] = record
 		}
@@ -182,7 +182,6 @@ type selfProduceBuilder struct {
 	idx            *manifest.DiscoveryIndex
 	emittedFiles   map[string][]manifest.NamedResource
 	store          *store.Store
-	wipeSecrets    bool
 	locations      map[manifest.NamedResource]Occurrence
 	scanExclusions bool
 	err            error
@@ -204,9 +203,9 @@ func (b *selfProduceBuilder) recordProduced(
 	if objects == nil {
 		var err error
 		if b.reader.compact {
-			objects, err = b.reader.censusFile(ctx, pr.visit.file, manifest.ParseDocOptions{WipeSecrets: b.wipeSecrets})
+			objects, err = b.reader.censusFile(ctx, pr.visit.file, manifest.ParseDocOptions{})
 		} else {
-			objects, err = b.reader.fileObjects(pr.visit.file, manifest.ParseDocOptions{WipeSecrets: b.wipeSecrets})
+			objects, err = b.reader.fileObjects(pr.visit.file, manifest.ParseDocOptions{})
 		}
 		if err != nil {
 			return pr.declarations, err
@@ -222,24 +221,6 @@ func (b *selfProduceBuilder) recordProduced(
 		}
 	}
 	return pr.declarations, pr.projectionErr
-}
-
-func (b *selfProduceBuilder) recordSecret(
-	secret *manifest.Secret,
-	id manifest.NamedResource,
-	productionArg *manifest.Production,
-) {
-	production := *productionArg
-	if !b.wipeSecrets || id.Namespace == "" || !secret.HasPlaceholder() {
-		return
-	}
-	record := b.idx.Records[id]
-	data := manifest.NewSecret(id, secret.Data, secret.StringData)
-	// The last traversed SOPS declaration wins before unhashed generator candidates.
-	record.ReferenceData = append(
-		[]manifest.ReferenceData{{Production: production, OfflineData: data}},
-		record.ReferenceData...)
-	b.idx.Records[id] = record
 }
 
 func (b *selfProduceBuilder) joinProductions(declarations []producerDeclaration, scope []graphVisit) {
@@ -258,7 +239,7 @@ func (b *selfProduceBuilder) joinProductions(declarations []producerDeclaration,
 			record := func(child store.Child) {
 				b.collectProducerReferences(child, &v, &candidates)
 			}
-			objects, err := b.reader.fileObjects(v.file, manifest.ParseDocOptions{WipeSecrets: b.wipeSecrets})
+			objects, err := b.reader.fileObjects(v.file, manifest.ParseDocOptions{})
 			if err != nil {
 				if b.err == nil {
 					b.err = err
@@ -342,6 +323,7 @@ func appendUniqueProducer[T comparable](dst []T, v T) []T {
 	return append(dst, v)
 }
 
+//nolint:gocritic // Immutable value inputs preserve snapshot semantics.
 func (b *selfProduceBuilder) collectProducerReferences(
 	child store.Child,
 	v *graphVisit,

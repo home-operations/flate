@@ -6,13 +6,10 @@
 // supporting Kubernetes core kinds (ConfigMap, Secret). ParseDoc decodes
 // raw YAML documents into these types for canonical YAML export.
 //
-// flate renders the user's own repo offline, not a live cluster, so Secret
-// values pass through verbatim — plaintext, public keys, certs, binary data.
-// The one exception (when wipeSecrets is set, the default) is SOPS ciphertext:
-// flate can't decrypt it, and a raw "ENC[AES256_GCM,...]" value poisons
-// downstream rendering (the ':'/commas break envsubst, Ingress hosts,
-// cert-manager dnsNames), so SOPS-encrypted data/stringData scalars are
-// rewritten with placeholder tokens of the form "..PLACEHOLDER_<key>..".
+// Data flate cannot read is absent, warned once, and supplied by the user.
+// Admission removes SOPS-encrypted Secret and ConfigMap entries and SOPS metadata.
+// Readable data remains authoritative; supplied dummy values fill absent reference keys.
+// Re-encryption alone cannot be compared without decryption.
 //
 // # Shadow fields
 //

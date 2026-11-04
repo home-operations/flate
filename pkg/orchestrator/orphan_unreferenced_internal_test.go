@@ -62,7 +62,7 @@ func TestOrchestrator_UnreferencedBaseKSNotAdmitted(t *testing.T) {
 	renderedSingleton1, err := RenderTrees(
 		t.Context(),
 		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
-		Config{WipeSecrets: true, Concurrency: 2},
+		Config{Concurrency: 2},
 	)
 	assert.FatalIf(t, len(renderedSingleton1) != 1, "missing render: %v", err)
 	o := renderedSingleton1[0].Orchestrator
@@ -79,9 +79,9 @@ func TestOrchestrator_UnreferencedBaseKSNotAdmitted(t *testing.T) {
 			assert.ErrorIf(t, orphaned || o.store.GetObject(id) != nil, "disabled Kustomization admitted: %s", id)
 		}
 	}
-	if len(res.Warnings) != 0 {
-		t.Errorf("disabled Kustomizations produced warnings: %+v", res.Warnings)
-	}
+	assert.ErrorIf(t, len(res.Warnings) != 0,
+		"disabled Kustomizations produced warnings: %+v", res.Warnings)
+
 	assert.ErrorIf(t, o.store.GetObject(
 		manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "app-a-cm"},
 	) == nil, "%v", "app-a-cm ConfigMap missing; the referenced base resource should still render")

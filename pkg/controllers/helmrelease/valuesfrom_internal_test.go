@@ -29,7 +29,7 @@ func TestController_OmittedValuesAfterWait(t *testing.T) {
 		name         string
 		waitValues   bool
 		materialized bool
-		wiped        bool
+		unreadable   bool
 		duplicate    bool
 		fail         bool
 		wantGreeting string
@@ -40,15 +40,146 @@ func TestController_OmittedValuesAfterWait(t *testing.T) {
 		{name: "chart wait, still missing", wantGreeting: "fallback", wantWarnings: 1},
 		{name: "chart wait, materialized", materialized: true, wantGreeting: "supplied"},
 		{name: "chart failed", fail: true, wantWarnings: 1},
-		{name: "wiped values file", wiped: true, wantGreeting: "fallback", wantWarnings: 1},
+		{name: "optional unreadable values file", unreadable: true, wantGreeting: "fallback", wantWarnings: 1},
 		{name: "duplicate omitted ref", duplicate: true, wantGreeting: "fallback", wantWarnings: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			testControllerOmittedValuesAfterWaitCase(t, &tc)
+			testControllerOmittedValuesAfterWaitCase1(t, &tc)
+		})
+	}
+}
+
+func testControllerOmittedValuesAfterWaitCase1(t *testing.T, tc *struct {
+	name         string
+	waitValues   bool
+	materialized bool
+	unreadable   bool
+	duplicate    bool
+	fail         bool
+	wantGreeting string
+	wantWarnings int
+},
+) {
+	t.Helper()
+
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
+	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: demo}
+data:
+  greeting: {{ .Values.greeting | default "fallback" | quote }}
+`)
+	c, st := newTestControllerWithOptions(t, &base.Options{})
+	src := &manifest.GitRepository{Name: "charts", Namespace: "flux-system"}
+	st.AddObject(src)
+	st.SetArtifact(src.Named(), &store.SourceArtifact{
+		Kind: manifest.KindGitRepository, URL: "file://" + dir, FS: os.DirFS(dir), LocalPath: dir,
+	})
+	st.UpdateStatus(src.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "fetching"})
+	if tc.waitValues {
+		st.UpdateStatus(src.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
+	}
+	publishRawFixture(t, c, &manifest.RawObject{
+		Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1",
+		Name: "app-creds", Namespace: "default",
+		Spec: map[string]any{"target": map[string]any{"name": "app-values"}},
+	})
+	hr := &manifest.HelmRelease{
+		Name:      "demo",
+		Namespace: "default",
+		Chart: manifest.HelmChart{
+			Name: "mychart",
+			Source: manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindGitRepository,
+				Namespace: "flux-system",
+				Name:      "charts",
+			},
 		},
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{
+			Chart: &helmv2.HelmChartTemplate{
+				Spec: helmv2.HelmChartTemplateSpec{
+					Chart:   "mychart",
+					Version: "",
+					SourceRef: &helmv2.CrossNamespaceObjectReference{
+						Kind:       manifest.KindGitRepository,
+						Name:       "charts",
+						Namespace:  "flux-system",
+						APIVersion: manifest.SourceDomain + "/v1",
+					},
+				},
+			},
+			ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: "app-values"}},
+		},
+	}
+	if tc.unreadable {
+		hr.ValuesFrom[0].Optional = true
+	}
+	if tc.duplicate {
+		hr.ValuesFrom = append(
+			hr.ValuesFrom,
+			manifest.ValuesReference{Kind: manifest.KindSecret, Name: "app-values", ValuesKey: "other.yaml"},
 		)
 	}
+	if tc.waitValues {
+		hr.ValuesFrom = append(
+			hr.ValuesFrom,
+			manifest.ValuesReference{Kind: manifest.KindConfigMap, Name: "chart-values"},
+		)
+	}
+	st.AddObject(hr)
+	if blocked := c.ReconcileNode(t.Context(), hr.Named(), manifest.DrainNone).Blocked; len(blocked) == 0 {
+		t.Fatal("expected reconciliation to wait for a dependency")
+	}
+	assert.Equal(t, len(st.Warnings()), 0)
+	st.AddObject(&manifest.ConfigMap{
+		Name: "chart-values", Namespace: "default",
+		Data: map[string]any{"values.yaml": "{}"},
+	})
+	if tc.materialized || tc.unreadable {
+		value := "greeting: supplied\n"
+		if tc.unreadable {
+			value = "ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]"
+		}
+		result1, err := manifest.ParseDoc(
+			map[string]any{
+				"apiVersion": "v1",
+				"kind":       "Secret",
+				"metadata":   map[string]any{"name": "app-values", "namespace": "default"},
+				"stringData": map[string]any{"values.yaml": value},
+			},
+			manifest.ParseDocOptions{},
+		)
+		obj, warnings := result1.Object, result1.Warnings
+
+		assert.NoError(t, err)
+		st.AddObject(obj)
+		for valueIndex := range warnings {
+			warning := warnings[valueIndex]
+			st.AddWarning(warning)
+		}
+	}
+
+	status := store.StatusReady
+	if tc.fail {
+		status = store.StatusFailed
+	}
+	st.UpdateStatus(src.Named(), store.StatusInfo{Status: status, Reason: "", Message: "chart source"})
+	assert.Equal(t, reconcileFixture(t, c, hr.Named()).Status, status)
+	assert.Equal(t, len(st.Warnings()), tc.wantWarnings)
+	for valueIndex := range st.Warnings() {
+		warning := st.Warnings()[valueIndex]
+		assert.Equal(t, warning.Count, 1)
+	}
+	if tc.fail {
+		return
+	}
+	art, ok := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
+	assert.FatalIf(t, !ok, "%s", "HelmRelease artifact was not written")
+
+	assert.Equal(t, renderedConfigMapValue(testutil.DocumentMaps(art.Manifests), "greeting"), tc.wantGreeting)
 }
 
 func TestResolvePreRenderValuesFrom_FailedChartRefTerminates(t *testing.T) {
@@ -85,7 +216,9 @@ func TestResolvePreRenderValuesFrom_FailedChartRefTerminates(t *testing.T) {
 	unsub := s.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
 		if id == hr.Named() && payload.(store.StatusInfo).Message == "resolving dependencies" {
 			attempts++
+
 			assert.FatalIf(t, attempts > 1, "%v", "retried a failed chartRef with no removable valuesFrom refs")
+
 			// Identical status writes suppress events, so reset the progress message.
 			s.UpdateStatus(
 				id,
@@ -96,7 +229,9 @@ func TestResolvePreRenderValuesFrom_FailedChartRefTerminates(t *testing.T) {
 	t.Cleanup(unsub)
 	err := c.newExecution(hr.Named()).reconcile(t.Context(), hr, manifest.DrainForce)
 	failed, ok := errors.AsType[*manifest.DependencyFailedError](err)
+
 	assert.FatalIf(t, !ok, "error = %v, want DependencyFailedError", err)
+
 	assert.Diff(t, failed.Failed, []manifest.NamedResource{chart.Named()})
 	assert.Equal(t, attempts, 1)
 }
@@ -174,14 +309,13 @@ func TestPreviousRender_OptionalExpectedInput(t *testing.T) {
 		},
 	}
 	st.AddObject(hr)
-	seed, omitted, err := helm.Prepare(
+	seed, err := helm.Prepare(
 		hr,
 		helm.NewSources(st).Declaration,
-		values.NewStoreProvider(st, false),
+		values.NewStoreProvider(st),
 		c.Helm.ValuesCache(),
 	)
 	assert.NoError(t, err)
-	assert.Equal(t, len(omitted), 0)
 	_, receipt, err := testutil.RenderMaps(
 		c.Helm.Template(t.Context(), seed, seed.Values, helm.RenderOptions{Sources: helm.NewSources(st)}),
 	)
@@ -228,7 +362,9 @@ func TestPreviousRender_OptionalExpectedInput(t *testing.T) {
 	producer := testutil.KustomizationID("apps", "producer-root")
 	st.UpdateStatus(producer, store.StatusInfo{Status: store.StatusPending, Message: "waiting for input"})
 	status, _ := st.GetStatus(producer)
+
 	assert.FatalIf(t, probe(), "%v", "optional expected input supplied complete history")
+
 	after, _ := st.GetStatus(producer)
 	assert.Equal(t, after, status)
 	assert.Equal(t, len(st.Warnings()), 0)
@@ -289,10 +425,10 @@ func TestController_AllowMissingKindsAdmission(t *testing.T) {
 				t,
 				controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode},
 			)
+
 			assert.FatalIf(t, (info.Status == store.StatusReady) != tc.want, "kind selection: %+v", info)
-			if tc.want && len(st.Warnings()) != 1 {
-				t.Fatalf("omitted input lost warning: %+v", st.Warnings())
-			}
+			assert.FatalIf(t, tc.want && len(st.Warnings()) != 1,
+				"omitted input lost warning: %+v", st.Warnings())
 		})
 	}
 }
@@ -342,10 +478,10 @@ func TestPreviousRender_AllowMissingKindsAdmission(t *testing.T) {
 				},
 			}
 			st.AddObject(hr)
-			seed, _, err := helm.Prepare(
+			seed, err := helm.Prepare(
 				omitValues(hr, []manifest.NamedResource{{Kind: kind, Namespace: "apps", Name: "missing"}}),
 				helm.NewSources(st).Declaration,
-				values.NewStoreProvider(st, false),
+				values.NewStoreProvider(st),
 				c.Helm.ValuesCache(),
 			)
 			assert.NoError(t, err)
@@ -377,6 +513,7 @@ func TestPreviousRender_AllowMissingKindsAdmission(t *testing.T) {
 				reads.Init(st, hr.Named(), nil)
 				records, _ := c.PreviousRender(t.Context(), hr, reads)
 				reads.Retire()
+
 				assert.FatalIf(
 					t,
 					(records != nil) != selected,
@@ -387,132 +524,6 @@ func TestPreviousRender_AllowMissingKindsAdmission(t *testing.T) {
 			}
 		})
 	}
-}
-
-func testControllerOmittedValuesAfterWaitCase(
-	t *testing.T,
-	testCaseInput *struct {
-		name string
-
-		waitValues   bool
-		materialized bool
-		wiped        bool
-		duplicate    bool
-		fail         bool
-		wantGreeting string
-		wantWarnings int
-	},
-) {
-	t.Helper()
-
-	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
-	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml", `apiVersion: v1
-kind: ConfigMap
-metadata: {name: demo}
-data:
-  greeting: {{ .Values.greeting | default "fallback" | quote }}
-`)
-	c, st := newTestControllerWithOptions(t, &base.Options{})
-	src := &manifest.GitRepository{Name: "charts", Namespace: "flux-system"}
-	st.AddObject(src)
-	st.SetArtifact(src.Named(), &store.SourceArtifact{
-		Kind: manifest.KindGitRepository, URL: "file://" + dir, FS: os.DirFS(dir), LocalPath: dir,
-	})
-	st.UpdateStatus(src.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "fetching"})
-	if testCaseInput.waitValues {
-		st.UpdateStatus(src.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
-	}
-	publishRawFixture(t, c, &manifest.RawObject{
-		Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1",
-		Name: "app-creds", Namespace: "default",
-		Spec: map[string]any{"target": map[string]any{"name": "app-values"}},
-	})
-	hr := &manifest.HelmRelease{
-		Name:      "demo",
-		Namespace: "default",
-		Chart: manifest.HelmChart{
-			Name: "mychart",
-			Source: manifest.NamedResource{
-				Group:     manifest.SourceDomain,
-				Kind:      manifest.KindGitRepository,
-				Namespace: "flux-system",
-				Name:      "charts",
-			},
-		},
-		HelmReleaseSpec: helmv2.HelmReleaseSpec{
-			Chart: &helmv2.HelmChartTemplate{
-				Spec: helmv2.HelmChartTemplateSpec{
-					Chart:   "mychart",
-					Version: "",
-					SourceRef: &helmv2.CrossNamespaceObjectReference{
-						Kind:       manifest.KindGitRepository,
-						Name:       "charts",
-						Namespace:  "flux-system",
-						APIVersion: manifest.SourceDomain + "/v1",
-					},
-				},
-			},
-			ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: "app-values"}},
-		},
-	}
-	if testCaseInput.duplicate {
-		hr.ValuesFrom = append(
-			hr.ValuesFrom,
-			manifest.ValuesReference{Kind: manifest.KindSecret, Name: "app-values", ValuesKey: "other.yaml"},
-		)
-	}
-	if testCaseInput.waitValues {
-		hr.ValuesFrom = append(
-			hr.ValuesFrom,
-			manifest.ValuesReference{Kind: manifest.KindConfigMap, Name: "chart-values"},
-		)
-	}
-	st.AddObject(hr)
-	{
-		blocked := c.ReconcileNode(t.Context(), hr.Named(), manifest.DrainNone).Blocked
-		assert.FatalIf(t, len(blocked) == 0, "%v", "expected reconciliation to wait for a dependency")
-	}
-	assert.Equal(t, len(st.Warnings()), 0)
-	st.AddObject(&manifest.ConfigMap{
-		Name: "chart-values", Namespace: "default",
-		Data: map[string]any{"values.yaml": "{}"},
-	})
-	if testCaseInput.materialized || testCaseInput.wiped {
-		value := "greeting: supplied\n"
-		if testCaseInput.wiped {
-			value = "..PLACEHOLDER_values.yaml.."
-		}
-		st.AddObject(&manifest.Secret{
-			Name: "app-values", Namespace: "default",
-			StringData: map[string]any{"values.yaml": value},
-		})
-	}
-	status := store.StatusReady
-	if testCaseInput.fail {
-		status = store.StatusFailed
-	}
-	st.UpdateStatus(src.Named(), store.StatusInfo{Status: status, Reason: "", Message: "chart source"})
-	assert.Equal(t, reconcileFixture(t, c, hr.Named()).Status, status)
-	assert.Equal(t, len(st.Warnings()), testCaseInput.wantWarnings)
-	{
-		warningValues := st.Warnings()
-		for warningIndex := range warningValues {
-			warning := warningValues[warningIndex]
-
-			assert.Equal(t, warning.Count, 1)
-		}
-	}
-	if testCaseInput.fail {
-		return
-	}
-	art, ok := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
-	assert.FatalIf(t, !ok, "%v", "HelmRelease artifact was not written")
-	assert.Equal(
-		t,
-		renderedConfigMapValue(testutil.DocumentMaps(art.Manifests), "greeting"), testCaseInput.
-			wantGreeting,
-	)
 }
 
 type testControllerValuesFromMixedProductionPrecedenceCaseInputs struct {
@@ -595,6 +606,7 @@ func testControllerValuesFromMixedProductionPrecedenceCase(
 		manifest.DrainNone,
 	)
 	hasProducer, omit := input.Generated, result.Omit
+
 	assert.FatalIf(
 		t,
 		omit != ((*testCaseInput.materializer) == "none") || omit && !hasProducer,
@@ -669,21 +681,21 @@ func testControllerPrepareRequiresDeclarationCase(
 	run := c.ReconcileNode(t.Context(), input.Named(), manifest.DrainNone)
 
 	info, _ := st.GetStatus(input.Named())
-	if (*testCaseInput) == "suspended" && run.Outcome() == schedule.Blocked ||
+	assert.FatalIf(t, (*testCaseInput) == "suspended" && run.Outcome() == schedule.Blocked ||
 		st.GetArtifact(input.Named(), store.ArtifactContent) != nil ||
-		len(st.Warnings()) != 0 {
-		t.Fatalf("declaration loss reached preparation: wait=%+v status=%+v", run.Blocked, info)
-	}
-	if (*testCaseInput) != "suspended" &&
+		len(st.Warnings()) != 0,
+		"declaration loss reached preparation: wait=%+v status=%+v", run.Blocked, info)
+	assert.FatalIf(t, (*testCaseInput) != "suspended" &&
 		!slices.Equal(info.BlockedBy(), []manifest.NamedResource{parent.Named()}) &&
-		!slices.Equal(run.Blocked, []manifest.NamedResource{parent.Named()}) {
-		t.Fatalf("withdrawn declaration did not park: %+v", run.Blocked)
-	}
+		!slices.Equal(run.Blocked, []manifest.NamedResource{parent.Named()}),
+		"withdrawn declaration did not park: %+v", run.Blocked)
+
 	assert.FatalIf(
 		t, (*testCaseInput) ==
 			"failed" && !info.IsDependencyFailure(), "materializer failure lost provenance: %+v",
 		info,
 	)
+
 	assert.FatalIf(
 		t, (*testCaseInput) ==
 			"suspended" && info.Outcome() != store.OutcomeSuspended, "effective suspension lost: %+v",

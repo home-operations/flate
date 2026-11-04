@@ -176,6 +176,7 @@ func (c *countedProductions) Productions(
 	return c.Store.Productions(id, index)
 }
 
+//nolint:gocritic // Immutable value inputs preserve snapshot semantics.
 func (c *countedProductions) IncomingProductions(
 	child store.Child,
 	index *manifest.DiscoveryIndex,
@@ -249,6 +250,7 @@ func TestAddEmitted_PrimaryAdmissionReadsRelationOnce(t *testing.T) {
 	}
 }
 
+//nolint:gocritic // Immutable value inputs preserve snapshot semantics.
 func (p *pausedIncoming) IncomingProductions(child store.Child, index *manifest.DiscoveryIndex) []manifest.Production {
 	if child.Obj.Named() == p.id {
 		p.once.Do(func() { close(p.read) })

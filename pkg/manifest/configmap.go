@@ -64,7 +64,7 @@ func (c *ConfigMap) HasKeys() bool { return len(c.Data) != 0 }
 // Keys yields the data keys without imposing output order.
 func (c *ConfigMap) Keys() iter.Seq[string] { return maps.Keys(c.Data) }
 
-// WithSupplied fills absent or wiped logical keys without changing repository data.
+// WithSupplied fills absent logical keys without changing repository data.
 func (c *ConfigMap) WithSupplied(supplied Data) SuppliedData {
 	out := *c
 	out.Data = nil
@@ -178,7 +178,7 @@ func (s *Secret) Keys() iter.Seq[string] {
 	}
 }
 
-// WithSupplied fills absent or wiped logical keys while preserving lazy decoding.
+// WithSupplied fills absent logical keys while preserving lazy decoding.
 func (s *Secret) WithSupplied(supplied Data) SuppliedData {
 	out := *s
 	out.Data = nil
@@ -208,11 +208,6 @@ func (s *Secret) WithSupplied(supplied Data) SuppliedData {
 		out.Data = nil
 	}
 	return SuppliedData{Data: &out, Overridden: overridden}
-}
-
-// HasPlaceholder reports whether the payload contains a wiped value.
-func (s *Secret) HasPlaceholder() bool {
-	return ContainsValuePlaceholder(s.StringData) || ContainsValuePlaceholder(s.Data)
 }
 
 // Snapshot returns an owned document for sanitation through ParseDoc.

@@ -34,7 +34,7 @@ func TestStoreProvider_SuppliedProductionReplacementAndWithdrawal(t *testing.T) 
 	var first store.ReadSet
 	first.Init(s, consumer.Named(), nil)
 	defer first.Close()
-	input := NewStoreProvider(&first, true).Lookup(supplied.Named())
+	input := NewStoreProvider(&first).Lookup(supplied.Named())
 
 	assert.FatalIf(
 		t,
@@ -63,7 +63,7 @@ func TestStoreProvider_SuppliedProductionReplacementAndWithdrawal(t *testing.T) 
 	second.Init(s, consumer.Named(), nil)
 	second.GetObject(consumer.Named())
 	defer second.Close()
-	resolved := NewStoreProvider(&second, true).Data(supplied.Named())
+	resolved := NewStoreProvider(&second).Data(supplied.Named())
 	assert.FatalIf(t, resolved != repository, "%s", "accepted repository data did not supersede supply")
 	second.Accept()
 	assert.Diff(
@@ -81,7 +81,7 @@ func TestStoreProvider_SuppliedProductionReplacementAndWithdrawal(t *testing.T) 
 	var third store.ReadSet
 	third.Init(s, consumer.Named(), nil)
 	defer third.Close()
-	restored := NewStoreProvider(&third, true).Data(supplied.Named())
+	restored := NewStoreProvider(&third).Data(supplied.Named())
 	valueResult2, valueResultErr := restored.Value("VALUE")
 	value, err = valueResult2.Value, valueResultErr
 	assert.NoError(t, err)
@@ -113,7 +113,7 @@ func TestStoreProvider_SharedSuppliedValues(t *testing.T) {
 			StringData: map[string]any{"VALUE": "repository", "tag": ""},
 		},
 	)
-	provider := NewStoreProvider(s, true)
+	provider := NewStoreProvider(s)
 	ks := &manifest.Kustomization{
 		Name:      "consumer",
 		Namespace: "apps",
@@ -137,8 +137,7 @@ func TestStoreProvider_SharedSuppliedValues(t *testing.T) {
 		},
 		Values: map[string]any{"greeting": "inline"},
 	}
-	omitted, err := ExpandValueReferences(hr, provider, nil)
+	err := ExpandValueReferences(hr, provider, nil)
 	assert.NoError(t, err)
-	assert.FatalIf(t, len(omitted) != 0, "usable supply omitted: %v", omitted)
 	assert.Diff(t, hr.Values, map[string]any{"greeting": "inline", "image": map[string]any{"tag": ""}})
 }

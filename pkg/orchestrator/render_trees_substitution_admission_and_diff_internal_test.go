@@ -11,6 +11,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -48,7 +49,6 @@ func TestRenderTrees_SubstitutionAdmissionAndDiff(t *testing.T) {
 	cfg := treeConfig{
 		CacheDir:            t.TempDir(),
 		Concurrency:         4,
-		WipeSecrets:         true,
 		Supply:              []store.Declaration{source},
 		StrictSubstitutions: true,
 		Tree:                Tree{},
@@ -117,8 +117,8 @@ func TestRenderTrees_SubstitutionAdmissionAndDiff(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestRender_SubstitutionChangesDoNotSelectConsumers(t *testing.T) {
+	t.Parallel()
 	baseRoot, headRoot := t.TempDir(), t.TempDir()
 	for _, root := range []string{baseRoot, headRoot} {
 		writeSubstitutionCluster(t, root, "external", "${VALUE}")
@@ -149,16 +149,75 @@ func TestRender_SubstitutionChangesDoNotSelectConsumers(t *testing.T) {
 
 func TestRenderTrees_SuppliedTransitionsMatchFull(t *testing.T) {
 	t.Parallel()
-	for _, transition := range [][2]string{{"absent", "real"}, {"wiped", "real"}, {"real", "absent"}, {"real", "wiped"}} {
+	for _, transition := range [][2]string{{"absent", "real"}, {"empty", "real"}, {"real", "absent"}, {"real", "empty"}} {
 		t.Run(strings.Join(transition[:], "-"), func(t *testing.T) {
 			t.Parallel()
-			testRenderTreesSuppliedTransitionsMatchFullCase(
+			testRenderTreesSuppliedTransitionsMatchFullCase1(t, &transition)
+		})
+	}
+}
+
+func testRenderTreesSuppliedTransitionsMatchFullCase1(t *testing.T, transition *[2]string) {
+	t.Helper()
+
+	roots := []string{t.TempDir(), t.TempDir()}
+	for i, root := range roots {
+		writeSubstitutionCluster(t, root, "settings", "${VALUE}")
+		if transition[i] != "absent" {
+			value := "repository"
+			if transition[i] == "empty" {
+				value = "ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]"
+			}
+			testutil.WriteFile(
 				t,
-				&transition,
+				root,
+				"settings.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: '"+value+"'}\n",
 			)
-		},
+			testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux.yaml, settings.yaml]\n")
+		}
+	}
+	cfg := Config{
+		CacheDir:    t.TempDir(),
+		Concurrency: 2,
+		Supply:      []store.Declaration{suppliedSubstitution("settings")},
+	}
+	consumer := testutil.KustomizationID("apps", "consumer")
+	for range 2 {
+		testRenderTreesSuppliedTransitionsMatchFullCase1Part1(
+			t,
+			&testRenderTreesSuppliedTransitionsMatchFullCase1Part1Inputs{
+				roots:      &roots,
+				cfg:        &cfg,
+				transition: &transition,
+				consumer:   &consumer,
+			},
 		)
 	}
+}
+
+func testRenderTreesSuppliedTransitionsMatchFullCase1Part1(
+	t *testing.T, inputs *testRenderTreesSuppliedTransitionsMatchFullCase1Part1Inputs,
+) {
+	t.Helper()
+	paired, err := RenderTrees(
+		t.Context(),
+		[]Tree{
+			{RepoRoot: (*inputs.roots)[0], ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}},
+			{RepoRoot: (*inputs.roots)[1], ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}},
+		}, (*inputs.cfg),
+	)
+	assert.NoError(t, err)
+	testRenderTreesSuppliedTransitionsMatchFullCase1Part1Tail(
+		t,
+		&testRenderTreesSuppliedTransitionsMatchFullCase1Part1TailInputs{
+			roots:      &inputs.roots,
+			cfg:        &inputs.cfg,
+			transition: &inputs.transition,
+			consumer:   &inputs.consumer,
+			paired:     &paired,
+		},
+	)
 }
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
@@ -173,19 +232,54 @@ func TestBootstrap_SubstitutionDuplicatesReplaceWholeObjects(t *testing.T) {
 	first.Doc = testutil.ObjectDocument(first.Obj)
 	o := newSubstitutionOrchestrator(t, treeConfig{Supply: []store.Declaration{first, last}, Path: root})
 	res, err := o.render(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.FatalIf(t, err != nil, "%s", err)
+
 	id := testutil.KustomizationID("apps", "consumer")
 	if got := substitutionValue(t, res, id); got != "last-gone" {
 		t.Fatalf("duplicate maps merged: %q", got)
 	}
-	if !maps.Equal(o.store.ReferenceFacts(last.Obj.Named(),
-		nil,
-		false,
-		manifest.NamedResource{}).Data.(*manifest.ConfigMap).Data,
-		last.Obj.(*manifest.ConfigMap).Data) {
-		t.Fatal("accepted input differs from last whole object")
+	assert.FatalIf(t, !maps.Equal(
+		o.store.ReferenceFacts(last.Obj.Named(), nil, manifest.NamedResource{}).Data.(*manifest.ConfigMap).Data,
+		last.Obj.(*manifest.ConfigMap).Data,
+	), "%s", "accepted input differs from last whole object")
+
+	for _, encryptedLast := range []bool{false, true} {
+		t.Run(fmt.Sprintf("encrypted_last=%t", encryptedLast), func(t *testing.T) {
+			encrypted := suppliedSubstitution("external")
+			encrypted.Obj.(*manifest.ConfigMap).Data = map[string]any{
+				"Z":     "ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]",
+				"A":     "ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]",
+				"EMPTY": "",
+			}
+			child, outcome, _ := loader.Prepare(
+				manifest.DocOccurrence{Document: testutil.ObjectDocument(encrypted.Obj)},
+				manifest.ParseDocOptions{RequiredIdentity: true},
+			)
+			assert.NoError(t, outcome.Err)
+			encrypted.Obj, encrypted.Doc, encrypted.Warnings = child.Obj, child.Doc, child.Warnings
+			inputs := []store.Declaration{encrypted, last}
+			if encryptedLast {
+				inputs = []store.Declaration{last, encrypted}
+			}
+			current := newSubstitutionOrchestrator(t, treeConfig{Supply: inputs, Path: t.TempDir()})
+			data := current.store.ReferenceFacts(last.Obj.Named(), nil, manifest.NamedResource{}).Data
+			want := last.Obj.(*manifest.ConfigMap).Data
+			if encryptedLast {
+				want = map[string]any{"EMPTY": ""}
+			}
+			assert.Diff(t, data.(*manifest.ConfigMap).Data, want)
+			warnings := current.store.Warnings()
+			count := 0
+			if encryptedLast {
+				count = 1
+			}
+			assert.Equal(t, len(warnings), count)
+			if encryptedLast {
+				assert.Equal(t, warnings[0].Count, 1)
+				assert.Equal(t, warnings[0].Category, manifest.WarnSOPSUnreadable)
+				assert.Diff(t, warnings[0].Detail, []string{"A", "Z"})
+			}
+		})
 	}
 }
 
@@ -203,10 +297,8 @@ func TestSupply_IndexedIdentityDoesNotPublish(t *testing.T) {
 					Records: map[manifest.NamedResource]manifest.DiscoveryRecord{indexed: {Path: "repository.yaml"}},
 				},
 			)
-			if o.store.ReferenceFacts(id, nil, false, manifest.NamedResource{}).Data == nil ||
-				!o.store.ReportHidden(id) {
-				t.Fatal("indexed evidence changed supply or published it")
-			}
+			assert.FatalIf(t, o.store.ReferenceFacts(id, nil, manifest.NamedResource{}).Data == nil ||
+				!o.store.ReportHidden(id), "%s", "indexed evidence changed supply or published it")
 		})
 	}
 }
@@ -234,13 +326,57 @@ func TestRenderTrees_RequiredPostBuildNotWaived(t *testing.T) {
 		for _, allowed := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/allowed=%t", kind, allowed), func(t *testing.T) {
 				t.Parallel()
-				testRenderTreesRequiredPostBuildNotWaivedCase(
-					t,
-					testRenderTreesRequiredPostBuildNotWaivedCaseInputs{kind: &kind, allowed: &allowed},
-				)
-			},
-			)
+				testRenderTreesRequiredPostBuildNotWaivedCase1(t, &kind, &allowed)
+			})
 		}
+	}
+}
+
+func testRenderTreesRequiredPostBuildNotWaivedCase1(t *testing.T, kind *string, allowed *bool) {
+	t.Helper()
+
+	roots := []string{t.TempDir(), t.TempDir()}
+	trees := make([]Tree, 2)
+	for i, root := range roots {
+		testutil.WriteFile(
+			t,
+			root,
+			"flux.yaml",
+			substitutionKS(
+				"consumer",
+				"app",
+				"  postBuild: {substituteFrom: [{kind: "+(*kind)+", name: absent}]}\n",
+			),
+		)
+		testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [cm.yaml]\n")
+		testutil.WriteFile(
+			t,
+			root,
+			"app/cm.yaml",
+			fmt.Sprintf(
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: rendered}\ndata: {value: '${VALUE}-%d'}\n",
+				i,
+			),
+		)
+		trees[i] = Tree{RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeSide(i)}}
+	}
+	cfg := Config{Concurrency: 2}
+	if *allowed {
+		cfg.AllowMissingKinds = []string{
+			manifest.KindSecret,
+			manifest.KindConfigMap,
+			manifest.KindCustomResourceDefinition,
+		}
+	}
+	runs, err := RenderTrees(t.Context(), trees, cfg)
+	assert.FatalIf(t, err == nil || len(runs) != 2,
+		"paired required input admitted: %+v %v", runs, err)
+
+	for _, run := range runs {
+		id := testutil.KustomizationID("apps", "consumer")
+		assert.FatalIf(t, run.Result == nil || run.Result.Failed[id].Status != store.StatusFailed ||
+			len(outputByParent(run.Result.Manifests)[id]) != 0,
+			"required input admitted on side %v: %+v", run.ID, run.Result)
 	}
 }
 
@@ -291,7 +427,7 @@ func TestRender_SubstitutionDeferredEntry(t *testing.T) {
 	)
 	assert.NoError(t, err)
 	for _, name := range []string{"data", "ready"} {
-		parsed, localErr := manifest.ParseDoc(
+		result1, localErr := manifest.ParseDoc(
 			map[string]any{
 				"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 				"kind":       "Kustomization",
@@ -300,7 +436,8 @@ func TestRender_SubstitutionDeferredEntry(t *testing.T) {
 			},
 			manifest.ParseDocOptions{},
 		)
-		obj := parsed.Object
+		obj := result1.Object
+
 		assert.NoError(t, localErr)
 		o.store.AddObject(obj)
 	}
@@ -315,13 +452,12 @@ func TestRender_SubstitutionDeferredEntry(t *testing.T) {
 		"deferred entry published an effective child during discovery",
 	)
 	result, err := o.collectResult(o.run(t.Context()))
-	if err != nil {
-		t.Fatalf("deferred entry did not progress: %v; failed=%v blocked=%v",
-			err,
-			result.Failed,
-			result.Blocked,
-		)
-	}
+	assert.FatalIf(t, err != nil,
+		"deferred entry did not progress: %v; failed=%v blocked=%v",
+		err,
+		result.Failed,
+		result.Blocked)
+
 	effective, ok := o.store.GetObject(child).(*manifest.Kustomization)
 	assert.FatalIf(t, !ok || effective.SourceID().Name != "late-self" || len(effective.DependsOn) != 1 ||
 		effective.DependsOn[0].Name != "ready", "effective graph was not admitted together: %+v", effective)
@@ -340,82 +476,6 @@ func TestRender_SubstitutionDeferredEntry(t *testing.T) {
 		"effective emission has no accepted render receipt",
 	)
 	assert.FatalIf(t, len(outputByParent(result.Manifests)[child]) != 1, "%v", "effective child did not render")
-}
-
-//nolint:paralleltest // The test calls a helper that changes process-global state.
-func TestRender_RootSecretOverridesProducerPlaceholder(t *testing.T) {
-	root := t.TempDir()
-	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [secret.yaml, producer.yaml, consumer.yaml]\n")
-	testutil.WriteFile(
-		t,
-		root,
-		"secret.yaml",
-		"apiVersion: v1\nkind: Secret\nmetadata: {name: settings, namespace: apps}\nstringData: {VALUE: repository}\n",
-	)
-	testutil.WriteFile(
-		t,
-		root,
-		"producer.yaml",
-		"apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: settings, namespace: apps}\nspec:\n  target: {name: settings}\n  data: [{secretKey: VALUE, remoteRef: {key: fixture}}]\n",
-	)
-	testutil.WriteFile(
-		t,
-		root,
-		"consumer.yaml",
-		substitutionKS("consumer", "leaf", "  postBuild: {substituteFrom: [{kind: Secret, name: settings}]}\n"),
-	)
-	testutil.WriteFile(t, root, "leaf/kustomization.yaml", "resources: [cm.yaml]\n")
-	testutil.WriteFile(
-		t,
-		root,
-		"leaf/cm.yaml",
-		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: rendered, namespace: apps}\ndata: {value: '${VALUE}'}\n",
-	)
-	input := &manifest.Secret{Name: "settings", Namespace: "apps", StringData: map[string]any{"VALUE": "private-value"}}
-	o := newSubstitutionOrchestrator(t,
-		treeConfig{
-			Path:     root,
-			RepoRoot: root,
-			Supply: []store.Declaration{{
-				Doc:    testutil.ObjectDocument(input),
-				Obj:    input,
-				Origin: manifest.SuppliedDeclaration,
-			}},
-		})
-	assert.NoError(t, o.bootstrap(t.Context()))
-	secret := input.Named()
-	if o.store.GetObject(secret) != input &&
-		o.store.GetObject(secret).(manifest.Data).HasKeys() == false ||
-		o.store.EmissionOwner(secret) != (manifest.NamedResource{}) {
-		t.Fatal("root-owned Secret published before its producer")
-	}
-	record := o.index.Records[secret]
-	before, ok := record.Declaration.(*manifest.Secret)
-	if !ok || before.StringData["VALUE"] != "repository" || record.BuilderOwner != o.entryBinding.Producer {
-		t.Fatalf("root-owned Secret lost immutable entry evidence: %+v", record)
-	}
-	result, err := o.collectResult(o.run(t.Context()))
-	assert.NoError(t, err)
-	assert.Equal(t, substitutionValue(t, result, testutil.KustomizationID("apps", "consumer")), "repository")
-	after, ok := o.store.GetObject(secret).(*manifest.Secret)
-	if !ok || after.StringData["VALUE"] != "repository" {
-		t.Fatalf("runtime repository precedence lost: %+v", after)
-	}
-	assert.Equal(t, o.store.EmissionOwner(secret), o.entryBinding.Producer)
-	_, _, inventory := o.store.GetEmission(o.entryBinding.Producer)
-	inventory.Children, inventory.Complete = nil, true
-	o.store.RecordEmitted(o.entryBinding.Producer, &inventory, nil)
-	inventory.Finish()
-	o.store.DeleteObject(secret)
-	facts := o.store.ReferenceFacts(secret, nil, false, manifest.NamedResource{})
-	if facts.Data == nil {
-		t.Fatal("repository data removed the invocation supplied snapshot")
-	}
-	valueResult, err := facts.Data.Value("VALUE")
-	supplied := valueResult.Value
-	assert.NoError(t, err)
-	assert.Equal(t, supplied, "private-value")
-	assert.Equal(t, input.StringData["VALUE"], "private-value")
 }
 
 func TestRenderTrees_IgnoredRequiredSubstitution(t *testing.T) {
@@ -463,8 +523,8 @@ func TestRenderTrees_IgnoredRequiredSubstitution(t *testing.T) {
 		nil,
 	)
 	for _, run := range runs {
-		membershipResult1 := run.filter.Membership(consumer)
-		needed, output, _, _ := membershipResult1.Needed, membershipResult1.Selected, membershipResult1.Dirty, membershipResult1.Revision
+		adaptedResult1 := run.filter.Membership(consumer)
+		needed, output := adaptedResult1.Needed, adaptedResult1.Selected
 		status, present := run.Store().GetStatus(consumer)
 		t.Logf(
 			"side=%d needed=%t selected=%t status=%s present=%t rawFailure=%v selectedFailure=%v rawError=%v selectedError=%v",
@@ -493,146 +553,97 @@ func TestRenderTrees_IgnoredRequiredSubstitution(t *testing.T) {
 	assert.NoError(t, remainder)
 }
 
-func testRenderTreesSuppliedTransitionsMatchFullCase(
+type testRenderTreesSuppliedTransitionsMatchFullCase1Part1TailInputs struct {
+	roots **[]string
+
+	cfg **Config
+
+	transition ***[2]string
+
+	consumer **manifest.
+			NamedResource
+
+	paired *[]Rendered
+}
+
+func testRenderTreesSuppliedTransitionsMatchFullCase1Part1Tail(
 	t *testing.T,
-	testCaseInput *[2]string,
+	inputs *testRenderTreesSuppliedTransitionsMatchFullCase1Part1TailInputs,
 ) {
 	t.Helper()
 
-	roots := []string{t.TempDir(), t.TempDir()}
-	for i, root := range roots {
-		writeSubstitutionCluster(t, root, "settings", "${VALUE}")
-		if testCaseInput[i] != "absent" {
-			value := "repository"
-			if testCaseInput[i] == "wiped" {
-				value = manifest.ValuePlaceholder("VALUE")
-			}
-			testutil.WriteFile(
-				t,
-				root,
-				"settings.yaml",
-				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: '"+value+"'}\n",
-			)
-			testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux.yaml, settings.yaml]\n")
-		}
-	}
-	cfg := Config{
-		CacheDir:    t.TempDir(),
-		Concurrency: 2,
-		WipeSecrets: true,
-		Supply:      []store.Declaration{suppliedSubstitution("settings")},
-	}
-	consumer := testutil.KustomizationID("apps", "consumer")
-	for range 2 {
-		paired, err := RenderTrees(
+	for i, root := range *(*inputs.roots) {
+		full, err := RenderTrees(
 			t.Context(),
-			[]Tree{
-				{RepoRoot: roots[0], ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}},
-				{RepoRoot: roots[1], ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}},
-			},
-			cfg,
+			[]Tree{{RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, (*(*inputs.cfg)),
 		)
 		assert.NoError(t, err)
-		for i, root := range roots {
-			full, err := RenderTrees(
-				t.Context(),
-				[]Tree{{RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
-				cfg,
-			)
-			assert.NoError(t, err)
-			want := "supplied"
-			if testCaseInput[i] == "real" {
-				want = "repository"
+		want := "supplied"
+		if (*(*inputs.transition))[i] == "real" {
+			want = "repository"
+		}
+		assert.Equal(t, substitutionValue(t, full[0].Result, (*(*inputs.consumer))), want)
+		assert.Equal(t, substitutionValue(t, (*inputs.paired)[i].Result, (*(*inputs.consumer))), want)
+		origin := manifest.SuppliedDeclaration
+		if (*(*inputs.transition))[i] != "absent" {
+			origin = manifest.RepositoryDeclaration
+		}
+		id := (*inputs.cfg).Supply[0].Obj.Named()
+		assert.Equal(t, (*inputs.paired)[i].Store().Policy(id).Origin, origin)
+		assert.Equal(t, full[0].Store().Policy(id).Origin, origin)
+		for _, result := range []*Result{(*inputs.paired)[i].Result, full[0].Result} {
+			testSuppliedOutputData(t, result, id, (*(*inputs.transition))[i] == "real")
+		}
+		var wantWarnings []manifest.Warning
+		if (*(*inputs.transition))[i] == "real" {
+			wantWarnings = []manifest.Warning{
+				{
+					Category: manifest.WarnSuppliedPrecedence,
+					Message:  "repository data takes precedence over supplied data",
+					Detail:   []string{"ConfigMap/apps/settings: VALUE (ci-values.yaml)"},
+					Count:    1,
+				},
 			}
-			assert.Equal(t, substitutionValue(t, full[0].Result, consumer), want)
-			assert.Equal(t, substitutionValue(t, paired[i].Result, consumer), want)
-			origin := map[string]manifest.DeclarationOrigin{"absent": manifest.SuppliedDeclaration, "real": manifest.RepositoryDeclaration, "wiped": manifest.RepositoryDeclaration}[testCaseInput[i]]
-			id := cfg.Supply[0].Obj.Named()
-			assert.Equal(t, paired[i].Store().Policy(id).Origin, origin)
-			assert.Equal(t, full[0].Store().Policy(id).Origin, origin)
-			var wantWarnings []manifest.Warning
-			if testCaseInput[i] == "real" {
-				wantWarnings = []manifest.Warning{
+		}
+		assert.Diff(t, full[0].Result.ClusterWarnings, wantWarnings)
+		if i == 0 {
+			assert.Equal(t, len((*inputs.paired)[i].Result.ClusterWarnings), 0)
+		} else {
+			assert.Diff(
+				t, (*inputs.paired)[i].Result.ClusterWarnings, []manifest.Warning{
 					{
 						Category: manifest.WarnSuppliedPrecedence,
 						Message:  "repository data takes precedence over supplied data",
 						Detail:   []string{"ConfigMap/apps/settings: VALUE (ci-values.yaml)"},
 						Count:    1,
 					},
-				}
-			}
-			assert.Diff(t, full[0].Result.ClusterWarnings, wantWarnings)
-			if i == 0 {
-				assert.Equal(t, len(paired[i].Result.ClusterWarnings), 0)
-			} else {
-				assert.Diff(
-					t,
-					paired[i].Result.ClusterWarnings,
-					[]manifest.Warning{
-						{
-							Category: manifest.WarnSuppliedPrecedence,
-							Message:  "repository data takes precedence over supplied data",
-							Detail:   []string{"ConfigMap/apps/settings: VALUE (ci-values.yaml)"},
-							Count:    1,
-						},
-					},
-				)
-			}
+				},
+			)
 		}
 	}
 }
 
-type testRenderTreesRequiredPostBuildNotWaivedCaseInputs struct {
-	kind    *string
-	allowed *bool
+type testRenderTreesSuppliedTransitionsMatchFullCase1Part1Inputs struct {
+	roots      *[]string
+	cfg        *Config
+	transition **[2]string
+	consumer   *manifest.NamedResource
 }
 
-func testRenderTreesRequiredPostBuildNotWaivedCase(
-	t *testing.T,
-	testCaseInput testRenderTreesRequiredPostBuildNotWaivedCaseInputs,
-) {
+func testSuppliedOutputData(t *testing.T, result *Result, id manifest.NamedResource, readable bool) {
 	t.Helper()
-
-	roots := []string{t.TempDir(), t.TempDir()}
-	trees := make([]Tree, 2)
-	for i, root := range roots {
-		testutil.WriteFile(
-			t,
-			root,
-			"flux.yaml",
-			substitutionKS(
-				"consumer",
-				"app",
-				"  postBuild: {substituteFrom: [{kind: "+(*testCaseInput.kind)+", name: absent}]}\n",
-			),
-		)
-		testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [cm.yaml]\n")
-		testutil.WriteFile(
-			t,
-			root,
-			"app/cm.yaml",
-			fmt.Sprintf(
-				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: rendered}\ndata: {value: '${VALUE}-%d'}\n",
-				i,
-			),
-		)
-		trees[i] = Tree{RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeSide(i)}}
-	}
-	cfg := Config{Concurrency: 2, WipeSecrets: true}
-	if *testCaseInput.allowed {
-		cfg.AllowMissingKinds = []string{
-			manifest.KindSecret,
-			manifest.KindConfigMap,
-			manifest.KindCustomResourceDefinition,
+	for _, documents := range outputByParent(result.Manifests) {
+		for _, document := range documents {
+			if manifest.DocIdentity(document) != id {
+				continue
+			}
+			data, _ := document["data"].(map[string]any)
+			if readable {
+				assert.Equal(t, data["VALUE"], any("repository"))
+			} else {
+				_, present := data["VALUE"]
+				assert.Equal(t, present, false)
+			}
 		}
-	}
-	runs, err := RenderTrees(t.Context(), trees, cfg)
-	assert.FatalIf(t, err == nil || len(runs) != 2, "paired required input admitted: %+v %v", runs, err)
-	for _, run := range runs {
-		id := testutil.KustomizationID("apps", "consumer")
-		assert.FatalIf(t, run.Result == nil || run.Result.Failed[id].Status != store.StatusFailed ||
-			len(
-				outputByParent(run.Result.Manifests)[id],
-			) != 0, "required input admitted on side %v: %+v", run.ID, run.Result)
 	}
 }

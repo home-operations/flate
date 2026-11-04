@@ -7,13 +7,7 @@ import (
 	"strings"
 )
 
-// ProducerTarget identifies an object a cluster-side producer declares and its known Secret keys.
-//
-// DeclaredKeys contains sorted, deduplicated, statically declared Secret keys for
-// offline placeholders. Remote dataFrom-only ExternalSecrets leave it nil because
-// their keys are unknowable offline. ObjectBucketClaim keys also remain nil because
-// the provisioner's fixed keys are outside the byte-verified scope. Such outputs
-// remain unreadable and can still produce the unresolved-substitution advisory.
+// ProducerTarget identifies a declared object and its known data keys.
 type ProducerTarget struct {
 	NamedResource
 

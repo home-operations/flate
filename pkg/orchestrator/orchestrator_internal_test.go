@@ -310,7 +310,7 @@ data: {k: v}
 	for _, key := range []string{"HOME", "XDG_CACHE_HOME", "TMPDIR", "TMP", "TEMP", "LOCALAPPDATA", "FLATE_CACHE_DIR"} {
 		t.Setenv(key, fallback)
 	}
-	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{WipeSecrets: true, Concurrency: 2})
+	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{Concurrency: 2})
 	assert.FatalIf(t, err != nil, "New: %v", err)
 	t.Cleanup(func() {
 		o.stop()
@@ -377,7 +377,7 @@ metadata: {name: hello}
 data: {k: v}
 `)
 
-	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{WipeSecrets: true, Concurrency: 4})
+	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{Concurrency: 4})
 	assert.FatalIf(t, err != nil, "New: %v", err)
 	{
 		err := o.bootstrap(context.Background())
@@ -485,7 +485,7 @@ func TestOrchestrator_ExplicitRepoRootNoGit(t *testing.T) {
 		writeCluster(t, dir)
 		assert.ErrorIf(
 			t,
-			rendersDemo(t, treeConfig{WipeSecrets: true, Concurrency: 4, Path: dir + "/kubernetes/flux/cluster"}),
+			rendersDemo(t, treeConfig{Concurrency: 4, Path: dir + "/kubernetes/flux/cluster"}),
 			"%v",
 			"no RepoRoot + no .git: spec.path doubles; cluster-apps should render nothing",
 		)
@@ -528,7 +528,7 @@ func TestOrchestrator_SelfSubstituteBareDirNoDeadlock(t *testing.T) {
 	testutil.WriteFile(t, dir, "kubernetes/components/substitutions/cluster-settings.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cluster-settings\ndata:\n  CLUSTER_NAME: home\n")
 
-	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{WipeSecrets: true, Concurrency: 4})
+	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{Concurrency: 4})
 	assert.FatalIf(t, err != nil, "New: %v", err)
 	{
 		err := o.bootstrap(context.Background())
@@ -589,7 +589,7 @@ func TestOrchestrator_SelfSubstituteAbsentCMFailsLoud(t *testing.T) {
 	testutil.WriteFile(t, dir, "kubernetes/apps/flux-system/cm.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: other\ndata:\n  k: v\n")
 
-	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{WipeSecrets: true, Concurrency: 4})
+	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{Concurrency: 4})
 	assert.FatalIf(t, err != nil, "New: %v", err)
 	{
 		err := o.bootstrap(context.Background())
@@ -607,9 +607,8 @@ func TestOrchestrator_SelfSubstituteAbsentCMFailsLoud(t *testing.T) {
 		info,
 		ok,
 	)
-	if !strings.Contains(info.String(), "cluster-settings") {
-		t.Errorf("cluster-apps failure message = %q, want it to mention cluster-settings", info.String())
-	}
+	assert.ErrorIf(t, !strings.Contains(info.String(), "cluster-settings"),
+		"cluster-apps failure message = %q, want it to mention cluster-settings", info.String())
 }
 
 type testOrchestratorCommentedOutKSNotReconciledCaseInputs struct {
@@ -685,7 +684,7 @@ func testOrchestratorCommentedOutKSNotReconciledCase(
 				ID:   manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
 			},
 		},
-		Config{WipeSecrets: true, Concurrency: 2},
+		Config{Concurrency: 2},
 	)
 	assert.FatalIf(t, len(renderedSingleton1) != 1, "missing render: %v", err)
 	o := renderedSingleton1[0].Orchestrator
@@ -701,9 +700,8 @@ func testOrchestratorCommentedOutKSNotReconciledCase(
 	}
 	assert.ErrorIf(t, !found["echo-cm"], "%v", "listed app output is missing")
 	for _, name := range []string{"tunnel", "tunnel-cm", "backup-cm"} {
-		if found[name] != (*testCaseInput.enabled) {
-			t.Errorf("output %s present=%t, want %t", name, found[name], (*testCaseInput.enabled))
-		}
+		assert.ErrorIf(t, found[name] != (*testCaseInput.enabled),
+			"output %s present=%t, want %t", name, found[name], (*testCaseInput.enabled))
 	}
 	id := testutil.KustomizationID("network", "tunnel")
 	assert.ErrorIf(

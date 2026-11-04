@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -184,8 +185,12 @@ func testFetcherLocalAgentSSHCase(t *testing.T, shape *string,
 	repo := gitRepoWithSecret("agent", url, "auth")
 	inputs := testInputs{}
 	if (*shape) == "explicit rejected" {
+		knownHosts, readErr := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".ssh", "known_hosts"))
+		assert.NoError(t, readErr)
 		inputs.secrets = func(_, _ string) *manifest.Secret {
-			return &manifest.Secret{StringData: map[string]any{"identity": identity}}
+			return &manifest.Secret{StringData: map[string]any{
+				"identity": identity, "known_hosts": string(knownHosts),
+			}}
 		}
 	}
 	reads := inputs.readSet(repo)

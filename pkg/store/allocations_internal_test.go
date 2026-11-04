@@ -26,7 +26,7 @@ func TestStore_ProductionsQueryAllocations(t *testing.T) {
 			}
 			{
 				got := testing.AllocsPerRun(10, func() {
-					s.ReferenceFacts(target, nil, false, manifest.NamedResource{})
+					s.ReferenceFacts(target, nil, manifest.NamedResource{})
 				})
 				assert.FatalIf(t, got != 0, "reference facts allocations=%v, want 0", got)
 			}

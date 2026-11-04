@@ -162,8 +162,7 @@ spec:
     name: charts
 `)
 			o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{
-				CacheDir: t.TempDir(), WipeSecrets: true,
-				Concurrency: 4,
+				CacheDir: t.TempDir(), Concurrency: 4,
 			},
 			)
 			assert.FatalIf(t, err != nil, "New: %v", err)
@@ -228,8 +227,7 @@ spec:
     name: ca
 `, strings.TrimPrefix(server.URL, "https://")))
 	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{
-		CacheDir: t.TempDir(), WipeSecrets: true,
-		AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}, Concurrency: 4,
+		CacheDir: t.TempDir(), AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}, Concurrency: 4,
 	},
 	)
 	assert.FatalIf(t, err != nil, "New: %v", err)

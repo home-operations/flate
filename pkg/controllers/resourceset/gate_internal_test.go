@@ -17,7 +17,7 @@ import (
 func TestReconcile_SharedAdmission(t *testing.T) {
 	t.Parallel()
 	s := store.New()
-	c := New(s, task.NewBounded(2), nil, false)
+	c := New(s, task.NewBounded(2), nil)
 	c.Configure(base.Options{})
 	rs := &manifest.ResourceSet{
 		Name:              "app",
@@ -35,7 +35,7 @@ func TestReconcile_SharedAdmission(t *testing.T) {
 func TestReconcile_SingleFailureTransition(t *testing.T) {
 	t.Parallel()
 	s := store.New()
-	c := New(s, task.NewBounded(2), nil, false)
+	c := New(s, task.NewBounded(2), nil)
 	c.Configure(base.Options{})
 	rs := &manifest.ResourceSet{Name: "app", Namespace: "apps", ResourcesTemplate: "<< missingFunction >>"}
 	s.AddObject(rs)
@@ -58,7 +58,6 @@ func TestReconcile_SingleFailureTransition(t *testing.T) {
 		assert.FatalIf(t, len(blocked) != 0, "blocked: %v", blocked)
 	}
 	info, _ := s.GetStatus(rs.Named())
-	if info.Status != store.StatusFailed || failures.Load() != 1 {
-		t.Fatalf("status=%+v, failure events=%d", info, failures.Load())
-	}
+	assert.FatalIf(t, info.Status != store.StatusFailed || failures.Load() != 1,
+		"status=%+v, failure events=%d", info, failures.Load())
 }

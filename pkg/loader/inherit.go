@@ -195,7 +195,7 @@ func (l *Loader) desiredAuthored(
 				record := l.authoredManifestRecord(new(r), id, previous.Obj, projected)
 				next[id] = record
 				if manifest.KindOf(projected).Discovery {
-					objects[id] = store.Child{Obj: projected, Doc: authored.Doc}
+					objects[id] = store.Child{Obj: projected, Doc: authored.Doc, Warnings: authored.Warnings}
 				}
 			}
 		}

@@ -58,7 +58,7 @@ data: {k: v}
 	renderedSingleton3, err := RenderTrees(
 		context.Background(),
 		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
-		Config{WipeSecrets: true},
+		Config{},
 	)
 	assert.FatalIf(t, len(renderedSingleton3) != 1, "missing render: %v", err)
 	res := renderedSingleton3[0].Result
@@ -66,20 +66,19 @@ data: {k: v}
 	assert.FatalIf(t, res == nil, "%v", "Render returned nil Result")
 	ksID := testutil.KustomizationID("flux-system", "apps")
 	mans, ok := outputByParent(res.Manifests)[ksID]
-	if !ok {
-		t.Fatalf("Result.Manifests missing %s; keys=%v", ksID, keysOf(outputByParent(res.Manifests)))
-	}
+	assert.FatalIf(t, !ok,
+		"Result.Manifests missing %s; keys=%v", ksID, keysOf(outputByParent(res.Manifests)))
+
 	assert.ErrorIf(t, len(mans) == 0, "expected rendered docs for %s; got empty", ksID)
-	if len(res.Failed) != 0 {
-		t.Errorf("expected no failures; got %v", res.Failed)
-	}
-	if len(res.Orphans) != 0 {
-		t.Errorf("expected no orphans; got %v", res.Orphans)
-	}
+	assert.ErrorIf(t, len(res.Failed) != 0,
+		"expected no failures; got %v", res.Failed)
+	assert.ErrorIf(t, len(res.Orphans) != 0,
+		"expected no orphans; got %v", res.Orphans)
+
 	again, err := RenderTrees(
 		t.Context(),
 		[]Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: dir}},
-		Config{WipeSecrets: true, Concurrency: 2},
+		Config{Concurrency: 2},
 	)
 	assert.NoError(t, err)
 	assert.FatalIf(t, len(again) != 1, "%v", "second invocation lost tree")
@@ -189,7 +188,7 @@ spec:
   defaultValues: {user: alice}
 `)
 
-	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{WipeSecrets: true, Concurrency: 2})
+	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{Concurrency: 2})
 	assert.FatalIf(t, err != nil, "New: %v", err)
 	{
 		localErr := o.bootstrap(t.Context())
@@ -223,13 +222,11 @@ spec:
 			break
 		}
 	}
-	if !found {
-		t.Errorf(
-			"expected ExternalSecret/acl in outputByParent(res.Manifests)[%s] (the RS-rendered child); kinds in stream: %v",
-			ksID,
-			kindsOf(mans),
-		)
-	}
+	assert.ErrorIf(t, !found,
+
+		"expected ExternalSecret/acl in outputByParent(res.Manifests)[%s] (the RS-rendered child); kinds in stream: %v",
+		ksID,
+		kindsOf(mans))
 }
 
 func kindsOf(docs []map[string]any) []string {
@@ -500,7 +497,7 @@ spec:
 	prime, err := newTestOrchestrator(
 		t,
 		Tree{Path: dir, RepoRoot: dir, Input: artifact},
-		Config{CacheDir: cacheDir, Concurrency: 2, WipeSecrets: true},
+		Config{CacheDir: cacheDir, Concurrency: 2},
 	)
 	assert.NoError(t, err)
 	assert.NoError(t, prime.bootstrap(t.Context()))
@@ -516,7 +513,6 @@ spec:
 		}),
 	}, Config{
 		CacheDir: cacheDir, Concurrency: 2,
-		WipeSecrets: true,
 	},
 	)
 	assert.FatalIf(t, err != nil, "New: %v", err)
@@ -529,9 +525,8 @@ spec:
 	producerID := testutil.KustomizationID("flux-system", "cluster-vars")
 	f := o.filter
 	assert.FatalIf(t, f == nil, "filter returned nil; ExternalChanges should have activated changed-only mode")
-	if !f.ShouldReconcile(producerID) {
-		t.Fatalf("producer %s must be in keep set; keep=%v", producerID, f.KeepNames())
-	}
+	assert.FatalIf(t, !f.ShouldReconcile(producerID),
+		"producer %s must be in keep set; keep=%v", producerID, f.KeepNames())
 
 	if err := o.run(context.Background()); err != nil {
 		assert.FatalIf(

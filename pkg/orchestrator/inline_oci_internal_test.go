@@ -374,10 +374,13 @@ func testRenderTreesInlineOCIIndependentGenerationsCase(
 }
 
 type newInlineChartRegistryTailInputs struct {
-	auth      *bool
-	registry  **inlineChartRegistry
+	auth *bool
+
+	registry **inlineChartRegistry
+
 	manifests *map[string][]byte
-	blobs     *map[string][]byte
+
+	blobs *map[string][]byte
 }
 
 type testRenderTreesInlineOCIIndependentGenerationsCaseSegmentInputs struct {

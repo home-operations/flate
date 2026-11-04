@@ -258,9 +258,9 @@ func testR4Running(t *testing.T, kind, result string, required bool) {
 	}
 	assert.NoError(t, <-done)
 	f.assertOutcome(t, required, result)
-	if readerDispatches.Load() > 4 || publications.Load() > 2 {
-		t.Fatalf("unbounded replay: dispatches=%d publications=%d", readerDispatches.Load(), publications.Load())
-	}
+	assert.FatalIf(t, readerDispatches.Load() > 4 || publications.Load() > 2,
+		"unbounded replay: dispatches=%d publications=%d", readerDispatches.Load(), publications.Load())
+
 	f.assertWarnings(t)
 	assert.Equal(t, f.o.tasks.Failures(), int64(0))
 }
@@ -602,7 +602,7 @@ func testResolveResourceSetInputCase(t *testing.T, testCaseInput testResolveReso
 			manifest.BootstrapSourceID,
 			store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""},
 		)
-		facts := o.store.ReferenceFacts(target, o.index, false, manifest.NamedResource{})
+		facts := o.store.ReferenceFacts(target, o.index, manifest.NamedResource{})
 
 		assert.FatalIf(t, !slices.ContainsFunc(
 			facts.Productions,

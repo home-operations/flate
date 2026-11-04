@@ -32,13 +32,11 @@ func TestDeepCopyMap_Isolation(t *testing.T) {
 	dst["nested"].(map[string]any)["k"] = "MUTATED"
 	dst["nested"].(map[string]any)["list"].([]any)[0].(map[string]any)["x"] = "MUTATED"
 	dst["nested"].(map[string]any)["list"].([]any)[1] = "MUTATED"
+	assert.ErrorIf(t, src["top"] != "scalar",
+		"source top leaked: %v", src["top"])
+	assert.ErrorIf(t, src["nested"].(map[string]any)["k"] != "v",
+		"source nested leaked: %v", src["nested"])
 
-	if src["top"] != "scalar" {
-		t.Errorf("source top leaked: %v", src["top"])
-	}
-	if src["nested"].(map[string]any)["k"] != "v" {
-		t.Errorf("source nested leaked: %v", src["nested"])
-	}
 	assert.ErrorIf(
 		t,
 		src["nested"].(map[string]any)["list"].([]any)[0].(map[string]any)["x"] != "y",
@@ -50,31 +48,6 @@ func TestDeepCopyMap_Isolation(t *testing.T) {
 func TestDeepCopyMap_Nil(t *testing.T) {
 	t.Parallel()
 	assert.ErrorIf(t, DeepCopyMap(nil) != nil, "nil source should produce nil")
-}
-
-func TestContainsValuePlaceholder_ValuesOnly(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name string
-		in   any
-		want bool
-	}{
-		{"nil", nil, false},
-		{"literal", "value", false},
-		{"placeholder", "..PLACEHOLDER_key..", true},
-		{"concatenation", "registry...PLACEHOLDER_DOMAIN..", true},
-		{"key only", map[string]any{"..PLACEHOLDER_key..": 1}, false},
-		{"nested key", []any{map[string]any{"..PLACEHOLDER_key..": "value"}}, false},
-		{"nested value", map[string]any{"data": []any{3, map[string]any{"value": "..PLACEHOLDER_key.."}}}, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			{
-				got := ContainsValuePlaceholder(tc.in)
-				assert.ErrorIf(t, got != tc.want, "ContainsValuePlaceholder = %v, want %v", got, tc.want)
-			}
-		})
-	}
 }
 
 // HelmRelease.Clone must produce a HR whose mutable fields don't alias
@@ -90,16 +63,12 @@ func TestHelmRelease_Clone_Isolation(t *testing.T) {
 	dst.Values["replicas"] = 99
 	dst.Values["nested"].(map[string]any)["k"] = "MUTATED"
 	dst.ChartValuesFiles[0] = "MUTATED"
-
-	if src.Values["replicas"] != 1 {
-		t.Errorf("source Values aliased: %v", src.Values["replicas"])
-	}
-	if src.Values["nested"].(map[string]any)["k"] != "v" {
-		t.Errorf("source nested Values aliased: %v", src.Values["nested"])
-	}
-	if src.ChartValuesFiles[0] != "values.yaml" {
-		t.Errorf("source ChartValuesFiles aliased: %v", src.ChartValuesFiles)
-	}
+	assert.ErrorIf(t, src.Values["replicas"] != 1,
+		"source Values aliased: %v", src.Values["replicas"])
+	assert.ErrorIf(t, src.Values["nested"].(map[string]any)["k"] != "v",
+		"source nested Values aliased: %v", src.Values["nested"])
+	assert.ErrorIf(t, src.ChartValuesFiles[0] != "values.yaml",
+		"source ChartValuesFiles aliased: %v", src.ChartValuesFiles)
 }
 
 func TestKustomization_Clone_Isolation(t *testing.T) {
@@ -185,12 +154,10 @@ func TestHelmRelease_Clone_DeepCopiesEmbeddedSpec(t *testing.T) {
 		src.DriftDetection.Mode != helmv2.DriftDetectionWarn,
 		"source DriftDetection aliased after Clone mutation",
 	)
-	if src.ValuesFrom[0].Name != "src-cm" {
-		t.Errorf("source ValuesFrom aliased: %v", src.ValuesFrom[0].Name)
-	}
-	if src.HelmReleaseSpec.DependsOn[0].Name != "src-dep" {
-		t.Errorf("source spec DependsOn aliased: %v", src.HelmReleaseSpec.DependsOn[0].Name)
-	}
+	assert.ErrorIf(t, src.ValuesFrom[0].Name != "src-cm",
+		"source ValuesFrom aliased: %v", src.ValuesFrom[0].Name)
+	assert.ErrorIf(t, src.HelmReleaseSpec.DependsOn[0].Name != "src-dep",
+		"source spec DependsOn aliased: %v", src.HelmReleaseSpec.DependsOn[0].Name)
 }
 
 // TestKustomization_Clone_DeepCopiesEmbeddedSpec pins the deep-copy of
@@ -217,19 +184,14 @@ func TestKustomization_Clone_DeepCopiesEmbeddedSpec(t *testing.T) {
 	dst.Patches[0].Patch = "MUTATED"
 	dst.Components[0] = "MUTATED"
 	dst.KustomizationSpec.DependsOn[0].Name = "MUTATED"
-
-	if src.PostBuild.Substitute["K"] != "v" {
-		t.Errorf("source PostBuild.Substitute aliased: %v", src.PostBuild.Substitute["K"])
-	}
-	if src.Patches[0].Patch != "src-patch" {
-		t.Errorf("source Patches aliased: %v", src.Patches[0].Patch)
-	}
-	if src.Components[0] != "src-comp" {
-		t.Errorf("source Components aliased: %v", src.Components[0])
-	}
-	if src.KustomizationSpec.DependsOn[0].Name != "src-dep" {
-		t.Errorf("source spec DependsOn aliased: %v", src.KustomizationSpec.DependsOn[0].Name)
-	}
+	assert.ErrorIf(t, src.PostBuild.Substitute["K"] != "v",
+		"source PostBuild.Substitute aliased: %v", src.PostBuild.Substitute["K"])
+	assert.ErrorIf(t, src.Patches[0].Patch != "src-patch",
+		"source Patches aliased: %v", src.Patches[0].Patch)
+	assert.ErrorIf(t, src.Components[0] != "src-comp",
+		"source Components aliased: %v", src.Components[0])
+	assert.ErrorIf(t, src.KustomizationSpec.DependsOn[0].Name != "src-dep",
+		"source spec DependsOn aliased: %v", src.KustomizationSpec.DependsOn[0].Name)
 }
 
 func TestWithNamespace_Copy(t *testing.T) {

@@ -25,12 +25,14 @@ type Warning struct {
 	// a WarnStaleValues advisory lists.
 	Detail []string
 	// Count is the number of current origins contributing this complete payload.
-	// Identical direct publications count once; incoming Count is ignored.
+	// SOPSUnreadable groups keys per object with Count=1. Incoming Count is ignored.
 	Count int
 }
 
 // Warning category codes. Stable identifiers a consumer filters on.
 const (
+	// WarnSOPSUnreadable reports unreadable encrypted keys on a core data object.
+	WarnSOPSUnreadable = "SOPSUnreadable"
 	// WarnConflictingProducers: unequal accepted contributions share an identity.
 	// Detail lists every contributor in deterministic settlement order.
 	WarnConflictingProducers = "ConflictingProducers"
@@ -51,12 +53,9 @@ const (
 	// WarnPathConfig: a --path / --path-orig misconfiguration (same root, or no
 	// detected changes). Render-global.
 	WarnPathConfig = "PathConfig"
-	// WarnUnresolvedSubstitution: a spec.postBuild.substituteFrom Secret could
-	// not be read offline (absent, or an ExternalSecret-synthesized empty
-	// target), so the ${VAR}s it would supply render as the empty string —
-	// dependent resources may then fail schema/template validation and drop
-	// out of the render. Render-global; Message names the Secret and Count
-	// records the independent consumers reporting the same payload.
+	// WarnUnresolvedSubstitution reports unavailable substituteFrom Secret variables.
+	// Inactive substitution preserves references; active substitution applies defaults
+	// or empty expansion. Count records independent consumers of the same payload.
 	WarnUnresolvedSubstitution = "UnresolvedSubstitution"
 	// WarnBootstrapAliases reports that multiple sources alias the working tree.
 	WarnBootstrapAliases = "BootstrapAliases"

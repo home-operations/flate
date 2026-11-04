@@ -252,7 +252,6 @@ func buildOrchCfg(c *commonFlags) orchestrator.Config {
 	return orchestrator.Config{
 		Cache:          c.owner,
 		HelmOptions:    helmOptions,
-		WipeSecrets:    true,
 		RegistryConfig: c.registryConfig,
 		Concurrency:    c.concurrency,
 		SourceRetry: sourcecache.RetryConfig{

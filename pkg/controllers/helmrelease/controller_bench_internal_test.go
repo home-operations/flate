@@ -110,7 +110,7 @@ func BenchmarkHelmReleaseEmission_Children(b *testing.B) {
 					c,
 					parent,
 					docs,
-					manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets, DefaultNamespace: ""},
+					manifest.ParseDocOptions{DefaultNamespace: ""},
 				)
 			}
 		})

@@ -53,13 +53,6 @@ func (f *operation) resolveAuth(
 	if err != nil {
 		return nil, fmt.Errorf("secret %s/%s: %w", repo.Namespace, repo.SecretRef.Name, err)
 	}
-	if manifest.HasValuePlaceholder(token) {
-		return nil, source.MissingSecretErr(
-			manifest.DiagnosticFor(repo.Named(), repo),
-			repo.SecretRef.Name,
-			"bearerToken unavailable",
-		)
-	}
 	if token != "" {
 		return &githttp.TokenAuth{Token: token}, nil
 	}
@@ -95,8 +88,8 @@ func (f *operation) resolveSSHAuth(
 		return nil, fmt.Errorf("secret %s/%s: %w", repo.Namespace, repo.SecretRef.Name, valueErr)
 	}
 	var auth *gitssh.PublicKeys
-	if identity.Value != "" && !manifest.HasValuePlaceholder(identity.Value) {
-		auth, valueErr = sshPublicKeys(cmp.Or(endpoint.User, "git"), identity.Value, password.Value)
+	if identity.Value != "" {
+		auth, valueErr = gitssh.NewPublicKeys(cmp.Or(endpoint.User, "git"), []byte(identity.Value), password.Value)
 		if valueErr != nil {
 			return nil, manifest.NewError(
 				manifest.ErrInput,
@@ -109,8 +102,8 @@ func (f *operation) resolveSSHAuth(
 			)
 		}
 	}
-	var cb ssh.HostKeyCallback = insecureIgnoreHostKey
-	if knownHosts.Value != "" && !manifest.HasValuePlaceholder(knownHosts.Value) {
+	var cb ssh.HostKeyCallback
+	if knownHosts.Value != "" {
 		cb, valueErr = knownHostsCallback([]byte(knownHosts.Value))
 		if valueErr != nil {
 			return nil, manifest.NewError(
@@ -124,42 +117,20 @@ func (f *operation) resolveSSHAuth(
 			)
 		}
 	}
-	if identity.Value == "" || manifest.HasValuePlaceholder(identity.Value) {
+	if identity.Value == "" {
 		return nil, source.MissingSecretErr(
 			manifest.DiagnosticFor(repo.Named(), repo),
 			repo.SecretRef.Name,
 			"missing 'identity' for SSH auth",
 		)
 	}
-	if manifest.HasValuePlaceholder(password.Value) {
+	if knownHosts.Value == "" {
 		return nil, source.MissingSecretErr(
 			manifest.DiagnosticFor(repo.Named(), repo),
 			repo.SecretRef.Name,
-			"SSH password unavailable",
-		)
-	}
-	if manifest.HasValuePlaceholder(knownHosts.Value) {
-		return nil, source.MissingSecretErr(
-			manifest.DiagnosticFor(repo.Named(), repo),
-			repo.SecretRef.Name,
-			"known_hosts unavailable",
+			"missing 'known_hosts' for SSH auth",
 		)
 	}
 	auth.HostKeyCallback = cb
 	return auth, nil
-}
-
-func sshPublicKeys(user, identity, password string) (*gitssh.PublicKeys, error) {
-	if !manifest.HasValuePlaceholder(password) {
-		result, err := gitssh.NewPublicKeys(user, []byte(identity), password)
-		if err != nil {
-			return nil, fmt.Errorf("parse SSH private key: %w", err)
-		}
-		return result, nil
-	}
-	signer, err := ssh.ParsePrivateKey([]byte(identity))
-	if _, needsPassword := errors.AsType[*ssh.PassphraseMissingError](err); needsPassword {
-		err = nil
-	}
-	return &gitssh.PublicKeys{User: user, Signer: signer}, err
 }

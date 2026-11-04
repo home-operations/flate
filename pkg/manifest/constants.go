@@ -52,9 +52,6 @@ var BootstrapSourceID = NamedResource{
 	Group: SourceDomain, Kind: KindGitRepository, Namespace: DefaultNamespace, Name: DefaultNamespace,
 }
 
-// ValuePlaceholderPrefix is the literal prefix used to detect offline placeholders.
-const ValuePlaceholderPrefix = "..PLACEHOLDER_"
-
 // KustomizeBuilderFilenames is the upstream list of recognized root filenames.
 //
 //nolint:gochecknoglobals // The SDK exposes the upstream filename inventory.

@@ -771,9 +771,17 @@ func testWarnMissingCRDsFinalEligibilityAndOrderingCase4(
 }
 
 type testWarnMissingCRDsFinalEligibilityAndOrderingTailInputs struct {
-	o          **Orchestrator
-	crdA       *manifest.NamedResource
-	crdB       *manifest.NamedResource
-	s          **store.Store
-	ungatedCRD *manifest.NamedResource
+	o **Orchestrator
+
+	crdA *manifest.
+		NamedResource
+
+	crdB *manifest.
+		NamedResource
+
+	s **store.
+		Store
+
+	ungatedCRD *manifest.
+			NamedResource
 }

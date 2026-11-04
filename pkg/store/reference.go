@@ -14,7 +14,7 @@ type referenceResolution struct {
 
 func (f *ReferenceFacts) resolve(
 	id manifest.NamedResource,
-	wipeSecrets bool,
+
 	scope *referenceResolution,
 ) ReferenceFacts {
 	if !id.KindInfo().Data {
@@ -25,6 +25,7 @@ func (f *ReferenceFacts) resolve(
 	input.Data = nil
 	production := trackReferenceProductions(&input, owner)
 	allowData := owner == (manifest.NamedResource{}) || f.Accepted || production.independent || !production.materialized
+	var warnings []manifest.Warning
 	if allowData {
 		input.Data = f.Data
 		if input.Data == nil {
@@ -32,38 +33,27 @@ func (f *ReferenceFacts) resolve(
 				candidate := &f.ReferenceData[index]
 				if candidate.OfflineData != nil {
 					input.Data, input.Offline = candidate.OfflineData, true
+					warnings = candidate.Warnings
 					break
 				}
 			}
 		}
 	}
-	return input.resolveReference(id, wipeSecrets, scope)
+	if scope.reads != nil {
+		for warningIndex := range warnings {
+			warning := warnings[warningIndex]
+			warning.Resource = id
+			scope.reads.AddWarning(warning)
+		}
+	}
+	return input.resolveReference(id, scope)
 }
 
 func (f *ReferenceFacts) resolveReference(
 	id manifest.NamedResource,
-	wipeSecrets bool,
+
 	scope *referenceResolution,
 ) ReferenceFacts {
-	reads := scope.reads
-	pending := false
-	if reads != nil && f.Data == nil && f.Generated {
-		pending = len(reads.UnsettledProducers(id)) != 0
-	}
-	if f.Data == nil && wipeSecrets && !f.Offline && !pending {
-		for index := range f.ReferenceData {
-			candidate := &f.ReferenceData[index]
-			if len(candidate.DeclaredKeys) == 0 {
-				continue
-			}
-			data := make(map[string]any, len(candidate.DeclaredKeys))
-			for _, key := range candidate.DeclaredKeys {
-				data[key] = manifest.ValuePlaceholder(key)
-			}
-			f.Data = manifest.NewSecret(id, nil, data)
-			break
-		}
-	}
 	scope.applySupplied(id, f)
 	if f.Data == nil {
 		for index := range f.Productions {
@@ -124,7 +114,7 @@ func (sc *referenceResolution) applySupplied(id manifest.NamedResource, f *Refer
 func (r *ReadSet) ReferenceFacts(
 	id manifest.NamedResource,
 	index *manifest.DiscoveryIndex,
-	wipeSecrets bool,
+
 	consumer manifest.NamedResource,
 ) ReferenceFacts {
 	input := r.input(id)
@@ -153,7 +143,7 @@ func (r *ReadSet) ReferenceFacts(
 	}
 	return facts.resolve(
 		id,
-		wipeSecrets,
+
 		&referenceResolution{consumer: consumer, reads: r, reference: input.view.reference},
 	)
 }

@@ -161,7 +161,7 @@ func TestKustomizationFingerprint_PreparedSources(t *testing.T) {
 						Origin: manifest.SuppliedDeclaration,
 					},
 				)
-				provider := values.NewStoreProvider(st, true)
+				provider := values.NewStoreProvider(st)
 				prepared, err := kustomize.Prepare(ks, provider)
 				assert.FatalIf(t, err != nil, "%v", err)
 				assert.FatalIf(
@@ -195,7 +195,7 @@ func TestKustomizationFingerprint_NoSubstitutionOptions(t *testing.T) {
 	ks.PostBuild = &kustomizev1.PostBuild{
 		SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "external"}},
 	}
-	ordinary, err := kustomize.Prepare(ks, values.NewStoreProvider(st, true))
+	ordinary, err := kustomize.Prepare(ks, values.NewStoreProvider(st))
 	assert.FatalIf(t, err != nil, "%v", err)
 	want := replayKey(t.Context(), ordinary.Content("/repo", map[string]struct{}{"VALUE": {}}, true))
 	for _, tc := range []struct {
@@ -206,11 +206,11 @@ func TestKustomizationFingerprint_NoSubstitutionOptions(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			c := New(st, task.NewBounded(2), nil, false)
+			c := New(st, task.NewBounded(2), nil)
 			c.Configure(tc.opts, sourcecache.RetryConfig{})
 			prepared, err := kustomize.Prepare(
 				ks,
-				values.NewStoreProvider(&c.newExecution(ks.Named()).run.Reads, c.WipeSecrets),
+				values.NewStoreProvider(&c.newExecution(ks.Named()).run.Reads),
 			)
 			assert.FatalIf(t, err != nil, "%v", err)
 			{

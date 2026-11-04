@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
-
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -20,8 +19,8 @@ func TestFinalizeIndex_GeneratorData(t *testing.T) {
 	t.Parallel()
 	const encrypted = "ENC[AES256_GCM,data:fixture,iv:x,tag:y,type:str]"
 	for _, tc := range []struct {
-		name, kind, namespace, input, value, want        string
-		wipe, existing, symlink, external, escape, probe bool
+		name, kind, namespace, input, value, want              string
+		unreadable, existing, symlink, external, escape, probe bool
 	}{
 		{name: "unreached_probe", kind: "configMap", input: "literals: [VALUE=fixture]", external: true, probe: true},
 		{name: "outside_flux_graph", kind: "configMap", input: "literals: [VALUE=fixture]", want: "fixture", external: true},
@@ -34,119 +33,120 @@ func TestFinalizeIndex_GeneratorData(t *testing.T) {
 		{name: "inside_root", kind: "configMap", input: "files: [VALUE=../input.txt]", value: "fixture", want: "fixture"},
 		{name: "outer_namespace", kind: "configMap", namespace: "namespace: outer\n", input: "literals: [VALUE=fixture]", want: "fixture"},
 		{name: "real_object_wins", kind: "configMap", input: "literals: [VALUE=generated]", existing: true, want: "real"},
-		{name: "sops_configmap_wipe", kind: "configMap", input: "envs: [../input.txt]", value: "VALUE=" + encrypted, wipe: true, want: "..PLACEHOLDER_VALUE.."},
-		{name: "sops_secret_wipe", kind: "secret", input: "envs: [../input.txt]", value: "VALUE=" + encrypted, wipe: true, want: "..PLACEHOLDER_VALUE.."},
-		{name: "sops_secret_preserved", kind: "secret", input: "files: [VALUE=../input.txt]", value: encrypted, want: encrypted},
-		{name: "yaml document", kind: "secret", input: "files: [VALUE=../input.txt]", value: "sops:\n  mac: ENC[fixture]\n", wipe: true, want: "..PLACEHOLDER_VALUE.."},
-		{name: "json document", kind: "secret", input: "files: [VALUE=../input.txt]", value: `{"sops": {"mac": "ENC[fixture]"}}`, wipe: true, want: "..PLACEHOLDER_VALUE.."},
-		{name: "dotenv document", kind: "secret", input: "files: [VALUE=../input.txt]", value: "sops_mac=ENC[fixture]", wipe: true, want: "..PLACEHOLDER_VALUE.."},
-		{name: "shortest ini document", kind: "secret", input: "files: [VALUE=../input.txt]", value: "[sops]", wipe: true, want: "..PLACEHOLDER_VALUE.."},
-		{name: "configmap document", kind: "configMap", input: "files: [VALUE=../input.txt]", value: "sops_mac=ENC[fixture]", wipe: true, want: "sops_mac=ENC[fixture]"},
-		{name: "disabled document", kind: "secret", input: "files: [VALUE=../input.txt]", value: "sops_mac=ENC[fixture]", want: "sops_mac=ENC[fixture]"},
-		{name: "cleartext_preserved", kind: "secret", input: "files: [VALUE=../input.txt]", value: "fixture", wipe: true, want: "fixture"},
-		{name: "ciphertext literal", kind: "configMap", input: "literals: ['VALUE=" + encrypted + "']", wipe: true, want: "..PLACEHOLDER_VALUE.."},
-		{name: "ciphertext file", kind: "secret", input: "files: [VALUE=../input.txt]", value: encrypted, wipe: true, want: "..PLACEHOLDER_VALUE.."},
-		{name: "literal prefix", kind: "configMap", input: "envs: [../input.txt]", value: "VALUE=documentation: " + encrypted, wipe: true, want: "documentation: " + encrypted},
-		{name: "embedded yaml", kind: "secret", input: "files: [VALUE=../input.txt]", value: "enabled: " + encrypted + "\n", wipe: true, want: "enabled: " + encrypted + "\n"},
-		{name: "partial framing", kind: "configMap", input: "literals: ['VALUE=ENC[AES256_GCM,data:fixture]']", wipe: true, want: "ENC[AES256_GCM,data:fixture]"},
-		{name: "encoded-looking plaintext", kind: "configMap", input: "files: [VALUE=../input.txt]", value: base64.StdEncoding.EncodeToString([]byte(encrypted)), wipe: true, want: base64.StdEncoding.EncodeToString([]byte(encrypted))},
-		{name: "encoded-looking secret", kind: "secret", input: "files: [VALUE=../input.txt]", value: base64.StdEncoding.EncodeToString([]byte(encrypted)), wipe: true, want: base64.StdEncoding.EncodeToString([]byte(encrypted))},
+		{name: "sops_configmap_unreadable", kind: "configMap", input: "envs: [../input.txt]", value: "VALUE=" + encrypted, unreadable: true},
+		{name: "sops_projected_namespace", kind: "secret", namespace: "namespace: outer\n", input: "envs: [../input.txt]", value: "VALUE=" + encrypted, unreadable: true},
+		{name: "sops_secret_unreadable", kind: "secret", input: "envs: [../input.txt]", value: "VALUE=" + encrypted, unreadable: true},
+		{name: "sops_secret_preserved", kind: "secret", input: "files: [VALUE=../input.txt]", value: encrypted, unreadable: true},
+		{name: "yaml document", kind: "secret", input: "files: [VALUE=../input.txt]", value: "sops:\n  mac: ENC[fixture]\n", unreadable: true},
+		{name: "json document", kind: "secret", input: "files: [VALUE=../input.txt]", value: `{"sops": {"mac": "ENC[fixture]"}}`, unreadable: true},
+		{name: "dotenv document", kind: "secret", input: "files: [VALUE=../input.txt]", value: "sops_mac=ENC[fixture]", unreadable: true},
+		{name: "shortest ini document", kind: "secret", input: "files: [VALUE=../input.txt]", value: "[sops]", unreadable: true},
+		{name: "configmap document", kind: "configMap", input: "files: [VALUE=../input.txt]", value: "sops_mac=ENC[fixture]", want: "sops_mac=ENC[fixture]"},
+		{name: "disabled document", kind: "secret", input: "files: [VALUE=../input.txt]", value: "sops_mac=ENC[fixture]", unreadable: true},
+		{name: "cleartext_preserved", kind: "secret", input: "files: [VALUE=../input.txt]", value: "fixture", want: "fixture"},
+		{name: "ciphertext literal", kind: "configMap", input: "literals: ['VALUE=" + encrypted + "']", unreadable: true},
+		{name: "ciphertext file", kind: "secret", input: "files: [VALUE=../input.txt]", value: encrypted, unreadable: true},
+		{name: "literal prefix", kind: "configMap", input: "envs: [../input.txt]", value: "VALUE=documentation: " + encrypted, want: "documentation: " + encrypted},
+		{name: "embedded yaml", kind: "secret", input: "files: [VALUE=../input.txt]", value: "enabled: " + encrypted + "\n", want: "enabled: " + encrypted + "\n"},
+		{name: "partial framing", kind: "configMap", input: "literals: ['VALUE=ENC[AES256_GCM,data:fixture]']", want: "ENC[AES256_GCM,data:fixture]"},
+		{name: "encoded-looking plaintext", kind: "configMap", input: "files: [VALUE=../input.txt]", value: base64.StdEncoding.EncodeToString([]byte(encrypted)), want: base64.StdEncoding.EncodeToString([]byte(encrypted))},
+		{name: "encoded-looking secret", kind: "secret", input: "files: [VALUE=../input.txt]", value: base64.StdEncoding.EncodeToString([]byte(encrypted)), want: base64.StdEncoding.EncodeToString([]byte(encrypted))},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			testFinalizeIndexGeneratorDataCase(t, &tc)
-		},
-		)
+			testFinalizeIndexGeneratorDataCase1(t, &tc, encrypted)
+		})
 	}
 }
 
-func testFinalizeIndexGeneratorDataCase(t *testing.T, testCaseInput *struct {
-	name      string
-	kind      string
-	namespace string
-	input     string
-	value     string
-	want      string
-	wipe      bool
-	existing  bool
-	symlink   bool
-	external  bool
-	escape    bool
-
-	probe bool
-},
+func testFinalizeIndexGeneratorDataCase1(t *testing.T, tc *struct {
+	name       string
+	kind       string
+	namespace  string
+	input      string
+	value      string
+	want       string
+	unreadable bool
+	existing   bool
+	symlink    bool
+	external   bool
+	escape     bool
+	probe      bool
+}, encrypted string,
 ) {
 	t.Helper()
 
 	parent := t.TempDir()
 	root := filepath.Join(parent, "repo")
 	testutil.WriteFile(t, parent, "outside.txt", "OUTSIDE")
-	testutil.WriteFile(t, root, "apps/input.txt", testCaseInput.value)
-	input := testCaseInput.input
+	testutil.WriteFile(t, root, "apps/input.txt", tc.value)
+	input := tc.input
+	additional := ""
+	if tc.unreadable {
+		additional = ", 'ZULU=" + encrypted + "', 'ALPHA=" + encrypted + "'"
+	}
 	if strings.HasPrefix(input, "literals: [") {
-		input = strings.TrimSuffix(input, "]") + ", CLEAR=readable]"
+		input = strings.TrimSuffix(input, "]") + ", CLEAR=readable" + additional + "]"
 	} else {
-		input += "\n  literals: [CLEAR=readable]"
+		input += "\n  literals: [CLEAR=readable" + additional + "]"
 	}
 	testutil.WriteFile(
 		t,
 		root,
-		"apps/a/kustomization.yaml",
-		testCaseInput.namespace+testCaseInput.kind+"Generator:\n- name: input\n  namespace: inner\n  "+input+"\n- name: sibling\n  namespace: inner\n  literals: [VALUE=sibling]\n",
+		"apps/a/kustomization.yaml", tc.
+			namespace+tc.kind+"Generator:\n- name: input\n  namespace: inner\n  "+input+"\n- name: sibling\n  namespace: inner\n  literals: [VALUE=sibling]\n",
 	)
-	if testCaseInput.escape {
+	if tc.escape {
 		testutil.WriteFile(
 			t,
 			parent,
-			"outside/kustomization.yaml",
-			testCaseInput.kind+"Generator:\n- name: input\n  namespace: inner\n  "+testCaseInput.input+"\n",
+			"outside/kustomization.yaml", tc.
+				kind+"Generator:\n- name: input\n  namespace: inner\n  "+tc.input+"\n",
 		)
 		testutil.WriteFile(
 			t,
 			root,
 			"apps/a/kustomization.yaml",
-			"resources: [../../../outside]\n"+testCaseInput.kind+"Generator:\n- name: sibling\n  namespace: inner\n  literals: [VALUE=sibling]\n",
+			"resources: [../../../outside]\n"+tc.kind+"Generator:\n- name: sibling\n  namespace: inner\n  literals: [VALUE=sibling]\n",
 		)
 	}
-	if testCaseInput.symlink {
-		{
-			err := os.Symlink(
-				filepath.Join(parent, "outside.txt"),
-				filepath.Join(root, "apps", "a", "escape.txt"),
-			)
-			assert.NoError(t, err)
+	if tc.symlink {
+		if err := os.Symlink(
+			filepath.Join(parent, "outside.txt"),
+			filepath.Join(root, "apps", "a", "escape.txt"),
+		); err != nil {
+			t.Fatal(err)
 		}
 	}
 	st := store.New()
 	ks := &manifest.Kustomization{Name: "owner", Namespace: "flux-system", Path: "./apps/a"}
-	if testCaseInput.name == "implicit document" {
+	if tc.name == "implicit document" {
 		ks.Path = "./apps"
 	}
-	if testCaseInput.external {
+	if tc.external {
 		ks.SourceRef.Kind, ks.SourceRef.Name, ks.SourceRef.Namespace = manifest.KindGitRepository, "external", "flux-system"
 		st.AddObject(&manifest.GitRepository{Name: "external", Namespace: "flux-system"})
 	}
 	st.AddObject(ks)
 	kind := manifest.KindConfigMap
-	if testCaseInput.kind == "secret" {
+	if tc.kind == "secret" {
 		kind = manifest.KindSecret
 	}
 	ns := "inner"
-	if testCaseInput.namespace != "" {
+	if tc.namespace != "" {
 		ns = "outer"
 	}
 	id := manifest.NamedResource{Kind: kind, Namespace: ns, Name: "input"}
-	if testCaseInput.existing {
+	if tc.existing {
 		st.AddObject(
 			&manifest.ConfigMap{Name: id.Name, Namespace: id.Namespace, Data: map[string]any{"VALUE": "real"}},
 		)
 	}
 	l := loaderFixture(st, nil)
-	l.Options.WipeSecrets = testCaseInput.wipe
 	l.documents = readerForTest(root)
 	admitForTest(st, root)
 	l.mountSources()
-	if testCaseInput.probe {
+	if tc.probe {
 		testutil.WriteFile(
 			t,
 			root,
@@ -160,97 +160,41 @@ func testFinalizeIndexGeneratorDataCase(t *testing.T, testCaseInput *struct {
 			"resources: [release.yaml]\nconfigMapGenerator:\n- name: input\n  namespace: inner\n  literals: [VALUE=fixture]\n",
 		)
 		l.documents.read(filepath.Join(root, "apps", "a"))
-	} else {
-		_, err := l.Load(t.Context(), filepath.Join(root, "apps", "a"))
-		assert.NoError(t, err)
+	} else if _, err := l.Load(t.Context(), filepath.Join(root, "apps", "a")); err != nil {
+		t.Fatal(err)
 	}
-	testFinalizeIndexGeneratorDataCaseCompletion(
+	testFinalizeIndexGeneratorDataCase1Tail(
 		t,
-		&testFinalizeIndexGeneratorDataCaseCompletionState{
-			testCaseInput: &testCaseInput,
-			root:          &root,
-			st:            &st,
-			ks:            &ks,
-			kind:          &kind,
-			id:            &id,
-			l:             &l,
+		&testFinalizeIndexGeneratorDataCase1TailInputs{
+			l:    &l,
+			root: &root,
+			tc:   &tc,
+			st:   &st,
+			id:   &id,
+			kind: &kind,
+			ks:   &ks,
 		},
 	)
 }
 
-type testFinalizeIndexGeneratorDataCaseCompletionState struct {
-	testCaseInput **struct {
-		name      string
-		kind      string
-		namespace string
-		input     string
-		value     string
-		want      string
-		wipe      bool
-		existing  bool
-		symlink   bool
-		external  bool
-		escape    bool
-		probe     bool
-	}
-	root *string
-	st   **store.Store
-	ks   **manifest.Kustomization
-	kind *string
-	id   *manifest.NamedResource
-	l    **Loader
-}
-
-func testFinalizeIndexGeneratorDataCaseCompletion(
-	t *testing.T,
-	scope *testFinalizeIndexGeneratorDataCaseCompletionState,
+func testFinalizeIndexGeneratorDataCase1Part1(t *testing.T, tc **struct {
+	name       string
+	kind       string
+	namespace  string
+	input      string
+	value      string
+	want       string
+	unreadable bool
+	existing   bool
+	symlink    bool
+	external   bool
+	escape     bool
+	probe      bool
+}, kind *string, obj manifest.Data,
 ) {
 	t.Helper()
-	{
-		err := (*scope.l).FinalizeIndex(t.Context(), (*scope.root), true)
-		assert.NoError(t, err)
-	}
-	if (*scope.testCaseInput).probe {
-		assert.FatalIf(t, (*scope.st).GetObject((*scope.id)) != nil, "%s", "unreached generator was materialized")
-		{
-			_, indexed := (*scope.l).Index.Lookup(testutil.HelmReleaseID("", "excluded"))
-			assert.FatalIf(t, indexed, "%s", "unreached generator scope indexed its application")
-		}
-		return
-	}
-	obj := values.NewStoreProvider((*scope.st), true).Data((*scope.id))
-	assert.FatalIf(
-		t,
-		!(*scope.testCaseInput).existing && (*scope.st).GetObject((*scope.id)) != nil,
-		"%s",
-		"generator lookup entered canonical inventory",
-	)
-	if (*scope.testCaseInput).want == "" {
-		assert.FatalIf(t, obj != nil, "failed generator materialized: %+v", obj)
-	} else {
-		assertGeneratorPayload(t, scope, obj)
-	}
-	var owners []manifest.NamedResource
-	if !(*scope.testCaseInput).external && !(*scope.testCaseInput).escape {
-		owners = []manifest.NamedResource{(*scope.ks).Named()}
-	}
-	{
-		got := testutil.Owners((*scope.l).Index.Records[(*scope.id)].Productions)
-		assert.FatalIf(t, !slices.Equal(got, owners), "Production owners = %v, want %v", got, owners)
-	}
-	scope.id.Name = "sibling"
-	assert.FatalIf(
-		t,
-		values.NewStoreProvider((*scope.st), true).Data((*scope.id)) == nil,
-		"%s",
-		"failed generator stopped its sibling",
-	)
-}
-
-func assertGeneratorPayload(t *testing.T, scope *testFinalizeIndexGeneratorDataCaseCompletionState, obj manifest.Data) {
-	t.Helper()
-	want := (*scope.testCaseInput).want
-	if (*scope.kind) == manifest.KindSecret {
+	want := (*tc).want
+	if (*kind) == manifest.KindSecret {
 		want = base64.StdEncoding.EncodeToString([]byte(want))
 	}
 	var got, clearValue any
@@ -260,12 +204,130 @@ func assertGeneratorPayload(t *testing.T, scope *testFinalizeIndexGeneratorDataC
 	case *manifest.Secret:
 		got, clearValue = o.Data["VALUE"], o.Data["CLEAR"]
 	}
-	if !(*scope.testCaseInput).existing {
+	if !(*tc).existing {
 		wantClear := "readable"
-		if (*scope.kind) == manifest.KindSecret {
+		if (*kind) == manifest.KindSecret {
 			wantClear = base64.StdEncoding.EncodeToString([]byte(wantClear))
 		}
-		assert.FatalIf(t, clearValue != wantClear, "CLEAR=%v, want %q", clearValue, wantClear)
+		assert.FatalIf(t, clearValue != wantClear,
+			"CLEAR=%v, want %q", clearValue, wantClear)
 	}
-	assert.FatalIf(t, got != want, "VALUE=%v, want %q", got, want)
+	if (*tc).unreadable {
+		assert.FatalIf(t, got != nil,
+			"encrypted VALUE retained: %v", got)
+	} else if got != want {
+		t.Fatalf("VALUE=%v, want %q", got, want)
+	}
+}
+
+type testFinalizeIndexGeneratorDataCase1TailInputs struct {
+	l **Loader
+
+	root *string
+
+	tc **struct {
+		name string
+
+		kind string
+
+		namespace string
+
+		input string
+
+		value      string
+		want       string
+		unreadable bool
+		existing   bool
+		symlink    bool
+		external   bool
+		escape     bool
+		probe      bool
+	}
+
+	st **store.
+		Store
+
+	id *manifest.
+		NamedResource
+
+	kind *string
+
+	ks **manifest.
+		Kustomization
+}
+
+func testFinalizeIndexGeneratorDataCase1Tail(t *testing.T, inputs *testFinalizeIndexGeneratorDataCase1TailInputs) {
+	t.Helper()
+
+	if err := (*inputs.l).FinalizeIndex(t.Context(), (*inputs.root), true); err != nil {
+		t.Fatal(err)
+	}
+	if (*inputs.tc).probe {
+		assert.FatalIf(t, (*inputs.st).GetObject((*inputs.id)) != nil, "%s", "unreached generator was materialized")
+
+		if _, indexed := (*inputs.l).Index.Lookup(testutil.HelmReleaseID("", "excluded")); indexed {
+			t.Fatal("unreached generator scope indexed its application")
+		}
+		return
+	}
+	obj := values.NewStoreProvider((*inputs.st)).Data((*inputs.id))
+	assert.FatalIf(
+		t,
+		!(*inputs.tc).existing && (*inputs.st).GetObject((*inputs.id)) != nil,
+		"%s",
+		"generator lookup entered canonical inventory",
+	)
+
+	if (*inputs.tc).want == "" && !(*inputs.tc).unreadable {
+		assert.FatalIf(t, obj != nil,
+			"failed generator materialized: %+v", obj)
+	} else {
+		testFinalizeIndexGeneratorDataCase1Part1(t, inputs.tc, inputs.kind, obj)
+	}
+	if (*inputs.tc).unreadable {
+		var reads store.ReadSet
+		reads.Init((*inputs.st), (*inputs.ks).Named(), nil)
+		reads.GetObject(reads.ID())
+		defer reads.Close()
+		assert.FatalIf(
+			t,
+			values.NewStoreProvider(&reads).Data((*inputs.id)) == nil,
+			"%s",
+			"captured generator data missing",
+		)
+
+		if got := (*inputs.st).Warnings(); len(got) != 0 {
+			t.Fatalf("unaccepted lookup published warnings: %+v", got)
+		}
+		reads.Accept()
+		warnings := (*inputs.st).Warnings()
+		assert.FatalIf(t, len(warnings) != 1 || warnings[0].Category != manifest.WarnSOPSUnreadable ||
+			warnings[0].Resource != (*inputs.id) ||
+			warnings[0].Count != 1 ||
+			!slices.Equal(warnings[0].Detail, []string{"ALPHA", "VALUE", "ZULU"}),
+			"accepted generator warnings: %+v", warnings)
+	}
+	var owners []manifest.NamedResource
+	if !(*inputs.tc).external && !(*inputs.tc).escape {
+		owners = []manifest.NamedResource{(*inputs.ks).Named()}
+	}
+	var got []manifest.NamedResource
+	for valueIndex := range (*inputs.l).Index.Records[(*inputs.id)].Productions {
+		production := (*inputs.l).Index.Records[(*inputs.id)].Productions[valueIndex]
+		if production.Owner != (manifest.NamedResource{}) {
+			got = append(got, production.Owner)
+		}
+	}
+	slices.SortFunc(got, manifest.NamedResource.Compare)
+	got = slices.Compact(got)
+	assert.FatalIf(t, !slices.Equal(got, owners),
+		"Production owners = %v, want %v", got, owners)
+	inputs.id.
+		Name = "sibling"
+	assert.FatalIf(
+		t,
+		values.NewStoreProvider((*inputs.st)).Data((*inputs.id)) == nil,
+		"%s",
+		"failed generator stopped its sibling",
+	)
 }

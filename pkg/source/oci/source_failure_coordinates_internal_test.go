@@ -160,9 +160,9 @@ func testFetcherFailureSourceAndOperationCase(
 		ctx,
 		repo, new(request), sourcecache.Policy{MaxAge: repo.SourceInterval(), Retry: retry},
 	)
-	if failures.Load() != tc.attempts {
-		t.Fatalf("producer failures: got %d, want %d: %v", failures.Load(), tc.attempts, err)
-	}
+	assert.FatalIf(t, failures.Load() != tc.attempts,
+		"producer failures: got %d, want %d: %v", failures.Load(), tc.attempts, err)
+
 	t.Logf("live producer failures=%d; total requests=%d", failures.Load(), requests.Load())
 	prefix := (*stage)
 	switch *stage {
@@ -177,7 +177,7 @@ func testFetcherFailureSourceAndOperationCase(
 	}
 	assert.FatalIf(t, err == nil || !strings.HasPrefix(err.Error(), prefix) || (*stage) !=
 		"canceled body" && strings.Contains(err.Error(), "cache:"), "failure identity: %v", err)
-	shouldReturn := testFetcherFailureSourceAndOperationCaseCompletion(
+	testFetcherFailureSourceAndOperationCaseCompletion(
 		t,
 		&testFetcherFailureSourceAndOperationCaseCompletionInputs{
 			ctx:      &ctx,
@@ -195,15 +195,12 @@ func testFetcherFailureSourceAndOperationCase(
 			failures: &failures,
 		},
 	)
-	if shouldReturn {
-		return
-	}
 }
 
 func testFetcherFailureSourceAndOperationCaseCompletion(
 	t *testing.T,
 	captures *testFetcherFailureSourceAndOperationCaseCompletionInputs,
-) bool {
+) {
 	t.Helper()
 	assert.FatalIf(t, !errors.Is((*captures.err), manifest.ErrFlux), "failure classification: %v", (*captures.err))
 	neutral, ok := errors.AsType[*fetcherr.ResponseError]((*captures.err))
@@ -213,7 +210,7 @@ func testFetcherFailureSourceAndOperationCaseCompletion(
 			ok || !errors.Is((*captures.err), errdef.ErrNotFound),
 			"ORAS not-found mapping changed: %v", (*captures.err),
 		)
-		return true
+		return
 	}
 	if (*(*captures.stage)) == "canceled body" {
 		assert.FatalIf(
@@ -222,7 +219,7 @@ func testFetcherFailureSourceAndOperationCaseCompletion(
 			"caller cancellation changed: %v",
 			(*captures.err),
 		)
-		return true
+		return
 	}
 	response, typed := errors.AsType[*errcode.ErrorResponse]((*captures.err))
 	method := http.MethodGet
@@ -248,7 +245,7 @@ func testFetcherFailureSourceAndOperationCaseCompletion(
 			"neutral body" && !errors.Is((*captures.original), neutral), "neutral body failure wrapped twice: %v", (*captures.err),
 	)
 	if !(*captures.tc).replay {
-		return true
+		return
 	}
 	terminal, ok := errors.AsType[*sourcecache.TerminalError]((*captures.err))
 	assert.FatalIf(t, !ok || !terminal.Attempted, "initial exhaustion: %+v, %v", terminal, (*captures.err))
@@ -268,14 +265,13 @@ func testFetcherFailureSourceAndOperationCaseCompletion(
 		new((*captures.request)),
 		sourcecache.Policy{MaxAge: (*captures.repo).SourceInterval(), Retry: (*captures.retry)},
 	)
-	if captures.requests.Load() != before || captures.failures.Load() != (*captures.tc).attempts {
-		t.Fatalf(
-			"replay fetched: requests=%d, want %d; failures=%d, want %d", captures.requests.
-				Load(), before, captures.failures.
-				Load(), (*captures.tc).
-				attempts,
-		)
-	}
+	assert.FatalIf(t, captures.requests.Load() != before || captures.failures.Load() != (*captures.tc).attempts,
+
+		"replay fetched: requests=%d, want %d; failures=%d, want %d", captures.requests.
+			Load(), before, captures.failures.
+			Load(), (*captures.tc).
+			attempts)
+
 	terminal, ok = errors.AsType[*sourcecache.TerminalError]((*captures.err))
 	neutral, neutralOK := errors.AsType[*fetcherr.ResponseError]((*captures.err))
 	response, typed = errors.AsType[*errcode.ErrorResponse]((*captures.err))
@@ -297,7 +293,6 @@ func testFetcherFailureSourceAndOperationCaseCompletion(
 			Load(), neutral.StatusCode,
 		neutral.Op,
 	)
-	return false
 }
 
 type testFetcherFailureSourceAndOperationCaseCallbackInputs struct {

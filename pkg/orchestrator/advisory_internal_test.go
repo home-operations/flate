@@ -320,9 +320,16 @@ func TestSelect_ClusterAdvisories(t *testing.T) {
 }
 
 type testRenderTreesClusterAdvisoriesWarmAcquisitionTailInputs struct {
-	runs     *[]Rendered
-	source   *manifest.NamedResource
-	consumer *manifest.NamedResource
+	runs *[]Rendered
+
+	source *manifest.
+		NamedResource
+
+	consumer *manifest.
+			NamedResource
+
 	fetchers *[]*advisorySourceFetcher
-	stores   *[]*store.Store
+
+	stores *[]*store.
+		Store
 }

@@ -47,7 +47,7 @@ func TestSubstitutionProvider_ExactIdentity(t *testing.T) {
 					Origin: manifest.SuppliedDeclaration,
 				},
 			)
-			c := New(st, task.NewBounded(2), nil, true)
+			c := New(st, task.NewBounded(2), nil)
 			c.Configure(Options{}, sourcecache.RetryConfig{})
 			execution := c.newExecution(testutil.KustomizationID("apps", "consumer"))
 			defer execution.run.Close()
@@ -77,7 +77,7 @@ func TestSubstitutionProvider_AcceptedSourceAndFallback(t *testing.T) {
 			st := store.New()
 			other := external.WithNamespace("other")
 			st.AddObject(other)
-			c := New(st, task.NewBounded(2), nil, true)
+			c := New(st, task.NewBounded(2), nil)
 			st.AddDeclaration(
 				store.Declaration{
 					Obj:    external,
@@ -89,7 +89,7 @@ func TestSubstitutionProvider_AcceptedSourceAndFallback(t *testing.T) {
 			st.AddObject(tc.late)
 			execution := c.newExecution(testutil.KustomizationID("apps", "consumer"))
 			defer execution.run.Close()
-			provider := values.NewStoreProvider(&execution.run.Reads, c.WipeSecrets)
+			provider := values.NewStoreProvider(&execution.run.Reads)
 			missing := manifest.NamedResource{Kind: external.Named().Kind, Namespace: "apps", Name: "absent"}
 			assert.FatalIf(t, provider.Data(external.Named()) != tc.late.(manifest.Data) ||
 				provider.Data(other.Named()) != other.(manifest.Data) ||
@@ -102,7 +102,7 @@ func TestSubstitutionProvider_AcceptedSourceAndFallback(t *testing.T) {
 			)
 
 			{
-				valueResult, err := values.NewStoreProvider(st, true).
+				valueResult, err := values.NewStoreProvider(st).
 					Data(external.Named()).
 					Value("VALUE")
 				got := valueResult.Value
@@ -122,7 +122,7 @@ func TestSubstitutionProvider_SuppliedLookupAllocations(t *testing.T) {
 	} {
 		t.Run(source.Named().Kind, func(t *testing.T) {
 			st := store.New()
-			c := New(st, task.NewBounded(2), nil, true)
+			c := New(st, task.NewBounded(2), nil)
 			st.AddDeclaration(
 				store.Declaration{
 					Obj:    source,
@@ -164,7 +164,7 @@ func TestReconcile_StrictSubstitutionClassification(t *testing.T) {
 	tasks := task.NewBounded(2)
 	trees := kustomize.NewTreeCache(owner, nil, tasks)
 	t.Cleanup(trees.Close)
-	c := New(st, tasks, trees, false)
+	c := New(st, tasks, trees)
 	c.Configure(Options{StrictSubstitutions: true}, sourcecache.RetryConfig{})
 	docs, err := testutil.SplitDocs(
 		[]byte(

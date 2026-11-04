@@ -261,15 +261,25 @@ func testRenderEntryDeclarationQualifiesOpaqueApplierCaseTail(
 }
 
 type testRenderEntryDeclarationQualifiesOpaqueApplierCaseTailInputs struct {
-	root          *string
-	url           string
-	before        **store.SourceArtifact
-	file          *string
+	root *string
+
+	url string
+
+	before **store.
+		SourceArtifact
+
+	file *string
+
 	testCaseInput **string
-	chart         *string
-	charts        *map[manifest.NamedResource]string
-	nested        *bool
-	declaration   *bool
+
+	chart *string
+
+	charts *map[manifest.
+		NamedResource]string
+
+	nested *bool
+
+	declaration *bool
 }
 
 type entryWork struct {

@@ -190,7 +190,6 @@ func TestTemplate_HistoryPolicyProjection(t *testing.T) {
 		{"api versions", func(_ *manifest.HelmRelease, o *RenderOptions) { o.APIVersions = "custom.io/v1" }},
 		{"dns", func(_ *manifest.HelmRelease, o *RenderOptions) { o.EnableDNS = true }},
 		{"digest policy", func(_ *manifest.HelmRelease, o *RenderOptions) { o.DisableChartDigestTracking = true }},
-		{"wipe policy", func(_ *manifest.HelmRelease, o *RenderOptions) { o.WipeSecrets = true }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -483,13 +482,12 @@ func testTemplateHistoryPolicyProjectionMetadataAcceptanceWritesNothing(
 		t,
 		json.Unmarshal([]byte(`{"commonMetadata":{"labels":{"rev":"changed"}}}`), &changed.HelmReleaseSpec),
 	)
-	_, next, err := testutil.RenderMaps(
-		(*testCaseInput.renderer).Template(
-			t.Context(),
-			changed,
-			nil,
-			RenderOptions{Sources: testCaseInput.input.Sources},
-		),
+	_, next, err := testutil.RenderMaps((*testCaseInput.renderer).Template(
+		t.Context(),
+		changed,
+		nil,
+		RenderOptions{Sources: testCaseInput.input.Sources},
+	),
 	)
 	assert.NoError(t, err)
 	assert.NoError(

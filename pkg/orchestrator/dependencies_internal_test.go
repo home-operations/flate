@@ -16,16 +16,14 @@ import (
 func TestRender_GeneratedValuesAndParentGates(t *testing.T) {
 	var generatedName string
 	for _, tc := range []struct {
-		workers     int
-		wipeSecrets bool
-	}{{2, false}, {2, true}, {4, false}, {4, true}} {
-		t.Run(fmt.Sprintf("workers_%d/wipe_%t", tc.workers, tc.wipeSecrets), func(t *testing.T) {
+		workers int
+	}{{2}, {4}} {
+		t.Run(fmt.Sprintf("workers_%d", tc.workers), func(t *testing.T) {
 			testRenderGeneratedValuesAndParentGatesCase(
 				t,
-				testRenderGeneratedValuesAndParentGatesCaseInputs{generatedName: &generatedName, tc: &tc},
+				&testRenderGeneratedValuesAndParentGatesCaseInputs{tc: &tc, generatedName: &generatedName},
 			)
-		},
-		)
+		})
 	}
 }
 
@@ -64,146 +62,21 @@ func TestRenderTrees_UnknownOrderingTargetStillFails(t *testing.T) {
 			{RepoRoot: baseDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}},
 			{RepoRoot: headDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}},
 		},
-		Config{WipeSecrets: true, Concurrency: 2, CacheDir: t.TempDir()},
+		Config{Concurrency: 2, CacheDir: t.TempDir()},
 	)
 	base, head := renderedTrees2[0], renderedTrees2[1]
+
 	assert.FatalIf(t, err == nil, "%v", "selected unknown ordering target was ignored")
+
 	for _, side := range []Rendered{base, head} {
 		info := side.Result.Failed[testutil.KustomizationID("flux-system", "selected")]
+
 		assert.FatalIf(
 			t,
 			info.Status != store.StatusFailed || !strings.Contains(info.String(), "unknown: dependency not found"),
 			"missing target diagnosis lost: %+v",
 			info,
 		)
-	}
-}
-
-type testRenderGeneratedValuesAndParentGatesCaseInputs struct {
-	generatedName *string
-	tc            *struct {
-		workers int
-
-		wipeSecrets bool
-	}
-}
-
-func testRenderGeneratedValuesAndParentGatesCase(
-	t *testing.T,
-	testCaseInput testRenderGeneratedValuesAndParentGatesCaseInputs,
-) {
-	t.Helper()
-
-	dir := t.TempDir()
-	testutil.WriteGeneratedValuesCluster(t, dir)
-	const cipher = "ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]"
-	testutil.WriteFile(
-		t,
-		dir,
-		"charts/app/templates/secret.yaml",
-		"apiVersion: v1\nkind: Secret\nmetadata:\n  name: {{ .Release.Name }}-secret\n  namespace: flux-system\nstringData:\n  token: '"+cipher+"'\n",
-	)
-	o, err := newTestOrchestrator(
-		t,
-		Tree{Path: dir, RepoRoot: dir},
-		Config{
-			CacheDir:    t.TempDir(),
-			WipeSecrets: testCaseInput.tc.wipeSecrets,
-			Concurrency: testCaseInput.tc.workers,
-		},
-	)
-	assert.FatalIf(t, err != nil, "%v", err)
-	assert.FatalIf(
-		t,
-		o.hrc.Store != o.store || o.hrc.Tasks != o.tasks,
-		"%v",
-		"HelmRelease base controller wiring changed",
-	)
-	{
-		localErr := o.bootstrap(t.Context())
-		assert.FatalIf(t, localErr != nil, "%v", localErr)
-	}
-	a := testutil.HelmReleaseID("flux-system", "a")
-	if o.store.GetObject(a) != nil ||
-		parentsForTest(o.index)[a] != testutil.KustomizationID("flux-system", "apps") {
-		t.Fatalf("raw HR arrived or parent gate missing: %s parent=%s", a, parentsForTest(o.index)[a])
-	}
-	res, err := o.collectResult(o.run(t.Context()))
-	if err != nil || len(res.Failed) != 0 || len(res.Blocked) != 0 {
-		t.Fatalf("Render err=%v failures=%v blockers=%v", err, res.Failed, res.Blocked)
-	}
-	for _, name := range []string{"a", "b"} {
-		id := testutil.HelmReleaseID("flux-system", name)
-		hr, ok := o.store.Get[*manifest.HelmRelease](id)
-		assert.FatalIf(t, !ok, "HR missing: %s", id)
-		if name == "a" {
-			assert.FatalIf(
-				t,
-				len(hr.ValuesFrom) != 1 || !strings.HasPrefix(hr.ValuesFrom[0].Name, "generated-values-"),
-				"HR did not retain rewritten reference: %+v",
-				hr,
-			)
-			ref := hr.ValuesFrom[0].Name
-			assert.FatalIf(
-				t, (*testCaseInput.generatedName) !=
-					"" && ref != (*testCaseInput.generatedName), "generated reference varies by entry or concurrency: %q != %q",
-				ref, (*testCaseInput.generatedName),
-			)
-			(*testCaseInput.generatedName) = ref
-			cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: id.Namespace, Name: ref}
-			cm, localOk := o.store.Get[*manifest.ConfigMap](cmID)
-			assert.FatalIf(
-				t,
-				!localOk || cm.Data["values.yaml"] != "greeting: hello\nreplicas: 2\n",
-				"generated values unavailable: %+v",
-				cm,
-			)
-		}
-		renderedID := manifest.NamedResource{
-			Kind:      manifest.KindConfigMap,
-			Namespace: id.Namespace,
-			Name:      name + "-rendered",
-		}
-		rendered, ok := o.store.Get[*manifest.ConfigMap](renderedID)
-		assert.FatalIf(
-			t,
-			!ok || rendered.Data["greeting"] != "hello" || rendered.Data["replicas"] != "2",
-			"effective chart values differ: %+v",
-			rendered,
-		)
-		secretID := manifest.NamedResource{
-			Kind:      manifest.KindSecret,
-			Namespace: id.Namespace,
-			Name:      name + "-secret",
-		}
-		secret, ok := o.store.Get[*manifest.Secret](secretID)
-		assert.FatalIf(t, !ok, "emitted Secret missing: %s", secretID)
-		want := cipher
-		if testCaseInput.tc.wipeSecrets {
-			want = "..PLACEHOLDER_token.."
-		}
-		{
-			valueResult, err := secret.Value("token")
-			value := valueResult.Value
-			assert.FatalIf(
-				t,
-				err != nil || value != want,
-				"emitted Secret token = %q, want %q: %v",
-				value,
-				want,
-				err,
-			)
-		}
-		{
-			info, _ := o.store.GetStatus(id)
-			assert.FatalIf(t, info.Status != store.StatusReady, "HR status=%+v", info)
-		}
-	}
-	{
-		info, _ := o.store.GetStatus(
-			testutil.KustomizationID("flux-system", "apps"),
-		)
-		assert.FatalIf(t, info.Status != store.StatusReady, "enclosing KS status=%+v", info)
 	}
 }
 
@@ -236,9 +109,10 @@ func testRenderTreesExcludedOrderingAndPromotionCase(
 			{RepoRoot: baseDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}},
 			{RepoRoot: headDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}},
 		},
-		Config{WipeSecrets: true, Concurrency: 4, CacheDir: t.TempDir()},
+		Config{Concurrency: 4, CacheDir: t.TempDir()},
 	)
 	base, head := renderedTrees1[0], renderedTrees1[1]
+
 	assert.FatalIf(
 		t,
 		(err != nil) != (*testCaseInput),
@@ -246,8 +120,10 @@ func testRenderTreesExcludedOrderingAndPromotionCase(
 		err,
 		(*testCaseInput),
 	)
+
 	for _, side := range []Rendered{base, head} {
 		assert.FatalIf(t, side.Result == nil, "%v", "snapshot result missing")
+
 		st := side.Store()
 		selected := testutil.HelmReleaseID("flux-system", "selected")
 		assertExcludedOrderingTargets(t, &side, st)
@@ -258,19 +134,18 @@ func testRenderTreesExcludedOrderingAndPromotionCase(
 				Namespace: "flux-system",
 				Name:      "selected-source",
 			}
-			if st.GetObject(source) == nil || side.Result.Failed[source].Status != store.StatusFailed ||
-				side.Result.Failed[selected].Status != store.StatusFailed {
-				t.Fatalf(
-					"selected source failure hidden: objects=%v failures=%v",
-					st.GetObject(source),
-					side.Result.Failed,
-				)
-			}
+			assert.FatalIf(t, st.GetObject(source) == nil || side.Result.Failed[source].Status != store.StatusFailed ||
+				side.Result.Failed[selected].Status != store.StatusFailed,
+
+				"selected source failure hidden: objects=%v failures=%v",
+				st.GetObject(source),
+				side.Result.Failed)
+
 			continue
 		}
-		if side.Err != nil || len(side.Result.Failed) != 0 || len(side.Result.Blocked) != 0 {
-			t.Fatalf("excluded chain contaminated snapshot: error=%v failures=%v", side.Err, side.Result.Failed)
-		}
+		assert.FatalIf(t, side.Err != nil || len(side.Result.Failed) != 0 || len(side.Result.Blocked) != 0,
+			"excluded chain contaminated snapshot: error=%v failures=%v", side.Err, side.Result.Failed)
+
 		assert.FatalIf(
 			t,
 			st.GetArtifact(
@@ -280,24 +155,28 @@ func testRenderTreesExcludedOrderingAndPromotionCase(
 			"%v",
 			"selected KS was skipped instead of reconciled",
 		)
+
 		chart := manifest.NamedResource{
 			Group:     "source.toolkit.fluxcd.io",
 			Kind:      manifest.KindHelmChart,
 			Namespace: "flux-system",
 			Name:      "shared-chart",
 		}
+
 		assert.FatalIf(
 			t,
 			st.GetObject(chart) == nil || !side.filter.ShouldReconcile(chart),
 			"required shared chart was not admitted: %s",
 			chart,
 		)
+
 		otherSource := manifest.NamedResource{
 			Group:     "source.toolkit.fluxcd.io",
 			Kind:      manifest.KindOCIRepository,
 			Namespace: "flux-system",
 			Name:      "selected-source",
 		}
+
 		{
 			info, known := side.statusOf(
 				otherSource,
@@ -306,12 +185,14 @@ func testRenderTreesExcludedOrderingAndPromotionCase(
 				(known || st.GetObject(otherSource) != nil) &&
 					info.Outcome() != store.OutcomeUnchanged, "excluded source sibling was activated: %+v", info)
 		}
+
 		assert.FatalIf(
 			t,
 			st.GetArtifact(otherSource, store.ArtifactContent) != nil,
 			"%v",
 			"excluded source sibling was fetched",
 		)
+
 		for _, id := range []manifest.NamedResource{
 			selected, testutil.KustomizationID("flux-system", "selected"),
 			{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "shared"},
@@ -322,6 +203,7 @@ func testRenderTreesExcludedOrderingAndPromotionCase(
 				"selected source or consumer missing: %s",
 				id,
 			)
+
 			{
 				info, _ := st.GetStatus(id)
 				assert.FatalIf(
@@ -333,6 +215,7 @@ func testRenderTreesExcludedOrderingAndPromotionCase(
 				)
 			}
 		}
+
 		assert.FatalIf(t, st.GetObject(
 			manifest.NamedResource{
 				Kind:      manifest.KindConfigMap,
@@ -359,6 +242,7 @@ func testRenderTreesExcludedOrderingAndPromotionCaseTail(
 	if !(*(*tailCaseInput.testCaseInput)) {
 		for i, side := range []Rendered{(*tailCaseInput.base), (*tailCaseInput.head)} {
 			batches := canonicalBatches(side.Result)
+
 			assert.FatalIf(
 				t,
 				len(batches) != 3 || batches[0].Parent != testutil.HelmReleaseID("flux-system", "selected") ||
@@ -370,6 +254,7 @@ func testRenderTreesExcludedOrderingAndPromotionCaseTail(
 				"unexpected selected producer batches: %+v",
 				batches,
 			)
+
 			var declarations []map[string]any
 			for _, name := range []string{"selected", "monitor-a", "monitor-b", "source"} {
 				body, err := fs.ReadFile(side.cfg.Input.FS, "flux/"+name+".yaml")
@@ -379,12 +264,14 @@ func testRenderTreesExcludedOrderingAndPromotionCaseTail(
 				declarations = append(declarations, parsed...)
 			}
 			assert.Diff(t, batches[1].Documents, declarations)
+
 			assert.FatalIf(
 				t,
 				len(batches[0].Documents) != 1 || len(batches[2].Documents) != 2,
 				"unexpected selected document order: %+v",
 				batches,
 			)
+
 			cm := batches[0].Documents[0]
 			meta, _ := cm["metadata"].(map[string]any)
 			data, _ := cm["data"].(map[string]any)
@@ -392,19 +279,20 @@ func testRenderTreesExcludedOrderingAndPromotionCaseTail(
 			if i == 1 {
 				want = "v2"
 			}
+
 			assert.FatalIf(t, cm["kind"] != manifest.KindConfigMap || meta["name"] != "selected-rendered" ||
 				data["greeting"] != want, "rendered chart values = %+v, want %s", cm, want)
+
 			hrDoc, valuesDoc := batches[2].Documents[0], batches[2].Documents[1]
 			valuesMeta, _ := valuesDoc["metadata"].(map[string]any)
 			hrMeta, _ := hrDoc["metadata"].(map[string]any)
 			spec, _ := hrDoc["spec"].(map[string]any)
 			values, _ := spec["values"].(map[string]any)
-			if valuesDoc["kind"] != manifest.KindConfigMap || valuesMeta["name"] != "selected-values" ||
+			assert.FatalIf(t, valuesDoc["kind"] != manifest.KindConfigMap || valuesMeta["name"] != "selected-values" ||
 				hrDoc["kind"] != manifest.KindHelmRelease ||
 				hrMeta["name"] != "selected" ||
-				values["greeting"] != want {
-				t.Fatalf("selected producer document order or values differ: %+v", batches[2].Documents)
-			}
+				values["greeting"] != want,
+				"selected producer document order or values differ: %+v", batches[2].Documents)
 		}
 	}
 }
@@ -432,9 +320,12 @@ func testRenderTreesExcludedOrderingAndPromotionSelectedMalformedReference(t *te
 		[]Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		Config{Concurrency: 2, CacheDir: t.TempDir()},
 	)
+
 	assert.FatalIf(t, len(renderedSingleton1) != 1, "missing render: %v", err)
+
 	o := renderedSingleton1[0].Orchestrator
 	res := renderedSingleton1[0].Result
+
 	assert.FatalIf(
 		t,
 		err == nil || !strings.Contains(err.Error(), "ResourceSet.fluxcd.controlplane.io/flux-system/invalid") ||
@@ -445,6 +336,7 @@ func testRenderTreesExcludedOrderingAndPromotionSelectedMalformedReference(t *te
 		"selected malformed reference lost its source: %v",
 		err,
 	)
+
 	{
 		info := res.Failed[testutil.KustomizationID("flux-system", "peer")]
 		assert.FatalIf(t, !strings.Contains(
@@ -452,6 +344,7 @@ func testRenderTreesExcludedOrderingAndPromotionSelectedMalformedReference(t *te
 			"missing.yaml",
 		), "input error overwrote the reader's render failure: %+v", info)
 	}
+
 	runs := []Rendered{{Orchestrator: o, Result: res, Err: err}}
 	for _, name := range []string{"apps", "good"} {
 		_, selectedErr, remainder := Select(
@@ -460,6 +353,7 @@ func testRenderTreesExcludedOrderingAndPromotionSelectedMalformedReference(t *te
 			[]manifest.NamedResource{testutil.KustomizationID("flux-system", name)},
 			nil,
 		)
+
 		assert.FatalIf(
 			t,
 			remainder != nil || (selectedErr != nil) != (name == "apps"),
@@ -473,8 +367,10 @@ func testRenderTreesExcludedOrderingAndPromotionSelectedMalformedReference(t *te
 
 type testRenderTreesExcludedOrderingAndPromotionCaseTailInputs struct {
 	testCaseInput **bool
-	base          *Rendered
-	head          *Rendered
+
+	base *Rendered
+
+	head *Rendered
 }
 
 func assertExcludedOrderingTargets(t *testing.T, side *Rendered, st *store.Store) {
@@ -494,6 +390,7 @@ func assertExcludedOrderingTargets(t *testing.T, side *Rendered, st *store.Store
 		Namespace: "flux-system",
 		Name:      "excluded-source",
 	}
+
 	{
 		info, known := side.statusOf(
 			excludedSource,
@@ -502,10 +399,135 @@ func assertExcludedOrderingTargets(t *testing.T, side *Rendered, st *store.Store
 			(known || st.GetObject(excludedSource) != nil) &&
 				info.Outcome() != store.OutcomeUnchanged, "discovered excluded source was activated: %+v", info)
 	}
+
 	assert.FatalIf(
 		t,
 		st.GetArtifact(excludedSource, store.ArtifactContent) != nil,
 		"%v",
 		"excluded source was fetched",
 	)
+}
+
+type testRenderGeneratedValuesAndParentGatesTailInputs struct {
+	o **Orchestrator
+}
+
+func testRenderGeneratedValuesAndParentGatesTail(
+	t *testing.T,
+	inputs *testRenderGeneratedValuesAndParentGatesTailInputs,
+) {
+	t.Helper()
+
+	if info, _ := (*inputs.o).store.GetStatus(
+		testutil.KustomizationID("flux-system", "apps"),
+	); info.Status != store.StatusReady {
+		t.Fatalf("enclosing KS status=%+v", info)
+	}
+}
+
+type testRenderGeneratedValuesAndParentGatesCaseInputs struct {
+	tc *struct {
+		workers int
+	}
+	generatedName *string
+}
+
+func testRenderGeneratedValuesAndParentGatesCase(
+	t *testing.T,
+	inputs *testRenderGeneratedValuesAndParentGatesCaseInputs,
+) {
+	t.Helper()
+
+	dir := t.TempDir()
+	testutil.WriteGeneratedValuesCluster(t, dir)
+	const cipher = "ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]"
+	testutil.WriteFile(
+		t,
+		dir,
+		"charts/app/templates/secret.yaml",
+		"apiVersion: v1\nkind: Secret\nmetadata:\n  name: {{ .Release.Name }}-secret\n  namespace: flux-system\nstringData:\n  token: '"+cipher+"'\n",
+	)
+	o, err := newTestOrchestrator(
+		t,
+		Tree{Path: dir, RepoRoot: dir},
+		Config{CacheDir: t.TempDir(), Concurrency: inputs.tc.workers},
+	)
+	assert.FatalIf(t, err != nil, "%s", err)
+	assert.FatalIf(
+		t,
+		o.hrc.Store != o.store || o.hrc.Tasks != o.tasks,
+		"%s",
+		"HelmRelease base controller wiring changed",
+	)
+
+	if errInner := o.bootstrap(t.Context()); errInner != nil {
+		t.Fatal(errInner)
+	}
+	a := testutil.HelmReleaseID("flux-system", "a")
+	assert.FatalIf(t, o.store.GetObject(a) != nil ||
+		parentsForTest(o.index)[a] != testutil.KustomizationID("flux-system", "apps"),
+		"raw HR arrived or parent gate missing: %s parent=%s", a, parentsForTest(o.index)[a])
+
+	res, err := o.collectResult(o.run(t.Context()))
+	assert.FatalIf(t, err != nil || len(res.Failed) != 0 || len(res.Blocked) != 0,
+		"Render err=%v failures=%v blockers=%v", err, res.Failed, res.Blocked)
+
+	for _, name := range []string{"a", "b"} {
+		id := testutil.HelmReleaseID("flux-system", name)
+		hr, ok := o.store.Get[*manifest.HelmRelease](id)
+		assert.FatalIf(t, !ok,
+			"HR missing: %s", id)
+
+		if name == "a" {
+			assert.FatalIf(
+				t,
+				len(hr.ValuesFrom) != 1 || !strings.HasPrefix(hr.ValuesFrom[0].Name, "generated-values-"),
+				"HR did not retain rewritten reference: %+v",
+				hr,
+			)
+
+			ref := hr.ValuesFrom[0].Name
+			assert.FatalIf(
+				t,
+				(*inputs.generatedName) != "" && ref != (*inputs.generatedName),
+				"generated reference varies by entry or concurrency: %q != %q",
+				ref,
+				(*inputs.generatedName),
+			)
+			(*inputs.generatedName) = ref
+			cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: id.Namespace, Name: ref}
+			cm, okInner := o.store.Get[*manifest.ConfigMap](cmID)
+			assert.FatalIf(t, !okInner || cm.Data["values.yaml"] != "greeting: hello\nreplicas: 2\n",
+				"generated values unavailable: %+v", cm)
+		}
+		renderedID := manifest.NamedResource{
+			Kind:      manifest.KindConfigMap,
+			Namespace: id.Namespace,
+			Name:      name + "-rendered",
+		}
+		rendered, ok := o.store.Get[*manifest.ConfigMap](renderedID)
+		assert.FatalIf(t, !ok || rendered.Data["greeting"] != "hello" || rendered.Data["replicas"] != "2",
+			"effective chart values differ: %+v", rendered)
+
+		secretID := manifest.NamedResource{
+			Kind:      manifest.KindSecret,
+			Namespace: id.Namespace,
+			Name:      name + "-secret",
+		}
+		secret, ok := o.store.Get[*manifest.Secret](secretID)
+		assert.FatalIf(t, !ok,
+			"emitted Secret missing: %s", secretID)
+
+		{
+			result1, err := secret.Value("token")
+			value, present := result1.Value, result1.Found
+			assert.FatalIf(t, err != nil || present || value != "",
+				"encrypted token retained: %q %t %v", value, present, err)
+		}
+
+		if info, _ := o.store.GetStatus(id); info.Status != store.StatusReady {
+			t.Fatalf("HR status=%+v", info)
+		}
+	}
+	testRenderGeneratedValuesAndParentGatesTail(t, &testRenderGeneratedValuesAndParentGatesTailInputs{o: &o})
 }

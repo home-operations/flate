@@ -143,8 +143,7 @@ func (f *operation) resolveCredentials(b *manifest.Bucket) (*credentials.Credent
 	if err != nil {
 		return nil, fmt.Errorf("secret %s/%s: %w", b.Namespace, b.SecretRef.Name, err)
 	}
-	if access == "" || value.Value == "" || manifest.HasValuePlaceholder(access) ||
-		manifest.HasValuePlaceholder(value.Value) {
+	if access == "" || value.Value == "" {
 		return nil, source.MissingSecretErr(
 			manifest.DiagnosticFor(b.Named(), b),
 			b.SecretRef.Name,

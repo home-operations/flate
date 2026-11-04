@@ -196,8 +196,10 @@ func testRenderTreesSuppliedViewsSameInputOverrideCase(
 
 type testRenderTreesSuppliedViewsCaseTailInputs struct {
 	testCaseInput *testRenderTreesSuppliedViewsCaseInputs
-	cfg           *treeConfig
-	root          *string
+
+	cfg *treeConfig
+
+	root *string
 }
 
 func testRenderTreesSuppliedViewsCaseTailSegment(

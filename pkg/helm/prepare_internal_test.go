@@ -35,7 +35,7 @@ func TestPrepare_ChartReferenceNamespace(t *testing.T) {
 			}
 			projected := hr.WithNamespace("effective").(*manifest.HelmRelease)
 			want := tc.want
-			got, _, err := Prepare(projected, func(id manifest.NamedResource) manifest.BaseManifest {
+			got, err := Prepare(projected, func(id manifest.NamedResource) manifest.BaseManifest {
 				assert.Equal(
 					t,
 					id,
@@ -72,7 +72,7 @@ func TestPrepare_ChartReferenceNamespace(t *testing.T) {
 			assert.Equal(t, hr.ChartRef.Namespace, namespace)
 			assert.Equal(t, hr.Values["key"], any("original"))
 			hr.ChartRef.Kind, hr.Chart.Source.Kind = manifest.KindOCIRepository, manifest.KindOCIRepository
-			got, _, err = Prepare(hr.WithNamespace("effective").(*manifest.HelmRelease), nil, nil, nil)
+			got, err = Prepare(hr.WithNamespace("effective").(*manifest.HelmRelease), nil, nil, nil)
 			assert.NoError(t, err)
 			assert.Equal(t, got.Chart.Source.Namespace, want)
 		})

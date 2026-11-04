@@ -22,7 +22,7 @@ type testFetcherInputsAuthenticationCaseCallbackInputs struct {
 		badMachine    bool
 		secret        bool
 		missing       bool
-		wiped         bool
+		emptyAuth     bool
 		badAuth       bool
 		badCert       bool
 		missingCert   bool
@@ -73,7 +73,7 @@ type testFetcherInputsAuthenticationCaseCompletionInputs struct {
 		badMachine    bool
 		secret        bool
 		missing       bool
-		wiped         bool
+		emptyAuth     bool
 		badAuth       bool
 		badCert       bool
 		missingCert   bool

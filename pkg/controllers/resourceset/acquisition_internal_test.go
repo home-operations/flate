@@ -100,7 +100,7 @@ func testReconcileProviderAcquisitionSettlementCase(
 	st := store.New()
 	tasks := task.NewBounded(2)
 	t.Cleanup(tasks.BlockTillDone)
-	c := New(st, tasks, nil, false)
+	c := New(st, tasks, nil)
 	c.Inputs = &oci.Fetcher{
 		Network:        network,
 		Cache:          cachetest.New(t, t.TempDir(), cache.New),
@@ -145,18 +145,19 @@ func testReconcileProviderAcquisitionSettlementCase(
 		Namespace: pending.Namespace,
 		Name:      pending.SecretRef.Name,
 	}
-	if run.Outcome() != schedule.Blocked || !slices.Equal(run.Blocked, []manifest.NamedResource{secretID}) ||
-		lists.Load() != 0 ||
-		publications.Load() != 0 ||
-		st.GetArtifact(rs.Named(), store.ArtifactContent) != nil {
-		t.Fatalf(
-			"partial collection outcome=%v blocked=%v listings=%d publications=%d",
-			run.Outcome(),
-			run.Blocked,
-			lists.Load(),
-			publications.Load(),
-		)
-	}
+	assert.FatalIf(
+		t,
+		run.Outcome() != schedule.Blocked || !slices.Equal(run.Blocked, []manifest.NamedResource{secretID}) ||
+			lists.Load() != 0 ||
+			publications.Load() != 0 ||
+			st.GetArtifact(rs.Named(), store.ArtifactContent) != nil,
+		"partial collection outcome=%v blocked=%v listings=%d publications=%d",
+		run.Outcome(),
+		run.Blocked,
+		lists.Load(),
+		publications.Load(),
+	)
+
 	testReconcileProviderAcquisitionSettlementCaseTail(
 		t,
 		&testReconcileProviderAcquisitionSettlementCaseTailInputs{
@@ -196,10 +197,7 @@ func testReconcileProviderAcquisitionSettlementCaseTail(
 		if (*(*tailCaseInput.testCaseInput)) == "changed completed provider" {
 			(*tailCaseInput.st).
 				AddObject(
-					staticRSIP(
-						(*tailCaseInput.ready).Name,
-						(*tailCaseInput.ready).Namespace,
-						nil,
+					staticRSIP((*tailCaseInput.ready).Name, (*tailCaseInput.ready).Namespace, nil,
 						map[string]string{"tag": "updated"},
 					),
 				)
@@ -244,9 +242,12 @@ func testReconcileProviderAcquisitionSettlementCaseTail(
 			info,
 		)
 	} else {
-		if (*tailCaseInput.run).Outcome() != schedule.Terminal {
-			t.Fatalf("settled collection outcome=%v", (*tailCaseInput.run).Outcome())
-		}
+		assert.FatalIf(
+			t,
+			(*tailCaseInput.run).Outcome() != schedule.Terminal,
+			"settled collection outcome=%v",
+			(*tailCaseInput.run).Outcome(),
+		)
 		(*tailCaseInput.tasks).
 			Go(
 				t.Context(),
@@ -260,24 +261,22 @@ func testReconcileProviderAcquisitionSettlementCaseTail(
 	}
 	emission, ok := (*tailCaseInput.st).GetArtifact((*tailCaseInput.rs).Named(), store.ArtifactContent).(*store.Emission)
 	assert.FatalIf(t, !ok, "%v", "completed collection did not publish its output")
-	if tailCaseInput.publications.Load() != 1 || tailCaseInput.lists.Load() != 1 ||
+	assert.FatalIf(t, tailCaseInput.publications.Load() != 1 || tailCaseInput.lists.Load() != 1 ||
 		tailCaseInput.rejected.Load() != 0 ||
 		len(emission.Manifests) != 2 ||
 		!emission.Complete ||
-		len((*tailCaseInput.st).Warnings()) != 0 {
-		t.Fatalf(
-			"completed collection publications=%d listings=%d rejected=%d output=%+v warnings=%+v",
-			tailCaseInput.publications.
-				Load(),
-			tailCaseInput.lists.
-				Load(),
-			tailCaseInput.rejected.
-				Load(),
-			emission,
-			(*tailCaseInput.st).
-				Warnings(),
-		)
-	}
+		len((*tailCaseInput.st).Warnings()) != 0,
+
+		"completed collection publications=%d listings=%d rejected=%d output=%+v warnings=%+v",
+		tailCaseInput.publications.
+			Load(),
+		tailCaseInput.lists.
+			Load(),
+		tailCaseInput.rejected.
+			Load(),
+		emission, (*tailCaseInput.st).
+			Warnings())
+
 	data := map[string]any{}
 	for _, doc := range emission.Manifests {
 		metadata := manifest.DocMetadata(doc.Document)
@@ -337,7 +336,7 @@ func testReconcileProviderAcquisitionRefreshCase(
 	st := store.New()
 	tasks := task.NewBounded(2)
 	t.Cleanup(tasks.BlockTillDone)
-	c := New(st, tasks, nil, false)
+	c := New(st, tasks, nil)
 	c.Inputs = &oci.Fetcher{
 		Network:        network,
 		Cache:          cachetest.New(t, t.TempDir(), cache.New),
@@ -381,14 +380,13 @@ func testReconcileProviderAcquisitionRefreshCase(
 		)
 		tasks.BlockTillDone()
 		defer run.Close()
-		if run.Outcome() != schedule.Terminal || run.Reused || !run.Reads.Valid() {
-			t.Fatalf(
-				"fresh acquisition outcome=%v reused=%t valid=%t",
-				run.Outcome(),
-				run.Reused,
-				run.Reads.Valid(),
-			)
-		}
+		assert.FatalIf(t, run.Outcome() != schedule.Terminal || run.Reused || !run.Reads.Valid(),
+
+			"fresh acquisition outcome=%v reused=%t valid=%t",
+			run.Outcome(),
+			run.Reused,
+			run.Reads.Valid())
+
 		info, _ := st.GetStatus(rs.Named())
 		assert.Equal(t, info.Status, store.StatusReady)
 		emission, ok := st.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
@@ -439,17 +437,40 @@ func testReconcileProviderAcquisitionRefreshCase(
 
 type testReconcileProviderAcquisitionSettlementCaseTailInputs struct {
 	testCaseInput **string
-	st            **store.Store
-	secretID      *manifest.NamedResource
-	credentials   *string
-	ready         **manifest.ResourceSetInputProvider
-	run           **base.Execution
-	tasks         **task.Service
-	publications  *atomic.Int32
-	lists         *atomic.Int32
-	rs            **manifest.ResourceSet
-	c             **Controller
-	rejected      *atomic.Int32
-	pending       **manifest.ResourceSetInputProvider
-	before        *[]byte
+
+	st **store.
+		Store
+
+	secretID *manifest.
+			NamedResource
+
+	credentials *string
+
+	ready **manifest.
+		ResourceSetInputProvider
+
+	run **base.
+		Execution
+
+	tasks **task.
+		Service
+
+	publications *atomic.
+			Int32
+
+	lists *atomic.
+		Int32
+
+	rs **manifest.
+		ResourceSet
+
+	c **Controller
+
+	rejected *atomic.
+			Int32
+
+	pending **manifest.
+		ResourceSetInputProvider
+
+	before *[]byte
 }

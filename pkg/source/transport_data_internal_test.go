@@ -127,8 +127,8 @@ func TestResolveTransport_InputOrder(t *testing.T) {
 
 func TestResolveTransport_UnavailableMaterial(t *testing.T) {
 	t.Parallel()
-	certificate := testutil.SelfSignedClientCert(t)
-
+	migratedResult1 := testutil.SelfSignedClientCert(t)
+	crt := migratedResult1.Cert
 	for _, tc := range []struct {
 		name                      string
 		data                      map[string]any
@@ -141,44 +141,42 @@ func TestResolveTransport_UnavailableMaterial(t *testing.T) {
 		{name: "optional auth only", cert: true, optional: true, success: true, data: map[string]any{"username": "alice", "password": "p"}},
 		{name: "optional absent TLS", cert: true, optional: true, absent: true, success: true},
 		{name: "required absent TLS", cert: true, absent: true, missing: true, want: "not found"},
-		{name: "wiped CA", data: map[string]any{"ca.crt": "..PLACEHOLDER_ca.crt.."}, cert: true, missing: true, want: "TLS material unavailable"},
-		{name: "mixed cert pair", data: map[string]any{"tls.crt": certificate.Cert, "tls.key": "..PLACEHOLDER_tls.key.."}, cert: true, missing: true, want: "TLS material unavailable"},
+		{name: "empty CA", data: map[string]any{"ca.crt": ""}, cert: true, missing: true, want: "TLS material unavailable"},
+		{name: "mixed cert pair", data: map[string]any{"tls.crt": crt, "tls.key": ""}, cert: true, want: "must provide both"},
 		{name: "empty TLS", cert: true, missing: true, want: "TLS material unavailable"},
 		{name: "real incomplete pair", data: map[string]any{"tls.crt": "real"}, cert: true, want: "must provide both tls.crt and tls.key together"},
 		{name: "real invalid CA", data: map[string]any{"ca.crt": "invalid PEM"}, cert: true, want: "ca.crt did not parse as PEM"},
-		{name: "invalid cert wiped key", data: map[string]any{"tls.crt": "real", "tls.key": "..PLACEHOLDER_tls.key.."}, cert: true, want: "parse tls.crt/tls.key"},
-		{name: "wiped cert invalid CA", data: map[string]any{"tls.crt": "..PLACEHOLDER_tls.crt..", "ca.crt": "invalid PEM"}, cert: true, want: "ca.crt"},
-		{name: "wiped cert bad key encoding", data: map[string]any{"tls.crt": "..PLACEHOLDER_tls.crt.."}, encodedData: map[string]any{"tls.key": "%%%fixture"}, cert: true, want: "tls.key"},
-		{name: "wiped key bad CA scalar", data: map[string]any{"tls.key": "..PLACEHOLDER_tls.key..", "ca.crt": map[string]any{"credential-fixture": "payload"}}, cert: true, want: "ca.crt"},
+		{name: "invalid cert empty key", data: map[string]any{"tls.crt": "real", "tls.key": ""}, cert: true, want: "must provide both"},
+		{name: "empty cert invalid CA", data: map[string]any{"tls.crt": "", "ca.crt": "invalid PEM"}, cert: true, want: "ca.crt"},
+		{name: "empty cert bad key encoding", data: map[string]any{"tls.crt": ""}, encodedData: map[string]any{"tls.key": "%%%fixture"}, cert: true, want: "tls.key"},
+		{name: "empty key bad CA scalar", data: map[string]any{"tls.key": "", "ca.crt": map[string]any{"credential-fixture": "payload"}}, cert: true, want: "ca.crt"},
 		{name: "real proxy credentials without address", data: map[string]any{"username": "u", "password": "p"}, want: "missing required 'address' key"},
 		{name: "empty proxy", missing: true, want: "missing required 'address' key"},
-		{name: "wiped proxy", data: map[string]any{"address": "..PLACEHOLDER_address.."}, missing: true, want: "proxy material unavailable"},
-		{name: "wiped malformed proxy address", data: map[string]any{"address": "http://..PLACEHOLDER_address../%"}, missing: true, want: "proxy material unavailable"},
-		{name: "wiped proxy password", data: map[string]any{"address": "http://proxy", "password": "..PLACEHOLDER_password.."}, missing: true, want: "proxy material unavailable"},
-		{name: "wiped address bad password encoding", data: map[string]any{"address": "..PLACEHOLDER_address.."}, encodedData: map[string]any{"password": "%%%fixture"}, want: "password"},
-		{name: "wiped username bad password scalar", data: map[string]any{"address": "http://proxy", "username": "..PLACEHOLDER_username..", "password": map[string]any{"credential-fixture": "payload"}}, want: "password"},
-		{name: "invalid address wiped password", data: map[string]any{"address": "http://proxy-credential-marker@proxy.invalid/%", "password": "..PLACEHOLDER_password.."}, want: "invalid proxy address"},
+		{name: "empty proxy", data: map[string]any{"address": ""}, missing: true, want: "missing required 'address' key"},
+		{name: "empty malformed proxy address", data: map[string]any{"address": "http:///%"}, want: "invalid proxy address"},
+		{name: "empty proxy password", data: map[string]any{"address": "http://proxy", "password": ""}, success: true},
+		{name: "empty address bad password encoding", data: map[string]any{"address": ""}, encodedData: map[string]any{"password": "%%%fixture"}, want: "password"},
+		{name: "empty username bad password scalar", data: map[string]any{"address": "http://proxy", "username": "", "password": map[string]any{"credential-fixture": "payload"}}, want: "password"},
+		{name: "invalid address empty password", data: map[string]any{"address": "http://proxy-credential-marker@proxy.invalid/%", "password": ""}, want: "invalid proxy address"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			testResolveTransportUnavailableMaterialCase(t, &tc)
-		},
-		)
+			testResolveTransportUnavailableMaterialCase1(t, &tc)
+		})
 	}
 }
 
-func testResolveTransportUnavailableMaterialCase(
-	t *testing.T, tc *struct {
-		name        string
-		data        map[string]any
-		encodedData map[string]any
-		cert        bool
-		optional    bool
-		absent      bool
-		success     bool
-		missing     bool
-		want        string
-	},
+func testResolveTransportUnavailableMaterialCase1(t *testing.T, tc *struct {
+	name        string
+	data        map[string]any
+	encodedData map[string]any
+	cert        bool
+	optional    bool
+	absent      bool
+	success     bool
+	missing     bool
+	want        string
+},
 ) {
 	t.Helper()
 
@@ -227,31 +225,36 @@ func testResolveTransportUnavailableMaterialCase(
 	}
 
 	if tc.missing {
-		missing, ok := errors.AsType[*MissingSecretError](err)
-		assert.FatalIf(t, !ok, "expected structured MissingSecretError: %v", err)
-		assert.FatalIf(t, missing.Owner != owner ||
-			missing.Secret != (manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "creds"}), "credential identities = %+v", missing)
+		testResolveTransportUnavailableMaterialCase1Part1(t, err, &owner)
 	}
-	if err == nil || errors.Is(err, manifest.ErrMissingSecret) != tc.missing ||
-		!strings.Contains(err.Error(), tc.want) {
-		t.Fatalf("missing=%t, error=%v", tc.missing, err)
-	}
+	assert.FatalIf(t, err == nil || errors.Is(err, manifest.ErrMissingSecret) != tc.missing ||
+		!strings.Contains(err.Error(), tc.want),
+		"missing=%t, error=%v", tc.missing, err)
+	assert.FatalIf(t, !errors.Is(err, manifest.ErrFlux) || errors.Is(err, manifest.ErrInput) == tc.missing,
+		"wrong error classification: %v", err)
 	assert.FatalIf(
 		t,
-		!errors.Is(err, manifest.ErrFlux) || errors.Is(err, manifest.ErrInput) == tc.missing,
-		"wrong error classification: %v",
-		err,
-	)
-	assert.FatalIf(
-		t,
-		(tc.cert || tc.encodedData != nil || tc.name == "wiped username bad password scalar" || tc.name == "invalid address wiped password") &&
+		(tc.cert || tc.encodedData != nil || tc.name == "empty username bad password scalar" || tc.name == "invalid address empty password") &&
 			strings.Contains(err.Error(), "OCIRepository"),
 		"repeated owner: %v",
 		err,
 	)
-	assert.FatalIf(t, !strings.Contains(err.Error(), "ns/creds"), "missing referenced Secret: %v", err)
+	assert.FatalIf(t, !strings.Contains(err.Error(), "ns/creds"),
+		"missing referenced Secret: %v", err)
+
 	for _, marker := range []string{"%%%fixture", "credential-fixture", "proxy-credential-marker"} {
 		assert.FatalIf(t, strings.Contains(err.Error(), marker), "%s", "credential payload leaked")
 	}
-	assert.FatalIf(t, lookup != [2]string{"ns", "creds"} || calls != 1, "lookup = %v (%d calls)", lookup, calls)
+	assert.FatalIf(t, lookup != [2]string{"ns", "creds"} || calls != 1,
+		"lookup = %v (%d calls)", lookup, calls)
+}
+
+func testResolveTransportUnavailableMaterialCase1Part1(t *testing.T, err error, owner *manifest.NamedResource) {
+	t.Helper()
+	missing, ok := errors.AsType[*MissingSecretError](err)
+	assert.FatalIf(t, !ok,
+		"expected structured MissingSecretError: %v", err)
+	assert.FatalIf(t, missing.Owner != (*owner) ||
+		missing.Secret != (manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "creds"}),
+		"credential identities = %+v", missing)
 }

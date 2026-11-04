@@ -34,7 +34,7 @@ func TestExpandPostBuildSubstituteReference_DiagnosticLogContext(t *testing.T) {
 		},
 	}
 	{
-		err := ExpandPostBuildSubstituteReference(entry, NewStoreProvider(store.New(), true))
+		err := ExpandPostBuildSubstituteReference(entry, NewStoreProvider(store.New()))
 		assert.NoError(t, err)
 	}
 	count := 0

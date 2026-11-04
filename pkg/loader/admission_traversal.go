@@ -199,7 +199,7 @@ func (c *admissionClosure) materializeReferenceInput(
 	if !unresolved || c.objects.GetArtifact(ref.NamedResource, store.ArtifactContent) != nil {
 		return
 	}
-	input := c.objects.ReferenceFacts(ref.NamedResource, c.loader.Index, false, id)
+	input := c.objects.ReferenceFacts(ref.NamedResource, c.loader.Index, id)
 	if input.Data != nil {
 		return
 	}
@@ -272,7 +272,6 @@ func (c *admissionClosure) walkObject(
 	var applicationSource manifest.NamedResource
 	if occurrence, ok := c.loader.occurrence(id); ok {
 		applicationSource, _, pathBearing = occurrence.SourcePath()
-		independent = independent || c.loader.Options.WipeSecrets && occurrence.facts.placeholder
 	}
 	materialized := c.selectProductions(id, &record, independent, role)
 	if c.incoming.Obj != nil && c.incoming.Obj.Named() == id {

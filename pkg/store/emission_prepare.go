@@ -135,19 +135,23 @@ func admissionEqual(a, b admission) bool {
 	return a.binding.equal(&b.binding) && a.child.equal(b.child)
 }
 
+//nolint:gocritic // Immutable value inputs preserve snapshot semantics.
 func (a Child) equal(b Child) bool {
 	return a.sameDeclaration(b) && a.sameEmission(b)
 }
 
+//nolint:gocritic // Immutable value inputs preserve snapshot semantics.
 func (a Child) sameDeclaration(b Child) bool {
 	return a.Origin == b.Origin && a.Generated == b.Generated && manifest.Equal(a.Obj, b.Obj) &&
 		manifest.ValueEqual(a.Doc, b.Doc)
 }
 
+//nolint:gocritic // Immutable value inputs preserve snapshot semantics.
 func (a Child) sameEmission(b Child) bool {
 	return slices.Equal(a.Productions, b.Productions) && a.payload == b.payload && a.output == b.output
 }
 
+//nolint:gocritic // Immutable value inputs preserve snapshot semantics.
 func semanticEqual(a, b Child) bool {
 	if a.Doc == nil || b.Doc == nil {
 		return semanticObjectsEqual(a, b)
@@ -196,6 +200,7 @@ func ownershipLabel(key string) bool {
 	return false
 }
 
+//nolint:gocritic // Immutable value inputs preserve snapshot semantics.
 func semanticObjectsEqual(a, b Child) bool {
 	if manifest.Equal(a.Obj, b.Obj) {
 		return true

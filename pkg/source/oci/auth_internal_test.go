@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,6 +26,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
+
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
@@ -36,8 +38,6 @@ func ociRepo(name string, set func(s *sourcev1.OCIRepositorySpec)) *manifest.OCI
 	return r
 }
 
-//nolint:paralleltest // Credential fixture helpers change the process environment.
-//nolint:paralleltest // Credential and DNS fixtures change process environment or resolver state.
 func TestFetcher_SecretReferences(t *testing.T) {
 	t.Setenv("DOCKER_CONFIG", t.TempDir())
 	t.Setenv("HELM_REGISTRY_CONFIG", filepath.Join(t.TempDir(), "absent.json"))
@@ -73,12 +73,7 @@ func TestFetcher_SecretReferences(t *testing.T) {
 		{name: "unwired getter", secret: "creds", unwired: true, wantText: "source.SecretGetter"},
 		{name: "missing auth secret", secret: "missing", wantText: "secret ns/missing not found", wantMissing: true},
 	}
-	for _, tt := range tests {
-		t.Run(
-			tt.name,
-			func(t *testing.T) { testFetcherSecretReferencesCase(t, &tt) },
-		)
-	}
+	testFetcherSecretReferencesTail(t, &testFetcherSecretReferencesTailInputs{tests: &tests})
 }
 
 func TestFetcher_ResolveTLS_NoCertSecret(t *testing.T) {
@@ -157,8 +152,7 @@ func TestFetcher_ResolveTLS_FromSecret(t *testing.T) {
 	)
 }
 
-//nolint:paralleltest // Credential fixture helpers change the process environment.
-//nolint:paralleltest // Credential and DNS fixtures change process environment or resolver state.
+//nolint:paralleltest // Credential fixtures change the process environment.
 func TestFetcher_ResolveConfig_CredentialPrecedence(t *testing.T) {
 	const secretJSON = `{"auths":{"ghcr.io":{"auth":"YWxpY2U6aHVudGVyMg=="}}}`
 	const explicitJSON = `{"auths":{"ghcr.io":{"username":"explicit","password":"explicit"}}}`
@@ -238,8 +232,7 @@ func TestFetcher_CorruptDockerConfig(t *testing.T) {
 	)
 }
 
-//nolint:paralleltest // Credential fixture helpers change the process environment.
-//nolint:paralleltest // Credential and DNS fixtures change process environment or resolver state.
+//nolint:paralleltest // Credential fixtures change the process environment.
 func TestFetcher_MachineCredentials(t *testing.T) {
 	const docker = `{"auths":{"ghcr.io":{"username":"docker","password":"docker"}}}`
 	const helm = `{"auths":{"ghcr.io":{"username":"helm","password":"helm"}}}`
@@ -270,8 +263,7 @@ func TestFetcher_MachineCredentials(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // Credential fixture helpers change the process environment.
-//nolint:paralleltest // Credential and DNS fixtures change process environment or resolver state.
+//nolint:paralleltest // Credential fixtures change the process environment.
 func TestFetcher_HelmConfigAvailability(t *testing.T) {
 	for _, mode := range []string{"absent", "open failure", "read failure", "malformed", "default", "override"} {
 		t.Run(mode, func(t *testing.T) {
@@ -281,8 +273,7 @@ func TestFetcher_HelmConfigAvailability(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // Credential fixture helpers change the process environment.
-//nolint:paralleltest // Credential and DNS fixtures change process environment or resolver state.
+//nolint:paralleltest // Credential fixtures change the process environment.
 func TestFetcher_MachineCredentialsAcquisition(t *testing.T) {
 	artifact := newFakeOCIArtifact(t, map[string]string{"app.yaml": "kind: ConfigMap\n"})
 	upstream := startFakeRegistry(t, artifact.manifest, artifact.config, artifact.layer)
@@ -325,8 +316,7 @@ func TestFetcher_SharedMachineFailure(t *testing.T) {
 	)
 }
 
-//nolint:paralleltest // Credential fixture helpers change the process environment.
-//nolint:paralleltest // Credential and DNS fixtures change process environment or resolver state.
+//nolint:paralleltest // Credential fixtures change the process environment.
 func TestFetcher_SecretCredentialsAcquisitionPolicy(t *testing.T) {
 	t.Setenv("DOCKER_CONFIG", t.TempDir())
 	t.Setenv("HELM_REGISTRY_CONFIG", filepath.Join(t.TempDir(), "absent.json"))
@@ -337,11 +327,7 @@ func TestFetcher_SecretCredentialsAcquisitionPolicy(t *testing.T) {
 		wantMissing, wantInput, canceled bool
 	}{
 		{name: "missing auth", wantMissing: true},
-		{
-			name:        "wiped auth",
-			material:    map[string]any{".dockerconfigjson": "..PLACEHOLDER_.dockerconfigjson.."},
-			wantMissing: true,
-		},
+		{name: "empty auth", material: map[string]any{".dockerconfigjson": ""}, wantMissing: true},
 		{name: "malformed auth", material: map[string]any{".dockerconfigjson": `{"auths":`}, wantInput: true},
 		{
 			name:      "malformed encoded auth",
@@ -350,31 +336,85 @@ func TestFetcher_SecretCredentialsAcquisitionPolicy(t *testing.T) {
 			wantInput: true,
 		},
 		{name: "missing TLS", cert: true, wantMissing: true},
-		{
-			name:        "wiped TLS",
-			cert:        true,
-			material:    map[string]any{"ca.crt": "..PLACEHOLDER_ca.crt.."},
-			wantMissing: true,
-		},
+		{name: "empty TLS", cert: true, material: map[string]any{"ca.crt": ""}, wantMissing: true},
 		{name: "malformed TLS", cert: true, material: map[string]any{"ca.crt": "invalid PEM"}},
 		{name: "missing proxy", proxy: true, wantMissing: true},
-		{
-			name:        "wiped proxy",
-			proxy:       true,
-			material:    map[string]any{"address": "..PLACEHOLDER_address.."},
-			wantMissing: true,
-		},
+		{name: "empty proxy", proxy: true, material: map[string]any{"address": ""}, wantMissing: true},
 		{name: "malformed proxy", proxy: true, material: map[string]any{"address": "%"}},
 		{name: "canceled", canceled: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			testFetcherSecretCredentialsAcquisitionPolicyCase(
-				t,
-				&tt,
-			)
-		},
-		)
+			testFetcherSecretCredentialsAcquisitionPolicyCase1(t, &tt)
+		})
+	}
+}
+
+func testFetcherSecretCredentialsAcquisitionPolicyCase1(t *testing.T, tt *struct {
+	name        string
+	cert        bool
+	proxy       bool
+	encoded     bool
+	material    map[string]any
+	wantMissing bool
+	wantInput   bool
+	canceled    bool
+},
+) {
+	t.Helper()
+	var requests atomic.Int64
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+	cache := cachetest.New(t, "", sourcecache.New)
+	fInputs := testInputs{secrets: func(_, name string) *manifest.Secret {
+		if name == "creds" && (tt.cert || tt.proxy || tt.canceled) {
+			return &manifest.Secret{
+				StringData: map[string]any{
+					".dockerconfigjson": `{"auths":{"ghcr.io":{"username":"alice","password":"hunter2"}}}`,
+				},
+			}
+		}
+		if tt.material != nil {
+			if tt.encoded {
+				return &manifest.Secret{Data: tt.material}
+			}
+			return &manifest.Secret{StringData: tt.material}
+		}
+		return nil
+	}}
+	f := &Fetcher{Network: newTestNetwork(t), Cache: cache}
+	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) {
+		s.URL, s.Insecure = "oci://"+mustURL(t, srv.URL).Host+"/app", true
+		s.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
+		if tt.cert {
+			s.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
+		}
+		if tt.proxy {
+			s.ProxySecretRef = &manifest.LocalObjectReference{Name: "proxy"}
+		}
+	})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	if tt.canceled {
+		cancel()
+	}
+	if _, err := f.Fetch(
+		ctx,
+		repo,
+		fInputs.readSet(repo),
+		sourcecache.Policy{MaxAge: repo.SourceInterval()},
+	); err == nil || errors.Is(err, manifest.ErrMissingSecret) != tt.wantMissing ||
+		errors.Is(err, context.Canceled) != tt.canceled {
+		t.Fatalf("Fetch error = %v, want missing=%t canceled=%t", err, tt.wantMissing, tt.canceled)
+	} else if tt.wantInput &&
+		!errors.Is(err, manifest.ErrInput) {
+		t.Fatalf("Fetch error = %v, want malformed material to be an input error", err)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("registry requests = %d, want 0", got)
 	}
 }
 
@@ -412,10 +452,8 @@ func TestFetcher_ResolveConfig_RegistryFallback(t *testing.T) {
 		{name: "not found, docker default fallback", docker: covering, wantRetry: true},
 		{name: "not found, Helm fallback", helm: covering, wantRetry: true},
 		{
-			name: "wiped, Helm fallback",
-			secret: &manifest.Secret{
-				StringData: map[string]any{".dockerconfigjson": "..PLACEHOLDER_.dockerconfigjson.."},
-			},
+			name:      "empty, Helm fallback",
+			secret:    &manifest.Secret{StringData: map[string]any{".dockerconfigjson": ""}},
 			helm:      covering,
 			wantRetry: true,
 		},
@@ -428,12 +466,9 @@ func TestFetcher_ResolveConfig_RegistryFallback(t *testing.T) {
 		{name: "Docker helper only", docker: `{"credsStore":"unused"}`, wantErr: manifest.ErrMissingSecret},
 		{name: "malformed Helm deferred", helm: `{`},
 		{
-			name: "placeholder-wiped, fallback",
-			secret: &manifest.Secret{
-				StringData: map[string]any{".dockerconfigjson": "..PLACEHOLDER_.dockerconfigjson.."},
-			},
-			config:    covering,
-			wantRetry: true,
+			name:   "unavailable, fallback",
+			secret: &manifest.Secret{StringData: map[string]any{".dockerconfigjson": ""}},
+			config: covering, wantRetry: true,
 		},
 		{
 			name:    "config covers another registry",
@@ -471,17 +506,13 @@ func TestFetcher_ResolveConfig_RegistryFallback(t *testing.T) {
 				sourcecache.Policy{},
 			)
 			missing, ok := errors.AsType[*source.MissingSecretError](err)
-			assert.FatalIf(
-				t,
-				!ok || missing.RetryAmbient == nil || missing.Secret.Name != "creds",
-				"unavailable auth lost lazy continuation: %v",
-				err,
-			)
+			assert.FatalIf(t, !ok || missing.RetryAmbient == nil || missing.Secret.Name != "creds",
+				"unavailable auth lost lazy continuation: %v", err)
+
 			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
-			{
-				_, err := missing.RetryMachine(ctx, nil)
-				assert.FatalIf(t, !errors.Is(err, context.Canceled), "canceled continuation ran preparation: %v", err)
+			if _, err := missing.RetryMachine(ctx, nil); !errors.Is(err, context.Canceled) {
+				t.Fatalf("canceled continuation ran preparation: %v", err)
 			}
 		})
 	}
@@ -540,11 +571,10 @@ func testFetcherSharedMachineFailureCallback(
 	for range 2 {
 		_, err := op.fetchSource(t.Context(), repo, sourcecache.Policy{})
 		response, ok := errors.AsType[*fetcherr.ResponseError](err)
-		if !ok || response.StatusCode != http.StatusServiceUnavailable ||
+		assert.FatalIf(t, !ok || response.StatusCode != http.StatusServiceUnavailable ||
 			strings.Contains(err.Error(), "credential helper") ||
-			requests.Load() != 1 {
-			t.Fatalf("transient replay gained advice or retried: %v, requests=%d", err, requests.Load())
-		}
+			requests.Load() != 1,
+			"transient replay gained advice or retried: %v, requests=%d", err, requests.Load())
 	}
 	time.Sleep(time.Second)
 	done := make(chan error, 2)
@@ -587,7 +617,34 @@ func testFetcherSharedMachineFailureCallback(
 			)
 		}
 	}
-	if requests.Load() != 2 {
-		t.Fatalf("shared acquisition duplicated work: requests=%d", requests.Load())
+	assert.FatalIf(t, requests.Load() != 2,
+		"shared acquisition duplicated work: requests=%d", requests.Load())
+}
+
+type testFetcherSecretReferencesTailInputs struct {
+	tests *[]struct {
+		name string
+
+		secret string
+
+		wantText string
+
+		material    map[string]any
+		cert        bool
+		proxy       bool
+		unwired     bool
+		wantMissing bool
+		wantOwner   bool
+	}
+}
+
+func testFetcherSecretReferencesTail(t *testing.T, inputs *testFetcherSecretReferencesTailInputs) {
+	t.Helper()
+
+	for _, tt := range *inputs.tests {
+		t.Run(
+			tt.name,
+			func(t *testing.T) { testFetcherSecretReferencesCase(t, &tt) },
+		)
 	}
 }

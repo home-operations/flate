@@ -252,10 +252,15 @@ spec:
 			side.Result,
 			side.Err,
 		)
-		if len(outputByParent(side.Result.Manifests)[testutil.KustomizationID("flux-system", "app-b")]) != 0 ||
-			configMapNames(side.Result)["cfg-b"] {
-			t.Fatalf("side %d rendered unchanged app-b: %v", i, side.Result.Manifests)
-		}
+		assert.FatalIf(
+			t,
+			len(outputByParent(side.Result.Manifests)[testutil.KustomizationID("flux-system", "app-b")]) != 0 ||
+				configMapNames(side.Result)["cfg-b"],
+			"side %d rendered unchanged app-b: %v",
+			i,
+			side.Result.Manifests,
+		)
+
 		id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "cm-one"}
 		cm, ok := side.Store().Get[*manifest.ConfigMap](id)
 		assert.FatalIf(t, !ok, "%v", "missing shared ConfigMap")
@@ -380,7 +385,7 @@ func TestRenderTrees_RepoRootRelativeNoGit(t *testing.T) {
 			{RepoRoot: baseDir, Path: entry(baseDir), ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}},
 			{RepoRoot: headDir, Path: entry(headDir), ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}},
 		},
-		Config{WipeSecrets: true, Concurrency: 4},
+		Config{Concurrency: 4},
 	)
 	base, head := renderedTrees4[0], renderedTrees4[1]
 	assert.FatalIf(t, err != nil, "RenderTrees: %v", err)
@@ -613,9 +618,9 @@ spec: {url: https://example.test/cluster.git}
 		result := renderedSingleton1[0].Result
 		assert.NoError(t, err)
 		fullApp[side] = outputByParent(result.Manifests)[app]
-		if len(fullApp[side]) != 1 {
-			t.Fatalf("side %d full app documents = %d", side, len(fullApp[side]))
-		}
+		assert.FatalIf(t, len(fullApp[side]) != 1,
+			"side %d full app documents = %d", side, len(fullApp[side]))
+
 		want := "${VALUE:=old}"
 		if side == 1 {
 			want = "new"
@@ -732,10 +737,20 @@ func testRenderTreesOptionalInputRoutesCaseTail(
 }
 
 type testRenderTreesOptionalInputRoutesCaseTailInputs struct {
-	owner   **sourcecache.Cache
-	inputs  **baseline.Result
-	app     *manifest.NamedResource
-	cluster *manifest.NamedResource
-	stable  *manifest.NamedResource
+	owner **sourcecache.
+		Cache
+
+	inputs **baseline.
+		Result
+
+	app *manifest.
+		NamedResource
+
+	cluster *manifest.
+		NamedResource
+
+	stable *manifest.
+		NamedResource
+
 	fullApp *[][]map[string]any
 }

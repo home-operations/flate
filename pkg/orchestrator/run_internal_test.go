@@ -64,7 +64,7 @@ spec: {}
 	assert.NoError(t, err)
 	st.SetArtifact(manifest.BootstrapSourceID, input)
 	e := &orchestratorExistence{DiscoveryIndex: idx.Index, o: &Orchestrator{
-		store: idx.Store, index: idx.Index, cfg: treeConfig{Config: Config{WipeSecrets: true}},
+		store: idx.Store, index: idx.Index, cfg: treeConfig{Config: Config{}},
 		ksc: &kustomization.Controller{Controller: base.New(st, nil)},
 	}}
 	{
@@ -179,7 +179,7 @@ spec: {url: https://example.test/excluded.git}
 		store:  idx.Store,
 		index:  idx.Index,
 		loader: idx,
-		cfg:    treeConfig{Config: Config{WipeSecrets: true}},
+		cfg:    treeConfig{Config: Config{}},
 		filter: filter,
 		ksc:    &kustomization.Controller{Controller: controller},
 	}}

@@ -83,7 +83,7 @@ func TestResolveSourceRoot_FallsBackToBootstrapWhenSourceRefEmpty(t *testing.T) 
 		Kind: manifest.KindGitRepository, URL: "file:///repo", LocalPath: "/repo", FS: fstest.MapFS{},
 	})
 
-	c := New(s, nil, nil, false)
+	c := New(s, nil, nil)
 	ks := &manifest.Kustomization{
 		Name: "foo", Namespace: "flux-system",
 		KustomizationSpec: kustomizev1.KustomizationSpec{
@@ -95,9 +95,8 @@ func TestResolveSourceRoot_FallsBackToBootstrapWhenSourceRefEmpty(t *testing.T) 
 	}
 	got, _, err := kustomize.SourceInput(&c.newExecution(ks.Named()).run.Reads, ks)
 	assert.FatalIf(t, err != nil, "resolveSourceRoot: %v", err)
-	if got.LocalPath != "/repo" {
-		t.Errorf("resolveSourceRoot=%q, want %q (bootstrap LocalPath)", got.LocalPath, "/repo")
-	}
+	assert.ErrorIf(t, got.LocalPath != "/repo",
+		"resolveSourceRoot=%q, want %q (bootstrap LocalPath)", got.LocalPath, "/repo")
 }
 
 // TestResolveSourceRoot_ExplicitSourceRefUnchanged guards against the
@@ -123,7 +122,7 @@ func TestResolveSourceRoot_ExplicitSourceRefUnchanged(t *testing.T) {
 		Kind: manifest.KindGitRepository, URL: "file:///repo", LocalPath: "/repo", FS: fstest.MapFS{},
 	})
 
-	c := New(s, nil, nil, false)
+	c := New(s, nil, nil)
 	ks := &manifest.Kustomization{
 		Name:      "foo",
 		Namespace: "flux-system",
@@ -136,9 +135,8 @@ func TestResolveSourceRoot_ExplicitSourceRefUnchanged(t *testing.T) {
 	}
 	got, _, err := kustomize.SourceInput(&c.newExecution(ks.Named()).run.Reads, ks)
 	assert.FatalIf(t, err != nil, "resolveSourceRoot: %v", err)
-	if got.LocalPath != "/external" {
-		t.Errorf("resolveSourceRoot=%q, want %q (explicit ref)", got.LocalPath, "/external")
-	}
+	assert.ErrorIf(t, got.LocalPath != "/external",
+		"resolveSourceRoot=%q, want %q (explicit ref)", got.LocalPath, "/external")
 }
 
 // TestResolveSourceRoot_NoBootstrapNoSourceRefErrors keeps the safety
@@ -146,7 +144,7 @@ func TestResolveSourceRoot_ExplicitSourceRefUnchanged(t *testing.T) {
 // resolve.
 func TestResolveSourceRoot_NoBootstrapNoSourceRefErrors(t *testing.T) {
 	t.Parallel()
-	c := New(store.New(), nil, nil, false)
+	c := New(store.New(), nil, nil)
 	ks := &manifest.Kustomization{
 		Name: "foo", Namespace: "flux-system",
 		Path: "./app",

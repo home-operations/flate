@@ -151,6 +151,8 @@ func (s *Store) Productions(id manifest.NamedResource, index *manifest.Discovery
 }
 
 // IncomingProductions projects prospective evidence without the stored target's state.
+//
+//nolint:gocritic // Immutable value inputs preserve snapshot semantics.
 func (s *Store) IncomingProductions(child Child, index *manifest.DiscoveryIndex) []manifest.Production {
 	result := productionResult{incoming: &child}
 	s.visitProductions(child.Obj.Named(), index, &result)
@@ -161,7 +163,7 @@ func (s *Store) IncomingProductions(child Child, index *manifest.DiscoveryIndex)
 func (s *Store) ReferenceFacts(
 	id manifest.NamedResource,
 	index *manifest.DiscoveryIndex,
-	wipeSecrets bool,
+
 	consumer manifest.NamedResource,
 ) ReferenceFacts {
 	result := productionResult{facts: true}
@@ -178,7 +180,7 @@ func (s *Store) ReferenceFacts(
 	}
 	return facts.resolve(
 		id,
-		wipeSecrets,
+
 		&referenceResolution{consumer: consumer, reference: result.reference},
 	)
 }

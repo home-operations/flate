@@ -339,7 +339,7 @@ func (h *acceptedHistoryCase) incompatiblePolicies(t *testing.T) {
 				PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"DEP": "effective-child"}},
 			}})
 		}},
-		{"wipe", func(r *RenderRequest) { r.WipeSecrets = true }},
+
 		{"strict", func(r *RenderRequest) { r.StrictSubstitutions = true }},
 		{"skip kinds", func(r *RenderRequest) { r.SkipKinds = []string{manifest.KindKustomization} }},
 		{"source binding", func(r *RenderRequest) { source := *r.Source; source.URL = "different"; r.Source = &source }},

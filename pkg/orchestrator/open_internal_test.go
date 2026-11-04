@@ -78,7 +78,7 @@ data:
 	o, err := newTestOrchestrator(
 		t,
 		Tree{Path: dir, BaseInput: testDirectoryInput(t, origDir)},
-		Config{WipeSecrets: true},
+		Config{},
 	)
 	assert.FatalIf(t, err != nil, "New: %v", err)
 	t.Cleanup(func() {
@@ -91,9 +91,8 @@ data:
 	f := o.filter
 	assert.FatalIf(t, f == nil, "%v", "expected non-nil change filter when PathOrig differs from Path")
 	apps := testutil.KustomizationID("flux-system", "apps")
-	if !f.ShouldReconcile(apps) {
-		t.Fatalf("KS reading the changed file via a resources: escape must be kept; keep=%v", f.KeepNames())
-	}
+	assert.FatalIf(t, !f.ShouldReconcile(apps),
+		"KS reading the changed file via a resources: escape must be kept; keep=%v", f.KeepNames())
 }
 
 func TestRenderTrees_IndependentInvocations(t *testing.T) {
@@ -137,9 +136,9 @@ data: {k: v}
 		Path:      dir,
 		BaseInput: testDirectoryInput(t, origDir),
 	}
-	first, err := RenderTrees(t.Context(), []Tree{tree}, Config{WipeSecrets: true, Concurrency: 2})
+	first, err := RenderTrees(t.Context(), []Tree{tree}, Config{Concurrency: 2})
 	assert.NoError(t, err)
-	second, err := RenderTrees(t.Context(), []Tree{tree}, Config{WipeSecrets: true, Concurrency: 2})
+	second, err := RenderTrees(t.Context(), []Tree{tree}, Config{Concurrency: 2})
 	assert.NoError(t, err)
 	assert.FatalIf(t, len(first) != 1 || len(second) != 1, "invocation results: %v %v", first, second)
 	for _, run := range []Rendered{first[0], second[0]} {

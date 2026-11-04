@@ -112,9 +112,10 @@ Leaf packages (`tree`, `manifest`, `task`, `schedule` behind its `Dispatcher` se
 - **One global serialization point.** Every krusty build holds `internal/kustomize.BuildMutex`;
   add no other on the render path.
 - **Changed-only mode.** `KeepEmitted`/`AddEmitted` before `AddObject`.
-- **Secrets.** Only SOPS ciphertext is wiped (`..PLACEHOLDER_<key>..`). Missing secrets fail loud
-  unless a producer exists or `--allow-missing-kinds Secret` is set; absent or wiped auth, cert and
-  proxy material follows the same whole-source skip; malformed real material fails loud.
+- **Secrets.** Data flate cannot read is absent, warned once, and supplied by the user.
+  Missing secrets fail loud unless a producer exists or `--allow-missing-kinds Secret` is set;
+  absent auth, cert and proxy material follows the same whole-source skip; malformed real
+  material fails loud.
 - **The cache owner alone chooses storage paths.** Flate-owned fetched-content writes go through
   `safepath` and the owner's `os.Root` boundary with atomic publication; ORAS and go-billy
   writers stay library-owned. The SSRF guard is process-global and opt-in via `RestrictEgress`.

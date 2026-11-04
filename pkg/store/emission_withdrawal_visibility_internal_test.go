@@ -165,7 +165,7 @@ func testRecordEmittedWithdrawalVisibilityCase(
 	if !(*testCaseInput.shared) {
 		hidden = append(hidden, data.Obj.Named())
 	} else {
-		checkEffectiveObject(t, s, data.Obj.Named(), independent)
+		checkEffectiveObject(t, s, data.Obj.Named(), &independent)
 		assert.Equal(t, s.EmissionOwner(data.Obj.Named()), q)
 	}
 	assert.FatalIf(
@@ -247,7 +247,7 @@ func testRecordEmittedWithdrawalVisibilityCaseCompletion(
 			_, ok := scope.s.GetStatus(id)
 			assert.FatalIf(t, ok, "%s", "hidden late Ready leaked")
 		}
-		checkEffectiveObject(t, scope.s, id, Child{})
+		checkEffectiveObject(t, scope.s, id, &Child{})
 	}
 	assert.FatalIf(t, len(
 		scope.s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization),

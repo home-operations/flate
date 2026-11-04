@@ -10,14 +10,21 @@ type Declaration struct {
 	policy    manifest.DeclarationPolicy
 	InputPath string
 	Ordinal   int
+	Warnings  []manifest.Warning `json:"-"`
 }
 
 func (d *Declaration) child() Child {
-	return Child{Obj: d.Obj, Doc: d.Doc, Origin: d.Origin, policy: d.policy}
+	return Child{Obj: d.Obj, Doc: d.Doc, Origin: d.Origin, policy: d.policy, Warnings: d.Warnings}
 }
 
 // AddDeclaration admits an immutable declaration under its origin's authority.
+//
+//nolint:gocritic // Immutable value inputs preserve snapshot semantics.
 func (s *Store) AddDeclaration(child Declaration) {
+	for warningIndex := range child.Warnings {
+		warning := child.Warnings[warningIndex]
+		s.AddWarning(warning)
+	}
 	if child.Origin == manifest.RepositoryDeclaration {
 		s.AddObject(child.Obj, child.Doc)
 		return
@@ -96,6 +103,8 @@ func (sh *shard) policyLocked(id manifest.NamedResource) manifest.DeclarationPol
 }
 
 // Policy derives execution roles from an incoming or captured declaration envelope.
+//
+//nolint:gocritic // Immutable value inputs preserve snapshot semantics.
 func (c Child) Policy(id manifest.NamedResource) manifest.DeclarationPolicy {
 	policy := c.Origin.Policy(id, c.Obj)
 	policy.Report = policy.Report && !c.Generated

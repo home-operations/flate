@@ -565,14 +565,31 @@ func testReconcileAlreadyReadyNoTransientPendingCase(
 
 type testReconcileUnresolvedWarningReplayCaseTailInputs struct {
 	testCaseInput **bool
-	start         *chan struct{}
-	c             **Controller
-	first         *manifest.NamedResource
-	accepted      **store.Emission
-	s             **store.Store
-	stopReplay    *func()
-	authority     *store.ReadSet
-	replayEvents  *atomic.Int64
-	renders       *atomic.Int64
-	consumers     *[]*manifest.Kustomization
+
+	start *chan struct{}
+
+	c **Controller
+
+	first *manifest.
+		NamedResource
+
+	accepted **store.
+			Emission
+
+	s **store.
+		Store
+
+	stopReplay *func()
+
+	authority *store.
+			ReadSet
+
+	replayEvents *atomic.
+			Int64
+
+	renders *atomic.
+		Int64
+
+	consumers *[]*manifest.
+			Kustomization
 }

@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"sigs.k8s.io/kustomize/api/resource"
@@ -22,14 +23,28 @@ import (
 // Prepare admits one authoritative document while retaining its sanitized outcome.
 func Prepare(doc manifest.DocOccurrence, opts manifest.ParseDocOptions) (store.Child, manifest.DocOccurrence, bool) {
 	if doc.Err != nil {
-		return store.Child{}, doc, false
+		sanitized, changed := manifest.SanitizeDocument(doc)
+		return store.Child{Doc: sanitized.Document, Warnings: sanitized.Warnings}, sanitized, changed
 	}
 	parsed, err := manifest.ParseDoc(doc.Document, opts)
 	doc.Document, doc.Err = parsed.Document, err
+	if len(parsed.Warnings) != 0 {
+		doc.Warnings = append(slices.Clone(doc.Warnings), parsed.Warnings...)
+	}
+	for warningIndex := range doc.Warnings {
+		warning := doc.Warnings[warningIndex]
+		if warning.Resource != manifest.DocIdentity(parsed.Document) {
+			doc.Warnings = slices.Clone(doc.Warnings)
+			for i := range doc.Warnings {
+				doc.Warnings[i].Resource = manifest.DocIdentity(parsed.Document)
+			}
+			break
+		}
+	}
 	if err != nil {
 		parsed.Object = nil
 	}
-	return store.Child{Obj: parsed.Object, Doc: parsed.Document}, doc, parsed.Changed
+	return store.Child{Obj: parsed.Object, Doc: parsed.Document, Warnings: doc.Warnings}, doc, parsed.Changed
 }
 
 //nolint:gocritic // Keep immutable value-receiver semantics.
@@ -165,7 +180,10 @@ func (r documentReader) censusFile(
 		manifest.ReleaseDoc(child.Doc)
 		outcome := child.outcome
 		outcome.Document = nil
-		facts = append(facts, parsedObject{Obj: structural, fact: &o, outcome: outcome, version: child.version})
+		facts = append(
+			facts,
+			parsedObject{Obj: structural, Warnings: child.Warnings, fact: &o, outcome: outcome, version: child.version},
+		)
 	})
 	if projectionErr != nil {
 		err = projectionErr

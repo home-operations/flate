@@ -141,7 +141,7 @@ func testReconcileSuspensionAfterRefreshCase(
 
 	st := store.New()
 	tasks := task.NewBounded(2)
-	c := New(st, tasks, nil, true)
+	c := New(st, tasks, nil)
 	var deliveries atomic.Int64
 	c.Configure(base.Options{})
 	c.StartLifecycle()
@@ -170,7 +170,7 @@ func testReconcileSuspensionAfterRefreshCase(
 		c,
 		parent.Named(),
 		[]map[string]any{doc},
-		manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: parent.Named().Namespace},
+		manifest.ParseDocOptions{DefaultNamespace: parent.Named().Namespace},
 	)
 	children, _ := publishDocumentsResult1.Children, publishDocumentsResult1.Documents
 	assert.FatalIf(t, len(children) != 1, "initial publication: %v", children)
@@ -208,7 +208,7 @@ func testReconcileSuspensionAfterRefreshCase(
 			c,
 			parent.Named(),
 			[]map[string]any{replacement},
-			manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: parent.Named().Namespace},
+			manifest.ParseDocOptions{DefaultNamespace: parent.Named().Namespace},
 		)
 		published.Store(true)
 	}, false)
@@ -218,14 +218,13 @@ func testReconcileSuspensionAfterRefreshCase(
 		t,
 		controllertest.Dispatch{Tasks: tasks, Store: st, ID: rs.Named(), ReconcileNode: c.ReconcileNode},
 	)
-	if observations.Load() < 1 || !published.Load() || tasks.Failures() != 0 {
-		t.Fatalf(
-			"observations=%d published=%t panics=%d",
-			observations.Load(),
-			published.Load(),
-			tasks.Failures(),
-		)
-	}
+	assert.FatalIf(t, observations.Load() < 1 || !published.Load() || tasks.Failures() != 0,
+
+		"observations=%d published=%t panics=%d",
+		observations.Load(),
+		published.Load(),
+		tasks.Failures())
+
 	fresh, ok := st.Get[*manifest.ResourceSet](rs.Named())
 	assert.FatalIf(t, !ok || fresh == rs || fresh.Suspend != (*testCaseInput) ||
 		fresh.ResourcesTemplate != replacement["spec"].(map[string]any)["resourcesTemplate"], "canonical replacement = %+v", fresh)
@@ -253,14 +252,14 @@ func testReconcileSuspensionAfterRefreshCase(
 			info,
 		)
 		_, _, inventory := st.GetEmission(rs.Named())
-		if art != nil || st.GetObject(child) != nil || deliveries.Load() != 0 || len(inventory.Children) != 0 {
-			t.Errorf(
-				"disabled replacement rendered: artifact=%+v child=%v raw deliveries=%d",
-				art,
-				st.GetObject(child),
-				deliveries.Load(),
-			)
-		}
+		assert.ErrorIf(
+			t,
+			art != nil || st.GetObject(child) != nil || deliveries.Load() != 0 || len(inventory.Children) != 0,
+			"disabled replacement rendered: artifact=%+v child=%v raw deliveries=%d",
+			art,
+			st.GetObject(child),
+			deliveries.Load(),
+		)
 	} else if info.Status != store.StatusReady || !hasRenderedDoc(art, "Widget", "rs-refresh-output") || st.GetObject(child) == nil {
 		t.Fatalf(
 			"active replacement output: status=%+v artifact=%+v child=%v raw deliveries=%d",

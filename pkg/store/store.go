@@ -757,6 +757,7 @@ func reconcileInputEqual(obj manifest.BaseManifest, a, b map[string]any) reconci
 	return reconcileComparison{equal: sameAPI && auid == buid && adisabled == bdisabled, consumes: true}
 }
 
+//nolint:gocritic // Immutable value inputs preserve snapshot semantics.
 func reconcileEqual(a, b Child) bool {
 	comparison := reconcileInputEqual(a.Obj, a.Doc, b.Doc)
 	if comparison.consumes {

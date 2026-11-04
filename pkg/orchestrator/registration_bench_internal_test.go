@@ -108,7 +108,6 @@ func benchmarkDirtyRerunDynamicEmissionChainCase(b *testing.B, root *string, wor
 	b.Helper()
 	cfg := treeConfig{
 		CacheDir:    b.TempDir(),
-		WipeSecrets: true,
 		Concurrency: workers,
 		Path:        (*root),
 		RepoRoot:    (*root),

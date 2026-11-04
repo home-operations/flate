@@ -64,7 +64,7 @@ data: {greeting: hi}
 	cache := kustomize.NewTreeCache(owner, &inputs, tasks)
 	t.Cleanup(cache.Close)
 
-	c := New(s, tasks, cache, true)
+	c := New(s, tasks, cache)
 	c.Configure(Options{}, sourcecache.RetryConfig{})
 	c.StartLifecycle()
 	t.Cleanup(func() {
@@ -223,7 +223,7 @@ spec:
 		t.Cleanup(inputs.Close)
 		trees := kustomize.NewTreeCache(owner, &inputs, tasks)
 		t.Cleanup(trees.Close)
-		c := New(s, tasks, trees, true)
+		c := New(s, tasks, trees)
 
 		c.Configure(Options{}, sourcecache.RetryConfig{})
 		c.StartLifecycle()
@@ -590,13 +590,12 @@ spec:
 	s.SetDiscoveryIndex(l.Index)
 	childID := testutil.KustomizationID("flux-system", "child")
 	record, found := l.Index.Lookup(childID)
-	if !found || record.Parent != ks.Named() || s.GetObject(childID) != nil {
-		t.Fatalf(
-			"child must start as owned discovery evidence: record=%+v object=%v",
-			record,
-			s.GetObject(childID),
-		)
-	}
+	assert.FatalIf(t, !found || record.Parent != ks.Named() || s.GetObject(childID) != nil,
+
+		"child must start as owned discovery evidence: record=%+v object=%v",
+		record,
+		s.GetObject(childID))
+
 	authored := manifest.DeepCopyMap(spec)
 	{
 		info := controllertest.DispatchToFixpoint(

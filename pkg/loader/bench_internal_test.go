@@ -70,7 +70,7 @@ func BenchmarkParseFile_Kustomization(b *testing.B) {
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		b.Fatal(err)
 	}
-	opts := manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: ""}
+	opts := manifest.ParseDocOptions{DefaultNamespace: ""}
 	reader := readerForTest(dir)
 
 	b.ReportAllocs()
@@ -141,7 +141,7 @@ spec:
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		b.Fatal(err)
 	}
-	opts := manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: ""}
+	opts := manifest.ParseDocOptions{DefaultNamespace: ""}
 	reader := readerForTest(dir)
 
 	b.ReportAllocs()

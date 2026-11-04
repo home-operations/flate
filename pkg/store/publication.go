@@ -527,6 +527,7 @@ func (f *footprint) appendCoverageReferences(
 	return references
 }
 
+//nolint:gocritic // Immutable value inputs preserve snapshot semantics.
 func (c Child) admissionTargets(
 	refs []manifest.NamedResource,
 	proven map[manifest.NamedResource][]manifest.NamedResource,

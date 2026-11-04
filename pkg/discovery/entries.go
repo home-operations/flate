@@ -17,10 +17,9 @@ type Entry struct {
 }
 
 type entryInputs struct {
-	input       store.SourceArtifact
-	parsed      *loader.ParsedInputs
-	aliasViews  map[string]*store.SourceArtifact
-	wipeSecrets bool
+	input      store.SourceArtifact
+	parsed     *loader.ParsedInputs
+	aliasViews map[string]*store.SourceArtifact
 }
 
 // Plan establishes entries without publishing seeds into the caller's store.
@@ -48,10 +47,9 @@ func Plan(ctx context.Context, cfg Config) ([]Entry, error) {
 		return nil, err
 	}
 	prepared := &entryInputs{
-		input:       *input,
-		parsed:      l.ParsedInputs(),
-		aliasViews:  maps.Clone(d.aliasViews),
-		wipeSecrets: cfg.WipeSecrets,
+		input:      *input,
+		parsed:     l.ParsedInputs(),
+		aliasViews: maps.Clone(d.aliasViews),
 	}
 	return []Entry{{Path: d.cfg.Path, Input: input, prepared: prepared}}, nil
 }

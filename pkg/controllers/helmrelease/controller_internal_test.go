@@ -64,7 +64,7 @@ func newTestControllerWithOptions(t *testing.T, opts *base.Options) (*Controller
 	owner := cachetest.New(t, "", sourcecache.New)
 	hc := helm.NewClient(owner)
 	controller := base.New(st, ts)
-	c := New(controller, hc, helm.Options{}, false)
+	c := New(controller, hc, helm.Options{})
 	assert.FatalIf(t, c.Controller != controller, "%v", "constructor replaced the supplied base controller")
 	c.Configure(*opts)
 	c.StartLifecycle()
@@ -348,12 +348,11 @@ data:
 		"permitted values omission hid required chart failure: %+v",
 		info,
 	)
-	if !slices.ContainsFunc(st.Warnings(), func(w manifest.Warning) bool {
+	assert.FatalIf(t, !slices.ContainsFunc(st.Warnings(), func(w manifest.Warning) bool {
 		return w.Resource == invalid.Named() && w.Category == manifest.WarnOmittedValues &&
 			strings.Contains(w.Message, "Secret/default/app-values")
-	}) {
-		t.Fatalf("failed chart lost its omission warning: %+v", st.Warnings())
-	}
+	}),
+		"failed chart lost its omission warning: %+v", st.Warnings())
 }
 
 func TestController_ValuesOmissionPreservesRequiredChartFailure(t *testing.T) {
@@ -581,14 +580,12 @@ func runSharedChartSchedule(t *testing.T, scope *sharedChartScheduleInputs) {
 	}
 	for _, hr := range *scope.consumers {
 		_, _, partial := (*scope.st).GetEmission(hr.Named())
-		if len(partial.Children) != 0 || len(partial.Manifests) != 0 {
-			t.Fatalf(
-				"synthetic child lost incomplete inventory semantics for %s: children=%+v manifests=%v",
-				hr.Named(),
-				partial.Children,
-				partial.Manifests,
-			)
-		}
+		assert.FatalIf(t, len(partial.Children) != 0 || len(partial.Manifests) != 0,
+
+			"synthetic child lost incomplete inventory semantics for %s: children=%+v manifests=%v",
+			hr.Named(),
+			partial.Children,
+			partial.Manifests)
 	}
 	(*scope.releaseSource)()
 	{
@@ -617,20 +614,19 @@ func checkSharedChartConsumers(t *testing.T, scope *sharedChartScheduleInputs) {
 		if (*scope.inputs).tc.status == store.StatusReady {
 			replay := prepareSharedChartRerun(t, (*scope.c), (*scope.st), hr)
 			closeReplays = append(closeReplays, replay.run.Close)
-			if replay.run.Outcome() == schedule.Blocked || !replay.valid || replay.arrivals != 0 ||
+			assert.FatalIf(t, replay.run.Outcome() == schedule.Blocked || !replay.valid || replay.arrivals != 0 ||
 				replay.artifacts != 0 ||
 				replay.statuses != 0 ||
-				replay.renders != 1 {
-				t.Fatalf(
-					"equal H rerun: unresolved=%t authority=%t object/artifact/status events=%d/%d/%d renders=%d",
-					replay.run.Outcome() == schedule.Blocked,
-					replay.valid,
-					replay.arrivals,
-					replay.artifacts,
-					replay.statuses,
-					replay.renders,
-				)
-			}
+				replay.renders != 1,
+
+				"equal H rerun: unresolved=%t authority=%t object/artifact/status events=%d/%d/%d renders=%d",
+				replay.run.Outcome() == schedule.Blocked,
+				replay.valid,
+				replay.arrivals,
+				replay.artifacts,
+				replay.statuses,
+				replay.renders)
+
 			assert.FatalIf(t, !replay.after.Complete || replay.before.Fingerprint != replay.after.Fingerprint ||
 				!cmp.Equal(
 					replay.before.Manifests,
@@ -667,9 +663,8 @@ func prepareSharedChartRerun(t *testing.T, c *Controller, st *store.Store, hr *m
 		false,
 	)
 	initialRun := c.ReconcileNode(t.Context(), hr.Named(), manifest.DrainNone)
-	if initialRun.Outcome() == schedule.Blocked {
-		t.Fatal(initialRun.Blocked)
-	}
+	assert.FatalIf(t, initialRun.Outcome() == schedule.Blocked, "%s", initialRun.Blocked)
+
 	before := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
 	var reader store.ReadSet
 	reader.Init(st, manifest.NamedResource{Kind: "Observer", Name: hr.Name}, nil)
@@ -727,9 +722,7 @@ func (s *sharedChartScheduleInputs) checkInventory(t *testing.T, hr *manifest.He
 		wantDocs = 2
 	}
 	assert.FatalIf(
-		t,
-		(*s.st).GetObject((*s.source)) == nil || len(retained.Manifests) != wantDocs,
-		"%v",
+		t, (*s.st).GetObject((*s.source)) == nil || len(retained.Manifests) != wantDocs, "%v",
 		"actual H completion lost C or output",
 	)
 	authored := false
@@ -753,9 +746,7 @@ func (s *sharedChartScheduleInputs) checkInventory(t *testing.T, hr *manifest.He
 		"authored C document was dropped",
 	)
 	assert.FatalIf(
-		t,
-		(*s.st).GetObject((*s.source)) == nil,
-		"%v",
+		t, (*s.st).GetObject((*s.source)) == nil, "%v",
 		"synthetic C unavailable after H completes",
 	)
 	if info, ok := (*s.st).GetStatus(hr.Named()); !ok || info.Status != (*s.inputs).tc.status {

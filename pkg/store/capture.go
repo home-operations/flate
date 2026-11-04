@@ -401,6 +401,8 @@ func (r *ReadSet) Productions(id manifest.NamedResource, index *manifest.Discove
 }
 
 // IncomingProductions captures prospective source and contributor evidence without reading the target.
+//
+//nolint:gocritic // Immutable value inputs preserve snapshot semantics.
 func (r *ReadSet) IncomingProductions(child Child, index *manifest.DiscoveryIndex) []manifest.Production {
 	result := productionResult{reads: r, incoming: &child, watch: true}
 	r.store.visitProductions(child.Obj.Named(), index, &result)

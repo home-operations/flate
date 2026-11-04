@@ -2,17 +2,12 @@ package orchestrator
 
 import (
 	"context"
-	"errors"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 func TestRender_ScanAndPathWarnings(t *testing.T) {
@@ -110,14 +105,16 @@ spec:
 	renderedSingleton1, err := RenderTrees(
 		context.Background(),
 		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
-		Config{WipeSecrets: true},
+		Config{},
 	)
+
 	assert.FatalIf(t, len(renderedSingleton1) != 1, "missing render: %v", err)
+
 	res := renderedSingleton1[0].Result
+
 	assert.FatalIf(t, err != nil, "Render: %v", err)
-	if len(res.Failed) != 0 {
-		t.Fatalf("advisory must not fail the render; Failed=%v", res.Failed)
-	}
+	assert.FatalIf(t, len(res.Failed) != 0,
+		"advisory must not fail the render; Failed=%v", res.Failed)
 
 	app := testutil.HelmReleaseID("apps", "app")
 	opaque := testutil.HelmReleaseID("apps", "opaque")
@@ -125,17 +122,17 @@ spec:
 	var got *manifest.Warning
 	for i := range res.Warnings {
 		w := res.Warnings[i]
+
 		assert.ErrorIf(t, w.Resource == opaque, "a chart consuming .Values wholesale must not warn; got %+v", w)
+
 		if w.Resource == app && w.Category == manifest.WarnStaleValues {
 			got = &res.Warnings[i]
 		}
 	}
-	if got == nil {
-		t.Fatalf("missing StaleValues warning for %s; Warnings=%+v", app, res.Warnings)
-	}
-	if !slices.Equal(got.Detail, []string{"oldUnusedKey"}) {
-		t.Errorf("warning Detail = %v, want [oldUnusedKey]", got.Detail)
-	}
+	assert.FatalIf(t, got == nil,
+		"missing StaleValues warning for %s; Warnings=%+v", app, res.Warnings)
+	assert.ErrorIf(t, !slices.Equal(got.Detail, []string{"oldUnusedKey"}),
+		"warning Detail = %v, want [oldUnusedKey]", got.Detail)
 }
 
 func TestRender_UnresolvedSubstitutionWarning(t *testing.T) {
@@ -177,13 +174,15 @@ func TestRender_UnresolvedSubstitutionWarning(t *testing.T) {
 	renderedSingleton2, err := RenderTrees(
 		t.Context(),
 		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
-		Config{WipeSecrets: true, Concurrency: 2},
+		Config{Concurrency: 2},
 	)
+
 	assert.FatalIf(t, len(renderedSingleton2) != 1, "missing render: %v", err)
+
 	res := renderedSingleton2[0].Result
-	if err == nil || len(res.Failed) != 2 {
-		t.Fatalf("required absent Secrets were admitted: error=%v failures=%v", err, res.Failed)
-	}
+	assert.FatalIf(t, err == nil || len(res.Failed) != 2,
+		"required absent Secrets were admitted: error=%v failures=%v", err, res.Failed)
+
 	for _, warning := range res.Warnings {
 		assert.FatalIf(
 			t,
@@ -207,9 +206,11 @@ spec:
 	renderedSingleton2, err = RenderTrees(
 		t.Context(),
 		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
-		Config{WipeSecrets: true, Concurrency: 2},
+		Config{Concurrency: 2},
 	)
+
 	assert.FatalIf(t, err != nil || len(renderedSingleton2) != 1, "producer-declared render: %v", err)
+
 	res = renderedSingleton2[0].Result
 	assert.Equal(t, len(res.Failed), 0)
 	var warnings []manifest.Warning
@@ -226,113 +227,6 @@ spec:
 		Count: 2,
 	}
 	assert.Diff(t, warnings, []manifest.Warning{want})
-}
-
-// TestRender_ProducerDeclaredSecretPlaceholder is the konflate-facing contract
-// for the cloudflared-secret case: when a Kustomization's postBuild.substituteFrom
-// Secret is materialized by an in-repo ExternalSecret that enumerates its keys
-// (spec.target.template.data), flate synthesizes a placeholder Secret for those
-// keys — so the ${VAR}s it supplies resolve to ..PLACEHOLDER_<key>.. (not the
-// empty string) and NO UnresolvedSubstitution advisory fires, because the secret
-// is now readable-as-placeholders, exactly like a SOPS-encrypted Secret.
-func TestRender_ProducerDeclaredSecretPlaceholder(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "flux/apps.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
-kind: GitRepository
-metadata: {name: flux-system, namespace: flux-system}
-spec:
-  url: https://example.test/cluster.git
-`+"---\n"+
-		testutil.KustomizationYAML("apps", "flux-system", `  path: ./apps
-  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
-  postBuild:
-    substituteFrom:
-      - kind: Secret
-        name: cloudflared-secret
-`))
-	testutil.WriteFile(
-		t,
-		dir,
-		"apps/kustomization.yaml",
-		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: flux-system\nresources:\n  - ./externalsecret.yaml\n  - ./cm.yaml\n",
-	)
-	// The ExternalSecret materializing cloudflared-secret enumerates its output
-	// keys via target.template.data (the dataFrom feeds the template's inputs).
-	testutil.WriteFile(t, dir, "apps/externalsecret.yaml", `apiVersion: external-secrets.io/v1
-kind: ExternalSecret
-metadata: {name: cloudflared}
-spec:
-  secretStoreRef: {kind: ClusterSecretStore, name: onepassword}
-  target:
-    name: cloudflared-secret
-    template:
-      data:
-        CLOUDFLARE_TUNNEL_ID: "{{ .id }}"
-        identity: "{{ .identity }}"
-  dataFrom:
-    - extract: {key: cloudflare}
-`)
-	// A resource consuming the secret-sourced var through postBuild substitution.
-	testutil.WriteFile(
-		t,
-		dir,
-		"apps/cm.yaml",
-		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: tunnel\ndata:\n  target: \"${CLOUDFLARE_TUNNEL_ID}.cfargotunnel.com\"\n",
-	)
-
-	renderedSingleton4, err := RenderTrees(
-		context.Background(),
-		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
-		Config{WipeSecrets: true},
-	)
-	assert.FatalIf(t, len(renderedSingleton4) != 1, "missing render: %v", err)
-	o := renderedSingleton4[0].Orchestrator
-	res := renderedSingleton4[0].Result
-	assert.FatalIf(t, err != nil, "Render: %v", err)
-
-	repo := &manifest.GitRepository{Name: "ssh", Namespace: "flux-system"}
-	repo.URL = "ssh://git@example.test/cluster"
-	repo.SecretRef = &manifest.LocalObjectReference{Name: "cloudflared-secret"}
-	var reads store.ReadSet
-	reads.Init(o.Store(), repo.Named(), nil)
-	_, err = o.src.Fetchers[manifest.KindGitRepository].Fetch(t.Context(), repo, &reads, sourcecache.Policy{})
-	{
-		missing, ok := errors.AsType[*source.MissingSecretError](
-			err,
-		)
-		assert.FatalIf(
-			t,
-			!ok || missing.Detail != "missing 'identity' for SSH auth" || missing.Secret.Name != "cloudflared-secret" ||
-				!reads.Valid(),
-			"producer-declared credential did not retain placeholder classification: %v",
-			err,
-		)
-	}
-
-	// The ${CLOUDFLARE_TUNNEL_ID} resolved to its placeholder, not empty/literal.
-	want := manifest.ValuePlaceholder("CLOUDFLARE_TUNNEL_ID") + ".cfargotunnel.com"
-	var got string
-	for _, docs := range outputByParent(res.Manifests) {
-		for _, d := range docs {
-			md, _ := d["metadata"].(map[string]any)
-			data, _ := d["data"].(map[string]any)
-			if d["kind"] == "ConfigMap" && md["name"] == "tunnel" {
-				got, _ = data["target"].(string)
-			}
-		}
-	}
-	assert.ErrorIf(t, got != want, "tunnel ConfigMap data.target = %q, want %q", got, want)
-	// No unreadable-secret advisory: a producer-declared secret is readable as placeholders.
-	for _, w := range res.Warnings {
-		assert.ErrorIf(
-			t,
-			w.Category == manifest.WarnUnresolvedSubstitution && strings.Contains(w.Message, "cloudflared-secret"),
-			"a producer-declared secret must not warn as unreadable; got %+v",
-			w,
-		)
-	}
 }
 
 func testRenderScanAndPathWarningsCase(t *testing.T, testCaseInput *struct {
@@ -352,10 +246,13 @@ func testRenderScanAndPathWarningsCase(t *testing.T, testCaseInput *struct {
 	}
 	cfg.ID = manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}
 	runs, err := RenderTrees(t.Context(), []Tree{cfg.Tree}, cfg.Config)
+
 	assert.FatalIf(t, len(runs) != 1, "missing run: %v", err)
+
 	res := runs[0].Result
 
 	assert.FatalIf(t, err != nil, "%v", err)
+
 	var warnings []manifest.Warning
 	{
 		wValues := res.Warnings
@@ -367,9 +264,9 @@ func testRenderScanAndPathWarningsCase(t *testing.T, testCaseInput *struct {
 			}
 		}
 	}
-	if len(warnings) != 1 {
-		t.Fatalf("warnings = %+v, want one %s", res.Warnings, testCaseInput.category)
-	}
+	assert.FatalIf(t, len(warnings) != 1,
+		"warnings = %+v, want one %s", res.Warnings, testCaseInput.category)
+
 	assert.Equal(t, warnings[0].Count, 1)
 	if testCaseInput.sameRoot {
 		assert.Diff(t, warnings[0].Detail, []string{root})

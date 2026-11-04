@@ -150,12 +150,7 @@ func (op *objectProduction) publish(pr *productionRecorder, b *selfProduceBuilde
 		&producerDeclaration{obj: projected, identity: op.identity, authored: op.object.Named(), visit: pr.visit},
 	)
 	op.recordDeclaration(pr, b, projected, needsCandidates)
-	switch {
-	case op.kind.Data:
-		if s, ok := op.object.(*manifest.Secret); ok && !pr.visit.deferMaterialization {
-			b.recordSecret(s, op.identity, new(p))
-		}
-	case op.kind.Structural:
+	if op.kind.Structural {
 		b.emittedFiles[pr.coordinate] = appendUniqueProducer(b.emittedFiles[pr.coordinate], pr.visit.owner)
 	}
 }

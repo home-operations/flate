@@ -133,7 +133,7 @@ spec:
 	o, err := newTestOrchestrator(t, Tree{
 		Path:            dir,
 		ExternalChanges: change.NewSet([]string{"kubernetes/apps/networking/echo.yaml"}),
-	}, Config{WipeSecrets: true, Concurrency: 2})
+	}, Config{Concurrency: 2})
 	assert.FatalIf(t, err != nil, "New: %v", err)
 	o.src.Fetchers[manifest.KindOCIRepository] = fakeOCIFetcher{localPath: dir}
 
@@ -142,9 +142,8 @@ spec:
 		t.Logf("Render returned err: %v", err)
 	}
 	for id, info := range res.Failed {
-		if strings.Contains(info.String(), "artifact not found") {
-			t.Errorf("issue #260 regressed: %s reports %s", id, info.String())
-		}
+		assert.ErrorIf(t, strings.Contains(info.String(), "artifact not found"),
+			"issue #260 regressed: %s reports %s", id, info.String())
 	}
 }
 

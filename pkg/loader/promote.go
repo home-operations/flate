@@ -13,13 +13,12 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// PromoteOptions preserves the run's secret policy and per-document admission boundary.
+// PromoteOptions preserves the per-document admission boundary.
 type PromoteOptions struct {
-	Record      manifest.Production
-	Reads       *store.ReadSet
-	WipeSecrets bool                                      // SOPS ciphertext is replaced with offline placeholders.
-	Documents   []store.Child                             // Parsed, sanitized documents replace raw file acquisition.
-	Admit       func(manifest.BaseManifest) (bool, error) // Admission applies to the requested object and every sibling.
+	Record    manifest.Production
+	Reads     *store.ReadSet
+	Documents []store.Child                             // Parsed, sanitized documents replace raw file acquisition.
+	Admit     func(manifest.BaseManifest) (bool, error) // Admission applies to the requested object and every sibling.
 }
 
 // Promote materializes admitted documents and reports whether id is available.
@@ -60,7 +59,7 @@ func Promote(
 		objs, err = reader.parseFile(
 			ctx,
 			path,
-			manifest.ParseDocOptions{WipeSecrets: opts.WipeSecrets, DefaultNamespace: ""},
+			manifest.ParseDocOptions{DefaultNamespace: ""},
 		)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -218,12 +217,16 @@ func (o *PromoteOptions) admitDocuments(
 	source := o.Record.Source
 	authored := o.Record.Authored
 	record := o.Record
+	addWarning := st.AddWarning
+	if o.Reads != nil {
+		addWarning = o.Reads.AddWarning
+	}
 	for _, child := range objs {
 		obj := child.Obj
-		if o.Documents == nil && obj.Named() == id && authored != id {
+		switch {
+		case o.Documents == nil && obj.Named() == id && authored != id:
 			continue
-		}
-		if o.Documents == nil && obj.Named() == authored && authored.Namespace != id.Namespace {
+		case o.Documents == nil && obj.Named() == authored && authored.Namespace != id.Namespace:
 			obj = obj.WithNamespace(id.Namespace)
 		}
 		admitted, err := o.Admit(obj)
@@ -239,11 +242,16 @@ func (o *PromoteOptions) admitDocuments(
 		if err := ctx.Err(); err != nil {
 			return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
 		}
-		if o.Reads != nil {
-			o.Reads.Admit(obj, source, record.Owner, child.Doc)
-		} else {
-			st.AddObject(obj, child.Doc)
+		for warningIndex := range child.Warnings {
+			warning := child.Warnings[warningIndex]
+			warning.Resource = obj.Named()
+			addWarning(warning)
 		}
+		if o.Reads == nil {
+			st.AddObject(obj, child.Doc)
+			continue
+		}
+		o.Reads.Admit(obj, source, record.Owner, child.Doc)
 	}
 	return nil
 }
@@ -348,7 +356,7 @@ func (l *Loader) stampedBuiltEqual(obj manifest.BaseManifest, originalValue *sto
 		producer.EmissionPolicy().Stamp([]manifest.DocOccurrence{{Document: doc}})
 		parsed, err := manifest.ParseDoc(
 			doc,
-			manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets},
+			manifest.ParseDocOptions{},
 		)
 		same = err == nil && manifest.Equal(obj, parsed.Object)
 	}

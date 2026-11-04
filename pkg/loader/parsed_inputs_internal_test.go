@@ -1,11 +1,11 @@
 package loader
 
 import (
-	"context"
 	"errors"
 	"io/fs"
 	"path/filepath"
-	"slices"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/fstest"
@@ -69,9 +69,9 @@ func TestParsedInputs_ContentAndAdmissionIsolation(t *testing.T) {
 	}
 	assert.Diff(t, ordinals, []int{1, 2, 3})
 	assert.Diff(t, versions, []string{"kustomize.toolkit.fluxcd.io/v1", "example.test/v2", "helm.toolkit.fluxcd.io/v2"})
-	if !errors.Is(snapshot.objects[2].outcome.Err, manifest.ErrInput) || snapshot.objects[2].Obj != nil {
-		t.Fatalf("failed declaration was not retained: %+v", snapshot.objects[2])
-	}
+	assert.FatalIf(t, !errors.Is(snapshot.objects[2].outcome.Err, manifest.ErrInput) || snapshot.objects[2].Obj != nil,
+		"failed declaration was not retained: %+v", snapshot.objects[2])
+
 	before := map[string]int64{}
 	for name, count := range reads {
 		before[name] = count.Load()
@@ -117,16 +117,16 @@ func TestParsedInputs_SourceAndParsePolicy(t *testing.T) {
 	)
 	assert.NoError(t, err)
 	input := &store.SourceArtifact{LocalPath: root, FS: view}
-	load := func(input *store.SourceArtifact, inputs *ParsedInputs, wipe bool) *Loader {
+	load := func(input *store.SourceArtifact, inputs *ParsedInputs) *Loader {
 		st := store.New()
 		st.SetArtifact(manifest.BootstrapSourceID, input)
 		l := New(st)
-		l.Options.WipeSecrets, l.Options.ParsedInputs = wipe, inputs
-		_, loadErr := l.Load(t.Context(), root)
-		assert.NoError(t, loadErr)
+		l.Options.ParsedInputs = inputs
+		_, err = l.Load(t.Context(), root)
+		assert.NoError(t, err)
 		return l
 	}
-	planner := load(input, nil, true)
+	planner := load(input, nil)
 	inputs := planner.ParsedInputs()
 	file := filepath.Join(root, "unreadable.yaml")
 	snapshot := inputs.sources[root].documents[file].objects
@@ -138,38 +138,36 @@ func TestParsedInputs_SourceAndParsePolicy(t *testing.T) {
 		"snapshot lost open failure: %+v",
 		snapshot,
 	)
+
 	planner.documents.cache[file].objects[0].outcome.Err = errors.New("planner mutation")
-	for _, wipe := range []bool{false, true} {
-		l := load(input, inputs, wipe)
-		obj := l.documents.cache[filepath.Join(root, "secret.yaml")].objects[0].Obj.(*manifest.Secret)
-		assert.Equal(t, obj.HasPlaceholder(), wipe)
-		failed := l.documents.cache[filepath.Join(root, "broken.yaml")].objects
-		assert.FatalIf(
-			t,
-			len(failed) != 1 || failed[0].outcome.Ordinal != 1 || !errors.Is(failed[0].outcome.Err, manifest.ErrInput) ||
-				failed[0].Obj != nil,
-			"snapshot lost failed read: %+v",
-			failed,
-		)
-		openFailure := l.documents.cache[file].objects
-		assert.FatalIf(t, len(openFailure) != 1 || !errors.Is(openFailure[0].outcome.Err, fs.ErrPermission) ||
-			openFailure[0].outcome.Ordinal != 0 ||
-			openFailure[0].Obj != nil ||
-			openFailure[0].Doc != nil ||
-			!errors.Is(
-				snapshot[0].outcome.Err,
-				fs.ErrPermission,
-			), "restoration lost immutable open failure: %+v", openFailure)
-		assert.FatalIf(
-			t,
-			wipe && !errors.Is(openFailure[0].outcome.Err, snapshot[0].outcome.Err),
-			"%s",
-			"open failure was not reused from parsed inputs",
-		)
-		{
-			empty := l.documents.cache[filepath.Join(root, "empty.yaml")].objects
-			assert.FatalIf(t, empty == nil || len(empty) != 0, "snapshot lost completed empty read: %+v", empty)
-		}
+	l := load(input, inputs)
+	obj := l.documents.cache[filepath.Join(root, "secret.yaml")].objects[0].Obj.(*manifest.Secret)
+	assert.Equal(t, obj.HasKeys(), false)
+	failed := l.documents.cache[filepath.Join(root, "broken.yaml")].objects
+	assert.FatalIf(
+		t,
+		len(failed) != 1 || failed[0].outcome.Ordinal != 1 || !errors.Is(failed[0].outcome.Err, manifest.ErrInput) ||
+			failed[0].Obj != nil,
+		"snapshot lost failed read: %+v",
+		failed,
+	)
+
+	openFailure := l.documents.cache[file].objects
+	assert.FatalIf(t, len(openFailure) != 1 || !errors.Is(openFailure[0].outcome.Err, fs.ErrPermission) ||
+		openFailure[0].outcome.Ordinal != 0 ||
+		openFailure[0].Obj != nil ||
+		openFailure[0].Doc != nil ||
+		!errors.Is(snapshot[0].outcome.Err, fs.ErrPermission),
+		"restoration lost immutable open failure: %+v", openFailure)
+	assert.FatalIf(
+		t,
+		!errors.Is(openFailure[0].outcome.Err, snapshot[0].outcome.Err),
+		"%s",
+		"open failure was not reused from parsed inputs",
+	)
+
+	if empty := l.documents.cache[filepath.Join(root, "empty.yaml")].objects; empty == nil || len(empty) != 0 {
+		t.Fatalf("snapshot lost completed empty read: %+v", empty)
 	}
 	other, _, err := gittree.New(
 		t.Context(),
@@ -184,11 +182,10 @@ func TestParsedInputs_SourceAndParsePolicy(t *testing.T) {
 		}},
 	)
 	assert.NoError(t, err)
-	l := load(&store.SourceArtifact{LocalPath: root, FS: other}, inputs, true)
+	l = load(&store.SourceArtifact{LocalPath: root, FS: other}, inputs)
 	assert.Equal(t, l.documents.cache[filepath.Join(root, "secret.yaml")].objects[0].Obj.Named().Name, "authoritative")
-	{
-		failures := retainedErrorsForTest(l)
-		assert.FatalIf(t, len(failures) != 0, "replaced source retained obsolete failures: %v", failures)
+	if failures := retainedErrorsForTest(l); len(failures) != 0 {
+		t.Fatalf("replaced source retained obsolete failures: %v", failures)
 	}
 }
 
@@ -217,13 +214,19 @@ func (f parsedReadFS) ReadDir(name string) ([]fs.DirEntry, error) {
 
 func TestParsedInputs_CompactPhysicalFacts(t *testing.T) {
 	t.Parallel()
+	t.Run("declaration fingerprints", func(t *testing.T) {
+		t.Parallel()
+		testParsedInputsCompactPhysicalFactsCase1(t)
+	})
 	root := t.TempDir()
 	files := fstest.MapFS{
 		"left/kustomization.yaml":   {Data: []byte("namespace: left\nnamePrefix: left-\nresources: [../shared]\n")},
 		"right/kustomization.yaml":  {Data: []byte("namespace: right\nnamePrefix: right-\nresources: [../shared]\n")},
 		"shared/kustomization.yaml": {Data: []byte("resources: [objects.yaml]\n")},
 		"shared/objects.yaml": {
-			Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: data}\ndata: {KEY: value}\n"),
+			Data: []byte(
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: data}\ndata: {KEY: value, HIDDEN: 'ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]'}\nsops: {mac: encrypted}\n",
+			),
 		},
 	}
 	reads := map[string]*atomic.Int64{}
@@ -239,17 +242,19 @@ func TestParsedInputs_CompactPhysicalFacts(t *testing.T) {
 		st := store.New()
 		st.SetArtifact(manifest.BootstrapSourceID, input)
 		l := New(st)
-		if name != "" {
-			l.AdmitDeclarations([]store.Declaration{{
-				Obj: &manifest.RawObject{
-					Kind:       "Widget",
-					APIVersion: "example.io/v1",
-					Name:       name,
-					Namespace:  "apps",
+		l.AdmitDeclarations(
+			[]store.Declaration{
+				{
+					Obj: &manifest.RawObject{
+						Kind:       "Widget",
+						APIVersion: "example.io/v1",
+						Name:       name,
+						Namespace:  "apps",
+					},
+					Origin: manifest.SuppliedDeclaration,
 				},
-				Origin: manifest.SuppliedDeclaration,
-			}})
-		}
+			},
+		)
 		l.SourceRoot = root
 		l.Options.Selection = manifest.Selection{Changed: true}
 		l.Options.ParsedInputs = parsed
@@ -259,10 +264,16 @@ func TestParsedInputs_CompactPhysicalFacts(t *testing.T) {
 	_, err := planner.Load(t.Context(), root)
 	assert.NoError(t, err)
 	for _, side := range []string{"left", "right"} {
-		_, occurrencesErr := planner.Occurrences(t.Context(), filepath.Join(root, side), "")
-		assert.NoError(t, occurrencesErr)
+		_, err = planner.Occurrences(t.Context(), filepath.Join(root, side), "")
+		assert.NoError(t, err)
 	}
 	parsed := planner.ParsedInputs()
+	compact := planner.documents.cache[filepath.Join(root, "shared", "objects.yaml")].objects
+	assert.Equal(t, len(compact), 1)
+	assert.Equal(t, compact[0].Doc == nil && compact[0].outcome.Document == nil, true)
+	assert.Equal(t, len(compact[0].Warnings), 1)
+	assert.Diff(t, compact[0].Warnings[0].Detail, []string{"HIDDEN"})
+	assert.Equal(t, len(planner.Store.Warnings()), 0)
 	before := map[string]int64{}
 	for name, count := range reads {
 		before[name] = count.Load()
@@ -270,10 +281,10 @@ func TestParsedInputs_CompactPhysicalFacts(t *testing.T) {
 	directoryCount := directories.Load()
 	for _, side := range []string{"left", "right"} {
 		l := newLoader(input, parsed, side)
-		_, loadErr2 := l.Load(t.Context(), root)
-		assert.NoError(t, loadErr2)
-		occurrences, loadErr2 := l.Occurrences(t.Context(), filepath.Join(root, side), "")
-		assert.NoError(t, loadErr2)
+		_, err = l.Load(t.Context(), root)
+		assert.NoError(t, err)
+		occurrences, errInner := l.Occurrences(t.Context(), filepath.Join(root, side), "")
+		assert.NoError(t, errInner)
 		assert.Equal(t, len(occurrences), 1)
 		assert.Equal(t, occurrences[0].Identity.Namespace, side)
 		assert.Equal(t, occurrences[0].Identity.Name, side+"-data")
@@ -307,6 +318,30 @@ func TestParsedInputs_CompactPhysicalFacts(t *testing.T) {
 	}
 	assert.Equal(t, len(planner.Index.Records), 2)
 
+	for _, side := range []string{"left", "right"} {
+		l := newLoader(input, parsed, side)
+		_, err = l.Load(t.Context(), root)
+		assert.NoError(t, err)
+		occurrences, errInner := l.Occurrences(t.Context(), filepath.Join(root, side), "")
+		assert.NoError(t, errInner)
+		child, errInner := l.exactObject(t.Context(), new(occurrences[0]), nil)
+		assert.NoError(t, errInner)
+		assert.Equal(t, len(child.Warnings), 1)
+		assert.Equal(t, child.Warnings[0].Resource, occurrences[0].Identity)
+		assert.Diff(t, child.Warnings[0].Detail, []string{"HIDDEN"})
+		result1, errInner := child.Obj.(manifest.Data).Value("HIDDEN")
+		value, present := result1.Value, result1.Found
+		assert.NoError(t, errInner)
+		assert.Equal(t, present, false)
+		assert.Equal(t, value, "")
+		result2, errInner := child.Obj.(manifest.Data).Value("KEY")
+		value, present = result2.Value, result2.Found
+		assert.NoError(t, errInner)
+		assert.Equal(t, present, true)
+		assert.Equal(t, value, "value")
+		assert.Equal(t, len(l.Store.Warnings()), 0)
+	}
+
 	other := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
 		"only.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: other}\n")},
 	}}
@@ -314,89 +349,61 @@ func TestParsedInputs_CompactPhysicalFacts(t *testing.T) {
 	_, err = l.Load(t.Context(), root)
 	assert.NoError(t, err)
 	assert.Equal(t, len(l.Index.Records), 2)
-	{
-		_, ok := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "other"})
-		assert.FatalIf(t, !ok, "%s", "borrowed facts from another source view")
+	if _, ok := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "other"}); !ok {
+		t.Fatal("borrowed facts from another source view")
 	}
+}
 
-	visibilityRoot := t.TempDir()
-	data := []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\n")
-	original := &store.SourceArtifact{
-		LocalPath: visibilityRoot,
-		FS:        fstest.MapFS{"left/a.yaml": {Data: data}, "right/b.yaml": {Data: data}},
-	}
-	physical := newLoader(original, nil, "")
-	for _, dir := range []string{"left", "right"} {
-		_, loadErr3 := physical.Load(t.Context(), filepath.Join(visibilityRoot, dir))
-		assert.NoError(t, loadErr3)
-	}
-	assert.NoError(t, physical.FinalizeIndex(t.Context(), visibilityRoot, false))
-	observations := slices.Clone(physical.Index.Visibility)
-	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}
-	assert.Equal(t, len(observations), 2)
-	for i, dir := range []string{"left", "right"} {
-		assert.Equal(t, observations[i].Complete, true)
-		assert.Equal(t, observations[i].Root, dir)
-		assert.Equal(t, len(observations[i].Inputs[id]), 1)
-	}
-	partial := newLoader(original, physical.ParsedInputs(), "")
-	_, err = partial.Load(t.Context(), filepath.Join(visibilityRoot, "left"))
-	assert.NoError(t, err)
-	assert.NoError(t, partial.FinalizeIndex(t.Context(), visibilityRoot, false))
-	assert.Diff(t, partial.Index.Visibility, observations[:1])
+func testParsedInputsCompactPhysicalFactsCase1(t *testing.T) {
+	t.Helper()
 
-	canceled := newLoader(original, nil, "")
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	_, err = canceled.Load(ctx, filepath.Join(visibilityRoot, "left"))
-	assert.FatalIf(t, !errors.Is(err, context.Canceled), "canceled load: %v", err)
-	assert.NoError(t, canceled.FinalizeIndex(t.Context(), visibilityRoot, false))
-	assert.Equal(t, len(canceled.Index.Visibility), 1)
-	assert.Equal(t, canceled.Index.Visibility[0].Complete, false)
-	incomplete := canceled.ParsedInputs()
-	canceledVisibility := slices.Clone(canceled.Index.Visibility)
-	recovered := newLoader(original, incomplete, "")
-	_, err = recovered.Load(t.Context(), filepath.Join(visibilityRoot, "left"))
-	assert.NoError(t, err)
-	assert.Equal(t, len(recovered.Index.Records), 1)
-	_, found := recovered.Index.Lookup(id)
-	assert.Equal(t, found, true)
-	assert.NoError(t, recovered.FinalizeIndex(t.Context(), visibilityRoot, false))
-	assert.Diff(t, recovered.Index.Visibility, observations[:1])
-	canceledFacts := incomplete.sources[visibilityRoot].loads[loadContext{path: filepath.Join(visibilityRoot, "left")}]
-	assert.Equal(t, canceledFacts.complete, false)
-	assert.Equal(t, canceledFacts.observed, true)
-	assert.Equal(t, len(canceledFacts.files), 0)
-	assert.Equal(t, len(canceledFacts.directories), 0)
-	assert.Diff(t, canceled.Index.Visibility, canceledVisibility)
-
-	replayed := newLoader(original, physical.ParsedInputs(), "")
-	for _, dir := range []string{"left", "right"} {
-		_, loadErr4 := replayed.Load(t.Context(), filepath.Join(visibilityRoot, dir))
-		assert.NoError(t, loadErr4)
+	for _, conflict := range []bool{false, true} {
+		t.Run(strconv.FormatBool(conflict), func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			body := "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: data, namespace: apps, labels: {kustomize.toolkit.fluxcd.io/name: owner}}\ndata: {KEY: 'ENC[AES256_GCM,data:original,iv:iv,tag:tag,type:str]'}\n"
+			documents, err := manifest.DecodeDocs(strings.NewReader(body), manifest.IncidentalDocuments)
+			assert.NoError(t, err)
+			want := manifest.Fingerprint(manifest.WithoutOwnershipLabels(documents[0].Document))
+			if conflict {
+				body += "---\n" + strings.ReplaceAll(body, "data:original", "data:different") + "---\n" + body
+			}
+			st := store.New()
+			st.SetArtifact(
+				manifest.BootstrapSourceID,
+				&store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{"objects.yaml": {Data: []byte(body)}}},
+			)
+			l := New(st)
+			l.SourceRoot = root
+			l.Options.Selection.Changed = true
+			_, err = l.Load(t.Context(), root)
+			assert.NoError(t, err)
+			assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
+			id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "data", Namespace: "apps"}
+			record, found := l.Index.Lookup(id)
+			assert.Equal(t, found, true)
+			if conflict {
+				want = ""
+			}
+			assert.Equal(t, record.Declared, want)
+			assert.NoError(
+				t,
+				(&documentReader{compact: true}).prepareStream(
+					strings.NewReader(body),
+					manifest.ParseDocOptions{},
+					func(object parsedObject) {
+						assert.NoError(t, object.outcome.Err)
+						_, present := object.Doc["data"].(map[string]any)["KEY"]
+						assert.Equal(t, present, false)
+						assert.FatalIf(t, object.declared == "" ||
+							object.declared == manifest.Fingerprint(
+								manifest.WithoutOwnershipLabels(object.Doc),
+							), "%s", "preparation lost the original declaration fingerprint")
+					},
+				),
+			)
+		})
 	}
-	assert.NoError(t, replayed.FinalizeIndex(t.Context(), visibilityRoot, false))
-	assert.Diff(t, replayed.Index.Visibility, observations)
-	replayed.Store.SetArtifact(
-		manifest.BootstrapSourceID,
-		&store.SourceArtifact{
-			LocalPath: visibilityRoot,
-			FS:        fstest.MapFS{".krmignore": {Data: []byte("*.yaml\n")}, "hidden.yaml": {Data: data}},
-		},
-	)
-	assert.NoError(t, replayed.FinalizeIndex(t.Context(), visibilityRoot, false))
-	assert.Equal(t, len(replayed.Index.Visibility), 0)
-	_, err = replayed.Load(t.Context(), visibilityRoot)
-	assert.NoError(t, err)
-	assert.NoError(t, replayed.FinalizeIndex(t.Context(), visibilityRoot, true))
-	assert.Diff(
-		t,
-		replayed.Index.Visibility,
-		[]manifest.InputVisibility{{Source: manifest.BootstrapSourceID, Root: ".", Complete: true}},
-	)
-	assert.Diff(t, physical.Index.Visibility, observations)
-	assert.Diff(t, observations[0].Inputs[id], []string{"left/a.yaml"})
-	assert.Diff(t, observations[1].Inputs[id], []string{"right/b.yaml"})
 }
 
 type testParsedInputsContentAndAdmissionIsolationIndependentEntriesInputs struct {
@@ -434,6 +441,7 @@ func testParsedInputsContentAndAdmissionIsolationIndependentEntries(
 			doc["metadata"].(map[string]any)["name"] = side
 			assert.Equal(t, len(l.Index.Records), 1)
 			failure := l.documents.cache[(*testCaseInput.file)].objects[2]
+
 			assert.FatalIf(
 				t,
 				failure.outcome.Ordinal != 3 || !errors.Is(failure.outcome.Err, testCaseInput.snapshot.objects[2].outcome.Err) ||

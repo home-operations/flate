@@ -19,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 
@@ -111,7 +113,7 @@ func TestFetcher_MachineContinuationEligibility(t *testing.T) {
 		{name: "unavailable AWS auth", provider: sourcev1.BucketProviderAmazon, wantAmbient: true},
 		{name: "unsupported provider auth", provider: sourcev1.BucketProviderGoogle},
 		{name: "STS auth", sts: true},
-		{name: "wiped auth", auth: &manifest.Secret{StringData: map[string]any{"accesskey": manifest.ValuePlaceholder("accesskey"), "secretkey": "key"}}, wantAmbient: true},
+		{name: "empty auth", auth: &manifest.Secret{StringData: map[string]any{"accesskey": "", "secretkey": "key"}}, wantAmbient: true},
 		{name: "malformed auth", auth: &manifest.Secret{Data: map[string]any{"accesskey": "credential-canary!"}}, wantInput: true},
 		{name: "missing TLS", certRef: true},
 		{name: "malformed TLS", certRef: true, cert: &manifest.Secret{StringData: map[string]any{"ca.crt": "credential-canary"}}, wantInput: true},
@@ -120,13 +122,62 @@ func TestFetcher_MachineContinuationEligibility(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			testFetcherMachineContinuationEligibilityCase(
-				t,
-				&tc,
-			)
-		},
-		)
+			testFetcherMachineContinuationEligibilityCase1(t, &tc)
+		})
 	}
+}
+
+func testFetcherMachineContinuationEligibilityCase1(t *testing.T, tc *struct {
+	name        string
+	provider    string
+	sts         bool
+	auth        *manifest.Secret
+	cert        *manifest.Secret
+	certRef     bool
+	proxy       bool
+	wantAmbient bool
+	wantInput   bool
+},
+) {
+	t.Helper()
+
+	b := ambientBucket()
+	b.Provider = tc.provider
+	if tc.sts {
+		b.STS = &sourcev1.BucketSTSSpec{
+			Provider: sourcev1.BucketProviderAmazon,
+			Endpoint: "https://sts.invalid",
+		}
+	}
+	if tc.certRef {
+		b.CertSecretRef = &manifest.LocalObjectReference{Name: "transport"}
+	}
+	if tc.proxy {
+		b.ProxySecretRef = &manifest.LocalObjectReference{Name: "transport"}
+	}
+	inputs := testInputs{secrets: func(_, name string) *manifest.Secret {
+		if name == "auth" {
+			return tc.auth
+		}
+		return tc.cert
+	}}
+	f := &Fetcher{Network: newTestNetwork(t)}
+	artifact, err := f.Fetch(t.Context(), b, inputs.readSet(b), cache.Policy{})
+	missing, ok := errors.AsType[*source.MissingSecretError](err)
+	assert.FatalIf(t, err == nil || artifact != nil || (ok && missing.RetryAmbient != nil) != tc.wantAmbient ||
+		errors.Is(err, manifest.ErrInput) != tc.wantInput ||
+		strings.Contains(err.Error(), "credential-canary"),
+
+		"ambient=%t input=%t: %v",
+		ok && missing.RetryAmbient != nil,
+		errors.Is(err, manifest.ErrInput),
+		err)
+	assert.FatalIf(
+		t,
+		(tc.sts || tc.provider == sourcev1.BucketProviderGoogle) && (!ok || missing.Secret.Name != "auth"),
+		"provider availability lost the missing Secret identity: %v",
+		err,
+	)
 }
 
 func TestFetcher_MachineProviders(t *testing.T) {
@@ -182,7 +233,6 @@ func clearMachineEnvironment(t *testing.T) {
 }
 
 //nolint:paralleltest // Credential fixture helpers change the process environment.
-//nolint:paralleltest // Credential and DNS fixtures change process environment or resolver state.
 func TestFetcher_MachineProfiles(t *testing.T) {
 	for _, shape := range []string{"process", "static before process", "environment before files", "partial", "missing executable", "failing process", "missing profile", "no default profile", "selected profile", "shared credentials", "malformed INI", "no files", "absent SSO token"} {
 		t.Run(shape, func(t *testing.T) {
@@ -235,10 +285,15 @@ func TestFetcher_MachineIAMFailures(t *testing.T) {
 				return bucketReply(r, http.StatusForbidden, `<Error><Code>AccessDenied</Code></Error>`), nil
 			})
 			artifact, err := f.fetchMachine(t.Context(), &request, providers, cache.Policy{})
-			if artifact != nil || err == nil || errors.Is(err, manifest.ErrMissingSecret) != tc.missing ||
-				strings.Contains(err.Error(), "canary") {
-				t.Fatalf("missing=%t, acquisition lost its outcome or exposed credentials: %v", tc.missing, err)
-			}
+			assert.FatalIf(
+				t,
+				artifact != nil || err == nil || errors.Is(err, manifest.ErrMissingSecret) != tc.missing ||
+					strings.Contains(err.Error(), "canary"),
+				"missing=%t, acquisition lost its outcome or exposed credentials: %v",
+				tc.missing,
+				err,
+			)
+
 			assert.FatalIf(
 				t,
 				!tc.missing && tc.cause != nil && !errors.Is(err, tc.cause),
@@ -290,30 +345,189 @@ func TestFetcher_MachineContinuation(t *testing.T) {
 	access := "machine-canary"
 	rejected := false
 	bucketPipe(t, func(r *http.Request) *http.Response {
-		return testFetcherMachineContinuationCallback(
-			r,
-			testFetcherMachineContinuationCallbackInputs{
-				t:        &t,
-				requests: &requests,
-				access:   &access,
-				rejected: &rejected,
-			},
+		requests.Add(1)
+		if r.Host == "sts.amazonaws.com" {
+			return bucketReply(
+				r,
+				403,
+				`<ErrorResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><Error><Code>AccessDenied</Code><Message>machine-canary</Message></Error></ErrorResponse>`,
+			)
+		}
+		assert.ErrorIf(
+			t,
+			access != "" && !strings.Contains(r.Header.Get("Authorization"), "Credential="+access+"/"),
+			"%s",
+			"credential precedence selected a different signer",
 		)
-	},
-	)
+		assert.ErrorIf(
+			t,
+			access == "" && r.Header.Get("Authorization") != "",
+			"%s",
+			"public source consulted machine credentials",
+		)
+
+		if rejected {
+			return bucketReply(r, 403, `<Error><Code>AccessDenied</Code><Message>rejected</Message></Error>`)
+		}
+		if r.URL.Query().Get("list-type") != "" {
+			return bucketReply(
+				r,
+				200,
+				`<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated><Contents><Key>file.yaml</Key><Size>4</Size><ETag>"etag"</ETag></Contents></ListBucketResult>`,
+			)
+		}
+		response := bucketReply(r, 200, "data")
+		response.Header.Set("ETag", `"etag"`)
+		response.Header.Set("Last-Modified", "Mon, 02 Jan 2006 15:04:05 GMT")
+		return response
+	})
 	for _, tier := range []string{"repository", "supply", "partial supply", "machine", "public", "rejected", "STS rejected"} {
 		t.Run(tier, func(t *testing.T) {
-			testFetcherMachineContinuationCase(
+			testFetcherMachineContinuationCase1(
 				t,
-				testFetcherMachineContinuationCaseInputs{
-					requests: &requests,
-					access:   &access,
+				&testFetcherMachineContinuationCase1Inputs{
 					rejected: &rejected,
 					tier:     &tier,
+					access:   &access,
+					requests: &requests,
 				},
 			)
-		},
+		})
+	}
+}
+
+func testFetcherMachineContinuationCase1(
+	t *testing.T, inputs *testFetcherMachineContinuationCase1Inputs,
+) {
+	t.Helper()
+	b := ambientBucket()
+	st := store.New()
+	(*inputs.rejected) = (*inputs.tier) == "rejected"
+	if (*inputs.tier) == "STS rejected" {
+		clearMachineEnvironment(t)
+		token := filepath.Join(t.TempDir(), "web-identity")
+		testutil.WriteFileAt(t, token, "synthetic-token")
+		t.Setenv("AWS_WEB_IDENTITY_TOKEN_FILE", token)
+		t.Setenv("AWS_ROLE_ARN", "arn:aws:iam::123456789012:role/fixture")
+	}
+	switch {
+	case (*inputs.tier) == "public":
+		b.SecretRef = nil
+		(*inputs.access) = ""
+	case (*inputs.tier) != "machine" && (*inputs.tier) != "STS rejected":
+		testFetcherMachineContinuationCase1Part1(&inputs.access, &inputs.tier, &st)
+	default:
+
+		(*inputs.access) = "machine-canary"
+	}
+
+	st.AddObject(b)
+	var reads store.ReadSet
+	reads.Init(st, b.Named(), nil)
+	defer reads.Close()
+	root := ""
+	if (*inputs.tier) == "machine" {
+		root = t.TempDir()
+	}
+	f := &Fetcher{Cache: cachetest.New(t, root, cache.New), Network: newTestNetwork(t)}
+	initialRequests := inputs.requests.Load()
+	artifact, err := f.Fetch(t.Context(), b, &reads, cache.Policy{MaxAge: time.Hour})
+	if (*inputs.tier) == "rejected" {
+		assert.FatalIf(
+			t,
+			err == nil || artifact != nil || !errors.Is(err, manifest.ErrMissingSecret) || inputs.requests.
+				Load() != initialRequests+1,
+			"explicit rejection advanced credential tiers: %v",
+			err,
 		)
+
+		return
+	}
+	if (*inputs.tier) == "STS rejected" {
+		missing, ok := errors.AsType[*source.MissingSecretError](err)
+		assert.FatalIf(t, !ok || missing.RetryAmbient == nil,
+			"missing continuation: %v", err)
+
+		artifact, err = missing.RetryAmbient(t.Context())
+		rejection, rejected := errors.AsType[credentials.ErrorResponse](err)
+		assert.FatalIf(t, artifact != nil || !rejected || rejection.STSError.Code != "AccessDenied" ||
+			errors.Is(err, manifest.ErrMissingSecret) ||
+			strings.Contains(err.Error(), "canary") || inputs.requests.
+			Load() == initialRequests,
+			"machine STS rejection lost its cause or exposed credentials: %v", err)
+
+		return
+	}
+	if (*inputs.tier) == "machine" {
+		missing, ok := errors.AsType[*source.MissingSecretError](err)
+		assert.FatalIf(t, !ok || missing.RetryAmbient == nil || artifact != nil,
+			"missing auth did not retain continuation: %v", err)
+
+		before, prepErr := (&operation{Fetcher: f, secrets: source.SecretLookup(&reads)}).prepare(b)
+		assert.Equal(t, errors.Is(prepErr, manifest.ErrMissingSecret), true)
+		t.Setenv("AWS_SECRET_ACCESS_KEY", "rotated-before-first-acquisition")
+		after, prepErr := (&operation{Fetcher: f, secrets: source.SecretLookup(&reads)}).prepare(b)
+		assert.Equal(t, errors.Is(prepErr, manifest.ErrMissingSecret), true)
+		assert.FatalIf(t, before.material != nil || after.material != nil ||
+			before.options.Transport != after.options.Transport, "%s", "machine values changed transport identity")
+
+		artifact, err = missing.RetryAmbient(t.Context())
+	}
+	testFetcherMachineContinuationCase1Tail(
+		t,
+		&testFetcherMachineContinuationCase1TailInputs{
+			err:      &err,
+			artifact: &artifact,
+			requests: &inputs.requests,
+			f:        &f,
+			b:        &b,
+			reads:    &reads,
+			tier:     &inputs.tier,
+			access:   &inputs.access,
+			root:     &root,
+		},
+	)
+}
+
+func testFetcherMachineContinuationCase1Part1(access, tier **string, st **store.Store) {
+	(*(*access)) = "repository"
+	sec := &manifest.Secret{
+		Name:       "auth",
+		Namespace:  "apps",
+		StringData: map[string]any{"accesskey": (*(*access)), "secretkey": "explicit-secret"},
+	}
+	if (*(*tier)) != "supply" {
+		if (*(*tier)) == "partial supply" {
+			delete(sec.StringData, "secretkey")
+		}
+		(*st).
+			AddObject(sec)
+	}
+	if (*(*tier)) == "supply" || (*(*tier)) == "partial supply" {
+		supplied := []store.Declaration{
+			{
+				Doc: testutil.ObjectDocument(
+					&manifest.Secret{
+						Name:       "auth",
+						Namespace:  "apps",
+						StringData: map[string]any{"accesskey": "supply", "secretkey": "supply-secret"},
+					},
+				),
+				Obj: &manifest.Secret{
+					Name:       "auth",
+					Namespace:  "apps",
+					StringData: map[string]any{"accesskey": "supply", "secretkey": "supply-secret"},
+				},
+				Origin: manifest.SuppliedDeclaration,
+			},
+		}
+		for _, declaration := range supplied {
+			(*st).
+				AddDeclaration(declaration)
+		}
+		if (*(*tier)) == "supply" {
+			(*(*access)) = "supply"
+		}
 	}
 }
 
@@ -391,64 +605,6 @@ func TestFetcher_MachineSSOTransport(t *testing.T) {
 	}
 }
 
-func testFetcherMachineContinuationEligibilityCase(
-	t *testing.T, tc *struct {
-		name     string
-		provider string
-		sts      bool
-		auth     *manifest.
-				Secret
-		cert        *manifest.Secret
-		certRef     bool
-		proxy       bool
-		wantAmbient bool
-		wantInput   bool
-	},
-) {
-	t.Helper()
-
-	b := ambientBucket()
-	b.Provider = tc.provider
-	if tc.sts {
-		b.STS = &sourcev1.BucketSTSSpec{
-			Provider: sourcev1.BucketProviderAmazon,
-			Endpoint: "https://sts.invalid",
-		}
-	}
-	if tc.certRef {
-		b.CertSecretRef = &manifest.LocalObjectReference{Name: "transport"}
-	}
-	if tc.proxy {
-		b.ProxySecretRef = &manifest.LocalObjectReference{Name: "transport"}
-	}
-	inputs := testInputs{secrets: func(_, name string) *manifest.Secret {
-		if name == "auth" {
-			return tc.auth
-		}
-		return tc.cert
-	}}
-	f := &Fetcher{Network: newTestNetwork(t)}
-	artifact, err := f.Fetch(t.Context(), b, inputs.readSet(b), cache.Policy{})
-	missing, ok := errors.AsType[*source.MissingSecretError](err)
-	if err == nil || artifact != nil || (ok && missing.RetryAmbient != nil) != tc.wantAmbient ||
-		errors.Is(err, manifest.ErrInput) != tc.wantInput ||
-		strings.Contains(err.Error(), "credential-canary") {
-		t.Fatalf(
-			"ambient=%t input=%t: %v",
-			ok && missing.RetryAmbient != nil,
-			errors.Is(err, manifest.ErrInput),
-			err,
-		)
-	}
-	assert.FatalIf(
-		t,
-		(tc.sts || tc.provider == sourcev1.BucketProviderGoogle) &&
-			(!ok || missing.Secret.Name != "auth"),
-		"provider availability lost the missing Secret identity: %v",
-		err,
-	)
-}
-
 func testFetcherMachineProvidersCase(t *testing.T, failure **fs.PathError,
 	tc *struct {
 		name  string
@@ -495,27 +651,29 @@ func testFetcherMachineProvidersCase(t *testing.T, failure **fs.PathError,
 	first := &machineProvider{value: tc.first}
 	next := &machineProvider{value: tc.next}
 	first.get = func(cc *credentials.CredContext) (credentials.Value, error) {
-		if cc == nil || cc.Context == nil || cc.Client == nil || cc.Client.Transport != f.Network {
-			t.Error("provider lost the producer context or guarded client")
-		}
+		assert.ErrorIf(
+			t,
+			cc == nil || cc.Context == nil || cc.Client == nil || cc.Client.Transport != f.Network,
+			"%s",
+			"provider lost the producer context or guarded client",
+		)
+
 		if _, ok := cc.Context.Deadline(); !ok {
 			t.Error("provider ran without the bounded acquisition deadline")
 		}
 		return tc.first, tc.firstErr
 	}
 	next.get = func(cc *credentials.CredContext) (credentials.Value, error) {
-		if cc.Client.Transport != f.Network {
-			t.Error("fallback provider bypassed the run transport")
-		}
+		assert.ErrorIf(t, cc.Client.Transport != f.Network, "%s", "fallback provider bypassed the run transport")
+
 		return tc.next, tc.nextErr
 	}
 	providers = []credentials.Provider{first, next}
 	var signed atomic.Int32
 	request.options.Transport = bucketTransport(func(r *http.Request) (*http.Response, error) {
-		if r.Header.Get("Authorization") == "" && tc.name != "anonymous" && tc.
-			name != "exhausted" {
-			t.Error("machine request is unsigned")
-		}
+		assert.ErrorIf(t, r.Header.Get("Authorization") == "" && tc.name != "anonymous" && tc.
+			name != "exhausted", "%s", "machine request is unsigned")
+
 		signed.Add(1)
 		return bucketReply(
 			r,
@@ -524,11 +682,11 @@ func testFetcherMachineProvidersCase(t *testing.T, failure **fs.PathError,
 		), nil
 	})
 	artifact, err := f.fetchMachine(t.Context(), &request, providers, cache.Policy{MaxAge: time.Hour})
-	if (err == nil) != tc.wantComplete || (artifact != nil) != tc.wantComplete ||
+	assert.FatalIf(t, (err == nil) != tc.wantComplete || (artifact != nil) != tc.wantComplete ||
 		first.calls.Load() != 1 ||
-		next.calls.Load() != tc.wantNext {
-		t.Fatalf("complete=%t calls=%d/%d: %v", artifact != nil, first.calls.Load(), next.calls.Load(), err)
-	}
+		next.calls.Load() != tc.wantNext,
+		"complete=%t calls=%d/%d: %v", artifact != nil, first.calls.Load(), next.calls.Load(), err)
+
 	assert.FatalIf(
 		t,
 		errors.Is(err, manifest.ErrMissingSecret) != tc.wantMissing,
@@ -618,54 +776,13 @@ func testFetcherMachineAcquisitionFailuresCase(
 			return err
 		}
 		data, err := os.ReadFile(path)
-		if strings.Contains(string(data), "canary") {
-			t.Error("failed machine acquisition persisted credential material")
-		}
+		assert.ErrorIf(
+			t,
+			strings.Contains(string(data), "canary"),
+			"%s",
+			"failed machine acquisition persisted credential material",
+		)
+
 		return err
 	}))
-}
-
-type testFetcherMachineContinuationCallbackInputs struct {
-	t        **testing.T
-	requests *atomic.Int32
-	access   *string
-	rejected *bool
-}
-
-func testFetcherMachineContinuationCallback(
-	r *http.Request,
-	testCaseInput testFetcherMachineContinuationCallbackInputs,
-) *http.Response {
-	testCaseInput.requests.
-		Add(1)
-	if r.Host == "sts.amazonaws.com" {
-		return bucketReply(
-			r,
-			403,
-			`<ErrorResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><Error><Code>AccessDenied</Code><Message>machine-canary</Message></Error></ErrorResponse>`,
-		)
-	}
-	if (*testCaseInput.access) != "" &&
-		!strings.Contains(r.Header.Get("Authorization"), "Credential="+(*testCaseInput.access)+"/") {
-		(*testCaseInput.t).
-			Error("credential precedence selected a different signer")
-	}
-	if (*testCaseInput.access) == "" && r.Header.Get("Authorization") != "" {
-		(*testCaseInput.t).
-			Error("public source consulted machine credentials")
-	}
-	if *testCaseInput.rejected {
-		return bucketReply(r, 403, `<Error><Code>AccessDenied</Code><Message>rejected</Message></Error>`)
-	}
-	if r.URL.Query().Get("list-type") != "" {
-		return bucketReply(
-			r,
-			200,
-			`<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated><Contents><Key>file.yaml</Key><Size>4</Size><ETag>"etag"</ETag></Contents></ListBucketResult>`,
-		)
-	}
-	response := bucketReply(r, 200, "data")
-	response.Header.Set("ETag", `"etag"`)
-	response.Header.Set("Last-Modified", "Mon, 02 Jan 2006 15:04:05 GMT")
-	return response
 }

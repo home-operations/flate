@@ -61,6 +61,7 @@ func declarationIndependent(index *manifest.DiscoveryIndex, id manifest.NamedRes
 	})
 }
 
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (cv *capture) declaration() manifest.BaseManifest {
 	c := *cv
 	if c.independent || c.accepted || c.owner != nil {
@@ -527,72 +528,12 @@ func (s *Store) SetDiscoveryIndex(index *manifest.DiscoveryIndex) {
 	if index == nil || s.index.Load() == index {
 		return
 	}
-	coverage := map[manifest.NamedResource]*contributor{}
-	{
-		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-		for id, r := range index.Records {
-
-			if len(r.Productions) == 0 {
-				continue
-			}
-			independent := declarationIndependent(index, id)
-			{
-				pValues5 := r.Productions
-				for pIndex4 := range pValues5 {
-					p := pValues5[pIndex4]
-					if p.Owner == (manifest.NamedResource{}) || p.Owner == id {
-						continue
-					}
-					c := coverage[p.Owner]
-					if c == nil {
-						c = &contributor{binding: sourceBinding{source: p.Source}}
-						coverage[p.Owner] = c
-					}
-					// Each identity is visited once, so repeated owner evidence can only match the tail.
-					if len(c.records) == 0 || c.records[len(c.records)-1].id != id {
-						c.records = append(c.records, footprint{id: id, record: r, independent: independent})
-					}
-					if a, ok := s.GetArtifact(p.Source, ArtifactContent).(*SourceArtifact); ok {
-						c.binding.artifact = a
-						if a.Content == "" {
-							c.binding.mutable = a.mutableMaterial()
-						}
-					}
-				}
-			}
-		}
-	}
+	coverage := s.discoveryCoverage(index)
 	for _, contributor := range coverage {
 		slices.SortFunc(contributor.records, func(a, b footprint) int { return a.id.Compare(b.id) })
 	}
 	s.lockAll()
-	if s.index.Load() == nil {
-		// Every non-independent declaration MUST occur in a contributor footprint.
-		for owner, c := range coverage {
-			{
-				recordValues := c.records
-				for recordIndex := range recordValues {
-					record := recordValues[recordIndex]
-					sh := s.shardFor(record.id)
-					if cell, exists := sh.cells[record.id]; exists {
-						cell.independent = record.independent
-						sh.cells[record.id] = cell
-					}
-				}
-			}
-			sh := s.shardFor(owner)
-			slot := sh.slots[owner]
-			if slot == nil {
-				slot = &producerSlot{id: owner, links: sh.newHeadLocked(0)}
-				slot.visible.Store(sh.objectLocked(owner) != nil)
-				slot.hidden.Store(sh.cells[owner].hidden)
-				sh.slots[owner] = slot
-			}
-			c.slot = slot
-		}
-		s.coverage = coverage
-		s.index.Store(index)
-	}
+	s.installDiscoveryCoverageLocked(index, coverage)
 	s.unlockAll()
 }
 
@@ -634,6 +575,86 @@ func (e *Emission) bindSource(s *Store, obj manifest.BaseManifest, reads *ReadSe
 			e.binding.artifact = a
 			if a.Content == "" {
 				e.binding.mutable = a.mutableMaterial()
+			}
+		}
+	}
+}
+
+func (s *Store) discoveryCoverage(index *manifest.DiscoveryIndex) map[manifest.NamedResource]*contributor {
+	coverage := map[manifest.NamedResource]*contributor{}
+	{
+		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+		for id, r := range index.Records {
+			if len(r.Productions) == 0 {
+				continue
+			}
+			independent := declarationIndependent(index, id)
+			s.addDiscoveryCoverage(coverage, id, &r, independent)
+		}
+	}
+	return coverage
+}
+
+func (s *Store) installDiscoveryCoverageLocked(
+	index *manifest.DiscoveryIndex,
+	coverage map[manifest.NamedResource]*contributor,
+) {
+	if s.index.Load() == nil {
+		// Every non-independent declaration MUST occur in a contributor footprint.
+		for owner, c := range coverage {
+			{
+				recordValues := c.records
+				for recordIndex := range recordValues {
+					record := recordValues[recordIndex]
+					sh := s.shardFor(record.id)
+					if cell, exists := sh.cells[record.id]; exists {
+						cell.independent = record.independent
+						sh.cells[record.id] = cell
+					}
+				}
+			}
+			sh := s.shardFor(owner)
+			slot := sh.slots[owner]
+			if slot == nil {
+				slot = &producerSlot{id: owner, links: sh.newHeadLocked(0)}
+				slot.visible.Store(sh.objectLocked(owner) != nil)
+				slot.hidden.Store(sh.cells[owner].hidden)
+				sh.slots[owner] = slot
+			}
+			c.slot = slot
+		}
+		s.coverage = coverage
+		s.index.Store(index)
+	}
+}
+
+func (s *Store) addDiscoveryCoverage(
+	coverage map[manifest.NamedResource]*contributor,
+	id manifest.NamedResource,
+	r *manifest.DiscoveryRecord,
+	independent bool,
+) {
+	{
+		pValues5 := r.Productions
+		for pIndex4 := range pValues5 {
+			p := pValues5[pIndex4]
+			if p.Owner == (manifest.NamedResource{}) || p.Owner == id {
+				continue
+			}
+			c := coverage[p.Owner]
+			if c == nil {
+				c = &contributor{binding: sourceBinding{source: p.Source}}
+				coverage[p.Owner] = c
+			}
+			// Each identity is visited once, so repeated owner evidence can only match the tail.
+			if len(c.records) == 0 || c.records[len(c.records)-1].id != id {
+				c.records = append(c.records, footprint{id: id, record: *r, independent: independent})
+			}
+			if a, ok := s.GetArtifact(p.Source, ArtifactContent).(*SourceArtifact); ok {
+				c.binding.artifact = a
+				if a.Content == "" {
+					c.binding.mutable = a.mutableMaterial()
+				}
 			}
 		}
 	}

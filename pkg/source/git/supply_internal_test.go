@@ -3,6 +3,8 @@ package git
 import (
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil"
+
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
@@ -21,20 +23,23 @@ func TestFetcher_SuppliedHTTPSMaterial(t *testing.T) {
 		URL:       "https://example.invalid/source.git",
 		SecretRef: &manifest.LocalObjectReference{Name: "auth"},
 	}
-	snapshot, err := store.NewSupplied(
-		[]store.SuppliedObject{
-			{
-				Object: &manifest.Secret{
-					Name:       "auth",
-					Namespace:  "apps",
-					StringData: map[string]any{"username": "filled", "password": "filled"},
-				},
-			},
+	snapshot := []store.Declaration{
+		{
+			Obj: &manifest.Secret{
+				Name:       "auth",
+				Namespace:  "apps",
+				StringData: map[string]any{"username": "filled", "password": "filled"},
+			}, Doc: testutil.ObjectDocument(&manifest.Secret{
+				Name:       "auth",
+				Namespace:  "apps",
+				StringData: map[string]any{"username": "filled", "password": "filled"},
+			}), Origin: manifest.SuppliedDeclaration,
 		},
-	)
-	assert.NoError(t, err)
+	}
 	s := store.New()
-	s.SetSupplied(snapshot)
+	for _, declaration := range snapshot {
+		s.AddDeclaration(declaration)
+	}
 	s.AddObject(&manifest.Secret{Name: "auth", Namespace: "apps", StringData: map[string]any{"username": "repository"}})
 	var reads store.ReadSet
 	reads.Init(s, repo.Named(), nil)

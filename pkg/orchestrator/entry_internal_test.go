@@ -22,6 +22,7 @@ import (
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestRender_EntryDeclarationQualifiesOpaqueApplier(t *testing.T) {
 	t.Run("settled_candidates", testRenderChangedLiteralEntryDrainsSettledCandidates)
+	t.Run("supplied applications", testSuppliedApplications)
 	for _, scenario := range []string{"declaration", "mutable_chart", "nested_chart", "nested_unchanged", "incomplete_inputs", "content", "owned_source"} {
 		t.Run(scenario, func(t *testing.T) {
 			testRenderEntryDeclarationQualifiesOpaqueApplierCase(

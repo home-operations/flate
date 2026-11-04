@@ -69,6 +69,7 @@ const (
 	branchKey         = "branch"
 	chartKey          = "chart"
 	commitKey         = "commit"
+	binaryDataKey     = "binaryData"
 	dataKey           = "data"
 	dependsOnKey      = "dependsOn"
 	kindKey           = "kind"

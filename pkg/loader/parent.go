@@ -17,6 +17,10 @@ import (
 // Claims builds reporting claims from caller-owned candidates, including external
 // sources and committed source coordinates. Discovery MUST use Loader.Claims instead.
 func Claims(s *store.Store, repoRoot string, candidates []*manifest.Kustomization) []manifest.KSClaim {
+	candidates = slices.DeleteFunc(
+		candidates,
+		func(ks *manifest.Kustomization) bool { return !s.Policy(ks.Named()).Root },
+	)
 	reader := documentReader{cache: map[string]document{}}
 	reader.mountSources(s)
 	var claimBuf [16]ownerClaims

@@ -2,6 +2,7 @@ package crds_test
 
 import (
 	"cmp"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -152,8 +153,10 @@ func suspendedIssueResourceSet() string {
 func TestE2E_MissingCRDs_Policy(t *testing.T) {
 	for _, tc := range []struct {
 		name, kind, supplied, namespace string
-		enabled, success                bool
+		enabled, success, reference     bool
 	}{
+		{name: "reference CRD", kind: "CustomResourceDefinition", supplied: helmReleaseCRD, reference: true, success: true},
+		{name: "reference CRD opt in", kind: "CustomResourceDefinition", supplied: helmReleaseCRD, reference: true, enabled: true, success: true},
 		{name: "strict absent", kind: "CustomResourceDefinition"},
 		{name: "allowed absent", kind: "CustomResourceDefinition", enabled: true, success: true},
 		{name: "supplied CRD", kind: "CustomResourceDefinition", supplied: helmReleaseCRD, success: true},
@@ -337,6 +340,7 @@ func e2EMissingCRDsPolicyName(t *testing.T, tc *struct {
 	namespace string
 	enabled   bool
 	success   bool
+	reference bool
 },
 ) {
 	t.Helper()
@@ -354,11 +358,16 @@ func e2EMissingCRDsPolicyName(t *testing.T, tc *struct {
 		)
 	}
 	dir := missingCRDRepo(t, rs)
-	if tc.supplied != "" {
+	if tc.supplied != "" && !tc.reference {
 		testutil.WriteFile(t, dir, "apps/dependency.yaml", tc.supplied)
 		testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- rs.yaml\n- dependency.yaml\n")
 	}
 	args := []string{"--path", dir, "--cache-dir", t.TempDir(), "--concurrency", "2", "--allow-missing-kinds="}
+	if tc.reference {
+		inputs := t.TempDir()
+		testutil.WriteFile(t, inputs, "dependency.yaml", tc.supplied)
+		args = append(args, "--supply", filepath.Join(inputs, "dependency.yaml"))
+	}
 	if tc.enabled {
 		args = append(args, "--allow-missing-kinds=CustomResourceDefinition")
 	}
@@ -414,6 +423,7 @@ func e2EMissingCRDsPolicyName(t *testing.T, tc *struct {
 			namespace string
 			enabled   bool
 			success   bool
+			reference bool
 		}
 	}{args: &args, wantWarning: &wantWarning, tc: &tc})
 }
@@ -428,6 +438,7 @@ func e2EMissingCRDsPolicyNameLoop(t *testing.T, loopInputs struct {
 		namespace string
 		enabled   bool
 		success   bool
+		reference bool
 	}
 },
 ) {
@@ -455,7 +466,13 @@ func e2EMissingCRDsPolicyNameLoop(t *testing.T, loopInputs struct {
 					found = true
 				}
 			}
-			assert.FatalIf(t, found == skip, "CRD excluded=%t did not filter only output: %s", skip, built)
+			assert.FatalIf(
+				t,
+				found != (!skip && !(*loopInputs.tc).reference),
+				"CRD excluded=%t did not filter only output: %s",
+				skip,
+				built,
+			)
 		}
 	}
 }

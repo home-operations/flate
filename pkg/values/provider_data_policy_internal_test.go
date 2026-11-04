@@ -35,7 +35,7 @@ func TestReferenceFacts_DataOnlyProviderPolicy(t *testing.T) {
 		},
 	)
 	st.AddObject(raw)
-	facts := st.ReferenceFacts(id, nil)
+	facts := st.ReferenceFacts(id, nil, false, manifest.NamedResource{})
 	{
 		assert.FatalIf(t, facts.Data != raw || facts.Accepted, "covered facts=%+v", facts)
 	}
@@ -90,14 +90,22 @@ func TestReferenceFacts_DataOnlyProviderPolicy(t *testing.T) {
 	defer current.Retire()
 	want := []manifest.Production{{Owner: owner, Source: manifest.BootstrapSourceID, Declaration: external.Named()}}
 	for _, reader := range []dataReader{st, &current} {
-		assert.Diff(
-			t,
-			reader.ReferenceFacts(id, nil),
-			store.ReferenceFacts{
-				Productions:   want,
-				ReferenceData: []manifest.ReferenceData{{Production: want[0], DeclaredKeys: []string{"VALUE"}}},
-			},
-		)
+		consumer := manifest.NamedResource{}
+		if reader == &current {
+			consumer = owner
+		}
+		facts := reader.ReferenceFacts(id, nil, false, consumer)
+		wantFacts := store.ReferenceFacts{
+			Generated:     true,
+			Productions:   want,
+			ReferenceData: []manifest.ReferenceData{{Production: want[0], DeclaredKeys: []string{"VALUE"}}},
+		}
+		if reader == &current {
+			wantFacts.Private = true
+		} else {
+			wantFacts.Materializers = []manifest.NamedResource{owner}
+		}
+		assert.Diff(t, facts, wantFacts)
 		assert.Diff(t, NewStoreProvider(reader, true).Data(id), &manifest.Secret{
 			Name:       id.Name,
 			Namespace:  id.Namespace,

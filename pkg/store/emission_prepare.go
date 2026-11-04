@@ -132,14 +132,20 @@ func sameMembership(a, b *Emission) bool {
 
 //nolint:gocritic // The slices callback contract requires value parameters.
 func admissionEqual(a, b admission) bool {
-	return a.binding.equal(&b.binding) && childEqual(a.child, b.child)
+	return a.binding.equal(&b.binding) && a.child.equal(b.child)
 }
 
-func childEqual(a, b Child) bool {
-	return a.Generated == b.Generated && manifest.Equal(a.Obj, b.Obj) && manifest.ValueEqual(a.Doc, b.Doc) &&
-		slices.Equal(a.Productions, b.Productions) &&
-		a.payload == b.payload &&
-		a.output == b.output
+func (a Child) equal(b Child) bool {
+	return a.sameDeclaration(b) && a.sameEmission(b)
+}
+
+func (a Child) sameDeclaration(b Child) bool {
+	return a.Origin == b.Origin && a.Generated == b.Generated && manifest.Equal(a.Obj, b.Obj) &&
+		manifest.ValueEqual(a.Doc, b.Doc)
+}
+
+func (a Child) sameEmission(b Child) bool {
+	return slices.Equal(a.Productions, b.Productions) && a.payload == b.payload && a.output == b.output
 }
 
 func semanticEqual(a, b Child) bool {

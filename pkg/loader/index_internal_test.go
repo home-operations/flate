@@ -256,6 +256,11 @@ func TestFinalizeIndex_RecordCompletion(t *testing.T) {
 		record, want manifest.DiscoveryRecord
 	}{
 		{
+			name:   "supplied pathless",
+			record: manifest.DiscoveryRecord{Origin: manifest.SuppliedDeclaration},
+			want:   manifest.DiscoveryRecord{Origin: manifest.SuppliedDeclaration},
+		},
+		{
 			name: "authored fallback", record: manifest.DiscoveryRecord{Authored: id, Path: "raw.yaml", File: "raw.yaml"},
 			want: manifest.DiscoveryRecord{Authored: id, Path: "raw.yaml", File: "raw.yaml", Productions: []manifest.Production{{Authored: id, Path: "raw.yaml", File: "raw.yaml", Source: manifest.BootstrapSourceID}}},
 		},
@@ -336,5 +341,41 @@ func TestFinalizeIndex_UnobservedBootstrap(t *testing.T) {
 			"%s",
 			"unobserved bootstrap census is complete",
 		)
+	}
+}
+
+func TestFinalizeIndex_PathlessCompactReconstruction(t *testing.T) {
+	t.Parallel()
+	l := New(store.New())
+	l.Options.Selection = manifest.Selection{Changed: true}
+	objects := []manifest.BaseManifest{
+		&manifest.RawObject{
+			Kind:       "Widget",
+			APIVersion: "example.io/v1",
+			Name:       "supplied",
+			Namespace:  "apps",
+		},
+		&manifest.GitRepository{
+			Name:      "supplied",
+			Namespace: "apps",
+			URL:       "https://fixture.invalid/repo",
+		},
+	}
+	for _, obj := range objects {
+		l.AdmitDeclarations([]store.Declaration{{Obj: obj, Origin: manifest.SuppliedDeclaration}})
+	}
+	for range 2 {
+		l.construction++
+		assert.NoError(t, l.FinalizeIndex(t.Context(), "", false))
+		for _, obj := range objects {
+			r, ok := l.Index.Lookup(obj.Named())
+			if !ok || r.Declaration != obj {
+				t.Fatalf("pathless declaration: %+v", r)
+			}
+			if r.Path != "" || r.File != "" || len(r.Productions) != 0 || r.Parent != (manifest.NamedResource{}) {
+				t.Fatalf("pathless record: %+v", r)
+			}
+			assert.Equal(t, l.AdmitsRoot(obj, ""), false)
+		}
 	}
 }

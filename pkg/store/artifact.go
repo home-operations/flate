@@ -280,7 +280,7 @@ func artifactValueEqual(prev, next Artifact) bool {
 		b, ok := next.(*Emission)
 		return ok && a != nil && b != nil && a.Complete == b.Complete &&
 			(a.Children == nil) == (b.Children == nil) &&
-			slices.EqualFunc(a.Children, b.Children, childEqual) && a.sameContent(b)
+			slices.EqualFunc(a.Children, b.Children, Child.equal) && a.sameContent(b)
 	}
 	a, aok := prev.(*SourceArtifact)
 	b, bok := next.(*SourceArtifact)

@@ -80,7 +80,7 @@ func entriesMatch(children []Child, entries []admission) bool {
 		return false
 	}
 	for i, child := range children {
-		if !childEqual(child, entries[i].child) {
+		if !child.equal(entries[i].child) {
 			return false
 		}
 	}
@@ -91,6 +91,7 @@ func (s *Store) prepareChildren(children []Child, index *manifest.DiscoveryIndex
 	prepared := make([]admission, 0, len(children))
 	for _, child := range children {
 		if child.Obj != nil {
+			child.policy = child.Policy(child.Obj.Named())
 			prepared = append(
 				prepared,
 				admission{child: child, independent: declarationIndependent(index, child.Obj.Named())},
@@ -517,17 +518,16 @@ func (f *footprint) appendCoverageReferences(
 	return refs, superseded
 }
 
-func (c *Child) admissionTargets(
+func (c Child) admissionTargets(
 	refs []manifest.NamedResource,
 	proven map[manifest.NamedResource][]manifest.NamedResource,
 	superseded, retained []manifest.NamedResource,
 ) []manifest.ProducerTarget {
-	child := *c
 	candidates := slices.Clip(refs)
-	for _, target := range proven[child.Obj.Named()] {
+	for _, target := range proven[c.Obj.Named()] {
 		if !slices.Contains(superseded, target) || slices.Contains(retained, target) {
 			candidates = append(candidates, target)
 		}
 	}
-	return manifest.ProducerTargets(child.Obj, candidates...)
+	return manifest.ProducerTargets(c.Obj, candidates...)
 }

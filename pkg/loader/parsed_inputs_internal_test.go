@@ -243,16 +243,27 @@ func TestParsedInputs_CompactPhysicalFacts(t *testing.T) {
 		LocalPath: root,
 		FS:        parsedReadFS{FS: files, reads: reads, directories: &directories},
 	}
-	newLoader := func(input *store.SourceArtifact, parsed *ParsedInputs) *Loader {
+	newLoader := func(input *store.SourceArtifact, parsed *ParsedInputs, name string) *Loader {
 		st := store.New()
 		st.SetArtifact(manifest.BootstrapSourceID, input)
 		l := New(st)
+		if name != "" {
+			l.AdmitDeclarations([]store.Declaration{{
+				Obj: &manifest.RawObject{
+					Kind:       "Widget",
+					APIVersion: "example.io/v1",
+					Name:       name,
+					Namespace:  "apps",
+				},
+				Origin: manifest.SuppliedDeclaration,
+			}})
+		}
 		l.SourceRoot = root
 		l.Options.Selection = manifest.Selection{Changed: true}
 		l.Options.ParsedInputs = parsed
 		return l
 	}
-	planner := newLoader(input, nil)
+	planner := newLoader(input, nil, "planner")
 	_, err := planner.Load(t.Context(), root)
 	assert.NoError(t, err)
 	for _, side := range []string{"left", "right"} {
@@ -266,7 +277,7 @@ func TestParsedInputs_CompactPhysicalFacts(t *testing.T) {
 	}
 	directoryCount := directories.Load()
 	for _, side := range []string{"left", "right"} {
-		l := newLoader(input, parsed)
+		l := newLoader(input, parsed, side)
 		_, loadErr2 := l.Load(t.Context(), root)
 		assert.NoError(t, loadErr2)
 		occurrences, loadErr2 := l.Occurrences(t.Context(), filepath.Join(root, side), "")
@@ -274,22 +285,43 @@ func TestParsedInputs_CompactPhysicalFacts(t *testing.T) {
 		assert.Equal(t, len(occurrences), 1)
 		assert.Equal(t, occurrences[0].Identity.Namespace, side)
 		assert.Equal(t, occurrences[0].Identity.Name, side+"-data")
-		assert.Equal(t, len(l.Store.Objects()), 0)
+		id := manifest.NamedResource{Group: "example.io", Kind: "Widget", Name: side, Namespace: "apps"}
+		record, found := l.Index.Lookup(id)
+		assert.Equal(t, found, true)
+		assert.Equal(t, record.Origin, manifest.SuppliedDeclaration)
+		assert.Equal(t, record.Path, "")
+		assert.Equal(t, l.Store.Policy(id).Root, false)
+		_, leaked := l.Index.Lookup(
+			manifest.NamedResource{Group: "example.io", Kind: "Widget", Name: "planner", Namespace: "apps"},
+		)
+		assert.Equal(t, leaked, false)
+		physical, found := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "data"})
+		assert.Equal(t, found, true)
+		assert.Equal(t, physical.Declaration == nil, true)
+		assert.Equal(t, physical.Path, filepath.Join(root, "shared", "objects.yaml"))
+		assert.Equal(t, physical.Authored, manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "data"})
+		assert.Equal(t, physical.Origin, manifest.RepositoryDeclaration)
+		assert.Equal(
+			t,
+			l.Store.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "data"}) == nil,
+			true,
+		)
+		assert.Equal(t, len(l.Store.Objects()), 1)
 		l.Index.Records = nil
 	}
 	assert.Equal(t, directories.Load(), directoryCount)
 	for name, count := range reads {
 		assert.Equal(t, count.Load(), before[name])
 	}
-	assert.Equal(t, len(planner.Index.Records), 1)
+	assert.Equal(t, len(planner.Index.Records), 2)
 
 	other := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
 		"only.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: other}\n")},
 	}}
-	l := newLoader(other, parsed)
+	l := newLoader(other, parsed, "other")
 	_, err = l.Load(t.Context(), root)
 	assert.NoError(t, err)
-	assert.Equal(t, len(l.Index.Records), 1)
+	assert.Equal(t, len(l.Index.Records), 2)
 	{
 		_, ok := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "other"})
 		assert.FatalIf(t, !ok, "%s", "borrowed facts from another source view")
@@ -301,7 +333,7 @@ func TestParsedInputs_CompactPhysicalFacts(t *testing.T) {
 		LocalPath: visibilityRoot,
 		FS:        fstest.MapFS{"left/a.yaml": {Data: data}, "right/b.yaml": {Data: data}},
 	}
-	physical := newLoader(original, nil)
+	physical := newLoader(original, nil, "")
 	for _, dir := range []string{"left", "right"} {
 		_, loadErr3 := physical.Load(t.Context(), filepath.Join(visibilityRoot, dir))
 		assert.NoError(t, loadErr3)
@@ -315,13 +347,13 @@ func TestParsedInputs_CompactPhysicalFacts(t *testing.T) {
 		assert.Equal(t, observations[i].Root, dir)
 		assert.Equal(t, len(observations[i].Inputs[id]), 1)
 	}
-	partial := newLoader(original, physical.ParsedInputs())
+	partial := newLoader(original, physical.ParsedInputs(), "")
 	_, err = partial.Load(t.Context(), filepath.Join(visibilityRoot, "left"))
 	assert.NoError(t, err)
 	assert.NoError(t, partial.FinalizeIndex(t.Context(), visibilityRoot, false))
 	assert.Diff(t, partial.Index.Visibility, observations[:1])
 
-	canceled := newLoader(original, nil)
+	canceled := newLoader(original, nil, "")
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, err = canceled.Load(ctx, filepath.Join(visibilityRoot, "left"))
@@ -333,7 +365,7 @@ func TestParsedInputs_CompactPhysicalFacts(t *testing.T) {
 	assert.Equal(t, canceled.Index.Visibility[0].Complete, false)
 	incomplete := canceled.ParsedInputs()
 	canceledVisibility := slices.Clone(canceled.Index.Visibility)
-	recovered := newLoader(original, incomplete)
+	recovered := newLoader(original, incomplete, "")
 	_, err = recovered.Load(t.Context(), filepath.Join(visibilityRoot, "left"))
 	assert.NoError(t, err)
 	assert.Equal(t, len(recovered.Index.Records), 1)
@@ -348,7 +380,7 @@ func TestParsedInputs_CompactPhysicalFacts(t *testing.T) {
 	assert.Equal(t, len(canceledFacts.directories), 0)
 	assert.Diff(t, canceled.Index.Visibility, canceledVisibility)
 
-	replayed := newLoader(original, physical.ParsedInputs())
+	replayed := newLoader(original, physical.ParsedInputs(), "")
 	for _, dir := range []string{"left", "right"} {
 		_, loadErr4 := replayed.Load(t.Context(), filepath.Join(visibilityRoot, dir))
 		assert.NoError(t, loadErr4)

@@ -20,20 +20,23 @@ func TestFetcher_SuppliedHTTPMaterial(t *testing.T) {
 		CertSecretRef: &manifest.LocalObjectReference{Name: "auth"},
 	}
 	ca := testutil.SelfSignedCA(t)
-	snapshot, err := store.NewSupplied(
-		[]store.SuppliedObject{
-			{
-				Object: &manifest.Secret{
-					Name:       "auth",
-					Namespace:  "apps",
-					StringData: map[string]any{"username": "filled", "password": "filled", "ca.crt": ca},
-				},
-			},
+	snapshot := []store.Declaration{
+		{
+			Obj: &manifest.Secret{
+				Name:       "auth",
+				Namespace:  "apps",
+				StringData: map[string]any{"username": "filled", "password": "filled", "ca.crt": ca},
+			}, Doc: testutil.ObjectDocument(&manifest.Secret{
+				Name:       "auth",
+				Namespace:  "apps",
+				StringData: map[string]any{"username": "filled", "password": "filled", "ca.crt": ca},
+			}), Origin: manifest.SuppliedDeclaration,
 		},
-	)
-	assert.NoError(t, err)
+	}
 	s := store.New()
-	s.SetSupplied(snapshot)
+	for _, declaration := range snapshot {
+		s.AddDeclaration(declaration)
+	}
 	s.AddObject(&manifest.Secret{Name: "auth", Namespace: "apps", StringData: map[string]any{"username": "repository"}})
 	var reads store.ReadSet
 	reads.Init(s, r.Named(), nil)

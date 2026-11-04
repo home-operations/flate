@@ -420,36 +420,6 @@ func (r *ReadSet) productions(input *Input, index *manifest.DiscoveryIndex) []ma
 	return details.productions
 }
 
-// ReferenceFacts captures visible data and its accepted source-qualified authority.
-func (r *ReadSet) ReferenceFacts(id manifest.NamedResource, index *manifest.DiscoveryIndex) ReferenceFacts {
-	input := r.input(id)
-	data, _ := r.Capture(input).(manifest.Data)
-	supplied, path := r.store.suppliedObject(id)
-	input.derived |= capturedProductions
-	productions := r.productions(input, index)
-	var candidates []manifest.ReferenceData
-	if len(productions) != 0 {
-		candidates = r.store.referenceData(id, index, productions, r)
-	}
-	{
-		productionValues := productions
-		for productionIndex := range productionValues {
-			production := productionValues[productionIndex]
-			if production.Source.Name != "" {
-				r.GetArtifact(production.Source, ArtifactContent)
-			}
-		}
-	}
-	return ReferenceFacts{
-		Data:          data,
-		Accepted:      input.view.accepted || input.view.owner != nil,
-		Productions:   productions,
-		ReferenceData: candidates,
-		Supplied:      supplied,
-		SupplyPath:    path,
-	}
-}
-
 // Materializer selects and captures the runnable declaration supplying a production.
 //
 //nolint:gocritic // The SDK preserves this value input and its snapshot boundary.

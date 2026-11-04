@@ -12,7 +12,6 @@ import (
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/values"
 )
 
 type admissionFailure struct{ cause error }
@@ -24,9 +23,9 @@ func (p admissionFailure) Promote(context.Context, *store.ReadSet, manifest.Name
 
 type countedDataLookup struct{ calls int }
 
-func (p *countedDataLookup) Lookup(manifest.NamedResource) values.Input {
+func (p *countedDataLookup) Lookup(manifest.NamedResource) store.ReferenceFacts {
 	p.calls++
-	return values.Input{}
+	return store.ReferenceFacts{}
 }
 
 func TestDataInputs_AdmissionErrorPrecedesMissingPolicy(t *testing.T) {
@@ -85,7 +84,7 @@ func TestAwaitData_AdmissionErrorPreventsResume(t *testing.T) {
 			var execution Execution
 			execution.Init(c, owner.Named())
 			defer execution.Close()
-			input := values.Input{Offline: true}
+			input := store.ReferenceFacts{Offline: true}
 			if materializer {
 				input.Materializers = []manifest.NamedResource{
 					{

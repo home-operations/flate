@@ -1,11 +1,13 @@
 package loader
 
 import (
+	"fmt"
 	"slices"
 	"testing"
 	"testing/fstest"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -149,9 +151,19 @@ func TestAdmission_KnownInputDoesNotOpenUnrelatedRenderer(t *testing.T) {
 
 func TestAdmission_UnclaimedInputDoesNotOpenUnrelatedRenderer(t *testing.T) {
 	t.Parallel()
+	for _, scenario := range []string{"unowned only", "supplied dependency", "repository collision"} {
+		t.Run(scenario, func(t *testing.T) {
+			t.Parallel()
+			testAdmissionUnclaimedInput(t, scenario)
+		})
+	}
+}
+
+func testAdmissionUnclaimedInput(t *testing.T, scenario string) {
+	t.Helper()
 	root := t.TempDir()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+	files := fstest.MapFS{
 		"input.yaml": {
 			Data: []byte(
 				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: changed}\n",
@@ -172,11 +184,40 @@ func TestAdmission_UnclaimedInputDoesNotOpenUnrelatedRenderer(t *testing.T) {
 				"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: producer, namespace: apps}\nspec: {resourcesTemplate: unexecuted}\n",
 			),
 		},
-	}})
+	}
+	dependency := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "external"}
+	if scenario == "repository collision" {
+		dependency.Name = "settings"
+	}
+	if scenario != "unowned only" {
+		files["consumer.yaml"] = &fstest.MapFile{Data: []byte(testutil.KustomizationYAML(
+			"consumer",
+			"apps",
+			fmt.Sprintf(
+				"  path: ./payload\n  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: %s}]\n",
+				dependency.Name,
+			),
+		))}
+	}
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
 	l := New(st)
+	if scenario != "unowned only" {
+		l.AdmitDeclarations(
+			[]store.Declaration{
+				{
+					Obj:    manifest.NewConfigMap(dependency, map[string]any{"VALUE": "supplied"}),
+					Origin: manifest.SuppliedDeclaration,
+				},
+			},
+		)
+	}
 	l.SourceRoot = root
 	l.Options.Filter = change.NewFilter()
-	l.Options.Changes = change.NewSet([]string{"unclaimed/notes.txt"})
+	changed := []string{"unclaimed/notes.txt"}
+	if scenario != "unowned only" {
+		changed = append(changed, "consumer.yaml")
+	}
+	l.Options.Changes = change.NewSet(changed)
 	l.Options.Selection = manifest.Selection{Changed: true}
 	_, err := l.Load(t.Context(), root)
 	assert.NoError(t, err)
@@ -198,6 +239,17 @@ func TestAdmission_UnclaimedInputDoesNotOpenUnrelatedRenderer(t *testing.T) {
 	l.Index.Records[templated] = record
 	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
 	assert.NoError(t, err)
+	if scenario != "unowned only" {
+		assertAdmissionSuppliedDependency(t, l, proposal, dependency)
+	}
+	assert.Equal(t, slices.Contains(proposal.Needed, templated), false)
+	assert.Equal(t, slices.Contains(proposal.Selected, templated), false)
+	assert.Equal(t, slices.Contains(proposal.Dirty, templated), false)
+	assertAdmissionUnrelatedMembership(t, l, proposal, producer)
+}
+
+func assertAdmissionUnrelatedMembership(t *testing.T, l *Loader, proposal *Admission, producer manifest.NamedResource) {
+	t.Helper()
 	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "settings", Namespace: "apps"}
 	renderer := manifest.NamedResource{
 		Group:     manifest.HelmReleaseDomain,
@@ -209,14 +261,11 @@ func TestAdmission_UnclaimedInputDoesNotOpenUnrelatedRenderer(t *testing.T) {
 	assert.Equal(t, slices.Contains(proposal.Needed, renderer), false)
 	assert.Equal(t, slices.Contains(proposal.Selected, renderer), false)
 	assert.Equal(t, slices.Contains(proposal.Dirty, renderer), false)
-	assert.Equal(t, slices.Contains(proposal.Needed, templated), false)
-	assert.Equal(t, slices.Contains(proposal.Selected, templated), false)
-	assert.Equal(t, slices.Contains(proposal.Dirty, templated), false)
 	assert.Equal(t, slices.Contains(proposal.Needed, producer), false)
 	assert.Equal(t, slices.Contains(proposal.Selected, producer), false)
 	assert.Equal(t, slices.Contains(proposal.Dirty, producer), false)
 	l.Options.HistoryOwners = []manifest.NamedResource{producer}
-	proposal, err = l.Prepare(t.Context(), store.Child{}, nil, nil)
+	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
 	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(proposal.Needed, producer), true)
 	assert.Equal(t, slices.Contains(proposal.Selected, producer), false)
@@ -317,4 +366,37 @@ func testAdmissionClosedRootFrontierCase(t *testing.T, testCaseInput *string,
 		settings.Name = "new-settings"
 		assert.Equal(t, slices.Contains(proposal.Needed, settings), true)
 	}
+}
+
+func assertAdmissionSuppliedDependency(
+	t *testing.T,
+	l *Loader,
+	proposal *Admission,
+	dependency manifest.NamedResource,
+) {
+	t.Helper()
+	consumer := testutil.KustomizationID("apps", "consumer")
+	assert.Equal(t, slices.Contains(proposal.Selected, consumer), true)
+	assert.Equal(t, slices.Contains(proposal.Needed, dependency), true)
+	assert.Equal(t, slices.Contains(proposal.Selected, dependency), false)
+	data := l.Store.ReferenceFacts(dependency, l.Index, false, manifest.NamedResource{}).Data
+	if dependency.Name == "settings" {
+		var hydrated bool
+		for _, child := range proposal.Objects {
+			if child.Obj.Named() == dependency {
+				hydrated = true
+				l.Store.AddObject(child.Obj, child.Doc)
+			}
+		}
+		assert.Equal(t, hydrated, true)
+		data = l.Store.ReferenceFacts(dependency, l.Index, false, manifest.NamedResource{}).Data
+	}
+	value, found, err := data.Value("VALUE")
+	assert.NoError(t, err)
+	assert.Equal(t, found, true)
+	want := "supplied"
+	if dependency.Name == "settings" {
+		want = "changed"
+	}
+	assert.Equal(t, value, want)
 }

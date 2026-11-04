@@ -40,7 +40,7 @@ func TestStore_ReferenceFacts_ReplacementConsistency(t *testing.T) {
 			}
 			s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: records})
 			s.AddObject(secret)
-			before := s.ReferenceFacts(target, nil)
+			before := s.ReferenceFacts(target, nil, false, manifest.NamedResource{})
 			{
 				assert.FatalIf(t, before.Data != secret || before.Accepted, "file-backed facts=%+v", before)
 			}
@@ -63,7 +63,7 @@ func TestStore_ReferenceFacts_ReplacementConsistency(t *testing.T) {
 			var wg sync.WaitGroup
 			wg.Go(func() {
 				<-start
-				s.ReferenceFacts(target, nil)
+				s.ReferenceFacts(target, nil, false, manifest.NamedResource{})
 			})
 			wg.Go(func() {
 				<-start
@@ -77,8 +77,10 @@ func TestStore_ReferenceFacts_ReplacementConsistency(t *testing.T) {
 			}
 			assert.Diff(
 				t,
-				s.ReferenceFacts(target, nil),
+				s.ReferenceFacts(target, nil, false, manifest.NamedResource{}),
 				ReferenceFacts{
+					Generated:     true,
+					Materializers: []manifest.NamedResource{owner},
 					Productions:   want,
 					ReferenceData: []manifest.ReferenceData{{Production: want[0], DeclaredKeys: []string{"VALUE"}}},
 				},
@@ -114,7 +116,7 @@ func TestReferenceFacts_PendingPeerAfterEmptySupplier(t *testing.T) {
 	defer next.Finish()
 	next.Complete = true
 	s.RecordEmitted(empty.Named(), &next, nil)
-	facts := s.ReferenceFacts(target, nil)
+	facts := s.ReferenceFacts(target, nil, false, manifest.NamedResource{})
 	{
 		assert.FatalIf(
 			t,

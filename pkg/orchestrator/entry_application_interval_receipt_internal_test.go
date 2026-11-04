@@ -13,6 +13,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -33,7 +34,7 @@ func TestRenderTrees_EntryApplicationIntervalReceipt(t *testing.T) {
 			t,
 			dir,
 			"entry/generator.yaml",
-			"apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: generator, namespace: apps}\nspec:\n  interval: 10m\n  chart:\n    spec:\n      chart: charts/bootstrap\n      sourceRef: {kind: GitRepository, name: self, namespace: apps}\n",
+			"apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: generator, namespace: apps}\nspec:\n  interval: 10m\n  valuesFrom: [{kind: ConfigMap, name: settings}]\n  chart:\n    spec:\n      chart: charts/bootstrap\n      sourceRef: {kind: GitRepository, name: self, namespace: apps}\n",
 		)
 		testutil.WriteFile(t, dir, "charts/bootstrap/Chart.yaml", "apiVersion: v2\nname: bootstrap\nversion: 1.0.0\n")
 		application := `apiVersion: fluxcd.controlplane.io/v1
@@ -59,7 +60,18 @@ spec:
 	before := testDirectoryInput(t, original)
 	before.LocalPath, before.LocalRoot, before.URL = root, root, "file://"+root
 	tree := Tree{Path: filepath.Join(root, "entry"), RepoRoot: root, SelfURLs: []string{url}}
-	cfg := Config{CacheDir: cache, Concurrency: 2}
+	settings := &manifest.ConfigMap{
+		Name:      "settings",
+		Namespace: "apps",
+		Data:      map[string]any{"values.yaml": "value: original\n"},
+	}
+	cfg := Config{
+		CacheDir:    cache,
+		Concurrency: 2,
+		Supply: []store.Declaration{
+			{Obj: settings, Doc: testutil.ObjectDocument(settings), Origin: manifest.SuppliedDeclaration},
+		},
+	}
 	prime, err := newTestOrchestrator(t, tree, cfg)
 	assert.NoError(t, err)
 	primed, err := prime.render(t.Context())
@@ -91,6 +103,16 @@ spec:
 	complete, err := full.render(t.Context())
 	assert.NoError(t, err)
 	assertEntryReceiptInterval(t, complete, "2h")
+	if fixture.persists {
+		evidence := full.ksc.Trees.PreviousEntry(t.Context(), kustomize.RenderRequest{
+			Source: full.cfg.Input, ApplyIgnore: true, SubPath: "entry",
+			Spec: manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", manifest.NamedResource{}),
+		})
+		if evidence.Application == nil || evidence.Receipt == nil {
+			t.Fatal("reopened cache lost the discovered application receipt")
+		}
+		assertEntryReceiptSuppliedInputs(t, full.ksc.Trees, &evidence, settings)
+	}
 	t.Run("warm_workload", func(t *testing.T) { testEntryReceiptWorkload(t, &fixture) })
 	testEntryReceiptInvalidation(t, &fixture)
 }
@@ -135,6 +157,7 @@ func testEntryReceiptInterval(t *testing.T, fixture *entryReceiptFixture, mode s
 		id := testutil.HelmReleaseID("apps", "generator")
 		selected := Config{
 			CacheDir: fixture.cfg.CacheDir, Concurrency: 2, Selection: manifest.Selection{Changed: true},
+			Supply: fixture.cfg.Supply,
 			StatusListener: func(tree manifest.TreeID, subject manifest.DiagnosticIdentity, info store.StatusInfo) {
 				if subject.ID == id && info.String() == "rendering" {
 					admissions[tree.Side].Add(1)
@@ -216,6 +239,7 @@ func testEntryReceiptWorkload(t *testing.T, fixture *entryReceiptFixture) {
 		id := testutil.HelmReleaseID("apps", "generator")
 		selected := Config{
 			CacheDir: fixture.cfg.CacheDir, Concurrency: 2, Selection: manifest.Selection{Changed: true},
+			Supply: fixture.cfg.Supply,
 			StatusListener: func(tree manifest.TreeID, subject manifest.DiagnosticIdentity, info store.StatusInfo) {
 				if subject.ID == id && info.String() == "rendering" {
 					admissions[tree.Side].Add(1)
@@ -339,5 +363,33 @@ func assertEntryReceiptWorkload(t *testing.T, results []Rendered, oracle *[2][]b
 		} else if !bytes.Equal(output, oracle[side]) {
 			t.Errorf("side %d changed output between runs", side)
 		}
+	}
+}
+
+func assertEntryReceiptSuppliedInputs(
+	t *testing.T,
+	trees *kustomize.TreeCache,
+	evidence *kustomize.EntryEvidence,
+	settings *manifest.ConfigMap,
+) {
+	t.Helper()
+	for _, scenario := range []string{"unchanged", "changed", "removed", "repository precedence"} {
+		t.Run(scenario, func(t *testing.T) {
+			current := store.New()
+			if scenario != "removed" {
+				data := *settings
+				if scenario != "unchanged" {
+					data.Data = map[string]any{"values.yaml": "value: changed\n"}
+				}
+				current.AddDeclaration(store.Declaration{Obj: &data, Origin: manifest.SuppliedDeclaration})
+			}
+			if scenario == "repository precedence" {
+				current.AddObject(settings, testutil.ObjectDocument(settings))
+			}
+			want := scenario == "unchanged" || scenario == "repository precedence"
+			if got := trees.EntryValid(t.Context(), *evidence, current); got != want {
+				t.Fatalf("discovered application receipt valid = %t, want %t", got, want)
+			}
+		})
 	}
 }

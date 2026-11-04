@@ -52,7 +52,9 @@ func TestPreviousEntry_ApplicationInputs(t *testing.T) {
 		Revision: "same-tag",
 		Key:      "same-family",
 	}
-	evidence.Inputs = []EntryInput{{Resource: chart, Artifact: artifact}}
+	secret := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "settings"}
+	data := manifest.NewSecret(secret, nil, map[string]any{"VALUE": "original"})
+	evidence.Inputs = []EntryInput{{Resource: chart, Artifact: artifact}, {Resource: secret, Data: data}}
 	entry, err := cache.ApplicationReceipt(
 		t.Context(),
 		request.Source,
@@ -81,7 +83,35 @@ func TestPreviousEntry_ApplicationInputs(t *testing.T) {
 	assert.Equal(t, accepted.Owner, evidence.Owner)
 	st := store.New()
 	st.SetArtifact(chart, artifact)
+	st.AddDeclaration(store.Declaration{Obj: data, Origin: manifest.SuppliedDeclaration})
 	assert.Equal(t, cache.EntryValid(t.Context(), accepted, st), true)
+	for _, scenario := range []string{"unchanged", "changed", "removed", "repository precedence"} {
+		t.Run(scenario, func(t *testing.T) {
+			t.Parallel()
+			current := store.New()
+			current.SetArtifact(chart, artifact)
+			if scenario != "removed" {
+				value := "original"
+				if scenario == "changed" || scenario == "repository precedence" {
+					value = "changed"
+				}
+				current.AddDeclaration(store.Declaration{
+					Obj: manifest.NewSecret(secret,
+						nil,
+						map[string]any{"VALUE": value}),
+					Origin: manifest.SuppliedDeclaration,
+				})
+			}
+			if scenario == "repository precedence" {
+				current.AddObject(data, testutil.ObjectDocument(data))
+			}
+			assert.Equal(t,
+				cache.EntryValid(t.Context(),
+					accepted,
+					current),
+				scenario == "unchanged" || scenario == "repository precedence")
+		})
+	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	assert.Equal(t, cache.EntryValid(ctx, accepted, st), false)

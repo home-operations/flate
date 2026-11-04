@@ -36,7 +36,7 @@ type execution struct {
 	run  base.Execution
 	data interface {
 		values.Provider
-		Lookup(manifest.NamedResource) values.Input
+		Lookup(manifest.NamedResource) store.ReferenceFacts
 	}
 }
 

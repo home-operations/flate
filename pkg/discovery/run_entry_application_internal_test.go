@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,12 +25,34 @@ import (
 	"github.com/home-operations/flate/pkg/task"
 )
 
+type entryApplicationCase struct {
+	name, owner, kind, url, path                               string
+	instance, admitted, pinned, qualified, dependent, supplied bool
+}
+
 func TestRun_EntryApplication(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		name, owner, kind, url, path                     string
-		instance, admitted, pinned, qualified, dependent bool
-	}{
+	for _, tc := range []entryApplicationCase{
+		{name: "supplied kustomization", owner: "supplied", supplied: true, qualified: true},
+		{name: "supplied noncovering kustomization", owner: "supplied", supplied: true, path: "./elsewhere"},
+		{
+			name:      "supplied instance",
+			owner:     "flux",
+			kind:      manifest.KindGitRepository,
+			url:       "https://fixture.invalid/self",
+			instance:  true,
+			admitted:  true,
+			supplied:  true,
+			qualified: true,
+		},
+		{
+			name:     "supplied noncovering instance",
+			owner:    "flux",
+			kind:     manifest.KindGitRepository,
+			url:      "https://fixture.invalid/foreign",
+			instance: true,
+			supplied: true,
+		},
 		{name: "gotk-sync", owner: "gotk-sync", qualified: true},
 		{name: "arbitrary applier", owner: "applies-here", qualified: true},
 		{name: "different path", owner: "elsewhere", path: "./elsewhere"},
@@ -61,6 +84,7 @@ func TestBindEntry_EvidenceAuthority(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
 		publication  bool
+		supplied     bool
 		livePath     string
 		history      bool
 		historyFirst bool
@@ -70,6 +94,8 @@ func TestBindEntry_EvidenceAuthority(t *testing.T) {
 		qualified    bool
 		reuse        string
 	}{
+		{name: "supplied_evidence", supplied: true, livePath: "./entry", qualified: true},
+		{name: "supplied_noncovering_evidence", supplied: true, livePath: "./elsewhere"},
 		{name: "retired_publication", publication: true, livePath: "./elsewhere"},
 		{name: "withdrawn_publication", publication: true},
 		{name: "effective_publication", publication: true, livePath: "./entry", qualified: true, reuse: "current"},
@@ -337,26 +363,14 @@ func TestAdvance_LeafAdmissionPreservesConstruction(t *testing.T) {
 	assert.Equal(t, st.GetObject(leaf.Named()), manifest.BaseManifest(leaf))
 }
 
-func testRunEntryApplicationCase(t *testing.T, testCaseInput *struct {
-	name string
-
-	owner     string
-	kind      string
-	url       string
-	path      string
-	instance  bool
-	admitted  bool
-	pinned    bool
-	qualified bool
-	dependent bool
-},
-) {
+func testRunEntryApplicationCase(t *testing.T, testCaseInput *entryApplicationCase) {
 	t.Helper()
 
 	const root = "/virtual/entry-application"
 	input := fstest.MapFS{
 		"object.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: literal}\n")},
 	}
+	observed := &entryGeneratorFS{FS: input}
 	st := store.New()
 	source := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
@@ -364,65 +378,49 @@ func testRunEntryApplicationCase(t *testing.T, testCaseInput *struct {
 		Name:      "self",
 		Namespace: "apps",
 	}
-	if testCaseInput.instance {
-		input["owner.yaml"] = &fstest.MapFile{
-			Data: []byte(
-				fmt.Sprintf(
-					"apiVersion: fluxcd.controlplane.io/v1\nkind: FluxInstance\nmetadata: {name: flux, namespace: apps}\nspec:\n  sync: {name: self, kind: %s, url: '%s', ref: main, path: ./}\n",
-					testCaseInput.kind,
-					testCaseInput.url,
-				),
-			),
-		}
-	} else {
-		extra := ""
-		if testCaseInput.dependent {
-			extra = "  dependsOn: [{name: sibling}]\n"
-			input["sibling.yaml"] = &fstest.MapFile{
-				Data: []byte(testutil.KustomizationYAML("sibling", "apps", "  path: ./leaf\n")),
-			}
-			input["leaf/kustomization.yaml"] = &fstest.MapFile{Data: []byte("resources: []\n")}
-		}
-		if testCaseInput.kind != "" {
-			extra = "  sourceRef: {kind: " + testCaseInput.kind + ", name: self}\n"
-			addEntrySourceFixture(input, testCaseInput.kind, testCaseInput.url, testCaseInput.pinned)
-		}
-		path := testCaseInput.path
-		if path == "" {
-			path = "./"
-		}
-		input["owner.yaml"] = &fstest.MapFile{
-			Data: []byte(testutil.KustomizationYAML(testCaseInput.owner, "apps", "  path: "+path+"\n"+extra)),
-		}
-	}
+	addEntryApplicationFixture(input, testCaseInput)
 	if testCaseInput.admitted {
 		artifact := &store.SourceArtifact{
 			LocalPath:  "/virtual/application-alias",
 			LocalRoot:  root,
 			InputAlias: true,
-			FS:         input,
+			FS:         observed,
 		}
 		if testCaseInput.pinned {
 			artifact.InputAlias, artifact.Content, artifact.Key = false, "committed", "committed"
 		}
 		st.SetArtifact(source, artifact)
 	}
+	var declarations []store.Declaration
+	if testCaseInput.supplied {
+		var err error
+		declarations, err = loader.LoadDocuments(t.Context(), bytes.NewReader(input["owner.yaml"].Data), "supply.yaml")
+		assert.NoError(t, err)
+		delete(input, "owner.yaml")
+	}
 	d := newDiscoverer(
 		&Config{
-			Input:    &store.SourceArtifact{LocalPath: root, FS: input},
-			Path:     root,
-			Store:    st,
-			Trees:    testTrees(t),
-			SelfURLs: []string{"https://fixture.invalid/self"},
+			Declarations: declarations,
+			Input:        &store.SourceArtifact{LocalPath: root, FS: observed},
+			Path:         root,
+			Store:        st,
+			Trees:        testTrees(t),
+			SelfURLs:     []string{"https://fixture.invalid/self"},
 		},
 	)
 	_, err := d.resolveEntrySources(t.Context(), false)
 	assert.NoError(t, err)
+	if testCaseInput.supplied {
+		assert.NoError(t, d.loadManifests(t.Context(), root, false))
+		_, err := d.bindEntry(t.Context(), root)
+		assert.NoError(t, err)
+		assert.Equal(t, observed.calls.Load(), int64(0))
+	}
 	assert.NoError(t, d.loadManifests(t.Context(), root, true))
 	assert.Equal(t, d.binding != (Binding{}), testCaseInput.qualified)
 	if testCaseInput.qualified {
 		assert.Equal(t, d.entryApplier.Name, testCaseInput.owner)
-		if testCaseInput.dependent {
+		if testCaseInput.dependent || testCaseInput.supplied {
 			assert.Equal(t, d.binding.Producer.ReportHidden(), true)
 		}
 		if testCaseInput.instance {
@@ -439,7 +437,11 @@ func testRunEntryApplicationCase(t *testing.T, testCaseInput *struct {
 			Namespace: "apps",
 			Name:      "flux",
 		}
-		assert.Equal(t, st.GetObject(instance), manifest.BaseManifest(nil))
+		if testCaseInput.supplied {
+			assert.Equal(t, st.ReportHidden(instance), true)
+		} else {
+			assert.Equal(t, st.GetObject(instance), manifest.BaseManifest(nil))
+		}
 		_, indexed := d.loader.Index.Lookup(instance)
 		assert.Equal(t, indexed, true)
 	}
@@ -449,6 +451,7 @@ func testBindEntryEvidenceAuthorityCase(t *testing.T, testCaseInput *struct {
 	name string
 
 	publication  bool
+	supplied     bool
 	livePath     string
 	history      bool
 	historyFirst bool
@@ -460,7 +463,6 @@ func testBindEntryEvidenceAuthorityCase(t *testing.T, testCaseInput *struct {
 },
 ) {
 	t.Helper()
-
 	const repo = "/virtual/evidence-authority"
 	input := &store.SourceArtifact{LocalPath: repo, FS: fstest.MapFS{
 		"entry/literal.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: literal}\n")},
@@ -515,7 +517,15 @@ func testBindEntryEvidenceAuthorityCase(t *testing.T, testCaseInput *struct {
 		addHistory()
 	}
 	if testCaseInput.livePath != "" {
-		st.AddObject(current)
+		if testCaseInput.supplied {
+			st.AddDeclaration(store.Declaration{
+				Obj:    current,
+				Doc:    testutil.ObjectDocument(current),
+				Origin: manifest.SuppliedDeclaration,
+			})
+		} else {
+			st.AddObject(current)
+		}
 		current = st.GetObject(current.Named()).(*manifest.Kustomization)
 		a.AddApplication(st, current)
 	}
@@ -529,7 +539,9 @@ func testBindEntryEvidenceAuthorityCase(t *testing.T, testCaseInput *struct {
 		assert.Equal(t, binding, Binding{})
 		return
 	}
-	assert.FatalIf(t, root == nil, "%v", "qualifying evidence lost its entry")
+	if root == nil {
+		t.Fatal("qualifying evidence lost its entry")
+	}
 	key := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", current.Named()).Named()
 	assert.Equal(t, binding.Key, key)
 	assert.Equal(t, binding.Path, "entry")
@@ -558,4 +570,38 @@ func addEntrySourceFixture(input fstest.MapFS, kind, url string, pinned bool) {
 		spec,
 	)
 	input["source.yaml"] = &fstest.MapFile{Data: []byte(declaration)}
+}
+
+func addEntryApplicationFixture(input fstest.MapFS, testCaseInput *entryApplicationCase) {
+	if testCaseInput.instance {
+		input["owner.yaml"] = &fstest.MapFile{
+			Data: []byte(
+				fmt.Sprintf(
+					"apiVersion: fluxcd.controlplane.io/v1\nkind: FluxInstance\nmetadata: {name: flux, namespace: apps}\nspec:\n  sync: {name: self, kind: %s, url: '%s', ref: main, path: ./}\n",
+					testCaseInput.kind,
+					testCaseInput.url,
+				),
+			),
+		}
+	} else {
+		extra := ""
+		if testCaseInput.dependent {
+			extra = "  dependsOn: [{name: sibling}]\n"
+			input["sibling.yaml"] = &fstest.MapFile{
+				Data: []byte(testutil.KustomizationYAML("sibling", "apps", "  path: ./leaf\n")),
+			}
+			input["leaf/kustomization.yaml"] = &fstest.MapFile{Data: []byte("resources: []\n")}
+		}
+		if testCaseInput.kind != "" {
+			extra = "  sourceRef: {kind: " + testCaseInput.kind + ", name: self}\n"
+			addEntrySourceFixture(input, testCaseInput.kind, testCaseInput.url, testCaseInput.pinned)
+		}
+		path := testCaseInput.path
+		if path == "" {
+			path = "./"
+		}
+		input["owner.yaml"] = &fstest.MapFile{
+			Data: []byte(testutil.KustomizationYAML(testCaseInput.owner, "apps", "  path: "+path+"\n"+extra)),
+		}
+	}
 }

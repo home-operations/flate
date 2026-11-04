@@ -54,9 +54,9 @@ type Config struct {
 	// AllowMissingKinds tolerates missing source Secret material, Helm valuesFrom kinds, and CRDs.
 	// Required postBuild references and malformed data remain errors.
 	AllowMissingKinds []string
-	// Supply contains invocation data, never stored as canonical objects or emitted.
-	Supply   []store.SuppliedObject
-	supplied *store.Supplied
+	// Supply contains authoritative reference-only documents, snapshotted before tree preparation.
+	// Identity and payload come from Doc; later duplicates replace whole declarations.
+	Supply []store.Declaration
 	// StrictSubstitutions fails undefined postBuild variables without defaults.
 	StrictSubstitutions bool
 
@@ -188,7 +188,9 @@ type treeConfig struct {
 func newOrchestrator(cfg *Config, treeInput *Tree, ts *task.Service) *Orchestrator {
 	tree := *treeInput
 	st := store.New()
-	st.SetSupplied(cfg.supplied)
+	for _, child := range cfg.Supply {
+		st.AddDeclaration(child)
+	}
 	o := &Orchestrator{
 		cfg:    treeConfig{Config: *cfg, Tree: tree},
 		inputs: source.NewHTTPInputs(cfg.Cache, cfg.Network, ts),
@@ -310,7 +312,8 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 		o.src.Fetchers[manifest.KindGitRepository] = source.Wrap(manifest.KindGitRepository, gitFetcher)
 	}
 	config := discovery.Config{
-		Selection: o.cfg.Selection, Loader: o.loader,
+		Declarations: o.cfg.Supply,
+		Selection:    o.cfg.Selection, Loader: o.loader,
 		Path: o.cfg.Path, RepoRoot: o.cfg.RepoRoot, SelfURLs: o.cfg.SelfURLs, Input: o.cfg.Input,
 		Store: o.store, WipeSecrets: o.cfg.WipeSecrets,
 		Trees: o.ksc.Trees, RemoteInputs: &o.inputs, RemoteRetry: o.cfg.SourceRetry,

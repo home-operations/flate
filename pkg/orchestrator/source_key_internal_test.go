@@ -198,7 +198,9 @@ func testDAGSourceEffectiveWarmCacheTail(t *testing.T, tailCaseInput *testDAGSou
 		}
 		scheduler := schedule.New(o.tasks, dispatch)
 		unwatch := o.watchDAG(scheduler)
-		scheduler.Seed(o.seedNodes())
+		seeds, seedErr := o.seedNodes()
+		assert.NoError(t, seedErr)
+		scheduler.Seed(seeds)
 		runCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		localErr = scheduler.Run(runCtx)
 		cancel()
@@ -417,7 +419,11 @@ func testCoveredArrivalBubble(t *testing.T, testCaseInput testDAGDispatchCovered
 	unwatch := o.watchDAG(scheduler)
 	defer unwatch()
 
-	scheduler.Seed(o.seedNodes())
+	seeds, seedErr := o.seedNodes()
+
+	assert.NoError(t, seedErr)
+
+	scheduler.Seed(seeds)
 	testCaseInput.admit(s, raw, "event")
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()

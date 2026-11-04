@@ -24,6 +24,8 @@ func TestStore_InclusionArrival(t *testing.T) {
 func TestStore_InclusionCellSize(t *testing.T) {
 	t.Parallel()
 	type originalCell struct {
+		Reference                                      *Child
+		Policy                                         manifest.DeclarationPolicy
 		Static                                         manifest.BaseManifest
 		Document                                       map[string]any
 		Publication                                    uint64

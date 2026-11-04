@@ -72,7 +72,7 @@ func (c *admissionClosure) materializers(
 		return true
 	}
 	target := demand.target
-	if demand.application == "" && c.objects.ReferenceFacts(target, c.loader.Index).Supplied != nil {
+	if demand.application == "" && c.objects.ReferenceFacts(target, c.loader.Index, false, consumer).Data != nil {
 		return false
 	}
 

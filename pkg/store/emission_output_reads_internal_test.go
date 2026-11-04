@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -264,7 +265,12 @@ func testRecordEmittedRejectedPublicationPreservesOutputWatchesCase(
 	_, _, retained := s.GetEmission(owner.Named())
 	defer retained.Finish()
 	{
-		diff := cmp.Diff(retained.Children, []Child{child}, cmp.AllowUnexported(Child{}))
+		diff := cmp.Diff(
+			retained.Children,
+			[]Child{child},
+			cmp.AllowUnexported(Child{}),
+			cmpopts.IgnoreFields(Child{}, "policy"),
+		)
 		assert.FatalIf(t, diff != "", "rejection changed accepted children (-want +got): %s", diff)
 	}
 	assert.Diff(t, retained.Manifests, output.Manifests)

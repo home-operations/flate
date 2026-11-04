@@ -192,6 +192,9 @@ func (c *selectionCollection) rootObjects(root manifest.NamedResource) []manifes
 func (c *selectionCollection) collectObject(root manifest.NamedResource, obj manifest.BaseManifest) {
 	s := c.side
 	id := obj.Named()
+	if !s.run.store.Policy(id).Report && !id.ReportHidden() {
+		return
+	}
 	if c.other != nil {
 		s.prepareExternal(root, obj)
 	}

@@ -360,19 +360,22 @@ func testFetcherLocalHelmContinuationCase(t *testing.T, testCaseInput testFetche
 			st.AddObject(secret)
 		}
 		if (*testCaseInput.tier) == "supply" || (*testCaseInput.tier) == "partial supply" {
-			supplied, err := store.NewSupplied(
-				[]store.SuppliedObject{
-					{
-						Object: &manifest.Secret{
-							Name:       "auth",
-							Namespace:  r.Namespace,
-							StringData: map[string]any{"username": "supply", "password": "password-canary"},
-						},
-					},
+			supplied := []store.Declaration{
+				{
+					Obj: &manifest.Secret{
+						Name:       "auth",
+						Namespace:  r.Namespace,
+						StringData: map[string]any{"username": "supply", "password": "password-canary"},
+					}, Doc: testutil.ObjectDocument(&manifest.Secret{
+						Name:       "auth",
+						Namespace:  r.Namespace,
+						StringData: map[string]any{"username": "supply", "password": "password-canary"},
+					}), Origin: manifest.SuppliedDeclaration,
 				},
-			)
-			assert.NoError(t, err)
-			st.SetSupplied(supplied)
+			}
+			for _, declaration := range supplied {
+				st.AddDeclaration(declaration)
+			}
 			if (*testCaseInput.tier) == "supply" {
 				(*testCaseInput.username) = "supply"
 			}

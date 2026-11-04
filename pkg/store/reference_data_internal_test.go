@@ -30,11 +30,11 @@ func TestReferenceFacts_ProjectsQualifiedNamespaceData(t *testing.T) {
 			ReferenceData: []manifest.ReferenceData{{Production: unrelated, DeclaredKeys: []string{"WRONG"}}},
 		},
 	}})
-	for _, facts := range []ReferenceFacts{st.ReferenceFacts(target, nil), func() ReferenceFacts {
+	for _, facts := range []ReferenceFacts{st.ReferenceFacts(target, nil, false, manifest.NamedResource{}), func() ReferenceFacts {
 		var reads ReadSet
 		reads.Init(st, ownerID("consumer"), nil)
 		defer reads.Close()
-		return reads.ReferenceFacts(target, nil)
+		return reads.ReferenceFacts(target, nil, false, reads.ID())
 	}()} {
 		{
 			assert.FatalIf(t, len(facts.ReferenceData) != 1, "candidates=%+v", facts.ReferenceData)
@@ -47,7 +47,7 @@ func TestReferenceFacts_ProjectsQualifiedNamespaceData(t *testing.T) {
 		{
 			assert.FatalIf(
 				t,
-				facts.Data != nil || facts.Accepted || st.GetObject(target) != nil,
+				facts.Data == nil || facts.Accepted || st.GetObject(target) != nil,
 				"%s",
 				"namespace projection gained authority",
 			)
@@ -98,7 +98,7 @@ func TestReferenceFacts_CurrentDeclarationSupersedesIndexedSource(t *testing.T) 
 	defer before.Close()
 	assert.Diff(
 		t,
-		before.ReferenceFacts(target, nil).ReferenceData,
+		before.ReferenceFacts(target, nil, false, before.ID()).ReferenceData,
 		[]manifest.ReferenceData{{Production: proof, DeclaredKeys: []string{"INDEXED"}}},
 	)
 	st.SetArtifact(source, &SourceArtifact{Content: "current"})
@@ -113,8 +113,8 @@ func TestReferenceFacts_CurrentDeclarationSupersedesIndexedSource(t *testing.T) 
 	current.Init(st, ownerID("current-consumer"), nil)
 	defer current.Close()
 	want := []manifest.ReferenceData{{Production: proof, DeclaredKeys: []string{"CURRENT"}}}
-	assert.Diff(t, st.ReferenceFacts(target, nil).ReferenceData, want)
-	assert.Diff(t, current.ReferenceFacts(target, nil).ReferenceData, want)
+	assert.Diff(t, st.ReferenceFacts(target, nil, false, manifest.NamedResource{}).ReferenceData, want)
+	assert.Diff(t, current.ReferenceFacts(target, nil, false, current.ID()).ReferenceData, want)
 	{
 		assert.FatalIf(t, st.GetObject(target) != nil, "%s", "current keys entered canonical inventory")
 	}
@@ -143,10 +143,16 @@ func testReferenceFactsSourceContextWithdrawalCase(
 			},
 		},
 	}})
+	supplied := manifest.NewSecret(target, nil, map[string]any{"VALUE": "supplied"})
+	st.AddDeclaration(Declaration{Obj: supplied, Origin: manifest.SuppliedDeclaration})
+	var captured ReadSet
+	captured.Init(st, ownerID("consumer"), nil)
+	defer captured.Retire()
+	assert.Equal(t, captured.ReferenceFacts(target, nil, false, captured.ID()).Data.HasKeys(), true)
 	{
 		assert.FatalIf(
 			t,
-			len(st.ReferenceFacts(target, nil).ReferenceData) != 1,
+			len(st.ReferenceFacts(target, nil, false, manifest.NamedResource{}).ReferenceData) != 1,
 			"%s",
 			"candidate unavailable before withdrawal",
 		)
@@ -159,7 +165,7 @@ func testReferenceFactsSourceContextWithdrawalCase(
 			{
 				assert.FatalIf(
 					t,
-					len(st.ReferenceFacts(target, nil).ReferenceData) != 0,
+					len(st.ReferenceFacts(target, nil, false, manifest.NamedResource{}).ReferenceData) != 0,
 					"%s",
 					"source replacement retained stale candidate",
 				)
@@ -170,11 +176,13 @@ func testReferenceFactsSourceContextWithdrawalCase(
 		output.Complete = true
 		st.RecordEmitted(owner.Named(), &output, nil)
 	}
-	facts := st.ReferenceFacts(target, nil)
+	facts := st.ReferenceFacts(target, nil, false, manifest.NamedResource{})
+	assert.Equal(t, captured.Valid(), false)
 	{
 		assert.FatalIf(
 			t,
-			len(facts.ReferenceData) != 0 || facts.Data != nil || st.GetObject(target) != nil,
+			len(facts.ReferenceData) != 0 || facts.Data != supplied || st.GetObject(target) != supplied ||
+				len(st.ListObjects("", manifest.KindSecret)) != 1,
 			"withdrawal retained lookup data: %+v",
 			facts,
 		)
@@ -194,7 +202,7 @@ func testReferenceFactsSourceContextWithdrawalCase(
 		defer current.Finish()
 		current.Complete, current.Children = true, []Child{{Obj: declaration}}
 		st.RecordEmitted(owner.Named(), &current, nil)
-		facts = st.ReferenceFacts(target, nil)
+		facts = st.ReferenceFacts(target, nil, false, manifest.NamedResource{})
 		{
 			assert.FatalIf(t, len(facts.ReferenceData) != 1, "current source lost declaration keys: %+v", facts)
 		}

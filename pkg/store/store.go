@@ -75,16 +75,17 @@ func (sh *shard) requireCapacityLocked(heads ...authority) {
 type objectCell struct {
 	authority
 
-	static   manifest.BaseManifest
-	document map[string]any
+	reference *Declaration
+	policy    manifest.DeclarationPolicy
+	static    manifest.BaseManifest
+	document  map[string]any
 	// Direct writes use this revision; emitted values use the immutable producer record.
 	publication                                              uint64
 	binding                                                  *Input
 	support                                                  *Input
 	excluded, included, rooted, retired, hidden, independent bool
-	// Auxiliary follows the emitted contender; current static authority still wins.
-	auxiliary bool
-	preflight string
+	reconcile, report                                        bool
+	preflight                                                string
 }
 
 func (c *objectCell) bound() bool {
@@ -168,8 +169,7 @@ func newShard() *shard {
 // orchestrator (pkg/orchestrator/orchestrator.go) follow the
 // clone-then-AddObject pattern; any new mutation site should too.
 type Store struct {
-	shards   [shardCount]*shard
-	supplied *Supplied
+	shards [shardCount]*shard
 
 	index    atomic.Pointer[manifest.DiscoveryIndex]
 	coverage map[manifest.NamedResource]*contributor
@@ -273,6 +273,7 @@ func (s *Store) rUnlockAll() {
 
 type objectUpdate struct {
 	obj                         manifest.BaseManifest
+	policy                      manifest.DeclarationPolicy
 	document                    map[string]any
 	explicit                    bool
 	binding                     *Input
@@ -287,6 +288,10 @@ type objectUpdate struct {
 
 func (u *objectUpdate) compare() {
 	equal := manifest.Equal(u.cell.static, u.obj)
+	u.policy = manifest.DeclarationPolicy{Root: true, Reconcile: u.cell.reconcile, Report: u.cell.report}
+	if u.cell.static == nil || u.cell.reconcile != manifest.KindOf(u.obj).Runnable {
+		u.policy = (Child{Obj: u.obj}).Policy(u.obj.Named())
+	}
 	if !u.explicit {
 		u.document = nil
 		if equal {
@@ -412,9 +417,10 @@ func (s *Store) admitLocked(sh *shard, id manifest.NamedResource, u *objectUpdat
 	}
 	if !u.staticEqual {
 		cell.static, cell.binding, cell.support = u.obj, u.binding, u.support
+		cell.reconcile, cell.report = u.policy.Reconcile, u.policy.Report
 	}
 	cell.document = u.document
-	cell.retired, cell.independent = false, u.independent
+	cell.retired, cell.independent, cell.policy = false, u.independent, u.policy
 	sh.cells[id] = cell
 	if !u.membershipEqual && bucket.update(nameID{id.Namespace, id.Name}, cell.static != nil, true, bucket.generation) {
 		bucket.authority = sh.enqueueLocked(bucket.authority)
@@ -528,9 +534,10 @@ func (sh *shard) deleteLocked(id manifest.NamedResource) bool {
 		cell.authority = sh.enqueueLocked(cell.authority)
 	}
 	cell.static, cell.rooted, cell.binding, cell.support, cell.document = nil, false, nil, nil, nil
+	_, cell.policy = sh.captureLocked(id, new(cell), nil)
 	sh.cells[id] = cell
 	sh.clearFacetsLocked(id)
-	if bucket.update(nameID{id.Namespace, id.Name}, false, true, bucket.generation) {
+	if bucket.update(nameID{id.Namespace, id.Name}, cell.reference != nil, true, bucket.generation) {
 		bucket.authority = sh.enqueueLocked(bucket.authority)
 		sh.byName[kindID{id.Group, id.Kind}] = bucket
 	}
@@ -562,10 +569,10 @@ func (s *Store) Snapshot(id manifest.NamedResource, conditions bool) (manifest.B
 	sh := s.shardFor(id)
 	sh.mu.RLock()
 	cell := sh.cells[id]
-	obj := sh.captureLocked(id, new(cell), nil)
+	obj, _ := sh.captureLocked(id, new(cell), nil)
 	var observed Observation
 	var record conditionRecord
-	if !cell.hidden {
+	if obj != nil || !cell.hidden {
 		observed.Statusful = obj != nil && manifest.KindOf(obj).Status || obj == nil && id.KindInfo().Status
 		if observed.Statusful || obj == nil || conditions {
 			record = sh.conditions[id]
@@ -590,7 +597,13 @@ func (s *Store) DeleteObject(id manifest.NamedResource) bool {
 	}
 	if len(sh.members[id]) == 0 && sh.slots[id] == nil {
 		removed := sh.deleteLocked(id)
+		var dispatch eventDispatch
+		if sh.cells[id].reference != nil {
+			dispatch = fireUnderLock(s, EventObjectAdded, id)
+			dispatch.payload = sh.objectLocked(id)
+		}
 		sh.mu.Unlock()
+		dispatch.run()
 		return removed
 	}
 	sh.mu.Unlock()
@@ -685,6 +698,7 @@ func (s *Store) addAnchor(uValue *objectUpdate) bool {
 	}
 	cell := sh.cells[id]
 	cell.rooted, cell.static, cell.binding, cell.support, cell.document = true, obj, u.binding, u.support, u.document
+	cell.reconcile, cell.report = u.policy.Reconcile, u.policy.Report
 	cell.publication++
 	sh.cells[id] = cell
 	dispatches := s.reachabilityLocked(region)
@@ -830,6 +844,7 @@ func (s *Store) installObjectAnchorsLocked(anchors []objectUpdate) {
 			sh := s.shardFor(id)
 			cell := sh.cells[id]
 			cell.static, cell.rooted, cell.retired, cell.document = obj, true, false, u.document
+			cell.reconcile, cell.report = u.policy.Reconcile, u.policy.Report
 			cell.publication++
 			sh.cells[id] = cell
 		}

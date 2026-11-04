@@ -443,51 +443,64 @@ spec:
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestDAG_SeedAdmissionPreservesSourceReaders(t *testing.T) {
-	root := t.TempDir()
-	o, err := newTestOrchestrator(t, Tree{Path: root, RepoRoot: root}, Config{CacheDir: t.TempDir(), Concurrency: 2})
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
-	t.Cleanup(func() {
-		o.stop()
-	})
-	source := &manifest.GitRepository{Name: "ignored", Namespace: "flux-system"}
-	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "flux-system"}
-	o.store.AddObjects([]manifest.BaseManifest{source, consumer})
-	index := &manifest.DiscoveryIndex{
-		Records: map[manifest.NamedResource]manifest.DiscoveryRecord{consumer.Named(): {File: "consumer.yaml"}},
-	}
-	o.loader = admissiontest.New(
-		t,
-		admissiontest.Config{
-			Changes:   change.NewSet([]string{"consumer.yaml"}),
-			Index:     index,
-			Inventory: o.store,
-			Root:      root,
-		},
-	)
-	admissiontest.Commit(t, o.loader, nil)
-	o.filter = o.loader.Options.Filter
-	o.configureControllers()
-	o.seedNodes()
-	var reads store.ReadSet
-	reads.Init(o.store, consumer.Named(), nil)
-	defer reads.Close()
-	{
-		assert.FatalIf(t, reads.GetObject(source.Named()) != source, "%v", "source metadata is unavailable")
-	}
-	var execution base.Execution
-	execution.Init(o.src.Controller, source.Named())
-	defer execution.Close()
-	{
-		assert.FatalIf(t, execution.Reads.Admitted(), "%v", "unchanged source was admitted")
-	}
-	{
-		assert.FatalIf(
-			t,
-			!reads.Valid(),
-			"%v",
-			"initial source admission invalidated a consumer that already captured its metadata",
-		)
+	for _, supplied := range []bool{false, true} {
+		t.Run(fmt.Sprintf("supplied_%t", supplied), func(t *testing.T) {
+			root := t.TempDir()
+			o, err := newTestOrchestrator(
+				t,
+				Tree{Path: root, RepoRoot: root},
+				Config{CacheDir: t.TempDir(), Concurrency: 2},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				o.stop()
+			})
+			source := &manifest.GitRepository{Name: "ignored", Namespace: "flux-system"}
+			consumer := &manifest.Kustomization{Name: "consumer", Namespace: "flux-system"}
+			o.store.AddObject(consumer)
+			if supplied {
+				o.store.AddDeclaration(store.Declaration{Obj: source, Origin: manifest.SuppliedDeclaration})
+			} else {
+				o.store.AddObject(source)
+			}
+			index := &manifest.DiscoveryIndex{
+				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{consumer.Named(): {File: "consumer.yaml"}},
+			}
+			if supplied {
+				index.Records[source.Named()] = manifest.DiscoveryRecord{
+					Declaration: source,
+					Origin:      manifest.SuppliedDeclaration,
+				}
+			}
+			o.loader = admissiontest.New(t,
+				admissiontest.Config{
+					Changes:   change.NewSet([]string{"consumer.yaml"}),
+					Index:     index,
+					Inventory: o.store,
+					Root:      root,
+				})
+			admissiontest.Commit(t, o.loader, nil)
+			o.filter = o.loader.Options.Filter
+			o.configureControllers()
+			_, err = o.seedNodes()
+			assert.NoError(t, err)
+			var reads store.ReadSet
+			reads.Init(o.store, consumer.Named(), nil)
+			defer reads.Close()
+			if reads.GetObject(source.Named()) != source {
+				t.Fatal("source metadata is unavailable")
+			}
+			var execution base.Execution
+			execution.Init(o.src.Controller, source.Named())
+			defer execution.Close()
+			if execution.Reads.Admitted() {
+				t.Fatal("unchanged source was admitted")
+			}
+			if !reads.Valid() {
+				t.Fatal("initial source admission invalidated a consumer that already captured its metadata")
+			}
+		})
 	}
 }

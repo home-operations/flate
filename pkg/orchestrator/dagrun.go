@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 
 	"github.com/home-operations/flate/pkg/discovery"
@@ -54,24 +55,24 @@ func (d dagDispatcher) Sweep(ctx context.Context, quiescent bool) []schedule.Nod
 	return slices.Collect(d.o.store.Sweep())
 }
 
-func (o *Orchestrator) seedNodes() []manifest.NamedResource {
+func (o *Orchestrator) seedNodes() ([]manifest.NamedResource, error) {
 	var ids []manifest.NamedResource
 	for info := range manifest.Kinds() {
 		if !info.Runnable {
 			continue
 		}
 		for _, obj := range o.store.ListObjects(info.Group, info.Kind) {
-			if o.schedulable(obj) {
-				if o.filter.Enabled() {
-					if !o.includeNode(obj.Named()) {
-						continue
-					}
+			err := o.visitNodes(obj, false, func(id manifest.NamedResource, runnable bool) {
+				if runnable {
+					ids = append(ids, id)
 				}
-				ids = append(ids, obj.Named())
+			})
+			if err != nil {
+				return nil, err
 			}
 		}
 	}
-	return ids
+	return ids, nil
 }
 
 func (o *Orchestrator) runDAG(ctx context.Context) error {
@@ -87,8 +88,12 @@ func (o *Orchestrator) runDAG(ctx context.Context) error {
 	unsubscribe := o.watchDAG(sched)
 	defer unsubscribe()
 
-	sched.Seed(o.seedNodes())
-	err := sched.Run(ctx)
+	seeds, err := o.seedNodes()
+	if err != nil {
+		return err
+	}
+	sched.Seed(seeds)
+	err = sched.Run(ctx)
 
 	return errors.Join(err, o.entryFailure, o.finalize())
 }
@@ -98,7 +103,7 @@ func (o *Orchestrator) schedulable(obj manifest.BaseManifest) bool {
 		return false
 	}
 	info := manifest.KindOf(obj)
-	return info.Runnable && (info.Group != manifest.SourceDomain || o.src.Owns(obj.Named()))
+	return o.store.Policy(obj.Named()).Reconcile && (info.Group != manifest.SourceDomain || o.src.Owns(obj.Named()))
 }
 
 func (o *Orchestrator) watchDAG(sched *schedule.Scheduler) func() {
@@ -112,10 +117,9 @@ func (o *Orchestrator) watchDAG(sched *schedule.Scheduler) func() {
 		if observeEntry {
 			o.admission.AddApplication(o.store, obj)
 		}
-		if o.filter.Enabled() && o.schedulable(obj) && !o.includeNode(id) {
-			return
+		if err := o.visitNodes(obj, false, sched.OnArrival); err != nil {
+			o.store.UpdateFailure(id, err)
 		}
-		sched.OnArrival(id, o.schedulable(obj))
 	}, false)
 
 	publication := func(manifest.NamedResource, any) { sched.OnPublication() }
@@ -126,6 +130,40 @@ func (o *Orchestrator) watchDAG(sched *schedule.Scheduler) func() {
 		unsubStatus()
 		unsubArtifact()
 	}
+}
+
+func (o *Orchestrator) visitNodes(
+	obj manifest.BaseManifest,
+	dependency bool,
+	yield func(manifest.NamedResource, bool),
+) error {
+	visited := map[manifest.NamedResource]bool{}
+	var visit func(manifest.BaseManifest, bool) error
+	visit = func(obj manifest.BaseManifest, dependency bool) error {
+		id := obj.Named()
+		if active, seen := visited[id]; seen {
+			if active {
+				return manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("source reference cycle at %s", id))
+			}
+			return nil
+		}
+		policy := o.store.Policy(id)
+		eligible := o.schedulable(obj)
+		if o.filter.Enabled() && eligible && !o.includeNode(id) {
+			return nil
+		}
+		runnable := eligible && (policy.Root || dependency)
+		visited[id] = true
+		if runnable {
+			if err := o.visitNodeReferences(obj, visit); err != nil {
+				return err
+			}
+		}
+		visited[id] = false
+		yield(id, runnable)
+		return nil
+	}
+	return visit(obj, dependency)
 }
 
 func (o *Orchestrator) includeNode(id manifest.NamedResource) bool {
@@ -191,4 +229,21 @@ func (o *Orchestrator) admitEntry(ctx context.Context) (bool, error) {
 		o.store.AddObject(root)
 		return true, nil
 	}
+}
+
+func (o *Orchestrator) visitNodeReferences(
+	obj manifest.BaseManifest,
+	visit func(manifest.BaseManifest, bool) error,
+) error {
+	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
+		if o.store.Policy(ref.NamedResource).Root {
+			continue
+		}
+		if target := o.store.GetObject(ref.NamedResource); target != nil && o.schedulable(target) {
+			if err := visit(target, true); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

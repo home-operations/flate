@@ -39,7 +39,7 @@ func Promote(
 	if st == nil || path == "" && opts.Documents == nil {
 		return false, nil
 	}
-	if obj := st.GetObject(id); obj != nil {
+	if obj, policy := st.Lookup(id); obj != nil && policy.Root {
 		return opts.Admit(obj)
 	}
 	source := record.Source
@@ -221,18 +221,20 @@ func (o *PromoteOptions) admitDocuments(
 	record := o.Record
 	for _, child := range objs {
 		obj := child.Obj
-		if o.Documents == nil && obj.Named() == authored {
-			if authored.Namespace != id.Namespace {
-				obj = obj.WithNamespace(id.Namespace)
-			}
-		} else if o.Documents == nil && obj.Named() == id {
+		if o.Documents == nil && obj.Named() == id && authored != id {
 			continue
+		}
+		if o.Documents == nil && obj.Named() == authored && authored.Namespace != id.Namespace {
+			obj = obj.WithNamespace(id.Namespace)
 		}
 		admitted, err := o.Admit(obj)
 		if err != nil {
 			return err
 		}
-		if !admitted || st.GetObject(obj.Named()) != nil {
+		if !admitted {
+			continue
+		}
+		if existing, policy := st.Lookup(obj.Named()); existing != nil && policy.Root {
 			continue
 		}
 		if err := ctx.Err(); err != nil {

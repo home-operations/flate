@@ -128,7 +128,7 @@ func TestRenderTrees_ClusterAdvisoriesWarmAcquisition(t *testing.T) {
 				Config{
 					Concurrency: 2,
 					CacheDir:    t.TempDir(),
-					Supply:      []store.SuppliedObject{suppliedSubstitution("settings")},
+					Supply:      []store.Declaration{suppliedSubstitution("settings")},
 				},
 			)
 			assert.NoError(t, err)

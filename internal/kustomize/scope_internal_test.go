@@ -116,7 +116,8 @@ func TestScopeResolver_MissDoesNotResetSchema(t *testing.T) {
 	BuildMutex.Unlock()
 
 	assert.NoError(t, err)
-	assert.Equal(t, (scopeResolver{}).ResolveScope(meta), false)
+	namespaced, _ := (scopeResolver{}).ResolveScope(meta)
+	assert.Equal(t, namespaced, false)
 }
 
 func parseDocScopeMemoNoLoad(t *testing.T) {
@@ -383,7 +384,8 @@ func scopeBuildIsolationState(t *testing.T, state *string, fs *interface {
 		assert.Equal(t, len(rm.Resources()), 1)
 		assert.Equal(t, rm.Resources()[0].GetNamespace(), "")
 	}
-	assert.Equal(t, (scopeResolver{}).ResolveScope(key), true)
+	namespaced, _ := (scopeResolver{}).ResolveScope(key)
+	assert.Equal(t, namespaced, true)
 }
 
 func parseDocScopeMemoCaseStateBody(start *chan struct{}, tc ***struct {

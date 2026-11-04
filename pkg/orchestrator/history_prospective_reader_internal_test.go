@@ -617,9 +617,13 @@ spec:
 	cfg := Config{
 		CacheDir:    t.TempDir(),
 		Concurrency: 2,
-		Supply: []store.SuppliedObject{
+		Supply: []store.Declaration{
 			{
-				Object: &manifest.ConfigMap{
+				Doc: testutil.ObjectDocument(
+					&manifest.ConfigMap{Name: "supplied", Namespace: "apps", Data: map[string]any{"ROOT": "apps/red"}},
+				),
+				Origin: manifest.SuppliedDeclaration,
+				Obj: &manifest.ConfigMap{
 					Name:      "supplied",
 					Namespace: "apps",
 					Data:      map[string]any{"ROOT": "apps/red"},
@@ -644,7 +648,9 @@ spec:
 	assert.Equal(t, narrow, false)
 	if (*testCaseInput) == "helm_values_from" {
 		supplied := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "supplied"}
-		assert.Equal(t, warm.store.GetObject(supplied) == nil, true)
+		assert.Equal(t, warm.store.GetObject(supplied) != nil, true)
+		assert.Equal(t, warm.store.Policy(supplied).Origin, manifest.SuppliedDeclaration)
+		assert.Equal(t, warm.store.EmissionOwner(supplied), manifest.NamedResource{})
 		reads.Retire()
 		reconcileEntryForTest(t, warm)
 		assert.Equal(t, warm.store.EmissionOwner(supplied), warm.entryBinding.Producer)

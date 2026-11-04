@@ -32,43 +32,7 @@ type Provider interface {
 }
 
 type dataReader interface {
-	ReferenceFacts(manifest.NamedResource, *manifest.DiscoveryIndex) store.ReferenceFacts
-}
-
-// Input retains data and the evidence explaining its offline availability.
-type Input struct {
-	Data          manifest.Data
-	Materializers []manifest.NamedResource
-	Generated     bool
-	Offline       bool
-	Private       bool
-}
-
-// NewInput resolves data and offline availability from captured source-qualified facts.
-//
-//nolint:gocritic // The SDK takes a value snapshot of captured availability facts.
-func NewInput(facts store.ReferenceFacts, owner manifest.NamedResource) Input {
-	input := Input{}
-	independent := trackProductions(&input, facts.Productions, owner)
-	allowData := owner == (manifest.NamedResource{}) || facts.Accepted || independent || len(input.Materializers) == 0
-	if allowData {
-		input.Data = facts.Data
-		if input.Data == nil {
-			for index := range facts.ReferenceData {
-				candidate := &facts.ReferenceData[index]
-				if candidate.OfflineData != nil {
-					input.Data, input.Offline = candidate.OfflineData, true
-					break
-				}
-			}
-		}
-	}
-	return input
-}
-
-// AllowsAbsence reports whether unavailable data belongs to the consumer or a cluster-side producer.
-func (i Input) AllowsAbsence() bool {
-	return i.Private || i.Generated && !i.Offline
+	ReferenceFacts(manifest.NamedResource, *manifest.DiscoveryIndex, bool, manifest.NamedResource) store.ReferenceFacts
 }
 
 // StoreProvider retains one execution's captured values and availability evidence.
@@ -90,7 +54,7 @@ func NewStoreProvider(s dataReader, wipeSecrets bool) *StoreProvider {
 
 type capturedInput struct {
 	id    manifest.NamedResource
-	input Input
+	input store.ReferenceFacts
 }
 
 // Data returns the captured data for id.
@@ -99,7 +63,7 @@ type capturedInput struct {
 func (p *StoreProvider) Data(id manifest.NamedResource) manifest.Data { return p.Lookup(id).Data }
 
 // Lookup captures a values object and its materializers once for expansion and diagnostics.
-func (p *StoreProvider) Lookup(id manifest.NamedResource) Input {
+func (p *StoreProvider) Lookup(id manifest.NamedResource) store.ReferenceFacts {
 	i := sort.Search(len(p.inputs), func(i int) bool { return p.inputs[i].id.Name >= id.Name })
 	for i < len(p.inputs) && p.inputs[i].id.Name == id.Name {
 		if p.inputs[i].id == id {
@@ -107,32 +71,7 @@ func (p *StoreProvider) Lookup(id manifest.NamedResource) Input {
 		}
 		i++
 	}
-	facts := p.s.ReferenceFacts(id, nil)
-	input := NewInput(facts, p.owner)
-	pending := false
-	if reads, ok := p.s.(interface {
-		UnsettledProducers(manifest.NamedResource) []manifest.NamedResource
-	}); ok && input.Data == nil && input.Generated {
-		pending = len(reads.UnsettledProducers(id)) != 0
-	}
-	if input.Data == nil && p.wipeSecrets && !input.Offline && !pending {
-		for index := range facts.ReferenceData {
-			candidate := &facts.ReferenceData[index]
-			if len(candidate.DeclaredKeys) == 0 {
-				continue
-			}
-			data := make(map[string]any, len(candidate.DeclaredKeys))
-			for _, key := range candidate.DeclaredKeys {
-				data[key] = manifest.ValuePlaceholder(key)
-			}
-			input.Data = manifest.NewSecret(id, nil, data)
-			break
-		}
-	}
-	p.applySupplied(id, &facts, &input)
-	if input.Data != nil {
-		input.Materializers = nil
-	}
+	input := p.s.ReferenceFacts(id, nil, p.wipeSecrets, p.owner)
 	p.inputs = slices.Insert(p.inputs, i, capturedInput{id: id, input: input})
 	return input
 }
@@ -377,46 +316,6 @@ func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, p Provider) 
 	}
 	ks.PostBuild.Substitute = values
 	return nil
-}
-
-func trackProductions(i *Input, productions []manifest.Production, owner manifest.NamedResource) bool {
-	independent := false
-	for index := range productions {
-		production := &productions[index]
-		hasOwner := production.Owner != (manifest.NamedResource{})
-		isOwner := hasOwner && production.Owner == owner
-		i.Private = i.Private || isOwner
-		if hasOwner && !isOwner && !slices.Contains(i.Materializers, production.Owner) {
-			i.Materializers = append(i.Materializers, production.Owner)
-		}
-		if production.Declaration != (manifest.NamedResource{}) {
-			i.Generated = true
-			continue
-		}
-		i.Offline = i.Offline || hasOwner || production.Path != ""
-		independent = independent || !hasOwner && production.Path != ""
-	}
-	return independent
-}
-
-func (p *StoreProvider) applySupplied(id manifest.NamedResource, facts *store.ReferenceFacts, input *Input) {
-	if facts.Supplied == nil {
-		return
-	}
-	if input.Data == nil {
-		input.Data = facts.Supplied
-		return
-	}
-	var overridden []string
-	input.Data, overridden = input.Data.WithSupplied(facts.Supplied)
-	if len(overridden) == 0 {
-		return
-	}
-	if reads, ok := p.s.(*store.ReadSet); ok {
-		reads.RecordSuppliedOverride(
-			store.SuppliedOverride{Resource: id, SupplyPath: facts.SupplyPath, Keys: overridden},
-		)
-	}
 }
 
 func mergeSubstitutions(values map[string]string, data manifest.Data) error {

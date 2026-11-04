@@ -3,6 +3,7 @@ package testutil
 import (
 	"bytes"
 	"io"
+	"reflect"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -89,4 +90,19 @@ func DocumentOccurrences(docs []map[string]any) []manifest.DocOccurrence {
 		out[i] = manifest.DocOccurrence{Document: doc, Ordinal: i}
 	}
 	return out
+}
+
+// ObjectDocument retains data payloads when constructing authoritative SDK fixtures.
+func ObjectDocument(obj manifest.BaseManifest) map[string]any {
+	if obj == nil || reflect.ValueOf(obj).IsNil() {
+		return nil
+	}
+	if data, ok := obj.(manifest.Data); ok {
+		return data.Snapshot()
+	}
+	doc, err := manifest.ObjectDocument(obj.Named(), obj)
+	if err != nil {
+		panic(err)
+	}
+	return doc
 }

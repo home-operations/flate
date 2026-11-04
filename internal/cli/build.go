@@ -58,7 +58,7 @@ func buildCmd(cmd *cobra.Command, kinds ...string) *cobra.Command {
 		}
 		return runSelected(cmd.Context(), selectedRequest{
 			flags: *c, roots: c.roots(firstArg(argv), kinds...),
-			stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(),
+			stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(), stdin: cmd.InOrStdin(),
 		}, func(inv *selectedInvocation) selectedPayload {
 			groups := make([]output.DocumentGroup, len(inv.groups))
 			for i, group := range inv.groups {

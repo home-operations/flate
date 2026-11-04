@@ -152,10 +152,13 @@ func TestSecretLookup_SuppliedAuthTLSAndProxy(t *testing.T) {
 			"address":  "http://proxy.invalid",
 		},
 	}
-	snapshot, err := store.NewSupplied([]store.SuppliedObject{{Object: supplied}})
-	assert.NoError(t, err)
+	snapshot := []store.Declaration{
+		{Obj: supplied, Doc: testutil.ObjectDocument(supplied), Origin: manifest.SuppliedDeclaration},
+	}
 	s := store.New()
-	s.SetSupplied(snapshot)
+	for _, declaration := range snapshot {
+		s.AddDeclaration(declaration)
+	}
 	repository := &manifest.Secret{
 		Name:       supplied.Name,
 		Namespace:  supplied.Namespace,

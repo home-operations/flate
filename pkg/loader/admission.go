@@ -22,9 +22,10 @@ type Admission struct {
 }
 
 type admissionReader interface {
+	Lookup(manifest.NamedResource) (manifest.BaseManifest, manifest.DeclarationPolicy)
 	GetObject(manifest.NamedResource) manifest.BaseManifest
 	GetDeclaration(manifest.NamedResource) manifest.BaseManifest
-	ReferenceFacts(manifest.NamedResource, *manifest.DiscoveryIndex) store.ReferenceFacts
+	ReferenceFacts(manifest.NamedResource, *manifest.DiscoveryIndex, bool, manifest.NamedResource) store.ReferenceFacts
 	GetArtifact(manifest.NamedResource, store.ArtifactRead) store.Artifact
 	GetStatus(manifest.NamedResource) (store.StatusInfo, bool)
 	Productions(manifest.NamedResource, *manifest.DiscoveryIndex) []manifest.Production
@@ -188,6 +189,16 @@ func (c *admissionClosure) add(id manifest.NamedResource, role admissionRole) {
 }
 
 func (c *admissionClosure) assignRole(id manifest.NamedResource, role admissionRole) {
+	record := c.record(id)
+	policy := record.Origin.Policy(id, nil)
+	if c.incoming.Obj != nil && c.incoming.Obj.Named() == id {
+		policy = c.incoming.Policy(id)
+	} else if record.Path == "" && record.Builder == "" {
+		_, policy = c.objects.Lookup(id)
+	}
+	if !policy.Root {
+		role.selected = false
+	}
 	state := c.states[id]
 	if c.states == nil {
 		c.states = map[manifest.NamedResource]admissionState{}

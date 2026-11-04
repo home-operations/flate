@@ -47,7 +47,7 @@ func testCmd(cmd *cobra.Command, kinds ...string) *cobra.Command {
 	cmd.RunE = func(cmd *cobra.Command, argv []string) error {
 		return runSelected(cmd.Context(), selectedRequest{
 			flags: *c, roots: c.roots(firstArg(argv), kinds...),
-			stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(), test: true,
+			stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(), stdin: cmd.InOrStdin(), test: true,
 		}, func(inv *selectedInvocation) selectedPayload {
 			rosters := make([]output.TestReport, len(inv.groups))
 			for i, group := range inv.groups {

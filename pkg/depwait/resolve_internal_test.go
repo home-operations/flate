@@ -56,9 +56,9 @@ func TestClassify_RepeatedInputFrozenPolicy(t *testing.T) {
 	t.Parallel()
 	st := store.New()
 	data := &manifest.ConfigMap{Name: "input", Namespace: "apps", Data: map[string]any{"VALUE": "first"}}
-	supplied, err := store.NewSupplied([]store.SuppliedObject{{Object: data}})
-	assert.NoError(t, err)
-	st.SetSupplied(supplied)
+	st.AddDeclaration(
+		store.Declaration{Obj: data, Doc: testutil.ObjectDocument(data), Origin: manifest.SuppliedDeclaration},
+	)
 	provider := values.NewStoreProvider(st, false)
 	captured := provider.Data(data.Named())
 	value, _, err := captured.Value("VALUE")
@@ -206,19 +206,18 @@ func testResolveSelectedDataCase(t *testing.T, testCaseInput *struct {
 		st.UpdateStatus(supplier, store.StatusInfo{Status: status, Reason: "", Message: "successor"})
 	}
 	if testCaseInput.supplied {
-		supplied, err := store.NewSupplied(
-			[]store.SuppliedObject{
-				{
-					Object: &manifest.ConfigMap{
-						Name:      data.Name,
-						Namespace: data.Namespace,
-						Data:      map[string]any{"VALUE": "supplied"},
-					},
-				},
+		supplied := &manifest.ConfigMap{
+			Name:      data.Name,
+			Namespace: data.Namespace,
+			Data:      map[string]any{"VALUE": "supplied"},
+		}
+		st.AddDeclaration(
+			store.Declaration{
+				Obj:    supplied,
+				Doc:    testutil.ObjectDocument(supplied),
+				Origin: manifest.SuppliedDeclaration,
 			},
 		)
-		assert.NoError(t, err)
-		st.SetSupplied(supplied)
 	}
 	var reads store.ReadSet
 	reads.Init(st, ks.Named(), nil)

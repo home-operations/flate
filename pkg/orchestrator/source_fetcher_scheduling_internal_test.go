@@ -50,21 +50,25 @@ func TestSourceFetchers_ExistenceOnlyDisabled(t *testing.T) {
 	t.Cleanup(func() { o.stop() })
 	repo := &manifest.HelmRepository{Name: "repo", Namespace: "ns", URL: "https://charts.example"}
 	o.store.AddObject(repo)
+	seeds, err := o.seedNodes()
+	assert.NoError(t, err)
 	{
 		{
 			f, registered := o.src.Fetchers[manifest.KindHelmRepository]
 			assert.FatalIf(t, !registered || f != nil || !o.schedulable(repo) ||
 				!slices.Contains(
-					o.seedNodes(),
+					seeds,
 					repo.Named(),
 				), "%v", "default nil reservation did not enable scheduling")
 		}
 	}
 	delete(o.src.Fetchers, manifest.KindHelmRepository)
+	seeds, err = o.seedNodes()
+	assert.NoError(t, err)
 	{
 		assert.FatalIf(
 			t,
-			o.schedulable(repo) || slices.Contains(o.seedNodes(), repo.Named()),
+			o.schedulable(repo) || slices.Contains(seeds, repo.Named()),
 			"%v",
 			"unregistered existence-only source still scheduled",
 		)
@@ -105,7 +109,9 @@ func testDAGSourceWithoutFetcherIsNotSeededCase(
 	}
 	obj := &manifest.ExternalArtifact{Name: "external", Namespace: "apps"}
 	o.store.AddObject(obj)
-	assert.Equal(t, slices.Contains(o.seedNodes(), obj.Named()), testCaseInput.fetcher)
+	seeds, err := o.seedNodes()
+	assert.NoError(t, err)
+	assert.Equal(t, slices.Contains(seeds, obj.Named()), testCaseInput.fetcher)
 	obj = &manifest.ExternalArtifact{Name: "arriving", Namespace: "apps"}
 	producer, consumer := testutil.KustomizationID(
 		"flux-system",

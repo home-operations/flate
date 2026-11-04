@@ -301,6 +301,12 @@ func testPromoteOrphansIndexedEvidenceCase(t *testing.T, testCaseInput testPromo
 		&store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: inputFS},
 	)
 	l := loader.New(st)
+	supplied := &manifest.Kustomization{Name: "supplied", Namespace: "default", Path: "."}
+	l.AdmitDeclarations([]store.Declaration{{
+		Obj:    supplied,
+		Doc:    testutil.ObjectDocument(supplied),
+		Origin: manifest.SuppliedDeclaration,
+	}})
 	l.SourceRoot = root
 	if testCaseInput.tc.chartPath != "" {
 		view[path.Join(testCaseInput.tc.chartPath, "Chart.yaml")] = &fstest.MapFile{
@@ -404,6 +410,16 @@ func testPromoteOrphansIndexedEvidenceCase(t *testing.T, testCaseInput testPromo
 			"orphan promotion reread indexed documents",
 		)
 	}
+	for _, child := range l.Kustomizations() {
+		if child.Obj.Named() == supplied.Named() {
+			t.Fatal("supplied evidence gained producer eligibility")
+		}
+	}
+	r := l.Index.Records[supplied.Named()]
+	if r.Path != "" || r.File != "" || r.Parent != (manifest.NamedResource{}) || len(r.Productions) != 0 {
+		t.Fatalf("supplied orphan: %+v", r)
+	}
+	assert.Equal(t, st.HasInventory(supplied.Named()), false)
 	obj, doc, attempt := st.GetEmission((*testCaseInput.generator))
 	attempt.Finish()
 	{

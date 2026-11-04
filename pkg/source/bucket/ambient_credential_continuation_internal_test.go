@@ -59,19 +59,16 @@ func testFetcherMachineContinuationCase(t *testing.T, testCaseInput testFetcherM
 			st.AddObject(sec)
 		}
 		if (*testCaseInput.tier) == "supply" || (*testCaseInput.tier) == "partial supply" {
-			supplied, err := store.NewSupplied(
-				[]store.SuppliedObject{
-					{
-						Object: &manifest.Secret{
-							Name:       "auth",
-							Namespace:  "apps",
-							StringData: map[string]any{"accesskey": "supply", "secretkey": "supply-secret"},
-						},
-					},
+			supplied := &manifest.Secret{Name: "auth", Namespace: "apps", StringData: map[string]any{
+				"accesskey": "supply", "secretkey": "supply-secret",
+			}}
+			st.AddDeclaration(
+				store.Declaration{
+					Obj:    supplied,
+					Doc:    testutil.ObjectDocument(supplied),
+					Origin: manifest.SuppliedDeclaration,
 				},
 			)
-			assert.NoError(t, err)
-			st.SetSupplied(supplied)
 			if (*testCaseInput.tier) == "supply" {
 				(*testCaseInput.access) = "supply"
 			}

@@ -30,7 +30,7 @@ func TestBindCommon_AllowMissingKinds(t *testing.T) {
 			fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
 			bindCommon(fs, &flags)
 			assert.NoError(t, fs.Parse(tc.args))
-			assert.NoError(t, flags.loadInputs(t.Context()))
+			assert.NoError(t, flags.loadInputs(t.Context(), nil))
 			assert.Diff(t, buildOrchCfg(&flags).AllowMissingKinds, tc.want)
 		})
 	}

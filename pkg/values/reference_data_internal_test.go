@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -49,9 +50,14 @@ func TestStoreProvider_OfflineCandidatePrecedenceAndWithdrawal(t *testing.T) {
 		},
 	}})
 	supplied := manifest.NewSecret(target, nil, map[string]any{"FIRST": "supplied", "EXTRA": "extra"})
-	snapshot, err := store.NewSupplied([]store.SuppliedObject{{Object: supplied, Path: "input.yaml"}})
-	assert.NoError(t, err)
-	st.SetSupplied(snapshot)
+	st.AddDeclaration(
+		store.Declaration{
+			Obj:       supplied,
+			Doc:       testutil.ObjectDocument(supplied),
+			Origin:    manifest.SuppliedDeclaration,
+			InputPath: "input.yaml",
+		},
+	)
 	data := NewStoreProvider(st, true).Data(target)
 	assert.Diff(t, slices.Sorted(data.Keys()), []string{"EXTRA", "FIRST"})
 	value, _, err := data.Value("FIRST")
@@ -74,7 +80,7 @@ func TestStoreProvider_OfflineCandidatePrecedenceAndWithdrawal(t *testing.T) {
 	{
 		assert.FatalIf(
 			t,
-			st.GetObject(target) != nil || len(st.ListObjects("", manifest.KindSecret)) != 0,
+			!st.ReportHidden(target) || len(st.ListObjects("", manifest.KindSecret)) != 1,
 			"%s",
 			"offline data entered inventory",
 		)

@@ -15,6 +15,8 @@ type Child struct {
 	Obj         manifest.BaseManifest
 	Doc         map[string]any
 	Generated   bool
+	Origin      manifest.DeclarationOrigin
+	policy      manifest.DeclarationPolicy
 	Productions []manifest.Production
 	payload     *SourceArtifact
 	output      *ReadSet

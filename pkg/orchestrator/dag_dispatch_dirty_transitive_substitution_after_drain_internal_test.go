@@ -139,7 +139,9 @@ func TestDAGDispatch_DirtyTransitiveSubstitutionAfterDrain(t *testing.T) {
 	scheduler := schedule.New(o.tasks, dispatch)
 	unsubscribe := o.watchDAG(scheduler)
 	defer unsubscribe()
-	scheduler.Seed(o.seedNodes())
+	seeds, seedErr := o.seedNodes()
+	assert.NoError(t, seedErr)
+	scheduler.Seed(seeds)
 	{
 		{
 			err := scheduler.Run(t.Context())

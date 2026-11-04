@@ -47,9 +47,14 @@ func TestReconcile_SuppliedAdvisoriesOnReplay(t *testing.T) {
 	)
 	freezeSourceForTest(t, st)
 	input := &manifest.ConfigMap{Name: "settings", Namespace: "flux-system", Data: map[string]any{"VALUE": "equal"}}
-	supply, err := store.NewSupplied([]store.SuppliedObject{{Object: input, Path: "supply.yaml"}})
-	assert.NoError(t, err)
-	st.SetSupplied(supply)
+	st.AddDeclaration(
+		store.Declaration{
+			Obj:       input,
+			Doc:       testutil.ObjectDocument(input),
+			Origin:    manifest.SuppliedDeclaration,
+			InputPath: "supply.yaml",
+		},
+	)
 	ks := &manifest.Kustomization{
 		Name:      "apps",
 		Namespace: "flux-system",

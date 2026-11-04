@@ -736,8 +736,13 @@ data: {VALUE: rendered}
 		CacheDir:            t.TempDir(),
 		Concurrency:         2,
 		StrictSubstitutions: true,
-		Supply: []store.SuppliedObject{
-			{Object: &manifest.ConfigMap{Name: "supplied", Namespace: "apps", Data: map[string]any{"ENTRY": "flux"}}},
+		Supply: []store.Declaration{
+			{
+				Doc: testutil.ObjectDocument(&manifest.ConfigMap{
+					Name: "supplied", Namespace: "apps", Data: map[string]any{"ENTRY": "flux"},
+				}),
+				Origin: manifest.SuppliedDeclaration,
+			},
 		},
 	}
 	warm, err := newTestOrchestrator(t, tree, cfg)

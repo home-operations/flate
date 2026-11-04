@@ -453,9 +453,14 @@ func TestReconcile_SuppliedAdvisoriesOnReplay(t *testing.T) {
 		Namespace: "apps",
 		Data:      map[string]any{"values.yaml": "value: equal\n"},
 	}
-	supply, err := store.NewSupplied([]store.SuppliedObject{{Object: input, Path: "supply.yaml"}})
-	assert.NoError(t, err)
-	st.SetSupplied(supply)
+	st.AddDeclaration(
+		store.Declaration{
+			Obj:       input,
+			Doc:       testutil.ObjectDocument(input),
+			Origin:    manifest.SuppliedDeclaration,
+			InputPath: "supply.yaml",
+		},
+	)
 	hr := &manifest.HelmRelease{Name: "app", Namespace: "apps", HelmReleaseSpec: helmv2.HelmReleaseSpec{
 		Chart: &helmv2.HelmChartTemplate{
 			Spec: helmv2.HelmChartTemplateSpec{

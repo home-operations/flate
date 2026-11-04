@@ -80,11 +80,11 @@ func testRecordEmittedPartialSubsetPreservesCompletedOutputCase(
 	}
 	s.RecordEmitted(owner.Named(), &partial, nil)
 	{
-		assert.FatalIf(t, !slices.EqualFunc(partial.Children, incoming, childEqual) ||
+		assert.FatalIf(t, !slices.EqualFunc(partial.Children, incoming, Child.equal) ||
 			!slices.EqualFunc(
 				before.Children,
 				borrowed,
-				childEqual,
+				Child.equal,
 			), "%s", "partial publication mutated borrowed children")
 	}
 	partial.Finish()
@@ -117,7 +117,7 @@ func testRecordEmittedPartialSubsetPreservesCompletedOutputCase(
 		{
 			assert.FatalIf(
 				t,
-				!slices.EqualFunc(after.Children, before.Children, childEqual),
+				!slices.EqualFunc(after.Children, before.Children, Child.equal),
 				"%s",
 				"equal partial subset changed its children",
 			)

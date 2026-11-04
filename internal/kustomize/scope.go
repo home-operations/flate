@@ -11,6 +11,8 @@ import (
 
 var namespaceScopes sync.Map //nolint:gochecknoglobals // Builtin scope results persist across all render invocations.
 
+type namespaceScope struct{ namespaced, known bool }
+
 type scopeResolver struct{}
 
 //nolint:gochecknoinits // Importing the krusty owner registers the SDK scope resolver before use.
@@ -18,22 +20,24 @@ func init() { manifest.RegisterScopeResolver(scopeResolver{}) }
 
 func (scopeResolver) LookupScope(meta yaml.TypeMeta) (bool, bool) {
 	value, _ := namespaceScopes.Load(meta)
-	namespaced, ok := value.(bool)
-	return namespaced, ok
+	scope, ok := value.(namespaceScope)
+	return scope.namespaced, ok
 }
 
-func (r scopeResolver) ResolveScope(meta yaml.TypeMeta) bool {
-	if value, ok := r.LookupScope(meta); ok {
-		return value
+func (scopeResolver) ResolveScope(meta yaml.TypeMeta) (bool, bool) {
+	if value, ok := namespaceScopes.Load(meta); ok {
+		scope, _ := value.(namespaceScope)
+		return scope.namespaced, scope.known
 	}
 	BuildMutex.Lock()
 	defer BuildMutex.Unlock()
-	if value, ok := r.LookupScope(meta); ok {
-		return value
+	if value, ok := namespaceScopes.Load(meta); ok {
+		scope, _ := value.(namespaceScope)
+		return scope.namespaced, scope.known
 	}
 	// Builds may load custom schemas; only builtin scope may determine defaults.
 	namespaced, found := openapi.IsNamespaceScoped(meta)
 	namespaced = namespaced || !found
-	namespaceScopes.Store(meta, namespaced)
-	return namespaced
+	namespaceScopes.Store(meta, namespaceScope{namespaced: namespaced, known: found})
+	return namespaced, found
 }

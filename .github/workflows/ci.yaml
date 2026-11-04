@@ -60,6 +60,9 @@ jobs:
       - name: Run linter
         run: mise run lint
 
+      - name: Run deadcode
+        run: mise run deadcode
+
   go-test:
     if: >-
       ${{ !(startsWith(github.head_ref, 'release-please--')

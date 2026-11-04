@@ -202,6 +202,7 @@ and `mise run lint` must pass on the whole repo.
 
 ```
 mise run lint
+mise run deadcode
 go mod tidy && git diff --exit-code go.mod go.sum
 mise run test        # go test -race, all packages including test/e2e
 mise run vulncheck

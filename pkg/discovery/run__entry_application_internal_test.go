@@ -364,7 +364,6 @@ func testRunEntryApplicationCase(t *testing.T, testCaseInput *struct {
 		Name:      "self",
 		Namespace: "apps",
 	}
-	var declaration string
 	if testCaseInput.instance {
 		input["owner.yaml"] = &fstest.MapFile{
 			Data: []byte(
@@ -386,19 +385,7 @@ func testRunEntryApplicationCase(t *testing.T, testCaseInput *struct {
 		}
 		if testCaseInput.kind != "" {
 			extra = "  sourceRef: {kind: " + testCaseInput.kind + ", name: self}\n"
-			spec := "url: '" + testCaseInput.url + "'"
-			if testCaseInput.kind == manifest.KindBucket {
-				spec = "endpoint: '" + testCaseInput.url + "', bucketName: cluster"
-			}
-			if testCaseInput.pinned {
-				spec += ", ref: {tag: pinned}"
-			}
-			declaration = fmt.Sprintf(
-				"apiVersion: source.toolkit.fluxcd.io/v1\nkind: %s\nmetadata: {name: self, namespace: apps}\nspec: {%s}\n",
-				testCaseInput.kind,
-				spec,
-			)
-			input["source.yaml"] = &fstest.MapFile{Data: []byte(declaration)}
+			addEntrySourceFixture(input, testCaseInput.kind, testCaseInput.url, testCaseInput.pinned)
 		}
 		path := testCaseInput.path
 		if path == "" {
@@ -555,4 +542,20 @@ func testBindEntryEvidenceAuthorityCase(t *testing.T, testCaseInput *struct {
 	}
 	assert.Equal(t, a.entryBound.Load(), true)
 	assert.Equal(t, a.applications.Load(), (*applicationEvidence)(nil))
+}
+
+func addEntrySourceFixture(input fstest.MapFS, kind, url string, pinned bool) {
+	spec := "url: '" + url + "'"
+	if kind == manifest.KindBucket {
+		spec = "endpoint: '" + url + "', bucketName: cluster"
+	}
+	if pinned {
+		spec += ", ref: {tag: pinned}"
+	}
+	declaration := fmt.Sprintf(
+		"apiVersion: source.toolkit.fluxcd.io/v1\nkind: %s\nmetadata: {name: self, namespace: apps}\nspec: {%s}\n",
+		kind,
+		spec,
+	)
+	input["source.yaml"] = &fstest.MapFile{Data: []byte(declaration)}
 }

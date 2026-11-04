@@ -373,7 +373,7 @@ func (s *Store) addObject(obj manifest.BaseManifest, binding, support *Input, do
 		}
 		if u.cell.hidden || !u.cell.rooted && (len(sh.members[id]) > 0 || sh.slots[id] != nil) {
 			sh.mu.Unlock()
-			if s.addAnchor(u) {
+			if s.addAnchor(new(u)) {
 				return
 			}
 			continue
@@ -763,7 +763,8 @@ func (s *Store) Objects() []manifest.BaseManifest {
 	return out
 }
 
-func (s *Store) addAnchor(u objectUpdate) bool {
+func (s *Store) addAnchor(uValue *objectUpdate) bool {
+	u := *uValue
 	id := u.obj.Named()
 	sh := s.shardFor(id)
 	var storage [4]regionState

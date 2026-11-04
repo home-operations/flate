@@ -81,7 +81,7 @@ func (s *Store) RecordEmitted(
 			candidate.OutputReads = next.Reads
 		}
 		unchanged := prev != nil && len(next.Failures) == 0 && len(prev.Failures) == 0 &&
-			(next.Complete && len(candidate.Children) == len(prev.entries) && prev.Complete && prev.shadows(next.binding) ||
+			(next.Complete && len(candidate.Children) == len(prev.entries) && prev.Complete && prev.shadows(new(next.binding)) ||
 				!next.Complete && candidate.OutputReads == prev.OutputReads)
 		if unchanged {
 			for i, child := range candidate.Children {
@@ -318,7 +318,7 @@ func (s *Store) prepareAdmissions(
 		}
 	}
 	if next.binding.equal(&binding) {
-		shadowed := prev.shadows(next.binding)
+		shadowed := prev.shadows(new(next.binding))
 		{
 			fValues := coverage
 			for fIndex := range fValues {

@@ -31,7 +31,7 @@ func prepareEmission(next, prev *Emission, prepared []admission, byID map[manife
 	if prev != nil {
 		e.shadowed = slices.Clone(prev.shadowed)
 	}
-	if (next.Complete || len(next.Failures) != 0) && !e.shadows(next.binding) {
+	if (next.Complete || len(next.Failures) != 0) && !e.shadows(new(next.binding)) {
 		e.shadowed = append(e.shadowed, next.binding)
 	}
 	e.previous = nil
@@ -234,6 +234,7 @@ func sameMembership(a, b *Emission) bool {
 	return true
 }
 
+//nolint:gocritic // The slices callback contract requires value parameters.
 func admissionEqual(a, b admission) bool {
 	return a.binding.equal(&b.binding) && childEqual(a.child, b.child)
 }

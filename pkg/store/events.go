@@ -92,7 +92,7 @@ func (s *Store) AddListener(event EventKind, fn Listener, flush bool) Unsubscrib
 		pValues := pairs
 		for pIndex := range pValues {
 			p := pValues[pIndex]
-			if e, ok := p.payload.(*Emission); ok && !emissionCurrent(e, p.input) {
+			if e, ok := p.payload.(*Emission); ok && !emissionCurrent(e, new(p.input)) {
 				continue
 			}
 			safeInvoke(fn, p.id, p.payload)
@@ -137,7 +137,7 @@ func (s *Store) snapshotForReplay(event EventKind) []idPayload {
 				if sh.cells[id].hidden {
 					continue
 				}
-				artifact := sh.projectArtifactLocked(id, &view, sh.artifacts[id])
+				artifact := sh.projectArtifactLocked(id, &view, new(sh.artifacts[id]))
 				if artifact != nil {
 					out = append(out, idPayload{id: id, payload: artifact, input: view})
 				}

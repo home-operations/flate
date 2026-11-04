@@ -702,7 +702,7 @@ func testRequireRetainsPredicatesCase(t *testing.T, testCaseInput *[]string,
 		reads.Require(ref)
 		if !slices.ContainsFunc(
 			want,
-			func(prior Gate) bool { return sameReadinessGate(prior.DependencyRef, ref) },
+			func(prior Gate) bool { return sameReadinessGate(new(prior.DependencyRef), new(ref)) },
 		) {
 			want = append(want, Gate{DependencyRef: ref})
 		}

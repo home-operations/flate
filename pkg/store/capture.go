@@ -435,7 +435,7 @@ func (r *ReadSet) GetArtifact(id manifest.NamedResource, read ArtifactRead) Arti
 		}
 		sh.mu.RUnlock()
 		input.derived |= capturedArtifact
-		if e, ok := details.artifact.(*Emission); ok && !emissionCurrent(e, input.view) {
+		if e, ok := details.artifact.(*Emission); ok && !emissionCurrent(e, new(input.view)) {
 			details.artifact = nil
 		}
 	}
@@ -688,7 +688,7 @@ func (s *Store) SetIncluded(id manifest.NamedResource, included bool) {
 	sh.cells[id] = cell
 	var dispatch eventDispatch
 	if reset {
-		updated, _ := sh.setConditionLocked(id, readyCondition(StatusPending, "", ""), 0, nil)
+		updated, _ := sh.setConditionLocked(id, new(readyCondition(StatusPending, "", "")), 0, nil)
 		if !sh.derived || !cell.hidden {
 			dispatch = fireUnderLock(s, EventStatusUpdated, id)
 			if dispatch.listeners != nil {
@@ -844,7 +844,9 @@ func (r *ReadSet) Close() {
 	}
 }
 
-func sameReadinessGate(a, b manifest.DependencyRef) bool {
+func sameReadinessGate(aValue *manifest.DependencyRef, bValue *manifest.DependencyRef) bool {
+	a := *aValue
+	b := *bValue
 	if a.ReadyExpr != b.ReadyExpr {
 		if a.ReadyExpr == nil || b.ReadyExpr == nil || *a.ReadyExpr != *b.ReadyExpr {
 			return false

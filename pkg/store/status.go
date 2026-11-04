@@ -275,7 +275,7 @@ func (r conditionRecord) statusInfo() (StatusInfo, bool) {
 // StatusUpdated event when the StatusInfo rollup changes. Snapshot
 // exposes the full condition state. An empty reason derives the normal reason from status.
 func (s *Store) UpdateStatus(id manifest.NamedResource, info StatusInfo) {
-	s.setCondition(id, readyCondition(info.Status, info.Reason, info.Message), info.applyingObjects, nil)
+	s.setCondition(id, new(readyCondition(info.Status, info.Reason, info.Message)), info.applyingObjects, nil)
 }
 
 // ReportProgress dispatches transient phase text without changing Ready conditions.
@@ -294,7 +294,7 @@ func (s *Store) UpdateFailure(id manifest.NamedResource, err error) {
 	if dep, ok := errors.AsType[*manifest.DependencyFailedError](err); ok {
 		failure = newDependencyFailure(dep)
 	}
-	s.setCondition(id, readyCondition(StatusFailed, "", message), 0, failure)
+	s.setCondition(id, new(readyCondition(StatusFailed, "", message)), 0, failure)
 }
 
 // SetCondition upserts cond into the resource's condition list keyed
@@ -314,18 +314,18 @@ func (s *Store) UpdateFailure(id manifest.NamedResource, err error) {
 //
 //nolint:gocritic // The SDK preserves this value input and its snapshot boundary.
 func (s *Store) SetCondition(id manifest.NamedResource, cond Condition) {
-	s.setCondition(id, cond, 0, nil)
+	s.setCondition(id, new(cond), 0, nil)
 }
 
 func (s *Store) setCondition(
-	id manifest.NamedResource,
-	cond Condition,
+	id manifest.NamedResource, condValue *Condition,
 	applyingObjects int,
 	failure *dependencyFailure,
 ) {
+	cond := *condValue
 	sh := s.shardFor(id)
 	sh.mu.Lock()
-	updated, changed := sh.setConditionLocked(id, cond, applyingObjects, failure)
+	updated, changed := sh.setConditionLocked(id, new(cond), applyingObjects, failure)
 	if !changed {
 		sh.mu.Unlock()
 		return
@@ -348,11 +348,11 @@ func (s *Store) setCondition(
 // Existing conditions with unchanged provenance MUST be overwritten in place
 // without reassigning the map entry, preserving the allocation-free hot path.
 func (sh *shard) setConditionLocked(
-	id manifest.NamedResource,
-	cond Condition,
+	id manifest.NamedResource, condValue *Condition,
 	applyingObjects int,
 	failure *dependencyFailure,
 ) (conditionRecord, bool) {
+	cond := *condValue
 	record := sh.conditions[id]
 	ready := cond.Type == ConditionReady
 	objects := record.applyingObjects
@@ -443,6 +443,8 @@ func (s *Store) ReportStatus(id manifest.NamedResource) (StatusInfo, bool) {
 // observable state. LastTransitionTime is intentionally ignored — it
 // is reset on every transition by the controller-runtime libraries
 // and would otherwise prevent the no-op short-circuit from firing.
+//
+//nolint:gocritic // The slices callback contract requires value parameters.
 func conditionEqual(a, b Condition) bool {
 	return a.Type == b.Type &&
 		a.Status == b.Status &&

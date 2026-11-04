@@ -322,7 +322,7 @@ func (s *Store) staticAnchorLocked(id manifest.NamedResource, support objectRegi
 			} else if slot != nil && slot.hidden.Load() {
 				continue
 			}
-			if slot == nil || !slot.current.Load().shadows(s.contributionBinding(p.Owner)) {
+			if slot == nil || !slot.current.Load().shadows(new(s.contributionBinding(p.Owner))) {
 				return true
 			}
 		}
@@ -376,7 +376,7 @@ func (s *Store) reachabilityLocked(region objectRegion) []objectPublication {
 				}
 			}
 		}
-		if e.shadows(s.contributionBinding(id)) {
+		if e.shadows(new(s.contributionBinding(id))) {
 			continue
 		}
 		if c := s.coverage[id]; c != nil {
@@ -462,7 +462,7 @@ func (s *Store) reachabilityLocked(region objectRegion) []objectPublication {
 			// Direct removal MUST restore surviving emitted payloads after clearing static facets.
 			if state.direct || state.payload != view.payload || state.cell.hidden != cell.hidden {
 				record := sh.artifacts[id]
-				effective := sh.projectArtifactLocked(id, &view, record)
+				effective := sh.projectArtifactLocked(id, &view, new(record))
 				if record.effective != effective {
 					changed := sh.publishArtifactLocked(id, &record, effective)
 					sh.artifacts[id] = record

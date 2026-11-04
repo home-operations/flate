@@ -225,7 +225,8 @@ func (s *Store) ChildFootprint(
 // Finish releases predecessor inventory borrowed by an attempt.
 func (e *Emission) Finish() { e.previous = nil }
 
-func (e *Emission) shadows(binding sourceBinding) bool {
+func (e *Emission) shadows(bindingValue *sourceBinding) bool {
+	binding := *bindingValue
 	return e != nil && slices.ContainsFunc(e.shadowed, func(other sourceBinding) bool { return binding.equal(&other) })
 }
 

@@ -11,15 +11,16 @@ import (
 //
 //nolint:gocritic // The SDK preserves this value input and its snapshot boundary.
 func (r *ReadSet) Require(ref manifest.DependencyRef) {
-	r.require(ref, false)
+	r.require(new(ref), false)
 }
 
 // RequireMaterializer retains a supplier's status-aware readiness assessment.
 func (r *ReadSet) RequireMaterializer(id manifest.NamedResource) {
-	r.require(manifest.DependencyRef{NamedResource: id}, true)
+	r.require(new(manifest.DependencyRef{NamedResource: id}), true)
 }
 
-func (r *ReadSet) require(ref manifest.DependencyRef, materializer bool) {
+func (r *ReadSet) require(refValue *manifest.DependencyRef, materializer bool) {
+	ref := *refValue
 	input := r.input(ref.NamedResource)
 	input.required = true
 	if !input.gate {
@@ -28,7 +29,7 @@ func (r *ReadSet) require(ref manifest.DependencyRef, materializer bool) {
 		input.materializer = materializer
 		return
 	}
-	if sameReadinessGate(input.Ref, ref) && input.materializer == materializer {
+	if sameReadinessGate(new(input.Ref), new(ref)) && input.materializer == materializer {
 		return
 	}
 	for gate := &r.details(input).gates; ; gate = &(*gate).next {
@@ -42,15 +43,13 @@ func (r *ReadSet) require(ref manifest.DependencyRef, materializer bool) {
 			}
 			return
 		}
-		if sameReadinessGate(
-			manifest.DependencyRef{
-				NamedResource: ref.NamedResource,
-				ReadyExpr:     (*gate).expr,
-				Artifact:      (*gate).artifact,
-				ArtifactOnly:  (*gate).artifactOnly,
-				ChartSource:   (*gate).chartSource,
-			},
-			ref,
+		if sameReadinessGate(new(manifest.DependencyRef{
+			NamedResource: ref.NamedResource,
+			ReadyExpr:     (*gate).expr,
+			Artifact:      (*gate).artifact,
+			ArtifactOnly:  (*gate).artifactOnly,
+			ChartSource:   (*gate).chartSource,
+		}), new(ref),
 		) &&
 			(*gate).materializer == materializer {
 			return

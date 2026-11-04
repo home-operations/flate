@@ -39,7 +39,7 @@ func (s *Store) commitStable(slot *producerSlot, prev, proposal *Emission, gener
 			record.inventoryVisible = true
 			var view capture
 			ps.captureLocked(slot.id, ps.cells[slot.id], &view)
-			record.effective = ps.projectArtifactLocked(slot.id, &view, record)
+			record.effective = ps.projectArtifactLocked(slot.id, &view, new(record))
 			record.publication++
 			ps.artifacts[slot.id] = record
 		}
@@ -87,7 +87,7 @@ func (s *Store) commitStable(slot *producerSlot, prev, proposal *Emission, gener
 		record.inventoryVisible = true
 		var view capture
 		ps.captureLocked(slot.id, ps.cells[slot.id], &view)
-		visible := ps.projectArtifactLocked(slot.id, &view, record)
+		visible := ps.projectArtifactLocked(slot.id, &view, new(record))
 		ps.publishArtifactLocked(slot.id, &record, visible)
 		ps.artifacts[slot.id] = record
 		artifact = fireUnderLock(s, EventArtifactUpdated, slot.id)
@@ -130,7 +130,7 @@ func (s *Store) commitReplacement(
 	}
 	var storage [4]regionState
 	changed := s.changedTargets(prev, proposal, storage[:])
-	if proposal.shadows(s.contributionBinding(id)) {
+	if proposal.shadows(new(s.contributionBinding(id))) {
 		{
 			fValues2 := proposal.coverage
 			for fIndex2 := range fValues2 {
@@ -262,7 +262,7 @@ func (s *Store) commitReplacement(
 		record.inventoryVisible = true
 		var view capture
 		ps.captureLocked(id, ps.cells[id], &view)
-		visible := ps.projectArtifactLocked(id, &view, record)
+		visible := ps.projectArtifactLocked(id, &view, new(record))
 		ps.publishArtifactLocked(id, &record, visible)
 		ps.artifacts[id] = record
 		event := fireUnderLock(s, EventArtifactUpdated, id)

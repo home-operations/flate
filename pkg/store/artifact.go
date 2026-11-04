@@ -158,7 +158,7 @@ func (s *Store) SetArtifact(id manifest.NamedResource, artifact *SourceArtifact)
 	prev.value = artifact
 	var view capture
 	sh.captureLocked(id, sh.cells[id], &view)
-	visible := sh.projectArtifactLocked(id, &view, prev)
+	visible := sh.projectArtifactLocked(id, &view, new(prev))
 	changed := sh.publishArtifactLocked(id, &prev, visible)
 	sh.artifacts[id] = prev
 	var dispatch eventDispatch
@@ -247,13 +247,14 @@ func (s *Store) GetArtifact(id manifest.NamedResource, _ ArtifactRead) Artifact 
 	artifact := sh.artifacts[id].effective
 	e, emitted := artifact.(*Emission)
 	sh.mu.RUnlock()
-	if emitted && !emissionCurrent(e, view) {
+	if emitted && !emissionCurrent(e, new(view)) {
 		return nil
 	}
 	return artifact
 }
 
-func (sh *shard) projectArtifactLocked(id manifest.NamedResource, view *capture, record artifactRecord) Artifact {
+func (sh *shard) projectArtifactLocked(id manifest.NamedResource, view *capture, recordValue *artifactRecord) Artifact {
+	record := *recordValue
 	if sh.cells[id].hidden {
 		return nil
 	}
@@ -322,7 +323,8 @@ func artifactValueEqual(prev, next Artifact) bool {
 	return reflect.DeepEqual(ac, bc)
 }
 
-func emissionCurrent(e *Emission, view capture) bool {
+func emissionCurrent(e *Emission, viewValue *capture) bool {
+	view := *viewValue
 	input := view.child
 	binding := view.sourceBinding()
 	equal, _ := reconcileInputEqual(e.input, e.inputDoc, input.Doc)

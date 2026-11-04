@@ -407,7 +407,7 @@ func (s *Store) visitProductions(id manifest.NamedResource, index *manifest.Disc
 			if reads != nil {
 				reads.sample(id, c.slot, accepted, result.watch)
 			}
-			if c.slot.hidden.Load() || accepted.shadows(c.binding) {
+			if c.slot.hidden.Load() || accepted.shadows(new(c.binding)) {
 				return
 			}
 		}
@@ -434,10 +434,11 @@ func (s *Store) visitProductions(id manifest.NamedResource, index *manifest.Disc
 				continue
 			}
 			matches := slices.ContainsFunc(evidence, func(e manifest.Production) bool {
-				return sameFamily(e, p) && sameProductionContext(s.coverage, e, p)
+				return sameFamily(e, p) && sameProductionContext(s.coverage, new(e), new(p))
 			})
 			if len(evidence) == 0 {
-				matches = first == nil || sameFamily(*first, p) && sameProductionContext(s.coverage, *first, p)
+				matches = first == nil ||
+					sameFamily(*first, p) && sameProductionContext(s.coverage, new(*first), new(p))
 			}
 			if !matches {
 				matches = slices.ContainsFunc(bare[:i], func(e manifest.Production) bool {
@@ -521,7 +522,13 @@ func (s *Store) visitProductions(id manifest.NamedResource, index *manifest.Disc
 	}
 }
 
-func sameProductionContext(coverage map[manifest.NamedResource]*contributor, a, b manifest.Production) bool {
+func sameProductionContext(
+	coverage map[manifest.NamedResource]*contributor,
+	aValue *manifest.Production,
+	bValue *manifest.Production,
+) bool {
+	a := *aValue
+	b := *bValue
 	if a.Source != b.Source {
 		return false
 	}
@@ -529,6 +536,7 @@ func sameProductionContext(coverage map[manifest.NamedResource]*contributor, a, 
 	return ac == nil || bc == nil || ac.binding.equal(&bc.binding)
 }
 
+//nolint:gocritic // The slices callback contract requires value parameters.
 func compareProduction(a, b manifest.Production) int {
 	return cmp.Or(a.Owner.Compare(b.Owner), a.Declaration.Compare(b.Declaration),
 		a.Source.Compare(b.Source), a.Authored.Compare(b.Authored),

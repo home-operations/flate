@@ -65,27 +65,7 @@ func (sh *shard) captureLocked(id manifest.NamedResource, cell objectCell, view 
 	if !bound {
 		obj = nil
 	}
-	var chosen *membership
-	for i := range sh.members[id] {
-		m := &sh.members[id][i]
-		if m.declaration || !m.slot.visible.Load() {
-			continue
-		}
-		if chosen == nil || m.slot.id.Compare(chosen.slot.id) > 0 {
-			chosen = m
-		}
-		if view != nil {
-			record := m.slot.current.Load()
-			if chosen == m {
-				view.auxiliary = record.entries[m.position].child.Generated
-			}
-			payload := record.entries[m.position].child.payload
-			if payload != nil && (view.payloadOwner == nil || m.slot.id.Compare(view.payloadOwner.id) > 0) {
-				view.payload, view.payloadOwner = payload, m.slot
-				view.payloadInput = record.entries[m.position].input
-			}
-		}
-	}
+	chosen := sh.captureMembersLocked(id, view)
 	if !cell.rooted || !bound {
 		if chosen != nil {
 			record := chosen.slot.current.Load()
@@ -307,27 +287,7 @@ func (s *Store) staticAnchorLocked(id manifest.NamedResource, support objectRegi
 	if cell.retired && bootstrapSeed(r.Productions) {
 		return false
 	}
-	{
-		pValues7 := r.Productions
-		for pIndex6 := range pValues7 {
-			p := pValues7[pIndex6]
-			if p.Owner == (manifest.NamedResource{}) || p.Owner == id {
-				return true
-			}
-			slot := s.shardFor(p.Owner).slots[p.Owner]
-			if i, inside := support.position(p.Owner); inside {
-				if !support.states[i].live {
-					continue
-				}
-			} else if slot != nil && slot.hidden.Load() {
-				continue
-			}
-			if slot == nil || !slot.current.Load().shadows(new(s.contributionBinding(p.Owner))) {
-				return true
-			}
-		}
-	}
-	return len(r.Productions) == 0
+	return s.staticProductionLocked(id, support, &r)
 }
 
 func (s *Store) reachabilityLocked(region objectRegion) []objectPublication {
@@ -517,4 +477,57 @@ func (s *Store) HasGeneratedObjects(id manifest.NamedResource) bool {
 	sh.mu.RUnlock()
 	return inventory != nil &&
 		slices.ContainsFunc(inventory.Children, func(child Child) bool { return child.Generated })
+}
+
+func (sh *shard) captureMembersLocked(id manifest.NamedResource, view *capture) *membership {
+	var chosen *membership
+	for i := range sh.members[id] {
+		m := &sh.members[id][i]
+		if m.declaration || !m.slot.visible.Load() {
+			continue
+		}
+		if chosen == nil || m.slot.id.Compare(chosen.slot.id) > 0 {
+			chosen = m
+		}
+		if view != nil {
+			record := m.slot.current.Load()
+			if chosen == m {
+				view.auxiliary = record.entries[m.position].child.Generated
+			}
+			payload := record.entries[m.position].child.payload
+			if payload != nil && (view.payloadOwner == nil || m.slot.id.Compare(view.payloadOwner.id) > 0) {
+				view.payload, view.payloadOwner = payload, m.slot
+				view.payloadInput = record.entries[m.position].input
+			}
+		}
+	}
+	return chosen
+}
+
+func (s *Store) staticProductionLocked(
+	id manifest.NamedResource,
+	support objectRegion,
+	r *manifest.DiscoveryRecord,
+) bool {
+	{
+		pValues7 := r.Productions
+		for pIndex6 := range pValues7 {
+			p := pValues7[pIndex6]
+			if p.Owner == (manifest.NamedResource{}) || p.Owner == id {
+				return true
+			}
+			slot := s.shardFor(p.Owner).slots[p.Owner]
+			if i, inside := support.position(p.Owner); inside {
+				if !support.states[i].live {
+					continue
+				}
+			} else if slot != nil && slot.hidden.Load() {
+				continue
+			}
+			if slot == nil || !slot.current.Load().shadows(new(s.contributionBinding(p.Owner))) {
+				return true
+			}
+		}
+	}
+	return len(r.Productions) == 0
 }

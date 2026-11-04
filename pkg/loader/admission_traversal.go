@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/values"
 )
@@ -273,20 +274,26 @@ func (c *admissionClosure) walkObject(
 		c.add(record.Parent, admissionRole{needed: true, dirty: c.states[record.Parent].changed})
 	}
 	pathBearing := false
+	var applicationSource manifest.NamedResource
 	if occurrence, ok := c.loader.occurrence(id); ok {
-		_, _, pathBearing = occurrence.SourcePath()
-		if c.loader.Options.WipeSecrets && occurrence.facts.placeholder {
-			independent = true
-		}
+		applicationSource, _, pathBearing = occurrence.SourcePath()
+		independent = independent || c.loader.Options.WipeSecrets && occurrence.facts.placeholder
 	}
 	materialized := c.selectProductions(id, &record, independent, role)
 	if c.incoming.Obj != nil && c.incoming.Obj.Named() == id {
 		c.selectIncomingProducers(id, role)
 	}
 
+	pending := false
 	if record.Path != "" && !materialized &&
-		(role.selected && (c.fileChanged(c.source(id), record.File) || id.Namespace == "" && id.KindInfo().Namespaced() && c.affected(id, obj)) || (role.selected || pathBearing) && !independent && c.objects.GetDeclaration(id) == nil) {
-		independent = c.completePathMaterialization(id, independent, materializers)
+		(c.selectedDeclarationFileChanged(id, obj, &record, role.selected) || (role.selected || pathBearing) && !independent && c.objects.GetDeclaration(id) == nil) {
+		pending = materializers(materializerDemand{target: id, source: c.declarationSource(id)}, id)
+	}
+	if !pending && role.selected && pathBearing {
+		pending = c.materializeEntryApplication(id, applicationSource, &record, materializers)
+	}
+	if pending && pathBearing {
+		independent = false
 	}
 	if err := c.hydrateIndependent(ctx, id, independent, &obj); err != nil {
 		return err
@@ -429,21 +436,6 @@ func (c *admissionClosure) selectProductions(
 	return materialized
 }
 
-func (c *admissionClosure) completePathMaterialization(
-	id manifest.NamedResource,
-	independent bool,
-	materializers func(materializerDemand, manifest.NamedResource) bool,
-) bool {
-	target := id
-	if materializers(materializerDemand{target: target, source: c.declarationSource(id)}, id) {
-		if occurrence, ok := c.loader.occurrence(id); ok {
-			_, _, applies := occurrence.SourcePath()
-			independent = independent && !applies
-		}
-	}
-	return independent
-}
-
 func (c *admissionClosure) hydrateIndependent(
 	ctx context.Context,
 	id manifest.NamedResource,
@@ -459,4 +451,30 @@ func (c *admissionClosure) hydrateIndependent(
 		}
 	}
 	return nil
+}
+
+func (c *admissionClosure) selectedDeclarationFileChanged(
+	id manifest.NamedResource,
+	obj manifest.BaseManifest,
+	record *manifest.DiscoveryRecord,
+	selected bool,
+) bool {
+	return selected &&
+		(c.fileChanged(c.source(id), record.File) || id.Namespace == "" && id.KindInfo().Namespaced() && c.affected(id, obj))
+}
+
+func (c *admissionClosure) materializeEntryApplication(
+	id, applicationSource manifest.NamedResource,
+	record *manifest.DiscoveryRecord,
+	materializers func(materializerDemand, manifest.NamedResource) bool,
+) bool {
+	if applicationSource.Name == "" || applicationSource == manifest.BootstrapSourceID ||
+		c.loader.entry != entryPlain ||
+		!safepath.Contains(c.loader.entryPath, record.Path) {
+		return false
+	}
+	return materializers(materializerDemand{
+		target: applicationSource, source: c.declarationSource(id), application: c.loader.entryPath,
+		required: c.fileChanged(c.source(id), record.File),
+	}, id)
 }

@@ -727,10 +727,11 @@ func testRenderTreesChangedOnlyAndDiffGeneratedInputsCaseTailSegment(
 			producer := testutil.KustomizationID("flux-system", "producer")
 			consumer := testutil.KustomizationID("flux-system", "consumer")
 			sibling := testutil.KustomizationID("flux-system", "sibling")
-			want := []manifest.NamedResource{producer, consumer, rendered.entryBinding.Producer}
-			if (*(*(*tailCaseInput).testCaseInput)) == "unrelated" {
-				want = []manifest.NamedResource{rendered.entryBinding.Producer}
-			}
+			want := generatedInputExpectedOwners(
+				**(*tailCaseInput).testCaseInput,
+				[]manifest.NamedResource{producer, consumer},
+				rendered.entryBinding.Producer,
+			)
 			var got []manifest.NamedResource
 			for id, docs := range outputByParent(rendered.Result.Manifests) {
 				assertGeneratedInputDeclarations(t, &rendered, id, docs)
@@ -811,4 +812,18 @@ func generatedInputProducerKeys(
 		key = "OTHER"
 	}
 	return target, key
+}
+
+func generatedInputExpectedOwners(
+	scenario string,
+	owners []manifest.NamedResource,
+	entry manifest.NamedResource,
+) []manifest.NamedResource {
+	if scenario == "target" {
+		return append(owners, entry)
+	}
+	if scenario == "unrelated" {
+		return nil
+	}
+	return owners
 }

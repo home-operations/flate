@@ -15,7 +15,6 @@ import (
 )
 
 func (o *Orchestrator) buildChangeFilter(ctx context.Context) error {
-	defer func() { o.entryDiscovery = nil }()
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("context: %w", err)
 	}
@@ -59,11 +58,8 @@ func (o *Orchestrator) buildChangeFilter(ctx context.Context) error {
 	if err := o.prepareNeededHistory(ctx, proposal.Needed, history); err != nil {
 		return err
 	}
-	if o.entryDiscovery != nil {
-		if err := o.entryDiscovery.PrepareEntry(ctx, o.cfg.ExternalChanges); err != nil {
-			return err
-		}
-		o.index, o.entryBinding = o.entryDiscovery.Index, o.entryDiscovery.Binding
+	if _, err := o.admitEntry(ctx); err != nil {
+		return err
 	}
 	o.history = history
 	if err := ctx.Err(); err != nil {
@@ -112,7 +108,8 @@ func (o *Orchestrator) prepareProducerHistory(
 	if obj == nil {
 		obj = o.index.Records[id].Declaration
 	}
-	if obj == nil {
+	currentInput := o.cfg.Input == o.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
+	if obj == nil || currentInput && o.index.Records[id].StaticOutput {
 		return nil, false
 	}
 	records, canNarrow := o.controllers.PreviousRender(ctx, obj, reads)
@@ -131,8 +128,10 @@ func (o *Orchestrator) prepareProducerHistory(
 		materialized[child] = record
 	}
 	if reads.Valid() {
-		for child, record := range materialized { //nolint:gocritic // Map iteration preserves a value snapshot without an extra lookup.
-			o.admission.AddHistory(o.store, child, record)
+		if canNarrow {
+			for child, record := range materialized { //nolint:gocritic // Map iteration preserves a value snapshot without an extra lookup.
+				o.admission.AddHistory(o.store, child, record)
+			}
 		}
 		return maps.All(materialized), canNarrow
 	}
@@ -200,17 +199,15 @@ func (o *Orchestrator) installAdmission(ctx context.Context) error {
 	}
 	var proposal *loader.Admission
 	var err error
-	if producers := o.admission.EntryProducers(); len(producers) != 0 {
-		o.entryAdmissionPending = true
+	if inputs := o.admission.EntryInputs(); len(inputs) != 0 {
 		var reads store.ReadSet
 		reads.Init(o.store, manifest.NamedResource{}, nil)
-		for _, id := range producers {
+		for _, id := range inputs {
 			reads.RequireData(id)
 		}
 		proposal, err = o.loader.Prepare(ctx, store.Child{}, &reads, nil)
 		reads.Retire()
 	} else {
-		o.entryAdmissionPending = false
 		proposal, err = o.loader.Prepare(ctx, store.Child{}, nil, o.history)
 	}
 	if err != nil {
@@ -230,7 +227,10 @@ func (o *Orchestrator) installAdmission(ctx context.Context) error {
 		o.store.AddObject(child.Obj, child.Doc)
 	}
 	o.changeNamespaces = proposal.Namespaces
-	o.preparation, o.history = nil, nil
+	o.preparation = nil
+	if len(o.admission.EntryInputs()) == 0 {
+		o.history = nil
+	}
 	o.loader.Options.HistoryOwners = nil
 	if changes := o.cfg.ExternalChanges; changes != nil && changes.Len() == 0 && len(o.filter.KeepNames()) == 0 &&
 		o.cfg.BaseInput != nil {

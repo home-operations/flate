@@ -376,3 +376,33 @@ func (b *selfProduceBuilder) recordDeclarationProduction(
 		b.idx.Records[producer] = r
 	}
 }
+
+func (b *selfProduceBuilder) recordApplication(l *Loader, declaration *producerDeclaration) {
+	if declaration.visit.owner == (manifest.NamedResource{}) || declaration.visit.owner == declaration.identity {
+		return
+	}
+	object := declaration.obj
+	if object == nil && declaration.fact != nil {
+		object = manifest.CatalogObject(declaration.fact.facts.catalog, declaration.identity)
+	}
+	application, valid := manifest.ApplicationFor(object)
+	input, _ := b.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
+	if !valid || !AppliesToEntry(b.store, &application, input, l.entryPath) {
+		return
+	}
+	relative, _ := filepath.Rel(l.SourceRoot, l.entryPath)
+	entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, filepath.ToSlash(relative), manifest.NamedResource{}).
+		Named()
+	production := manifest.Production{
+		Owner:       declaration.visit.owner,
+		Declaration: declaration.identity,
+		Authored:    declaration.authored,
+		Source:      declaration.visit.source,
+		File:        cmp.Or(declaration.visit.localCoordinate(), declaration.visit.coordinate),
+	}
+	record := b.idx.Records[entry]
+	if !slices.Contains(record.Productions, production) {
+		record.Productions = append(record.Productions, production)
+		b.idx.Records[entry] = record
+	}
+}

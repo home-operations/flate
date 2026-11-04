@@ -56,7 +56,9 @@ func TestDiscover_FailureDetailsEvaluation(t *testing.T) {
 			assert.NoError(t, o.prepareBootstrap(t.Context()))
 			detail := new(countedDetailError)
 			failure := manifest.NewError(manifest.ErrInput, detail, "entry failed")
-			o.entryDiscovery.Binding.Failure = failure
+			result, err := o.session.Freeze(t.Context())
+			assert.NoError(t, err)
+			result.Binding.Failure = failure
 			assert.NoError(t, o.discover(t.Context()))
 			assert.Equal(t, o.entryBinding.Failure, error(failure))
 			assert.Equal(t, detail.calls > 0, level == slog.LevelDebug)

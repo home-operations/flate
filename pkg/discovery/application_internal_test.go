@@ -11,6 +11,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/kustomize"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -29,14 +30,12 @@ func TestEntryQualification_ReceiptInputs(t *testing.T) {
 	}
 }
 
-func testEntryQualificationReceiptInputsCase(
-	t *testing.T,
-	testCaseInput *string,
-) {
+func testEntryQualificationReceiptInputsCase(t *testing.T, testCaseInput *string) {
 	t.Helper()
-
 	root := t.TempDir()
-	input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}}
+	input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		"entry/child.yaml": {Data: []byte(testutil.KustomizationYAML("child", "apps", "  path: ./workload\n"))},
+	}}
 	st := store.New()
 	st.SetArtifact(manifest.BootstrapSourceID, input)
 	app := testutil.KustomizationYAML(
@@ -50,7 +49,16 @@ func testEntryQualificationReceiptInputsCase(
 		Application: documents[0].Document,
 		Receipt:     manifest.NewRenderReceipt("entry", func(a, b any) bool { return a == b }),
 	}
-	q := &entryQualification{trees: testTrees(t), visited: map[manifest.NamedResource]bool{}}
+	result, err := Run(t.Context(), Config{
+		Input: input, Path: filepath.Join(root, "entry"), Store: st, Trees: testTrees(t),
+		Selection: manifest.Selection{Changed: true},
+	})
+	assert.NoError(t, err)
+	a := result.Admission
+	q := a.qualification
+	if q == nil {
+		t.Fatal("unresolved entry has no receipt qualification")
+	}
 	for _, name := range []string{"ancestor-chart", "nested-chart"} {
 		id := manifest.NamedResource{
 			Group:     manifest.SourceDomain,
@@ -73,40 +81,32 @@ func testEntryQualificationReceiptInputsCase(
 		q.refresh = append(q.refresh, id)
 	}
 	q.previous = evidence
-	a := &Admission{input: input, path: filepath.Join(root, "entry"), qualification: q}
 	pending, _, err := a.BindEntry(t.Context(), st)
 	assert.NoError(t, err)
 	assert.Equal(t, pending == nil, true)
 	assert.Equal(t, a.applications.Load() == nil, true)
-	assert.Diff(t, a.EntryProducers(), q.refresh)
-	{
-		expectedValues := evidence.Inputs
-		for i := range expectedValues {
-			expected := expectedValues[i]
-
-			content := expected.Content
-			if (*testCaseInput) == "ancestor chart changed" && i == 0 {
-				content = manifest.Fingerprint("new chart behind same tag")
-			}
-			st.SetArtifact(
-				expected.Resource,
-				&store.SourceArtifact{
-					Kind:     expected.Resource.Kind,
-					FS:       fstest.MapFS{},
-					Key:      "same-family",
-					Revision: "same-tag",
-					Content:  content,
-				},
-			)
-			st.UpdateStatus(expected.Resource, store.StatusInfo{Status: store.StatusReady})
+	assert.Diff(t, a.EntryInputs(), q.refresh)
+	for i := range evidence.Inputs {
+		expected := &evidence.Inputs[i]
+		content := expected.Content
+		if (*testCaseInput) == "ancestor chart changed" && i == 0 {
+			content = manifest.Fingerprint("new chart behind same tag")
 		}
+		st.SetArtifact(
+			expected.Resource,
+			&store.SourceArtifact{
+				Kind:     expected.Resource.Kind,
+				FS:       fstest.MapFS{},
+				Key:      "same-family",
+				Revision: "same-tag",
+				Content:  content,
+			},
+		)
+		st.UpdateStatus(expected.Resource, store.StatusInfo{Status: store.StatusReady})
 	}
 	if (*testCaseInput) == "acquisition failure" {
 		st.SetArtifact(q.refresh[0], nil)
-		st.UpdateFailure(
-			q.refresh[0],
-			manifest.NewError(manifest.ErrInput, errors.New("acquisition failed"), ""),
-		)
+		st.UpdateFailure(q.refresh[0], manifest.NewError(manifest.ErrInput, errors.New("acquisition failed"), ""))
 	}
 	ctx := t.Context()
 	if (*testCaseInput) == "canceled" {
@@ -118,4 +118,69 @@ func testEntryQualificationReceiptInputsCase(
 	assert.Equal(t, errors.Is(err, context.Canceled), (*testCaseInput) == "canceled")
 	assert.Equal(t, bound != nil, (*testCaseInput) == "identical")
 	assert.Equal(t, a.applications.Load() == nil, true)
+}
+
+func TestRun_EntryQualificationLifetime(t *testing.T) {
+	t.Parallel()
+	for _, scenario := range []string{"bound", "unresolved changed-only", "nil trees"} {
+		t.Run(scenario, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			input := fstest.MapFS{
+				"entry/child.yaml": {Data: []byte(testutil.KustomizationYAML("child", "apps", "  path: ./workload\n"))},
+			}
+			if scenario == "bound" {
+				input["entry/kustomization.yaml"] = &fstest.MapFile{Data: []byte("resources: [child.yaml]\n")}
+			}
+			st := store.New()
+			l := loader.New(st)
+			l.Options.HistoryOwners = []manifest.NamedResource{testutil.KustomizationID("apps", "child")}
+			cfg := Config{
+				Store:  st,
+				Loader: l,
+				Input:  &store.SourceArtifact{LocalPath: root, FS: input},
+				Path:   filepath.Join(root, "entry"),
+				Trees:  testTrees(t),
+			}
+			if scenario == "unresolved changed-only" {
+				cfg.Selection = manifest.Selection{Changed: true}
+			}
+			if scenario == "nil trees" {
+				cfg.Trees = nil
+			}
+			session, err := Begin(t.Context(), cfg)
+			assert.NoError(t, err)
+			result, err := session.Freeze(t.Context())
+			assert.NoError(t, err)
+			a := result.Admission
+			assert.Equal(t, a.entryBound.Load(), scenario == "bound")
+			assert.Equal(t, a.qualification != nil, scenario == "unresolved changed-only")
+			assert.Equal(t, len(l.Options.HistoryOwners) == 0, scenario != "unresolved changed-only")
+			if scenario != "unresolved changed-only" {
+				assert.Equal(t, session.entryState.loader == nil, true)
+				return
+			}
+			q := a.qualification
+			assert.Equal(t, q, &session.entryState)
+			assert.Equal(t, q.loader, l)
+			applier := testutil.KustomizationYAML(
+				"applier",
+				"apps",
+				"  path: ./entry\n  sourceRef: {kind: GitRepository, name: cluster}\n",
+			)
+			documents, err := manifest.DecodeDocs(strings.NewReader(applier), manifest.RequiredDocuments)
+			assert.NoError(t, err)
+			object, _, _, err := manifest.ParseDoc(documents[0].Document, manifest.ParseDocOptions{})
+			assert.NoError(t, err)
+			st.AddObject(object)
+			a.AddApplication(st, object)
+			bound, binding, err := a.BindEntry(t.Context(), st)
+			assert.NoError(t, err)
+			assert.Equal(t, bound != nil, true)
+			assert.Equal(t, binding.Producer, object.Named())
+			assert.Equal(t, a.entryBound.Load(), true)
+			assert.Equal(t, a.qualification == nil, true)
+			assert.Equal(t, q.loader == nil, true)
+		})
+	}
 }

@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -19,130 +18,16 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-type entryApplication interface {
-	EntryApplication() (manifest.EntryApplication, bool)
-}
-
 type entryQualification struct {
-	loader         *loader.Loader
-	trees          *kustomize.TreeCache
-	candidates     []manifest.NamedResource
-	current        manifest.NamedResource
-	receipt        *manifest.RenderReceipt
-	accepted       *kustomize.EntryEvidence
-	documents      map[manifest.NamedResource]map[string]any
-	visited        map[manifest.NamedResource]bool
-	observed       bool
-	previous       kustomize.EntryEvidence
-	refresh        []manifest.NamedResource
-	refreshStarted bool
-}
-
-func (d *Session) needsEntry(changes *change.Set) bool {
-	if changes == nil || !d.cfg.Selection.Changed {
-		return false
-	}
-	delta, _, _ := changes.ForSource(manifest.BootstrapSourceID)
-	for id, record := range d.loader.Index.Files() { //nolint:gocritic // The iterator supplies independent value snapshots.
-		if record.Path == "" || record.Parent != (manifest.NamedResource{}) || !d.cfg.Selection.Matches(id) ||
-			!delta.Contains(record.File) ||
-			!safepath.Contains(d.cfg.Path, record.Path) {
-			continue
-		}
-		if slices.ContainsFunc(record.Productions, func(p manifest.Production) bool {
-			return p.Owner != (manifest.NamedResource{}) && p.Owner != id && !p.Owner.ReportHidden()
-		}) {
-			continue
-		}
-		return true
-	}
-	return false
-}
-
-func (d *Session) qualifyEntry(ctx context.Context, admission *Admission) error {
-	d.entryState = entryQualification{loader: d.loader, trees: d.cfg.Trees, visited: map[manifest.NamedResource]bool{}}
-	q := &d.entryState
-	admission.qualification = q
-	relative, _ := filepath.Rel(d.cfg.Input.LocalPath, d.cfg.Path)
-	root := manifest.NewEntryKustomization(
-		manifest.BootstrapSourceID,
-		filepath.ToSlash(relative),
-		manifest.NamedResource{},
-	)
-	evidence := d.cfg.Trees.PreviousEntry(ctx, kustomize.RenderRequest{
-		Source:                  d.cfg.Input,
-		ApplyIgnore:             true,
-		SubPath:                 root.Path,
-		Spec:                    root,
-		WipeSecrets:             d.cfg.WipeSecrets,
-		StrictSubstitutions:     d.cfg.StrictSubstitutions,
-		SkipKinds:               d.cfg.SkipKinds,
-		DependencySubstitutions: d.substitutions,
-	})
-	if evidence.Application != nil {
-		q.previous = evidence
-		for index := range evidence.Inputs {
-			input := evidence.Inputs[index]
-
-			if input.Binding.Present {
-				q.refresh = append(q.refresh, input.Resource)
-			}
-		}
-	}
-	for id, record := range d.loader.Index.Files() { //nolint:gocritic // The iterator supplies independent value snapshots.
-		if record.Path == "" || !safepath.Contains(d.cfg.Path, record.Path) {
-			continue
-		}
-		object := d.loader.CatalogObject(id)
-		if object == nil {
-			continue
-		}
-		if record.Parent == (manifest.NamedResource{}) && !d.loader.AdmitsRoot(object, record.Path) {
-			continue
-		}
-		if _, _, applies := object.SourcePath(); applies {
-			continue
-		}
-		if _, producer := object.(interface {
-			EmissionPolicy() manifest.EmissionPolicy
-		}); producer {
-			q.candidates = append(q.candidates, id)
-		}
-	}
-	slices.SortFunc(q.candidates, manifest.NamedResource.Compare)
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("context: %w", err)
-	}
-	return nil
-}
-
-// EntryProducers returns the next bounded acquisition or qualification work for an unknown applier.
-func (a *Admission) EntryProducers() []manifest.NamedResource {
-	if a == nil || a.qualification == nil || a.entryBound.Load() {
-		return nil
-	}
-	q := a.qualification
-	if q.previous.Receipt != nil {
-		if q.refreshStarted {
-			return nil
-		}
-		q.refreshStarted = true
-		return slices.Clone(q.refresh)
-	}
-	if q.current != (manifest.NamedResource{}) && !q.observed {
-		return nil
-	}
-	for len(q.candidates) != 0 {
-		id := q.candidates[0]
-		q.candidates[0], q.candidates = manifest.NamedResource{}, q.candidates[1:]
-		if q.visited[id] {
-			continue
-		}
-		q.visited[id] = true
-		q.current, q.observed = id, false
-		return []manifest.NamedResource{id}
-	}
-	return nil
+	loader     *loader.Loader
+	trees      *kustomize.TreeCache
+	current    manifest.NamedResource
+	receipt    *manifest.RenderReceipt
+	accepted   *kustomize.EntryEvidence
+	previous   kustomize.EntryEvidence
+	refresh    []manifest.NamedResource
+	candidates []manifest.NamedResource
+	visited    map[manifest.NamedResource]bool
 }
 
 func (a *Admission) captureApplication(
@@ -157,13 +42,12 @@ func (a *Admission) captureApplication(
 	if q.receipt != nil {
 		return q.receipt, nil
 	}
-	if !q.captureDocument(st, owner) {
+	document := q.captureDocument(st, owner)
+	if document == nil {
 		return nil, nil //nolint:nilnil // Incomplete evidence grants no receipt.
 	}
-	document := q.documents[owner.Named()]
 	c := entryCapture{admission: a, store: st, qualification: q, seen: map[manifest.NamedResource]bool{}}
-	c.queue = slices.SortedFunc(maps.Keys(q.visited), manifest.NamedResource.Compare)
-	c.queue = append(c.queue, q.current)
+	c.queue = []manifest.NamedResource{q.current}
 	if !c.collect() || !c.mapFiles() {
 		return nil, nil //nolint:nilnil // Incomplete evidence grants no receipt.
 	}
@@ -176,24 +60,6 @@ func (a *Admission) captureApplication(
 		Application: document, Owner: q.current, Inputs: c.inputs, Renders: c.renders,
 		Records: st.ChildFootprint(q.current, output.Children, q.loader.Index),
 	}, slices.Compact(c.files))
-}
-
-func (q *entryQualification) captureDocument(st *store.Store, owner manifest.BaseManifest) bool {
-	if q.documents[owner.Named()] != nil {
-		return true
-	}
-	producer := st.EmissionOwner(owner.Named())
-	if producer == (manifest.NamedResource{}) {
-		return false
-	}
-	_, document, output := st.GetEmission(owner.Named())
-	output.Finish()
-	if document == nil {
-		return false
-	}
-	q.current = producer
-	q.documents = map[manifest.NamedResource]map[string]any{owner.Named(): document}
-	return true
 }
 
 type entryCapture struct {
@@ -292,7 +158,7 @@ func (c *entryCapture) captureOutput(id manifest.NamedResource) bool {
 			c.renders = append(c.renders, output.Render)
 		}
 		c.queue = append(c.queue, slices.Collect(output.OutputReads.Inputs())...)
-	} else if c.qualification.visited[id] {
+	} else if id == c.qualification.current {
 		return false
 	}
 	return true
@@ -354,10 +220,8 @@ func (c *entryCapture) mapFile(absolute string) (string, bool) {
 func (d *Session) applications() []manifest.BaseManifest {
 	objects := map[manifest.NamedResource]manifest.BaseManifest{}
 	add := func(obj manifest.BaseManifest) {
-		if application, ok := obj.(entryApplication); ok {
-			if _, valid := application.EntryApplication(); valid && objects[obj.Named()] == nil {
-				objects[obj.Named()] = obj
-			}
+		if _, valid := manifest.ApplicationFor(obj); valid && objects[obj.Named()] == nil {
+			objects[obj.Named()] = obj
 		}
 	}
 	{
@@ -409,11 +273,7 @@ func (a *Admission) addApplication(st *store.Store, obj manifest.BaseManifest, h
 	if a == nil || a.entryBound.Load() {
 		return
 	}
-	applier, ok := obj.(entryApplication)
-	if !ok {
-		return
-	}
-	application, valid := applier.EntryApplication()
+	application, valid := manifest.ApplicationFor(obj)
 	if !valid {
 		return
 	}
@@ -465,19 +325,14 @@ func (a *Admission) qualifyEntry(
 	st *store.Store,
 	objects []manifest.BaseManifest,
 ) ([]manifest.BaseManifest, error) {
-	repoRoot := a.input.LocalPath
 	var appliers []manifest.BaseManifest
 	for _, obj := range objects {
-		applier, ok := obj.(entryApplication)
-		if !ok {
-			continue
-		}
-		application, valid := applier.EntryApplication()
+		application, valid := manifest.ApplicationFor(obj)
 		if !valid {
 			continue
 		}
 		resolved := a.applicationSource(st, &application)
-		qualified, err := a.qualifyApplication(ctx, &application, &resolved, repoRoot)
+		qualified, err := a.qualifyApplication(ctx, &application, &resolved)
 		if err != nil {
 			return nil, err
 		}
@@ -495,7 +350,7 @@ func (a *Admission) qualifyEntry(
 			}
 		}
 		obj, application, resolved := evidence.object, evidence.application, evidence.source
-		qualified, err := a.qualifyApplication(ctx, &application, &resolved, repoRoot)
+		qualified, err := a.qualifyApplication(ctx, &application, &resolved)
 		if err != nil {
 			return nil, err
 		}
@@ -511,7 +366,6 @@ func (a *Admission) qualifyApplication(
 	ctx context.Context,
 	application *manifest.EntryApplication,
 	resolved *entryResolution,
-	repoRoot string,
 ) (bool, error) {
 	artifact := resolved.artifact
 	if artifact == nil {
@@ -525,12 +379,7 @@ func (a *Admission) qualifyApplication(
 	if artifact == nil {
 		return false, nil
 	}
-	root, pinned, external := loader.SourceView(resolved, application.Source, repoRoot)
-	if pinned || external {
-		return false, nil
-	}
-	target := filepath.Join(root, manifest.NormalizeClaimBase(application.Path))
-	return safepath.Contains(root, target) && artifact.OriginPath(target) == a.input.OriginPath(a.path), nil
+	return loader.AppliesToEntry(resolved, application, a.input, a.path), nil
 }
 
 //nolint:ireturn // loader.SourceView requires this manifest interface signature.
@@ -595,12 +444,7 @@ func (a *Admission) BindEntry(ctx context.Context, st *store.Store) (*manifest.K
 		if !q.reusePrevious(ctx, st, a) {
 			return nil, Binding{}, nil
 		}
-		if q.current != (manifest.NamedResource{}) && !q.observed && !q.observeCurrent(st, a) {
-			if err := ctx.Err(); err != nil {
-				return nil, Binding{}, fmt.Errorf("context: %w", err)
-			}
-			return nil, Binding{}, nil
-		}
+		q.advance(st)
 	}
 	root, owner, err := a.entry(ctx, st, st.ListObjects("", ""))
 	if err != nil || root == nil {
@@ -677,63 +521,154 @@ func (q *entryQualification) reusePrevious(ctx context.Context, st *store.Store,
 	return true
 }
 
-func (q *entryQualification) observeCurrent(st *store.Store, a *Admission) bool {
-	output, ok := st.GetArtifact(q.current, store.ArtifactContent).(*store.Emission)
-	if !ok || !output.Complete || !output.OutputReads.Valid() {
-		q.observeParents(st)
-		return false
+// EntryInputs returns receipt inputs or one producer needed to qualify a changed literal entry.
+func (a *Admission) EntryInputs() []manifest.NamedResource {
+	if a == nil || a.qualification == nil || a.entryBound.Load() {
+		return nil
 	}
-	if output.Complete && output.OutputReads.Valid() {
-		q.observeChildren(st, a, output)
+	q := a.qualification
+	if q.previous.Receipt != nil {
+		return slices.Clone(q.refresh)
 	}
-	return true
+	if len(q.candidates) != 0 {
+		return slices.Clone(q.candidates[:1])
+	}
+	return nil
 }
 
-func (q *entryQualification) observeParents(st *store.Store) {
-	status, _ := st.GetStatus(q.current)
+func (d *Session) entryReceipt(ctx context.Context, a *Admission) {
+	q := a.qualification
+	relative, _ := filepath.Rel(d.cfg.Input.LocalPath, d.cfg.Path)
+	root := manifest.NewEntryKustomization(
+		manifest.BootstrapSourceID,
+		filepath.ToSlash(relative),
+		manifest.NamedResource{},
+	)
+	q.previous = d.cfg.Trees.PreviousEntry(
+		ctx,
+		kustomize.RenderRequest{
+			Source:                  d.cfg.Input,
+			ApplyIgnore:             true,
+			SubPath:                 root.Path,
+			Spec:                    root,
+			WipeSecrets:             d.cfg.WipeSecrets,
+			StrictSubstitutions:     d.cfg.StrictSubstitutions,
+			SkipKinds:               d.cfg.SkipKinds,
+			DependencySubstitutions: d.substitutions,
+		},
+	)
+	for i := range q.previous.Inputs {
+		input := &q.previous.Inputs[i]
+		if input.Binding.Present {
+			q.refresh = append(q.refresh, input.Resource)
+		}
+	}
+	if !d.literalEntryChanged() {
+		return
+	}
+	q.visited = make(map[manifest.NamedResource]bool)
+	for id := range d.loader.Index.Files() {
+		record, _ := d.loader.Index.Lookup(id)
+		if record.Path == "" || !safepath.Contains(d.cfg.Path, record.Path) {
+			continue
+		}
+		object := d.loader.CatalogObject(id)
+		if object == nil || record.Parent == (manifest.NamedResource{}) && !d.loader.AdmitsRoot(object, record.Path) {
+			continue
+		}
+		if _, _, applies := object.SourcePath(); applies {
+			continue
+		}
+		if _, producer := object.(interface {
+			EmissionPolicy() manifest.EmissionPolicy
+		}); producer {
+			q.candidates = append(q.candidates, id)
+			q.visited[id] = true
+		}
+	}
+	slices.SortFunc(q.candidates, manifest.NamedResource.Compare)
+}
+
+func (d *Session) literalEntryChanged() bool {
+	changes := d.loader.Options.Changes
+	if changes == nil {
+		return false
+	}
+	delta, _, _ := changes.ForSource(manifest.BootstrapSourceID)
+	for id := range d.loader.Index.Files() {
+		record, _ := d.loader.Index.Lookup(id)
+		if id.KindInfo().Runnable {
+			continue
+		}
+		root := record.Parent == (manifest.NamedResource{}) && record.BuilderOwner == (manifest.NamedResource{})
+		if !root || filepath.Dir(record.Path) != d.cfg.Path || !d.cfg.Selection.Matches(id) ||
+			!delta.Contains(record.File) {
+			continue
+		}
+		object := d.loader.CatalogObject(id)
+		if object == nil {
+			continue
+		}
+		if _, _, applies := object.SourcePath(); applies {
+			continue
+		}
+		read := false
+		for reader := range d.loader.Index.ReadersOfFile(record.File) {
+			if reader.Reader != id && reader.Reader != (manifest.NamedResource{}) {
+				read = true
+				break
+			}
+		}
+		if !read {
+			return true
+		}
+	}
+	return false
+}
+
+func (q *entryQualification) advance(st *store.Store) {
+	if len(q.candidates) == 0 {
+		return
+	}
+	id := q.candidates[0]
+	output, ok := st.GetArtifact(id, store.ArtifactContent).(*store.Emission)
+	status, _ := st.GetStatus(id)
+	complete := ok && output.Complete && output.OutputReads.Valid()
+	settled := complete
 	switch status.Outcome() {
 	case store.OutcomePending, store.OutcomePassed, store.OutcomeBlocked:
 	case store.OutcomeFailed, store.OutcomeSkipped, store.OutcomeSuspended, store.OutcomeUnchanged:
-		q.observed = true
+		settled = true
 	}
-	record, _ := q.loader.Index.Lookup(q.current)
-	parents := []manifest.NamedResource{record.Parent, record.BuilderOwner}
-	{
-		productionValues2 := st.Productions(q.current, q.loader.Index)
-		for productionIndex2 := range productionValues2 {
-			production := productionValues2[productionIndex2]
-
-			parents = append(parents, production.Materializer(q.current))
+	if !settled {
+		return
+	}
+	q.candidates = q.candidates[1:]
+	if !complete {
+		return
+	}
+	for _, child := range output.Children {
+		if _, producer := child.Obj.(interface {
+			EmissionPolicy() manifest.EmissionPolicy
+		}); !producer || q.visited[child.Obj.Named()] {
+			continue
 		}
+		id := child.Obj.Named()
+		q.visited[id] = true
+		q.candidates = append(q.candidates, id)
 	}
-	for _, owner := range parents {
-		parent, accepted := st.GetArtifact(owner, store.ArtifactContent).(*store.Emission)
-		if accepted && parent.Complete && parent.OutputReads.Valid() &&
-			!slices.ContainsFunc(
-				parent.Children,
-				func(child store.Child) bool { return child.Obj.Named() == q.current },
-			) {
-			q.observed = true
-		}
-	}
+	slices.SortFunc(q.candidates, manifest.NamedResource.Compare)
 }
 
-func (q *entryQualification) observeChildren(st *store.Store, a *Admission, output *store.Emission) {
-	q.observed = true
-	q.documents = map[manifest.NamedResource]map[string]any{}
-	for _, child := range output.Children {
-		if applier, ok := child.Obj.(entryApplication); ok {
-			if _, valid := applier.EntryApplication(); valid {
-				a.addApplication(st, child.Obj, true)
-				q.documents[child.Obj.Named()] = child.Doc
-			}
-		}
-		if _, _, applies := child.Obj.SourcePath(); !applies && !q.visited[child.Obj.Named()] {
-			if _, producer := child.Obj.(interface {
-				EmissionPolicy() manifest.EmissionPolicy
-			}); producer && !slices.Contains(q.candidates, child.Obj.Named()) {
-				q.candidates = append(q.candidates, child.Obj.Named())
-			}
-		}
+func (q *entryQualification) captureDocument(st *store.Store, owner manifest.BaseManifest) map[string]any {
+	producer := st.EmissionOwner(owner.Named())
+	if producer == (manifest.NamedResource{}) {
+		return nil
 	}
+	_, document, output := st.GetEmission(owner.Named())
+	output.Finish()
+	if document != nil {
+		q.current = producer
+	}
+	return document
 }

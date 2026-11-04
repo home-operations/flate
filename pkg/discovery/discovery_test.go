@@ -282,6 +282,7 @@ func TestRun_AdmittedScanCoordinates(t *testing.T) {
 //nolint:paralleltest // This test changes process-global state.
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestRun_AdmittedRelativeScanCoordinates(t *testing.T) {
+	t.Run("unchanged_entry_construction", testSessionUnchangedEntryConstruction)
 	t.Chdir(t.TempDir())
 	cwd, err := os.Getwd()
 	assert.FatalIf(t, err != nil, "%v", err)

@@ -171,7 +171,7 @@ func TestIncomingProductions_RegisteredEvidence(t *testing.T) {
 
 func TestChildFootprint_MatchesEmission(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"index", "superseded", "foreign", "previous", "retained", "empty", "static", "entry"} {
+	for _, mode := range []string{"index", "superseded", "foreign", "previous", "retained", "empty", "static", "entry", "application-kustomization", "application-fluxinstance"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			testChildFootprintMatchesEmissionCase(t, &mode)
@@ -370,10 +370,8 @@ func testIncomingProductionsRegisteredEvidenceCase2(
 	assert.Equal(t, reads.Valid(), (*testCaseInput) == "content_only")
 }
 
-func testChildFootprintMatchesEmissionCase(t *testing.T, testCaseInput *string,
-) {
+func testChildFootprintMatchesEmissionCase(t *testing.T, testCaseInput *string) {
 	t.Helper()
-
 	s := New()
 	source := projectionSource(t, s, "content")
 	owner := projectionOwner(s, "owner", source)
@@ -397,10 +395,7 @@ func testChildFootprintMatchesEmissionCase(t *testing.T, testCaseInput *string,
 		Obj: &manifest.Kustomization{
 			Name:      "consumer",
 			Namespace: "apps",
-			SourceRef: kustomizev1.CrossNamespaceSourceReference{
-				Kind: manifest.KindExternalArtifact,
-				Name: "app-api",
-			},
+			SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindExternalArtifact, Name: "app-api"},
 		},
 	}
 	consumer.Obj.(*manifest.Kustomization).PostBuild = &kustomizev1.PostBuild{
@@ -431,18 +426,12 @@ func testChildFootprintMatchesEmissionCase(t *testing.T, testCaseInput *string,
 	if (*testCaseInput) == "static" || (*testCaseInput) == "entry" {
 		index.Records[owner.Named()] = manifest.DiscoveryRecord{StaticOutput: true}
 	}
-	if (*testCaseInput) == "previous" || (*testCaseInput) == "retained" {
-		_, _, prior := s.GetEmission(owner.Named())
-		prior.Children, prior.Complete = []Child{generator, consumer}, true
-		if (*testCaseInput) == "retained" {
-			retained := *consumer.Obj.(*manifest.Kustomization)
-			retained.Name = "retained"
-			prior.Children = append(prior.Children, Child{Obj: &retained})
-		}
-		s.RecordEmitted(owner.Named(), &prior, nil)
-		prior.Finish()
-	}
+	recordProjectionHistory(s, owner.Named(), []Child{generator, consumer}, *testCaseInput)
 	children := []Child{generator}
+	application := (*testCaseInput) == "application-kustomization" || (*testCaseInput) == "application-fluxinstance"
+	if application {
+		children = append(children, projectionApplicationChild(t, source, *testCaseInput))
+	}
 	if (*testCaseInput) == "superseded" || (*testCaseInput) == "retained" {
 		replacement := *consumer.Obj.(*manifest.Kustomization)
 		replacement.SourceRef.Name = "app-web"
@@ -454,15 +443,15 @@ func testChildFootprintMatchesEmissionCase(t *testing.T, testCaseInput *string,
 	prior := s.GetArtifact(owner.Named(), ArtifactContent)
 	prospective := s.ChildFootprint(owner.Named(), children, index)
 	sources := s.ChildSourcePaths(owner.Named(), children, index)
-	{
-		assert.FatalIf(t, prospective == nil, "%s", "complete batch supplied unavailable history")
+	if prospective == nil {
+		t.Fatal("complete batch supplied unavailable history")
 	}
 	before := maps.Collect(prospective)
 	_, predicted := before[target]
 	assert.Equal(
 		t,
-		predicted, (*testCaseInput) ==
-			"index" || (*testCaseInput) == "previous" || (*testCaseInput) == "retained" || (*testCaseInput) == "static" || (*testCaseInput) == "entry",
+		predicted,
+		slices.Contains([]string{"index", "previous", "retained", "static", "entry"}, *testCaseInput) || application,
 	)
 	assert.Equal(t, s.GetArtifact(owner.Named(), ArtifactContent), prior)
 	assert.Equal(t, s.index.Load() == nil, true)
@@ -477,10 +466,17 @@ func testChildFootprintMatchesEmissionCase(t *testing.T, testCaseInput *string,
 	reads.GetArtifact(source, ArtifactContent)
 	next.Children, next.Complete, next.Reads = children, true, &reads
 	s.RecordEmitted(owner.Named(), &next, nil)
-	{
-		assert.FatalIf(t, next.Footprint() == nil, "%s", "real emission was not accepted")
+	if next.Footprint() == nil {
+		t.Fatal("real emission was not accepted")
 	}
 	assert.Diff(t, maps.Collect(next.Footprint()), before)
+	if application {
+		id := children[1].Obj.Named()
+		if before[id].Application == "" {
+			t.Fatal("application document missing from prospective footprint")
+		}
+		assert.Equal(t, maps.Collect(next.Footprint())[id].Application, before[id].Application)
+	}
 	if (*testCaseInput) == "static" {
 		assert.Equal(t, next.SourcePaths() == nil, true)
 	} else {
@@ -490,9 +486,55 @@ func testChildFootprintMatchesEmissionCase(t *testing.T, testCaseInput *string,
 		Source: s.GetArtifact(source, ArtifactContent).(*SourceArtifact).HistoryIdentity(source),
 		Path:   "settings.yaml",
 	}
-	assert.Equal(
-		t,
-		slices.Contains(sources, input),
-		(*testCaseInput) == "retained" || (*testCaseInput) == "superseded",
-	)
+	assert.Equal(t, slices.Contains(sources, input), (*testCaseInput) == "retained" || (*testCaseInput) == "superseded")
+	if application {
+		id := children[1].Obj.Named()
+		replacement := s.ChildFootprint(owner.Named(), []Child{generator}, index)
+		_, retained := maps.Collect(replacement)[id]
+		assert.Equal(t, retained, false)
+		next.Children = []Child{generator}
+		s.RecordEmitted(owner.Named(), &next, nil)
+		_, retained = maps.Collect(next.Footprint())[id]
+		assert.Equal(t, retained, false)
+	}
+}
+
+func recordProjectionHistory(s *Store, owner manifest.NamedResource, children []Child, mode string) {
+	if mode == "previous" || mode == "retained" {
+		_, _, prior := s.GetEmission(owner)
+		prior.Children, prior.Complete = children, true
+		if mode == "retained" {
+			retained := *children[1].Obj.(*manifest.Kustomization)
+			retained.Name = "retained"
+			prior.Children = append(prior.Children, Child{Obj: &retained})
+		}
+		s.RecordEmitted(owner, &prior, nil)
+		prior.Finish()
+	}
+}
+
+func projectionApplicationChild(t *testing.T, source manifest.NamedResource, mode string) Child {
+	t.Helper()
+	document := map[string]any{
+		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+		"kind":       "Kustomization",
+		"metadata":   map[string]any{"name": "application", "namespace": "apps"},
+		"spec": map[string]any{
+			"path":      "./entry",
+			"sourceRef": map[string]any{"kind": source.Kind, "name": source.Name},
+		},
+	}
+	if mode == "application-fluxinstance" {
+		document["apiVersion"], document["kind"] = "fluxcd.controlplane.io/v1", "FluxInstance"
+		document["spec"] = map[string]any{"sync": map[string]any{
+			"kind": source.Kind,
+			"name": source.Name,
+			"path": "./entry",
+			"url":  "https://fixture.invalid/self",
+			"ref":  "main",
+		}}
+	}
+	object, _, _, err := manifest.ParseDoc(document, manifest.ParseDocOptions{})
+	assert.NoError(t, err)
+	return Child{Obj: object, Doc: document}
 }

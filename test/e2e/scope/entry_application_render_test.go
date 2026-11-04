@@ -1,6 +1,7 @@
 package scope_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -73,16 +74,12 @@ func TestE2E_EntryApplicationRendered(t *testing.T) {
 				"entry/unapplied/cm.yaml",
 				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unused, namespace: apps}\n",
 			)
-			testutil.WriteFile(
-				t,
-				root,
-				"entry/workload.yaml",
-				testutil.KustomizationYAML(
-					"workload",
-					"apps",
-					"  path: ./workload\n  sourceRef: {kind: GitRepository, name: self}\n",
-				),
+			child := testutil.KustomizationYAML(
+				"workload",
+				"apps",
+				"  interval: 1h\n  path: ./workload\n  sourceRef: {kind: GitRepository, name: self}\n",
 			)
+			testutil.WriteFile(t, root, "entry/workload.yaml", child)
 			testutil.WriteFile(t, root, "workload/kustomization.yaml", "resources: [release.yaml]\n")
 			testutil.WriteFile(t, root, "elsewhere/kustomization.yaml", "resources: []\n")
 			workload := "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: workload, namespace: apps}\nspec:\n  chart:\n    spec:\n      chart: charts/workload\n      sourceRef: {kind: GitRepository, name: self}\n  values: {value: before}\n"
@@ -157,6 +154,14 @@ func TestE2E_EntryApplicationRendered(t *testing.T) {
 			testutil.WriteFile(
 				t,
 				root,
+				"entry/workload.yaml",
+				strings.ReplaceAll(child, "interval: 1h", "interval: 2h"),
+			)
+			assertEntryApplicationIntervalDiff(t, common, generatorEvent)
+
+			testutil.WriteFile(
+				t,
+				root,
 				"charts/bootstrap/templates/application.yaml",
 				"{{ print "+fmt.Sprintf("%q", strings.ReplaceAll(application, "./entry", "./elsewhere"))+" }}",
 			)
@@ -167,5 +172,57 @@ func TestE2E_EntryApplicationRendered(t *testing.T) {
 					"name: literal-layer",
 				), "changed generator input retained stale entry qualification: %s\n%s", invalidated, invalidatedDebug)
 		})
+	}
+}
+
+func assertEntryApplicationIntervalDiff(t *testing.T, common []string, generatorEvent string) {
+	t.Helper()
+	for _, mode := range []string{"warm", "cold"} {
+		t.Run(mode+" interval", func(t *testing.T) {
+			intervalArgs := append([]string{"diff", "all", "--base", "HEAD", "-o", "json"}, common...)
+			if mode == "cold" {
+				intervalArgs = append(intervalArgs, "--cache-dir", t.TempDir())
+			}
+			intervalDiff, debug := harness.RequireCLIOK(t, intervalArgs...)
+			wantRenders := 0
+			if mode == "cold" {
+				wantRenders = 1
+			}
+			if strings.Count(debug, generatorEvent) != wantRenders {
+				t.Fatalf("%s applier renders != %d: %s", mode, wantRenders, debug)
+			}
+			assertEntryApplicationIntervalChange(t, intervalDiff)
+			again, _ := harness.RequireCLIOK(t, intervalArgs...)
+			assert.Equal(t, again, intervalDiff)
+		})
+	}
+}
+
+func assertEntryApplicationIntervalChange(t *testing.T, intervalDiff string) {
+	t.Helper()
+
+	var report struct {
+		Changes []struct {
+			Kind string `json:"kind"`
+			Name string `json:"name"`
+			Old  struct {
+				Spec map[string]any `json:"spec"`
+			} `json:"old"`
+			New struct {
+				Spec map[string]any `json:"spec"`
+			} `json:"new"`
+		} `json:"changes"`
+	}
+	assert.NoError(t, json.Unmarshal([]byte(intervalDiff), &report))
+	found := false
+	for _, item := range report.Changes {
+		if item.Kind == "Kustomization" && item.Name == "workload" {
+			assert.Equal(t, item.Old.Spec["interval"], any("1h"))
+			assert.Equal(t, item.New.Spec["interval"], any("2h"))
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("root interval edit missing: %s", intervalDiff)
 	}
 }

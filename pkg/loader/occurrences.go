@@ -48,7 +48,7 @@ type occurrenceFacts struct {
 	source                         manifest.NamedResource
 	path                           string
 	hasPath, namespaced, uncertain bool
-	tracked                        bool
+	retained                       bool
 	structural                     *manifest.Kustomization
 	catalog                        manifest.BaseManifest
 	reverse                        []manifest.NamedResource
@@ -96,25 +96,21 @@ func compactOccurrence(obj manifest.BaseManifest, projection manifest.TemplatePr
 		path:            path,
 		hasPath:         hasPath,
 		namespaced:      manifest.KindOf(obj).Namespaced(),
-		tracked:         manifest.KindOf(obj).Tracked,
+		retained:        manifest.KindOf(obj).Tracked || hasPath,
 		targets:         targets,
 		authoredTargets: targets,
 		needsCandidates: manifest.ProducerNeedsCandidates(obj),
 		roots:           slices.Collect(manifest.RenderRoots(obj)),
 	}
-
 	facts.templateInputs = projection.Inputs
 	facts.templateObjects = projection.Objects
 	facts.targets = append(facts.targets, projection.Targets...)
-
 	generated, _ := manifest.GeneratedObjects(obj)
 	for _, child := range generated {
 		facts.targets = append(facts.targets, manifest.ProducerTarget{NamedResource: child.Named()})
 	}
-
 	facts.catalog = manifest.CatalogObject(obj, obj.Named())
 	facts.structural, _ = facts.catalog.(*manifest.Kustomization)
-
 	if data, ok := obj.(interface{ HasPlaceholder() bool }); ok {
 		facts.placeholder = data.HasPlaceholder()
 	}

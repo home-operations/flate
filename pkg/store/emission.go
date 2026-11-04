@@ -265,13 +265,9 @@ func addChildFootprint(
 }
 
 func footprintApplication(record *manifest.DiscoveryRecord, entry *admission) {
-	if applier, ok := entry.child.Obj.(interface {
-		EntryApplication() (manifest.EntryApplication, bool)
-	}); ok {
-		if _, valid := applier.EntryApplication(); valid && entry.child.Doc != nil {
-			if data, err := json.Marshal(entry.child.Doc); err == nil {
-				record.Application = string(data)
-			}
+	if _, valid := manifest.ApplicationFor(entry.child.Obj); valid && entry.child.Doc != nil {
+		if data, err := json.Marshal(entry.child.Doc); err == nil {
+			record.Application = string(data)
 		}
 	}
 }

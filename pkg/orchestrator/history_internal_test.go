@@ -25,6 +25,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
@@ -55,6 +56,7 @@ func TestBootstrap_EntryReceiptDependencySubstitutions(t *testing.T) {
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestBootstrap_EntryHistoryMatchesEmission(t *testing.T) {
+	t.Run("partial_application_history", testBuildChangeFilterPartialApplicationHistory)
 	if reason := sourcecache.RenderPersistenceDisabledReason(); reason != "" {
 		t.Skip(reason)
 	}
@@ -696,4 +698,98 @@ func testBootstrapEntryReceiptDependencySubstitutionsCaseCase(
 	}
 	assert.Diff(t, maps.Collect(again), maps.Collect(records))
 	assert.NoError(t, o.run(t.Context()))
+}
+
+func testBuildChangeFilterPartialApplicationHistory(t *testing.T) {
+	t.Helper()
+	if reason := sourcecache.RenderPersistenceDisabledReason(); reason != "" {
+		t.Skip(reason)
+	}
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "flux/factory.yaml", testutil.KustomizationYAML("factory", "apps", `  path: ./producers
+  postBuild: {substituteFrom: [{kind: ConfigMap, name: supplied}]}
+`))
+	testutil.WriteFile(t, root, "flux/consumer.yaml", testutil.KustomizationYAML("consumer", "apps", `  path: ./workload
+  postBuild: {substituteFrom: [{kind: ConfigMap, name: target}]}
+`))
+	testutil.WriteFile(t, root, "producers/kustomization.yaml", "resources: [applier.yaml, target.yaml]\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"producers/applier.yaml",
+		testutil.KustomizationYAML("applier", "apps", "  path: ./${ENTRY}\n"),
+	)
+	testutil.WriteFile(t, root, "producers/target.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: target, namespace: apps}
+data: {VALUE: rendered}
+`)
+	testutil.WriteFile(t, root, "workload/kustomization.yaml", "resources: [result.yaml]\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"workload/result.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: result, namespace: apps}\ndata: {value: '${VALUE}'}\n",
+	)
+	tree := Tree{Path: filepath.Join(root, "flux"), RepoRoot: root}
+	cfg := Config{
+		CacheDir:            t.TempDir(),
+		Concurrency:         2,
+		StrictSubstitutions: true,
+		Supply: []store.SuppliedObject{
+			{Object: &manifest.ConfigMap{Name: "supplied", Namespace: "apps", Data: map[string]any{"ENTRY": "flux"}}},
+		},
+	}
+	warm, err := newTestOrchestrator(t, tree, cfg)
+	assert.NoError(t, err)
+	assert.NoError(t, warm.bootstrap(t.Context()))
+	warm.configureControllers()
+	owner := testutil.KustomizationID("apps", "factory")
+	var reads store.ReadSet
+	reads.Init(warm.store, owner, nil)
+	prepared, err := kustomize.Prepare(
+		warm.store.GetObject(owner).(*manifest.Kustomization),
+		values.NewStoreProvider(&reads, false),
+	)
+	assert.NoError(t, err)
+	source := reads.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
+	request := kustomize.RenderRequest{
+		Source:              source,
+		ApplyIgnore:         true,
+		SubPath:             prepared.Path,
+		Spec:                prepared,
+		StrictSubstitutions: true,
+	}
+	documents, receipt, err := kustomize.Render(t.Context(), warm.ksc.Trees, request, cfg.SourceRetry)
+	assert.NoError(t, err)
+	content := request.Content(documents)
+	assert.NoError(t, kustomize.Shape(prepared, documents, true))
+	children, _, failures := warm.ksc.ParseChildren(prepared, documents, manifest.ParseDocOptions{})
+	assert.Equal(t, len(failures), 0)
+	assert.NoError(
+		t,
+		warm.ksc.Trees.RecordRender(
+			t.Context(),
+			kustomize.RenderAcceptance{
+				Owner:   owner,
+				Receipt: receipt,
+				Content: content,
+				Records: warm.store.ChildFootprint(owner, children, warm.index),
+			},
+		),
+	)
+	reads.Retire()
+	warm.stop()
+	tree.ExternalChanges = change.NewSet([]string{"flux/consumer.yaml"})
+	fresh, err := newTestOrchestrator(t, tree, cfg)
+	assert.NoError(t, err)
+	t.Cleanup(fresh.stop)
+	result, err := fresh.render(t.Context())
+	assert.NoError(t, err)
+	assert.Equal(t, fresh.entryBinding.Producer, testutil.KustomizationID("apps", "applier"))
+	assert.Equal(t, fresh.filter.ShouldReconcile(owner), true)
+	assert.Diff(t, configMapNames(result), map[string]bool{"target": true, "result": true})
+	consumer := outputByParent(result.Manifests)[testutil.KustomizationID("apps", "consumer")]
+	assert.Equal(t, len(consumer), 1)
+	assert.Diff(t, consumer[0]["data"], any(map[string]any{"value": "rendered"}))
 }

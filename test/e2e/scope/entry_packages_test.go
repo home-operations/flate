@@ -2,6 +2,7 @@ package scope_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -117,7 +118,7 @@ func TestE2E_EntryPackageJSON(t *testing.T) {
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_EntryPackageFailure(t *testing.T) {
 	roots := [2]string{t.TempDir(), t.TempDir()}
-	for _, root := range roots {
+	for i, root := range roots {
 		testutil.GitInit(t, root)
 		testutil.WriteFile(
 			t,
@@ -129,7 +130,7 @@ func TestE2E_EntryPackageFailure(t *testing.T) {
 			t,
 			root,
 			"entry/child.yaml",
-			testutil.KustomizationYAML("child", "apps", "  path: ./workload\n"),
+			testutil.KustomizationYAML("child", "apps", fmt.Sprintf("  interval: %dh\n  path: ./workload\n", i+1)),
 		)
 		testutil.WriteFile(t, root, "workload/kustomization.yaml", "resources: []\n")
 	}

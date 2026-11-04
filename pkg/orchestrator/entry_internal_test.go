@@ -3,22 +3,25 @@ package orchestrator
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"path/filepath"
+	"slices"
 	"sync/atomic"
 	"testing"
-
-	"github.com/home-operations/flate/pkg/store"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 //nolint:paralleltest // This test changes process-global state.
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestRender_EntryDeclarationQualifiesOpaqueApplier(t *testing.T) {
+	t.Run("settled_candidates", testRenderChangedLiteralEntryDrainsSettledCandidates)
 	for _, scenario := range []string{"declaration", "mutable_chart", "nested_chart", "nested_unchanged", "incomplete_inputs", "content", "owned_source"} {
 		t.Run(scenario, func(t *testing.T) {
 			testRenderEntryDeclarationQualifiesOpaqueApplierCase(
@@ -373,4 +376,123 @@ func (i *testRenderEntryDeclarationQualifiesOpaqueApplierCaseTailInputs) entryAp
 		)
 	}
 	return applier
+}
+
+func TestRenderTrees_ChangedLiteralEntryQualifiesOpaqueApplier(t *testing.T) {
+	t.Parallel()
+	for _, depth := range []int{1, 2, 3} {
+		t.Run(fmt.Sprintf("depth-%d", depth), func(t *testing.T) {
+			t.Parallel()
+			trees := changedLiteralEntryTrees(t, depth)
+			delta := func(runs []Rendered) []byte {
+				t.Helper()
+				selected, selectedErr, err := Select(
+					runs,
+					nil,
+					[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")},
+					nil,
+				)
+				assert.NoError(t, err)
+				body, warnings, suppressed, err := diff.Compare(
+					diff.Snapshot{
+						Subjects:     selected[0].Subjects,
+						Manifests:    selected[0].Manifests,
+						ProducerKeys: selected[0].ProducerKeys,
+						Unavailable:  selected[0].Unavailable,
+					},
+					diff.Snapshot{
+						Subjects:     selected[1].Subjects,
+						Manifests:    selected[1].Manifests,
+						ProducerKeys: selected[1].ProducerKeys,
+						Unavailable:  selected[1].Unavailable,
+					},
+					selectedErr,
+					diff.Options{Format: diff.FormatJSON},
+				)
+				assert.NoError(t, err)
+				assert.Equal(t, len(warnings), 0)
+				assert.Equal(t, len(suppressed), 0)
+				return body
+			}
+			full := make([]Rendered, 2)
+			for side, tree := range trees {
+				runs, err := RenderTrees(t.Context(), []Tree{tree}, Config{Concurrency: 2, CacheDir: t.TempDir()})
+				assert.NoError(t, err)
+				full[side] = runs[0]
+			}
+			want := delta(full)
+			var expected struct {
+				Changes []diff.Change `json:"changes"`
+			}
+			assert.NoError(t, json.Unmarshal(want, &expected))
+			assert.Equal(t, slices.ContainsFunc(expected.Changes, func(c diff.Change) bool {
+				return c.Kind == manifest.KindConfigMap && c.Name == "literal" && c.Namespace == "apps" &&
+					c.Status == diff.StatusChanged
+			}), true)
+			t.Logf("independent full delta: %s", want)
+			for side := range trees {
+				trees[side].ExternalChanges = change.NewSet([]string{"entry/cm.yaml"})
+			}
+			cfg := Config{Concurrency: 2, CacheDir: t.TempDir()}
+			for range 2 {
+				runs, err := RenderTrees(t.Context(), trees, cfg)
+				assert.NoError(t, err)
+				assert.Equal(t, string(delta(runs)), string(want))
+			}
+		})
+	}
+}
+
+func changedLiteralEntryTrees(t *testing.T, depth int) []Tree {
+	t.Helper()
+	roots := [2]string{t.TempDir(), t.TempDir()}
+	trees := make([]Tree, 2)
+	const url = "https://example.test/entry/repo"
+	for side, root := range roots {
+		testutil.GitInit(t, root)
+		testutil.WriteFile(t, root, "entry/source.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: self, namespace: apps}
+spec: {url: `+url+"}\n")
+		testutil.WriteFile(t, root, "entry/generator.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: generator, namespace: apps}
+spec:
+  interval: 1h
+  chart: {spec: {chart: charts/fixture-0, sourceRef: {kind: GitRepository, name: self}}}
+  values: {entry: ./entry}
+`)
+		testutil.WriteFile(t, root, "entry/cm.yaml", fmt.Sprintf(`apiVersion: v1
+kind: ConfigMap
+metadata: {name: literal, namespace: apps}
+data: {value: side-%d}
+`, side))
+		for level := range depth {
+			chart := fmt.Sprintf("charts/fixture-%d", level)
+			testutil.WriteFile(t, root, chart+"/Chart.yaml", "apiVersion: v2\nname: fixture\nversion: 1.0.0\n")
+			application := `apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata: {name: applies-entry, namespace: apps}
+spec:
+  sync: {name: self, kind: GitRepository, url: ` + url + ", ref: main, path: {{ .Values.entry | quote }}}\n"
+			if level+1 < depth {
+				application = fmt.Sprintf(`apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: generator-%d, namespace: apps}
+spec:
+  interval: 1h
+  chart: {spec: {chart: charts/fixture-%d, sourceRef: {kind: GitRepository, name: self}}}
+  values: {entry: {{ .Values.entry | quote }}}
+`, level+1, level+1)
+			}
+			testutil.WriteFile(t, root, chart+"/templates/application.yaml", application)
+		}
+		trees[side] = Tree{
+			ID:       manifest.TreeID{Cluster: ".", Side: manifest.TreeSide(side)},
+			Path:     filepath.Join(root, "entry"),
+			RepoRoot: root,
+			SelfURLs: []string{url},
+		}
+	}
+	return trees
 }

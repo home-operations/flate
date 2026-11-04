@@ -208,10 +208,9 @@ func (d *Session) addLoadedSources(
 		for childIndex := range childValues {
 			child := childValues[childIndex]
 
-			if applier, ok := d.loader.CatalogObject(child.Identity).(entryApplication); ok {
-				if application, valid := applier.EntryApplication(); valid && application.Declaration != nil {
-					continue
-				}
+			application, valid := manifest.ApplicationFor(d.loader.CatalogObject(child.Identity))
+			if valid && application.Declaration != nil {
+				continue
 			}
 			ref, _, _ := child.SourcePath()
 			if allowMissing || groups[ref].evidence.Obj != nil || d.cfg.Store.GetObject(ref) != nil {
@@ -386,6 +385,7 @@ func (d *Session) admission() *Admission {
 		sources:    maps.Clone(d.resolvedSources),
 	}
 	admission.entryBound.Store(d.binding != (Binding{}))
+	d.entryState = entryQualification{}
 	if d.cfg.Trees != nil && !admission.entryBound.Load() {
 		d.entryState.loader, d.entryState.trees = d.loader, d.cfg.Trees
 		admission.qualification = &d.entryState

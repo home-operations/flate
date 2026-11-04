@@ -84,7 +84,7 @@ func (l *Loader) Retire() {
 	l.InputContent = nil
 	l.Options.HistoryOwners = nil
 	l.inputReaders, l.inputObjects = nil, nil
-	l.templateTargets = nil
+	l.templateProjections = nil
 	l.producerFacts.Store(nil)
 	if !l.Options.Filter.Enabled() {
 		l.documents = documentReader{}
@@ -161,7 +161,11 @@ func (l *Loader) resetDerivedProductions() {
 					delete(l.locations, id)
 					continue
 				}
-				record.Productions = nil
+				record.Productions = slices.DeleteFunc(record.Productions, func(p manifest.Production) bool {
+					return record.Builder == "" || p.Owner != record.BuilderOwner ||
+						p.Declaration != (manifest.NamedResource{}) ||
+						p.Path != ""
+				})
 				l.Index.Records[id] = record
 			}
 		}

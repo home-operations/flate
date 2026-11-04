@@ -45,53 +45,13 @@ func (d dagDispatcher) Sweep(ctx context.Context, quiescent bool) []schedule.Nod
 			return changed
 		}
 	}
-	return d.sweepEntry(ctx, changed)
-}
-
-func (d dagDispatcher) sweepEntry(ctx context.Context, changed []schedule.NodeID) []schedule.NodeID {
-	for d.o.entryBinding == (discovery.Binding{}) && d.o.entryFailure == nil {
-		root, binding, err := d.o.admission.BindEntry(ctx, d.o.store)
+	if admitted, err := d.o.admitEntry(ctx); err != nil {
 		d.o.entryFailure = err
-		if root != nil {
-			d.o.entryBinding = binding
-			if _, err := d.o.ksc.KeepEmitted(ctx, manifest.NamedResource{}, store.Child{Obj: root}, nil); err != nil {
-				d.o.entryFailure = err
-				return changed
-			}
-			d.o.store.AddObject(root)
-			if d.o.entryAdmissionPending {
-				d.o.entryFailure = d.o.installAdmission(ctx)
-			}
-			return slices.Collect(d.o.store.Sweep())
-		}
-		if producers := d.o.admission.EntryProducers(); len(producers) != 0 {
-			d.requireEntryProducers(ctx, producers)
-			changed = slices.Collect(d.o.store.Sweep())
-			if len(changed) != 0 {
-				return changed
-			}
-			continue
-		}
-		if d.o.entryAdmissionPending {
-			d.o.entryFailure = d.o.installAdmission(ctx)
-		}
-		break
+	} else if admitted {
+		return slices.Collect(d.o.store.Sweep())
 	}
 	d.o.classifyCompleted()
 	return slices.Collect(d.o.store.Sweep())
-}
-
-func (d dagDispatcher) requireEntryProducers(ctx context.Context, producers []manifest.NamedResource) {
-	var reads store.ReadSet
-	reads.Init(d.o.store, manifest.NamedResource{}, nil)
-	for _, producer := range producers {
-		reads.RequireData(producer)
-	}
-	_, err := d.o.ksc.KeepEmitted(ctx, manifest.NamedResource{}, store.Child{}, &reads)
-	reads.Retire()
-	if err != nil {
-		d.o.entryFailure = err
-	}
 }
 
 func (o *Orchestrator) seedNodes() []manifest.NamedResource {
@@ -198,4 +158,37 @@ func (d dagDispatcher) admitRawRoots(ctx context.Context) bool {
 		return true
 	}
 	return false
+}
+
+func (o *Orchestrator) admitEntry(ctx context.Context) (bool, error) {
+	if o.entryBinding != (discovery.Binding{}) || o.entryFailure != nil {
+		return false, o.entryFailure
+	}
+	for {
+		inputs := o.admission.EntryInputs()
+		root, binding, err := o.admission.BindEntry(ctx, o.store)
+		if err != nil {
+			return false, err
+		}
+		if root == nil {
+			if slices.Equal(inputs, o.admission.EntryInputs()) {
+				return false, nil
+			}
+			if err := o.installAdmission(ctx); err != nil {
+				return false, err
+			}
+			continue
+		}
+		o.entryBinding = binding
+		if binding.Entry != nil {
+			if err := o.installAdmission(ctx); err != nil {
+				return false, err
+			}
+		}
+		if _, err := o.ksc.KeepEmitted(ctx, manifest.NamedResource{}, store.Child{Obj: root}, nil); err != nil {
+			return false, err
+		}
+		o.store.AddObject(root)
+		return true, nil
+	}
 }

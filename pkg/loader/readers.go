@@ -62,6 +62,7 @@ func (l *Loader) finalizeRecords(
 
 		emittedFiles: emittedFiles,
 	}
+	rf.collectEntryInputs()
 	rf.collectControls()
 	rf.objects = map[manifest.NamedResource]manifest.BaseManifest{}
 	rf.sources = map[manifest.NamedResource]graphVisit{}
@@ -344,10 +345,10 @@ func (rf *readerFinalizer) setRecordOutput(id manifest.NamedResource, r *manifes
 	if !rf.loader.documents.compact && r.Builder == "" {
 		r.Declaration = rf.loader.IndexedObject(id, *r).Obj
 	}
-	r.StaticOutput = kind.Structural || len(rf.loader.templateTargets[id]) != 0
+	r.StaticOutput = kind.Structural || len(rf.loader.templateProjections[id].Targets) != 0
 	if len(rf.loader.locations) != 0 {
 		if occurrence, known := rf.loader.occurrence(id); known {
-			r.StaticOutput = !occurrence.facts.opaque(rf.loader.templateTargets[id])
+			r.StaticOutput = !occurrence.facts.opaque(rf.loader.templateProjections[id].Targets)
 		}
 	}
 	r.StaticOutput = r.StaticOutput && !rf.unresolvedPaths[id]
@@ -549,6 +550,7 @@ func (rf *readerFinalizer) observeChart(
 			}
 			refs.Inputs = append(refs.Inputs, next.Inputs...)
 			refs.Targets = append(refs.Targets, next.Targets...)
+			refs.Objects = append(refs.Objects, next.Objects...)
 		}
 		rf.templateRefs[key] = refs
 	}
@@ -556,18 +558,7 @@ func (rf *readerFinalizer) observeChart(
 		return nil
 	}
 	rf.templateWalks[key] = true
-	for _, target := range refs.Targets {
-		if rf.loader.templateTargets == nil {
-			rf.loader.templateTargets = map[manifest.NamedResource][]manifest.ProducerTarget{}
-		}
-		targets := rf.loader.templateTargets[reader.Reader]
-		if !slices.ContainsFunc(
-			targets,
-			func(known manifest.ProducerTarget) bool { return known.NamedResource == target.NamedResource },
-		) {
-			rf.loader.templateTargets[reader.Reader] = append(targets, target)
-		}
-	}
+	rf.retainTemplateProjection(reader.Reader, &refs)
 	{
 		inputValues := refs.Inputs
 		for inputIndex := range inputValues {
@@ -634,4 +625,59 @@ func (rf *readerFinalizer) projectOccurrence(
 		}
 	}
 	return nil
+}
+
+func (rf *readerFinalizer) collectEntryInputs() {
+	if !rf.loader.documents.compact || rf.loader.scopes == nil {
+		return
+	}
+	for _, root := range rf.loader.scopes.roots {
+		id := manifest.NewEntryKustomization(manifest.BootstrapSourceID, root, manifest.NamedResource{}).Named()
+		record := rf.loader.Index.Records[id]
+		// Exact package inputs MUST remain authoritative after construction is frozen.
+		inputs := rf.entryInputs(root)
+		slices.Sort(inputs)
+		record.ContentRoots = map[manifest.NamedResource][]string{manifest.BootstrapSourceID: slices.Compact(inputs)}
+		rf.loader.Index.Records[id] = record
+	}
+}
+
+func (rf *readerFinalizer) entryInputs(root string) []string {
+	var inputs []string
+	visits := rf.loader.scopeWalk(new(graphVisit{root: rf.repoRoot, dir: root}))
+	for i := range visits {
+		visit := &visits[i]
+		if visit.incomplete != "" {
+			inputs = append(inputs, path.Join(visit.prefix, visit.dir))
+		} else if rf.loader.documents.cache[visit.file].pathState == pathMissing {
+			inputs = append(inputs, visit.coordinate)
+		}
+		for _, file := range []string{visit.coordinate, visit.localCoordinate()} {
+			if file != "" {
+				inputs = append(inputs, file)
+			}
+		}
+	}
+	return inputs
+}
+
+func (rf *readerFinalizer) retainTemplateProjection(
+	consumer manifest.NamedResource,
+	refs *manifest.TemplateProjection,
+) {
+	if len(refs.Targets)+len(refs.Objects) != 0 {
+		if rf.loader.templateProjections == nil {
+			rf.loader.templateProjections = map[manifest.NamedResource]manifest.TemplateProjection{}
+		}
+		projection := rf.loader.templateProjections[consumer]
+		for _, target := range refs.Targets {
+			if !slices.ContainsFunc(projection.Targets, func(known manifest.ProducerTarget) bool {
+				return known.NamedResource == target.NamedResource
+			}) {
+				projection.Targets = append(projection.Targets, target)
+			}
+		}
+		projection.Objects = append(projection.Objects, refs.Objects...)
+		rf.loader.templateProjections[consumer] = projection
+	}
 }

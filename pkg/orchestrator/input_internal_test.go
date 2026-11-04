@@ -1,7 +1,10 @@
 package orchestrator
 
 import (
+	"bytes"
+	"encoding/json"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -35,6 +38,8 @@ func (r *scopedPeerReader) ReadDir(name string) ([]fs.DirEntry, error) {
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestRenderTrees_AdmittedViews(t *testing.T) {
+	t.Run("prepares_each_side_once", testRenderTreesPreparesEachSideOnce)
+	t.Run("flux_instance_sync_unchanged_root", testRenderTreesFluxInstanceSyncUnchangedRoot)
 	for _, scenario := range []string{"scoped_peer", "equal_selected_alias", "selected_payload_only", "source_declaration_equal", "equal_labels", "synthetic_labels", "authored_pins", "committed_detection", "equal_selected_pin", "unavailable_host_decoy"} {
 		t.Run(scenario, func(t *testing.T) {
 			testRenderTreesAdmittedViewsCase(t, &scenario)
@@ -112,8 +117,13 @@ func (r *preparationReader) Open(name string) (fs.File, error) {
 	return r.FS.Open(name)
 }
 
-func TestRenderTrees_PreparesEachSideOnce(t *testing.T) {
-	t.Parallel()
+func testRenderTreesPreparesEachSideOnce(t *testing.T) {
+	t.Helper()
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".", manifest.NamedResource{}).Named()
 	roots := [2]string{t.TempDir(), t.TempDir()}
 	var readers [2]*preparationReader
 	inputs := [2]*store.SourceArtifact{}
@@ -159,11 +169,23 @@ func TestRenderTrees_PreparesEachSideOnce(t *testing.T) {
 	)
 	base, head := renderedTrees3[0], renderedTrees3[1]
 	assert.NoError(t, err)
+	builds := 0
+	for line := range strings.SplitSeq(logs.String(), "\n") {
+		var event struct {
+			Msg  string `json:"msg"`
+			Path string `json:"path"`
+		}
+		if json.Unmarshal([]byte(line), &event) == nil && event.Msg == "kustomize: build" &&
+			manifest.NormalizeClaimBase(event.Path) == "." {
+			builds++
+		}
+	}
+	assert.Equal(t, builds, 0)
+	t.Logf("paired root builds=%d", builds)
 	for side, rendered := range []Rendered{base, head} {
+		assert.Equal(t, rendered.entryBinding.Producer, entry)
 		assert.Equal(t, readers[side].fingerprints.Load(), int64(2))
-		// Mutable source proofs MUST retain two validations, alongside one census,
-		// one fingerprint, one required build, and seven stat-only opens.
-		assert.Equal(t, readers[side].parsed.Load(), int64(12))
+		assert.Equal(t, readers[side].parsed.Load(), int64(5))
 		assert.Diff(t, configMapNames(rendered.Result), map[string]bool{"cfg-a": true})
 		t.Logf(
 			"side=%d declaration reads=%d selected evidence reads=%d",
@@ -171,6 +193,35 @@ func TestRenderTrees_PreparesEachSideOnce(t *testing.T) {
 			readers[side].parsed.Load(),
 			readers[side].fingerprints.Load(),
 		)
+	}
+	for side, root := range roots {
+		o, err := newTestOrchestrator(
+			t,
+			Tree{
+				RepoRoot:        root,
+				Input:           inputs[side],
+				BaseInput:       inputs[1-side],
+				ExternalChanges: change.NewSet([]string{"apps/app-a/cm.yaml"}),
+			},
+			Config{Concurrency: 2},
+		)
+		assert.NoError(t, err)
+		assert.NoError(t, o.bootstrap(t.Context()))
+		calls, admitted := map[manifest.NamedResource]*atomic.Int64{
+			entry: {},
+		}, map[manifest.NamedResource]*atomic.Int64{
+			entry: {},
+		}
+		for id := range o.index.Records {
+			if id.Kind == manifest.KindKustomization && id.Group == manifest.FluxKustomizeDomain {
+				calls[id], admitted[id] = new(atomic.Int64), new(atomic.Int64)
+			}
+		}
+		o.controllers.Kustomization = countedNodeController{o.ksc, calls, admitted}
+		assert.NoError(t, o.run(t.Context()))
+		t.Logf("side=%d root controller calls=%d admitted=%d", side, calls[entry].Load(), admitted[entry].Load())
+		assert.Equal(t, admitted[entry].Load(), int64(0))
+		o.stop()
 	}
 }
 
@@ -410,5 +461,125 @@ func testRenderTreesAdmittedViewsCaseCaseSegment(
 			roots[side] = input.LocalPath
 		}
 		inputs[side] = input
+	}
+}
+
+func testRenderTreesFluxInstanceSyncUnchangedRoot(t *testing.T) {
+	t.Helper()
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	roots := [2]string{t.TempDir(), t.TempDir()}
+	var inputs [2]*store.SourceArtifact
+	const url = "https://example.test/sync/repo"
+	for side, root := range roots {
+		testutil.GitInit(t, root)
+		testutil.WriteFile(
+			t,
+			root,
+			"entry/generator.yaml",
+			testutil.KustomizationYAML(
+				"generator",
+				"apps",
+				"  path: ./entry/bootstrap\n  sourceRef: {kind: GitRepository, name: self}\n",
+			),
+		)
+		testutil.WriteFile(
+			t,
+			root,
+			"entry/bootstrap/kustomization.yaml",
+			"namespace: apps\nresources: [release.yaml]\n",
+		)
+		testutil.WriteFile(t, root, "entry/bootstrap/release.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: generator}
+spec:
+  chart:
+    spec:
+      chart: charts/bootstrap
+      sourceRef: {kind: GitRepository, name: self, namespace: apps}
+`)
+		testutil.WriteFile(t, root, "charts/bootstrap/Chart.yaml", "apiVersion: v2\nname: bootstrap\nversion: 1.0.0\n")
+		testutil.WriteFile(
+			t,
+			root,
+			"charts/bootstrap/templates/application.yaml",
+			`apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata: {name: flux, namespace: apps}
+spec:
+  sync: {name: self, kind: GitRepository, url: `+url+", ref: main, path: ./entry}\n",
+		)
+		testutil.WriteFile(
+			t,
+			root,
+			"entry/child.yaml",
+			testutil.KustomizationYAML(
+				"child",
+				"apps",
+				"  path: ./workload\n  sourceRef: {kind: GitRepository, name: self}\n",
+			),
+		)
+		testutil.WriteFile(t, root, "workload/kustomization.yaml", "resources: [cm.yaml]\n")
+		testutil.WriteFile(
+			t,
+			root,
+			"workload/cm.yaml",
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected}\ndata: {value: "+[]string{"before", "after"}[side]+"}\n",
+		)
+		testutil.WriteFile(
+			t,
+			root,
+			"outside/cm.yaml",
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: outside}\ndata: {value: "+[]string{"before", "after"}[side]+"}\n",
+		)
+		inputs[side] = &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: os.DirFS(root)}
+	}
+	results, err := RenderTrees(
+		t.Context(),
+		[]Tree{
+			{
+				ID:              manifest.TreeID{Cluster: "entry", Side: manifest.TreeBase},
+				Path:            filepath.Join(roots[0], "entry"),
+				RepoRoot:        roots[0],
+				SelfURLs:        []string{url},
+				Input:           inputs[0],
+				BaseInput:       inputs[1],
+				ExternalChanges: change.NewSet([]string{"workload/cm.yaml", "outside/cm.yaml"}),
+			},
+			{
+				ID:              manifest.TreeID{Cluster: "entry", Side: manifest.TreeHead},
+				Path:            filepath.Join(roots[1], "entry"),
+				RepoRoot:        roots[1],
+				SelfURLs:        []string{url},
+				Input:           inputs[1],
+				BaseInput:       inputs[0],
+				ExternalChanges: change.NewSet([]string{"workload/cm.yaml", "outside/cm.yaml"}),
+			},
+		},
+		Config{Concurrency: 2, Selection: manifest.Selection{Changed: true}},
+	)
+	assert.NoError(t, err)
+	for line := range strings.SplitSeq(logs.String(), "\n") {
+		var event struct {
+			Msg  string `json:"msg"`
+			Path string `json:"path"`
+		}
+		if json.Unmarshal([]byte(line), &event) == nil && event.Msg == "kustomize: build" &&
+			manifest.NormalizeClaimBase(event.Path) == "entry" {
+			t.Error("unchanged FluxInstance sync root was constructed")
+		}
+	}
+	for side, result := range results {
+		assert.Equal(t, result.entryBinding.Producer == (manifest.NamedResource{}), false)
+		assert.Diff(t, configMapNames(result.Result), map[string]bool{"selected": true})
+		for _, batch := range result.Result.Manifests {
+			for _, doc := range batch.Documents {
+				if doc["kind"] == "ConfigMap" {
+					assert.Diff(t, doc["data"], any(map[string]any{"value": []string{"before", "after"}[side]}))
+				}
+			}
+		}
 	}
 }

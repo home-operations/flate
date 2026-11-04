@@ -10,19 +10,17 @@ import (
 	"sync/atomic"
 	"text/template"
 
+	yamlv3 "go.yaml.in/yaml/v3"
 	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
-
 	"sigs.k8s.io/kustomize/api/resource"
 	kyaml "sigs.k8s.io/kustomize/kyaml/yaml"
 	"sigs.k8s.io/yaml"
-
-	yamlv3 "go.yaml.in/yaml/v3"
 
 	"github.com/home-operations/flate/internal/keylock"
 	"github.com/home-operations/flate/internal/resourcesetinput"
 )
 
-// TemplateProjection contains positive inputs and output identities from unrendered documents.
+// TemplateProjection contains positive inputs, output identities, and applications from unrendered documents.
 type TemplateProjection struct {
 	Inputs  []TemplateInput
 	Targets []ProducerTarget
@@ -64,7 +62,7 @@ func (p *ProducerProjections) Project(ctx context.Context, object BaseManifest) 
 	return p.project(ctx, Fingerprint(resourceSet), resourceSet.templateProjection)
 }
 
-// ProjectTemplate derives immutable references and identities once per template content and namespace.
+// ProjectTemplate derives immutable references, identities, and applications once per template content and namespace.
 func (p *ProducerProjections) ProjectTemplate(
 	ctx context.Context,
 	data []byte,
@@ -157,41 +155,25 @@ func projectTemplate(data []byte, namespace string, projected bool, yield func(B
 }
 
 func (p *TemplateProjection) addObject(object BaseManifest, authoredNamespace string, retain bool) {
+	keep := func(object BaseManifest) {
+		_, application := ApplicationFor(object)
+		if retain || application {
+			p.Objects = append(p.Objects, object)
+		}
+	}
 	id := object.Named()
 	if concreteTemplateOperand(id.Name) && concreteTemplateOperand(id.Namespace) {
 		p.Targets = append(p.Targets, ProducerTarget{NamedResource: id})
-		if retain {
-			p.Objects = append(p.Objects, object)
-		}
+		keep(object)
 		p.Targets = append(p.Targets, ProducerTargets(object)...)
 	}
 	nested := ProjectProducer(object)
 	p.Inputs = append(p.Inputs, nested.Inputs...)
 	p.Targets = append(p.Targets, nested.Targets...)
-	if retain {
-		p.Objects = append(p.Objects, nested.Objects...)
+	for _, object := range nested.Objects {
+		keep(object)
 	}
-	for ref := range References(object, ReferenceRelations) {
-		if !ref.ContentInput() || ref.Ordering || !concreteTemplateOperand(ref.Name) ||
-			!concreteTemplateOperand(ref.Namespace) {
-			continue
-		}
-		ref.NamespaceDefault = ref.NamespaceDefault && authoredNamespace == ""
-		ref.Gate, ref.ArtifactStages = 0, 0
-		ref.Artifact, ref.ChartSource = false, false
-		unresolved := false
-		if ref.Use == sourceKey {
-			for root := range SourceRoots(object) {
-				if concreteTemplateOperand(root) {
-					ref.Files = append(ref.Files, root)
-					ref.Subtree = true
-				} else {
-					unresolved = true
-				}
-			}
-		}
-		p.Inputs = append(p.Inputs, TemplateInput{Reader: id, Reference: ref, UnresolvedPath: unresolved})
-	}
+	p.addObjectInputs(object, authoredNamespace)
 }
 
 func concreteTemplateOperand(value string) bool {
@@ -374,5 +356,30 @@ func (p *resourceSetTemplates) visit(r *ResourceSet, data []byte, jsonDocument b
 			continue
 		}
 		p.collect(rendered, r.Namespace, true)
+	}
+}
+
+func (p *TemplateProjection) addObjectInputs(object BaseManifest, authoredNamespace string) {
+	id := object.Named()
+	for ref := range References(object, ReferenceRelations) {
+		if !ref.ContentInput() || ref.Ordering || !concreteTemplateOperand(ref.Name) ||
+			!concreteTemplateOperand(ref.Namespace) {
+			continue
+		}
+		ref.NamespaceDefault = ref.NamespaceDefault && authoredNamespace == ""
+		ref.Gate, ref.ArtifactStages = 0, 0
+		ref.Artifact, ref.ChartSource = false, false
+		unresolved := false
+		if ref.Use == sourceKey {
+			for root := range SourceRoots(object) {
+				if concreteTemplateOperand(root) {
+					ref.Files = append(ref.Files, root)
+					ref.Subtree = true
+				} else {
+					unresolved = true
+				}
+			}
+		}
+		p.Inputs = append(p.Inputs, TemplateInput{Reader: id, Reference: ref, UnresolvedPath: unresolved})
 	}
 }

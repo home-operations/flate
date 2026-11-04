@@ -78,3 +78,15 @@ func (r *RawObject) EntryApplication() (EntryApplication, bool) {
 	}
 	return EntryApplication{Source: declaration.Named(), Path: sync.Path, Declaration: declaration}, true
 }
+
+// ApplicationFor returns the application described by an entry applier.
+func ApplicationFor(obj BaseManifest) (EntryApplication, bool) {
+	switch obj := obj.(type) {
+	case *Kustomization:
+		return obj.EntryApplication()
+	case *RawObject:
+		return obj.EntryApplication()
+	default:
+		return EntryApplication{}, false
+	}
+}

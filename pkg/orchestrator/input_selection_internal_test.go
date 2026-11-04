@@ -3,7 +3,6 @@ package orchestrator
 import (
 	"encoding/json"
 	"fmt"
-	"io/fs"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -85,7 +84,6 @@ func TestRenderTrees_SelectedSelfSourceReproducer(t *testing.T) {
 		[]string{source.String(), (manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "selected"}).String()},
 		147-2,
 	)
-	files := slices.Grow([]string{"source.yaml"}, 146-1)
 	var resources strings.Builder
 	resources.WriteString("resources:\n- source.yaml\n")
 	testutil.WriteFile(
@@ -98,7 +96,6 @@ func TestRenderTrees_SelectedSelfSourceReproducer(t *testing.T) {
 		name := fmt.Sprintf("app-%03d", i)
 		id := testutil.KustomizationID("flux-system", name)
 		want = append(want, id.String())
-		files = append(files, name+".yaml")
 		fmt.Fprintf(&resources, "- %s.yaml\n", name)
 		testutil.WriteFile(
 			t,
@@ -145,14 +142,6 @@ func TestRenderTrees_SelectedSelfSourceReproducer(t *testing.T) {
 	cache := cachetest.New(t, "", sourcecache.New)
 	selected, err := baseline.AutoResolve(t.Context(), root, baseHash.String(), cache)
 	assert.NoError(t, err)
-	var declarations []map[string]any
-	for _, file := range files {
-		body, err := fs.ReadFile(selected.Source.FS, file)
-		assert.NoError(t, err)
-		parsed, err := testutil.DecodeDocs(strings.NewReader(string(body)))
-		assert.NoError(t, err)
-		declarations = append(declarations, parsed...)
-	}
 	cfg := treeConfig{
 		Cache:           cache,
 		Concurrency:     2,
@@ -170,14 +159,10 @@ func TestRenderTrees_SelectedSelfSourceReproducer(t *testing.T) {
 		o, err := newTestOrchestrator(t, one.Tree, one.Config)
 		assert.NoError(t, err)
 		assert.NoError(t, o.bootstrap(t.Context()))
-		prerequisites := []string{o.entryBinding.Producer.String(), manifest.BootstrapSourceID.String()}
-		slices.Sort(prerequisites)
 		if side == 0 {
-			assert.Diff(t, o.filter.KeepNames(), prerequisites)
+			assert.Equal(t, len(o.filter.KeepNames()), 0)
 		} else {
-			expected := append(slices.Clone(want), prerequisites...)
-			slices.Sort(expected)
-			assert.Diff(t, o.filter.KeepNames(), expected)
+			assert.Diff(t, o.filter.KeepNames(), want)
 		}
 		t.Logf("current-only side=%d exact keep=%v", side, o.filter.KeepNames())
 		o.stop()
@@ -208,14 +193,9 @@ func TestRenderTrees_SelectedSelfSourceReproducer(t *testing.T) {
 		base, head := renderedTrees1[0], renderedTrees1[1]
 		assert.NoError(t, err)
 		for side, rendered := range []Rendered{base, head} {
-			prerequisites := []string{rendered.entryBinding.Producer.String(), manifest.BootstrapSourceID.String()}
-			slices.Sort(prerequisites)
-			assert.Diff(t, rendered.filter.KeepNames(), prerequisites)
-			assert.Diff(
-				t,
-				outputByParent(rendered.Result.Manifests),
-				map[manifest.NamedResource][]map[string]any{rendered.entryBinding.Producer: declarations},
-			)
+			assert.Equal(t, len(rendered.filter.KeepNames()), 0)
+			assert.Equal(t, len(rendered.Result.Manifests), 0)
+			assert.Equal(t, rendered.filter.ShouldReconcile(rendered.entryBinding.Producer), false)
 			delta, err := change.Detect(
 				t.Context(),
 				base.store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact),
@@ -223,13 +203,7 @@ func TestRenderTrees_SelectedSelfSourceReproducer(t *testing.T) {
 			)
 			assert.NoError(t, err)
 			assert.Diff(t, delta.Paths(), []string(nil))
-			t.Logf(
-				"paired run=%d side=%d kept prerequisites=%v root declarations=%d",
-				run,
-				side,
-				prerequisites,
-				len(declarations),
-			)
+			t.Logf("paired run=%d side=%d unchanged root and source payload excluded", run, side)
 		}
 	}
 }

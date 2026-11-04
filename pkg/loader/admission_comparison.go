@@ -196,16 +196,7 @@ func (c *admissionClosure) affected(id manifest.NamedResource, obj manifest.Base
 			return true
 		}
 	}
-	roots := record.ContentRoots
-	if roots == nil && obj != nil {
-		roots = map[manifest.NamedResource][]string{}
-		c.populateContentRoots(id, obj, roots)
-	}
-
-	if c.incoming.Obj != nil && c.incoming.Obj.Named() == id {
-		source := c.incomingContentSource(obj, &record)
-		roots = map[manifest.NamedResource][]string{source: slices.Collect(manifest.RenderRoots(obj))}
-	}
+	roots := c.contentRoots(id, obj, &record)
 	for source, roots := range roots {
 		if c.affectedSourceRoots(id, source, roots, &record) {
 			return true
@@ -405,4 +396,22 @@ func (c *admissionClosure) affectedClaim(id manifest.NamedResource, prefix, inde
 		}
 	}
 	return true
+}
+
+func (c *admissionClosure) contentRoots(
+	id manifest.NamedResource,
+	obj manifest.BaseManifest,
+	record *manifest.DiscoveryRecord,
+) map[manifest.NamedResource][]string {
+	roots := record.ContentRoots
+	if roots == nil && obj != nil {
+		roots = map[manifest.NamedResource][]string{}
+		c.populateContentRoots(id, obj, roots)
+	}
+
+	if c.incoming.Obj != nil && c.incoming.Obj.Named() == id && (record.ContentRoots == nil || !id.ReportHidden()) {
+		source := c.incomingContentSource(obj, record)
+		roots = map[manifest.NamedResource][]string{source: slices.Collect(manifest.RenderRoots(obj))}
+	}
+	return roots
 }

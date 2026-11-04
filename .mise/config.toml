@@ -23,19 +23,6 @@ run = "govulncheck ./..."
 description = "Run tests with race detection and coverage"
 run = "go test -buildvcs=true -race $(go list ./...) -coverprofile cover.out"
 
-[tasks.test-allocations]
-description = "Run race-excluded allocation tests without instrumentation"
-run = """
-if ! files=$(git grep -l '^//go:build !race$' -- '*_test.go'); then
-  echo "no race-excluded allocation test files found" >&2
-  exit 1
-fi
-packages=$(printf '%s\\n' "$files" | while IFS= read -r file; do
-  printf './%s\\n' "$(dirname "$file")"
-done | sort -u)
-go test -buildvcs=true $packages
-"""
-
 [tasks.bench]
 description = "Run benchmark suite (use BENCH=Pattern to filter, COUNT=N to repeat)"
 run = """

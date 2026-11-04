@@ -361,14 +361,16 @@ func testParseFileResultOwnershipCaseCompletion(t *testing.T, scope *testParseFi
 	if (*scope.testCaseInput).cached {
 		cached := scope.r.cache[(*scope.path)]
 		var children []store.Child
-		for _, child := range cached.objects {
+		for i := range cached.objects {
+			child := cached.objects[i]
 			if child.outcome.Err == nil {
 				children = append(children, child.Child)
 			}
 		}
 		(*scope.assertNames)(children, []string{"first", "producer", "last"})
 		var failure error
-		for _, child := range cached.objects {
+		for i := range cached.objects {
+			child := cached.objects[i]
 			if child.outcome.Err != nil {
 				failure = child.outcome.Err
 				{

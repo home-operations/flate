@@ -535,7 +535,8 @@ func testFilterSubstitutionGeneratorProducersQualifiedDeclarations(t *testing.T)
 		for _, target := range []manifest.NamedResource{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}, {Kind: manifest.KindSecret, Namespace: "apps", Name: "secret"}} {
 			evidence := st.Productions(target, l.Index)
 			assert.FatalIf(t, len(evidence) == 0, "missing evidence for %s", target)
-			for _, p := range evidence {
+			for i := range evidence {
+				p := evidence[i]
 				if p.File != "" {
 					assert.Equal(t, p.Source, source.Named())
 				}

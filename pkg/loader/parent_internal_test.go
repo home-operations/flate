@@ -190,7 +190,8 @@ func parentsForTest(t *testing.T, l *Loader, repoRoot, kind string) map[manifest
 		assert.NoError(t, err)
 	}
 	out := map[manifest.NamedResource]manifest.NamedResource{}
-	for id, r := range l.Index.Records {
+	for id := range l.Index.Records {
+		r := l.Index.Records[id]
 		if id.Kind == kind && r.Parent != (manifest.NamedResource{}) {
 			out[id] = r.Parent
 		}

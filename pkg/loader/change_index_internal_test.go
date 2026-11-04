@@ -75,7 +75,8 @@ func (f filterFixture) index() *manifest.DiscoveryIndex {
 			index.Readers[file] = f.readers(file)
 		}
 	}
-	for id, r := range index.Records {
+	for id := range index.Records {
+		r := index.Records[id]
 		{
 			owners, _ := index.OwnersOfFile(r.File)
 			r.Productions = testutil.ProductionEvidence(owners)
@@ -87,8 +88,10 @@ func (f filterFixture) index() *manifest.DiscoveryIndex {
 			index.Records[id] = r
 		}
 	}
-	for id, r := range index.Records {
-		for _, p := range r.Productions {
+	for id := range index.Records {
+		r := index.Records[id]
+		for i := range r.Productions {
+			p := r.Productions[i]
 			if f.objects == nil {
 				continue
 			}

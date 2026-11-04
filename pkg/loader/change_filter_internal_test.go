@@ -33,7 +33,9 @@ func (f *admissionFixture) addRecursive(id manifest.NamedResource) []manifest.Na
 func (f *admissionFixture) productionOwners(id manifest.NamedResource) []manifest.NamedResource {
 	var owners []manifest.NamedResource
 	s := f.last
-	for _, p := range s.productions(id) {
+	productions := s.productions(id)
+	for i := range productions {
+		p := productions[i]
 		if owner := p.Materializer(id); owner != (manifest.NamedResource{}) && !slices.Contains(owners, owner) {
 			owners = append(owners, owner)
 		}

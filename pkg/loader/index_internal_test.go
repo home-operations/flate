@@ -96,6 +96,7 @@ func renderers(index *manifest.DiscoveryIndex, id manifest.NamedResource) []mani
 
 func filesForTest(index *manifest.DiscoveryIndex) map[manifest.NamedResource]string {
 	files := map[manifest.NamedResource]string{}
+	//nolint:gocritic // The iterator supplies filtered value snapshots through its callback.
 	for id, r := range index.Files() {
 		files[id] = r.File
 	}
@@ -113,6 +114,7 @@ func declarationOwnersForTest(index *manifest.DiscoveryIndex, id manifest.NamedR
 }
 
 func emissionParentForTest(index *manifest.DiscoveryIndex, file string) (manifest.NamedResource, bool) {
+	//nolint:gocritic // The iterator supplies filtered value snapshots through its callback.
 	for _, r := range index.Files() {
 		if r.File == file && r.Parent != (manifest.NamedResource{}) {
 			return r.Parent, true
@@ -124,7 +126,8 @@ func emissionParentForTest(index *manifest.DiscoveryIndex, file string) (manifes
 func snapshotIndexForTest(index *manifest.DiscoveryIndex) manifest.DiscoveryIndex {
 	snapshot := *index
 	snapshot.Records = maps.Clone(index.Records)
-	for id, r := range snapshot.Records {
+	for id := range snapshot.Records {
+		r := snapshot.Records[id]
 		r.Refs = slices.Clone(r.Refs)
 		r.Productions = slices.Clone(r.Productions)
 		snapshot.Records[id] = r

@@ -413,7 +413,9 @@ func testAddEmittedCrossSourceOptionalInputEvidenceCase(
 	assert.Equal(t, len(inputMap(changes)), 0)
 	setup := admissionClosure{loader: filter.loader, objects: st, incoming: child}
 	assert.Equal(t, setup.affected(child.Obj.Named(), child.Obj), false)
-	for _, production := range st.IncomingProductions(child, index) {
+	productions := st.IncomingProductions(child, index)
+	for i := range productions {
+		production := productions[i]
 		assert.Equal(t, setup.fileChanged(production.Source, production.File), false)
 	}
 	var reads store.ReadSet

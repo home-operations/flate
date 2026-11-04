@@ -347,18 +347,37 @@ func synthDeepComponents(b *testing.B, root string, depth int) {
 }
 
 func BenchmarkProjectIdentity(b *testing.B) {
-	for _, tc := range []struct {
+	cases := []struct {
 		name     string
 		view     graphVisit
 		object   manifest.RawObject
 		distinct bool
 	}{
 		{name: "untransformed", object: manifest.RawObject{APIVersion: "v1", Kind: "ConfigMap", Name: "values"}},
-		{name: "namespace", view: graphVisit{namespace: "apps"}, object: manifest.RawObject{APIVersion: "v1", Kind: "ConfigMap", Name: "values"}},
-		{name: "warm transformed", view: graphVisit{namespace: "apps", namePrefix: "pre-", nameSuffix: "-post"}, object: manifest.RawObject{APIVersion: "v1", Kind: "ConfigMap", Name: "values"}},
-		{name: "warm Namespace", view: graphVisit{namespace: "apps"}, object: manifest.RawObject{APIVersion: "v1", Kind: "Namespace", Name: "_"}},
-		{name: "distinct transformed", view: graphVisit{namespace: "apps", namePrefix: "pre-", nameSuffix: "-post"}, object: manifest.RawObject{APIVersion: "v1", Kind: "ConfigMap", Name: "values"}, distinct: true},
-	} {
+		{
+			name:   "namespace",
+			view:   graphVisit{namespace: "apps"},
+			object: manifest.RawObject{APIVersion: "v1", Kind: "ConfigMap", Name: "values"},
+		},
+		{
+			name:   "warm transformed",
+			view:   graphVisit{namespace: "apps", namePrefix: "pre-", nameSuffix: "-post"},
+			object: manifest.RawObject{APIVersion: "v1", Kind: "ConfigMap", Name: "values"},
+		},
+		{
+			name:   "warm Namespace",
+			view:   graphVisit{namespace: "apps"},
+			object: manifest.RawObject{APIVersion: "v1", Kind: "Namespace", Name: "_"},
+		},
+		{
+			name:     "distinct transformed",
+			view:     graphVisit{namespace: "apps", namePrefix: "pre-", nameSuffix: "-post"},
+			object:   manifest.RawObject{APIVersion: "v1", Kind: "ConfigMap", Name: "values"},
+			distinct: true,
+		},
+	}
+	for i := range cases {
+		tc := cases[i]
 		b.Run(tc.name, func(b *testing.B) {
 			objects := []manifest.RawObject{tc.object}
 			if tc.distinct {

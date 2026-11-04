@@ -248,7 +248,16 @@ spec:
 		!errors.Is(retainedErrorsForTest(l)[independentFile], independentError) {
 		t.Fatalf("remount and finalization changed replacement errors: %v", retainedErrorsForTest(l))
 	}
-	testRegisterBuiltTransformedEvidenceCompletion(t, &testRegisterBuiltTransformedEvidenceCompletionState{st: &st, l: &l, selectedFile: &selectedFile, data: &data, docs: &docs})
+	testRegisterBuiltTransformedEvidenceCompletion(
+		t,
+		&testRegisterBuiltTransformedEvidenceCompletionState{
+			st:           &st,
+			l:            &l,
+			selectedFile: &selectedFile,
+			data:         &data,
+			docs:         &docs,
+		},
+	)
 }
 
 func TestRegisterBuilt_SharedInputs(t *testing.T) {
@@ -641,7 +650,10 @@ type testRegisterBuiltTransformedEvidenceCompletionState struct {
 	docs         *[]store.Child
 }
 
-func testRegisterBuiltTransformedEvidenceCompletion(t *testing.T, scope *testRegisterBuiltTransformedEvidenceCompletionState) {
+func testRegisterBuiltTransformedEvidenceCompletion(
+	t *testing.T,
+	scope *testRegisterBuiltTransformedEvidenceCompletionState,
+) {
 	t.Helper()
 	var generated manifest.NamedResource
 	for _, child := range *scope.docs {
@@ -679,7 +691,8 @@ func testRegisterBuiltTransformedEvidenceCompletion(t *testing.T, scope *testReg
 		if strings.HasPrefix(id.Name, "generated-dev-") {
 			generated = id
 		}
-		for _, production := range record.Productions {
+		for i := range record.Productions {
+			production := record.Productions[i]
 			{
 				assert.ErrorIf(
 					t,
@@ -694,6 +707,7 @@ func testRegisterBuiltTransformedEvidenceCompletion(t *testing.T, scope *testReg
 	if generated.Name == "" {
 		t.Fatalf("upstream generated hash missing from built output: %s", bytes.TrimSpace((*scope.data)))
 	}
+	//nolint:gocritic // The iterator supplies filtered value snapshots through its callback.
 	for id, record := range (*scope.l).Index.Files() {
 		{
 			assert.ErrorIf(

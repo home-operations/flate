@@ -402,7 +402,8 @@ func testParsedInputsContentAndAdmissionIsolationIndependentEntries(
 			occurrences, err := l.Occurrences(t.Context(), path, "")
 			assert.NoError(t, err)
 			assert.Equal(t, len(occurrences), 2)
-			for _, occurrence := range occurrences {
+			for i := range occurrences {
+				occurrence := occurrences[i]
 				assert.Equal(t, occurrence.Identity.Namespace, side)
 				assert.Equal(t, occurrence.Identity.Name, side+"-"+occurrence.Authored.Name)
 			}

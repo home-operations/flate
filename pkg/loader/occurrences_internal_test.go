@@ -349,9 +349,11 @@ func testOccurrenceClaimsCapturedSubsetAndIdentityRetainedFailureBeforeSuccessfu
 	assert.Diff(t, l.OccurrenceClaims(root, first), []manifest.KSClaim{{ID: want, Prefix: "captured/"}})
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	failed := testutil.KustomizationID("authored", "failed")
+	//nolint:gocritic // The iterator supplies filtered value snapshots through its callback.
 	for _, record := range l.Index.Files() {
 		assert.Equal(t, record.Authored == failed, false)
-		for _, production := range record.Productions {
+		for i := range record.Productions {
+			production := record.Productions[i]
 			assert.Equal(t, production.Authored == failed, false)
 		}
 	}
@@ -431,10 +433,12 @@ func testProjectIdentityCompleteInputsEqualResolvedNamespaceWithDistinctVisitNam
 
 	l := &Loader{}
 	obj := &manifest.ConfigMap{Name: "values"}
-	for _, view := range []graphVisit{
+	views := []graphVisit{
 		{namespace: "selected", fallback: "ignored", namePrefix: "pre-"},
 		{fallback: "selected", namePrefix: "pre-"},
-	} {
+	}
+	for i := range views {
+		view := views[i]
 		got, err := l.projectIdentity(obj.Named(), view, "v1", manifest.KindOf(obj).Namespaced())
 		assert.NoError(t, err)
 		assert.Equal(
@@ -451,11 +455,13 @@ func testProjectIdentityCompleteInputsExcludedTransformsStillDistinguishExactInp
 
 	l := &Loader{}
 	obj := &manifest.RawObject{APIVersion: "v1", Kind: "Namespace", Name: "_"}
-	for i, view := range []graphVisit{
+	views := []graphVisit{
 		{namespace: "selected"},
 		{namespace: "selected", namePrefix: "pre-"},
 		{namespace: "selected", nameSuffix: "-post"},
-	} {
+	}
+	for i := range views {
+		view := views[i]
 		got, err := l.projectIdentity(obj.Named(), view, obj.APIVersion, manifest.KindOf(obj).Namespaced())
 		assert.NoError(t, err)
 		assert.Equal(t, got, manifest.NamedResource{Kind: "Namespace", Name: "selected"})

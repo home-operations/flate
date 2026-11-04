@@ -253,7 +253,8 @@ spec:
 			)
 		}
 		facts := l.locations[owner].facts
-		for _, input := range facts.templateInputs {
+		for i := range facts.templateInputs {
+			input := facts.templateInputs[i]
 			assert.FatalIf(
 				t,
 				input.Reference.Name == "rejected" || slices.Contains(input.Reference.Files, "second"),
@@ -529,7 +530,9 @@ func testAdmitGraphProjectionCase2(t *testing.T, testCaseInput *struct {
 	assert.Diff(t, l.recordNamespaces(r, ""), testCaseInput.namespaces)
 	assert.Equal(t, l.documents.cache[r.Path].eligible, testCaseInput.eligibility)
 	if testCaseInput.name == "external" {
-		for _, v := range l.scopes.visits[r.Path] {
+		visits := l.scopes.visits[r.Path]
+		for i := range visits {
+			v := visits[i]
 			{
 				assert.FatalIf(
 					t,
@@ -681,7 +684,8 @@ func testAdmitGraphProjectionPathWitnessConstructionLifetime(t *testing.T) {
 	l.Admit(root)
 	assert.Equal(t, len(l.PathObjects()), 1)
 	paths := make([]string, 0, len(witnesses))
-	for _, child := range witnesses {
+	for i := range witnesses {
+		child := witnesses[i]
 		_, path, _ := child.SourcePath()
 		paths = append(paths, path)
 	}

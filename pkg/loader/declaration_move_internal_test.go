@@ -269,6 +269,7 @@ func testAdmissionUnchangedDeclarationMoveCase(
 
 	loaders, changes := declarationMovePair(t, "move", (*testCaseInput))
 	for _, l := range loaders {
+		//nolint:gocritic // The iterator supplies filtered value snapshots through its callback.
 		for _, record := range l.Index.Files() {
 			assert.Equal(t, record.Declaration == nil, true)
 		}

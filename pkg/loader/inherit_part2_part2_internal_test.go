@@ -44,7 +44,8 @@ func testAdmitGraphProjectionEffectiveNamesIncludeNamespaceTransformation(t *tes
 		occurrences, err := l.Occurrences(t.Context(), filepath.Join(root, side), "")
 		assert.NoError(t, err)
 		ids := make([]manifest.NamedResource, 0, len(occurrences))
-		for _, o := range occurrences {
+		for i := range occurrences {
+			o := occurrences[i]
 			ids = append(ids, o.Identity)
 			{
 				assert.FatalIf(t, o.object.Named() != o.Authored, "%s", "projection mutated an authored object")
@@ -470,6 +471,7 @@ spec:
 	if len(testCaseInput.wantKS) != 0 {
 		id := testutil.KustomizationID("flux-system", "myapp")
 		var r manifest.DiscoveryRecord
+		//nolint:gocritic // The iterator supplies filtered value snapshots through its callback.
 		for _, record := range l.Index.Files() {
 			if record.Authored == id {
 				r = record
@@ -547,6 +549,7 @@ func testAdmitGraphProjectionCase4Completion(t *testing.T, scope *testAdmitGraph
 		}
 		assert.Diff(t, (*scope.l).recordNamespaces((*scope.raw), "myns"), (*scope.testCaseInput).wantKS)
 		got, want := map[manifest.NamedResource][]manifest.NamedResource{}, map[manifest.NamedResource][]manifest.NamedResource{}
+		//nolint:gocritic // The iterator supplies filtered value snapshots through its callback.
 		for id, r := range (*scope.l).Index.Files() {
 			if r.Path == scope.raw.Path {
 				assert.Equal(t, r.Authored, scope.raw.Authored)

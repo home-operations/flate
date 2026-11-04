@@ -28,6 +28,7 @@ func BenchmarkFinalizeIndex_WideDirectory(b *testing.B) {
 	for b.Loop() {
 		l := loaderFixture(store.New(), files)
 		l.documents = documents
+		//nolint:gocritic // The timed setup needs value snapshots without additional map lookups.
 		for id, r := range l.Index.Records {
 			r.Path = filepath.Join(root, r.File)
 			l.Index.Records[id] = r
@@ -61,6 +62,7 @@ func BenchmarkFinalizeIndex_LocalChart(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		l := loaderFixture(st, files)
+		//nolint:gocritic // The timed setup needs value snapshots without additional map lookups.
 		for id, r := range l.Index.Records {
 			r.Refs = []manifest.NamedResource{source.Named()}
 			l.Index.Records[id] = r

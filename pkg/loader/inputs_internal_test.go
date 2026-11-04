@@ -631,6 +631,7 @@ func testLoaderInputRolesAndAdmissionCase(t *testing.T, testCaseInput *struct {
 		assert.NoError(t, err)
 	}
 	admitted := map[manifest.NamedResource]bool{}
+	//nolint:gocritic // The iterator supplies filtered value snapshots through its callback.
 	for id, record := range l.Index.Files() {
 		admitted[id] = l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, record.Path)
 	}

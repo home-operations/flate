@@ -510,7 +510,8 @@ func testSelfProduceBuilderRecordProducedReuseCase(
 	}
 	{
 		got := testing.AllocsPerRun(100, func() {
-			for _, visit := range visits {
+			for i := range visits {
+				visit := visits[i]
 				_, err := builder.recordProduced(t.Context(), visit, nil, l)
 				if err != nil {
 					t.Fatal(err)

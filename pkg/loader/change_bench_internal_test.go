@@ -235,7 +235,9 @@ func BenchmarkAddEmitted_OneSidedSuppliers(b *testing.B) {
 					setup.affected(children[0].Obj.Named(), children[0].Obj) {
 					b.Fatal("supplier scan would be bypassed")
 				}
-				for _, production := range st.IncomingProductions(children[0], index) {
+				productions := st.IncomingProductions(children[0], index)
+				for i := range productions {
+					production := productions[i]
 					if setup.fileChanged(production.Source, production.File) {
 						b.Fatal("incoming production would bypass supplier scan")
 					}

@@ -342,35 +342,7 @@ func testPromoteOrphansIndexedEvidenceCase(t *testing.T, testCaseInput testPromo
 			), "chart did not read independent declarations: %+v", readers)
 		}
 	} else {
-		{
-			{
-				_, err := l.Load(t.Context(), root)
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
-		}
-		occurrences, err := l.Occurrences(t.Context(), root, "")
-		{
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
-		var sharedDeclarations []loader.OccurrenceID
-		{
-			oValues := occurrences
-			for oIndex := range oValues {
-				o := oValues[oIndex]
-
-				if o.Identity == (*testCaseInput.shared) {
-					sharedDeclarations = append(sharedDeclarations, o.Declaration)
-				}
-			}
-		}
-		{
-			assert.FatalIf(
-				t,
-				len(sharedDeclarations) != 2 || sharedDeclarations[0] == sharedDeclarations[1],
-				"identity collapse erased distinct orphan occurrences: %+v",
-				sharedDeclarations,
-			)
-		}
+		assertOrphanOccurrencesDistinct(t, l, root, testCaseInput.shared)
 	}
 	for _, id := range []manifest.NamedResource{(*testCaseInput.x), (*testCaseInput.shared), (*testCaseInput.sibling)} {
 		file := "a.yaml"
@@ -704,23 +676,61 @@ func testPromoteOrphansSecretPrecedenceCase(t *testing.T, testCaseInput *string,
 		{
 			assert.FatalIf(t, doc == nil, "%v", "promoted or restored secret lost its authoritative document")
 		}
-		if (*testCaseInput) == "failed" || (*testCaseInput) == "preexisting" ||
-			(*testCaseInput) == "graph-owned" {
-			{
-				assert.FatalIf(
-					t,
-					doc["metadata"].(map[string]any)["uid"] != "saved-secret",
-					"saved secret metadata lost: %v",
-					doc,
-				)
+		assertOrphanSecretSnapshot(t, doc, testCaseInput, saved[i])
+	}
+}
+
+func assertOrphanOccurrencesDistinct(t *testing.T, l *loader.Loader, root string, shared *manifest.NamedResource) {
+	t.Helper()
+	{
+		{
+			_, err := l.Load(t.Context(), root)
+			assert.FatalIf(t, err != nil, "%v", err)
+		}
+	}
+	occurrences, err := l.Occurrences(t.Context(), root, "")
+	{
+		assert.FatalIf(t, err != nil, "%v", err)
+	}
+	var sharedDeclarations []loader.OccurrenceID
+	{
+		oValues := occurrences
+		for oIndex := range oValues {
+			o := oValues[oIndex]
+
+			if o.Identity == (*shared) {
+				sharedDeclarations = append(sharedDeclarations, o.Declaration)
 			}
 		}
-		wantSaved := "..PLACEHOLDER_HOST.."
-		if (*testCaseInput) == "preexisting" {
-			wantSaved = "preexisting-value"
-		}
+	}
+	{
+		assert.FatalIf(
+			t,
+			len(sharedDeclarations) != 2 || sharedDeclarations[0] == sharedDeclarations[1],
+			"identity collapse erased distinct orphan occurrences: %+v",
+			sharedDeclarations,
+		)
+	}
+}
+
+func assertOrphanSecretSnapshot(t *testing.T, doc map[string]any, testCaseInput *string, saved *manifest.Secret) {
+	t.Helper()
+	if (*testCaseInput) == "failed" || (*testCaseInput) == "preexisting" ||
+		(*testCaseInput) == "graph-owned" {
 		{
-			assert.ErrorIf(t, saved[i].StringData["HOST"] != wantSaved, "%v", "saved immutable Secret mutated")
+			assert.FatalIf(
+				t,
+				doc["metadata"].(map[string]any)["uid"] != "saved-secret",
+				"saved secret metadata lost: %v",
+				doc,
+			)
 		}
+	}
+	wantSaved := "..PLACEHOLDER_HOST.."
+	if (*testCaseInput) == "preexisting" {
+		wantSaved = "preexisting-value"
+	}
+	{
+		assert.ErrorIf(t, saved.StringData["HOST"] != wantSaved, "%v", "saved immutable Secret mutated")
 	}
 }

@@ -303,7 +303,18 @@ func testFilterCrossSourceOptionalInputPairedSidesCase(
 			st.SetArtifact(manifest.BootstrapSourceID, original[side].(*store.SourceArtifact))
 		}
 	}
-	testFilterCrossSourceOptionalInputPairedSidesCaseCompletion(t, &testFilterCrossSourceOptionalInputPairedSidesCaseCompletionState{testCaseInput: testCaseInput, changes: changes, stores: &stores, roots: &roots, source: source, consumer: consumer, sibling: sibling})
+	testFilterCrossSourceOptionalInputPairedSidesCaseCompletion(
+		t,
+		&testFilterCrossSourceOptionalInputPairedSidesCaseCompletionState{
+			testCaseInput: testCaseInput,
+			changes:       changes,
+			stores:        &stores,
+			roots:         &roots,
+			source:        source,
+			consumer:      consumer,
+			sibling:       sibling,
+		},
+	)
 }
 
 func testFilterChangedInputUsesDeclarationSourceCase(
@@ -614,7 +625,10 @@ type testFilterCrossSourceOptionalInputPairedSidesCaseCompletionState struct {
 	sibling       *manifest.Kustomization
 }
 
-func testFilterCrossSourceOptionalInputPairedSidesCaseCompletion(t *testing.T, scope *testFilterCrossSourceOptionalInputPairedSidesCaseCompletionState) {
+func testFilterCrossSourceOptionalInputPairedSidesCaseCompletion(
+	t *testing.T,
+	scope *testFilterCrossSourceOptionalInputPairedSidesCaseCompletionState,
+) {
 	t.Helper()
 	for side, st := range *scope.stores {
 		index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
@@ -642,7 +656,7 @@ func testFilterCrossSourceOptionalInputPairedSidesCaseCompletion(t *testing.T, s
 		}
 		filter := newAdmission(
 			t,
-			admissionConfig{changes: scope.changes, index: index, inventory: st, root: (*scope.roots)[side]},
+			admissionConfig{changes: scope.changes, index: index, inventory: st, root: scope.roots[side]},
 		)
 		want := (*scope.testCaseInput) == "exact_removed" || (*scope.testCaseInput) == "deferred_consumer" ||
 			(*scope.testCaseInput) ==

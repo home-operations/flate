@@ -127,7 +127,10 @@ func declarationMovePair(t *testing.T, scenario string, reverse bool) ([2]*Loade
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 		loaders[side] = l
 	}
-	return declarationMovePairCompletion(t, &declarationMovePairCompletionState{scenario: &scenario, reverse: &reverse, loaders: &loaders, inputs: &inputs})
+	return declarationMovePairCompletion(
+		t,
+		&declarationMovePairCompletionState{scenario: &scenario, reverse: &reverse, loaders: &loaders, inputs: &inputs},
+	)
 }
 
 func TestAdmission_UnchangedDeclarationMove(t *testing.T) {
@@ -318,26 +321,29 @@ func declarationMovePairCompletion(t *testing.T, scope *declarationMovePairCompl
 			Namespace: "apps",
 			Name:      "chart",
 		}
-		record := (*scope.loaders)[1].Index.Records[id]
+		record := scope.loaders[1].Index.Records[id]
 		for i := range record.Productions {
 			record.Productions[i].Source.Name = "foreign"
 		}
-		(*scope.loaders)[1].Index.Records[id] = record
+		scope.loaders[1].Index.Records[id] = record
 	}
 	if *scope.reverse {
-		(*scope.loaders)[0], (*scope.loaders)[1] = (*scope.loaders)[1], (*scope.loaders)[0]
-		(*scope.inputs)[0], (*scope.inputs)[1] = (*scope.inputs)[1], (*scope.inputs)[0]
+		scope.loaders[0], scope.loaders[1] = scope.loaders[1], scope.loaders[0]
+		scope.inputs[0], scope.inputs[1] = scope.inputs[1], scope.inputs[0]
 	}
 	if (*scope.scenario) == "partial" {
-		(*scope.loaders)[1].Index.CompleteSources = nil
+		scope.loaders[1].Index.CompleteSources = nil
 	}
-	changes, err := change.Detect(t.Context(), (*scope.inputs)[0], (*scope.inputs)[1])
+	changes, err := change.Detect(t.Context(), scope.inputs[0], scope.inputs[1])
 	assert.NoError(t, err)
 	changes, err = changes.WithReaders(
 		t.Context(),
-		(*scope.loaders)[0].Index,
-		(*scope.loaders)[1].Index,
-		[2]map[manifest.NamedResource]inputprojection.Projection{(*scope.loaders)[0].InputContent, (*scope.loaders)[1].InputContent},
+		scope.loaders[0].Index,
+		scope.loaders[1].Index,
+		[2]map[manifest.NamedResource]inputprojection.Projection{
+			scope.loaders[0].InputContent,
+			scope.loaders[1].InputContent,
+		},
 	)
 	assert.NoError(t, err)
 	for side, l := range *scope.loaders {

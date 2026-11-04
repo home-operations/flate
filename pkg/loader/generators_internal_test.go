@@ -91,13 +91,15 @@ func testFinalizeIndexGeneratorDataCase(t *testing.T, testCaseInput *struct {
 	testutil.WriteFile(
 		t,
 		root,
-		"apps/a/kustomization.yaml", testCaseInput.namespace+testCaseInput.kind+"Generator:\n- name: input\n  namespace: inner\n  "+input+"\n- name: sibling\n  namespace: inner\n  literals: [VALUE=sibling]\n",
+		"apps/a/kustomization.yaml",
+		testCaseInput.namespace+testCaseInput.kind+"Generator:\n- name: input\n  namespace: inner\n  "+input+"\n- name: sibling\n  namespace: inner\n  literals: [VALUE=sibling]\n",
 	)
 	if testCaseInput.escape {
 		testutil.WriteFile(
 			t,
 			parent,
-			"outside/kustomization.yaml", testCaseInput.kind+"Generator:\n- name: input\n  namespace: inner\n  "+testCaseInput.input+"\n",
+			"outside/kustomization.yaml",
+			testCaseInput.kind+"Generator:\n- name: input\n  namespace: inner\n  "+testCaseInput.input+"\n",
 		)
 		testutil.WriteFile(
 			t,
@@ -162,7 +164,18 @@ func testFinalizeIndexGeneratorDataCase(t *testing.T, testCaseInput *struct {
 		_, err := l.Load(t.Context(), filepath.Join(root, "apps/a"))
 		assert.NoError(t, err)
 	}
-	testFinalizeIndexGeneratorDataCaseCompletion(t, &testFinalizeIndexGeneratorDataCaseCompletionState{testCaseInput: &testCaseInput, root: &root, st: &st, ks: &ks, kind: &kind, id: &id, l: &l})
+	testFinalizeIndexGeneratorDataCaseCompletion(
+		t,
+		&testFinalizeIndexGeneratorDataCaseCompletionState{
+			testCaseInput: &testCaseInput,
+			root:          &root,
+			st:            &st,
+			ks:            &ks,
+			kind:          &kind,
+			id:            &id,
+			l:             &l,
+		},
+	)
 }
 
 type testFinalizeIndexGeneratorDataCaseCompletionState struct {
@@ -188,7 +201,10 @@ type testFinalizeIndexGeneratorDataCaseCompletionState struct {
 	l    **Loader
 }
 
-func testFinalizeIndexGeneratorDataCaseCompletion(t *testing.T, scope *testFinalizeIndexGeneratorDataCaseCompletionState) {
+func testFinalizeIndexGeneratorDataCaseCompletion(
+	t *testing.T,
+	scope *testFinalizeIndexGeneratorDataCaseCompletionState,
+) {
 	t.Helper()
 	{
 		err := (*scope.l).FinalizeIndex(t.Context(), (*scope.root), true)
@@ -244,7 +260,7 @@ func testFinalizeIndexGeneratorDataCaseCompletion(t *testing.T, scope *testFinal
 		got := testutil.Owners((*scope.l).Index.Records[(*scope.id)].Productions)
 		assert.FatalIf(t, !slices.Equal(got, owners), "Production owners = %v, want %v", got, owners)
 	}
-	(*scope.id).Name = "sibling"
+	scope.id.Name = "sibling"
 	{
 		assert.FatalIf(
 			t,

@@ -280,22 +280,27 @@ func testAdmissionDuplicateInputContentCase(t *testing.T, testCaseInput *string,
 	}
 }
 
-func testAdmissionInputVisibilityCaseCompletion(t *testing.T, hide *bool, loaders *[2]*Loader, stores *[2]*store.Store) {
+func testAdmissionInputVisibilityCaseCompletion(
+	t *testing.T,
+	hide *bool,
+	loaders *[2]*Loader,
+	stores *[2]*store.Store,
+) {
 	t.Helper()
 	for _, reverse := range []bool{false, true} {
 		before, after := 0, 1
 		if reverse {
 			before, after = after, before
 		}
-		changes, err := change.Qualify(t.Context(), nil, (*stores)[before], (*stores)[after])
+		changes, err := change.Qualify(t.Context(), nil, stores[before], stores[after])
 		assert.NoError(t, err)
 		changes, err = changes.WithReaders(
 			t.Context(),
-			(*loaders)[before].Index,
-			(*loaders)[after].Index,
+			loaders[before].Index,
+			loaders[after].Index,
 			[2]map[manifest.NamedResource]inputprojection.Projection{
-				(*loaders)[before].InputContent,
-				(*loaders)[after].InputContent,
+				loaders[before].InputContent,
+				loaders[after].InputContent,
 			},
 		)
 		assert.NoError(t, err)

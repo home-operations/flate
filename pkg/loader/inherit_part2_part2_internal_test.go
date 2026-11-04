@@ -478,7 +478,12 @@ spec:
 		}
 		authored := l.authoredObject(r.Path, r.Authored)
 		{
-			assert.FatalIf(t, authored.Doc == nil || manifest.DocIdentity(authored.Doc) != r.Authored, "projection lost authored document: %v", authored.Doc)
+			assert.FatalIf(
+				t,
+				authored.Doc == nil || manifest.DocIdentity(authored.Doc) != r.Authored,
+				"projection lost authored document: %v",
+				authored.Doc,
+			)
 		}
 		original, _ = authored.Obj.(*manifest.Kustomization)
 		{
@@ -487,7 +492,17 @@ spec:
 		snapshot = original.Clone()
 		raw = r
 	}
-	testAdmitGraphProjectionCase4Completion(t, &testAdmitGraphProjectionCase4CompletionState{testCaseInput: &testCaseInput, root: &root, l: &l, original: &original, snapshot: &snapshot, raw: &raw})
+	testAdmitGraphProjectionCase4Completion(
+		t,
+		&testAdmitGraphProjectionCase4CompletionState{
+			testCaseInput: &testCaseInput,
+			root:          &root,
+			l:             &l,
+			original:      &original,
+			snapshot:      &snapshot,
+			raw:           &raw,
+		},
+	)
 }
 
 type testAdmitGraphProjectionCase4CompletionState struct {
@@ -523,7 +538,7 @@ func testAdmitGraphProjectionCase4Completion(t *testing.T, scope *testAdmitGraph
 		}
 		{
 			diff := cmp.Diff(
-				(*scope.l).authoredObject((*scope.raw).Path, (*scope.raw).Authored).Obj,
+				(*scope.l).authoredObject(scope.raw.Path, scope.raw.Authored).Obj,
 				(*scope.snapshot),
 				cmp.AllowUnexported(manifest.Kustomization{}),
 				cmpopts.IgnoreFields(manifest.Kustomization{}, "projection"),
@@ -533,8 +548,8 @@ func testAdmitGraphProjectionCase4Completion(t *testing.T, scope *testAdmitGraph
 		assert.Diff(t, (*scope.l).recordNamespaces((*scope.raw), "myns"), (*scope.testCaseInput).wantKS)
 		got, want := map[manifest.NamedResource][]manifest.NamedResource{}, map[manifest.NamedResource][]manifest.NamedResource{}
 		for id, r := range (*scope.l).Index.Files() {
-			if r.Path == (*scope.raw).Path {
-				assert.Equal(t, r.Authored, (*scope.raw).Authored)
+			if r.Path == scope.raw.Path {
+				assert.Equal(t, r.Authored, scope.raw.Authored)
 				got[id] = r.Refs
 			}
 		}
@@ -580,7 +595,13 @@ func testAdmitGraphProjectionCase4Completion(t *testing.T, scope *testAdmitGraph
 		r, _ := (*scope.l).Index.Lookup(testutil.HelmReleaseID("apps", "app"))
 		readers := (*scope.l).Index.Readers[r.File]
 		{
-			assert.FatalIf(t, len(readers) != 1 || readers[0].Reader != testutil.KustomizationID("flux-system", "pinned"), "committed source file %q readers = %v", r.File, readers)
+			assert.FatalIf(
+				t,
+				len(readers) != 1 || readers[0].Reader != testutil.KustomizationID("flux-system", "pinned"),
+				"committed source file %q readers = %v",
+				r.File,
+				readers,
+			)
 		}
 	}
 	if (*scope.testCaseInput).name == "cross_tree" {

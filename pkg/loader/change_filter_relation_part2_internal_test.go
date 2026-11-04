@@ -440,7 +440,15 @@ func testQualifyContentFingerprintCase(t *testing.T, testCaseInput *string,
 		st[i].AddObject(source)
 		st[i].SetArtifact(id, art)
 	}
-	testQualifyContentFingerprintCaseCompletion(t, &testQualifyContentFingerprintCaseCompletionState{testCaseInput: &testCaseInput, st: &st, id: &id, readers: &readers})
+	testQualifyContentFingerprintCaseCompletion(
+		t,
+		&testQualifyContentFingerprintCaseCompletionState{
+			testCaseInput: &testCaseInput,
+			st:            &st,
+			id:            &id,
+			readers:       &readers,
+		},
+	)
 }
 
 func testFilterEqualSelectedSourcesCase(t *testing.T, testCaseInput *string,
@@ -589,7 +597,20 @@ func testFilterEqualSelectedSourcesCase(t *testing.T, testCaseInput *string,
 			st.SetArtifact(other.Named(), &art)
 		}
 	}
-	testFilterEqualSelectedSourcesCaseCompletion(t, &testFilterEqualSelectedSourcesCaseCompletionState{testCaseInput: &testCaseInput, source: &source, owner: &owner, selected: &selected, err: &err, expectedOpens: &expectedOpens, stores: &stores, roots: &roots, indexes: &indexes})
+	testFilterEqualSelectedSourcesCaseCompletion(
+		t,
+		&testFilterEqualSelectedSourcesCaseCompletionState{
+			testCaseInput: &testCaseInput,
+			source:        &source,
+			owner:         &owner,
+			selected:      &selected,
+			err:           &err,
+			expectedOpens: &expectedOpens,
+			stores:        &stores,
+			roots:         &roots,
+			indexes:       &indexes,
+		},
+	)
 }
 
 type testQualifyContentFingerprintCaseCompletionState struct {
@@ -599,7 +620,10 @@ type testQualifyContentFingerprintCaseCompletionState struct {
 	readers       *[2]*relationReader
 }
 
-func testQualifyContentFingerprintCaseCompletion(t *testing.T, scope *testQualifyContentFingerprintCaseCompletionState) {
+func testQualifyContentFingerprintCaseCompletion(
+	t *testing.T,
+	scope *testQualifyContentFingerprintCaseCompletionState,
+) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -610,7 +634,7 @@ func testQualifyContentFingerprintCaseCompletion(t *testing.T, scope *testQualif
 	if (*(*scope.testCaseInput)) == "bootstrap" {
 		changes = nil
 	}
-	qualified, err := change.Qualify(ctx, changes, (*scope.st)[0], (*scope.st)[1])
+	qualified, err := change.Qualify(ctx, changes, scope.st[0], scope.st[1])
 	if (*(*scope.testCaseInput)) == "error" || (*(*scope.testCaseInput)) == "canceled" ||
 		(*(*scope.testCaseInput)) == "callback_canceled" ||
 		(*(*scope.testCaseInput)) == "callback_deadline" {
@@ -649,7 +673,10 @@ type testFilterEqualSelectedSourcesCaseCompletionState struct {
 	indexes       *[]*manifest.DiscoveryIndex
 }
 
-func testFilterEqualSelectedSourcesCaseCompletion(t *testing.T, scope *testFilterEqualSelectedSourcesCaseCompletionState) {
+func testFilterEqualSelectedSourcesCaseCompletion(
+	t *testing.T,
+	scope *testFilterEqualSelectedSourcesCaseCompletionState,
+) {
 	t.Helper()
 	var changes *change.Set
 	paths := []string{"apps/cm.yaml"}
@@ -686,7 +713,7 @@ func testFilterEqualSelectedSourcesCaseCompletion(t *testing.T, scope *testFilte
 	assert.Equal(t, sourceChanges(supplied, (*scope.source).Named()) == nil, true)
 	if (*(*scope.testCaseInput)) == "reader_reuse" {
 		for i, input := range *scope.selected {
-			assert.Equal(t, input.FS.(*relationReader).opens.Load(), (*scope.expectedOpens)[i])
+			assert.Equal(t, input.FS.(*relationReader).opens.Load(), scope.expectedOpens[i])
 		}
 	}
 	if (*(*scope.testCaseInput)) == "comparison_policy" {
@@ -712,7 +739,12 @@ func testFilterEqualSelectedSourcesCaseCompletion(t *testing.T, scope *testFilte
 	for i := range *scope.stores {
 		kept[i] = newAdmission(
 			t,
-			admissionConfig{changes: changes, index: (*scope.indexes)[i], inventory: (*scope.stores)[i], root: (*scope.roots)[i]},
+			admissionConfig{
+				changes:   changes,
+				index:     (*scope.indexes)[i],
+				inventory: (*scope.stores)[i],
+				root:      (*scope.roots)[i],
+			},
 		).KeepNames()
 		t.Logf("side %d exact kept identities: %v", i, kept[i])
 		want := []string{}

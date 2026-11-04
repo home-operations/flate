@@ -517,31 +517,31 @@ func testSelectorVisibilityCaseCompletion(t *testing.T, scope *testSelectorVisib
 	changes, err := change.Qualify(
 		t.Context(),
 		change.NewSet([]string{".krmignore"}),
-		(*scope.stores)[0],
-		(*scope.stores)[1],
+		scope.stores[0],
+		scope.stores[1],
 	)
 	assert.NoError(t, err)
 	changes, err = changes.WithReaders(
 		t.Context(),
-		(*scope.indexes)[0],
-		(*scope.indexes)[1],
+		scope.indexes[0],
+		scope.indexes[1],
 		[2]map[manifest.NamedResource]inputprojection.Projection{},
 	)
 	assert.NoError(t, err)
-	changes, err = changes.WithDeclarations(t.Context(), (*scope.stores)[0], (*scope.stores)[1], (*scope.prepared))
+	changes, err = changes.WithDeclarations(t.Context(), scope.stores[0], scope.stores[1], (*scope.prepared))
 	assert.NoError(t, err)
 	for side, l := range *scope.loaders {
 		l.Options.Changes = changes
 		l.freezeConstruction()
 		if manifest.TreeSide(side) != (*(*scope.testCaseInput).visibleSide) {
-			assert.Equal(t, (*scope.stores)[side].GetObject((*scope.provider).Named()), nil)
+			assert.Equal(t, scope.stores[side].GetObject((*scope.provider).Named()), nil)
 			_, located := l.locations[(*scope.provider).Named()]
 			assert.Equal(t, located, false)
 			assert.Equal(t, l.candidates[(*scope.provider).Named()].Obj, nil)
 		}
 		child := store.Child{}
 		if *(*scope.testCaseInput).incoming {
-			child = (*scope.prepared)[side][(*scope.app).Named()]
+			child = scope.prepared[side][(*scope.app).Named()]
 		}
 		proposal, err := l.Prepare(t.Context(), child, nil, nil)
 		assert.NoError(t, err)
@@ -552,8 +552,8 @@ func testSelectorVisibilityCaseCompletion(t *testing.T, scope *testSelectorVisib
 			slices.Contains(proposal.Needed, (*scope.provider).Named()),
 			manifest.TreeSide(side) == (*(*scope.testCaseInput).visibleSide),
 		)
-		assert.Equal(t, slices.Contains(proposal.Selected, (*scope.other).Named()), false)
-		assert.Equal(t, slices.Contains(proposal.Dirty, (*scope.other).Named()), false)
+		assert.Equal(t, slices.Contains(proposal.Selected, scope.other.Named()), false)
+		assert.Equal(t, slices.Contains(proposal.Dirty, scope.other.Named()), false)
 		for _, control := range (*scope.controls)[1:] {
 			assert.Equal(t, slices.Contains(proposal.Needed, control.Named()), false)
 		}

@@ -316,7 +316,17 @@ metadata: {namespace: apps}
 		}
 		assert.Diff(t, got, names)
 	}
-	testParseFileResultOwnershipCaseCompletion(t, &testParseFileResultOwnershipCaseCompletionState{testCaseInput: &testCaseInput, path: &path, r: &r, header: &header, want: &want, assertNames: &assertNames})
+	testParseFileResultOwnershipCaseCompletion(
+		t,
+		&testParseFileResultOwnershipCaseCompletionState{
+			testCaseInput: &testCaseInput,
+			path:          &path,
+			r:             &r,
+			header:        &header,
+			want:          &want,
+			assertNames:   &assertNames,
+		},
+	)
 }
 
 type testParseFileResultOwnershipCaseCompletionState struct {
@@ -335,21 +345,21 @@ type testParseFileResultOwnershipCaseCompletionState struct {
 
 func testParseFileResultOwnershipCaseCompletion(t *testing.T, scope *testParseFileResultOwnershipCaseCompletionState) {
 	t.Helper()
-	first, err := (*scope.r).parseFile(t.Context(), (*scope.path), manifest.ParseDocOptions{})
+	first, err := scope.r.parseFile(t.Context(), (*scope.path), manifest.ParseDocOptions{})
 	(*scope.assertNames)(first, (*scope.want))
 	assert.NoError(t, err)
 	slices.Reverse(first)
 	first[0] = store.Child{}
-	second, err := (*scope.r).parseFile(t.Context(), (*scope.path), manifest.ParseDocOptions{})
+	second, err := scope.r.parseFile(t.Context(), (*scope.path), manifest.ParseDocOptions{})
 	assert.NoError(t, err)
 	(*scope.assertNames)(second, (*scope.want))
 	slices.Reverse(second)
 	second[0] = store.Child{}
-	third, err := (*scope.r).parseFile(t.Context(), (*scope.path), manifest.ParseDocOptions{})
+	third, err := scope.r.parseFile(t.Context(), (*scope.path), manifest.ParseDocOptions{})
 	assert.NoError(t, err)
 	(*scope.assertNames)(third, (*scope.want))
 	if (*scope.testCaseInput).cached {
-		cached := (*scope.r).cache[(*scope.path)]
+		cached := scope.r.cache[(*scope.path)]
 		var children []store.Child
 		for _, child := range cached.objects {
 			if child.outcome.Err == nil {
@@ -397,8 +407,8 @@ func testParseFileResultOwnershipCaseCompletion(t *testing.T, scope *testParseFi
 				targets,
 			)
 		}
-		assert.Equal(t, cached.body, (*scope.header).body)
-		assert.Equal(t, cached.file, (*scope.header).file)
-		assert.Equal(t, cached.loaded, (*scope.header).loaded)
+		assert.Equal(t, cached.body, scope.header.body)
+		assert.Equal(t, cached.file, scope.header.file)
+		assert.Equal(t, cached.loaded, scope.header.loaded)
 	}
 }

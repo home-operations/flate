@@ -35,7 +35,7 @@ func (d *Session) discardPinnedWorkingTreeFiles(repoRoot string) {
 		if _, pinned := pinnedSources[id]; pinned {
 			continue
 		}
-		if !d.pinnedWorkingTreeFile(repoRoot, prefixes, id, record) {
+		if !d.pinnedWorkingTreeFile(repoRoot, prefixes, id, &record) {
 			continue
 		}
 		d.cfg.Store.DeleteObject(id)
@@ -72,7 +72,7 @@ func (d *Session) pinnedWorkingTreeFile(
 	repoRoot string,
 	prefixes []manifest.KSClaim,
 	id manifest.NamedResource,
-	record manifest.DiscoveryRecord,
+	record *manifest.DiscoveryRecord,
 ) bool {
 	if len(prefixes) == 0 {
 		return false
@@ -128,6 +128,8 @@ func (d *Session) loadSourcePath(
 }
 
 // Begin binds sources and collects declarations without evaluating standalone packages.
+//
+//nolint:gocritic // Public session construction preserves its configuration value snapshot.
 func Begin(ctx context.Context, cfg Config) (*Session, error) {
 	if cfg.Store == nil {
 		return nil, errors.New("discovery: Store is required")
@@ -154,10 +156,47 @@ func (d *Session) Advance(ctx context.Context, admission *loader.Admission) (boo
 	if d.result != nil || admission == nil {
 		return false, nil
 	}
+	changed, refresh, err := d.admitRequiredObjects(ctx, admission.Objects)
+	if err != nil {
+		return false, err
+	}
+	root := d.cfg.Input.LocalPath
+	owners := d.neededMaterializers(admission.Needed)
+	pending, err := d.pendingProducers(ctx, admission, root, owners)
+	if err != nil {
+		return false, err
+	}
+	for _, id := range slices.SortedFunc(maps.Keys(pending), manifest.NamedResource.Compare) {
+		ks := pending[id]
+		prepared, err := d.preparePendingProducer(ctx, ks)
+		if err != nil {
+			if ctx.Err() != nil {
+				return false, ctx.Err() //nolint:wrapcheck // Preserve cancellation identity after producer preparation.
+			}
+			if d.binding.Producer == ks.Named() {
+				d.binding.Failure = err
+			}
+			slog.Debug("discovery: declaration preparation deferred", "err", err)
+			return false, nil
+		}
+		if prepared {
+			changed, refresh = true, true
+		}
+	}
+	if !changed || !refresh {
+		return changed, nil
+	}
+	if err := d.refreshDeclarations(ctx, root); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (d *Session) admitRequiredObjects(ctx context.Context, objects []store.Child) (bool, bool, error) {
 	changed, refresh := false, false
-	for _, child := range admission.Objects {
+	for _, child := range objects {
 		if err := ctx.Err(); err != nil {
-			return false, fmt.Errorf("context: %w", err)
+			return false, false, fmt.Errorf("context: %w", err)
 		}
 		if child.Obj != nil && d.cfg.Store.GetObject(child.Obj.Named()) == nil {
 			d.cfg.Store.AddObject(child.Obj, child.Doc)
@@ -167,9 +206,12 @@ func (d *Session) Advance(ctx context.Context, admission *loader.Admission) (boo
 			refresh = refresh || hasPath || source
 		}
 	}
-	root := d.cfg.Input.LocalPath
+	return changed, refresh, nil
+}
+
+func (d *Session) neededMaterializers(needed []manifest.NamedResource) map[manifest.NamedResource]bool {
 	owners := map[manifest.NamedResource]bool{}
-	for _, id := range admission.Needed {
+	for _, id := range needed {
 		if !id.KindInfo().Runnable {
 			continue
 		}
@@ -184,6 +226,15 @@ func (d *Session) Advance(ctx context.Context, admission *loader.Admission) (boo
 			}
 		}
 	}
+	return owners
+}
+
+func (d *Session) pendingProducers(
+	ctx context.Context,
+	admission *loader.Admission,
+	root string,
+	owners map[manifest.NamedResource]bool,
+) (map[manifest.NamedResource]*manifest.Kustomization, error) {
 	pending := map[manifest.NamedResource]*manifest.Kustomization{}
 	for _, child := range d.loader.Kustomizations() {
 		ks := child.Obj.(*manifest.Kustomization) //nolint:errcheck // This branch handles an admitted Kustomization.
@@ -204,46 +255,40 @@ func (d *Session) Advance(ctx context.Context, admission *loader.Admission) (boo
 			var err error
 			ks, err = d.bindEntry(ctx, root)
 			if err != nil {
-				return false, err
+				return nil, err
 			}
 			d.cfg.Store.AddObject(ks)
 		}
 		pending[ks.Named()] = ks
 	}
-	for _, id := range slices.SortedFunc(maps.Keys(pending), manifest.NamedResource.Compare) {
-		ks := pending[id]
-		input, _, err := kustomize.SourceInput(d.cfg.Store, ks)
-		if err != nil || d.cfg.Trees == nil || ks.PostBuild != nil && len(ks.PostBuild.SubstituteFrom) != 0 {
-			continue
-		}
-		if previous, ok := d.prepared[ks]; ok && previous.registered && previous.source == input {
-			continue
-		}
-		if err := d.prepareProducer(ctx, ks, input); err != nil {
-			if ctx.Err() != nil {
-				return false, ctx.Err()
-			}
-			if d.binding.Producer == ks.Named() {
-				d.binding.Failure = err
-			}
-			slog.Debug("discovery: declaration preparation deferred", "err", err)
-			return false, nil
-		}
-		changed, refresh = true, true
+	return pending, nil
+}
+
+func (d *Session) preparePendingProducer(ctx context.Context, ks *manifest.Kustomization) (bool, error) {
+	input, _, err := kustomize.SourceInput(d.cfg.Store, ks)
+	if err != nil || d.cfg.Trees == nil || ks.PostBuild != nil && len(ks.PostBuild.SubstituteFrom) != 0 {
+		return false, nil //nolint:nilerr // Unavailable inputs defer preparation to reconciliation.
 	}
-	if !changed || !refresh {
-		return changed, nil
+	if previous, ok := d.prepared[ks]; ok && previous.registered && previous.source == input {
+		return false, nil
 	}
-	if _, err := d.resolveEntrySources(ctx, false); err != nil {
-		return false, err
-	}
-	if err := d.loadManifests(ctx, root, false); err != nil {
-		return false, err
-	}
-	if err := d.loader.FinalizeIndex(ctx, root, false); err != nil {
+	if err := d.prepareProducer(ctx, ks, input); err != nil {
 		return false, err
 	}
 	return true, nil
+}
+
+func (d *Session) refreshDeclarations(ctx context.Context, root string) error {
+	if _, err := d.resolveEntrySources(ctx, false); err != nil {
+		return err
+	}
+	if err := d.loadManifests(ctx, root, false); err != nil {
+		return err
+	}
+	if err := d.loader.FinalizeIndex(ctx, root, false); err != nil {
+		return err
+	}
+	return nil
 }
 
 // Freeze publishes the final index once and releases construction ownership.

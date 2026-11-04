@@ -94,50 +94,14 @@ type Config struct {
 // Run performs the full discovery phase against cfg and writes results
 // into cfg.Store. Returns the structural metadata the orchestrator
 // needs for change-filter construction and controller wiring.
+//
+//nolint:gocritic // Public discovery preserves its configuration value snapshot.
 func Run(ctx context.Context, cfg Config) (*Result, error) {
 	if cfg.Store == nil {
 		return nil, errors.New("discovery: Store is required")
 	}
 	if cfg.session == nil && (cfg.Selection.Changed || len(cfg.Selection.Roots) != 0) {
-		if cfg.Loader == nil {
-			cfg.Loader = loader.New(cfg.Store)
-		}
-		if cfg.Loader.Options.Filter == nil {
-			cfg.Loader.Options.Filter = change.NewFilter()
-		}
-		session, err := Begin(ctx, cfg)
-		if err != nil {
-			return nil, err
-		}
-		for {
-			proposal, err := cfg.Loader.Prepare(ctx, store.Child{}, nil, nil)
-			if err != nil {
-				return nil, err
-			}
-			advanced, err := session.Advance(ctx, proposal)
-			if err != nil {
-				return nil, err
-			}
-			if !advanced {
-				added, retry := cfg.Loader.Options.Filter.AddEmitted(
-					proposal.Needed,
-					proposal.Selected,
-					proposal.Dirty,
-					proposal.Revision,
-				)
-				if retry {
-					return nil, manifest.NewError(
-						manifest.ErrInput,
-						nil,
-						"discovery membership changed during construction",
-					)
-				}
-				for _, id := range added {
-					cfg.Store.SetIncluded(id, true)
-				}
-				return session.Freeze(ctx)
-			}
-		}
+		return runSelected(ctx, &cfg)
 	}
 	d := cfg.session
 	if d == nil {
@@ -155,6 +119,57 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 			return nil, err
 		}
 	}
+	return d.finishDiscovery(ctx, &cfg, repoRoot, l)
+}
+
+func runSelected(ctx context.Context, cfg *Config) (*Result, error) {
+	if cfg.Loader == nil {
+		cfg.Loader = loader.New(cfg.Store)
+	}
+	if cfg.Loader.Options.Filter == nil {
+		cfg.Loader.Options.Filter = change.NewFilter()
+	}
+	session, err := Begin(ctx, *cfg)
+	if err != nil {
+		return nil, err
+	}
+	for {
+		proposal, err := cfg.Loader.Prepare(ctx, store.Child{}, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		advanced, err := session.Advance(ctx, proposal)
+		if err != nil {
+			return nil, err
+		}
+		if !advanced {
+			added, retry := cfg.Loader.Options.Filter.AddEmitted(
+				proposal.Needed,
+				proposal.Selected,
+				proposal.Dirty,
+				proposal.Revision,
+			)
+			if retry {
+				return nil, manifest.NewError(
+					manifest.ErrInput,
+					nil,
+					"discovery membership changed during construction",
+				)
+			}
+			for _, id := range added {
+				cfg.Store.SetIncluded(id, true)
+			}
+			return session.Freeze(ctx)
+		}
+	}
+}
+
+func (d *Session) finishDiscovery(
+	ctx context.Context,
+	cfg *Config,
+	repoRoot string,
+	l *loader.Loader,
+) (*Result, error) {
 	for _, child := range d.loader.Kustomizations() {
 		ks := child.Obj.(*manifest.Kustomization) //nolint:errcheck // This branch handles an admitted Kustomization.
 		if resolved := manifest.MapDependsOn(
@@ -168,14 +183,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 			cfg.Store.AddObject(resolved, doc)
 		}
 	}
-	var standaloneSecrets []manifest.NamedResource
-	if cfg.WipeSecrets {
-		for id := range l.Index.Files() {
-			if id.Group == "" && id.Kind == manifest.KindSecret && d.cfg.Store.GetObject(id) == nil {
-				standaloneSecrets = append(standaloneSecrets, id)
-			}
-		}
-	}
+	standaloneSecrets := d.standaloneSecretIDs(l, cfg.WipeSecrets)
 	if d.binding.Failure == nil {
 		if err := l.EntryFailure(ctx, repoRoot); err != nil {
 			return nil, err
@@ -204,6 +212,18 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		Index:                   l.Index,
 		WipeSecrets:             cfg.WipeSecrets,
 	}, nil
+}
+
+func (d *Session) standaloneSecretIDs(l *loader.Loader, wipeSecrets bool) []manifest.NamedResource {
+	var standaloneSecrets []manifest.NamedResource
+	if wipeSecrets {
+		for id := range l.Index.Files() {
+			if id.Group == "" && id.Kind == manifest.KindSecret && d.cfg.Store.GetObject(id) == nil {
+				standaloneSecrets = append(standaloneSecrets, id)
+			}
+		}
+	}
+	return standaloneSecrets
 }
 
 // PrepareEntry completes discovery preparation after validated receipt evidence is admitted.

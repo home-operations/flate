@@ -186,6 +186,7 @@ Leaf packages (`tree`, `manifest`, `task`, `schedule` behind its `Dispatcher` se
   `ssrfguard.Restrict`, go-git protocol registration, a package variable, or `testing.AllocsPerRun`)
   stays serial with `//nolint:paralleltest // <reason>`.
   Never call `t.Parallel` inside a `synctest` bubble.
+- An allocation claim that fails under the race detector belongs in a benchmark under the allocs/op gate, never a race-excluded test.
 - A matrix axis exists only where the code under test branches on it. Worker counts vary only
   where concurrency is the subject; elsewhere use one count >= 2. Determinism is shown with
   two runs. No iteration loops to provoke races: use explicit synchronization or

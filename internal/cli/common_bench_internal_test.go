@@ -1,0 +1,14 @@
+package cli
+
+import (
+	"testing"
+
+	"github.com/home-operations/flate/internal/selection"
+)
+
+func BenchmarkSelectedWarnings_Empty(b *testing.B) {
+	b.ReportAllocs()
+	for b.Loop() {
+		selectedWarnings(&selection.Selection{})
+	}
+}

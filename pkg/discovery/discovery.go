@@ -422,9 +422,9 @@ func (d *Session) loadManifests(ctx context.Context, repoRoot string, build bool
 			if !safepath.Contains(sourceRoot, target) {
 				continue
 			}
-			loaded, err := d.loadSourcePath(ctx, target, key.source, &total)
-			if err != nil {
-				return err
+			loaded, loadErr := d.loadSourcePath(ctx, target, key.source, &total)
+			if loadErr != nil {
+				return loadErr
 			}
 			if !loaded {
 				continue
@@ -432,51 +432,26 @@ func (d *Session) loadManifests(ctx context.Context, repoRoot string, build bool
 			added++
 		}
 		pending = next
-		if added == 0 {
-			missing, err := d.resolveEntrySources(ctx, true)
-			if err != nil {
-				return err
-			}
-			if missing != 0 {
-				continue
-			}
-			var discovered []*manifest.Kustomization
-			for _, child := range kustomizations {
-				discovered = append(
-					discovered,
-					child.Obj.(*manifest.Kustomization), //nolint:errcheck // This branch handles an admitted Kustomization.
-				)
-			}
-			d.substitutions = values.NewDependencySubstitutions(discovered)
-			if !build {
-				break
-			}
-			ks, err := d.bindEntry(ctx, repoRoot)
-			if err != nil {
-				return err
-			}
-			if err := ctx.Err(); err != nil {
-				return fmt.Errorf("context: %w", err)
-			}
-			l.Admit(repoRoot)
-			if ks == nil {
-				break
-			}
-			source, _, _ := kustomize.SourceInput(d.cfg.Store, ks)
-			if d.cfg.Trees == nil || source == nil || ks.PostBuild != nil && len(ks.PostBuild.SubstituteFrom) != 0 {
-				break
-			}
-			if previous, ok := d.prepared[ks]; ok && previous.registered && previous.source == source {
-				break
-			}
-			if err := d.prepareProducer(ctx, ks, source); err != nil {
-				if ctx.Err() != nil {
-					return ctx.Err()
-				}
-				d.binding.Failure = err
-				slog.Debug("discovery: declaration preparation deferred", "err", err)
-				break
-			}
+		if added != 0 {
+			continue
+		}
+		missing, err := d.resolveEntrySources(ctx, true)
+		if err != nil {
+			return err
+		}
+		if missing != 0 {
+			continue
+		}
+		d.setDependencySubstitutions(kustomizations)
+		if !build {
+			break
+		}
+		prepared, err := d.prepareStandaloneEntry(ctx, repoRoot, l)
+		if err != nil {
+			return err
+		}
+		if !prepared {
+			break
 		}
 	}
 	l.PreferExisting = false
@@ -493,6 +468,50 @@ func (d *Session) loadManifests(ctx context.Context, repoRoot string, build bool
 		repoRoot,
 	)
 	return nil
+}
+
+func (d *Session) setDependencySubstitutions(kustomizations []store.Child) {
+	var discovered []*manifest.Kustomization
+	if len(kustomizations) != 0 {
+		discovered = make([]*manifest.Kustomization, 0, len(kustomizations))
+	}
+	for _, child := range kustomizations {
+		discovered = append(
+			discovered,
+			child.Obj.(*manifest.Kustomization), //nolint:errcheck // This branch handles an admitted Kustomization.
+		)
+	}
+	d.substitutions = values.NewDependencySubstitutions(discovered)
+}
+
+func (d *Session) prepareStandaloneEntry(ctx context.Context, repoRoot string, l *loader.Loader) (bool, error) {
+	ks, err := d.bindEntry(ctx, repoRoot)
+	if err != nil {
+		return false, err
+	}
+	if err := ctx.Err(); err != nil {
+		return false, fmt.Errorf("context: %w", err)
+	}
+	l.Admit(repoRoot)
+	if ks == nil {
+		return false, nil
+	}
+	source, _, _ := kustomize.SourceInput(d.cfg.Store, ks)
+	if d.cfg.Trees == nil || source == nil || ks.PostBuild != nil && len(ks.PostBuild.SubstituteFrom) != 0 {
+		return false, nil
+	}
+	if previous, ok := d.prepared[ks]; ok && previous.registered && previous.source == source {
+		return false, nil
+	}
+	if err := d.prepareProducer(ctx, ks, source); err != nil {
+		if ctx.Err() != nil {
+			return false, ctx.Err() //nolint:wrapcheck // Preserve cancellation identity after producer preparation.
+		}
+		d.binding.Failure = err
+		slog.Debug("discovery: declaration preparation deferred", "err", err)
+		return false, nil
+	}
+	return true, nil
 }
 
 // Binding keeps actual ownership separate from the paired entry comparison coordinate.

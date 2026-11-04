@@ -45,11 +45,12 @@ func testFetcherRevalidationSelectedTagMetadataCase(
 	artifact.manifest, err = json.Marshal(m)
 	assert.NoError(t, err)
 	artifact.manifestDigest = sha256Digest(artifact.manifest)
-	srv, _ := newMutableFakeRegistry(t, artifact)
+	registry := newMutableFakeRegistry(t, artifact)
+
 	var newer atomic.Bool
 	var tags, heads, manifests, layers atomic.Int32
-	handler := srv.Config.Handler
-	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := registry.server.Config.Handler
+	registry.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		testFetcherRevalidationSelectedTagMetadataCaseCallback(
 			w,
 			r,
@@ -64,12 +65,12 @@ func testFetcherRevalidationSelectedTagMetadataCase(
 		)
 	},
 	)
-	srv.StartTLS()
+	registry.server.StartTLS()
 	root := t.TempDir()
 	f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, root, sourcecache.New)}
 	repo := &manifest.OCIRepository{
 		Name: "metadata", Namespace: "test",
-		URL: "oci://" + mustURL(t, srv.URL).Host + "/app", Insecure: true,
+		URL: "oci://" + mustURL(t, registry.server.URL).Host + "/app", Insecure: true,
 		Reference:     &sourcev1.OCIRepositoryRef{SemVer: ">=1.0.0"},
 		LayerSelector: &sourcev1.OCILayerSelector{Operation: (*operation)},
 	}

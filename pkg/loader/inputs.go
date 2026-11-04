@@ -122,18 +122,16 @@ func (l *Loader) ParsedInputs() *ParsedInputs {
 		source.documents = map[string]parsedDocument{}
 		inputs.sources[root] = source
 	}
-	{
-		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-		for file, doc := range l.documents.cache {
-			if doc.body == nil && doc.objects == nil &&
-				(!inputs.compact || !doc.searched && doc.pathState == pathUnknown && doc.decodeErr == nil) {
-				continue
-			}
-			if source, ok := inputs.sources[new(l.documents).mountedRoot(file)]; ok {
-				source.documents[file] = parsedDocument{
-					body: doc.body, file: doc.file, objects: cloneInputObjects(doc.objects),
-					state: doc.pathState, searched: doc.searched, plugins: doc.plugins, decodeErr: doc.decodeErr,
-				}
+	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+	for file, doc := range l.documents.cache {
+		if doc.body == nil && doc.objects == nil &&
+			(!inputs.compact || !doc.searched && doc.pathState == pathUnknown && doc.decodeErr == nil) {
+			continue
+		}
+		if source, ok := inputs.sources[new(l.documents).mountedRoot(file)]; ok {
+			source.documents[file] = parsedDocument{
+				body: doc.body, file: doc.file, objects: cloneInputObjects(doc.objects),
+				state: doc.pathState, searched: doc.searched, plugins: doc.plugins, decodeErr: doc.decodeErr,
 			}
 		}
 	}

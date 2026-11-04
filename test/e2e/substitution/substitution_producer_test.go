@@ -39,7 +39,7 @@ func TestE2E_SubstitutionProducerCycle(t *testing.T) {
 	for _, workers := range []string{"1", "2", "8"} {
 		t.Run("concurrency_"+workers, func(t *testing.T) {
 			for range 2 {
-				stdout, stderr, code := harness.RunCLIBuffers(
+				runCLIBuffersResult1 := harness.RunCLIBuffers(
 					"build",
 					"all",
 					"--path",
@@ -50,6 +50,7 @@ func TestE2E_SubstitutionProducerCycle(t *testing.T) {
 					workers,
 					"--no-progress",
 				)
+				stdout, stderr, code := runCLIBuffersResult1.Stdout, runCLIBuffersResult1.Stderr, runCLIBuffersResult1.Code
 				assert.FatalIf(
 					t,
 					code != 1 || stderr != want,
@@ -67,7 +68,8 @@ func TestE2E_SubstitutionProducerCycle(t *testing.T) {
 					err,
 				)
 				for _, doc := range docs {
-					name, namespace := manifest.DocMetadata(doc)
+					metadata := manifest.DocMetadata(doc)
+					name, namespace := metadata.Name, metadata.Namespace
 					assert.FatalIf(t, manifest.DocKind(doc) != "Kustomization" || namespace != "flux-system" ||
 						name != "a" && name != "b", "cycle emitted workload output: %s", stdout)
 				}
@@ -143,7 +145,8 @@ func TestE2E_SubstitutionProducerTransformedNamespace(t *testing.T) {
 				if mode == "changed" {
 					args = append(args, "--path-orig", original)
 				}
-				stdout, stderr, code := harness.RunCLIBuffers(args...)
+				runCLIBuffersResult2 := harness.RunCLIBuffers(args...)
+				stdout, stderr, code := runCLIBuffersResult2.Stdout, runCLIBuffersResult2.Stderr, runCLIBuffersResult2.Code
 				assert.FatalIf(
 					t,
 					code != 0 || !strings.Contains(stdout, "version: 4.6.2"),
@@ -174,7 +177,7 @@ func TestE2E_SubstitutionCycleDownstream(t *testing.T) {
 	for _, workers := range []string{"2", "8"} {
 		t.Run("concurrency_"+workers, func(t *testing.T) {
 			for range 2 {
-				stdout, stderr, code := harness.RunCLIBuffers(
+				runCLIBuffersResult3 := harness.RunCLIBuffers(
 					"build",
 					"all",
 					"--path",
@@ -185,6 +188,7 @@ func TestE2E_SubstitutionCycleDownstream(t *testing.T) {
 					workers,
 					"--no-progress",
 				)
+				stdout, stderr, code := runCLIBuffersResult3.Stdout, runCLIBuffersResult3.Stderr, runCLIBuffersResult3.Code
 				assert.FatalIf(t, code != 1 || strings.Contains(stderr, "flux-system/consumer  dependency cycle:") ||
 					!strings.Contains(
 						stderr,
@@ -199,7 +203,8 @@ func TestE2E_SubstitutionCycleDownstream(t *testing.T) {
 					err,
 				)
 				for _, doc := range docs {
-					name, namespace := manifest.DocMetadata(doc)
+					metadata2 := manifest.DocMetadata(doc)
+					name, namespace := metadata2.Name, metadata2.Namespace
 					assert.FatalIf(t, manifest.DocKind(doc) != "Kustomization" || namespace != "flux-system" ||
 						name != "a" && name != "b" &&
 							name != "consumer", "blocked consumer emitted workload output: %s", stdout)
@@ -231,7 +236,8 @@ func TestE2E_DependencyCycleWarnings(t *testing.T) {
 		t.Run(verb, func(t *testing.T) {
 			var previous string
 			for range 2 {
-				stdout, stderr, code := harness.RunCLIBuffers(verb, "all", "--path", root, "--concurrency=2")
+				runCLIBuffersResult4 := harness.RunCLIBuffers(verb, "all", "--path", root, "--concurrency=2")
+				stdout, stderr, code := runCLIBuffersResult4.Stdout, runCLIBuffersResult4.Stderr, runCLIBuffersResult4.Code
 				assert.FatalIf(t, code != 1 || strings.Count(stderr, "[DependencyCycle]") != 1 ||
 					!strings.Contains(stdout+stderr, "dependency cycle") ||
 					!strings.Contains(stdout+stderr, "2 failed") ||
@@ -246,7 +252,8 @@ func TestE2E_DependencyCycleWarnings(t *testing.T) {
 						err,
 					)
 					for _, doc := range docs {
-						name, namespace := manifest.DocMetadata(doc)
+						metadata3 := manifest.DocMetadata(doc)
+						name, namespace := metadata3.Name, metadata3.Namespace
 						assert.FatalIf(t, manifest.DocKind(doc) != "Kustomization" || namespace != "flux-system" ||
 							name != "a" && name != "b", "cycle emitted workload output: %s", stdout)
 					}
@@ -265,7 +272,7 @@ func TestE2E_LiteralKustomizationPath(t *testing.T) {
 	}
 }
 
-func e2ESubstitutionProducerRenderingCase(t *testing.T, kind *string, mode *string) {
+func e2ESubstitutionProducerRenderingCase(t *testing.T, kind, mode *string) {
 	t.Helper()
 
 	root := t.TempDir()
@@ -287,7 +294,7 @@ func e2ESubstitutionProducerRenderingCase(t *testing.T, kind *string, mode *stri
 		"unrelated/deployment.yaml",
 		"apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: unrelated-workload}\n",
 	)
-	consumer, err := os.ReadFile(filepath.Join(root, "flux/consumer.yaml"))
+	consumer, err := os.ReadFile(filepath.Join(root, "flux", "consumer.yaml"))
 	assert.NoError(t, err)
 	postBuild := "  postBuild: {substituteFrom: [{kind: " + (*kind) + ", name: settings}]}\n"
 	if (*mode) == "inherited" {
@@ -394,7 +401,8 @@ spec:
 		args[0] = "diff"
 		args = append(args, "-o", "diff")
 	}
-	stdout, stderr, code := harness.RunCLIBuffers(args...)
+	runCLIBuffersResult5 := harness.RunCLIBuffers(args...)
+	stdout, stderr, code := runCLIBuffersResult5.Stdout, runCLIBuffersResult5.Stderr, runCLIBuffersResult5.Code
 	assert.FatalIf(
 		t,
 		(*mode) != "full" && strings.Contains(stdout, "unrelated-workload"),
@@ -484,7 +492,8 @@ func e2ELiteralKustomizationPathMode(t *testing.T, mode *string) {
 	}
 	var previous string
 	for run := range 2 {
-		stdout, stderr, code := harness.RunCLIBuffers(args...)
+		runCLIBuffersResult6 := harness.RunCLIBuffers(args...)
+		stdout, stderr, code := runCLIBuffersResult6.Stdout, runCLIBuffersResult6.Stderr, runCLIBuffersResult6.Code
 		assert.FatalIf(
 			t,
 			code != 0 || !strings.Contains(stdout, "correct") || !strings.Contains(stdout, "apps") ||
@@ -503,7 +512,8 @@ func e2ELiteralKustomizationPathMode(t *testing.T, mode *string) {
 			docs, err := testutil.DecodeDocs(strings.NewReader(stdout))
 			assert.NoError(t, err)
 			for _, doc := range docs {
-				name, _ := manifest.DocMetadata(doc)
+				metadata4 := manifest.DocMetadata(doc)
+				name := metadata4.Name
 				assert.FatalIf(
 					t,
 					manifest.DocKind(doc) == "ConfigMap" && name == "unrelated",

@@ -72,7 +72,8 @@ func (d *Session) loadExpansions(
 		if ks.IsFragment() {
 			continue
 		}
-		sourceRoot, _, external := loader.SourceView(d.cfg.Store, ks.SourceID(), repoRoot)
+		sourceViewResult1 := loader.SourceView(d.cfg.Store, ks.SourceID(), repoRoot)
+		sourceRoot, _, external := sourceViewResult1.Path, sourceViewResult1.Pinned, sourceViewResult1.External
 		if external && d.cfg.Store.GetObject(ks.SourceID()) == nil {
 			next = append(next, key)
 			continue

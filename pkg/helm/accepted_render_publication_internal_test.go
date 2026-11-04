@@ -23,7 +23,7 @@ import (
 func testTemplateAcceptedHistoryDurablePublication(
 	t *testing.T,
 	testCaseInput **testTemplateAcceptedHistoryDurableInputs,
-	records *map[manifest.NamedResource]manifest.DiscoveryRecord,
+	records map[manifest.NamedResource]manifest.DiscoveryRecord,
 ) {
 	t.Helper()
 
@@ -53,14 +53,12 @@ func testTemplateAcceptedHistoryDurablePublication(
 			t,
 			json.Unmarshal(data[12+int(binary.BigEndian.Uint32(data[8:12]))+stored.header.Size:], &actual),
 		)
-		{
-			assert.FatalIf(
-				t,
-				content == "" || content != manifest.Fingerprint(actual),
-				"%s",
-				"stored accepted-frame key does not identify the actual accepted frame",
-			)
-		}
+		assert.FatalIf(
+			t,
+			content == "" || content != manifest.Fingerprint(actual),
+			"%s",
+			"stored accepted-frame key does not identify the actual accepted frame",
+		)
 		return content
 	}
 	unchanged := func() func() {
@@ -77,14 +75,12 @@ func testTemplateAcceptedHistoryDurablePublication(
 			assert.NoError(t, err)
 			current, err := os.ReadFile(indexPath)
 			assert.NoError(t, err)
-			{
-				assert.FatalIf(
-					t,
-					!bytes.Equal(current, content) || !after.ModTime().Equal(before.ModTime()),
-					"%s",
-					"unchanged accepted frame republished the OCI index",
-				)
-			}
+			assert.FatalIf(
+				t,
+				!bytes.Equal(current, content) || !after.ModTime().Equal(before.ModTime()),
+				"%s",
+				"unchanged accepted frame republished the OCI index",
+			)
 		}
 	}
 	assert.NoError(
@@ -95,7 +91,7 @@ func testTemplateAcceptedHistoryDurablePublication(
 				Owner:   accepting,
 				Receipt: pending,
 				Sources: []manifest.SourceEvidence{},
-				Records: maps.All((*records)),
+				Records: maps.All(records),
 			},
 		),
 	)
@@ -110,14 +106,12 @@ func testTemplateAcceptedHistoryDurablePublication(
 	)
 	assert.NoError(t, (*(*testCaseInput).err))
 	resident := pending.Value().(renderFrame)
-	{
-		assert.FatalIf(
-			t,
-			resident.accepted == nil || resident.acceptedKey == "",
-			"%s",
-			"warm receipt did not carry decoded accepted evidence",
-		)
-	}
+	assert.FatalIf(
+		t,
+		resident.accepted == nil || resident.acceptedKey == "",
+		"%s",
+		"warm receipt did not carry decoded accepted evidence",
+	)
 	check := unchanged()
 	assert.NoError(
 		t,
@@ -127,7 +121,7 @@ func testTemplateAcceptedHistoryDurablePublication(
 				Owner:   accepting,
 				Receipt: pending,
 				Sources: []manifest.SourceEvidence{},
-				Records: maps.All((*records)),
+				Records: maps.All(records),
 			},
 		),
 	)
@@ -158,7 +152,7 @@ func testTemplateAcceptedHistoryDurablePublication(
 				Owner:   accepting,
 				Receipt: pending,
 				Sources: []manifest.SourceEvidence{},
-				Records: maps.All((*records)),
+				Records: maps.All(records),
 			},
 		),
 	)
@@ -175,7 +169,7 @@ func testTemplateAcceptedHistoryDurablePublication(
 				Owner:   accepting,
 				Receipt: pending,
 				Sources: []manifest.SourceEvidence{},
-				Records: maps.All((*records)),
+				Records: maps.All(records),
 			},
 		),
 	)
@@ -196,17 +190,13 @@ func testTemplateAcceptedHistoryDurablePublication(
 	)
 	changedIndex, err := os.ReadFile(indexPath)
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(
-			t,
-			storedKey() == initialKey,
-			"%s",
-			"changed accepted frame retained the previous content key",
-		)
-	}
-	{
-		assert.FatalIf(t, bytes.Equal(initialIndex, changedIndex), "%s", "changed accepted frame was not published")
-	}
+	assert.FatalIf(
+		t,
+		storedKey() == initialKey,
+		"%s",
+		"changed accepted frame retained the previous content key",
+	)
+	assert.FatalIf(t, bytes.Equal(initialIndex, changedIndex), "%s", "changed accepted frame was not published")
 	previousRenderPrevious3, previousRenderErr := renderer.PreviousRender(
 		t.Context(),
 		(*(*testCaseInput).hr),
@@ -236,7 +226,7 @@ func testTemplateAcceptedHistoryDurablePublication(
 				Owner:   foreign,
 				Receipt: pending,
 				Sources: []manifest.SourceEvidence{},
-				Records: maps.All((*records)),
+				Records: maps.All(records),
 			},
 		),
 	)
@@ -257,7 +247,7 @@ func testTemplateAcceptedHistoryDurablePublication(
 				Owner:   accepting,
 				Receipt: borrowedReceipt,
 				Sources: []manifest.SourceEvidence{},
-				Records: maps.All((*records)),
+				Records: maps.All(records),
 			},
 		),
 	)
@@ -270,7 +260,7 @@ func testTemplateAcceptedHistoryDurablePublication(
 	)
 	assert.Equal(t, previousRenderErr, true)
 	got := maps.Collect(previousRenderPrevious3)
-	assert.Diff(t, got, (*records))
+	assert.Diff(t, got, records)
 	check = unchanged()
 	assert.NoError(
 		t,
@@ -280,7 +270,7 @@ func testTemplateAcceptedHistoryDurablePublication(
 				Owner:   accepting,
 				Receipt: pending,
 				Sources: []manifest.SourceEvidence{},
-				Records: maps.All((*records)),
+				Records: maps.All(records),
 			},
 		),
 	)
@@ -295,7 +285,7 @@ func testTemplateAcceptedHistoryDurablePublication(
 				Owner:   accepting,
 				Receipt: pending,
 				Sources: []manifest.SourceEvidence{},
-				Records: maps.All((*records)),
+				Records: maps.All(records),
 			},
 		)
 		assert.FatalIf(t, !errors.Is(
@@ -312,7 +302,7 @@ func testTemplateAcceptedHistoryDurablePublication(
 				Owner:   accepting,
 				Receipt: manifest.NewRenderReceipt("invalid", nil),
 				Sources: []manifest.SourceEvidence{},
-				Records: maps.All((*records)),
+				Records: maps.All(records),
 			},
 		)
 		assert.FatalIf(t, !errors.Is(
@@ -348,5 +338,5 @@ func testTemplateAcceptedHistoryDurablePublication(
 	)
 	assert.Equal(t, previousRenderErr, true)
 	got = maps.Collect(previousRenderPrevious3)
-	assert.Diff(t, got, (*records))
+	assert.Diff(t, got, records)
 }

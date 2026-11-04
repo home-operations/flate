@@ -275,7 +275,8 @@ func TestFinalizeIndex_InputProjectionLifetime(t *testing.T) {
 	second, known := l.InputContent[reader]
 	assert.Equal(t, known, true)
 	assert.Equal(t, manifest.ValueEqual(first.Content, second.Content), false)
-	value, present, err := first.Inputs[provider].Value("VALUE")
+	valueResult, err := first.Inputs[provider].Value("VALUE")
+	value, present := valueResult.Value, valueResult.Found
 	assert.NoError(t, err)
 	assert.Equal(t, present, true)
 	assert.Equal(t, value, "old")

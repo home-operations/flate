@@ -65,9 +65,7 @@ func TestExpandValueReferences_WipedScalarPlaceholderTolerated(t *testing.T) {
 		},
 	}
 	omitted, err := ExpandValueReferences(hr, provider, nil)
-	{
-		assert.FatalIf(t, err != nil, "ExpandValueReferences failed for wiped scalar placeholder: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "ExpandValueReferences failed for wiped scalar placeholder: %v", err)
 	assert.Diff(t, omitted, []manifest.NamedResource{sec.Named()})
 	if len(hr.Values) != 0 {
 		t.Errorf("expected empty values, got %v", hr.Values)
@@ -102,37 +100,29 @@ func TestExpandValueReferences_MalformedYAMLClassified(t *testing.T) {
 					},
 				}
 				_, err := ExpandValueReferences(hr, NewStoreProvider(st, true), &Cache{})
-				{
-					assert.FatalIf(
-						t,
-						!errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux),
-						"malformed values must retain input/domain identity: %v",
-						err,
-					)
-				}
+				assert.FatalIf(
+					t,
+					!errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux),
+					"malformed values must retain input/domain identity: %v",
+					err,
+				)
 				for _, detail := range []string{"extra", "requested.yaml"} {
-					{
-						assert.ErrorIf(t, !strings.Contains(err.Error(), detail), "error lacks %q: %v", detail, err)
-					}
+					assert.ErrorIf(t, !strings.Contains(err.Error(), detail), "error lacks %q: %v", detail, err)
 				}
 				wrapped, ok := errors.AsType[interface {
 					error
 					Unwrap() []error
 				}](err)
-				{
-					assert.FatalIf(t, !ok, "parser cause is not wrapped beside ErrInput: %v", err)
-				}
+				assert.FatalIf(t, !ok, "parser cause is not wrapped beside ErrInput: %v", err)
 				causes := wrapped.Unwrap()
 				var decoded map[string]any
 				parseErr := yaml.Unmarshal([]byte(tc.document), &decoded)
-				{
-					assert.FatalIf(
-						t,
-						len(causes) != 2 || parseErr == nil || errors.Unwrap(causes[1]).Error() != parseErr.Error(),
-						"parser cause changed: %v",
-						err,
-					)
-				}
+				assert.FatalIf(
+					t,
+					len(causes) != 2 || parseErr == nil || errors.Unwrap(causes[1]).Error() != parseErr.Error(),
+					"parser cause changed: %v",
+					err,
+				)
 				if tc.typeError {
 					{
 						_, ok := errors.AsType[*json.UnmarshalTypeError](err)

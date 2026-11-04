@@ -44,7 +44,12 @@ func TestEmit_MetadataRefreshFingerprintReuse(t *testing.T) {
 			},
 			"spec": map[string]any{"path": path},
 		}
-		children, docs := parseChildrenForTest(parent.Named(), []map[string]any{doc}, manifest.ParseDocOptions{})
+		parseChildrenForTestResult1 := parseChildrenForTest(
+			parent.Named(),
+			[]map[string]any{doc},
+			manifest.ParseDocOptions{},
+		)
+		children, docs := parseChildrenForTestResult1.Children, parseChildrenForTestResult1.Documents
 		_, _, next := s.GetEmission(parent.Named())
 		defer next.Finish()
 		next.Children, next.Manifests, next.Complete = children, testutil.DocumentOccurrences(docs), true
@@ -52,10 +57,11 @@ func TestEmit_MetadataRefreshFingerprintReuse(t *testing.T) {
 	}
 	publish("first", "app")
 	_, _, next := s.GetEmission(childID)
-	fingerprint, _, _ := newExecution(
+	fingerprintDedupResult2, fingerprintDedupResult2Err := newExecution(
 		c,
 		childID,
 	).FingerprintDedup(t.Context(), childID, "effective-owner-input", &store.Emission{})
+	fingerprint, _, _ := fingerprintDedupResult2.Fingerprint, fingerprintDedupResult2.Reused, fingerprintDedupResult2Err
 	next.Fingerprint, next.Complete = fingerprint, true
 	s.RecordEmitted(childID, &next, nil)
 	next.Finish()
@@ -68,38 +74,33 @@ func TestEmit_MetadataRefreshFingerprintReuse(t *testing.T) {
 	stopStatus := s.AddListener(store.EventStatusUpdated, func(manifest.NamedResource, any) { statuses++ }, false)
 	defer stopStatus()
 	{
-		{
-			_, handled, err := newExecution(
-				c,
-				childID,
-			).FingerprintDedup(t.Context(), childID, "effective-owner-input", &store.Emission{})
-			assert.FatalIf(
-				t,
-				!handled || err != nil || s.GetArtifact(childID, store.ArtifactContent).(*store.Emission).Fingerprint != before.(*store.Emission).Fingerprint || arrivals != 0 ||
-					statuses != 0,
-				"metadata refresh discarded current artifact or replayed work: handled=%t error=%v arrivals=%d statuses=%d",
-				handled,
-				err,
-				arrivals,
-				statuses,
-			)
-		}
-	}
-	publish("third", "different")
-	{
+		fingerprintDedupResult3, fingerprintDedupResult3Err := newExecution(
+			c,
+			childID,
+		).FingerprintDedup(t.Context(), childID, "effective-owner-input", &store.Emission{})
+		_, handled, err := fingerprintDedupResult3.Fingerprint, fingerprintDedupResult3.Reused, fingerprintDedupResult3Err
 		assert.FatalIf(
 			t,
-			s.GetArtifact(childID, store.ArtifactContent) != nil,
-			"%v",
-			"changed effective input exposed stale current artifact",
+			!handled || err != nil || s.GetArtifact(childID, store.ArtifactContent).(*store.Emission).Fingerprint != before.(*store.Emission).Fingerprint || arrivals != 0 ||
+				statuses != 0,
+			"metadata refresh discarded current artifact or replayed work: handled=%t error=%v arrivals=%d statuses=%d",
+			handled,
+			err,
+			arrivals,
+			statuses,
 		)
 	}
+	publish("third", "different")
+	assert.FatalIf(
+		t,
+		s.GetArtifact(childID, store.ArtifactContent) != nil,
+		"%v",
+		"changed effective input exposed stale current artifact",
+	)
 	obj, _, accepted := s.GetEmission(childID)
 	_, replayable := accepted.Replay(fingerprint)
 	accepted.Finish()
-	{
-		assert.FatalIf(t, obj == nil || !replayable, "%v", "failed successor lost accepted render identity")
-	}
+	assert.FatalIf(t, obj == nil || !replayable, "%v", "failed successor lost accepted render identity")
 }
 
 func TestFingerprintDedup_WarningsRebind(t *testing.T) {
@@ -154,16 +155,15 @@ func TestFingerprintDedup_WarningsRebind(t *testing.T) {
 			current := store.SuppliedOverride{Resource: obj.Named(), Keys: []string{"current"}}
 			second.Reads.RecordSuppliedOverride(current)
 			{
-				{
-					_, handled, err := second.FingerprintDedup(
-						t.Context(),
-						obj.Named(),
-						"equal projection",
-						&store.Emission{},
-					)
-					assert.FatalIf(t, !handled ||
-						err != nil, "projection replay: handled=%t error=%v", handled, err)
-				}
+				fingerprintDedupResult4, fingerprintDedupResult4Err := second.FingerprintDedup(
+					t.Context(),
+					obj.Named(),
+					"equal projection",
+					&store.Emission{},
+				)
+				_, handled, err := fingerprintDedupResult4.Fingerprint, fingerprintDedupResult4.Reused, fingerprintDedupResult4Err
+				assert.FatalIf(t, !handled ||
+					err != nil, "projection replay: handled=%t error=%v", handled, err)
 			}
 			second.Reads.Accept()
 			defer second.Close()
@@ -173,9 +173,7 @@ func TestFingerprintDedup_WarningsRebind(t *testing.T) {
 			assert.Diff(t, s.AdvisoryEvidence(), store.AdvisoryEvidence{Overrides: []store.SuppliedOverride{current}})
 			assert.Equal(t, second.Valid(), true)
 			s.SetIncluded(child.Named(), false)
-			{
-				assert.FatalIf(t, !second.Valid(), "%v", "replayed output became a consumed input of its own producer")
-			}
+			assert.FatalIf(t, !second.Valid(), "%v", "replayed output became a consumed input of its own producer")
 		})
 	}
 }
@@ -202,14 +200,13 @@ func TestEmit_PartialRetainsUnvisitedDocuments(t *testing.T) {
 	valid := manifest.DeepCopyMap(invalid)
 	valid["metadata"].(map[string]any)["name"] = "updated"
 	valid["spec"] = map[string]any{"path": "original"}
-	children, docs := parseChildrenForTest(
+	parseChildrenForTestResult5 := parseChildrenForTest(
 		root.Named(),
 		[]map[string]any{secret, valid, invalid},
 		manifest.ParseDocOptions{WipeSecrets: true},
 	)
-	{
-		assert.FatalIf(t, len(children) != 3 || len(docs) != 3, "%v", "invalid predecessor fixture")
-	}
+	children, docs := parseChildrenForTestResult5.Children, parseChildrenForTestResult5.Documents
+	assert.FatalIf(t, len(children) != 3 || len(docs) != 3, "%v", "invalid predecessor fixture")
 	_, _, next := s.GetEmission(root.Named())
 	next.Children, next.Manifests, next.Complete = children, testutil.DocumentOccurrences(docs), true
 	c.emit(t.Context(), root.Named(), &next, nil)
@@ -219,10 +216,8 @@ func TestEmit_PartialRetainsUnvisitedDocuments(t *testing.T) {
 	c.emit(t.Context(), root.Named(), &inherited, nil)
 	_, _, retained := s.GetEmission(root.Named())
 	{
-		{
-			diff := cmp.Diff(docs, testutil.DocumentMaps(retained.Manifests))
-			assert.FatalIf(t, diff != "", "inherited partial changed order or bytes (-want +got): %s", diff)
-		}
+		diff := cmp.Diff(docs, testutil.DocumentMaps(retained.Manifests))
+		assert.FatalIf(t, diff != "", "inherited partial changed order or bytes (-want +got): %s", diff)
 	}
 	inherited.Finish()
 	fresh := map[string]any{
@@ -231,7 +226,12 @@ func TestEmit_PartialRetainsUnvisitedDocuments(t *testing.T) {
 		"metadata":   map[string]any{"name": "fresh", "namespace": "apps"},
 		"data":       map[string]any{"value": "first"},
 	}
-	incoming, incomingDocs := parseChildrenForTest(root.Named(), []map[string]any{fresh}, manifest.ParseDocOptions{})
+	parseChildrenForTestResult6 := parseChildrenForTest(
+		root.Named(),
+		[]map[string]any{fresh},
+		manifest.ParseDocOptions{},
+	)
+	incoming, incomingDocs := parseChildrenForTestResult6.Children, parseChildrenForTestResult6.Documents
 	_, _, partial := s.GetEmission(root.Named())
 	partial.Children, partial.Manifests = incoming, testutil.DocumentOccurrences(incomingDocs)
 	c.emit(t.Context(), root.Named(), &partial, nil)
@@ -239,14 +239,17 @@ func TestEmit_PartialRetainsUnvisitedDocuments(t *testing.T) {
 	_, _, retained = s.GetEmission(root.Named())
 	want := append([]map[string]any{fresh}, docs...)
 	{
-		{
-			diff := cmp.Diff(want, testutil.DocumentMaps(retained.Manifests))
-			assert.FatalIf(t, diff != "", "replacement-doc partial discarded predecessor (-want +got): %s", diff)
-		}
+		diff := cmp.Diff(want, testutil.DocumentMaps(retained.Manifests))
+		assert.FatalIf(t, diff != "", "replacement-doc partial discarded predecessor (-want +got): %s", diff)
 	}
 	fresh = manifest.DeepCopyMap(fresh)
 	fresh["data"].(map[string]any)["value"] = "second"
-	incoming, incomingDocs = parseChildrenForTest(root.Named(), []map[string]any{fresh}, manifest.ParseDocOptions{})
+	parseChildrenForTestResult7 := parseChildrenForTest(
+		root.Named(),
+		[]map[string]any{fresh},
+		manifest.ParseDocOptions{},
+	)
+	incoming, incomingDocs = parseChildrenForTestResult7.Children, parseChildrenForTestResult7.Documents
 	_, _, partial = s.GetEmission(root.Named())
 	partial.Children, partial.Manifests = incoming, testutil.DocumentOccurrences(incomingDocs)
 	c.emit(t.Context(), root.Named(), &partial, nil)
@@ -254,19 +257,22 @@ func TestEmit_PartialRetainsUnvisitedDocuments(t *testing.T) {
 	_, _, retained = s.GetEmission(root.Named())
 	want = append([]map[string]any{fresh}, docs...)
 	{
-		{
-			diff := cmp.Diff(want, testutil.DocumentMaps(retained.Manifests))
-			assert.FatalIf(
-				t,
-				diff != "",
-				"visited actual child did not replace only its documents (-want +got): %s",
-				diff,
-			)
-		}
+		diff := cmp.Diff(want, testutil.DocumentMaps(retained.Manifests))
+		assert.FatalIf(
+			t,
+			diff != "",
+			"visited actual child did not replace only its documents (-want +got): %s",
+			diff,
+		)
 	}
 	valid = manifest.DeepCopyMap(valid)
 	valid["spec"].(map[string]any)["path"] = "updated"
-	incoming, incomingDocs = parseChildrenForTest(root.Named(), []map[string]any{valid}, manifest.ParseDocOptions{})
+	parseChildrenForTestResult8 := parseChildrenForTest(
+		root.Named(),
+		[]map[string]any{valid},
+		manifest.ParseDocOptions{},
+	)
+	incoming, incomingDocs = parseChildrenForTestResult8.Children, parseChildrenForTestResult8.Documents
 	_, _, partial = s.GetEmission(root.Named())
 	partial.Children, partial.Manifests = incoming, testutil.DocumentOccurrences(incomingDocs)
 	c.emit(t.Context(), root.Named(), &partial, nil)
@@ -274,26 +280,22 @@ func TestEmit_PartialRetainsUnvisitedDocuments(t *testing.T) {
 	_, _, retained = s.GetEmission(root.Named())
 	want = []map[string]any{valid, fresh, docs[0], invalid}
 	{
-		{
-			diff := cmp.Diff(want, testutil.DocumentMaps(retained.Manifests))
-			assert.FatalIf(
-				t,
-				diff != "",
-				"same-identity invalid output was mistaken for admitted ownership (-want +got): %s",
-				diff,
-			)
-		}
+		diff := cmp.Diff(want, testutil.DocumentMaps(retained.Manifests))
+		assert.FatalIf(
+			t,
+			diff != "",
+			"same-identity invalid output was mistaken for admitted ownership (-want +got): %s",
+			diff,
+		)
 	}
 	c.emit(t.Context(), root.Named(), &store.Emission{Complete: true}, nil)
 	_, _, retained = s.GetEmission(root.Named())
-	{
-		assert.FatalIf(
-			t,
-			len(retained.Manifests) != 0 || len(retained.Children) != 0,
-			"%v",
-			"complete empty retained unbound invalid output",
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(retained.Manifests) != 0 || len(retained.Children) != 0,
+		"%v",
+		"complete empty retained unbound invalid output",
+	)
 }
 
 func TestEmit_DefaultsNamespace(t *testing.T) {
@@ -475,23 +477,31 @@ func TestEmit_ChangedCompletePayloadDoesNotInheritKey(t *testing.T) {
 		"metadata":   map[string]any{"name": "output", "namespace": "apps"},
 		"data":       map[string]any{"value": "one"},
 	}
-	children, retained := parseChildrenForTest(parent.Named(), []map[string]any{doc}, manifest.ParseDocOptions{})
+	parseChildrenForTestResult9 := parseChildrenForTest(
+		parent.Named(),
+		[]map[string]any{doc},
+		manifest.ParseDocOptions{},
+	)
+	children, retained := parseChildrenForTestResult9.Children, parseChildrenForTestResult9.Documents
 	initial.Children, initial.Manifests = children, testutil.DocumentOccurrences(retained)
 	initial.Fingerprint, initial.Complete = manifest.Fingerprint("rendered input"), true
 	first.Emit(t.Context(), parent.Named(), &initial, nil)
 	initial.Finish()
-	{
-		assert.FatalIf(
-			t,
-			!s.GetArtifact(parent.Named(), store.ArtifactContent).(*store.Emission).OutputReads.Valid(),
-			"%v",
-			"initial output is not valid",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!s.GetArtifact(parent.Named(), store.ArtifactContent).(*store.Emission).OutputReads.Valid(),
+		"%v",
+		"initial output is not valid",
+	)
 	changed := manifest.DeepCopyMap(doc)
 	changed["data"].(map[string]any)["value"] = "two"
 	_, _, next := s.GetEmission(parent.Named())
-	children, retained = parseChildrenForTest(parent.Named(), []map[string]any{changed}, manifest.ParseDocOptions{})
+	parseChildrenForTestResult10 := parseChildrenForTest(
+		parent.Named(),
+		[]map[string]any{changed},
+		manifest.ParseDocOptions{},
+	)
+	children, retained = parseChildrenForTestResult10.Children, parseChildrenForTestResult10.Documents
 	next.Children, next.Manifests = children, testutil.DocumentOccurrences(retained)
 	next.Complete = true
 	c.emit(t.Context(), parent.Named(), &next, nil)
@@ -501,30 +511,25 @@ func TestEmit_ChangedCompletePayloadDoesNotInheritKey(t *testing.T) {
 		t.Errorf("changed complete output inherited key %q", accepted.Fingerprint)
 	}
 	{
-		{
-			_, found := accepted.Replay(initial.Fingerprint)
-			assert.ErrorIf(t, found, "%v", "changed complete output retained a false render mapping")
-		}
+		_, found := accepted.Replay(initial.Fingerprint)
+		assert.ErrorIf(t, found, "%v", "changed complete output retained a false render mapping")
 	}
 	{
-		{
-			diff := cmp.Diff([]map[string]any{changed}, testutil.DocumentMaps(accepted.Manifests))
-			assert.FatalIf(t, diff != "", "changed payload was not published (-want +got): %s", diff)
-		}
+		diff := cmp.Diff([]map[string]any{changed}, testutil.DocumentMaps(accepted.Manifests))
+		assert.FatalIf(t, diff != "", "changed payload was not published (-want +got): %s", diff)
 	}
 	second := newExecution(c, parent.Named())
 	defer second.Close()
 	{
-		{
-			_, handled, err := second.FingerprintDedup(
-				t.Context(),
-				parent.Named(),
-				"rendered input",
-				&store.Emission{},
-			)
-			assert.FatalIf(t, handled ||
-				err != nil, "old render input reused changed bytes: handled=%t error=%v", handled, err)
-		}
+		fingerprintDedupResult11, fingerprintDedupResult11Err := second.FingerprintDedup(
+			t.Context(),
+			parent.Named(),
+			"rendered input",
+			&store.Emission{},
+		)
+		_, handled, err := fingerprintDedupResult11.Fingerprint, fingerprintDedupResult11.Reused, fingerprintDedupResult11Err
+		assert.FatalIf(t, handled ||
+			err != nil, "old render input reused changed bytes: handled=%t error=%v", handled, err)
 	}
 }
 
@@ -595,7 +600,8 @@ func testEmitDefaultsNamespaceCase(t *testing.T, testCaseInput testEmitDefaultsN
 			Namespace:  parent.Namespace,
 		},
 	)
-	children, retained := parseChildrenForTest(parent, docs, opts)
+	parseChildrenForTestResult12 := parseChildrenForTest(parent, docs, opts)
+	children, retained := parseChildrenForTestResult12.Children, parseChildrenForTestResult12.Documents
 	c.emit(
 		t.Context(),
 		parent,
@@ -609,9 +615,7 @@ func testEmitDefaultsNamespaceCase(t *testing.T, testCaseInput testEmitDefaultsN
 	assert.Equal(t, len(children), len(docs))
 	for i, want := range []string{(*testCaseInput.fallback), "release", (*testCaseInput.fallback), "", (*testCaseInput.fallback)} {
 		assert.Equal(t, children[i].Obj.Named().Namespace, want)
-		{
-			assert.ErrorIf(t, s.GetObject(children[i].Obj.Named()) == nil, "child %d was not published", i)
-		}
+		assert.ErrorIf(t, s.GetObject(children[i].Obj.Named()) == nil, "child %d was not published", i)
 	}
 	assert.Diff(t, docs, before)
 	if (*testCaseInput.fallback) != "" {
@@ -620,7 +624,8 @@ func testEmitDefaultsNamespaceCase(t *testing.T, testCaseInput testEmitDefaultsN
 		}
 	}
 	assert.Diff(t, retained, before)
-	replayed, replay := parseChildrenForTest(parent, retained, opts)
+	parseChildrenForTestResult13 := parseChildrenForTest(parent, retained, opts)
+	replayed, replay := parseChildrenForTestResult13.Children, parseChildrenForTestResult13.Documents
 	c.emit(
 		t.Context(),
 		parent,
@@ -673,9 +678,7 @@ func testKeepEmittedInvalidatesCapturedExclusionCase(
 	s.SetIncluded(obj.Named(), false)
 	execution := newExecution(c, obj.Named())
 	t.Cleanup(execution.Close)
-	{
-		assert.FatalIf(t, execution.Reads.Admitted(), "%v", "child admitted before publication")
-	}
+	assert.FatalIf(t, execution.Reads.Admitted(), "%v", "child admitted before publication")
 	c.KeepEmitted(t.Context(), (*testCaseInput.parent), store.Child{Obj: obj}, nil)
 	assert.Equal(t, execution.Reads.Valid(), false)
 	next := newExecution(c, obj.Named())
@@ -768,24 +771,18 @@ func testExecutionReplacementReclaimsBorrowedOutputCase(
 		current.Reads.Accept()
 	})
 	tasks.BlockTillDone()
-	{
-		assert.FatalIf(t, tasks.Failures() != 0 || current == nil, "%v", "replacement did not complete")
-	}
+	assert.FatalIf(t, tasks.Failures() != 0 || current == nil, "%v", "replacement did not complete")
 	defer current.Close()
 	for range st.Sweep() {
 	}
 	runtime.GC()
-	{
-		assert.FatalIf(
-			t,
-			previous.Value() != nil,
-			"%v",
-			"accepted replacement retained predecessor registration storage",
-		)
-	}
-	{
-		assert.FatalIf(t, !current.Valid(), "%v", "replacement retired current output provenance")
-	}
+	assert.FatalIf(
+		t,
+		previous.Value() != nil,
+		"%v",
+		"accepted replacement retained predecessor registration storage",
+	)
+	assert.FatalIf(t, !current.Valid(), "%v", "replacement retired current output provenance")
 	runtime.KeepAlive(st)
 	runtime.KeepAlive(current)
 }

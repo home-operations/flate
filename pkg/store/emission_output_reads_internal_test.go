@@ -135,14 +135,12 @@ func testRecordEmittedRetiresOnlyReplacedOutputBorrowerCase(
 	}
 	current := s.GetArtifact(owner.Named(), ArtifactContent).(*Emission)
 	if (*testCaseInput.mode) == "rebound" || (*testCaseInput.mode) == "keyed_replay" && (*testCaseInput.payload) {
-		{
-			assert.FatalIf(
-				t,
-				!first.retired.Load() || current.OutputReads != &second,
-				"%s",
-				"accepted rebound retained the predecessor borrower",
-			)
-		}
+		assert.FatalIf(
+			t,
+			!first.retired.Load() || current.OutputReads != &second,
+			"%s",
+			"accepted rebound retained the predecessor borrower",
+		)
 	} else {
 		assert.FatalIf(
 			t,
@@ -151,9 +149,7 @@ func testRecordEmittedRetiresOnlyReplacedOutputBorrowerCase(
 			"publication retired an output borrower it did not replace",
 		)
 	}
-	{
-		assert.FatalIf(t, !current.OutputReads.Valid(), "%s", "current output lost valid provenance")
-	}
+	assert.FatalIf(t, !current.OutputReads.Valid(), "%s", "current output lost valid provenance")
 }
 
 type testRecordEmittedRejectedPublicationPreservesOutputWatchesCaseInputs struct {
@@ -214,14 +210,12 @@ func testRecordEmittedRejectedPublicationPreservesOutputWatchesCase(
 		close(captured)
 		tasks.YieldSlot(func() { <-stale })
 		if (*testCaseInput.rejection) == "stale_generation" {
-			{
-				assert.ErrorIf(
-					t,
-					!second.Valid() || next.inputHead.generation == output.inputHead.generation,
-					"%s",
-					"fixture did not isolate stale generation with valid reads",
-				)
-			}
+			assert.ErrorIf(
+				t,
+				!second.Valid() || next.inputHead.generation == output.inputHead.generation,
+				"%s",
+				"fixture did not isolate stale generation with valid reads",
+			)
 		} else {
 			assert.ErrorIf(t, second.Valid(), "%s", "fixture did not invalidate proposal reads")
 		}
@@ -239,26 +233,20 @@ func testRecordEmittedRejectedPublicationPreservesOutputWatchesCase(
 		}
 	})
 	tasks.BlockTillDone()
-	{
-		assert.FatalIf(t, tasks.Failures() != 0, "%s", "publication task panicked")
-	}
+	assert.FatalIf(t, tasks.Failures() != 0, "%s", "publication task panicked")
 	current := s.GetArtifact(owner.Named(), ArtifactContent).(*Emission)
-	{
-		assert.FatalIf(
-			t,
-			current != accepted || current.OutputReads != &first,
-			"%s",
-			"rejection replaced the accepted emission or borrower",
-		)
-	}
-	{
-		assert.ErrorIf(
-			t,
-			first.retired.Load() || !first.Valid(),
-			"%s",
-			"rejection retired or invalidated the accepted output borrower",
-		)
-	}
+	assert.FatalIf(
+		t,
+		current != accepted || current.OutputReads != &first,
+		"%s",
+		"rejection replaced the accepted emission or borrower",
+	)
+	assert.ErrorIf(
+		t,
+		first.retired.Load() || !first.Valid(),
+		"%s",
+		"rejection retired or invalidated the accepted output borrower",
+	)
 	for id := range s.Sweep() {
 		t.Errorf("rejection invalidated unchanged accepted owner %v", id)
 	}
@@ -287,19 +275,15 @@ func testRecordEmittedRejectedPublicationPreservesOutputWatchesCase(
 			"accepted input change did not deliver its owner through Sweep",
 		)
 	}
-	{
-		assert.ErrorIf(t, first.Valid(), "%s", "accepted output remained valid after its input changed")
-	}
+	assert.ErrorIf(t, first.Valid(), "%s", "accepted output remained valid after its input changed")
 	_, _, invalid := s.GetEmission(owner.Named())
 	defer invalid.Finish()
-	{
-		assert.FatalIf(
-			t,
-			len(invalid.Children) != 0 || len(invalid.Manifests) != 0,
-			"%s",
-			"invalid accepted output retained children or manifests",
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(invalid.Children) != 0 || len(invalid.Manifests) != 0,
+		"%s",
+		"invalid accepted output retained children or manifests",
+	)
 }
 
 func testReadSetCloseRetiresHiddenBorrowedOutputCase(
@@ -353,14 +337,12 @@ func testReadSetCloseRetiresHiddenBorrowedOutputCase(
 	} else {
 		publish()
 	}
-	{
-		assert.FatalIf(
-			t,
-			s.GetArtifact(declaration.Named(), ArtifactContent) != nil,
-			"%s",
-			"changed parent input left the old artifact visible",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.GetArtifact(declaration.Named(), ArtifactContent) != nil,
+		"%s",
+		"changed parent input left the old artifact visible",
+	)
 	second.Init(s, declaration.Named(), nil)
 	second.GetObject(declaration.Named())
 	second.Close()
@@ -412,22 +394,18 @@ func testReadSetCloseRetiresHiddenBorrowedOutputCaseCompletion(
 			registrations,
 		)
 	}
-	{
-		assert.FatalIf(
-			t,
-			scope.first.GetObject((*scope.declaration).Named()) != (*scope.declaration),
-			"%s",
-			"closing discarded the accepted read snapshot",
-		)
-	}
-	{
-		assert.FatalIf(
-			t,
-			!slices.Contains(slices.Collect(scope.first.Required()), scope.parent.Named()),
-			"%s",
-			"closing discarded the accepted required-input footprint",
-		)
-	}
+	assert.FatalIf(
+		t,
+		scope.first.GetObject((*scope.declaration).Named()) != (*scope.declaration),
+		"%s",
+		"closing discarded the accepted read snapshot",
+	)
+	assert.FatalIf(
+		t,
+		!slices.Contains(slices.Collect(scope.first.Required()), scope.parent.Named()),
+		"%s",
+		"closing discarded the accepted required-input footprint",
+	)
 	sh := scope.s.shardFor((*scope.declaration).Named())
 	sh.mu.RLock()
 	var retained *ReadSet
@@ -437,7 +415,5 @@ func testReadSetCloseRetiresHiddenBorrowedOutputCaseCompletion(
 		retained = sh.slots[(*scope.declaration).Named()].current.Load().OutputReads
 	}
 	sh.mu.RUnlock()
-	{
-		assert.FatalIf(t, retained != scope.first, "%s", "closing discarded borrowed output provenance")
-	}
+	assert.FatalIf(t, retained != scope.first, "%s", "closing discarded borrowed output provenance")
 }

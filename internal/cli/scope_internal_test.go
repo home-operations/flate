@@ -78,7 +78,8 @@ func TestRun_NamedScope_UnrelatedFailure(t *testing.T) {
 			var want string
 			for _, path := range []string{root, filepath.Join(root, "cluster")} {
 				args := []string{"build", kind, "selected", "--path", path, "--cache-dir", cache, "--concurrency", "2"}
-				out, errOut, code := runCLI(t, args...)
+				cli := runCLI(t, args...)
+				out, errOut, code := cli.stdout, cli.stderr, cli.code
 				assert.FatalIf(t, code != 0, "named build exited %d: %s", code, errOut)
 				want = cmp.Or(want, out)
 				assert.FatalIf(t, out == "" || out != want, "selected YAML differs: want %s, got %s", want, out)
@@ -89,7 +90,7 @@ func TestRun_NamedScope_UnrelatedFailure(t *testing.T) {
 					errOut,
 				)
 			}
-			_, stderr, code := runCLI(
+			cli2 := runCLI(
 				t,
 				"build",
 				"all",
@@ -100,6 +101,7 @@ func TestRun_NamedScope_UnrelatedFailure(t *testing.T) {
 				"--concurrency",
 				"2",
 			)
+			stderr, code := cli2.stderr, cli2.code
 			assert.FatalIf(
 				t,
 				code != 1 || !strings.Contains(stderr, "outside") || !strings.Contains(stderr, "unrelated"),
@@ -153,14 +155,16 @@ func TestRun_NamedScope_CommandsAndNamespace(t *testing.T) {
 				appendScopeSpec(t, root, "cluster/ks.yaml", "  postBuild: {substitute: {GREETING: changed}}\n")
 				args = append(args, "--path-orig", filepath.Join(orig, "cluster"), "-o", "diff")
 			}
-			_, stderr, code := runCLI(t, args...)
+			cli := runCLI(t, args...)
+			stderr, code := cli.stderr, cli.code
 			assert.FatalIf(t, code != 0, "healthy named command exited %d: %s", code, stderr)
 			file, ns := "cluster/hr.yaml", "apps"
 			if tc.kind == "ks" {
 				file, ns = "cluster/ks.yaml", "flux-system"
 			}
 			appendScopeSpec(t, root, file, "  dependsOn: [{name: missing, namespace: other}]\n")
-			_, stderr, code = runCLI(t, append(args, "-n", ns)...)
+			cli2 := runCLI(t, append(args, "-n", ns)...)
+			stderr, code = cli2.stderr, cli2.code
 			assert.FatalIf(
 				t,
 				code != 1 || !strings.Contains(stderr, "missing"),
@@ -190,7 +194,7 @@ func TestRun_NamedScope_UnnamedAndNoMatch(t *testing.T) {
 			if args[0] == "diff" {
 				args = append(args, "--path-orig", filepath.Join(writeNamedScopeFixture(t), "cluster"))
 			}
-			_, stderr, code := runCLI(
+			cli := runCLI(
 				t,
 				append(
 					args,
@@ -201,6 +205,7 @@ func TestRun_NamedScope_UnnamedAndNoMatch(t *testing.T) {
 					"--concurrency",
 					"2",
 				)...)
+			stderr, code := cli.stderr, cli.code
 			assert.FatalIf(t, code != 1 || stderr == "", "expected failure: %d %s", code, stderr)
 			assert.FatalIf(
 				t,
@@ -251,7 +256,7 @@ func TestRun_NamedScope_SubstituteOwners(t *testing.T) {
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestRun_NamedScope_AllMatchingNamespaces(t *testing.T) {
 	root := writeNamedScopeFixture(t)
-	body, err := os.ReadFile(filepath.Join(root, "cluster/hr.yaml"))
+	body, err := os.ReadFile(filepath.Join(root, "cluster", "hr.yaml"))
 	assert.NoError(t, err)
 	testutil.WriteFile(
 		t,
@@ -260,7 +265,9 @@ func TestRun_NamedScope_AllMatchingNamespaces(t *testing.T) {
 		strings.Replace(string(body), "namespace: apps", "namespace: other", 1)+"  dependsOn: [{name: missing}]\n",
 	)
 	for _, verb := range []string{"build", "test"} {
-		args := []string{
+		const argumentCapacity = 11
+		args := make([]string, 0, argumentCapacity)
+		args = append(args,
 			verb,
 			"hr",
 			"selected",
@@ -270,10 +277,12 @@ func TestRun_NamedScope_AllMatchingNamespaces(t *testing.T) {
 			t.TempDir(),
 			"--concurrency",
 			"2",
-		}
-		_, stderr, code := runCLI(t, append(args, "-n", "apps")...)
+		)
+		cli := runCLI(t, append(args, "-n", "apps")...)
+		stderr, code := cli.stderr, cli.code
 		assert.FatalIf(t, code != 0, "healthy namespace failed: %d %s", code, stderr)
-		_, stderr, code = runCLI(t, args...)
+		cli2 := runCLI(t, args...)
+		stderr, code = cli2.stderr, cli2.code
 		assert.FatalIf(
 			t,
 			code != 1 || !strings.Contains(stderr, "missing"),
@@ -293,9 +302,9 @@ func TestRun_NamedScope_ParentChain(t *testing.T) {
 		"kustomization.yaml",
 		"resources: [cluster/ks.yaml, cluster/unrelated.yaml, cluster/parent.yaml, outside.yaml]\n",
 	)
-	body, err := os.ReadFile(filepath.Join(root, "cluster/hr.yaml"))
+	body, err := os.ReadFile(filepath.Join(root, "cluster", "hr.yaml"))
 	assert.NoError(t, err)
-	assert.NoError(t, os.Remove(filepath.Join(root, "cluster/hr.yaml")))
+	assert.NoError(t, os.Remove(filepath.Join(root, "cluster", "hr.yaml")))
 	testutil.WriteFile(t, root, "child/hr.yaml", string(body))
 	testutil.WriteFile(t, root, "child/kustomization.yaml", "resources: [hr.yaml]\n")
 	testutil.WriteFile(
@@ -319,7 +328,7 @@ func TestRun_NamedScope_ParentChain(t *testing.T) {
 			"  path: ./parent\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
 		),
 	)
-	_, stderr, code := runCLI(
+	cli := runCLI(
 		t,
 		"build",
 		"ks",
@@ -333,6 +342,7 @@ func TestRun_NamedScope_ParentChain(t *testing.T) {
 		"-n",
 		"apps",
 	)
+	stderr, code := cli.stderr, cli.code
 	assert.FatalIf(
 		t,
 		code != 1 || !strings.Contains(stderr, "parent") || !strings.Contains(stderr, "missing.yaml"),
@@ -491,7 +501,8 @@ spec:
 				if verb == "diff" {
 					args = append(args, "--path-orig", orig)
 				}
-				_, stderr, code := runCLI(t, args...)
+				cli := runCLI(t, args...)
+				stderr, code := cli.stderr, cli.code
 				assert.FatalIf(
 					t,
 					code != 1 || !strings.Contains(stderr, "missing-child-dependency"),
@@ -514,9 +525,9 @@ func TestRun_NamedScope_PrerequisiteSiblings(t *testing.T) {
 		"kustomization.yaml",
 		"resources: [cluster/hr.yaml, cluster/unrelated.yaml, cluster/parent.yaml, outside.yaml]\n",
 	)
-	body, err := os.ReadFile(filepath.Join(root, "cluster/ks.yaml"))
+	body, err := os.ReadFile(filepath.Join(root, "cluster", "ks.yaml"))
 	assert.NoError(t, err)
-	assert.NoError(t, os.Remove(filepath.Join(root, "cluster/ks.yaml")))
+	assert.NoError(t, os.Remove(filepath.Join(root, "cluster", "ks.yaml")))
 	testutil.WriteFile(
 		t,
 		root,
@@ -557,7 +568,7 @@ spec:
 		),
 	)
 	for _, verb := range []string{"build", "test"} {
-		_, stderr, code := runCLI(
+		cli := runCLI(
 			t,
 			verb,
 			"ks",
@@ -569,6 +580,7 @@ spec:
 			"--concurrency",
 			"2",
 		)
+		stderr, code := cli.stderr, cli.code
 		assert.FatalIf(
 			t,
 			code != 0 || strings.Contains(stderr, "missing-sibling-dependency"),
@@ -578,7 +590,8 @@ spec:
 			stderr,
 		)
 	}
-	_, stderr, code := runCLI(t, "build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2")
+	cli2 := runCLI(t, "build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2")
+	stderr, code := cli2.stderr, cli2.code
 	assert.FatalIf(
 		t,
 		code != 1 || !strings.Contains(stderr, "missing-sibling-dependency"),

@@ -72,12 +72,12 @@ func TestTreeFS_LocalConstraints(t *testing.T) {
 		name, path string
 		constraint bool
 	}{
-		{name: "ordinary read", path: filepath.Join(root, "folder/value")},
+		{name: "ordinary read", path: filepath.Join(root, "folder", "value")},
 		{name: "parent escape", path: root + "/../outside", constraint: true},
 		{name: "outside absolute", path: filepath.Join(parent, "outside"), constraint: true},
-		{name: "sibling prefix", path: filepath.Join(parent, "root-sibling/value"), constraint: true},
+		{name: "sibling prefix", path: filepath.Join(parent, "root-sibling", "value"), constraint: true},
 		{name: "file link", path: filepath.Join(root, "file-link")},
-		{name: "directory link", path: filepath.Join(root, "directory-link/value")},
+		{name: "directory link", path: filepath.Join(root, "directory-link", "value")},
 		{name: "dangling", path: filepath.Join(root, "dangling")},
 		{name: "escaping link", path: filepath.Join(root, "escaping-link")},
 	} {
@@ -89,10 +89,8 @@ func TestTreeFS_LocalConstraints(t *testing.T) {
 			data, err := adapter.ReadFile(tc.path)
 			switch {
 			case tc.constraint:
-				{
-					_, ok := errors.AsType[*fluxfilesys.ConstraintError](err)
-					assert.FatalIf(t, !ok, "lexical escape error = %v; want ConstraintError", err)
-				}
+				_, ok := errors.AsType[*fluxfilesys.ConstraintError](err)
+				assert.FatalIf(t, !ok, "lexical escape error = %v; want ConstraintError", err)
 
 			case tc.name == "ordinary read":
 				assert.FatalIf(t, err != nil || string(data) != "inside", "ordinary read = %q, %v", data, err)
@@ -179,12 +177,12 @@ func TestRender_ArtifactWithoutPayloadRejected(t *testing.T) {
 	for _, key := range []string{"", "pin"} {
 		t.Run("key="+key, func(t *testing.T) {
 			t.Parallel()
-			source := &store.SourceArtifact{LocalPath: label, Key: key}
+			sourceID := &store.SourceArtifact{LocalPath: label, Key: key}
 			out, _, err := testutil.RenderMaps(
 				Render(
 					t.Context(),
 					newTestTreeCache(t, ""),
-					RenderRequest{Source: source, SubPath: ".", Spec: demoSpec},
+					RenderRequest{Source: sourceID, SubPath: ".", Spec: demoSpec},
 					sourcecache.RetryConfig{},
 				),
 			)

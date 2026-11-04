@@ -120,14 +120,10 @@ func testReadSetRemoteValidationCase(t *testing.T, testCaseInput *string,
 		independent: &independent,
 	})
 	frame, err := encodeFrame(&renderHeader{Reads: rec.snapshot()}, nil)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	snapFrame, err := decodeFrame(frame)
 	snap := snapFrame.header.Reads
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	if (*testCaseInput) == "duplicate-entry" {
 		snap.Remotes = append(snap.Remotes, snap.Remotes[0])
 	}
@@ -138,23 +134,19 @@ func testReadSetRemoteValidationCase(t *testing.T, testCaseInput *string,
 	changed.Store(true)
 	c = newCache()
 	valid, err := snap.stillValid(ctx, c, input, true)
-	{
-		assert.FatalIf(
-			t,
-			valid != ((*testCaseInput) == "stable-chain") ||
-				(err != nil) != ((*testCaseInput) == "canceled-parent"),
-			"validation=%t error=%v",
-			valid,
-			err,
-		)
-	}
-	{
-		assert.FatalIf(
-			t, (*testCaseInput) ==
-				"canceled-parent" && !errors.Is(err, context.Canceled), "lost cancellation: %v",
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		valid != ((*testCaseInput) == "stable-chain") ||
+			(err != nil) != ((*testCaseInput) == "canceled-parent"),
+		"validation=%t error=%v",
+		valid,
+		err,
+	)
+	assert.FatalIf(
+		t, (*testCaseInput) ==
+			"canceled-parent" && !errors.Is(err, context.Canceled), "lost cancellation: %v",
+		err,
+	)
 	mu.Lock()
 	defer mu.Unlock()
 	assertRemoteValidationRequests(t, &remoteValidationRequestInputs{
@@ -216,9 +208,7 @@ func captureRemoteValidationReadSet(ctx context.Context, t *testing.T, inputs *r
 	} else {
 		for _, descriptor := range []remoteInput{*inputs.child, *inputs.independent, *inputs.second, *inputs.first} {
 			_, identity, err := descriptor.acquire(ctx, *inputs.cache, *inputs.tree)
-			{
-				assert.NoError(t, err)
-			}
+			assert.NoError(t, err)
 			var parents []remoteInput
 			switch descriptor {
 			case *inputs.child:
@@ -276,28 +266,24 @@ func assertRemoteValidationRequests(t *testing.T, inputs *remoteValidationReques
 	case "independent-input":
 		want = []string{inputs.first.URL, "/0-independent"}
 	}
-	{
-		assert.FatalIf(
-			t,
-			len(*inputs.calls) != len(want),
-			"requests=%v, want %v in dependency order",
-			*inputs.calls,
-			want,
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(*inputs.calls) != len(want),
+		"requests=%v, want %v in dependency order",
+		*inputs.calls,
+		want,
+	)
 	testReadSetRemoteValidationCaseLoop(t, struct {
 		want   *[]string
 		counts *map[string]int
 	}{want: &want, counts: &counts})
 	if **inputs.scenario == "stable-chain" || **inputs.scenario == "changed-leaf" {
-		{
-			assert.ErrorIf(
-				t,
-				positions[inputs.first.URL] >= positions[inputs.second.URL] ||
-					positions[inputs.second.URL] >= positions["/a-child"],
-				"child preceded a validated parent: %v",
-				*inputs.calls,
-			)
-		}
+		assert.ErrorIf(
+			t,
+			positions[inputs.first.URL] >= positions[inputs.second.URL] ||
+				positions[inputs.second.URL] >= positions["/a-child"],
+			"child preceded a validated parent: %v",
+			*inputs.calls,
+		)
 	}
 }

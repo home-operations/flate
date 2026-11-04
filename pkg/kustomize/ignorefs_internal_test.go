@@ -72,13 +72,9 @@ func TestIgnoreFS_HidesExcludedPaths(t *testing.T) {
 	}
 
 	// The root itself is never hidden, and its listing drops hidden children.
-	{
-		assert.FatalIf(t, !ig.IsDir(root), "%s", "root must stay visible")
-	}
+	assert.FatalIf(t, !ig.IsDir(root), "%s", "root must stay visible")
 	entries, err := ig.ReadDir(root)
-	{
-		assert.FatalIf(t, err != nil, "ReadDir root: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "ReadDir root: %v", err)
 	slices.Sort(entries)
 	{
 		want := []string{"charts", "clusters"}
@@ -142,14 +138,12 @@ func TestRender_SourceignoreAllowlist(t *testing.T) {
 				sourcecache.RetryConfig{},
 			),
 		)
-		{
-			assert.FatalIf(
-				t,
-				!errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "not a directory"),
-				"expected the excluded spec.path to be reported missing, got %v",
-				err,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "not a directory"),
+			"expected the excluded spec.path to be reported missing, got %v",
+			err,
+		)
 	})
 
 	t.Run("kustomization base excluded", func(t *testing.T) {
@@ -168,14 +162,12 @@ func TestRender_SourceignoreAllowlist(t *testing.T) {
 				sourcecache.RetryConfig{},
 			),
 		)
-		{
-			assert.FatalIf(
-				t,
-				err == nil || !strings.Contains(err.Error(), "bundles/common"),
-				"expected the build to fail resolving the excluded base, got %v",
-				err,
-			)
-		}
+		assert.FatalIf(
+			t,
+			err == nil || !strings.Contains(err.Error(), "bundles/common"),
+			"expected the build to fail resolving the excluded base, got %v",
+			err,
+		)
 	})
 
 	t.Run("allowlisted path renders", func(t *testing.T) {
@@ -194,12 +186,8 @@ func TestRender_SourceignoreAllowlist(t *testing.T) {
 				sourcecache.RetryConfig{},
 			),
 		)
-		{
-			assert.FatalIf(t, err != nil, "render: %v", err)
-		}
-		{
-			assert.FatalIf(t, !hasRenderField(out, "name", "ok"), "expected rendered ConfigMap, got:\n%s", out)
-		}
+		assert.FatalIf(t, err != nil, "render: %v", err)
+		assert.FatalIf(t, !hasRenderField(out, "name", "ok"), "expected rendered ConfigMap, got:\n%s", out)
 	})
 
 	t.Run("fetched artifact not refiltered", func(t *testing.T) {
@@ -218,12 +206,8 @@ func TestRender_SourceignoreAllowlist(t *testing.T) {
 				sourcecache.RetryConfig{},
 			),
 		)
-		{
-			assert.FatalIf(t, err != nil, "render: %v", err)
-		}
-		{
-			assert.FatalIf(t, !hasRenderField(out, "name", "common"), "expected rendered ConfigMap, got:\n%s", out)
-		}
+		assert.FatalIf(t, err != nil, "render: %v", err)
+		assert.FatalIf(t, !hasRenderField(out, "name", "common"), "expected rendered ConfigMap, got:\n%s", out)
 	})
 }
 
@@ -290,9 +274,7 @@ configMapGenerator:
 					plumbing.ZeroHash,
 					gittree.ViewOptions{Mode: gittree.Source, Current: artifact.FS, Ignore: tc.extra},
 				)
-				{
-					assert.NoError(t, err)
-				}
+				assert.NoError(t, err)
 				artifact.FS = input
 			}
 			out, _, err := testutil.RenderMaps(
@@ -310,27 +292,21 @@ configMapGenerator:
 				),
 			)
 			if tc.wantErr {
-				{
-					assert.FatalIf(
-						t,
-						err == nil || !strings.Contains(err.Error(), "logo.png"),
-						"expected excluded image to fail the build, got %v",
-						err,
-					)
-				}
+				assert.FatalIf(
+					t,
+					err == nil || !strings.Contains(err.Error(), "logo.png"),
+					"expected excluded image to fail the build, got %v",
+					err,
+				)
 				return
 			}
-			{
-				assert.FatalIf(t, err != nil, "render: %v", err)
-			}
-			{
-				assert.FatalIf(t, !hasRenderField(out, "kind", "ConfigMap") ||
-					!hasRenderField(
-						out,
-						"logo.png",
-						base64.StdEncoding.EncodeToString([]byte(image)),
-					), "expected image bytes in generated ConfigMap, got: %v", out)
-			}
+			assert.FatalIf(t, err != nil, "render: %v", err)
+			assert.FatalIf(t, !hasRenderField(out, "kind", "ConfigMap") ||
+				!hasRenderField(
+					out,
+					"logo.png",
+					base64.StdEncoding.EncodeToString([]byte(image)),
+				), "expected image bytes in generated ConfigMap, got: %v", out)
 		})
 	}
 }
@@ -380,14 +356,12 @@ func testIgnoreFSHidesExcludedPathsCase(t *testing.T, testCaseInput *testIgnoreF
 			err,
 			testCaseInput.tc.visible,
 		)
-		{
-			assert.ErrorIf(
-				t,
-				!testCaseInput.tc.visible && !errors.Is(err, os.ErrNotExist),
-				"hidden ReadFile error should be not-exist, got %v",
-				err,
-			)
-		}
+		assert.ErrorIf(
+			t,
+			!testCaseInput.tc.visible && !errors.Is(err, os.ErrNotExist),
+			"hidden ReadFile error should be not-exist, got %v",
+			err,
+		)
 	}
 }
 
@@ -421,9 +395,7 @@ func testRenderSourceignoreCacheReplaysFilteredViewCase(
 				plumbing.ZeroHash,
 				gittree.ViewOptions{Mode: gittree.Source, Current: artifact.FS, Ignore: "b.yaml\n"},
 			)
-			{
-				assert.NoError(t, err)
-			}
+			assert.NoError(t, err)
 			artifact.FS = input
 		}
 		return artifact
@@ -439,26 +411,18 @@ func testRenderSourceignoreCacheReplaysFilteredViewCase(
 			sourcecache.RetryConfig{},
 		),
 	)
-	{
-		assert.FatalIf(t, err != nil, "first render: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "first render: %v", err)
 	{
 		recordRenderErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt})
 		assert.NoError(t, recordRenderErr)
 	}
-	{
-		assert.FatalIf(t, hasRenderField(out1, "name", "b"), "b.yaml should be excluded; got %s", out1)
-	}
+	assert.FatalIf(t, hasRenderField(out1, "name", "b"), "b.yaml should be excluded; got %s", out1)
 	req := RenderRequest{Source: admit(), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoSpec}
 	input, err := cache.sourceRootFor(ctx, req.Source, root)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	key := renderKey(&req, root, input.ignore)
 	snap, _, ok := readTestRenderFrame(t, cache, key)
-	{
-		assert.FatalIf(t, !ok, "%s", "owner did not retain filtered render")
-	}
+	assert.FatalIf(t, !ok, "%s", "owner did not retain filtered render")
 	publishTestFrame(
 		t,
 		cache.owner,
@@ -473,15 +437,11 @@ func testRenderSourceignoreCacheReplaysFilteredViewCase(
 			sourcecache.RetryConfig{},
 		),
 	)
-	{
-		assert.NoError(t, err)
-	}
-	{
-		assert.FatalIf(
-			t,
-			!hasRenderField(out2, "witness", "SENTINEL"),
-			"filtered view missed its validated frame: %s",
-			out2,
-		)
-	}
+	assert.NoError(t, err)
+	assert.FatalIf(
+		t,
+		!hasRenderField(out2, "witness", "SENTINEL"),
+		"filtered view missed its validated frame: %s",
+		out2,
+	)
 }

@@ -40,7 +40,7 @@ func TestReconcile_InputsFromPreservesAuthoredKind(t *testing.T) {
 	c, s := newController(t)
 	provider := staticRSIP("inputs", "apps", nil, map[string]string{"user": "alice"})
 	s.AddObject(provider)
-	obj, _, _, err := manifest.ParseDoc(map[string]any{
+	parsed, err := manifest.ParseDoc(map[string]any{
 		"apiVersion": "fluxcd.controlplane.io/v1", "kind": manifest.KindResourceSet,
 		"metadata": map[string]any{"name": "app", "namespace": "apps"},
 		"spec": map[string]any{
@@ -48,42 +48,33 @@ func TestReconcile_InputsFromPreservesAuthoredKind(t *testing.T) {
 			"resourcesTemplate": "apiVersion: example.com/v1\nkind: Widget\nmetadata: {name: << inputs.user >>, namespace: apps}\n",
 		},
 	}, manifest.ParseDocOptions{DefaultNamespace: ""})
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	obj := parsed.Object
+	assert.FatalIf(t, err != nil, "%v", err)
 	rs := obj.(*manifest.ResourceSet)
 	s.AddObject(rs)
 	want := manifest.NamedResource{Kind: "Unsupported", Namespace: "apps", Name: provider.Name}
 	{
-		{
-			blocked := c.ReconcileNode(
-				t.Context(),
-				rs.Named(),
-				manifest.DrainNone,
-			).Blocked
-			assert.FatalIf(t, len(blocked) != 1 ||
-				blocked[0] != want, "blocked = %v, want [%s]", blocked, want)
-		}
+		blocked := c.ReconcileNode(
+			t.Context(),
+			rs.Named(),
+			manifest.DrainNone,
+		).Blocked
+		assert.FatalIf(t, len(blocked) != 1 ||
+			blocked[0] != want, "blocked = %v, want [%s]", blocked, want)
 	}
 	{
-		{
-			info := controllertest.DispatchToFixpoint(
-				t.Context(),
-				t,
-				controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode},
-			)
-			assert.FatalIf(t, info.Status != store.StatusFailed, "status = %+v, want Failed", info)
-		}
+		info := controllertest.DispatchToFixpoint(
+			t.Context(),
+			t,
+			controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode},
+		)
+		assert.FatalIf(t, info.Status != store.StatusFailed, "status = %+v, want Failed", info)
 	}
 	{
-		{
-			art := s.GetArtifact(rs.Named(), store.ArtifactContent)
-			assert.FatalIf(t, art != nil, "unsupported input kind rendered: artifact = %+v", art)
-		}
+		art := s.GetArtifact(rs.Named(), store.ArtifactContent)
+		assert.FatalIf(t, art != nil, "unsupported input kind rendered: artifact = %+v", art)
 	}
-	{
-		assert.FatalIf(t, rs.InputsFrom[0].Kind != "Unsupported", "%v", "authored input kind mutated")
-	}
+	assert.FatalIf(t, rs.InputsFrom[0].Kind != "Unsupported", "%v", "authored input kind mutated")
 }
 
 func TestReconcile_WarningsBeforeExit(t *testing.T) {
@@ -120,30 +111,24 @@ func TestReconcile_WarningsBeforeExit(t *testing.T) {
 					)
 					return true, nil
 				})
-				{
-					assert.FatalIf(t, err != nil, "%v", err)
-				}
+				assert.FatalIf(t, err != nil, "%v", err)
 			}
 			info := controllertest.DispatchToFixpoint(
 				t.Context(),
 				t,
 				controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode},
 			)
-			{
-				assert.FatalIf(
-					t,
-					(info.Status == store.StatusReady) != hit,
-					"reconcile status = %+v, hit=%t",
-					info,
-					hit,
-				)
-			}
+			assert.FatalIf(
+				t,
+				(info.Status == store.StatusReady) != hit,
+				"reconcile status = %+v, hit=%t",
+				info,
+				hit,
+			)
 			warnings := s.Warnings()
-			{
-				assert.FatalIf(t, len(warnings) != 1 || warnings[0].Category != manifest.WarnOfflineInputProvider ||
-					warnings[0].Resource != rs.Named() ||
-					warnings[0].Count != 1, "early return lost warnings: %+v", warnings)
-			}
+			assert.FatalIf(t, len(warnings) != 1 || warnings[0].Category != manifest.WarnOfflineInputProvider ||
+				warnings[0].Resource != rs.Named() ||
+				warnings[0].Count != 1, "early return lost warnings: %+v", warnings)
 		})
 	}
 }
@@ -181,23 +166,21 @@ func testReconcileSuspensionAfterRefreshCase(
 			),
 		},
 	}
-	children, _ := publishDocuments(
+	publishDocumentsResult1 := publishDocuments(
 		c,
 		parent.Named(),
 		[]map[string]any{doc},
 		manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: parent.Named().Namespace},
 	)
-	{
-		assert.FatalIf(t, len(children) != 1, "initial publication: %v", children)
-	}
+	children, _ := publishDocumentsResult1.Children, publishDocumentsResult1.Documents
+	assert.FatalIf(t, len(children) != 1, "initial publication: %v", children)
 	rs := children[0].Obj.(*manifest.ResourceSet)
-	original, _, _, err := manifest.ParseDoc(
+	parsed2, err := manifest.ParseDoc(
 		manifest.DeepCopyMap(doc),
 		manifest.ParseDocOptions{DefaultNamespace: ""},
 	)
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	original := parsed2.Object
+	assert.FatalIf(t, err != nil, "%v", err)
 	st.UpdateStatus(rs.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: ""})
 	replacement := manifest.DeepCopyMap(doc)
 	replacement["spec"].(map[string]any)["resourcesTemplate"] = "apiVersion: example.com/v1\nkind: Widget\nmetadata: {name: << inputs.user >>}\n" + "---\n" + testutil.KustomizationYAML(
@@ -244,39 +227,31 @@ func testReconcileSuspensionAfterRefreshCase(
 		)
 	}
 	fresh, ok := st.Get[*manifest.ResourceSet](rs.Named())
+	assert.FatalIf(t, !ok || fresh == rs || fresh.Suspend != (*testCaseInput) ||
+		fresh.ResourcesTemplate != replacement["spec"].(map[string]any)["resourcesTemplate"], "canonical replacement = %+v", fresh)
 	{
-		assert.FatalIf(t, !ok || fresh == rs || fresh.Suspend != (*testCaseInput) ||
-			fresh.ResourcesTemplate != replacement["spec"].(map[string]any)["resourcesTemplate"], "canonical replacement = %+v", fresh)
+		diff := cmp.Diff(original, rs)
+		assert.FatalIf(t, diff != "", "original mutated (-want +got):\n%s", diff)
 	}
 	{
-		{
-			diff := cmp.Diff(original, rs)
-			assert.FatalIf(t, diff != "", "original mutated (-want +got):\n%s", diff)
-		}
-	}
-	{
-		{
-			owners := testutil.Owners(st.Productions(rs.Named(), nil))
-			assert.FatalIf(
-				t,
-				!slices.Contains(owners, parent.Named()),
-				"missing independent contributor: %v",
-				owners,
-			)
-		}
+		owners := testutil.Owners(st.Productions(rs.Named(), nil))
+		assert.FatalIf(
+			t,
+			!slices.Contains(owners, parent.Named()),
+			"missing independent contributor: %v",
+			owners,
+		)
 	}
 	info, _ := st.GetStatus(rs.Named())
 	art, _ := st.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 	child := testutil.KustomizationID("flux-system", "rs-refresh-child")
 	if *testCaseInput {
-		{
-			assert.ErrorIf(
-				t,
-				info.Outcome() != store.OutcomeSuspended || info.Message != "suspended",
-				"status = %+v, want Ready/suspended",
-				info,
-			)
-		}
+		assert.ErrorIf(
+			t,
+			info.Outcome() != store.OutcomeSuspended || info.Message != "suspended",
+			"status = %+v, want Ready/suspended",
+			info,
+		)
 		_, _, inventory := st.GetEmission(rs.Named())
 		if art != nil || st.GetObject(child) != nil || deliveries.Load() != 0 || len(inventory.Children) != 0 {
 			t.Errorf(

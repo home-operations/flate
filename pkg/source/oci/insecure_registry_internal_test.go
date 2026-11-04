@@ -40,10 +40,11 @@ func testFetcherInsecureRegistryCase(t *testing.T, chart *bool,
 		manifestBlob{data: art.layer, mediaType: registry.ChartLayerMediaType},
 	)
 	art.manifestDigest = sha256Digest(art.manifest)
-	srv, _ := newMutableFakeRegistry(t, art)
+	registry2 := newMutableFakeRegistry(t, art)
+
 	var tags, heads, manifests, layers atomic.Int32
-	handler := srv.Config.Handler
-	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := registry2.server.Config.Handler
+	registry2.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		testFetcherInsecureRegistryCaseCallback(
 			w,
 			r,
@@ -58,13 +59,13 @@ func testFetcherInsecureRegistryCase(t *testing.T, chart *bool,
 		)
 	},
 	)
-	srv.Start()
+	registry2.server.Start()
 	fetch := func(f *Fetcher, insecure bool) (*store.SourceArtifact, error) {
 		if !(*chart) {
 			repo := &manifest.OCIRepository{
 				Name:      "app",
 				Namespace: "ns",
-				URL:       "oci://" + mustURL(t, srv.URL).Host + "/charts/app",
+				URL:       "oci://" + mustURL(t, registry2.server.URL).Host + "/charts/app",
 				Insecure:  insecure,
 				Reference: &sourcev1.OCIRepositoryRef{SemVer: "1.x"},
 			}
@@ -78,7 +79,7 @@ func testFetcherInsecureRegistryCase(t *testing.T, chart *bool,
 		repo := &manifest.HelmRepository{
 			Name:      "charts",
 			Namespace: "ns",
-			URL:       "oci://" + mustURL(t, srv.URL).Host + "/charts",
+			URL:       "oci://" + mustURL(t, registry2.server.URL).Host + "/charts",
 			Type:      sourcev1.HelmRepositoryTypeOCI,
 			Insecure:  insecure,
 			Interval:  metav1.Duration{Duration: time.Hour},
@@ -247,15 +248,11 @@ func testFetcherInsecureRegistryErrorsCaseCompletion(
 	case "cancel mismatch", "stalled HTTPS":
 		assert.FatalIf(t, !errors.Is(err, context.Canceled), "lost cancellation: %v", err)
 	case "TLS":
-		{
-			_, ok := errors.AsType[*net.OpError](err)
-			assert.FatalIf(t, !ok || errors.Is(err, http.ErrSchemeMismatch), "lost TLS failure: %v", err)
-		}
+		_, ok := errors.AsType[*net.OpError](err)
+		assert.FatalIf(t, !ok || errors.Is(err, http.ErrSchemeMismatch), "lost TLS failure: %v", err)
 	case "reset":
-		{
-			_, ok := errors.AsType[*url.Error](err)
-			assert.FatalIf(t, !ok || errors.Is(err, http.ErrSchemeMismatch), "lost reset failure: %v", err)
-		}
+		_, ok := errors.AsType[*url.Error](err)
+		assert.FatalIf(t, !ok || errors.Is(err, http.ErrSchemeMismatch), "lost reset failure: %v", err)
 	}
 }
 

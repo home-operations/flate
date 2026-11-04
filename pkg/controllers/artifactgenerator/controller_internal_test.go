@@ -22,7 +22,12 @@ import (
 	"github.com/home-operations/flate/pkg/task"
 )
 
-func generatorForTest(t *testing.T, artifacts []any) (*manifest.RawObject, map[string]any) {
+type generatorFixture struct {
+	object   *manifest.RawObject
+	document map[string]any
+}
+
+func generatorForTest(t *testing.T, artifacts []any) generatorFixture {
 	t.Helper()
 	doc := map[string]any{
 		"apiVersion": "source.extensions.fluxcd.io/v1beta1",
@@ -33,11 +38,10 @@ func generatorForTest(t *testing.T, artifacts []any) (*manifest.RawObject, map[s
 			"artifacts": artifacts,
 		},
 	}
-	obj, authoritative, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
-	return obj.(*manifest.RawObject), authoritative
+	parsed2, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+	obj, authoritative := parsed2.Object, parsed2.Document
+	assert.FatalIf(t, err != nil, "%v", err)
+	return generatorFixture{object: obj.(*manifest.RawObject), document: authoritative}
 }
 
 func runForTest(t *testing.T, c *Controller, id manifest.NamedResource) {
@@ -48,9 +52,7 @@ func runForTest(t *testing.T, c *Controller, id manifest.NamedResource) {
 		func(ctx context.Context) { t.Cleanup(c.ReconcileNode(ctx, id, manifest.DrainNone).Close) },
 	)
 	c.Tasks.BlockTillDone()
-	{
-		assert.FatalIf(t, c.Tasks.Failures() != 0, "%v", "reconcile task panicked")
-	}
+	assert.FatalIf(t, c.Tasks.Failures() != 0, "%v", "reconcile task panicked")
 }
 
 func TestArtifactGenerator_AllStrategies(t *testing.T) {
@@ -59,28 +61,20 @@ func TestArtifactGenerator_AllStrategies(t *testing.T) {
 	gz := gzip.NewWriter(&compressed)
 	archive := tar.NewWriter(gz)
 	{
-		{
-			err := archive.WriteHeader(&tar.Header{Name: "inside.txt", Mode: 0o755, Size: 6})
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := archive.WriteHeader(&tar.Header{Name: "inside.txt", Mode: 0o755, Size: 6})
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	{
-		{
-			_, err := archive.Write([]byte("inside"))
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		_, err := archive.Write([]byte("inside"))
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	{
-		{
-			err := archive.Close()
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := archive.Close()
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	{
-		{
-			err := gz.Close()
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := gz.Close()
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	for _, tc := range []struct {
 		name       string
@@ -96,9 +90,7 @@ func TestArtifactGenerator_AllStrategies(t *testing.T) {
 			st := store.New()
 			tasks := task.NewBounded(2)
 			owner, err := cache.New(t.Context(), "")
-			{
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
+			assert.FatalIf(t, err != nil, "%v", err)
 			t.Cleanup(func() {
 				{
 					localErr := owner.Close()
@@ -107,7 +99,11 @@ func TestArtifactGenerator_AllStrategies(t *testing.T) {
 			})
 			c := New(st, tasks, owner)
 
-			obj, doc := generatorForTest(t, []any{map[string]any{"name": "output", "copy": tc.operations}})
+			generatorForTestResult1 := generatorForTest(
+				t,
+				[]any{map[string]any{"name": "output", "copy": tc.operations}},
+			)
+			obj, doc := generatorForTestResult1.object, generatorForTestResult1.document
 			st.AddObject(obj, doc)
 			repo := manifest.NamedResource{
 				Group:     manifest.SourceDomain,
@@ -135,9 +131,7 @@ func TestArtifactGenerator_AllStrategies(t *testing.T) {
 			)
 			runForTest(t, c, obj.Named())
 			status, _ := st.GetStatus(obj.Named())
-			{
-				assert.FatalIf(t, status.Status != store.StatusReady, "generator status = %+v", status)
-			}
+			assert.FatalIf(t, status.Status != store.StatusReady, "generator status = %+v", status)
 			target := manifest.NamedResource{
 				Group:     manifest.SourceDomain,
 				Kind:      manifest.KindExternalArtifact,
@@ -145,38 +139,30 @@ func TestArtifactGenerator_AllStrategies(t *testing.T) {
 				Name:      "output",
 			}
 			artifact, ok := st.GetArtifact(target, store.ArtifactContent).(*store.SourceArtifact)
-			{
-				assert.FatalIf(
-					t,
-					!ok || artifact.FS == nil || artifact.Key == "" || !strings.HasPrefix(artifact.Digest, "sha256:") ||
-						artifact.Kind != manifest.KindExternalArtifact ||
-						artifact.Revision != "latest@"+artifact.Digest,
-					"generated artifact = %+v",
-					artifact,
-				)
-			}
+			assert.FatalIf(
+				t,
+				!ok || artifact.FS == nil || artifact.Key == "" || !strings.HasPrefix(artifact.Digest, "sha256:") ||
+					artifact.Kind != manifest.KindExternalArtifact ||
+					artifact.Revision != "latest@"+artifact.Digest,
+				"generated artifact = %+v",
+				artifact,
+			)
 			data, err := fs.ReadFile(artifact.FS, tc.path)
-			{
-				assert.FatalIf(t, err != nil || string(data) != tc.want, "output %s = %q, %v", tc.path, data, err)
-			}
+			assert.FatalIf(t, err != nil || string(data) != tc.want, "output %s = %q, %v", tc.path, data, err)
 			accepted, ok := st.GetArtifact(obj.Named(), store.ArtifactContent).(*store.Emission)
-			{
-				assert.FatalIf(
-					t,
-					!ok || !accepted.Complete || accepted.Fingerprint == "" || len(accepted.Children) != 1,
-					"accepted inventory = %+v",
-					accepted,
-				)
-			}
+			assert.FatalIf(
+				t,
+				!ok || !accepted.Complete || accepted.Fingerprint == "" || len(accepted.Children) != 1,
+				"accepted inventory = %+v",
+				accepted,
+			)
 			runForTest(t, c, obj.Named())
-			{
-				assert.FatalIf(
-					t,
-					st.GetArtifact(target, store.ArtifactContent) != artifact,
-					"%v",
-					"complete replay changed accepted bytes",
-				)
-			}
+			assert.FatalIf(
+				t,
+				st.GetArtifact(target, store.ArtifactContent) != artifact,
+				"%v",
+				"complete replay changed accepted bytes",
+			)
 		})
 	}
 }
@@ -186,15 +172,11 @@ func TestArtifactGenerator_PartialFailure(t *testing.T) {
 	st := store.New()
 	tasks := task.NewBounded(2)
 	owner, err := cache.New(t.Context(), "")
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	t.Cleanup(func() {
 		{
-			{
-				err := owner.Close()
-				assert.ErrorIf(t, err != nil, "%v", err)
-			}
+			err := owner.Close()
+			assert.ErrorIf(t, err != nil, "%v", err)
 		}
 	})
 	c := New(st, tasks, owner)
@@ -209,7 +191,8 @@ func TestArtifactGenerator_PartialFailure(t *testing.T) {
 			},
 		)
 	}
-	obj, doc := generatorForTest(t, outputs)
+	generatorForTestResult2 := generatorForTest(t, outputs)
+	obj, doc := generatorForTestResult2.object, generatorForTestResult2.document
 	st.AddObject(obj, doc)
 	repo := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
@@ -229,30 +212,20 @@ func TestArtifactGenerator_PartialFailure(t *testing.T) {
 	)
 	runForTest(t, c, obj.Named())
 	status, _ := st.GetStatus(obj.Named())
-	{
-		assert.FatalIf(t, status.Status != store.StatusFailed, "partial status = %+v", status)
-	}
+	assert.FatalIf(t, status.Status != store.StatusFailed, "partial status = %+v", status)
 	for _, name := range []string{"a", "b"} {
 		artifact, ok := st.GetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: name}, store.ArtifactContent).(*store.SourceArtifact)
+		assert.FatalIf(t, !ok || artifact.FS == nil, "accepted %s unavailable", name)
 		{
-			assert.FatalIf(t, !ok || artifact.FS == nil, "accepted %s unavailable", name)
-		}
-		{
-			{
-				data, err := fs.ReadFile(artifact.FS, "file")
-				assert.FatalIf(t, err != nil || string(data) != name, "accepted %s = %q, %v", name, data, err)
-			}
+			data, err := fs.ReadFile(artifact.FS, "file")
+			assert.FatalIf(t, err != nil || string(data) != name, "accepted %s = %q, %v", name, data, err)
 		}
 	}
 	accepted := st.GetArtifact(obj.Named(), store.ArtifactContent).(*store.Emission)
-	{
-		assert.FatalIf(t, accepted.Complete || accepted.Fingerprint != "", "%v", "partial attempt became replayable")
-	}
+	assert.FatalIf(t, accepted.Complete || accepted.Fingerprint != "", "%v", "partial attempt became replayable")
 	runForTest(t, c, obj.Named())
 	status, _ = st.GetStatus(obj.Named())
-	{
-		assert.FatalIf(t, status.Status != store.StatusReady, "retry status = %+v", status)
-	}
+	assert.FatalIf(t, status.Status != store.StatusReady, "retry status = %+v", status)
 	target := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
 		Kind:      manifest.KindExternalArtifact,
@@ -260,43 +233,31 @@ func TestArtifactGenerator_PartialFailure(t *testing.T) {
 		Name:      "c",
 	}
 	artifact, ok := st.GetArtifact(target, store.ArtifactContent).(*store.SourceArtifact)
+	assert.FatalIf(t, !ok, "%v", "same-input retry did not execute the failed output")
 	{
-		assert.FatalIf(t, !ok, "%v", "same-input retry did not execute the failed output")
-	}
-	{
-		{
-			data, err := fs.ReadFile(artifact.FS, "file")
-			assert.FatalIf(t, err != nil || string(data) != "c", "retried c = %q, %v", data, err)
-		}
+		data, err := fs.ReadFile(artifact.FS, "file")
+		assert.FatalIf(t, err != nil || string(data) != "c", "retried c = %q, %v", data, err)
 	}
 	accepted = st.GetArtifact(obj.Named(), store.ArtifactContent).(*store.Emission)
-	{
-		assert.FatalIf(
-			t,
-			!accepted.Complete || len(accepted.Children) != 3 || accepted.Fingerprint == "",
-			"retried inventory = %+v",
-			accepted,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!accepted.Complete || len(accepted.Children) != 3 || accepted.Fingerprint == "",
+		"retried inventory = %+v",
+		accepted,
+	)
 	nextInput := maps.Clone(input)
 	delete(nextInput, "b")
 	st.SetArtifact(repo, &store.SourceArtifact{Key: "second", Content: "second", Digest: "second", FS: nextInput})
 	runForTest(t, c, obj.Named())
 	status, _ = st.GetStatus(obj.Named())
+	assert.FatalIf(t, status.Status != store.StatusFailed, "successor failure status = %+v", status)
 	{
-		assert.FatalIf(t, status.Status != store.StatusFailed, "successor failure status = %+v", status)
+		current := st.GetArtifact(target, store.ArtifactContent)
+		assert.FatalIf(t, current != artifact, "%v", "failure withdrew an unvisited accepted output")
 	}
 	{
-		{
-			current := st.GetArtifact(target, store.ArtifactContent)
-			assert.FatalIf(t, current != artifact, "%v", "failure withdrew an unvisited accepted output")
-		}
-	}
-	{
-		{
-			data, err := fs.ReadFile(artifact.FS, "file")
-			assert.FatalIf(t, err != nil || string(data) != "c", "retained c = %q, %v", data, err)
-		}
+		data, err := fs.ReadFile(artifact.FS, "file")
+		assert.FatalIf(t, err != nil || string(data) != "c", "retained c = %q, %v", data, err)
 	}
 }
 
@@ -306,7 +267,8 @@ func TestArtifactGenerator_Disabled(t *testing.T) {
 	tasks := task.NewBounded(2)
 	c := New(st, tasks, nil)
 
-	obj, doc := generatorForTest(t, nil)
+	generatorForTestResult3 := generatorForTest(t, nil)
+	obj, doc := generatorForTestResult3.object, generatorForTestResult3.document
 	doc["metadata"].(map[string]any)["annotations"] = map[string]any{
 		"source.extensions.fluxcd.io/reconcile": "DiSaBlEd",
 	}
@@ -320,22 +282,16 @@ func TestArtifactGenerator_Disabled(t *testing.T) {
 	t.Cleanup(unsubscribe)
 	runForTest(t, c, obj.Named())
 	status, _ := st.GetStatus(obj.Named())
+	assert.FatalIf(
+		t,
+		status.Status != store.StatusReady || st.GetArtifact(obj.Named(), store.ArtifactContent) != nil,
+		"disabled result = %+v",
+		status,
+	)
+	assert.FatalIf(t, emissions.Load() != 0, "%v", "disabled generator published an artifact")
 	{
-		assert.FatalIf(
-			t,
-			status.Status != store.StatusReady || st.GetArtifact(obj.Named(), store.ArtifactContent) != nil,
-			"disabled result = %+v",
-			status,
-		)
-	}
-	{
-		assert.FatalIf(t, emissions.Load() != 0, "%v", "disabled generator published an artifact")
-	}
-	{
-		{
-			_, err := decodeSpec(obj.Spec)
-			assert.FatalIf(t, err == nil, "%v", "disabled fixture should be invalid when enabled")
-		}
+		_, err := decodeSpec(obj.Spec)
+		assert.FatalIf(t, err == nil, "%v", "disabled fixture should be invalid when enabled")
 	}
 }
 
@@ -387,7 +343,7 @@ func TestArtifactGenerator_RequiredUnusedAlias(t *testing.T) {
 	st := store.New()
 	c := New(st, task.NewBounded(2), nil)
 
-	_, doc := generatorForTest(
+	generatorForTestResult4 := generatorForTest(
 		t,
 		[]any{
 			map[string]any{
@@ -396,15 +352,15 @@ func TestArtifactGenerator_RequiredUnusedAlias(t *testing.T) {
 			},
 		},
 	)
+	_, doc := generatorForTestResult4.object, generatorForTestResult4.document
 	spec := doc["spec"].(map[string]any)
 	spec["sources"] = append(
 		spec["sources"].([]any),
 		map[string]any{"alias": "unused", "name": "unused", "kind": "GitRepository"},
 	)
-	obj, doc, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	parsed3, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+	obj, doc := parsed3.Object, parsed3.Document
+	assert.FatalIf(t, err != nil, "%v", err)
 	st.AddObject(obj, doc)
 	repo := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
@@ -425,14 +381,12 @@ func TestArtifactGenerator_RequiredUnusedAlias(t *testing.T) {
 	st.UpdateStatus(repo, store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "unavailable unused alias"})
 	runForTest(t, c, obj.Named())
 	status, _ := st.GetStatus(obj.Named())
-	{
-		assert.FatalIf(
-			t,
-			status.Status != store.StatusFailed || st.GetArtifact(obj.Named(), store.ArtifactContent) != nil,
-			"unused alias result = %+v",
-			status,
-		)
-	}
+	assert.FatalIf(
+		t,
+		status.Status != store.StatusFailed || st.GetArtifact(obj.Named(), store.ArtifactContent) != nil,
+		"unused alias result = %+v",
+		status,
+	)
 }
 
 func TestArtifactGenerator_InputAvailability(t *testing.T) {
@@ -473,20 +427,16 @@ func testArtifactGeneratorMetadataCase(t *testing.T, testCaseInput *struct {
 
 	st := store.New()
 	owner, err := cache.New(t.Context(), "")
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	t.Cleanup(func() {
 		{
-			{
-				innerLocalErr := owner.Close()
-				assert.ErrorIf(t, innerLocalErr != nil, "%v", innerLocalErr)
-			}
+			innerLocalErr := owner.Close()
+			assert.ErrorIf(t, innerLocalErr != nil, "%v", innerLocalErr)
 		}
 	})
 	c := New(st, task.NewBounded(2), owner)
 
-	_, doc := generatorForTest(
+	generatorForTestResult5 := generatorForTest(
 		t,
 		[]any{
 			map[string]any{
@@ -499,6 +449,7 @@ func testArtifactGeneratorMetadataCase(t *testing.T, testCaseInput *struct {
 			},
 		},
 	)
+	_, doc := generatorForTestResult5.object, generatorForTestResult5.document
 	spec := doc["spec"].(map[string]any)
 	spec["pathPattern"] = "@repo/apps/{App}"
 	spec["commonMetadata"] = map[string]any{
@@ -513,10 +464,9 @@ func testArtifactGeneratorMetadataCase(t *testing.T, testCaseInput *struct {
 	if !testCaseInput.uid {
 		delete(doc["metadata"].(map[string]any), "uid")
 	}
-	parsed, doc, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	parsed4, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+	parsed, doc := parsed4.Object, parsed4.Document
+	assert.FatalIf(t, err != nil, "%v", err)
 	obj := parsed.(*manifest.RawObject)
 	st.AddObject(obj, doc)
 	input := &observedFS{FS: fstest.MapFS{"apps/Prod/file": {Data: []byte("bytes")}}}
@@ -551,17 +501,13 @@ func testArtifactGeneratorMetadataCase(t *testing.T, testCaseInput *struct {
 	if testCaseInput.revision != "" {
 		wantRevision = "revision"
 	}
-	{
-		assert.FatalIf(t, artifact.Revision != wantRevision ||
-			artifact.Metadata["org.opencontainers.image.revision"] != testCaseInput.wantOrigin, "metadata = %+v; revision=%q origin=%q", artifact, wantRevision, testCaseInput.wantOrigin)
-	}
+	assert.FatalIf(t, artifact.Revision != wantRevision ||
+		artifact.Metadata["org.opencontainers.image.revision"] != testCaseInput.wantOrigin, "metadata = %+v; revision=%q origin=%q", artifact, wantRevision, testCaseInput.wantOrigin)
 	if testCaseInput.origin == "@absent" && len(artifact.Metadata) != 0 {
 		t.Fatalf("absent origin alias added metadata: %+v", artifact.Metadata)
 	}
 	emission, ok := st.GetArtifact(obj.Named(), store.ArtifactContent).(*store.Emission)
-	{
-		assert.FatalIf(t, !ok, "%v", "missing complete generator inventory")
-	}
+	assert.FatalIf(t, !ok, "%v", "missing complete generator inventory")
 	metadata := emission.Children[0].Doc["metadata"].(map[string]any)
 	uid := ""
 	if testCaseInput.uid {
@@ -574,39 +520,31 @@ func testArtifactGeneratorMetadataCase(t *testing.T, testCaseInput *struct {
 		"kept":                                  "common",
 	}
 	{
-		{
-			diff := cmp.Diff(want, metadata["labels"])
-			assert.FatalIf(t, diff != "", "%v", diff)
-		}
+		diff := cmp.Diff(want, metadata["labels"])
+		assert.FatalIf(t, diff != "", "%v", diff)
 	}
 	{
-		{
-			diff := cmp.Diff(map[string]any{"note": "kept"}, metadata["annotations"])
-			assert.FatalIf(t, diff != "", "%v", diff)
-		}
+		diff := cmp.Diff(map[string]any{"note": "kept"}, metadata["annotations"])
+		assert.FatalIf(t, diff != "", "%v", diff)
 	}
 	for _, key := range []string{"uid", "resourceVersion", "creationTimestamp"} {
 		{
-			{
-				_, present := metadata[key]
-				assert.FatalIf(t, present, "invented %s", key)
-			}
+			_, present := metadata[key]
+			assert.FatalIf(t, present, "invented %s", key)
 		}
 	}
 	sourceRef := emission.Children[0].Doc["spec"].(map[string]any)["sourceRef"]
 	{
-		{
-			diff := cmp.Diff(
-				map[string]any{
-					"apiVersion": obj.APIVersion,
-					"kind":       obj.Kind,
-					"name":       obj.Name,
-					"namespace":  obj.Namespace,
-				},
-				sourceRef,
-			)
-			assert.FatalIf(t, diff != "", "%v", diff)
-		}
+		diff := cmp.Diff(
+			map[string]any{
+				"apiVersion": obj.APIVersion,
+				"kind":       obj.Kind,
+				"name":       obj.Name,
+				"namespace":  obj.Namespace,
+			},
+			sourceRef,
+		)
+		assert.FatalIf(t, diff != "", "%v", diff)
 	}
 	opens := input.opens.Load()
 	updated := *selected
@@ -617,14 +555,12 @@ func testArtifactGeneratorMetadataCase(t *testing.T, testCaseInput *struct {
 	updated.Metadata["unrelated"] = "changed"
 	st.SetArtifact(repo, &updated)
 	runForTest(t, c, obj.Named())
-	{
-		assert.FatalIf(
-			t,
-			st.GetArtifact(target, store.ArtifactContent) != artifact || input.opens.Load() != opens,
-			"%v",
-			"unrelated metadata prevented replay",
-		)
-	}
+	assert.FatalIf(
+		t,
+		st.GetArtifact(target, store.ArtifactContent) != artifact || input.opens.Load() != opens,
+		"%v",
+		"unrelated metadata prevented replay",
+	)
 	updatedDoc := maps.Clone(doc)
 	updatedMetadata := maps.Clone(doc["metadata"].(map[string]any))
 	updatedMetadata["uid"] = "next"
@@ -632,18 +568,14 @@ func testArtifactGeneratorMetadataCase(t *testing.T, testCaseInput *struct {
 	st.AddObject(obj, updatedDoc)
 	runForTest(t, c, obj.Named())
 	emission, ok = st.GetArtifact(obj.Named(), store.ArtifactContent).(*store.Emission)
-	{
-		assert.FatalIf(t, !ok, "%v", "UID refresh left no authoritative generator inventory")
-	}
+	assert.FatalIf(t, !ok, "%v", "UID refresh left no authoritative generator inventory")
 	labels := emission.Children[0].Doc["metadata"].(map[string]any)["labels"].(map[string]any)
-	{
-		assert.FatalIf(
-			t,
-			labels["source.extensions.fluxcd.io/generator"] != "next" || input.opens.Load() != opens,
-			"%v",
-			"cache-hit metadata did not refresh without input work",
-		)
-	}
+	assert.FatalIf(
+		t,
+		labels["source.extensions.fluxcd.io/generator"] != "next" || input.opens.Load() != opens,
+		"%v",
+		"cache-hit metadata did not refresh without input work",
+	)
 	if testCaseInput.origin == "@repo" {
 		next := updated
 		next.Metadata = maps.Clone(updated.Metadata)
@@ -651,19 +583,15 @@ func testArtifactGeneratorMetadataCase(t *testing.T, testCaseInput *struct {
 		st.SetArtifact(repo, &next)
 		runForTest(t, c, obj.Named())
 		fresh := st.GetArtifact(target, store.ArtifactContent).(*store.SourceArtifact)
-		{
-			assert.FatalIf(t, fresh.Revision != "revision" ||
-				fresh.Metadata["org.opencontainers.image.revision"] != "next-origin", "origin-only metadata stayed stale: %+v", fresh)
-		}
+		assert.FatalIf(t, fresh.Revision != "revision" ||
+			fresh.Metadata["org.opencontainers.image.revision"] != "next-origin", "origin-only metadata stayed stale: %+v", fresh)
 		last := next
 		last.Revision = "next-revision"
 		st.SetArtifact(repo, &last)
 		runForTest(t, c, obj.Named())
 		fresh = st.GetArtifact(target, store.ArtifactContent).(*store.SourceArtifact)
-		{
-			assert.FatalIf(t, fresh.Revision != "next-revision" ||
-				fresh.Metadata["org.opencontainers.image.revision"] != "next-origin", "selected metadata stayed stale: %+v", fresh)
-		}
+		assert.FatalIf(t, fresh.Revision != "next-revision" ||
+			fresh.Metadata["org.opencontainers.image.revision"] != "next-origin", "selected metadata stayed stale: %+v", fresh)
 	}
 	disabledDoc := maps.Clone(updatedDoc)
 	disabledMetadata := maps.Clone(updatedMetadata)
@@ -680,21 +608,17 @@ func testArtifactGeneratorMetadataCase(t *testing.T, testCaseInput *struct {
 	)
 	runForTest(t, c, obj.Named())
 	unsubscribe()
-	{
-		assert.FatalIf(
-			t,
-			emissions.Load() != 0 || st.GetArtifact(target, store.ArtifactContent) != beforeDisabled,
-			"%v",
-			"disable annotation arrival changed accepted outputs",
-		)
-	}
+	assert.FatalIf(
+		t,
+		emissions.Load() != 0 || st.GetArtifact(target, store.ArtifactContent) != beforeDisabled,
+		"%v",
+		"disable annotation arrival changed accepted outputs",
+	)
 	st.AddObject(obj, updatedDoc)
 	runForTest(t, c, obj.Named())
 	enabled := st.GetArtifact(obj.Named(), store.ArtifactContent).(*store.Emission)
-	{
-		assert.FatalIf(t, input.opens.Load() != beforeDisabledOpens ||
-			enabled.Children[0].Doc["metadata"].(map[string]any)["labels"].(map[string]any)["source.extensions.fluxcd.io/generator"] != "next", "%v", "re-enabling did not retain cached content and current UID")
-	}
+	assert.FatalIf(t, input.opens.Load() != beforeDisabledOpens ||
+		enabled.Children[0].Doc["metadata"].(map[string]any)["labels"].(map[string]any)["source.extensions.fluxcd.io/generator"] != "next", "%v", "re-enabling did not retain cached content and current UID")
 }
 
 func testArtifactGeneratorInputAvailabilityCase(
@@ -714,20 +638,16 @@ func testArtifactGeneratorInputAvailabilityCase(
 
 	st := store.New()
 	owner, err := cache.New(t.Context(), "")
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	t.Cleanup(func() {
 		{
-			{
-				err := owner.Close()
-				assert.ErrorIf(t, err != nil, "%v", err)
-			}
+			err := owner.Close()
+			assert.ErrorIf(t, err != nil, "%v", err)
 		}
 	})
 	c := New(st, task.NewBounded(2), owner)
 
-	obj, doc := generatorForTest(
+	generatorForTestResult6 := generatorForTest(
 		t,
 		[]any{
 			map[string]any{
@@ -738,6 +658,7 @@ func testArtifactGeneratorInputAvailabilityCase(
 			},
 		},
 	)
+	obj, doc := generatorForTestResult6.object, generatorForTestResult6.document
 	st.AddObject(obj, doc)
 	repo := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
@@ -760,14 +681,12 @@ func testArtifactGeneratorInputAvailabilityCase(
 	}
 	runForTest(t, c, obj.Named())
 	status, _ := st.GetStatus(obj.Named())
-	{
-		assert.FatalIf(t, status.Status != testCaseInput.want || testCaseInput.
-			wantReason != "" && status.Reason != testCaseInput.wantReason, "input availability = %+v; want %s/%s",
-			status, testCaseInput.
-				want, testCaseInput.
-				wantReason,
-		)
-	}
+	assert.FatalIf(t, status.Status != testCaseInput.want || testCaseInput.
+		wantReason != "" && status.Reason != testCaseInput.wantReason, "input availability = %+v; want %s/%s",
+		status, testCaseInput.
+			want, testCaseInput.
+			wantReason,
+	)
 	target := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
 		Kind:      manifest.KindExternalArtifact,
@@ -783,8 +702,6 @@ func testArtifactGeneratorInputAvailabilityCase(
 		})
 		c.Tasks.BlockTillDone()
 		status, _ = st.GetStatus(obj.Named())
-		{
-			assert.FatalIf(t, status.Status != store.StatusFailed, "missing input after drain = %+v", status)
-		}
+		assert.FatalIf(t, status.Status != store.StatusFailed, "missing input after drain = %+v", status)
 	}
 }

@@ -112,13 +112,9 @@ spec:
 		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		Config{WipeSecrets: true},
 	)
-	{
-		assert.FatalIf(t, len(renderedSingleton1) != 1, "missing render: %v", err)
-	}
+	assert.FatalIf(t, len(renderedSingleton1) != 1, "missing render: %v", err)
 	res := renderedSingleton1[0].Result
-	{
-		assert.FatalIf(t, err != nil, "Render: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "Render: %v", err)
 	if len(res.Failed) != 0 {
 		t.Fatalf("advisory must not fail the render; Failed=%v", res.Failed)
 	}
@@ -129,9 +125,7 @@ spec:
 	var got *manifest.Warning
 	for i := range res.Warnings {
 		w := res.Warnings[i]
-		{
-			assert.ErrorIf(t, w.Resource == opaque, "a chart consuming .Values wholesale must not warn; got %+v", w)
-		}
+		assert.ErrorIf(t, w.Resource == opaque, "a chart consuming .Values wholesale must not warn; got %+v", w)
 		if w.Resource == app && w.Category == manifest.WarnStaleValues {
 			got = &res.Warnings[i]
 		}
@@ -185,22 +179,18 @@ func TestRender_UnresolvedSubstitutionWarning(t *testing.T) {
 		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		Config{WipeSecrets: true, Concurrency: 2},
 	)
-	{
-		assert.FatalIf(t, len(renderedSingleton2) != 1, "missing render: %v", err)
-	}
+	assert.FatalIf(t, len(renderedSingleton2) != 1, "missing render: %v", err)
 	res := renderedSingleton2[0].Result
 	if err == nil || len(res.Failed) != 2 {
 		t.Fatalf("required absent Secrets were admitted: error=%v failures=%v", err, res.Failed)
 	}
 	for _, warning := range res.Warnings {
-		{
-			assert.FatalIf(
-				t,
-				warning.Category == manifest.WarnUnresolvedSubstitution,
-				"failed reference reported success warning: %+v",
-				warning,
-			)
-		}
+		assert.FatalIf(
+			t,
+			warning.Category == manifest.WarnUnresolvedSubstitution,
+			"failed reference reported success warning: %+v",
+			warning,
+		)
 	}
 	testutil.WriteFile(t, dir, "kubernetes/apps/external-secret.yaml", `apiVersion: external-secrets.io/v1
 kind: ExternalSecret
@@ -219,9 +209,7 @@ spec:
 		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		Config{WipeSecrets: true, Concurrency: 2},
 	)
-	{
-		assert.FatalIf(t, err != nil || len(renderedSingleton2) != 1, "producer-declared render: %v", err)
-	}
+	assert.FatalIf(t, err != nil || len(renderedSingleton2) != 1, "producer-declared render: %v", err)
 	res = renderedSingleton2[0].Result
 	assert.Equal(t, len(res.Failed), 0)
 	var warnings []manifest.Warning
@@ -299,14 +287,10 @@ spec:
 		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		Config{WipeSecrets: true},
 	)
-	{
-		assert.FatalIf(t, len(renderedSingleton4) != 1, "missing render: %v", err)
-	}
+	assert.FatalIf(t, len(renderedSingleton4) != 1, "missing render: %v", err)
 	o := renderedSingleton4[0].Orchestrator
 	res := renderedSingleton4[0].Result
-	{
-		assert.FatalIf(t, err != nil, "Render: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "Render: %v", err)
 
 	repo := &manifest.GitRepository{Name: "ssh", Namespace: "flux-system"}
 	repo.URL = "ssh://git@example.test/cluster"
@@ -315,18 +299,16 @@ spec:
 	reads.Init(o.Store(), repo.Named(), nil)
 	_, err = o.src.Fetchers[manifest.KindGitRepository].Fetch(t.Context(), repo, &reads, sourcecache.Policy{})
 	{
-		{
-			missing, ok := errors.AsType[*source.MissingSecretError](
-				err,
-			)
-			assert.FatalIf(
-				t,
-				!ok || missing.Detail != "missing 'identity' for SSH auth" || missing.Secret.Name != "cloudflared-secret" ||
-					!reads.Valid(),
-				"producer-declared credential did not retain placeholder classification: %v",
-				err,
-			)
-		}
+		missing, ok := errors.AsType[*source.MissingSecretError](
+			err,
+		)
+		assert.FatalIf(
+			t,
+			!ok || missing.Detail != "missing 'identity' for SSH auth" || missing.Secret.Name != "cloudflared-secret" ||
+				!reads.Valid(),
+			"producer-declared credential did not retain placeholder classification: %v",
+			err,
+		)
 	}
 
 	// The ${CLOUDFLARE_TUNNEL_ID} resolved to its placeholder, not empty/literal.
@@ -341,19 +323,15 @@ spec:
 			}
 		}
 	}
-	{
-		assert.ErrorIf(t, got != want, "tunnel ConfigMap data.target = %q, want %q", got, want)
-	}
+	assert.ErrorIf(t, got != want, "tunnel ConfigMap data.target = %q, want %q", got, want)
 	// No unreadable-secret advisory: a producer-declared secret is readable as placeholders.
 	for _, w := range res.Warnings {
-		{
-			assert.ErrorIf(
-				t,
-				w.Category == manifest.WarnUnresolvedSubstitution && strings.Contains(w.Message, "cloudflared-secret"),
-				"a producer-declared secret must not warn as unreadable; got %+v",
-				w,
-			)
-		}
+		assert.ErrorIf(
+			t,
+			w.Category == manifest.WarnUnresolvedSubstitution && strings.Contains(w.Message, "cloudflared-secret"),
+			"a producer-declared secret must not warn as unreadable; got %+v",
+			w,
+		)
 	}
 }
 
@@ -374,14 +352,10 @@ func testRenderScanAndPathWarningsCase(t *testing.T, testCaseInput *struct {
 	}
 	cfg.ID = manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}
 	runs, err := RenderTrees(t.Context(), []Tree{cfg.Tree}, cfg.Config)
-	{
-		assert.FatalIf(t, len(runs) != 1, "missing run: %v", err)
-	}
+	assert.FatalIf(t, len(runs) != 1, "missing run: %v", err)
 	res := runs[0].Result
 
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	var warnings []manifest.Warning
 	{
 		wValues := res.Warnings

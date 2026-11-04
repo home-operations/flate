@@ -240,35 +240,33 @@ func prepareAccepted(
 		Raw:      frame.raw,
 		Final:    fingerprint,
 	}
-	{
-		//nolint:gocritic // The iterator supplies immutable value snapshots.
-		for id, record := range records {
-			item := acceptedRecord{ID: id, Record: record}
-			item.Record.ContentRoots = nil
-			item.Record.Inputs = slices.Clone(record.Inputs)
-			item.Record.Refs = slices.Clone(record.Refs)
-			slices.SortFunc(item.Record.Refs, manifest.NamedResource.Compare)
-			item.Record.Refs = slices.Compact(item.Record.Refs)
-			item.Record.Productions = slices.Clone(record.Productions)
-			slices.SortFunc(item.Record.Productions, func(a, b manifest.Production) int {
-				return cmp.Or(
-					a.Owner.Compare(b.Owner),
-					a.Declaration.Compare(b.Declaration),
-					a.Authored.Compare(b.Authored),
-					a.Source.Compare(b.Source),
-					cmp.Compare(a.Path, b.Path),
-					cmp.Compare(a.File, b.File),
-				)
-			})
-			item.Record.Productions = slices.Compact(item.Record.Productions)
-			for source, paths := range record.ContentRoots {
-				paths = slices.Clone(paths)
-				slices.Sort(paths)
-				item.Roots = append(item.Roots, acceptedRoot{Source: source, Paths: slices.Compact(paths)})
-			}
-			slices.SortFunc(item.Roots, func(a, b acceptedRoot) int { return a.Source.Compare(b.Source) })
-			accepted.Records = append(accepted.Records, item)
+	//nolint:gocritic // The iterator supplies immutable value snapshots.
+	for id, record := range records {
+		item := acceptedRecord{ID: id, Record: record}
+		item.Record.ContentRoots = nil
+		item.Record.Inputs = slices.Clone(record.Inputs)
+		item.Record.Refs = slices.Clone(record.Refs)
+		slices.SortFunc(item.Record.Refs, manifest.NamedResource.Compare)
+		item.Record.Refs = slices.Compact(item.Record.Refs)
+		item.Record.Productions = slices.Clone(record.Productions)
+		slices.SortFunc(item.Record.Productions, func(a, b manifest.Production) int {
+			return cmp.Or(
+				a.Owner.Compare(b.Owner),
+				a.Declaration.Compare(b.Declaration),
+				a.Authored.Compare(b.Authored),
+				a.Source.Compare(b.Source),
+				cmp.Compare(a.Path, b.Path),
+				cmp.Compare(a.File, b.File),
+			)
+		})
+		item.Record.Productions = slices.Compact(item.Record.Productions)
+		for source, paths := range record.ContentRoots {
+			paths = slices.Clone(paths)
+			slices.Sort(paths)
+			item.Roots = append(item.Roots, acceptedRoot{Source: source, Paths: slices.Compact(paths)})
 		}
+		slices.SortFunc(item.Roots, func(a, b acceptedRoot) int { return a.Source.Compare(b.Source) })
+		accepted.Records = append(accepted.Records, item)
 	}
 	slices.SortFunc(accepted.Records, func(a, b acceptedRecord) int { return a.ID.Compare(b.ID) })
 	for i := 1; i < len(accepted.Records); i++ {

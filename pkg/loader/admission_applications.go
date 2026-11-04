@@ -30,7 +30,8 @@ func (c *admissionClosure) materializerMatcher(demand *materializerDemand) (mani
 				return false
 			}
 			var err error
-			object, _, _, err = manifest.ParseDoc(document, manifest.ParseDocOptions{})
+			parsed, parsedErr := manifest.ParseDoc(document, manifest.ParseDocOptions{})
+			object, err = parsed.Object, parsedErr
 			if err != nil || object == nil || object.Named() != id {
 				return false
 			}

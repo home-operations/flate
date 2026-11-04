@@ -83,7 +83,7 @@ func missingCRDRepo(t *testing.T, rs string) string {
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_MissingCRDs_StrictIssue(t *testing.T) {
 	dir := missingCRDRepo(t, issueResourceSet)
-	out, errOut, code := harness.RunCLIBuffers(
+	runCLIBuffersResult1 := harness.RunCLIBuffers(
 		"test",
 		"all",
 		"--path",
@@ -93,6 +93,7 @@ func TestE2E_MissingCRDs_StrictIssue(t *testing.T) {
 		"--concurrency",
 		"2",
 	)
+	out, errOut, code := runCLIBuffersResult1.Stdout, runCLIBuffersResult1.Stderr, runCLIBuffersResult1.Code
 	assert.FatalIf(t, code != 1 || !strings.Contains(out+errOut, "helmreleases.helm.toolkit.fluxcd.io") ||
 		!strings.Contains(out+errOut, "not found"), "strict issue: exit=%d stdout=%s stderr=%s", code, out, errOut)
 	t.Logf("strict issue: exit=%d stdout=%s stderr=%s", code, out, errOut)
@@ -111,7 +112,7 @@ func TestE2E_ResourceSet_RuntimeClassDependency(t *testing.T) {
 		"apps/runtime.yaml",
 		"apiVersion: node.k8s.io/v1\nkind: RuntimeClass\nmetadata: {name: nvidia}\nhandler: nvidia\n",
 	)
-	out, errOut, code := harness.RunCLIBuffers(
+	runCLIBuffersResult2 := harness.RunCLIBuffers(
 		"test",
 		"all",
 		"--path",
@@ -121,6 +122,7 @@ func TestE2E_ResourceSet_RuntimeClassDependency(t *testing.T) {
 		"--concurrency",
 		"2",
 	)
+	out, errOut, code := runCLIBuffersResult2.Stdout, runCLIBuffersResult2.Stderr, runCLIBuffersResult2.Code
 	assert.FatalIf(t, code != 0, "RuntimeClass dependency: exit=%d stdout=%s stderr=%s", code, out, errOut)
 }
 
@@ -175,8 +177,10 @@ func TestE2E_MissingCRDs_Policy(t *testing.T) {
 func TestE2E_MissingCRDs_Environment(t *testing.T) {
 	dir := missingCRDRepo(t, suspendedIssueResourceSet())
 	t.Setenv("FLATE_ALLOW_MISSING_KINDS", "CustomResourceDefinition")
-	args := []string{"test", "all", "--path", dir, "--cache-dir", t.TempDir(), "--concurrency", "2"}
-	out, errOut, code := harness.RunCLIBuffers(args...)
+	args := make([]string, 0, 9)
+	args = append(args, "test", "all", "--path", dir, "--cache-dir", t.TempDir(), "--concurrency", "2")
+	runCLIBuffersResult3 := harness.RunCLIBuffers(args...)
+	out, errOut, code := runCLIBuffersResult3.Stdout, runCLIBuffersResult3.Stderr, runCLIBuffersResult3.Code
 	assert.FatalIf(
 		t,
 		code != 0 || strings.Count(out+errOut, "absent from offline inputs; accepted for") != 1,
@@ -185,7 +189,8 @@ func TestE2E_MissingCRDs_Environment(t *testing.T) {
 		out,
 		errOut,
 	)
-	out, errOut, code = harness.RunCLIBuffers(append(args, "--allow-missing-kinds=")...)
+	runCLIBuffersResult4 := harness.RunCLIBuffers(append(args, "--allow-missing-kinds=")...)
+	out, errOut, code = runCLIBuffersResult4.Stdout, runCLIBuffersResult4.Stderr, runCLIBuffersResult4.Code
 	assert.FatalIf(
 		t,
 		code != 1 || strings.Contains(out+errOut, "absent from offline inputs; accepted for"),
@@ -210,7 +215,7 @@ func TestE2E_MissingCRDs_DeterministicWarnings(t *testing.T) {
 		)
 		rs += "---\n" + strings.Replace(rs, "  name: flux-operator\n", "  name: z-dependent\n", 1)
 		dir := missingCRDRepo(t, rs)
-		out, errOut := harness.RequireCLIOK(
+		requireCLIOKResult5 := harness.RequireCLIOK(
 			t,
 			"test",
 			"all",
@@ -222,6 +227,7 @@ func TestE2E_MissingCRDs_DeterministicWarnings(t *testing.T) {
 			strconv.Itoa(workers),
 			"--allow-missing-kinds=CustomResourceDefinition",
 		)
+		out, errOut := requireCLIOKResult5.Stdout, requireCLIOKResult5.Stderr
 		lines := []string{}
 		for line := range strings.SplitSeq(out+errOut, "\n") {
 			if strings.Contains(line, "absent from offline inputs; accepted for") {
@@ -243,7 +249,7 @@ func TestE2E_MissingCRDs_DeterministicWarnings(t *testing.T) {
 		}
 		assert.FatalIf(t, !strings.Contains(lines[0], "helmreleases.helm.toolkit.fluxcd.io") ||
 			!strings.Contains(lines[1], "widgets.example.com"), "warnings out of order: %v", lines)
-		built, _ := harness.RequireCLIOK(
+		requireCLIOKResult6 := harness.RequireCLIOK(
 			t,
 			"build",
 			"all",
@@ -255,7 +261,8 @@ func TestE2E_MissingCRDs_DeterministicWarnings(t *testing.T) {
 			strconv.Itoa(workers),
 			"--allow-missing-kinds=CustomResourceDefinition",
 		)
-		hr, _ := harness.RequireCLIOK(
+		built, _ := requireCLIOKResult6.Stdout, requireCLIOKResult6.Stderr
+		requireCLIOKResult7 := harness.RequireCLIOK(
 			t,
 			"get",
 			"hr",
@@ -269,6 +276,7 @@ func TestE2E_MissingCRDs_DeterministicWarnings(t *testing.T) {
 			strconv.Itoa(workers),
 			"--allow-missing-kinds=CustomResourceDefinition",
 		)
+		hr, _ := requireCLIOKResult7.Stdout, requireCLIOKResult7.Stderr
 		if firstBuild == "" {
 			firstBuild = built
 			firstHR = hr
@@ -291,7 +299,8 @@ func TestE2E_MissingCRDs_DiffSides(t *testing.T) {
 		t.Run(strconv.Itoa(workers), func(t *testing.T) {
 			before := missingCRDRepo(t, suspendedIssueResourceSet())
 			after := missingCRDRepo(t, strings.Replace(suspendedIssueResourceSet(), "interval: 5m", "interval: 10m", 1))
-			args := []string{
+			args := make([]string, 0, 11)
+			args = append(args,
 				"diff",
 				"all",
 				"--path",
@@ -302,8 +311,9 @@ func TestE2E_MissingCRDs_DiffSides(t *testing.T) {
 				t.TempDir(),
 				"--concurrency",
 				strconv.Itoa(workers),
-			}
-			out, errOut, code := harness.RunCLIBuffers(args...)
+			)
+			runCLIBuffersResult8 := harness.RunCLIBuffers(args...)
+			out, errOut, code := runCLIBuffersResult8.Stdout, runCLIBuffersResult8.Stderr, runCLIBuffersResult8.Code
 			assert.FatalIf(t, code != 1 ||
 				strings.Count(
 					errOut,
@@ -313,7 +323,9 @@ func TestE2E_MissingCRDs_DiffSides(t *testing.T) {
 					errOut,
 					"2 failed · 2 blocked",
 				), "strict diff exit=%d stdout=%s stderr=%s", code, out, errOut)
-			out, errOut, code = harness.RunCLIBuffers(append(args, "--allow-missing-kinds=CustomResourceDefinition")...)
+			runCLIBuffersResult9 := harness.RunCLIBuffers(
+				append(args, "--allow-missing-kinds=CustomResourceDefinition")...)
+			out, errOut, code = runCLIBuffersResult9.Stdout, runCLIBuffersResult9.Stderr, runCLIBuffersResult9.Code
 			assert.FatalIf(
 				t,
 				code != 0 || !strings.Contains(out+errOut, "10m") || !strings.Contains(out+errOut, "5m"),
@@ -371,7 +383,8 @@ func e2EMissingCRDsPolicyName(t *testing.T, tc *struct {
 	if tc.enabled {
 		args = append(args, "--allow-missing-kinds=CustomResourceDefinition")
 	}
-	out, errOut, code := harness.RunCLIBuffers(append([]string{"test", "all"}, args...)...)
+	runCLIBuffersResult10 := harness.RunCLIBuffers(append([]string{"test", "all"}, args...)...)
+	out, errOut, code := runCLIBuffersResult10.Stdout, runCLIBuffersResult10.Stderr, runCLIBuffersResult10.Code
 	wantCode := 1
 	if tc.success {
 		wantCode = 0
@@ -404,7 +417,8 @@ func e2EMissingCRDsPolicyName(t *testing.T, tc *struct {
 		)
 		return
 	}
-	child, childErr := harness.RequireCLIOK(t, append([]string{"get", "hr", "-o", "yaml"}, args...)...)
+	requireCLIOKResult11 := harness.RequireCLIOK(t, append([]string{"get", "hr", "-o", "yaml"}, args...)...)
+	child, childErr := requireCLIOKResult11.Stdout, requireCLIOKResult11.Stderr
 	for _, part := range []string{"name: flux-operator", "kind: OCIRepository", "suspend: true"} {
 		assert.FatalIf(t, !strings.Contains(child, part), "missing child spec %q: %s", part, child)
 	}
@@ -449,9 +463,10 @@ func e2EMissingCRDsPolicyNameLoop(t *testing.T, loopInputs struct {
 		if skip {
 			skipKinds += ",CustomResourceDefinition"
 		}
-		built, builtErr := harness.RequireCLIOK(
+		requireCLIOKResult12 := harness.RequireCLIOK(
 			t,
 			append(append([]string{"build", "all"}, (*loopInputs.args)...), "--skip-kinds="+skipKinds)...)
+		built, builtErr := requireCLIOKResult12.Stdout, requireCLIOKResult12.Stderr
 		assert.FatalIf(t, strings.Contains(built, "absent from offline inputs") ||
 			strings.Count(
 				builtErr,

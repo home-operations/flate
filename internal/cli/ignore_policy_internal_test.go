@@ -23,7 +23,8 @@ func TestRun_ConventionalIgnore(t *testing.T) {
 		),
 	)
 	testutil.WriteFile(t, path, ".krmignore", "flux/extra.yaml\n")
-	stdout, stderr, code := runCLI(t, "get", "ks", "--path", path, "-o", "name")
+	cli := runCLI(t, "get", "ks", "--path", path, "-o", "name")
+	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 	assert.FatalIf(
 		t,
 		code != 0 || strings.Contains(stdout, "apps-extra") || !strings.Contains(stdout, "apps"),

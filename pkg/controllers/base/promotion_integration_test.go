@@ -142,9 +142,7 @@ spec: {url: https://example.test/excluded.git}
 				filter.ShouldReconcile(id), "excluded sibling %s must remain absent", id)
 		}
 	}
-	{
-		assert.ErrorIf(t, len(filter.KeepNames()) != size, "%v", "ordering promotion must not expand keep")
-	}
+	assert.ErrorIf(t, len(filter.KeepNames()) != size, "%v", "ordering promotion must not expand keep")
 	st.AddObject(&manifest.ConfigMap{Name: "excluded", Namespace: "apps"})
 	{
 		promoted, err := promote(excluded)

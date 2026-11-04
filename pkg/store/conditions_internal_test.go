@@ -31,9 +31,7 @@ func TestStore_SetCondition_ReadyFiresStatusEvent(t *testing.T) {
 	assert.Equal(t, events[0].Reason, ReasonSkipped)
 	assert.Equal(t, events[1].Reason, StatusReason("Custom"))
 	info, ok := s.GetStatus(id)
-	{
-		assert.FatalIf(t, !ok || info != events[1] || info.Outcome() != OutcomePassed, "projected status = %+v", info)
-	}
+	assert.FatalIf(t, !ok || info != events[1] || info.Outcome() != OutcomePassed, "projected status = %+v", info)
 	assert.Equal(t, snapshot[0].Reason, string(ReasonSkipped))
 }
 

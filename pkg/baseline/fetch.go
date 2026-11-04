@@ -43,11 +43,11 @@ func fetchBase(ctx context.Context, url, rev string, owner *sourcecache.Cache) (
 	if err != nil {
 		return nil, fmt.Errorf("newendpoint: %w", err)
 	}
-	client, err := client.NewClient(ep)
+	transportClient, err := client.NewClient(ep)
 	if err != nil {
 		return nil, fmt.Errorf("newclient: %w", err)
 	}
-	session, err := client.NewUploadPackSession(ep, nil)
+	session, err := transportClient.NewUploadPackSession(ep, nil)
 	if err != nil {
 		return nil, fmt.Errorf("newuploadpacksession: %w", err)
 	}
@@ -60,7 +60,7 @@ func fetchBase(ctx context.Context, url, rev string, owner *sourcecache.Cache) (
 	if err != nil {
 		return nil, err
 	}
-	remote := &baseRemote{client: client, endpoint: ep, capabilities: refs.Capabilities, pin: pin, url: url}
+	remote := &baseRemote{client: transportClient, endpoint: ep, capabilities: refs.Capabilities, pin: pin, url: url}
 	key := sourcecache.GitKey{Content: struct{ URL, Commit string }{url, pin.String()}, Ref: pin.String()}
 	generation, _, err := owner.Git(
 		ctx,
@@ -211,7 +211,7 @@ func (r *baseRemote) newRequest(wantCommit bool) *packp.UploadPackRequest {
 	return req
 }
 
-func copyMetadata(ctx context.Context, source storage.Storer, upper storage.Storer, hash plumbing.Hash) error {
+func copyMetadata(ctx context.Context, source, upper storage.Storer, hash plumbing.Hash) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("context: %w", err)
 	}

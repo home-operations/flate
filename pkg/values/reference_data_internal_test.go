@@ -60,7 +60,8 @@ func TestStoreProvider_OfflineCandidatePrecedenceAndWithdrawal(t *testing.T) {
 	)
 	data := NewStoreProvider(st, true).Data(target)
 	assert.Diff(t, slices.Sorted(data.Keys()), []string{"EXTRA", "FIRST"})
-	value, _, err := data.Value("FIRST")
+	valueResult, err := data.Value("FIRST")
+	value := valueResult.Value
 	assert.NoError(t, err)
 	assert.Equal(t, value, "first")
 	_, _, firstOutput := st.GetEmission(first.Named())
@@ -69,7 +70,8 @@ func TestStoreProvider_OfflineCandidatePrecedenceAndWithdrawal(t *testing.T) {
 	st.RecordEmitted(first.Named(), &firstOutput, nil)
 	data = NewStoreProvider(st, true).Data(target)
 	assert.Diff(t, slices.Sorted(data.Keys()), []string{"EXTRA", "FIRST", "SECOND"})
-	value, _, err = data.Value("SECOND")
+	valueResult2, valueResultErr := data.Value("SECOND")
+	value, err = valueResult2.Value, valueResultErr
 	assert.NoError(t, err)
 	assert.Equal(t, value, "second")
 	_, _, secondOutput := st.GetEmission(second.Named())
@@ -77,14 +79,13 @@ func TestStoreProvider_OfflineCandidatePrecedenceAndWithdrawal(t *testing.T) {
 	secondOutput.Complete = true
 	st.RecordEmitted(second.Named(), &secondOutput, nil)
 	assert.Diff(t, NewStoreProvider(st, true).Data(target).Snapshot(), supplied.Snapshot())
-	{
-		assert.FatalIf(
-			t,
-			!st.ReportHidden(target) || len(st.ListObjects("", manifest.KindSecret)) != 1,
-			"%s",
-			"offline data entered inventory",
-		)
-	}
+
+	assert.FatalIf(
+		t,
+		!st.ReportHidden(target) || len(st.ListObjects("", manifest.KindSecret)) != 1,
+		"%s",
+		"offline data entered inventory",
+	)
 }
 
 func TestStoreProvider_OfflineSourceAndRealDataInvalidateCapture(t *testing.T) {
@@ -117,41 +118,29 @@ func TestStoreProvider_OfflineSourceAndRealDataInvalidateCapture(t *testing.T) {
 	)
 	defer reads.Close()
 	provider := NewStoreProvider(&reads, true)
-	{
-		assert.FatalIf(t, provider.Data(target) != offline, "%s", "offline candidate unavailable")
-	}
+	assert.FatalIf(t, provider.Data(target) != offline, "%s", "offline candidate unavailable")
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{Content: "new-source"})
-	{
-		assert.FatalIf(t, reads.Valid(), "%s", "source arrival did not invalidate offline data")
-	}
+	assert.FatalIf(t, reads.Valid(), "%s", "source arrival did not invalidate offline data")
 	var fresh store.ReadSet
 	fresh.Init(st, reads.ID(), nil)
 	defer fresh.Close()
 	next := NewStoreProvider(&fresh, true)
-	{
-		assert.FatalIf(t, next.Data(target) != offline, "%s", "fresh lookup lost candidate")
-	}
+	assert.FatalIf(t, next.Data(target) != offline, "%s", "fresh lookup lost candidate")
 	actual := manifest.NewConfigMap(target, map[string]any{"VALUE": "real"})
 	st.AddObject(actual)
-	{
-		assert.FatalIf(t, fresh.Valid(), "%s", "real data arrival did not invalidate offline capture")
-	}
-	{
-		assert.FatalIf(
-			t,
-			provider.Data(target) != offline || next.Data(target) != offline,
-			"%s",
-			"captured lookup changed during expansion",
-		)
-	}
-	{
-		assert.FatalIf(
-			t,
-			NewStoreProvider(st, true).Data(target) != actual,
-			"%s",
-			"fresh lookup retained offline value",
-		)
-	}
+	assert.FatalIf(t, fresh.Valid(), "%s", "real data arrival did not invalidate offline capture")
+	assert.FatalIf(
+		t,
+		provider.Data(target) != offline || next.Data(target) != offline,
+		"%s",
+		"captured lookup changed during expansion",
+	)
+	assert.FatalIf(
+		t,
+		NewStoreProvider(st, true).Data(target) != actual,
+		"%s",
+		"fresh lookup retained offline value",
+	)
 }
 
 func TestStoreProvider_PendingIndexedKeysAwaitPublication(t *testing.T) {
@@ -194,28 +183,20 @@ func TestStoreProvider_PendingIndexedKeysAwaitPublication(t *testing.T) {
 	)
 	defer reads.Close()
 	input := NewStoreProvider(&reads, true).Lookup(target)
-	{
-		assert.FatalIf(t, input.Data != nil || !input.Generated, "%s", "unsettled producer supplied a placeholder")
-	}
+	assert.FatalIf(t, input.Data != nil || !input.Generated, "%s", "unsettled producer supplied a placeholder")
 	assert.Diff(t, input.Materializers, []manifest.NamedResource{owner.Named()})
 	_, _, output := st.GetEmission(owner.Named())
 	defer output.Finish()
 	output.Children, output.Complete = []store.Child{{Obj: declaration}}, true
 	st.RecordEmitted(owner.Named(), &output, nil)
-	{
-		assert.FatalIf(t, reads.Valid(), "%s", "producer publication did not invalidate pending lookup")
-	}
+	assert.FatalIf(t, reads.Valid(), "%s", "producer publication did not invalidate pending lookup")
 	var fresh store.ReadSet
 	fresh.Init(st, reads.ID(), nil)
 	defer fresh.Close()
 	data := NewStoreProvider(&fresh, true).Data(target)
-	{
-		assert.FatalIf(t, data == nil, "%s", "settled declaration supplied no placeholder")
-	}
+	assert.FatalIf(t, data == nil, "%s", "settled declaration supplied no placeholder")
 	assert.Diff(t, slices.Sorted(data.Keys()), []string{"CURRENT"})
-	{
-		assert.FatalIf(t, st.GetObject(target) != nil, "%s", "placeholder entered inventory")
-	}
+	assert.FatalIf(t, st.GetObject(target) != nil, "%s", "placeholder entered inventory")
 }
 
 func TestStoreProvider_CompetingKeysRemainSeparate(t *testing.T) {
@@ -243,9 +224,7 @@ func TestStoreProvider_CompetingKeysRemainSeparate(t *testing.T) {
 	}})
 	data := NewStoreProvider(st, true).Data(target)
 	assert.Diff(t, slices.Sorted(data.Keys()), []string{"FIRST"})
-	{
-		assert.FatalIf(t, st.GetObject(target) != nil, "%s", "competing keys produced an object")
-	}
+	assert.FatalIf(t, st.GetObject(target) != nil, "%s", "competing keys produced an object")
 }
 
 func testStoreProviderIndexOnlyDeclaredKeysCase(
@@ -287,23 +266,20 @@ func testStoreProviderIndexOnlyDeclaredKeysCase(
 	defer reads.Close()
 	input := NewStoreProvider(&reads, testCaseInput.wipe).Lookup(target)
 	if testCaseInput.wipe && len(testCaseInput.keys) != 0 {
-		{
-			assert.FatalIf(t, input.Data == nil, "%s", "index-only key evidence was lost")
-		}
-		value, _, err := input.Data.Value("VALUE")
+		assert.FatalIf(t, input.Data == nil, "%s", "index-only key evidence was lost")
+		valueResult3, err := input.Data.Value("VALUE")
+		value := valueResult3.Value
 		assert.NoError(t, err)
 		assert.Equal(t, value, manifest.ValuePlaceholder("VALUE"))
 	} else {
 		assert.FatalIf(t, input.Data != nil, "%s", "lookup fabricated unavailable key data")
 	}
-	{
-		assert.FatalIf(
-			t,
-			st.GetObject(target) != nil || st.GetObject(declaration) != nil,
-			"%s",
-			"lookup published an object",
-		)
-	}
+	assert.FatalIf(
+		t,
+		st.GetObject(target) != nil || st.GetObject(declaration) != nil,
+		"%s",
+		"lookup published an object",
+	)
 	st.AddObject(&manifest.RawObject{
 		Kind:       declaration.Kind,
 		APIVersion: "external-secrets.io/v1",
@@ -314,19 +290,15 @@ func testStoreProviderIndexOnlyDeclaredKeysCase(
 			"data":   []any{map[string]any{"secretKey": "CURRENT"}},
 		},
 	})
-	{
-		assert.FatalIf(t, reads.Valid(), "%s", "declaration arrival did not invalidate indexed keys")
-	}
+	assert.FatalIf(t, reads.Valid(), "%s", "declaration arrival did not invalidate indexed keys")
 	data := NewStoreProvider(st, true).Data(target)
 	assert.Diff(t, slices.Sorted(data.Keys()), []string{"CURRENT"})
 	actual := manifest.NewSecret(target, nil, map[string]any{"REAL": "real"})
 	st.AddObject(actual)
-	{
-		assert.FatalIf(
-			t,
-			NewStoreProvider(st, true).Data(target) != actual,
-			"%s",
-			"real data did not supersede indexed keys",
-		)
-	}
+	assert.FatalIf(
+		t,
+		NewStoreProvider(st, true).Data(target) != actual,
+		"%s",
+		"real data did not supersede indexed keys",
+	)
 }

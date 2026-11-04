@@ -89,15 +89,13 @@ func testRenderRemoteSelectionTransitionCase(
 	c := newCache()
 	request := RenderRequest{Source: localSource(t, root), Label: root, Spec: demoSpec}
 	out, receipt, err := testutil.RenderMaps(Render(t.Context(), c, request, sourcecache.RetryConfig{}))
-	{
-		assert.FatalIf(
-			t,
-			err != nil || receipt == nil || !hasRenderField(out, "name", "git-output"),
-			"initial directory selection: %s, %v",
-			out,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err != nil || receipt == nil || !hasRenderField(out, "name", "git-output"),
+		"initial directory selection: %s, %v",
+		out,
+		err,
+	)
 	realOutput := testRenderEncoding(t, out)
 	{
 		recordRenderErr := c.RecordRender(
@@ -129,15 +127,13 @@ func testRenderRemoteSelectionTransitionCase(
 			!valid, "unchanged resource selection rejected Git: valid=%t, %v", valid, stillValidErr)
 	}
 	out, _, err = testutil.RenderMaps(Render(t.Context(), c, request, sourcecache.RetryConfig{}))
-	{
-		assert.FatalIf(
-			t,
-			err != nil || !bytes.Equal(realOutput, testRenderEncoding(t, out)),
-			"unchanged real output: %s, %v",
-			out,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err != nil || !bytes.Equal(realOutput, testRenderEncoding(t, out)),
+		"unchanged real output: %s, %v",
+		out,
+		err,
+	)
 	if eligible {
 		publishTestFrame(
 			t,
@@ -150,17 +146,15 @@ func testRenderRemoteSelectionTransitionCase(
 	c = newCache()
 	out, _, err = testutil.RenderMaps(Render(t.Context(), c, request, sourcecache.RetryConfig{}))
 	witness := hasRenderField(out, "witness", "REMOTE-SELECTION")
-	{
-		assert.FatalIf(
-			t,
-			err != nil || witness != eligible ||
-				!eligible && !bytes.Equal(realOutput, testRenderEncoding(t, out)),
-			"saved-render reuse: %s, %v; eligible=%t",
-			out,
-			err,
-			eligible,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err != nil || witness != eligible ||
+			!eligible && !bytes.Equal(realOutput, testRenderEncoding(t, out)),
+		"saved-render reuse: %s, %v; eligible=%t",
+		out,
+		err,
+		eligible,
+	)
 	t.Logf(
 		"persistence eligible=%t witness assertion executed=%t witness reused=%t",
 		eligible,
@@ -185,16 +179,14 @@ func testRenderRemoteSelectionTransitionCase(
 	if testCaseInput.changeGit {
 		want = "changed-git-output"
 	}
-	{
-		assert.FatalIf(
-			t,
-			err != nil || !hasRenderField(out, "name", want) || hasRenderField(out, "name", "git-output") ||
-				hasRenderField(out, "witness", "REMOTE-SELECTION"),
-			"resource transition: %s, %v",
-			out,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err != nil || !hasRenderField(out, "name", want) || hasRenderField(out, "name", "git-output") ||
+			hasRenderField(out, "witness", "REMOTE-SELECTION"),
+		"resource transition: %s, %v",
+		out,
+		err,
+	)
 	if hits.Load() != 4 {
 		t.Fatalf("validation/preflight acquisitions=%d, want one per invocation", hits.Load())
 	}

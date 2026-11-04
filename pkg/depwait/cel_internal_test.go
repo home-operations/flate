@@ -45,9 +45,7 @@ func TestReadyExpr_ProjectsObservedGeneration(t *testing.T) {
 				tc.version,
 			)
 			ok, err := evaluateReadyExpr(expr, s, manifest.NamedResource{}, dep)
-			{
-				assert.ErrorIf(t, err != nil || !ok, "readiness projection: ok=%v err=%v, want true/nil", ok, err)
-			}
+			assert.ErrorIf(t, err != nil || !ok, "readiness projection: ok=%v err=%v, want true/nil", ok, err)
 		})
 	}
 }
@@ -124,15 +122,13 @@ func TestReadyExpr_ReplaceOverridesBuiltin(t *testing.T) {
 		ReadyExpr:     new(`dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")`),
 	}
 	{
-		{
-			got := w.Classify(t.Context(), ref, manifest.DrainNone)
-			assert.ErrorIf(
-				t,
-				got.Kind != schedule.Terminal,
-				"replace ReadyExpr true over Failed built-in: got %+v, want schedule.Terminal",
-				got,
-			)
-		}
+		got := w.Classify(t.Context(), ref, manifest.DrainNone)
+		assert.ErrorIf(
+			t,
+			got.Kind != schedule.Terminal,
+			"replace ReadyExpr true over Failed built-in: got %+v, want schedule.Terminal",
+			got,
+		)
 	}
 }
 
@@ -148,22 +144,18 @@ func TestReadyExpr_CompileError(t *testing.T) {
 			}
 
 			{
-				{
-					_, err := evaluateReadyExpr(`this isn't valid CEL`, s, manifest.NamedResource{}, dep)
-					assert.FatalIf(t, err == nil, "%v", "expected compile error")
-				}
+				_, err := evaluateReadyExpr(`this isn't valid CEL`, s, manifest.NamedResource{}, dep)
+				assert.FatalIf(t, err == nil, "%v", "expected compile error")
 			}
 			w := &Waiter{Store: s}
 			ref := manifest.DependencyRef{NamedResource: dep, ReadyExpr: new(`this isn't valid CEL`)}
 			got := w.Classify(t.Context(), ref, manifest.DrainNone)
-			{
-				assert.ErrorIf(
-					t,
-					got.Kind != schedule.DependencyFailed || !strings.HasPrefix(got.Message, "readyExpr:"),
-					"compile error: got %+v, want schedule.DependencyFailed with 'readyExpr:' prefix",
-					got,
-				)
-			}
+			assert.ErrorIf(
+				t,
+				got.Kind != schedule.DependencyFailed || !strings.HasPrefix(got.Message, "readyExpr:"),
+				"compile error: got %+v, want schedule.DependencyFailed with 'readyExpr:' prefix",
+				got,
+			)
 		})
 	}
 }
@@ -177,19 +169,15 @@ func TestReadyExpr_NonBoolResult(t *testing.T) {
 	s.UpdateStatus(dep, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "ok"})
 
 	_, err := evaluateReadyExpr(`dep.metadata.name`, s, manifest.NamedResource{}, dep) // string, not bool
+	assert.ErrorIf(
+		t,
+		err == nil || !strings.Contains(err.Error(), "must return bool"),
+		"non-bool result: err=%v, want a 'must return bool' error",
+		err,
+	)
 	{
-		assert.ErrorIf(
-			t,
-			err == nil || !strings.Contains(err.Error(), "must return bool"),
-			"non-bool result: err=%v, want a 'must return bool' error",
-			err,
-		)
-	}
-	{
-		{
-			_, terminal := errors.AsType[*celCompileError](err)
-			assert.ErrorIf(t, !terminal, "non-bool result: err=%T, want terminal *celCompileError", err)
-		}
+		_, terminal := errors.AsType[*celCompileError](err)
+		assert.ErrorIf(t, !terminal, "non-bool result: err=%T, want terminal *celCompileError", err)
 	}
 }
 
@@ -209,27 +197,24 @@ func TestReadyExpr_TransientEvalErrorNotTerminal(t *testing.T) {
 	obj, observation := s.Snapshot(dep, true)
 	conds := observation.Conditions
 	{
-		{
-			ready, failMsg := w.tryReadyExpr(
-				&manifest.DependencyRef{NamedResource: dep, ReadyExpr: new(expr)},
-				obj,
-				conds,
-			)
-			assert.FatalIf(t, ready ||
-				failMsg != "", "transient eval error: ready=%v failMsg=%q, want false/empty (not terminal)", ready, failMsg)
-		}
+		tryReadyExprResult1 := w.tryReadyExpr(
+			&manifest.DependencyRef{NamedResource: dep, ReadyExpr: new(expr)},
+			obj,
+			conds,
+		)
+		ready, failMsg := tryReadyExprResult1.ready, tryReadyExprResult1.failure
+		assert.FatalIf(t, ready ||
+			failMsg != "", "transient eval error: ready=%v failMsg=%q, want false/empty (not terminal)", ready, failMsg)
 	}
 	ref := manifest.DependencyRef{NamedResource: dep, ReadyExpr: new(expr)}
 	{
-		{
-			got := w.Classify(t.Context(), ref, manifest.DrainNone)
-			assert.ErrorIf(
-				t,
-				got.Kind != schedule.Blocked,
-				"transient eval error@none: got %+v, want schedule.Blocked (re-runnable, not failed)",
-				got,
-			)
-		}
+		got := w.Classify(t.Context(), ref, manifest.DrainNone)
+		assert.ErrorIf(
+			t,
+			got.Kind != schedule.Blocked,
+			"transient eval error@none: got %+v, want schedule.Blocked (re-runnable, not failed)",
+			got,
+		)
 	}
 }
 
@@ -262,9 +247,7 @@ func TestReadyExpr_ReadsLabelsAndAnnotations(t *testing.T) {
 	} {
 		expr += ` && dep.spec.path == "./old" && dep.status.conditions.exists(c, c.type == "Ready" && c.status == "True")`
 		ok, err := w.evaluateReadyExpr(expr, dep, obj, conds)
-		{
-			assert.ErrorIf(t, err != nil || !ok, "expr %q: ok=%v err=%v, want true/nil", expr, ok, err)
-		}
+		assert.ErrorIf(t, err != nil || !ok, "expr %q: ok=%v err=%v, want true/nil", expr, ok, err)
 	}
 }
 
@@ -287,9 +270,7 @@ func TestReadyExpr_BindsSelfAndDep(t *testing.T) {
 		self,
 		dep,
 	)
-	{
-		assert.ErrorIf(t, err != nil || !ok, "self/dep binding: ok=%v err=%v, want true/nil", ok, err)
-	}
+	assert.ErrorIf(t, err != nil || !ok, "self/dep binding: ok=%v err=%v, want true/nil", ok, err)
 	var observation store.Observation
 	obj, observation := s.Snapshot(dep, true)
 	conds := observation.Conditions
@@ -307,10 +288,8 @@ func TestReadyExpr_BindsSelfAndDep(t *testing.T) {
 			w := Waiter{Store: s, Parent: tc.self}
 			expr := `self.status.conditions.exists(c, c.type == "Ready" && c.reason == "` + tc.reason + `") && dep.status.conditions.exists(c, c.type == "Ready" && c.reason == "Skipped" && c.status == "True")`
 			{
-				{
-					ok, err := w.evaluateReadyExpr(expr, dep, obj, conds)
-					assert.FatalIf(t, err != nil || !ok, "retained observation: ok=%v err=%v", ok, err)
-				}
+				ok, err := w.evaluateReadyExpr(expr, dep, obj, conds)
+				assert.FatalIf(t, err != nil || !ok, "retained observation: ok=%v err=%v", ok, err)
 			}
 		})
 	}
@@ -321,29 +300,25 @@ func TestReadyExpr_BindsSelfAndDep(t *testing.T) {
 			foreignSelf.Group, foreignDep.Group = group, group
 			expr := `self.apiVersion == '' && dep.apiVersion == '' && !dep.status.conditions.exists(c, c.type == 'Ready' && c.status == 'True')`
 			{
-				{
-					ok, err := evaluateReadyExpr(expr, s, foreignSelf, foreignDep)
-					assert.FatalIf(
-						t,
-						err != nil || !ok,
-						"foreign projection borrowed Flux identity or conditions: ok=%v err=%v",
-						ok,
-						err,
-					)
-				}
+				ok, err := evaluateReadyExpr(expr, s, foreignSelf, foreignDep)
+				assert.FatalIf(
+					t,
+					err != nil || !ok,
+					"foreign projection borrowed Flux identity or conditions: ok=%v err=%v",
+					ok,
+					err,
+				)
 			}
 			s.UpdateStatus(foreignDep, store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "foreign"})
 			{
-				{
-					ok, err := evaluateReadyExpr(expr, s, foreignSelf, foreignDep)
-					assert.FatalIf(
-						t,
-						err != nil || !ok,
-						"status-only projection borrowed Flux identity: ok=%v err=%v",
-						ok,
-						err,
-					)
-				}
+				ok, err := evaluateReadyExpr(expr, s, foreignSelf, foreignDep)
+				assert.FatalIf(
+					t,
+					err != nil || !ok,
+					"status-only projection borrowed Flux identity: ok=%v err=%v",
+					ok,
+					err,
+				)
 			}
 		})
 	}
@@ -367,10 +342,8 @@ func TestReadyExpr_BindsSelfAndDep(t *testing.T) {
 			pending.Message,
 		)
 		{
-			{
-				ok, err := evaluateReadyExpr(expr, s, parent.Named(), dependency.Named())
-				assert.FatalIf(t, err != nil || !ok, "ResourceSet self condition: ok=%v err=%v, want true/nil", ok, err)
-			}
+			ok, err := evaluateReadyExpr(expr, s, parent.Named(), dependency.Named())
+			assert.FatalIf(t, err != nil || !ok, "ResourceSet self condition: ok=%v err=%v, want true/nil", ok, err)
 		}
 	})
 }
@@ -384,12 +357,8 @@ func TestCompileReadyExpr_MemoizesErrors(t *testing.T) {
 	const bad = `this is not valid CEL ((` // unclosed paren = compile error
 	_, err1 := compileReadyExpr(bad)
 	_, err2 := compileReadyExpr(bad)
-	{
-		assert.FatalIf(t, err1 == nil || err2 == nil, "%v", "expected compile error on both calls")
-	}
-	{
-		assert.ErrorIf(t, !errors.Is(err1, err2), "compile error not memoized: %p vs %p", err1, err2)
-	}
+	assert.FatalIf(t, err1 == nil || err2 == nil, "%v", "expected compile error on both calls")
+	assert.ErrorIf(t, !errors.Is(err1, err2), "compile error not memoized: %p vs %p", err1, err2)
 }
 
 func evaluateReadyExpr(expr string, s *store.Store, self, dep manifest.NamedResource) (bool, error) {
@@ -453,12 +422,8 @@ func TestReadyExpr_SelfCapture(t *testing.T) {
 			obj, info := reads.Snapshot(dep.Named(), true)
 			w := Waiter{Store: &reads, Parent: self.Named()}
 			ok, err := w.evaluateReadyExpr(tc.expr, dep.Named(), obj, info.Conditions)
-			{
-				assert.FatalIf(t, err != nil || !ok, "evaluation: ok=%v err=%v, want true/nil", ok, err)
-			}
-			{
-				assert.FatalIf(t, !reads.Valid(), "%v", "fresh read set invalid")
-			}
+			assert.FatalIf(t, err != nil || !ok, "evaluation: ok=%v err=%v, want true/nil", ok, err)
+			assert.FatalIf(t, !reads.Valid(), "%v", "fresh read set invalid")
 			s.UpdateStatus(
 				self.Named(),
 				store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "rendering"},
@@ -500,10 +465,8 @@ func TestReadyExpr_DeclarationChanges(t *testing.T) {
 				expr = `true`
 			}
 			{
-				{
-					ok, err := w.evaluateReadyExpr(expr, dep.Named(), obj, info.Conditions)
-					assert.FatalIf(t, err != nil || !ok, "evaluation: ok=%v err=%v, want true/nil", ok, err)
-				}
+				ok, err := w.evaluateReadyExpr(expr, dep.Named(), obj, info.Conditions)
+				assert.FatalIf(t, err != nil || !ok, "evaluation: ok=%v err=%v, want true/nil", ok, err)
 			}
 			changed := self.Clone()
 			if field == "spec" {
@@ -513,10 +476,8 @@ func TestReadyExpr_DeclarationChanges(t *testing.T) {
 			}
 			s.AddObject(changed)
 			{
-				{
-					got, want := reads.Valid(), field == "constant"
-					assert.FatalIf(t, got != want, "valid after declaration replacement = %v, want %v", got, want)
-				}
+				got, want := reads.Valid(), field == "constant"
+				assert.FatalIf(t, got != want, "valid after declaration replacement = %v, want %v", got, want)
 			}
 		})
 	}
@@ -537,15 +498,11 @@ func TestReadyExpr_DependencyConditions(t *testing.T) {
 		ReadyExpr:     new(`dep.status.conditions.exists(c, c.status == 'True')`),
 	}
 	{
-		{
-			got := w.Classify(t.Context(), ref, manifest.DrainNone)
-			assert.FatalIf(t, got.Kind != schedule.Terminal, "dependency: %+v", got)
-		}
+		got := w.Classify(t.Context(), ref, manifest.DrainNone)
+		assert.FatalIf(t, got.Kind != schedule.Terminal, "dependency: %+v", got)
 	}
 	s.UpdateStatus(dep.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "rendering"})
-	{
-		assert.FatalIf(t, reads.Valid(), "%v", "dependency conditions did not invalidate reads")
-	}
+	assert.FatalIf(t, reads.Valid(), "%v", "dependency conditions did not invalidate reads")
 }
 
 func TestReadyExpr_CapturedSpec(t *testing.T) {
@@ -559,13 +516,10 @@ kind: Kustomization
 metadata: {name: dep, namespace: ns, labels: {version: old}, annotations: {revision: old}}
 spec: {path: ./old}
 `))
-			{
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
-			obj, _, _, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{})
-			{
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
+			assert.FatalIf(t, err != nil, "%v", err)
+			parsed, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{})
+			obj := parsed.Object
+			assert.FatalIf(t, err != nil, "%v", err)
 			dep := obj.(*manifest.Kustomization)
 			s.AddObject(dep)
 			s.UpdateStatus(dep.Named(), store.StatusInfo{Status: store.StatusReady})
@@ -593,14 +547,10 @@ spec: {path: ./old}
 					expr += ` && self.spec.path == './consumer'`
 				}
 				{
-					{
-						ok, err := w.evaluateReadyExpr(expr, dep.Named(), old, info.Conditions)
-						assert.ErrorIf(t, err != nil || !ok, "old capture: ok=%v err=%v", ok, err)
-					}
+					ok, err := w.evaluateReadyExpr(expr, dep.Named(), old, info.Conditions)
+					assert.ErrorIf(t, err != nil || !ok, "old capture: ok=%v err=%v", ok, err)
 				}
-				{
-					assert.ErrorIf(t, reads.Valid(), "%v", "replaced observation remained valid")
-				}
+				assert.ErrorIf(t, reads.Valid(), "%v", "replaced observation remained valid")
 			})
 			wg.Go(func() {
 				<-captured
@@ -619,14 +569,10 @@ spec: {path: ./old}
 					expr += ` && self.spec == dep.spec && self.status == dep.status`
 				}
 				{
-					{
-						ok, err := w.evaluateReadyExpr(expr, dep.Named(), current, info.Conditions)
-						assert.ErrorIf(t, err != nil || !ok, "new capture: ok=%v err=%v", ok, err)
-					}
+					ok, err := w.evaluateReadyExpr(expr, dep.Named(), current, info.Conditions)
+					assert.ErrorIf(t, err != nil || !ok, "new capture: ok=%v err=%v", ok, err)
 				}
-				{
-					assert.ErrorIf(t, !reads.Valid(), "%v", "fresh observation invalid")
-				}
+				assert.ErrorIf(t, !reads.Valid(), "%v", "fresh observation invalid")
 			})
 			wg.Wait()
 		})
@@ -666,42 +612,37 @@ func testReadyExprDesiredSpecCase(t *testing.T, testCaseInput *struct {
 				if id == self && !equal {
 					value = "v2"
 				}
-				obj, _, _, err := manifest.ParseDoc(map[string]any{
+				parsed2, err := manifest.ParseDoc(map[string]any{
 					"apiVersion": id.KindInfo().APIVersion(),
 					"kind":       id.Kind,
 					"metadata":   map[string]any{"name": id.Name, "namespace": id.Namespace},
 					"spec":       testCaseInput.spec(value),
 				}, manifest.ParseDocOptions{})
-				{
-					assert.FatalIf(t, err != nil, "%v", err)
-				}
+				obj := parsed2.Object
+				assert.FatalIf(t, err != nil, "%v", err)
 				s.AddObject(obj)
 				s.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady})
 			}
 			{
-				{
-					ok, err := evaluateReadyExpr(testCaseInput.expr, s, self, testCaseInput.id)
-					assert.ErrorIf(
-						t,
-						err != nil || ok != equal,
-						"desired-spec comparison: ok=%v err=%v, want %v/nil",
-						ok,
-						err,
-						equal,
-					)
-				}
+				ok, err := evaluateReadyExpr(testCaseInput.expr, s, self, testCaseInput.id)
+				assert.ErrorIf(
+					t,
+					err != nil || ok != equal,
+					"desired-spec comparison: ok=%v err=%v, want %v/nil",
+					ok,
+					err,
+					equal,
+				)
 			}
 			{
-				{
-					ok, err := evaluateReadyExpr(testCaseInput.presence, s, self, testCaseInput.id)
-					assert.ErrorIf(
-						t,
-						err != nil || !ok,
-						"authored field presence: ok=%v err=%v, want true/nil",
-						ok,
-						err,
-					)
-				}
+				ok, err := evaluateReadyExpr(testCaseInput.presence, s, self, testCaseInput.id)
+				assert.ErrorIf(
+					t,
+					err != nil || !ok,
+					"authored field presence: ok=%v err=%v, want true/nil",
+					ok,
+					err,
+				)
 			}
 			w := Waiter{Store: s, Parent: self}
 			ref := manifest.DependencyRef{
@@ -713,15 +654,13 @@ func testReadyExprDesiredSpecCase(t *testing.T, testCaseInput *struct {
 				want = schedule.Terminal
 			}
 			{
-				{
-					got := w.Classify(
-						t.Context(),
-						ref,
-						manifest.DrainNone,
-					)
-					assert.ErrorIf(t, got.Kind != want || got.Err != nil ||
-						got.Message != "", "desired-spec readiness: got %+v, want kind=%v without error or message", got, want)
-				}
+				got := w.Classify(
+					t.Context(),
+					ref,
+					manifest.DrainNone,
+				)
+				assert.ErrorIf(t, got.Kind != want || got.Err != nil ||
+					got.Message != "", "desired-spec readiness: got %+v, want kind=%v without error or message", got, want)
 			}
 		})
 	}

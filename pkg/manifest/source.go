@@ -121,6 +121,8 @@ func (g *GitRepository) SourceInterval() time.Duration { return g.Interval.Durat
 func (g *GitRepository) OperationTimeout() time.Duration { return operationTimeout(g.Timeout) }
 
 // Active source credentials MUST name a Secret, even when missing secrets are allowed.
+//
+//nolint:gocritic // The callback must update the caller error when a reference is invalid.
 func validateSecretReference(id NamedResource, err *error) func(Reference) bool {
 	return func(ref Reference) bool {
 		if ref.Kind == KindSecret && ref.Name == "" {

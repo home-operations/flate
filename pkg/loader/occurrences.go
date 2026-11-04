@@ -274,7 +274,7 @@ func (l *Loader) Packages(ctx context.Context) ([]PackageEvidence, error) {
 }
 
 // Occurrences projects cached declarations through the existing contextual traversal.
-func (l *Loader) Occurrences(ctx context.Context, dir, namespace string) ([]Occurrence, error) {
+func (l *Loader) Occurrences(ctx context.Context, dir, targetNamespace string) ([]Occurrence, error) {
 	l.mountSources()
 	l.ensureScopes()
 	root := new(l.documents).mountedRoot(dir)
@@ -286,8 +286,8 @@ func (l *Loader) Occurrences(ctx context.Context, dir, namespace string) ([]Occu
 		new(graphVisit{
 			root:      root,
 			dir:       filepath.ToSlash(relative),
-			namespace: namespace,
-			fallback:  namespace,
+			namespace: targetNamespace,
+			fallback:  targetNamespace,
 			role:      kustomizeinput.Resource,
 		}),
 	)
@@ -655,39 +655,35 @@ func (l *Loader) appendPathObject(objects []Occurrence, childValue *parsedObject
 }
 
 func (l *Loader) collectPackages(packages map[string]struct{}, scans map[string]string) {
-	{
-		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-		for dir, doc := range l.documents.cache {
-			if doc.adHoc && new(l.documents).mountedRoot(dir) == l.SourceRoot {
-				relative, _ := filepath.Rel(l.SourceRoot, dir)
-				scans[dir] = filepath.ToSlash(relative)
-			}
-			if doc.traversed && doc.body != nil && !isKustomizeComponent(doc.body) &&
-				new(l.documents).mountedRoot(dir) == l.SourceRoot {
-				packages[dir] = struct{}{}
-			}
+	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+	for dir, doc := range l.documents.cache {
+		if doc.adHoc && new(l.documents).mountedRoot(dir) == l.SourceRoot {
+			relative, _ := filepath.Rel(l.SourceRoot, dir)
+			scans[dir] = filepath.ToSlash(relative)
+		}
+		if doc.traversed && doc.body != nil && !isKustomizeComponent(doc.body) &&
+			new(l.documents).mountedRoot(dir) == l.SourceRoot {
+			packages[dir] = struct{}{}
 		}
 	}
 }
 
 func (l *Loader) collectUncoveredPackages(packages map[string]struct{}, covered map[OccurrenceID]bool) {
-	{
-		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-		for file, doc := range l.documents.cache {
-			if !doc.loaded || len(doc.objects) == 0 || doc.bootstrap ||
-				new(l.documents).mountedRoot(file) != l.SourceRoot {
-				continue
-			}
-			relative, _ := filepath.Rel(l.SourceRoot, file)
-			{
-				childValues2 := doc.objects
-				for childIndex2 := range childValues2 {
-					child := childValues2[childIndex2]
-					if child.Obj != nil && child.outcome.Err == nil &&
-						!covered[OccurrenceID{Source: l.SourceRoot, File: filepath.ToSlash(relative), Document: child.outcome.Ordinal}] {
-						packages[filepath.Dir(file)] = struct{}{}
-						break
-					}
+	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+	for file, doc := range l.documents.cache {
+		if !doc.loaded || len(doc.objects) == 0 || doc.bootstrap ||
+			new(l.documents).mountedRoot(file) != l.SourceRoot {
+			continue
+		}
+		relative, _ := filepath.Rel(l.SourceRoot, file)
+		{
+			childValues2 := doc.objects
+			for childIndex2 := range childValues2 {
+				child := childValues2[childIndex2]
+				if child.Obj != nil && child.outcome.Err == nil &&
+					!covered[OccurrenceID{Source: l.SourceRoot, File: filepath.ToSlash(relative), Document: child.outcome.Ordinal}] {
+					packages[filepath.Dir(file)] = struct{}{}
+					break
 				}
 			}
 		}

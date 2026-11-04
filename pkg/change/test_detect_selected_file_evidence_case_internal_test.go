@@ -61,9 +61,7 @@ func testDetectSelectedFileEvidenceCase(t *testing.T, testCaseInput *string,
 			plumbing.ZeroHash,
 			gittree.ViewOptions{Mode: gittree.Direct, Current: readers[i]},
 		)
-		{
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		assert.FatalIf(t, err != nil, "%v", err)
 		inputs[i] = &store.SourceArtifact{
 			FS:                 input,
 			LocalPath:          roots[i],
@@ -72,10 +70,8 @@ func testDetectSelectedFileEvidenceCase(t *testing.T, testCaseInput *string,
 		if (*testCaseInput) != "neither" && ((*testCaseInput) != "before" || i != 1) &&
 			((*testCaseInput) != "after" || i != 0) {
 			{
-				{
-					_, err := gittree.ContentFingerprint(t.Context(), input)
-					assert.FatalIf(t, err != nil, "%v", err)
-				}
+				_, err := gittree.ContentFingerprint(t.Context(), input)
+				assert.FatalIf(t, err != nil, "%v", err)
 			}
 		}
 	}
@@ -88,26 +84,20 @@ func testDetectSelectedFileEvidenceCase(t *testing.T, testCaseInput *string,
 	}
 	got, err := Detect(ctx, inputs[0], inputs[1])
 	if (*testCaseInput) == "canceled" {
-		{
-			assert.FatalIf(t, !errors.Is(err, context.Canceled), "Detect error = %v, want canceled", err)
-		}
+		assert.FatalIf(t, !errors.Is(err, context.Canceled), "Detect error = %v, want canceled", err)
 		return
 	}
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	if !slices.Equal(got.Paths(), want) {
 		t.Fatalf("paths = %v, want %v", got.Paths(), want)
 	}
 	if (*testCaseInput) == "before" || (*testCaseInput) == "after" || (*testCaseInput) == "neither" {
-		{
-			assert.FatalIf(
-				t,
-				readers[0].opens.Load()+readers[1].opens.Load() == opens,
-				"%v",
-				"missing pair evidence skipped byte comparison",
-			)
-		}
+		assert.FatalIf(
+			t,
+			readers[0].opens.Load()+readers[1].opens.Load() == opens,
+			"%v",
+			"missing pair evidence skipped byte comparison",
+		)
 	} else {
 		assert.FatalIf(
 			t,

@@ -72,7 +72,7 @@ func (c *admissionClosure) reverseInputRole(
 			if !c.role(input).dirty && !c.affected(input, c.object(input)) && !c.changedInput(id, input) {
 				continue
 			}
-			if changed, known := c.outputChanged(id, new(ref), c.incoming.Obj); known && !changed {
+			if comparison := c.outputChanged(id, new(ref), c.incoming.Obj); comparison.Known && !comparison.Changed {
 				continue
 			}
 			role.needed = true
@@ -101,7 +101,7 @@ func (c *admissionClosure) sourceRole(id manifest.NamedResource, role admissionR
 	}
 	//nolint:gocritic // The iterator supplies immutable value snapshots.
 	for target, record := range c.loader.Index.Files() {
-		needed, _, _, _ := c.loader.Options.Filter.Membership(target)
+		needed := c.loader.Options.Filter.Membership(target).Needed
 		if !needed || record.BuilderOwner != (manifest.NamedResource{}) ||
 			!c.coversDeclaration(c.incoming.Obj, target) {
 			continue
@@ -177,7 +177,7 @@ func (c *admissionClosure) selectInputReader(id, reader manifest.NamedResource) 
 		if !slices.Contains(inputs, id) {
 			continue
 		}
-		if changed, known := c.outputChanged(reader, new(ref), object); known && !changed {
+		if comparison := c.outputChanged(reader, new(ref), object); comparison.Known && !comparison.Changed {
 			continue
 		}
 		c.add(reader, admissionRole{needed: true, selected: true, dirty: true})

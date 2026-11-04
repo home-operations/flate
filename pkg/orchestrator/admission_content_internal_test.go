@@ -12,7 +12,12 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func namespaceChildrenFixture(tb testing.TB, peers int) (Tree, string) {
+type namespaceFixture struct {
+	tree     Tree
+	artifact string
+}
+
+func namespaceChildrenFixture(tb testing.TB, peers int) namespaceFixture {
 	tb.Helper()
 	root, artifact := tb.TempDir(), tb.TempDir()
 	testutil.WriteFile(tb, root, "flux/set.yaml", `apiVersion: fluxcd.controlplane.io/v1
@@ -64,12 +69,13 @@ spec:
 		"payload/cm.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected, namespace: apps}\ndata: {value: expected}\n",
 	)
-	return Tree{Path: filepath.Join(root, "flux"), RepoRoot: root}, artifact
+	return namespaceFixture{tree: Tree{Path: filepath.Join(root, "flux"), RepoRoot: root}, artifact: artifact}
 }
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestRender_EmittedNamespaceChildren(t *testing.T) {
-	tree, artifact := namespaceChildrenFixture(t, 2)
+	namespaceChildrenFixtureResult1 := namespaceChildrenFixture(t, 2)
+	tree, artifact := namespaceChildrenFixtureResult1.tree, namespaceChildrenFixtureResult1.artifact
 	roots := []manifest.NamedResource{
 		testutil.KustomizationID("apps", ""),
 		testutil.HelmReleaseID("apps", ""),
@@ -102,7 +108,8 @@ func TestRender_EmittedNamespaceChildren(t *testing.T) {
 		unsub()
 		assert.NoError(t, err)
 		output := outputByParent(result.Manifests)[selected]
-		needed, selectedRoot, dirty, _ := o.filter.Membership(selected)
+		membershipResult1 := o.filter.Membership(selected)
+		needed, selectedRoot, dirty, _ := membershipResult1.Needed, membershipResult1.Selected, membershipResult1.Dirty, membershipResult1.Revision
 		t.Logf("%s: selected membership needed=%t selected=%t dirty=%t", mode, needed, selectedRoot, dirty)
 		t.Logf(
 			"%s: fetches=%d excluded renders=%d selected documents=%d",
@@ -120,7 +127,8 @@ func TestRender_EmittedNamespaceChildren(t *testing.T) {
 		assert.Equal(t, fetcher.calls.Load(), int64(1))
 		assert.Equal(t, renders.Load(), int64(0))
 		for _, id := range []manifest.NamedResource{excluded, testutil.KustomizationID("monitoring", "peer-0"), testutil.KustomizationID("monitoring", "peer-1")} {
-			needed, selected, dirty, _ := o.filter.Membership(id)
+			membershipResult2 := o.filter.Membership(id)
+			needed, selected, dirty, _ := membershipResult2.Needed, membershipResult2.Selected, membershipResult2.Dirty, membershipResult2.Revision
 			assert.Equal(t, needed || selected || dirty, false)
 			_, dispatched := o.store.GetStatus(id)
 			assert.Equal(t, dispatched, false)
@@ -216,7 +224,8 @@ spec:
 			_, indexed := o.index.Lookup(source)
 			assert.Equal(t, indexed, false)
 			assert.Equal(t, o.Store().GetObject(source) == nil, true)
-			needed, selected, dirty, _ := o.filter.Membership(producer)
+			membershipResult3 := o.filter.Membership(producer)
+			needed, selected, dirty, _ := membershipResult3.Needed, membershipResult3.Selected, membershipResult3.Dirty, membershipResult3.Revision
 			assert.Equal(t, needed, true)
 			assert.Equal(t, selected, false)
 			assert.Equal(t, dirty, false)
@@ -289,14 +298,13 @@ spec:
 		unsub()
 		assert.NoError(t, err)
 		documents := outputByParent(result.Manifests)[child]
-		needed, selected, dirty, _ := o.filter.Membership(child)
+		membershipResult4 := o.filter.Membership(child)
+		needed, selected, dirty, _ := membershipResult4.Needed, membershipResult4.Selected, membershipResult4.Dirty, membershipResult4.Revision
 		t.Logf("%s: child membership needed=%t selected=%t dirty=%t", name, needed, selected, dirty)
 		t.Logf("%s: child dispatches=%d documents=%d", name, dispatches.Load(), len(documents))
 		assert.Equal(t, dispatches.Load() > 0, true)
 		if name == "full" {
-			{
-				assert.FatalIf(t, len(documents) != 1, "full oracle output=%v", documents)
-			}
+			assert.FatalIf(t, len(documents) != 1, "full oracle output=%v", documents)
 			oracle = documents
 		} else {
 			t.Run(name, func(t *testing.T) {

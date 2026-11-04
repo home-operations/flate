@@ -159,9 +159,7 @@ func testSelectSingleRunOmitsExternalDisclosuresCaseTail(
 	}
 	for externalSide, runs := range [][]Rendered{{(*tailCaseInput.run), (*tailCaseInput.other)}, {(*tailCaseInput.other), (*tailCaseInput.run)}} {
 		selected, err, _ = Select(runs, nil, root, (*tailCaseInput.labels))
-		{
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		assert.FatalIf(t, err != nil, "%v", err)
 		for i, res := range selected {
 			var want []manifest.Warning
 			if (*tailCaseInput.testCaseInput).want && i == externalSide {

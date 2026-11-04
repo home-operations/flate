@@ -133,7 +133,8 @@ func (c *Controller) KeepEmitted(
 	}
 	defer func() { admission.proof.Retire() }()
 	for {
-		ready, retry, err := admission.prepare(ctx)
+		prepareResult1, prepareResult1Err := admission.prepare(ctx)
+		ready, retry, err := prepareResult1.committed, prepareResult1.retry, prepareResult1Err
 		if retry {
 			continue
 		}
@@ -213,7 +214,12 @@ type emittedAdmission struct {
 	inferProductions bool
 }
 
-func (a *emittedAdmission) prepare(ctx context.Context) (bool, bool, error) {
+type admissionState struct {
+	committed bool
+	retry     bool
+}
+
+func (a *emittedAdmission) prepare(ctx context.Context) (admissionState, error) {
 	a.proof.Retire()
 	a.proof = a.controller.admissionProof(a.reads)
 	if a.inferProductions {
@@ -221,38 +227,38 @@ func (a *emittedAdmission) prepare(ctx context.Context) (bool, bool, error) {
 	}
 	proposal, err := a.controller.loader.Prepare(ctx, a.incoming, a.proof, nil)
 	if err != nil {
-		return false, false, err
+		return admissionState{committed: false, retry: false}, err
 	}
 	if !a.reads.Valid() {
-		return false, false, nil
+		return admissionState{committed: false, retry: false}, nil
 	}
 	if !a.proof.Valid() {
-		return false, true, nil
+		return admissionState{committed: false, retry: true}, nil
 	}
 	if err := ctx.Err(); err != nil {
-		return false, false, fmt.Errorf("context: %w", err)
+		return admissionState{committed: false, retry: false}, fmt.Errorf("context: %w", err)
 	}
 	added, retry := a.filter.AddEmitted(proposal.Needed, proposal.Selected, proposal.Dirty, proposal.Revision)
 	if retry {
-		return false, true, nil
+		return admissionState{committed: false, retry: true}, nil
 	}
 	for _, id := range added {
 		a.controller.Store.SetIncluded(id, true)
 	}
 	for _, input := range proposal.Objects {
 		if err := ctx.Err(); err != nil {
-			return false, false, fmt.Errorf("context: %w", err)
+			return admissionState{committed: false, retry: false}, fmt.Errorf("context: %w", err)
 		}
 		if !a.reads.Valid() {
-			return false, false, nil
+			return admissionState{committed: false, retry: false}, nil
 		}
 		if !a.proof.Valid() {
-			return false, true, nil
+			return admissionState{committed: false, retry: true}, nil
 		}
 		admitEmittedInput(a.proof, &input)
 	}
 	if !a.proof.Valid() {
-		return false, true, nil
+		return admissionState{committed: false, retry: true}, nil
 	}
-	return true, false, nil
+	return admissionState{committed: true, retry: false}, nil
 }

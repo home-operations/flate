@@ -34,7 +34,8 @@ func TestFetcher_TransportMaterialAbsentFromCache(t *testing.T) {
 		g.username = "flate-" + g.name + "-proxy-user-79a6b321"
 		g.password = "flate-" + g.name + "-proxy-password-c46e081f"
 		g.ca = testutil.SelfSignedCA(t)
-		g.cert, g.key = testutil.SelfSignedClientCert(t)
+		certificate := testutil.SelfSignedClientCert(t)
+		g.cert, g.key = certificate.Cert, certificate.Key
 		g.authorization = "Basic " + base64.StdEncoding.EncodeToString([]byte(g.username+":"+g.password))
 	}
 	var expected atomic.Pointer[testFetcherTransportMaterialAbsentFromCacheGeneration]

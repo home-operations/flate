@@ -58,23 +58,19 @@ func testTemplateCacheSubchartPersistenceCase(
 	next := NewClient((*testCaseInput.owner))
 	nextSources := NewSources(nextStore)
 	nextKey := (*testCaseInput.keyFor)(t, next, nextSources)
-	{
-		assert.FatalIf(
-			t,
-			nextKey.Content == testCaseInput.key.Content,
-			"%s",
-			"edited child reused the original completed-output key",
-		)
-	}
+	assert.FatalIf(
+		t,
+		nextKey.Content == testCaseInput.key.Content,
+		"%s",
+		"edited child reused the original completed-output key",
+	)
 	_, _, _, err := (*testCaseInput.owner).Blob(t.Context(), nextKey, cache.Policy{MaxAge: cache.Forever}, nil)
-	{
-		assert.FatalIf(
-			t,
-			!errors.Is(err, errdef.ErrNotFound),
-			"edited child lookup: got %v, want not found",
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!errors.Is(err, errdef.ErrNotFound),
+		"edited child lookup: got %v, want not found",
+		err,
+	)
 	out, receipt10, err := testutil.RenderMaps(
 		next.Template(t.Context(), (*testCaseInput.hr), nil, RenderOptions{Options: Options{}, Sources: nextSources}),
 	)
@@ -89,20 +85,18 @@ func testTemplateCacheSubchartPersistenceCase(
 	}
 
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(
-			t,
-			reflect.DeepEqual(out, (*testCaseInput.cold)) || hasRenderField(out, "witness", "persisted-subchart-hit") ||
-				!hasRenderField(out, "edited-template", "original") &&
-					!hasRenderField(
-						out,
-						"marker",
-						"edited-default",
-					),
-			"%s",
-			"edited child reused stale output or omitted its new content",
-		)
-	}
+	assert.FatalIf(
+		t,
+		reflect.DeepEqual(out, (*testCaseInput.cold)) || hasRenderField(out, "witness", "persisted-subchart-hit") ||
+			!hasRenderField(out, "edited-template", "original") &&
+				!hasRenderField(
+					out,
+					"marker",
+					"edited-default",
+				),
+		"%s",
+		"edited child reused stale output or omitted its new content",
+	)
 	assert.Diff(t, (*testCaseInput.readBlob)(t, (*testCaseInput.owner), nextKey), out)
 	assert.Diff(t, (*testCaseInput.readBlob)(t, (*testCaseInput.owner), (*testCaseInput.key)), (*testCaseInput.marked))
 	t.Log(

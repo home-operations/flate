@@ -33,26 +33,22 @@ func TestAdmit_UnchangedInputs(t *testing.T) {
 	before := l.Kustomizations()
 	assert.Equal(t, len(before), 4)
 	for _, child := range before {
-		{
-			assert.FatalIf(
-				t,
-				child.Doc == nil || child.Doc["spec"].(map[string]any)["path"] != "./app",
-				"admitted peer lost its document: %v",
-				child.Doc,
-			)
-		}
+		assert.FatalIf(
+			t,
+			child.Doc == nil || child.Doc["spec"].(map[string]any)["path"] != "./app",
+			"admitted peer lost its document: %v",
+			child.Doc,
+		)
 	}
 	allocs := testing.AllocsPerRun(10, func() { l.Admit(root) })
 	t.Logf("unchanged admission: %.0f allocations", allocs)
 	assert.FatalIf(t, allocs > 3, "unchanged admission repeated scope work: %.0f allocations", allocs)
-	{
-		assert.FatalIf(
-			t,
-			!slices.EqualFunc(l.Kustomizations(), before, func(a, b store.Child) bool { return a.Obj == b.Obj }),
-			"%v",
-			"unchanged admission replaced peer identities",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!slices.EqualFunc(l.Kustomizations(), before, func(a, b store.Child) bool { return a.Obj == b.Obj }),
+		"%v",
+		"unchanged admission replaced peer identities",
+	)
 	assert.Equal(t, len(l.Index.Claims), 1)
 }
 

@@ -545,7 +545,7 @@ func testApplicationInventoryCase(t *testing.T, tc *applicationInventoryCase) {
 		l.locations[application.Named()] = fact
 		l.Index.Records[application.Named()] = manifest.DiscoveryRecord{
 			Authored: application.Named(),
-			Path:     filepath.Join(root, "entry/application.yaml"),
+			Path:     filepath.Join(root, "entry", "application.yaml"),
 			File:     "entry/application.yaml",
 		}
 		l.roots = map[manifest.NamedResource]bool{application.Named(): true}

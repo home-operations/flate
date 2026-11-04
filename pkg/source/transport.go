@@ -70,7 +70,8 @@ func ResolveTransport(
 			if input.Reference == nil {
 				continue
 			}
-			cfg, certificate, identity, err := resolveTLS(secrets, &owner, input)
+			resolvedTLS, err := resolveTLS(secrets, &owner, input)
+			cfg, certificate, identity := resolvedTLS.configuration, resolvedTLS.material, resolvedTLS.identity
 			if err != nil {
 				return TransportMaterial{}, err
 			}

@@ -204,16 +204,12 @@ func TestDetect_GitlinkFile(t *testing.T) {
 	testutil.WriteFile(t, before, "links/keep.yaml", "same")
 	testutil.WriteFile(t, after, "links/keep.yaml", "same")
 	{
-		{
-			err := os.Symlink("old", filepath.Join(before, "links/.git"))
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := os.Symlink("old", filepath.Join(before, "links", ".git"))
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	{
-		{
-			err := os.Symlink("new", filepath.Join(after, "links/.git"))
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := os.Symlink("new", filepath.Join(after, "links", ".git"))
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	for _, roots := range [][2]string{{before, after}, {after, before}} {
 		for _, wrapped := range []bool{false, true} {
@@ -231,9 +227,7 @@ func TestDetect_GitlinkFile(t *testing.T) {
 				}
 			}
 			got, err := Detect(t.Context(), inputs[0], inputs[1])
-			{
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
+			assert.FatalIf(t, err != nil, "%v", err)
 			assert.Equal(t, got.Len(), 0)
 		}
 	}
@@ -249,9 +243,7 @@ func TestDetect_NestedOppositeRoot(t *testing.T) {
 	testutil.WriteFile(t, inner, "mod.yaml", "new")
 	for _, roots := range [][2]string{{outer, inner}, {inner, outer}} {
 		got, err := Detect(t.Context(), testInput(roots[0]), testInput(roots[1]))
-		{
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		assert.FatalIf(t, err != nil, "%v", err)
 		assert.Diff(t, got.Paths(), []string{"mod.yaml"})
 	}
 }
@@ -379,9 +371,7 @@ func testDetectFluxIgnoreRulesCase(t *testing.T, testCaseInput *struct {
 				}
 			}
 			got, err := Detect(t.Context(), inputs[0], inputs[1])
-			{
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
+			assert.FatalIf(t, err != nil, "%v", err)
 			assert.Diff(t, got.Paths(), testCaseInput.want)
 		}
 	}
@@ -413,9 +403,7 @@ func testDetectConcurrentCase(t *testing.T, testCaseInput *int,
 		})
 	}
 	{
-		{
-			err := g.Wait()
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := g.Wait()
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 }

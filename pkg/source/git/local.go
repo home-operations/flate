@@ -76,7 +76,7 @@ func (r *localResolver) resolve(
 	}
 	selected := (*manifest.GitRepositoryRef)(repository.Reference)
 	ref := selected.Normalized()
-	if kind, _ := selected.Effective(); kind == "" {
+	if reference := selected.Effective(); reference.Kind == "" {
 		return nil, nil //nolint:nilnil // Repositories without an authored reference do not select local content.
 	}
 	if err := selected.Validate(); err != nil {

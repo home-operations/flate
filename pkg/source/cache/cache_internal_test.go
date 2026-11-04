@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -106,6 +107,12 @@ func TestAcquire_ArchiveFailuresAndLinks(t *testing.T) {
 //nolint:tparallel // Cancel these synchronous acquisition deadlines before the parallel subtests start.
 func TestAcquire_ConcurrentKeysAndCancellation(t *testing.T) {
 	t.Parallel()
+	stops := make([]context.CancelFunc, 0, 4)
+	defer func() {
+		for _, stop := range slices.Backward(stops) {
+			stop()
+		}
+	}()
 
 	t.Run("due", func(t *testing.T) {
 		t.Parallel()
@@ -170,7 +177,7 @@ func TestAcquire_ConcurrentKeysAndCancellation(t *testing.T) {
 					!errors.Is(err, context.Canceled), "wait: id=%q, %v", id, err)
 			}
 			crossCtx, stop := context.WithTimeout(t.Context(), 5*time.Second)
-			defer stop()
+			stops = append(stops, stop)
 			testAcquireSharedContentAfterCancellation(
 
 				crossCtx, t,
@@ -336,7 +343,7 @@ func TestAcquire_SparseReplayMatchesMemory(t *testing.T) {
 	assert.NoError(t, err)
 
 	data, err := os.ReadFile(
-		filepath.Join(strings.TrimSpace(string(root)), "src/archive/tar/testdata/sparse-formats.tar"),
+		filepath.Join(strings.TrimSpace(string(root)), "src", "archive", "tar", "testdata", "sparse-formats.tar"),
 	)
 	assert.NoError(t, err)
 

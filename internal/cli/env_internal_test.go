@@ -19,7 +19,8 @@ import (
 func TestEnv_FlagFromEnv(t *testing.T) {
 	path := writeFixture(t)
 	t.Setenv("FLATE_PATH", path)
-	stdout, stderr, code := runCLI(t, "build", "all")
+	cli := runCLI(t, "build", "all")
+	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 	assert.FatalIf(t, code != 0, "build all (FLATE_PATH) exited %d: %s", code, stderr)
 	assert.ErrorIf(
 		t,
@@ -38,7 +39,8 @@ func TestEnv_FlagFromEnv(t *testing.T) {
 func TestEnv_CLIFlagOverridesEnv(t *testing.T) {
 	path := writeFixture(t)
 	t.Setenv("FLATE_PATH", "/nonexistent/path/here")
-	stdout, stderr, code := runCLI(t, "build", "all", "--path", path)
+	cli := runCLI(t, "build", "all", "--path", path)
+	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 	assert.FatalIf(t, code != 0, "build all --path (vs FLATE_PATH) exited %d: %s", code, stderr)
 	assert.ErrorIf(
 		t,
@@ -58,7 +60,8 @@ func TestEnv_SliceFlagParsesCSV(t *testing.T) {
 	t.Run("render", func(t *testing.T) {
 		path := writeFixture(t)
 		t.Setenv("FLATE_SKIP_KINDS", "ConfigMap,Secret")
-		stdout, stderr, code := runCLI(t, "build", "all", "--path", path)
+		cli := runCLI(t, "build", "all", "--path", path)
+		stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 		assert.FatalIf(t, code != 0, "build all FLATE_SKIP_KINDS=... exited %d: %s", code, stderr)
 		assert.ErrorIf(
 			t,
@@ -110,7 +113,8 @@ func TestEnv_SliceFlagParsesCSV(t *testing.T) {
 func TestEnv_InvalidValueReportsKey(t *testing.T) {
 	path := writeFixture(t)
 	t.Setenv("FLATE_CONCURRENCY", "notanint")
-	_, stderr, code := runCLI(t, "build", "all", "--path", path)
+	cli := runCLI(t, "build", "all", "--path", path)
+	stderr, code := cli.stderr, cli.code
 	assert.FatalIf(t, code == 0, "%v", "expected non-zero exit for invalid FLATE_CONCURRENCY")
 	assert.ErrorIf(
 		t,
@@ -129,7 +133,8 @@ func TestEnv_InvalidValueReportsKey(t *testing.T) {
 func TestEnv_PersistentFlagFromEnv(t *testing.T) {
 	path := writeFixture(t)
 	t.Setenv("FLATE_LOG_LEVEL", "bogus")
-	_, stderr, code := runCLI(t, "build", "all", "--path", path)
+	cli := runCLI(t, "build", "all", "--path", path)
+	stderr, code := cli.stderr, cli.code
 	assert.FatalIf(t, code == 0, "%v", "expected non-zero exit for FLATE_LOG_LEVEL=bogus")
 	assert.ErrorIf(
 		t,
@@ -149,7 +154,8 @@ func TestEnv_HelpVersionAreSkipped(t *testing.T) {
 	path := writeFixture(t)
 	t.Setenv("FLATE_HELP", "true")
 	t.Setenv("FLATE_VERSION", "true")
-	stdout, stderr, code := runCLI(t, "build", "all", "--path", path)
+	cli := runCLI(t, "build", "all", "--path", path)
+	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 	assert.FatalIf(t, code != 0, "FLATE_HELP/VERSION should be ignored, but build exited %d: %s", code, stderr)
 	assert.ErrorIf(
 		t,
@@ -168,7 +174,8 @@ func TestEnv_HelpVersionAreSkipped(t *testing.T) {
 //
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestEnv_HelpAdvertisesEnvVars(t *testing.T) {
-	stdout, _, code := runCLI(t, "build", "all", "--help")
+	cli := runCLI(t, "build", "all", "--help")
+	stdout, code := cli.stdout, cli.code
 	assert.FatalIf(t, code != 0, "`build all --help` exited %d", code)
 	for _, want := range []string{
 		"[env: FLATE_PATH]",
@@ -246,7 +253,8 @@ func TestRun_RemovedFlagsRejected(t *testing.T) {
 		}
 		for _, flag := range flags {
 			t.Run(verb+"/"+flag, func(t *testing.T) {
-				_, stderr, code := runCLI(t, verb, "all", "--"+flag)
+				cli := runCLI(t, verb, "all", "--"+flag)
+				stderr, code := cli.stderr, cli.code
 				assert.FatalIf(
 					t,
 					code != 1 || !strings.Contains(stderr, "unknown flag: --"+flag),
@@ -254,7 +262,8 @@ func TestRun_RemovedFlagsRejected(t *testing.T) {
 					code,
 					stderr,
 				)
-				help, _, code := runCLI(t, verb, "all", "--help")
+				cli2 := runCLI(t, verb, "all", "--help")
+				help, code := cli2.stdout, cli2.code
 				assert.FatalIf(
 					t,
 					code != 0 || strings.Contains(help, "--"+flag) || strings.Contains(help, envKey(flag)),
@@ -269,7 +278,8 @@ func TestRun_RemovedFlagsRejected(t *testing.T) {
 
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestRun_RemovedShorthandRejected(t *testing.T) {
-	_, stderr, code := runCLI(t, "build", "all", "-s", "templates/main.yaml")
+	cli := runCLI(t, "build", "all", "-s", "templates/main.yaml")
+	stderr, code := cli.stderr, cli.code
 	assert.FatalIf(
 		t,
 		code != 1 || !strings.Contains(stderr, "unknown shorthand flag"),
@@ -285,7 +295,8 @@ func TestEnv_RemovedOptionsIgnored(t *testing.T) {
 	for _, key := range []string{"SUBSTITUTE", "NO_HOOKS", "SHOW_ONLY", "FORCE_GENERIC_PROVIDER", "IS_UPGRADE", "ALLOW_MISSING_SECRETS", "ALLOW_MISSING_CRDS", "STREAM", "SKIP_CRDS", "SKIP_SECRETS", "ONLY_CRDS", "KRMIGNORE", "SKIP_SCHEMA_VALIDATION", "SOURCE_RETRY_ATTEMPTS", "SOURCE_RETRY_MIN_WAIT", "SOURCE_RETRY_MAX_WAIT", "SOURCE_RETRY_JITTER", "HELM_TEMPLATE_CACHE_MB", "HELM_RENDER_CACHE_MB", "KUSTOMIZE_RENDER_CACHE_MB"} {
 		t.Setenv("FLATE_"+key, "invalid-value")
 	}
-	stdout, stderr, code := runCLI(t, "build", "all", "--path", path)
+	cli := runCLI(t, "build", "all", "--path", path)
+	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 	assert.FatalIf(
 		t,
 		code != 0 || !strings.Contains(stdout, "kind: ConfigMap"),

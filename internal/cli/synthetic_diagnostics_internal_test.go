@@ -66,7 +66,8 @@ spec:
 			if verb == "build" || verb == "get" {
 				args = append(args, "-o", "json")
 			}
-			out, diagnostic, code := runCLI(t, args...)
+			cli := runCLI(t, args...)
+			out, diagnostic, code := cli.stdout, cli.stderr, cli.code
 			assert.FatalIf(t, code != 0 || strings.Contains(diagnostic, "OCIRepository") ||
 				!strings.Contains(
 					diagnostic,

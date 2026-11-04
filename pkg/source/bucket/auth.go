@@ -33,7 +33,7 @@ func (f *operation) prepare(b *manifest.Bucket) (bucketAcquisition, error) {
 	if authErr != nil && !errors.Is(authErr, manifest.ErrMissingSecret) {
 		return bucketAcquisition{}, authErr
 	}
-	endpoint, secure, err := normalizeEndpoint(b.Endpoint, b.Insecure)
+	endpointInfo, err := normalizeEndpoint(b.Endpoint, b.Insecure)
 	if err != nil {
 		return bucketAcquisition{}, err
 	}
@@ -45,7 +45,9 @@ func (f *operation) prepare(b *manifest.Bucket) (bucketAcquisition, error) {
 	if err != nil {
 		return bucketAcquisition{}, err
 	}
-	if _, proxyURLErr := resolved.ProxyURL(&url.URL{Scheme: schemeFor(secure), Host: endpoint}); proxyURLErr != nil {
+	if _, proxyURLErr := resolved.ProxyURL(
+		&url.URL{Scheme: schemeFor(endpointInfo.secure), Host: endpointInfo.host},
+	); proxyURLErr != nil {
 		return bucketAcquisition{}, manifest.NewError(
 			manifest.ErrInput,
 			nil,
@@ -76,8 +78,18 @@ func (f *operation) prepare(b *manifest.Bucket) (bucketAcquisition, error) {
 		return bucketAcquisition{}, err
 	}
 	request := bucketAcquisition{
-		network: f.Network, bucket: b, endpoint: endpoint, material: resolved.Identity(material), resolved: resolved,
-		options: minio.Options{MaxRetries: 1, Creds: creds, Secure: secure, Region: b.Region, Transport: tr},
+		network:  f.Network,
+		bucket:   b,
+		endpoint: endpointInfo.host,
+		material: resolved.Identity(material),
+		resolved: resolved,
+		options: minio.Options{
+			MaxRetries: 1,
+			Creds:      creds,
+			Secure:     endpointInfo.secure,
+			Region:     b.Region,
+			Transport:  tr,
+		},
 	}
 	return request, authErr
 }
@@ -122,22 +134,24 @@ func (f *operation) resolveCredentials(b *manifest.Bucket) (*credentials.Credent
 	if sec == nil {
 		return nil, source.MissingSecretErr(manifest.DiagnosticFor(b.Named(), b), b.SecretRef.Name, "not found")
 	}
-	access, _, err := sec.Value("accesskey")
+	valueResult, err := sec.Value("accesskey")
+	access := valueResult.Value
 	if err != nil {
 		return nil, fmt.Errorf("secret %s/%s: %w", b.Namespace, b.SecretRef.Name, err)
 	}
-	secret, _, err := sec.Value("secretkey")
+	value, err := sec.Value("secretkey")
 	if err != nil {
 		return nil, fmt.Errorf("secret %s/%s: %w", b.Namespace, b.SecretRef.Name, err)
 	}
-	if access == "" || secret == "" || manifest.HasValuePlaceholder(access) || manifest.HasValuePlaceholder(secret) {
+	if access == "" || value.Value == "" || manifest.HasValuePlaceholder(access) ||
+		manifest.HasValuePlaceholder(value.Value) {
 		return nil, source.MissingSecretErr(
 			manifest.DiagnosticFor(b.Named(), b),
 			b.SecretRef.Name,
 			"missing accesskey/secretkey",
 		)
 	}
-	return credentials.NewStaticV4(access, secret, ""), nil
+	return credentials.NewStaticV4(access, value.Value, ""), nil
 }
 
 func machineFilesConfigured() (bool, error) {

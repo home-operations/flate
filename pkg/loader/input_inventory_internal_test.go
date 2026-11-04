@@ -65,9 +65,7 @@ func TestFinalizeIndex_InputInventory(t *testing.T) {
 				[]manifest.FileReader{{Reader: owner.Named(), Source: manifest.BootstrapSourceID}},
 			)
 			assert.Diff(t, ownersForTest(idx, tc.file), []manifest.NamedResource{owner.Named()})
-			{
-				assert.FatalIf(t, len(idx.Readers["inputs/unrelated"]) != 0, "%s", "unrelated sibling gained readers")
-			}
+			assert.FatalIf(t, len(idx.Readers["inputs/unrelated"]) != 0, "%s", "unrelated sibling gained readers")
 		})
 	}
 }
@@ -113,10 +111,10 @@ func TestLoader_InputRolesDualResourceOutside(t *testing.T) {
 		)
 		assert.FatalIf(t, !ok || l.candidates[id].Obj == nil || st.GetObject(id) == nil ||
 			len(
-				l.documents.cache[filepath.Join(root, "inputs/dual.yaml")].objects,
+				l.documents.cache[filepath.Join(root, "inputs", "dual.yaml")].objects,
 			) != 1, "%s", "terminal role suppressed a separately declared resource")
 	}
-	file := filepath.Join(root, "inputs/dual.yaml")
+	file := filepath.Join(root, "inputs", "dual.yaml")
 	admitted := l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, file)
 	assert.Equal(t, admitted, true)
 	assert.Equal(t, l.terminalInput(file), false)
@@ -147,7 +145,15 @@ func TestFinalizeIndex_AdmissionAndConcurrentQueries(t *testing.T) {
 	_, err := loadForTest(t.Context(), t, l, root)
 	assert.NoError(t, err)
 	peer, missing := testutil.KustomizationID("apps", "peer"), testutil.HelmReleaseID("apps", "missing")
-	peerFile, missingFile := filepath.Join(root, "declarations/peer.yaml"), filepath.Join(root, "missing/release.yaml")
+	peerFile, missingFile := filepath.Join(
+		root,
+		"declarations",
+		"peer.yaml",
+	), filepath.Join(
+		root,
+		"missing",
+		"release.yaml",
+	)
 	l.Index.Records[missing] = manifest.DiscoveryRecord{
 		Authored: missing,
 		File:     "missing/release.yaml",
@@ -196,7 +202,8 @@ func TestFinalizeIndex_AdmissionAndConcurrentQueries(t *testing.T) {
 		workers.Go(func() {
 			ready <- struct{}{}
 			<-start
-			owners, ancestors := l.Index.OwnersOfFile("target/deleted.yaml")
+			ownership := l.Index.OwnersOfFile("target/deleted.yaml")
+			owners, ancestors := ownership.Owners, ownership.Ancestors
 			var readers []manifest.FileReader
 			for reader := range l.Index.ReadersOfFile("missing/release.yaml") {
 				readers = append(readers, reader)
@@ -270,10 +277,8 @@ func TestOccurrences_InputSourceViews(t *testing.T) {
 			assert.NoError(t, err)
 			occurrences, err := l.Occurrences(t.Context(), filepath.Join(local, "entry"), "projected")
 			assert.NoError(t, err)
-			{
-				assert.FatalIf(t, len(occurrences) != 1 || occurrences[0].Identity.Name != "pre-mounted-post" ||
-					occurrences[0].Identity.Namespace != "projected", "source-view occurrence projection: %+v", occurrences)
-			}
+			assert.FatalIf(t, len(occurrences) != 1 || occurrences[0].Identity.Name != "pre-mounted-post" ||
+				occurrences[0].Identity.Namespace != "projected", "source-view occurrence projection: %+v", occurrences)
 			wantSource, wantFile := local, "shared/resource.yaml"
 			if mode == "alias" {
 				wantSource, wantFile = root, "subtree/shared/resource.yaml"
@@ -319,7 +324,7 @@ func testFinalizeIndexInputCoordinatesAndAdmissionCase(
 	)
 	body := fmt.Sprintf(
 		"resources: [%q, ../inputs/escaped.yaml, ../../outside.yaml]\npatches: [{path: ../inputs/missing}, {path: patch.yaml}]\n",
-		filepath.ToSlash(filepath.Join(root, "inputs/absolute.yaml")),
+		filepath.ToSlash(filepath.Join(root, "inputs", "absolute.yaml")),
 	)
 	testutil.WriteFile(t, root, "apps/"+(*testCaseInput), body)
 	s := store.New()
@@ -336,14 +341,14 @@ func testFinalizeIndexInputCoordinatesAndAdmissionCase(
 	l := New(s)
 	l.Index.Records[sibling.Named()] = manifest.DiscoveryRecord{
 		File: "apps/patch.yaml",
-		Path: filepath.Join(root, "apps/patch.yaml"),
+		Path: filepath.Join(root, "apps", "patch.yaml"),
 	}
 	l.SourceRoot = root
 	admitForTest(s, root)
 	l.Admit(root)
 	admitted := l.AdmitsRoot(
 		l.IndexedObject(sibling.Named(), l.Index.Records[sibling.Named()]).Obj,
-		filepath.Join(root, "apps/patch.yaml"),
+		filepath.Join(root, "apps", "patch.yaml"),
 	)
 	assert.Equal(t, admitted, false)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
@@ -352,16 +357,14 @@ func testFinalizeIndexInputCoordinatesAndAdmissionCase(
 		t,
 		l.AdmitsRoot(
 			l.IndexedObject(sibling.Named(), l.Index.Records[sibling.Named()]).Obj,
-			filepath.Join(root, "apps/patch.yaml"),
+			filepath.Join(root, "apps", "patch.yaml"),
 		),
 		admitted,
 	)
-	{
-		assert.FatalIf(t, l.AdmitsRoot(
-			l.IndexedObject(sibling.Named(), l.Index.Records[sibling.Named()]).Obj,
-			filepath.Join(root, "apps/patch.yaml"),
-		), "%s", "file-role input counted as a listed structural resource")
-	}
+	assert.FatalIf(t, l.AdmitsRoot(
+		l.IndexedObject(sibling.Named(), l.Index.Records[sibling.Named()]).Obj,
+		filepath.Join(root, "apps", "patch.yaml"),
+	), "%s", "file-role input counted as a listed structural resource")
 	for _, file := range []string{"apps/" + (*testCaseInput), "inputs/absolute.yaml", "inputs/escaped.yaml", "inputs/missing", "apps/patch.yaml"} {
 		assert.Diff(
 			t,
@@ -370,14 +373,10 @@ func testFinalizeIndexInputCoordinatesAndAdmissionCase(
 		)
 	}
 	for _, name := range []string{"absolute", "escaped", "outside"} {
-		{
-			assert.FatalIf(t, s.GetObject(testutil.KustomizationID("authored", name)) != nil ||
-				len(
-					idx.Records[testutil.KustomizationID("authored", name)].Productions,
-				) != 0, "dependency coordinate broadened object admission: %s", name)
-		}
+		assert.FatalIf(t, s.GetObject(testutil.KustomizationID("authored", name)) != nil ||
+			len(
+				idx.Records[testutil.KustomizationID("authored", name)].Productions,
+			) != 0, "dependency coordinate broadened object admission: %s", name)
 	}
-	{
-		assert.FatalIf(t, len(idx.Readers["../outside.yaml"]) != 0, "%s", "out-of-source resource gained a reader")
-	}
+	assert.FatalIf(t, len(idx.Readers["../outside.yaml"]) != 0, "%s", "out-of-source resource gained a reader")
 }

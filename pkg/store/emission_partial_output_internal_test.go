@@ -70,33 +70,29 @@ func testRecordEmittedPartialSubsetPreservesCompletedOutputCase(
 		partial.Children = append(partial.Children, retained)
 	}
 	incoming := slices.Clone(partial.Children)
-	{
-		assert.FatalIf(
-			t,
-			!before.Complete || !before.OutputReads.Valid(),
-			"%s",
-			"subset did not start from valid completed output",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!before.Complete || !before.OutputReads.Valid(),
+		"%s",
+		"subset did not start from valid completed output",
+	)
 	s.RecordEmitted(owner.Named(), &partial, nil)
-	{
-		assert.FatalIf(t, !slices.EqualFunc(partial.Children, incoming, Child.equal) ||
-			!slices.EqualFunc(
-				before.Children,
-				borrowed,
-				Child.equal,
-			), "%s", "partial publication mutated borrowed children")
-	}
+
+	assert.FatalIf(t, !slices.EqualFunc(partial.Children, incoming, Child.equal) ||
+		!slices.EqualFunc(
+			before.Children,
+			borrowed,
+			Child.equal,
+		), "%s", "partial publication mutated borrowed children")
+
 	partial.Finish()
 	after := s.GetArtifact(owner.Named(), ArtifactContent).(*Emission)
-	{
-		assert.FatalIf(
-			t,
-			!output.Valid() || !after.OutputReads.Valid(),
-			"%s",
-			"partial publication invalidated captured output reads",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!output.Valid() || !after.OutputReads.Valid(),
+		"%s",
+		"partial publication invalidated captured output reads",
+	)
 	if (*testCaseInput) == "ordinary_subset" {
 		if !observer.Valid() || objects != 0 || artifacts != 0 {
 			t.Fatalf(
@@ -106,29 +102,25 @@ func testRecordEmittedPartialSubsetPreservesCompletedOutputCase(
 				artifacts,
 			)
 		}
-		{
-			assert.FatalIf(
-				t,
-				!after.Complete || after.Fingerprint != before.Fingerprint,
-				"%s",
-				"equal partial subset lost completed render identity",
-			)
-		}
-		{
-			assert.FatalIf(
-				t,
-				!slices.EqualFunc(after.Children, before.Children, Child.equal),
-				"%s",
-				"equal partial subset changed its children",
-			)
-		}
+
+		assert.FatalIf(
+			t,
+			!after.Complete || after.Fingerprint != before.Fingerprint,
+			"%s",
+			"equal partial subset lost completed render identity",
+		)
+
+		assert.FatalIf(
+			t,
+			!slices.EqualFunc(after.Children, before.Children, Child.equal),
+			"%s",
+			"equal partial subset changed its children",
+		)
 	} else {
-		{
-			assert.FatalIf(t, s.GetObject(removed.Obj.Named()) != nil || s.GetObject(first.Obj.Named()) == nil ||
-				s.GetObject(
-					last.Obj.Named(),
-				) == nil, "%s", "partial subset failed to withdraw generated output while retaining ordinary children")
-		}
+		assert.FatalIf(t, s.GetObject(removed.Obj.Named()) != nil || s.GetObject(first.Obj.Named()) == nil ||
+			s.GetObject(
+				last.Obj.Named(),
+			) == nil, "%s", "partial subset failed to withdraw generated output while retaining ordinary children")
 		{
 			got := s.GetObject(retained.Obj.Named())
 			assert.FatalIf(
@@ -138,14 +130,12 @@ func testRecordEmittedPartialSubsetPreservesCompletedOutputCase(
 				"partial subset retained the wrong generated membership",
 			)
 		}
-		{
-			assert.FatalIf(
-				t,
-				after.Complete || len(after.Failures) != 0,
-				"%s",
-				"generated withdrawal forced completion or failure",
-			)
-		}
+		assert.FatalIf(
+			t,
+			after.Complete || len(after.Failures) != 0,
+			"%s",
+			"generated withdrawal forced completion or failure",
+		)
 	}
 	assert.Diff(t, after.Manifests, before.Manifests)
 }

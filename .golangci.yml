@@ -330,6 +330,7 @@ linters:
           paramsOnly: false
         underef:
           skipRecvDeref: false
+      enabled-tags: [diagnostic, style]
       enabled-checks:
         - commentedOutCode
         - hugeParam

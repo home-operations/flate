@@ -141,14 +141,12 @@ func TestRecordEmitted_IdenticalArtifactEmission(t *testing.T) {
 		got := testing.AllocsPerRun(10, func() { s.RecordEmitted(owner.Named(), next, nil) })
 		assert.FatalIf(t, got != 0, "identical dynamic emission allocated %v times, want zero", got)
 	}
-	{
-		assert.FatalIf(
-			t,
-			s.GetArtifact(owner.Named(), ArtifactContent) != accepted,
-			"%v",
-			"identical emission replaced the accepted proposal",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.GetArtifact(owner.Named(), ArtifactContent) != accepted,
+		"%v",
+		"identical emission replaced the accepted proposal",
+	)
 	target := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
 		Kind:      manifest.KindExternalArtifact,
@@ -158,9 +156,7 @@ func TestRecordEmitted_IdenticalArtifactEmission(t *testing.T) {
 	facts := s.ReferenceFacts(target, nil, false, manifest.NamedResource{})
 	assert.Diff(t, facts.Productions, s.Productions(target, nil))
 	assert.Diff(t, facts.Productions, []manifest.Production{{Owner: owner.Named(), Declaration: generator.Named()}})
-	{
-		assert.FatalIf(t, facts.Data != nil || facts.Accepted, "prediction supplied authority: %+v", facts)
-	}
+	assert.FatalIf(t, facts.Data != nil || facts.Accepted, "prediction supplied authority: %+v", facts)
 }
 
 type testRecordEmittedArtifactPredictionsCaseInputs struct {
@@ -265,30 +261,20 @@ func testRecordEmittedArtifactPredictionsReplacementAndPartialRetention(
 		&Emission{Children: []Child{g, (*testCaseInput.consumer)(replacement.Name)}, Complete: true},
 		nil,
 	)
-	{
-		assert.FatalIf(t, len(s.Productions(replacement, nil)) != 1, "%s", "reference replacement lost new prediction")
-	}
-	{
-		assert.FatalIf(
-			t,
-			len(s.Productions((*testCaseInput.target), nil)) != 0,
-			"%s",
-			"reference replacement retained old prediction",
-		)
-	}
+	assert.FatalIf(t, len(s.Productions(replacement, nil)) != 1, "%s", "reference replacement lost new prediction")
+	assert.FatalIf(
+		t,
+		len(s.Productions((*testCaseInput.target), nil)) != 0,
+		"%s",
+		"reference replacement retained old prediction",
+	)
 	_, _, current := s.GetEmission(owner.Named())
-	{
-		assert.FatalIf(t, current.Children[0].Obj != g.Obj, "%s", "unchanged declaration replaced")
-	}
+	assert.FatalIf(t, current.Children[0].Obj != g.Obj, "%s", "unchanged declaration replaced")
 	current.Finish()
 	s.RecordEmitted(owner.Named(), &Emission{}, nil)
-	{
-		assert.FatalIf(t, len(s.Productions(replacement, nil)) != 1, "%s", "incomplete empty withdrew prediction")
-	}
+	assert.FatalIf(t, len(s.Productions(replacement, nil)) != 1, "%s", "incomplete empty withdrew prediction")
 	s.RecordEmitted(owner.Named(), &Emission{Complete: true}, nil)
-	{
-		assert.FatalIf(t, len(s.Productions(replacement, nil)) != 0, "%s", "successful empty retained prediction")
-	}
+	assert.FatalIf(t, len(s.Productions(replacement, nil)) != 0, "%s", "successful empty retained prediction")
 }
 
 type testRecordEmittedArtifactPredictionsRetainedConsumerInputs struct {
@@ -325,14 +311,12 @@ func testRecordEmittedArtifactPredictionsRetainedConsumer(
 		&Emission{Children: []Child{g, (*testCaseInput.consumer)("app-web")}, Complete: true},
 		nil,
 	)
-	{
-		assert.FatalIf(
-			t,
-			len(s.Productions((*testCaseInput.target), nil)) != 1,
-			"%s",
-			"retained consumer lost its declaration's prediction",
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(s.Productions((*testCaseInput.target), nil)) != 1,
+		"%s",
+		"retained consumer lost its declaration's prediction",
+	)
 }
 
 type testRecordEmittedArtifactPredictionsRetryRebuildsAdmissionsInputs struct {
@@ -376,23 +360,21 @@ func testRecordEmittedArtifactPredictionsCaseCompletion(
 				}
 			}
 		}
-		{
-			assert.FatalIf(t, predicted != want, "predicted = %t, want %t", predicted, want)
-		}
+
+		assert.FatalIf(t, predicted != want, "predicted = %t, want %t", predicted, want)
+
 		facts := scope.s.ReferenceFacts((*scope.testCaseInput.target), nil, false, manifest.NamedResource{})
 		assert.Diff(t, facts.Productions, scope.s.Productions((*scope.testCaseInput.target), nil))
-		{
-			assert.FatalIf(
-				t,
-				facts.Data != nil || facts.Accepted || scope.s.GetObject((*scope.testCaseInput.target)) != nil ||
-					scope.s.GetArtifact(
-						(*scope.testCaseInput.target),
-						ArtifactContent,
-					) != nil,
-				"%s",
-				"prediction supplied content",
-			)
-		}
+		assert.FatalIf(
+			t,
+			facts.Data != nil || facts.Accepted || scope.s.GetObject((*scope.testCaseInput.target)) != nil ||
+				scope.s.GetArtifact(
+					(*scope.testCaseInput.target),
+					ArtifactContent,
+				) != nil,
+			"%s",
+			"prediction supplied content",
+		)
 	}
 	check(want)
 	_, _, next := scope.s.GetEmission(scope.owner.Named())
@@ -513,29 +495,23 @@ func testRecordEmittedArtifactPredictionsRetryRebuildsAdmissions(
 			s.Productions(replacement, nil),
 			[]manifest.Production{{Owner: owner.Named(), Declaration: g.Obj.Named(), Source: binding.source}},
 		)
-		{
-			assert.ErrorIf(
-				t,
-				len(s.Productions((*testCaseInput.target), nil)) != 0,
-				"%s",
-				"retry retained superseded prediction",
-			)
-		}
+		assert.ErrorIf(
+			t,
+			len(s.Productions((*testCaseInput.target), nil)) != 0,
+			"%s",
+			"retry retained superseded prediction",
+		)
 		for _, id := range []manifest.NamedResource{(*testCaseInput.target), replacement} {
 			facts := s.ReferenceFacts(id, nil, false, manifest.NamedResource{})
 			assert.Diff(t, facts.Productions, s.Productions(id, nil))
-			{
-				assert.ErrorIf(t, facts.Data != nil || facts.Accepted || s.GetObject(id) != nil ||
-					s.GetArtifact(id, ArtifactContent) != nil, "%s", "prediction supplied content")
-			}
+			assert.ErrorIf(t, facts.Data != nil || facts.Accepted || s.GetObject(id) != nil ||
+				s.GetArtifact(id, ArtifactContent) != nil, "%s", "prediction supplied content")
 		}
 	}
 	check()
 	resume()
 	writers.Wait()
-	{
-		assert.FatalIf(t, s.GetObject(barrierID) != barrier, "%s", "retry did not accept the paused proposal")
-	}
+	assert.FatalIf(t, s.GetObject(barrierID) != barrier, "%s", "retry did not accept the paused proposal")
 	check()
 }
 

@@ -132,44 +132,36 @@ func TestSelect_CountsBeforeLabelsAndRequestedOrder(t *testing.T) {
 	raw := outputByParent(run.Result.Manifests)
 	roots := []manifest.NamedResource{testutil.HelmReleaseID("", "same"), testutil.KustomizationID("", "same")}
 	selected, err, _ := Select([]Rendered{run}, nil, roots, map[string]string{"env": ""})
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	res := selected[0]
 	assert.Diff(t, res.Counts, map[string]int{manifest.KindHelmRelease: 1, manifest.KindKustomization: 1})
-	{
-		assert.FatalIf(
-			t,
-			len(res.Objects) != 1 || res.Objects[0] != ks || len(res.Manifests) != 1,
-			"label or raw snapshot changed: selected=%+v raw=%+v",
-			res,
-			run.Result,
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(res.Objects) != 1 || res.Objects[0] != ks || len(res.Manifests) != 1,
+		"label or raw snapshot changed: selected=%+v raw=%+v",
+		res,
+		run.Result,
+	)
 	assert.Diff(t, outputByParent(run.Result.Manifests), raw)
 	selected, err, _ = Select([]Rendered{run}, nil, roots, nil)
-	{
-		assert.FatalIf(
-			t,
-			err != nil || len(selected[0].Objects) != 2 || selected[0].Objects[0] != hr || selected[0].Objects[1] != ks,
-			"requested grouping changed: %+v %v",
-			selected,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err != nil || len(selected[0].Objects) != 2 || selected[0].Objects[0] != hr || selected[0].Objects[1] != ks,
+		"requested grouping changed: %+v %v",
+		selected,
+		err,
+	)
 	for i := range roots {
 		roots[i].Name = "missing"
 	}
 	selected, err, _ = Select([]Rendered{run}, nil, roots, nil)
-	{
-		assert.FatalIf(
-			t,
-			err != nil || len(selected[0].Objects) != 0 || len(selected[0].Counts) != 0,
-			"name mismatch selected objects or counted roots: %+v %v",
-			selected,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err != nil || len(selected[0].Objects) != 0 || len(selected[0].Counts) != 0,
+		"name mismatch selected objects or counted roots: %+v %v",
+		selected,
+		err,
+	)
 }
 
 func TestSelect_InferredNamespacesAreNotIdentityFilter(t *testing.T) {
@@ -200,15 +192,13 @@ func TestSelect_InferredNamespacesAreNotIdentityFilter(t *testing.T) {
 	admissiontest.Commit(t, run.loader, nil)
 	run.filter = run.loader.Options.Filter
 	selected, err, _ := Select([]Rendered{run}, nil, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
-	{
-		assert.FatalIf(
-			t,
-			err != nil || selected[0].Counts[manifest.KindKustomization] != 2,
-			"inferred scope excluded healthy sibling or admitted foreign namespace: %+v %v",
-			selected,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err != nil || selected[0].Counts[manifest.KindKustomization] != 2,
+		"inferred scope excluded healthy sibling or admitted foreign namespace: %+v %v",
+		selected,
+		err,
+	)
 }
 
 func TestSelect_IncompleteInputCoverageScope(t *testing.T) {
@@ -340,13 +330,11 @@ func TestSelect_SharedRootsAndAdvisoryCycles(t *testing.T) {
 		t.Fatalf("shared/cyclic projection lost: %+v %v", results[0], err)
 	}
 	for _, warning := range results[0].Unrelated {
-		{
-			assert.FatalIf(t, warning.Resource == root || warning.Category != manifest.WarnUnrelatedFailure ||
-				strings.Contains(
-					warning.Message,
-					"dependency cycle",
-				), "fatal/advisory policies conflated: %+v", warning)
-		}
+		assert.FatalIf(t, warning.Resource == root || warning.Category != manifest.WarnUnrelatedFailure ||
+			strings.Contains(
+				warning.Message,
+				"dependency cycle",
+			), "fatal/advisory policies conflated: %+v", warning)
 	}
 	got, _, _ := Select(
 		[]Rendered{run},
@@ -472,9 +460,7 @@ func testSelectIncompleteInputCoverageScopeCase(
 		root = testutil.HelmReleaseID(testCaseInput.tc.namespace, testCaseInput.tc.requested)
 	}
 	results, err, _ := Select(runs, nil, []manifest.NamedResource{root}, nil)
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	assert.Diff(
 		t,
 		run.Result.Warnings,
@@ -609,14 +595,12 @@ func testSelectMissingAndCyclesCase(t *testing.T, testCaseInput testSelectMissin
 		selectedFailures(res).Error(),
 		"reconcile completed with 3 failure(s):\n  Kustomization.kustomize.toolkit.fluxcd.io/apps/a: dependency cycle: blocked by Kustomization.kustomize.toolkit.fluxcd.io/apps/b\n  Kustomization.kustomize.toolkit.fluxcd.io/apps/b: dependency cycle: blocked by Kustomization.kustomize.toolkit.fluxcd.io/apps/a\n  Kustomization.kustomize.toolkit.fluxcd.io/apps/missing: not found\n  (+2 blocked by failed/missing dependencies)",
 	)
-	{
-		assert.FatalIf(
-			t,
-			err == nil || !strings.Contains(err.Error(), "both snapshots had reconcile failures"),
-			"cycle error missing: %v",
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err == nil || !strings.Contains(err.Error(), "both snapshots had reconcile failures"),
+		"cycle error missing: %v",
+		err,
+	)
 	for _, resource := range []manifest.NamedResource{(*testCaseInput.a), (*testCaseInput.b)} {
 		raw := run.Result.Failed[resource]
 		if res.Failed[resource].String() == raw.String() || !res.Failed[resource].IsDependencyFailure() {
@@ -679,25 +663,21 @@ func testSelectFatalScopeAndRunErrorIdentitiesCaseCase(
 	}
 	for _, aggregate := range []error{raw, run.Err} {
 		concrete, ok := errors.AsType[*FailuresError](aggregate)
-		{
-			assert.FatalIf(
-				t,
-				!ok || !errors.Is(concrete, raw) || !errors.Is(aggregate, manifest.ErrFlux),
-				"aggregate identity lost: %v",
-				aggregate,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!ok || !errors.Is(concrete, raw) || !errors.Is(aggregate, manifest.ErrFlux),
+			"aggregate identity lost: %v",
+			aggregate,
+		)
 		assert.Equal(t, concrete.Message, wantRaw)
 	}
 	assert.Equal(t, raw.Error(), wantRaw)
-	{
-		assert.FatalIf(
-			t,
-			errors.Is(raw, manifest.ErrInput),
-			"%v",
-			"aggregate classified heterogeneous failures as input errors",
-		)
-	}
+	assert.FatalIf(
+		t,
+		errors.Is(raw, manifest.ErrInput),
+		"%v",
+		"aggregate classified heterogeneous failures as input errors",
+	)
 	runs, runErr := []Rendered{run}, run.Err
 	if (*testCaseInput.testCaseInput.sides) == 2 {
 		runs, runErr = []Rendered{run, run}, errors.Join(run.Err, run.Err)
@@ -708,67 +688,53 @@ func testSelectFatalScopeAndRunErrorIdentitiesCaseCase(
 		[]manifest.NamedResource{testutil.KustomizationID("media", "")},
 		nil,
 	)
-	{
-		assert.FatalIf(
-			t,
-			(err != nil) != (testCaseInput.tc.visible || testCaseInput.tc.extra != nil) ||
-				len(selected) != (*testCaseInput.testCaseInput.sides),
-			"unexpected scoped failure: %+v %v",
-			selected,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		(err != nil) != (testCaseInput.tc.visible || testCaseInput.tc.extra != nil) ||
+			len(selected) != (*testCaseInput.testCaseInput.sides),
+		"unexpected scoped failure: %+v %v",
+		selected,
+		err,
+	)
 	for _, res := range selected {
 		if (len(res.Failed) != 0) != testCaseInput.tc.visible {
 			t.Fatalf("unexpected selected failures: %+v", res.Failed)
 		}
 	}
-	{
-		assert.FatalIf(
-			t,
-			(remainder != nil) != (testCaseInput.tc.extra != nil),
-			"unexpected incidental error: %v",
-			remainder,
-		)
-	}
+	assert.FatalIf(
+		t,
+		(remainder != nil) != (testCaseInput.tc.extra != nil),
+		"unexpected incidental error: %v",
+		remainder,
+	)
 	for _, got := range []error{err, remainder} {
-		{
-			assert.FatalIf(
-				t,
-				testCaseInput.tc.extra != nil && !errors.Is(got, testCaseInput.tc.extra),
-				"non-resource error identity lost: %v",
-				got,
-			)
-		}
-		{
-			assert.FatalIf(
-				t,
-				errors.Is(got, manifest.ErrInput) != errors.Is(testCaseInput.tc.extra, manifest.ErrInput),
-				"input identity changed: %v",
-				got,
-			)
-		}
-		{
-			assert.FatalIf(t, errors.Is(got, raw), "raw aggregate entered projection: %v", got)
-		}
-	}
-	{
 		assert.FatalIf(
 			t,
-			errors.Is(err, manifest.ErrFlux) != (testCaseInput.tc.visible || errors.Is(testCaseInput.tc.extra, manifest.ErrFlux)) ||
-				errors.Is(
-					remainder,
-					manifest.ErrFlux,
-				) != errors.Is(testCaseInput.tc.extra, manifest.ErrFlux),
-			"domain identity changed: selected=%v remainder=%v",
-			err,
-			remainder,
+			testCaseInput.tc.extra != nil && !errors.Is(got, testCaseInput.tc.extra),
+			"non-resource error identity lost: %v",
+			got,
 		)
+		assert.FatalIf(
+			t,
+			errors.Is(got, manifest.ErrInput) != errors.Is(testCaseInput.tc.extra, manifest.ErrInput),
+			"input identity changed: %v",
+			got,
+		)
+		assert.FatalIf(t, errors.Is(got, raw), "raw aggregate entered projection: %v", got)
 	}
+	assert.FatalIf(
+		t,
+		errors.Is(err, manifest.ErrFlux) != (testCaseInput.tc.visible || errors.Is(testCaseInput.tc.extra, manifest.ErrFlux)) ||
+			errors.Is(
+				remainder,
+				manifest.ErrFlux,
+			) != errors.Is(testCaseInput.tc.extra, manifest.ErrFlux),
+		"domain identity changed: selected=%v remainder=%v",
+		err,
+		remainder,
+	)
 	concrete, ok := errors.AsType[*FailuresError](err)
-	{
-		assert.FatalIf(t, ok != testCaseInput.tc.visible, "selected aggregate identity changed: %v", err)
-	}
+	assert.FatalIf(t, ok != testCaseInput.tc.visible, "selected aggregate identity changed: %v", err)
 	if testCaseInput.tc.visible {
 		assert.Equal(
 			t,
@@ -777,17 +743,13 @@ func testSelectFatalScopeAndRunErrorIdentitiesCaseCase(
 		)
 	}
 	{
-		{
-			_, ok := errors.AsType[*FailuresError](remainder)
-			assert.FatalIf(t, ok, "aggregate entered incidental error: %v", remainder)
-		}
+		_, ok := errors.AsType[*FailuresError](remainder)
+		assert.FatalIf(t, ok, "aggregate entered incidental error: %v", remainder)
 	}
-	{
-		assert.FatalIf(
-			t,
-			err != nil && strings.Contains(err.Error(), "default failed"),
-			"hidden raw failure leaked: %v",
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err != nil && strings.Contains(err.Error(), "default failed"),
+		"hidden raw failure leaked: %v",
+		err,
+	)
 }

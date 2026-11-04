@@ -55,7 +55,7 @@ order: second
 	assert.NoError(t, err)
 	second, err := decodeRenderMaps(payload)
 	assert.NoError(t, err)
-	for _, got := range []([]map[string]any){first, second} {
+	for _, got := range [][]map[string]any{first, second} {
 		{
 			diff := cmp.Diff(docs, got, equalFloat, equalTime)
 			assert.FatalIf(t, diff != "", "codec changed constructed values (-want +got):\n%s", diff)
@@ -81,9 +81,7 @@ func TestRenderCodec_EmptyAndErrors(t *testing.T) {
 	for _, docs := range [][]map[string]any{nil, {}} {
 		payload, err := encodeRenderMaps(docs)
 		assert.NoError(t, err)
-		{
-			assert.FatalIf(t, len(payload) == 0, "%s", "empty output has no encoded stream")
-		}
+		assert.FatalIf(t, len(payload) == 0, "%s", "empty output has no encoded stream")
 		got, err := decodeRenderMaps(payload)
 		assert.NoError(t, err)
 		assert.Equal(t, len(got), 0)
@@ -127,9 +125,7 @@ func TestRenderCodec_Deterministic(t *testing.T) {
 	assert.NoError(t, err)
 	second, err := encodeRenderMaps(docs)
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(t, !bytes.Equal(first, second), "%s", "equal documents have different encoded bytes")
-	}
+	assert.FatalIf(t, !bytes.Equal(first, second), "%s", "equal documents have different encoded bytes")
 	got, err := decodeRenderMaps(first)
 	assert.NoError(t, err)
 	assert.Equal(t, len(got[0]["mixed"].(map[any]any)), 102)
@@ -207,18 +203,14 @@ func TestRenderCodec_AllocationBound(t *testing.T) {
 				count,
 				limit,
 			)
-			{
-				assert.FatalIf(t, docs != nil || !errors.Is(err, ErrFlux), "malformed payload: %v, %v", docs, err)
-			}
-			{
-				assert.ErrorIf(
-					t,
-					allocated > limit,
-					"decode allocated %d bytes, exceeding input-proportional ceiling %d",
-					allocated,
-					limit,
-				)
-			}
+			assert.FatalIf(t, docs != nil || !errors.Is(err, ErrFlux), "malformed payload: %v, %v", docs, err)
+			assert.ErrorIf(
+				t,
+				allocated > limit,
+				"decode allocated %d bytes, exceeding input-proportional ceiling %d",
+				allocated,
+				limit,
+			)
 		})
 	}
 }
@@ -281,9 +273,7 @@ func TestRenderCodec_DenseAndNested(t *testing.T) {
 	assert.NoError(t, err)
 	encoded, err := encodeRenderMaps(got)
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(t, !bytes.Equal(encoded, payload), "%s", "dense nested containers changed encoded values")
-	}
+	assert.FatalIf(t, !bytes.Equal(encoded, payload), "%s", "dense nested containers changed encoded values")
 }
 
 func testRenderCodecFirstErrorCase(t *testing.T, testCaseInput *struct {

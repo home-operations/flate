@@ -33,7 +33,8 @@ func testFetcherRecursiveTLSDefaultsCase(t *testing.T, testCaseInput testFetcher
 	t.Helper()
 
 	root := t.TempDir()
-	cert, ca := tlsGitCertificate(t)
+	certificate2 := tlsGitCertificate(t)
+
 	parentHandler, moduleHandler := gitHTTPHandler(t, root), gitHTTPHandler(t, (*testCaseInput.module))
 	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/module/") {
@@ -42,7 +43,7 @@ func testFetcherRecursiveTLSDefaultsCase(t *testing.T, testCaseInput testFetcher
 			parentHandler.ServeHTTP(w, r)
 		}
 	}))
-	srv.TLS = &tls.Config{Certificates: []tls.Certificate{cert}}
+	srv.TLS = &tls.Config{Certificates: []tls.Certificate{certificate2.certificate}}
 	srv.StartTLS()
 	t.Cleanup(srv.Close)
 	url := "file://" + (*testCaseInput.module)
@@ -100,7 +101,7 @@ func testFetcherRecursiveTLSDefaultsCase(t *testing.T, testCaseInput testFetcher
 
 	fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
 		return &manifest.Secret{
-			StringData: map[string]any{"username": "alice", "password": "p", "ca.crt": ca},
+			StringData: map[string]any{"username": "alice", "password": "p", "ca.crt": certificate2.pem},
 		}
 	}}
 	f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}

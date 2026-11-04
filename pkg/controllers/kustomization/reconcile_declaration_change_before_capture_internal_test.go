@@ -85,15 +85,13 @@ func TestReconcile_SuppliedAdvisoriesOnReplay(t *testing.T) {
 		}
 		previous = next
 		t.Cleanup(next.Close)
-		{
-			assert.FatalIf(
-				t,
-				next.Outcome() == schedule.Blocked || !next.Valid() || next.Reused != (i == 1 || i == 2),
-				"phase %d: execution=%+v",
-				i,
-				next,
-			)
-		}
+		assert.FatalIf(
+			t,
+			next.Outcome() == schedule.Blocked || !next.Valid() || next.Reused != (i == 1 || i == 2),
+			"phase %d: execution=%+v",
+			i,
+			next,
+		)
 		current := st.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission)
 		if i == 0 {
 			first = current
@@ -155,7 +153,7 @@ func testReconcileDeclarationChangeBeforeCaptureCase(
 	)
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "flux-system"}
 	peer := &manifest.Kustomization{Name: "peer", Namespace: "flux-system"}
-	parsed, _, _, err := manifest.ParseDoc(
+	parsed2, err := manifest.ParseDoc(
 		map[string]any{
 			"apiVersion": manifest.FluxKustomizeDomain + "/v1",
 			"kind":       manifest.KindKustomization,
@@ -167,9 +165,8 @@ func testReconcileDeclarationChangeBeforeCaptureCase(
 		},
 		manifest.ParseDocOptions{},
 	)
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	parsed := parsed2.Object
+	assert.FatalIf(t, err != nil, "%v", err)
 	input := parsed.(*manifest.Kustomization)
 	st.AddObjects([]manifest.BaseManifest{parent, peer, input})
 	st.SetDiscoveryIndex(
@@ -238,9 +235,7 @@ func testReconcileDeclarationChangeBeforeCaptureCase(
 		}
 	})
 	c.Tasks.BlockTillDone()
-	{
-		assert.FatalIf(t, c.Tasks.Failures() != 0, "%v", "capture worker panicked")
-	}
+	assert.FatalIf(t, c.Tasks.Failures() != 0, "%v", "capture worker panicked")
 	if run.Valid() || expansions.Load() != 0 || st.GetArtifact(input.Named(), store.ArtifactContent) != nil {
 		t.Fatalf("stale source capture continued: valid=%t expansions=%d", run.Valid(), expansions.Load())
 	}
@@ -359,14 +354,12 @@ func testReconcileRequiredPostBuildNotWaivedCase(
 		ReconcileNode: c.ReconcileNode,
 	}
 	info := controllertest.DispatchToFixpoint(t.Context(), t, dispatch)
-	{
-		assert.FatalIf(
-			t,
-			info.Status != store.StatusFailed || st.GetArtifact(ks.Named(), store.ArtifactContent) != nil,
-			"required absent postBuild input admitted: %+v",
-			info,
-		)
-	}
+	assert.FatalIf(
+		t,
+		info.Status != store.StatusFailed || st.GetArtifact(ks.Named(), store.ArtifactContent) != nil,
+		"required absent postBuild input admitted: %+v",
+		info,
+	)
 	input := manifest.NamedResource{Kind: (*testCaseInput.kind), Namespace: ks.Namespace, Name: "missing"}
 	if (*testCaseInput.kind) == manifest.KindSecret {
 		st.AddObject(&manifest.Secret{Name: input.Name, Namespace: input.Namespace})

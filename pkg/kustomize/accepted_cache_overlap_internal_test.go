@@ -122,9 +122,7 @@ func testRenderAcceptedCacheAcquisitionOverlapCase(
 	})
 	select {
 	case err := <-progress:
-		{
-			assert.NoError(t, err)
-		}
+		assert.NoError(t, err)
 	case <-ctx.Done():
 		t.Fatal("same-frame lookup/publication or source acquisition blocked behind input read")
 	}
@@ -133,9 +131,7 @@ func testRenderAcceptedCacheAcquisitionOverlapCase(
 	released = true
 	select {
 	case err := <-rendered:
-		{
-			assert.NoError(t, err)
-		}
+		assert.NoError(t, err)
 	case <-ctx.Done():
 		t.Fatal("render did not finish")
 	}

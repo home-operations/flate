@@ -69,9 +69,7 @@ func TestClaims_SortsLongestFirst(t *testing.T) {
 		"",
 		s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization),
 	)
-	{
-		assert.FatalIf(t, len(prefixes) != 3, "expected 3 prefixes, got %d", len(prefixes))
-	}
+	assert.FatalIf(t, len(prefixes) != 3, "expected 3 prefixes, got %d", len(prefixes))
 	// Longest first: leaf > mid > root.
 	{
 		got := []string{
@@ -108,10 +106,8 @@ func TestClaims_EmptyPathClaimsRoot(t *testing.T) {
 		"",
 		s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization),
 	)
-	{
-		assert.FatalIf(t, len(prefixes) != 2 || prefixes[0].ID != with.Named() || prefixes[1].ID != without.Named() ||
-			prefixes[1].Prefix != "", "expected apps and source-root claims; got %+v", prefixes)
-	}
+	assert.FatalIf(t, len(prefixes) != 2 || prefixes[0].ID != with.Named() || prefixes[1].ID != without.Named() ||
+		prefixes[1].Prefix != "", "expected apps and source-root claims; got %+v", prefixes)
 	if parent, ok := manifest.StrictParent(
 		prefixes,
 		"root.yaml",
@@ -141,14 +137,12 @@ func TestClaims_EmptyExternalPath(t *testing.T) {
 	s.AddObject(external)
 	s.AddObject(local)
 	prefixes := loaderFixture(s, nil).Claims(t.TempDir())
-	{
-		assert.FatalIf(
-			t,
-			len(prefixes) != 1 || prefixes[0].ID != local.Named(),
-			"external source root must not claim local files: %+v",
-			prefixes,
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(prefixes) != 1 || prefixes[0].ID != local.Named(),
+		"external source root must not claim local files: %+v",
+		prefixes,
+	)
 	{
 		parent, ok := manifest.StrictParent(
 			Claims(s, "", s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)),
@@ -214,17 +208,13 @@ func TestClaims_IncludesSpecComponents(t *testing.T) {
 	})
 
 	got, ok := manifest.StrictParent(prefixes, "apps/shared/observability/karma.yaml", manifest.NamedResource{}, nil)
-	{
-		assert.FatalIf(t, !ok, "StrictParent missed component-dir child — components fold regression")
-	}
-	{
-		assert.ErrorIf(
-			t,
-			got.Name != "parent",
-			"StrictParent = %q, want 'parent' (component-dir child should attribute to its containing KS)",
-			got.Name,
-		)
-	}
+	assert.FatalIf(t, !ok, "StrictParent missed component-dir child — components fold regression")
+	assert.ErrorIf(
+		t,
+		got.Name != "parent",
+		"StrictParent = %q, want 'parent' (component-dir child should attribute to its containing KS)",
+		got.Name,
+	)
 }
 
 // TestStrictParent_DeepestMatchWins exercises the typical case:
@@ -251,12 +241,8 @@ func TestStrictParent_DeepestMatchWins(t *testing.T) {
 		s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization),
 	)
 	got, ok := manifest.StrictParent(prefixes, "apps/team-a/web/deploy.yaml", manifest.NamedResource{}, nil)
-	{
-		assert.FatalIf(t, !ok, "expected a parent match")
-	}
-	{
-		assert.ErrorIf(t, got.Name != "leaf", "expected deepest parent 'leaf', got %q", got.Name)
-	}
+	assert.FatalIf(t, !ok, "expected a parent match")
+	assert.ErrorIf(t, got.Name != "leaf", "expected deepest parent 'leaf', got %q", got.Name)
 }
 
 // TestStrictParent_AbsoluteSpecPath is the #920 regression: a Kustomization
@@ -285,14 +271,12 @@ func TestStrictParent_AbsoluteSpecPath(t *testing.T) {
 		hr,
 		nil,
 	)
-	{
-		assert.FatalIf(
-			t,
-			!ok,
-			"expected the absolute spec.path KS to parent its helm-release.yaml; prefixes=%v",
-			prefixes,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!ok,
+		"expected the absolute spec.path KS to parent its helm-release.yaml; prefixes=%v",
+		prefixes,
+	)
 	if parent != ks.Named() {
 		t.Errorf("parent = %v, want %v", parent, ks.Named())
 	}

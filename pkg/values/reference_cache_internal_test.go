@@ -39,9 +39,7 @@ func TestExpandValueReferences_ConcurrentSharedCache(t *testing.T) {
 	expandValuesForTest(t, prior, provider, cache)
 	before := manifest.DeepCopyMap(prior.Values)
 	canonical, ok := cache.lookup(cm.Data["values.yaml"].(string))
-	{
-		assert.FatalIf(t, !ok, "%s", "missing cached document")
-	}
+	assert.FatalIf(t, !ok, "%s", "missing cached document")
 	cases := []struct {
 		name    string
 		refs    []manifest.ValuesReference
@@ -165,9 +163,7 @@ func TestExpandValueReferences_TargetPathDoesNotCorruptSharedCache(t *testing.T)
 				TargetPath: "env[0].value=changed,broken[bad]", Literal: tc.literal,
 			})
 			_, err := ExpandValueReferences(hr, provider, cache)
-			{
-				assert.FatalIf(t, err == nil, "%s", "malformed target path succeeded")
-			}
+			assert.FatalIf(t, err == nil, "%s", "malformed target path succeeded")
 			assert.Diff(t, hr.Values, before)
 			after := wholeDocHR()
 			expandValuesForTest(t, after, provider, cache)
@@ -247,9 +243,7 @@ func TestExpandValueReferences_InterleavedTargetPaths(t *testing.T) {
 				want map[string]any
 			}{{first, firstBefore}, {second, secondBefore}} {
 				canonical, ok := cache.lookup(document.cm.Data["values.yaml"].(string))
-				{
-					assert.FatalIf(t, !ok, "%s", "missing cached document")
-				}
+				assert.FatalIf(t, !ok, "%s", "missing cached document")
 				assert.Diff(t, canonical, document.want)
 			}
 		})

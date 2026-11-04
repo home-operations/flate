@@ -25,12 +25,12 @@ func Claims(s *store.Store, repoRoot string, candidates []*manifest.Kustomizatio
 	reader.mountSources(s)
 	var claimBuf [16]ownerClaims
 	built := new(reader).buildClaims(repoRoot, candidates, func(id manifest.NamedResource) sourceScope {
-		root, pinned, external := SourceView(s, id, repoRoot)
+		location := SourceView(s, id, repoRoot)
 		return sourceScope{
-			root:     root,
-			pinned:   pinned,
-			external: external,
-			origin:   new(reader).localBase(root, repoRoot),
+			root:     location.Path,
+			pinned:   location.Pinned,
+			external: location.External,
+			origin:   new(reader).localBase(location.Path, repoRoot),
 		}
 	}, claimBuf[:0])
 	claims, _ := projectClaims(len(built), func(i int) ownerClaims { return built[i] })
@@ -99,8 +99,8 @@ func (r *documentReader) buildClaims(
 		out = out[:len(kss)]
 		clear(out)
 	}
-	qualified, components := dr.qualifyClaims(repoRoot, kss, source)
-	claims := manifest.BuildKSClaims(kss, components)
+	qualification := dr.qualifyClaims(repoRoot, kss, source)
+	claims := manifest.BuildKSClaims(kss, qualification.components)
 	slices.SortStableFunc(claims, func(a, b manifest.KSClaim) int { return a.ID.Compare(b.ID) })
 	next := 0
 	for i, ks := range kss {
@@ -110,12 +110,12 @@ func (r *documentReader) buildClaims(
 		}
 		out[i].claims = claims[first:next:next]
 	}
-	for _, view := range qualified {
+	for _, view := range qualification.qualified {
 		base, err := filepath.Rel(repoRoot, view.root)
 		if err != nil {
 			continue
 		}
-		aliases := manifest.BuildKSClaims([]*manifest.Kustomization{view.ks}, components)
+		aliases := manifest.BuildKSClaims([]*manifest.Kustomization{view.ks}, qualification.components)
 		for i := range aliases {
 			aliases[i].Prefix = filepath.ToSlash(filepath.Join(base, aliases[i].Prefix)) + "/"
 		}
@@ -130,11 +130,16 @@ type qualifiedClaim struct {
 	index int
 }
 
+type claimQualification struct {
+	qualified  []qualifiedClaim
+	components map[manifest.NamedResource][]string
+}
+
 func (r *documentReader) qualifyClaims(
 	repoRoot string,
 	kss []*manifest.Kustomization,
 	source func(manifest.NamedResource) sourceScope,
-) ([]qualifiedClaim, map[manifest.NamedResource][]string) {
+) claimQualification {
 	var qualified []qualifiedClaim
 	var components map[manifest.NamedResource][]string
 	for i, ks := range kss {
@@ -163,7 +168,7 @@ func (r *documentReader) qualifyClaims(
 		}
 		components = r.claimComponents(ks, root, base, components)
 	}
-	return qualified, components
+	return claimQualification{qualified: qualified, components: components}
 }
 
 func (r *documentReader) claimComponents(
@@ -175,7 +180,7 @@ func (r *documentReader) claimComponents(
 		return components
 	}
 	var refs []string
-	spec, _ := r.read(filepath.Join(root, base))
+	spec := r.read(filepath.Join(root, base)).body
 	for ref := range kustomizeinput.Kustomization(spec) {
 		if ref.Role == kustomizeinput.Component {
 			refs = append(refs, ref.Path)
@@ -212,16 +217,16 @@ func (r *documentReader) claimBase(root, p string) string {
 //
 //nolint:gocritic // SecureJoin consumes filesystem methods from documentReader values.
 func (r documentReader) Lstat(file string) (fs.FileInfo, error) {
-	input, name := new(r).input(filepath.Clean(file))
-	return fs.Lstat(input, name) //nolint:wrapcheck // SecureJoin requires original filesystem errors.
+	inputFile := new(r).input(filepath.Clean(file))
+	return fs.Lstat(inputFile.fs, inputFile.name) //nolint:wrapcheck // SecureJoin requires original filesystem errors.
 }
 
 // Readlink uses the same mounted source view as Lstat.
 //
 //nolint:gocritic // SecureJoin consumes filesystem methods from documentReader values.
 func (r documentReader) Readlink(file string) (string, error) {
-	input, name := new(r).input(filepath.Clean(file))
-	return fs.ReadLink(input, name) //nolint:wrapcheck // SecureJoin requires original filesystem errors.
+	input := new(r).input(filepath.Clean(file))
+	return fs.ReadLink(input.fs, input.name) //nolint:wrapcheck // SecureJoin requires original filesystem errors.
 }
 
 type sourceStore interface {
@@ -229,11 +234,17 @@ type sourceStore interface {
 	GetArtifact(manifest.NamedResource, store.ArtifactRead) store.Artifact
 }
 
+// SourceLocation binds a source path to its pin and ownership.
+type SourceLocation struct {
+	Path             string
+	Pinned, External bool
+}
+
 // SourceView classifies an admitted source coordinate, committed pin and external ownership.
 // Unavailable sources MUST NOT borrow bootstrap bytes or claim unrelated working-tree files.
-func SourceView(s sourceStore, ref manifest.NamedResource, repoRoot string) (string, bool, bool) {
+func SourceView(s sourceStore, ref manifest.NamedResource, repoRoot string) SourceLocation {
 	if ref.Name == "" || ref == manifest.BootstrapSourceID {
-		return repoRoot, false, false
+		return SourceLocation{Path: repoRoot, Pinned: false, External: false}
 	}
 	art, _ := s.GetArtifact(ref, store.ArtifactContent).(*store.SourceArtifact)
 	return sourceView(ref, repoRoot, art, s.GetObject(ref))
@@ -244,21 +255,21 @@ func sourceView(
 	repoRoot string,
 	art *store.SourceArtifact,
 	object manifest.BaseManifest,
-) (string, bool, bool) {
+) SourceLocation {
 	if art != nil && art.FS != nil {
 		if art.LocalPath == repoRoot {
-			return repoRoot, false, false
+			return SourceLocation{Path: repoRoot, Pinned: false, External: false}
 		}
 		if art.LocalRoot != "" &&
 			(art.LocalRoot == repoRoot || art.InputAlias && safepath.Contains(repoRoot, art.LocalRoot)) {
 			// Derived input keys pin selected bootstrap bytes, never authored refs.
-			return art.LocalPath, art.Content != "" && !art.InputAlias, false
+			return SourceLocation{Path: art.LocalPath, Pinned: art.Content != "" && !art.InputAlias, External: false}
 		}
 	}
 	if object != nil {
-		return repoRoot, false, true
+		return SourceLocation{Path: repoRoot, Pinned: false, External: true}
 	}
-	return repoRoot, false, ref.CanBindLocal()
+	return SourceLocation{Path: repoRoot, Pinned: false, External: ref.CanBindLocal()}
 }
 
 // Input aliases map source-relative readers and claims to their physical origin.
@@ -290,10 +301,10 @@ func AppliesToEntry(
 	if source == nil {
 		return false
 	}
-	root, pinned, external := SourceView(s, application.Source, input.LocalPath)
-	if pinned || external {
+	location2 := SourceView(s, application.Source, input.LocalPath)
+	if location2.Pinned || location2.External {
 		return false
 	}
-	target := filepath.Join(root, manifest.NormalizeClaimBase(application.Path))
-	return safepath.Contains(root, target) && source.OriginPath(target) == input.OriginPath(entry)
+	target := filepath.Join(location2.Path, manifest.NormalizeClaimBase(application.Path))
+	return safepath.Contains(location2.Path, target) && source.OriginPath(target) == input.OriginPath(entry)
 }

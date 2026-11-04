@@ -60,24 +60,16 @@ data: {k: v}
 		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		Config{WipeSecrets: true},
 	)
-	{
-		assert.FatalIf(t, len(renderedSingleton3) != 1, "missing render: %v", err)
-	}
+	assert.FatalIf(t, len(renderedSingleton3) != 1, "missing render: %v", err)
 	res := renderedSingleton3[0].Result
-	{
-		assert.FatalIf(t, err != nil, "Render: %v", err)
-	}
-	{
-		assert.FatalIf(t, res == nil, "%v", "Render returned nil Result")
-	}
+	assert.FatalIf(t, err != nil, "Render: %v", err)
+	assert.FatalIf(t, res == nil, "%v", "Render returned nil Result")
 	ksID := testutil.KustomizationID("flux-system", "apps")
 	mans, ok := outputByParent(res.Manifests)[ksID]
 	if !ok {
 		t.Fatalf("Result.Manifests missing %s; keys=%v", ksID, keysOf(outputByParent(res.Manifests)))
 	}
-	{
-		assert.ErrorIf(t, len(mans) == 0, "expected rendered docs for %s; got empty", ksID)
-	}
+	assert.ErrorIf(t, len(mans) == 0, "expected rendered docs for %s; got empty", ksID)
 	if len(res.Failed) != 0 {
 		t.Errorf("expected no failures; got %v", res.Failed)
 	}
@@ -90,9 +82,7 @@ data: {k: v}
 		Config{WipeSecrets: true, Concurrency: 2},
 	)
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(t, len(again) != 1, "%v", "second invocation lost tree")
-	}
+	assert.FatalIf(t, len(again) != 1, "%v", "second invocation lost tree")
 	assert.Diff(t, canonicalBatches(again[0].Result), canonicalBatches(res))
 }
 
@@ -118,34 +108,24 @@ func TestOrchestrator_TypedNullErrors(t *testing.T) {
 				[]Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 				Config{CacheDir: t.TempDir(), Concurrency: 2},
 			)
-			{
-				assert.FatalIf(t, len(renderedSingleton1) != 1, "missing render: %v", err)
-			}
+			assert.FatalIf(t, len(renderedSingleton1) != 1, "missing render: %v", err)
 			res := renderedSingleton1[0].Result
 			{
-				{
-					_, ok := errors.AsType[*FailuresError](err)
-					assert.FatalIf(t, !ok, "render error = %v, want resource failure", err)
-				}
+				_, ok := errors.AsType[*FailuresError](err)
+				assert.FatalIf(t, !ok, "render error = %v, want resource failure", err)
 			}
-			{
-				assert.FatalIf(t, !strings.Contains(err.Error(), tc.diagnostic), "missing upstream diagnostic: %v", err)
-			}
-			{
-				assert.FatalIf(t, res == nil, "%v", "missing render result")
-			}
+			assert.FatalIf(t, !strings.Contains(err.Error(), tc.diagnostic), "missing upstream diagnostic: %v", err)
+			assert.FatalIf(t, res == nil, "%v", "missing render result")
 			id := testutil.KustomizationID("flux-system", "apps")
 			{
-				{
-					info, ok := res.Failed[id]
-					assert.FatalIf(
-						t,
-						!ok || !strings.Contains(info.String(), tc.diagnostic),
-						"Kustomization failure = %+v, present = %t",
-						info,
-						ok,
-					)
-				}
+				info, ok := res.Failed[id]
+				assert.FatalIf(
+					t,
+					!ok || !strings.Contains(info.String(), tc.diagnostic),
+					"Kustomization failure = %+v, present = %t",
+					info,
+					ok,
+				)
 			}
 		})
 	}
@@ -210,14 +190,10 @@ spec:
 `)
 
 	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{WipeSecrets: true, Concurrency: 2})
+	assert.FatalIf(t, err != nil, "New: %v", err)
 	{
-		assert.FatalIf(t, err != nil, "New: %v", err)
-	}
-	{
-		{
-			localErr := o.bootstrap(t.Context())
-			assert.FatalIf(t, localErr != nil, "%v", localErr)
-		}
+		localErr := o.bootstrap(t.Context())
+		assert.FatalIf(t, localErr != nil, "%v", localErr)
 	}
 	rsID := manifest.NamedResource{
 		Group:     "fluxcd.controlplane.io",
@@ -226,21 +202,15 @@ spec:
 		Name:      "acl",
 	}
 	{
-		{
-			_, ok := o.index.Lookup(rsID)
-			assert.FatalIf(t, ok, "%v", "fixture ResourceSet must only exist in render output")
-		}
+		_, ok := o.index.Lookup(rsID)
+		assert.FatalIf(t, ok, "%v", "fixture ResourceSet must only exist in render output")
 	}
 	res, err := o.collectResult(o.run(t.Context()))
-	{
-		assert.FatalIf(t, err != nil, "Render: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "Render: %v", err)
 	ksID := testutil.KustomizationID("flux-system", "apps")
 	{
-		{
-			owners := testutil.Owners(o.Store().Productions(rsID, nil))
-			assert.FatalIf(t, !slices.Contains(owners, ksID), "missing independent contributor: %v", owners)
-		}
+		owners := testutil.Owners(o.Store().Productions(rsID, nil))
+		assert.FatalIf(t, !slices.Contains(owners, ksID), "missing independent contributor: %v", owners)
 	}
 	mans := outputByParent(res.Manifests)[ksID]
 	var found bool
@@ -275,7 +245,8 @@ func TestOrchestrator_AllowMissingSecretsPropagates(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	registryURL, registryConfig := privateRegistry(t)
+	privateRegistryResult1 := privateRegistry(t)
+	registryURL, registryConfig := privateRegistryResult1.url, privateRegistryResult1.credentials
 	testutil.WriteFile(t, dir, "oci.yaml", fmt.Sprintf(`apiVersion: source.toolkit.fluxcd.io/v1
 kind: OCIRepository
 metadata:
@@ -307,14 +278,10 @@ spec:
 			AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap},
 		},
 	)
-	{
-		assert.FatalIf(t, len(renderedSingleton4) != 1, "missing render: %v", err)
-	}
+	assert.FatalIf(t, len(renderedSingleton4) != 1, "missing render: %v", err)
 	o := renderedSingleton4[0].Orchestrator
 	res := renderedSingleton4[0].Result
-	{
-		assert.FatalIf(t, err != nil, "Render: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "Render: %v", err)
 
 	ociID := manifest.NamedResource{
 		Group:     "source.toolkit.fluxcd.io",
@@ -335,30 +302,27 @@ spec:
 	}
 
 	ociInfo, ok := o.Store().GetStatus(ociID)
-	{
-		assert.ErrorIf(
-			t,
-			!ok || ociInfo.Outcome() != store.OutcomeSkipped,
-			"OCIRepository should be Ready+skipped; got %+v",
-			ociInfo,
-		)
-	}
+	assert.ErrorIf(
+		t,
+		!ok || ociInfo.Outcome() != store.OutcomeSkipped,
+		"OCIRepository should be Ready+skipped; got %+v",
+		ociInfo,
+	)
 	ksInfo, ok := o.Store().GetStatus(ksID)
-	{
-		assert.ErrorIf(
-			t,
-			!ok || ksInfo.Outcome() != store.OutcomeSkipped,
-			"KS should be Ready+skipped; got %+v",
-			ksInfo,
-		)
-	}
+	assert.ErrorIf(
+		t,
+		!ok || ksInfo.Outcome() != store.OutcomeSkipped,
+		"KS should be Ready+skipped; got %+v",
+		ksInfo,
+	)
 }
 
 func TestOrchestrator_AllowMissingSecretsHRSkipsBeforePull(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	registryURL, registryConfig := privateRegistry(t)
+	privateRegistryResult2 := privateRegistry(t)
+	registryURL, registryConfig := privateRegistryResult2.url, privateRegistryResult2.credentials
 	testutil.WriteFile(t, dir, "oci.yaml", fmt.Sprintf(`apiVersion: source.toolkit.fluxcd.io/v1
 kind: OCIRepository
 metadata:
@@ -392,30 +356,24 @@ spec:
 			AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap},
 		},
 	)
-	{
-		assert.FatalIf(t, len(renderedSingleton5) != 1, "missing render: %v", err)
-	}
+	assert.FatalIf(t, len(renderedSingleton5) != 1, "missing render: %v", err)
 	o := renderedSingleton5[0].Orchestrator
 	res := renderedSingleton5[0].Result
-	{
-		assert.FatalIf(t, err != nil, "Render: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "Render: %v", err)
 
 	hrID := testutil.HelmReleaseID("default", "demo")
 	if _, failed := res.Failed[hrID]; failed {
 		t.Errorf("HR must propagate skip before helm.Template runs; got %v", res.Failed[hrID])
 	}
 	hrInfo, ok := o.Store().GetStatus(hrID)
-	{
-		assert.ErrorIf(
-			t,
-			!ok || hrInfo.Outcome() != store.OutcomeSkipped,
-			"HR should be Ready+skipped (chart source skipped); got %+v. "+
-				"If status is Failed with a registry-pull error, the pre-check is missing and "+
-				"helm tried an anonymous pull — exactly the silent-downgrade the pre-check exists to prevent.",
-			hrInfo,
-		)
-	}
+	assert.ErrorIf(
+		t,
+		!ok || hrInfo.Outcome() != store.OutcomeSkipped,
+		"HR should be Ready+skipped (chart source skipped); got %+v. "+
+			"If status is Failed with a registry-pull error, the pre-check is missing and "+
+			"helm tried an anonymous pull — exactly the silent-downgrade the pre-check exists to prevent.",
+		hrInfo,
+	)
 }
 
 func keysOf[V any](m map[manifest.NamedResource]V) []manifest.NamedResource {
@@ -561,87 +519,69 @@ spec:
 		WipeSecrets: true,
 	},
 	)
-	{
-		assert.FatalIf(t, err != nil, "New: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "New: %v", err)
 	t.Cleanup(func() { o.stop() })
 	{
-		{
-			err := o.bootstrap(context.Background())
-			assert.FatalIf(t, err != nil, "Bootstrap: %v", err)
-		}
+		err := o.bootstrap(context.Background())
+		assert.FatalIf(t, err != nil, "Bootstrap: %v", err)
 	}
 
 	producerID := testutil.KustomizationID("flux-system", "cluster-vars")
 	f := o.filter
-	{
-		assert.FatalIf(t, f == nil, "filter returned nil; ExternalChanges should have activated changed-only mode")
-	}
+	assert.FatalIf(t, f == nil, "filter returned nil; ExternalChanges should have activated changed-only mode")
 	if !f.ShouldReconcile(producerID) {
 		t.Fatalf("producer %s must be in keep set; keep=%v", producerID, f.KeepNames())
 	}
 
 	if err := o.run(context.Background()); err != nil {
-		{
-			assert.FatalIf(
-				t,
-				strings.Contains(err.Error(), "ConfigMap/flux-system/cluster-settings: dependency not found"),
-				"changed-only skipped unchanged substituteFrom producer: %v",
-				err,
-			)
-		}
+		assert.FatalIf(
+			t,
+			strings.Contains(err.Error(), "ConfigMap/flux-system/cluster-settings: dependency not found"),
+			"changed-only skipped unchanged substituteFrom producer: %v",
+			err,
+		)
 		t.Fatalf("Run: %v", err)
 	}
 
 	{
-		{
-			got := o.Store().GetArtifact(producerID, store.ArtifactContent)
-			assert.ErrorIf(
-				t,
-				got == nil,
-				"producer %s artifact missing after Run; producer was kept but never reconciled",
-				producerID,
-			)
-		}
+		got := o.Store().GetArtifact(producerID, store.ArtifactContent)
+		assert.ErrorIf(
+			t,
+			got == nil,
+			"producer %s artifact missing after Run; producer was kept but never reconciled",
+			producerID,
+		)
 	}
 	cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "cluster-settings"}
 	{
-		{
-			got := o.Store().GetObject(cmID)
-			assert.ErrorIf(
-				t,
-				got == nil,
-				"rendered %s missing after Run; producer reconcile did not materialize the substituteFrom CM",
-				cmID,
-			)
-		}
+		got := o.Store().GetObject(cmID)
+		assert.ErrorIf(
+			t,
+			got == nil,
+			"rendered %s missing after Run; producer reconcile did not materialize the substituteFrom CM",
+			cmID,
+		)
 	}
 	consumedID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "consumed"}
 	consumed, ok := o.Store().GetObject(consumedID).(*manifest.ConfigMap)
-	{
-		assert.FatalIf(
-			t,
-			!ok || consumed.Data["domain"] != "example.test",
-			"producer data did not reach changed-only consumer: %#v",
-			consumed,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!ok || consumed.Data["domain"] != "example.test",
+		"producer data did not reach changed-only consumer: %#v",
+		consumed,
+	)
 	retainedID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "retained"}
-	{
-		assert.FatalIf(t, o.Store().GetObject(retainedID) == nil, "%v", "persisted producer lost its retained child")
-	}
+	assert.FatalIf(t, o.Store().GetObject(retainedID) == nil, "%v", "persisted producer lost its retained child")
 	if reason := sourcecache.RenderPersistenceDisabledReason(); reason == "" {
 		{
-			{
-				warmReads := input.reads.Load()
-				assert.FatalIf(
-					t,
-					warmReads >= coldReads,
-					"persisted producer rebuilt: cold reads=%d, warm reads=%d",
-					coldReads,
-					warmReads,
-				)
-			}
+			warmReads := input.reads.Load()
+			assert.FatalIf(
+				t,
+				warmReads >= coldReads,
+				"persisted producer rebuilt: cold reads=%d, warm reads=%d",
+				coldReads,
+				warmReads,
+			)
 		}
 		t.Logf("persisted producer skipped source reads: cold=%d warm=%d", coldReads, input.reads.Load())
 	} else {
@@ -679,7 +619,8 @@ func testRSEmissionGroupingCase(t *testing.T, testCaseInput *bool,
 		"metadata":   map[string]any{"name": "shared", "namespace": "apps"},
 		"data":       map[string]any{"value": "equal"},
 	}
-	children, docs := parseChildrenForTest(parent, []map[string]any{doc}, manifest.ParseDocOptions{})
+	parseChildrenForTestResult3 := parseChildrenForTest(parent, []map[string]any{doc}, manifest.ParseDocOptions{})
+	children, docs := parseChildrenForTestResult3.Children, parseChildrenForTestResult3.Documents
 	ids := []manifest.NamedResource{a.Named(), b.Named()}
 	if *testCaseInput {
 		slices.Reverse(ids)
@@ -699,7 +640,8 @@ func testRSEmissionGroupingCase(t *testing.T, testCaseInput *bool,
 	second := manifest.DeepCopyMap(doc)
 	second["metadata"].(map[string]any)["name"] = "second"
 	for _, ordered := range [][]map[string]any{{doc, second}, {second, doc}} {
-		entries, authoritative := parseChildrenForTest(b.Named(), ordered, manifest.ParseDocOptions{})
+		parseChildrenForTestResult4 := parseChildrenForTest(b.Named(), ordered, manifest.ParseDocOptions{})
+		entries, authoritative := parseChildrenForTestResult4.Children, parseChildrenForTestResult4.Documents
 		s.RecordEmitted(
 			b.Named(),
 			&store.Emission{
@@ -710,20 +652,19 @@ func testRSEmissionGroupingCase(t *testing.T, testCaseInput *bool,
 			nil,
 		)
 		{
-			{
-				got := outputByParent(o.collectManifests())[parent]
-				assert.FatalIf(t, len(got) != 2 ||
-					resourceset.DedupKey(
-						got[0],
-					) != resourceset.DedupKey(
-						ordered[0],
-					), "authoritative document order lost: %v", got)
-			}
+			got := outputByParent(o.collectManifests())[parent]
+			assert.FatalIf(t, len(got) != 2 ||
+				resourceset.DedupKey(
+					got[0],
+				) != resourceset.DedupKey(
+					ordered[0],
+				), "authoritative document order lost: %v", got)
 		}
 	}
 	unequal := manifest.DeepCopyMap(doc)
 	unequal["data"] = map[string]any{"value": "different"}
-	changed, changedDocs := parseChildrenForTest(parent, []map[string]any{unequal}, manifest.ParseDocOptions{})
+	parseChildrenForTestResult5 := parseChildrenForTest(parent, []map[string]any{unequal}, manifest.ParseDocOptions{})
+	changed, changedDocs := parseChildrenForTestResult5.Children, parseChildrenForTestResult5.Documents
 	for _, id := range ids {
 		if id == a.Named() {
 			s.RecordEmitted(

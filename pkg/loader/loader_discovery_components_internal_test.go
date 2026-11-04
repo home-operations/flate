@@ -80,24 +80,20 @@ spec:
 		assert.ErrorIf(t, !ok, "%s", "claimed Kustomization 'valheim' missing")
 	}
 	// Atuin (commented out) MUST be absent.
-	{
-		assert.ErrorIf(
-			t,
-			s.GetObject(testutil.KustomizationID("", "atuin")) != nil,
-			"%s",
-			"orphan Kustomization 'atuin' should be skipped (#346 deep-orphan)",
-		)
-	}
+	assert.ErrorIf(
+		t,
+		s.GetObject(testutil.KustomizationID("", "atuin")) != nil,
+		"%s",
+		"orphan Kustomization 'atuin' should be skipped (#346 deep-orphan)",
+	)
 	// Atuin's deep HR MUST also be absent — its only kustomize-graph
 	// connection is via the orphan wrapper.
-	{
-		assert.ErrorIf(
-			t,
-			s.GetObject(testutil.HelmReleaseID("", "atuin")) != nil,
-			"%s",
-			"HelmRelease only reachable via orphan wrapper should be skipped",
-		)
-	}
+	assert.ErrorIf(
+		t,
+		s.GetObject(testutil.HelmReleaseID("", "atuin")) != nil,
+		"%s",
+		"HelmRelease only reachable via orphan wrapper should be skipped",
+	)
 	// Valheim's HR should NOT load via the initial graph walk either
 	// — it lives in `default/valheim/app/` which is only reachable
 	// via the wrapper's spec.path, NOT via `default/kustomization.yaml`'s
@@ -105,14 +101,12 @@ spec:
 	// loadAt(valheim/app/) which becomes a fresh entry-point.
 	// (This test stops before that step, so the HR is absent here —
 	// which is the correct flux-local behavior.)
-	{
-		assert.ErrorIf(
-			t,
-			s.GetObject(testutil.HelmReleaseID("", "valheim")) != nil,
-			"%s",
-			"HelmRelease in unreachable subtree leaked into initial walk",
-		)
-	}
+	assert.ErrorIf(
+		t,
+		s.GetObject(testutil.HelmReleaseID("", "valheim")) != nil,
+		"%s",
+		"HelmRelease in unreachable subtree leaked into initial walk",
+	)
 }
 
 // TestLoader_OrphanYAMLSkipped pins the issue-#342 fix: a YAML
@@ -171,14 +165,12 @@ resources:
 		assert.ErrorIf(t, !ok, "%s", "referenced Kustomization 'valheim' missing from store")
 	}
 	// vrising is NOT referenced — must be skipped as orphan.
-	{
-		assert.ErrorIf(
-			t,
-			s.GetObject(testutil.KustomizationID("", "vrising")) != nil,
-			"%s",
-			"orphan Kustomization 'vrising' should not be loaded (issue #342)",
-		)
-	}
+	assert.ErrorIf(
+		t,
+		s.GetObject(testutil.KustomizationID("", "vrising")) != nil,
+		"%s",
+		"orphan Kustomization 'vrising' should not be loaded (issue #342)",
+	)
 }
 
 // Component data must retain producer evidence for substituteFrom dependencies
@@ -227,21 +219,17 @@ data:
 		_, ok := filesForTest(l.Index)[cmID]
 		assert.ErrorIf(t, !ok, "Component-housed CM must be recorded in SourceFiles during discovery")
 	}
-	{
-		assert.ErrorIf(
-			t,
-			s.GetObject(cmID) != nil,
-			"Component-housed CM must NOT be in Store during discovery (existence-only)",
-		)
-	}
+	assert.ErrorIf(
+		t,
+		s.GetObject(cmID) != nil,
+		"Component-housed CM must NOT be in Store during discovery (existence-only)",
+	)
 	leakID := testutil.KustomizationID("ns", "${APP}-leak")
-	{
-		assert.ErrorIf(
-			t,
-			s.GetObject(leakID) != nil,
-			"templated Flux CR inside a Component must NOT leak into the Store",
-		)
-	}
+	assert.ErrorIf(
+		t,
+		s.GetObject(leakID) != nil,
+		"templated Flux CR inside a Component must NOT leak into the Store",
+	)
 }
 
 func TestLoader_DiscoveryRecordsSourceRefs(t *testing.T) {
@@ -366,7 +354,7 @@ data:
 	// Drive the loader at the outer Component directly — same shape
 	// as TestLoader_SkipsKustomizeComponentSubtree's entry pattern.
 	{
-		_, err := loadForTest(context.Background(), t, l, filepath.Join(dir, "components/outer"))
+		_, err := loadForTest(context.Background(), t, l, filepath.Join(dir, "components", "outer"))
 		assert.FatalIf(t, err != nil, "Load: %v", err)
 	}
 
@@ -407,16 +395,14 @@ data:
 			if want {
 				wantCount = 1
 			}
-			{
-				assert.FatalIf(
-					t,
-					found != want || count != wantCount,
-					"ordinary Resource after Component %s: found=%t, count=%d",
-					role,
-					found,
-					count,
-				)
-			}
+			assert.FatalIf(
+				t,
+				found != want || count != wantCount,
+				"ordinary Resource after Component %s: found=%t, count=%d",
+				role,
+				found,
+				count,
+			)
 		})
 	}
 }
@@ -439,7 +425,7 @@ components:
 	// No timeout context: if cycle protection fails, the test hangs
 	// and the test framework's overall timeout surfaces the bug.
 	{
-		_, err := loadForTest(context.Background(), t, l, filepath.Join(dir, "components/a"))
+		_, err := loadForTest(context.Background(), t, l, filepath.Join(dir, "components", "a"))
 		assert.FatalIf(t, err != nil, "Load: %v", err)
 	}
 }

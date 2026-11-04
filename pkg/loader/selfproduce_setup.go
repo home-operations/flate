@@ -16,13 +16,11 @@ func (l *Loader) pinnedProductionOwners() map[manifest.NamedResource]bool {
 }
 
 func (l *Loader) scanRemainingGenerators(b *selfProduceBuilder, remaining map[string]struct{}) {
-	{
-		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-		for dir, doc := range l.documents.cache {
-			b.scanExclusions = b.scanExclusions || doc.scanExcluded
-			if doc.body != nil && !doc.selected && len(doc.body.ConfigMapGenerator)+len(doc.body.SecretGenerator) != 0 {
-				remaining[dir] = struct{}{}
-			}
+	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+	for dir, doc := range l.documents.cache {
+		b.scanExclusions = b.scanExclusions || doc.scanExcluded
+		if doc.body != nil && !doc.selected && len(doc.body.ConfigMapGenerator)+len(doc.body.SecretGenerator) != 0 {
+			remaining[dir] = struct{}{}
 		}
 	}
 }

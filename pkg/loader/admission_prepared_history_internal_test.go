@@ -225,7 +225,7 @@ func testAdmissionChangedDeclarationsPrepareLinearlyCase(
 		ids = append(ids, object.Named())
 		required.RequireData(object.Named())
 	}
-	_, _, _, revision := l.Options.Filter.Membership(manifest.NamedResource{})
+	revision := l.Options.Filter.Membership(manifest.NamedResource{}).Revision
 	_, retry := l.Options.Filter.AddEmitted(ids, ids, ids, revision)
 	assert.Equal(t, retry, false)
 	reads := &admissionArtifactReads{admissionReader: st}

@@ -163,22 +163,28 @@ func (t *treeFS) origin(rel string) (string, bool) {
 	}
 }
 
-func (t *treeFS) observed(name, rel string) (string, string, bool) {
+type observedPath struct {
+	origin string
+	path   string
+	found  bool
+}
+
+func (t *treeFS) observed(name, rel string) observedPath {
 	if t.rec == nil || t.rec.immutable || !fs.ValidPath(rel) {
-		return "", "", false
+		return observedPath{origin: "", path: "", found: false}
 	}
 	authored, err := t.rel(name)
 	if err != nil {
-		return "", "", false
+		return observedPath{origin: "", path: "", found: false}
 	}
 	origin, local := t.origin(authored)
 	if !local || t.modified(origin) {
-		return "", "", false
+		return observedPath{origin: "", path: "", found: false}
 	}
 	if origin == authored {
-		return origin, name, true
+		return observedPath{origin: origin, path: name, found: true}
 	}
-	return origin, t.mount(origin), true
+	return observedPath{origin: origin, path: t.mount(origin), found: true}
 }
 
 func (t *treeFS) mark(relResult string) {
@@ -193,7 +199,8 @@ func (t *treeFS) mark(relResult string) {
 }
 
 func (t *treeFS) probe(name, rel string) {
-	rel, recorded, local := t.observed(name, rel)
+	observedResult1 := t.observed(name, rel)
+	rel, recorded, local := observedResult1.origin, observedResult1.path, observedResult1.found
 	if !local {
 		return
 	}
@@ -232,7 +239,8 @@ func (t *treeFS) ReadFile(name string) ([]byte, error) {
 		return nil, err
 	}
 	data, err := t.upper.ReadFile(rel)
-	if _, recorded, local := t.observed(name, rel); local {
+	observedResult2 := t.observed(name, rel)
+	if _, recorded, local := observedResult2.origin, observedResult2.path, observedResult2.found; local {
 		t.rec.recordFile(recorded, data, err)
 	}
 	return data, treeError("read", name, err)
@@ -269,7 +277,8 @@ func (t *treeFS) Open(name string) (filesys.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, recorded, local := t.observed(name, rel); local {
+	observedResult3 := t.observed(name, rel)
+	if _, recorded, local := observedResult3.origin, observedResult3.path, observedResult3.found; local {
 		data, readFileErr := t.upper.ReadFile(rel)
 		t.rec.recordFile(recorded, data, readFileErr)
 	}
@@ -310,7 +319,8 @@ func (t *treeFS) ReadDir(name string) ([]string, error) {
 		return nil, err
 	}
 	entries, err := t.upper.ReadDir(rel)
-	if origin, recorded, local := t.observed(name, rel); local {
+	observedResult4 := t.observed(name, rel)
+	if origin, recorded, local := observedResult4.origin, observedResult4.path, observedResult4.found; local {
 		if lower, e := fs.ReadDir(t.lower, origin); e == nil {
 			t.rec.recordDir(recorded, entryNames(lower))
 		}
@@ -334,7 +344,10 @@ func (t *treeFS) Walk(name string, fn filepath.WalkFunc) error {
 			return treeError("walk", mounted, resolveErr)
 		}
 		info, err := entry.Info()
-		if origin, recorded, local := t.observed(mounted, p); err == nil && info.IsDir() && local {
+		observedResult5 := t.observed(mounted, p)
+		if origin, recorded, local := observedResult5.origin, observedResult5.path, observedResult5.found; err == nil &&
+			info.IsDir() &&
+			local {
 			if entries, e := fs.ReadDir(t.lower, origin); e == nil {
 				t.rec.recordDir(recorded, entryNames(entries))
 			}

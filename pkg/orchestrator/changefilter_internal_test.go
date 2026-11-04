@@ -17,9 +17,7 @@ func TestBuildChangeFilter_FluxExcludedWarning(t *testing.T) {
 	testutil.WriteFile(t, before, ".sops.yaml", "old")
 	testutil.WriteFile(t, after, ".sops.yaml", "new")
 	input, _, err := baseline.AdmitDirectory(t.Context(), after, after)
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	o, err := newTestOrchestrator(
 		t,
 		Tree{RepoRoot: after, Path: after, BaseInput: testDirectoryInput(t, before), Input: input},
@@ -29,9 +27,7 @@ func TestBuildChangeFilter_FluxExcludedWarning(t *testing.T) {
 	assert.NoError(t, o.bootstrap(t.Context()))
 	assert.Equal(t, o.filter.Enabled(), true)
 	warnings := o.store.Warnings()
-	{
-		assert.FatalIf(t, len(warnings) != 1, "warnings = %v, want one", warnings)
-	}
+	assert.FatalIf(t, len(warnings) != 1, "warnings = %v, want one", warnings)
 	assert.Equal(t, warnings[0].Category, manifest.WarnPathConfig)
 	if !strings.Contains(warnings[0].Message, "Flux-excluded files are not counted") {
 		t.Errorf("warning does not explain Flux exclusions: %q", warnings[0].Message)
@@ -100,7 +96,7 @@ data:
 	// root — this is the user-facing convention and the case the fix
 	// targets. The flux/cluster directory is byte-identical between
 	// the two checkouts; only kubernetes/apps/foo/cm.yaml differs.
-	currCluster := filepath.Join(currRoot, "kubernetes/flux")
+	currCluster := filepath.Join(currRoot, "kubernetes", "flux")
 
 	// The CLI lifts a subdir --path / --path-orig to its repo root before
 	// reaching the orchestrator; here we pass the explicit
@@ -112,34 +108,26 @@ data:
 		RepoRoot: currRoot, BaseInput: testDirectoryInput(t, origRoot),
 	}, Config{WipeSecrets: true},
 	)
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	defer func() {
 		o.stop()
 	}()
 	{
-		{
-			err := o.bootstrap(t.Context())
-			assert.FatalIf(t, err != nil, "Bootstrap: %v", err)
-		}
+		err := o.bootstrap(t.Context())
+		assert.FatalIf(t, err != nil, "Bootstrap: %v", err)
 	}
 
 	f := o.filter
-	{
-		assert.FatalIf(
-			t,
-			f == nil,
-			"%v",
-			"expected change.Filter to be wired (PathOrig was set), got nil — buildChangeFilter dropped the filter",
-		)
-	}
+	assert.FatalIf(
+		t,
+		f == nil,
+		"%v",
+		"expected change.Filter to be wired (PathOrig was set), got nil — buildChangeFilter dropped the filter",
+	)
 	clusterApps := testutil.KustomizationID("flux-system", "cluster-apps")
-	{
-		assert.ErrorIf(
-			t,
-			!f.ShouldReconcile(clusterApps),
-			"cluster-apps owns the changed file (apps/foo/cm.yaml) but was filtered out of the keep set; diff did not widen to repo root",
-		)
-	}
+	assert.ErrorIf(
+		t,
+		!f.ShouldReconcile(clusterApps),
+		"cluster-apps owns the changed file (apps/foo/cm.yaml) but was filtered out of the keep set; diff did not widen to repo root",
+	)
 }

@@ -547,25 +547,21 @@ func testPreflightRemoteResourcesReachableInputsCase(
 			err,
 			testCaseInput.wantErr,
 		)
-		{
-			assert.FatalIf(
-				t,
-				testCaseInput.name == "plugin-directory-cycle" && !strings.Contains(err.Error(), remoteResourcePrefix),
-				"cycle diagnostic lost private view: %v",
-				err,
-			)
-		}
+		assert.FatalIf(
+			t,
+			testCaseInput.name == "plugin-directory-cycle" && !strings.Contains(err.Error(), remoteResourcePrefix),
+			"cycle diagnostic lost private view: %v",
+			err,
+		)
 	} else if err != nil || !hasRenderField(out, strings.SplitN(strings.ReplaceAll(testCaseInput.want, "$URL", url), ": ", 2)[0], strings.SplitN(strings.ReplaceAll(testCaseInput.want, "$URL", url), ": ", 2)[1]) {
 		t.Fatalf("render: %s, %v; want %q", out, err, testCaseInput.want)
 	}
-	{
-		assert.FatalIf(
-			t,
-			strings.Contains(testCaseInput.name, "two-owners") && !hasRenderField(out, "local.txt", "owner-a"),
-			"first owner's relative operand was lost: %s",
-			out,
-		)
-	}
+	assert.FatalIf(
+		t,
+		strings.Contains(testCaseInput.name, "two-owners") && !hasRenderField(out, "local.txt", "owner-a"),
+		"first owner's relative operand was lost: %s",
+		out,
+	)
 	assert.FatalIf(
 		t,
 		marked.Load() != int32(len(testCaseInput.replies)),
@@ -592,15 +588,13 @@ func testPreflightRemoteResourcesReachableInputsCase(
 		}
 		snapFrame, err := decodeFrame(testRenderFrame(t, new(rec.snapshot()), testRenderEncoding(t, out)))
 		snap := snapFrame.header.Reads
-		{
-			assert.FatalIf(
-				t,
-				err != nil || len(snap.Remotes) != 1 || snap.Remotes[0].Input.Operation != remoteHTTP,
-				"admitted file operation: %+v, %v",
-				snap,
-				err,
-			)
-		}
+		assert.FatalIf(
+			t,
+			err != nil || len(snap.Remotes) != 1 || snap.Remotes[0].Input.Operation != remoteHTTP,
+			"admitted file operation: %+v, %v",
+			snap,
+			err,
+		)
 		replay := newTestTreeCache(t, "")
 		replay.SetGitBaseFetcher(
 			func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
@@ -614,14 +608,10 @@ func testPreflightRemoteResourcesReachableInputsCase(
 		}
 		assert.FatalIf(t, marked.Load() != 2, "HTTP initial/replay: requests=%d", marked.Load())
 	}
-	{
-		assert.FatalIf(t, manifest.Fingerprint(spec) != before, "%s", "stored Flux specification mutated")
-	}
+	assert.FatalIf(t, manifest.Fingerprint(spec) != before, "%s", "stored Flux specification mutated")
 	for name, body := range files {
 		got, err := os.ReadFile(filepath.Join(root, name))
-		{
-			assert.FatalIf(t, err != nil || string(got) != body, "source mutation %s: %q, %v", name, got, err)
-		}
+		assert.FatalIf(t, err != nil || string(got) != body, "source mutation %s: %q, %v", name, got, err)
 	}
 	{
 		matches, _ := filepath.Glob(filepath.Join(root, remoteResourcePrefix+"*"))

@@ -575,14 +575,14 @@ func testRunAliasesURLMatchedInTreeGitRepositoryCase(
 		(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "home-kubernetes"}).String(),
 	}
 	for _, kind := range []string{manifest.KindGitRepository, manifest.KindOCIRepository, manifest.KindBucket} {
-		source := manifest.NamedResource{
+		sourceID := manifest.NamedResource{
 			Group:     manifest.SourceDomain,
 			Kind:      kind,
 			Namespace: "other",
 			Name:      "missing",
 		}
 		if kind == manifest.KindGitRepository {
-			want = append(want, source.String())
+			want = append(want, sourceID.String())
 		}
 		for _, name := range []string{"one", "two"} {
 			objects = append(
@@ -591,7 +591,7 @@ func testRunAliasesURLMatchedInTreeGitRepositoryCase(
 					Name:      kind + name,
 					Namespace: "other",
 					Path:      "./k8s/apps",
-					SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: kind, Name: source.Name},
+					SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: kind, Name: sourceID.Name},
 				},
 			)
 		}

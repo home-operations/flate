@@ -29,15 +29,13 @@ func TestDateInZone_DefaultsToFixedClockAndForcesUTC(t *testing.T) {
 	// Empty and "Local" zones both render in UTC (machine-independent).
 	empty := dateInZone("150405", ts, "")
 	local := dateInZone("150405", ts, "Local")
-	{
-		assert.ErrorIf(
-			t,
-			empty != "080910" || local != "080910",
-			`empty/Local zone not forced to UTC: ""=%q Local=%q, want 080910`,
-			empty,
-			local,
-		)
-	}
+	assert.ErrorIf(
+		t,
+		empty != "080910" || local != "080910",
+		`empty/Local zone not forced to UTC: ""=%q Local=%q, want 080910`,
+		empty,
+		local,
+	)
 }
 
 //nolint:paralleltest // test replaces process-wide dependency configuration.
@@ -107,9 +105,7 @@ func TestClockFuncs_DurationRoundFixedClock(t *testing.T) {
 func TestClockFuncs_DurationRoundInputs(t *testing.T) {
 	t.Parallel()
 	round, ok := Funcs(SeedFor("rel", "ns"))["durationRound"].(func(any) string)
-	{
-		assert.FatalIf(t, !ok, "%s", "durationRound override has unexpected type")
-	}
+	assert.FatalIf(t, !ok, "%s", "durationRound override has unexpected type")
 	for _, tc := range []struct {
 		name  string
 		input any

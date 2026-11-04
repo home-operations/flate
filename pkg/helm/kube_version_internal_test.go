@@ -46,14 +46,10 @@ data:
 				),
 			)
 			if tc.fail {
-				{
-					assert.FatalIf(t, err == nil, "%s", "invalid override accepted")
-				}
+				assert.FatalIf(t, err == nil, "%s", "invalid override accepted")
 				return
 			}
-			{
-				assert.NoError(t, err)
-			}
+			assert.NoError(t, err)
 			assert.Equal(t, docs[0]["data"].(map[string]any)["version"], any(tc.want))
 		})
 	}

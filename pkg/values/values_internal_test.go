@@ -61,16 +61,10 @@ func TestDeepMergeInto_MutatesDstPreservesSemantics(t *testing.T) {
 		t.Errorf("scalar override failed: %v", result["a"])
 	}
 	bb := result["b"].(map[string]any)
-	{
-		assert.ErrorIf(t, bb["x"] != 1 || bb["y"] != 99 || bb["z"] != 3, "nested merge wrong: %v", bb)
-	}
+	assert.ErrorIf(t, bb["x"] != 1 || bb["y"] != 99 || bb["z"] != 3, "nested merge wrong: %v", bb)
 	dst["sentinel"] = "v"
-	{
-		assert.ErrorIf(t, result["sentinel"] != "v", "%s", "DeepMergeInto must return dst itself, got distinct map")
-	}
-	{
-		assert.ErrorIf(t, dst["a"] != 2 || dst["b"].(map[string]any)["y"] != 99, "%s", "dst not mutated as expected")
-	}
+	assert.ErrorIf(t, result["sentinel"] != "v", "%s", "DeepMergeInto must return dst itself, got distinct map")
+	assert.ErrorIf(t, dst["a"] != 2 || dst["b"].(map[string]any)["y"] != 99, "%s", "dst not mutated as expected")
 	assert.Diff(t, borrowed, before)
 	assert.Diff(t, override, overrideBefore)
 }
@@ -105,9 +99,7 @@ func TestExpandValueReferences_ConfigMap(t *testing.T) {
 		t.Errorf("replicaCount: %v", hr.Values["replicaCount"])
 	}
 	img := hr.Values["image"].(map[string]any)
-	{
-		assert.ErrorIf(t, img["tag"] != "v2" || img["repository"] != "x", "image merge wrong: %+v", img)
-	}
+	assert.ErrorIf(t, img["tag"] != "v2" || img["repository"] != "x", "image merge wrong: %+v", img)
 }
 
 func TestExpandValueReferences_MalformedSiblingTolerated(t *testing.T) {
@@ -151,14 +143,12 @@ func TestExpandValueReferences_MalformedRequestedKeyStillFails(t *testing.T) {
 					ValuesFrom: []manifest.ValuesReference{{Kind: obj.Named().Kind, Name: "extra", Optional: optional}},
 				}
 				_, err := ExpandValueReferences(hr, NewStoreProvider(st, true), nil)
-				{
-					assert.FatalIf(
-						t,
-						!errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "data[values.yaml]"),
-						"malformed requested key must fail with its name: %v",
-						err,
-					)
-				}
+				assert.FatalIf(
+					t,
+					!errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "data[values.yaml]"),
+					"malformed requested key must fail with its name: %v",
+					err,
+				)
 			})
 		}
 	}
@@ -381,9 +371,7 @@ func TestExpandValueReferences_CacheHits(t *testing.T) {
 
 	entries := 0
 	cache.m.Range(func(_, _ any) bool { entries++; return true })
-	{
-		assert.FatalIf(t, entries != 1, "identical content cached %d times, want once", entries)
-	}
+	assert.FatalIf(t, entries != 1, "identical content cached %d times, want once", entries)
 
 	// Top-level writes must not reach the shared cache canonical.
 	a.Values["replicaCount"] = "stomped"
@@ -546,12 +534,10 @@ func TestExpandPostBuildSubstituteReference_MalformedKeysDeterministic(t *testin
 			SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindSecret, Name: "vars"}},
 		},
 	}
-	_, _, want := sec.Value("A")
+	_, want := sec.Value("A")
 	for range 50 {
 		err := ExpandPostBuildSubstituteReference(ks, provider)
-		{
-			assert.FatalIf(t, err == nil || err.Error() != want.Error(), "got %v, want %v", err, want)
-		}
+		assert.FatalIf(t, err == nil || err.Error() != want.Error(), "got %v, want %v", err, want)
 	}
 }
 
@@ -577,22 +563,18 @@ func TestExpandPostBuildSubstituteReference_RejectsInvalidVarName(t *testing.T) 
 			before := ks.Clone()
 			err := ExpandPostBuildSubstituteReference(ks, provider)
 			assert.Diff(t, ks.PostBuild.Substitute, before.PostBuild.Substitute)
-			{
-				assert.FatalIf(
-					t,
-					!errors.Is(err, manifest.ErrInvalidSubstituteReference),
-					"expected invalid substitute reference, got %v",
-					err,
-				)
-			}
-			{
-				assert.ErrorIf(
-					t,
-					err.Error() != "invalid substitute variables my-var, z-var",
-					"error should name invalid vars in sorted order; got %v",
-					err,
-				)
-			}
+			assert.FatalIf(
+				t,
+				!errors.Is(err, manifest.ErrInvalidSubstituteReference),
+				"expected invalid substitute reference, got %v",
+				err,
+			)
+			assert.ErrorIf(
+				t,
+				err.Error() != "invalid substitute variables my-var, z-var",
+				"error should name invalid vars in sorted order; got %v",
+				err,
+			)
 		})
 	}
 }
@@ -607,19 +589,15 @@ func TestExpandPostBuildSubstituteReference_InvalidSingleName(t *testing.T) {
 	before := ks.Clone()
 	err := ExpandPostBuildSubstituteReference(ks, &sliceProvider{})
 	assert.Diff(t, ks.PostBuild.Substitute, before.PostBuild.Substitute)
-	{
-		assert.FatalIf(t, err == nil || err.Error() != "invalid substitute variable flate-campaign" ||
-			!errors.Is(err, manifest.ErrInvalidSubstituteReference) ||
-			!errors.Is(err, manifest.ErrFlux), "invalid variable: %v", err)
-	}
-	{
-		assert.FatalIf(
-			t,
-			!strings.Contains(manifest.ErrorDetails(err), varsubRegex.String()),
-			"%s",
-			"lost validator detail",
-		)
-	}
+	assert.FatalIf(t, err == nil || err.Error() != "invalid substitute variable flate-campaign" ||
+		!errors.Is(err, manifest.ErrInvalidSubstituteReference) ||
+		!errors.Is(err, manifest.ErrFlux), "invalid variable: %v", err)
+	assert.FatalIf(
+		t,
+		!strings.Contains(manifest.ErrorDetails(err), varsubRegex.String()),
+		"%s",
+		"lost validator detail",
+	)
 }
 
 func TestStoreProvider_LookupReadability(t *testing.T) {
@@ -651,12 +629,8 @@ func TestStoreProvider_LookupReadability(t *testing.T) {
 			id := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: tc.name}
 			input := provider.Lookup(id)
 			unreadable := input.Data == nil || !input.Data.HasKeys()
-			{
-				assert.FatalIf(t, unreadable != tc.unreadable, "unreadable=%t, want %t", unreadable, tc.unreadable)
-			}
-			{
-				assert.FatalIf(t, provider.Data(id) != input.Data, "%s", "expansion read a different captured value")
-			}
+			assert.FatalIf(t, unreadable != tc.unreadable, "unreadable=%t, want %t", unreadable, tc.unreadable)
+			assert.FatalIf(t, provider.Data(id) != input.Data, "%s", "expansion read a different captured value")
 		})
 	}
 }
@@ -720,11 +694,9 @@ func testExpandValueReferencesMissingReferencesCase(
 		assert.Diff(t, hr.Values, map[string]any{"existing": "kept", "k": ""})
 		return
 	}
-	{
-		assert.FatalIf(t, testCaseInput.tc.kind != "Deployment" &&
-			strings.Contains(
-				err.Error(),
-				`key "v"`,
-			) != errors.Is(testCaseInput.tc.want, manifest.ErrInvalidValuesReference), "wrong missing-resource/key disposition: %v", err)
-	}
+	assert.FatalIf(t, testCaseInput.tc.kind != "Deployment" &&
+		strings.Contains(
+			err.Error(),
+			`key "v"`,
+		) != errors.Is(testCaseInput.tc.want, manifest.ErrInvalidValuesReference), "wrong missing-resource/key disposition: %v", err)
 }

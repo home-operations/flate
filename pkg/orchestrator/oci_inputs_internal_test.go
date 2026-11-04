@@ -65,9 +65,7 @@ spec:
 			Config{Concurrency: 2, CacheDir: t.TempDir()},
 		)
 		assert.NoError(t, err)
-		{
-			assert.FatalIf(t, len(rendered) != 1, "rendered %d trees", len(rendered))
-		}
+		assert.FatalIf(t, len(rendered) != 1, "rendered %d trees", len(rendered))
 		var docs []map[string]any
 		for _, batch := range outputByParent(rendered[0].Result.Manifests) {
 			for _, doc := range batch {
@@ -76,9 +74,7 @@ spec:
 				}
 			}
 		}
-		{
-			assert.FatalIf(t, len(docs) != 1, "registry provider rendered %d resources, want 1", len(docs))
-		}
+		assert.FatalIf(t, len(docs) != 1, "registry provider rendered %d resources, want 1", len(docs))
 		data := docs[0]["data"].(map[string]any)
 		assert.Equal(t, data["tag"], any("release-b"))
 		assert.Equal(t, data["digest"], any(digest))
@@ -87,14 +83,12 @@ spec:
 			t.Fatalf("generated id=%v", data["id"])
 		}
 		for _, warning := range rendered[0].Result.Warnings {
-			{
-				assert.FatalIf(
-					t,
-					warning.Category == manifest.WarnOfflineInputProvider,
-					"evaluated registry provider warned offline: %+v",
-					warning,
-				)
-			}
+			assert.FatalIf(
+				t,
+				warning.Category == manifest.WarnOfflineInputProvider,
+				"evaluated registry provider warned offline: %+v",
+				warning,
+			)
 		}
 		body, err := json.Marshal(docs)
 		assert.NoError(t, err)

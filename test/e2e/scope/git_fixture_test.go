@@ -11,7 +11,12 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 )
 
-func initGitFixture(t *testing.T) (string, string) {
+type gitFixture struct {
+	path string
+	root string
+}
+
+func initGitFixture(t *testing.T) gitFixture {
 	t.Helper()
 	dir := t.TempDir()
 	repo := testutil.GitInit(t, dir)
@@ -40,5 +45,5 @@ data:
 		"init",
 		&gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}},
 	)
-	return filepath.Join(dir, "kubernetes", "flux"), dir
+	return gitFixture{path: filepath.Join(dir, "kubernetes", "flux"), root: dir}
 }

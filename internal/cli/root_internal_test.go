@@ -89,7 +89,8 @@ func TestRun_RenderPersistenceNotice(t *testing.T) {
 	path := writeMultiNamespaceFixture(t)
 	args := []string{"build", "all", "--path", path, "--cache-dir", t.TempDir(), "--concurrency", "2"}
 	renderPersistenceDisabledReason = ""
-	want, wantErr, wantCode := runCLI(t, args...)
+	cli := runCLI(t, args...)
+	want, wantErr, wantCode := cli.stdout, cli.stderr, cli.code
 	assert.Equal(t, wantCode, 0)
 	assert.FatalIf(
 		t,
@@ -109,7 +110,8 @@ func TestRun_RenderPersistenceNotice(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			renderPersistenceDisabledReason = tc.reason
-			stdout, stderr, code := runCLI(t, tc.args...)
+			cli2 := runCLI(t, tc.args...)
+			stdout, stderr, code := cli2.stdout, cli2.stderr, cli2.code
 			assert.Equal(t, code, wantCode)
 			assert.Equal(t, stdout, want)
 			assert.Equal(t, stderr, wantErr+tc.notice)
@@ -122,7 +124,8 @@ func TestRun_RenderPersistenceNoticeEnvAndLevel(t *testing.T) {
 	path := writeFixture(t)
 	args := []string{"build", "all", "--path", path, "--concurrency", "2"}
 	renderPersistenceDisabledReason = ""
-	want, _, wantCode := runCLI(t, args...)
+	cli := runCLI(t, args...)
+	want, wantCode := cli.stdout, cli.code
 	assert.Equal(t, wantCode, 0)
 	renderPersistenceDisabledReason = persistenceReason
 	t.Setenv("FLATE_CACHE_DIR", t.TempDir())
@@ -145,7 +148,8 @@ func TestRun_RenderPersistenceNoticeEnvAndLevel(t *testing.T) {
 			if tc.envLevel == "" {
 				assert.NoError(t, os.Unsetenv("FLATE_LOG_LEVEL"))
 			}
-			stdout, stderr, code := runCLI(t, append(append([]string{}, args...), tc.args...)...)
+			cli2 := runCLI(t, append(append([]string{}, args...), tc.args...)...)
+			stdout, stderr, code := cli2.stdout, cli2.stderr, cli2.code
 			assert.Equal(t, code, wantCode)
 			assert.Equal(t, stdout, want)
 			assert.Equal(t, strings.Count(stderr, "render persistence is disabled"), tc.count)
@@ -183,7 +187,8 @@ func TestRun_RenderPersistenceNoticeCommands(t *testing.T) {
 				args = append(args, "--path", path, "--concurrency", "2")
 				count = 1
 			}
-			stdout, stderr, code := runCLI(t, args...)
+			cli := runCLI(t, args...)
+			stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 			assert.Equal(t, code, 0)
 			assert.Equal(t, strings.Contains(stdout, "render persistence is disabled"), false)
 			assert.Equal(t, strings.Count(stderr, "render persistence is disabled"), count)
@@ -207,7 +212,7 @@ func TestRun_RenderPersistenceNoticeErrors(t *testing.T) {
 		{name: "invalid level", args: []string{"--log-level=invalid"}, wantErr: "invalid --log-level"},
 		{name: "invalid arguments", args: []string{"unexpected"}, wantErr: "unknown command"},
 		{name: "invalid environment", env: "invalid", wantErr: "invalid FLATE_CONCURRENCY"},
-		{name: "cache initialization", args: []string{"--cache-dir", filepath.Join(path, "flux/cluster.yaml")}, wantErr: "cache", notice: persistenceNotice},
+		{name: "cache initialization", args: []string{"--cache-dir", filepath.Join(path, "flux", "cluster.yaml")}, wantErr: "cache", notice: persistenceNotice},
 		{name: "baseline setup", args: []string{"--path-orig", path, "--base", "HEAD"}, wantErr: "mutually exclusive", notice: persistenceNotice},
 		{name: "invalid kind", args: []string{"--allow-missing-kinds=invalid"}, wantErr: "--allow-missing-kinds", notice: persistenceNotice},
 		{name: "profile startup", profile: "invalid", wantErr: "invalid FLATE_PROFILE", notice: persistenceNotice},
@@ -224,11 +229,13 @@ func TestRun_RenderPersistenceNoticeErrors(t *testing.T) {
 				invocation = []string{"build", "all", "--path", path, "--cache-dir", t.TempDir()}
 			}
 			renderPersistenceDisabledReason = ""
-			want, wantErr, wantCode := runCLI(t, invocation...)
+			cli := runCLI(t, invocation...)
+			want, wantErr, wantCode := cli.stdout, cli.stderr, cli.code
 			assert.Equal(t, wantCode, 1)
 			assert.FatalIf(t, !strings.Contains(wantErr, tc.wantErr), "expected %q in %q", tc.wantErr, wantErr)
 			renderPersistenceDisabledReason = persistenceReason
-			stdout, stderr, code := runCLI(t, invocation...)
+			cli2 := runCLI(t, invocation...)
+			stdout, stderr, code := cli2.stdout, cli2.stderr, cli2.code
 			assert.Equal(t, code, wantCode)
 			assert.Equal(t, stdout, want)
 			assert.Equal(t, stderr, wantErr+tc.notice)
@@ -236,7 +243,8 @@ func TestRun_RenderPersistenceNoticeErrors(t *testing.T) {
 	}
 	t.Run("advisory write failure", func(t *testing.T) {
 		renderPersistenceDisabledReason = ""
-		want, _, wantCode := runCLI(t, args...)
+		cli3 := runCLI(t, args...)
+		want, wantCode := cli3.stdout, cli3.code
 		assert.Equal(t, wantCode, 0)
 		renderPersistenceDisabledReason = persistenceReason
 		var stdout bytes.Buffer

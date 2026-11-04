@@ -341,7 +341,7 @@ type testNewFSParityCaseCallbackInputs struct {
 }
 
 func testNewFSParityCaseCallback(
-	path string,
+	filePath string,
 	d fs.DirEntry,
 	err error,
 	testCaseInput testNewFSParityCaseCallbackInputs,
@@ -349,10 +349,10 @@ func testNewFSParityCaseCallback(
 	if err != nil {
 		return err
 	}
-	if path == (*testCaseInput.root) {
+	if filePath == (*testCaseInput.root) {
 		return nil
 	}
-	rel, err := filepath.Rel((*testCaseInput.root), path)
+	rel, err := filepath.Rel((*testCaseInput.root), filePath)
 	if err != nil {
 		return err
 	}
@@ -361,7 +361,7 @@ func testNewFSParityCaseCallback(
 		return filepath.SkipDir
 	}
 	if !d.IsDir() && d.Name() == ".sourceignore" {
-		(*testCaseInput.files) = append((*testCaseInput.files), path)
+		(*testCaseInput.files) = append((*testCaseInput.files), filePath)
 	}
 	return nil
 }

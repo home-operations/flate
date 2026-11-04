@@ -66,7 +66,8 @@ func testDAGDispatchWithdrawalNotificationDrainCase(
 			"metadata":   map[string]any{"name": "late", "namespace": "apps"},
 			"data":       map[string]any{"value": "private"},
 		}
-		children, retained := parseChildrenForTest(k, []map[string]any{doc}, manifest.ParseDocOptions{})
+		parseChildrenForTestResult1 := parseChildrenForTest(k, []map[string]any{doc}, manifest.ParseDocOptions{})
+		children, retained := parseChildrenForTestResult1.Children, parseChildrenForTestResult1.Documents
 		late.Children, late.Manifests = children, testutil.DocumentOccurrences(retained)
 		late.Complete = true
 		publishRelease, entered, deliveryRelease := make(
@@ -104,14 +105,12 @@ func testDAGDispatchWithdrawalNotificationDrainCase(
 									level,
 								)
 							}
-							{
-								assert.ErrorIf(
-									t,
-									execution.Reads.GetObject(k) != nil,
-									"%v",
-									"withdrawal wake observed child still live",
-								)
-							}
+							assert.ErrorIf(
+								t,
+								execution.Reads.GetObject(k) != nil,
+								"%v",
+								"withdrawal wake observed child still live",
+							)
 							close(woken)
 							return nil
 						},
@@ -151,18 +150,14 @@ func testDAGDispatchWithdrawalNotificationDrainCase(
 		assertDAGDrainPending(t, done, &calls)
 		releaseDelivery()
 		{
-			{
-				err := <-done
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
+			err := <-done
+			assert.FatalIf(t, err != nil, "%v", err)
 		}
 		assertDAGWithdrawalWake(t, woken)
-		{
-			assert.FatalIf(t, calls.Load() != 2 || tasks.Failures() != 0 || s.GetObject(k) != nil ||
-				s.GetObject(
-					late.Children[0].Obj.Named(),
-				) != nil, "%v", "withdrawal lost wake or late publication manufactured support")
-		}
+		assert.FatalIf(t, calls.Load() != 2 || tasks.Failures() != 0 || s.GetObject(k) != nil ||
+			s.GetObject(
+				late.Children[0].Obj.Named(),
+			) != nil, "%v", "withdrawal lost wake or late publication manufactured support")
 	})
 }
 
@@ -173,9 +168,7 @@ func assertDAGDrainPending(t *testing.T, done <-chan error, calls *atomic.Int64)
 		t.Fatalf("drain sealed while notification was outstanding: %v", err)
 	default:
 	}
-	{
-		assert.FatalIf(t, calls.Load() > 2, "%v", "outstanding publication queued duplicate successors")
-	}
+	assert.FatalIf(t, calls.Load() > 2, "%v", "outstanding publication queued duplicate successors")
 }
 
 func assertDAGWithdrawalWake(t *testing.T, woken <-chan struct{}) {

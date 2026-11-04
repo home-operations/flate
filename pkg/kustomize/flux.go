@@ -373,7 +373,8 @@ func (r *renderRequest) generateFiles(_ context.Context, memFS *treeFS, subDir s
 		if cleanedAbsErr != nil {
 			return "", cleanedAbsErr
 		}
-		data, kfile, cleanedAbsErr = generateManifest(memFS, subDir, ks)
+		generateManifestResult1, generateManifestResult1Err := generateManifest(memFS, subDir, ks)
+		data, kfile, cleanedAbsErr = generateManifestResult1.data, generateManifestResult1.path, generateManifestResult1Err
 		if cleanedAbsErr != nil {
 			return "", fmt.Errorf("flux kustomize generator: %w", cleanedAbsErr)
 		}

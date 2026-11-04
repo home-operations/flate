@@ -28,19 +28,18 @@ func TestDiscoveryIndex_CommittedClaimsExcludeCheckoutRoot(t *testing.T) {
 	} {
 		t.Run(tc.file, func(t *testing.T) {
 			t.Parallel()
-			owners, ancestors := index.OwnersOfFile(tc.file)
-			{
-				assert.FatalIf(
-					t,
-					!slices.Equal(owners, tc.owners) || !slices.Equal(ancestors, tc.ancestors),
-					"ownership for %s = (%v, %v), want (%v, %v)",
-					tc.file,
-					owners,
-					ancestors,
-					tc.owners,
-					tc.ancestors,
-				)
-			}
+			ownership := index.OwnersOfFile(tc.file)
+			owners, ancestors := ownership.Owners, ownership.Ancestors
+			assert.FatalIf(
+				t,
+				!slices.Equal(owners, tc.owners) || !slices.Equal(ancestors, tc.ancestors),
+				"ownership for %s = (%v, %v), want (%v, %v)",
+				tc.file,
+				owners,
+				ancestors,
+				tc.owners,
+				tc.ancestors,
+			)
 		})
 	}
 }
@@ -80,25 +79,22 @@ func TestDiscoveryIndex_ReadersOfFileReplay(t *testing.T) {
 		}
 		break
 	}
-	{
-		assert.FatalIf(t, count != 1, "early stop yielded %d readers, want 1", count)
-	}
+	assert.FatalIf(t, count != 1, "early stop yielded %d readers, want 1", count)
 	for range 2 {
 		{
 			got := slices.Collect(readers)
 			assert.FatalIf(t, !slices.Equal(got, want), "reader query changed on replay: %v", got)
 		}
 	}
-	owners, ancestors := index.OwnersOfFile("missing/nested/input.yaml")
-	{
-		assert.FatalIf(
-			t,
-			!slices.Equal(owners, []NamedResource{ancestor, exact}) || len(ancestors) != 0,
-			"source pairs changed owner projection: %v, %v",
-			owners,
-			ancestors,
-		)
-	}
+	ownership2 := index.OwnersOfFile("missing/nested/input.yaml")
+	owners, ancestors := ownership2.Owners, ownership2.Ancestors
+	assert.FatalIf(
+		t,
+		!slices.Equal(owners, []NamedResource{ancestor, exact}) || len(ancestors) != 0,
+		"source pairs changed owner projection: %v, %v",
+		owners,
+		ancestors,
+	)
 }
 
 func TestDiscoveryIndex_OwnersOfFilePrefixGroups(t *testing.T) {
@@ -123,26 +119,23 @@ func TestDiscoveryIndex_OwnersOfFilePrefixGroups(t *testing.T) {
 		t.Run(tc.file, func(t *testing.T) {
 			t.Parallel()
 			for range 2 {
-				owners, ancestors := index.OwnersOfFile(tc.file)
-				{
-					assert.FatalIf(
-						t,
-						!slices.Equal(owners, tc.owners) || !slices.Equal(ancestors, tc.ancestors),
-						"ownership = (%v, %v), want (%v, %v)",
-						owners,
-						ancestors,
-						tc.owners,
-						tc.ancestors,
-					)
-				}
-				{
-					assert.FatalIf(
-						t,
-						!slices.Equal(index.Claims["apps/"], []NamedResource{parentB, parentA}),
-						"%s",
-						"query mutated borrowed peer group",
-					)
-				}
+				ownership3 := index.OwnersOfFile(tc.file)
+				owners, ancestors := ownership3.Owners, ownership3.Ancestors
+				assert.FatalIf(
+					t,
+					!slices.Equal(owners, tc.owners) || !slices.Equal(ancestors, tc.ancestors),
+					"ownership = (%v, %v), want (%v, %v)",
+					owners,
+					ancestors,
+					tc.owners,
+					tc.ancestors,
+				)
+				assert.FatalIf(
+					t,
+					!slices.Equal(index.Claims["apps/"], []NamedResource{parentB, parentA}),
+					"%s",
+					"query mutated borrowed peer group",
+				)
 			}
 		})
 	}
@@ -154,14 +147,11 @@ func TestDiscoveryIndex_OwnersOfFileUnclaimed(t *testing.T) {
 	index := &DiscoveryIndex{Claims: map[string][]NamedResource{"other/": {{Name: "owner"}}}}
 	var owners, ancestors []NamedResource
 	allocations := testing.AllocsPerRun(1, func() {
-		owners, ancestors = index.OwnersOfFile("apps/file.yaml")
+		ownership4 := index.OwnersOfFile("apps/file.yaml")
+		owners, ancestors = ownership4.Owners, ownership4.Ancestors
 	})
-	{
-		assert.FatalIf(t, len(owners) != 0 || len(ancestors) != 0, "unclaimed ownership = (%v, %v)", owners, ancestors)
-	}
-	{
-		assert.FatalIf(t, allocations != 0, "unclaimed allocations = %g, want 0", allocations)
-	}
+	assert.FatalIf(t, len(owners) != 0 || len(ancestors) != 0, "unclaimed ownership = (%v, %v)", owners, ancestors)
+	assert.FatalIf(t, allocations != 0, "unclaimed allocations = %g, want 0", allocations)
 }
 
 func TestDiscoveryIndex_IsFileIndexed(t *testing.T) {
@@ -190,12 +180,10 @@ func TestDiscoveryIndex_IsFileIndexed(t *testing.T) {
 		})
 	}
 	var index *DiscoveryIndex
-	{
-		assert.FatalIf(
-			t,
-			index.IsFileIndexed(NamedResource{Name: "target", Namespace: "apps"}),
-			"%s",
-			"nil index has a file-indexed target",
-		)
-	}
+	assert.FatalIf(
+		t,
+		index.IsFileIndexed(NamedResource{Name: "target", Namespace: "apps"}),
+		"%s",
+		"nil index has a file-indexed target",
+	)
 }

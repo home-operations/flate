@@ -10,25 +10,37 @@ import (
 // Data provides lazy ConfigMap/Secret variables and owned snapshot documents.
 type Data interface {
 	HasKeys() bool
-	Value(string) (string, bool, error)
+	Value(string) (DataValue, error)
 	Keys() iter.Seq[string]
 	Snapshot() map[string]any
-	WithSupplied(Data) (Data, []string)
+	WithSupplied(Data) SuppliedData
+}
+
+// DataValue keeps empty present values distinct from absent keys.
+type DataValue struct {
+	Value string
+	Found bool
+}
+
+// SuppliedData retains immutable data and records keys that repository data overrides.
+type SuppliedData struct {
+	Data       Data
+	Overridden []string
 }
 
 func fillSupplied(repository, supplied Data, write func(string, string)) []string {
 	var overridden []string
 	supplied.Keys()(func(key string) bool {
-		value, present, err := repository.Value(key)
+		value, err := repository.Value(key)
 		if err != nil {
 			return true
 		}
-		if present && !HasValuePlaceholder(value) {
+		if value.Found && !HasValuePlaceholder(value.Value) {
 			overridden = append(overridden, key)
 			return true
 		}
-		value, _, _ = supplied.Value(key)
-		write(key, value)
+		value, _ = supplied.Value(key)
+		write(key, value.Value)
 		return true
 	})
 	slices.Sort(overridden)

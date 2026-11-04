@@ -29,12 +29,16 @@ func schemaError(err error) error {
 		if strings.HasSuffix(line, ":") {
 			values = false
 			if i+1 < len(lines) {
-				indent, _, ok := schemaDiagnostic(lines[i+1])
+				schemaDiagnosticResult1 := schemaDiagnostic(lines[i+1])
+				indent, _, ok := schemaDiagnosticResult1.indent, schemaDiagnosticResult1.message, schemaDiagnosticResult1.valid
 				values = ok && indent == 0
 			}
 		}
-		if indent, _, ok := schemaDiagnostic(line); ok && values {
-			forest, consumed := schemaForest(lines[i:], indent)
+		schemaDiagnosticResult2 := schemaDiagnostic(line)
+		if indent, _, ok := schemaDiagnosticResult2.indent, schemaDiagnosticResult2.message, schemaDiagnosticResult2.valid; ok &&
+			values {
+			schemaForestResult3 := schemaForest(lines[i:], indent)
+			forest, consumed := schemaForestResult3.text, schemaForestResult3.consumed
 			out = append(out, forest)
 			i += consumed
 		} else {
@@ -49,26 +53,39 @@ func schemaError(err error) error {
 	return &schemaDisplayError{text: canonical, cause: err}
 }
 
-func schemaDiagnostic(line string) (int, string, bool) {
+type diagnosticLine struct {
+	indent  int
+	message string
+	valid   bool
+}
+
+func schemaDiagnostic(line string) diagnosticLine {
 	trimmed := strings.TrimLeft(line, " ")
 	indent := len(line) - len(trimmed)
 	location, ok := strings.CutPrefix(trimmed, "- at ")
 	if !ok || indent%2 != 0 {
-		return 0, "", false
+		return diagnosticLine{indent: 0, message: "", valid: false}
 	}
-	_, rest, ok := schemaQuoted(location)
+	schemaQuotedResult4 := schemaQuoted(location)
+	_, rest, ok := schemaQuotedResult4.value, schemaQuotedResult4.rest, schemaQuotedResult4.valid
 	if !ok {
-		return 0, "", false
+		return diagnosticLine{indent: 0, message: "", valid: false}
 	}
 	message, ok := strings.CutPrefix(rest, ": ")
-	return indent, message, ok
+	return diagnosticLine{indent: indent, message: message, valid: ok}
 }
 
-func schemaForest(lines []string, indent int) (string, int) {
+type diagnosticForest struct {
+	text     string
+	consumed int
+}
+
+func schemaForest(lines []string, indent int) diagnosticForest {
 	var blocks []string
 	i := 0
 	for i < len(lines) {
-		depth, message, ok := schemaDiagnostic(lines[i])
+		schemaDiagnosticResult5 := schemaDiagnostic(lines[i])
+		depth, message, ok := schemaDiagnosticResult5.indent, schemaDiagnosticResult5.message, schemaDiagnosticResult5.valid
 		if !ok || depth != indent {
 			break
 		}
@@ -76,13 +93,15 @@ func schemaForest(lines []string, indent int) (string, int) {
 		i++
 	diagnostics:
 		for i < len(lines) {
-			depth, _, diagnostic := schemaDiagnostic(lines[i])
+			schemaDiagnosticResult6 := schemaDiagnostic(lines[i])
+			depth, _, diagnostic := schemaDiagnosticResult6.indent, schemaDiagnosticResult6.message, schemaDiagnosticResult6.valid
 			switch {
 			case diagnostic:
 				if depth <= indent {
 					break diagnostics
 				}
-				children, consumed := schemaForest(lines[i:], depth)
+				schemaForestResult7 := schemaForest(lines[i:], depth)
+				children, consumed := schemaForestResult7.text, schemaForestResult7.consumed
 				block = append(block, children)
 				i += consumed
 			case len(lines[i])-len(strings.TrimLeft(lines[i], " ")) > indent:
@@ -95,7 +114,7 @@ func schemaForest(lines []string, indent int) (string, int) {
 		blocks = append(blocks, strings.Join(block, "\n"))
 	}
 	slices.Sort(blocks)
-	return strings.Join(blocks, "\n"), i
+	return diagnosticForest{text: strings.Join(blocks, "\n"), consumed: i}
 }
 
 func schemaProperties(message string) string {
@@ -114,7 +133,8 @@ func schemaProperties(message string) string {
 	rest := core[len(prefix):]
 	var tokens []string
 	for {
-		token, tail, ok := schemaQuoted(rest)
+		schemaQuotedResult8 := schemaQuoted(rest)
+		token, tail, ok := schemaQuotedResult8.value, schemaQuotedResult8.rest, schemaQuotedResult8.valid
 		if !ok {
 			return message
 		}
@@ -140,7 +160,8 @@ func schemaProperties(message string) string {
 		if !ok {
 			return message
 		}
-		_, tail, ok := schemaQuoted(trigger)
+		schemaQuotedResult9 := schemaQuoted(trigger)
+		_, tail, ok := schemaQuotedResult9.value, schemaQuotedResult9.rest, schemaQuotedResult9.valid
 		if !ok || tail != " exists" {
 			return message
 		}
@@ -149,20 +170,26 @@ func schemaProperties(message string) string {
 	return prefix + strings.Join(tokens, ", ") + rest + message[len(core):]
 }
 
-func schemaQuoted(text string) (string, string, bool) {
+type quotedText struct {
+	value string
+	rest  string
+	valid bool
+}
+
+func schemaQuoted(text string) quotedText {
 	if !strings.HasPrefix(text, "'") {
-		return "", "", false
+		return quotedText{value: "", rest: "", valid: false}
 	}
 	for rest := text[1:]; rest != ""; {
 		if rest[0] == '\'' {
 			end := len(text) - len(rest) + 1
-			return text[:end], text[end:], true
+			return quotedText{value: text[:end], rest: text[end:], valid: true}
 		}
 		_, _, tail, err := strconv.UnquoteChar(rest, '\'')
 		if err != nil {
-			return "", "", false
+			return quotedText{value: "", rest: "", valid: false}
 		}
 		rest = tail
 	}
-	return "", "", false
+	return quotedText{value: "", rest: "", valid: false}
 }

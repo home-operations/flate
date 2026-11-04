@@ -57,9 +57,7 @@ func TestDAG_RedispatchErrorPropagates(t *testing.T) {
 		Tree{Path: dir, RepoRoot: dir},
 		Config{WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: 2},
 	)
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	victim := testutil.KustomizationID("flux-system", "app")
 	unsub := o.store.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
 		if info, ok := payload.(store.StatusInfo); ok && id == victim && info.Status == store.StatusReady {
@@ -102,14 +100,10 @@ func testDAGDispatcherRecoveredAndPrimaryFailuresCase(
 		Tree{Path: dir, RepoRoot: dir},
 		Config{WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: (*testCaseInput)},
 	)
+	assert.FatalIf(t, err != nil, "%v", err)
 	{
+		err := o.bootstrap(t.Context())
 		assert.FatalIf(t, err != nil, "%v", err)
-	}
-	{
-		{
-			err := o.bootstrap(t.Context())
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
 	}
 	reconcileEntryForTest(t, o)
 	o.configureControllers()
@@ -129,13 +123,11 @@ func testDAGDispatcherRecoveredAndPrimaryFailuresCase(
 	)
 	o.tasks.BlockTillDone()
 	info, _ := o.store.GetStatus(victim)
-	{
-		assert.FatalIf(t, result.Assessment.Outcome() == schedule.Blocked || !info.IsDependencyFailure() ||
-			!slices.Equal(
-				info.BlockedBy(),
-				[]manifest.NamedResource{ghost},
-			), "derived failure = %+v, want ghost blocker", info)
-	}
+	assert.FatalIf(t, result.Assessment.Outcome() == schedule.Blocked || !info.IsDependencyFailure() ||
+		!slices.Equal(
+			info.BlockedBy(),
+			[]manifest.NamedResource{ghost},
+		), "derived failure = %+v, want ghost blocker", info)
 	o.store.AddObject(&manifest.Kustomization{Name: ghost.Name, Namespace: ghost.Namespace})
 	o.store.UpdateStatus(ghost, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 	o.tasks.Go(
@@ -188,9 +180,7 @@ func testDAGReleasedPinRecovery(t *testing.T, dir string, workers *int, ks *mani
 		Tree{Path: dir, RepoRoot: dir},
 		Config{WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: (*workers)},
 	)
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	defer localO.stop()
 	localO.configureControllers()
 	d := dagDispatcher{localO}
@@ -254,10 +244,8 @@ func testDAGReleasedPinRecovery(t *testing.T, dir string, workers *int, ks *mani
 
 	sched.Seed([]schedule.NodeID{repo.Named(), consumer.Named()})
 	{
-		{
-			err := sched.Run(t.Context())
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := sched.Run(t.Context())
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	localO.tasks.BlockTillDone()
 	assert.Equal(t, localO.tasks.Failures(), int64(0))
@@ -267,8 +255,6 @@ func testDAGReleasedPinRecovery(t *testing.T, dir string, workers *int, ks *mani
 	info, _ := localO.store.GetStatus(consumer.Named())
 	assert.Equal(t, info.Status, store.StatusReady)
 	art, ok := localO.store.GetArtifact(consumer.Named(), store.ArtifactContent).(*store.Emission)
-	{
-		assert.FatalIf(t, !ok || len(art.Manifests) != 1, "recovered output = %+v", art)
-	}
+	assert.FatalIf(t, !ok || len(art.Manifests) != 1, "recovered output = %+v", art)
 	assert.Diff(t, art.Manifests[0].Document["data"], map[string]any{"k": "v"})
 }

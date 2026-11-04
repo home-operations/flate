@@ -24,12 +24,12 @@ func Prepare(doc manifest.DocOccurrence, opts manifest.ParseDocOptions) (store.C
 	if doc.Err != nil {
 		return store.Child{}, doc, false
 	}
-	obj, authoritative, changed, err := manifest.ParseDoc(doc.Document, opts)
-	doc.Document, doc.Err = authoritative, err
+	parsed, err := manifest.ParseDoc(doc.Document, opts)
+	doc.Document, doc.Err = parsed.Document, err
 	if err != nil {
-		obj = nil
+		parsed.Object = nil
 	}
-	return store.Child{Obj: obj, Doc: authoritative}, doc, changed
+	return store.Child{Obj: parsed.Object, Doc: parsed.Document}, doc, parsed.Changed
 }
 
 //nolint:gocritic // Keep immutable value-receiver semantics.
@@ -100,14 +100,14 @@ func (r documentReader) decodeFileObjects(
 	keepRaw bool,
 	yield func(parsedObject),
 ) error {
-	input, name := new(r).input(path)
+	inputFile := new(r).input(path)
 	path = new(r).localPath(path)
 	var f fs.File
 	var err error
-	if local, ok := input.(*gittree.FS); ok && r.regular {
-		f, err = local.OpenRegular(name)
+	if local, ok := inputFile.fs.(*gittree.FS); ok && r.regular {
+		f, err = local.OpenRegular(inputFile.name)
 	} else {
-		f, err = input.Open(name)
+		f, err = inputFile.fs.Open(inputFile.name)
 	}
 	if err != nil {
 		return fileOpenFailure(path, err, yield)

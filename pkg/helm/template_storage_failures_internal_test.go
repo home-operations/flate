@@ -65,9 +65,7 @@ func testTemplateCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 		}{cli: &cli, hr: &hr, cliSources: &cliSources})
 		d, err := cli.describeChart(t.Context(), hr, cliSources)
 		assert.NoError(t, err)
-		{
-			assert.FatalIf(t, d.record == nil, "%s", "lookup fault fixture did not warm a typed record")
-		}
+		assert.FatalIf(t, d.record == nil, "%s", "lookup fault fixture did not warm a typed record")
 		if (*testCaseInput) == "read" {
 			r, _, _, err := owner.Blob(
 				t.Context(),
@@ -107,24 +105,20 @@ func testTemplateCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 				assert.FatalIf(t, !ok || pathErr.Op != "read", "read fault did not precede decoding: %v", err)
 			}
 		}
-		{
-			assert.FatalIf(
-				t, (*testCaseInput) ==
-					"construction" && !errors.Is(err, manifest.ErrInput), "construction did not precede publication: %v",
-				err,
-			)
-		}
+		assert.FatalIf(
+			t, (*testCaseInput) ==
+				"construction" && !errors.Is(err, manifest.ErrInput), "construction did not precede publication: %v",
+			err,
+		)
 		wantDocuments := 0
 		if (*testCaseInput) == "publication" {
 			wantDocuments = 1
 		}
-		{
-			assert.FatalIf(t, len(out) != wantDocuments || !errors.Is(err, manifest.ErrFlux) ||
-				errors.Is(
-					err,
-					errdef.ErrNotFound,
-				), "%s fault returned output %q, error %v", (*testCaseInput), out, err)
-		}
+		assert.FatalIf(t, len(out) != wantDocuments || !errors.Is(err, manifest.ErrFlux) ||
+			errors.Is(
+				err,
+				errdef.ErrNotFound,
+			), "%s fault returned output %q, error %v", (*testCaseInput), out, err)
 	}
 }
 

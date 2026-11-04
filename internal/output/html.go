@@ -97,6 +97,16 @@ type sRow struct {
 	Left, Right cell
 }
 
+// highlighter renders single YAML lines to syntax-highlighted HTML spans
+// (chroma, class-based). The matching stylesheet — both the light (github) and
+// dark (github-dark) variants, scoped under .chroma.light / .chroma.dark — is
+// emitted once into the document <style>; the spans themselves are
+// theme-agnostic. Highlighting is per-line so it maps 1:1 onto the diff line
+// indices; block-scalar bodies lose cross-line context, immaterial for review.
+type highlighter struct {
+	lexer chroma.Lexer
+}
+
 func (e Encoder) html(changes []LineChange) error {
 	hl, css, err := newHighlighter()
 	if err != nil {
@@ -156,7 +166,8 @@ func buildTree(res []htmlResource) []treeParent {
 func buildHTMLResource(p *LineChange, hl *highlighter) htmlResource {
 	a, b := difflib.SplitLines(p.From), difflib.SplitLines(p.To)
 	groups := difflib.NewMatcher(a, b).GetGroupedOpCodes(diffContextLines)
-	ah, bh := highlightPair(a, b, groups, hl)
+	highlighted := highlightPair(a, b, groups, hl)
+
 	parent := p.Parent.Kind + " " + p.Parent.Name
 	if p.ParentPath != "" {
 		parent += " (" + p.ParentPath + ")"
@@ -167,8 +178,8 @@ func buildHTMLResource(p *LineChange, hl *highlighter) htmlResource {
 		Name:   p.Resource.Name,
 		Parent: parent,
 		Status: p.Status,
-		URows:  unifiedRows(ah, bh, groups),
-		SRows:  sideRows(ah, bh, groups),
+		URows:  unifiedRows(highlighted.orig, highlighted.current, groups),
+		SRows:  sideRows(highlighted.orig, highlighted.current, groups),
 	}
 	for _, u := range res.URows {
 		switch u.Kind {
@@ -286,8 +297,7 @@ func sideRows(ah, bh []template.HTML, groups [][]difflib.OpCode) []sRow {
 	return rows
 }
 
-// highlightPair returns highlighted lines with changed rune spans on each side.
-func highlightPair(a, b []string, groups [][]difflib.OpCode, hl *highlighter) ([]template.HTML, []template.HTML) {
+func highlightPair(a, b []string, groups [][]difflib.OpCode, hl *highlighter) highlightedPair {
 	ah, bh := hl.lines(a), hl.lines(b)
 	for _, group := range groups {
 		for _, op := range group {
@@ -296,23 +306,24 @@ func highlightPair(a, b []string, groups [][]difflib.OpCode, hl *highlighter) ([
 			}
 			for k := range min(op.I2-op.I1, op.J2-op.J1) {
 				ai, bj := op.I1+k, op.J1+k
-				aLo, aHi, bLo, bHi := runeDiffRange(strings.TrimRight(a[ai], "\n"), strings.TrimRight(b[bj], "\n"))
-				if aHi > aLo {
-					ah[ai] = hl.emit(a[ai], aLo, aHi)
+				spans := runeDiffRange(strings.TrimRight(a[ai], "\n"), strings.TrimRight(b[bj], "\n"))
+
+				if spans.origHigh > spans.origLow {
+					ah[ai] = hl.emit(a[ai], spans.origLow, spans.origHigh)
 				}
-				if bHi > bLo {
-					bh[bj] = hl.emit(b[bj], bLo, bHi)
+				if spans.currentHigh > spans.currentLow {
+					bh[bj] = hl.emit(b[bj], spans.currentLow, spans.currentHigh)
 				}
 			}
 		}
 	}
-	return ah, bh
+	return highlightedPair{orig: ah, current: bh}
 }
 
 // runeDiffRange returns the per-side changed rune ranges of two differing lines
 // by trimming the common prefix and suffix. It returns empty ranges when the
 // lines share no common affix (a total change — not worth a word highlight).
-func runeDiffRange(a, b string) (int, int, int, int) {
+func runeDiffRange(a, b string) runeRanges {
 	ar, br := []rune(a), []rune(b)
 	p := 0
 	for p < len(ar) && p < len(br) && ar[p] == br[p] {
@@ -323,9 +334,9 @@ func runeDiffRange(a, b string) (int, int, int, int) {
 		s++
 	}
 	if p == 0 && s == 0 {
-		return 0, 0, 0, 0
+		return runeRanges{}
 	}
-	return p, len(ar) - s, p, len(br) - s
+	return runeRanges{origLow: p, origHigh: len(ar) - s, currentLow: p, currentHigh: len(br) - s}
 }
 
 // emit renders one YAML line to class-based highlighted HTML, walking chroma's
@@ -384,16 +395,6 @@ func classFor(tt chroma.TokenType) string {
 		return c
 	}
 	return ""
-}
-
-// highlighter renders single YAML lines to syntax-highlighted HTML spans
-// (chroma, class-based). The matching stylesheet — both the light (github) and
-// dark (github-dark) variants, scoped under .chroma.light / .chroma.dark — is
-// emitted once into the document <style>; the spans themselves are
-// theme-agnostic. Highlighting is per-line so it maps 1:1 onto the diff line
-// indices; block-scalar bodies lose cross-line context, immaterial for review.
-type highlighter struct {
-	lexer chroma.Lexer
 }
 
 func newHighlighter() (*highlighter, string, error) {
@@ -504,3 +505,7 @@ func appendSideRows(rows []sRow, ah, bh []template.HTML, op difflib.OpCode) []sR
 	}
 	return rows
 }
+
+type highlightedPair struct{ orig, current []template.HTML }
+
+type runeRanges struct{ origLow, origHigh, currentLow, currentHigh int }

@@ -119,13 +119,14 @@ func TestFetcher_ResolveTLS_Insecure(t *testing.T) {
 
 func TestFetcher_ResolveTLS_FromSecret(t *testing.T) {
 	t.Parallel()
-	certPEM, keyPEM := testutil.SelfSignedServerCert(t)
+	certificate := testutil.SelfSignedServerCert(t)
+
 	fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
 		return &manifest.Secret{
 			StringData: map[string]any{
-				"tls.crt": certPEM,
-				"tls.key": keyPEM,
-				"ca.crt":  certPEM,
+				"tls.crt": certificate.Cert,
+				"tls.key": certificate.Key,
+				"ca.crt":  certificate.Cert,
 			},
 		}
 	}}

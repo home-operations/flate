@@ -58,8 +58,10 @@ func e2EEntryPrerequisiteDiffSidesNameLoop(t *testing.T, loopInputs struct {
 		if command == "diff" {
 			args = append(args, "-o", "json")
 		}
-		out, _ := harness.RequireCLIOK(t, args...)
-		again, _ := harness.RequireCLIOK(t, args...)
+		requireCLIOKResult1 := harness.RequireCLIOK(t, args...)
+		out, _ := requireCLIOKResult1.Stdout, requireCLIOKResult1.Stderr
+		requireCLIOKResult2 := harness.RequireCLIOK(t, args...)
+		again, _ := requireCLIOKResult2.Stdout, requireCLIOKResult2.Stderr
 		assert.Equal(t, again, out)
 		if command == "build" {
 			docs, err := testutil.SplitDocs([]byte(out))
@@ -122,7 +124,8 @@ func e2EEntryPrerequisiteDiffSidesNameLoopLoop(t *testing.T, loopInputs struct {
 	t.Helper()
 
 	for _, doc := range *loopInputs.docs {
-		name, _ := manifest.DocMetadata(doc)
+		metadata := manifest.DocMetadata(doc)
+		name := metadata.Name
 		if name == "entry-output" || name == "prerequisite-output" {
 			assert.Equal(
 				t,

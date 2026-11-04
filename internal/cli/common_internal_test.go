@@ -69,7 +69,8 @@ func TestCacheDir_FlagAndEnvPopulateRoot(t *testing.T) {
 			path := writeFixture(t)
 			selectedRoot := filepath.Join(t.TempDir(), "cache")
 			args := append([]string{"build", "all", "--path", path}, tc.via(t, selectedRoot)...)
-			_, stderr, code := runCLI(t, args...)
+			cli := runCLI(t, args...)
+			stderr, code := cli.stderr, cli.code
 			assert.FatalIf(t, code != 0, "build all (%s) exited %d: %s", tc.name, code, stderr)
 			entries, err := os.ReadDir(selectedRoot)
 			assert.FatalIf(t, err != nil, "read cache root %q: %v", selectedRoot, err)
@@ -102,7 +103,8 @@ func TestCacheDir_EmptyUsesMemory(t *testing.T) {
 			if setting == "empty-flag-over-env" {
 				t.Setenv("FLATE_CACHE_DIR", filepath.Join(fallback, "explicit"))
 			}
-			stdout, stderr, code := runCLI(t, args...)
+			cli := runCLI(t, args...)
+			stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 			assert.FatalIf(
 				t,
 				code != 0 || !strings.Contains(stdout, "name: hello"),
@@ -287,10 +289,10 @@ func TestResolveBaseline_DebugRevision(t *testing.T) {
 	pin := testutil.GitCommitAll(t, repo, "fixture", &git.CommitOptions{
 		Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)},
 	})
-	var output bytes.Buffer
+	var logOutput bytes.Buffer
 	logger := slog.Default()
 	t.Cleanup(func() { slog.SetDefault(logger) })
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logOutput, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	c := commonFlags{path: root, base: "HEAD", concurrency: 2}
 	if c.owner == nil {
 		c.owner = cachetest.New(t, "", sourcecache.New)
@@ -299,7 +301,7 @@ func TestResolveBaseline_DebugRevision(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, c.baseInput.Revision, pin.String())
 	var record map[string]any
-	assert.NoError(t, json.Unmarshal(output.Bytes(), &record))
+	assert.NoError(t, json.Unmarshal(logOutput.Bytes(), &record))
 	delete(record, "time")
 	assert.Diff(t, record, map[string]any{
 		"level": "DEBUG", "msg": "cli: baseline", "source": "explicit --base=HEAD",
@@ -419,7 +421,8 @@ func TestBindCommon_ChartDigestTrackingOverride(t *testing.T) {
 func TestResolveBaseline_AdmittedIdentity(t *testing.T) {
 	t.Parallel()
 	const url = "ssh://git@github.com/example/home-ops.git"
-	current, original := writeCustomSourceDiffFixture(t, url)
+	fixture := writeCustomSourceDiffFixture(t, url)
+	current, original := fixture.current, fixture.orig
 	writeBaselineGit(t, current, url)
 	writeBaselineGit(t, original, url)
 	testutil.WriteFile(

@@ -39,23 +39,17 @@ func TestDeepCopyMap_Isolation(t *testing.T) {
 	if src["nested"].(map[string]any)["k"] != "v" {
 		t.Errorf("source nested leaked: %v", src["nested"])
 	}
-	{
-		assert.ErrorIf(
-			t,
-			src["nested"].(map[string]any)["list"].([]any)[0].(map[string]any)["x"] != "y",
-			"source deep nested leaked",
-		)
-	}
-	{
-		assert.ErrorIf(t, src["nested"].(map[string]any)["list"].([]any)[1] != "z", "source list leaked")
-	}
+	assert.ErrorIf(
+		t,
+		src["nested"].(map[string]any)["list"].([]any)[0].(map[string]any)["x"] != "y",
+		"source deep nested leaked",
+	)
+	assert.ErrorIf(t, src["nested"].(map[string]any)["list"].([]any)[1] != "z", "source list leaked")
 }
 
 func TestDeepCopyMap_Nil(t *testing.T) {
 	t.Parallel()
-	{
-		assert.ErrorIf(t, DeepCopyMap(nil) != nil, "nil source should produce nil")
-	}
+	assert.ErrorIf(t, DeepCopyMap(nil) != nil, "nil source should produce nil")
 }
 
 func TestContainsValuePlaceholder_ValuesOnly(t *testing.T) {
@@ -138,14 +132,12 @@ spec:
 	assert.Equal(t, src.Labels["owner"], "original")
 	assert.Equal(t, src.Annotations["note"], "original")
 	assert.Equal(t, Fingerprint(src.Content(nil, nil, false)), snapshot)
-	{
-		assert.FatalIf(
-			t,
-			Fingerprint(dst.Content(nil, nil, false)) == snapshot,
-			"%s",
-			"typed input edits did not invalidate content",
-		)
-	}
+	assert.FatalIf(
+		t,
+		Fingerprint(dst.Content(nil, nil, false)) == snapshot,
+		"%s",
+		"typed input edits did not invalidate content",
+	)
 }
 
 // TestHelmRelease_Clone_DeepCopiesEmbeddedSpec pins the deep-copy of
@@ -183,28 +175,16 @@ func TestHelmRelease_Clone_DeepCopiesEmbeddedSpec(t *testing.T) {
 	dst.ValuesFrom[0].Name = "MUTATED"
 	dst.HelmReleaseSpec.DependsOn[0].Name = "MUTATED"
 
-	{
-		assert.ErrorIf(t, src.Install.DisableHooks, "source Install aliased after Clone mutation")
-	}
-	{
-		assert.ErrorIf(t, src.Upgrade.DisableHooks, "source Upgrade aliased after Clone mutation")
-	}
-	{
-		assert.ErrorIf(t, src.Rollback.DisableHooks, "source Rollback aliased after Clone mutation")
-	}
-	{
-		assert.ErrorIf(t, src.Uninstall.DisableHooks, "source Uninstall aliased after Clone mutation")
-	}
-	{
-		assert.ErrorIf(t, src.Test.Enable, "source Test aliased after Clone mutation")
-	}
-	{
-		assert.ErrorIf(
-			t,
-			src.DriftDetection.Mode != helmv2.DriftDetectionWarn,
-			"source DriftDetection aliased after Clone mutation",
-		)
-	}
+	assert.ErrorIf(t, src.Install.DisableHooks, "source Install aliased after Clone mutation")
+	assert.ErrorIf(t, src.Upgrade.DisableHooks, "source Upgrade aliased after Clone mutation")
+	assert.ErrorIf(t, src.Rollback.DisableHooks, "source Rollback aliased after Clone mutation")
+	assert.ErrorIf(t, src.Uninstall.DisableHooks, "source Uninstall aliased after Clone mutation")
+	assert.ErrorIf(t, src.Test.Enable, "source Test aliased after Clone mutation")
+	assert.ErrorIf(
+		t,
+		src.DriftDetection.Mode != helmv2.DriftDetectionWarn,
+		"source DriftDetection aliased after Clone mutation",
+	)
 	if src.ValuesFrom[0].Name != "src-cm" {
 		t.Errorf("source ValuesFrom aliased: %v", src.ValuesFrom[0].Name)
 	}

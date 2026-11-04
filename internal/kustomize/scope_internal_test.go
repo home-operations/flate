@@ -7,8 +7,6 @@ import (
 	"testing"
 	"time"
 
-	filepath "path/filepath"
-
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	"sigs.k8s.io/kustomize/api/resmap"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
@@ -78,21 +76,7 @@ func TestScopeBuildIsolation(t *testing.T) {
 	}
 	for _, state := range []string{"success", "error", "concurrent"} {
 		t.Run(state, func(t *testing.T) {
-			scopeBuildIsolationState(t, &state, (*interface {
-				CleanedAbs(path string) (filesys.ConfirmedDir, string, error)
-				Create(path string) (filesys.File, error)
-				Exists(path string) bool
-				Glob(pattern string) ([]string, error)
-				IsDir(path string) bool
-				Mkdir(path string) error
-				MkdirAll(path string) error
-				Open(path string) (filesys.File, error)
-				ReadDir(path string) ([]string, error)
-				ReadFile(path string) ([]byte, error)
-				RemoveAll(path string) error
-				Walk(path string, walkFn filepath.WalkFunc) error
-				WriteFile(path string, data []byte) error
-			})(&fs))
+			scopeBuildIsolationState(t, &state, fs)
 		})
 	}
 }
@@ -116,8 +100,8 @@ func TestScopeResolver_MissDoesNotResetSchema(t *testing.T) {
 	BuildMutex.Unlock()
 
 	assert.NoError(t, err)
-	namespaced, _ := (scopeResolver{}).ResolveScope(meta)
-	assert.Equal(t, namespaced, false)
+	scope := (scopeResolver{}).ResolveScope(meta)
+	assert.Equal(t, scope.Namespaced, false)
 }
 
 func parseDocScopeMemoNoLoad(t *testing.T) {
@@ -192,8 +176,8 @@ func parseDocScopeMemoMemoMiss(t *testing.T) {
 		<-done
 		t.Fatal("memo miss attempted cold scope resolution")
 	}
-	_, prepared := (scopeResolver{}).LookupScope(meta)
-	assert.Equal(t, prepared, false)
+	prepared := (scopeResolver{}).LookupScope(meta)
+	assert.Equal(t, prepared.Found, false)
 }
 
 func parseDocScopeMemoCase(t *testing.T, tc *struct {
@@ -211,7 +195,7 @@ func parseDocScopeMemoCase(t *testing.T, tc *struct {
 	}
 }
 
-func parseDocScopeMemoDependencyPreparationCase(t *testing.T, namespace *string, fallback *string, workers *int) {
+func parseDocScopeMemoDependencyPreparationCase(t *testing.T, namespace, fallback *string, workers *int) {
 	t.Helper()
 
 	meta := yaml.TypeMeta{APIVersion: "scope-preparation.example/v1", Kind: "FreshDependency"}
@@ -240,10 +224,11 @@ func parseDocScopeMemoDependencyPreparationCase(t *testing.T, namespace *string,
 			},
 		}},
 	}
-	obj, _, _, err := manifest.ParseDoc(
+	parsed, err := manifest.ParseDoc(
 		doc,
 		manifest.ParseDocOptions{DefaultNamespace: (*fallback)},
 	)
+	obj := parsed.Object
 	assert.NoError(t, err)
 	wantNamespace := (*namespace)
 	if wantNamespace == "" {
@@ -251,8 +236,8 @@ func parseDocScopeMemoDependencyPreparationCase(t *testing.T, namespace *string,
 	}
 	assert.Equal(t, obj.Named().Namespace, wantNamespace)
 	for _, key := range []yaml.TypeMeta{meta, cluster} {
-		_, prepared := (scopeResolver{}).LookupScope(key)
-		assert.Equal(t, prepared, true)
+		prepared := (scopeResolver{}).LookupScope(key)
+		assert.Equal(t, prepared.Found, true)
 	}
 	BuildMutex.Lock()
 	done := make(chan struct{})
@@ -290,7 +275,7 @@ func parseDocScopeMemoCaseState(t *testing.T, workers **int, tc **struct {
 	start, done := make(chan struct{}), make(chan struct{})
 	var wg sync.WaitGroup
 	for range *(*workers) {
-		wg.Go(func() { parseDocScopeMemoCaseStateBody(&start, &tc, &t) })
+		wg.Go(func() { parseDocScopeMemoCaseStateBody(start, &tc, &t) })
 	}
 	BuildMutex.Lock()
 	if (*state) == "cold" {
@@ -321,22 +306,7 @@ func parseDocScopeMemoCaseState(t *testing.T, workers **int, tc **struct {
 	}
 }
 
-func scopeBuildIsolationState(t *testing.T, state *string, fs *interface {
-	CleanedAbs(path string) (filesys.ConfirmedDir, string, error)
-	Create(path string) (filesys.File, error)
-	Exists(path string) bool
-	Glob(pattern string) ([]string, error)
-	IsDir(path string) bool
-	Mkdir(path string) error
-	MkdirAll(path string) error
-	Open(path string) (filesys.File, error)
-	ReadDir(path string) ([]string, error)
-	ReadFile(path string) ([]byte, error)
-	RemoveAll(path string) error
-	Walk(path string, walkFn filepath.WalkFunc) error
-	WriteFile(path string, data []byte) error
-},
-) {
+func scopeBuildIsolationState(t *testing.T, state *string, fs filesys.FileSystem) {
 	t.Helper()
 
 	key := yaml.TypeMeta{APIVersion: "scope.test.example/v1", Kind: "ScopeCluster"}
@@ -365,7 +335,7 @@ func scopeBuildIsolationState(t *testing.T, state *string, fs *interface {
 	}
 	rm, err := func() (resmap.ResMap, error) {
 		defer BuildMutex.Unlock()
-		return Build((*fs), dir)
+		return Build(fs, dir)
 	}()
 	select {
 	case <-done:
@@ -384,11 +354,11 @@ func scopeBuildIsolationState(t *testing.T, state *string, fs *interface {
 		assert.Equal(t, len(rm.Resources()), 1)
 		assert.Equal(t, rm.Resources()[0].GetNamespace(), "")
 	}
-	namespaced, _ := (scopeResolver{}).ResolveScope(key)
-	assert.Equal(t, namespaced, true)
+	scope := (scopeResolver{}).ResolveScope(key)
+	assert.Equal(t, scope.Namespaced, true)
 }
 
-func parseDocScopeMemoCaseStateBody(start *chan struct{}, tc ***struct {
+func parseDocScopeMemoCaseStateBody(start chan struct{}, tc ***struct {
 	version   string
 	kind      string
 	namespace string
@@ -396,22 +366,24 @@ func parseDocScopeMemoCaseStateBody(start *chan struct{}, tc ***struct {
 ) {
 	(*t).Helper()
 
-	<-(*start)
+	<-start
 	doc := map[string]any{
 		"apiVersion": (*(*tc)).version,
 		"kind":       (*(*tc)).kind,
 		"metadata":   map[string]any{"name": "scope"},
 	}
-	obj, authoritative, _, err := manifest.ParseDoc(
+	parsed2, err := manifest.ParseDoc(
 		doc,
 		manifest.ParseDocOptions{DefaultNamespace: "apps"},
 	)
+	obj, authoritative := parsed2.Object, parsed2.Document
 	if err != nil {
 		(*t).Errorf("manifest.ParseDoc: %v", err)
 		return
 	}
 	assert.Equal((*t), obj.Named().Namespace, (*(*tc)).namespace)
-	_, ns := manifest.DocMetadata(authoritative)
+	metadata := manifest.DocMetadata(authoritative)
+	ns := metadata.Namespace
 	assert.Equal((*t), ns, (*(*tc)).namespace)
 	rs := &manifest.ResourceSet{Namespace: "apps"}
 	rs.DependsOn = []fluxopv1.Dependency{
@@ -426,10 +398,11 @@ func parseDocScopeMemoCaseStateBody(start *chan struct{}, tc ***struct {
 			"kind":       (*(*tc)).kind,
 			"metadata":   map[string]any{"name": "authored", "namespace": "authored"},
 		}
-		obj, _, changed, err := manifest.ParseDoc(
+		parsed3, err := manifest.ParseDoc(
 			doc,
 			manifest.ParseDocOptions{DefaultNamespace: namespace},
 		)
+		obj, changed := parsed3.Object, parsed3.Changed
 		if err != nil {
 			(*t).Error(err)
 			return

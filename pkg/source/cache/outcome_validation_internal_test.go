@@ -100,28 +100,29 @@ func TestOutcome_InvalidRecords(t *testing.T) {
 			t.Parallel()
 			testOutcomeInvalidRecordsCase(
 				t,
-				&invalidCauses, &scenario,
+				invalidCauses, &scenario,
 			)
 		},
 		)
 	}
 }
 
-func testOutcomeInvalidRecordsCase(t *testing.T, invalidCauses *map[string]outcomeCause,
+func testOutcomeInvalidRecordsCase(t *testing.T, invalidCauses map[string]outcomeCause,
 	scenario *string,
 ) {
 	t.Helper()
 
 	c := cachetest.New(t, t.TempDir(), New)
 	o := newOutcome(outcomeFailure(connReset()), time.Now().UTC(), 1, &ocispec.Descriptor{})
-	_, data, _ := o.encode()
+	blobs, _ := o.encode()
+
 	var m ocispec.Manifest
 	{
-		err := json.Unmarshal(data, &m)
+		err := json.Unmarshal(blobs.manifest, &m)
 		assert.NoError(t, err)
 	}
 
-	if cause, ok := (*invalidCauses)[(*scenario)]; ok {
+	if cause, ok := invalidCauses[(*scenario)]; ok {
 		o.record.Cause = outcomeCause{
 			Kind:     "terminal",
 			Children: []outcomeCause{{Kind: "join", Children: []outcomeCause{{Kind: "reset"}, cause}}},
@@ -163,7 +164,7 @@ func testOutcomeInvalidRecordsCase(t *testing.T, invalidCauses *map[string]outco
 			Size:      1,
 		}
 	case "layer is outcome":
-		m.Layers = []ocispec.Descriptor{content.NewDescriptorFromBytes(ocispec.MediaTypeImageManifest, data)}
+		m.Layers = []ocispec.Descriptor{content.NewDescriptorFromBytes(ocispec.MediaTypeImageManifest, blobs.manifest)}
 	}
 	config, err := json.Marshal(o.record)
 	assert.NoError(t, err)
@@ -181,10 +182,10 @@ func testOutcomeInvalidRecordsCase(t *testing.T, invalidCauses *map[string]outco
 	if (*scenario) == "config media" {
 		m.Config.MediaType = "unknown"
 	}
-	data, err = json.Marshal(m)
+	blobs.manifest, err = json.Marshal(m)
 	assert.NoError(t, err)
 
-	desc := pushOutcomeFixture(t, c, config, data)
+	desc := pushOutcomeFixture(t, c, config, blobs.manifest)
 	{
 		got, readOutcomeErr := c.readOutcome(t.Context(), &desc)
 		assert.FatalIf(

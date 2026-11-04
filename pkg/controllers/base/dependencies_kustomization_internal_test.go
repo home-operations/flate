@@ -92,9 +92,7 @@ func TestDependencies_Kustomization_SubstitutionProducers(t *testing.T) {
 			for _, dep := range deps {
 				got = append(got, dep.NamedResource)
 			}
-			{
-				assert.FatalIf(t, !slices.Equal(got, tc.want), "dependencies = %v, want %v", got, tc.want)
-			}
+			assert.FatalIf(t, !slices.Equal(got, tc.want), "dependencies = %v, want %v", got, tc.want)
 		})
 	}
 }
@@ -156,9 +154,7 @@ func TestCollectDeps_Allocations(t *testing.T) {
 	admissiontest.Commit(t, admissionLoader1, nil)
 	c.Configure(Options{Filter: admissionLoader1.Options.Filter, Loader: admissionLoader1})
 	allocs := testing.AllocsPerRun(100, func() { c.dependencies(ks, manifest.GateInputs) })
-	{
-		assert.FatalIf(t, allocs > 3, "dependency collection allocated %g times, want at most 3", allocs)
-	}
+	assert.FatalIf(t, allocs > 3, "dependency collection allocated %g times, want at most 3", allocs)
 }
 
 func TestCollectDeps_NoParentNoExtraDep(t *testing.T) {
@@ -166,9 +162,7 @@ func TestCollectDeps_NoParentNoExtraDep(t *testing.T) {
 	child := &manifest.Kustomization{Name: "karma", Namespace: "observability"}
 	c := New(store.New(), nil)
 	deps := gateExecution(c, child.Named()).dependencies(child, manifest.GateInputs)
-	{
-		assert.ErrorIf(t, len(deps) != 0, "expected no deps for KS without sourceRef/dependsOn/parent; got %+v", deps)
-	}
+	assert.ErrorIf(t, len(deps) != 0, "expected no deps for KS without sourceRef/dependsOn/parent; got %+v", deps)
 }
 
 func TestSubstitutionAvailability_ObservesMaterializers(t *testing.T) {
@@ -264,19 +258,15 @@ func TestSubstitutionAvailability_UnselectedMaterializer(t *testing.T) {
 	execution := gateExecution(c, consumerObj.Named())
 	input := values.NewStoreProvider(&execution.Reads, false).
 		Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: consumer.Namespace, Name: cmID.Name})
+	assert.FatalIf(
+		t,
+		!slices.Equal(input.Materializers, []manifest.NamedResource{producer}) || !input.Offline,
+		"missing unselected materializer evidence: %+v",
+		input,
+	)
 	{
-		assert.FatalIf(
-			t,
-			!slices.Equal(input.Materializers, []manifest.NamedResource{producer}) || !input.Offline,
-			"missing unselected materializer evidence: %+v",
-			input,
-		)
-	}
-	{
-		{
-			deps := execution.authoredDependenciesForTest(consumerObj)
-			assert.FatalIf(t, len(deps) != 0, "materializer became required gate: %v", deps)
-		}
+		deps := execution.authoredDependenciesForTest(consumerObj)
+		assert.FatalIf(t, len(deps) != 0, "materializer became required gate: %v", deps)
 	}
 }
 
@@ -321,17 +311,13 @@ func TestCollectDeps_SkipsSelfProducer(t *testing.T) {
 	c := New(store.New(), nil)
 	c.Configure(Options{Filter: f, Index: index, Loader: fLoader})
 	{
-		{
-			owners := c.Store.Productions(cmID, index)
-			assert.FatalIf(t, len(owners) != 1 || owners[0].Owner != self, "missing self evidence: %v", owners)
-		}
+		owners := c.Store.Productions(cmID, index)
+		assert.FatalIf(t, len(owners) != 1 || owners[0].Owner != self, "missing self evidence: %v", owners)
 	}
 	deps := gateExecution(c, selfObj.Named()).authoredDependenciesForTest(selfObj)
 
 	for _, d := range deps {
-		{
-			assert.ErrorIf(t, d.NamedResource == self, "self-producer must not appear as its own dep; got %+v", deps)
-		}
+		assert.ErrorIf(t, d.NamedResource == self, "self-producer must not appear as its own dep; got %+v", deps)
 	}
 }
 
@@ -370,28 +356,21 @@ func TestSubstitutionAvailability_RuntimeDeclaration(t *testing.T) {
 	execution := gateExecution(c, consumer.Named())
 	target := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: consumer.Namespace, Name: "credentials"}
 	input := values.NewStoreProvider(&execution.Reads, true).Lookup(target)
+	assert.FatalIf(
+		t,
+		!input.Generated || input.Offline || len(input.Materializers) != 0,
+		"runtime declaration evidence=%+v",
+		input,
+	)
+	assert.FatalIf(t, input.Data == nil, "%v", "declared keys did not retain placeholder data")
 	{
-		assert.FatalIf(
-			t,
-			!input.Generated || input.Offline || len(input.Materializers) != 0,
-			"runtime declaration evidence=%+v",
-			input,
-		)
+		valueResult, err := input.Data.Value("X")
+		value := valueResult.Value
+		assert.FatalIf(t, err != nil || value != "..PLACEHOLDER_X..", "placeholder=%q error=%v", value, err)
 	}
 	{
-		assert.FatalIf(t, input.Data == nil, "%v", "declared keys did not retain placeholder data")
-	}
-	{
-		{
-			value, _, err := input.Data.Value("X")
-			assert.FatalIf(t, err != nil || value != "..PLACEHOLDER_X..", "placeholder=%q error=%v", value, err)
-		}
-	}
-	{
-		{
-			deps := execution.authoredDependenciesForTest(consumer)
-			assert.FatalIf(t, len(deps) != 0, "runtime declaration became required gate: %v", deps)
-		}
+		deps := execution.authoredDependenciesForTest(consumer)
+		assert.FatalIf(t, len(deps) != 0, "runtime declaration became required gate: %v", deps)
 	}
 }
 
@@ -483,9 +462,7 @@ func testResolveSubstitutionProducersCase(t *testing.T, testCaseInput testResolv
 
 	c.Reads.Init(c.Store, ks.Named(), nil)
 	inputs, admissionErr1 := c.DataInputs(t.Context(), ks, values.NewStoreProvider(&c.Reads, false))
-	{
-		assert.FatalIf(t, admissionErr1 != nil, "%v", admissionErr1)
-	}
+	assert.FatalIf(t, admissionErr1 != nil, "%v", admissionErr1)
 	err := c.AwaitData(
 		t.Context(),
 		DataWait{
@@ -504,23 +481,19 @@ func testResolveSubstitutionProducersCase(t *testing.T, testCaseInput testResolv
 	}
 	switch {
 	case len(want) > 0:
-		{
-			assert.FatalIf(t, !waiting, "supplier was not bound: %v", err)
-		}
+		assert.FatalIf(t, !waiting, "supplier was not bound: %v", err)
 		for _, supplier := range want {
 			if !slices.Contains(blocked.Deps, supplier) {
 				t.Fatalf("suppliers=%v want=%v", blocked.Deps, want)
 			}
 		}
 	case (testCaseInput.tc.ref.Kind == manifest.KindConfigMap || testCaseInput.tc.ref.Kind == manifest.KindSecret) && testCaseInput.tc.ref.Name != "" && !testCaseInput.tc.ref.Optional && !slices.Contains(testCaseInput.tc.producers, (*testCaseInput.consumer)):
-		{
-			assert.FatalIf(
-				t,
-				!waiting || !slices.Contains(blocked.Deps, id),
-				"required input did not wait: %v",
-				err,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!waiting || !slices.Contains(blocked.Deps, id),
+			"required input did not wait: %v",
+			err,
+		)
 	default:
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
@@ -568,10 +541,8 @@ func testSubstitutionAvailabilityObservesMaterializersCase(
 	}
 	execution := gateExecution(c, (*testCaseInput.consumer))
 	{
-		{
-			deps := execution.authoredDependenciesForTest(ks)
-			assert.FatalIf(t, len(deps) != 0, "data became authored readiness gate: %v", deps)
-		}
+		deps := execution.authoredDependenciesForTest(ks)
+		assert.FatalIf(t, len(deps) != 0, "data became authored readiness gate: %v", deps)
 	}
 	input := values.NewStoreProvider(&execution.Reads, false).Lookup(id)
 	w := depwait.Waiter{Store: &execution.Reads, Parent: (*testCaseInput.consumer)}
@@ -585,18 +556,14 @@ func testSubstitutionAvailabilityObservesMaterializersCase(
 		},
 		manifest.DrainNone,
 	)
-	{
-		assert.FatalIf(t, got.Kind != testCaseInput.tc.want, "availability=%+v want=%v", got, testCaseInput.tc.want)
-	}
-	{
-		assert.FatalIf(
-			t,
-			testCaseInput.tc.known && !testCaseInput.tc.self &&
-				!slices.Equal(got.Blocked, []manifest.NamedResource{(*testCaseInput.producer)}),
-			"materializer was not observed: %+v",
-			got,
-		)
-	}
+	assert.FatalIf(t, got.Kind != testCaseInput.tc.want, "availability=%+v want=%v", got, testCaseInput.tc.want)
+	assert.FatalIf(
+		t,
+		testCaseInput.tc.known && !testCaseInput.tc.self &&
+			!slices.Equal(got.Blocked, []manifest.NamedResource{(*testCaseInput.producer)}),
+		"materializer was not observed: %+v",
+		got,
+	)
 	for required := range execution.Reads.Required() {
 		t.Fatalf("materializer became required cause: %s", required)
 	}
@@ -658,14 +625,12 @@ func testCollectDepsDeclarationAvailabilityUsesCommonGateCase(
 	c := New(st, nil)
 	c.Configure(Options{Index: index})
 	deps := gateExecution(c, (*testCaseInput.child).Named()).dependencies((*testCaseInput.child), manifest.GateInputs)
-	{
-		assert.FatalIf(
-			t,
-			len(deps) != 0,
-			"structural declaration owners leaked into authored dependencies: %v",
-			deps,
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(deps) != 0,
+		"structural declaration owners leaked into authored dependencies: %v",
+		deps,
+	)
 }
 
 func testCollectDepsOrderingFilterCase(t *testing.T, testCaseInput *struct {
@@ -785,12 +750,10 @@ func testCollectDepsOrderingFilterCase(t *testing.T, testCaseInput *struct {
 		},
 	)
 	assert.Diff(t, deps, want)
-	{
-		assert.ErrorIf(
-			t,
-			len(filter.KeepNames()) != size || len(consumer.DependsOn) != 2,
-			"%v",
-			"ordering collection must preserve keep and input edges",
-		)
-	}
+	assert.ErrorIf(
+		t,
+		len(filter.KeepNames()) != size || len(consumer.DependsOn) != 2,
+		"%v",
+		"ordering collection must preserve keep and input edges",
+	)
 }

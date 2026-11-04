@@ -127,35 +127,29 @@ func testAvailableOptionalMaterializerAbsenceCase(
 		},
 		testCaseInput.level,
 	)
-	{
-		assert.FatalIf(
-			t,
-			got.Kind != testCaseInput.want || got.Omit != testCaseInput.omit,
-			"availability=%+v, want kind=%v omit=%t",
-			got,
-			testCaseInput.want,
-			testCaseInput.omit,
-		)
-	}
-	{
-		assert.FatalIf(
-			t,
-			testCaseInput.want == schedule.Blocked && len(got.Blocked) != 1,
-			"blocked inputs=%v",
-			got.Blocked,
-		)
-	}
+	assert.FatalIf(
+		t,
+		got.Kind != testCaseInput.want || got.Omit != testCaseInput.omit,
+		"availability=%+v, want kind=%v omit=%t",
+		got,
+		testCaseInput.want,
+		testCaseInput.omit,
+	)
+	assert.FatalIf(
+		t,
+		testCaseInput.want == schedule.Blocked && len(got.Blocked) != 1,
+		"blocked inputs=%v",
+		got.Blocked,
+	)
 	for required := range reads.Required() {
 		t.Fatalf("availability made %s a required failure cause", required)
 	}
-	{
-		assert.FatalIf(
-			t,
-			got.Kind == schedule.DependencyFailed && got.Reason.Message != "dependency not found",
-			"materializer failure became target cause: %+v",
-			got,
-		)
-	}
+	assert.FatalIf(
+		t,
+		got.Kind == schedule.DependencyFailed && got.Reason.Message != "dependency not found",
+		"materializer failure became target cause: %+v",
+		got,
+	)
 }
 
 func testAvailableRequiredMaterializerCycleCase(
@@ -204,13 +198,11 @@ func testAvailableRequiredMaterializerCycleCase(
 	if testCaseInput.optional || testCaseInput.unrelated {
 		want = schedule.Terminal
 	}
-	{
-		assert.FatalIf(
-			t,
-			got.Kind != want || (len(got.Failed) != 0) != (want == schedule.DependencyFailed),
-			"availability=%+v, want %v",
-			got,
-			want,
-		)
-	}
+	assert.FatalIf(
+		t,
+		got.Kind != want || (len(got.Failed) != 0) != (want == schedule.DependencyFailed),
+		"availability=%+v, want %v",
+		got,
+		want,
+	)
 }

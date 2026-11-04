@@ -71,7 +71,8 @@ func testSourceViewInputOriginCase(t *testing.T, testCaseInput *struct {
 	source := &manifest.GitRepository{Name: "source", Namespace: "flux-system"}
 	st.AddObject(source)
 	st.SetArtifact(source.Named(), art)
-	root, pinned, external := SourceView(st, source.Named(), repoRoot)
+	location := SourceView(st, source.Named(), repoRoot)
+	root, pinned, external := location.Path, location.Pinned, location.External
 	wantRoot := mount
 	if testCaseInput.external {
 		wantRoot = repoRoot

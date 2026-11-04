@@ -300,9 +300,7 @@ func TestOrchestratorExistence_FileIndexNamespaceConvention(t *testing.T) {
 			id.Namespace = tc.requested
 			{
 				got := e.IsFileIndexed(id)
-				{
-					assert.ErrorIf(t, got != tc.want, "IsFileIndexed(%s) = %v, want %v", id, got, tc.want)
-				}
+				assert.ErrorIf(t, got != tc.want, "IsFileIndexed(%s) = %v, want %v", id, got, tc.want)
 			}
 		})
 	}

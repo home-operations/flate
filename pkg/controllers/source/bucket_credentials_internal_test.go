@@ -85,14 +85,12 @@ func testControllerBucketMachineFailuresCase(
 				return
 			}
 			defer request.Body.Close()
-			{
-				assert.ErrorIf(
-					t,
-					request.Host == "bucket.invalid",
-					"%v",
-					"failed machine credentials reached the bucket",
-				)
-			}
+			assert.ErrorIf(
+				t,
+				request.Host == "bucket.invalid",
+				"%v",
+				"failed machine credentials reached the bucket",
+			)
 			body := `<ErrorResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><Error><Code>AccessDenied</Code><Message>credential-canary</Message></Error></ErrorResponse>`
 			response := &http.Response{
 				StatusCode:    http.StatusForbidden,
@@ -134,19 +132,15 @@ func testControllerBucketMachineFailuresCase(
 		t,
 		controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: b.Named(), ReconcileNode: c.ReconcileNode},
 	)
-	{
-		assert.FatalIf(t, info.Status != store.StatusFailed || info.Outcome() == store.OutcomeSkipped ||
-			strings.Contains(
-				info.Message,
-				"canary",
-			), "status=%+v, want failure with no credential material", info)
-	}
-	{
-		assert.FatalIf(
-			t,
-			st.GetArtifact(b.Named(), store.ArtifactContent) != nil,
-			"%v",
-			"failed machine acquisition published content",
-		)
-	}
+	assert.FatalIf(t, info.Status != store.StatusFailed || info.Outcome() == store.OutcomeSkipped ||
+		strings.Contains(
+			info.Message,
+			"canary",
+		), "status=%+v, want failure with no credential material", info)
+	assert.FatalIf(
+		t,
+		st.GetArtifact(b.Named(), store.ArtifactContent) != nil,
+		"%v",
+		"failed machine acquisition published content",
+	)
 }

@@ -206,10 +206,9 @@ func TestKindInfo_ArtifactGenerator(t *testing.T) {
 		"metadata":   map[string]any{"name": "generator", "namespace": "apps"},
 		"spec":       map[string]any{},
 	}
-	obj, _, _, err := ParseDoc(doc, ParseDocOptions{})
-	{
-		assert.NoError(t, err)
-	}
+	parsed, err := ParseDoc(doc, ParseDocOptions{})
+	obj := parsed.Object
+	assert.NoError(t, err)
 	{
 		_, ok := obj.(*RawObject)
 		assert.FatalIf(t, !ok, "generator type = %T", obj)

@@ -74,17 +74,13 @@ func testLoadFSChartFailureRecoveryCase(t *testing.T, testCaseInput *string,
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: observed, Key: "untrusted"})
 	cliSources := NewSources(st)
 	_, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
-	{
-		assert.FatalIf(t, err == nil, "%s", "failed input accepted")
-	}
-	{
-		assert.FatalIf(
-			t,
-			((*testCaseInput) == "read" || (*testCaseInput) == "close") && !errors.Is(err, want),
-			"lost read/close error: %v",
-			err,
-		)
-	}
+	assert.FatalIf(t, err == nil, "%s", "failed input accepted")
+	assert.FatalIf(
+		t,
+		((*testCaseInput) == "read" || (*testCaseInput) == "close") && !errors.Is(err, want),
+		"lost read/close error: %v",
+		err,
+	)
 	if (*testCaseInput) == "disappeared" {
 		_, missing, captureChartErr := captureChart(t.Context(), observed, ".", false)
 		assert.Equal(t, missing, false)

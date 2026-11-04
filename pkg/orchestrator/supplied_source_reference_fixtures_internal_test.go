@@ -15,7 +15,8 @@ import (
 
 func testSuppliedSourceReference(t *testing.T, kind, mode string) {
 	t.Helper()
-	root, artifact, inputs := suppliedSourceReferenceFixture(t, kind)
+	suppliedSourceReferenceFixtureResult1 := suppliedSourceReferenceFixture(t, kind)
+	root, artifact, inputs := suppliedSourceReferenceFixtureResult1.root, suppliedSourceReferenceFixtureResult1.artifact, suppliedSourceReferenceFixtureResult1.declarations
 	tree := Tree{Path: root, RepoRoot: root}
 	if mode == "changed" {
 		tree.ExternalChanges = change.NewSet([]string{"consumer.yaml"})
@@ -58,7 +59,13 @@ func testSuppliedSourceReference(t *testing.T, kind, mode string) {
 	assertSuppliedSourceReference(t, o, result, mode)
 }
 
-func suppliedSourceReferenceFixture(t *testing.T, kind string) (string, string, []store.Declaration) {
+type suppliedReferenceFixture struct {
+	root         string
+	artifact     string
+	declarations []store.Declaration
+}
+
+func suppliedSourceReferenceFixture(t *testing.T, kind string) suppliedReferenceFixture {
 	t.Helper()
 	root, artifact := t.TempDir(), t.TempDir()
 	testutil.WriteFile(t, artifact, "app/kustomization.yaml", "resources: [cm.yaml]\n")
@@ -105,5 +112,5 @@ func suppliedSourceReferenceFixture(t *testing.T, kind string) (string, string, 
 	}
 	inputs, err := loader.LoadDocuments(t.Context(), strings.NewReader(stream), "supply.yaml")
 	assert.NoError(t, err)
-	return root, artifact, inputs
+	return suppliedReferenceFixture{root: root, artifact: artifact, declarations: inputs}
 }

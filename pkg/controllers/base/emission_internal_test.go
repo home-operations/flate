@@ -56,28 +56,25 @@ func TestEmit_RetainsSanitizedInvalidDocuments(t *testing.T) {
 				manifest.DeepCopyMap(skipped),
 				manifest.DeepCopyMap(invalid),
 			}
-			children, docs, failures := c.ParseChildren(
+			parseChildrenResult1 := c.ParseChildren(
 				parent,
 				testutil.DocumentOccurrences(borrowed),
 				manifest.ParseDocOptions{WipeSecrets: wipe},
 			)
-			{
-				assert.FatalIf(
-					t,
-					len(failures) != 1 || !errors.Is(failures[0].Err, manifest.ErrInput),
-					"retained failures = %v",
-					failures,
-				)
-			}
-			{
-				assert.FatalIf(
-					t,
-					len(children) != 2 || len(docs) != 2,
-					"parse: children=%d docs=%d",
-					len(children),
-					len(docs),
-				)
-			}
+			children, docs, failures := parseChildrenResult1.Children, parseChildrenResult1.Visible, parseChildrenResult1.Failures
+			assert.FatalIf(
+				t,
+				len(failures) != 1 || !errors.Is(failures[0].Err, manifest.ErrInput),
+				"retained failures = %v",
+				failures,
+			)
+			assert.FatalIf(
+				t,
+				len(children) != 2 || len(docs) != 2,
+				"parse: children=%d docs=%d",
+				len(children),
+				len(docs),
+			)
 			want := "ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]"
 			if wipe {
 				want = manifest.ValuePlaceholder("X")
@@ -86,36 +83,30 @@ func TestEmit_RetainsSanitizedInvalidDocuments(t *testing.T) {
 			assert.Diff(t, docs[1].Document, invalid)
 			assert.Diff(t, children[1].Doc, skipped)
 			assert.Diff(t, borrowed, before)
-			{
-				assert.FatalIf(
-					t,
-					fmt.Sprintf("%p", children[0].Doc) != fmt.Sprintf("%p", docs[0].Document),
-					"%v",
-					"child document does not share authoritative map",
-				)
-			}
+			assert.FatalIf(
+				t,
+				fmt.Sprintf("%p", children[0].Doc) != fmt.Sprintf("%p", docs[0].Document),
+				"%v",
+				"child document does not share authoritative map",
+			)
 			next := &store.Emission{Children: children, Manifests: docs, Failures: failures, Complete: true}
 			c.emit(t.Context(), parent.Named(), next, nil)
 			children[0] = store.Child{}
 			docs[0].Document = nil
-			{
-				assert.FatalIf(
-					t,
-					next.Footprint() != nil || next.Complete,
-					"%v",
-					"failed inventory acquired a successful footprint",
-				)
-			}
+			assert.FatalIf(
+				t,
+				next.Footprint() != nil || next.Complete,
+				"%v",
+				"failed inventory acquired a successful footprint",
+			)
 			_, _, accepted := s.GetEmission(parent.Named())
-			{
-				assert.FatalIf(
-					t,
-					len(accepted.Children) != 2 || accepted.Children[0].Obj == nil ||
-						accepted.Manifests[0].Document == nil,
-					"%v",
-					"caller slice headers mutate accepted inventory",
-				)
-			}
+			assert.FatalIf(
+				t,
+				len(accepted.Children) != 2 || accepted.Children[0].Obj == nil ||
+					accepted.Manifests[0].Document == nil,
+				"%v",
+				"caller slice headers mutate accepted inventory",
+			)
 		})
 	}
 }
@@ -163,11 +154,12 @@ func TestEmit_OwnershipPrecedesArrivals(t *testing.T) {
 					"spec":       map[string]any{"path": "./app"},
 				},
 			}
-			children, retained, failures := c.ParseChildren(
+			parseChildrenResult2 := c.ParseChildren(
 				parent,
 				testutil.DocumentOccurrences(docs),
 				manifest.ParseDocOptions{},
 			)
+			children, retained, failures := parseChildrenResult2.Children, parseChildrenResult2.Visible, parseChildrenResult2.Failures
 			assert.Equal(t, len(failures), 0)
 			type observation struct {
 				id                       manifest.NamedResource
@@ -193,14 +185,10 @@ func TestEmit_OwnershipPrecedesArrivals(t *testing.T) {
 				defer next.Finish()
 				next.Children, next.Manifests, next.Complete = children, retained, true
 				{
-					{
-						err := execution.Emit(t.Context(), parent.Named(), &next, nil)
-						assert.ErrorIf(t, err != nil, "%v", err)
-					}
+					err := execution.Emit(t.Context(), parent.Named(), &next, nil)
+					assert.ErrorIf(t, err != nil, "%v", err)
 				}
-				{
-					assert.ErrorIf(t, !execution.Reads.Valid(), "%v", "publication captured its own children as inputs")
-				}
+				assert.ErrorIf(t, !execution.Reads.Valid(), "%v", "publication captured its own children as inputs")
 			})
 			tasks.BlockTillDone()
 			assert.Equal(t, tasks.Failures(), int64(0))
@@ -224,17 +212,21 @@ func TestEmit_PayloadProvenance(t *testing.T) {
 	c := New(s, nil)
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 	s.AddObject(parent)
-	child, childDoc := emissionDependency(t, "child", "  dependsOn: [{name: '${PREFIX:-dev-}config'}]\n")
+	emissionDependencyResult3 := emissionDependency(t, "child", "  dependsOn: [{name: '${PREFIX:-dev-}config'}]\n")
+	child, childDoc := emissionDependencyResult3.object, emissionDependencyResult3.document
 	doc := map[string]any{
 		"apiVersion": "source.toolkit.fluxcd.io/v1",
 		"kind":       manifest.KindExternalArtifact,
 		"metadata":   map[string]any{"name": "output", "namespace": "apps"},
 		"spec":       map[string]any{},
 	}
-	children, docs := parseChildrenForTest(parent.Named(), []map[string]any{childDoc, doc}, manifest.ParseDocOptions{})
-	{
-		assert.FatalIf(t, len(children) != 2, "parsed children = %d, want 2", len(children))
-	}
+	parseChildrenForTestResult4 := parseChildrenForTest(
+		parent.Named(),
+		[]map[string]any{childDoc, doc},
+		manifest.ParseDocOptions{},
+	)
+	children, docs := parseChildrenForTestResult4.Children, parseChildrenForTestResult4.Documents
+	assert.FatalIf(t, len(children) != 2, "parsed children = %d, want 2", len(children))
 	target := children[1].Obj.Named()
 	payload := &store.SourceArtifact{
 		Kind:   target.Kind,
@@ -248,54 +240,44 @@ func TestEmit_PayloadProvenance(t *testing.T) {
 	c.emit(t.Context(), parent.Named(), &attempt, map[manifest.NamedResource]*store.SourceArtifact{target: payload})
 	checkPayload := func() {
 		t.Helper()
-		{
-			assert.FatalIf(
-				t,
-				s.GetArtifact(target, store.ArtifactContent) != payload,
-				"%v",
-				"publication lost the accepted payload",
-			)
-		}
-		data, err := fs.ReadFile(s.GetArtifact(target, store.ArtifactContent).(*store.SourceArtifact).FS, "file")
-		{
-			assert.FatalIf(t, err != nil || string(data) != "bytes", "accepted bytes = %q, %v", data, err)
-		}
-	}
-	checkPayload()
-	{
 		assert.FatalIf(
 			t,
-			attempt.Children[0].Obj != children[0].Obj || child.DependsOn[0].Name != "${PREFIX:-dev-}config",
+			s.GetArtifact(target, store.ArtifactContent) != payload,
 			"%v",
-			"dependency substitution mutated the caller's children",
+			"publication lost the accepted payload",
 		)
+		data, err := fs.ReadFile(s.GetArtifact(target, store.ArtifactContent).(*store.SourceArtifact).FS, "file")
+		assert.FatalIf(t, err != nil || string(data) != "bytes", "accepted bytes = %q, %v", data, err)
 	}
+	checkPayload()
+	assert.FatalIf(
+		t,
+		attempt.Children[0].Obj != children[0].Obj || child.DependsOn[0].Name != "${PREFIX:-dev-}config",
+		"%v",
+		"dependency substitution mutated the caller's children",
+	)
 	{
-		{
-			got := s.GetObject(child.Named()).(*manifest.Kustomization).DependsOn[0].Name
-			assert.FatalIf(t, got != "dev-config", "admitted dependency = %q, want dev-config", got)
-		}
+		got := s.GetObject(child.Named()).(*manifest.Kustomization).DependsOn[0].Name
+		assert.FatalIf(t, got != "dev-config", "admitted dependency = %q, want dev-config", got)
 	}
 	attempt.Children, attempt.Complete, attempt.Fingerprint = children, true, manifest.Fingerprint("inputs")
 	c.emit(t.Context(), parent.Named(), &attempt, nil)
 	checkPayload()
+	assert.FatalIf(t, attempt.Children[0].Obj == children[0].Obj ||
+		attempt.Children[0].Obj.(*manifest.Kustomization).DependsOn[0].Name != "dev-config" ||
+		attempt.Footprint() == nil, "%v", "completed emission did not return its substituted accepted inventory")
 	{
-		assert.FatalIf(t, attempt.Children[0].Obj == children[0].Obj ||
-			attempt.Children[0].Obj.(*manifest.Kustomization).DependsOn[0].Name != "dev-config" ||
-			attempt.Footprint() == nil, "%v", "completed emission did not return its substituted accepted inventory")
-	}
-	{
-		{
-			_, handled, err := newExecution(
-				c,
-				parent.Named(),
-			).FingerprintDedup(t.Context(), parent.Named(), "inputs", &store.Emission{})
-			assert.FatalIf(t, !handled ||
-				err != nil, "borrowed replay handled=%t err=%v", handled, err)
-		}
+		fingerprintDedupResult5, fingerprintDedupResult5Err := newExecution(
+			c,
+			parent.Named(),
+		).FingerprintDedup(t.Context(), parent.Named(), "inputs", &store.Emission{})
+		_, handled, err := fingerprintDedupResult5.Fingerprint, fingerprintDedupResult5.Reused, fingerprintDedupResult5Err
+		assert.FatalIf(t, !handled ||
+			err != nil, "borrowed replay handled=%t err=%v", handled, err)
 	}
 	checkPayload()
-	fresh, retained := parseChildrenForTest(parent.Named(), docs, manifest.ParseDocOptions{})
+	parseChildrenForTestResult6 := parseChildrenForTest(parent.Named(), docs, manifest.ParseDocOptions{})
+	fresh, retained := parseChildrenForTestResult6.Children, parseChildrenForTestResult6.Documents
 	c.emit(
 		t.Context(),
 		parent.Named(),
@@ -307,14 +289,12 @@ func TestEmit_PayloadProvenance(t *testing.T) {
 		},
 		nil,
 	)
-	{
-		assert.FatalIf(
-			t,
-			s.GetObject(target) == nil || s.GetArtifact(target, store.ArtifactContent) != nil,
-			"%v",
-			"fresh equal declaration-only emission retained borrowed payload authority",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.GetObject(target) == nil || s.GetArtifact(target, store.ArtifactContent) != nil,
+		"%v",
+		"fresh equal declaration-only emission retained borrowed payload authority",
+	)
 }
 
 func TestEmit_SelfCopyIsNotPublished(t *testing.T) {
@@ -332,19 +312,16 @@ func TestEmit_SelfCopyIsNotPublished(t *testing.T) {
 			"spec":       map[string]any{"path": "stale"},
 		},
 	}
-	children, retained := parseChildrenForTest(parent.Named(), docs, manifest.ParseDocOptions{})
-	{
-		assert.FatalIf(t, len(children) != 0, "%v", "self copy admitted")
-	}
+	parseChildrenForTestResult7 := parseChildrenForTest(parent.Named(), docs, manifest.ParseDocOptions{})
+	children, retained := parseChildrenForTestResult7.Children, parseChildrenForTestResult7.Documents
+	assert.FatalIf(t, len(children) != 0, "%v", "self copy admitted")
 	c.emit(
 		t.Context(),
 		parent.Named(),
 		&store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(retained), Complete: true},
 		nil,
 	)
-	{
-		assert.FatalIf(t, s.GetObject(parent.Named()) != parent, "%v", "self copy overwrote effective input")
-	}
+	assert.FatalIf(t, s.GetObject(parent.Named()) != parent, "%v", "self copy overwrote effective input")
 }
 
 func TestEmit_RuntimeProducerReplacement(t *testing.T) {
@@ -412,9 +389,7 @@ func testEmitRuntimeProducerReplacementCase(t *testing.T, testCaseInput *bool,
 	s.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, payload any) {
 		if id == target {
 			invalidations++
-			{
-				assert.ErrorIf(t, payload != nil, "%v", "declaration installed a data object")
-			}
+			assert.ErrorIf(t, payload != nil, "%v", "declaration installed a data object")
 		}
 	}, false)
 	for _, key := range []string{"X", "Y"} {
@@ -429,65 +404,56 @@ func testEmitRuntimeProducerReplacementCase(t *testing.T, testCaseInput *bool,
 				},
 			},
 		}
-		children, docs := parseChildrenForTest(
+		parseChildrenForTestResult8 := parseChildrenForTest(
 			parent.Named(),
 			[]map[string]any{doc},
 			manifest.ParseDocOptions{WipeSecrets: (*testCaseInput)},
 		)
+		children, docs := parseChildrenForTestResult8.Children, parseChildrenForTestResult8.Documents
 		c.emit(
 			t.Context(),
 			parent.Named(),
 			&store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(docs), Complete: true},
 			nil,
 		)
-		{
-			assert.FatalIf(t, s.GetObject(target) != nil, "%v", "runtime placeholder has a store writer")
-		}
+		assert.FatalIf(t, s.GetObject(target) != nil, "%v", "runtime placeholder has a store writer")
 		data := values.NewStoreProvider(s, (*testCaseInput)).Data(target)
 		if !(*testCaseInput) {
-			{
-				assert.FatalIf(t, data != nil, "%v", "wiping disabled synthesized placeholder")
-			}
+			assert.FatalIf(t, data != nil, "%v", "wiping disabled synthesized placeholder")
 			continue
 		}
-		value, ok, err := data.Value(key)
-		{
-			assert.FatalIf(
-				t,
-				!ok || err != nil || value != manifest.ValuePlaceholder(key),
-				"runtime key: %q %v %v",
-				value,
-				ok,
-				err,
-			)
-		}
+		valueResult, err := data.Value(key)
+		value, ok := valueResult.Value, valueResult.Found
+		assert.FatalIf(
+			t,
+			!ok || err != nil || value != manifest.ValuePlaceholder(key),
+			"runtime key: %q %v %v",
+			value,
+			ok,
+			err,
+		)
 		if key == "Y" {
 			{
-				{
-					_, ok, _ := data.Value("X")
-					assert.FatalIf(t, ok, "%v", "old key retained")
-				}
+				valueResult2, _ := data.Value("X")
+				ok := valueResult2.Found
+				assert.FatalIf(t, ok, "%v", "old key retained")
 			}
 		}
 	}
 	c.emit(t.Context(), parent.Named(), &store.Emission{Complete: true}, nil)
-	{
-		assert.FatalIf(
-			t,
-			len(s.Productions(target, nil)) != 0 ||
-				values.NewStoreProvider(s, (*testCaseInput)).Data(target) != nil,
-			"%v",
-			"omitted declaration retained",
-		)
-	}
-	{
-		assert.FatalIf(
-			t,
-			invalidations != 3,
-			"declaration target invalidations=%d want admission, key refresh and omission",
-			invalidations,
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(s.Productions(target, nil)) != 0 ||
+			values.NewStoreProvider(s, (*testCaseInput)).Data(target) != nil,
+		"%v",
+		"omitted declaration retained",
+	)
+	assert.FatalIf(
+		t,
+		invalidations != 3,
+		"declaration target invalidations=%d want admission, key refresh and omission",
+		invalidations,
+	)
 }
 
 type testEmitRuntimeProducerTargetsCaseInputs struct {
@@ -529,11 +495,12 @@ func testEmitRuntimeProducerTargetsCase(t *testing.T, testCaseInput testEmitRunt
 	}
 	publish := func(owner manifest.NamedResource, doc map[string]any) {
 		t.Helper()
-		children, docs := parseChildrenForTest(
+		parseChildrenForTestResult9 := parseChildrenForTest(
 			owner,
 			[]map[string]any{doc},
 			manifest.ParseDocOptions{WipeSecrets: (*testCaseInput.wipe)},
 		)
+		children, docs := parseChildrenForTestResult9.Children, parseChildrenForTestResult9.Documents
 		c.emit(
 			t.Context(),
 			owner,
@@ -548,40 +515,34 @@ func testEmitRuntimeProducerTargetsCase(t *testing.T, testCaseInput testEmitRunt
 	publish(root.Named(), doc)
 	for _, target := range testCaseInput.tc.targets {
 		{
-			{
-				got := s.Productions(target, nil)
-				assert.FatalIf(
-					t,
-					len(got) != 1 || got[0].Declaration.Kind != testCaseInput.tc.kind,
-					"runtime declaration evidence: %v",
-					got,
-				)
-			}
+			got := s.Productions(target, nil)
+			assert.FatalIf(
+				t,
+				len(got) != 1 || got[0].Declaration.Kind != testCaseInput.tc.kind,
+				"runtime declaration evidence: %v",
+				got,
+			)
 		}
 		data := values.NewStoreProvider(s, (*testCaseInput.wipe)).Data(target)
 		known := (*testCaseInput.wipe) && testCaseInput.tc.name != "bucket" && target.Kind == manifest.KindSecret
-		{
-			assert.FatalIf(
-				t,
-				(data != nil) != known,
-				"known-key availability=%t want %t",
-				data != nil,
-				known,
-			)
-		}
+		assert.FatalIf(
+			t,
+			(data != nil) != known,
+			"known-key availability=%t want %t",
+			data != nil,
+			known,
+		)
 	}
 	if len(testCaseInput.tc.targets) == 0 {
 		for _, kind := range []string{manifest.KindSecret, manifest.KindConfigMap} {
 			{
-				{
-					got := s.Productions(
-						manifest.NamedResource{Kind: kind, Namespace: "apps", Name: "old"},
-						nil,
-					)
-					assert.FatalIf(t, len(
-						got,
-					) != 0, "%v", "lookalike produced a target")
-				}
+				got := s.Productions(
+					manifest.NamedResource{Kind: kind, Namespace: "apps", Name: "old"},
+					nil,
+				)
+				assert.FatalIf(t, len(
+					got,
+				) != 0, "%v", "lookalike produced a target")
 			}
 		}
 	}
@@ -620,93 +581,77 @@ func testEmitRuntimeProducerTargetsCaseTail(t *testing.T, tailCaseInput *testEmi
 	(*tailCaseInput.publish)((*tailCaseInput.root).Named(), renamed)
 	for _, target := range tailCaseInput.testCaseInput.tc.targets {
 		{
-			{
-				got := (*tailCaseInput.s).Productions(target, nil)
-				assert.FatalIf(
-					t,
-					len(got) != 1 || got[0].Owner != (*tailCaseInput.supporter).Named(),
-					"target rename changed independent contribution: %v",
-					got,
-				)
-			}
-		}
-		target.Name = "next"
-		{
+			got := (*tailCaseInput.s).Productions(target, nil)
 			assert.FatalIf(
 				t,
-				len((*tailCaseInput.s).Productions(target, nil)) != 1,
-				"%v",
-				"target rename lost new contribution",
+				len(got) != 1 || got[0].Owner != (*tailCaseInput.supporter).Named(),
+				"target rename changed independent contribution: %v",
+				got,
 			)
 		}
+		target.Name = "next"
+		assert.FatalIf(
+			t,
+			len((*tailCaseInput.s).Productions(target, nil)) != 1,
+			"%v",
+			"target rename lost new contribution",
+		)
 		data := values.NewStoreProvider((*tailCaseInput.s), (*tailCaseInput.testCaseInput.wipe)).Data(target)
 		if !(*tailCaseInput.testCaseInput.wipe) || tailCaseInput.testCaseInput.tc.name == "bucket" {
-			{
-				assert.FatalIf(t, data != nil, "%v", "unknown or wipe-disabled keys synthesized data")
-			}
+			assert.FatalIf(t, data != nil, "%v", "unknown or wipe-disabled keys synthesized data")
 			continue
 		}
+		assert.FatalIf(t, data == nil, "%v", "renamed declaration lost known keys")
 		{
-			assert.FatalIf(t, data == nil, "%v", "renamed declaration lost known keys")
+			valueResult3, err := data.Value("Y")
+			value, ok := valueResult3.Value, valueResult3.Found
+			assert.FatalIf(
+				t,
+				value != "..PLACEHOLDER_Y.." || !ok || err != nil,
+				"replacement key: %q %t %v",
+				value,
+				ok,
+				err,
+			)
 		}
 		{
-			{
-				value, ok, err := data.Value("Y")
-				assert.FatalIf(
-					t,
-					value != "..PLACEHOLDER_Y.." || !ok || err != nil,
-					"replacement key: %q %t %v",
-					value,
-					ok,
-					err,
-				)
-			}
-		}
-		{
-			{
-				_, ok, _ := data.Value("X")
-				assert.FatalIf(t, ok, "%v", "renamed declaration retained old key")
-			}
+			valueResult4, _ := data.Value("X")
+			ok := valueResult4.Found
+			assert.FatalIf(t, ok, "%v", "renamed declaration retained old key")
 		}
 	}
 	(*tailCaseInput.c).
 		emit(t.Context(), (*tailCaseInput.root).Named(), &store.Emission{Complete: true}, nil)
 	for _, target := range tailCaseInput.testCaseInput.tc.targets {
 		{
-			{
-				got := (*tailCaseInput.s).Productions(target, nil)
-				assert.FatalIf(
-					t,
-					len(got) != 1 || got[0].Owner != (*tailCaseInput.supporter).Named(),
-					"omission withdrew independent support: %v",
-					got,
-				)
-			}
-		}
-		target.Name = "next"
-		{
+			got := (*tailCaseInput.s).Productions(target, nil)
 			assert.FatalIf(
 				t,
-				len((*tailCaseInput.s).Productions(target, nil)) != 0,
-				"%v",
-				"omission retained cluster-only target",
+				len(got) != 1 || got[0].Owner != (*tailCaseInput.supporter).Named(),
+				"omission withdrew independent support: %v",
+				got,
 			)
 		}
+		target.Name = "next"
+		assert.FatalIf(
+			t,
+			len((*tailCaseInput.s).Productions(target, nil)) != 0,
+			"%v",
+			"omission retained cluster-only target",
+		)
 	}
 	(*tailCaseInput.c).
 		emit(t.Context(), (*tailCaseInput.supporter).Named(), &store.Emission{Complete: true}, nil)
 	for _, target := range tailCaseInput.testCaseInput.tc.targets {
-		{
-			assert.FatalIf(
-				t,
-				len((*tailCaseInput.s).Productions(target, nil)) != 0 ||
-					values.NewStoreProvider((*tailCaseInput.s), (*tailCaseInput.testCaseInput.wipe)).
-						Data(target) !=
-						nil,
-				"%v",
-				"last supporter withdrawal retained target data",
-			)
-		}
+		assert.FatalIf(
+			t,
+			len((*tailCaseInput.s).Productions(target, nil)) != 0 ||
+				values.NewStoreProvider((*tailCaseInput.s), (*tailCaseInput.testCaseInput.wipe)).
+					Data(target) !=
+					nil,
+			"%v",
+			"last supporter withdrawal retained target data",
+		)
 	}
 }
 
@@ -773,22 +718,17 @@ func testEmitRuntimeProducerDataPrecedenceCase(
 	}
 	data := values.NewStoreProvider(s, true).Data(target)
 	if (*testCaseInput.pending) != "none" && !(*testCaseInput.actual) {
-		{
-			assert.FatalIf(t, data != nil, "%v", "declaration placeholder outranked pending materializer")
-		}
+		assert.FatalIf(t, data != nil, "%v", "declaration placeholder outranked pending materializer")
 		return
 	}
-	{
-		assert.FatalIf(t, data == nil, "%v", "usable data missing")
-	}
-	got, _, err := data.Value("X")
+	assert.FatalIf(t, data == nil, "%v", "usable data missing")
+	valueResult5, err := data.Value("X")
+	got := valueResult5.Value
 	want := "..PLACEHOLDER_X.."
 	if *testCaseInput.actual {
 		want = "actual"
 	}
-	{
-		assert.FatalIf(t, err != nil || got != want, "value=%q want %q error=%v", got, want, err)
-	}
+	assert.FatalIf(t, err != nil || got != want, "value=%q want %q error=%v", got, want, err)
 }
 
 type testEmitRuntimeProducerTargetsCaseTailInputs struct {

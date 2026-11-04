@@ -124,16 +124,14 @@ spec:
 		[]Tree{{Path: root, RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		cfg,
 	)
-	{
-		assert.FatalIf(
-			t,
-			(err != nil) != testCaseInput.failure || len(rendered) != 1 || rendered[0].Result == nil,
-			"render error=%v, want failure=%t; trees=%v",
-			err,
-			testCaseInput.failure,
-			rendered,
-		)
-	}
+	assert.FatalIf(
+		t,
+		(err != nil) != testCaseInput.failure || len(rendered) != 1 || rendered[0].Result == nil,
+		"render error=%v, want failure=%t; trees=%v",
+		err,
+		testCaseInput.failure,
+		rendered,
+	)
 	rsID := manifest.NamedResource{
 		Group:     manifest.FluxOperatorDomain,
 		Kind:      manifest.KindResourceSet,
@@ -151,15 +149,13 @@ spec:
 	if testCaseInput.failure {
 		wantStatus, wantDocs = store.StatusFailed, 0
 	}
-	{
-		assert.FatalIf(
-			t,
-			info.Status != wantStatus || info.Outcome() == store.OutcomeSkipped,
-			"consumer status=%+v, want %s without a whole-set skip",
-			info,
-			wantStatus,
-		)
-	}
+	assert.FatalIf(
+		t,
+		info.Status != wantStatus || info.Outcome() == store.OutcomeSkipped,
+		"consumer status=%+v, want %s without a whole-set skip",
+		info,
+		wantStatus,
+	)
 	var docs []map[string]any
 	for _, batch := range outputByParent(rendered[0].Result.Manifests) {
 		for _, doc := range batch {
@@ -168,11 +164,10 @@ spec:
 			}
 		}
 	}
-	{
-		assert.FatalIf(t, len(docs) != wantDocs, "rendered %d consumer documents, want %d", len(docs), wantDocs)
-	}
+	assert.FatalIf(t, len(docs) != wantDocs, "rendered %d consumer documents, want %d", len(docs), wantDocs)
 	if wantDocs != 0 {
-		name, _ := manifest.DocMetadata(docs[0])
+		metadata := manifest.DocMetadata(docs[0])
+		name := metadata.Name
 		assert.Equal(t, name, "available")
 	}
 	assertOCIInputWarnings(t, rendered[0].Result.Warnings, providerID, testCaseInput.unavailable)
@@ -194,24 +189,20 @@ func assertOCIInputWarnings(
 		for warningIndex := range warningValues {
 			warning := warningValues[warningIndex]
 
-			{
-				assert.FatalIf(
-					t,
-					warning.Category == manifest.WarnOfflineInputProvider,
-					"registry acquisition warned offline: %+v",
-					warning,
-				)
-			}
+			assert.FatalIf(
+				t,
+				warning.Category == manifest.WarnOfflineInputProvider,
+				"registry acquisition warned offline: %+v",
+				warning,
+			)
 			if warning.Category == manifest.WarnSourceCredentialsUnavailable {
 				unavailable = append(unavailable, warning)
 			}
 		}
 	}
 	if wantUnavailable {
-		{
-			assert.FatalIf(t, len(unavailable) != 1 || unavailable[0].Resource != providerID ||
-				unavailable[0].Subject.ID != providerID, "unavailable provider diagnostic=%+v", unavailable)
-		}
+		assert.FatalIf(t, len(unavailable) != 1 || unavailable[0].Resource != providerID ||
+			unavailable[0].Subject.ID != providerID, "unavailable provider diagnostic=%+v", unavailable)
 	} else {
 		assert.FatalIf(t, len(unavailable) != 0, "hard failure became unavailable: %+v", unavailable)
 	}

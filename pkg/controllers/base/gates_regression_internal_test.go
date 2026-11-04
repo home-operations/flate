@@ -39,18 +39,22 @@ func TestFingerprintDedup_ChangedWorkBecomesPending(t *testing.T) {
 	s.AddObject(hr)
 	s.UpdateStatus(hr.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "completed"})
 	c := gateExecution(New(s, task.NewBounded(2)), hr.Named())
-	_, handled, err := c.FingerprintDedup(t.Context(), hr.Named(), "changed", &store.Emission{})
+	fingerprintDedupResult1, fingerprintDedupResult1Err := c.FingerprintDedup(
+		t.Context(),
+		hr.Named(),
+		"changed",
+		&store.Emission{},
+	)
+	_, handled, err := fingerprintDedupResult1.Fingerprint, fingerprintDedupResult1.Reused, fingerprintDedupResult1Err
 	info, _ := s.GetStatus(hr.Named())
-	{
-		assert.FatalIf(
-			t,
-			err != nil || handled || info.Status != store.StatusPending,
-			"admission=%t/%v, status=%+v",
-			handled,
-			err,
-			info,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err != nil || handled || info.Status != store.StatusPending,
+		"admission=%t/%v, status=%+v",
+		handled,
+		err,
+		info,
+	)
 }
 
 //nolint:paralleltest // This test changes process-global state.
@@ -71,28 +75,24 @@ func TestEmit_ApplyingProgress(t *testing.T) {
 	publication := func(t *testing.T, want string) {
 		t.Helper()
 		{
-			{
-				allocations := testing.AllocsPerRun(100, func() {
-					s.UpdateStatus(
-						parent.Named(),
-						store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "rendering"},
-					)
-					c.emit(t.Context(), parent.Named(), &next, nil)
-				})
-				assert.FatalIf(t, allocations != 0, "applying publication allocates %g times", allocations)
-			}
+			allocations := testing.AllocsPerRun(100, func() {
+				s.UpdateStatus(
+					parent.Named(),
+					store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "rendering"},
+				)
+				c.emit(t.Context(), parent.Named(), &next, nil)
+			})
+			assert.FatalIf(t, allocations != 0, "applying publication allocates %g times", allocations)
 		}
 		localInfo, _ := s.GetStatus(parent.Named())
 		assert.Equal(t, localInfo.String(), want)
 	}
 	t.Run("first", func(t *testing.T) { publication(t, "applying 0 objects") })
 	{
-		{
-			allocations := testing.AllocsPerRun(100, func() {
-				c.emit(t.Context(), parent.Named(), &next, nil)
-			})
-			assert.FatalIf(t, allocations != 0, "repeated publication allocates %g times", allocations)
-		}
+		allocations := testing.AllocsPerRun(100, func() {
+			c.emit(t.Context(), parent.Named(), &next, nil)
+		})
+		assert.FatalIf(t, allocations != 0, "repeated publication allocates %g times", allocations)
 	}
 	next.Manifests = testutil.DocumentOccurrences([]map[string]any{{"kind": "ConfigMap"}})
 	c.emit(t.Context(), parent.Named(), &next, nil)
@@ -153,21 +153,17 @@ func TestRequireRefresh_PreparedSource(t *testing.T) {
 			}
 			c := gateExecution(New(s, task.NewBounded(2)), canonical.Named())
 			got, err := c.RequireRefresh(t.Context(), prepared, manifest.GateArtifacts, manifest.DrainNone)
+			assert.FatalIf(t, got != want || canonical.Chart.Source.Kind != manifest.KindHelmRepository ||
+				prepared.Chart.Source.Kind != manifest.KindHelmChart, "canonical=%v prepared=%v returned=%v", canonical, prepared, got)
 			{
-				assert.FatalIf(t, got != want || canonical.Chart.Source.Kind != manifest.KindHelmRepository ||
-					prepared.Chart.Source.Kind != manifest.KindHelmChart, "canonical=%v prepared=%v returned=%v", canonical, prepared, got)
-			}
-			{
-				{
-					blocked, ok := errors.AsType[*depwait.ErrBlocked](
-						err,
-					)
-					assert.FatalIf(t, !ok ||
-						!slices.Equal(
-							blocked.Deps,
-							[]manifest.NamedResource{source},
-						), "prepared source gate=%v, want %s", err, source)
-				}
+				blocked, ok := errors.AsType[*depwait.ErrBlocked](
+					err,
+				)
+				assert.FatalIf(t, !ok ||
+					!slices.Equal(
+						blocked.Deps,
+						[]manifest.NamedResource{source},
+					), "prepared source gate=%v, want %s", err, source)
 			}
 		})
 	}
@@ -208,19 +204,13 @@ func TestRequireRefresh_DataPromotionRefreshesCanonical(t *testing.T) {
 	first := gateExecution(c, canonical.Named())
 	_ = first.Reads.GetObject(canonical.Named())
 	_, admissionErr1 := first.DataInputs(t.Context(), canonical, values.NewStoreProvider(&first.Reads, false))
-	{
-		assert.FatalIf(t, admissionErr1 != nil, "%v", admissionErr1)
-	}
-	{
-		assert.FatalIf(t, first.Reads.Valid(), "%v", "promotion did not invalidate the captured declaration")
-	}
+	assert.FatalIf(t, admissionErr1 != nil, "%v", admissionErr1)
+	assert.FatalIf(t, first.Reads.Valid(), "%v", "promotion did not invalidate the captured declaration")
 	second := gateExecution(c, canonical.Named())
 	got, _ := second.Reads.Get[*manifest.Kustomization](canonical.Named())
 	assert.Equal(t, got, fresh)
 	inputs, admissionErr2 := second.DataInputs(t.Context(), got, values.NewStoreProvider(&second.Reads, false))
-	{
-		assert.FatalIf(t, admissionErr2 != nil, "%v", admissionErr2)
-	}
+	assert.FatalIf(t, admissionErr2 != nil, "%v", admissionErr2)
 	assert.Equal(t, len(inputs), 1)
 	assert.Equal(t, inputs[0].NamedResource, replacement.Named())
 	assert.Equal(t, inputs[0].Input.Data, manifest.Data(replacement))
@@ -268,43 +258,35 @@ func TestRequireRefresh_ChangedCanonicalReferences(t *testing.T) {
 			c.Configure(Options{Index: index, Existence: promotion})
 			first := gateExecution(c, child.Named())
 			_, _ = first.RequireRefresh(t.Context(), child, manifest.GateParents, manifest.DrainNone)
-			{
-				assert.FatalIf(
-					t,
-					first.Reads.Valid(),
-					"%v",
-					"parent publication did not invalidate the captured attempt",
-				)
-			}
+			assert.FatalIf(
+				t,
+				first.Reads.Valid(),
+				"%v",
+				"parent publication did not invalidate the captured attempt",
+			)
 			second := gateExecution(c, child.Named())
 			got, err := second.RequireRefresh(t.Context(), fresh, manifest.GateParents, manifest.DrainNone)
-			{
-				assert.FatalIf(
-					t,
-					got != fresh || child.TargetNamespace != "" || child.PostBuild.SubstituteFrom[0].Name != "stale",
-					"canonical=%v, original=%v",
-					got,
-					child,
-				)
-			}
+			assert.FatalIf(
+				t,
+				got != fresh || child.TargetNamespace != "" || child.PostBuild.SubstituteFrom[0].Name != "stale",
+				"canonical=%v, original=%v",
+				got,
+				child,
+			)
 			if suspended {
 				info, _ := s.GetStatus(child.Named())
-				{
-					assert.FatalIf(
-						t,
-						!errors.Is(err, errSuspended) || info.Outcome() != store.OutcomeSuspended,
-						"error=%v, status=%+v",
-						err,
-						info,
-					)
-				}
+				assert.FatalIf(
+					t,
+					!errors.Is(err, errSuspended) || info.Outcome() != store.OutcomeSuspended,
+					"error=%v, status=%+v",
+					err,
+					info,
+				)
 				return
 			}
 			assert.NoError(t, err)
 			inputs, admissionErr3 := second.DataInputs(t.Context(), got, values.NewStoreProvider(&second.Reads, false))
-			{
-				assert.FatalIf(t, admissionErr3 != nil, "%v", admissionErr3)
-			}
+			assert.FatalIf(t, admissionErr3 != nil, "%v", admissionErr3)
 			assert.Equal(t, len(inputs), 1)
 			assert.Equal(t, inputs[0].Name, "current")
 		})
@@ -349,10 +331,14 @@ func TestEmit_LatePreflight(t *testing.T) {
 				},
 			)
 			execution := gateExecution(c, parent.Named())
-			_, handled, err := execution.FingerprintDedup(t.Context(), parent.Named(), "new content", &store.Emission{})
-			{
-				assert.FatalIf(t, handled || err != nil, "admission=%t/%v", handled, err)
-			}
+			fingerprintDedupResult2, fingerprintDedupResult2Err := execution.FingerprintDedup(
+				t.Context(),
+				parent.Named(),
+				"new content",
+				&store.Emission{},
+			)
+			_, handled, err := fingerprintDedupResult2.Fingerprint, fingerprintDedupResult2.Reused, fingerprintDedupResult2Err
+			assert.FatalIf(t, handled || err != nil, "admission=%t/%v", handled, err)
 			_, _, next := s.GetEmission(parent.Named())
 			defer next.Finish()
 			next.Children, next.Complete = []store.Child{{Obj: child}}, complete
@@ -360,23 +346,19 @@ func TestEmit_LatePreflight(t *testing.T) {
 			s.SetPreflight(parent.Named(), "cycle")
 			payloads := map[manifest.NamedResource]*store.SourceArtifact{child.Named(): {FS: fstest.MapFS{}}}
 			{
-				{
-					err := execution.Emit(t.Context(), parent.Named(), &next, payloads)
-					assert.FatalIf(t, err == nil, "publication error=%v", err)
-				}
+				err := execution.Emit(t.Context(), parent.Named(), &next, payloads)
+				assert.FatalIf(t, err == nil, "publication error=%v", err)
 			}
-			{
-				assert.FatalIf(
-					t,
-					s.GetObject(child.Named()) != nil || s.GetArtifact(child.Named(), store.ArtifactContent) != nil ||
-						s.GetArtifact(parent.Named(), store.ArtifactContent) != nil ||
-						filter.ShouldReconcile(
-							child.Named(),
-						),
-					"%v",
-					"rejected publication admitted children or expanded selection",
-				)
-			}
+			assert.FatalIf(
+				t,
+				s.GetObject(child.Named()) != nil || s.GetArtifact(child.Named(), store.ArtifactContent) != nil ||
+					s.GetArtifact(parent.Named(), store.ArtifactContent) != nil ||
+					filter.ShouldReconcile(
+						child.Named(),
+					),
+				"%v",
+				"rejected publication admitted children or expanded selection",
+			)
 		})
 	}
 }
@@ -417,47 +399,43 @@ func TestEmit_ProducerNamespacePolicy(t *testing.T) {
 				{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "data"}},
 				{"apiVersion": "v1", "kind": "Namespace", "metadata": map[string]any{"name": "cluster"}},
 			}
-			children, visible := testutil.ParseChildren(
-				c,
+			parsed2 := c.ParseChildren(
 				producer,
-				docs,
+				testutil.DocumentOccurrences(docs),
 				manifest.ParseDocOptions{DefaultNamespace: "wrong"},
 			)
-			{
-				assert.FatalIf(t, len(children) != 2 || len(visible) != 2, "children=%v, visible=%v", children, visible)
+			if failure := manifest.DocumentFailure(parsed2.Failures); failure != nil {
+				panic(failure)
 			}
-			{
-				assert.FatalIf(
-					t,
-					children[0].Obj.Named().Namespace != "target" || children[1].Obj.Named().Namespace != "",
-					"child identities=%v",
-					children,
-				)
-			}
-			_, ns := manifest.DocMetadata(visible[0])
+			children, visible := parsed2.Children, testutil.DocumentMaps(parsed2.Visible)
+			assert.FatalIf(t, len(children) != 2 || len(visible) != 2, "children=%v, visible=%v", children, visible)
+			assert.FatalIf(
+				t,
+				children[0].Obj.Named().Namespace != "target" || children[1].Obj.Named().Namespace != "",
+				"child identities=%v",
+				children,
+			)
+			metadata2 := manifest.DocMetadata(visible[0])
+			ns := metadata2.Namespace
 			policy := producer.EmissionPolicy()
-			{
-				assert.FatalIf(
-					t,
-					(ns == "") != policy.InternalNamespace,
-					"visible namespace=%q, policy=%+v",
-					ns,
-					policy,
-				)
-			}
-			_, clusterNamespace := manifest.DocMetadata(visible[1])
-			{
-				assert.FatalIf(
-					t,
-					clusterNamespace != "" || children[0].Doc["metadata"] == nil,
-					"%v",
-					"cluster scope or document binding changed",
-				)
-			}
-			_, authoredNamespace := manifest.DocMetadata(docs[0])
-			{
-				assert.FatalIf(t, authoredNamespace != "", "%v", "borrowed document changed during namespace admission")
-			}
+			assert.FatalIf(
+				t,
+				(ns == "") != policy.InternalNamespace,
+				"visible namespace=%q, policy=%+v",
+				ns,
+				policy,
+			)
+			metadata3 := manifest.DocMetadata(visible[1])
+			clusterNamespace := metadata3.Namespace
+			assert.FatalIf(
+				t,
+				clusterNamespace != "" || children[0].Doc["metadata"] == nil,
+				"%v",
+				"cluster scope or document binding changed",
+			)
+			metadata4 := manifest.DocMetadata(docs[0])
+			authoredNamespace := metadata4.Namespace
+			assert.FatalIf(t, authoredNamespace != "", "%v", "borrowed document changed during namespace admission")
 		})
 	}
 }
@@ -484,30 +462,28 @@ func TestEmit_KindExclusionPolicy(t *testing.T) {
 				),
 			)
 			assert.NoError(t, err)
-			children, visible := testutil.ParseChildren(c, producer, docs, manifest.ParseDocOptions{})
-			{
-				assert.FatalIf(
-					t,
-					len(visible) != 1 || manifest.DocKind(visible[0]) != "ServiceAccount",
-					"visible=%v",
-					visible,
-				)
+			parsed3 := c.ParseChildren(producer, testutil.DocumentOccurrences(docs), manifest.ParseDocOptions{})
+			if failure := manifest.DocumentFailure(parsed3.Failures); failure != nil {
+				panic(failure)
 			}
+			children, visible := parsed3.Children, testutil.DocumentMaps(parsed3.Visible)
+			assert.FatalIf(
+				t,
+				len(visible) != 1 || manifest.DocKind(visible[0]) != "ServiceAccount",
+				"visible=%v",
+				visible,
+			)
 			wantChildren := 4
 			if producer.EmissionPolicy().ExcludeChildren {
 				wantChildren = 1
 			}
-			{
-				assert.FatalIf(t, len(children) != wantChildren, "children=%d, want %d", len(children), wantChildren)
-			}
+			assert.FatalIf(t, len(children) != wantChildren, "children=%d, want %d", len(children), wantChildren)
 			_, _, next := s.GetEmission(producer.Named())
 			defer next.Finish()
 			next.Children, next.Manifests, next.Complete = children, testutil.DocumentOccurrences(visible), true
 			c.emit(t.Context(), producer.Named(), &next, nil)
 			accepted, _ := s.GetArtifact(producer.Named(), store.ArtifactContent).(*store.Emission)
-			{
-				assert.FatalIf(t, accepted == nil || len(accepted.Manifests) != 1, "accepted=%v", accepted)
-			}
+			assert.FatalIf(t, accepted == nil || len(accepted.Manifests) != 1, "accepted=%v", accepted)
 			for _, child := range children {
 				if s.GetObject(child.Obj.Named()) == nil {
 					t.Fatalf("internal child %s was hidden", child.Obj.Named())
@@ -550,16 +526,14 @@ func TestRequireRefresh_FailedParentRetainsInputFailures(t *testing.T) {
 			missing.Name = "missing"
 			if level == manifest.DrainNone {
 				{
-					{
-						blocked, ok := errors.AsType[*depwait.ErrBlocked](
-							err,
-						)
-						assert.FatalIf(t, !ok ||
-							!slices.Equal(
-								blocked.Deps,
-								[]manifest.NamedResource{missing},
-							), "gate=%v, want missing input blocked before terminal failure", err)
-					}
+					blocked, ok := errors.AsType[*depwait.ErrBlocked](
+						err,
+					)
+					assert.FatalIf(t, !ok ||
+						!slices.Equal(
+							blocked.Deps,
+							[]manifest.NamedResource{missing},
+						), "gate=%v, want missing input blocked before terminal failure", err)
 				}
 			} else {
 				{
@@ -601,10 +575,11 @@ func TestRequireRefresh_ArtifactReferences(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			s := store.New()
-			obj, _, _, err := manifest.ParseDoc(map[string]any{
+			parsed, err := manifest.ParseDoc(map[string]any{
 				"apiVersion": tc.apiVersion, "kind": tc.kind,
 				"metadata": map[string]any{"name": "consumer", "namespace": "apps"}, "spec": tc.spec,
 			}, manifest.ParseDocOptions{})
+			obj := parsed.Object
 			assert.NoError(t, err)
 			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 			s.AddObjects([]manifest.BaseManifest{obj, parent, tc.dependency})
@@ -623,14 +598,12 @@ func TestRequireRefresh_ArtifactReferences(t *testing.T) {
 				defer first.Close()
 				_, localErr := first.RequireRefresh(t.Context(), obj, manifest.GateParents, manifest.DrainNone)
 				blocked, ok := errors.AsType[*depwait.ErrBlocked](localErr)
-				{
-					assert.FatalIf(
-						t,
-						!ok || !slices.Equal(blocked.Deps, []manifest.NamedResource{parent.Named()}),
-						"parent gate=%v",
-						localErr,
-					)
-				}
+				assert.FatalIf(
+					t,
+					!ok || !slices.Equal(blocked.Deps, []manifest.NamedResource{parent.Named()}),
+					"parent gate=%v",
+					localErr,
+				)
 				s.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady})
 			}
 			c.emit(
@@ -644,19 +617,15 @@ func TestRequireRefresh_ArtifactReferences(t *testing.T) {
 			canonical, err := first.RequireRefresh(t.Context(), obj, tc.stage, manifest.DrainNone)
 			assert.Equal(t, canonical, obj)
 			blocked, ok := errors.AsType[*depwait.ErrBlocked](err)
-			{
-				assert.FatalIf(
-					t,
-					!ok || !slices.Equal(blocked.Deps, []manifest.NamedResource{tc.dependency.Named()}),
-					"reference gate=%v",
-					err,
-				)
-			}
+			assert.FatalIf(
+				t,
+				!ok || !slices.Equal(blocked.Deps, []manifest.NamedResource{tc.dependency.Named()}),
+				"reference gate=%v",
+				err,
+			)
 			s.SetArtifact(tc.dependency.Named(), &store.SourceArtifact{FS: fstest.MapFS{}})
 			s.UpdateStatus(tc.dependency.Named(), store.StatusInfo{Status: store.StatusReady})
-			{
-				assert.FatalIf(t, first.Reads.Valid(), "%v", "dependency transition retained a stale assessment")
-			}
+			assert.FatalIf(t, first.Reads.Valid(), "%v", "dependency transition retained a stale assessment")
 			fresh := gateExecution(c, obj.Named())
 			defer fresh.Close()
 			canonical, err = fresh.RequireRefresh(t.Context(), obj, tc.stage, manifest.DrainNone)

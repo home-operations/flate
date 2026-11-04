@@ -65,12 +65,10 @@ func (p *acceptedHistoryPublication) storedKey(t *testing.T) string {
 	stored, err := decodeFrame(data)
 	assert.NoError(t, err)
 	content := descriptor.Annotations["flate.accepted-render"]
-	{
-		assert.FatalIf(t, content == "" ||
-			content != manifest.Fingerprint(
-				data[12+int(binary.BigEndian.Uint32(data[8:12]))+stored.header.Size:],
-			), "%s", "stored accepted-frame key does not identify the actual accepted frame")
-	}
+	assert.FatalIf(t, content == "" ||
+		content != manifest.Fingerprint(
+			data[12+int(binary.BigEndian.Uint32(data[8:12]))+stored.header.Size:],
+		), "%s", "stored accepted-frame key does not identify the actual accepted frame")
 	return content
 }
 
@@ -88,14 +86,12 @@ func (p *acceptedHistoryPublication) unchanged(t *testing.T) func() {
 		assert.NoError(t, err)
 		current, err := os.ReadFile(p.indexPath)
 		assert.NoError(t, err)
-		{
-			assert.FatalIf(
-				t,
-				!bytes.Equal(current, content) || !after.ModTime().Equal(before.ModTime()),
-				"%s",
-				"unchanged accepted frame republished the OCI index",
-			)
-		}
+		assert.FatalIf(
+			t,
+			!bytes.Equal(current, content) || !after.ModTime().Equal(before.ModTime()),
+			"%s",
+			"unchanged accepted frame republished the OCI index",
+		)
 	}
 }
 
@@ -105,14 +101,12 @@ func (p *acceptedHistoryPublication) warm(t *testing.T) {
 	assert.NoError(t, err)
 	_, p.pending, _ = p.renderer.PreviousRender(t.Context(), p.req)
 	resident := p.pending.Value().(renderFrame)
-	{
-		assert.FatalIf(
-			t,
-			resident.accepted == nil || resident.acceptedKey == "" || resident.lookup == "",
-			"%s",
-			"warm receipt did not carry decoded accepted evidence",
-		)
-	}
+	assert.FatalIf(
+		t,
+		resident.accepted == nil || resident.acceptedKey == "" || resident.lookup == "",
+		"%s",
+		"warm receipt did not carry decoded accepted evidence",
+	)
 	check := p.unchanged(t)
 	assert.NoError(t, p.renderer.RecordRender(t.Context(), RenderAcceptance{
 		Owner:   p.owner,
@@ -168,17 +162,13 @@ func (p *acceptedHistoryPublication) change(t *testing.T) {
 	}))
 	changedIndex, err := os.ReadFile(p.indexPath)
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(
-			t,
-			p.storedKey(t) == p.initialKey,
-			"%s",
-			"changed accepted frame retained the previous content key",
-		)
-	}
-	{
-		assert.FatalIf(t, bytes.Equal(initialIndex, changedIndex), "%s", "changed accepted frame was not published")
-	}
+	assert.FatalIf(
+		t,
+		p.storedKey(t) == p.initialKey,
+		"%s",
+		"changed accepted frame retained the previous content key",
+	)
+	assert.FatalIf(t, bytes.Equal(initialIndex, changedIndex), "%s", "changed accepted frame was not published")
 	previous, complete := previousHistory(t.Context(), p.renderer, &p.req, p.owner)
 	assert.Equal(t, complete && previous != nil, true)
 	for range previous {

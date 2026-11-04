@@ -53,9 +53,7 @@ func testRenderCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 				assert.NoError(t, recordErr)
 			}
 		}
-		{
-			assert.NoError(t, err)
-		}
+		assert.NoError(t, err)
 	}
 	if (*testCaseInput) == "read" {
 		key := sourcecache.BlobKey{Content: renderKey(&req, root, nil), Render: sourcecache.RenderAccepted}
@@ -97,12 +95,10 @@ func testRenderCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 		if (*testCaseInput) == "publication" {
 			wantDocuments = 1
 		}
-		{
-			assert.FatalIf(t, len(out) != wantDocuments || !errors.Is(err, manifest.ErrFlux) ||
-				errors.Is(
-					err,
-					errdef.ErrNotFound,
-				), "%s fault returned output %q, error %v", (*testCaseInput), out, err)
-		}
+		assert.FatalIf(t, len(out) != wantDocuments || !errors.Is(err, manifest.ErrFlux) ||
+			errors.Is(
+				err,
+				errdef.ErrNotFound,
+			), "%s fault returned output %q, error %v", (*testCaseInput), out, err)
 	}
 }

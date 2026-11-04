@@ -258,15 +258,15 @@ func (c *Cache) Blob(
 }
 
 // RenderMetadata returns the current descriptor and generation without opening the payload.
-// The boolean reports whether this owner can persist renders. A nonempty lookup
+// Enabled reports whether this owner can persist renders. A nonempty lookup
 // MUST identify Blob accepted history for this content; an empty lookup derives it.
-func (c *Cache) RenderMetadata(ctx context.Context, content, lookup string) (ocispec.Descriptor, string, bool, error) {
+func (c *Cache) RenderMetadata(ctx context.Context, content, lookup string) (RenderMetadata, error) {
 	enabled, err := c.renderEnabled(ctx, content)
 	if err != nil || !enabled {
-		return ocispec.Descriptor{}, "", enabled, err
+		return RenderMetadata{Enabled: enabled}, err
 	}
 	if errErr := ctx.Err(); errErr != nil {
-		return ocispec.Descriptor{}, "", true, &CacheError{errErr}
+		return RenderMetadata{Enabled: true}, &CacheError{errErr}
 	}
 	var e *entry
 	if lookup != "" {
@@ -299,27 +299,27 @@ func (c *Cache) RenderMetadata(ctx context.Context, content, lookup string) (oci
 			e.ready.Store(true)
 		}
 		if err != nil {
-			return ocispec.Descriptor{}, "", true, err
+			return RenderMetadata{Enabled: true}, err
 		}
 	}
 	root := &c.blobRoots[slices.Index(blobAlgorithms[:], e.stored.Digest.Algorithm())]
 	current, temporary, err := root.current(c.root)
 	if err != nil {
-		return ocispec.Descriptor{}, "", true, &CacheError{err}
+		return RenderMetadata{Enabled: true}, &CacheError{err}
 	}
 	if temporary {
 		defer func() { _ = current.Close() }()
 	}
 	info, err := current.Stat(e.stored.Digest.Encoded())
 	if err != nil {
-		return ocispec.Descriptor{}, "", true, &CacheError{err}
+		return RenderMetadata{Enabled: true}, &CacheError{err}
 	}
 	if !info.Mode().IsRegular() {
-		return ocispec.Descriptor{}, "", true, &CacheError{
+		return RenderMetadata{Enabled: true}, &CacheError{
 			fmt.Errorf("%w: render blob is not a regular file", fs.ErrInvalid),
 		}
 	}
-	return e.descriptor, e.stored.Digest.String(), true, nil
+	return RenderMetadata{Descriptor: e.descriptor, Identity: e.stored.Digest.String(), Enabled: true}, nil
 }
 
 func (c *Cache) renderEnabled(ctx context.Context, content string) (bool, error) {
@@ -357,7 +357,8 @@ func (c *Cache) acquireOnce(ctx context.Context, keyValue *acquireKey, callbacks
 	if candidate != nil || err != nil {
 		return candidate, err
 	}
-	candidate, rejected, err := c.waveCandidate(ctx, &key, observed, callbacks.validate)
+	candidates, err := c.waveCandidate(ctx, &key, observed, callbacks.validate)
+	candidate, rejected := candidates.candidate, candidates.rejected
 	if candidate != nil || err != nil {
 		return candidate, err
 	}
@@ -632,8 +633,9 @@ func (c *Cache) prepareRenderBlob(ctx context.Context, key *BlobKey, lookupOnly 
 
 func (c *Cache) replayOutcome(key *acquireKey, e *entry) error {
 	if e != nil && e.outcome != nil {
-		isFresh, _ := e.outcome.observe(time.Now().UTC())
-		if isFresh {
+		freshness := e.outcome.observe(time.Now().UTC())
+
+		if freshness.fresh {
 			if err := c.touch(key, e); err != nil {
 				return err
 			}
@@ -648,4 +650,11 @@ func (c *Cache) missingGeneration(key *acquireKey, e *entry) error {
 		c.entries.CompareAndDelete(key.id, e)
 	}
 	return &CacheError{errdef.ErrNotFound}
+}
+
+// RenderMetadata identifies the accepted generation without opening its payload.
+type RenderMetadata struct {
+	Descriptor ocispec.Descriptor
+	Identity   string
+	Enabled    bool
 }

@@ -27,22 +27,18 @@ func TestReplaceValueAtPath_TypeCoercion(t *testing.T) {
 			t.Parallel()
 			got := map[string]any{}
 			err := replaceValueAtPath(got, tc.path, tc.val)
-			{
-				assert.FatalIf(t, err != nil, "replaceValueAtPath: %v", err)
-			}
+			assert.FatalIf(t, err != nil, "replaceValueAtPath: %v", err)
 			leaf := walkPath(t, got, tc.path)
-			{
-				assert.ErrorIf(
-					t,
-					!equalish(leaf, tc.want),
-					"path %q: got %v (%T), want %v (%T)",
-					tc.path,
-					leaf,
-					leaf,
-					tc.want,
-					tc.want,
-				)
-			}
+			assert.ErrorIf(
+				t,
+				!equalish(leaf, tc.want),
+				"path %q: got %v (%T), want %v (%T)",
+				tc.path,
+				leaf,
+				leaf,
+				tc.want,
+				tc.want,
+			)
 		})
 	}
 }

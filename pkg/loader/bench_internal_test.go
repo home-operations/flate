@@ -368,10 +368,11 @@ func benchmarkRecordObjectCase(b *testing.B, kind string, count int) {
 			}
 		}
 		var err error
-		obj, _, _, err = manifest.ParseDoc(map[string]any{
+		parsed, parsedErr := manifest.ParseDoc(map[string]any{
 			"apiVersion": api, "kind": kind,
 			"metadata": map[string]any{"name": "app", "namespace": "ns"}, "spec": spec,
 		}, manifest.ParseDocOptions{DefaultNamespace: ""})
+		obj, err = parsed.Object, parsedErr
 		if err != nil {
 			b.Fatal(err)
 		}

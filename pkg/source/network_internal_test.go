@@ -27,7 +27,7 @@ import (
 func networkTimeout() error { return &net.OpError{Op: "dial", Net: "tcp", Err: os.ErrDeadlineExceeded} }
 
 func networkGet(ctx context.Context, client *http.Client, target string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
 	if err != nil {
 		return err
 	}

@@ -126,7 +126,8 @@ func (c *execution) render(
 			content = hr.Content(key, omitted)
 		}
 		var innerLocalErr error
-		fp, handled, innerLocalErr = c.run.FingerprintDedup(ctx, id, content, &attempt)
+		fingerprintDedupResult1, fingerprintDedupResult1Err := c.run.FingerprintDedup(ctx, id, content, &attempt)
+		fp, handled, innerLocalErr = fingerprintDedupResult1.Fingerprint, fingerprintDedupResult1.Reused, fingerprintDedupResult1Err
 		if handled || innerLocalErr != nil {
 			return handled, innerLocalErr
 		}
@@ -159,11 +160,12 @@ func (c *execution) render(
 	}
 	hr.EmissionPolicy().Stamp(docs)
 
-	attempt.Children, attempt.Manifests, attempt.Failures = c.ParseChildren(
+	parseChildrenResult2 := c.ParseChildren(
 		hr,
 		docs,
 		manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets},
 	)
+	attempt.Children, attempt.Manifests, attempt.Failures = parseChildrenResult2.Children, parseChildrenResult2.Visible, parseChildrenResult2.Failures
 	attempt.Fingerprint, attempt.Complete, attempt.Render = fp, true, receipt
 	if err := c.run.Emit(ctx, id, &attempt, nil); err != nil {
 		return err

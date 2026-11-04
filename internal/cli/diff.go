@@ -218,7 +218,7 @@ func (d *diffFlags) payload(inv *selectedInvocation, encoder output.Encoder) sel
 			result.err = errors.Join(result.err, err)
 			continue
 		}
-		left, right, notes := diffprep.Suppress(
+		batches := diffprep.Suppress(
 			diffprep.Snapshot{
 				Subjects:     orig.Subjects,
 				Manifests:    orig.Manifests,
@@ -232,9 +232,10 @@ func (d *diffFlags) payload(inv *selectedInvocation, encoder output.Encoder) sel
 				ProducerKeys: current.ProducerKeys,
 			},
 		)
+
 		p := diffprep.Prepare(
-			diffprep.Documents(left),
-			diffprep.Documents(right),
+			diffprep.Documents(batches.Orig),
+			diffprep.Documents(batches.Current),
 			diffprep.Options{
 				Subjects: [2]map[manifest.NamedResource]manifest.DiagnosticIdentity{
 					orig.Subjects,
@@ -244,7 +245,7 @@ func (d *diffFlags) payload(inv *selectedInvocation, encoder output.Encoder) sel
 				StripFields: d.stripFields,
 			},
 		)
-		result.warnings[i] = preparedDiffWarnings(&p, notes)
+		result.warnings[i] = preparedDiffWarnings(&p, batches.Suppressed)
 		var err error
 		if format == output.FormatDiff || format == output.FormatHTML {
 			lines[i], err = output.PrepareLines(p)

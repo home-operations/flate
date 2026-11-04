@@ -27,23 +27,19 @@ func TestBootstrapAlias_SourceKinds(t *testing.T) {
 			behavior, ok := obj.(interface {
 				BootstrapAlias(string) (BaseManifest, *GitRepository)
 			})
-			{
-				assert.FatalIf(t, ok != (obj == git), "bootstrap capability on %T", obj)
-			}
+			assert.FatalIf(t, ok != (obj == git), "bootstrap capability on %T", obj)
 			if !ok {
 				return
 			}
 			before := Fingerprint(obj)
 			alias, descriptor := behavior.BootstrapAlias("/repo")
 			assert.Equal(t, alias.Named(), obj.Named())
-			{
-				assert.FatalIf(
-					t,
-					alias == obj || Fingerprint(obj) != before,
-					"%s",
-					"alias mutated or retained receiver",
-				)
-			}
+			assert.FatalIf(
+				t,
+				alias == obj || Fingerprint(obj) != before,
+				"%s",
+				"alias mutated or retained receiver",
+			)
 			a := alias.(*GitRepository)
 			assert.Equal(t, descriptor, git)
 			assert.Equal(t, a.URL, "file:///repo")

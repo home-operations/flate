@@ -226,7 +226,8 @@ func projectTemplateDocument(document []byte, namespace string, projected bool, 
 				},
 				specKey: fields.Spec,
 			}
-			object, _, _, parseDocErr := ParseDoc(doc, ParseDocOptions{DefaultNamespace: namespace})
+			parsed, parseDocErr := ParseDoc(doc, ParseDocOptions{DefaultNamespace: namespace})
+			object := parsed.Object
 			if parseDocErr == nil && object != nil {
 				yield(object, fields.Metadata.Namespace)
 			}
@@ -285,8 +286,10 @@ func projectTemplateNode(node *kyaml.RNode, namespace string, projected bool, yi
 			return
 		}
 	}
-	_, authoredNamespace := DocMetadata(doc)
-	object, _, _, err := ParseDoc(doc, ParseDocOptions{DefaultNamespace: namespace})
+	metadata := DocMetadata(doc)
+	authoredNamespace := metadata.Namespace
+	parsed2, err := ParseDoc(doc, ParseDocOptions{DefaultNamespace: namespace})
+	object := parsed2.Object
 	if err != nil || object == nil {
 		return
 	}
@@ -346,12 +349,12 @@ func (p *resourceSetTemplates) visit(r *ResourceSet, data []byte, jsonDocument b
 			p.inputs = []map[string]any{nil}
 		}
 	}
-	template, err := resourcesetinput.Parse(string(data))
+	tmpl, err := resourcesetinput.Parse(string(data))
 	if err != nil {
 		return
 	}
 	for _, input := range p.inputs {
-		rendered, err := template.Execute(input)
+		rendered, err := tmpl.Execute(input)
 		if err != nil {
 			continue
 		}

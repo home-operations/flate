@@ -145,7 +145,7 @@ func testLocateRepositorySelectionRetainedCoordinatesAndConfiguration(t *testing
 	testutil.WriteFile(t, root, ".git/config", "[remote \"origin\"]\nurl = https://host/replaced\n")
 	assert.Diff(t, location.URLs, []string{"https://host/original"})
 	assert.Diff(t, location.Config.Remotes["origin"].URLs, []string{"https://host/original"})
-	assert.Equal(t, os.Remove(filepath.Join(root, ".git/config")), nil)
+	assert.Equal(t, os.Remove(filepath.Join(root, ".git", "config")), nil)
 	assert.Diff(t, location.Config.Remotes["origin"].URLs, []string{"https://host/original"})
 }
 

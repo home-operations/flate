@@ -149,7 +149,8 @@ func runDiffOmittedValuesNameLoop(t *testing.T, loopInputs struct {
 			args = append(args, "--namespace", (*loopInputs.tc).namespace)
 		}
 
-		stdout, stderr, code := runCLI(t, args...)
+		cli := runCLI(t, args...)
+		stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 		assert.Equal(t, code, (*loopInputs.tc).wantCode)
 		assert.Equal(
 			t,

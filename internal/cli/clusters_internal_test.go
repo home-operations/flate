@@ -27,7 +27,7 @@ import (
 	"github.com/home-operations/flate/pkg/orchestrator"
 )
 
-func runClusterInputs(t *testing.T, argv ...string) (string, string, int) {
+func runClusterInputs(t *testing.T, argv ...string) cliResult {
 	t.Helper()
 	verb, kind, name := argv[0], "all", ""
 	args := argv[1:]
@@ -88,7 +88,7 @@ func runClusterInputs(t *testing.T, argv ...string) (string, string, int) {
 			func(group selectedGroup) bool { return group.sides[0].Counts[kinds[0]] == 0 },
 		)
 		if len(inv.groups) == 0 {
-			return "", noNamedError(kinds[0], name, "independent trees").Error(), 1
+			return cliResult{stderr: noNamedError(kinds[0], name, "independent trees").Error(), code: 1}
 		}
 	}
 	encoder := output.Encoder{Writer: &stdout, Format: output.Format(c.output)}
@@ -96,9 +96,9 @@ func runClusterInputs(t *testing.T, argv ...string) (string, string, int) {
 	payload := command.payload(t, inv, encoder)
 
 	if err := finishSelected(&req, inv, &payload); err != nil {
-		return stdout.String(), stderr.String(), 1
+		return cliResult{stdout: stdout.String(), stderr: stderr.String(), code: 1}
 	}
-	return stdout.String(), stderr.String(), 0
+	return cliResult{stdout: stdout.String(), stderr: stderr.String(), code: 0}
 }
 
 func clusterSnapshot(side *selection.Selection) diff.Snapshot {
@@ -186,20 +186,22 @@ spec:
 func TestRun_ClusterGroups_PayloadAndSelection(t *testing.T) {
 	root := writeClusterGroupsFixture(t, map[string]string{"omega": "second", "alpha": "first"})
 	args := []string{"build", "all", "--path", root, "-o", "json", "--concurrency", "2"}
-	collision, diagnostic, status := runCLI(t, args...)
+	cli := runCLI(t, args...)
+	collision, diagnostic, status := cli.stdout, cli.stderr, cli.code
 	assert.FatalIf(t, status != 0 || !strings.Contains(collision, "example.test/app:") ||
 		strings.Contains(
 			diagnostic,
 			"duplicate resource(s)",
 		), "discovery root did not render clusters: code=%d stdout=%s stderr=%s", status, collision, diagnostic)
-	stdout, stderr, code := runClusterInputs(t, args...)
+	cluster := runClusterInputs(t, args...)
+	stdout, stderr, code := cluster.stdout, cluster.stderr, cluster.code
 	assert.FatalIf(t, code != 0, "group build: code=%d stdout=%s stderr=%s", code, stdout, stderr)
 	var groups []output.DocumentGroup
 	assert.NoError(t, json.Unmarshal([]byte(stdout), &groups))
 	assert.FatalIf(t, len(groups) != 2, "got groups: %s", stdout)
 	for i, dir := range []string{"alpha", "omega"} {
 		assert.Equal(t, groups[i].Cluster, dir)
-		entry, diagnostics, statusInner := runClusterInputs(
+		cluster2 := runClusterInputs(
 			t,
 			"build",
 			"all",
@@ -210,17 +212,19 @@ func TestRun_ClusterGroups_PayloadAndSelection(t *testing.T) {
 			"--concurrency",
 			"2",
 		)
+		entry, diagnostics, statusInner := cluster2.stdout, cluster2.stderr, cluster2.code
 		assert.FatalIf(t, statusInner != code, "entry %s status=%d stderr=%s", dir, statusInner, diagnostics)
 		var documents []map[string]any
 		assert.NoError(t, json.Unmarshal([]byte(entry), &documents))
 		assert.Diff(t, groups[i].Documents, documents)
 	}
-	again, diagnostics, status := runClusterInputs(t, args...)
+	cluster3 := runClusterInputs(t, args...)
+	again, diagnostics, status := cluster3.stdout, cluster3.stderr, cluster3.code
 	assert.Equal(t, status, code)
 	assert.Equal(t, again, stdout)
 	assert.Equal(t, diagnostics, stderr)
 
-	stdout, stderr, code = runClusterInputs(
+	cluster4 := runClusterInputs(
 		t,
 		"get",
 		"ks",
@@ -232,21 +236,25 @@ func TestRun_ClusterGroups_PayloadAndSelection(t *testing.T) {
 		"--concurrency",
 		"2",
 	)
+	stdout, stderr, code = cluster4.stdout, cluster4.stderr, cluster4.code
 	assert.Equal(t, code, 0)
 	assert.Equal(t, stdout, "alpha:shared\nomega:shared\n")
 	assert.Equal(t, stderr, "\n  alpha: ✓ 0 failed\n\n  omega: ✓ 0 failed\n")
-	stdout, _, code = runClusterInputs(t, "get", "ks", "--path", root, "--concurrency", "2")
+	cluster5 := runClusterInputs(t, "get", "ks", "--path", root, "--concurrency", "2")
+	stdout, code = cluster5.stdout, cluster5.code
 	assert.Equal(t, code, 0)
 	assert.Equal(
 		t,
 		stdout,
 		"CLUSTER    NAMESPACE      NAME      PATH\nalpha      flux-system    shared    ./alpha/app\nomega      flux-system    shared    ./omega/app\n",
 	)
-	stdout, stderr, code = runClusterInputs(t, "get", "images", "--path", root, "--concurrency", "2")
+	cluster6 := runClusterInputs(t, "get", "images", "--path", root, "--concurrency", "2")
+	stdout, stderr, code = cluster6.stdout, cluster6.stderr, cluster6.code
 	assert.Equal(t, code, 0)
 	assert.Equal(t, stdout, "CLUSTER    IMAGE\nalpha      example.test/app:first\nomega      example.test/app:second\n")
 	assert.Equal(t, stderr, "\n  alpha: ✓ 0 failed\n\n  omega: ✓ 0 failed\n")
-	stdout, stderr, code = runClusterInputs(t, "test", "ks", "shared", "--path", root, "--concurrency", "2")
+	cluster7 := runClusterInputs(t, "test", "ks", "shared", "--path", root, "--concurrency", "2")
+	stdout, stderr, code = cluster7.stdout, cluster7.stderr, cluster7.code
 	assert.FatalIf(t, code != 0 || !strings.Contains(stdout, "alpha: flux-system/shared") ||
 		!strings.Contains(stdout, "omega: flux-system/shared") ||
 		strings.Contains(stdout, "Cluster:") ||
@@ -260,7 +268,7 @@ func TestRun_ClusterGroups_PayloadAndSelection(t *testing.T) {
 		testutil.KustomizationYAML("only-alpha", "flux-system", "  path: ./alpha/app\n"),
 	)
 	testutil.WriteFile(t, root, "alpha/kustomization.yaml", "resources: [flux.yaml, extra.yaml]\n")
-	stdout, stderr, code = runClusterInputs(
+	cluster8 := runClusterInputs(
 		t,
 		"get",
 		"ks",
@@ -272,6 +280,7 @@ func TestRun_ClusterGroups_PayloadAndSelection(t *testing.T) {
 		"--concurrency",
 		"2",
 	)
+	stdout, stderr, code = cluster8.stdout, cluster8.stderr, cluster8.code
 	assert.Equal(t, code, 0)
 	assert.Equal(t, stdout, "only-alpha\n")
 	assert.FatalIf(
@@ -280,10 +289,12 @@ func TestRun_ClusterGroups_PayloadAndSelection(t *testing.T) {
 		"another cluster's absence rejected a named match: %s",
 		stderr,
 	)
-	stdout, _, code = runClusterInputs(t, "get", "ks", "only-alpha", "--path", root, "--concurrency", "2")
+	cluster9 := runClusterInputs(t, "get", "ks", "only-alpha", "--path", root, "--concurrency", "2")
+	stdout, code = cluster9.stdout, cluster9.code
 	assert.Equal(t, code, 0)
 	assert.Equal(t, stdout, "NAMESPACE      NAME          PATH\nflux-system    only-alpha    ./alpha/app\n")
-	stdout, stderr, code = runClusterInputs(t, "test", "ks", "only-alpha", "--path", root, "--concurrency", "2")
+	cluster10 := runClusterInputs(t, "test", "ks", "only-alpha", "--path", root, "--concurrency", "2")
+	stdout, stderr, code = cluster10.stdout, cluster10.stderr, cluster10.code
 	assert.Equal(t, code, 0)
 	assert.FatalIf(
 		t,
@@ -292,7 +303,8 @@ func TestRun_ClusterGroups_PayloadAndSelection(t *testing.T) {
 		stdout,
 		stderr,
 	)
-	_, stderr, code = runClusterInputs(t, "get", "ks", "absent", "--path", root, "--concurrency", "2")
+	cluster11 := runClusterInputs(t, "get", "ks", "absent", "--path", root, "--concurrency", "2")
+	stderr, code = cluster11.stderr, cluster11.code
 	assert.FatalIf(
 		t,
 		code != 1 || !strings.Contains(stderr, "absent"),
@@ -301,7 +313,8 @@ func TestRun_ClusterGroups_PayloadAndSelection(t *testing.T) {
 		stderr,
 	)
 	writeGetRelease(t, root, "alpha")
-	stdout, stderr, code = runClusterInputs(t, "get", "all", "--path", root, "--concurrency", "2")
+	cluster12 := runClusterInputs(t, "get", "all", "--path", root, "--concurrency", "2")
+	stdout, stderr, code = cluster12.stdout, cluster12.stderr, cluster12.code
 	assert.FatalIf(
 		t,
 		code != 0 || strings.Count(stdout, "CLUSTER") != 2 || !strings.Contains(stdout, "HelmRelease/shared") ||
@@ -320,9 +333,10 @@ func TestRun_ClusterGroups_PayloadAndSelection(t *testing.T) {
 
 	for _, format := range []string{"table", "name", "json", "yaml"} {
 		for _, command := range []string{"get all", "get"} {
-			out, diagnostics, status := runClusterInputs(
+			cluster13 := runClusterInputs(
 				t,
 				append(strings.Fields(command), "--path", root, "--concurrency", "2", "-n", "absent", "-o", format)...)
+			out, diagnostics, status := cluster13.stdout, cluster13.stderr, cluster13.code
 			assert.FatalIf(t, status != 0, "empty roster: exit=%d stdout=%s stderr=%s", status, out, diagnostics)
 			if format == "json" || format == "yaml" {
 				groups := decodeGetDocuments(t, out, format, []string{"alpha", "omega"})
@@ -341,7 +355,8 @@ func TestRun_ClusterGroups_PayloadAndSelection(t *testing.T) {
 func TestRun_ClusterGroups_PartialFailure(t *testing.T) {
 	root := writeClusterGroupsFixture(t, map[string]string{"alpha": "first", "omega": "second"})
 	appendScopeSpec(t, root, "alpha/flux.yaml", "  dependsOn: [{name: missing}]\n")
-	stdout, stderr, code := runClusterInputs(t, "build", "all", "--path", root, "-o", "json", "--concurrency", "2")
+	cluster := runClusterInputs(t, "build", "all", "--path", root, "-o", "json", "--concurrency", "2")
+	stdout, stderr, code := cluster.stdout, cluster.stderr, cluster.code
 	assert.FatalIf(
 		t,
 		code != 1 || !strings.Contains(stderr, "alpha: flux-system/missing") || strings.Contains(stderr, "Cluster:") ||
@@ -398,7 +413,7 @@ func TestRun_ClusterReport_NativeAggregateInputs(t *testing.T) {
 	}
 	testutil.WriteFile(t, current, "omega/flux.yaml", testutil.KustomizationYAML("shared", "flux-system",
 		"  path: ./omega/app\n  postBuild: {substitute: {CLUSTER: new}}\n"))
-	html, diagnostics, status := runClusterInputs(
+	cluster := runClusterInputs(
 		t,
 		"diff",
 		"all",
@@ -411,6 +426,7 @@ func TestRun_ClusterReport_NativeAggregateInputs(t *testing.T) {
 		"--concurrency",
 		"2",
 	)
+	html, diagnostics, status := cluster.stdout, cluster.stderr, cluster.code
 	assert.Equal(t, status, 0)
 	for _, token := range []string{`<section class="resource" id="r0">`, `<section class="resource" id="r1">`, "Pod alpha: apps/shared", "Pod omega: apps/shared"} {
 		assert.FatalIf(
@@ -507,7 +523,7 @@ func clusterDiffPayloadLoop(t *testing.T, loopInputs struct {
 			loopInputs.payload.warnings[i] = appendSuppressionWarnings(warnings, notes)
 			continue
 		}
-		left, right, notes := diffprep.Suppress(
+		batches := diffprep.Suppress(
 			diffprep.Snapshot{
 				Subjects:     before.Subjects,
 				Manifests:    before.Manifests,
@@ -521,6 +537,7 @@ func clusterDiffPayloadLoop(t *testing.T, loopInputs struct {
 				ProducerKeys: after.ProducerKeys,
 			},
 		)
+		left, right, notes := batches.Orig, batches.Current, batches.Suppressed
 		prepared := diffprep.Prepare(
 			diffprep.Documents(left),
 			diffprep.Documents(right),

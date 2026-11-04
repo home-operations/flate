@@ -67,7 +67,7 @@ func NewSparseGit(tb testing.TB, files int, blobBytes int64) SparseGit {
 	if err != nil {
 		tb.Fatal(err)
 	}
-	info, err := os.Stat(filepath.Join(root, "unrelated/large.txt"))
+	info, err := os.Stat(filepath.Join(root, "unrelated", "large.txt"))
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func (s *SparseGit) assertSnapshots(tb testing.TB, files int) {
 func writeSparseBlob(tb testing.TB, root string, repo *git.Repository, blobBytes int64) plumbing.Hash {
 	tb.Helper()
 	file, err := os.OpenFile(
-		filepath.Join(root, "unrelated/large.txt"),
+		filepath.Join(root, "unrelated", "large.txt"),
 		os.O_RDWR,
 		0o600,
 	)

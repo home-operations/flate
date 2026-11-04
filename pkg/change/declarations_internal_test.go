@@ -125,18 +125,19 @@ func TestWithDeclarations_LocalApplicabilityAndSelectedKey(t *testing.T) {
 			),
 			nil,
 		)
-		changed, known := frozen.OutputChanged(manifest.TreeSide(side), manifest.BootstrapSourceID, ref, owner)
+		comparison := frozen.OutputChanged(manifest.TreeSide(side), manifest.BootstrapSourceID, ref, owner)
+		changed, known := comparison.Changed, comparison.Known
 		assert.Equal(t, known, true)
 		assert.Equal(t, changed, false)
-		_, known = frozen.OutputChanged(manifest.TreeSide(side), manifest.BootstrapSourceID, ref, owner.Clone())
+		known = frozen.OutputChanged(manifest.TreeSide(side), manifest.BootstrapSourceID, ref, owner.Clone()).Known
 		assert.Equal(t, known, false)
 		ref.Key = "unobserved"
-		_, known = frozen.OutputChanged(manifest.TreeSide(side), manifest.BootstrapSourceID, ref, owner)
+		known = frozen.OutputChanged(manifest.TreeSide(side), manifest.BootstrapSourceID, ref, owner).Known
 		assert.Equal(t, known, false)
 		replacement := owner.Clone()
 		replacement.ValuesFrom[0].Name = "replacement"
 		for ref := range manifest.References(replacement, manifest.ReferenceRelations) {
-			_, known = frozen.OutputChanged(manifest.TreeSide(side), manifest.BootstrapSourceID, ref, replacement)
+			known = frozen.OutputChanged(manifest.TreeSide(side), manifest.BootstrapSourceID, ref, replacement).Known
 			assert.Equal(t, known, false)
 		}
 	}
@@ -147,9 +148,9 @@ func TestWithDeclarations_LocalApplicabilityAndSelectedKey(t *testing.T) {
 		unknown.OppositeDeclaration(manifest.TreeBase, manifest.BootstrapSourceID, owners[0].Named(), owners[0]),
 		nil,
 	)
-	_, known := unknown.OutputChanged(
+	known := unknown.OutputChanged(
 		manifest.TreeBase, manifest.BootstrapSourceID, manifest.Reference{NamedResource: owners[0].Named()}, owners[0],
-	)
+	).Known
 	assert.Equal(t, known, false)
 	assert.Equal(t, len(changes.declarations), 0)
 }
@@ -184,12 +185,12 @@ func TestWithDeclarations_ProducerOwnedRawIsUnknown(t *testing.T) {
 		frozen.OppositeDeclaration(manifest.TreeBase, manifest.BootstrapSourceID, child.Named(), child),
 		nil,
 	)
-	_, known := frozen.OutputChanged(
+	known := frozen.OutputChanged(
 		manifest.TreeBase,
 		manifest.BootstrapSourceID,
 		manifest.Reference{NamedResource: child.Named()},
 		child,
-	)
+	).Known
 	assert.Equal(t, known, false)
 }
 
@@ -225,17 +226,13 @@ func TestWithDeclarations_DoesNotRetainSourceCaptures(t *testing.T) {
 		delta, descriptors, _ := frozen.ForSource(manifest.BootstrapSourceID)
 		for side, snapshot := range descriptors {
 			assert.Equal(t, snapshot, frozen.origins[side])
-			{
-				assert.FatalIf(
-					t,
-					snapshot == nil || snapshot.Reads != nil || snapshot.ContentFingerprint != nil,
-					"%v",
-					"source capture retained in frozen comparison",
-				)
-			}
-			{
-				assert.FatalIf(t, snapshot == inputs[side], "%v", "source descriptor was borrowed")
-			}
+			assert.FatalIf(
+				t,
+				snapshot == nil || snapshot.Reads != nil || snapshot.ContentFingerprint != nil,
+				"%v",
+				"source capture retained in frozen comparison",
+			)
+			assert.FatalIf(t, snapshot == inputs[side], "%v", "source descriptor was borrowed")
 			snapshot.Metadata["key"] = "private"
 			snapshot.Warnings[0].Detail[0] = "private"
 			assert.Equal(t, inputs[side].Metadata["key"], "original")
@@ -243,9 +240,7 @@ func TestWithDeclarations_DoesNotRetainSourceCaptures(t *testing.T) {
 		}
 		_, snapshots, _ := delta.ForSource(manifest.BootstrapSourceID)
 		for _, snapshot := range snapshots {
-			{
-				assert.FatalIf(t, snapshot != nil && snapshot.Reads != nil, "%v", "source delta retained a capture")
-			}
+			assert.FatalIf(t, snapshot != nil && snapshot.Reads != nil, "%v", "source delta retained a capture")
 		}
 	}
 }
@@ -539,9 +534,10 @@ func testWithDeclarationsPreparedProductionCase(
 	frozen, err := changes.WithDeclarations(t.Context(), stores[0], stores[1], prepared)
 	assert.NoError(t, err)
 	for side, child := range children {
-		changed, known := frozen.OutputChanged(
+		comparison7 := frozen.OutputChanged(
 			manifest.TreeSide(side), source, manifest.Reference{NamedResource: child.Named()}, child,
 		)
+		changed, known := comparison7.Changed, comparison7.Known
 		var opposite manifest.BaseManifest
 		if !testCaseInput.foreign && !testCaseInput.missing {
 			opposite = children[1-side]
@@ -605,12 +601,13 @@ func testWithDeclarationsEffectiveInputApplicabilityCase(
 			if ref.NamedResource != inputID {
 				continue
 			}
-			changed, known := frozen.OutputChanged(
+			comparison8 := frozen.OutputChanged(
 				manifest.TreeSide(side),
 				manifest.BootstrapSourceID,
 				ref,
 				owner,
 			)
+			changed, known := comparison8.Changed, comparison8.Known
 			assert.Equal(t, known, true)
 			assert.Equal(t, changed, (*testCaseInput) != "unused")
 		}

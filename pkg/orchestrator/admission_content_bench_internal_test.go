@@ -14,7 +14,8 @@ import (
 func BenchmarkRender_Namespace(b *testing.B) {
 	for _, peers := range []int{2, 64} {
 		b.Run(fmt.Sprintf("peers=%d", peers), func(b *testing.B) {
-			tree, artifact := namespaceChildrenFixture(b, peers)
+			namespaceChildrenFixtureResult1 := namespaceChildrenFixture(b, peers)
+			tree, artifact := namespaceChildrenFixtureResult1.tree, namespaceChildrenFixtureResult1.artifact
 			cfg := Config{
 				Concurrency: 2,
 				Selection: manifest.Selection{

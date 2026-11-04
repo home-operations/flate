@@ -181,9 +181,7 @@ func reconcileEntryForTest(t *testing.T, o *Orchestrator) {
 	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{
 		Tasks: o.tasks, Store: o.store, ID: o.entryBinding.Producer, ReconcileNode: o.ksc.ReconcileNode,
 	})
-	{
-		assert.FatalIf(t, info.Status != store.StatusReady, "entry staging failed: %v", info)
-	}
+	assert.FatalIf(t, info.Status != store.StatusReady, "entry staging failed: %v", info)
 }
 
 type newTestOrchestratorTailInputs struct {

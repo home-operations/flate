@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -44,6 +45,12 @@ func TestFetcher_AnonymousBucketsShareIAM(t *testing.T) {
 	t.Cleanup(bucket.Close)
 	var workers sync.WaitGroup
 	start := make(chan struct{})
+	closers := make([]func(), 0, 10)
+	defer func() {
+		for _, closeResource := range slices.Backward(closers) {
+			closeResource()
+		}
+	}()
 	for i := range 10 {
 		f := &Fetcher{Cache: cachetest.New(t, "", cache.New), Network: network}
 		b := ambientBucket()
@@ -53,7 +60,7 @@ func TestFetcher_AnonymousBucketsShareIAM(t *testing.T) {
 		b.Endpoint = bucket.URL
 		b.Insecure = true
 		reads := (testInputs{}).readSet(b)
-		defer reads.Close()
+		closers = append(closers, reads.Close)
 		workers.Go(func() {
 			<-start
 			artifact, err := f.Fetch(t.Context(), b, reads, cache.Policy{})
@@ -105,6 +112,12 @@ func TestFetcher_SharedIAMTransport(t *testing.T) {
 	network := newTestNetwork(t)
 	var workers sync.WaitGroup
 	start := make(chan struct{})
+	closers := make([]func(), 0, 2)
+	defer func() {
+		for _, closeResource := range slices.Backward(closers) {
+			closeResource()
+		}
+	}()
 	for i := range 2 {
 		proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Host != "bucket.invalid" {
@@ -132,7 +145,7 @@ func TestFetcher_SharedIAMTransport(t *testing.T) {
 			return &manifest.Secret{StringData: map[string]any{"address": proxy.URL, "ca.crt": ca}}
 		}}
 		reads := inputs.readSet(b)
-		defer reads.Close()
+		closers = append(closers, reads.Close)
 		f := &Fetcher{Cache: cachetest.New(t, "", cache.New), Network: network}
 		workers.Go(func() {
 			<-start

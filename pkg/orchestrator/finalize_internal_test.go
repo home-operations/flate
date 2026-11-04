@@ -149,11 +149,9 @@ func TestAggregateFailures_Deterministic(t *testing.T) {
 			failed[id] = store.StatusInfo{Status: store.StatusFailed, Message: "invalid input"}
 		}
 		got := o.aggregateFailures(failed)
-		{
-			assert.FatalIf(t, !errors.Is(got, manifest.ErrFlux) || strings.Count(got.Error(), a.String()) != 1 ||
-				strings.Count(got.Error(), b.String()) != 1 ||
-				strings.Count(got.Error(), "invalid input") != 2, "aggregate lost identities or causes: %v", got)
-		}
+		assert.FatalIf(t, !errors.Is(got, manifest.ErrFlux) || strings.Count(got.Error(), a.String()) != 1 ||
+			strings.Count(got.Error(), b.String()) != 1 ||
+			strings.Count(got.Error(), "invalid input") != 2, "aggregate lost identities or causes: %v", got)
 		if previous != "" {
 			assert.Equal(t, got.Error(), previous)
 		}
@@ -237,14 +235,12 @@ func TestFinalize_DispatchPanic(t *testing.T) {
 			assert.Equal(t, t.Context().Err(), nil)
 			o := &Orchestrator{store: st, tasks: tasks}
 			err := o.finalize()
-			{
-				assert.FatalIf(
-					t,
-					err == nil || !strings.Contains(err.Error(), "1 task(s) panicked without per-resource attribution"),
-					"poisoned task service finalized successfully: %v",
-					err,
-				)
-			}
+			assert.FatalIf(
+				t,
+				err == nil || !strings.Contains(err.Error(), "1 task(s) panicked without per-resource attribution"),
+				"poisoned task service finalized successfully: %v",
+				err,
+			)
 		})
 	}
 }

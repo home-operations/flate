@@ -97,14 +97,12 @@ func TestAdmitDirectory_ExplicitRootRetainsRepository(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, string(body), "body")
 	_, _, err = AdmitDirectory(t.Context(), root, content)
-	{
-		assert.FatalIf(
-			t,
-			err == nil || !strings.Contains(err.Error(), "outside the source root"),
-			"escaped scan was admitted: %v",
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err == nil || !strings.Contains(err.Error(), "outside the source root"),
+		"escaped scan was admitted: %v",
+		err,
+	)
 }
 
 func TestResolvePaths_ReusesRoot(t *testing.T) {
@@ -126,9 +124,7 @@ func TestResolvePaths_ReusesRoot(t *testing.T) {
 			assert.Equal(t, result.BaseScanPath, original)
 			missing := filepath.Join(root, "missing")
 			_, err = ResolvePaths(t.Context(), missing, original)
-			{
-				assert.FatalIf(t, !errors.Is(err, fs.ErrNotExist), "missing same-root scan was admitted: %v", err)
-			}
+			assert.FatalIf(t, !errors.Is(err, fs.ErrNotExist), "missing same-root scan was admitted: %v", err)
 			assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 			assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 			assert.Equal(t, strings.Contains(err.Error(), missing), true)

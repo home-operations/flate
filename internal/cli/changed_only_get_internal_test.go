@@ -59,7 +59,8 @@ func TestRun_GetAll_ChangedOnly(t *testing.T) {
 func runGetAllChangedOnlyBody(t *testing.T, command *string, flags *[]string, selected *[][]output.DocumentGroup) {
 	t.Helper()
 
-	out, stderr, code := runClusterInputs(t, append(append(strings.Fields((*command)), "-o", "json"), (*flags)...)...)
+	cluster := runClusterInputs(t, append(append(strings.Fields((*command)), "-o", "json"), (*flags)...)...)
+	out, stderr, code := cluster.stdout, cluster.stderr, cluster.code
 	assert.FatalIf(t, code != 0, "exit=%d stdout=%s stderr=%s", code, out, stderr)
 	groups := decodeGetDocuments(t, out, "json", []string{"alpha", "omega"})
 	for i, group := range groups {
@@ -76,7 +77,8 @@ func runGetAllChangedOnlyBody(t *testing.T, command *string, flags *[]string, se
 			assert.Diff(t, identities, []string{"Kustomization/shared"})
 		}
 	}
-	out, stderr, code = runClusterInputs(t, append(strings.Fields((*command)), (*flags)...)...)
+	cluster2 := runClusterInputs(t, append(strings.Fields((*command)), (*flags)...)...)
+	out, stderr, code = cluster2.stdout, cluster2.stderr, cluster2.code
 	assert.FatalIf(t, code != 0 || strings.Count(out, "CLUSTER") != 2 || !strings.Contains(out, "omega") ||
 		strings.Contains(out, "removed") ||
 		!strings.Contains(out, "alpha") ||
@@ -86,7 +88,8 @@ func runGetAllChangedOnlyBody(t *testing.T, command *string, flags *[]string, se
 		), "changed table: exit=%d stdout=%s stderr=%s", code, out, stderr)
 	for _, format := range []string{"json", "yaml"} {
 		args := append(append(strings.Fields((*command)), "-o", format, "-n", "apps"), (*flags)...)
-		out, stderr, code := runClusterInputs(t, args...)
+		cluster3 := runClusterInputs(t, args...)
+		out, stderr, code := cluster3.stdout, cluster3.stderr, cluster3.code
 		assert.FatalIf(t, code != 0, "namespace selection: exit=%d stdout=%s stderr=%s", code, out, stderr)
 		groups := decodeGetDocuments(t, out, format, []string{"alpha", "omega"})
 		assert.Equal(t, len(groups[0].Documents), 1)
@@ -109,7 +112,8 @@ func runGetAllChangedOnlyLoop(t *testing.T, loopInputs struct {
 	t.Helper()
 
 	for _, kind := range []string{"ks", "hr"} {
-		out, stderr, code := runClusterInputs(t, append([]string{"get", kind, "-o", "json"}, (*loopInputs.flags)...)...)
+		cluster := runClusterInputs(t, append([]string{"get", kind, "-o", "json"}, (*loopInputs.flags)...)...)
+		out, stderr, code := cluster.stdout, cluster.stderr, cluster.code
 		assert.FatalIf(t, code != 0, "get %s: exit=%d stdout=%s stderr=%s", kind, code, out, stderr)
 		if (*loopInputs.selected) == nil {
 			(*loopInputs.selected) = make([][]output.DocumentGroup, 0, 2)

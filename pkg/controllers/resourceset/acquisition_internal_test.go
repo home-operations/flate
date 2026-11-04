@@ -205,13 +205,11 @@ func testReconcileProviderAcquisitionSettlementCaseTail(
 				)
 			wantTag = "updated"
 		}
-		{
-			assert.FatalIf(
-				t, (*tailCaseInput.run).
-					Reads.Valid(), "%v",
-				"rendered input did not invalidate the parked collection",
-			)
-		}
+		assert.FatalIf(
+			t, (*tailCaseInput.run).
+				Reads.Valid(), "%v",
+			"rendered input did not invalidate the parked collection",
+		)
 	}
 	(*tailCaseInput.tasks).
 		Go(t.Context(), "settle", func(ctx context.Context) {
@@ -220,17 +218,15 @@ func testReconcileProviderAcquisitionSettlementCaseTail(
 	(*tailCaseInput.tasks).
 		BlockTillDone()
 	if (*(*tailCaseInput.testCaseInput)) != "ambient" {
-		{
-			assert.FatalIf(
-				t,
-				tailCaseInput.publications.Load() != 0 || tailCaseInput.lists.Load() != 0 || (*tailCaseInput.st).
-					GetArtifact((*tailCaseInput.rs).
-						Named(), store.ArtifactContent,
-					) != nil,
-				"%v",
-				"stale partial collection acquired or published inputs",
-			)
-		}
+		assert.FatalIf(
+			t,
+			tailCaseInput.publications.Load() != 0 || tailCaseInput.lists.Load() != 0 || (*tailCaseInput.st).
+				GetArtifact((*tailCaseInput.rs).
+					Named(), store.ArtifactContent,
+				) != nil,
+			"%v",
+			"stale partial collection acquired or published inputs",
+		)
 		info := controllertest.DispatchToFixpoint(
 			t.Context(),
 			t,
@@ -241,14 +237,12 @@ func testReconcileProviderAcquisitionSettlementCaseTail(
 				ReconcileNode: (*tailCaseInput.c).ReconcileNode,
 			},
 		)
-		{
-			assert.FatalIf(
-				t,
-				info.Status != store.StatusReady || info.Outcome() == store.OutcomeSkipped,
-				"rendered Secret did not take precedence over broken machine credentials: %+v",
-				info,
-			)
-		}
+		assert.FatalIf(
+			t,
+			info.Status != store.StatusReady || info.Outcome() == store.OutcomeSkipped,
+			"rendered Secret did not take precedence over broken machine credentials: %+v",
+			info,
+		)
 	} else {
 		if (*tailCaseInput.run).Outcome() != schedule.Terminal {
 			t.Fatalf("settled collection outcome=%v", (*tailCaseInput.run).Outcome())
@@ -265,9 +259,7 @@ func testReconcileProviderAcquisitionSettlementCaseTail(
 			BlockTillDone()
 	}
 	emission, ok := (*tailCaseInput.st).GetArtifact((*tailCaseInput.rs).Named(), store.ArtifactContent).(*store.Emission)
-	{
-		assert.FatalIf(t, !ok, "%v", "completed collection did not publish its output")
-	}
+	assert.FatalIf(t, !ok, "%v", "completed collection did not publish its output")
 	if tailCaseInput.publications.Load() != 1 || tailCaseInput.lists.Load() != 1 ||
 		tailCaseInput.rejected.Load() != 0 ||
 		len(emission.Manifests) != 2 ||
@@ -288,7 +280,8 @@ func testReconcileProviderAcquisitionSettlementCaseTail(
 	}
 	data := map[string]any{}
 	for _, doc := range emission.Manifests {
-		name, _ := manifest.DocMetadata(doc.Document)
+		metadata := manifest.DocMetadata(doc.Document)
+		name := metadata.Name
 		data[name] = doc.Document["data"].(map[string]any)["tag"]
 	}
 	assert.Diff(t, data, map[string]any{(*tailCaseInput.ready).Name: wantTag, (*tailCaseInput.pending).Name: "pending"})
@@ -399,14 +392,12 @@ func testReconcileProviderAcquisitionRefreshCase(
 		info, _ := st.GetStatus(rs.Named())
 		assert.Equal(t, info.Status, store.StatusReady)
 		emission, ok := st.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
-		{
-			assert.FatalIf(
-				t,
-				!ok || !emission.Complete || emission.Fingerprint == "" || len(emission.Manifests) != 1,
-				"missing complete emission: %+v",
-				emission,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!ok || !emission.Complete || emission.Fingerprint == "" || len(emission.Manifests) != 1,
+			"missing complete emission: %+v",
+			emission,
+		)
 		assert.Diff(
 			t,
 			emission.Manifests[0].Document["data"],
@@ -431,14 +422,12 @@ func testReconcileProviderAcquisitionRefreshCase(
 	}
 	current := render(wantDigest, wantColor)
 	assert.Equal(t, lists.Load(), int32(2))
-	{
-		assert.FatalIf(
-			t,
-			current.Fingerprint == first.Fingerprint,
-			"%v",
-			"changed live inputs retained the prior emission fingerprint",
-		)
-	}
+	assert.FatalIf(
+		t,
+		current.Fingerprint == first.Fingerprint,
+		"%v",
+		"changed live inputs retained the prior emission fingerprint",
+	)
 	assert.Diff(
 		t,
 		first.Manifests[0].Document["data"],

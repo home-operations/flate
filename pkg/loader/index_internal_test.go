@@ -61,7 +61,7 @@ func stampForTest(s *store.Store, files map[manifest.NamedResource]string, root 
 			}
 		}
 		if ks, ok := s.Get[*manifest.Kustomization](id); ok {
-			predicted, _ := l.predictNamespaces(ks, root, new(manifest.DiscoveryRecord{File: file}), cache)
+			predicted := l.predictNamespaces(ks, root, new(manifest.DiscoveryRecord{File: file}), cache).object
 			s.AddObject(predicted)
 		}
 	}
@@ -104,7 +104,7 @@ func filesForTest(index *manifest.DiscoveryIndex) map[manifest.NamedResource]str
 }
 
 func ownersForTest(index *manifest.DiscoveryIndex, file string) []manifest.NamedResource {
-	owners, _ := index.OwnersOfFile(file)
+	owners := index.OwnersOfFile(file).Owners
 	return owners
 }
 
@@ -187,9 +187,7 @@ func TestFinalizeIndex_Productions(t *testing.T) {
 			}
 			l := newLoader()
 			rendererFixture(t, l, root)
-			{
-				assert.FatalIf(t, l.Store.GetObject(id) != nil, "%s", "indexed data must remain absent from the store")
-			}
+			assert.FatalIf(t, l.Store.GetObject(id) != nil, "%s", "indexed data must remain absent from the store")
 			projected := id
 			projected.Namespace = "apps"
 			r, _ := l.Index.Lookup(projected)
@@ -198,10 +196,19 @@ func TestFinalizeIndex_Productions(t *testing.T) {
 				got := testutil.Owners(r.Productions)
 				assert.FatalIf(t, !slices.Equal(got, want), "projected materializers: %v", got)
 			}
-			assert.Diff(t, r.Productions, []manifest.Production{{
-				Owner: overlay.Named(), Authored: id,
-				Path: filepath.Join(root, "raw/input.yaml"), File: "raw/input.yaml", Source: manifest.BootstrapSourceID,
-			}})
+			assert.Diff(t, r.Productions, []manifest.Production{
+				{
+					Owner:    overlay.Named(),
+					Authored: id,
+					Path: filepath.Join(
+						root,
+						"raw",
+						"input.yaml",
+					),
+					File:   "raw/input.yaml",
+					Source: manifest.BootstrapSourceID,
+				},
+			})
 			snapshot := snapshotIndexForTest(l.Index)
 			{
 				err := l.FinalizeIndex(t.Context(), root, true)
@@ -334,14 +341,12 @@ func TestFinalizeIndex_UnobservedBootstrap(t *testing.T) {
 		err := l.FinalizeIndex(t.Context(), "", true)
 		assert.NoError(t, err)
 	}
-	{
-		assert.FatalIf(
-			t,
-			l.Index.CompleteSources[manifest.BootstrapSourceID],
-			"%s",
-			"unobserved bootstrap census is complete",
-		)
-	}
+	assert.FatalIf(
+		t,
+		l.Index.CompleteSources[manifest.BootstrapSourceID],
+		"%s",
+		"unobserved bootstrap census is complete",
+	)
 }
 
 func TestFinalizeIndex_PathlessCompactReconstruction(t *testing.T) {

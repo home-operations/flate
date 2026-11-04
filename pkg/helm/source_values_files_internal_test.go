@@ -96,7 +96,7 @@ func (c *Client) assertSourceValuesChanges(t *testing.T, hr *manifest.HelmReleas
 	assert.NoError(t, err)
 	for _, marker := range []string{"changed", "", "added"} {
 		if marker == "" {
-			assert.NoError(t, os.Remove(filepath.Join(root, "config/prod.yaml")))
+			assert.NoError(t, os.Remove(filepath.Join(root, "config", "prod.yaml")))
 		} else {
 			testutil.WriteFile(t, root, "config/prod.yaml", "marker: "+marker+"\n")
 		}
@@ -175,9 +175,7 @@ func testTemplateCacheSourceRootValuesFilesPersistentReuse(t *testing.T) {
 	)
 	assert.NoError(t, initial.valuesErr)
 	key := computeTemplateKey(&initial, map[string]any{}, Options{}, hr)
-	{
-		assert.FatalIf(t, key == "", "%s", "fixture has no completed-output key")
-	}
+	assert.FatalIf(t, key == "", "%s", "fixture has no completed-output key")
 	r, _, _, err := owner.Blob(
 		t.Context(),
 		cache.BlobKey{Content: key, Render: cache.RenderAccepted},
@@ -264,9 +262,7 @@ func testTemplateCacheSourceRootValuesFilesPackagedCacheCannotMaskMissingSourceV
 	initial, err := newClientCli2.describeChart(t.Context(), hr, newSourcesCliSources2)
 	assert.NoError(t, err)
 	key := computeTemplateKey(&initial, map[string]any{}, Options{}, hr)
-	{
-		assert.FatalIf(t, key == "", "%s", "fixture has no completed-output key")
-	}
+	assert.FatalIf(t, key == "", "%s", "fixture has no completed-output key")
 	r, _, _, err := owner.Blob(
 		t.Context(),
 		cache.BlobKey{Content: key, Render: cache.RenderAccepted},
@@ -282,9 +278,7 @@ func testTemplateCacheSourceRootValuesFilesPackagedCacheCannotMaskMissingSourceV
 	decoded, err := testutil.DecodeRender(record.Output)
 	assert.NoError(t, err)
 	assert.Diff(t, decoded, first)
-	{
-		assert.FatalIf(t, record.Analysis == nil, "%s", "persisted record has no chart analysis")
-	}
+	assert.FatalIf(t, record.Analysis == nil, "%s", "persisted record has no chart analysis")
 	sourceHR := hr.Clone()
 	sourceHR.Chart.Source.Kind = manifest.KindGitRepository
 	st.SetArtifact(sourceHR.ChartSource(), artifact)
@@ -304,15 +298,13 @@ func testTemplateCacheSourceRootValuesFilesPackagedCacheCannotMaskMissingSourceV
 	}
 
 	assert.Diff(t, out, []map[string]any(nil))
-	{
-		assert.FatalIf(
-			t,
-			!errors.Is(err, fs.ErrNotExist) || !errors.Is(err, manifest.ErrInput) ||
-				!errors.Is(err, manifest.ErrFlux),
-			"missing source values error = %v, want fs.ErrNotExist, ErrInput and ErrFlux",
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!errors.Is(err, fs.ErrNotExist) || !errors.Is(err, manifest.ErrInput) ||
+			!errors.Is(err, manifest.ErrFlux),
+		"missing source values error = %v, want fs.ErrNotExist, ErrInput and ErrFlux",
+		err,
+	)
 	assert.FatalIf(t, !strings.Contains(err.Error(), `read values file "prod.yaml"`), "%v", err)
 	missing, err := fresh.describeChart(t.Context(), sourceHR, freshSources)
 	assert.NoError(t, err)

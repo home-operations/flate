@@ -151,9 +151,7 @@ data: {env: `+env+`}
 				!promoted, "%s", "app-config was not indexed for promotion")
 		}
 		obj := l.Store.GetObject(appID)
-		{
-			assert.FatalIf(t, obj == nil, "%s", "app-config was not loaded at all")
-		}
+		assert.FatalIf(t, obj == nil, "%s", "app-config was not loaded at all")
 		cm, ok := obj.(*manifest.ConfigMap)
 		assert.FatalIf(t, !ok, "app-config is %T, want *manifest.ConfigMap", obj)
 		env, _ := cm.Data["env"].(string)
@@ -244,9 +242,7 @@ data: {env: `+env+`}
 				!promoted, "%s", "app-config was not indexed for promotion")
 		}
 		cm, ok := s.GetObject(appID).(*manifest.ConfigMap)
-		{
-			assert.FatalIf(t, !ok, "%s", "app-config was not loaded")
-		}
+		assert.FatalIf(t, !ok, "%s", "app-config was not loaded")
 		env, _ := cm.Data["env"].(string)
 		return env
 	}
@@ -346,14 +342,12 @@ func testWalkerIgnoreMatchesMemoMatchesUncachedCase(
 						want,
 					)
 				}
-				{
-					assert.ErrorIf(
-						t,
-						testCaseInput.patterns == "" && want,
-						"%s",
-						"nil matcher must not match any path",
-					)
-				}
+				assert.ErrorIf(
+					t,
+					testCaseInput.patterns == "" && want,
+					"%s",
+					"nil matcher must not match any path",
+				)
 			}
 		})
 	}
@@ -467,10 +461,8 @@ func testLoaderKrmignoreNormalizationCase(t *testing.T, testCaseInput *struct {
 		want := name == "keep"
 		assert.FatalIf(t, indexed != want, "%s indexed = %t, want %t", name, indexed, want)
 	}
-	{
-		assert.FatalIf(t, st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != nil ||
-			st.GetObject(manifest.BootstrapSourceID) != nil, "%s", "standalone load published bootstrap identity")
-	}
+	assert.FatalIf(t, st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != nil ||
+		st.GetObject(manifest.BootstrapSourceID) != nil, "%s", "standalone load published bootstrap identity")
 }
 
 func testLoaderKrmignoreNormalizationReaderError(t *testing.T) {

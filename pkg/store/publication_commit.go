@@ -49,10 +49,10 @@ func (s *Store) commitStable(slot *producerSlot, prev, proposal *Emission, gener
 			}
 		}
 	}
-	artifact, events := s.stableEventsLocked(ps, slot, proposal)
+	events := s.stableEventsLocked(ps, slot, proposal)
 	ps.mu.Unlock()
-	dispatchEvents(events)
-	artifact.run()
+	dispatchEvents(events.objects)
+	events.artifact.run()
 	return publicationAccepted
 }
 
@@ -188,7 +188,12 @@ func (s *Store) commitRevisionLocked(ps *shard, slot *producerSlot, proposal *Em
 	return publicationAccepted
 }
 
-func (s *Store) stableEventsLocked(ps *shard, slot *producerSlot, proposal *Emission) (eventDispatch, []eventDispatch) {
+type stableEvents struct {
+	artifact eventDispatch
+	objects  []eventDispatch
+}
+
+func (s *Store) stableEventsLocked(ps *shard, slot *producerSlot, proposal *Emission) stableEvents {
 	var artifact eventDispatch
 	var events []eventDispatch
 	if slot.visible.Load() {
@@ -223,7 +228,7 @@ func (s *Store) stableEventsLocked(ps *shard, slot *producerSlot, proposal *Emis
 	} else {
 		events = nil
 	}
-	return artifact, events
+	return stableEvents{artifact: artifact, objects: events}
 }
 
 func checkStableCapacityLocked(ps *shard, slot *producerSlot, proposal *Emission) {

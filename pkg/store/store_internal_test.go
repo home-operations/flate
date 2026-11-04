@@ -166,7 +166,7 @@ func TestObjectEqual_ConcurrentProjection(t *testing.T) {
 	t.Parallel()
 	parse := func() *manifest.Kustomization {
 		t.Helper()
-		obj, _, _, err := manifest.ParseDoc(map[string]any{
+		parsed, err := manifest.ParseDoc(map[string]any{
 			"apiVersion": manifest.FluxKustomizeDomain + "/v1",
 			"kind":       manifest.KindKustomization,
 			"metadata":   map[string]any{"name": "app", "namespace": "ns"},
@@ -175,9 +175,8 @@ func TestObjectEqual_ConcurrentProjection(t *testing.T) {
 				"sourceRef": map[string]any{"kind": "GitRepository", "name": "repo"},
 			},
 		}, manifest.ParseDocOptions{})
-		{
-			assert.NoError(t, err)
-		}
+		obj := parsed.Object
+		assert.NoError(t, err)
 		return obj.(*manifest.Kustomization)
 	}
 	first, second := parse(), parse()
@@ -212,7 +211,7 @@ func TestObjectEqual_KustomizationContent(t *testing.T) {
 	t.Parallel()
 	parse := func(t *testing.T) *manifest.Kustomization {
 		t.Helper()
-		obj, _, _, err := manifest.ParseDoc(map[string]any{
+		parsed2, err := manifest.ParseDoc(map[string]any{
 			"apiVersion": manifest.FluxKustomizeDomain + "/v1", "kind": manifest.KindKustomization,
 			"metadata": map[string]any{"name": "app", "namespace": "ns"},
 			"spec": map[string]any{
@@ -220,6 +219,7 @@ func TestObjectEqual_KustomizationContent(t *testing.T) {
 				"postBuild": map[string]any{"substitute": map[string]any{"KEY": "same"}},
 			},
 		}, manifest.ParseDocOptions{})
+		obj := parsed2.Object
 		assert.NoError(t, err)
 		return obj.(*manifest.Kustomization)
 	}
@@ -446,9 +446,7 @@ func TestStore_AdmissionResetsUnchangedReadiness(t *testing.T) {
 	reads.Init(s, id, nil)
 	defer reads.Retire()
 	_, previous := reads.Snapshot(id, true)
-	{
-		assert.FatalIf(t, reads.Admitted(), "%s", "excluded execution admitted")
-	}
+	assert.FatalIf(t, reads.Admitted(), "%s", "excluded execution admitted")
 	arrivals := 0
 	s.AddListener(EventObjectAdded, func(manifest.NamedResource, any) { arrivals++ }, false)
 	published, resume, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
@@ -519,21 +517,17 @@ func TestStore_UpdateStatus_Idempotent(
 		t.Run(tc.name, func(t *testing.T) {
 			s.UpdateStatus(id, StatusInfo{Status: tc.status, Reason: tc.reason, Message: "same message"})
 			info, ok := s.GetStatus(id)
-			{
-				assert.FatalIf(
-					t,
-					!ok || info.Status != tc.status || info.Reason != tc.want || len(events) != tc.count,
-					"status=%+v present=%v events=%d, want reason=%s events=%d",
-					info,
-					ok,
-					len(events),
-					tc.want,
-					tc.count,
-				)
-			}
-			{
-				assert.FatalIf(t, events[len(events)-1] != info, "%s", "event lost status projection")
-			}
+			assert.FatalIf(
+				t,
+				!ok || info.Status != tc.status || info.Reason != tc.want || len(events) != tc.count,
+				"status=%+v present=%v events=%d, want reason=%s events=%d",
+				info,
+				ok,
+				len(events),
+				tc.want,
+				tc.count,
+			)
+			assert.FatalIf(t, events[len(events)-1] != info, "%s", "event lost status projection")
 			var replay StatusInfo
 			u := s.AddListener(
 				EventStatusUpdated,
@@ -541,9 +535,7 @@ func TestStore_UpdateStatus_Idempotent(
 				true,
 			)
 			u()
-			{
-				assert.FatalIf(t, replay != info, "replay=%+v, want %+v", replay, info)
-			}
+			assert.FatalIf(t, replay != info, "replay=%+v, want %+v", replay, info)
 		})
 	}
 	assert.Equal(t, events[1].Reason, ReasonSkipped)
@@ -669,19 +661,15 @@ func testStoreAddObjectContentDedupDocumentMetadata(t *testing.T) {
 	next := manifest.DeepCopyMap(doc)
 	next["metadata"].(map[string]any)["namespace"] = obj.Namespace
 	s.AddObject(obj, next)
-	{
-		assert.FatalIf(t, arrivals != 1, "unchanged source metadata caused %d arrivals, want 1", arrivals)
-	}
+	assert.FatalIf(t, arrivals != 1, "unchanged source metadata caused %d arrivals, want 1", arrivals)
 	_, retained, attempt := s.GetEmission(obj.Named())
 	defer attempt.Finish()
-	{
-		assert.FatalIf(
-			t,
-			!manifest.ValueEqual(retained, next),
-			"%s",
-			"suppressed arrival lost the authoritative document",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!manifest.ValueEqual(retained, next),
+		"%s",
+		"suppressed arrival lost the authoritative document",
+	)
 }
 
 func testStoreAddObjectContentDedupCase(t *testing.T, testCaseInput *struct {
@@ -710,9 +698,7 @@ func testStoreAddObjectContentDedupCase(t *testing.T, testCaseInput *struct {
 				seen := 0
 				s.AddListener(EventObjectAdded, func(id manifest.NamedResource, _ any) {
 					seen++
-					{
-						assert.ErrorIf(t, s.GetObject(id) == nil, "%s", "listener cannot see rendered object")
-					}
+					assert.ErrorIf(t, s.GetObject(id) == nil, "%s", "listener cannot see rendered object")
 				}, false)
 				testCaseInput.add(s, obj)
 				equal := obj

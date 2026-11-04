@@ -81,7 +81,7 @@ func (l *Loader) recordProductionInput(
 	incomplete map[manifest.NamedResource][]string,
 ) bool {
 	if file := cmp.Or(v.origin, v.file); len(pinned) != 0 && !pinned[v.owner] && safepath.Contains(repoRoot, file) {
-		owners, _ := l.Index.OwnersOfFile(l.fileCoordinate(file))
+		owners := l.Index.OwnersOfFile(l.fileCoordinate(file)).Owners
 		if slices.ContainsFunc(owners, func(owner manifest.NamedResource) bool {
 			return pinned[owner]
 		}) {

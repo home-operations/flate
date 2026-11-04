@@ -86,29 +86,21 @@ spec:
 		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		Config{WipeSecrets: true, Concurrency: 4},
 	)
-	{
-		assert.FatalIf(t, len(renderedSingleton1) != 1, "missing render: %v", err)
-	}
+	assert.FatalIf(t, len(renderedSingleton1) != 1, "missing render: %v", err)
 	o := renderedSingleton1[0].Orchestrator
 	res := renderedSingleton1[0].Result
-	{
-		assert.FatalIf(t, err != nil, "Render: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "Render: %v", err)
 
 	canonical := testutil.KustomizationID("myns", "myapp")
-	{
-		assert.ErrorIf(t, o.store.GetObject(canonical) == nil, "%v", "transformer-projected Kustomization is missing")
-	}
+	assert.ErrorIf(t, o.store.GetObject(canonical) == nil, "%v", "transformer-projected Kustomization is missing")
 	stale := canonical
 	stale.Namespace = "flux-system"
-	{
-		assert.ErrorIf(
-			t,
-			o.store.GetObject(stale) != nil,
-			"%v",
-			"authored Kustomization identity survived the namespace transformer",
-		)
-	}
+	assert.ErrorIf(
+		t,
+		o.store.GetObject(stale) != nil,
+		"%v",
+		"authored Kustomization identity survived the namespace transformer",
+	)
 
 	namespaced := testutil.HelmReleaseID("myns", "myapp")
 	if o.store.GetObject(namespaced) == nil {
@@ -119,10 +111,8 @@ spec:
 	// The empty-namespace phantom must never reach the store.
 	phantom := testutil.HelmReleaseID("", "myapp")
 	{
-		{
-			obj := o.store.GetObject(phantom)
-			assert.ErrorIf(t, obj != nil, "empty-namespace HelmRelease phantom present in store: %v", phantom)
-		}
+		obj := o.store.GetObject(phantom)
+		assert.ErrorIf(t, obj != nil, "empty-namespace HelmRelease phantom present in store: %v", phantom)
 	}
 
 	for id := range res.Failed {
@@ -157,14 +147,10 @@ spec:
 		[]Tree{{Path: path, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		Config{WipeSecrets: true, Concurrency: 4},
 	)
-	{
-		assert.FatalIf(t, len(renderedSingleton2) != 1, "missing render: %v", err)
-	}
+	assert.FatalIf(t, len(renderedSingleton2) != 1, "missing render: %v", err)
 	o = renderedSingleton2[0].Orchestrator
 	res = renderedSingleton2[0].Result
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	if len(res.Failed) != 0 {
 		t.Fatalf("shared-context failures: %v", res.Failed)
 	}
@@ -172,9 +158,7 @@ spec:
 		for _, info := range reconcilableKinds {
 			kind := info.Kind
 			id := manifest.NamedResource{Group: info.Group, Kind: kind, Namespace: ns, Name: "myapp"}
-			{
-				assert.ErrorIf(t, o.store.GetObject(id) == nil, "shared-context render omitted %s", id)
-			}
+			assert.ErrorIf(t, o.store.GetObject(id) == nil, "shared-context render omitted %s", id)
 		}
 	}
 
@@ -234,9 +218,7 @@ spec:
 		ExternalChanges: change.NewSet([]string{dirty}),
 	}, Config{WipeSecrets: true, Concurrency: 4},
 	)
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	{
 		localErr := o.bootstrap(t.Context())
 		assert.FatalIf(t, localErr != nil, "Bootstrap: %v", localErr)
@@ -249,26 +231,23 @@ spec:
 			Name:      "flux-system",
 		}
 		record, ok := o.index.Lookup(source)
-		{
-			assert.FatalIf(
-				t,
-				!ok || record.File != "cluster/source-"+ns+".yaml",
-				"source fixture %s: indexed=%t record=%+v",
-				source,
-				ok,
-				record,
-			)
-		}
-		owners, ancestors := o.index.OwnersOfFile(record.File)
+		assert.FatalIf(
+			t,
+			!ok || record.File != "cluster/source-"+ns+".yaml",
+			"source fixture %s: indexed=%t record=%+v",
+			source,
+			ok,
+			record,
+		)
+		ownership := o.index.OwnersOfFile(record.File)
+		owners, ancestors := ownership.Owners, ownership.Ancestors
 		t.Logf("source %s: File=%s owners=%v ancestors=%v", source, record.File, owners, ancestors)
-		{
-			assert.FatalIf(
-				t,
-				len(owners) != 0 || len(ancestors) != 0,
-				"source fixture %s has unrelated ownership selection",
-				source,
-			)
-		}
+		assert.FatalIf(
+			t,
+			len(owners) != 0 || len(ancestors) != 0,
+			"source fixture %s has unrelated ownership selection",
+			source,
+		)
 		id := testutil.KustomizationID(ns, "myapp")
 		record, ok = o.index.Lookup(id)
 		t.Logf(
@@ -280,13 +259,11 @@ spec:
 			record.Refs,
 		)
 		authored := testutil.KustomizationID("flux-system", "myapp")
-		{
-			assert.ErrorIf(t, !ok || record.File != "apps/myapp/myapp/ks.yaml" || record.Authored != authored ||
-				!slices.Equal(
-					record.Refs,
-					[]manifest.NamedResource{source},
-				), "projected consumer %s: indexed=%t record=%+v", id, ok, record)
-		}
+		assert.ErrorIf(t, !ok || record.File != "apps/myapp/myapp/ks.yaml" || record.Authored != authored ||
+			!slices.Equal(
+				record.Refs,
+				[]manifest.NamedResource{source},
+			), "projected consumer %s: indexed=%t record=%+v", id, ok, record)
 	}
 	other := testutil.KustomizationID("other", "myapp")
 	t.Logf(
@@ -296,33 +273,28 @@ spec:
 		o.filter.ShouldReconcile(other),
 		o.filter.KeepNames(),
 	)
-	{
-		assert.ErrorIf(
-			t,
-			!o.filter.Enabled() || !o.filter.ShouldReconcile(other),
-			"second-source change did not select %s",
-			other,
-		)
-	}
+	assert.ErrorIf(
+		t,
+		!o.filter.Enabled() || !o.filter.ShouldReconcile(other),
+		"second-source change did not select %s",
+		other,
+	)
 	res, err := o.collectResult(o.run(t.Context()))
 	if err != nil || len(res.Failed) != 0 {
 		t.Fatalf("changed-only Render: %v; failures=%v", err, res.Failed)
 	}
 	docs := outputByParent(res.Manifests)[other]
+	assert.FatalIf(
+		t,
+		len(docs) != 1 || manifest.DocKind(docs[0]) != manifest.KindHelmRelease,
+		"rendered children of %s = %v, want one HelmRelease",
+		other,
+		docs,
+	)
 	{
-		assert.FatalIf(
-			t,
-			len(docs) != 1 || manifest.DocKind(docs[0]) != manifest.KindHelmRelease,
-			"rendered children of %s = %v, want one HelmRelease",
-			other,
-			docs,
-		)
-	}
-	{
-		{
-			name, _ := manifest.DocMetadata(docs[0])
-			assert.ErrorIf(t, name != "myapp", "rendered child name = %q, want myapp", name)
-		}
+		metadata := manifest.DocMetadata(docs[0])
+		name := metadata.Name
+		assert.ErrorIf(t, name != "myapp", "rendered child name = %q, want myapp", name)
 	}
 }
 

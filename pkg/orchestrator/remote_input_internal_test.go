@@ -59,20 +59,14 @@ generatorOptions:
 		"env": {"VALUE": "stable"}, "file": {"payload": "VALUE=stable\n"},
 	} {
 		obj, ok := values.NewStoreProvider(o.store, true).Data(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: name}).(*manifest.ConfigMap)
-		{
-			assert.FatalIf(t, !ok, "bootstrap ConfigMap %s missing", name)
-		}
+		assert.FatalIf(t, !ok, "bootstrap ConfigMap %s missing", name)
 		assert.Diff(t, obj.Data, want)
 	}
 	secret, ok := values.NewStoreProvider(o.store, true).Data(manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "secret"}).(*manifest.Secret)
-	{
-		assert.FatalIf(t, !ok, "%v", "bootstrap Secret missing")
-	}
+	assert.FatalIf(t, !ok, "%v", "bootstrap Secret missing")
 	assert.Diff(t, secret.Data, map[string]any{"VALUE": base64.StdEncoding.EncodeToString([]byte("stable"))})
 	ks, ok := o.store.Get[*manifest.Kustomization](testutil.KustomizationID("apps", "owner"))
-	{
-		assert.FatalIf(t, !ok, "%v", "bootstrap owner missing")
-	}
+	assert.FatalIf(t, !ok, "%v", "bootstrap owner missing")
 	req := kustomize.RenderRequest{
 		Source:  o.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact),
 		SubPath: "apps",
@@ -82,22 +76,18 @@ generatorOptions:
 	assert.NoError(t, err)
 	second, _, err := testutil.RenderMaps(kustomize.Render(t.Context(), o.ksc.Trees, req, o.cfg.SourceRetry))
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(
-			t,
-			len(first) == 0 || !reflect.DeepEqual(first, second),
-			"rendered documents differ: first=%v second=%v",
-			first,
-			second,
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(first) == 0 || !reflect.DeepEqual(first, second),
+		"rendered documents differ: first=%v second=%v",
+		first,
+		second,
+	)
 	assert.Equal(t, requests.Load(), int32(1))
-	{
-		assert.FatalIf(
-			t,
-			len(o.store.ListObjects("", manifest.KindConfigMap))+len(o.store.ListObjects("", manifest.KindSecret)) != 0,
-			"%v",
-			"bootstrap generator lookup entered canonical inventory",
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(o.store.ListObjects("", manifest.KindConfigMap))+len(o.store.ListObjects("", manifest.KindSecret)) != 0,
+		"%v",
+		"bootstrap generator lookup entered canonical inventory",
+	)
 }

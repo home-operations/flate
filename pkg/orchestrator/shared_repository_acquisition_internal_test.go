@@ -85,10 +85,8 @@ func testDAGDispatchSharedHelmRepositoryAcquisitionCase(
 		})
 	}
 	{
-		{
-			diff := cmp.Diff(outputs[0], outputs[1])
-			assert.ErrorIf(t, diff != "", "controlled output differs (-want +got): %s", diff)
-		}
+		diff := cmp.Diff(outputs[0], outputs[1])
+		assert.ErrorIf(t, diff != "", "controlled output differs (-want +got): %s", diff)
 	}
 }
 
@@ -113,9 +111,7 @@ func testSharedRepositoryAcquisitionArrival(
 		Tree{Path: dir, RepoRoot: dir},
 		Config{Concurrency: (*testCaseInput.workers)},
 	)
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	defer func() {
 		o.stop()
 	}()
@@ -153,11 +149,12 @@ func testSharedRepositoryAcquisitionArrival(
 		nextDoc := sharedRepositoryPublication(doc, p, testCaseInput)
 		_, _, next := s.GetEmission(p)
 		defer next.Finish()
-		localChildren, retained := parseChildrenForTest(
+		parseChildrenForTestResult1 := parseChildrenForTest(
 			p,
 			[]map[string]any{nextDoc},
 			manifest.ParseDocOptions{},
 		)
+		localChildren, retained := parseChildrenForTestResult1.Children, parseChildrenForTestResult1.Documents
 		next.Children, next.Manifests = localChildren, testutil.DocumentOccurrences(retained)
 		next.Complete = true
 		controllertest.Emit(t.Context(), o.ksc.Controller, p, &next)
@@ -198,14 +195,12 @@ func testSharedRepositoryAcquisitionArrival(
 					defer empty.Finish()
 					empty.Children, empty.Manifests, empty.Complete = nil, nil, true
 					controllertest.Emit(t.Context(), o.ksc.Controller, p, &empty)
-					{
-						assert.ErrorIf(
-							t,
-							s.GetDeclaration(repo) != nil,
-							"%v",
-							"withdrawal retained repository authority",
-						)
-					}
+					assert.ErrorIf(
+						t,
+						s.GetDeclaration(repo) != nil,
+						"%v",
+						"withdrawal retained repository authority",
+					)
 					releaseWithdrawal()
 				default:
 					publish()
@@ -220,14 +215,12 @@ func testSharedRepositoryAcquisitionArrival(
 				firstRepository.Do(func() {
 					execution := result.Assessment.(*base.Execution)
 					r, ok := execution.Reads.Get[*manifest.HelmRepository](repo)
-					{
-						assert.ErrorIf(
-							t,
-							!ok || r.URL != original.URL,
-							"%v",
-							"initial assessment lost the original repository URL",
-						)
-					}
+					assert.ErrorIf(
+						t,
+						!ok || r.URL != original.URL,
+						"%v",
+						"initial assessment lost the original repository URL",
+					)
 					captured <- execution
 					o.tasks.YieldSlot(func() {
 						waitSharedRepositoryBarrier(ctx, assessmentPermit)
@@ -271,31 +264,25 @@ func testSharedRepositoryAcquisitionArrival(
 	if (*testCaseInput.scenario) == "effective_input_change" {
 		initial := initialSharedRepositoryAssessment(t, captured, done, &joined)
 		synctest.Wait()
-		{
-			assert.FatalIf(
-				t,
-				!initial.Reads.Valid(),
-				"%v",
-				"initial assessment was already superseded",
-			)
-		}
+		assert.FatalIf(
+			t,
+			!initial.Reads.Valid(),
+			"%v",
+			"initial assessment was already superseded",
+		)
 		releasePublisher()
 		await(published)
-		{
-			assert.ErrorIf(
-				t,
-				initial.Reads.Valid(),
-				"%v",
-				"changed URL retained the original captured assessment",
-			)
-		}
+		assert.ErrorIf(
+			t,
+			initial.Reads.Valid(),
+			"%v",
+			"changed URL retained the original captured assessment",
+		)
 		releaseAssessment()
 	}
 	first := firstSharedRepositoryAcquisition(t, entered, done, &joined)
 	synctest.Wait()
-	{
-		assert.FatalIf(t, !first.reads.Valid(), "%v", "initial acquisition was already superseded")
-	}
+	assert.FatalIf(t, !first.reads.Valid(), "%v", "initial acquisition was already superseded")
 	releaseConsumers.beforeReturn(t, arrival, first.reads)
 	if (*testCaseInput.scenario) != "effective_input_change" {
 		assertSharedRepositoryInitialURL(t, first.url, original)
@@ -310,9 +297,7 @@ func testSharedRepositoryAcquisitionArrival(
 	err = <-done
 	joined = true
 	o.tasks.BlockTillDone()
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	finalChart := finalSharedRepositoryChart(t, s, repo, &first)
 	completions := sharedRepositoryCompletions(t, &logs, f, s)
 	completions.assertFetches(t, f, repo, finalChart)
@@ -336,10 +321,8 @@ func sharedRepositoryCompletions(
 			ID      string `json:"id"`
 		}
 		{
-			{
-				err := json.Unmarshal(line, &event)
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
+			err := json.Unmarshal(line, &event)
+			assert.FatalIf(t, err != nil, "%v", err)
 		}
 		if event.Message == "source: fetch complete" {
 			for id := range f.calls {
@@ -352,6 +335,8 @@ func sharedRepositoryCompletions(
 	return completions
 }
 
+type sharedRepositoryCompletionCounts map[manifest.NamedResource]int
+
 func (cc sharedRepositoryCompletionCounts) assertFetches(
 	t *testing.T,
 	f *sharedRepositoryFetcher,
@@ -359,14 +344,12 @@ func (cc sharedRepositoryCompletionCounts) assertFetches(
 ) {
 	t.Helper()
 	t.Logf("acquisitions=%v completions=%v", f.calls, cc)
-	{
-		assert.ErrorIf(
-			t,
-			f.calls[repo] != 0 || cc[repo] != 0,
-			"%v",
-			"existence-only repository fetched",
-		)
-	}
+	assert.ErrorIf(
+		t,
+		f.calls[repo] != 0 || cc[repo] != 0,
+		"%v",
+		"existence-only repository fetched",
+	)
 	for id, calls := range f.calls {
 		if cc[id] > 1 || cc[id] > calls || calls > 2 {
 			t.Errorf("%s calls=%d completions=%d", id, calls, cc[id])
@@ -377,6 +360,8 @@ func (cc sharedRepositoryCompletionCounts) assertFetches(
 	}
 }
 
+type sharedRepositoryConsumers []manifest.NamedResource
+
 func (cs sharedRepositoryConsumers) appendOutputs(
 	t *testing.T,
 	s *store.Store,
@@ -386,30 +371,24 @@ func (cs sharedRepositoryConsumers) appendOutputs(
 	t.Helper()
 	for _, id := range cs {
 		{
-			{
-				info, ok := s.GetStatus(
-					id,
-				)
-				assert.ErrorIf(t, !ok || info.Status != store.StatusReady ||
-					info.Message != "", "consumer %s: %+v", id, info)
-			}
+			info, ok := s.GetStatus(
+				id,
+			)
+			assert.ErrorIf(t, !ok || info.Status != store.StatusReady ||
+				info.Message != "", "consumer %s: %+v", id, info)
 		}
 		_, _, output := s.GetEmission(id)
-		{
-			assert.ErrorIf(
-				t,
-				len(output.Manifests) != 1,
-				"consumer %s emitted %d documents",
-				id,
-				len(output.Manifests),
-			)
-		}
+		assert.ErrorIf(
+			t,
+			len(output.Manifests) != 1,
+			"consumer %s emitted %d documents",
+			id,
+			len(output.Manifests),
+		)
 		*documents = append(*documents, testutil.DocumentMaps(output.Manifests))
 		output.Finish()
 	}
 }
-
-type sharedRepositoryCompletionCounts map[manifest.NamedResource]int
 
 func waitSharedRepositoryBarrier(ctx context.Context, signal <-chan struct{}) {
 	select {
@@ -457,10 +436,9 @@ func sharedRepositorySource(
 		"metadata": map[string]any{"name": "shared", "namespace": "apps"},
 		"spec":     map[string]any{"url": "https://charts.example", "interval": "1h"},
 	}
-	children, _ := parseChildrenForTest(p, []map[string]any{doc}, manifest.ParseDocOptions{})
-	{
-		assert.FatalIf(t, len(children) != 1, "%v", "repository fixture was not parsed")
-	}
+	parseChildrenForTestResult2 := parseChildrenForTest(p, []map[string]any{doc}, manifest.ParseDocOptions{})
+	children, _ := parseChildrenForTestResult2.Children, parseChildrenForTestResult2.Documents
+	assert.FatalIf(t, len(children) != 1, "%v", "repository fixture was not parsed")
 	original := children[0].Obj.(*manifest.HelmRepository)
 	repo := original.Named()
 	s.AddObject(original)
@@ -494,6 +472,8 @@ func sharedRepositoryConsumer(i int, repo manifest.NamedResource) *manifest.Helm
 	return hr
 }
 
+type sharedRepositoryReleases []func()
+
 func (rs sharedRepositoryReleases) releaseAll() {
 	for _, release := range rs {
 		release()
@@ -507,14 +487,12 @@ func (rs sharedRepositoryReleases) beforeReturn(t *testing.T, arrival string, re
 		synctest.Wait()
 		rs[2]()
 		synctest.Wait()
-		{
-			assert.ErrorIf(
-				t,
-				!reads.Valid(),
-				"%v",
-				"another release invalidated an independent generated chart acquisition",
-			)
-		}
+		assert.ErrorIf(
+			t,
+			!reads.Valid(),
+			"%v",
+			"another release invalidated an independent generated chart acquisition",
+		)
 	}
 }
 
@@ -531,8 +509,6 @@ func joinSharedRepositoryScheduler(joined bool, done <-chan error) {
 		<-done
 	}
 }
-
-type sharedRepositoryReleases []func()
 
 func sharedRepositoryPublication(
 	doc map[string]any,
@@ -571,8 +547,6 @@ func (cs sharedRepositoryConsumers) waitFor(
 		}
 	}
 }
-
-type sharedRepositoryConsumers []manifest.NamedResource
 
 func hiddenSharedRepositoryDeclaration(s *store.Store, id, repo manifest.NamedResource) bool {
 	return id == repo && s.GetDeclaration(id) == nil
@@ -614,9 +588,7 @@ func finalSharedRepositoryChart(
 	t.Helper()
 	first := *firstValue
 	final, ok := s.Get[*manifest.HelmRepository](repo)
-	{
-		assert.FatalIf(t, !ok, "%v", "final repository is absent")
-	}
+	assert.FatalIf(t, !ok, "%v", "final repository is absent")
 	finalChart := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
 		Kind:      manifest.KindHelmChart,

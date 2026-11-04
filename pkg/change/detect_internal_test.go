@@ -29,16 +29,12 @@ import (
 func TestDetect_BothPathsRequired(t *testing.T) {
 	t.Parallel()
 	{
-		{
-			_, err := Detect(t.Context(), testInput(""), testInput("/tmp/x"))
-			assert.ErrorIf(t, err == nil, "expected error for empty before")
-		}
+		_, err := Detect(t.Context(), testInput(""), testInput("/tmp/x"))
+		assert.ErrorIf(t, err == nil, "expected error for empty before")
 	}
 	{
-		{
-			_, err := Detect(t.Context(), testInput("/tmp/x"), testInput(""))
-			assert.ErrorIf(t, err == nil, "expected error for empty after")
-		}
+		_, err := Detect(t.Context(), testInput("/tmp/x"), testInput(""))
+		assert.ErrorIf(t, err == nil, "expected error for empty after")
 	}
 }
 
@@ -49,9 +45,7 @@ func TestDetect_IdenticalTreesEmpty(t *testing.T) {
 	testutil.WriteFile(t, before, "a.yaml", "x")
 	testutil.WriteFile(t, after, "a.yaml", "x")
 	got, err := Detect(t.Context(), testInput(before), testInput(after))
-	{
-		assert.FatalIf(t, err != nil, "Detect: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "Detect: %v", err)
 	if got.Len() != 0 {
 		t.Errorf("expected 0 changes, got %v", got.Paths())
 	}
@@ -73,22 +67,16 @@ func TestDetect_AddedRemovedModified(t *testing.T) {
 	testutil.WriteFile(t, after, "mod.yaml", "BBB")
 	// Bump mtime so the mtime equality bypass doesn't short-circuit.
 	{
-		{
-			err := os.Chtimes(filepath.Join(after, "mod.yaml"), time.Now(), time.Now().Add(time.Hour))
-			assert.FatalIf(t, err != nil, "chtimes: %v", err)
-		}
+		err := os.Chtimes(filepath.Join(after, "mod.yaml"), time.Now(), time.Now().Add(time.Hour))
+		assert.FatalIf(t, err != nil, "chtimes: %v", err)
 	}
 
 	got, err := Detect(t.Context(), testInput(before), testInput(after))
-	{
-		assert.FatalIf(t, err != nil, "Detect: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "Detect: %v", err)
 	want := []string{"added.yaml", "mod.yaml", "removed.yaml"}
 	{
-		{
-			got := got.Paths()
-			assert.ErrorIf(t, !slices.Equal(got, want), "paths = %v, want %v", got, want)
-		}
+		got := got.Paths()
+		assert.ErrorIf(t, !slices.Equal(got, want), "paths = %v, want %v", got, want)
 	}
 }
 
@@ -100,9 +88,7 @@ func TestDetect_SizeDifferAlwaysChanged(t *testing.T) {
 	testutil.WriteFile(t, before, "f.yaml", "small")
 	testutil.WriteFile(t, after, "f.yaml", "this is a larger payload")
 	got, err := Detect(t.Context(), testInput(before), testInput(after))
-	{
-		assert.FatalIf(t, err != nil, "Detect: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "Detect: %v", err)
 	if !got.Contains("f.yaml") {
 		t.Errorf("expected f.yaml in change set, got %v", got.Paths())
 	}
@@ -119,19 +105,15 @@ func TestDetect_HiddenScanRoot(t *testing.T) {
 	testutil.WriteFile(t, after, "mod.yaml", "new")
 
 	got, err := Detect(t.Context(), testInput(before), testInput(after))
+	assert.FatalIf(t, err != nil, "Detect: %v", err)
 	{
-		assert.FatalIf(t, err != nil, "Detect: %v", err)
-	}
-	{
-		{
-			paths := got.Paths()
-			assert.ErrorIf(
-				t,
-				!slices.Equal(paths, []string{"mod.yaml"}),
-				"hidden scan root paths = %v, want [mod.yaml]",
-				paths,
-			)
-		}
+		paths := got.Paths()
+		assert.ErrorIf(
+			t,
+			!slices.Equal(paths, []string{"mod.yaml"}),
+			"hidden scan root paths = %v, want [mod.yaml]",
+			paths,
+		)
 	}
 }
 
@@ -152,22 +134,16 @@ func TestDetect_SameSizeSameMtime_StillDetected(t *testing.T) {
 	// Exact same mtime — what the mtime-fast-path used to short-circuit on.
 	stamp := time.Now()
 	{
-		{
-			err := os.Chtimes(filepath.Join(before, "mod.yaml"), stamp, stamp)
-			assert.FatalIf(t, err != nil, "chtimes before: %v", err)
-		}
+		err := os.Chtimes(filepath.Join(before, "mod.yaml"), stamp, stamp)
+		assert.FatalIf(t, err != nil, "chtimes before: %v", err)
 	}
 	{
-		{
-			err := os.Chtimes(filepath.Join(after, "mod.yaml"), stamp, stamp)
-			assert.FatalIf(t, err != nil, "chtimes after: %v", err)
-		}
+		err := os.Chtimes(filepath.Join(after, "mod.yaml"), stamp, stamp)
+		assert.FatalIf(t, err != nil, "chtimes after: %v", err)
 	}
 
 	got, err := Detect(t.Context(), testInput(before), testInput(after))
-	{
-		assert.FatalIf(t, err != nil, "Detect: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "Detect: %v", err)
 	if !got.Contains("mod.yaml") {
 		t.Errorf("Detect missed same-size same-mtime modification — fast-path regression. Paths: %v", got.Paths())
 	}
@@ -190,14 +166,10 @@ func TestHashFile(t *testing.T) {
 				data := []byte(content)
 				input := &cancellingInput{FS: fstest.MapFS{"file.yaml": {Data: data}}, dataEOF: tc.dataEOF}
 				got, err := hashFile(t.Context(), input, "file.yaml")
+				assert.FatalIf(t, err != nil, "hashFile: %v", err)
 				{
-					assert.FatalIf(t, err != nil, "hashFile: %v", err)
-				}
-				{
-					{
-						want := sha256.Sum256(data)
-						assert.ErrorIf(t, got != want, "hash = %x, want %x", got, want)
-					}
+					want := sha256.Sum256(data)
+					assert.ErrorIf(t, got != want, "hash = %x, want %x", got, want)
 				}
 			}
 		})
@@ -215,10 +187,8 @@ func TestDetect_MissingInputsWrapInput(t *testing.T) {
 	t.Parallel()
 	for _, input := range []*store.SourceArtifact{nil, {}} {
 		_, err := Detect(t.Context(), input, &store.SourceArtifact{FS: fstest.MapFS{}})
-		{
-			assert.FatalIf(t, !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) ||
-				err.Error() != "both admitted inputs required", "missing input error=%v", err)
-		}
+		assert.FatalIf(t, !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) ||
+			err.Error() != "both admitted inputs required", "missing input error=%v", err)
 	}
 }
 
@@ -255,39 +225,31 @@ func TestDetect_LastBodyCancellation(t *testing.T) {
 						after.closed.Load(),
 						after.postCancel.Load(),
 					)
-					{
-						assert.ErrorIf(
-							t,
-							!errors.Is(err, context.Canceled) || set != nil,
-							"cancelled last body=%v,%v",
-							set,
-							err,
-						)
-					}
-					{
-						assert.ErrorIf(
-							t,
-							before.postCancel.Load() != 0 || after.postCancel.Load() != 0,
-							"%v",
-							"content read started after cancellation",
-						)
-					}
-					{
-						assert.ErrorIf(
-							t,
-							side == "before" && after.opened.Load() != 0,
-							"%v",
-							"after-side hash opened after cancellation",
-						)
-					}
-					{
-						assert.ErrorIf(
-							t,
-							before.opened.Load() != before.closed.Load() || after.opened.Load() != after.closed.Load(),
-							"%v",
-							"hash files not closed",
-						)
-					}
+					assert.ErrorIf(
+						t,
+						!errors.Is(err, context.Canceled) || set != nil,
+						"cancelled last body=%v,%v",
+						set,
+						err,
+					)
+					assert.ErrorIf(
+						t,
+						before.postCancel.Load() != 0 || after.postCancel.Load() != 0,
+						"%v",
+						"content read started after cancellation",
+					)
+					assert.ErrorIf(
+						t,
+						side == "before" && after.opened.Load() != 0,
+						"%v",
+						"after-side hash opened after cancellation",
+					)
+					assert.ErrorIf(
+						t,
+						before.opened.Load() != before.closed.Load() || after.opened.Load() != after.closed.Load(),
+						"%v",
+						"hash files not closed",
+					)
 				})
 			}
 		})
@@ -521,7 +483,8 @@ func TestSet_WithReadersBuildInputs(t *testing.T) {
 		[2]map[manifest.NamedResource]inputprojection.Projection{},
 	)
 	assert.NoError(t, err)
-	changed, known := qualified.DeclarationChanged(manifest.TreeHead, manifest.BootstrapSourceID, child.Named(), nil)
+	comparison := qualified.DeclarationChanged(manifest.TreeHead, manifest.BootstrapSourceID, child.Named(), nil)
+	changed, known := comparison.Changed, comparison.Known
 	assert.Equal(t, known, false)
 	assert.Equal(t, changed, false)
 	for _, id := range []manifest.NamedResource{child.Named(), reader} {
@@ -640,14 +603,12 @@ func assertHashReadersDrained(t *testing.T, testCaseInput *string, reads *hashRe
 			reads.opened.Load()-reads.before.Load(),
 			reads.closed.Load(),
 		)
-		{
-			assert.ErrorIf(
-				t,
-				reads.postCancel.Load() != 0 || reads.opened.Load() != reads.before.Load(),
-				"%v",
-				"hash work started after cancellation",
-			)
-		}
+		assert.ErrorIf(
+			t,
+			reads.postCancel.Load() != 0 || reads.opened.Load() != reads.before.Load(),
+			"%v",
+			"hash work started after cancellation",
+		)
 	}
 	if reads.active.Load() != 0 || reads.opened.Load() != reads.closed.Load() || reads.maximum.Load() > 8 {
 		t.Fatalf(
@@ -715,12 +676,13 @@ func testSetWithReadersCase(t *testing.T, testCaseInput *string,
 		[2]map[manifest.NamedResource]inputprojection.Projection{},
 	)
 	assert.NoError(t, err)
-	changed, known := resolved.DeclarationChanged(
+	comparison2 := resolved.DeclarationChanged(
 		manifest.TreeBase,
 		manifest.BootstrapSourceID,
 		declaration.Named(),
 		nil,
 	)
+	changed, known := comparison2.Changed, comparison2.Known
 	assert.Equal(t, known, (*testCaseInput) != "partial" && (*testCaseInput) != "ambiguous content")
 	if known {
 		assert.Equal(t, changed, (*testCaseInput) != "move")

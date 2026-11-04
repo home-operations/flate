@@ -76,9 +76,7 @@ func TestRecordEmitted_EqualDeclarationRetainsCapture(t *testing.T) {
 	accept(t, st, parent.Named(), &Emission{Children: []Child{{Obj: input}}, Fingerprint: "parent-A", Complete: true})
 	captured, _, inventory := st.GetEmission(input.Named())
 	defer inventory.Finish()
-	{
-		assert.FatalIf(t, captured != input, "%s", "fixture did not capture accepted child")
-	}
+	assert.FatalIf(t, captured != input, "%s", "fixture did not capture accepted child")
 	var arrivals atomic.Int64
 	stop := st.AddListener(EventObjectAdded, func(id manifest.NamedResource, _ any) {
 		if id == input.Named() {
@@ -196,17 +194,13 @@ func testGetDeclarationCoveredAuthorityCase(t *testing.T, testCaseInput *string,
 	}
 	got, _, inventory := st.GetEmission(raw.Named())
 	defer inventory.Finish()
-	{
-		assert.FatalIf(t, got != want, "emission input=%v want=%v", got, want)
-	}
-	{
-		assert.FatalIf(
-			t,
-			(*testCaseInput) == "covered" && st.GetObject(raw.Named()) != raw,
-			"%s",
-			"coverage hid raw admission identity",
-		)
-	}
+	assert.FatalIf(t, got != want, "emission input=%v want=%v", got, want)
+	assert.FatalIf(
+		t,
+		(*testCaseInput) == "covered" && st.GetObject(raw.Named()) != raw,
+		"%s",
+		"coverage hid raw admission identity",
+	)
 }
 
 type testRecordEmittedReplacedInputRejectedCaseInputs struct {
@@ -294,22 +288,18 @@ func testRecordEmittedReplacedInputRejectedCase(
 		default:
 			st.RecordEmitted(input.Named(), &next, nil)
 		}
-		{
-			assert.ErrorIf(t, result != publicationRejected || reads.Valid(), "%s", "stale inventory accepted")
-		}
+		assert.ErrorIf(t, result != publicationRejected || reads.Valid(), "%s", "stale inventory accepted")
 	})
 	tasks.Go(t.Context(), "replace", func(context.Context) {
 		tasks.YieldSlot(func() { <-captured })
 		if *testCaseInput.loss {
 			accept(t, st, peer.Named(), &Emission{Complete: true})
-			{
-				assert.ErrorIf(
-					t,
-					st.GetObject(input.Named()) != input || st.GetDeclaration(input.Named()) != nil,
-					"%s",
-					"fixture did not retain raw input without authority",
-				)
-			}
+			assert.ErrorIf(
+				t,
+				st.GetObject(input.Named()) != input || st.GetDeclaration(input.Named()) != nil,
+				"%s",
+				"fixture did not retain raw input without authority",
+			)
 		} else {
 			replacement := input.Clone()
 			replacement.Path = "B"
@@ -318,15 +308,11 @@ func testRecordEmittedReplacedInputRejectedCase(
 		close(replaced)
 	})
 	tasks.BlockTillDone()
-	{
-		assert.FatalIf(t, tasks.Failures() != 0, "%s", "publication task panicked")
-	}
+	assert.FatalIf(t, tasks.Failures() != 0, "%s", "publication task panicked")
 	_, _, retained := st.GetEmission(input.Named())
 	defer retained.Finish()
-	{
-		assert.FatalIf(t, retained.Fingerprint == "stale" || len(retained.Children) != 1 ||
-			retained.Children[0].Obj != child.Obj, "%s", "rejection replaced accepted output")
-	}
+	assert.FatalIf(t, retained.Fingerprint == "stale" || len(retained.Children) != 1 ||
+		retained.Children[0].Obj != child.Obj, "%s", "rejection replaced accepted output")
 	assert.Diff(t, retained.Children[0].Doc, child.Doc)
 	assert.Diff(t, testutil.DocumentMaps(retained.Manifests), []map[string]any{child.Doc})
 }

@@ -121,12 +121,10 @@ func (r *documentReader) mountSources(s sourceReader, candidates ...*manifest.Di
 		}
 	}
 	for _, index := range candidates {
-		{
-			//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-			for id, record := range index.Records {
-				if id.KindInfo().SourceArtifact && record.File != "" {
-					mountSource(mounted, s.GetArtifact(id, store.ArtifactContent))
-				}
+		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+		for id, record := range index.Records {
+			if id.KindInfo().SourceArtifact && record.File != "" {
+				mountSource(mounted, s.GetArtifact(id, store.ArtifactContent))
 			}
 		}
 	}
@@ -154,12 +152,10 @@ func (r *documentReader) setSources(mounted map[string]*store.SourceArtifact) []
 	r.invalidateSourceDocuments(changed)
 	if len(changed) != 0 {
 		r.edgesDirty = true
-		{
-			//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-			for file, doc := range r.cache {
-				doc.incoming, doc.edgesKnown = false, false
-				r.cache[file] = doc
-			}
+		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+		for file, doc := range r.cache {
+			doc.incoming, doc.edgesKnown = false, false
+			r.cache[file] = doc
 		}
 	}
 	if len(mounted) != 0 && r.views == nil {
@@ -260,9 +256,14 @@ func (unavailableSource) Open(string) (fs.File, error) {
 	return nil, errSourceUnavailable
 }
 
+type fileInput struct {
+	fs   fs.FS
+	name string
+}
+
 // input binds source coordinates to their filesystem; an absent mounted file
 // MUST never fall through to the working tree.
-func (r *documentReader) input(file string) (fs.FS, string) {
+func (r *documentReader) input(file string) fileInput {
 	dr := *r
 	if root := new(dr).mountedRoot(file); root != "" {
 		input := dr.views[root]
@@ -270,9 +271,9 @@ func (r *documentReader) input(file string) (fs.FS, string) {
 		if input == nil {
 			input = unavailableSource{}
 		}
-		return input, filepath.ToSlash(rel)
+		return fileInput{fs: input, name: filepath.ToSlash(rel)}
 	}
-	return unavailableSource{}, "."
+	return fileInput{fs: unavailableSource{}, name: "."}
 }
 
 func (r *documentReader) mountedRoot(file string) string {
@@ -290,38 +291,43 @@ func (r *documentReader) mountedRoot(file string) string {
 	}
 }
 
-func (r *documentReader) read(dir string) (*types.Kustomization, string) {
+type builderDocument struct {
+	body *types.Kustomization
+	file string
+}
+
+func (r *documentReader) read(dir string) builderDocument {
 	r.restore(dir)
 	cached, seen := r.cache[dir]
 	if seen &&
 		(cached.body != nil || cached.searched || cached.pathState == pathFile || cached.pathState == pathMissing) {
-		return cached.body, cached.file
+		return builderDocument{body: cached.body, file: cached.file}
 	}
 	if cached.objects != nil {
 		cached.pathState = pathFile
 		if r.cache != nil {
 			r.cache[dir] = cached
 		}
-		return nil, ""
+		return builderDocument{}
 	}
 	if cached.pathState == pathUnknown {
-		input, name := new(*r).input(dir)
-		info, err := fs.Stat(input, name)
+		inputFile := new(*r).input(dir)
+		info, err := fs.Stat(inputFile.fs, inputFile.name)
 		cached = new(*r).rememberStat(dir, info, err)
 	}
 	if cached.pathState == pathFile || cached.pathState == pathMissing {
-		return nil, ""
+		return builderDocument{}
 	}
 	return r.readBuilder(dir, new(cached))
 }
 
-func (r *documentReader) readBuilder(dir string, cachedValue *document) (*types.Kustomization, string) {
+func (r *documentReader) readBuilder(dir string, cachedValue *document) builderDocument {
 	cached := *cachedValue
 	cached.searched = true
 	for _, name := range manifest.KustomizeBuilderFilenames {
 		file := filepath.Join(dir, name)
-		input, name := new(*r).input(file)
-		data, err := fs.ReadFile(input, name)
+		inputFile2 := new(*r).input(file)
+		data, err := fs.ReadFile(inputFile2.fs, inputFile2.name)
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
@@ -331,19 +337,19 @@ func (r *documentReader) readBuilder(dir string, cachedValue *document) (*types.
 			if r.cache != nil {
 				r.cache[dir] = cached
 			}
-			return nil, file
+			return builderDocument{body: nil, file: file}
 		}
 		normalizeKustomization(&k)
 		cached.body, cached.file, cached.pathState = &k, file, pathDirectory
 		if r.cache != nil {
 			r.cache[dir] = cached
 		}
-		return &k, file
+		return builderDocument{body: &k, file: file}
 	}
 	if r.cache != nil {
 		r.cache[dir] = cached
 	}
-	return nil, cached.file
+	return builderDocument{body: nil, file: cached.file}
 }
 
 func normalizeKustomization(k *types.Kustomization) {

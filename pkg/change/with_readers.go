@@ -347,10 +347,10 @@ func (r *readerScope) routeInputReader(side int, name string, reader *manifest.F
 		return
 	}
 	if reader.Declaration != (manifest.NamedResource{}) {
-		if changed, known := r.bindings.declaredChanged(
+		if comparison := r.bindings.declaredChanged(
 			r.evidence.source,
 			reader.Declaration,
-		); known && !changed {
+		); comparison.Known && !comparison.Changed {
 			return
 		}
 	}
@@ -486,8 +486,8 @@ func (r *readerRoute) recordFile(
 	if !found {
 		return true
 	}
-	declaredChanged, declaredKnown := r.scope.bindings.declaredChanged(r.scope.evidence.source, owner)
-	if known && comparison.changed || !known && (!declaredKnown || declaredChanged) {
+	declared := r.scope.bindings.declaredChanged(r.scope.evidence.source, owner)
+	if known && comparison.changed || !known && (!declared.Known || declared.Changed) {
 		if r.input.File == "" || changed < r.input.File {
 			r.input.File = changed
 		}
@@ -713,12 +713,12 @@ type declarationComparison struct {
 	implicitNamespace [2]bool
 }
 
-func (s *Set) declaredChanged(source, id manifest.NamedResource) (bool, bool) {
+func (s *Set) declaredChanged(source, id manifest.NamedResource) Comparison {
 	if s == nil {
-		return false, false
+		return Comparison{}
 	}
 	fact := s.declarations[comparisonKey{source: source, owner: id, input: id}]
-	return fact.declared[0] != fact.declared[1], fact.declaredKnown
+	return Comparison{Changed: fact.declared[0] != fact.declared[1], Known: fact.declaredKnown}
 }
 
 // DeclarationChanged compares complete declared content and the current prepared document.
@@ -727,17 +727,15 @@ func (s *Set) DeclarationChanged(
 	side manifest.TreeSide,
 	source, id manifest.NamedResource,
 	document map[string]any,
-) (bool, bool) {
-	changed, known := s.declaredChanged(source, id)
-	if !known || changed || document == nil || side > manifest.TreeHead {
-		return changed, known
+) Comparison {
+	comparison := s.declaredChanged(source, id)
+	if !comparison.Known || comparison.Changed || document == nil || side > manifest.TreeHead {
+		return comparison
 	}
 	fact := s.declarations[comparisonKey{source: source, owner: id, input: id}]
 	// Namespace defaulting MUST NOT change identical authored content.
-	if _, namespace := manifest.DocMetadata(
-		document,
-	); fact.implicitNamespace[side] && namespace != "" &&
-		namespace == id.Namespace {
+	if metadata := manifest.DocMetadata(document); fact.implicitNamespace[side] && metadata.Namespace != "" &&
+		metadata.Namespace == id.Namespace {
 		document = maps.Clone(document)
 		metadata := maps.Clone(
 			document["metadata"].(map[string]any), //nolint:errcheck // ObjectDocument always creates metadata as a map.
@@ -747,7 +745,7 @@ func (s *Set) DeclarationChanged(
 	}
 	current := manifest.Fingerprint(manifest.WithoutOwnershipLabels(document))
 	if current == "" {
-		return false, false
+		return Comparison{}
 	}
-	return current != fact.declared[side], true
+	return Comparison{Changed: current != fact.declared[side], Known: true}
 }

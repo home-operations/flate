@@ -55,7 +55,7 @@ func TestError_ClassificationAndDetails(t *testing.T) {
 	for _, category := range []error{ErrInput, ErrObjectNotFound, ErrInvalidValuesReference, ErrInvalidSubstituteReference, ErrMissingSecret, ErrSourceSkipped} {
 		t.Run(category.Error(), func(t *testing.T) {
 			t.Parallel()
-			testErrorClassificationAndDetailsCase3(t, &category)
+			testErrorClassificationAndDetailsCase3(t, category)
 		},
 		)
 	}
@@ -72,9 +72,7 @@ func TestError_CategoryTraversalAllocations(t *testing.T) {
 			t.Fatal("category matched a dependency failure")
 		}
 	})
-	{
-		assert.FatalIf(t, allocations != 0, "category traversal allocates %v objects, want 0", allocations)
-	}
+	assert.FatalIf(t, allocations != 0, "category traversal allocates %v objects, want 0", allocations)
 }
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
@@ -90,9 +88,7 @@ func TestError_CauseTraversalAllocations(t *testing.T) {
 			t.Fatal("cause matched a dependency failure")
 		}
 	})
-	{
-		assert.FatalIf(t, allocations != 0, "cause traversal allocates %v objects, want 0", allocations)
-	}
+	assert.FatalIf(t, allocations != 0, "cause traversal allocates %v objects, want 0", allocations)
 }
 
 func TestDependencyFailedError_Format(t *testing.T) {
@@ -123,25 +119,19 @@ func TestDependencyFailedError_Format(t *testing.T) {
 		},
 	}
 	msg := err.Error()
-	{
-		assert.ErrorIf(t, !strings.Contains(msg, "dependencies failed:"), "missing prefix: %q", msg)
-	}
-	{
-		assert.ErrorIf(
-			t,
-			!strings.Contains(msg, depA.String()) || !strings.Contains(msg, depB.String()),
-			"missing dependency IDs: %q",
-			msg,
-		)
-	}
-	{
-		assert.ErrorIf(
-			t,
-			!strings.Contains(msg, "SECRET_DOMAIN") || !strings.Contains(msg, "timed out"),
-			"missing reasons: %q",
-			msg,
-		)
-	}
+	assert.ErrorIf(t, !strings.Contains(msg, "dependencies failed:"), "missing prefix: %q", msg)
+	assert.ErrorIf(
+		t,
+		!strings.Contains(msg, depA.String()) || !strings.Contains(msg, depB.String()),
+		"missing dependency IDs: %q",
+		msg,
+	)
+	assert.ErrorIf(
+		t,
+		!strings.Contains(msg, "SECRET_DOMAIN") || !strings.Contains(msg, "timed out"),
+		"missing reasons: %q",
+		msg,
+	)
 }
 
 func TestDependencyFailedError_Unwraps(t *testing.T) {
@@ -149,16 +139,12 @@ func TestDependencyFailedError_Unwraps(t *testing.T) {
 	err := &DependencyFailedError{
 		Parent: NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Name: "x"},
 	}
-	{
-		assert.ErrorIf(t, !errors.Is(err, ErrInput), "expected errors.Is(err, ErrInput) to be true")
-	}
-	{
-		assert.ErrorIf(
-			t,
-			!errors.Is(err, ErrFlux),
-			"expected errors.Is(err, ErrFlux) to be true (ErrInput wraps ErrFlux)",
-		)
-	}
+	assert.ErrorIf(t, !errors.Is(err, ErrInput), "expected errors.Is(err, ErrInput) to be true")
+	assert.ErrorIf(
+		t,
+		!errors.Is(err, ErrFlux),
+		"expected errors.Is(err, ErrFlux) to be true (ErrInput wraps ErrFlux)",
+	)
 
 	{
 		_, ok := errors.AsType[*DependencyFailedError](err)
@@ -216,39 +202,33 @@ func testErrorClassificationAndDetailsCase2(t *testing.T, testCaseInput *testErr
 	}
 }
 
-func testErrorClassificationAndDetailsCase3(t *testing.T, testCaseInput *error,
+func testErrorClassificationAndDetailsCase3(t *testing.T, testCaseInput error,
 ) {
 	t.Helper()
 
 	underlying := &os.PathError{Op: "read", Path: "library-cause", Err: fs.ErrPermission}
 	cause := fmt.Errorf("fetch operation: %w", errors.Join(underlying, context.Canceled))
 	for _, message := range []string{"", "actionable cause"} {
-		err := NewError((*testCaseInput), cause, message)
+		err := NewError(testCaseInput, cause, message)
 		want := message
 		if want == "" {
 			want = cause.Error()
 		}
-		{
-			assert.FatalIf(t, err.Error() != want, "Error() = %q, want %q", err, want)
-		}
-		for _, target := range []error{ErrFlux, (*testCaseInput), fs.ErrPermission, context.Canceled} {
-			{
-				assert.ErrorIf(t, !errors.Is(err, target), "lost classification %v", target)
-			}
+		assert.FatalIf(t, err.Error() != want, "Error() = %q, want %q", err, want)
+		for _, target := range []error{ErrFlux, testCaseInput, fs.ErrPermission, context.Canceled} {
+			assert.ErrorIf(t, !errors.Is(err, target), "lost classification %v", target)
 		}
 		{
 			got, ok := errors.AsType[*os.PathError](err)
 			assert.FatalIf(t, !ok || got != underlying, "%s", "lost typed cause")
 		}
 		for _, detail := range []string{want, "fetch operation", "library-cause", context.Canceled.Error()} {
-			{
-				assert.ErrorIf(
-					t,
-					!strings.Contains(ErrorDetails(err), detail),
-					"lost diagnostic detail %q",
-					detail,
-				)
-			}
+			assert.ErrorIf(
+				t,
+				!strings.Contains(ErrorDetails(err), detail),
+				"lost diagnostic detail %q",
+				detail,
+			)
 		}
 	}
 }

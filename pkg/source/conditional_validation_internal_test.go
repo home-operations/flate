@@ -83,12 +83,12 @@ func testAcquireConditionalValidationOwnerMissing(t *testing.T) {
 
 	var trace remoteHTTPTrace
 	srv := trace.serve(t, func() string { return "changed" })
-	url := srv.URL + "/input?version=2"
+	inputURL := srv.URL + "/input?version=2"
 	root := t.TempDir()
 	c := newTestHTTPInputs(t, root)
 	reader, _, _, err := c.owner.Blob(
 		t.Context(),
-		sourcecache.BlobKey{Content: struct{ URL string }{url}},
+		sourcecache.BlobKey{Content: struct{ URL string }{inputURL}},
 		sourcecache.Policy{},
 		func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 			annotations := map[string]string{
@@ -105,7 +105,7 @@ func testAcquireConditionalValidationOwnerMissing(t *testing.T) {
 
 	closeTestHTTPInputs(t, c)
 	c = newTestHTTPInputs(t, root)
-	input, err := c.Acquire(t.Context(), url, sourcecache.RetryConfig{}, nil)
+	input, err := c.Acquire(t.Context(), inputURL, sourcecache.RetryConfig{}, nil)
 	assert.NoError(t, err)
 
 	body, err := fs.ReadFile(input, "content")
@@ -127,7 +127,7 @@ func testAcquireConditionalValidationCase3(t *testing.T, scenario *string,
 	t.Helper()
 
 	root := t.TempDir()
-	const url = "https://reader:owner-cache-test-password@example.invalid/input"
+	const inputURL = "https://reader:owner-cache-test-password@example.invalid/input"
 	etag := `W/"opaque-tag"`
 	closeErr := errors.New("304 close failed")
 	var firstIdentity string
@@ -148,7 +148,7 @@ func testAcquireConditionalValidationCase3(t *testing.T, scenario *string,
 			)
 		},
 		)
-		input, err := c.Acquire(t.Context(), url, sourcecache.RetryConfig{}, nil)
+		input, err := c.Acquire(t.Context(), inputURL, sourcecache.RetryConfig{}, nil)
 		assert.FatalIf(t, requests != 1, "phase=%d requests=%d, want 1", phase, requests)
 		if (*scenario) == "unsolicited-304" ||
 			phase == 1 &&
@@ -306,7 +306,7 @@ type testAcquireConditionalValidationCase3CallbackCompletionInputs struct {
 
 func testRemoveValidationPayload(t *testing.T, root string) {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(root, "oci/index.json"))
+	data, err := os.ReadFile(filepath.Join(root, "oci", "index.json"))
 	assert.NoError(t, err)
 
 	var index ocispec.Index
@@ -319,7 +319,7 @@ func testRemoveValidationPayload(t *testing.T, root string) {
 		if desc.MediaType == "application/octet-stream" {
 			path := filepath.Join(
 				root,
-				"oci/blobs",
+				"oci", "blobs",
 				desc.Digest.Algorithm().String(),
 				desc.Digest.Encoded(),
 			)

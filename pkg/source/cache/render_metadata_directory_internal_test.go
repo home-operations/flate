@@ -54,12 +54,13 @@ func testRenderMetadataCurrentDirectoryCase(t *testing.T, name *string,
 	case "closed":
 		assert.NoError(t, c.Close())
 	}
-	_, current, enabled, err := c.RenderMetadata(ctx, "current-directory", lookup)
+	metadata, err := c.RenderMetadata(ctx, "current-directory", lookup)
+
 	if (*name) == "replaced parent present" {
 		assert.NoError(t, err)
 		assert.FatalIf(
 			t,
-			!enabled || current == "" || current != identity,
+			!metadata.Enabled || metadata.Identity == "" || metadata.Identity != identity,
 			"%s",
 			"replaced current directory lost the published generation",
 		)
@@ -71,7 +72,12 @@ func testRenderMetadataCurrentDirectoryCase(t *testing.T, name *string,
 		assert.Equal(t, bytes.Equal(data, payload), true)
 		return
 	}
-	assert.FatalIf(t, err == nil || current != "", "%s", "invalid current directory authorized a metadata hit")
+	assert.FatalIf(
+		t,
+		err == nil || metadata.Identity != "",
+		"%s",
+		"invalid current directory authorized a metadata hit",
+	)
 
 	{
 		_, ok := errors.AsType[*CacheError](err)

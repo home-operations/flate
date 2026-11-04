@@ -24,12 +24,10 @@ func (c *admissionClosure) readHistory() {
 		}
 		c.replace[owner] = history.Complete
 		records := map[manifest.NamedResource]manifest.DiscoveryRecord{}
-		{
-			//nolint:gocritic // The iterator supplies immutable value snapshots.
-			for id, record := range history.Records {
-				c.resolveHistoricalRecord(owner, &record)
-				records[id] = record
-			}
+		//nolint:gocritic // The iterator supplies immutable value snapshots.
+		for id, record := range history.Records {
+			c.resolveHistoricalRecord(owner, &record)
+			records[id] = record
 		}
 		c.accepted[owner] = records
 	}
@@ -130,23 +128,25 @@ func (c *admissionClosure) completeRecord(
 		record.Refs, record.ContentRoots, record.Parent = nil, nil, manifest.NamedResource{}
 	}
 	for owner, records := range c.accepted {
-		if historical, ok := records[(*id)]; ok {
-			record.Origin = historical.Origin
-			record.Refs = append(slices.Clone(record.Refs), historical.Refs...)
-			// An entry's exact current coverage MUST supersede historical subtree coverage.
-			if record.ContentRoots != nil && id.ReportHidden() {
+		historical, ok := records[(*id)]
+		if !ok {
+			continue
+		}
+		record.Origin = historical.Origin
+		record.Refs = append(slices.Clone(record.Refs), historical.Refs...)
+		// An entry's exact current coverage MUST supersede historical subtree coverage.
+		if record.ContentRoots != nil && id.ReportHidden() {
+			continue
+		}
+		record.ContentRoots = maps.Clone(record.ContentRoots)
+		if record.ContentRoots == nil {
+			record.ContentRoots = map[manifest.NamedResource][]string{}
+		}
+		for source, roots := range historical.ContentRoots {
+			if owner != (*id) && c.replace[(*id)] {
 				continue
 			}
-			record.ContentRoots = maps.Clone(record.ContentRoots)
-			if record.ContentRoots == nil {
-				record.ContentRoots = map[manifest.NamedResource][]string{}
-			}
-			for source, roots := range historical.ContentRoots {
-				if owner != (*id) && c.replace[(*id)] {
-					continue
-				}
-				record.ContentRoots[source] = append(slices.Clone(record.ContentRoots[source]), roots...)
-			}
+			record.ContentRoots[source] = append(slices.Clone(record.ContentRoots[source]), roots...)
 		}
 	}
 	return (*record)

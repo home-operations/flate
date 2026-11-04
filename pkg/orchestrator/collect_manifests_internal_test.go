@@ -35,7 +35,8 @@ func TestCollectManifests_SupportDeclarations(t *testing.T) {
 		},
 		{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "sibling", "namespace": "apps"}},
 	}
-	children, documents := parseChildrenForTest(owner.Named(), documents, manifest.ParseDocOptions{})
+	parseChildrenForTestResult1 := parseChildrenForTest(owner.Named(), documents, manifest.ParseDocOptions{})
+	children, documents := parseChildrenForTestResult1.Children, parseChildrenForTestResult1.Documents
 	st.RecordEmitted(
 		owner.Named(),
 		&store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(documents), Complete: true},
@@ -82,14 +83,12 @@ func TestCollectManifests_FailedSuccessorRetainsCompleted(t *testing.T) {
 	successor := hr.Clone()
 	successor.Chart.Name = "different"
 	st.AddObject(successor)
-	{
-		assert.FatalIf(
-			t,
-			st.GetArtifact(failedHR, store.ArtifactContent) != nil,
-			"%v",
-			"successor exposed a current-input artifact",
-		)
-	}
+	assert.FatalIf(
+		t,
+		st.GetArtifact(failedHR, store.ArtifactContent) != nil,
+		"%v",
+		"successor exposed a current-input artifact",
+	)
 	failure := "values don't meet the specifications of the schema(s)"
 	st.UpdateStatus(failedHR, store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: failure})
 
@@ -104,46 +103,36 @@ func TestCollectManifests_FailedSuccessorRetainsCompleted(t *testing.T) {
 	got := outputByParent(o.collectManifests())
 
 	{
-		{
-			_, ok := got[ready]
-			assert.ErrorIf(t, !ok, "passing HelmRelease %s must contribute its rendered children", ready)
-		}
+		_, ok := got[ready]
+		assert.ErrorIf(t, !ok, "passing HelmRelease %s must contribute its rendered children", ready)
 	}
 	{
-		{
-			docs, ok := got[failedHR]
-			assert.ErrorIf(
-				t,
-				!ok || len(docs) != 1,
-				"failed HelmRelease %s lost completed output; got %d docs",
-				failedHR,
-				len(docs),
-			)
-		}
+		docs, ok := got[failedHR]
+		assert.ErrorIf(
+			t,
+			!ok || len(docs) != 1,
+			"failed HelmRelease %s lost completed output; got %d docs",
+			failedHR,
+			len(docs),
+		)
 	}
 	{
-		{
-			_, ok := got[failedKS]
-			assert.ErrorIf(t, !ok, "failed Kustomization %s lost completed output", failedKS)
-		}
+		_, ok := got[failedKS]
+		assert.ErrorIf(t, !ok, "failed Kustomization %s lost completed output", failedKS)
 	}
 	{
-		{
-			info, ok := st.FailedResources()[failedHR]
-			assert.ErrorIf(
-				t,
-				!ok || !strings.Contains(info.Message, failure),
-				"failed successor lost diagnostics: %+v",
-				info,
-			)
-		}
+		info, ok := st.FailedResources()[failedHR]
+		assert.ErrorIf(
+			t,
+			!ok || !strings.Contains(info.Message, failure),
+			"failed successor lost diagnostics: %+v",
+			info,
+		)
 	}
 	st.DeleteObject(failedHR)
 	{
-		{
-			_, ok := outputByParent(o.collectManifests())[failedHR]
-			assert.FatalIf(t, ok, "%v", "hidden producer contributed completed output")
-		}
+		_, ok := outputByParent(o.collectManifests())[failedHR]
+		assert.FatalIf(t, ok, "%v", "hidden producer contributed completed output")
 	}
 	t.Run("ResourceSets", func(t *testing.T) {
 		t.Parallel()
@@ -166,7 +155,12 @@ func TestCollectManifests_FailedSuccessorRetainsCompleted(t *testing.T) {
 				"metadata":   map[string]any{"name": "shared", "namespace": "apps"},
 				"data":       map[string]any{"value": owner.Name},
 			}
-			children, retained := parseChildrenForTest(owner.Named(), []map[string]any{doc}, manifest.ParseDocOptions{})
+			parseChildrenForTestResult2 := parseChildrenForTest(
+				owner.Named(),
+				[]map[string]any{doc},
+				manifest.ParseDocOptions{},
+			)
+			children, retained := parseChildrenForTestResult2.Children, parseChildrenForTestResult2.Documents
 			completed.Children, completed.Manifests = children, testutil.DocumentOccurrences(retained)
 			completed.Complete = true
 			st.RecordEmitted(owner.Named(), &completed, nil)
@@ -220,7 +214,12 @@ func TestCollectManifests_MissingParent(t *testing.T) {
 		"kind":       "ConfigMap",
 		"metadata":   map[string]any{"name": "settings", "namespace": "apps"},
 	}
-	children, docs := testutil.ParseChildren(base.New(st, nil), rs, []map[string]any{doc}, manifest.ParseDocOptions{})
+	parsedChildren1 := base.New(st, nil).
+		ParseChildren(rs, testutil.DocumentOccurrences([]map[string]any{doc}), manifest.ParseDocOptions{})
+	if err := manifest.DocumentFailure(parsedChildren1.Failures); err != nil {
+		panic(err)
+	}
+	children, docs := parsedChildren1.Children, testutil.DocumentMaps(parsedChildren1.Visible)
 	st.RecordEmitted(
 		rs.Named(),
 		&store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(docs), Complete: true},
@@ -233,10 +232,8 @@ func TestCollectManifests_MissingParent(t *testing.T) {
 		}},
 	}
 	{
-		{
-			batches := o.collectManifests()
-			assert.FatalIf(t, len(batches) != 0, "missing parent contributed output: %+v", batches)
-		}
+		batches := o.collectManifests()
+		assert.FatalIf(t, len(batches) != 0, "missing parent contributed output: %+v", batches)
 	}
 }
 
@@ -323,11 +320,12 @@ func testCollectManifestsConflictingProducersCase(
 				"metadata":   map[string]any{"name": "shared", "namespace": "apps"},
 				"data":       map[string]any{"value": strconv.Itoa(i)},
 			}
-			children, docs := parseChildrenForTest(
+			parseChildrenForTestResult3 := parseChildrenForTest(
 				owners[i],
 				[]map[string]any{doc},
 				manifest.ParseDocOptions{},
 			)
+			children, docs := parseChildrenForTestResult3.Children, parseChildrenForTestResult3.Documents
 			st.RecordEmitted(
 				owners[i],
 				&store.Emission{
@@ -351,20 +349,19 @@ func testCollectManifestsConflictingProducersCase(
 	wg.Wait()
 	o := &Orchestrator{store: st}
 	got := outputByParent(o.collectManifests())
-	{
-		assert.FatalIf(t, len(got) != (*testCaseInput.workers), "output lost producer documents: %v", got)
-	}
+	assert.FatalIf(t, len(got) != (*testCaseInput.workers), "output lost producer documents: %v", got)
 	for i, owner := range owners {
 		if len(got[owner]) != 1 || got[owner][0]["data"].(map[string]any)["value"] != strconv.Itoa(i) {
 			t.Fatalf("output lost %s contribution: %v", owner, got[owner])
 		}
 	}
 	for _, owner := range owners {
-		children, docs := parseChildrenForTest(
+		parseChildrenForTestResult4 := parseChildrenForTest(
 			owner,
 			got[owners[(*testCaseInput.workers)-1]],
 			manifest.ParseDocOptions{},
 		)
+		children, docs := parseChildrenForTestResult4.Children, parseChildrenForTestResult4.Documents
 		st.RecordEmitted(
 			owner,
 			&store.Emission{
@@ -376,10 +373,8 @@ func testCollectManifestsConflictingProducersCase(
 		)
 	}
 	{
-		{
-			got := outputByParent(o.collectManifests())
-			assert.FatalIf(t, len(got) != (*testCaseInput.workers), "equal ordinary producer groups changed: %v", got)
-		}
+		got := outputByParent(o.collectManifests())
+		assert.FatalIf(t, len(got) != (*testCaseInput.workers), "equal ordinary producer groups changed: %v", got)
 	}
 }
 
@@ -435,17 +430,16 @@ func testCollectManifestsParentlessResourceSetSharedChildCase(
 				"stringData": map[string]any{"key": id.Name},
 			},
 		}
-		children, docs := parseChildrenForTest(id, batch, manifest.ParseDocOptions{})
-		{
-			assert.FatalIf(
-				t,
-				len(children) != len(batch) || len(docs) != len(batch),
-				"%s must publish every child: %v, %v",
-				id,
-				children,
-				docs,
-			)
-		}
+		parseChildrenForTestResult5 := parseChildrenForTest(id, batch, manifest.ParseDocOptions{})
+		children, docs := parseChildrenForTestResult5.Children, parseChildrenForTestResult5.Documents
+		assert.FatalIf(
+			t,
+			len(children) != len(batch) || len(docs) != len(batch),
+			"%s must publish every child: %v, %v",
+			id,
+			children,
+			docs,
+		)
 		st.RecordEmitted(
 			id,
 			&store.Emission{
@@ -468,9 +462,7 @@ func testCollectManifestsParentlessResourceSetSharedChildCase(
 	cm, ok := st.Get[*manifest.ConfigMap](
 		manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "shared"},
 	)
-	{
-		assert.FatalIf(t, !ok, "%v", "missing shared ConfigMap")
-	}
+	assert.FatalIf(t, !ok, "%v", "missing shared ConfigMap")
 	assert.Diff(t, cm.Data, map[string]any{"key": "z"})
 	warnings := st.Warnings()
 	assert.Equal(t, len(warnings), 3)
@@ -524,11 +516,12 @@ func testCollectManifestsResourceSetConflictingProducersCase(
 		if (*testCaseInput.kind) == manifest.KindSecret {
 			doc["stringData"] = map[string]any{"value": owner.Name}
 		}
-		children, docs := parseChildrenForTest(
+		parseChildrenForTestResult6 := parseChildrenForTest(
 			owner.Named(),
 			[]map[string]any{doc},
 			manifest.ParseDocOptions{},
 		)
+		children, docs := parseChildrenForTestResult6.Children, parseChildrenForTestResult6.Documents
 		emissions[i] = store.Emission{
 			Children:  children,
 			Manifests: testutil.DocumentOccurrences(docs),

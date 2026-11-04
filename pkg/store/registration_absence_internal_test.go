@@ -78,9 +78,7 @@ func testReadRegistrationAbsentAdmissionCase(
 	}()
 	<-done
 	assert.Diff(t, slices.Collect(s.Sweep()), []manifest.NamedResource{reads.id})
-	{
-		assert.FatalIf(t, reads.Valid(), "%s", "first authority admission left consumed absence valid")
-	}
+	assert.FatalIf(t, reads.Valid(), "%s", "first authority admission left consumed absence valid")
 	reads.Retire()
 	assert.Equal(t, len(slices.Collect(s.Sweep())), 0)
 }
@@ -139,21 +137,17 @@ func testReadRegistrationAbsentDetachedAdmissionCase(
 	close(resume)
 	<-done
 	assert.Diff(t, slices.Collect(s.Sweep()), []manifest.NamedResource{later.id})
-	{
-		assert.FatalIf(t, !fresh.Valid(), "%s", "new live absence registration was invalidated")
-	}
+	assert.FatalIf(t, !fresh.Valid(), "%s", "new live absence registration was invalidated")
 	later.Retire()
 	fresh.Retire()
 	assert.Equal(t, len(slices.Collect(s.Sweep())), 0)
 	sh := s.shardFor(laterID)
-	{
-		assert.FatalIf(
-			t,
-			sh.absence.first.Load() != nil || sh.absence.watch != nil || sh.absence.pending.Load(),
-			"%s",
-			"retired absence registrations survived reclamation",
-		)
-	}
+	assert.FatalIf(
+		t,
+		sh.absence.first.Load() != nil || sh.absence.watch != nil || sh.absence.pending.Load(),
+		"%s",
+		"retired absence registrations survived reclamation",
+	)
 }
 
 func testReadRegistrationAbsenceExhaustionIsAtomicCase(
@@ -217,24 +211,20 @@ func testReadRegistrationAbsenceExhaustionIsAtomicCase(
 	if !panicked || sh.absence.generation.Load() != generation || !reads.Valid() {
 		t.Fatalf("panic=%t generation=%d valid=%t", panicked, sh.absence.generation.Load(), reads.Valid())
 	}
-	{
-		assert.FatalIf(
-			t,
-			s.GetObject(obj.Named()) != nil || s.GetArtifact(obj.Named(), ArtifactContent) != nil,
-			"%s",
-			"exhaustion partially admitted target",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.GetObject(obj.Named()) != nil || s.GetArtifact(obj.Named(), ArtifactContent) != nil,
+		"%s",
+		"exhaustion partially admitted target",
+	)
 	{
 		_, ok := s.GetStatus(obj.Named())
 		assert.FatalIf(t, ok, "%s", "exhaustion partially published status")
 	}
-	{
-		assert.FatalIf(
-			t,
-			s.GetArtifact(producer.Named(), ArtifactContent) != nil,
-			"%s",
-			"exhaustion partially published inventory",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.GetArtifact(producer.Named(), ArtifactContent) != nil,
+		"%s",
+		"exhaustion partially published inventory",
+	)
 }

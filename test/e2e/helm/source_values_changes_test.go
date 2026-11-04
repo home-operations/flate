@@ -43,7 +43,8 @@ func e2EHelmSourceRootValuesFilesChangedOnlyCase(t *testing.T, operation *string
 		"--concurrency", "2", "--cache-dir", t.TempDir(),
 	}
 	if (*operation) == "strict delete" {
-		out, code := harness.RunCLIExpectErr(t, args...)
+		runCLIExpectErrResult1 := harness.RunCLIExpectErr(t, args...)
+		out, code := runCLIExpectErrResult1.Output, runCLIExpectErrResult1.Code
 		assert.Equal(t, code, 1)
 		assert.FatalIf(
 			t,

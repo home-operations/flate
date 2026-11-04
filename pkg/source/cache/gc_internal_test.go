@@ -422,10 +422,8 @@ func testSweepGitGenerationsCase(t *testing.T, scenario *string,
 	case "bad-index":
 		testutil.WriteFile(t, filepath.Join(c.root.Name(), ociDir), "index.json", "{")
 	case "missing-payload":
-		{
-			err := os.Remove(filepath.Join(c.root.Name(), blobPath(desc.Digest)))
-			assert.NoError(t, err)
-		}
+		err := os.Remove(filepath.Join(c.root.Name(), blobPath(desc.Digest)))
+		assert.NoError(t, err)
 	}
 	testSweepGitGenerationsCaseCompletion(
 		t,

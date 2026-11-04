@@ -94,9 +94,7 @@ func TestDependencies_Resourceset_ScopeAndImmutability(t *testing.T) {
 			assert.Diff(t, c.dependenciesForTest(rs), want)
 			assert.Equal(t, rs.DependsOn[0].Namespace, tc.namespace)
 			stored, ok := s.Get[*manifest.ResourceSet](rs.Named())
-			{
-				assert.FatalIf(t, !ok, "%v", "missing stored ResourceSet")
-			}
+			assert.FatalIf(t, !ok, "%v", "missing stored ResourceSet")
 			assert.Equal(t, stored.DependsOn[0].Namespace, tc.namespace)
 		})
 	}

@@ -84,7 +84,7 @@ kind: ConfigMap
 metadata: {name: out, namespace: default}
 data: {v: "${K}"}
 `)
-			stdout, stderr, code := harness.RunCLIBuffers(
+			runCLIBuffersResult1 := harness.RunCLIBuffers(
 				"build",
 				"ks",
 				"consumer",
@@ -98,6 +98,7 @@ data: {v: "${K}"}
 				"--log-level",
 				"warn",
 			)
+			stdout, stderr, code := runCLIBuffersResult1.Stdout, runCLIBuffersResult1.Stderr, runCLIBuffersResult1.Code
 			assert.FatalIf(
 				t,
 				code != 0 || !strings.Contains(stdout, "name: out") || !strings.Contains(stdout, "v: v") ||
@@ -107,7 +108,7 @@ data: {v: "${K}"}
 				stdout,
 				stderr,
 			)
-			_, fullErr, fullCode := harness.RunCLIBuffers(
+			runCLIBuffersResult2 := harness.RunCLIBuffers(
 				"build",
 				"all",
 				"--path",
@@ -120,6 +121,7 @@ data: {v: "${K}"}
 				"--log-level",
 				"warn",
 			)
+			_, fullErr, fullCode := runCLIBuffersResult2.Stdout, runCLIBuffersResult2.Stderr, runCLIBuffersResult2.Code
 			assert.FatalIf(
 				t,
 				fullCode != 1 || !strings.Contains(fullErr, "other"),
@@ -204,7 +206,8 @@ data: {v: "${K}"}
 				"--log-level",
 				"warn",
 			}
-			full, stderr := harness.RequireCLIOK(t, fullArgs...)
+			requireCLIOKResult3 := harness.RequireCLIOK(t, fullArgs...)
+			full, stderr := requireCLIOKResult3.Stdout, requireCLIOKResult3.Stderr
 			assert.FatalIf(
 				t,
 				!strings.Contains(full, "name: out") || !strings.Contains(full, "v: v"),
@@ -214,7 +217,8 @@ data: {v: "${K}"}
 			)
 			assert.FatalIf(t, strings.Contains(stderr, "[") &&
 				(strings.Count(stderr, "[") != 1 || !strings.Contains(stderr, "[RenderPersistenceDisabled]")), "unexpected full warnings: %s", stderr)
-			again, repeatedStderr := harness.RequireCLIOK(t, fullArgs...)
+			requireCLIOKResult4 := harness.RequireCLIOK(t, fullArgs...)
+			again, repeatedStderr := requireCLIOKResult4.Stdout, requireCLIOKResult4.Stderr
 			assert.FatalIf(t, strings.Contains(repeatedStderr, "[") &&
 				(strings.Count(repeatedStderr, "[") != 1 || !strings.Contains(repeatedStderr, "[RenderPersistenceDisabled]")), "unexpected repeated warnings: %s", repeatedStderr)
 			assert.FatalIf(t, again != full, "%v", "identical list builds changed output")
@@ -226,10 +230,10 @@ data: {v: "${K}"}
 			)
 			wantValue := "v: v"
 			if list {
-				harness.MutateFile(t, filepath.Join(root, "apps/other/cm.yaml"), "K: v", "K: changed")
+				harness.MutateFile(t, filepath.Join(root, "apps", "other", "cm.yaml"), "K: v", "K: changed")
 				wantValue = "v: changed"
 			}
-			stdout, stderr, code := harness.RunCLIBuffers(
+			runCLIBuffersResult5 := harness.RunCLIBuffers(
 				"build",
 				"all",
 				"--path",
@@ -244,6 +248,7 @@ data: {v: "${K}"}
 				"--log-level",
 				"warn",
 			)
+			stdout, stderr, code := runCLIBuffersResult5.Stdout, runCLIBuffersResult5.Stderr, runCLIBuffersResult5.Code
 			assert.FatalIf(t, strings.Contains(stderr, "[") &&
 				(strings.Count(stderr, "[") != 1 || !strings.Contains(stderr, "[RenderPersistenceDisabled]")), "unexpected changed-only warnings: %s", stderr)
 			assert.FatalIf(
@@ -341,8 +346,10 @@ spec: {url: "https://example.test/cluster.git", ref: {branch: main}}
 					"-o",
 					"json",
 				}
-				out, warnings := harness.RequireCLIOK(t, args...)
-				again, againWarnings := harness.RequireCLIOK(t, args...)
+				requireCLIOKResult6 := harness.RequireCLIOK(t, args...)
+				out, warnings := requireCLIOKResult6.Stdout, requireCLIOKResult6.Stderr
+				requireCLIOKResult7 := harness.RequireCLIOK(t, args...)
+				again, againWarnings := requireCLIOKResult7.Stdout, requireCLIOKResult7.Stderr
 				assert.Equal(t, again, out)
 				assert.Equal(t, againWarnings, warnings)
 				t.Logf(
@@ -394,8 +401,10 @@ spec: {url: "https://example.test/cluster.git", ref: {branch: main}}
 					"-o",
 					"json",
 				}
-				out, warnings := harness.RequireCLIOK(t, args...)
-				again, againWarnings := harness.RequireCLIOK(t, args...)
+				requireCLIOKResult8 := harness.RequireCLIOK(t, args...)
+				out, warnings := requireCLIOKResult8.Stdout, requireCLIOKResult8.Stderr
+				requireCLIOKResult9 := harness.RequireCLIOK(t, args...)
+				again, againWarnings := requireCLIOKResult9.Stdout, requireCLIOKResult9.Stderr
 				assert.Equal(t, again, out)
 				assert.Equal(t, againWarnings, warnings)
 				t.Logf(
@@ -486,7 +495,7 @@ func TestE2E_BootstrapGeneratorFailureIsolation(t *testing.T) {
 				"configMapGenerator:\n- name: bad\n  "+input+"\n",
 			)
 			for _, workers := range []string{"2", "8"} {
-				stdout, stderr, code := harness.RunCLIBuffers(
+				runCLIBuffersResult10 := harness.RunCLIBuffers(
 					"build",
 					"all",
 					"--path",
@@ -497,6 +506,7 @@ func TestE2E_BootstrapGeneratorFailureIsolation(t *testing.T) {
 					t.TempDir(),
 					"--no-progress",
 				)
+				stdout, stderr, code := runCLIBuffersResult10.Stdout, runCLIBuffersResult10.Stderr, runCLIBuffersResult10.Code
 				assert.FatalIf(
 					t,
 					code != 1 || !strings.Contains(stdout, "good-output") || !strings.Contains(stderr, "bad") ||
@@ -615,7 +625,8 @@ sops:
 	}
 	var previous string
 	for run := range 2 {
-		out, _ := harness.RequireCLIOK(t, args...)
+		requireCLIOKResult11 := harness.RequireCLIOK(t, args...)
+		out, _ := requireCLIOKResult11.Stdout, requireCLIOKResult11.Stderr
 		assert.FatalIf(
 			t,
 			strings.Count(out, "name: settings-8h75cgbfc5") != 2 || !strings.Contains(out, "secretRef:") ||

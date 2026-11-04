@@ -102,7 +102,8 @@ spec:
 	if tc.allowMissing {
 		args = append(args, "--allow-missing-kinds=Secret,ConfigMap")
 	}
-	stdout, stderr, code := harness.RunCLIBuffers(args...)
+	runCLIBuffersResult1 := harness.RunCLIBuffers(args...)
+	stdout, stderr, code := runCLIBuffersResult1.Stdout, runCLIBuffersResult1.Stderr, runCLIBuffersResult1.Code
 	wantCode := 1
 	if tc.wantSkip {
 		wantCode = 0
@@ -138,7 +139,8 @@ spec:
 	)
 	if tc.wantSkip {
 		args[0] = "test"
-		out, diagnostic, testCode := harness.RunCLIBuffers(args...)
+		runCLIBuffersResult2 := harness.RunCLIBuffers(args...)
+		out, diagnostic, testCode := runCLIBuffersResult2.Stdout, runCLIBuffersResult2.Stderr, runCLIBuffersResult2.Code
 		assert.FatalIf(
 			t,
 			testCode != 0,

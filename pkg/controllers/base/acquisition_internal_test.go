@@ -80,16 +80,14 @@ func TestAcquire_SettlementContinuation(t *testing.T) {
 		},
 		Complete: func(_ context.Context, acquired *store.SourceArtifact, unavailable error, level manifest.DrainLevel) error {
 			completions++
-			{
-				assert.ErrorIf(
-					t,
-					acquired != artifact || unavailable != nil || level != manifest.DrainCascade,
-					"completion artifact=%v unavailable=%v level=%d",
-					acquired,
-					unavailable,
-					level,
-				)
-			}
+			assert.ErrorIf(
+				t,
+				acquired != artifact || unavailable != nil || level != manifest.DrainCascade,
+				"completion artifact=%v unavailable=%v level=%d",
+				acquired,
+				unavailable,
+				level,
+			)
 			return nil
 		},
 	}
@@ -128,13 +126,11 @@ func TestAcquire_SettlementContinuation(t *testing.T) {
 			completions,
 		)
 	}
-	{
-		assert.FatalIf(t, st.GetArtifact(provider.Named(), store.ArtifactContent) != nil ||
-			st.GetArtifact(owner.Named(), store.ArtifactContent) != nil ||
-			len(
-				st.Warnings(),
-			) != 0, "%v", "shared acquisition published source content or treated an evaluated empty result as unavailable")
-	}
+	assert.FatalIf(t, st.GetArtifact(provider.Named(), store.ArtifactContent) != nil ||
+		st.GetArtifact(owner.Named(), store.ArtifactContent) != nil ||
+		len(
+			st.Warnings(),
+		) != 0, "%v", "shared acquisition published source content or treated an evaluated empty result as unavailable")
 }
 
 func TestAcquire_CanceledMaterialDoesNotPark(t *testing.T) {
@@ -174,12 +170,10 @@ func TestAcquire_CanceledMaterialDoesNotPark(t *testing.T) {
 				t.Fatalf("canceled acquisition error=%v warnings=%+v", got, st.Warnings())
 			}
 			{
-				{
-					pending, ok := got.(interface {
-						Settle(context.Context, manifest.DrainLevel) error
-					})
-					assert.FatalIf(t, ok, "canceled material parked: %v", pending)
-				}
+				pending, ok := got.(interface {
+					Settle(context.Context, manifest.DrainLevel) error
+				})
+				assert.FatalIf(t, ok, "canceled material parked: %v", pending)
 			}
 		})
 	}
@@ -265,23 +259,19 @@ func testAcquireOutcomesCase(t *testing.T, testCaseInput *struct {
 					},
 					Complete: func(_ context.Context, acquired *store.SourceArtifact, unavailable error, completedLevel manifest.DrainLevel) error {
 						completed++
-						{
-							assert.ErrorIf(
-								t,
-								(unavailable != nil) != testCaseInput.unavailable || completedLevel != level,
-								"completion unavailable=%v level=%d",
-								unavailable,
-								completedLevel,
-							)
-						}
-						{
-							assert.ErrorIf(
-								t,
-								!testCaseInput.unavailable && acquired != artifact,
-								"%v",
-								"completion lost acquired content",
-							)
-						}
+						assert.ErrorIf(
+							t,
+							(unavailable != nil) != testCaseInput.unavailable || completedLevel != level,
+							"completion unavailable=%v level=%d",
+							unavailable,
+							completedLevel,
+						)
+						assert.ErrorIf(
+							t,
+							!testCaseInput.unavailable && acquired != artifact,
+							"%v",
+							"completion lost acquired content",
+						)
 						return nil
 					},
 				}, level)
@@ -312,40 +302,32 @@ func testAcquireOutcomesCaseTail(t *testing.T, tailCaseInput *testAcquireOutcome
 	t.Helper()
 	(*tailCaseInput.tasks).
 		BlockTillDone()
-	{
-		assert.FatalIf(
-			t,
-			((*tailCaseInput.got) != nil) != (*tailCaseInput.testCaseInput).hard || (*tailCaseInput.completed) !=
-				map[bool]int{true: 0, false: 1}[(*tailCaseInput.testCaseInput).hard],
-			"error=%v completions=%d, want hard=%t",
-			(*tailCaseInput.got),
-			(*tailCaseInput.completed),
-			(*tailCaseInput.testCaseInput).hard,
-		)
-	}
-	{
-		assert.FatalIf(
-			t,
-			(*tailCaseInput.testCaseInput).hard && !errors.Is((*tailCaseInput.got), (*tailCaseInput.failure)),
-			"hard failure lost its cause: %v",
-			(*tailCaseInput.got),
-		)
-	}
+	assert.FatalIf(
+		t,
+		((*tailCaseInput.got) != nil) != (*tailCaseInput.testCaseInput).hard || (*tailCaseInput.completed) !=
+			map[bool]int{true: 0, false: 1}[(*tailCaseInput.testCaseInput).hard],
+		"error=%v completions=%d, want hard=%t",
+		(*tailCaseInput.got),
+		(*tailCaseInput.completed),
+		(*tailCaseInput.testCaseInput).hard,
+	)
+	assert.FatalIf(
+		t,
+		(*tailCaseInput.testCaseInput).hard && !errors.Is((*tailCaseInput.got), (*tailCaseInput.failure)),
+		"hard failure lost its cause: %v",
+		(*tailCaseInput.got),
+	)
 	warnings := (*tailCaseInput.st).Warnings()
 	if !(*tailCaseInput.testCaseInput).unavailable {
-		{
-			assert.FatalIf(t, len(warnings) != 0, "unexpected warnings: %+v", warnings)
-		}
+		assert.FatalIf(t, len(warnings) != 0, "unexpected warnings: %+v", warnings)
 		return true
 	}
-	{
-		assert.FatalIf(t, len(warnings) != 1 || warnings[0].Resource != (*tailCaseInput.provider).Named() ||
-			warnings[0].Subject != manifest.DiagnosticFor(
-				(*tailCaseInput.provider).Named(),
-				(*tailCaseInput.provider),
-			) ||
-			warnings[0].Category != manifest.WarnSourceCredentialsUnavailable, "provider diagnostic=%+v", warnings)
-	}
+	assert.FatalIf(t, len(warnings) != 1 || warnings[0].Resource != (*tailCaseInput.provider).Named() ||
+		warnings[0].Subject != manifest.DiagnosticFor(
+			(*tailCaseInput.provider).Named(),
+			(*tailCaseInput.provider),
+		) ||
+		warnings[0].Category != manifest.WarnSourceCredentialsUnavailable, "provider diagnostic=%+v", warnings)
 	var related []manifest.NamedResource
 	if (*tailCaseInput.testCaseInput).missing {
 		related = []manifest.NamedResource{(*tailCaseInput.missing).Secret}
@@ -354,13 +336,11 @@ func testAcquireOutcomesCaseTail(t *testing.T, tailCaseInput *testAcquireOutcome
 		t.Fatalf("related=%v, want %v", warnings[0].Related, related)
 	}
 	{
-		{
-			info, _ := (*tailCaseInput.st).GetStatus((*tailCaseInput.owner).
-				Named(),
-			)
-			assert.FatalIf(t, info.Status != store.StatusReady ||
-				info.Outcome() == store.OutcomeSkipped, "provider unavailability suppressed the consumer: %+v", info)
-		}
+		info, _ := (*tailCaseInput.st).GetStatus((*tailCaseInput.owner).
+			Named(),
+		)
+		assert.FatalIf(t, info.Status != store.StatusReady ||
+			info.Outcome() == store.OutcomeSkipped, "provider unavailability suppressed the consumer: %+v", info)
 	}
 	return false
 }

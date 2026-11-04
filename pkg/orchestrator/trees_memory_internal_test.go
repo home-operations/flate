@@ -174,9 +174,7 @@ func TestRender_MemorySharedOwner(t *testing.T) {
 			)
 		}
 		root := os.Getenv("FLATE_E8_HOME")
-		{
-			assert.FatalIf(t, root == "", "%v", "MEM-3-WARM SDK requested without FLATE_E8_HOME pinned corpus input")
-		}
+		assert.FatalIf(t, root == "", "%v", "MEM-3-WARM SDK requested without FLATE_E8_HOME pinned corpus input")
 		func() {
 			owner, err := sourcecache.New(t.Context(), "")
 			assert.NoError(t, err)
@@ -185,7 +183,7 @@ func TestRender_MemorySharedOwner(t *testing.T) {
 			for run := range 2 {
 				o, err := newTestOrchestrator(
 					t,
-					Tree{Path: filepath.Join(root, "kubernetes/apps"), RepoRoot: root},
+					Tree{Path: filepath.Join(root, "kubernetes", "apps"), RepoRoot: root},
 					Config{
 						Cache:       owner,
 						WipeSecrets: true,
@@ -218,14 +216,12 @@ func TestRender_MemorySharedOwner(t *testing.T) {
 					nil,
 				)
 				assert.NoError(t, selectedErr)
-				{
-					assert.FatalIf(
-						t,
-						len(selected) != 1 || len(selected[0].Objects) != 1 || len(selected[0].Manifests) == 0,
-						"%v",
-						"pinned corpus did not supply rendered media/plex",
-					)
-				}
+				assert.FatalIf(
+					t,
+					len(selected) != 1 || len(selected[0].Objects) != 1 || len(selected[0].Manifests) == 0,
+					"%v",
+					"pinned corpus did not supply rendered media/plex",
+				)
 				data, err := json.Marshal(selected[0].Manifests)
 				assert.NoError(t, err)
 				digests[run] = sha256.Sum256(data)
@@ -280,17 +276,13 @@ func TestRender_MemoryContained(t *testing.T) {
 	parents := make(map[manifest.NamedResource]int)
 	objects := make(map[string]bool)
 	for _, batch := range memoryWorkloadBatches(t, result, o, declarations) {
-		{
-			assert.FatalIf(t, batch.Parent == nil, "%v", "ownerless workload output")
-		}
+		assert.FatalIf(t, batch.Parent == nil, "%v", "ownerless workload output")
 		id := batch.Parent.Named()
 		for _, doc := range batch.Documents {
 			parents[id]++
 			metadata := doc["metadata"].(map[string]any)
 			key := fmt.Sprint(metadata["namespace"], "/", metadata["name"])
-			{
-				assert.FatalIf(t, objects[key], "duplicate workload object %s", key)
-			}
+			assert.FatalIf(t, objects[key], "duplicate workload object %s", key)
 			objects[key] = true
 			assert.Equal(t, doc["kind"], any("ConfigMap"))
 			assert.Equal(t, doc["data"].(map[string]any)["payload"], any(strings.Repeat("x", 1024)))
@@ -375,25 +367,21 @@ func testRenderMemorySparseGitCase(t *testing.T, testCaseInput *struct {
 			assert.Equal(t, ok, true)
 			assert.Equal(t, status.Status, store.StatusReady)
 			siblingStatus, _ := side.store.GetStatus(sibling)
-			{
-				assert.FatalIf(
-					t,
-					siblingStatus.Outcome() == store.OutcomePassed,
-					"%v",
-					"unrelated sibling reconciled",
-				)
-			}
+			assert.FatalIf(
+				t,
+				siblingStatus.Outcome() == store.OutcomePassed,
+				"%v",
+				"unrelated sibling reconciled",
+			)
 			assert.Equal(t, side.store.GetObject(sibling) == nil, true)
 			count := 0
 			for _, batch := range memoryWorkloadBatches(t, side.Result, side.Orchestrator, []manifest.NamedResource{app}) {
-				{
-					assert.FatalIf(
-						t,
-						batch.Parent == nil || batch.Parent.Named().Name != "app",
-						"unrelated output parent=%v",
-						batch.Parent,
-					)
-				}
+				assert.FatalIf(
+					t,
+					batch.Parent == nil || batch.Parent.Named().Name != "app",
+					"unrelated output parent=%v",
+					batch.Parent,
+				)
 				for _, doc := range batch.Documents {
 					count++
 					want := []string{"before", "after!"}[n]

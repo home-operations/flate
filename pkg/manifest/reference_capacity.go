@@ -1,7 +1,13 @@
 package manifest
 
+// ReferenceLimits bounds preallocation without resolving identities.
+type ReferenceLimits struct {
+	References int
+	DataInputs int
+}
+
 // ReferenceCapacity bounds all references and data input uses without resolving identities.
-func (k *Kustomization) ReferenceCapacity() (int, int) {
+func (k *Kustomization) ReferenceCapacity() ReferenceLimits {
 	data := 0
 	n := len(k.DependsOn)
 	if k.SourceRef.Kind != "" || k.SourceRef.Name != "" || k.Path != "" {
@@ -11,22 +17,22 @@ func (k *Kustomization) ReferenceCapacity() (int, int) {
 		data = len(k.PostBuild.SubstituteFrom)
 		n += data
 	}
-	return n, data
+	return ReferenceLimits{References: n, DataInputs: data}
 }
 
 // ReferenceCapacity bounds all references and data input uses without resolving identities.
-func (h *HelmRelease) ReferenceCapacity() (int, int) {
+func (h *HelmRelease) ReferenceCapacity() ReferenceLimits {
 	n := len(h.DependsOn) + len(h.ValuesFrom)
 	if h.ChartRef != nil {
 		n++
 		if h.chartDeclaration != nil {
 			n++
 		}
-		return n, len(h.ValuesFrom)
+		return ReferenceLimits{References: n, DataInputs: len(h.ValuesFrom)}
 	}
 	template := h.HelmReleaseSpec.Chart
 	if template == nil {
-		return n, len(h.ValuesFrom)
+		return ReferenceLimits{References: n, DataInputs: len(h.ValuesFrom)}
 	}
 	if template.Kind == KindOCIRepository {
 		n++
@@ -38,58 +44,72 @@ func (h *HelmRelease) ReferenceCapacity() (int, int) {
 	} else {
 		n += chartTemplateSourceCapacity
 	}
-	return n, len(h.ValuesFrom)
+	return ReferenceLimits{References: n, DataInputs: len(h.ValuesFrom)}
 }
 
 // ReferenceCapacity bounds all references and data input uses without resolving identities.
-func (r *ResourceSet) ReferenceCapacity() (int, int) {
-	return len(r.DependsOn) + len(r.InputsFrom), 0
+func (r *ResourceSet) ReferenceCapacity() ReferenceLimits {
+	return ReferenceLimits{References: len(r.DependsOn) + len(r.InputsFrom)}
 }
 
 // ReferenceCapacity bounds all references and data input uses without resolving identities.
-func (*GitRepository) ReferenceCapacity() (int, int) { return gitCredentialCapacity, 0 }
+func (*GitRepository) ReferenceCapacity() ReferenceLimits {
+	return ReferenceLimits{References: gitCredentialCapacity}
+}
 
 // ReferenceCapacity bounds all references and data input uses without resolving identities.
-func (*OCIRepository) ReferenceCapacity() (int, int) { return ociCredentialCapacity, 0 }
+func (*OCIRepository) ReferenceCapacity() ReferenceLimits {
+	return ReferenceLimits{References: ociCredentialCapacity}
+}
 
 // ReferenceCapacity bounds all references and data input uses without resolving identities.
-func (*Bucket) ReferenceCapacity() (int, int) { return bucketCredentialCapacity, 0 }
+func (*Bucket) ReferenceCapacity() ReferenceLimits {
+	return ReferenceLimits{References: bucketCredentialCapacity}
+}
 
 // ReferenceCapacity bounds all references and data input uses without resolving identities.
-func (*HelmRepository) ReferenceCapacity() (int, int) { return helmCredentialCapacity, 0 }
+func (*HelmRepository) ReferenceCapacity() ReferenceLimits {
+	return ReferenceLimits{References: helmCredentialCapacity}
+}
 
 // ReferenceCapacity bounds all references and data input uses without resolving identities.
-func (*HelmChartSource) ReferenceCapacity() (int, int) { return 1, 0 }
+func (*HelmChartSource) ReferenceCapacity() ReferenceLimits {
+	return ReferenceLimits{References: 1}
+}
 
 // ReferenceCapacity bounds all references and data input uses without resolving identities.
-func (e *ExternalArtifact) ReferenceCapacity() (int, int) {
+func (e *ExternalArtifact) ReferenceCapacity() ReferenceLimits {
 	if e.SourceRef != nil {
-		return 1, 0
+		return ReferenceLimits{References: 1}
 	}
-	return 0, 0
+	return ReferenceLimits{}
 }
 
 // ReferenceCapacity bounds all references and data input uses without resolving identities.
-func (p *ResourceSetInputProvider) ReferenceCapacity() (int, int) {
+func (p *ResourceSetInputProvider) ReferenceCapacity() ReferenceLimits {
 	if p.inputKind() == ProviderInputRegistry {
-		return registryCredentialCapacity, 0
+		return ReferenceLimits{References: registryCredentialCapacity}
 	}
-	return 0, 0
+	return ReferenceLimits{}
 }
 
 // ReferenceCapacity bounds all references and data input uses without resolving identities.
-func (*ConfigMap) ReferenceCapacity() (int, int) { return 0, 0 }
+func (*ConfigMap) ReferenceCapacity() ReferenceLimits {
+	return ReferenceLimits{}
+}
 
 // ReferenceCapacity bounds all references and data input uses without resolving identities.
-func (*Secret) ReferenceCapacity() (int, int) { return 0, 0 }
+func (*Secret) ReferenceCapacity() ReferenceLimits {
+	return ReferenceLimits{}
+}
 
 // ReferenceCapacity bounds all references and data input uses without resolving identities.
-func (r *RawObject) ReferenceCapacity() (int, int) {
+func (r *RawObject) ReferenceCapacity() ReferenceLimits {
 	if r.isArtifactGenerator() {
 		sources, _ := r.Spec["sources"].([]any)
-		return len(sources), 0
+		return ReferenceLimits{References: len(sources)}
 	}
-	return 0, 0
+	return ReferenceLimits{}
 }
 
 const (

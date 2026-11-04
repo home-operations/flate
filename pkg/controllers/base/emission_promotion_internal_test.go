@@ -130,17 +130,13 @@ func TestRequire_PromotesPresentRuntimeInput(t *testing.T) {
 		[]manifest.DependencyRef{{NamedResource: input.Named(), Artifact: true, ChartSource: true}},
 		manifest.DrainNone,
 	)
-	{
-		assert.FatalIf(t, err == nil, "%v", "the input without acquired content did not block")
-	}
-	{
-		assert.FatalIf(
-			t,
-			!l.Options.Filter.ShouldReconcile(input.Named()),
-			"%v",
-			"a present runtime input was left excluded from acquisition",
-		)
-	}
+	assert.FatalIf(t, err == nil, "%v", "the input without acquired content did not block")
+	assert.FatalIf(
+		t,
+		!l.Options.Filter.ShouldReconcile(input.Named()),
+		"%v",
+		"a present runtime input was left excluded from acquisition",
+	)
 }
 
 func TestKeepEmitted_RequiredDeclarationSurvivesAdmissionRetry(t *testing.T) {
@@ -234,9 +230,7 @@ func TestKeepEmitted_DirtyInputDoesNotConsumeReaders(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, reads.Valid(), true)
 	st.DeleteObject(consumer.Named())
-	{
-		assert.FatalIf(t, !reads.Valid(), "%v", "reader publication invalidated the input that only admitted it")
-	}
+	assert.FatalIf(t, !reads.Valid(), "%v", "reader publication invalidated the input that only admitted it")
 }
 
 func TestDispatch_AdmissionDoesNotConsumeProducerInventory(t *testing.T) {
@@ -278,14 +272,12 @@ func TestDispatch_AdmissionDoesNotConsumeProducerInventory(t *testing.T) {
 	next.Children = []store.Child{{Obj: &manifest.ExternalArtifact{Name: "unrelated", Namespace: "apps"}}}
 	publication.Bind(&next)
 	st.RecordEmitted(producer.Named(), &next, nil)
-	{
-		assert.FatalIf(
-			t,
-			!execution.Reads.Valid(),
-			"%v",
-			"unrelated partial publication invalidated the child's admission-only inventory proof",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!execution.Reads.Valid(),
+		"%v",
+		"unrelated partial publication invalidated the child's admission-only inventory proof",
+	)
 }
 
 func testKeepEmittedLatePromotionConvergesCase(
@@ -411,9 +403,7 @@ func testKeepEmittedLatePromotionConvergesCase(
 		assert.Equal(t, filter.ShouldReconcile(child.Named()), true)
 		assert.Equal(t, rendered, "late consumer reconciled\n")
 		output, ok := s.GetArtifact(child.Named(), store.ArtifactContent).(*store.Emission)
-		{
-			assert.FatalIf(t, !ok, "%v", "missing selected output")
-		}
+		assert.FatalIf(t, !ok, "%v", "missing selected output")
 		assert.Diff(
 			t,
 			testutil.DocumentMaps(output.Manifests),
@@ -481,21 +471,25 @@ func testFingerprintDedupIncomingSelectionEvidenceCase(
 	stop := s.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, payload any) {
 		if id == child.Obj.Named() && payload != nil {
 			arrivals++
-			{
-				assert.ErrorIf(
-					t,
-					!filter.ShouldReconcile(id),
-					"%v",
-					"incoming contribution was not selected before arrival",
-				)
-			}
+			assert.ErrorIf(
+				t,
+				!filter.ShouldReconcile(id),
+				"%v",
+				"incoming contribution was not selected before arrival",
+			)
 		}
 	}, false)
 	defer stop()
 	if (*testCaseInput) == "emit" {
 		run.Emit(t.Context(), parent.Named(), attempt, nil)
 	} else {
-		_, handled, err := run.FingerprintDedup(t.Context(), parent.Named(), "same", &store.Emission{})
+		fingerprintDedupResult1, fingerprintDedupResult1Err := run.FingerprintDedup(
+			t.Context(),
+			parent.Named(),
+			"same",
+			&store.Emission{},
+		)
+		_, handled, err := fingerprintDedupResult1.Fingerprint, fingerprintDedupResult1.Reused, fingerprintDedupResult1Err
 		assert.NoError(t, err)
 		assert.Equal(t, handled, true)
 	}
@@ -507,8 +501,6 @@ func testFingerprintDedupIncomingSelectionEvidenceCase(
 		return
 	}
 	obj, ok := s.Get[*manifest.ConfigMap](child.Obj.Named())
-	{
-		assert.FatalIf(t, !ok, "%v", "selected incoming output is missing")
-	}
+	assert.FatalIf(t, !ok, "%v", "selected incoming output is missing")
 	assert.Diff(t, obj.Data, map[string]any{"VALUE": "incoming"})
 }

@@ -106,19 +106,15 @@ func TestLoadChart_ArtifactKeyIsolation(t *testing.T) {
 		}
 		loaded, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 		if name == "invalid-metadata" || name == "invalid-archive" {
-			{
-				assert.FatalIf(
-					t,
-					!errors.Is(err, manifest.ErrInput) || strings.Contains(err.Error(), "input error"),
-					"invalid metadata must be classified once: %v",
-					err,
-				)
-			}
+			assert.FatalIf(
+				t,
+				!errors.Is(err, manifest.ErrInput) || strings.Contains(err.Error(), "input error"),
+				"invalid metadata must be classified once: %v",
+				err,
+			)
 			continue
 		}
-		{
-			assert.NoError(t, err)
-		}
+		assert.NoError(t, err)
 		if loaded.chart.Name() != name {
 			t.Fatalf("loaded %s, want %s", loaded.chart.Name(), name)
 		}
@@ -192,9 +188,7 @@ func TestLoadFSChart_ArchiveSizeLimit(t *testing.T) {
 		}, 0o600, gzip.DefaultCompression)
 		assert.Equal(t, int64(len(payload)) < archive.MaxDecompressedChartSize, true)
 		_, wantErr := loader.LoadArchive(bytes.NewReader(payload))
-		{
-			assert.FatalIf(t, wantErr == nil, "%s", "Helm accepted oversized fixture")
-		}
+		assert.FatalIf(t, wantErr == nil, "%s", "Helm accepted oversized fixture")
 		captured, missing, err := captureChart(
 			t.Context(),
 			fstest.MapFS{"chart.tgz": {Data: payload}},
@@ -204,9 +198,7 @@ func TestLoadFSChart_ArchiveSizeLimit(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, missing, false)
 		_, err = captured.load()
-		{
-			assert.FatalIf(t, err == nil, "%s", "flate accepted oversized fixture")
-		}
+		assert.FatalIf(t, err == nil, "%s", "flate accepted oversized fixture")
 		assert.Equal(t, err.Error(), wantErr.Error())
 	})
 	t.Run("valid reload", func(t *testing.T) {
@@ -436,9 +428,7 @@ func testLoadFSChartMatchesHelmDirLoaderCase(
 	}
 	if *testCaseInput {
 		listener, err := net.Listen("unix", filepath.Join(root, "socket"))
-		{
-			assert.NoError(t, err)
-		}
+		assert.NoError(t, err)
 		t.Cleanup(func() { _ = listener.Close() })
 	}
 	want, wantErr := loader.LoadDir(root)
@@ -448,17 +438,13 @@ func testLoadFSChartMatchesHelmDirLoaderCase(
 		got, gotErr = captured.load()
 	}
 	if *testCaseInput {
-		{
-			assert.FatalIf(t, wantErr == nil || gotErr == nil, "irregular: upstream=%v FS=%v", wantErr, gotErr)
-		}
-		{
-			assert.FatalIf(
-				t,
-				!errors.Is(gotErr, manifest.ErrInput),
-				"irregular error lacks input classification: %v",
-				gotErr,
-			)
-		}
+		assert.FatalIf(t, wantErr == nil || gotErr == nil, "irregular: upstream=%v FS=%v", wantErr, gotErr)
+		assert.FatalIf(
+			t,
+			!errors.Is(gotErr, manifest.ErrInput),
+			"irregular error lacks input classification: %v",
+			gotErr,
+		)
 		{
 			want := strings.ReplaceAll(
 				wantErr.Error(),
@@ -469,9 +455,7 @@ func testLoadFSChartMatchesHelmDirLoaderCase(
 		}
 		return
 	}
-	{
-		assert.FatalIf(t, wantErr != nil || gotErr != nil, "upstream=%v FS=%v", wantErr, gotErr)
-	}
+	assert.FatalIf(t, wantErr != nil || gotErr != nil, "upstream=%v FS=%v", wantErr, gotErr)
 	{
 		diff := cmp.Diff(
 			want,
@@ -593,14 +577,12 @@ func testLoadFSChartDecompressedBudgetMatchesHelmCase(
 		(*testCaseInput.delta) > 0 || (*testCaseInput.automatic) && (*testCaseInput.delta) == 0,
 	)
 	assert.Equal(t, gotErr != nil, wantErr != nil)
-	{
-		assert.FatalIf(
-			t,
-			gotErr != nil && !errors.Is(gotErr, manifest.ErrInput),
-			"budget error lacks input classification: %v",
-			gotErr,
-		)
-	}
+	assert.FatalIf(
+		t,
+		gotErr != nil && !errors.Is(gotErr, manifest.ErrInput),
+		"budget error lacks input classification: %v",
+		gotErr,
+	)
 }
 
 type testLoadFSChartInvalidInputsCaseInputs struct {
@@ -615,26 +597,20 @@ func testLoadFSChartInvalidInputsCase(t *testing.T, testCaseInput *testLoadFSCha
 	if err == nil {
 		_, err = captured.load()
 	}
-	{
-		assert.FatalIf(
-			t, (*testCaseInput.name) ==
-				"missing" && !errors.Is(err, fs.ErrNotExist), "missing original cause: %v",
-			err,
-		)
-	}
-	{
-		assert.FatalIf(
-			t,
-			missing != ((*testCaseInput.name) == "missing"),
-			"missing location = %v for %s: %v",
-			missing, (*testCaseInput.name), err,
-		)
-	}
+	assert.FatalIf(
+		t, (*testCaseInput.name) ==
+			"missing" && !errors.Is(err, fs.ErrNotExist), "missing original cause: %v",
+		err,
+	)
+	assert.FatalIf(
+		t,
+		missing != ((*testCaseInput.name) == "missing"),
+		"missing location = %v for %s: %v",
+		missing, (*testCaseInput.name), err,
+	)
 	if (*testCaseInput.name) == "archive" || (*testCaseInput.name) == "empty" ||
 		(*testCaseInput.name) == "empty archive" {
-		{
-			assert.FatalIf(t, err == nil, "%s", "invalid chart must return an error")
-		}
+		assert.FatalIf(t, err == nil, "%s", "invalid chart must return an error")
 		return
 	}
 	if (*testCaseInput.name) == "metadata" {
@@ -644,14 +620,12 @@ func testLoadFSChartInvalidInputsCase(t *testing.T, testCaseInput *testLoadFSCha
 		}
 		return
 	}
-	{
-		assert.FatalIf(
-			t,
-			!errors.Is(err, manifest.ErrInput),
-			"invalid chart lacks input classification: %v",
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!errors.Is(err, manifest.ErrInput),
+		"invalid chart lacks input classification: %v",
+		err,
+	)
 }
 
 type testLoadChartAnonymousMutableInputsDoNotShareMemoCaseInputs struct {

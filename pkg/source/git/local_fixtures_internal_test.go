@@ -15,7 +15,7 @@ import (
 	"github.com/home-operations/flate/pkg/source/gitrepo"
 )
 
-func localFixture(tb testing.TB) (string, *git.Repository, plumbing.Hash, plumbing.Hash) {
+func localFixture(tb testing.TB) localRepository {
 	tb.Helper()
 	root := tb.TempDir()
 	repo := testutil.GitInit(tb, root)
@@ -34,7 +34,7 @@ func localFixture(tb testing.TB) (string, *git.Repository, plumbing.Hash, plumbi
 		}
 	}
 	testutil.WriteFile(tb, root, "value.txt", "dirty")
-	return root, repo, hashes[0], hashes[1]
+	return localRepository{root: root, repo: repo, base: hashes[0], head: hashes[1]}
 }
 
 func localLocation(tb testing.TB, root string) *gitrepo.Location {
@@ -61,4 +61,10 @@ func submoduleCommit(t *testing.T, repo *git.Repository, hash plumbing.Hash) plu
 	hash, err = repo.Storer.SetEncodedObject(encoded)
 	assert.NoError(t, err)
 	return hash
+}
+
+type localRepository struct {
+	root       string
+	repo       *git.Repository
+	base, head plumbing.Hash
 }

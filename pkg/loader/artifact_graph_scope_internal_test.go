@@ -76,9 +76,7 @@ func TestFinalizeIndex_ArtifactSourceViews(t *testing.T) {
 			Name:  "generator",
 		}
 		record, ok := l.Index.Lookup(authored)
-		{
-			assert.FatalIf(t, !ok, "%s", "authored generator missing before index finalization")
-		}
+		assert.FatalIf(t, !ok, "%s", "authored generator missing before index finalization")
 		assert.Diff(t, record.Refs, []manifest.NamedResource{
 			{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "external", Name: "foreign"},
 			{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "input"},
@@ -98,9 +96,7 @@ func TestFinalizeIndex_ArtifactSourceViews(t *testing.T) {
 		Name:      "generator",
 	}
 	record, ok := l.Index.Lookup(projected)
-	{
-		assert.FatalIf(t, !ok, "%s", "projected generator missing before index finalization")
-	}
+	assert.FatalIf(t, !ok, "%s", "projected generator missing before index finalization")
 	assert.Diff(t, record.Refs, []manifest.NamedResource{
 		{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "external", Name: "foreign"},
 		{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "input"},
@@ -108,14 +104,12 @@ func TestFinalizeIndex_ArtifactSourceViews(t *testing.T) {
 	})
 	obj, doc, attempt := s.GetEmission(projected)
 	attempt.Finish()
-	{
-		assert.FatalIf(
-			t,
-			obj == nil || doc == nil || doc["metadata"].(map[string]any)["uid"] != "authored",
-			"projected authoritative document = %#v",
-			doc,
-		)
-	}
+	assert.FatalIf(
+		t,
+		obj == nil || doc == nil || doc["metadata"].(map[string]any)["uid"] != "authored",
+		"projected authoritative document = %#v",
+		doc,
+	)
 	{
 		_, authoredNamespace := doc["metadata"].(map[string]any)["namespace"]
 		assert.FatalIf(t, authoredNamespace, "%s", "projection changed authored document namespace")
@@ -241,9 +235,7 @@ func TestFinalizeIndex_UntraversedBuilder(t *testing.T) {
 	for _, name := range []string{"untraversed", "selected"} {
 		id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: name}
 		_, indexed := l.Index.Lookup(id)
-		{
-			assert.FatalIf(t, indexed != (name == "selected"), "generator %s indexed = %v", name, indexed)
-		}
+		assert.FatalIf(t, indexed != (name == "selected"), "generator %s indexed = %v", name, indexed)
 	}
 }
 
@@ -412,25 +404,23 @@ func testSelfProduceBuilderArtifactDocumentVisitCase(
 	w := traversal{documents: reader, visited: map[graphContext]struct{}{}}
 	var scope []graphVisit
 	var declarations []producerDeclaration
-	{
-		assert.FatalIf(t, !w.walk(
-			t.Context(),
-			graphVisit{root: root, dir: ".", source: manifest.BootstrapSourceID},
-			func(v graphVisit) bool {
-				v.deferMaterialization = (*testCaseInput) != "explicit" && (*testCaseInput) != "transformed"
-				if (*testCaseInput) == "self_owner" {
-					v.owner = generator
-				}
-				scope = append(scope, v)
-				if v.document == nil && v.readable {
-					var err error
-					declarations, err = b.recordProduced(t.Context(), new(v), declarations, l)
-					assert.NoError(t, err)
-				}
-				return true
-			},
-		), "%s", "walk stopped before completing")
-	}
+	assert.FatalIf(t, !w.walk(
+		t.Context(),
+		graphVisit{root: root, dir: ".", source: manifest.BootstrapSourceID},
+		func(v graphVisit) bool {
+			v.deferMaterialization = (*testCaseInput) != "explicit" && (*testCaseInput) != "transformed"
+			if (*testCaseInput) == "self_owner" {
+				v.owner = generator
+			}
+			scope = append(scope, v)
+			if v.document == nil && v.readable {
+				var err error
+				declarations, err = b.recordProduced(t.Context(), new(v), declarations, l)
+				assert.NoError(t, err)
+			}
+			return true
+		},
+	), "%s", "walk stopped before completing")
 	b.joinProductions(declarations, scope)
 	want := map[string]int{"app-api": 1, "app-document": 0, "app-hidden": 0}
 	if (*testCaseInput) == "explicit" || (*testCaseInput) == "transformed" {

@@ -81,9 +81,7 @@ func TestGetEmission_SelectedBinding(t *testing.T) {
 	attempt.Fingerprint, attempt.Complete = "success", true
 	s.RecordEmitted(obj.Named(), &attempt, nil)
 	accepted := s.GetArtifact(obj.Named(), ArtifactContent)
-	{
-		assert.FatalIf(t, accepted == nil, "%s", "fresh inventory unavailable")
-	}
+	assert.FatalIf(t, accepted == nil, "%s", "fresh inventory unavailable")
 	s.RecordEmitted(
 		parent,
 		&Emission{Children: []Child{child}, Complete: true, binding: first, Fingerprint: "changed"},
@@ -91,29 +89,25 @@ func TestGetEmission_SelectedBinding(t *testing.T) {
 	)
 	_, doc, equivalent := s.GetEmission(obj.Named())
 	defer equivalent.Finish()
-	{
-		assert.FatalIf(t, equivalent.inputHead.binding != first || !manifest.ValueEqual(doc, child.Doc) ||
-			func() bool { output, ok := equivalent.Replay("success"); return !ok || output.Fingerprint != "success" }() ||
-			s.GetArtifact(
-				obj.Named(),
-				ArtifactContent,
-			) != accepted, "%s", "equivalent declaration storage invalidated accepted work")
-	}
+	assert.FatalIf(t, equivalent.inputHead.binding != first || !manifest.ValueEqual(doc, child.Doc) ||
+		func() bool { output, ok := equivalent.Replay("success"); return !ok || output.Fingerprint != "success" }() ||
+		s.GetArtifact(
+			obj.Named(),
+			ArtifactContent,
+		) != accepted, "%s", "equivalent declaration storage invalidated accepted work")
 	s.RecordEmitted(parent, &Emission{Children: []Child{child}, Complete: true, binding: second}, nil)
 	_, doc, rebound := s.GetEmission(obj.Named())
 	defer rebound.Finish()
-	{
-		assert.FatalIf(
-			t,
-			rebound.inputHead.binding != second || !manifest.ValueEqual(doc, child.Doc) || rebound.Fingerprint != "" ||
-				s.GetArtifact(
-					obj.Named(),
-					ArtifactContent,
-				) != nil,
-			"%s",
-			"selected document and binding did not invalidate old replay together",
-		)
-	}
+	assert.FatalIf(
+		t,
+		rebound.inputHead.binding != second || !manifest.ValueEqual(doc, child.Doc) || rebound.Fingerprint != "" ||
+			s.GetArtifact(
+				obj.Named(),
+				ArtifactContent,
+			) != nil,
+		"%s",
+		"selected document and binding did not invalidate old replay together",
+	)
 }
 
 func testGetEmissionAuthoritativeDocumentCase(
@@ -138,22 +132,16 @@ func testGetEmissionAuthoritativeDocumentCase(
 		}
 	}, false)()
 	s.AddObject(raw, doc)
-	{
-		assert.FatalIf(t, added != 1, "initial admission events = %d, want 1", added)
-	}
+	assert.FatalIf(t, added != 1, "initial admission events = %d, want 1", added)
 	if *testCaseInput {
 		s.AddObjects([]manifest.BaseManifest{raw.Clone()})
 	} else {
 		s.AddObject(raw.Clone())
 	}
-	{
-		assert.FatalIf(t, added != 1, "equal object-only admission events = %d, want 1", added)
-	}
+	assert.FatalIf(t, added != 1, "equal object-only admission events = %d, want 1", added)
 	_, retained, attempt := s.GetEmission(raw.Named())
 	attempt.Finish()
-	{
-		assert.FatalIf(t, !manifest.ValueEqual(retained, doc), "%s", "equal object-only admission discarded document")
-	}
+	assert.FatalIf(t, !manifest.ValueEqual(retained, doc), "%s", "equal object-only admission discarded document")
 	changed := raw.Clone()
 	changed.Spec["value"] = "second"
 	if *testCaseInput {
@@ -161,64 +149,48 @@ func testGetEmissionAuthoritativeDocumentCase(
 	} else {
 		s.AddObject(changed)
 	}
-	{
-		assert.FatalIf(t, added != 2, "changed object-only admission events = %d, want 2", added)
-	}
+	assert.FatalIf(t, added != 2, "changed object-only admission events = %d, want 2", added)
 	_, retained, attempt = s.GetEmission(raw.Named())
 	attempt.Finish()
-	{
-		assert.FatalIf(t, retained != nil, "%s", "changed object-only admission retained stale authority")
-	}
+	assert.FatalIf(t, retained != nil, "%s", "changed object-only admission retained stale authority")
 	replacement := map[string]any{"metadata": map[string]any{"uid": "replacement"}}
 	var captured ReadSet
 	captured.Init(s, ownerID("document-reader"), nil)
 	captured.GetObject(raw.Named())
 	s.AddObject(changed, replacement)
-	{
-		assert.FatalIf(
-			t,
-			captured.Valid(),
-			"%s",
-			"meaningful document-only replacement kept the captured generator valid",
-		)
-	}
+	assert.FatalIf(
+		t,
+		captured.Valid(),
+		"%s",
+		"meaningful document-only replacement kept the captured generator valid",
+	)
 	captured.Retire()
-	{
-		assert.FatalIf(t, added != 3, "replacement document admission events = %d, want 3", added)
-	}
+	assert.FatalIf(t, added != 3, "replacement document admission events = %d, want 3", added)
 	_, retained, attempt = s.GetEmission(raw.Named())
 	attempt.Finish()
-	{
-		assert.FatalIf(
-			t,
-			!manifest.ValueEqual(retained, replacement),
-			"%s",
-			"explicit document did not replace equal object's authority",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!manifest.ValueEqual(retained, replacement),
+		"%s",
+		"explicit document did not replace equal object's authority",
+	)
 	s.AddObject(changed, replacement)
-	{
-		assert.FatalIf(t, added != 3, "equal document admission events = %d, want 3", added)
-	}
+	assert.FatalIf(t, added != 3, "equal document admission events = %d, want 3", added)
 	_, _, completed := s.GetEmission(raw.Named())
 	defer completed.Finish()
 	completed.Complete = true
 	s.RecordEmitted(raw.Named(), &completed, nil)
-	{
-		assert.FatalIf(
-			t,
-			s.GetArtifact(raw.Named(), ArtifactContent) == nil,
-			"%s",
-			"completed document input is unavailable",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.GetArtifact(raw.Named(), ArtifactContent) == nil,
+		"%s",
+		"completed document input is unavailable",
+	)
 	s.AddObject(changed, doc)
-	{
-		assert.FatalIf(
-			t,
-			s.GetArtifact(raw.Named(), ArtifactContent) != nil,
-			"%s",
-			"changed document retained completed work for the same object pointer",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.GetArtifact(raw.Named(), ArtifactContent) != nil,
+		"%s",
+		"changed document retained completed work for the same object pointer",
+	)
 }

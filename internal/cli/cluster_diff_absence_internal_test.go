@@ -16,7 +16,7 @@ import (
 	"github.com/home-operations/flate/pkg/diff"
 )
 
-func runClusterGroupsDiffAbsenceAndFailureScenario(t *testing.T, scenario *string, base *string) {
+func runClusterGroupsDiffAbsenceAndFailureScenario(t *testing.T, scenario, base *string) {
 	t.Helper()
 
 	values := map[string]string{"omega": "new"}
@@ -27,7 +27,7 @@ func runClusterGroupsDiffAbsenceAndFailureScenario(t *testing.T, scenario *strin
 	if (*scenario) == "failed" {
 		appendScopeSpec(t, current, "alpha/flux.yaml", "  dependsOn: [{name: missing}]\n")
 	}
-	stdout, stderr, code := runClusterInputs(
+	cluster := runClusterInputs(
 		t,
 		"diff",
 		"all",
@@ -40,6 +40,7 @@ func runClusterGroupsDiffAbsenceAndFailureScenario(t *testing.T, scenario *strin
 		"--concurrency",
 		"2",
 	)
+	stdout, stderr, code := cluster.stdout, cluster.stderr, cluster.code
 	var groups []struct {
 		Cluster    string             `json:"cluster"`
 		Removed    bool               `json:"removed"`
@@ -53,7 +54,7 @@ func runClusterGroupsDiffAbsenceAndFailureScenario(t *testing.T, scenario *strin
 			groups[1].Changes,
 			hasPod,
 		), "keyed diff lost healthy group: code=%d stdout=%s stderr=%s", code, stdout, stderr)
-	entry, diagnostics, status := runClusterInputs(
+	cluster2 := runClusterInputs(
 		t,
 		"diff",
 		"all",
@@ -66,6 +67,7 @@ func runClusterGroupsDiffAbsenceAndFailureScenario(t *testing.T, scenario *strin
 		"--concurrency",
 		"2",
 	)
+	entry, diagnostics, status := cluster2.stdout, cluster2.stderr, cluster2.code
 	assert.FatalIf(
 		t,
 		status != 0,
@@ -84,7 +86,7 @@ func runClusterGroupsDiffAbsenceAndFailureScenario(t *testing.T, scenario *strin
 			len(
 				groups[0].Suppressed,
 			) != 0, "absent side suppressed removal: code=%d stdout=%s stderr=%s", code, stdout, stderr)
-		images, diagnostics, status := runClusterInputs(
+		cluster3 := runClusterInputs(
 			t,
 			"diff",
 			"images",
@@ -95,6 +97,7 @@ func runClusterGroupsDiffAbsenceAndFailureScenario(t *testing.T, scenario *strin
 			"--concurrency",
 			"2",
 		)
+		images, diagnostics, status := cluster3.stdout, cluster3.stderr, cluster3.code
 		assert.FatalIf(
 			t,
 			status != 0 || images != "omega: example.test/app:new\n",
@@ -120,7 +123,7 @@ func runClusterGroupsDiffAbsenceAndFailureScenario(t *testing.T, scenario *strin
 		}
 		for _, format := range []string{"json", "yaml"} {
 			t.Run("images/"+format, func(t *testing.T) {
-				images, diagnostics, status := runClusterInputs(
+				cluster4 := runClusterInputs(
 					t,
 					"diff",
 					"images",
@@ -133,6 +136,7 @@ func runClusterGroupsDiffAbsenceAndFailureScenario(t *testing.T, scenario *strin
 					"--concurrency",
 					"2",
 				)
+				images, diagnostics, status := cluster4.stdout, cluster4.stderr, cluster4.code
 				assert.Equal(t, status, 1)
 				var imageGroups []output.ImageGroup
 				assert.NoError(t, yaml.Unmarshal([]byte(images), &imageGroups))
@@ -192,7 +196,7 @@ func runClusterGroupsDiffAbsenceAndFailureName(t *testing.T, tc *struct {
 		}
 	}
 	testutil.WriteFile(t, current, tc.path, fmt.Sprintf(input, tc.resource, "changed"))
-	stdout, stderr, code := runClusterInputs(
+	cluster := runClusterInputs(
 		t,
 		"diff",
 		"all",
@@ -205,6 +209,7 @@ func runClusterGroupsDiffAbsenceAndFailureName(t *testing.T, tc *struct {
 		"--concurrency",
 		"2",
 	)
+	stdout, stderr, code := cluster.stdout, cluster.stderr, cluster.code
 	assert.FatalIf(t, code != 0, "group comparison: code=%d stdout=%s stderr=%s", code, stdout, stderr)
 	var groups []struct {
 		Cluster    string             `json:"cluster"`
@@ -219,7 +224,7 @@ func runClusterGroupsDiffAbsenceAndFailureName(t *testing.T, tc *struct {
 		stdout,
 	)
 	for i, entry := range []string{"alpha", "omega"} {
-		out, diagnostics, status := runClusterInputs(
+		cluster2 := runClusterInputs(
 			t,
 			"diff",
 			"all",
@@ -232,6 +237,7 @@ func runClusterGroupsDiffAbsenceAndFailureName(t *testing.T, tc *struct {
 			"--concurrency",
 			"2",
 		)
+		out, diagnostics, status := cluster2.stdout, cluster2.stderr, cluster2.code
 		assert.FatalIf(
 			t,
 			status != 0,

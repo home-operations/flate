@@ -35,7 +35,8 @@ func TestCacheGC_ExplicitRoot(t *testing.T) {
 			for _, key := range []string{"HOME", "XDG_CACHE_HOME", "TMPDIR"} {
 				t.Setenv(key, t.TempDir())
 			}
-			stdout, stderr, code := runCLI(t, args...)
+			cli := runCLI(t, args...)
+			stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 			wantCode := 1
 			if scenario == "flag" || scenario == "env" {
 				wantCode = 0
@@ -70,7 +71,8 @@ func TestCacheGC_ExplicitRoot(t *testing.T) {
 func TestCache_RemovedSurfaceUnavailable(t *testing.T) {
 	for _, args := range [][]string{{"cache", "removed-command"}, {"cache", "gc", "--include-mirrors"}} {
 		{
-			_, stderr, code := runCLI(t, args...)
+			cli := runCLI(t, args...)
+			stderr, code := cli.stderr, cli.code
 			assert.FatalIf(t, code != 1, "removed surface %v exited %d: %s", args, code, stderr)
 		}
 	}
@@ -92,7 +94,8 @@ func TestCacheGC_WarningWriteError(t *testing.T) {
 	args := []string{"cache", "gc", "--cache-dir", root, "--max-age=0"}
 	var wantOut, wantErr string
 	for run := range 2 {
-		stdout, stderr, code := runCLI(t, args...)
+		cli := runCLI(t, args...)
+		stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 		assert.FatalIf(t, code != 0 || strings.Count(stderr, "[CacheMaintenance]") != 1 ||
 			!strings.Contains(stderr, "save swept index") ||
 			strings.Contains(stdout, "save swept index") ||

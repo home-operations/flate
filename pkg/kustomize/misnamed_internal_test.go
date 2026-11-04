@@ -37,24 +37,18 @@ func TestRender_MisnamedKustomization(t *testing.T) {
 			sourcecache.RetryConfig{},
 		),
 	)
-	{
-		assert.FatalIf(t, err == nil, "%s", "expected an error for the misnamed kustomization file")
-	}
+	assert.FatalIf(t, err == nil, "%s", "expected an error for the misnamed kustomization file")
 	s := err.Error()
-	{
-		assert.ErrorIf(
-			t,
-			!strings.Contains(s, "misnamed kustomization") || !strings.Contains(s, "kustomzation.yaml"),
-			"want an actionable misnamed-kustomization hint naming the file, got: %v",
-			err,
-		)
-	}
-	{
-		assert.ErrorIf(
-			t,
-			!strings.Contains(s, "kustomization.yaml"),
-			"error should point at the correct filename: %v",
-			err,
-		)
-	}
+	assert.ErrorIf(
+		t,
+		!strings.Contains(s, "misnamed kustomization") || !strings.Contains(s, "kustomzation.yaml"),
+		"want an actionable misnamed-kustomization hint naming the file, got: %v",
+		err,
+	)
+	assert.ErrorIf(
+		t,
+		!strings.Contains(s, "kustomization.yaml"),
+		"error should point at the correct filename: %v",
+		err,
+	)
 }

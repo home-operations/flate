@@ -99,32 +99,26 @@ func testStoreRenderedParentAllocationsCase(t *testing.T, testCaseInput *string,
 	var parent manifest.NamedResource
 	var ok bool
 	allocs := testing.AllocsPerRun(10, func() { parent, ok = s.RenderedParent(id, nil) })
-	{
-		assert.FatalIf(
-			t,
-			allocs != 0 || ok != ((*testCaseInput) != "missing") || (ok && parent != owner),
-			"parent=%v/%t allocations=%v",
-			parent,
-			ok,
-			allocs,
-		)
-	}
+	assert.FatalIf(
+		t,
+		allocs != 0 || ok != ((*testCaseInput) != "missing") || (ok && parent != owner),
+		"parent=%v/%t allocations=%v",
+		parent,
+		ok,
+		allocs,
+	)
 	if (*testCaseInput) == "thin" {
 		var obj manifest.BaseManifest
 		allocs = testing.AllocsPerRun(10, func() { obj = s.GetObject(id) })
-		{
-			assert.FatalIf(
-				t,
-				allocs != 0 || obj != child.Obj,
-				"effective object=%v allocations=%v",
-				obj,
-				allocs,
-			)
-		}
+		assert.FatalIf(
+			t,
+			allocs != 0 || obj != child.Obj,
+			"effective object=%v allocations=%v",
+			obj,
+			allocs,
+		)
 		allocs = testing.AllocsPerRun(10, func() { parent = s.EmissionOwner(id) })
-		{
-			assert.FatalIf(t, allocs != 0 || parent != owner, "content owner=%v allocations=%v", parent, allocs)
-		}
+		assert.FatalIf(t, allocs != 0 || parent != owner, "content owner=%v allocations=%v", parent, allocs)
 	}
 }
 
@@ -142,17 +136,13 @@ func TestStore_AddObject_TypedDocumentFreeAllocations(t *testing.T) {
 		i++
 		s.AddObject(versions[i%2])
 	})
-	{
-		assert.FatalIf(t, got > 6, "changed typed object allocations=%v, want at most 6", got)
-	}
-	{
-		assert.FatalIf(
-			t,
-			s.GetObject(versions[0].Named()) != versions[i%2],
-			"%v",
-			"changed typed object was not admitted",
-		)
-	}
+	assert.FatalIf(t, got > 6, "changed typed object allocations=%v, want at most 6", got)
+	assert.FatalIf(
+		t,
+		s.GetObject(versions[0].Named()) != versions[i%2],
+		"%v",
+		"changed typed object was not admitted",
+	)
 }
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
@@ -183,7 +173,5 @@ func TestRecordEmitted_ReplacementAllocations(t *testing.T) {
 		round++
 		s.RecordEmitted(owner.Named(), &versions[round%2], nil)
 	})
-	{
-		assert.FatalIf(t, got > 60, "100-output replacement allocations=%v, want at most 60", got)
-	}
+	assert.FatalIf(t, got > 60, "100-output replacement allocations=%v, want at most 60", got)
 }

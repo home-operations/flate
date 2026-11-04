@@ -51,26 +51,24 @@ func testRenderConcurrentPrivateOverlaysCase(
 					sourcecache.RetryConfig{},
 				),
 			)
-			{
-				assert.ErrorIf(
-					t,
-					err != nil || !hasRenderField(out, "name", fmt.Sprintf("render%d-shared", n)) ||
-						!hasRenderField(
-							out,
-							"marker",
-							"patched",
-						) || !hasRenderField(out, "payload", "remote") ||
-						!hasRenderField(
-							out,
-							"namespace",
-							fmt.Sprintf("namespace%d", n),
-						) || spec.PostBuild.Substitute["SLOT"] != strconv.Itoa(n) ||
-						original.TargetNamespace != "" || len(original.PostBuild.Substitute) != 0,
-					"private output = %s, %v",
-					out,
-					err,
-				)
-			}
+			assert.ErrorIf(
+				t,
+				err != nil || !hasRenderField(out, "name", fmt.Sprintf("render%d-shared", n)) ||
+					!hasRenderField(
+						out,
+						"marker",
+						"patched",
+					) || !hasRenderField(out, "payload", "remote") ||
+					!hasRenderField(
+						out,
+						"namespace",
+						fmt.Sprintf("namespace%d", n),
+					) || spec.PostBuild.Substitute["SLOT"] != strconv.Itoa(n) ||
+					original.TargetNamespace != "" || len(original.PostBuild.Substitute) != 0,
+				"private output = %s, %v",
+				out,
+				err,
+			)
 		})
 		lookups.Go(func() {
 			runPrivateOverlayLookup(t, &privateOverlayLookupInputs{
@@ -86,22 +84,18 @@ func testRenderConcurrentPrivateOverlaysCase(
 	lookups.Wait()
 	for n, count := range iterations {
 		t.Logf("lookup worker %d: %d complete scope batches during render workers", n, count)
-		{
-			assert.ErrorIf(t, count == 0, "lookup worker %d did no scope work during render workers", n)
-		}
+		assert.ErrorIf(t, count == 0, "lookup worker %d did no scope work during render workers", n)
 	}
 	for path, want := range *testCaseInput.files {
 		got, err := fs.ReadFile((*testCaseInput.artifact).FS, path)
-		{
-			assert.FatalIf(
-				t,
-				err != nil || string(got) != want,
-				"shared source %s mutated: %s, %v",
-				path,
-				got,
-				err,
-			)
-		}
+		assert.FatalIf(
+			t,
+			err != nil || string(got) != want,
+			"shared source %s mutated: %s, %v",
+			path,
+			got,
+			err,
+		)
 	}
 }
 
@@ -147,15 +141,17 @@ func checkPrivateOverlayScopes(t *testing.T, scenario **testRenderConcurrentPriv
 			"kind":       tc.kind,
 			"metadata":   map[string]any{"name": "scope"},
 		}
-		obj, authoritative, changed, err := manifest.ParseDoc(
+		parsed, err := manifest.ParseDoc(
 			doc,
 			manifest.ParseDocOptions{DefaultNamespace: "apps"},
 		)
+		obj, authoritative, changed := parsed.Object, parsed.Document, parsed.Changed
 		if err != nil {
 			t.Error(err)
 			return false
 		}
-		_, ns := manifest.DocMetadata(authoritative)
+		metadata := manifest.DocMetadata(authoritative)
+		ns := metadata.Namespace
 		if obj.Named().Namespace != tc.namespace || ns != tc.namespace ||
 			changed != (tc.namespace != "") {
 			t.Errorf(

@@ -45,29 +45,23 @@ func TestTreeFS_WalkPropagatesSkipDir(t *testing.T) {
 		}
 		return nil
 	})
-	{
-		assert.FatalIf(t, err != nil, "walk: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "walk: %v", err)
 
 	// app/ was SkipDir'd: none of its children — disk OR memory — may be delivered.
 	for _, bad := range []string{"app/kustomization.yaml", "app/inner.yaml", "app/mem.yaml"} {
-		{
-			assert.ErrorIf(
-				t,
-				slices.Contains(visited, bad),
-				"SkipDir not honored on the disk layer: walk descended into %q\nvisited=%v",
-				bad,
-				visited,
-			)
-		}
-	}
-	// lib/ was NOT skipped: its disk-only child must still surface.
-	{
 		assert.ErrorIf(
 			t,
-			!slices.Contains(visited, "lib/disk.yaml"),
-			"over-skip: disk-only file lib/disk.yaml was not visited\nvisited=%v",
+			slices.Contains(visited, bad),
+			"SkipDir not honored on the disk layer: walk descended into %q\nvisited=%v",
+			bad,
 			visited,
 		)
 	}
+	// lib/ was NOT skipped: its disk-only child must still surface.
+	assert.ErrorIf(
+		t,
+		!slices.Contains(visited, "lib/disk.yaml"),
+		"over-skip: disk-only file lib/disk.yaml was not visited\nvisited=%v",
+		visited,
+	)
 }

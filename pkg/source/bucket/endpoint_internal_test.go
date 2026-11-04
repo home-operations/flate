@@ -92,7 +92,8 @@ func testNormalizeEndpointCase(t *testing.T, tc *struct {
 ) {
 	t.Helper()
 
-	host, secure, err := normalizeEndpoint(tc.endpoint, tc.insecure)
+	endpointInfo, err := normalizeEndpoint(tc.endpoint, tc.insecure)
+
 	if tc.wantErr != "" {
 		if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 			t.Fatalf("err = %v, want substring %q", err, tc.wantErr)
@@ -100,10 +101,10 @@ func testNormalizeEndpointCase(t *testing.T, tc *struct {
 		return
 	}
 	assert.FatalIf(t, err != nil, "unexpected err: %v", err)
-	if host != tc.wantHost {
-		t.Errorf("host = %q, want %q", host, tc.wantHost)
+	if endpointInfo.host != tc.wantHost {
+		t.Errorf("host = %q, want %q", endpointInfo.host, tc.wantHost)
 	}
-	if secure != tc.wantSecure {
-		t.Errorf("secure = %v, want %v", secure, tc.wantSecure)
+	if endpointInfo.secure != tc.wantSecure {
+		t.Errorf("secure = %v, want %v", endpointInfo.secure, tc.wantSecure)
 	}
 }

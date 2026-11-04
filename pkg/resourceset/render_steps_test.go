@@ -49,39 +49,30 @@ func TestRender_Steps(t *testing.T) {
 			rs := &manifest.ResourceSet{Name: "steps", Namespace: "default", ResourceSetSpec: tt.spec}
 			docs, _, err := renderProviders(rs, nil, nil)
 			if tt.wantErr != "" {
-				{
-					assert.FatalIf(
-						t,
-						err == nil || !strings.Contains(err.Error(), tt.wantErr),
-						"error = %v, want %q",
-						err,
-						tt.wantErr,
-					)
-				}
-				{
-					assert.FatalIf(t, strings.Contains(err.Error(), "ResourceSet default/steps") ||
-						strings.Contains(err.Error(), "flux error") ||
-						strings.Contains(
-							err.Error(),
-							"input error",
-						), "step diagnostic repeated owner or classification: %v", err)
-				}
+				assert.FatalIf(
+					t,
+					err == nil || !strings.Contains(err.Error(), tt.wantErr),
+					"error = %v, want %q",
+					err,
+					tt.wantErr,
+				)
+				assert.FatalIf(t, strings.Contains(err.Error(), "ResourceSet default/steps") ||
+					strings.Contains(err.Error(), "flux error") ||
+					strings.Contains(
+						err.Error(),
+						"input error",
+					), "step diagnostic repeated owner or classification: %v", err)
 				return
 			}
-			{
-				assert.NoError(t, err)
-			}
+			assert.NoError(t, err)
 			names := make([]string, 0, len(docs))
 			rs.EmissionPolicy().Stamp(docs)
 			for _, doc := range docs {
-				name, ns := manifest.DocMetadata(doc.Document)
-				{
-					assert.ErrorIf(t, ns != "", "namespace = %q", ns)
-				}
+				metadata := manifest.DocMetadata(doc.Document)
+				name, ns := metadata.Name, metadata.Namespace
+				assert.ErrorIf(t, ns != "", "namespace = %q", ns)
 				labels := doc.Document["metadata"].(map[string]any)["labels"].(map[string]any)
-				{
-					assert.ErrorIf(t, labels[fluxopv1.OwnerLabelResourceSetName] != "steps", "labels = %v", labels)
-				}
+				assert.ErrorIf(t, labels[fluxopv1.OwnerLabelResourceSetName] != "steps", "labels = %v", labels)
 				names = append(names, name)
 			}
 			assert.Diff(t, names, tt.names)

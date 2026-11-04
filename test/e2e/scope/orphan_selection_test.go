@@ -61,7 +61,7 @@ data: {value: rendered}
 					"  path: ./missing\n  sourceRef: {kind: GitRepository, name: flux-system}\n",
 				),
 			)
-			stdout, stderr, code := harness.RunCLIBuffers(
+			runCLIBuffersResult1 := harness.RunCLIBuffers(
 				"build",
 				"all",
 				"--path",
@@ -73,6 +73,7 @@ data: {value: rendered}
 				"--cache-dir",
 				t.TempDir(),
 			)
+			stdout, stderr, code := runCLIBuffersResult1.Stdout, runCLIBuffersResult1.Stderr, runCLIBuffersResult1.Code
 			assert.FatalIf(t, code != 0 || !strings.Contains(stdout, "name: healthy-output") ||
 				strings.Contains(
 					stdout,

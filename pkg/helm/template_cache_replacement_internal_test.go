@@ -16,7 +16,7 @@ func testTemplateCacheSameKeyReplacements(
 	t *testing.T,
 	inputs *templateCacheIntegrationInputs,
 	alternateKey *cache.BlobKey,
-	alternate *map[string]any,
+	alternate map[string]any,
 ) {
 	t.Helper()
 	for _, replacement := range []string{"changed output", "corrupt payload", "{", `{"Output":"bWlzc2luZyBhbmFseXNpcw=="}`} {
@@ -52,7 +52,7 @@ func testTemplateCacheSameKeyReplacements(
 			(*inputs.cli).Template(
 				t.Context(),
 				newHR(),
-				(*alternate),
+				alternate,
 				RenderOptions{Options: Options{}, Sources: (*inputs.cliSources)},
 			),
 		)
@@ -73,42 +73,34 @@ func testTemplateCacheSameKeyReplacements(
 		switch replacement {
 		case "changed output":
 			assert.NoError(t, blobErr)
-			{
-				assert.FatalIf(
-					t,
-					!reflect.DeepEqual(out, replacementDocs),
-					"%s",
-					"same-key replacement served stale output",
-				)
-			}
+			assert.FatalIf(
+				t,
+				!reflect.DeepEqual(out, replacementDocs),
+				"%s",
+				"same-key replacement served stale output",
+			)
 		case "corrupt payload":
-			{
-				assert.FatalIf(
-					t,
-					blobErr == nil || !strings.Contains(blobErr.Error(), "cache miss action") || len(out) != 0,
-					"corrupt payload: %v, %v",
-					out,
-					blobErr,
-				)
-			}
+			assert.FatalIf(
+				t,
+				blobErr == nil || !strings.Contains(blobErr.Error(), "cache miss action") || len(out) != 0,
+				"corrupt payload: %v, %v",
+				out,
+				blobErr,
+			)
 		case "{":
-			{
-				assert.FatalIf(
-					t,
-					blobErr == nil || !strings.Contains(blobErr.Error(), "cache miss action") || len(out) != 0,
-					"malformed replacement was concealed: %v",
-					blobErr,
-				)
-			}
+			assert.FatalIf(
+				t,
+				blobErr == nil || !strings.Contains(blobErr.Error(), "cache miss action") || len(out) != 0,
+				"malformed replacement was concealed: %v",
+				blobErr,
+			)
 		default:
-			{
-				assert.FatalIf(
-					t,
-					blobErr == nil || !strings.Contains(blobErr.Error(), "cache miss action") || len(out) != 0,
-					"missing analysis was accepted: %v",
-					blobErr,
-				)
-			}
+			assert.FatalIf(
+				t,
+				blobErr == nil || !strings.Contains(blobErr.Error(), "cache miss action") || len(out) != 0,
+				"missing analysis was accepted: %v",
+				blobErr,
+			)
 		}
 	}
 }

@@ -27,23 +27,19 @@ func TestRender_UsesOneProviderQuery(t *testing.T) {
 		rs,
 		func(fluxopv1.InputProviderReference, manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
 			calls++
-			{
-				assert.FatalIf(t, calls != 1, "%s", "provider query repeated")
-			}
+			assert.FatalIf(t, calls != 1, "%s", "provider query repeated")
 			return []*manifest.ResourceSetInputProvider{provider}, nil
 		},
 		nil,
 	)
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(
-			t,
-			calls != 1 || len(docs) != 1 || docs[0].Document["metadata"].(map[string]any)["name"] != "captured",
-			"query calls=%d output=%v",
-			calls,
-			docs,
-		)
-	}
+	assert.FatalIf(
+		t,
+		calls != 1 || len(docs) != 1 || docs[0].Document["metadata"].(map[string]any)["name"] != "captured",
+		"query calls=%d output=%v",
+		calls,
+		docs,
+	)
 }
 
 func renderProviders(

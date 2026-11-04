@@ -75,13 +75,9 @@ func TestRenderTrees_MissingPath(t *testing.T) {
 		[]Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		Config{},
 	)
-	{
-		assert.FatalIf(t, len(runs) != 1 || runs[0].Orchestrator != nil || !errors.Is(err, manifest.ErrInput) ||
-			!errors.Is(err, manifest.ErrFlux), "missing path identity: runs=%v err=%v", runs, err)
-	}
-	{
-		assert.FatalIf(t, !strings.Contains(err.Error(), "tree path is required"), "missing path diagnostic: %v", err)
-	}
+	assert.FatalIf(t, len(runs) != 1 || runs[0].Orchestrator != nil || !errors.Is(err, manifest.ErrInput) ||
+		!errors.Is(err, manifest.ErrFlux), "missing path identity: runs=%v err=%v", runs, err)
+	assert.FatalIf(t, !strings.Contains(err.Error(), "tree path is required"), "missing path diagnostic: %v", err)
 }
 
 // TestDetectOrphans drives the orphan-detection logic in isolation —
@@ -137,28 +133,20 @@ func TestDetectOrphans(t *testing.T) {
 	orphans := o.detectOrphans(failed, o.reportOwnership(o.reportingClaims()))
 
 	{
-		{
-			_, ok := orphans[orphan.Named()]
-			assert.ErrorIf(t, !ok, "expected orphan to be detected")
-		}
+		_, ok := orphans[orphan.Named()]
+		assert.ErrorIf(t, !ok, "expected orphan to be detected")
 	}
 	{
-		{
-			_, ok := orphans[emittedChild.Named()]
-			assert.ErrorIf(t, ok, "re-emitted child is not an orphan: parent's render covered it")
-		}
+		_, ok := orphans[emittedChild.Named()]
+		assert.ErrorIf(t, ok, "re-emitted child is not an orphan: parent's render covered it")
 	}
 	{
-		{
-			_, ok := orphans[root.Named()]
-			assert.ErrorIf(t, ok, "root resource with no covering parent is not an orphan")
-		}
+		_, ok := orphans[root.Named()]
+		assert.ErrorIf(t, ok, "root resource with no covering parent is not an orphan")
 	}
 	{
-		{
-			got := len(orphans)
-			assert.ErrorIf(t, got != 1, "expected exactly 1 orphan, got %d: %+v", got, orphans)
-		}
+		got := len(orphans)
+		assert.ErrorIf(t, got != 1, "expected exactly 1 orphan, got %d: %+v", got, orphans)
 	}
 	o.store.AddObject(&manifest.GitRepository{Name: "external", Namespace: "flux-system"})
 	o.store.AddObject(&manifest.Kustomization{
@@ -209,9 +197,7 @@ func TestDetectOrphans_NonReconcilableKindsIgnored(t *testing.T) {
 		foreign.Named(): {Status: store.StatusFailed, Message: "foreign"},
 	}
 	orphans := o.detectOrphans(failed, o.reportOwnership(o.reportingClaims()))
-	{
-		assert.ErrorIf(t, len(orphans) != 0, "orphan detection should skip non-reconcilable kinds; got %+v", orphans)
-	}
+	assert.ErrorIf(t, len(orphans) != 0, "orphan detection should skip non-reconcilable kinds; got %+v", orphans)
 }
 
 // TestDetectOrphans_ParentFailedIsCascadeNotOrphan pins the cascade/orphan
@@ -247,19 +233,15 @@ func TestDetectOrphans_ParentFailedIsCascadeNotOrphan(t *testing.T) {
 	}
 	orphans := o.detectOrphans(failed, o.reportOwnership(o.reportingClaims()))
 	{
-		{
-			_, ok := orphans[child.Named()]
-			assert.ErrorIf(
-				t,
-				ok,
-				"child under a FAILED covering parent is a cascade victim, not an orphan: %+v",
-				orphans,
-			)
-		}
+		_, ok := orphans[child.Named()]
+		assert.ErrorIf(
+			t,
+			ok,
+			"child under a FAILED covering parent is a cascade victim, not an orphan: %+v",
+			orphans,
+		)
 	}
-	{
-		assert.ErrorIf(t, len(orphans) != 0, "expected no orphans when the covering parent failed, got %+v", orphans)
-	}
+	assert.ErrorIf(t, len(orphans) != 0, "expected no orphans when the covering parent failed, got %+v", orphans)
 }
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
@@ -285,15 +267,13 @@ func TestOrchestrator_StopBeforeBootstrapCompletion(t *testing.T) {
 	o.stop()
 	o.stop()
 	{
-		{
-			innerLocalErr := <-done
-			assert.FatalIf(
-				t,
-				!errors.Is(innerLocalErr, context.Canceled),
-				"local cleanup did not cancel/join input: %v",
-				innerLocalErr,
-			)
-		}
+		innerLocalErr := <-done
+		assert.FatalIf(
+			t,
+			!errors.Is(innerLocalErr, context.Canceled),
+			"local cleanup did not cancel/join input: %v",
+			innerLocalErr,
+		)
 	}
 	<-completed
 	_, _, _, err = owner.Blob(t.Context(), sourcecache.BlobKey{Content: "after-tree-close"}, sourcecache.Policy{},
@@ -331,48 +311,36 @@ data: {k: v}
 		t.Setenv(key, fallback)
 	}
 	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{WipeSecrets: true, Concurrency: 2})
-	{
-		assert.FatalIf(t, err != nil, "New: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "New: %v", err)
 	t.Cleanup(func() {
 		o.stop()
 	})
 	{
-		{
-			err := o.bootstrap(t.Context())
-			assert.FatalIf(t, err != nil, "Bootstrap: %v", err)
-		}
+		err := o.bootstrap(t.Context())
+		assert.FatalIf(t, err != nil, "Bootstrap: %v", err)
 	}
 	{
-		{
-			err := o.run(t.Context())
-			assert.FatalIf(t, err != nil, "Run: %v", err)
-		}
+		err := o.run(t.Context())
+		assert.FatalIf(t, err != nil, "Run: %v", err)
 	}
 
 	{
-		{
-			got := len(o.Store().ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization))
-			assert.ErrorIf(t, got != 1, "expected one discovered Kustomization, got %d", got)
-		}
+		got := len(o.Store().ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization))
+		assert.ErrorIf(t, got != 1, "expected one discovered Kustomization, got %d", got)
 	}
 	{
-		{
-			got := len(o.Store().ListObjects("", manifest.KindConfigMap))
-			assert.ErrorIf(t, got < 1, "expected at least 1 ConfigMap after reconcile, got %d", got)
-		}
+		got := len(o.Store().ListObjects("", manifest.KindConfigMap))
+		assert.ErrorIf(t, got < 1, "expected at least 1 ConfigMap after reconcile, got %d", got)
 	}
 	{
-		{
-			entries, err := os.ReadDir(fallback)
-			assert.FatalIf(
-				t,
-				err != nil || len(entries) != 0,
-				"empty SDK CacheDir wrote cache artifacts: %v, %v",
-				entries,
-				err,
-			)
-		}
+		entries, err := os.ReadDir(fallback)
+		assert.FatalIf(
+			t,
+			err != nil || len(entries) != 0,
+			"empty SDK CacheDir wrote cache artifacts: %v, %v",
+			entries,
+			err,
+		)
 	}
 }
 
@@ -410,36 +378,28 @@ data: {k: v}
 `)
 
 	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{WipeSecrets: true, Concurrency: 4})
+	assert.FatalIf(t, err != nil, "New: %v", err)
 	{
-		assert.FatalIf(t, err != nil, "New: %v", err)
-	}
-	{
-		{
-			err := o.bootstrap(context.Background())
-			assert.FatalIf(t, err != nil, "Bootstrap: %v", err)
-		}
+		err := o.bootstrap(context.Background())
+		assert.FatalIf(t, err != nil, "Bootstrap: %v", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	{
-		{
-			err := o.run(ctx)
-			assert.FatalIf(t, err != nil, "Run: %v", err)
-		}
+		err := o.run(ctx)
+		assert.FatalIf(t, err != nil, "Run: %v", err)
 	}
 	for _, name := range []string{"config-a", "config-b", "consumer"} {
 		id := testutil.KustomizationID("flux-system", name)
 		info, ok := o.Store().GetStatus(id)
-		{
-			assert.FatalIf(
-				t,
-				!ok || info.Status != store.StatusReady,
-				"%s status = (%+v, %v), want Ready (mutual-parent deadlock regressed?)",
-				id,
-				info,
-				ok,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!ok || info.Status != store.StatusReady,
+			"%s status = (%+v, %v), want Ready (mutual-parent deadlock regressed?)",
+			id,
+			info,
+			ok,
+		)
 	}
 }
 
@@ -504,13 +464,9 @@ func TestOrchestrator_ExplicitRepoRootNoGit(t *testing.T) {
 			},
 			cfg.Config,
 		)
-		{
-			assert.FatalIf(t, len(renderedSingleton2) != 1, "missing render: %v", err)
-		}
+		assert.FatalIf(t, len(renderedSingleton2) != 1, "missing render: %v", err)
 		res := renderedSingleton2[0].Result
-		{
-			assert.FatalIf(t, res == nil, "Render returned nil Result: %v", err)
-		}
+		assert.FatalIf(t, res == nil, "Render returned nil Result: %v", err)
 		for _, m := range outputByParent(res.Manifests)[clusterApps] {
 			if m["kind"] != "ConfigMap" {
 				continue
@@ -527,14 +483,12 @@ func TestOrchestrator_ExplicitRepoRootNoGit(t *testing.T) {
 
 		dir := t.TempDir()
 		writeCluster(t, dir)
-		{
-			assert.ErrorIf(
-				t,
-				rendersDemo(t, treeConfig{WipeSecrets: true, Concurrency: 4, Path: dir + "/kubernetes/flux/cluster"}),
-				"%v",
-				"no RepoRoot + no .git: spec.path doubles; cluster-apps should render nothing",
-			)
-		}
+		assert.ErrorIf(
+			t,
+			rendersDemo(t, treeConfig{WipeSecrets: true, Concurrency: 4, Path: dir + "/kubernetes/flux/cluster"}),
+			"%v",
+			"no RepoRoot + no .git: spec.path doubles; cluster-apps should render nothing",
+		)
 	})
 }
 
@@ -575,43 +529,33 @@ func TestOrchestrator_SelfSubstituteBareDirNoDeadlock(t *testing.T) {
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cluster-settings\ndata:\n  CLUSTER_NAME: home\n")
 
 	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{WipeSecrets: true, Concurrency: 4})
+	assert.FatalIf(t, err != nil, "New: %v", err)
 	{
-		assert.FatalIf(t, err != nil, "New: %v", err)
-	}
-	{
-		{
-			err := o.bootstrap(context.Background())
-			assert.FatalIf(t, err != nil, "Bootstrap: %v", err)
-		}
+		err := o.bootstrap(context.Background())
+		assert.FatalIf(t, err != nil, "Bootstrap: %v", err)
 	}
 	// The context timeout bounds a regressed self-deadlock.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	{
-		{
-			err := o.run(ctx)
-			assert.FatalIf(t, err != nil, "Run: %v", err)
-		}
+		err := o.run(ctx)
+		assert.FatalIf(t, err != nil, "Run: %v", err)
 	}
 	ksID := testutil.KustomizationID("flux-system", "cluster-apps")
 	{
-		{
-			info, ok := o.Store().GetStatus(ksID)
-			assert.FatalIf(
-				t,
-				!ok || info.Status != store.StatusReady,
-				"cluster-apps status = (%+v, %v), want Ready (self-substitute deadlock regressed?)",
-				info,
-				ok,
-			)
-		}
+		info, ok := o.Store().GetStatus(ksID)
+		assert.FatalIf(
+			t,
+			!ok || info.Status != store.StatusReady,
+			"cluster-apps status = (%+v, %v), want Ready (self-substitute deadlock regressed?)",
+			info,
+			ok,
+		)
 	}
 	cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "cluster-settings"}
 	{
-		{
-			got := o.Store().GetObject(cmID)
-			assert.ErrorIf(t, got == nil, "cluster-apps render did not emit %s", cmID)
-		}
+		got := o.Store().GetObject(cmID)
+		assert.ErrorIf(t, got == nil, "cluster-apps render did not emit %s", cmID)
 	}
 }
 
@@ -646,29 +590,23 @@ func TestOrchestrator_SelfSubstituteAbsentCMFailsLoud(t *testing.T) {
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: other\ndata:\n  k: v\n")
 
 	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{WipeSecrets: true, Concurrency: 4})
+	assert.FatalIf(t, err != nil, "New: %v", err)
 	{
-		assert.FatalIf(t, err != nil, "New: %v", err)
-	}
-	{
-		{
-			err := o.bootstrap(context.Background())
-			assert.FatalIf(t, err != nil, "Bootstrap: %v", err)
-		}
+		err := o.bootstrap(context.Background())
+		assert.FatalIf(t, err != nil, "Bootstrap: %v", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = o.run(ctx) // reconcile failure is recorded in status, not returned
 	ksID := testutil.KustomizationID("flux-system", "cluster-apps")
 	info, ok := o.Store().GetStatus(ksID)
-	{
-		assert.FatalIf(
-			t,
-			!ok || info.Status != store.StatusFailed,
-			"cluster-apps status = (%+v, %v), want Failed (absent substituteFrom CM must fail loud)",
-			info,
-			ok,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!ok || info.Status != store.StatusFailed,
+		"cluster-apps status = (%+v, %v), want Failed (absent substituteFrom CM must fail loud)",
+		info,
+		ok,
+	)
 	if !strings.Contains(info.String(), "cluster-settings") {
 		t.Errorf("cluster-apps failure message = %q, want it to mention cluster-settings", info.String())
 	}
@@ -749,36 +687,29 @@ func testOrchestratorCommentedOutKSNotReconciledCase(
 		},
 		Config{WipeSecrets: true, Concurrency: 2},
 	)
-	{
-		assert.FatalIf(t, len(renderedSingleton1) != 1, "missing render: %v", err)
-	}
+	assert.FatalIf(t, len(renderedSingleton1) != 1, "missing render: %v", err)
 	o := renderedSingleton1[0].Orchestrator
 	result := renderedSingleton1[0].Result
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	found := map[string]bool{}
 	for _, batch := range result.Manifests {
 		for _, obj := range batch.Documents {
-			name, _ := manifest.DocMetadata(obj)
+			metadata := manifest.DocMetadata(obj)
+			name := metadata.Name
 			found[name] = true
 		}
 	}
-	{
-		assert.ErrorIf(t, !found["echo-cm"], "%v", "listed app output is missing")
-	}
+	assert.ErrorIf(t, !found["echo-cm"], "%v", "listed app output is missing")
 	for _, name := range []string{"tunnel", "tunnel-cm", "backup-cm"} {
 		if found[name] != (*testCaseInput.enabled) {
 			t.Errorf("output %s present=%t, want %t", name, found[name], (*testCaseInput.enabled))
 		}
 	}
 	id := testutil.KustomizationID("network", "tunnel")
-	{
-		assert.ErrorIf(
-			t,
-			(o.Store().GetObject(id) != nil) != (*testCaseInput.enabled),
-			"disabled app reached store: %v",
-			id,
-		)
-	}
+	assert.ErrorIf(
+		t,
+		(o.Store().GetObject(id) != nil) != (*testCaseInput.enabled),
+		"disabled app reached store: %v",
+		id,
+	)
 }

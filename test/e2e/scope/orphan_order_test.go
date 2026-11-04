@@ -38,10 +38,10 @@ func TestE2E_ExcludedSiblingsDeterministic(t *testing.T) {
 			),
 		)
 	}
-	clock := regexp.MustCompile(`   \d+(?:\.\d+s|m\d+s)\n$`)
+	clock := regexp.MustCompile(` {3}\d+(?:\.\d+s|m\d+s)\n$`)
 	for _, verb := range []string{"build", "test"} {
 		t.Run(verb, func(t *testing.T) {
-			firstOut, firstErr := harness.RequireCLIOK(
+			requireCLIOKResult1 := harness.RequireCLIOK(
 				t,
 				verb,
 				"all",
@@ -52,7 +52,8 @@ func TestE2E_ExcludedSiblingsDeterministic(t *testing.T) {
 				"--no-progress",
 				"--concurrency=2",
 			)
-			secondOut, secondErr := harness.RequireCLIOK(
+			firstOut, firstErr := requireCLIOKResult1.Stdout, requireCLIOKResult1.Stderr
+			requireCLIOKResult2 := harness.RequireCLIOK(
 				t,
 				verb,
 				"all",
@@ -63,6 +64,7 @@ func TestE2E_ExcludedSiblingsDeterministic(t *testing.T) {
 				"--no-progress",
 				"--concurrency=2",
 			)
+			secondOut, secondErr := requireCLIOKResult2.Stdout, requireCLIOKResult2.Stderr
 			for _, result := range []struct{ stdout, stderr string }{{firstOut, firstErr}, {secondOut, secondErr}} {
 				stdout, stderr := result.stdout, result.stderr
 				assert.FatalIf(

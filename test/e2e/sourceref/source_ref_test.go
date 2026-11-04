@@ -99,8 +99,10 @@ spec:
 				"build", "ks", "multus-crd", "--path", filepath.Join(root, "flux"),
 				"--concurrency", "2", "--git-depth", "0", "--skip-kinds", "", "--cache-dir", t.TempDir(),
 			}
-			out, _ := harness.RequireCLIOK(t, args...)
-			again, _ := harness.RequireCLIOK(t, args...)
+			requireCLIOKResult1 := harness.RequireCLIOK(t, args...)
+			out, _ := requireCLIOKResult1.Stdout, requireCLIOKResult1.Stderr
+			requireCLIOKResult2 := harness.RequireCLIOK(t, args...)
+			again, _ := requireCLIOKResult2.Stdout, requireCLIOKResult2.Stderr
 			assert.Equal(t, again, out)
 			docs, err := testutil.DecodeDocs(strings.NewReader(out))
 			assert.NoError(t, err)
@@ -163,7 +165,8 @@ data: {value: '${VALUE}'}
 	wantDocs, err := testutil.DecodeDocs(strings.NewReader(wantOutput))
 	assert.NoError(t, err)
 	for _, doc := range wantDocs {
-		name, _ := manifest.DocMetadata(doc)
+		metadata := manifest.DocMetadata(doc)
+		name := metadata.Name
 		if manifest.DocKind(doc) == manifest.KindKustomization && name == "root" {
 			delete(doc["spec"].(map[string]any), "path")
 		}
@@ -339,14 +342,16 @@ patches:
 				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: apps-cm, namespace: apps}\n",
 			)
 			testutil.WriteFile(t, root, "unrelated/broken.yaml", "invalid: [\n")
-			out, _ := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(root, "flux"),
+			requireCLIOKResult3 := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(root, "flux"),
 				"--concurrency", concurrency, "--cache-dir", t.TempDir())
+			out, _ := requireCLIOKResult3.Stdout, requireCLIOKResult3.Stderr
 			docs, err := testutil.DecodeDocs(strings.NewReader(out))
 			assert.NoError(t, err)
 			assert.Equal(t, len(docs), 3)
 			seen := map[manifest.NamedResource]bool{}
 			for _, doc := range docs {
-				obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{DefaultNamespace: ""})
+				parsed, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{DefaultNamespace: ""})
+				obj := parsed.Object
 				assert.NoError(t, err)
 				seen[obj.Named()] = true
 				if ks, ok := obj.(*manifest.Kustomization); ok && ks.Name == "tmpl" {
@@ -365,7 +370,8 @@ patches:
 
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_SourceRef_NonHEADTag(t *testing.T) {
-	root, repo, older, _ := sourceRefFixture(t)
+	sourceRefFixtureResult1 := sourceRefFixture(t)
+	root, repo, older, _ := sourceRefFixtureResult1.root, sourceRefFixtureResult1.repository, sourceRefFixtureResult1.before, sourceRefFixtureResult1.after
 	commit, err := repo.CommitObject(older)
 	assert.NoError(t, err)
 	tree, err := commit.Tree()
@@ -387,7 +393,7 @@ func TestE2E_SourceRef_NonHEADTag(t *testing.T) {
 	for _, verb := range []string{"build", "test"} {
 		var previous string
 		for range 2 {
-			out, stderr := harness.RequireCLIOK(
+			requireCLIOKResult4 := harness.RequireCLIOK(
 				t,
 				verb,
 				"all",
@@ -397,6 +403,7 @@ func TestE2E_SourceRef_NonHEADTag(t *testing.T) {
 				"--cache-dir",
 				t.TempDir(),
 			)
+			out, stderr := requireCLIOKResult4.Stdout, requireCLIOKResult4.Stderr
 			assert.FatalIf(t, strings.Count(stderr, "[SkippedSubmodule]") != 1 || !strings.Contains(stderr, "module") ||
 				!strings.Contains(stderr, "flux-system/cluster") ||
 				strings.Contains(out, "skipped submodule"), "submodule destination: stdout=%s stderr=%s", out, stderr)
@@ -517,7 +524,7 @@ spec:
 	assert.NoError(t, repo.Storer.SetReference(
 		plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), head.Hash()),
 	))
-	harness.MutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: pinned", "value: newer")
+	harness.MutateFile(t, filepath.Join(root, "apps", "cm.yaml"), "value: pinned", "value: newer")
 	testutil.GitCommitAll(
 		t,
 		repo,
@@ -525,8 +532,9 @@ spec:
 		&gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}},
 	)
 	testutil.WriteFile(t, root, "apps/cm.yaml", "metadata: {name: broken\n")
-	_, stderr, code := harness.RunCLIBuffers("build", "ks", "b-z", "--path", filepath.Join(root, "flux"),
+	runCLIBuffersResult5 := harness.RunCLIBuffers("build", "ks", "b-z", "--path", filepath.Join(root, "flux"),
 		"--concurrency", "2", "--cache-dir", t.TempDir())
+	_, stderr, code := runCLIBuffersResult5.Stdout, runCLIBuffersResult5.Stderr, runCLIBuffersResult5.Code
 	assert.FatalIf(
 		t,
 		code != 1 || !strings.Contains(stderr, "apps/cm.yaml") || !strings.Contains(stderr, "b-z"),

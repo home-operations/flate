@@ -37,15 +37,13 @@ func testReadSetRemoteFailureCancellationCase(
 	}
 	if *testCaseInput {
 		_, identity, err := probe.acquire(t.Context(), c, &treeFS{})
-		{
-			assert.FatalIf(
-				t,
-				err == nil || identity != snap.Remotes[0].Identity,
-				"completed probe=%+v error=%v",
-				identity,
-				err,
-			)
-		}
+		assert.FatalIf(
+			t,
+			err == nil || identity != snap.Remotes[0].Identity,
+			"completed probe=%+v error=%v",
+			identity,
+			err,
+		)
 		git := remoteInput{Operation: remoteGit, URL: "file:///repo"}
 		snap.Remotes = append(
 			snap.Remotes,

@@ -304,11 +304,12 @@ func testDAGKeepBeforeLateDataPublicationCase(
 			},
 		},
 	}
-	children, retained, failures := c.ParseChildren(
+	parseChildrenResult1 := c.ParseChildren(
 		parent,
 		testutil.DocumentOccurrences(childDocs),
 		manifest.ParseDocOptions{},
 	)
+	children, retained, failures := parseChildrenResult1.Children, parseChildrenResult1.Visible, parseChildrenResult1.Failures
 	assert.Equal(t, len(failures), 0)
 	assert.Equal(t, len(children), 1)
 	assert.Equal(t, children[0].Obj.Named(), child)
@@ -457,9 +458,7 @@ func testDAGSuspensionAfterRefreshCase(t *testing.T, testCaseInput testDAGSuspen
 		)
 	}
 	o, err := newTestOrchestrator(t, cfg.Tree, cfg.Config)
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	t.Cleanup(func() {
 		o.stop()
 	})
@@ -467,18 +466,14 @@ func testDAGSuspensionAfterRefreshCase(t *testing.T, testCaseInput testDAGSuspen
 		localErr := o.bootstrap(t.Context())
 		assert.FatalIf(t, localErr != nil, "%v", localErr)
 	}
-	{
-		assert.FatalIf(
-			t, (*testCaseInput.changedOnly) &&
-				o.store.GetObject(child) != nil, "%v",
-			"producer-owned child hydrated before publication",
-		)
-	}
+	assert.FatalIf(
+		t, (*testCaseInput.changedOnly) &&
+			o.store.GetObject(child) != nil, "%v",
+		"producer-owned child hydrated before publication",
+	)
 	reconcileEntryForTest(t, o)
 	original, ok := o.store.Get[*manifest.Kustomization](child)
-	{
-		assert.FatalIf(t, !ok || original.Suspend, "%v", "active child missing")
-	}
+	assert.FatalIf(t, !ok || original.Suspend, "%v", "active child missing")
 	o.store.UpdateStatus(
 		gate,
 		store.StatusInfo{
@@ -510,13 +505,11 @@ func testDAGSuspensionAfterRefreshCase(t *testing.T, testCaseInput testDAGSuspen
 		)
 	})
 	o.tasks.BlockTillDone()
-	{
-		assert.FatalIf(t, result.Assessment.Outcome() != schedule.Blocked ||
-			!slices.Contains(
-				result.Assessment.(*base.Execution).Blocked,
-				child,
-			), "dependent must first wait on child: %+v", result.Assessment)
-	}
+	assert.FatalIf(t, result.Assessment.Outcome() != schedule.Blocked ||
+		!slices.Contains(
+			result.Assessment.(*base.Execution).Blocked,
+			child,
+		), "dependent must first wait on child: %+v", result.Assessment)
 	retainedID := manifest.NamedResource{
 		Kind:      manifest.KindConfigMap,
 		Namespace: child.Namespace,
@@ -576,32 +569,26 @@ func testDAGSuspensionAfterRefreshCase(t *testing.T, testCaseInput testDAGSuspen
 		)
 	}
 	{
-		{
-			owners := testutil.Owners(o.store.Productions(child, nil))
-			assert.FatalIf(
-				t,
-				!slices.Contains(owners, gate),
-				"missing independent contributor: %v",
-				owners,
-			)
-		}
+		owners := testutil.Owners(o.store.Productions(child, nil))
+		assert.FatalIf(
+			t,
+			!slices.Contains(owners, gate),
+			"missing independent contributor: %v",
+			owners,
+		)
 	}
-	{
-		assert.FatalIf(t, !slices.ContainsFunc(
-			slices.Collect(o.index.ReadersOfFile("child/cm.yaml")),
-			func(r manifest.FileReader) bool { return r.Reader == child },
-		), "%v", "suspension lost the child's file read tracking")
-	}
+	assert.FatalIf(t, !slices.ContainsFunc(
+		slices.Collect(o.index.ReadersOfFile("child/cm.yaml")),
+		func(r manifest.FileReader) bool { return r.Reader == child },
+	), "%v", "suspension lost the child's file read tracking")
 	_, _, inventory := o.store.GetEmission(child)
 	if *testCaseInput.retained {
-		{
-			assert.FatalIf(t, len(artifact.Manifests) != 1 ||
-				o.store.GetArtifact(child, store.ArtifactContent) != nil ||
-				o.store.GetObject(retainedID) == nil ||
-				len(
-					inventory.Children,
-				) != 1, "%v", "suspension pruned retained artifact or emission")
-		}
+		assert.FatalIf(t, len(artifact.Manifests) != 1 ||
+			o.store.GetArtifact(child, store.ArtifactContent) != nil ||
+			o.store.GetObject(retainedID) == nil ||
+			len(
+				inventory.Children,
+			) != 1, "%v", "suspension pruned retained artifact or emission")
 	} else {
 		assert.FatalIf(
 			t,
@@ -664,11 +651,12 @@ func publishSuspendedChild(t *testing.T, o *Orchestrator, gate manifest.NamedRes
 		t.Error(localErr)
 		return
 	}
-	children, retained := parseChildrenForTest(
+	parseChildrenForTestResult1 := parseChildrenForTest(
 		gate,
 		docs,
 		manifest.ParseDocOptions{DefaultNamespace: gate.Namespace},
 	)
+	children, retained := parseChildrenForTestResult1.Children, parseChildrenForTestResult1.Documents
 	for _, emitted := range children {
 		if o.filter != nil {
 			if _, innerLocalErr := o.ksc.KeepEmitted(t.Context(), gate, emitted, nil); innerLocalErr != nil {
@@ -716,28 +704,22 @@ func assertSuspensionActiveOutputs(t *testing.T, o *Orchestrator, res *Result) {
 	t.Helper()
 	for _, name := range []string{"dependent", "independent"} {
 		id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: name}
-		{
-			assert.FatalIf(t, o.store.GetObject(id) == nil ||
-				len(
-					outputByParent(res.Manifests)[testutil.KustomizationID("flux-system", name)],
-				) != 1, "active output missing: %s", id)
-		}
+		assert.FatalIf(t, o.store.GetObject(id) == nil ||
+			len(
+				outputByParent(res.Manifests)[testutil.KustomizationID("flux-system", name)],
+			) != 1, "active output missing: %s", id)
 	}
 }
 
 func assertSuspensionOutputBytes(t *testing.T, res *Result, testCaseInput testDAGSuspensionAfterRefreshCaseInputs) {
 	t.Helper()
 	output, err := json.Marshal(canonicalBatches(res))
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
-	{
-		assert.FatalIf(
-			t, (*testCaseInput.previous) !=
-				nil && !bytes.Equal((*testCaseInput.previous), output), "%v",
-			"output bytes differ across worker counts",
-		)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
+	assert.FatalIf(
+		t, (*testCaseInput.previous) !=
+			nil && !bytes.Equal((*testCaseInput.previous), output), "%v",
+		"output bytes differ across worker counts",
+	)
 	(*testCaseInput.previous) = output
 }
 
@@ -748,10 +730,8 @@ func (in testDAGSuspensionAfterRefreshCaseInputs) assertArrival(
 ) {
 	t.Helper()
 	owners := testutil.Owners(o.store.Productions(child, nil))
-	{
-		assert.ErrorIf(t, !slices.Contains(owners, gate) || (*in.changedOnly) &&
-			!o.filter.ShouldReconcile(
-				child,
-			), "child arrived before evidence/selection: %v", owners)
-	}
+	assert.ErrorIf(t, !slices.Contains(owners, gate) || (*in.changedOnly) &&
+		!o.filter.ShouldReconcile(
+			child,
+		), "child arrived before evidence/selection: %v", owners)
 }

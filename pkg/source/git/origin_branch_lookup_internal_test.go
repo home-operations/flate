@@ -21,15 +21,16 @@ func testCheckoutRefPreservesOriginFirstBranchLookupCase(
 ) {
 	t.Helper()
 
-	src, remote, first, second := localFixture(t)
+	fixture := localFixture(t)
+
 	branch := plumbing.NewBranchReferenceName("pinned")
-	assert.NoError(t, remote.Storer.SetReference(plumbing.NewHashReference(branch, first)))
-	assert.NoError(t, remote.Storer.SetReference(plumbing.NewSymbolicReference(plumbing.HEAD, branch)))
+	assert.NoError(t, fixture.repo.Storer.SetReference(plumbing.NewHashReference(branch, fixture.base)))
+	assert.NoError(t, fixture.repo.Storer.SetReference(plumbing.NewSymbolicReference(plumbing.HEAD, branch)))
 	var advertisements atomic.Int32
-	handler := gitHTTPHandler(t, src)
+	handler := gitHTTPHandler(t, fixture.root)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && advertisements.Add(1) == 2 {
-			if err := remote.Storer.SetReference(plumbing.NewHashReference(branch, second)); err != nil {
+			if err := fixture.repo.Storer.SetReference(plumbing.NewHashReference(branch, fixture.head)); err != nil {
 				t.Error(err)
 				http.Error(w, "move branch", http.StatusInternalServerError)
 				return
@@ -41,7 +42,7 @@ func testCheckoutRefPreservesOriginFirstBranchLookupCase(
 	f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
 	ref := &sourcev1.GitRepositoryRef{Name: branch.String()}
 	if (*kind) == "commit-branch" {
-		ref = &sourcev1.GitRepositoryRef{Commit: second.String(), Branch: "pinned"}
+		ref = &sourcev1.GitRepositoryRef{Commit: fixture.head.String(), Branch: "pinned"}
 	}
 	spec := &manifest.GitRepository{
 		URL: srv.URL, Reference: ref, RecurseSubmodules: true,
@@ -58,11 +59,11 @@ func testCheckoutRefPreservesOriginFirstBranchLookupCase(
 	assert.NoError(t, err)
 	origin, err := acquired.Reference(plumbing.NewRemoteReferenceName("origin", "pinned"), true)
 	assert.NoError(t, err)
-	assert.Equal(t, local.Hash(), second)
-	assert.Equal(t, origin.Hash(), first)
+	assert.Equal(t, local.Hash(), fixture.head)
+	assert.Equal(t, origin.Hash(), fixture.base)
 	resolved, err := resolveRefHash(acquired, spec.Reference, true)
 	assert.NoError(t, err)
-	assert.Equal(t, resolved, second)
+	assert.Equal(t, resolved, fixture.head)
 	assert.Equal(t, artifact.Revision, resolved.String())
 	assertWorktree(t, artifact.FS, "value.txt", "B")
 }

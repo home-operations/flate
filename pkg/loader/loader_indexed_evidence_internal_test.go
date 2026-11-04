@@ -26,7 +26,7 @@ func TestLoader_PreferExistingIndexedObject(t *testing.T) {
 	l.Admit(root)
 	id := testutil.KustomizationID("apps", "child")
 	record, _ := l.Index.Lookup(id)
-	if record.Path != filepath.Join(root, "first/ks.yaml") || len(l.Kustomizations()) != 1 ||
+	if record.Path != filepath.Join(root, "first", "ks.yaml") || len(l.Kustomizations()) != 1 ||
 		l.Kustomizations()[0].Obj.(*manifest.Kustomization).Path != "./first" {
 		t.Fatalf("first indexed object was replaced: %+v, %+v", record, l.Kustomizations())
 	}

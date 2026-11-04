@@ -95,43 +95,33 @@ data:
 	st.AddObject(hr)
 
 	info := reconcileFixture(t, c, hr.Named())
-	{
-		assert.FatalIf(
-			t,
-			info.Status != store.StatusReady || info.Outcome() == store.OutcomeSkipped,
-			"status = %+v, want StatusReady (producer-backed ref omitted, not skipped/failed)",
-			info,
-		)
-	}
+	assert.FatalIf(
+		t,
+		info.Status != store.StatusReady || info.Outcome() == store.OutcomeSkipped,
+		"status = %+v, want StatusReady (producer-backed ref omitted, not skipped/failed)",
+		info,
+	)
 	art, ok := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
+	assert.FatalIf(t, !ok, "%v", "HelmRelease artifact was not written")
 	{
-		assert.FatalIf(t, !ok, "%v", "HelmRelease artifact was not written")
+		got := renderedConfigMapValue(testutil.DocumentMaps(art.Manifests), "kept")
+		assert.FatalIf(t, got != "kept-value", "rendered kept = %q, want kept-value", got)
 	}
 	{
-		{
-			got := renderedConfigMapValue(testutil.DocumentMaps(art.Manifests), "kept")
-			assert.FatalIf(t, got != "kept-value", "rendered kept = %q, want kept-value", got)
-		}
-	}
-	{
-		{
-			got := renderedConfigMapValue(testutil.DocumentMaps(art.Manifests), "fallback")
-			assert.FatalIf(t, got != "fallback", "rendered fallback = %q, want fallback", got)
-		}
+		got := renderedConfigMapValue(testutil.DocumentMaps(art.Manifests), "fallback")
+		assert.FatalIf(t, got != "fallback", "rendered fallback = %q, want fallback", got)
 	}
 	invalid := hr.Clone()
 	invalid.Name = "invalid"
 	invalid.Values = map[string]any{"required": ""}
 	st.AddObject(invalid)
 	info = reconcileFixture(t, c, invalid.Named())
-	{
-		assert.FatalIf(
-			t,
-			info.Status != store.StatusFailed || !strings.Contains(info.Message, "missing required value"),
-			"permitted values omission hid required chart failure: %+v",
-			info,
-		)
-	}
+	assert.FatalIf(
+		t,
+		info.Status != store.StatusFailed || !strings.Contains(info.Message, "missing required value"),
+		"permitted values omission hid required chart failure: %+v",
+		info,
+	)
 	if !slices.ContainsFunc(st.Warnings(), func(w manifest.Warning) bool {
 		return w.Resource == invalid.Named() && w.Category == manifest.WarnOmittedValues &&
 			strings.Contains(w.Message, "Secret/default/app-values")
@@ -189,14 +179,12 @@ func TestController_MissingValuesFromNoProducerFailsWithoutFlag(t *testing.T) {
 	st.AddObject(hr)
 
 	info := reconcileFixture(t, c, hr.Named())
-	{
-		assert.FatalIf(
-			t,
-			info.Status == store.StatusReady,
-			"status = %+v, want failure (missing no-producer Secret must not be silently omitted)",
-			info,
-		)
-	}
+	assert.FatalIf(
+		t,
+		info.Status == store.StatusReady,
+		"status = %+v, want failure (missing no-producer Secret must not be silently omitted)",
+		info,
+	)
 }
 
 // TestController_HelmChartSourceResolvedViaResolver locks the iter-16
@@ -221,9 +209,7 @@ func TestController_HelmChartSourceResolvedViaResolver(t *testing.T) {
 	if got == nil {
 		t.Fatalf("resolver.HelmChart(%q, %q) returned nil; expected the just-added source", src.Namespace, src.Name)
 	}
-	{
-		assert.ErrorIf(t, got.Chart != "podinfo", "resolver returned wrong source: %+v", got)
-	}
+	assert.ErrorIf(t, got.Chart != "podinfo", "resolver returned wrong source: %+v", got)
 }
 
 // TestHelmReleaseFingerprint_StableAcrossLabelStamping locks the
@@ -234,7 +220,7 @@ func TestController_HelmChartSourceResolvedViaResolver(t *testing.T) {
 // and helm.Template runs twice for one logical release.
 func TestHelmReleaseFingerprint_StableAcrossLabelStamping(t *testing.T) {
 	t.Parallel()
-	base := &manifest.HelmRelease{
+	baseRef := &manifest.HelmRelease{
 		Name:      "demo",
 		Namespace: "default",
 		Chart: manifest.HelmChart{
@@ -263,7 +249,7 @@ func TestHelmReleaseFingerprint_StableAcrossLabelStamping(t *testing.T) {
 			Interval: metav1Duration(time.Hour),
 		},
 	}
-	stamped := base.Clone()
+	stamped := baseRef.Clone()
 	stamped.Labels = map[string]string{
 		"kustomize.toolkit.fluxcd.io/name":      "parent-ks",
 		"kustomize.toolkit.fluxcd.io/namespace": "flux-system",
@@ -271,16 +257,14 @@ func TestHelmReleaseFingerprint_StableAcrossLabelStamping(t *testing.T) {
 	stamped.Annotations = map[string]string{"reconcile.fluxcd.io/requestedAt": "now"}
 
 	{
-		{
-			got, want := replayKey(stamped.Content(nil, nil)), replayKey(base.Content(nil, nil))
-			assert.ErrorIf(
-				t,
-				got != want,
-				"fingerprint changed under label/annotation stamping; got %q want %q",
-				got,
-				want,
-			)
-		}
+		got, want := replayKey(stamped.Content(nil, nil)), replayKey(baseRef.Content(nil, nil))
+		assert.ErrorIf(
+			t,
+			got != want,
+			"fingerprint changed under label/annotation stamping; got %q want %q",
+			got,
+			want,
+		)
 	}
 }
 
@@ -291,7 +275,7 @@ func TestHelmReleaseFingerprint_StableAcrossLabelStamping(t *testing.T) {
 // renders the canonical post-patch values.
 func TestHelmReleaseFingerprint_DifferentOnSpecChange(t *testing.T) {
 	t.Parallel()
-	base := &manifest.HelmRelease{
+	baseRef := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
 		Interval: metav1Duration(time.Hour),
 		Chart:    manifest.HelmChart{Name: "podinfo"},
@@ -311,18 +295,16 @@ func TestHelmReleaseFingerprint_DifferentOnSpecChange(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			patched := base.Clone()
+			patched := baseRef.Clone()
 			tc.change(patched)
 			{
-				{
-					got := replayKey(base.Content(nil, nil))
-					assert.ErrorIf(
-						t,
-						got == replayKey(patched.Content(nil, nil)),
-						"fingerprint should differ when spec mutates; both = %q",
-						got,
-					)
-				}
+				got := replayKey(baseRef.Content(nil, nil))
+				assert.ErrorIf(
+					t,
+					got == replayKey(patched.Content(nil, nil)),
+					"fingerprint should differ when spec mutates; both = %q",
+					got,
+				)
 			}
 		})
 	}
@@ -418,10 +400,8 @@ func TestController_AlreadyReady_NoTransientPending(t *testing.T) {
 	}
 	st.AddObject(hr)
 	{
-		{
-			info := reconcileFixture(t, c, hr.Named())
-			assert.FatalIf(t, info.Status != store.StatusReady, "status = %+v, want StatusReady", info)
-		}
+		info := reconcileFixture(t, c, hr.Named())
+		assert.FatalIf(t, info.Status != store.StatusReady, "status = %+v, want StatusReady", info)
 	}
 
 	var mu sync.Mutex
@@ -451,19 +431,15 @@ func TestController_AlreadyReady_NoTransientPending(t *testing.T) {
 	mu.Lock()
 	pending := sawPending
 	mu.Unlock()
+	assert.ErrorIf(
+		t,
+		pending,
+		"%v",
+		"no-op re-reconcile of an already-Ready HelmRelease transiently downgraded it to Pending (the quiescence-race window)",
+	)
 	{
-		assert.ErrorIf(
-			t,
-			pending,
-			"%v",
-			"no-op re-reconcile of an already-Ready HelmRelease transiently downgraded it to Pending (the quiescence-race window)",
-		)
-	}
-	{
-		{
-			info, _ := st.GetStatus(hr.Named())
-			assert.ErrorIf(t, info.Status != store.StatusReady, "HR not Ready after no-op re-run: %+v", info)
-		}
+		info, _ := st.GetStatus(hr.Named())
+		assert.ErrorIf(t, info.Status != store.StatusReady, "HR not Ready after no-op re-run: %+v", info)
 	}
 }
 
@@ -515,23 +491,19 @@ func TestController_ChartAndValuesPrerequisites(t *testing.T) {
 	st.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "released"})
 	st.SetArtifact(id, &store.SourceArtifact{Key: "pin"})
 	{
-		{
-			blocked, ok := errors.AsType[*depwait.ErrBlocked](
-				c.newExecution(hr.Named()).requireChartForTest(t.Context(), hr, manifest.DrainNone),
-			)
-			assert.FatalIf(t, !ok || len(blocked.Deps) != 1 ||
-				blocked.Deps[0] != id, "released source did not block on acquisition: %v", blocked)
-		}
+		blocked, ok := errors.AsType[*depwait.ErrBlocked](
+			c.newExecution(hr.Named()).requireChartForTest(t.Context(), hr, manifest.DrainNone),
+		)
+		assert.FatalIf(t, !ok || len(blocked.Deps) != 1 ||
+			blocked.Deps[0] != id, "released source did not block on acquisition: %v", blocked)
 	}
 	{
-		{
-			err := c.newExecution(hr.Named()).
-				requireChartForTest(t.Context(), hr, manifest.DrainForce)
-			assert.FatalIf(t, !errors.Is(
-				err,
-				manifest.ErrObjectNotFound,
-			), "released source at fixpoint: %v", err)
-		}
+		err := c.newExecution(hr.Named()).
+			requireChartForTest(t.Context(), hr, manifest.DrainForce)
+		assert.FatalIf(t, !errors.Is(
+			err,
+			manifest.ErrObjectNotFound,
+		), "released source at fixpoint: %v", err)
 	}
 	st.UpdateStatus(
 		id,
@@ -569,9 +541,7 @@ func TestController_ChartAndValuesPrerequisites(t *testing.T) {
 	st.AddObject(hr.Clone())
 	err := c.newExecution(hr.Named()).reconcile(t.Context(), hr, manifest.DrainNone)
 	blockedChart, ok := errors.AsType[*depwait.ErrBlocked](err)
-	{
-		assert.FatalIf(t, !ok, "pre-render gate=%v", err)
-	}
+	assert.FatalIf(t, !ok, "pre-render gate=%v", err)
 	assert.Diff(
 		t,
 		blockedChart.Deps,
@@ -597,9 +567,7 @@ func TestController_ChartAndValuesPrerequisites(t *testing.T) {
 	)
 	err = c.newExecution(hr.Named()).reconcile(t.Context(), hr, manifest.DrainNone)
 	blockedValues, ok := errors.AsType[*depwait.ErrBlocked](err)
-	{
-		assert.FatalIf(t, !ok, "values gate=%v", err)
-	}
+	assert.FatalIf(t, !ok, "values gate=%v", err)
 	assert.Diff(
 		t,
 		blockedValues.Deps,
@@ -609,8 +577,9 @@ func TestController_ChartAndValuesPrerequisites(t *testing.T) {
 
 func replayKey(content any) string {
 	c := base.New(store.New(), nil)
-	fp, _, _ := controllertest.NewExecution(c, manifest.NamedResource{}).
+	fingerprintDedupResult1, fingerprintDedupResult1Err := controllertest.NewExecution(c, manifest.NamedResource{}).
 		FingerprintDedup(context.TODO(), manifest.NamedResource{}, content, &store.Emission{})
+	fp, _, _ := fingerprintDedupResult1.Fingerprint, fingerprintDedupResult1.Reused, fingerprintDedupResult1Err
 	return fp
 }
 
@@ -620,10 +589,8 @@ func TestRawProducerIndex_StoreListener(t *testing.T) {
 	c, st := newTestControllerWithOptions(t, &base.Options{})
 	target := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "default", Name: "app-values"}
 	{
-		{
-			got := st.Productions(target, nil)
-			assert.FatalIf(t, len(got) != 0, "empty store reported productions: %v", got)
-		}
+		got := st.Productions(target, nil)
+		assert.FatalIf(t, len(got) != 0, "empty store reported productions: %v", got)
 	}
 	producer := &manifest.RawObject{
 		Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1",

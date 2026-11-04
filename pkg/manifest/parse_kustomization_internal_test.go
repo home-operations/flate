@@ -24,13 +24,9 @@ spec:
   interval: 5m
 `)
 	k, err := parseKustomization(doc)
-	{
-		assert.FatalIf(t, err != nil, "parseKustomization: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "parseKustomization: %v", err)
 	deps := refsForUse(t, k, "dependsOn")
-	{
-		assert.FatalIf(t, len(deps) != 1, "DependsOn len = %d", len(deps))
-	}
+	assert.FatalIf(t, len(deps) != 1, "DependsOn len = %d", len(deps))
 	if deps[0].Name != "infra" {
 		t.Errorf("name: %q", deps[0].Name)
 	}
@@ -50,22 +46,18 @@ func TestParseKustomization_InvalidGeneratorFields(t *testing.T) {
 					"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: apps}\nspec: {"+field+": not-a-list}\n",
 				),
 			)
-			{
-				assert.FatalIf(
-					t,
-					!errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux),
-					"invalid typed field error = %v, want input error",
-					err,
-				)
-			}
-			{
-				assert.FatalIf(
-					t,
-					!strings.Contains(err.Error(), "cannot unmarshal string"),
-					"missing decoder diagnostic: %v",
-					err,
-				)
-			}
+			assert.FatalIf(
+				t,
+				!errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux),
+				"invalid typed field error = %v, want input error",
+				err,
+			)
+			assert.FatalIf(
+				t,
+				!strings.Contains(err.Error(), "cannot unmarshal string"),
+				"missing decoder diagnostic: %v",
+				err,
+			)
 		})
 	}
 }
@@ -96,13 +88,9 @@ spec:
         optional: true
 `)
 	k, err := parseKustomization(doc)
-	{
-		assert.FatalIf(t, err != nil, "parseKustomization: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "parseKustomization: %v", err)
 	deps := refsForUse(t, k, "dependsOn")
-	{
-		assert.FatalIf(t, len(deps) != 2, "DependsOn len = %d, want 2", len(deps))
-	}
+	assert.FatalIf(t, len(deps) != 2, "DependsOn len = %d, want 2", len(deps))
 	{
 		got := deps[0].NamespacedName()
 		assert.ErrorIf(t, got != "flux-system/infra", "DependsOn[0] = %q, want flux-system/infra", got)

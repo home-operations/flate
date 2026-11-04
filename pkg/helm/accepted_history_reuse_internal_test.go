@@ -50,9 +50,7 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 	)
 	docs, receipt, err := testutil.RenderMaps(client.Template(t.Context(), hr, nil, input))
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(t, receipt == nil, "%s", "successful raw template supplied no receipt")
-	}
+	assert.FatalIf(t, receipt == nil, "%s", "successful raw template supplied no receipt")
 	frame := receipt.Value().(renderFrame)
 	frame.header.Binding = manifest.Fingerprint(frame.binding)
 	frame.header.Analysis = (&chartDescription{chart: frame.chart, analysis: frame.header.Analysis}).analyze()
@@ -161,14 +159,12 @@ func testTemplateAcceptedHistoryDisabledPreparation(
 	}
 	_, err := fresh.describeChart(t.Context(), (*testCaseInput.hr), observed.Sources)
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(
-			t,
-			sources.calls.Load() == 0 || counted.opens.Load() == 0 || len(fresh.chartCache) == 0,
-			"%s",
-			"chart description was not primed",
-		)
-	}
+	assert.FatalIf(
+		t,
+		sources.calls.Load() == 0 || counted.opens.Load() == 0 || len(fresh.chartCache) == 0,
+		"%s",
+		"chart description was not primed",
+	)
 	sources.calls.Store(0)
 	counted.opens.Store(0)
 	{
@@ -253,16 +249,16 @@ func testTemplateAcceptedHistoryDurable(t *testing.T, testCaseInput *testTemplat
 	assert.Diff(t, got, records)
 	t.Run("static output", func(t *testing.T) {
 		t.Parallel()
-		testTemplateAcceptedHistoryDurableStaticOutput(t, &testCaseInput, &records)
+		testTemplateAcceptedHistoryDurableStaticOutput(t, &testCaseInput, records)
 	})
 	t.Run("source metadata replacement", func(t *testing.T) {
 		t.Parallel()
-		testTemplateAcceptedHistoryDurableSourceMetadataReplacement(t, &testCaseInput, &records)
+		testTemplateAcceptedHistoryDurableSourceMetadataReplacement(t, &testCaseInput, records)
 	})
 
 	t.Run("preparation", func(t *testing.T) {
 		t.Parallel()
-		testTemplateAcceptedHistoryDurablePreparation(t, &testCaseInput, &records)
+		testTemplateAcceptedHistoryDurablePreparation(t, &testCaseInput, records)
 	})
 
 	for _, tc := range []struct {
@@ -274,26 +270,26 @@ func testTemplateAcceptedHistoryDurable(t *testing.T, testCaseInput *testTemplat
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			testTemplateAcceptedHistoryDurableName(t, &testCaseInput, &tc, &records)
+			testTemplateAcceptedHistoryDurableName(t, &testCaseInput, &tc, records)
 		})
 	}
 	t.Run("typed record key", func(t *testing.T) {
 		t.Parallel()
-		testTemplateAcceptedHistoryDurableTypedRecordKey(t, &testCaseInput, &records)
+		testTemplateAcceptedHistoryDurableTypedRecordKey(t, &testCaseInput, records)
 	})
 	t.Run("frozen preparation", func(t *testing.T) {
 		t.Parallel()
-		testTemplateAcceptedHistoryDurableFrozenPreparation(t, &testCaseInput, &records)
+		testTemplateAcceptedHistoryDurableFrozenPreparation(t, &testCaseInput, records)
 	})
 
 	t.Run("unaccepted preparation", func(t *testing.T) {
 		t.Parallel()
-		testTemplateAcceptedHistoryDurableUnacceptedPreparation(t, &testCaseInput, &records)
+		testTemplateAcceptedHistoryDurableUnacceptedPreparation(t, &testCaseInput, records)
 	})
 
 	t.Run("publication", func(t *testing.T) {
 		t.Parallel()
-		testTemplateAcceptedHistoryDurablePublication(t, &testCaseInput, &records)
+		testTemplateAcceptedHistoryDurablePublication(t, &testCaseInput, records)
 	})
 	described, err := fresh.describeChart(t.Context(), (*testCaseInput.hr), testCaseInput.input.Sources)
 	assert.NoError(t, err)
@@ -318,7 +314,7 @@ func testTemplateAcceptedHistoryDurable(t *testing.T, testCaseInput *testTemplat
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			testTemplateAcceptedHistoryDurableName2(t, &testCaseInput, &records, &tc)
+			testTemplateAcceptedHistoryDurableName2(t, &testCaseInput, records, &tc)
 		})
 	}
 	foreign := (*testCaseInput.hr).Clone()
@@ -386,7 +382,7 @@ func testTemplateAcceptedHistoryDurable(t *testing.T, testCaseInput *testTemplat
 func testTemplateAcceptedHistoryDurableStaticOutput(
 	t *testing.T,
 	testCaseInput **testTemplateAcceptedHistoryDurableInputs,
-	records *map[manifest.NamedResource]manifest.DiscoveryRecord,
+	records map[manifest.NamedResource]manifest.DiscoveryRecord,
 ) {
 	t.Helper()
 
@@ -398,7 +394,7 @@ func testTemplateAcceptedHistoryDurableStaticOutput(
 			RenderAcceptance{
 				Owner:   (*(*testCaseInput).hr).Named(),
 				Receipt: (*(*testCaseInput).receipt),
-				Records: maps.All((*records)),
+				Records: maps.All(records),
 			},
 		),
 	)
@@ -415,7 +411,7 @@ func testTemplateAcceptedHistoryDurableStaticOutput(
 func testTemplateAcceptedHistoryDurableSourceMetadataReplacement(
 	t *testing.T,
 	testCaseInput **testTemplateAcceptedHistoryDurableInputs,
-	records *map[manifest.NamedResource]manifest.DiscoveryRecord,
+	records map[manifest.NamedResource]manifest.DiscoveryRecord,
 ) {
 	t.Helper()
 
@@ -434,7 +430,7 @@ func testTemplateAcceptedHistoryDurableSourceMetadataReplacement(
 				RenderAcceptance{
 					Owner:   (*(*testCaseInput).hr).Named(),
 					Receipt: (*(*testCaseInput).receipt),
-					Records: maps.All((*records)),
+					Records: maps.All(records),
 					Sources: sources,
 				},
 			),
@@ -460,7 +456,7 @@ func testTemplateAcceptedHistoryDurableSourceMetadataReplacement(
 func testTemplateAcceptedHistoryDurablePreparation(
 	t *testing.T,
 	testCaseInput **testTemplateAcceptedHistoryDurableInputs,
-	records *map[manifest.NamedResource]manifest.DiscoveryRecord,
+	records map[manifest.NamedResource]manifest.DiscoveryRecord,
 ) {
 	t.Helper()
 
@@ -484,7 +480,7 @@ func testTemplateAcceptedHistoryDurablePreparation(
 				Owner:   (*(*testCaseInput).hr).Named(),
 				Receipt: pending,
 				Sources: []manifest.SourceEvidence{},
-				Records: maps.All((*records)),
+				Records: maps.All(records),
 			},
 		),
 	)
@@ -498,15 +494,13 @@ func testTemplateAcceptedHistoryDurablePreparation(
 		observed,
 	)
 	assert.Equal(t, previousRenderErr && previousRenderPrevious2 != nil, true)
-	assert.Diff(t, maps.Collect(previousRenderPrevious2), (*records))
-	{
-		assert.FatalIf(
-			t,
-			sources.calls.Load() == 0 || counted.opens.Load() == 0,
-			"%s",
-			"enabled history did not prepare chart",
-		)
-	}
+	assert.Diff(t, maps.Collect(previousRenderPrevious2), records)
+	assert.FatalIf(
+		t,
+		sources.calls.Load() == 0 || counted.opens.Load() == 0,
+		"%s",
+		"enabled history did not prepare chart",
+	)
 	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
 	sources.calls.Store(0)
@@ -542,7 +536,7 @@ func testTemplateAcceptedHistoryDurableName(
 		name   string
 		mutate func(*renderHeader)
 	},
-	records *map[manifest.NamedResource]manifest.DiscoveryRecord,
+	records map[manifest.NamedResource]manifest.DiscoveryRecord,
 ) {
 	t.Helper()
 
@@ -553,7 +547,7 @@ func testTemplateAcceptedHistoryDurableName(
 	assert.NoError(t, encodeFrameErr)
 	invalidFrame, encodeFrameErr := decodeFrame(invalidReceipt)
 	assert.NoError(t, encodeFrameErr)
-	accepted, encodeFrameErr := encodeAccepted((*(*testCaseInput).hr).Named(), &invalidFrame, maps.All((*records)))
+	accepted, encodeFrameErr := encodeAccepted((*(*testCaseInput).hr).Named(), &invalidFrame, maps.All(records))
 	assert.NoError(t, encodeFrameErr)
 	_, _, _, encodeFrameErr = isolated.cache.Blob(
 		t.Context(), (*(*testCaseInput).key), cache.Policy{MaxAge: 0},
@@ -584,9 +578,7 @@ func testTemplateAcceptedHistoryDurableName(
 	}()
 	found, encodeFrameErr := isolated.lookupRender(t.Context(), &prepared.loaded, prepared.key)
 	assert.NoError(t, encodeFrameErr)
-	{
-		assert.FatalIf(t, found != nil, "%s", "invalid raw request metadata reused cached output")
-	}
+	assert.FatalIf(t, found != nil, "%s", "invalid raw request metadata reused cached output")
 	{
 		_, previousRenderComplete := isolated.PreviousRender(
 			t.Context(),
@@ -601,7 +593,7 @@ func testTemplateAcceptedHistoryDurableName(
 func testTemplateAcceptedHistoryDurableTypedRecordKey(
 	t *testing.T,
 	testCaseInput **testTemplateAcceptedHistoryDurableInputs,
-	records *map[manifest.NamedResource]manifest.DiscoveryRecord,
+	records map[manifest.NamedResource]manifest.DiscoveryRecord,
 ) {
 	t.Helper()
 
@@ -614,7 +606,7 @@ func testTemplateAcceptedHistoryDurableTypedRecordKey(
 				Owner:   (*(*testCaseInput).hr).Named(),
 				Receipt: (*(*testCaseInput).receipt),
 				Sources: []manifest.SourceEvidence{},
-				Records: maps.All((*records)),
+				Records: maps.All(records),
 			},
 		),
 	)
@@ -627,9 +619,7 @@ func testTemplateAcceptedHistoryDurableTypedRecordKey(
 	assert.NoError(t, prepareTemplateErr)
 	remembered, prepareTemplateErr := isolated.lookupRender(t.Context(), &prepared.loaded, prepared.key)
 	assert.NoError(t, prepareTemplateErr)
-	{
-		assert.FatalIf(t, remembered == nil, "%s", "matching request did not load a typed record")
-	}
+	assert.FatalIf(t, remembered == nil, "%s", "matching request did not load a typed record")
 	prepared.loaded.record = remembered
 	reader, _, _, prepareTemplateErr := isolated.cache.Blob(
 		t.Context(),
@@ -656,20 +646,18 @@ func testTemplateAcceptedHistoryDurableTypedRecordKey(
 
 	found, prepareTemplateErr := isolated.lookupRender(t.Context(), &prepared.loaded, "foreign")
 	assert.NoError(t, prepareTemplateErr)
-	{
-		assert.FatalIf(
-			t,
-			found != nil,
-			"%s",
-			"same acquisition identity lent a typed record to a foreign request key",
-		)
-	}
+	assert.FatalIf(
+		t,
+		found != nil,
+		"%s",
+		"same acquisition identity lent a typed record to a foreign request key",
+	)
 }
 
 func testTemplateAcceptedHistoryDurableFrozenPreparation(
 	t *testing.T,
 	testCaseInput **testTemplateAcceptedHistoryDurableInputs,
-	records *map[manifest.NamedResource]manifest.DiscoveryRecord,
+	records map[manifest.NamedResource]manifest.DiscoveryRecord,
 ) {
 	t.Helper()
 
@@ -699,7 +687,7 @@ func testTemplateAcceptedHistoryDurableFrozenPreparation(
 				Owner:   (*(*testCaseInput).hr).Named(),
 				Receipt: pending,
 				Sources: []manifest.SourceEvidence{},
-				Records: maps.All((*records)),
+				Records: maps.All(records),
 			},
 		),
 	)
@@ -736,7 +724,7 @@ func testTemplateAcceptedHistoryDurableFrozenPreparation(
 func testTemplateAcceptedHistoryDurableUnacceptedPreparation(
 	t *testing.T,
 	testCaseInput **testTemplateAcceptedHistoryDurableInputs,
-	records *map[manifest.NamedResource]manifest.DiscoveryRecord,
+	records map[manifest.NamedResource]manifest.DiscoveryRecord,
 ) {
 	t.Helper()
 
@@ -754,7 +742,7 @@ func testTemplateAcceptedHistoryDurableUnacceptedPreparation(
 				Owner:   (*(*testCaseInput).hr).Named(),
 				Receipt: first,
 				Sources: []manifest.SourceEvidence{},
-				Records: maps.All((*records)),
+				Records: maps.All(records),
 			},
 		),
 	)
@@ -764,9 +752,7 @@ func testTemplateAcceptedHistoryDurableUnacceptedPreparation(
 		renderer.Template(t.Context(), (*(*testCaseInput).hr), nil, changed),
 	)
 	assert.NoError(t, renderMapsErr2)
-	{
-		assert.FatalIf(t, pending == nil, "%s", "raw successor supplied no receipt")
-	}
+	assert.FatalIf(t, pending == nil, "%s", "raw successor supplied no receipt")
 	{
 		_, previousRenderComplete5 := renderer.PreviousRender(
 			t.Context(),
@@ -790,7 +776,7 @@ func testTemplateAcceptedHistoryDurableUnacceptedPreparation(
 func testTemplateAcceptedHistoryDurableName2(
 	t *testing.T,
 	testCaseInput **testTemplateAcceptedHistoryDurableInputs,
-	records *map[manifest.NamedResource]manifest.DiscoveryRecord,
+	records map[manifest.NamedResource]manifest.DiscoveryRecord,
 	tc *struct {
 		name   string
 		mutate func(*RenderOptions)
@@ -807,7 +793,7 @@ func testTemplateAcceptedHistoryDurableName2(
 				Owner:   (*(*testCaseInput).hr).Named(),
 				Receipt: (*(*testCaseInput).receipt),
 				Sources: []manifest.SourceEvidence{},
-				Records: maps.All((*records)),
+				Records: maps.All(records),
 			},
 		),
 	)

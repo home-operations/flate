@@ -52,9 +52,7 @@ func partialSourcePublicationCase(t *testing.T, output *[]map[string]any) {
 	const unrelated = 40
 	st, bodies := store.New(), task.NewBounded(2)
 	owner, err := cache.New(t.Context(), "")
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	defer func() {
 		{
 			localErr := owner.Close()
@@ -63,7 +61,8 @@ func partialSourcePublicationCase(t *testing.T, output *[]map[string]any) {
 	}()
 	outputs := make([]any, 0, unrelated+1)
 	partialPublicationOutputs(&outputs)
-	generator, generatorDoc := generatorForTest(t, outputs)
+	generatorForTestResult1 := generatorForTest(t, outputs)
+	generator, generatorDoc := generatorForTestResult1.object, generatorForTestResult1.document
 	st.AddObject(generator, generatorDoc)
 	consumerDoc := map[string]any{
 		"apiVersion": manifest.FluxKustomizeDomain + "/v1",
@@ -75,10 +74,9 @@ func partialSourcePublicationCase(t *testing.T, output *[]map[string]any) {
 			"sourceRef": map[string]any{"kind": manifest.KindExternalArtifact, "name": "input"},
 		},
 	}
-	consumer, authoritative, _, err := manifest.ParseDoc(consumerDoc, manifest.ParseDocOptions{})
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	parsed, err := manifest.ParseDoc(consumerDoc, manifest.ParseDocOptions{})
+	consumer, authoritative := parsed.Object, parsed.Document
+	assert.FatalIf(t, err != nil, "%v", err)
 	st.AddObject(consumer, authoritative)
 	repo := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
@@ -116,9 +114,8 @@ func partialSourcePublicationCase(t *testing.T, output *[]map[string]any) {
 		func(id manifest.NamedResource, _ any) { s.OnArrival(id, id.KindInfo().Runnable) },
 		false,
 	)()
-	for _, event := range []store.EventKind{store.EventStatusUpdated, store.EventArtifactUpdated} {
-		defer st.AddListener(event, func(manifest.NamedResource, any) { s.OnPublication() }, false)()
-	}
+	defer st.AddListener(store.EventStatusUpdated, func(manifest.NamedResource, any) { s.OnPublication() }, false)()
+	defer st.AddListener(store.EventArtifactUpdated, func(manifest.NamedResource, any) { s.OnPublication() }, false)()
 	defer st.AddListener(store.EventArtifactUpdated, func(id manifest.NamedResource, value any) {
 		if id != generator.Named() {
 			return
@@ -196,14 +193,12 @@ func checkPartialPublication(t *testing.T, statementInput *partialPublicationChe
 	t.Helper()
 	const unrelated = 40
 	firstComplete := <-(*statementInput.committed)
-	{
-		assert.FatalIf(
-			t,
-			firstComplete || <-(*statementInput.committed),
-			"%v",
-			"generator completed before its first partial publication",
-		)
-	}
+	assert.FatalIf(
+		t,
+		firstComplete || <-(*statementInput.committed),
+		"%v",
+		"generator completed before its first partial publication",
+	)
 	input := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
 		Kind:      manifest.KindExternalArtifact,
@@ -244,14 +239,12 @@ func checkPartialPublication(t *testing.T, statementInput *partialPublicationChe
 		before := (*statementInput.st).GetArtifact(input, store.ArtifactContent)
 		(*statementInput.advance) <- struct{}{}
 		complete := <-(*statementInput.committed)
-		{
-			assert.FatalIf(
-				t,
-				before != (*statementInput.st).GetArtifact(input, store.ArtifactContent),
-				"unrelated publication %d changed the consumed source",
-				publication,
-			)
-		}
+		assert.FatalIf(
+			t,
+			before != (*statementInput.st).GetArtifact(input, store.ArtifactContent),
+			"unrelated publication %d changed the consumed source",
+			publication,
+		)
 		if paused {
 			(*statementInput.resume) <- struct{}{}
 		}
@@ -260,19 +253,15 @@ func checkPartialPublication(t *testing.T, statementInput *partialPublicationChe
 		}
 	}
 	{
-		{
-			err := <-(*statementInput.done)
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := <-(*statementInput.done)
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	status, _ := (*statementInput.st).GetStatus((*statementInput.consumer).Named())
 	inventory, ok := (*statementInput.st).GetArtifact((*statementInput.consumer).Named(), store.ArtifactContent).(*store.Emission)
-	{
-		assert.FatalIf(t, !ok || !inventory.Complete || len(inventory.Manifests) != 1 ||
-			inventory.Manifests[0].Document["data"].(map[string]any)["value"] != "stable" ||
-			status.Status != store.StatusReady ||
-			!(*statementInput.s).Results()[(*statementInput.consumer).Named()].Assessment.Valid(), "unaccepted stable consumer: status=%+v inventory=%+v", status, inventory)
-	}
+	assert.FatalIf(t, !ok || !inventory.Complete || len(inventory.Manifests) != 1 ||
+		inventory.Manifests[0].Document["data"].(map[string]any)["value"] != "stable" ||
+		status.Status != store.StatusReady ||
+		!(*statementInput.s).Results()[(*statementInput.consumer).Named()].Assessment.Valid(), "unaccepted stable consumer: status=%+v inventory=%+v", status, inventory)
 	assert.Equal(t, statementInput.captures.Load(), int64(1))
 	(*(*statementInput.output)) = testutil.DocumentMaps(inventory.Manifests)
 }

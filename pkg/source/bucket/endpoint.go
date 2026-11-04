@@ -9,7 +9,7 @@ import (
 
 // normalizeEndpoint splits a Flux-style endpoint into the
 // host[:port] form minio-go expects and a tls flag.
-func normalizeEndpoint(endpoint string, insecure bool) (string, bool, error) {
+func normalizeEndpoint(endpoint string, insecure bool) (bucketEndpoint, error) {
 	var host string
 	var secure bool
 	switch {
@@ -22,12 +22,12 @@ func normalizeEndpoint(endpoint string, insecure bool) (string, bool, error) {
 	}
 	host = strings.TrimRight(host, "/")
 	if host == "" {
-		return "", false, errors.New("bucket endpoint is empty")
+		return bucketEndpoint{host: "", secure: false}, errors.New("bucket endpoint is empty")
 	}
 	if _, perr := url.Parse(schemeFor(secure) + "://" + host); perr != nil {
-		return "", false, fmt.Errorf("parse Bucket endpoint %q: %w", endpoint, perr)
+		return bucketEndpoint{host: "", secure: false}, fmt.Errorf("parse Bucket endpoint %q: %w", endpoint, perr)
 	}
-	return host, secure, nil
+	return bucketEndpoint{host: host, secure: secure}, nil
 }
 
 func schemeFor(secure bool) string {
@@ -35,4 +35,9 @@ func schemeFor(secure bool) string {
 		return "https"
 	}
 	return "http"
+}
+
+type bucketEndpoint struct {
+	host   string
+	secure bool
 }

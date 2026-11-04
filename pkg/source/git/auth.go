@@ -48,7 +48,8 @@ func (f *operation) resolveAuth(
 		return auth, nil
 	}
 
-	token, _, err := sec.Value("bearerToken")
+	valueResult, err := sec.Value("bearerToken")
+	token := valueResult.Value
 	if err != nil {
 		return nil, fmt.Errorf("secret %s/%s: %w", repo.Namespace, repo.SecretRef.Name, err)
 	}
@@ -78,21 +79,24 @@ func (f *operation) resolveSSHAuth(
 	sec *manifest.Secret,
 	endpoint *transport.Endpoint,
 ) (*gitssh.PublicKeys, error) {
-	identity, _, valueErr := sec.Value("identity")
+	identity, valueErr := sec.Value("identity")
+
 	if valueErr != nil {
 		return nil, fmt.Errorf("secret %s/%s: %w", repo.Namespace, repo.SecretRef.Name, valueErr)
 	}
-	password, _, valueErr := sec.Value("password")
+	password, valueErr := sec.Value("password")
+
 	if valueErr != nil {
 		return nil, fmt.Errorf("secret %s/%s: %w", repo.Namespace, repo.SecretRef.Name, valueErr)
 	}
-	kh, _, valueErr := sec.Value("known_hosts")
+	knownHosts, valueErr := sec.Value("known_hosts")
+
 	if valueErr != nil {
 		return nil, fmt.Errorf("secret %s/%s: %w", repo.Namespace, repo.SecretRef.Name, valueErr)
 	}
 	var auth *gitssh.PublicKeys
-	if identity != "" && !manifest.HasValuePlaceholder(identity) {
-		auth, valueErr = sshPublicKeys(cmp.Or(endpoint.User, "git"), identity, password)
+	if identity.Value != "" && !manifest.HasValuePlaceholder(identity.Value) {
+		auth, valueErr = sshPublicKeys(cmp.Or(endpoint.User, "git"), identity.Value, password.Value)
 		if valueErr != nil {
 			return nil, manifest.NewError(
 				manifest.ErrInput,
@@ -106,8 +110,8 @@ func (f *operation) resolveSSHAuth(
 		}
 	}
 	var cb ssh.HostKeyCallback = insecureIgnoreHostKey
-	if kh != "" && !manifest.HasValuePlaceholder(kh) {
-		cb, valueErr = knownHostsCallback([]byte(kh))
+	if knownHosts.Value != "" && !manifest.HasValuePlaceholder(knownHosts.Value) {
+		cb, valueErr = knownHostsCallback([]byte(knownHosts.Value))
 		if valueErr != nil {
 			return nil, manifest.NewError(
 				manifest.ErrInput,
@@ -120,21 +124,21 @@ func (f *operation) resolveSSHAuth(
 			)
 		}
 	}
-	if identity == "" || manifest.HasValuePlaceholder(identity) {
+	if identity.Value == "" || manifest.HasValuePlaceholder(identity.Value) {
 		return nil, source.MissingSecretErr(
 			manifest.DiagnosticFor(repo.Named(), repo),
 			repo.SecretRef.Name,
 			"missing 'identity' for SSH auth",
 		)
 	}
-	if manifest.HasValuePlaceholder(password) {
+	if manifest.HasValuePlaceholder(password.Value) {
 		return nil, source.MissingSecretErr(
 			manifest.DiagnosticFor(repo.Named(), repo),
 			repo.SecretRef.Name,
 			"SSH password unavailable",
 		)
 	}
-	if manifest.HasValuePlaceholder(kh) {
+	if manifest.HasValuePlaceholder(knownHosts.Value) {
 		return nil, source.MissingSecretErr(
 			manifest.DiagnosticFor(repo.Named(), repo),
 			repo.SecretRef.Name,

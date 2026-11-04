@@ -52,32 +52,26 @@ func TestRecordEmitted_PayloadProvenance(t *testing.T) {
 	attempt.Children = []Child{child}
 	attempt.Fingerprint = "same"
 	s.RecordEmitted(p, &attempt, map[manifest.NamedResource]*SourceArtifact{target: payload})
-	{
-		assert.FatalIf(
-			t,
-			attempt.Fingerprint != "" || s.GetArtifact(p, ArtifactContent).(*Emission).Fingerprint != "",
-			"%s",
-			"partial payload publication retained successful fingerprint eligibility",
-		)
-	}
+	assert.FatalIf(
+		t,
+		attempt.Fingerprint != "" || s.GetArtifact(p, ArtifactContent).(*Emission).Fingerprint != "",
+		"%s",
+		"partial payload publication retained successful fingerprint eligibility",
+	)
 	attempt.Children, attempt.Complete = []Child{child}, true
 	attempt.Fingerprint = "same"
 	s.RecordEmitted(p, &attempt, nil)
-	{
-		assert.FatalIf(
-			t,
-			s.GetArtifact(target, ArtifactContent) != payload,
-			"%s",
-			"same-attempt nil finalization removed payload",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.GetArtifact(target, ArtifactContent) != payload,
+		"%s",
+		"same-attempt nil finalization removed payload",
+	)
 	_, _, replay := s.GetEmission(p)
 	defer replay.Finish()
 	replay.Complete = true
 	s.RecordEmitted(p, &replay, nil)
-	{
-		assert.FatalIf(t, s.GetArtifact(target, ArtifactContent) != payload, "%s", "borrowed replay removed payload")
-	}
+	assert.FatalIf(t, s.GetArtifact(target, ArtifactContent) != payload, "%s", "borrowed replay removed payload")
 	s.RecordEmitted(
 		p,
 		&Emission{
@@ -88,14 +82,12 @@ func TestRecordEmitted_PayloadProvenance(t *testing.T) {
 		},
 		nil,
 	)
-	{
-		assert.FatalIf(
-			t,
-			s.GetArtifact(target, ArtifactContent) != nil,
-			"%s",
-			"fresh declaration-only replacement retained bytes",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.GetArtifact(target, ArtifactContent) != nil,
+		"%s",
+		"fresh declaration-only replacement retained bytes",
+	)
 	s.RecordEmitted(
 		p,
 		&Emission{Children: []Child{child}, Fingerprint: "same", Complete: true},
@@ -106,15 +98,13 @@ func TestRecordEmitted_PayloadProvenance(t *testing.T) {
 	defer replacement.Finish()
 	replacement.Children, replacement.Complete = []Child{child, other}, true
 	s.RecordEmitted(p, &replacement, map[manifest.NamedResource]*SourceArtifact{other.Obj.Named(): payload})
-	{
-		assert.FatalIf(
-			t,
-			s.GetArtifact(target, ArtifactContent) != nil ||
-				s.GetArtifact(other.Obj.Named(), ArtifactContent) != payload,
-			"%s",
-			"new attempt borrowed an earlier payload for its fresh declaration-only child",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.GetArtifact(target, ArtifactContent) != nil ||
+			s.GetArtifact(other.Obj.Named(), ArtifactContent) != payload,
+		"%s",
+		"new attempt borrowed an earlier payload for its fresh declaration-only child",
+	)
 }
 
 func TestRecordEmitted_PayloadUpdate(t *testing.T) {
@@ -153,14 +143,12 @@ func TestRecordEmitted_PayloadUpdate(t *testing.T) {
 	defer next.Finish()
 	next.Complete = true
 	s.RecordEmitted(owner.Named(), &next, map[manifest.NamedResource]*SourceArtifact{target: second})
-	{
-		assert.FatalIf(
-			t,
-			!slices.Equal(updates, []*SourceArtifact{second}),
-			"%s",
-			"payload-only replacement did not notify the whole descriptor exactly once",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!slices.Equal(updates, []*SourceArtifact{second}),
+		"%s",
+		"payload-only replacement did not notify the whole descriptor exactly once",
+	)
 	obj, doc, input := s.GetEmission(target)
 	defer input.Finish()
 	assert.Equal(t, obj, child.Obj)
@@ -169,23 +157,19 @@ func TestRecordEmitted_PayloadUpdate(t *testing.T) {
 	equal := *second
 	equal.FS = fstest.MapFS{"file": {Data: []byte("second")}}
 	s.RecordEmitted(owner.Named(), &next, map[manifest.NamedResource]*SourceArtifact{target: &equal})
-	{
-		assert.FatalIf(
-			t,
-			!slices.Equal(updates, []*SourceArtifact{second}),
-			"%s",
-			"semantically equal payload with distinct backing notified readers",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!slices.Equal(updates, []*SourceArtifact{second}),
+		"%s",
+		"semantically equal payload with distinct backing notified readers",
+	)
 	s.RecordEmitted(owner.Named(), &Emission{Complete: true}, nil)
-	{
-		assert.FatalIf(
-			t,
-			s.GetArtifact(target, ArtifactContent) != nil || !slices.Equal(updates, []*SourceArtifact{second, nil}),
-			"%s",
-			"last payload withdrawal did not remove authority and notify readers",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.GetArtifact(target, ArtifactContent) != nil || !slices.Equal(updates, []*SourceArtifact{second, nil}),
+		"%s",
+		"last payload withdrawal did not remove authority and notify readers",
+	)
 }
 
 func TestRecordEmitted_PayloadWarnings(t *testing.T) {

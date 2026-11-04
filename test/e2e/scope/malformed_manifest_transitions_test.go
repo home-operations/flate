@@ -84,7 +84,8 @@ func e2EDiffMalformedManifestTransitionsName(t *testing.T, tc *struct {
 		"-o",
 		"json",
 	}
-	stdout, stderr, code := harness.RunCLIBuffers(args...)
+	runCLIBuffersResult1 := harness.RunCLIBuffers(args...)
+	stdout, stderr, code := runCLIBuffersResult1.Stdout, runCLIBuffersResult1.Stderr, runCLIBuffersResult1.Code
 	assert.FatalIf(
 		t,
 		code != 1 || !strings.Contains(stderr, "✗  "+tc.side+" snapshot: Kustomization  flux-system/owner"),
@@ -130,7 +131,8 @@ func e2EDiffMalformedManifestTransitionsName(t *testing.T, tc *struct {
 			t.Fatalf("unexpected descendant suppression:\n%s", stdout)
 		}
 	}
-	nextOut, nextErr, nextCode := harness.RunCLIBuffers(args...)
+	runCLIBuffersResult2 := harness.RunCLIBuffers(args...)
+	nextOut, nextErr, nextCode := runCLIBuffersResult2.Stdout, runCLIBuffersResult2.Stderr, runCLIBuffersResult2.Code
 	assert.Equal(t, nextCode, code)
 	assert.Equal(t, nextOut, stdout)
 	assert.Equal(t, nextErr, stderr)

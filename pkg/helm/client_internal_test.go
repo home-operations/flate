@@ -40,14 +40,12 @@ func TestLoadChart_ValidationAcrossSources(t *testing.T) {
 			cliSources := NewSources(st)
 			_, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 			_, typed := errors.AsType[chart.ValidationError](err)
-			{
-				assert.FatalIf(
-					t,
-					!typed || !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux),
-					"validation chain = %v",
-					err,
-				)
-			}
+			assert.FatalIf(
+				t,
+				!typed || !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux),
+				"validation chain = %v",
+				err,
+			)
 		})
 	}
 }
@@ -79,20 +77,14 @@ func TestLoadChart_ValuesContentWithMemoryOwner(t *testing.T) {
 			},
 		)
 		loaded, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
-		{
-			assert.NoError(t, err)
-		}
-		{
-			assert.FatalIf(t, chartValuesCacheKey(&loaded, hr.ChartValuesFiles, false, "") == "" ||
-				chartValuesCacheKey(&loaded, hr.ChartValuesFiles,
-					false,
-					"",
-				) == previous, "%s", "different chart content shared a fingerprint")
-		}
+		assert.NoError(t, err)
+		assert.FatalIf(t, chartValuesCacheKey(&loaded, hr.ChartValuesFiles, false, "") == "" ||
+			chartValuesCacheKey(&loaded, hr.ChartValuesFiles,
+				false,
+				"",
+			) == previous, "%s", "different chart content shared a fingerprint")
 		merged, err := cli.mergeChartValuesFiles(t.Context(), &loaded, hr.ChartValuesFiles, false)
-		{
-			assert.NoError(t, err)
-		}
+		assert.NoError(t, err)
 		assert.Equal(t, merged["marker"], any([]string{"original", "second"}[i]))
 		previous = chartValuesCacheKey(&loaded, hr.ChartValuesFiles, false, "")
 	}
@@ -163,9 +155,7 @@ func TestSourceResolver_SharedClientDeclarations(t *testing.T) {
 		raw.Named(): {Productions: []manifest.Production{{Owner: parent.Named(), Source: manifest.BootstrapSourceID}}},
 	}})
 	resolver := NewSources(st)
-	{
-		assert.FatalIf(t, resolver.Declaration(raw.Named()) != nil, "%s", "provisional source reached shared resolver")
-	}
+	assert.FatalIf(t, resolver.Declaration(raw.Named()) != nil, "%s", "provisional source reached shared resolver")
 	accepted := *raw
 	accepted.URL = "https://accepted.example"
 	_, _, next := st.GetEmission(parent.Named())
@@ -176,14 +166,12 @@ func TestSourceResolver_SharedClientDeclarations(t *testing.T) {
 		parent.Named(),
 		store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "other children pending"},
 	)
-	{
-		assert.FatalIf(
-			t,
-			resolver.Declaration(raw.Named()) != &accepted,
-			"%s",
-			"shared resolver lost effective accepted source",
-		)
-	}
+	assert.FatalIf(
+		t,
+		resolver.Declaration(raw.Named()) != &accepted,
+		"%s",
+		"shared resolver lost effective accepted source",
+	)
 }
 
 func testLoadChartSharedChartRetainsValuesFingerprintCase(
@@ -216,9 +204,7 @@ func testLoadChartSharedChartRetainsValuesFingerprintCase(
 	withoutFiles := hr.Clone()
 	withoutFiles.ChartValuesFiles = nil
 	loaded, err := loadDecodedChart(t.Context(), cli, withoutFiles, cliSources)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	assert.Equal(t, loaded.fingerprint == "", false)
 	var results [2]chartDescription
 	var failures [2]error
@@ -231,9 +217,7 @@ func testLoadChartSharedChartRetainsValuesFingerprintCase(
 	wg.Wait()
 	for i := range results {
 		result := results[i]
-		{
-			assert.NoError(t, failures[i])
-		}
+		assert.NoError(t, failures[i])
 		assert.Equal(
 			t,
 			chartValuesCacheKey(&result, hr.ChartValuesFiles, false, ""),
@@ -242,8 +226,6 @@ func testLoadChartSharedChartRetainsValuesFingerprintCase(
 	}
 	loaded = results[0]
 	merged, err := cli.mergeChartValuesFiles(t.Context(), &loaded, hr.ChartValuesFiles, false)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	assert.Equal(t, merged["marker"], any("original"))
 }

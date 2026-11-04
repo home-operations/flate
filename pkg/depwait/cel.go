@@ -114,15 +114,15 @@ func compileReadyExpr(expr string) (celCacheEntry, error) {
 }
 
 func buildCacheEntry(expr string) celCacheEntry {
-	ast, issues := celEnv.Compile(expr)
+	compiled, issues := celEnv.Compile(expr)
 	if issues != nil && issues.Err() != nil {
 		return celCacheEntry{err: fmt.Errorf("compile: %w", issues.Err())}
 	}
-	prog, err := celEnv.Program(ast)
+	prog, err := celEnv.Program(compiled)
 	if err != nil {
 		return celCacheEntry{err: fmt.Errorf("program: %w", err)}
 	}
-	return celCacheEntry{prog: prog, selfStatus: readsSelfStatus(ast)}
+	return celCacheEntry{prog: prog, selfStatus: readsSelfStatus(compiled)}
 }
 
 func readsSelfStatus(checked *cel.Ast) bool {

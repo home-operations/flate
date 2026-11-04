@@ -45,7 +45,7 @@ func TestE2E_SelectedKustomizeClassification(t *testing.T) {
 					"entry.yaml",
 					testutil.KustomizationYAML("plain", "apps", "  path: ./unavailable\n  suspend: true\n"),
 				)
-				out, _ := harness.RequireCLIOK(
+				requireCLIOKResult1 := harness.RequireCLIOK(
 					t,
 					"get",
 					"ks",
@@ -59,6 +59,7 @@ func TestE2E_SelectedKustomizeClassification(t *testing.T) {
 					"--cache-dir",
 					t.TempDir(),
 				)
+				out, _ := requireCLIOKResult1.Stdout, requireCLIOKResult1.Stderr
 				var owners []struct {
 					Name string `json:"Name"`
 				}
@@ -72,8 +73,9 @@ func TestE2E_SelectedKustomizeClassification(t *testing.T) {
 				}
 				return
 			}
-			out, stderr, code := harness.RunCLIBuffers("build", "all", "--path", root,
+			runCLIBuffersResult2 := harness.RunCLIBuffers("build", "all", "--path", root,
 				"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
+			out, stderr, code := runCLIBuffersResult2.Stdout, runCLIBuffersResult2.Stderr, runCLIBuffersResult2.Code
 			if tc.fail {
 				assert.FatalIf(
 					t,

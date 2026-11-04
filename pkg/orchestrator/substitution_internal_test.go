@@ -154,13 +154,15 @@ func TestSnapshotSubstitutions_OwnsInputs(t *testing.T) {
 		manifest.NamedResource{})
 	assert.Equal(t, o.cfg.Supply[0].InputPath, "ci-values.yaml")
 	for key, want := range map[string]string{"VALUE": "supplied", "BINARY": "owned"} {
-		got, _, err := facts.Data.Value(key)
+		valueResult, err := facts.Data.Value(key)
+		got := valueResult.Value
 		assert.NoError(t, err)
 		assert.Equal(t, got, want)
 	}
 	secretFacts := o.store.ReferenceFacts(secret.Named(), nil, false, manifest.NamedResource{})
 	for _, key := range []string{"ENCODED", "VALUE"} {
-		got, _, err := secretFacts.Data.Value(key)
+		valueResult2, err := secretFacts.Data.Value(key)
+		got := valueResult2.Value
 		assert.NoError(t, err)
 		assert.Equal(t, got, "owned")
 	}
@@ -232,9 +234,7 @@ func TestRenderTrees_SubstitutionValidation(t *testing.T) {
 						return sourcecache.ProducerResult{}, localErr
 					},
 				)
-				{
-					assert.FatalIf(t, localErr != nil, "constructor released borrowed owner: %v", localErr)
-				}
+				assert.FatalIf(t, localErr != nil, "constructor released borrowed owner: %v", localErr)
 				assert.NoError(t, cfg.Cache.Close())
 			}
 			res, err := sourcecache.Sweep(t.Context(), root, sourcecache.SweepOpts{})
@@ -750,10 +750,8 @@ func testRenderSubstitutionLateProducerCase(t *testing.T, testCaseInput testRend
 		o.stop()
 	})
 	{
-		{
-			localErr := o.bootstrap(t.Context())
-			assert.FatalIf(t, localErr != nil, "%v", localErr)
-		}
+		localErr := o.bootstrap(t.Context())
+		assert.FatalIf(t, localErr != nil, "%v", localErr)
 	}
 	external := source.Obj.Named()
 	assert.FatalIf(

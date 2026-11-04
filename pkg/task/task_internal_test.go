@@ -62,13 +62,9 @@ func TestNewBounded_Unbounded(t *testing.T) {
 	t.Parallel()
 	// Workers <= 0 disables bounding (no semaphore allocated).
 	s := NewBounded(0)
-	{
-		assert.ErrorIf(t, s.sem != nil, "expected nil semaphore for workers=0")
-	}
+	assert.ErrorIf(t, s.sem != nil, "expected nil semaphore for workers=0")
 	s = NewBounded(-1)
-	{
-		assert.ErrorIf(t, s.sem != nil, "expected nil semaphore for workers=-1")
-	}
+	assert.ErrorIf(t, s.sem != nil, "expected nil semaphore for workers=-1")
 }
 
 func TestService_BlockTillDone(t *testing.T) {
@@ -150,9 +146,7 @@ func TestYieldSlot_UnboundedIsNoOp(t *testing.T) {
 	s := NewBounded(0)
 	called := false
 	s.YieldSlot(func() { called = true })
-	{
-		assert.ErrorIf(t, !called, "YieldSlot did not invoke fn on unbounded Service")
-	}
+	assert.ErrorIf(t, !called, "YieldSlot did not invoke fn on unbounded Service")
 }
 
 // TestYieldSlot_PanicRestoresSlot guards against a phantom-slot drain

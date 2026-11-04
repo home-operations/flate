@@ -71,7 +71,8 @@ func testRunBuiltPackagesCase(t *testing.T, testCaseInput *string,
 		if lifetime == "uncached" || lifetime == "changed-uncached" {
 			dir = ""
 		}
-		trees, closeCache := testReceiptTrees(t, dir)
+		testReceiptTreesResult1 := testReceiptTrees(t, dir)
+		trees, closeCache := testReceiptTreesResult1.trees, testReceiptTreesResult1.close
 		st := store.New()
 		source := &store.SourceArtifact{LocalPath: root, FS: input}
 		st.SetArtifact(manifest.BootstrapSourceID, source)
@@ -105,7 +106,8 @@ func testRunBuiltPackagesCase(t *testing.T, testCaseInput *string,
 		}
 		assert.NoError(t, d.loadManifests(t.Context(), root, true))
 		assert.Equal(t, d.binding.Producer, owner.Named())
-		docs, wantHistory := d.assertPreparedPackageOutputs(t, testCaseInput, owner, wantValue)
+		assertPreparedPackageOutputsResult2 := d.assertPreparedPackageOutputs(t, testCaseInput, owner, wantValue)
+		docs, wantHistory := assertPreparedPackageOutputsResult2.documents, assertPreparedPackageOutputsResult2.history
 		assert.NoError(t, d.loader.FinalizeIndex(t.Context(), root, true))
 		assert.NoError(t, d.acceptPrepared(t.Context()))
 		if dir != "" {
@@ -136,12 +138,17 @@ type testRunEntryOwnerEligibilityCaseTailInputs struct {
 	root          string
 }
 
+type packageOutputs struct {
+	documents []map[string]any
+	history   map[manifest.NamedResource]manifest.DiscoveryRecord
+}
+
 func (d *Session) assertPreparedPackageOutputs(
 	t *testing.T,
 	testCaseInput *string,
 	owner *manifest.Kustomization,
 	wantValue string,
-) ([]map[string]any, map[manifest.NamedResource]manifest.DiscoveryRecord) {
+) packageOutputs {
 	t.Helper()
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings-dev"}
 	batch := d.loader.PromotionDocuments(id)
@@ -183,7 +190,7 @@ func (d *Session) assertPreparedPackageOutputs(
 			assert.Diff(t, cm.Data, map[string]any{"A": wantValue, "B": "patched"})
 		}
 	}
-	return docs, wantHistory
+	return packageOutputs{documents: docs, history: wantHistory}
 }
 
 func (d *Session) assertPreparedPackageReaders(t *testing.T, testCaseInput *string) {

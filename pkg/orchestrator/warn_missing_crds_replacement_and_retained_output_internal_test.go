@@ -72,14 +72,10 @@ spec:
 			[]Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 			Config{CacheDir: cache, Concurrency: 2, AllowMissingKinds: []string{manifest.KindCustomResourceDefinition}},
 		)
-		{
-			assert.FatalIf(t, len(renderedSingleton2) != 1, "missing render: %v", err)
-		}
+		assert.FatalIf(t, len(renderedSingleton2) != 1, "missing render: %v", err)
 		o := renderedSingleton2[0].Orchestrator
 		res := renderedSingleton2[0].Result
-		{
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		assert.FatalIf(t, err != nil, "%v", err)
 		want := slices.Grow([]manifest.Warning{}, 2-0)
 		for _, name := range []string{"a.example.com", "z.example.com"} {
 			crd := manifest.NamedResource{
@@ -124,13 +120,9 @@ spec:
 			assert.Equal(t, ok, true)
 			assert.Equal(t, status.Status, store.StatusReady)
 			art, ok := o.store.GetArtifact(id, store.ArtifactContent).(*store.Emission)
-			{
-				assert.FatalIf(t, !ok || len(art.Manifests) != 1, "%s artifact=%+v", id, art)
-			}
+			assert.FatalIf(t, !ok || len(art.Manifests) != 1, "%s artifact=%+v", id, art)
 			raw, ok := o.store.GetObject(manifest.NamedResource{Group: "example.com", Kind: "Widget", Namespace: "flux-system", Name: name}).(*manifest.RawObject)
-			{
-				assert.FatalIf(t, !ok, "missing emitted Widget/%s", name)
-			}
+			assert.FatalIf(t, !ok, "missing emitted Widget/%s", name)
 			assert.Diff(t, raw.Spec, map[string]any{"value": name})
 		}
 		if first == nil {
@@ -238,14 +230,12 @@ func testWarnMissingCRDsReplacementAndRetainedOutputCase(
 	wantStatus := store.StatusReady
 	if (*testCaseInput) == "failed gate" {
 		wantStatus = store.StatusFailed
-		{
-			assert.FatalIf(
-				t,
-				!strings.Contains(info.Message, "dependency not found"),
-				"primary error missing: %+v",
-				info,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!strings.Contains(info.Message, "dependency not found"),
+			"primary error missing: %+v",
+			info,
+		)
 	}
 	assert.Equal(t, info.Status, wantStatus)
 	if (*testCaseInput) == "dedup" {
@@ -298,7 +288,8 @@ func assertRetainedCRDManifests(t *testing.T, s *store.Store, rs *manifest.Resou
 	}
 	names := slices.Grow([]string{}, len(raw)-0)
 	for _, doc := range raw {
-		name, ns := manifest.DocMetadata(doc.Document)
+		metadata := manifest.DocMetadata(doc.Document)
+		name, ns := metadata.Name, metadata.Namespace
 		names = append(names, name)
 		assert.Equal(t, ns, "")
 		assert.Equal(t, doc.Document["spec"].(map[string]any)["value"].(string), name)

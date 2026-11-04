@@ -43,9 +43,7 @@ func testGetDeclarationIndependenceLifecycleCaseCompletion(
 		}, false)()
 		doc := map[string]any{"apiVersion": manifest.SourceDomain + "/v1beta2"}
 		(*scope.st).AddObject((*scope.raw), doc)
-		{
-			assert.FatalIf(t, reads.Valid(), "%s", "document replacement retained the captured generation")
-		}
+		assert.FatalIf(t, reads.Valid(), "%s", "document replacement retained the captured generation")
 		assert.Equal(t, reads.GetDeclaration((*scope.raw).Named()), want)
 		assert.Equal(t, reads.input((*scope.raw).Named()).view.independent, (*scope.independent))
 		assert.Diff(
@@ -62,14 +60,12 @@ func testGetDeclarationIndependenceLifecycleCaseCompletion(
 		assert.Equal(t, (*scope.st).GetDeclaration((*scope.raw).Named()), want)
 		assert.Diff(t, document, doc)
 		assert.Equal(t, current.input((*scope.raw).Named()).view.independent, (*scope.independent))
-		{
-			assert.FatalIf(
-				t,
-				replacement.inputHead.generation <= reads.input((*scope.raw).Named()).view.generation,
-				"%s",
-				"document replacement did not advance the generation",
-			)
-		}
+		assert.FatalIf(
+			t,
+			replacement.inputHead.generation <= reads.input((*scope.raw).Named()).view.generation,
+			"%s",
+			"document replacement did not advance the generation",
+		)
 		(*scope.st).AddObject((*scope.raw), manifest.DeepCopyMap(doc))
 		if !current.Valid() || added != 1 {
 			t.Fatalf(
@@ -110,14 +106,12 @@ func testRecordEmittedIndependencePublicationCaseCompletion(
 		)
 		(*scope.st).RecordEmitted((*scope.owner).Named(), &Emission{Complete: true}, nil)
 	}
-	{
-		assert.FatalIf(
-			t,
-			!slices.Contains(slices.Collect((*scope.st).Sweep()), scope.absent.ID()) || scope.absent.Valid(),
-			"%s",
-			"first publication missed the registered absence",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!slices.Contains(slices.Collect((*scope.st).Sweep()), scope.absent.ID()) || scope.absent.Valid(),
+		"%s",
+		"first publication missed the registered absence",
+	)
 	if (*(*scope.testCaseInput).route) == "stable" || (*(*scope.testCaseInput).route) == "replacement" {
 		(*scope.child) = emissionChild("output", "second")
 		children := []Child{(*scope.child)}

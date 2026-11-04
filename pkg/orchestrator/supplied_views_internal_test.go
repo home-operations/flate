@@ -216,9 +216,7 @@ func testRenderTreesSuppliedViewsCaseTailSegment(
 			)
 			continue
 		}
-		{
-			assert.FatalIf(t, rendered.Result == nil, "side %d has no result", side)
-		}
+		assert.FatalIf(t, rendered.Result == nil, "side %d has no result", side)
 		assert.NoError(t, rendered.Err)
 		assert.Equal(t, len(rendered.Result.Failed), 0)
 		wantA := (*tailCaseInput.testCaseInput.scenario) == "explicit_changes" ||
@@ -235,14 +233,12 @@ func testRenderTreesSuppliedViewsCaseTailSegment(
 			id := testutil.KustomizationID("flux-system", "app-a")
 			assert.Equal(t, rendered.Store().GetObject(id) == nil, true)
 			for _, obj := range rendered.Store().ListObjects("", manifest.KindConfigMap) {
-				{
-					assert.FatalIf(
-						t,
-						obj.Named().Name == "cfg-a",
-						"%v",
-						"filtered side admitted cfg-a as an orphan seed",
-					)
-				}
+				assert.FatalIf(
+					t,
+					obj.Named().Name == "cfg-a",
+					"%v",
+					"filtered side admitted cfg-a as an orphan seed",
+				)
 			}
 		}
 		tailCaseInput.assertWarnings(t, side, &rendered)
@@ -309,13 +305,11 @@ func (s *testRenderTreesSuppliedViewsCaseTailInputs) assertWarnings(t *testing.T
 	warnings := rendered.Result.Warnings
 	if (*s.testCaseInput.scenario) == "differing_options" ||
 		(*s.testCaseInput.scenario) == "explicit_empty" {
-		{
-			assert.FatalIf(t, len(warnings) != 1 || warnings[0].Category != manifest.WarnPathConfig ||
-				!strings.Contains(
-					warnings[0].Message,
-					"no changes detected",
-				), "side %d warnings = %v", side, warnings)
-		}
+		assert.FatalIf(t, len(warnings) != 1 || warnings[0].Category != manifest.WarnPathConfig ||
+			!strings.Contains(
+				warnings[0].Message,
+				"no changes detected",
+			), "side %d warnings = %v", side, warnings)
 	} else {
 		assert.Equal(t, len(warnings), 0)
 	}

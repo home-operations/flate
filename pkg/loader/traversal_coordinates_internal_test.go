@@ -44,20 +44,16 @@ func TestTraversal_RootCoordinates(t *testing.T) {
 			w := traversal{documents: readerForTest(root), visited: map[graphContext]struct{}{}}
 			context := graphContext{root: root, dir: dir}
 			count := 0
-			{
-				assert.FatalIf(t, !w.walk(t.Context(), graphVisit{graphContext: context}, func(v graphVisit) bool {
-					assert.Equal(t, v.graphContext, context)
-					count++
-					return true
-				}), "%s", "walk stopped before completing")
-			}
+			assert.FatalIf(t, !w.walk(t.Context(), graphVisit{graphContext: context}, func(v graphVisit) bool {
+				assert.Equal(t, v.graphContext, context)
+				count++
+				return true
+			}), "%s", "walk stopped before completing")
 			assert.Equal(t, count, 1)
-			{
-				assert.FatalIf(t, !w.walk(t.Context(), graphVisit{graphContext: context}, func(graphVisit) bool {
-					count++
-					return true
-				}), "%s", "repeated walk stopped before completing")
-			}
+			assert.FatalIf(t, !w.walk(t.Context(), graphVisit{graphContext: context}, func(graphVisit) bool {
+				count++
+				return true
+			}), "%s", "repeated walk stopped before completing")
 			assert.Equal(t, count, 1)
 		})
 	}
@@ -98,24 +94,20 @@ func testLoaderDotDotPathsCase(t *testing.T, testCaseInput *struct {
 
 	w := traversal{documents: documents, visited: map[graphContext]struct{}{}}
 	var files []string
-	{
-		assert.FatalIf(
-			t,
-			!w.walk(t.Context(), graphVisit{root: root, dir: testCaseInput.path}, func(v graphVisit) bool {
-				files = append(files, v.file)
-				return true
-			}),
-			"%s",
-			"walk stopped before completing",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!w.walk(t.Context(), graphVisit{root: root, dir: testCaseInput.path}, func(v graphVisit) bool {
+			files = append(files, v.file)
+			return true
+		}),
+		"%s",
+		"walk stopped before completing",
+	)
 	var wantFiles []string
 	if testCaseInput.accepted {
 		wantFiles = []string{filepath.Join(dir, "kustomization.yaml")}
 	}
-	{
-		assert.ErrorIf(t, !slices.Equal(files, wantFiles), "walk files = %v, want %v", files, wantFiles)
-	}
+	assert.ErrorIf(t, !slices.Equal(files, wantFiles), "walk files = %v, want %v", files, wantFiles)
 
 	wantRef := ""
 	if testCaseInput.accepted {

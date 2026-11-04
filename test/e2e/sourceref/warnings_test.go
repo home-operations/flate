@@ -76,7 +76,7 @@ func TestE2E_SourceWarnings_BootstrapSubmoduleAliases(t *testing.T) {
 	cache := t.TempDir()
 	var wantOut, wantErr string
 	for run := range 2 {
-		stdout, stderr := harness.RequireCLIOK(
+		requireCLIOKResult1 := harness.RequireCLIOK(
 			t,
 			"diff",
 			"all",
@@ -89,6 +89,7 @@ func TestE2E_SourceWarnings_BootstrapSubmoduleAliases(t *testing.T) {
 			"--concurrency=2",
 			"--no-progress",
 		)
+		stdout, stderr := requireCLIOKResult1.Stdout, requireCLIOKResult1.Stderr
 		_, snapshots, hasOrig := strings.Cut(stderr, "orig snapshot:")
 		orig, current, hasCurrent := strings.Cut(snapshots, "current snapshot:")
 		assert.FatalIf(t, !hasOrig || !hasCurrent || strings.Count(stderr, "[SkippedSubmodule]") != 1 ||
@@ -163,7 +164,8 @@ func TestE2E_LoaderIncidentalParseFailure(t *testing.T) {
 				t.Run(verb, func(t *testing.T) {
 					var previous string
 					for range 2 {
-						stdout, stderr := harness.RequireCLIOK(t, verb, "all", "--path", root, "--concurrency=2")
+						requireCLIOKResult2 := harness.RequireCLIOK(t, verb, "all", "--path", root, "--concurrency=2")
+						stdout, stderr := requireCLIOKResult2.Stdout, requireCLIOKResult2.Stderr
 						assert.FatalIf(t, strings.Contains(stdout+stderr, "[InputParseFailed]") ||
 							strings.Contains(stdout+stderr, "bad.yaml") ||
 							strings.Contains(
@@ -188,13 +190,14 @@ func TestE2E_KustomizationParseFailure(t *testing.T) {
 	testutil.WriteFile(t, root, "flux/apps.yaml", testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n"))
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [unclosed\n")
 	for _, verb := range []string{"build", "test"} {
-		stdout, stderr, code := harness.RunCLIBuffers(
+		runCLIBuffersResult3 := harness.RunCLIBuffers(
 			verb,
 			"all",
 			"--path",
 			filepath.Join(root, "flux"),
 			"--concurrency=2",
 		)
+		stdout, stderr, code := runCLIBuffersResult3.Stdout, runCLIBuffersResult3.Stderr, runCLIBuffersResult3.Code
 		assert.FatalIf(t, code != 1 || !strings.Contains(stdout+stderr, "flux kustomize generator") ||
 			!strings.Contains(stdout+stderr, "error converting YAML") ||
 			strings.Contains(stdout, "[InputParseFailed]") ||
@@ -270,7 +273,7 @@ func e2ESourceWarningsConditionVerb(t *testing.T, verb *string, root *string, ca
 
 	var wantErr, wantOut string
 	for run := range 2 {
-		stdout, stderr := harness.RequireCLIOK(
+		requireCLIOKResult4 := harness.RequireCLIOK(
 			t,
 			(*verb),
 			"all",
@@ -280,6 +283,7 @@ func e2ESourceWarningsConditionVerb(t *testing.T, verb *string, root *string, ca
 			"--concurrency=2",
 			"--no-progress",
 		)
+		stdout, stderr := requireCLIOKResult4.Stdout, requireCLIOKResult4.Stderr
 		count := 1
 		if (*(*capturedInputs.condition)) == "unavailable-ref" {
 			count = 2

@@ -23,7 +23,8 @@ func runDiffKSPathOrigRepositoryIdentityName(t *testing.T, tc *struct {
 	const currentURL = "ssh://git@github.com/example/home-ops.git"
 	const baselineURL = "https://example.invalid/upstream.git"
 
-	current, orig := writeCustomSourceDiffFixture(t, currentURL)
+	fixture := writeCustomSourceDiffFixture(t, currentURL)
+	current, orig := fixture.current, fixture.orig
 	writeBaselineGit(t, current, currentURL)
 	url := baselineURL
 	if tc.matching {
@@ -96,7 +97,8 @@ spec: {url: "https://example.invalid/unrelated.git", interval: 1h}
 		"diff", "ks", "--path", currentScan, "--path-orig", origScan,
 		"--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "diff",
 	}
-	stdout, stderr, code := runCLI(t, args...)
+	cli := runCLI(t, args...)
+	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 	assert.FatalIf(t, code != 0, "diff exited %d: %s", code, stderr)
 	for _, want := range []string{"-  greeting: hola", "+  greeting: hi"} {
 		{
@@ -120,7 +122,8 @@ spec: {url: "https://example.invalid/unrelated.git", interval: 1h}
 		stderr,
 	)
 	if tc.name == "different origins" {
-		secondOut, secondErr, secondCode := runCLI(t, args...)
+		cli2 := runCLI(t, args...)
+		secondOut, secondErr, secondCode := cli2.stdout, cli2.stderr, cli2.code
 		assert.ErrorIf(
 			t,
 			secondOut != stdout || secondErr != stderr || secondCode != code,

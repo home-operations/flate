@@ -26,14 +26,10 @@ func TestReconcile_SharedAdmission(t *testing.T) {
 	}
 	s.AddObject(rs)
 	{
-		{
-			err := c.newExecution(rs.Named()).reconcile(t.Context(), rs, manifest.DrainNone)
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := c.newExecution(rs.Named()).reconcile(t.Context(), rs, manifest.DrainNone)
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
-	{
-		assert.FatalIf(t, s.GetArtifact(rs.Named(), store.ArtifactContent) == nil, "%v", "missing completed output")
-	}
+	assert.FatalIf(t, s.GetArtifact(rs.Named(), store.ArtifactContent) == nil, "%v", "missing completed output")
 }
 
 func TestReconcile_SingleFailureTransition(t *testing.T) {
@@ -51,19 +47,15 @@ func TestReconcile_SingleFailureTransition(t *testing.T) {
 	}, false)
 	defer unsubscribe()
 	{
-		{
-			err := c.newExecution(rs.Named()).reconcile(t.Context(), rs, manifest.DrainNone)
-			assert.FatalIf(t, err == nil, "%v", "malformed template succeeded")
-		}
+		err := c.newExecution(rs.Named()).reconcile(t.Context(), rs, manifest.DrainNone)
+		assert.FatalIf(t, err == nil, "%v", "malformed template succeeded")
 	}
 	if info, _ := s.GetStatus(rs.Named()); info.Status == store.StatusFailed || failures.Load() != 0 {
 		t.Fatalf("render body terminalized before dispatch: status=%+v, failure events=%d", info, failures.Load())
 	}
 	{
-		{
-			blocked := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone).Blocked
-			assert.FatalIf(t, len(blocked) != 0, "blocked: %v", blocked)
-		}
+		blocked := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone).Blocked
+		assert.FatalIf(t, len(blocked) != 0, "blocked: %v", blocked)
 	}
 	info, _ := s.GetStatus(rs.Named())
 	if info.Status != store.StatusFailed || failures.Load() != 1 {

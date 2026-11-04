@@ -155,22 +155,18 @@ func TestDependencies_HelmRelease_DeclarationAvailabilityUsesCommonGate(t *testi
 	st.RecordEmitted(parent.Named(), &next, nil)
 	run := gateExecution(c, child.Named())
 	deps := run.dependencies(child, manifest.GateInputs)
-	{
-		assert.FatalIf(t, len(deps) != 0, "structural declaration owners leaked into authored dependencies: %v", deps)
-	}
+	assert.FatalIf(t, len(deps) != 0, "structural declaration owners leaked into authored dependencies: %v", deps)
 	fresh := run.Reads.GetDeclaration(child.Named())
 	err := run.Require(t.Context(), deps, manifest.DrainNone)
 	ok := fresh != nil
-	{
-		assert.FatalIf(
-			t,
-			!ok || fresh != child || err != nil,
-			"accepted child waited for Pending owner: %v %t %v",
-			fresh,
-			ok,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!ok || fresh != child || err != nil,
+		"accepted child waited for Pending owner: %v %t %v",
+		fresh,
+		ok,
+		err,
+	)
 }
 
 func testControllerCollectHRDepsOrderingFilterCase(
@@ -249,12 +245,10 @@ func testControllerCollectHRDepsOrderingFilterCase(
 		}
 	}
 	assert.Diff(t, sortedDependencies(c.dependencies(hr, manifest.GateInputs)), sortedDependencies(want))
-	{
-		assert.ErrorIf(
-			t,
-			len(filter.KeepNames()) != size || len(hr.DependsOn) != 1,
-			"%v",
-			"ordering collection must preserve keep and input edges",
-		)
-	}
+	assert.ErrorIf(
+		t,
+		len(filter.KeepNames()) != size || len(hr.DependsOn) != 1,
+		"%v",
+		"ordering collection must preserve keep and input edges",
+	)
 }

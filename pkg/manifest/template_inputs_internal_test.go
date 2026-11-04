@@ -155,7 +155,7 @@ func testTemplateInputsStaticReferencesFirstEvaluatedChildReplacesDraft(
 ) {
 	t.Helper()
 
-	object, _, _, err := ParseDoc(map[string]any{
+	parsed, err := ParseDoc(map[string]any{
 		"apiVersion": FluxOperatorDomain + "/v1", "kind": KindResourceSet,
 		"metadata": map[string]any{"name": "factory", "namespace": "apps"},
 		"spec": map[string]any{
@@ -170,6 +170,7 @@ func testTemplateInputsStaticReferencesFirstEvaluatedChildReplacesDraft(
 			),
 		},
 	}, ParseDocOptions{})
+	object := parsed.Object
 	assert.NoError(t, err)
 	projection := ProjectProducer(object)
 	assert.Equal(t, len(projection.Objects), 1)
@@ -224,30 +225,24 @@ func testProducerProjectionsConcurrentContentCase(
 	for _, projection := range results {
 		assert.Equal(t, len(projection.Targets), 1)
 	}
-	{
-		assert.FatalIf(
-			t,
-			&results[0].Targets[0] != &results[1].Targets[0],
-			"%s",
-			"equal content did not share immutable projection facts",
-		)
-	}
-	{
-		assert.FatalIf(t, (*testCaseInput) == "producer" &&
-			(results[0].Objects[0] == nil || results[0].Objects[0] != results[1].Objects[0]), "%s", "equal content did not share the computed immutable object")
-	}
+	assert.FatalIf(
+		t,
+		&results[0].Targets[0] != &results[1].Targets[0],
+		"%s",
+		"equal content did not share immutable projection facts",
+	)
+	assert.FatalIf(t, (*testCaseInput) == "producer" &&
+		(results[0].Objects[0] == nil || results[0].Objects[0] != results[1].Objects[0]), "%s", "equal content did not share the computed immutable object")
 	projections.Clear()
 	fresh, err := project()
 	assert.NoError(t, err)
 	assert.Equal(t, len(fresh.Targets), 1)
-	{
-		assert.FatalIf(
-			t,
-			&fresh.Targets[0] == &results[0].Targets[0],
-			"%s",
-			"cleared content reused prior projection facts",
-		)
-	}
+	assert.FatalIf(
+		t,
+		&fresh.Targets[0] == &results[0].Targets[0],
+		"%s",
+		"cleared content reused prior projection facts",
+	)
 
 	if (*testCaseInput) == "template" {
 		other, err := projections.ProjectTemplate(t.Context(), []byte(content), "other")

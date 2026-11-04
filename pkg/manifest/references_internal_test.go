@@ -25,16 +25,15 @@ func refsForUse(t *testing.T, obj BaseManifest, use string) []Reference {
 			refs = append(refs, ref)
 		}
 	}
-	capacity, _ := obj.ReferenceCapacity()
-	{
-		assert.FatalIf(
-			t,
-			count > capacity,
-			"reference capacity %d is below the %d authored references",
-			capacity,
-			count,
-		)
-	}
+	limits := obj.ReferenceCapacity()
+	capacity := limits.References
+	assert.FatalIf(
+		t,
+		count > capacity,
+		"reference capacity %d is below the %d authored references",
+		capacity,
+		count,
+	)
 	return refs
 }
 
@@ -56,7 +55,8 @@ func TestReferenceCapacity_DataInputBounds(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			capacity, data := tc.obj.ReferenceCapacity()
+			limits2 := tc.obj.ReferenceCapacity()
+			capacity, data := limits2.References, limits2.DataInputs
 			count, inputs := 0, 0
 			for ref := range References(tc.obj, ReferenceAll) {
 				count++
@@ -64,9 +64,7 @@ func TestReferenceCapacity_DataInputBounds(t *testing.T) {
 					inputs++
 				}
 			}
-			{
-				assert.FatalIf(t, count == 0 || count > capacity, "reference count %d, capacity %d", count, capacity)
-			}
+			assert.FatalIf(t, count == 0 || count > capacity, "reference count %d, capacity %d", count, capacity)
 			assert.Equal(t, data, tc.data)
 			assert.Equal(t, inputs, data)
 		})
@@ -143,13 +141,14 @@ func TestReferences_EffectiveNamespace(t *testing.T) {
 			map[string]any{"alias": "fourth", "kind": KindExternalArtifact, "name": "generated"},
 		}},
 	}
-	e, _, _, err := ParseDoc(map[string]any{
+	parsed2, err := ParseDoc(map[string]any{
 		"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": KindExternalArtifact,
 		"metadata": map[string]any{"name": "generated", "namespace": "authored"},
 		"spec": map[string]any{"sourceRef": map[string]any{
 			"apiVersion": "source.extensions.fluxcd.io/v1beta1", "kind": "ArtifactGenerator", "name": "generator",
 		}},
 	}, ParseDocOptions{})
+	e := parsed2.Object
 	assert.NoError(t, err)
 	for _, tc := range []struct {
 		name, namespace string
@@ -278,7 +277,8 @@ func TestReferences_ActiveCredentials(t *testing.T) {
 				}
 			}
 			assertReferenceEdges(t, slices.Collect(References(provider, ReferenceRelations)), want)
-			capacity, data := provider.ReferenceCapacity()
+			limits3 := provider.ReferenceCapacity()
+			capacity, data := limits3.References, limits3.DataInputs
 			assert.Equal(t, capacity, len(want))
 			assert.Equal(t, data, 0)
 		})
@@ -457,7 +457,7 @@ func TestReferences_NoAllocations(t *testing.T) {
 	KindOf(&RawObject{APIVersion: "v1", Kind: KindConfigMap}).Namespaced()
 	for _, obj := range []BaseManifest{&Kustomization{DependsOn: []kustomizev1.DependencyReference{{Name: "dependency", ReadyExpr: "true"}}, SourceRef: kustomizev1.CrossNamespaceSourceReference{Name: "source"}, PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []SubstituteReference{{Kind: KindConfigMap, Name: "values"}}}}, &HelmRelease{Name: "release", Namespace: "apps", ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: KindOCIRepository, Name: "chart"}, DependsOn: []helmv2.DependencyReference{{Name: "dependency", ReadyExpr: "true"}}, ValuesFrom: []ValuesReference{{Name: "values"}}}, &HelmRelease{Name: "values-only", Namespace: "apps", ValuesFrom: []ValuesReference{{Name: "values"}}}, &HelmChartSource{Chart: "./charts/demo", SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: KindBucket, Name: "source"}, ValuesFiles: []string{"config/prod.yaml"}}, &ResourceSet{DependsOn: []fluxopv1.Dependency{{APIVersion: "v1", Kind: KindConfigMap, Name: "dependency", ReadyExpr: "true"}}, InputsFrom: []fluxopv1.InputProviderReference{{Name: "input"}}}, &GitRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &OCIRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &HelmRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &Bucket{SecretRef: &LocalObjectReference{Name: "auth"}}, &RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Spec: map[string]any{"sources": []any{map[string]any{"kind": KindGitRepository, "name": "input"}}}}} {
 		t.Run(obj.Named().Kind, func(t *testing.T) {
-			testReferencesNoAllocationsCase(t, &obj)
+			testReferencesNoAllocationsCase(t, obj)
 		},
 		)
 	}
@@ -577,7 +577,8 @@ func testReferencesEffectiveNamespaceCase(t *testing.T, testCaseInput *struct {
 		"spec":       fields,
 	}
 	before := DeepCopyMap(doc)
-	obj, authoritative, changed, err := ParseDoc(doc, ParseDocOptions{DefaultNamespace: testCaseInput.namespace})
+	parsed3, err := ParseDoc(doc, ParseDocOptions{DefaultNamespace: testCaseInput.namespace})
+	obj, authoritative, changed := parsed3.Object, parsed3.Document, parsed3.Changed
 	assert.NoError(t, err)
 	assertReferenceEdges(t, slices.Collect(References(obj, ReferenceRelations)), testCaseInput.want)
 	switch parsed := obj.(type) {
@@ -620,14 +621,13 @@ func testResolveChartSourceEffectiveNamespaceCase(
 	if testCaseInput.apiVersion != "" {
 		ref["apiVersion"] = testCaseInput.apiVersion
 	}
-	obj, _, _, err := ParseDoc(map[string]any{
+	parsed4, err := ParseDoc(map[string]any{
 		"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": KindHelmRelease,
 		"metadata": map[string]any{"name": "app", "namespace": "authored"},
 		"spec":     map[string]any{"chartRef": ref},
 	}, ParseDocOptions{DefaultNamespace: ""})
-	{
-		assert.NoError(t, err)
-	}
+	obj := parsed4.Object
+	assert.NoError(t, err)
 	hr := obj.(*HelmRelease)
 	hr.Chart.Version = testCaseInput.version
 	assert.Equal(t, hr.ChartRef.Namespace, testCaseInput.namespace)
@@ -694,18 +694,18 @@ func testResolveChartSourceEffectiveNamespaceCase(
 	assert.Equal(t, hr.Namespace, "authored")
 }
 
-func testReferencesNoAllocationsCase(t *testing.T, testCaseInput *BaseManifest,
+func testReferencesNoAllocationsCase(t *testing.T, testCaseInput BaseManifest,
 ) {
 	t.Helper()
-	assert.Equal(t, testing.AllocsPerRun(100, func() { KindOf((*testCaseInput)) }), float64(0))
+	assert.Equal(t, testing.AllocsPerRun(100, func() { KindOf(testCaseInput) }), float64(0))
 	count := 0
 	assert.Equal(t, testing.AllocsPerRun(100, func() {
-		for range References((*testCaseInput), ReferenceRelations) {
+		for range References(testCaseInput, ReferenceRelations) {
 			count++
 		}
 	}), float64(0))
 	stops := 0
-	References((*testCaseInput), ReferenceRelations)(func(Reference) bool { stops++; return false })
+	References(testCaseInput, ReferenceRelations)(func(Reference) bool { stops++; return false })
 	assert.Equal(t, stops, 1)
 	assert.Equal(t, count > 0, true)
 }

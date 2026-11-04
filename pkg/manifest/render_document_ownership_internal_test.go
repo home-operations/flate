@@ -53,9 +53,7 @@ spec: {path: ./p0}
 	assert.NoError(t, err)
 	_, err = ks.RenderDocument()
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(t, encoder == nil || encoder.buffer.Len() == 0, "%s", "render did not use an encoder buffer")
-	}
+	assert.FatalIf(t, encoder == nil || encoder.buffer.Len() == 0, "%s", "render did not use an encoder buffer")
 	published := ks.projection.Load().raw
 	snapshot := bytes.Clone(published)
 	encoder.buffer.Bytes()[0] ^= 1

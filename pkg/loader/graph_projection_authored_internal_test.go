@@ -142,18 +142,14 @@ spec:
 			}
 		}
 		authored := l.authoredObject(r.Path, r.Authored)
-		{
-			assert.FatalIf(
-				t,
-				authored.Doc == nil || manifest.DocIdentity(authored.Doc) != r.Authored,
-				"projection lost authored document: %v",
-				authored.Doc,
-			)
-		}
+		assert.FatalIf(
+			t,
+			authored.Doc == nil || manifest.DocIdentity(authored.Doc) != r.Authored,
+			"projection lost authored document: %v",
+			authored.Doc,
+		)
 		original, _ = authored.Obj.(*manifest.Kustomization)
-		{
-			assert.FatalIf(t, original == nil, "%s", "authored Kustomization missing")
-		}
+		assert.FatalIf(t, original == nil, "%s", "authored Kustomization missing")
 		snapshot = original.Clone()
 		raw = r
 	}
@@ -222,21 +218,17 @@ func testAdmitGraphProjectionCase4Completion(t *testing.T, scope *testAdmitGraph
 		}
 		r, _ := (*scope.l).Index.Lookup(testutil.HelmReleaseID("apps", "app"))
 		readers := (*scope.l).Index.Readers[r.File]
-		{
-			assert.FatalIf(
-				t,
-				len(readers) != 1 || readers[0].Reader != testutil.KustomizationID("flux-system", "pinned"),
-				"committed source file %q readers = %v",
-				r.File,
-				readers,
-			)
-		}
+		assert.FatalIf(
+			t,
+			len(readers) != 1 || readers[0].Reader != testutil.KustomizationID("flux-system", "pinned"),
+			"committed source file %q readers = %v",
+			r.File,
+			readers,
+		)
 	}
 	if (*scope.testCaseInput).name == "cross_tree" {
 		ks, ok := (*scope.l).Store.Get[*manifest.Kustomization](testutil.KustomizationID("games", "games"))
-		{
-			assert.FatalIf(t, !ok, "%s", "projected Kustomization missing")
-		}
+		assert.FatalIf(t, !ok, "%s", "projected Kustomization missing")
 		var deps []manifest.NamedResource
 		for ref := range manifest.References(ks, manifest.ReferenceRelations) {
 			if ref.Use == "dependsOn" {

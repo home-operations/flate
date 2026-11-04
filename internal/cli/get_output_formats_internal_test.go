@@ -167,9 +167,11 @@ func runGetFormatsNameCaseCommand(t *testing.T, command *string, scope ***struct
 	if (*(*capturedInputs.format)) != "" {
 		args = append(args, "-o", (*(*capturedInputs.format)))
 	}
-	out, diagnostics, status := runClusterInputs(t, args...)
+	cluster := runClusterInputs(t, args...)
+	out, diagnostics, status := cluster.stdout, cluster.stderr, cluster.code
 	assert.FatalIf(t, status != 0, "exit=%d stdout=%s stderr=%s", status, out, diagnostics)
-	again, stderr, code := runClusterInputs(t, args...)
+	cluster2 := runClusterInputs(t, args...)
+	again, stderr, code := cluster2.stdout, cluster2.stderr, cluster2.code
 	assert.Equal(t, code, status)
 	assert.Equal(t, again, out)
 	assert.Equal(t, stderr, diagnostics)

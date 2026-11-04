@@ -133,7 +133,8 @@ func testRenderTreesIgnoredSelectorInputCase(
 	runs, err := RenderTrees(t.Context(), trees, Config{Concurrency: 2})
 	assert.NoError(t, err)
 	for side, run := range runs {
-		needed, selected, _, _ := run.filter.Membership((*testCaseInput.consumer))
+		membershipResult1 := run.filter.Membership((*testCaseInput.consumer))
+		needed, selected, _, _ := membershipResult1.Needed, membershipResult1.Selected, membershipResult1.Dirty, membershipResult1.Revision
 		t.Logf(
 			"selector visibility: side=%d needed=%t selected=%t output=%t",
 			run.ID.Side,
@@ -153,7 +154,8 @@ func testRenderTreesIgnoredSelectorInputCase(
 		oracle := outputByParent(testCaseInput.fullResults[fullSide].Manifests)[owner]
 		actual := outputByParent(run.Result.Manifests)[owner]
 		assert.Diff(t, actual, oracle)
-		otherNeeded, otherSelected, otherDirty, _ := run.filter.Membership((*testCaseInput.nonmatching))
+		membershipResult2 := run.filter.Membership((*testCaseInput.nonmatching))
+		otherNeeded, otherSelected, otherDirty, _ := membershipResult2.Needed, membershipResult2.Selected, membershipResult2.Dirty, membershipResult2.Revision
 		t.Logf(
 			"nonmatching declaration support: needed=%t selected=%t dirty=%t",
 			otherNeeded,

@@ -216,7 +216,8 @@ func testRenderEntryDeclarationQualifiesOpaqueApplierCaseTail(
 		}
 		o.controllers.HelmRelease = countedNodeController{o.hrc, calls, admitted}
 		assert.NoError(t, o.run(t.Context()))
-		renders, reused := entryApplicationWork(t, &logs)
+		entryApplicationWorkResult1 := entryApplicationWork(t, &logs)
+		renders, reused := entryApplicationWorkResult1.renders, entryApplicationWorkResult1.reused
 		slog.SetDefault(previous)
 		if *tailCaseInput.declaration {
 			tailCaseInput.assertEntryApplicationDeclaration(t, o, applier, &logs)
@@ -271,7 +272,12 @@ type testRenderEntryDeclarationQualifiesOpaqueApplierCaseTailInputs struct {
 	declaration   *bool
 }
 
-func entryApplicationWork(t *testing.T, logs *bytes.Buffer) (int, int) {
+type entryWork struct {
+	renders int
+	reused  int
+}
+
+func entryApplicationWork(t *testing.T, logs *bytes.Buffer) entryWork {
 	t.Helper()
 	renders, reused := 0, 0
 	for line := range bytes.Lines(logs.Bytes()) {
@@ -286,7 +292,7 @@ func entryApplicationWork(t *testing.T, logs *bytes.Buffer) (int, int) {
 			reused++
 		}
 	}
-	return renders, reused
+	return entryWork{renders: renders, reused: reused}
 }
 
 func (i *testRenderEntryDeclarationQualifiesOpaqueApplierCaseTailInputs) assertEntryApplicationDeclaration(

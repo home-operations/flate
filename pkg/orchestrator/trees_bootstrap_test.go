@@ -44,18 +44,14 @@ func TestRenderTrees_BootstrapWarnings(t *testing.T) {
 		orchestrator.Config{Concurrency: 2},
 	)
 	base, head := runs[0], runs[1]
-	{
-		assert.FatalIf(t, !errors.Is(err, fs.ErrPermission), "preparation error: %v", err)
-	}
+	assert.FatalIf(t, !errors.Is(err, fs.ErrPermission), "preparation error: %v", err)
 	for _, side := range []orchestrator.Rendered{base, head} {
-		{
-			assert.FatalIf(
-				t,
-				side.Orchestrator != nil || side.Result == nil || len(side.Result.Manifests) != 0,
-				"fatal preparation exposed content: %+v",
-				side,
-			)
-		}
+		assert.FatalIf(
+			t,
+			side.Orchestrator != nil || side.Result == nil || len(side.Result.Manifests) != 0,
+			"fatal preparation exposed content: %+v",
+			side,
+		)
 		assert.Diff(t, side.Result.Warnings, []manifest.Warning{warning})
 	}
 }

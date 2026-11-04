@@ -463,7 +463,8 @@ func TestRun_BootstrapOCIArtifactRoot(t *testing.T) {
 					"missing non-Git source aliased",
 				)
 				{
-					owners, _ := res.Index.OwnersOfFile("apps/x/cm.yaml")
+					ownership := res.Index.OwnersOfFile("apps/x/cm.yaml")
+					owners := ownership.Owners
 					assert.FatalIf(t, len(owners) != 0, "missing source claimed owners: %v", owners)
 				}
 				{
@@ -479,7 +480,8 @@ func TestRun_BootstrapOCIArtifactRoot(t *testing.T) {
 			art, ok := st.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
 			assert.FatalIf(t, !ok || art.LocalRoot != dir, "Git source = %+v", art)
 			{
-				owners, _ := res.Index.OwnersOfFile("apps/x/cm.yaml")
+				ownership2 := res.Index.OwnersOfFile("apps/x/cm.yaml")
+				owners := ownership2.Owners
 				assert.FatalIf(t, !slices.Contains(owners, parent), "Git owners = %v", owners)
 			}
 			{
@@ -496,7 +498,8 @@ func TestRun_BootstrapOCIArtifactRoot(t *testing.T) {
 				), "Git readers = %v", readers)
 			}
 			{
-				owners, _ := res.Index.OwnersOfFile("sibling/cm.yaml")
+				ownership3 := res.Index.OwnersOfFile("sibling/cm.yaml")
+				owners := ownership3.Owners
 				assert.FatalIf(t, len(owners) != 0, "unrelated owners = %v", owners)
 			}
 		})

@@ -130,9 +130,7 @@ func TestWipeValue_ClearEncodedAllocationFree(t *testing.T) {
 		got = WipeValue("key", value, base64.StdEncoding, true)
 	})
 	assert.Diff(t, value, got)
-	{
-		assert.FatalIf(t, allocs != 0, "WipeValue allocated %g times, want 0", allocs)
-	}
+	assert.FatalIf(t, allocs != 0, "WipeValue allocated %g times, want 0", allocs)
 }
 
 func TestHasSubstituteDisabled(t *testing.T) {

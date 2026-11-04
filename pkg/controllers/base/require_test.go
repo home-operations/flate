@@ -53,9 +53,7 @@ func TestExecution_BlockedSuccessorRetainsAssessment(t *testing.T) {
 	st.AddObject(
 		&manifest.ConfigMap{Name: input.Name, Namespace: input.Namespace, Data: map[string]any{"value": "new"}},
 	)
-	{
-		assert.FatalIf(t, first.Valid(), "%v", "changed input left the predecessor current")
-	}
+	assert.FatalIf(t, first.Valid(), "%v", "changed input left the predecessor current")
 	second := controllertest.NewExecution(c, obj.Named())
 	defer second.Close()
 	type state struct {
@@ -71,9 +69,7 @@ func TestExecution_BlockedSuccessorRetainsAssessment(t *testing.T) {
 			manifest.DrainNone,
 			s,
 			func(s *state, ctx context.Context, got *manifest.Kustomization, level manifest.DrainLevel) error {
-				{
-					assert.FatalIf(t, got != s.obj, "%v", "resumption lost the captured declaration")
-				}
+				assert.FatalIf(t, got != s.obj, "%v", "resumption lost the captured declaration")
 				calls++
 				return s.run.Require(ctx, []manifest.DependencyRef{{NamedResource: gate}}, level)
 			},
@@ -81,35 +77,25 @@ func TestExecution_BlockedSuccessorRetainsAssessment(t *testing.T) {
 		return ref
 	}()
 	runtime.GC()
-	{
-		assert.FatalIf(t, retained.Value() == nil, "%v", "blocked successor released its state")
-	}
-	{
-		assert.FatalIf(
-			t,
-			second.Outcome() != schedule.Blocked || !second.Valid(),
-			"%v",
-			"current blocked assessment was invalidated by stale predecessor output",
-		)
-	}
+	assert.FatalIf(t, retained.Value() == nil, "%v", "blocked successor released its state")
+	assert.FatalIf(
+		t,
+		second.Outcome() != schedule.Blocked || !second.Valid(),
+		"%v",
+		"current blocked assessment was invalidated by stale predecessor output",
+	)
 	second.Settle(t.Context(), manifest.DrainForce)
-	{
-		assert.FatalIf(
-			t,
-			calls != 2 || second.Outcome() != schedule.DependencyFailed || !second.Valid(),
-			"%v",
-			"successor did not settle with its captured state",
-		)
-	}
+	assert.FatalIf(
+		t,
+		calls != 2 || second.Outcome() != schedule.DependencyFailed || !second.Valid(),
+		"%v",
+		"successor did not settle with its captured state",
+	)
 	runtime.GC()
-	{
-		assert.FatalIf(t, retained.Value() != nil, "%v", "terminal failure retained successor state")
-	}
+	assert.FatalIf(t, retained.Value() != nil, "%v", "terminal failure retained successor state")
 	runtime.KeepAlive(second)
 	st.UpdateStatus(gate, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
-	{
-		assert.FatalIf(t, second.Valid(), "%v", "changed readiness did not invalidate the blocked assessment")
-	}
+	assert.FatalIf(t, second.Valid(), "%v", "changed readiness did not invalidate the blocked assessment")
 }
 
 func TestRecordEmitted_PhantomSupersession(t *testing.T) {
@@ -138,9 +124,7 @@ func TestRecordEmitted_PhantomSupersession(t *testing.T) {
 					return nil
 				},
 			)
-			{
-				assert.FatalIf(t, !first.Valid(), "%v", "initial inventory was never settled")
-			}
+			assert.FatalIf(t, !first.Valid(), "%v", "initial inventory was never settled")
 			if invalidated {
 				st.AddObject(
 					&manifest.ConfigMap{
@@ -205,25 +189,19 @@ func TestExecution_CanonicalManifest(t *testing.T) {
 				execution,
 				func(_ *base.Execution, _ context.Context, got *manifest.HelmRelease, _ manifest.DrainLevel) error {
 					called = true
-					{
-						assert.FatalIf(t, got != want, "dispatched declaration = %v, want captured %v", got, want)
-					}
+					assert.FatalIf(t, got != want, "dispatched declaration = %v, want captured %v", got, want)
 					return nil
 				},
 			)
-			{
-				assert.FatalIf(t, called != (mode == "active"), "reconcile called=%v for %s", called, mode)
-			}
+			assert.FatalIf(t, called != (mode == "active"), "reconcile called=%v for %s", called, mode)
 			info, has := st.GetStatus(obj.Named())
 			if mode == "suspended" {
-				{
-					assert.FatalIf(
-						t,
-						!has || info.Outcome() != store.OutcomeSuspended,
-						"suspended refresh status: %+v",
-						info,
-					)
-				}
+				assert.FatalIf(
+					t,
+					!has || info.Outcome() != store.OutcomeSuspended,
+					"suspended refresh status: %+v",
+					info,
+				)
 			} else {
 				assert.FatalIf(t, mode == "missing" && has, "missing declaration changed status: %+v", info)
 			}
@@ -243,14 +221,12 @@ func TestRequire_ReadyAllocation(t *testing.T) {
 	deps := []manifest.DependencyRef{{NamedResource: dependency.Named()}}
 	ctx := t.Context()
 	{
-		{
-			allocations := testing.AllocsPerRun(100, func() {
-				if err := execution.Require(ctx, deps, manifest.DrainNone); err != nil {
-					t.Fatal(err)
-				}
-			})
-			assert.FatalIf(t, allocations != 0, "ready classification allocations=%v, want 0", allocations)
-		}
+		allocations := testing.AllocsPerRun(100, func() {
+			if err := execution.Require(ctx, deps, manifest.DrainNone); err != nil {
+				t.Fatal(err)
+			}
+		})
+		assert.FatalIf(t, allocations != 0, "ready classification allocations=%v, want 0", allocations)
 	}
 }
 
@@ -324,40 +300,30 @@ func TestExecution_ResumedPredicates(t *testing.T) {
 		execution,
 		func(execution *base.Execution, ctx context.Context, obj *manifest.Kustomization, level manifest.DrainLevel) error {
 			calls++
-			{
-				assert.FatalIf(t, obj != consumer, "%v", "resumption replaced the captured declaration")
-			}
+			assert.FatalIf(t, obj != consumer, "%v", "resumption replaced the captured declaration")
 			return execution.Require(ctx, deps, level)
 		},
 	)
-	{
-		assert.FatalIf(t, execution.Outcome() != schedule.Blocked ||
-			!slices.Equal(
-				execution.Blocked,
-				[]manifest.NamedResource{dependency.Named()},
-			), "%v", "false predicate did not park the execution")
-	}
+	assert.FatalIf(t, execution.Outcome() != schedule.Blocked ||
+		!slices.Equal(
+			execution.Blocked,
+			[]manifest.NamedResource{dependency.Named()},
+		), "%v", "false predicate did not park the execution")
 	execution.Settle(t.Context(), manifest.DrainForce)
-	{
-		assert.FatalIf(t, calls != 2, "reconcile calls=%d, want initial and retained callback", calls)
-	}
+	assert.FatalIf(t, calls != 2, "reconcile calls=%d, want initial and retained callback", calls)
 	info, _ := st.GetStatus(consumer.Named())
-	{
-		assert.FatalIf(t, execution.Outcome() != schedule.DependencyFailed || !info.IsDependencyFailure() ||
-			!slices.Equal(
-				info.BlockedBy(),
-				[]manifest.NamedResource{dependency.Named()},
-			), "resumed execution lost its false predicate: %+v", info)
-	}
+	assert.FatalIf(t, execution.Outcome() != schedule.DependencyFailed || !info.IsDependencyFailure() ||
+		!slices.Equal(
+			info.BlockedBy(),
+			[]manifest.NamedResource{dependency.Named()},
+		), "resumed execution lost its false predicate: %+v", info)
 	want := make([]store.Gate, len(deps))
 	for i, dep := range deps {
 		want[i].DependencyRef = dep
 	}
 	{
-		{
-			got := slices.Collect(execution.Reads.Gates())
-			assert.FatalIf(t, !slices.Equal(got, want), "resumption duplicated or lost predicates: %v", got)
-		}
+		got := slices.Collect(execution.Reads.Gates())
+		assert.FatalIf(t, !slices.Equal(got, want), "resumption duplicated or lost predicates: %v", got)
 	}
 }
 
@@ -425,33 +391,27 @@ func TestDispatch_ExactMaterializers(t *testing.T) {
 			info, _ := st.GetStatus(id)
 			if state == store.StatusPending {
 				blocked, isBlocked := run.Blocked, run.Outcome() == schedule.Blocked
-				{
-					assert.FatalIf(
-						t,
-						!isBlocked || !slices.Equal(blocked, []manifest.NamedResource{owner.Named()}),
-						"blocked=%v error=%v, want exact pending owner once",
-						blocked,
-						info,
-					)
-				}
+				assert.FatalIf(
+					t,
+					!isBlocked || !slices.Equal(blocked, []manifest.NamedResource{owner.Named()}),
+					"blocked=%v error=%v, want exact pending owner once",
+					blocked,
+					info,
+				)
 			} else {
 				failed, isFailed := info.BlockedBy(), info.IsDependencyFailure()
-				{
-					assert.FatalIf(
-						t,
-						!isFailed || !slices.Equal(failed, []manifest.NamedResource{owner.Named(), peer.Named()}),
-						"failure=%v, want sorted exact owners once",
-						info,
-					)
-				}
-				{
-					assert.FatalIf(
-						t,
-						state == store.StatusReady && !strings.Contains(info.Message, "declaration not emitted"),
-						"ready owner reason = %q",
-						info.Message,
-					)
-				}
+				assert.FatalIf(
+					t,
+					!isFailed || !slices.Equal(failed, []manifest.NamedResource{owner.Named(), peer.Named()}),
+					"failure=%v, want sorted exact owners once",
+					info,
+				)
+				assert.FatalIf(
+					t,
+					state == store.StatusReady && !strings.Contains(info.Message, "declaration not emitted"),
+					"ready owner reason = %q",
+					info.Message,
+				)
 			}
 		})
 	}
@@ -499,41 +459,33 @@ func testRequireClassificationsCase(t *testing.T, testCaseInput *string,
 	}
 	err := controllertest.NewExecution(base.New(st, nil), id).Require(t.Context(), deps, level)
 	info, _ := st.GetStatus(id)
-	{
-		assert.FatalIf(
-			t,
-			info.Status != store.StatusReady || info.Message != "informative",
-			"gate changed caller status: %+v",
-			info,
-		)
-	}
+	assert.FatalIf(
+		t,
+		info.Status != store.StatusReady || info.Message != "informative",
+		"gate changed caller status: %+v",
+		info,
+	)
 	switch *testCaseInput {
 	case "ready":
-		{
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		assert.FatalIf(t, err != nil, "%v", err)
 	case "blocked", "mixed":
 		blocked, ok := errors.AsType[*depwait.ErrBlocked](err)
-		{
-			assert.FatalIf(
-				t,
-				!ok || !slices.Equal(blocked.Deps, []manifest.NamedResource{pending.NamedResource}) ||
-					errors.Is(err, manifest.ErrFlux),
-				"blocked gate = %v, want only pending dependency",
-				err,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!ok || !slices.Equal(blocked.Deps, []manifest.NamedResource{pending.NamedResource}) ||
+				errors.Is(err, manifest.ErrFlux),
+			"blocked gate = %v, want only pending dependency",
+			err,
+		)
 	case "failed", "force":
 		failure, ok := errors.AsType[*manifest.DependencyFailedError](err)
 		want := []manifest.NamedResource{failed.NamedResource}
 		if (*testCaseInput) == "force" {
 			want = append(want, pending.NamedResource)
 		}
-		{
-			assert.FatalIf(t, !ok || failure.Parent != id || !slices.Equal(failure.Failed, want) ||
-				!errors.Is(err, manifest.ErrInput) ||
-				!errors.Is(err, manifest.ErrFlux), "failed gate = %#v, want sorted dependencies %v", err, want)
-		}
+		assert.FatalIf(t, !ok || failure.Parent != id || !slices.Equal(failure.Failed, want) ||
+			!errors.Is(err, manifest.ErrInput) ||
+			!errors.Is(err, manifest.ErrFlux), "failed gate = %#v, want sorted dependencies %v", err, want)
 		if failure.Reasons[failed.NamedResource].Message != "render failed" || (*testCaseInput) ==
 			"force" && failure.Reasons[pending.NamedResource].Message != "not ready" {
 			t.Fatalf("failure reasons = %v", failure.Reasons)
@@ -569,17 +521,21 @@ func testRequireMultiplePredicatesCase(t *testing.T, testCaseInput *struct {
 		deps = append(deps, manifest.DependencyRef{NamedResource: obj.Named(), ReadyExpr: new(expr)})
 	}
 	var reason string
+	closeExecutions := make([]func(), 0, 2)
+	defer func() {
+		for _, closeExecution := range slices.Backward(closeExecutions) {
+			closeExecution()
+		}
+	}()
 	for range 2 {
 		execution := controllertest.NewExecution(base.New(st, nil), consumer.Named())
-		defer execution.Close()
+		closeExecutions = append(closeExecutions, execution.Close)
 		err := execution.Require(t.Context(), deps, testCaseInput.level)
 		switch testCaseInput.want {
 		case schedule.DependencyFailed:
 			failed, ok := errors.AsType[*manifest.DependencyFailedError](err)
-			{
-				assert.FatalIf(t, !ok || !slices.Equal(failed.Failed, []manifest.NamedResource{obj.Named()}) ||
-					len(failed.Reasons) != 1, "failed identities were lost or duplicated: %v", err)
-			}
+			assert.FatalIf(t, !ok || !slices.Equal(failed.Failed, []manifest.NamedResource{obj.Named()}) ||
+				len(failed.Reasons) != 1, "failed identities were lost or duplicated: %v", err)
 			if reason != "" && reason != failed.Reasons[obj.Named()].Message {
 				t.Fatalf(
 					"registration order changed diagnostic: %q vs %q",
@@ -590,32 +546,26 @@ func testRequireMultiplePredicatesCase(t *testing.T, testCaseInput *struct {
 			reason = failed.Reasons[obj.Named()].Message
 		case schedule.Blocked:
 			blocked, ok := errors.AsType[*depwait.ErrBlocked](err)
-			{
-				assert.FatalIf(
-					t,
-					!ok || !slices.Equal(blocked.Deps, []manifest.NamedResource{obj.Named()}),
-					"blocked identities were lost or duplicated: %v",
-					err,
-				)
-			}
+			assert.FatalIf(
+				t,
+				!ok || !slices.Equal(blocked.Deps, []manifest.NamedResource{obj.Named()}),
+				"blocked identities were lost or duplicated: %v",
+				err,
+			)
 		case schedule.Terminal:
-			fallthrough
+			assert.FatalIf(t, err != nil, "%v", err)
 		default:
-			{
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
+			assert.FatalIf(t, err != nil, "%v", err)
 		}
 		_ = execution.Require(t.Context(), deps, testCaseInput.level)
 		{
-			{
-				got := slices.Collect(execution.Reads.Gates())
-				assert.FatalIf(
-					t,
-					len(got) != len(testCaseInput.expressions),
-					"repeated registration changed predicates: %v",
-					got,
-				)
-			}
+			got := slices.Collect(execution.Reads.Gates())
+			assert.FatalIf(
+				t,
+				len(got) != len(testCaseInput.expressions),
+				"repeated registration changed predicates: %v",
+				got,
+			)
 		}
 		slices.Reverse(deps)
 	}
@@ -645,36 +595,30 @@ func testExecutionSettleInvalidReadsCase(t *testing.T, testCaseInput *bool,
 			return pending
 		},
 	)
-	{
-		assert.FatalIf(t, execution.Outcome() != schedule.Blocked ||
-			!slices.Equal(execution.Blocked, []manifest.NamedResource{input.Named()}) ||
-			pending.calls != 0, "%v", "dispatch did not retain the blocked settler")
-	}
+	assert.FatalIf(t, execution.Outcome() != schedule.Blocked ||
+		!slices.Equal(execution.Blocked, []manifest.NamedResource{input.Named()}) ||
+		pending.calls != 0, "%v", "dispatch did not retain the blocked settler")
 	before, _ := st.GetStatus(consumer.Named())
 	if *testCaseInput {
 		replacement := *input
 		replacement.Data = map[string]any{"value": "new"}
 		st.AddObject(&replacement)
 	}
-	{
-		assert.FatalIf(
-			t,
-			execution.Reads.Valid() == (*testCaseInput),
-			"%v",
-			"captured input validity does not match replacement",
-		)
-	}
+	assert.FatalIf(
+		t,
+		execution.Reads.Valid() == (*testCaseInput),
+		"%v",
+		"captured input validity does not match replacement",
+	)
 	execution.Settle(t.Context(), manifest.DrainForce)
 	after, _ := st.GetStatus(consumer.Named())
 	if *testCaseInput {
 		if pending.calls != 0 {
 			t.Fatalf("stale execution called retained settler %d times", pending.calls)
 		}
-		{
-			assert.FatalIf(t, execution.Outcome() != schedule.Blocked ||
-				!slices.Equal(execution.Blocked, []manifest.NamedResource{input.Named()}) ||
-				after != before, "stale settlement changed retained assessment or status: %+v", after)
-		}
+		assert.FatalIf(t, execution.Outcome() != schedule.Blocked ||
+			!slices.Equal(execution.Blocked, []manifest.NamedResource{input.Named()}) ||
+			after != before, "stale settlement changed retained assessment or status: %+v", after)
 	} else if pending.calls != 1 || execution.Outcome() != schedule.Terminal || after.Status != store.StatusReady {
 		t.Fatalf(
 			"valid settlement did not run retained work: calls=%d outcome=%v status=%+v",

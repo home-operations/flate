@@ -22,34 +22,28 @@ func TestReadSet_MatchesMutableArtifact(t *testing.T) {
 	before.Init(st, ownerID("consumer"), nil)
 	before.GetArtifact(source.Named(), ArtifactContent)
 	current.Init(st, ownerID("consumer"), nil)
-	{
-		assert.FatalIf(
-			t,
-			!current.Matches(&before),
-			"%s",
-			"the same mutable artifact was treated as different material",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!current.Matches(&before),
+		"%s",
+		"the same mutable artifact was treated as different material",
+	)
 	st.SetArtifact(source.Named(), artifact.WithReads(&ReadSet{}))
-	{
-		assert.FatalIf(
-			t,
-			!before.Valid() || !current.Matches(&before),
-			"%s",
-			"refreshing registrations replaced the acquired mutable material",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!before.Valid() || !current.Matches(&before),
+		"%s",
+		"refreshing registrations replaced the acquired mutable material",
+	)
 	st.SetArtifact(source.Named(), &SourceArtifact{LocalPath: artifact.LocalPath, FS: artifact.FS})
 	var replacement ReadSet
 	replacement.Init(st, ownerID("consumer"), nil)
-	{
-		assert.FatalIf(
-			t,
-			replacement.Matches(&before),
-			"%s",
-			"a new mutable artifact was inferred equal from its location",
-		)
-	}
+	assert.FatalIf(
+		t,
+		replacement.Matches(&before),
+		"%s",
+		"a new mutable artifact was inferred equal from its location",
+	)
 }
 
 func TestReadSet_MatchesRawCollection(t *testing.T) {

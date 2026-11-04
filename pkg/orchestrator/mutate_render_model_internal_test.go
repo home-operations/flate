@@ -100,10 +100,8 @@ func writeRenderModelWorld(t *testing.T, root string, w modelWorld) {
 		content := w.files[file]
 		if content.directory {
 			{
-				{
-					err := os.MkdirAll(filepath.Join(root, file.path), 0o750)
-					assert.FatalIf(t, err != nil, "%v", err)
-				}
+				err := os.MkdirAll(filepath.Join(root, file.path), 0o750)
+				assert.FatalIf(t, err != nil, "%v", err)
 			}
 			if !slices.ContainsFunc(keys, func(candidate modelPath) bool {
 				return candidate.source == file.source && strings.HasPrefix(candidate.path, file.path+"/")
@@ -349,7 +347,12 @@ func projectRenderModel(full modelObservation, selection modelSelection, w model
 	return out
 }
 
-func materializeRenderModelSources(t *testing.T, fixture *renderModelCase) (modelWorld, modelWorld) {
+type modelSources struct {
+	before modelWorld
+	after  modelWorld
+}
+
+func materializeRenderModelSources(t *testing.T, fixture *renderModelCase) modelSources {
 	t.Helper()
 	before, after := cloneModelWorld(fixture.before), cloneModelWorld(fixture.after)
 	primary := renderModelSource(before)
@@ -370,7 +373,7 @@ func materializeRenderModelSources(t *testing.T, fixture *renderModelCase) (mode
 			sources: &sources,
 		},
 	)
-	return before, after
+	return modelSources{before: before, after: after}
 }
 
 type materializeRenderModelSourcesSegmentInputs struct {
@@ -394,9 +397,7 @@ func materializeRenderModelSourcesSegment(t *testing.T, statementInput *material
 			files := sourceModelFiles(world, coordinate)
 			if !reflect.DeepEqual(previous, files) {
 				wt, err := repo.Worktree()
-				{
-					assert.FatalIf(t, err != nil, "%v", err)
-				}
+				assert.FatalIf(t, err != nil, "%v", err)
 				removeAbsentSourceModelFiles(t, wt, previous, files)
 				for name, file := range files {
 					testutil.WriteFile(t, root, name, string(file.body))
@@ -623,10 +624,8 @@ func removeAbsentSourceModelFiles(t *testing.T, wt *gogit.Worktree, previous, fi
 	for name := range previous {
 		if _, exists := files[name]; !exists {
 			{
-				{
-					_, err := wt.Remove(name)
-					assert.FatalIf(t, err != nil, "%v", err)
-				}
+				_, err := wt.Remove(name)
+				assert.FatalIf(t, err != nil, "%v", err)
 			}
 		}
 	}

@@ -57,7 +57,8 @@ func testOutcomePublicationFailureCase(t *testing.T, scenario *string,
 		}
 
 	case "existing config corrupt":
-		config, data, _ := o.encode()
+		blobs, _ := o.encode()
+		config, data := blobs.config, blobs.manifest
 		pushOutcomeFixture(t, c, config, data)
 		desc := content.NewDescriptorFromBytes(outcomeConfig, config)
 		{

@@ -18,7 +18,7 @@ import (
 
 func setSourceRef(t *testing.T, root, ref string) {
 	t.Helper()
-	path := filepath.Join(root, "flux/entry.yaml")
+	path := filepath.Join(root, "flux", "entry.yaml")
 	data, err := os.ReadFile(path)
 	assert.NoError(t, err)
 	line := ""

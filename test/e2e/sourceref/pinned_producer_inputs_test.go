@@ -31,7 +31,8 @@ func TestE2E_PinnedDiff_GeneratorInputs(t *testing.T) {
 		{"configmap_file", "ConfigMap", "configMapGenerator:\n- name: settings\n  files: [GENERATED=value.txt]\n- name: stable-settings\n  literals: [STABLE=unchanged]\n", "value.txt", "before", "after"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			orig, repo, _, _ := sourceRefFixture(t)
+			sourceRefFixtureResult1 := sourceRefFixture(t)
+			orig, repo, _, _ := sourceRefFixtureResult1.root, sourceRefFixtureResult1.repository, sourceRefFixtureResult1.before, sourceRefFixtureResult1.after
 			transport := installSourceRefTransport(t, repo.Storer)
 			testutil.WriteFile(t, orig, "flux/consumer.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
@@ -100,8 +101,10 @@ data:
 					"-o",
 					"json",
 				}
-				out, warnings := harness.RequireCLIOK(t, args...)
-				again, againWarnings := harness.RequireCLIOK(t, args...)
+				requireCLIOKResult1 := harness.RequireCLIOK(t, args...)
+				out, warnings := requireCLIOKResult1.Stdout, requireCLIOKResult1.Stderr
+				requireCLIOKResult2 := harness.RequireCLIOK(t, args...)
+				again, againWarnings := requireCLIOKResult2.Stdout, requireCLIOKResult2.Stderr
 				assert.Equal(t, again, out)
 				assert.Equal(t, againWarnings, warnings)
 				t.Logf(
@@ -138,8 +141,10 @@ data:
 				"-o",
 				"diff",
 			}
-			out, warnings := harness.RequireCLIOK(t, args...)
-			again, againWarnings := harness.RequireCLIOK(t, args...)
+			requireCLIOKResult3 := harness.RequireCLIOK(t, args...)
+			out, warnings := requireCLIOKResult3.Stdout, requireCLIOKResult3.Stderr
+			requireCLIOKResult4 := harness.RequireCLIOK(t, args...)
+			again, againWarnings := requireCLIOKResult4.Stdout, requireCLIOKResult4.Stderr
 			assert.Equal(t, again, out)
 			assert.Equal(t, againWarnings, warnings)
 			t.Logf("diff stdout=%x stderr=%x", sha256.Sum256([]byte(out)), sha256.Sum256([]byte(warnings)))
@@ -167,7 +172,8 @@ data:
 func TestE2E_PinnedDiff_DirtyTransitiveSubstituteFrom(t *testing.T) {
 	var roots [2]string
 	for i, mode := range []string{"before", "after"} {
-		root, repo, _, _ := sourceRefFixture(t)
+		sourceRefFixtureResult2 := sourceRefFixture(t)
+		root, repo, _, _ := sourceRefFixtureResult2.root, sourceRefFixtureResult2.repository, sourceRefFixtureResult2.before, sourceRefFixtureResult2.after
 		roots[i] = root
 		testutil.WriteFile(t, root, "flux/consumer.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
@@ -209,13 +215,13 @@ data:
 			&gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}},
 		)
 		if mode == "after" {
-			harness.MutateFile(t, filepath.Join(root, "shared/consumer.yaml"), "mode: before", "mode: after")
+			harness.MutateFile(t, filepath.Join(root, "shared", "consumer.yaml"), "mode: before", "mode: after")
 		}
-		harness.MutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: v2.0.0", "value: dirty-pin")
+		harness.MutateFile(t, filepath.Join(root, "apps", "cm.yaml"), "value: v2.0.0", "value: dirty-pin")
 	}
 	var priorOut, priorWarnings string
 	for run := range 2 {
-		out, warnings := harness.RequireCLIOK(
+		requireCLIOKResult5 := harness.RequireCLIOK(
 			t,
 			"diff",
 			"all",
@@ -232,6 +238,7 @@ data:
 			"-o",
 			"diff",
 		)
+		out, warnings := requireCLIOKResult5.Stdout, requireCLIOKResult5.Stderr
 		assert.FatalIf(t, strings.Count(out, "-  mode: before") != 1 || strings.Count(out, "+  mode: after") != 1 ||
 			strings.Count(out, "   value: v1.0.0") != 1 ||
 			strings.Contains(out, "dirty-pin") ||
@@ -259,13 +266,14 @@ func testPinnedProducerDiff(t *testing.T, deleted bool) {
 	t.Helper()
 	var roots [2]string
 	for i, mode := range []string{"before", "after"} {
-		root, repo, older, head := sourceRefFixture(t)
+		sourceRefFixtureResult3 := sourceRefFixture(t)
+		root, repo, older, head := sourceRefFixtureResult3.root, sourceRefFixtureResult3.repository, sourceRefFixtureResult3.before, sourceRefFixtureResult3.after
 		roots[i] = root
 		wt, err := repo.Worktree()
 		assert.NoError(t, err)
 		for _, hash := range []plumbing.Hash{older, head} {
 			assert.NoError(t, wt.Checkout(&gogit.CheckoutOptions{Hash: hash}))
-			harness.MutateFile(t, filepath.Join(root, "apps/cm.yaml"), "name: hello, namespace: apps", "name: hello")
+			harness.MutateFile(t, filepath.Join(root, "apps", "cm.yaml"), "name: hello, namespace: apps", "name: hello")
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", "namespace: apps\nresources:\n- cm.yaml\n")
 			if hash == older {
 				testutil.GitCommitAll(
@@ -284,7 +292,7 @@ func testPinnedProducerDiff(t *testing.T, deleted bool) {
 			}
 		}
 		if deleted {
-			assert.NoError(t, os.Remove(filepath.Join(root, "apps/cm.yaml")))
+			assert.NoError(t, os.Remove(filepath.Join(root, "apps", "cm.yaml")))
 		}
 		testutil.WriteFile(t, root, "flux/consumer.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
@@ -310,8 +318,9 @@ data:
   value: ${value}
   mode: ${mode}
 `)
-		out, _ := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(root, "flux"),
+		requireCLIOKResult6 := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(root, "flux"),
 			"--concurrency", "2", "--cache-dir", t.TempDir())
+		out, _ := requireCLIOKResult6.Stdout, requireCLIOKResult6.Stderr
 		assert.FatalIf(
 			t,
 			strings.Count(out, "value: v1.0.0") != 2 || !strings.Contains(out, "mode: "+mode),
@@ -319,8 +328,9 @@ data:
 			out,
 		)
 	}
-	out, _ := harness.RequireCLIOK(t, "diff", "all", "--path", filepath.Join(roots[1], "flux"),
+	requireCLIOKResult7 := harness.RequireCLIOK(t, "diff", "all", "--path", filepath.Join(roots[1], "flux"),
 		"--path-orig", filepath.Join(roots[0], "flux"), "--concurrency", "2", "--cache-dir", t.TempDir(), "-o", "diff")
+	out, _ := requireCLIOKResult7.Stdout, requireCLIOKResult7.Stderr
 	assert.FatalIf(t, strings.Count(out, "-  mode: before") != 1 || strings.Count(out, "+  mode: after") != 1 ||
 		!strings.Contains(
 			out,

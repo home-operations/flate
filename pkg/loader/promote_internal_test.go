@@ -21,15 +21,11 @@ import (
 func builtObjectsForTest(t *testing.T, data string) []store.Child {
 	t.Helper()
 	docs, err := manifest.DecodeDocs(strings.NewReader(data), manifest.RequiredDocuments)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	objects := make([]store.Child, 0, len(docs))
 	for _, doc := range docs {
 		child, outcome, _ := Prepare(doc, manifest.ParseDocOptions{WipeSecrets: true})
-		{
-			assert.NoError(t, outcome.Err)
-		}
+		assert.NoError(t, outcome.Err)
 		if child.Obj != nil {
 			objects = append(objects, child)
 		} else {
@@ -132,13 +128,9 @@ spec:
 	internalkustomize.BuildMutex.Lock()
 	result, err := internalkustomize.Build(filesys.MakeFsOnDisk(), entry)
 	internalkustomize.BuildMutex.Unlock()
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	data, err := result.AsYaml()
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	docs := builtObjectsForTest(t, string(data))
 	l.RegisterBuilt(
 		BuiltInput{Root: entry, Source: manifest.BootstrapSourceID, Owner: testutil.KustomizationID("apps", "entry")},
@@ -148,17 +140,13 @@ spec:
 		err := retainedErrorsForTest(l)[selectedFile]
 		assert.FatalIf(t, err != nil, "selected raw error survived successful built registration: %v", err)
 	}
-	{
-		assert.FatalIf(
-			t,
-			!errors.Is(retainedErrorsForTest(l)[independentFile], independentError),
-			"%s",
-			"successful built registration replaced an unselected raw error",
-		)
-	}
-	{
-		assert.FatalIf(t, st.GetObject(rawSource) != nil, "%s", "selected raw source survived built registration")
-	}
+	assert.FatalIf(
+		t,
+		!errors.Is(retainedErrorsForTest(l)[independentFile], independentError),
+		"%s",
+		"successful built registration replaced an unselected raw error",
+	)
+	assert.FatalIf(t, st.GetObject(rawSource) != nil, "%s", "selected raw source survived built registration")
 	separate := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "separate"}
 	{
 		_, exists := l.Index.Lookup(separate)
@@ -180,14 +168,12 @@ spec:
 	}
 	selected.Namespace, selected.Name = "apps", "selected-dev"
 	rs, ok := st.GetObject(selected).(*manifest.ResourceSet)
-	{
-		assert.FatalIf(
-			t,
-			!ok || len(rs.DependsOn) != 1 || rs.DependsOn[0].APIVersion != "v1",
-			"corrected built ResourceSet unavailable: %+v",
-			rs,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!ok || len(rs.DependsOn) != 1 || rs.DependsOn[0].APIVersion != "v1",
+		"corrected built ResourceSet unavailable: %+v",
+		rs,
+	)
 	for range 2 {
 		l.Admit(root)
 	}
@@ -206,14 +192,12 @@ spec:
 		_, err := l.Load(t.Context(), view)
 		assert.NoError(t, err)
 	}
-	{
-		assert.FatalIf(
-			t,
-			len(l.documents.cache[filepath.Join(view, "collision.yaml")].objects) != 1,
-			"%s",
-			"colliding source document was not loaded",
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(l.documents.cache[filepath.Join(view, "collision.yaml")].objects) != 1,
+		"%s",
+		"colliding source document was not loaded",
+	)
 	l.Admit(root)
 	{
 		err := l.FinalizeIndex(t.Context(), root, true)
@@ -231,14 +215,12 @@ spec:
 		}
 	}
 	independentError = retainedErrorsForTest(l)[independentFile]
-	{
-		assert.FatalIf(
-			t,
-			!errors.Is(independentError, manifest.ErrInput),
-			"reloaded independent raw error = %v, want ErrInput",
-			independentError,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!errors.Is(independentError, manifest.ErrInput),
+		"reloaded independent raw error = %v, want ErrInput",
+		independentError,
+	)
 	l.Admit(root)
 	{
 		err := l.FinalizeIndex(t.Context(), root, true)
@@ -451,18 +433,12 @@ spec:
 	internalkustomize.BuildMutex.Lock()
 	result, err := internalkustomize.Build(filesys.MakeFsOnDisk(), root)
 	internalkustomize.BuildMutex.Unlock()
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	data, err := result.AsYaml()
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	docs := builtObjectsForTest(t, string(data))
-	{
-		assert.FatalIf(t, len(docs) != 1 ||
-			docs[0].Obj.Named() != (manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "retained"}), "deletion patch did not leave only the retained ConfigMap: %v", docs)
-	}
+	assert.FatalIf(t, len(docs) != 1 ||
+		docs[0].Obj.Named() != (manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "retained"}), "deletion patch did not leave only the retained ConfigMap: %v", docs)
 	l.RegisterBuilt(
 		BuiltInput{Root: root, Source: manifest.BootstrapSourceID, Owner: testutil.KustomizationID("apps", "entry")},
 		docs,
@@ -544,16 +520,14 @@ func TestRegisterBuilt_StandaloneRoots(t *testing.T) {
 	}
 	l.RegisterBuilt(
 		BuiltInput{
-			Root:   filepath.Join(root, "entry/independent"),
+			Root:   filepath.Join(root, "entry", "independent"),
 			Source: manifest.BootstrapSourceID,
 			Owner:  testutil.KustomizationID("apps", "entry"),
 		},
 		nil,
 	)
-	{
-		assert.FatalIf(t, l.documents.cache[entry].built == nil ||
-			l.documents.cache[filepath.Join(root, "entry/independent")].built == nil, "%s", "empty builds did not retain completion evidence")
-	}
+	assert.FatalIf(t, l.documents.cache[entry].built == nil ||
+		l.documents.cache[filepath.Join(root, "entry", "independent")].built == nil, "%s", "empty builds did not retain completion evidence")
 	for _, tc := range []struct {
 		name, ownerPath string
 		reader, scanned bool
@@ -621,25 +595,21 @@ func TestPromote_ContentOnlyBinding(t *testing.T) {
 	next.Revision = "next"
 	next.Metadata = map[string]string{"org.opencontainers.image.revision": "next"}
 	st.SetArtifact(source, &next)
-	{
-		assert.FatalIf(
-			t,
-			!reads.Valid() || !consumer.Valid() || st.GetObject(id) == nil,
-			"%s",
-			"metadata invalidated the promoted content binding",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!reads.Valid() || !consumer.Valid() || st.GetObject(id) == nil,
+		"%s",
+		"metadata invalidated the promoted content binding",
+	)
 	replacement := next
 	replacement.Content = "replacement"
 	st.SetArtifact(source, &replacement)
-	{
-		assert.FatalIf(
-			t,
-			reads.Valid() || consumer.Valid() || st.GetObject(id) != nil,
-			"%s",
-			"replacement retained a stale promoted document",
-		)
-	}
+	assert.FatalIf(
+		t,
+		reads.Valid() || consumer.Valid() || st.GetObject(id) != nil,
+		"%s",
+		"replacement retained a stale promoted document",
+	)
 }
 
 type testRegisterBuiltTransformedEvidenceCompletionState struct {
@@ -660,48 +630,38 @@ func testRegisterBuiltTransformedEvidenceCompletion(
 		obj := child.Obj
 		id := obj.Named()
 		record, exists := (*scope.l).Index.Lookup(id)
-		{
-			assert.FatalIf(t, !exists || record.Path != "" || record.Authored != (manifest.NamedResource{}) ||
-				record.File != "entry/kustomization.yaml", "built record %s lost authoritative evidence: %+v", id, record)
-		}
-		{
-			assert.ErrorIf(t, (*scope.st).GetObject(id) != obj || candidateForTest(t, (*scope.l), id) != obj ||
-				(*scope.l).AdmitsRoot(
-					(*scope.l).IndexedObject(id, (*scope.l).Index.Records[id]).Obj,
-					"",
-				), "built identity %s did not survive admission and source mounts", id)
-		}
+		assert.FatalIf(t, !exists || record.Path != "" || record.Authored != (manifest.NamedResource{}) ||
+			record.File != "entry/kustomization.yaml", "built record %s lost authoritative evidence: %+v", id, record)
+		assert.ErrorIf(t, (*scope.st).GetObject(id) != obj || candidateForTest(t, (*scope.l), id) != obj ||
+			(*scope.l).AdmitsRoot(
+				(*scope.l).IndexedObject(id, (*scope.l).Index.Records[id]).Obj,
+				"",
+			), "built identity %s did not survive admission and source mounts", id)
 		for _, file := range []string{"entry/kustomization.yaml", "entry/bundle.yaml", "entry/version.yaml", "entry/value.txt", (*scope.selectedFile)} {
-			{
-				assert.ErrorIf(t, !slices.Contains(record.Inputs, file), "%s does not retain built input %s", id, file)
-			}
-			{
-				assert.ErrorIf(
-					t,
-					slices.ContainsFunc(
-						(*scope.l).Index.Readers[file],
-						func(r manifest.FileReader) bool { return r.Reader == id },
-					),
-					"package input %s made %s a render owner",
-					file,
-					id,
-				)
-			}
+			assert.ErrorIf(t, !slices.Contains(record.Inputs, file), "%s does not retain built input %s", id, file)
+			assert.ErrorIf(
+				t,
+				slices.ContainsFunc(
+					(*scope.l).Index.Readers[file],
+					func(r manifest.FileReader) bool { return r.Reader == id },
+				),
+				"package input %s made %s a render owner",
+				file,
+				id,
+			)
 		}
 		if strings.HasPrefix(id.Name, "generated-dev-") {
 			generated = id
 		}
 		for i := range record.Productions {
 			production := record.Productions[i]
-			{
-				assert.ErrorIf(
-					t,
-					production.Path != "",
-					"built %s advertises a raw lazy production: %+v",
-					id,
-					production,
-				)
-			}
+			assert.ErrorIf(
+				t,
+				production.Path != "",
+				"built %s advertises a raw lazy production: %+v",
+				id,
+				production,
+			)
 		}
 	}
 	if generated.Name == "" {
@@ -739,10 +699,8 @@ func testRegisterBuiltTransformedEvidenceCompletion(
 		assert.NoError(t, err)
 		sources = append(sources, source)
 	}
-	{
-		assert.FatalIf(t, !slices.ContainsFunc(
-			sources,
-			func(child store.Child) bool { return child.Obj.Named().Name == "source-dev" && child.Doc != nil },
-		), "%s", "built source is unavailable to discovery")
-	}
+	assert.FatalIf(t, !slices.ContainsFunc(
+		sources,
+		func(child store.Child) bool { return child.Obj.Named().Name == "source-dev" && child.Doc != nil },
+	), "%s", "built source is unavailable to discovery")
 }

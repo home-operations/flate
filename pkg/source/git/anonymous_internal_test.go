@@ -35,7 +35,8 @@ func testFetcherProviderAnonymousCase(t *testing.T, root *string,
 ) {
 	t.Helper()
 
-	certificate, ca := tlsGitCertificate(t)
+	certificate2 := tlsGitCertificate(t)
+
 	handler := gitHTTPHandler(t, (*root))
 	var advertisements, packs atomic.Int32
 	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -52,13 +53,13 @@ func testFetcherProviderAnonymousCase(t *testing.T, root *string,
 		)
 	},
 	))
-	srv.TLS = &tls.Config{Certificates: []tls.Certificate{certificate}}
+	srv.TLS = &tls.Config{Certificates: []tls.Certificate{certificate2.certificate}}
 	srv.StartTLS()
 	t.Cleanup(srv.Close)
 	repo := gitRepoWithSecret("public", srv.URL, "ca")
 	repo.Provider = "aws"
 	inputs := testInputs{secrets: func(string, string) *manifest.Secret {
-		return &manifest.Secret{StringData: map[string]any{"ca.crt": ca}}
+		return &manifest.Secret{StringData: map[string]any{"ca.crt": certificate2.pem}}
 	}}
 	reads := inputs.readSet(repo)
 	defer reads.Close()

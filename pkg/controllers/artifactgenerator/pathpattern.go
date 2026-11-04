@@ -111,7 +111,8 @@ func pathMatcher(patternValue string, inputs map[string]fs.FS) (*regexp.Regexp, 
 	var matcher *regexp.Regexp
 	var input fs.FS
 	if patternValue != "" {
-		alias, pattern, err := sourcePath(patternValue)
+		sourcePathResult1, sourcePathResult1Err := sourcePath(patternValue)
+		alias, pattern, err := sourcePathResult1.alias, sourcePathResult1.pattern, sourcePathResult1Err
 		if err != nil {
 			return nil, nil, err
 		}

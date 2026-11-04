@@ -49,7 +49,8 @@ func (s *Store) RecordEmitted(
 			proposal = prepareEmission(&candidate, prev, prepared, byID)
 		}
 		retainProposalFingerprint(proposal, prev, unchanged)
-		stable, unchanged := emissionProposalState(proposal, prev)
+		state := emissionProposalState(proposal, prev)
+		unchanged = state.unchanged
 		if unchanged {
 			proposal = rebindAcceptedEmission(next, prev, &candidate)
 		} else {
@@ -57,7 +58,7 @@ func (s *Store) RecordEmitted(
 		}
 		retainEmissionCache(proposal, prev)
 		var result publicationResult
-		if stable {
+		if state.stable {
 			result = s.commitStable(slot, prev, proposal, generation)
 		} else {
 			result = s.commitReplacement(id, prev, proposal, generation)
@@ -114,8 +115,8 @@ func (s *Store) prepareAdmissions(
 		}
 		return prepared
 	}
-	var refs, superseded, retained []manifest.NamedResource
-	refs = collectCurrentReferences(next, refs)
+	var retained []manifest.NamedResource
+	references := coverageReferences{refs: collectCurrentReferences(next, nil)}
 	var proven map[manifest.NamedResource][]manifest.NamedResource
 	retain := func(declaration, target manifest.NamedResource) {
 		if proven == nil {
@@ -128,15 +129,13 @@ func (s *Store) prepareAdmissions(
 	if next.family != nil && next.family != s.index.Load() {
 		binding = next.binding
 		coverage = nil
-		{
-			//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-			for target, record := range next.family.Records {
-				if slices.ContainsFunc(
-					record.Productions,
-					func(p manifest.Production) bool { return p.Owner == id && p.Source == binding.source },
-				) {
-					coverage = append(coverage, footprint{id: target, record: record})
-				}
+		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+		for target, record := range next.family.Records {
+			if slices.ContainsFunc(
+				record.Productions,
+				func(p manifest.Production) bool { return p.Owner == id && p.Source == binding.source },
+			) {
+				coverage = append(coverage, footprint{id: target, record: record})
 			}
 		}
 	}
@@ -154,7 +153,7 @@ func (s *Store) prepareAdmissions(
 							continue
 						}
 						if p.File == f.record.File && p.Path == f.record.Path {
-							refs, superseded = new(f).appendCoverageReferences(byID, shadowed, refs, superseded)
+							references = new(f).appendCoverageReferences(byID, shadowed, references)
 						}
 						if !shadowed && p.Declaration != (manifest.NamedResource{}) {
 							retain(p.Declaration, f.id)
@@ -173,7 +172,7 @@ func (s *Store) prepareAdmissions(
 					_, replacement := byID[entry.child.Obj.Named()]
 					for ref := range manifest.References(entry.child.Obj, manifest.ReferenceRelations) {
 						if replacement {
-							superseded = append(superseded, ref.NamedResource)
+							references.superseded = append(references.superseded, ref.NamedResource)
 						} else {
 							retained = append(retained, ref.NamedResource)
 						}
@@ -183,11 +182,11 @@ func (s *Store) prepareAdmissions(
 			}
 		}
 	}
-	slices.SortFunc(refs, manifest.NamedResource.Compare)
-	refs = slices.Compact(refs)
+	slices.SortFunc(references.refs, manifest.NamedResource.Compare)
+	references.refs = slices.Compact(references.refs)
 	for i := range prepared {
 		child := prepared[i].child
-		prepared[i].targets = new(child).admissionTargets(refs, proven, superseded, retained)
+		prepared[i].targets = new(child).admissionTargets(references.refs, proven, references.superseded, retained)
 	}
 	return prepared
 }
@@ -406,7 +405,12 @@ func (s *Store) retirePreviousEmission(proposal, prev *Emission) {
 	}
 }
 
-func emissionProposalState(proposal, prev *Emission) (bool, bool) {
+type proposalState struct {
+	stable    bool
+	unchanged bool
+}
+
+func emissionProposalState(proposal, prev *Emission) proposalState {
 	var unchanged bool
 	stable := prev != nil &&
 		(proposal == prev || sameMembership(prev, proposal) && slices.EqualFunc(prev.Children, proposal.Children, func(a, b Child) bool { return a.payload == b.payload }))
@@ -415,7 +419,7 @@ func emissionProposalState(proposal, prev *Emission) (bool, bool) {
 		proposal.Complete = true
 	}
 	unchanged = unchanged && prev.Complete == proposal.Complete
-	return stable, unchanged
+	return proposalState{stable: stable, unchanged: unchanged}
 }
 
 func snapshotEmission(ps *shard, id manifest.NamedResource) (*producerSlot, *Emission, uint64) {
@@ -505,17 +509,22 @@ func projectAdmissionInput(entry *admission, projections []ArtifactInput, prepar
 	return projections
 }
 
+type coverageReferences struct {
+	refs       []manifest.NamedResource
+	superseded []manifest.NamedResource
+}
+
 func (f *footprint) appendCoverageReferences(
 	byID map[manifest.NamedResource]int,
 	shadowed bool,
-	refs, superseded []manifest.NamedResource,
-) ([]manifest.NamedResource, []manifest.NamedResource) {
+	references coverageReferences,
+) coverageReferences {
 	if _, replaced := byID[f.id]; replaced {
-		superseded = append(superseded, f.record.Refs...)
+		references.superseded = append(references.superseded, f.record.Refs...)
 	} else if !shadowed {
-		refs = append(refs, f.record.Refs...)
+		references.refs = append(references.refs, f.record.Refs...)
 	}
-	return refs, superseded
+	return references
 }
 
 func (c Child) admissionTargets(

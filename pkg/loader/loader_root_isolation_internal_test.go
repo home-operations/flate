@@ -78,28 +78,24 @@ func testLoaderIndependentRootsCase(t *testing.T, testCaseInput *string,
 		_, ok := l.Index.Lookup(child)
 		assert.FatalIf(t, !ok, "%s", "loaded child evidence missing")
 	}
-	{
-		assert.FatalIf(
-			t,
-			(l.Store.GetObject(child) != nil) != ((*testCaseInput) == "plain"),
-			"%s",
-			"later load changed first entry admission policy",
-		)
-	}
+	assert.FatalIf(
+		t,
+		(l.Store.GetObject(child) != nil) != ((*testCaseInput) == "plain"),
+		"%s",
+		"later load changed first entry admission policy",
+	)
 	independent := New(store.New())
 	independent.SourceRoot = root
 	independent.Store.AddObject(l.Store.GetObject(testutil.KustomizationID("apps", "owner")))
 	_, err := independent.Load(t.Context(), filepath.Join(root, "builder"))
 	assert.NoError(t, err)
 	independent.Admit(root)
-	{
-		assert.FatalIf(
-			t,
-			independent.Store.GetObject(child) != nil,
-			"%s",
-			"independent loader inherited first entry policy",
-		)
-	}
+	assert.FatalIf(
+		t,
+		independent.Store.GetObject(child) != nil,
+		"%s",
+		"independent loader inherited first entry policy",
+	)
 }
 
 func testLoaderIndependentRootsRetainedNativeViews(t *testing.T) {
@@ -122,15 +118,11 @@ func testLoaderIndependentRootsRetainedNativeViews(t *testing.T) {
 	view := l.documents.views[root]
 	observed, err := fs.Stat(view, "first")
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(t, view == artifact.FS, "%s", "loader did not retain a private operation view")
-	}
+	assert.FatalIf(t, view == artifact.FS, "%s", "loader did not retain a private operation view")
 	_, err = fs.ReadDir(view, "second")
 	assert.NoError(t, err)
 	_, err = fs.Stat(view, "second/late.yaml")
-	{
-		assert.FatalIf(t, !errors.Is(err, fs.ErrNotExist), "uncreated file error = %v, want not exist", err)
-	}
+	assert.FatalIf(t, !errors.Is(err, fs.ErrNotExist), "uncreated file error = %v, want not exist", err)
 	testutil.WriteFile(
 		t,
 		root,
@@ -139,34 +131,26 @@ func testLoaderIndependentRootsRetainedNativeViews(t *testing.T) {
 	)
 	n, err = loadForTest(t.Context(), t, l, filepath.Join(root, "second"))
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(
-			t,
-			n != 1,
-			"second graph loaded %d objects, want one from retained directory observations",
-			n,
-		)
-	}
-	{
-		assert.FatalIf(t, l.documents.views[root] != view, "%s", "unchanged artifact replaced the private view")
-	}
+	assert.FatalIf(
+		t,
+		n != 1,
+		"second graph loaded %d objects, want one from retained directory observations",
+		n,
+	)
+	assert.FatalIf(t, l.documents.views[root] != view, "%s", "unchanged artifact replaced the private view")
 	retained, err := fs.Stat(l.documents.views[root], "first")
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(t, retained != observed, "%s", "load discarded retained directory observations")
-	}
+	assert.FatalIf(t, retained != observed, "%s", "load discarded retained directory observations")
 	for _, name := range []string{"first", "second"} {
 		id := testutil.KustomizationID("apps", name)
 		record, indexed := l.Index.Lookup(id)
-		{
-			assert.FatalIf(
-				t,
-				!indexed || record.Path != filepath.Join(root, name, "ks.yaml") || s.GetObject(id) == nil,
-				"%s graph was not loaded and indexed: %+v",
-				name,
-				record,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!indexed || record.Path != filepath.Join(root, name, "ks.yaml") || s.GetObject(id) == nil,
+			"%s graph was not loaded and indexed: %+v",
+			name,
+			record,
+		)
 	}
 	{
 		_, statErr := fs.Stat(l.documents.views[root], "second/late.yaml")
@@ -175,26 +159,22 @@ func testLoaderIndependentRootsRetainedNativeViews(t *testing.T) {
 	other := New(s)
 	_, err = other.Load(t.Context(), filepath.Join(root, "second"))
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(
-			t,
-			other.documents.views[root] == view || other.documents.views[root] == artifact.FS,
-			"%s",
-			"loaders shared their operation views",
-		)
-	}
+	assert.FatalIf(
+		t,
+		other.documents.views[root] == view || other.documents.views[root] == artifact.FS,
+		"%s",
+		"loaders shared their operation views",
+	)
 	{
 		_, err := fs.Stat(other.documents.views[root], "second/late.yaml")
 		assert.FatalIf(t, err != nil, "second loader inherited a private miss: %v", err)
 	}
-	{
-		assert.FatalIf(
-			t,
-			s.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != artifact,
-			"%s",
-			"loader replaced the source artifact",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != artifact,
+		"%s",
+		"loader replaced the source artifact",
+	)
 	{
 		_, err := fs.Stat(artifact.FS, "second/late.yaml")
 		assert.FatalIf(t, err != nil, "loader mutated the artifact's observations: %v", err)
@@ -225,14 +205,12 @@ func testLoaderIndependentRootsAdmittedMembership(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, n, 1)
 	objects := s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)
-	{
-		assert.FatalIf(
-			t,
-			len(objects) != 1 || objects[0].Name != "first",
-			"admitted objects = %v, want first only",
-			objects,
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(objects) != 1 || objects[0].Name != "first",
+		"admitted objects = %v, want first only",
+		objects,
+	)
 }
 
 func testLoaderIndependentRootsCase2(t *testing.T, testCaseInput *struct {
@@ -267,10 +245,8 @@ func testLoaderIndependentRootsCase2(t *testing.T, testCaseInput *struct {
 		_, err := loadForTest(t.Context(), t, l, roots[0])
 		assert.NoError(t, err)
 	}
-	{
-		assert.FatalIf(t, l.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != nil ||
-			l.Store.GetObject(manifest.BootstrapSourceID) != nil, "%s", "standalone load published bootstrap identity")
-	}
+	assert.FatalIf(t, l.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != nil ||
+		l.Store.GetObject(manifest.BootstrapSourceID) != nil, "%s", "standalone load published bootstrap identity")
 	testLoaderIndependentRootsCase2Completion(
 		t,
 		&testLoaderIndependentRootsCase2CompletionState{testCaseInput: &testCaseInput, roots: &roots, ids: &ids, l: &l},
@@ -296,22 +272,18 @@ func testLoaderIndependentRootsCase2Completion(t *testing.T, scope *testLoaderIn
 	for _, root := range []string{(*scope.roots)[1], (*scope.roots)[0]} {
 		_, err := loadForTest(t.Context(), t, (*scope.l), root)
 		if (*scope.testCaseInput).bounded && root == (*scope.roots)[1] {
-			{
-				assert.FatalIf(
-					t,
-					!errors.Is(err, manifest.ErrInput),
-					"outside SourceRoot error = %v, want unavailable source",
-					err,
-				)
-			}
-			{
-				assert.FatalIf(
-					t,
-					(*scope.l).documents.views[(*scope.roots)[0]] != view,
-					"%s",
-					"outside SourceRoot load replaced the mounted view",
-				)
-			}
+			assert.FatalIf(
+				t,
+				!errors.Is(err, manifest.ErrInput),
+				"outside SourceRoot error = %v, want unavailable source",
+				err,
+			)
+			assert.FatalIf(
+				t,
+				(*scope.l).documents.views[(*scope.roots)[0]] != view,
+				"%s",
+				"outside SourceRoot load replaced the mounted view",
+			)
 			{
 				_, indexed := (*scope.l).Index.Lookup(
 					(*scope.ids)[1],
@@ -331,26 +303,21 @@ func testLoaderIndependentRootsCase2Completion(t *testing.T, scope *testLoaderIn
 		}
 		retained, err := fs.Stat((*scope.l).documents.views[(*scope.roots)[0]], ".")
 		assert.NoError(t, err)
-		{
-			assert.FatalIf(t, retained != observed, "%s", "standalone binding discarded operation observations")
-		}
-		{
-			assert.FatalIf(t, (*scope.l).Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != nil ||
-				(*scope.l).Store.GetObject(
-					manifest.BootstrapSourceID,
-				) != nil, "%s", "independent load published bootstrap identity")
-		}
+		assert.FatalIf(t, retained != observed, "%s", "standalone binding discarded operation observations")
+		assert.FatalIf(t, (*scope.l).Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != nil ||
+			(*scope.l).Store.GetObject(
+				manifest.BootstrapSourceID,
+			) != nil, "%s", "independent load published bootstrap identity")
 		if (*scope.testCaseInput).nested {
-			input, file := new((*scope.l).documents).input(filepath.Join((*scope.roots)[0], "ks.yaml"))
-			{
-				assert.FatalIf(
-					t,
-					input != view || file != "ks.yaml",
-					"child source binding = (%v, %q), want original view and ks.yaml",
-					input,
-					file,
-				)
-			}
+			inputFile := new((*scope.l).documents).input(filepath.Join((*scope.roots)[0], "ks.yaml"))
+			input, file := inputFile.fs, inputFile.name
+			assert.FatalIf(
+				t,
+				input != view || file != "ks.yaml",
+				"child source binding = (%v, %q), want original view and ks.yaml",
+				input,
+				file,
+			)
 		}
 		for i, id := range *scope.ids {
 			if (*scope.testCaseInput).bounded && i == 1 {
@@ -362,18 +329,16 @@ func testLoaderIndependentRootsCase2Completion(t *testing.T, scope *testLoaderIn
 			if (*scope.testCaseInput).bounded {
 				file = "ks.yaml"
 			}
-			{
-				assert.FatalIf(
-					t,
-					!indexed || r.Path != path || r.File != file || (*scope.l).Store.GetObject(id) == nil,
-					"%s record = %+v, present = %t; want path %s, file %s and stored object",
-					id,
-					r,
-					indexed,
-					path,
-					file,
-				)
-			}
+			assert.FatalIf(
+				t,
+				!indexed || r.Path != path || r.File != file || (*scope.l).Store.GetObject(id) == nil,
+				"%s record = %+v, present = %t; want path %s, file %s and stored object",
+				id,
+				r,
+				indexed,
+				path,
+				file,
+			)
 		}
 	}
 }

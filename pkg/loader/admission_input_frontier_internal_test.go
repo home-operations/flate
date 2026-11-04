@@ -317,14 +317,12 @@ func testAdmissionClosedRootFrontierCase(t *testing.T, testCaseInput *string,
 	settings := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "settings", Namespace: "apps"}
 	providerChild := l.IndexedObject(provider, l.Index.Records[provider])
 	consumerChild := l.IndexedObject(consumer, l.Index.Records[consumer])
-	{
-		assert.FatalIf(
-			t,
-			providerChild.Obj == nil || consumerChild.Obj == nil,
-			"%s",
-			"fixture declarations are unavailable",
-		)
-	}
+	assert.FatalIf(
+		t,
+		providerChild.Obj == nil || consumerChild.Obj == nil,
+		"%s",
+		"fixture declarations are unavailable",
+	)
 	l.Options.Selection = manifest.Selection{Roots: []manifest.NamedResource{consumer}}
 	l.Options.Filter = change.NewFilter()
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
@@ -339,7 +337,7 @@ func testAdmissionClosedRootFrontierCase(t *testing.T, testCaseInput *string,
 	fresh := settings
 	fresh.Name = "new-settings"
 	st.AddObject(manifest.NewConfigMap(fresh, map[string]any{"VALUE": "current"}))
-	_, _, _, revision := l.Options.Filter.Membership(provider)
+	revision := l.Options.Filter.Membership(provider).Revision
 	_, retry := l.Options.Filter.AddEmitted(
 		[]manifest.NamedResource{provider, settings, manifest.BootstrapSourceID},
 		nil,
@@ -391,7 +389,8 @@ func assertAdmissionSuppliedDependency(
 		assert.Equal(t, hydrated, true)
 		data = l.Store.ReferenceFacts(dependency, l.Index, false, manifest.NamedResource{}).Data
 	}
-	value, found, err := data.Value("VALUE")
+	valueResult, err := data.Value("VALUE")
+	value, found := valueResult.Value, valueResult.Found
 	assert.NoError(t, err)
 	assert.Equal(t, found, true)
 	want := "supplied"

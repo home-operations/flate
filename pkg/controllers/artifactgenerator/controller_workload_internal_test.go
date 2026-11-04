@@ -44,9 +44,7 @@ func testArtifactGeneratorGeneratedWorkloadsCase(
 		root = t.TempDir()
 	}
 	owner, err := cache.New(t.Context(), root)
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	defer func() {
 		{
 			localErr := owner.Close()
@@ -65,9 +63,7 @@ func testArtifactGeneratorGeneratedWorkloadsCase(
 				assert.FatalIf(t, localErr != nil, "%v", localErr)
 			}
 			owner, err = cache.New(t.Context(), root)
-			{
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
+			assert.FatalIf(t, err != nil, "%v", err)
 		}
 		input.opens.Store(0)
 		input.bytes.Store(0)
@@ -79,17 +75,15 @@ func testArtifactGeneratorGeneratedWorkloadsCase(
 		for i, child := range emission.Children {
 			artifact := st.GetArtifact(child.Obj.Named(), store.ArtifactContent).(*store.SourceArtifact)
 			data, err := fs.ReadFile(artifact.FS, "input")
-			{
-				assert.FatalIf(
-					t,
-					err != nil || string(data) != "selected\n",
-					"%s output %d = %q, %v",
-					phase,
-					i,
-					data,
-					err,
-				)
-			}
+			assert.FatalIf(
+				t,
+				err != nil || string(data) != "selected\n",
+				"%s output %d = %q, %v",
+				phase,
+				i,
+				data,
+				err,
+			)
 			identity := artifact.Key + "/" + artifact.Digest
 			if phase == "cold" {
 				identities = append(identities, identity)

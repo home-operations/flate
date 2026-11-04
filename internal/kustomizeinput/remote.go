@@ -41,27 +41,28 @@ func ParseGitBase(raw string) (GitBase, bool) {
 	}
 	username := gitUsername.FindString(n)
 	n = strings.TrimPrefix(n, username)
-	host, repoPath, ok := remoteHost(scheme, username, n)
+	remote, ok := remoteHost(scheme, username, n)
+
 	if !ok {
 		return GitBase{}, false
 	}
 	var subpath string
 	switch {
-	case strings.Contains(repoPath, "_git/"):
-		before, after, _ := strings.Cut(repoPath, "_git/")
+	case strings.Contains(remote.path, "_git/"):
+		before, after, _ := strings.Cut(remote.path, "_git/")
 		repo, rest, _ := strings.Cut(after, "/")
-		repoPath, subpath = before+"_git/"+repo, rest
-	case strings.Contains(repoPath, "//"):
-		repoPath, subpath, _ = strings.Cut(repoPath, "//")
-	case strings.Contains(repoPath, ".git"):
-		before, after, _ := strings.Cut(repoPath, ".git")
-		repoPath, subpath = before+".git", after
+		remote.path, subpath = before+"_git/"+repo, rest
+	case strings.Contains(remote.path, "//"):
+		remote.path, subpath, _ = strings.Cut(remote.path, "//")
+	case strings.Contains(remote.path, ".git"):
+		before, after, _ := strings.Cut(remote.path, ".git")
+		remote.path, subpath = before+".git", after
 	case scheme != fileScheme:
-		segments := strings.Split(repoPath, "/")
+		segments := strings.Split(remote.path, "/")
 		if len(segments) < repositoryPathSegments {
 			return GitBase{}, false
 		}
-		repoPath, subpath = strings.Join(
+		remote.path, subpath = strings.Join(
 			segments[:repositoryPathSegments],
 			"/",
 		), strings.Join(
@@ -71,11 +72,11 @@ func ParseGitBase(raw string) (GitBase, bool) {
 	}
 	clean := filepath.Clean(strings.TrimPrefix(subpath, string(filepath.Separator)))
 	first, _, _ := strings.Cut(clean, string(filepath.Separator))
-	if repoPath == "" || first == ".." {
+	if remote.path == "" || first == ".." {
 		return GitBase{}, false
 	}
 	return GitBase{
-		RepoURL:    host + repoPath,
+		RepoURL:    remote.host + remote.path,
 		SubPath:    strings.TrimPrefix(subpath, "/"),
 		Ref:        ref,
 		Timeout:    timeout,
@@ -111,13 +112,13 @@ func parseQuery(query string) (string, time.Duration, bool) {
 }
 
 // CutHTTPScheme splits the HTTP scheme used by file acquisition.
-func CutHTTPScheme(s string) (string, string, bool) {
+func CutHTTPScheme(s string) (HTTPPrefix, bool) {
 	for _, scheme := range []string{httpsScheme, "http://"} {
 		if rest, ok := trimPrefixFold(s, scheme); ok {
-			return scheme, rest, true
+			return HTTPPrefix{Scheme: scheme, Rest: rest}, true
 		}
 	}
-	return "", "", false
+	return HTTPPrefix{}, false
 }
 
 func trimPrefixFold(s, prefix string) (string, bool) {
@@ -127,16 +128,16 @@ func trimPrefixFold(s, prefix string) (string, bool) {
 	return s, false
 }
 
-func remoteHost(scheme, username, n string) (string, string, bool) {
+func remoteHost(scheme, username, n string) (remoteLocation, bool) {
 	lower := strings.ToLower(n)
 	github := strings.HasPrefix(lower, "github.com/") || strings.HasPrefix(lower, "github.com:")
 	scp := scheme == "" && (username != "" || github)
 	if scheme == "" && !scp {
-		return "", "", false
+		return remoteLocation{}, false
 	}
 	var host, repoPath string
 	if scheme == fileScheme {
-		return scheme, username + n, true
+		return remoteLocation{host: scheme, path: username + n}, true
 	}
 	sep := strings.Index(n, "/")
 	if scp {
@@ -157,10 +158,10 @@ func remoteHost(scheme, username, n string) (string, string, bool) {
 		}
 	}
 	if host == "" {
-		return "", "", false
+		return remoteLocation{}, false
 	}
 	host = scheme + username + host
-	return host, repoPath, true
+	return remoteLocation{host: host, path: repoPath}, true
 }
 
 const fileScheme = "file://"
@@ -168,3 +169,8 @@ const fileScheme = "file://"
 const repositoryPathSegments = 2
 
 const httpsScheme = "https://"
+
+// HTTPPrefix keeps the matched scheme separate from its remaining operand.
+type HTTPPrefix struct{ Scheme, Rest string }
+
+type remoteLocation struct{ host, path string }

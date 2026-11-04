@@ -27,72 +27,60 @@ func TestStore_AddListener_ReplayWithdrawnDeclaredSecret(t *testing.T) {
 	accept(t, s, p, &Emission{Children: []Child{{Obj: secret}}, Complete: true})
 	accept(t, s, q, &Emission{Children: []Child{{Obj: external}}, Complete: true})
 	accept(t, s, p, &Emission{Complete: true})
-	{
-		assert.FatalIf(
-			t,
-			s.GetObject(secret.Named()) != nil || s.GetObject(external.Named()) != external,
-			"%s",
-			"withdrawal did not preserve only the effective ExternalSecret",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.GetObject(secret.Named()) != nil || s.GetObject(external.Named()) != external,
+		"%s",
+		"withdrawal did not preserve only the effective ExternalSecret",
+	)
 	assert.Equal(t, s.EmissionOwner(secret.Named()), manifest.NamedResource{})
 	assert.Equal(t, s.EmissionOwner(external.Named()), q)
 	proofs := s.Productions(secret.Named(), nil)
-	{
-		assert.FatalIf(
-			t,
-			len(proofs) != 1 || proofs[0].Owner != q || proofs[0].Declaration != external.Named(),
-			"withdrawal lost declaration evidence: %v",
-			proofs,
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(proofs) != 1 || proofs[0].Owner != q || proofs[0].Declaration != external.Named(),
+		"withdrawal lost declaration evidence: %v",
+		proofs,
+	)
 	inventory := s.ListObjects("", "")
-	{
-		assert.FatalIf(
-			t,
-			len(inventory) != 3,
-			"effective inventory has %d objects, want two owners and ExternalSecret",
-			len(inventory),
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(inventory) != 3,
+		"effective inventory has %d objects, want two owners and ExternalSecret",
+		len(inventory),
+	)
 	replayed := make(map[manifest.NamedResource][]any)
 	var notifications int
 	unsub := s.AddListener(EventObjectAdded, func(id manifest.NamedResource, payload any) {
 		replayed[id] = append(replayed[id], payload)
 		notifications++
 	}, true)
-	{
-		assert.FatalIf(
-			t,
-			len(replayed) != len(inventory) || notifications != len(inventory),
-			"replayed %d identities and %d notifications, want %d",
-			len(replayed),
-			notifications,
-			len(inventory),
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(replayed) != len(inventory) || notifications != len(inventory),
+		"replayed %d identities and %d notifications, want %d",
+		len(replayed),
+		notifications,
+		len(inventory),
+	)
 	for _, obj := range inventory {
 		if payloads := replayed[obj.Named()]; len(payloads) != 1 || payloads[0] != obj {
 			t.Fatalf("replay for %v: got %v, want effective object %v once", obj.Named(), payloads, obj)
 		}
 	}
-	{
-		assert.FatalIf(t, len(replayed[secret.Named()]) != 0, "%s", "replay revived the withdrawn Secret")
-	}
+	assert.FatalIf(t, len(replayed[secret.Named()]) != 0, "%s", "replay revived the withdrawn Secret")
 	{
 		got := s.ListObjects("", "")
 		assert.FatalIf(t, !slices.Equal(got, inventory), "%s", "registration changed the effective inventory")
 	}
 	live := emissionChild("live", "value")
 	s.AddObject(live.Obj)
-	{
-		assert.FatalIf(
-			t,
-			s.GetObject(live.Obj.Named()) != live.Obj,
-			"%s",
-			"store did not retain an object added after replay",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.GetObject(live.Obj.Named()) != live.Obj,
+		"%s",
+		"store did not retain an object added after replay",
+	)
 	{
 		payloads := replayed[live.Obj.Named()]
 		assert.FatalIf(t, len(payloads) != 1 || payloads[0] != live.Obj ||
@@ -240,16 +228,14 @@ func TestStore_AddListenerNoFlush_NoMissedConcurrentWrites(t *testing.T) {
 			for i := range workers {
 				id := newCM(fmt.Sprintf("after-%d", i), "ns").Named()
 				count, ok := seen.Load(id)
-				{
-					assert.ErrorIf(
-						t,
-						!ok || count.(*atomic.Int64).Load() != 1,
-						"post-registration delivery %s = %v, present=%t",
-						id,
-						count,
-						ok,
-					)
-				}
+				assert.ErrorIf(
+					t,
+					!ok || count.(*atomic.Int64).Load() != 1,
+					"post-registration delivery %s = %v, present=%t",
+					id,
+					count,
+					ok,
+				)
 				{
 					_, ok := seen.Load(newCM(fmt.Sprintf("before-%d", i), "ns").Named())
 					assert.ErrorIf(t, ok, "no-flush listener replayed pre-registration object %d", i)

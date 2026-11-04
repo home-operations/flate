@@ -465,7 +465,7 @@ func testNewEntryPolicyLocalOperationObservations(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteFile(t, root, ".sourceignore", "/*\n!/dir/arrived\n!/hidden/empty/\n")
 	testutil.WriteFile(t, root, "dir/excluded", "excluded")
-	assert.Equal(t, os.MkdirAll(filepath.Join(root, "hidden/empty"), 0o755), nil)
+	assert.Equal(t, os.MkdirAll(filepath.Join(root, "hidden", "empty"), 0o755), nil)
 	artifact, err := admitLocal(t, root)
 	assert.NoError(t, err)
 
@@ -595,7 +595,7 @@ func testNewEntryPolicyCallerOwnedListing(t *testing.T) {
 			for name, data := range map[string]string{"a": "a", "child": "content", "z": "longer content"} {
 				testutil.WriteFile(t, root, "dir/"+name, data)
 			}
-			want, err := os.Lstat(filepath.Join(root, "dir/a"))
+			want, err := os.Lstat(filepath.Join(root, "dir", "a"))
 			assert.NoError(t, err)
 			artifact, err := admitLocal(t, root)
 			assert.NoError(t, err)

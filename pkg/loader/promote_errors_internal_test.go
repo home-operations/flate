@@ -57,33 +57,25 @@ func testPromoteAdmissionErrorsCase(t *testing.T, testCaseInput *string,
 	if (*testCaseInput) == "cancel" {
 		want = context.Canceled
 	}
-	{
-		assert.FatalIf(t, got || !errors.Is(err, want), "Promote = %v, %v, want false, %v", got, err, want)
-	}
-	{
-		assert.FatalIf(
-			t,
-			(*testCaseInput) != "existing" && st.GetObject(first.Named()) == nil,
-			"%s",
-			"previously admitted independent object was rolled back",
-		)
-	}
+	assert.FatalIf(t, got || !errors.Is(err, want), "Promote = %v, %v, want false, %v", got, err, want)
+	assert.FatalIf(
+		t,
+		(*testCaseInput) != "existing" && st.GetObject(first.Named()) == nil,
+		"%s",
+		"previously admitted independent object was rolled back",
+	)
 	if (*testCaseInput) == "child" || (*testCaseInput) == "cancel" {
-		{
-			assert.FatalIf(
-				t,
-				st.GetObject(target.Named()) != nil || st.GetObject(last.Named()) != nil,
-				"%s",
-				"failure published the rejected or later sibling",
-			)
-		}
-	}
-	{
 		assert.FatalIf(
 			t,
-			(*testCaseInput) == "final" && st.GetObject(target.Named()) == nil,
+			st.GetObject(target.Named()) != nil || st.GetObject(last.Named()) != nil,
 			"%s",
-			"final admission error rolled back accepted publication",
+			"failure published the rejected or later sibling",
 		)
 	}
+	assert.FatalIf(
+		t,
+		(*testCaseInput) == "final" && st.GetObject(target.Named()) == nil,
+		"%s",
+		"final admission error rolled back accepted publication",
+	)
 }

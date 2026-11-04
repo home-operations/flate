@@ -66,28 +66,22 @@ data: {value: rendered}
 			)
 			s.SetArtifact(l.Named(), &store.SourceArtifact{Key: "static-l"})
 			s.UpdateStatus(l.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
+			assert.FatalIf(
+				t,
+				s.GetObject(l.Named()) != l || s.GetArtifact(l.Named(), store.ArtifactContent) == nil,
+				"%v",
+				"fixture L is not live with an artifact",
+			)
 			{
-				assert.FatalIf(
-					t,
-					s.GetObject(l.Named()) != l || s.GetArtifact(l.Named(), store.ArtifactContent) == nil,
-					"%v",
-					"fixture L is not live with an artifact",
-				)
+				info, ok := s.GetStatus(l.Named())
+				assert.FatalIf(t, !ok || info.Status != store.StatusReady, "%v", "fixture L is not Ready")
 			}
-			{
-				{
-					info, ok := s.GetStatus(l.Named())
-					assert.FatalIf(t, !ok || info.Status != store.StatusReady, "%v", "fixture L is not Ready")
-				}
-			}
-			{
-				assert.FatalIf(
-					t,
-					s.GetArtifact(k, store.ArtifactContent) != nil,
-					"%v",
-					"fixture K unexpectedly emitted",
-				)
-			}
+			assert.FatalIf(
+				t,
+				s.GetArtifact(k, store.ArtifactContent) != nil,
+				"%v",
+				"fixture K unexpectedly emitted",
+			)
 			var publications atomic.Int64
 			c := resourceset.New(s, tasks, nil, true)
 			c.Configure(base.Options{})
@@ -108,14 +102,12 @@ data: {value: rendered}
 				tasks.YieldSlot(func() { <-withdrawn })
 				result := d.Dispatch(ctx, l.Named(), manifest.DrainNone)
 				defer result.Assessment.Close()
-				{
-					assert.ErrorIf(
-						t,
-						result.Assessment.Outcome() == schedule.Blocked,
-						"withdrawn dispatch blocked: %+v",
-						result.Assessment,
-					)
-				}
+				assert.ErrorIf(
+					t,
+					result.Assessment.Outcome() == schedule.Blocked,
+					"withdrawn dispatch blocked: %+v",
+					result.Assessment,
+				)
 			})
 			tasks.BlockTillDone()
 			output := manifest.NamedResource{
@@ -133,14 +125,12 @@ data: {value: rendered}
 				d.Dispatch(ctx, l.Named(), manifest.DrainNone)
 			})
 			tasks.BlockTillDone()
-			{
-				assert.FatalIf(
-					t,
-					tasks.Failures() != 0 || publications.Load() != 1 || s.GetObject(output) == nil,
-					"%v",
-					"restored control did not execute the real render body",
-				)
-			}
+			assert.FatalIf(
+				t,
+				tasks.Failures() != 0 || publications.Load() != 1 || s.GetObject(output) == nil,
+				"%v",
+				"restored control did not execute the real render body",
+			)
 		})
 	}
 }

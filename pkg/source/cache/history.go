@@ -35,7 +35,8 @@ func RecordInventory[T io.WriterTo](ctx context.Context, c *Cache, inventory Acc
 	if err != nil || !enabled {
 		return err
 	}
-	descriptor, _, _, lookupErr := c.RenderMetadata(ctx, inventory.Key, inventory.Lookup)
+	metadata, lookupErr := c.RenderMetadata(ctx, inventory.Key, inventory.Lookup)
+
 	if lookupErr != nil && !errors.Is(lookupErr, errdef.ErrNotFound) {
 		return lookupErr
 	}
@@ -43,13 +44,13 @@ func RecordInventory[T io.WriterTo](ctx context.Context, c *Cache, inventory Acc
 	if snapshot := c.snapshot.Load(); snapshot != nil {
 		history = snapshot.histories[inventory.Key]
 	}
-	if lookupErr == nil && descriptor.Annotations[acceptedRenderAnnotation] == inventory.Acceptance &&
+	if lookupErr == nil && metadata.Descriptor.Annotations[acceptedRenderAnnotation] == inventory.Acceptance &&
 		history.matches(&inventory.History, inventory.Acceptance) {
 		identity := ""
 		if history != nil {
 			identity = history.identity
 		}
-		if descriptor.Annotations[historyIdentityAnnotation] == identity {
+		if metadata.Descriptor.Annotations[historyIdentityAnnotation] == identity {
 			return ctx.Err() //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 		}
 	}
@@ -118,6 +119,15 @@ type RenderHistory struct {
 	Sources []manifest.SourceEvidence
 }
 
+type historyRecord struct {
+	identity   string
+	identities map[manifest.SourceIdentity]string
+	Acceptance string                 `json:"Acceptance"`
+	Build      string                 `json:"Build"`
+	Owner      manifest.NamedResource `json:"Owner"`
+	Sources    []historyPaths         `json:"Sources"`
+}
+
 func (r *historyRecord) metadata() (map[string]string, error) {
 	if r == nil {
 		return nil, nil //nolint:nilnil // A nil value and nil error represent an optional absence or a reusable-cache miss.
@@ -137,15 +147,6 @@ type historyPaths struct {
 type historyPath struct {
 	Path    string `json:"Path"`
 	Subtree bool   `json:"Subtree"`
-}
-
-type historyRecord struct {
-	identity   string
-	identities map[manifest.SourceIdentity]string
-	Acceptance string                 `json:"Acceptance"`
-	Build      string                 `json:"Build"`
-	Owner      manifest.NamedResource `json:"Owner"`
-	Sources    []historyPaths         `json:"Sources"`
 }
 
 func (hv *RenderHistory) record(acceptance string) *historyRecord {
@@ -271,21 +272,22 @@ func changedHistoryPaths(query []manifest.SourceEvidence) map[string]map[string]
 	changes := map[string]map[string]struct{}{}
 	identities := map[manifest.SourceIdentity]string{}
 	for _, evidence := range query {
-		if evidence.Source != (manifest.SourceIdentity{}) {
-			id := identities[evidence.Source]
-			if id == "" {
-				id = manifest.Fingerprint(evidence.Source)
-				identities[evidence.Source] = id
-			}
-			file := path.Clean(evidence.Path)
-			if !fs.ValidPath(file) {
-				continue
-			}
-			if changes[id] == nil {
-				changes[id] = map[string]struct{}{}
-			}
-			changes[id][file] = struct{}{}
+		if evidence.Source == (manifest.SourceIdentity{}) {
+			continue
 		}
+		id := identities[evidence.Source]
+		if id == "" {
+			id = manifest.Fingerprint(evidence.Source)
+			identities[evidence.Source] = id
+		}
+		file := path.Clean(evidence.Path)
+		if !fs.ValidPath(file) {
+			continue
+		}
+		if changes[id] == nil {
+			changes[id] = map[string]struct{}{}
+		}
+		changes[id][file] = struct{}{}
 	}
 
 	return changes

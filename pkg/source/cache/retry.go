@@ -120,7 +120,7 @@ func (c *Cache) acquire(
 	}
 }
 
-func backoffSchedule(attempt uint64, minimum, maximum time.Duration) (time.Duration, time.Duration) {
+func backoffSchedule(attempt uint64, minimum, maximum time.Duration) retrySchedule {
 	if maximum <= 0 {
 		maximum = defaultMaximumBackoff
 	}
@@ -135,18 +135,21 @@ func backoffSchedule(attempt uint64, minimum, maximum time.Duration) (time.Durat
 		}
 		delay *= 2
 	}
-	return delay, maximum
+	return retrySchedule{delay: delay, ceiling: maximum}
 }
 
 func (c RetryConfig) backoff(attempt int) time.Duration {
-	delay, ceiling := backoffSchedule(uint64(max(attempt, 0)), c.MinWait, c.MaxWait)
+	schedule := backoffSchedule(uint64(max(attempt, 0)), c.MinWait, c.MaxWait)
+
 	if c.Jitter <= 0 || math.IsNaN(c.Jitter) || math.IsInf(c.Jitter, 0) {
-		return delay
+		return schedule.delay
 	}
 	jitter := min(c.Jitter, 1)
-	spread := float64(delay) * (1 - jitter + rand.Float64()*2*jitter) //nolint:gosec // Non-cryptographic retry jitter.
-	if spread >= float64(ceiling) {
-		return ceiling
+	spread := float64(
+		schedule.delay,
+	) * (1 - jitter + rand.Float64()*2*jitter) //nolint:gosec // Non-cryptographic retry jitter.
+	if spread >= float64(schedule.ceiling) {
+		return schedule.ceiling
 	}
 	return time.Duration(spread)
 }
@@ -175,3 +178,5 @@ func retryable(err error) bool {
 	return errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNREFUSED) ||
 		errors.Is(err, io.ErrUnexpectedEOF)
 }
+
+type retrySchedule struct{ delay, ceiling time.Duration }

@@ -89,6 +89,17 @@ func Sweep(ctx context.Context, root string, opts SweepOpts) (SweepResult, error
 	return selection.apply(ctx)
 }
 
+// Selection MUST finish every read before maintenance opens a writable store.
+type sweepSelection struct {
+	root        *os.Root
+	store       *oci.ReadOnlyStore
+	retained    map[string]struct{}
+	seen        map[digest.Digest]bool
+	result      SweepResult
+	tags        []string
+	generations []string
+}
+
 func (s *sweepSelection) apply(ctx context.Context) (SweepResult, error) {
 	res, r := s.result, s.root
 	writable, err := oci.NewWithContext(ctx, filepath.Join(r.Name(), ociDir))
@@ -118,17 +129,6 @@ func (s *sweepSelection) apply(ctx context.Context) (SweepResult, error) {
 		}
 	}
 	return res, nil
-}
-
-// Selection MUST finish every read before maintenance opens a writable store.
-type sweepSelection struct {
-	root        *os.Root
-	store       *oci.ReadOnlyStore
-	retained    map[string]struct{}
-	seen        map[digest.Digest]bool
-	result      SweepResult
-	tags        []string
-	generations []string
 }
 
 func selectSweep(ctx context.Context, r *os.Root, maxAge time.Duration) (sweepSelection, error) {

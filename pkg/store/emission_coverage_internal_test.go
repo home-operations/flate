@@ -48,10 +48,9 @@ func testRecordEmittedShadowedCoverageAncestorReplacementCase(
 				"path": name, "sourceRef": map[string]any{"kind": binding.Kind, "name": binding.Name},
 			},
 		}
-		obj, authoritative, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
-		{
-			assert.NoError(t, err)
-		}
+		parsed, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+		obj, authoritative := parsed.Object, parsed.Document
+		assert.NoError(t, err)
 		return Child{Obj: obj, Doc: authoritative}
 	}
 	currentSource := source
@@ -221,28 +220,22 @@ func TestRecordEmitted_DescendantRetainsBootstrapAuthority(t *testing.T) {
 		}
 	}
 	s.RecordEmitted(applier.Named(), &Emission{Children: []Child{{Obj: seed}}, Complete: true}, nil)
-	{
-		assert.FatalIf(t, s.GetObject(stale.Obj.Named()) != nil, "%s", "withdrawal revived an unrelated bootstrap seed")
-	}
+	assert.FatalIf(t, s.GetObject(stale.Obj.Named()) != nil, "%s", "withdrawal revived an unrelated bootstrap seed")
 	s.RecordEmitted(seed.Named(), &Emission{Complete: true}, nil)
-	{
-		assert.FatalIf(
-			t,
-			s.GetObject(middle.Named()) != nil || s.GetObject(applier.Named()) != nil ||
-				s.GetObject(seed.Named()) != seed,
-			"%s",
-			"producer withdrawal retained emitted descendants or retired its own authority",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.GetObject(middle.Named()) != nil || s.GetObject(applier.Named()) != nil ||
+			s.GetObject(seed.Named()) != seed,
+		"%s",
+		"producer withdrawal retained emitted descendants or retired its own authority",
+	)
 	s.RecordEmitted(seed.Named(), &Emission{Children: []Child{{Obj: middle}}, Complete: true}, nil)
-	{
-		assert.FatalIf(
-			t,
-			s.GetObject(applier.Named()) != applier,
-			"%s",
-			"producer replay did not restore its emitted descendant",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.GetObject(applier.Named()) != applier,
+		"%s",
+		"producer replay did not restore its emitted descendant",
+	)
 	independent := &manifest.Kustomization{Name: "z-root", Namespace: "apps"}
 	s.AddObject(independent)
 	s.RecordEmitted(independent.Named(), &Emission{Children: []Child{{Obj: seed}}, Complete: true}, nil)
@@ -364,17 +357,13 @@ func testRecordEmittedCoverageAndStaticBoundaryCase2(
 		s.RecordEmitted(q, &Emission{Children: []Child{other}, Complete: true}, nil)
 		assert.Equal(t, s.EmissionOwner(seed.Obj.Named()), manifest.NamedResource{})
 		warnings := s.Warnings()
-		{
-			assert.FatalIf(t, len(warnings) != 1, "static conflict warnings: %+v", warnings)
-		}
+		assert.FatalIf(t, len(warnings) != 1, "static conflict warnings: %+v", warnings)
 		assert.Equal(t, warnings[0].Resource, seed.Obj.Named())
 		assert.Equal(t, warnings[0].Category, manifest.WarnConflictingProducers)
 		assert.Equal(t, warnings[0].Count, 1)
 		assert.Equal(t, warnings[0].Message, "conflicting producers; using static object")
 		assert.Diff(t, warnings[0].Detail, []string{p.String(), q.String()})
-		{
-			assert.FatalIf(t, s.GetObject(seed.Obj.Named()) != seed.Obj, "%s", "rooted read lost static authority")
-		}
+		assert.FatalIf(t, s.GetObject(seed.Obj.Named()) != seed.Obj, "%s", "rooted read lost static authority")
 		checkEffectiveObject(t, s, seed.Obj.Named(), seed)
 		replacement := emissionChild("seed", "replacement")
 		s.AddObject(replacement.Obj, replacement.Doc)
@@ -382,20 +371,16 @@ func testRecordEmittedCoverageAndStaticBoundaryCase2(
 		_, document, replaced := s.GetEmission(seed.Obj.Named())
 		assert.Diff(t, document, replacement.Doc)
 		replaced.Finish()
-		{
-			assert.FatalIf(t, !s.DeleteObject(seed.Obj.Named()), "%s", "static authority was not deleted")
-		}
+		assert.FatalIf(t, !s.DeleteObject(seed.Obj.Named()), "%s", "static authority was not deleted")
 		checkEffectiveObject(t, s, seed.Obj.Named(), other)
 		return
 	}
-	{
-		assert.FatalIf(
-			t,
-			!s.DeleteObject(seed.Obj.Named()) || s.GetObject(seed.Obj.Named()) != child.Obj,
-			"%s",
-			"static deletion lost live emitted support",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!s.DeleteObject(seed.Obj.Named()) || s.GetObject(seed.Obj.Named()) != child.Obj,
+		"%s",
+		"static deletion lost live emitted support",
+	)
 	assert.Equal(t, s.EmissionOwner(seed.Obj.Named()), p)
 	checkEffectiveObject(t, s, seed.Obj.Named(), child)
 }
@@ -415,14 +400,12 @@ func testRecordEmittedCoverageAndStaticBoundaryNeverEmittedStatic(t *testing.T) 
 	attempt.Complete = true
 	s.RecordEmitted(p, &attempt, nil)
 	attempt.Finish()
-	{
-		assert.FatalIf(
-			t,
-			s.GetObject(seed.Obj.Named()) != nil,
-			"%s",
-			"empty membership exposed hidden static prediction",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.GetObject(seed.Obj.Named()) != nil,
+		"%s",
+		"empty membership exposed hidden static prediction",
+	)
 }
 
 func testRecordEmittedCoverageAndStaticBoundaryReplayedBootstrapSeed(t *testing.T) {
@@ -444,14 +427,12 @@ func testRecordEmittedCoverageAndStaticBoundaryReplayedBootstrapSeed(t *testing.
 	}})
 	s.RecordEmitted(p, next, nil)
 	s.RecordEmitted(p, &Emission{Complete: true}, nil)
-	{
-		assert.FatalIf(
-			t,
-			s.GetObject(seed.Obj.Named()) != nil,
-			"%s",
-			"equal replay failed to retire the bootstrap seed",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.GetObject(seed.Obj.Named()) != nil,
+		"%s",
+		"equal replay failed to retire the bootstrap seed",
+	)
 }
 
 func testRecordEmittedCoverageAndStaticBoundaryCase3(
@@ -491,24 +472,20 @@ func testRecordEmittedCoverageAndStaticBoundaryCase3(
 		t.Helper()
 		for _, id := range []manifest.NamedResource{k, l, tail.Obj.Named()} {
 			sh := s.shardFor(id)
-			{
-				assert.ErrorIf(
-					t,
-					(s.GetObject(id) != nil) != want || sh.cells[id].hidden == want,
-					"%v support/visibility disagree, want live=%t",
-					id,
-					want,
-				)
-			}
-			{
-				assert.ErrorIf(
-					t,
-					sh.cells[id].static != nil && sh.cells[id].retired == want,
-					"%v retirement disagrees, want live=%t",
-					id,
-					want,
-				)
-			}
+			assert.ErrorIf(
+				t,
+				(s.GetObject(id) != nil) != want || sh.cells[id].hidden == want,
+				"%v support/visibility disagree, want live=%t",
+				id,
+				want,
+			)
+			assert.ErrorIf(
+				t,
+				sh.cells[id].static != nil && sh.cells[id].retired == want,
+				"%v retirement disagrees, want live=%t",
+				id,
+				want,
+			)
 		}
 	}
 	publish(p, true)
@@ -528,9 +505,7 @@ func testRecordEmittedCoverageAndStaticBoundaryCase3(
 	if (*testCaseInput) == "other-source-current" {
 		s.AddObject(child.Obj)
 		check(true)
-		{
-			assert.FatalIf(t, !s.DeleteObject(k), "%s", "independent anchor was not removed")
-		}
+		assert.FatalIf(t, !s.DeleteObject(k), "%s", "independent anchor was not removed")
 		check(false)
 	}
 	if (*testCaseInput) == "boundary-support" {
@@ -590,14 +565,12 @@ func testRecordEmittedCoverageAndStaticBoundaryCaseCompletion(
 	assert.Equal(t, scope.s.EmissionOwner(scope.seed.Obj.Named()), (*scope.p))
 	checkEffectiveObject(t, scope.s, scope.seed.Obj.Named(), actual)
 	if *scope.independent {
-		{
-			assert.FatalIf(
-				t,
-				scope.s.GetObject(scope.seed.Obj.Named()) != actual.Obj,
-				"%s",
-				"accepted output did not replace independent static content",
-			)
-		}
+		assert.FatalIf(
+			t,
+			scope.s.GetObject(scope.seed.Obj.Named()) != actual.Obj,
+			"%s",
+			"accepted output did not replace independent static content",
+		)
 		_, _, empty := scope.s.GetEmission((*scope.p))
 		empty.Children, empty.Manifests = nil, nil
 		empty.Complete = true
@@ -633,24 +606,20 @@ func testRecordEmittedCoverageAndStaticBoundaryCaseCompletion(
 	empty.Manifests = nil
 	empty.Complete = true
 	accept(t, scope.s, (*scope.p), &empty)
-	{
-		assert.FatalIf(
-			t,
-			scope.s.GetObject(scope.seed.Obj.Named()) != nil ||
-				len(scope.s.Productions(scope.seed.Obj.Named(), nil)) != 0,
-			"%s",
-			"complete empty resurrected covered prediction",
-		)
-	}
+	assert.FatalIf(
+		t,
+		scope.s.GetObject(scope.seed.Obj.Named()) != nil ||
+			len(scope.s.Productions(scope.seed.Obj.Named(), nil)) != 0,
+		"%s",
+		"complete empty resurrected covered prediction",
+	)
 	checkEffectiveObject(t, scope.s, scope.seed.Obj.Named(), Child{})
 	scope.s.AddObject(scope.seed.Obj)
 	checkEffectiveObject(t, scope.s, scope.seed.Obj.Named(), (*scope.seed))
-	{
-		assert.FatalIf(
-			t,
-			scope.s.GetObject(scope.seed.Obj.Named()) == nil,
-			"%s",
-			"explicit external anchor could not restore covered identity",
-		)
-	}
+	assert.FatalIf(
+		t,
+		scope.s.GetObject(scope.seed.Obj.Named()) == nil,
+		"%s",
+		"explicit external anchor could not restore covered identity",
+	)
 }

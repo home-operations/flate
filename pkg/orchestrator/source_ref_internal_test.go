@@ -94,30 +94,22 @@ func testRunDefaultGitCacheCase(t *testing.T, testCaseInput *string,
 		cfg.Cache = cachetest.New(t, t.TempDir(), sourcecache.New)
 	}
 	o, err := newTestOrchestrator(t, cfg.Tree, cfg.Config)
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	t.Cleanup(func() {
 		o.stop()
 	})
 	{
-		{
-			err := o.bootstrap(t.Context())
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := o.bootstrap(t.Context())
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	{
-		{
-			err := o.run(t.Context())
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := o.run(t.Context())
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	for _, name := range []string{"first", "second"} {
 		id := testutil.KustomizationID("flux-system", name)
 		artifact, ok := o.Store().GetArtifact(id, store.ArtifactContent).(*store.Emission)
-		{
-			assert.FatalIf(t, !ok || len(artifact.Manifests) != 1, "remote render %s = %v", name, artifact)
-		}
+		assert.FatalIf(t, !ok || len(artifact.Manifests) != 1, "remote render %s = %v", name, artifact)
 	}
 }
 
@@ -146,12 +138,10 @@ spec:
 		)
 		if i == 0 {
 			{
-				{
-					err := repo.Storer.SetReference(
-						plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), hash),
-					)
-					assert.FatalIf(t, err != nil, "%v", err)
-				}
+				err := repo.Storer.SetReference(
+					plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), hash),
+				)
+				assert.FatalIf(t, err != nil, "%v", err)
 			}
 		}
 	}
@@ -168,37 +158,29 @@ spec:
 		cfg.Cache = cachetest.New(t, ownerRoot, sourcecache.New)
 	}
 	o, err := newTestOrchestrator(t, cfg.Tree, cfg.Config)
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	t.Cleanup(func() {
 		o.stop()
 	})
 	{
-		{
-			err := o.bootstrap(t.Context())
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := o.bootstrap(t.Context())
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
-	{
-		assert.FatalIf(
-			t,
-			o.hrc.Helm == nil || o.ksc.Trees == nil || (cfg.Cache != nil && o.cache != cfg.Cache),
-			"%v",
-			"renderers did not receive the selected cache before discovery",
-		)
-	}
+	assert.FatalIf(
+		t,
+		o.hrc.Helm == nil || o.ksc.Trees == nil || (cfg.Cache != nil && o.cache != cfg.Cache),
+		"%v",
+		"renderers did not receive the selected cache before discovery",
+	)
 	if cfg.Cache != nil {
 		entries, err := os.ReadDir(selectedRoot)
-		{
-			assert.FatalIf(
-				t,
-				err != nil || len(entries) != 0,
-				"injected owner created independent cache backing: entries=%v err=%v",
-				entries,
-				err,
-			)
-		}
+		assert.FatalIf(
+			t,
+			err != nil || len(entries) != 0,
+			"injected owner created independent cache backing: entries=%v err=%v",
+			entries,
+			err,
+		)
 	}
 	id := manifest.NamedResource{
 		Group:     "source.toolkit.fluxcd.io",
@@ -207,25 +189,19 @@ spec:
 		Name:      "cluster",
 	}
 	{
-		{
-			err := o.run(t.Context())
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := o.run(t.Context())
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	artifact := o.Store().GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
+	assert.FatalIf(
+		t,
+		artifact.FS == nil || artifact.Key == "",
+		"selected cache %s did not reach discovery: %+v",
+		selectedRoot,
+		artifact,
+	)
 	{
-		assert.FatalIf(
-			t,
-			artifact.FS == nil || artifact.Key == "",
-			"selected cache %s did not reach discovery: %+v",
-			selectedRoot,
-			artifact,
-		)
-	}
-	{
-		{
-			content, err := fs.ReadFile(artifact.FS, "value.txt")
-			assert.FatalIf(t, err != nil || string(content) != "A", "committed artifact = %q, %v", content, err)
-		}
+		content, err := fs.ReadFile(artifact.FS, "value.txt")
+		assert.FatalIf(t, err != nil || string(content) != "A", "committed artifact = %q, %v", content, err)
 	}
 }

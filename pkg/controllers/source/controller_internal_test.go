@@ -152,9 +152,7 @@ func TestSource_CapturedMaterialRefresh(t *testing.T) {
 				},
 			},
 		)
-		{
-			assert.FatalIf(t, pending != 1, "pending transitions=%d, want only initial acquisition", pending)
-		}
+		assert.FatalIf(t, pending != 1, "pending transitions=%d, want only initial acquisition", pending)
 		if accepted.Outcome() == schedule.Blocked || !accepted.Valid() || f.calls != phase.calls {
 			t.Fatalf(
 				"assessment valid=%t unresolved=%t acquisitions=%d, want %d",
@@ -332,9 +330,7 @@ func TestController_FetchErrorMarksFailed(t *testing.T) {
 		t,
 		controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode},
 	)
-	{
-		assert.FatalIf(t, info.Status != store.StatusFailed, "status = %+v, want StatusFailed", info)
-	}
+	assert.FatalIf(t, info.Status != store.StatusFailed, "status = %+v, want StatusFailed", info)
 	if info.String() != "boom" {
 		t.Errorf("Failed reason = %q, want %q", info.String(), "boom")
 	}
@@ -380,22 +376,18 @@ func TestController_UnregisteredKindIgnored(t *testing.T) {
 	}
 	st.AddObject(oci)
 	{
-		{
-			info := controllertest.DispatchToFixpoint(
-				t.Context(),
-				t,
-				controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: oci.Named(), ReconcileNode: c.ReconcileNode},
-			)
-			assert.FatalIf(t, info.Status != store.StatusReady, "status = %+v, want StatusReady", info)
-		}
+		info := controllertest.DispatchToFixpoint(
+			t.Context(),
+			t,
+			controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: oci.Named(), ReconcileNode: c.ReconcileNode},
+		)
+		assert.FatalIf(t, info.Status != store.StatusReady, "status = %+v, want StatusReady", info)
 	}
 
 	// The unregistered kind was never dispatched, so it must have no status.
 	{
-		{
-			_, ok := st.GetStatus(unregistered.Named())
-			assert.ErrorIf(t, ok, "expected no status update for unregistered kind")
-		}
+		_, ok := st.GetStatus(unregistered.Named())
+		assert.ErrorIf(t, ok, "expected no status update for unregistered kind")
 	}
 }
 
@@ -517,14 +509,12 @@ func testSourceDeclarationContributorsReuseCase(
 	c.Tasks.BlockTillDone()
 	wantCalls := 1
 	if (*testCaseInput.timing) == "changed_in_flight" {
-		{
-			assert.FatalIf(
-				t,
-				accepted.Valid() || st.GetArtifact(chart.Named(), store.ArtifactContent) != nil,
-				"%v",
-				"changed content accepted the invalidated acquisition",
-			)
-		}
+		assert.FatalIf(
+			t,
+			accepted.Valid() || st.GetArtifact(chart.Named(), store.ArtifactContent) != nil,
+			"%v",
+			"changed content accepted the invalidated acquisition",
+		)
 		accepted.Retire()
 		c.Tasks.Go(t.Context(), "changed content", func(ctx context.Context) {
 			accepted = c.ReconcileNode(ctx, chart.Named(), manifest.DrainNone)
@@ -554,14 +544,12 @@ func testSourceDeclarationContributorsReuseCase(
 		&store.Emission{Children: []store.Child{{Obj: chart}}, Complete: (*testCaseInput.complete)},
 	)
 	publish("changed again")
-	{
-		assert.FatalIf(
-			t,
-			accepted.Valid(),
-			"%v",
-			"producer publication did not invalidate the captured availability assessment",
-		)
-	}
+	assert.FatalIf(
+		t,
+		accepted.Valid(),
+		"%v",
+		"producer publication did not invalidate the captured availability assessment",
+	)
 	c.Tasks.Go(t.Context(), "successor", func(ctx context.Context) {
 		next := c.ReconcileNode(ctx, chart.Named(), manifest.DrainNone)
 		defer next.Close()
@@ -620,14 +608,12 @@ func testSourceDeclarationProgressCase(t *testing.T, testCaseInput *string,
 					); err != nil {
 						return err
 					}
-					{
-						assert.ErrorIf(
-							t,
-							run.Reads.GetArtifact(repo.Named(), store.ArtifactContent) == nil,
-							"%v",
-							"producer did not receive source content",
-						)
-					}
+					assert.ErrorIf(
+						t,
+						run.Reads.GetArtifact(repo.Named(), store.ArtifactContent) == nil,
+						"%v",
+						"producer did not receive source content",
+					)
 					run.Emit(
 						t.Context(),
 						id,
@@ -643,10 +629,8 @@ func testSourceDeclarationProgressCase(t *testing.T, testCaseInput *string,
 	scheduler := schedule.New(c.Tasks, dispatch)
 	scheduler.Seed(ids)
 	{
-		{
-			err := scheduler.Run(t.Context())
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := scheduler.Run(t.Context())
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	info, _ := st.GetStatus(repo.Named())
 	if (*testCaseInput) == "absent producer" {
@@ -691,19 +675,17 @@ func testControllerFetchesAndStoresArtifactCase(
 		(*testCaseInput.st).SetArtifact((*testCaseInput.repo).Named(), &pin)
 	}
 	{
-		{
-			info := controllertest.DispatchToFixpoint(
-				t.Context(),
-				t,
-				controllertest.Dispatch{
-					Tasks:         (*testCaseInput.c).Tasks,
-					Store:         (*testCaseInput.st),
-					ID:            (*testCaseInput.repo).Named(),
-					ReconcileNode: (*testCaseInput.c).ReconcileNode,
-				},
-			)
-			assert.FatalIf(t, info.Status != store.StatusReady, "status = %+v, want StatusReady", info)
-		}
+		info := controllertest.DispatchToFixpoint(
+			t.Context(),
+			t,
+			controllertest.Dispatch{
+				Tasks:         (*testCaseInput.c).Tasks,
+				Store:         (*testCaseInput.st),
+				ID:            (*testCaseInput.repo).Named(),
+				ReconcileNode: (*testCaseInput.c).ReconcileNode,
+			},
+		)
+		assert.FatalIf(t, info.Status != store.StatusReady, "status = %+v, want StatusReady", info)
 	}
 	if (*testCaseInput.f).retry.MaxAge != time.Hour ||
 		(*testCaseInput.f).retry.Retry != (sourcecache.RetryConfig{Attempts: 3}) ||
@@ -712,28 +694,24 @@ func testControllerFetchesAndStoresArtifactCase(
 		t.Fatalf("configured policy=%+v", (*testCaseInput.f).retry)
 	}
 	art, ok := (*testCaseInput.st).GetArtifact((*testCaseInput.repo).Named(), store.ArtifactContent).(*store.SourceArtifact)
+	assert.FatalIf(
+		t,
+		!ok || art.FS == nil || art.Kind != (*testCaseInput.f).artifact.Kind || art.URL != (*testCaseInput.f).artifact.URL || art.Key != "pin" ||
+			art.Revision != (*testCaseInput.f).artifact.Revision ||
+			art.Digest != (*testCaseInput.f).artifact.Digest,
+		"artifact = %+v, want readable source with original identity",
+		art,
+	)
 	{
+		got, err := fs.ReadFile(art.FS, "source.txt")
 		assert.FatalIf(
 			t,
-			!ok || art.FS == nil || art.Kind != (*testCaseInput.f).artifact.Kind || art.URL != (*testCaseInput.f).artifact.URL || art.Key != "pin" ||
-				art.Revision != (*testCaseInput.f).artifact.Revision ||
-				art.Digest != (*testCaseInput.f).artifact.Digest,
-			"artifact = %+v, want readable source with original identity",
-			art,
+			err != nil || string(got) != content,
+			"artifact bytes = %q, error = %v, want %q",
+			got,
+			err,
+			content,
 		)
-	}
-	{
-		{
-			got, err := fs.ReadFile(art.FS, "source.txt")
-			assert.FatalIf(
-				t,
-				err != nil || string(got) != content,
-				"artifact bytes = %q, error = %v, want %q",
-				got,
-				err,
-				content,
-			)
-		}
 	}
 }
 
@@ -776,14 +754,12 @@ func testControllerShortCircuitsToReadyCase(t *testing.T, testCaseInput *bool,
 			if info.Outcome() != outcome || info.String() != message || f.calls != calls {
 				t.Fatalf("status=%+v fetch calls=%d, want Ready/%q calls=%d", info, f.calls, message, calls)
 			}
-			{
-				assert.FatalIf(
-					t,
-					st.GetArtifact(tc.obj.Named(), store.ArtifactContent) != nil,
-					"%v",
-					"no-content reconciliation fabricated an artifact",
-				)
-			}
+			assert.FatalIf(
+				t,
+				st.GetArtifact(tc.obj.Named(), store.ArtifactContent) != nil,
+				"%v",
+				"no-content reconciliation fabricated an artifact",
+			)
 		})
 	}
 }

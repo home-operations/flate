@@ -142,15 +142,13 @@ func testRenderRemoteValidationSlotsCase(t *testing.T, testCaseInput *string,
 		<-ready
 		close(begin)
 		a, b := <-entered, <-entered
-		{
-			assert.FatalIf(
-				t,
-				(a != "/a" || b != "/b") && (a != "/b" || b != "/a"),
-				"independent frontier did not start first: %q %q",
-				a,
-				b,
-			)
-		}
+		assert.FatalIf(
+			t,
+			(a != "/a" || b != "/b") && (a != "/b" || b != "/a"),
+			"independent frontier did not start first: %q %q",
+			a,
+			b,
+		)
 		synctest.Wait()
 		assert.Equal(t, active.Load(), int32(2))
 		releaseFirst()
@@ -292,18 +290,14 @@ type remoteSlotCheckInputs struct {
 func assertRemoteSlotAcquisitions(t *testing.T, inputs *remoteSlotCheckInputs) {
 	t.Helper()
 	if **inputs.scenario != "validation" {
-		{
-			assert.FatalIf(
-				t,
-				!reflect.DeepEqual(inputs.result.out, inputs.otherResult.out) || len(inputs.result.out) == 0,
-				"%s",
-				"two deterministic renders differ or are empty",
-			)
-		}
+		assert.FatalIf(
+			t,
+			!reflect.DeepEqual(inputs.result.out, inputs.otherResult.out) || len(inputs.result.out) == 0,
+			"%s",
+			"two deterministic renders differ or are empty",
+		)
 		for _, name := range []string{"input", "shared", "git"} {
-			{
-				assert.ErrorIf(t, !hasRenderField(inputs.result.out, "name", name), "render omitted %s", name)
-			}
+			assert.ErrorIf(t, !hasRenderField(inputs.result.out, "name", name), "render omitted %s", name)
 		}
 	}
 	(*inputs.cache).Close()

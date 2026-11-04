@@ -100,21 +100,17 @@ func testLoadFSChartAutomaticArchiveSemanticsCase(
 		if gotErr == nil {
 			t.Fatalf("Helm rejected archive with %v; flate loaded %s", wantErr, got.chart.Name())
 		}
-		{
-			assert.FatalIf(
-				t,
-				!strings.Contains(gotErr.Error(), wantErr.Error()),
-				"Helm error %v; flate error %v",
-				wantErr,
-				gotErr,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!strings.Contains(gotErr.Error(), wantErr.Error()),
+			"Helm error %v; flate error %v",
+			wantErr,
+			gotErr,
+		)
 		return
 	}
 	t.Logf("Helm accepted chart %q with %d templates", want.Name(), len(want.Templates))
-	{
-		assert.FatalIf(t, gotErr != nil, "Helm accepted archive; flate failed: %v", gotErr)
-	}
+	assert.FatalIf(t, gotErr != nil, "Helm accepted archive; flate failed: %v", gotErr)
 	{
 		diff := cmp.Diff(
 			want,

@@ -38,7 +38,7 @@ func testAdmitGraphProjectionBootstrapDocumentOwners(t *testing.T) {
 		assert.FatalIf(t, l.Store.GetObject(id) != nil ||
 			l.AdmitsRoot(
 				l.IndexedObject(id, l.Index.Records[id]).Obj,
-				filepath.Join(root, "app/siblings.yaml"),
+				filepath.Join(root, "app", "siblings.yaml"),
 			), "omitted declaration became runnable: %s", id)
 		{
 			_, ok := l.Index.Lookup(id)
@@ -47,13 +47,11 @@ func testAdmitGraphProjectionBootstrapDocumentOwners(t *testing.T) {
 	}
 	l.Admit(root)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
-	{
-		assert.FatalIf(t, l.AdmitsRoot(
-			l.IndexedObject(
-				testutil.KustomizationID("apps", "self"),
-				l.Index.Records[testutil.KustomizationID("apps", "self")],
-			).Obj,
-			filepath.Join(root, "app/siblings.yaml"),
-		), "%s", "finalization lost denial")
-	}
+	assert.FatalIf(t, l.AdmitsRoot(
+		l.IndexedObject(
+			testutil.KustomizationID("apps", "self"),
+			l.Index.Records[testutil.KustomizationID("apps", "self")],
+		).Obj,
+		filepath.Join(root, "app", "siblings.yaml"),
+	), "%s", "finalization lost denial")
 }

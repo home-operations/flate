@@ -13,7 +13,14 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 )
 
-func sourceRefFixture(t *testing.T) (string, *gogit.Repository, plumbing.Hash, plumbing.Hash) {
+type sourceFixture struct {
+	root       string
+	repository *gogit.Repository
+	before     plumbing.Hash
+	after      plumbing.Hash
+}
+
+func sourceRefFixture(t *testing.T) sourceFixture {
 	t.Helper()
 	root := t.TempDir()
 	repo := testutil.GitInit(t, root)
@@ -57,5 +64,5 @@ data:
 		assert.NoError(t, repo.Storer.SetReference(plumbing.NewHashReference(
 			plumbing.NewTagReferenceName(version), head.Hash())))
 	}
-	return root, repo, hashes[0], hashes[1]
+	return sourceFixture{root: root, repository: repo, before: hashes[0], after: hashes[1]}
 }

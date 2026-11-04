@@ -190,13 +190,11 @@ func assertRegisteredGraphResults(t *testing.T, scope *registeredGraphResultStat
 		}
 		assert.Diff(t, status.BlockedBy(), wantBlockers)
 
-		{
-			assert.ErrorIf(
-				t, scope.testCaseInput.tc.
-					want == store.StatusFailed && status.Message == "", "%s: terminal failure has no diagnostic",
-				name,
-			)
-		}
+		assert.ErrorIf(
+			t, scope.testCaseInput.tc.
+				want == store.StatusFailed && status.Message == "", "%s: terminal failure has no diagnostic",
+			name,
+		)
 		wantRenders := int64(0)
 		if scope.testCaseInput.tc.want == store.StatusReady {
 			wantRenders = 1

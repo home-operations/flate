@@ -58,7 +58,7 @@ func pemKey(t *testing.T, priv *ecdsa.PrivateKey) string {
 	return string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
 }
 
-func makeCertificate(t *testing.T, tmpl *x509.Certificate) (string, string) {
+func makeCertificate(t *testing.T, tmpl *x509.Certificate) Certificate {
 	t.Helper()
 	priv := ecKey(t)
 	now := time.Now()
@@ -69,24 +69,28 @@ func makeCertificate(t *testing.T, tmpl *x509.Certificate) (string, string) {
 	if err != nil {
 		t.Fatalf("CreateCertificate: %v", err)
 	}
-	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), pemKey(t, priv)
+	return Certificate{
+		Cert: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})),
+		Key:  pemKey(t, priv),
+	}
 }
 
 // SelfSignedCA returns a PEM-encoded CA certificate.
 func SelfSignedCA(t *testing.T) string {
 	t.Helper()
-	cert, _ := makeCertificate(t, &x509.Certificate{
+	certificate := makeCertificate(t, &x509.Certificate{
 		Subject:  pkix.Name{CommonName: "flate-test-ca"},
 		KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
 		IsCA:     true,
 	})
-	return cert
+
+	return certificate.Cert
 }
 
 // SelfSignedServerCert returns a PEM-encoded server+client cert and
 // matching ECDSA private key — usable as both a TLS server cert and a
 // CA bundle (IsCA=true).
-func SelfSignedServerCert(t *testing.T) (string, string) {
+func SelfSignedServerCert(t *testing.T) Certificate {
 	t.Helper()
 	return makeCertificate(t, &x509.Certificate{
 		Subject:     pkix.Name{CommonName: "flate-test"},
@@ -98,7 +102,7 @@ func SelfSignedServerCert(t *testing.T) (string, string) {
 
 // SelfSignedClientCert returns a PEM-encoded client cert and matching
 // ECDSA private key — ExtKeyUsage is ClientAuth only.
-func SelfSignedClientCert(t *testing.T) (string, string) {
+func SelfSignedClientCert(t *testing.T) Certificate {
 	t.Helper()
 	return makeCertificate(t, &x509.Certificate{
 		Subject:     pkix.Name{CommonName: "flate-test-client"},
@@ -106,3 +110,6 @@ func SelfSignedClientCert(t *testing.T) (string, string) {
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	})
 }
+
+// Certificate keeps a PEM certificate with its matching private key.
+type Certificate struct{ Cert, Key string }

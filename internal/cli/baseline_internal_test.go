@@ -36,7 +36,8 @@ func TestRun_BasePathDiagnostics(t *testing.T) {
 			case "non git":
 				args = append(args, "--base", "HEAD")
 			}
-			_, stderr, code := runCLI(t, args...)
+			cli := runCLI(t, args...)
+			stderr, code := cli.stderr, cli.code
 			assert.FatalIf(
 				t,
 				code != 1 || !strings.Contains(stderr, tc.want),
@@ -110,7 +111,8 @@ func TestRun_BaseLinkExclusion(t *testing.T) {
 			}
 			assert.NoError(t, os.Remove(filepath.Join(root, "apps", "link.yaml")))
 			assert.NoError(t, os.Symlink("target-B", filepath.Join(root, "apps", "link.yaml")))
-			stdout, stderr, code := runCLI(t, args...)
+			cli := runCLI(t, args...)
+			stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 			switch {
 			case route == "referenced link":
 
@@ -176,7 +178,7 @@ func TestRun_BaseFailureIsolation(t *testing.T) {
 	)
 	assert.NoError(t, os.Rename(filepath.Join(root, "apps"), filepath.Join(root, "apps_real")))
 	assert.NoError(t, os.Symlink("apps_real", filepath.Join(root, "apps")))
-	stdout, stderr, code := runCLI(
+	cli := runCLI(
 		t,
 		"diff",
 		"ks",
@@ -191,6 +193,7 @@ func TestRun_BaseFailureIsolation(t *testing.T) {
 		"-o",
 		"diff",
 	)
+	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 	assert.FatalIf(t, code != 1 || !strings.Contains(stderr, "Kustomization  flux-system/apps") ||
 		!strings.Contains(stderr, "diff suppressed") ||
 		strings.Contains(stdout, "diff suppressed") ||
@@ -207,7 +210,8 @@ func TestRun_BaseFailureIsolation(t *testing.T) {
 func TestRun_EntryIgnoreDenial(t *testing.T) {
 	root := writeFixture(t)
 	assert.NoError(t, os.Symlink("apps/cm.yaml", filepath.Join(root, ".krmignore")))
-	stdout, stderr, code := runCLI(t, "build", "ks", "--path", root, "--concurrency", "2")
+	cli := runCLI(t, "build", "ks", "--path", root, "--concurrency", "2")
+	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 	assert.FatalIf(
 		t,
 		code != 1 || !strings.Contains(stderr, "permission denied"),
@@ -223,8 +227,9 @@ func TestRun_PathOrigSameDirectory(t *testing.T) {
 	root := writeFixture(t)
 	alias := filepath.Join(t.TempDir(), "same")
 	assert.NoError(t, os.Symlink(root, alias))
-	stdout, stderr, code := runCLI(t, "build", "ks", "--path", root, "--path-orig", alias,
+	cli := runCLI(t, "build", "ks", "--path", root, "--path-orig", alias,
 		"--cache-dir", t.TempDir(), "--concurrency", "2")
+	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 	assert.FatalIf(
 		t,
 		code != 0 || !strings.Contains(stdout, "name: hello"),

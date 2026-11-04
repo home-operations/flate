@@ -54,9 +54,7 @@ func TestSubstitutionProvider_ExactIdentity(t *testing.T) {
 			input := execution.data.Lookup(
 				manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "external"},
 			)
-			{
-				assert.FatalIf(t, (input.Data != nil) != tc.accepted, "input=%+v accepted=%t", input, tc.accepted)
-			}
+			assert.FatalIf(t, (input.Data != nil) != tc.accepted, "input=%+v accepted=%t", input, tc.accepted)
 		})
 	}
 }
@@ -93,28 +91,23 @@ func TestSubstitutionProvider_AcceptedSourceAndFallback(t *testing.T) {
 			defer execution.run.Close()
 			provider := values.NewStoreProvider(&execution.run.Reads, c.WipeSecrets)
 			missing := manifest.NamedResource{Kind: external.Named().Kind, Namespace: "apps", Name: "absent"}
-			{
-				assert.FatalIf(t, provider.Data(external.Named()) != tc.late.(manifest.Data) ||
-					provider.Data(other.Named()) != other.(manifest.Data) ||
-					provider.Data(missing) != nil, "%v", "provider lost repository precedence or exact identity")
-			}
-			{
-				assert.FatalIf(
-					t,
-					!provider.Lookup(external.Named()).Data.HasKeys(),
-					"%v",
-					"readable supplied source reported unreadable",
-				)
-			}
+			assert.FatalIf(t, provider.Data(external.Named()) != tc.late.(manifest.Data) ||
+				provider.Data(other.Named()) != other.(manifest.Data) ||
+				provider.Data(missing) != nil, "%v", "provider lost repository precedence or exact identity")
+			assert.FatalIf(
+				t,
+				!provider.Lookup(external.Named()).Data.HasKeys(),
+				"%v",
+				"readable supplied source reported unreadable",
+			)
 
 			{
-				{
-					got, _, err := values.NewStoreProvider(st, true).
-						Data(external.Named()).
-						Value("VALUE")
-					assert.FatalIf(t, err != nil ||
-						got != "late", "%v", "ordinary provider used supplied values")
-				}
+				valueResult, err := values.NewStoreProvider(st, true).
+					Data(external.Named()).
+					Value("VALUE")
+				got := valueResult.Value
+				assert.FatalIf(t, err != nil ||
+					got != "late", "%v", "ordinary provider used supplied values")
 			}
 		})
 	}
@@ -142,14 +135,10 @@ func TestSubstitutionProvider_SuppliedLookupAllocations(t *testing.T) {
 			defer execution.run.Close()
 			provider := execution.data
 			id := source.Named()
+			assert.FatalIf(t, provider.Data(id) == nil, "%v", "provider lost supplied identity")
 			{
-				assert.FatalIf(t, provider.Data(id) == nil, "%v", "provider lost supplied identity")
-			}
-			{
-				{
-					allocs := testing.AllocsPerRun(100, func() { provider.Data(id) })
-					assert.FatalIf(t, allocs != 0, "supplied lookup allocated %g times, want 0", allocs)
-				}
+				allocs := testing.AllocsPerRun(100, func() { provider.Data(id) })
+				assert.FatalIf(t, allocs != 0, "supplied lookup allocated %g times, want 0", allocs)
 			}
 		})
 	}
@@ -182,13 +171,10 @@ func TestReconcile_StrictSubstitutionClassification(t *testing.T) {
 			testutil.KustomizationYAML("consumer", "apps", "  {path: app, postBuild: {substituteStrategy: Always}}\n"),
 		),
 	)
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
-	obj, _, _, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{DefaultNamespace: ""})
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
+	parsed, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{DefaultNamespace: ""})
+	obj := parsed.Object
+	assert.FatalIf(t, err != nil, "%v", err)
 	ks := obj.(*manifest.Kustomization)
 	st.AddObject(ks)
 	tasks.Go(
@@ -197,12 +183,10 @@ func TestReconcile_StrictSubstitutionClassification(t *testing.T) {
 		func(ctx context.Context) { err = c.newExecution(ks.Named()).reconcile(ctx, ks, manifest.DrainNone) },
 	)
 	tasks.BlockTillDone()
-	{
-		assert.FatalIf(
-			t,
-			!errors.Is(err, manifest.ErrFlux) || !errors.Is(err, manifest.ErrInvalidSubstituteReference),
-			"strict engine failure lost classification: %v",
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!errors.Is(err, manifest.ErrFlux) || !errors.Is(err, manifest.ErrInvalidSubstituteReference),
+		"strict engine failure lost classification: %v",
+		err,
+	)
 }

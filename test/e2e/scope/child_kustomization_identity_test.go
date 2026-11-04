@@ -27,8 +27,9 @@ func e2EChildKustomizationIdentityNameCase(t *testing.T, flags *[]string, tc **s
 
 	renderRaw := func() map[string]string {
 		t.Helper()
-		out, stderr, code := harness.RunCLIBuffers(
+		runCLIBuffersResult1 := harness.RunCLIBuffers(
 			append([]string{"build", "all", "-o", "yaml"}, (*flags)...)...)
+		out, stderr, code := runCLIBuffersResult1.Stdout, runCLIBuffersResult1.Stderr, runCLIBuffersResult1.Code
 		assert.FatalIf(t, code != 0, "build exit=%d stderr=%s", code, stderr)
 		raw := make(map[string]string)
 		for body := range strings.SplitSeq(out, "---\n") {
@@ -36,7 +37,8 @@ func e2EChildKustomizationIdentityNameCase(t *testing.T, flags *[]string, tc **s
 			assert.NoError(t, err)
 			for _, doc := range docs {
 				version := manifest.DocAPIVersion(doc)
-				name, ns := manifest.DocMetadata(doc)
+				metadata := manifest.DocMetadata(doc)
+				name, ns := metadata.Name, metadata.Namespace
 				if manifest.DocKind(doc) != manifest.KindKustomization || name != "child" ||
 					version == "kustomize.toolkit.fluxcd.io/v1" {
 					continue

@@ -50,19 +50,15 @@ func TestGeneratedObjects_OCISelector(t *testing.T) {
 				}},
 			}
 			objects, err := GeneratedObjects(hr)
-			{
-				assert.NoError(t, err)
-			}
+			assert.NoError(t, err)
 			got := objects[0].(*OCIRepository).LayerSelector
 			if selector == nil {
-				{
-					assert.FatalIf(
-						t,
-						got == nil || got.Operation != sourcev1.OCILayerCopy,
-						"%s",
-						"nil selector did not receive the chart default",
-					)
-				}
+				assert.FatalIf(
+					t,
+					got == nil || got.Operation != sourcev1.OCILayerCopy,
+					"%s",
+					"nil selector did not receive the chart default",
+				)
 			} else {
 				assert.FatalIf(
 					t,
@@ -79,9 +75,7 @@ func TestGeneratedObjects_EmptyRule(t *testing.T) {
 	t.Parallel()
 	for _, obj := range []BaseManifest{&Kustomization{}, &HelmRelease{HelmReleaseSpec: helmv2.HelmReleaseSpec{Suspend: true, Chart: &helmv2.HelmChartTemplate{Kind: KindOCIRepository, Spec: helmv2.HelmChartTemplateSpec{OCIRepositorySpec: sourcev1.OCIRepositorySpec{URL: "oci://registry.example/chart"}}}}}, &HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: KindOCIRepository, Name: "chart"}}} {
 		objects, err := GeneratedObjects(obj)
-		{
-			assert.FatalIf(t, err != nil || objects != nil, "%T generated %v: %v", obj, objects, err)
-		}
+		assert.FatalIf(t, err != nil || objects != nil, "%T generated %v: %v", obj, objects, err)
 	}
 }
 
@@ -111,10 +105,9 @@ func TestReferences_InlineTemplateNoAllocations(t *testing.T) {
 				assert.NoError(t, err)
 			}
 			refs := slices.Collect(References(hr, ReferenceRelations))
-			capacity, _ := hr.ReferenceCapacity()
-			{
-				assert.FatalIf(t, len(refs) == 0 || len(refs) > capacity, "references=%v capacity=%d", refs, capacity)
-			}
+			limits := hr.ReferenceCapacity()
+			capacity := limits.References
+			assert.FatalIf(t, len(refs) == 0 || len(refs) > capacity, "references=%v capacity=%d", refs, capacity)
 			{
 				allocations := testing.AllocsPerRun(100, func() {
 					for range References(hr, ReferenceRelations) {
@@ -229,26 +222,20 @@ func TestHelmRelease_HistoryTemplatePolicy(t *testing.T) {
 			changed := hr.Clone()
 			tc.change(changed.HelmReleaseSpec.Chart)
 			originalTemplate, changedTemplate := hr.HelmReleaseSpec.Chart, changed.HelmReleaseSpec.Chart
-			{
-				assert.FatalIf(t, equalChartTemplate(originalTemplate, changedTemplate) ||
-					equalChartTemplate(changedTemplate, originalTemplate), "%s", "changed template compared equal")
-			}
-			{
-				assert.FatalIf(
-					t,
-					before.Equal(changed.HistoryPolicy()) || !before.Equal(hr.HistoryPolicy()),
-					"%s",
-					"template policy change reused history or mutated its predecessor",
-				)
-			}
+			assert.FatalIf(t, equalChartTemplate(originalTemplate, changedTemplate) ||
+				equalChartTemplate(changedTemplate, originalTemplate), "%s", "changed template compared equal")
+			assert.FatalIf(
+				t,
+				before.Equal(changed.HistoryPolicy()) || !before.Equal(hr.HistoryPolicy()),
+				"%s",
+				"template policy change reused history or mutated its predecessor",
+			)
 		})
 	}
-	{
-		assert.FatalIf(t, before.Equal(hr.WithNamespace("other").(*HelmRelease).HistoryPolicy()) ||
-			!before.Equal(
-				hr.Clone().HistoryPolicy(),
-			), "%s", "effective identity or no-op template history policy changed")
-	}
+	assert.FatalIf(t, before.Equal(hr.WithNamespace("other").(*HelmRelease).HistoryPolicy()) ||
+		!before.Equal(
+			hr.Clone().HistoryPolicy(),
+		), "%s", "effective identity or no-op template history policy changed")
 }
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
@@ -265,29 +252,23 @@ func TestEqual_HelmReleaseProjectionCache(t *testing.T) {
 		assert.FatalIf(t, allocations != 0, "equal chart declaration comparison allocates %g times", allocations)
 	}
 	clone.ChartRef.Name = "other"
-	{
-		assert.FatalIf(t, Equal(hr, clone), "%v", "changed chart declaration compared equal")
-	}
+	assert.FatalIf(t, Equal(hr, clone), "%v", "changed chart declaration compared equal")
 }
 
 func TestEqualChartTemplate_OptionalValues(t *testing.T) {
 	t.Parallel()
-	{
-		assert.FatalIf(
-			t,
-			!equalChartTemplate(nil, nil) || equalChartTemplate(nil, &helmv2.HelmChartTemplate{}),
-			"%s",
-			"template presence differs",
-		)
-	}
-	{
-		assert.FatalIf(
-			t,
-			equalChartTemplate(&helmv2.HelmChartTemplate{}, nil),
-			"%s",
-			"template presence comparison is asymmetric",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!equalChartTemplate(nil, nil) || equalChartTemplate(nil, &helmv2.HelmChartTemplate{}),
+		"%s",
+		"template presence differs",
+	)
+	assert.FatalIf(
+		t,
+		equalChartTemplate(&helmv2.HelmChartTemplate{}, nil),
+		"%s",
+		"template presence comparison is asymmetric",
+	)
 	for _, tc := range []struct {
 		name   string
 		mutate func(*helmv2.HelmChartTemplate)
@@ -303,14 +284,12 @@ func TestEqualChartTemplate_OptionalValues(t *testing.T) {
 		},
 		)
 	}
-	{
-		assert.FatalIf(
-			t,
-			!equalChartTemplate(&helmv2.HelmChartTemplate{}, &helmv2.HelmChartTemplate{}),
-			"%s",
-			"absent optional fields differ",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!equalChartTemplate(&helmv2.HelmChartTemplate{}, &helmv2.HelmChartTemplate{}),
+		"%s",
+		"absent optional fields differ",
+	)
 }
 
 type testGeneratedObjectsChartTemplateCaseInputs struct {
@@ -385,9 +364,7 @@ func testGeneratedObjectsChartTemplateCase(t *testing.T, testCaseInput *testGene
 	before := hr.DeepCopy()
 	projected := hr.WithNamespace("effective").(*HelmRelease)
 	objects, err := GeneratedObjects(projected)
-	{
-		assert.FatalIf(t, err != nil || len(objects) != 1, "objects=%v error=%v", objects, err)
-	}
+	assert.FatalIf(t, err != nil || len(objects) != 1, "objects=%v error=%v", objects, err)
 	release := helmv2.HelmRelease{
 		Name:      projected.Name,
 		Namespace: projected.Namespace,
@@ -405,14 +382,12 @@ func testGeneratedObjectsChartTemplateCase(t *testing.T, testCaseInput *testGene
 		)
 	}
 	subject := DiagnosticFor(objects[0].Named(), objects[0])
-	{
-		assert.FatalIf(
-			t,
-			subject.ID != objects[0].Named() || subject.Resource != projected.Named(),
-			"pre-emission diagnostic = %+v",
-			subject,
-		)
-	}
+	assert.FatalIf(
+		t,
+		subject.ID != objects[0].Named() || subject.Resource != projected.Named(),
+		"pre-emission diagnostic = %+v",
+		subject,
+	)
 	copied := objects[0].WithNamespace("another-source-namespace")
 	{
 		got := DiagnosticFor(copied.Named(), copied)
@@ -454,12 +429,10 @@ func testGeneratedObjectsChartTemplateCase(t *testing.T, testCaseInput *testGene
 		}
 		source.Reference.Tag, source.Verify.SecretRef.Name, *source.Ignore = "mutated", "mutated", "mutated"
 	}
-	{
-		assert.FatalIf(t, labels[HelmReleaseDomain+"/name"] != "app" ||
-			labels[HelmReleaseDomain+"/namespace"] != "effective" ||
-			labels["custom"] != "label" ||
-			annotations["custom"] != "annotation", "metadata=%v %v", labels, annotations)
-	}
+	assert.FatalIf(t, labels[HelmReleaseDomain+"/name"] != "app" ||
+		labels[HelmReleaseDomain+"/namespace"] != "effective" ||
+		labels["custom"] != "label" ||
+		annotations["custom"] != "annotation", "metadata=%v %v", labels, annotations)
 	labels["custom"], annotations["custom"] = "mutated", "mutated"
 	{
 		diff := cmp.Diff(before, &hr.HelmReleaseSpec)
@@ -484,12 +457,10 @@ func testEqualChartTemplateOptionalValuesCase(
 	}
 	changed := original.DeepCopy()
 	testCaseInput.mutate(changed)
-	{
-		assert.FatalIf(
-			t,
-			!equalChartTemplate(original, changed) || !equalChartTemplate(changed, original),
-			"%s",
-			"nil and empty collection semantics differ",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!equalChartTemplate(original, changed) || !equalChartTemplate(changed, original),
+		"%s",
+		"nil and empty collection semantics differ",
+	)
 }

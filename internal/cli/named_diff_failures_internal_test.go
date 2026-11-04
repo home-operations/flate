@@ -36,11 +36,13 @@ func TestRun_NamedScope_DiffBothSnapshots(t *testing.T) {
 		"--concurrency",
 		"2",
 	}
-	want, _, code := runCLI(t, args...)
+	cli := runCLI(t, args...)
+	want, code := cli.stdout, cli.code
 	assert.Equal(t, code, 0)
 	assert.FatalIf(t, want == "", "%v", "selected chart change produced no diff")
 	appendScopeSpec(t, root, "cluster/unrelated.yaml", "  postBuild: {substitute: {GREETING: changed}}\n")
-	got, stderr, code := runCLI(t, args...)
+	cli2 := runCLI(t, args...)
+	got, stderr, code := cli2.stdout, cli2.stderr, cli2.code
 	assert.Equal(t, code, 0)
 	assert.Equal(t, got, want)
 	assert.FatalIf(t, strings.Contains(stderr, "outside") || strings.Contains(stderr, "unrelated") ||
@@ -135,7 +137,7 @@ spec:
 		testutil.WriteFile(t, dir, "apps/selected.yaml", release("selected", "./charts/app"))
 		testutil.WriteFile(t, dir, "apps/sibling.yaml", release("sibling", "./charts/app"))
 	}
-	assert.NoError(t, os.Remove(filepath.Join(root, "apps/selected.yaml")))
+	assert.NoError(t, os.Remove(filepath.Join(root, "apps", "selected.yaml")))
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [sibling.yaml]\n")
 	testutil.WriteFile(t, root, "apps/sibling.yaml", release("sibling", "./charts/missing"))
 	flags := []string{
@@ -156,7 +158,8 @@ spec:
 		{"sibling", 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			out, stderr, code := runCLI(t, append([]string{"diff", "hr", tc.name}, flags...)...)
+			cli := runCLI(t, append([]string{"diff", "hr", tc.name}, flags...)...)
+			out, stderr, code := cli.stdout, cli.stderr, cli.code
 			assert.FatalIf(
 				t,
 				code != tc.code || !strings.Contains(stderr, "sibling") || !strings.Contains(stderr, "charts/missing"),
@@ -241,7 +244,8 @@ spec:
 			if tc.name == "namespace" {
 				flags = append(flags, "-n", "apps")
 			}
-			out, stderr, code := runCLI(t, append([]string{"diff", "hr", "selected"}, flags...)...)
+			cli := runCLI(t, append([]string{"diff", "hr", "selected"}, flags...)...)
+			out, stderr, code := cli.stdout, cli.stderr, cli.code
 			assert.FatalIf(
 				t,
 				code != 0 || strings.Contains(stderr, "reconcile completed"),
@@ -316,7 +320,7 @@ spec:
 	if tc.layout == "moved" {
 		assert.NoError(t, os.Rename(
 			filepath.Join(root, releasePath),
-			filepath.Join(root, "other/hr.yaml"),
+			filepath.Join(root, "other", "hr.yaml"),
 		))
 		testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
 		testutil.WriteFile(
@@ -347,7 +351,8 @@ spec:
 		"--concurrency",
 		"2",
 	}
-	_, stderr, code := runCLI(t, append([]string{"diff", "hr", "selected"}, flags...)...)
+	cli := runCLI(t, append([]string{"diff", "hr", "selected"}, flags...)...)
+	stderr, code := cli.stderr, cli.code
 	switch {
 	case tc.layout == "moved" && tc.failingSide == "current":
 
@@ -356,7 +361,7 @@ spec:
 				stderr,
 				"reconcile completed",
 			), "former owning Kustomization became fatal: %d %s", code, stderr)
-		_, stderr, code = runCLI(
+		cli2 := runCLI(
 			t,
 			"build",
 			"hr",
@@ -368,20 +373,22 @@ spec:
 			"--concurrency",
 			"2",
 		)
+		stderr, code = cli2.stderr, cli2.code
 		assert.FatalIf(t, code != 0, "former owning Kustomization became fatal in build: %d %s", code, stderr)
 
 	case code != 1 || !strings.Contains(stderr, "✗ 1 failed") || !strings.Contains(stderr, "ConfigMap  flux-system/nope  not found"):
 
 		t.Fatalf("owning Kustomization failure hidden: %d %s", code, stderr)
 	}
-	_, stderr, code = runCLI(t, append([]string{"diff", "ks", "other"}, flags...)...)
+	cli3 := runCLI(t, append([]string{"diff", "ks", "other"}, flags...)...)
+	stderr, code = cli3.stderr, cli3.code
 	assert.FatalIf(t, code != 0, "unrelated owning Kustomization became fatal: %d %s", code, stderr)
 	if tc.layout == "plain" {
 		baseline := orig
 		if failing == orig {
 			baseline = root
 		}
-		_, stderr, code = runCLI(
+		cli4 := runCLI(
 			t,
 			"build",
 			"hr",
@@ -395,6 +402,7 @@ spec:
 			"--concurrency",
 			"2",
 		)
+		stderr, code = cli4.stderr, cli4.code
 		assert.FatalIf(
 			t,
 			code != 1 || !strings.Contains(stderr, "1 failed") || !strings.Contains(stderr, "flux-system/nope"),

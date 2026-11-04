@@ -51,22 +51,18 @@ func TestTemplateCache_ChartDigestTrackingOptions(t *testing.T) {
 			}
 		}
 
-		{
-			assert.NoError(t, err)
-		}
+		assert.NoError(t, err)
 		version := "6.15.0"
 		if !disable {
 			version += "+ff3d3e14728f"
 		}
-		{
-			assert.FatalIf(
-				t,
-				!hasRenderField(out, "version", version),
-				"disable=%v returned incompatible output:\n%s",
-				disable,
-				out,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!hasRenderField(out, "version", version),
+			"disable=%v returned incompatible output:\n%s",
+			disable,
+			out,
+		)
 		freshClient, freshSources := newClient()
 		fresh, receipt29, err := testutil.RenderMaps(
 			freshClient.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: freshSources}),
@@ -81,15 +77,13 @@ func TestTemplateCache_ChartDigestTrackingOptions(t *testing.T) {
 			}
 		}
 
-		{
-			assert.FatalIf(
-				t,
-				err != nil || !reflect.DeepEqual(fresh, out),
-				"fresh disable=%v result differs: err=%v output=%s",
-				disable,
-				err,
-				fresh,
-			)
-		}
+		assert.FatalIf(
+			t,
+			err != nil || !reflect.DeepEqual(fresh, out),
+			"fresh disable=%v result differs: err=%v output=%s",
+			disable,
+			err,
+			fresh,
+		)
 	}
 }

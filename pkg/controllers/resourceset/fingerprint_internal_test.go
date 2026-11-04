@@ -39,19 +39,19 @@ func TestResourceSetFingerprint_SelectorInputs(t *testing.T) {
 	s.AddObject(b)
 	s.AddObject(a)
 	resolve := resourceset.StoreResolver(s)
-	docs, fp, err := renderWithAdmission(rs, resolve, "")
+	renderWithAdmissionResult1, renderWithAdmissionResult1Err := renderWithAdmission(rs, resolve, "")
+	docs, fp, err := renderWithAdmissionResult1.documents, renderWithAdmissionResult1.fingerprint, renderWithAdmissionResult1Err
 	assert.NoError(t, err)
 	assert.Equal(t, len(docs), 2)
 	encoded, err := json.Marshal(docs)
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(t, fp == "", "%v", "empty fingerprint")
-	}
+	assert.FatalIf(t, fp == "", "%v", "empty fingerprint")
 	other := store.New()
 	other.AddObject(a)
 	other.AddObject(b)
 	otherResolve := resourceset.StoreResolver(other)
-	otherDocs, otherFP, err := renderWithAdmission(rs, otherResolve, "")
+	renderWithAdmissionResult2, renderWithAdmissionResult2Err := renderWithAdmission(rs, otherResolve, "")
+	otherDocs, otherFP, err := renderWithAdmissionResult2.documents, renderWithAdmissionResult2.fingerprint, renderWithAdmissionResult2Err
 	assert.Equal(t, otherFP, fp)
 	assert.NoError(t, err)
 	otherEncoded, err := json.Marshal(otherDocs)
@@ -159,12 +159,14 @@ func TestResourceSetFingerprint_CapturedInputs(t *testing.T) {
 	}
 	s.AddObject(p)
 	resolve := resourceset.StoreResolver(s)
-	docs, fingerprint, err := renderWithAdmission(rs, resolve, "")
+	renderWithAdmissionResult3, renderWithAdmissionResult3Err := renderWithAdmission(rs, resolve, "")
+	docs, fingerprint, err := renderWithAdmissionResult3.documents, renderWithAdmissionResult3.fingerprint, renderWithAdmissionResult3Err
 	assert.NoError(t, err)
 	assert.Equal(t, len(docs), 1)
 	assert.Equal(t, docs[0]["data"].(map[string]any)["value"].(string), "status-a")
 	assert.Equal(t, string(p.Status.ExportedInputs[0]["nested"].Raw), `{"value":"stored"}`)
-	hit, key, err := renderWithAdmission(rs, resolve, fingerprint)
+	renderWithAdmissionResult4, renderWithAdmissionResult4Err := renderWithAdmission(rs, resolve, fingerprint)
+	hit, key, err := renderWithAdmissionResult4.documents, renderWithAdmissionResult4.fingerprint, renderWithAdmissionResult4Err
 	assert.NoError(t, err)
 	assert.Equal(t, key, fingerprint)
 	assert.Equal(t, len(hit), 0)
@@ -173,20 +175,24 @@ func TestResourceSetFingerprint_CapturedInputs(t *testing.T) {
 		{"value": {Raw: []byte(`"status-b"`)}, "nested": {Raw: []byte(`{"value":"stored"}`)}},
 	}
 	s.AddObject(&fresh)
-	docs, current, err := renderWithAdmission(rs, resolve, fingerprint)
+	renderWithAdmissionResult5, renderWithAdmissionResult5Err := renderWithAdmission(rs, resolve, fingerprint)
+	docs, current, err := renderWithAdmissionResult5.documents, renderWithAdmissionResult5.fingerprint, renderWithAdmissionResult5Err
 	assert.NoError(t, err)
 	assert.Equal(t, len(docs), 1)
 	assert.Equal(t, docs[0]["data"].(map[string]any)["value"].(string), "status-b")
-	{
-		assert.FatalIf(t, current == fingerprint, "%v", "successor did not capture the changed exported inputs")
-	}
+	assert.FatalIf(t, current == fingerprint, "%v", "successor did not capture the changed exported inputs")
+}
+
+type admittedRender struct {
+	documents   []map[string]any
+	fingerprint string
 }
 
 func renderWithAdmission(
 	rs *manifest.ResourceSet,
 	resolve resourceset.ProviderResolver,
 	previous string,
-) ([]map[string]any, string, error) {
+) (admittedRender, error) {
 	s := store.New()
 	s.AddObject(rs)
 	s.RecordEmitted(rs.Named(), &store.Emission{Fingerprint: previous, Complete: true}, nil)
@@ -197,10 +203,16 @@ func renderWithAdmission(
 	docs, _, err := renderProviders(rs, resolve, func(content any) (bool, error) {
 		var hit bool
 		var err error
-		fp, hit, err = run.FingerprintDedup(context.TODO(), rs.Named(), content, &store.Emission{})
+		fingerprintDedupResult1, fingerprintDedupResult1Err := run.FingerprintDedup(
+			context.TODO(),
+			rs.Named(),
+			content,
+			&store.Emission{},
+		)
+		fp, hit, err = fingerprintDedupResult1.Fingerprint, fingerprintDedupResult1.Reused, fingerprintDedupResult1Err
 		return hit, err
 	})
-	return testutil.DocumentMaps(docs), fp, err
+	return admittedRender{documents: testutil.DocumentMaps(docs), fingerprint: fp}, err
 }
 
 func renderProviders(
@@ -256,19 +268,18 @@ func testResourceSetFingerprintSelectorInputsCase(
 		providers[0].Status.ExportedInputs = []fluxopv1.ResourceSetInput{(*testCaseInput.a).DefaultValues}
 	}
 	calls := 0
-	got, key, err := renderWithAdmission(
+	renderWithAdmissionResult6, renderWithAdmissionResult6Err := renderWithAdmission(
 		&candidate,
 		func(fluxopv1.InputProviderReference, manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
 			calls++
 			return providers, nil
 		}, (*testCaseInput.fp),
 	)
+	got, key, err := renderWithAdmissionResult6.documents, renderWithAdmissionResult6.fingerprint, renderWithAdmissionResult6Err
 	assert.NoError(t, err)
 	assert.Equal(t, calls, len(candidate.InputsFrom))
 	assert.Equal(t, len(got), 2)
-	{
-		assert.FatalIf(t, key == (*testCaseInput.fp), "%v", "effective content change replayed")
-	}
+	assert.FatalIf(t, key == (*testCaseInput.fp), "%v", "effective content change replayed")
 }
 
 type testResourceSetFingerprintSelectorInputsResolverErrorCannotReplayInputs struct {
@@ -283,25 +294,24 @@ func testResourceSetFingerprintSelectorInputsResolverErrorCannotReplay(
 	t.Helper()
 
 	failure := errors.New("captured provider unavailable")
-	localDocs, key, err := renderWithAdmission(
+	renderWithAdmissionResult7, renderWithAdmissionResult7Err := renderWithAdmission(
 		(*testCaseInput.rs),
 		func(fluxopv1.InputProviderReference, manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
 			return nil, failure
 		},
 		(*testCaseInput.fp),
 	)
-	{
-		assert.FatalIf(
-			t,
-			!errors.Is(err, failure) || !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) ||
-				key != "" ||
-				localDocs != nil,
-			"resolver error became a hit: docs=%v key=%q error=%v",
-			localDocs,
-			key,
-			err,
-		)
-	}
+	localDocs, key, err := renderWithAdmissionResult7.documents, renderWithAdmissionResult7.fingerprint, renderWithAdmissionResult7Err
+	assert.FatalIf(
+		t,
+		!errors.Is(err, failure) || !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) ||
+			key != "" ||
+			localDocs != nil,
+		"resolver error became a hit: docs=%v key=%q error=%v",
+		localDocs,
+		key,
+		err,
+	)
 }
 
 func testResourceSetFingerprintSelectorInputsInlineOrder(t *testing.T) {
@@ -310,17 +320,19 @@ func testResourceSetFingerprintSelectorInputsInlineOrder(t *testing.T) {
 	candidate := &manifest.ResourceSet{Name: "inline", Namespace: "apps", Inputs: []fluxopv1.ResourceSetInput{
 		{"name": {Raw: []byte(`"first"`)}}, {"name": {Raw: []byte(`"second"`)}},
 	}, ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '<< inputs.name >>'}"}
-	localDocs, key, err := renderWithAdmission(candidate, nil, "")
+	renderWithAdmissionResult8, renderWithAdmissionResult8Err := renderWithAdmission(candidate, nil, "")
+	localDocs, key, err := renderWithAdmissionResult8.documents, renderWithAdmissionResult8.fingerprint, renderWithAdmissionResult8Err
 	assert.NoError(t, err)
-	first, _ := manifest.DocMetadata(localDocs[0])
+	metadata := manifest.DocMetadata(localDocs[0])
+	first := metadata.Name
 	assert.Equal(t, first, "first")
 	candidate.Inputs[0], candidate.Inputs[1] = candidate.Inputs[1], candidate.Inputs[0]
-	localDocs, current, err := renderWithAdmission(candidate, nil, key)
+	renderWithAdmissionResult9, renderWithAdmissionResult9Err := renderWithAdmission(candidate, nil, key)
+	localDocs, current, err := renderWithAdmissionResult9.documents, renderWithAdmissionResult9.fingerprint, renderWithAdmissionResult9Err
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(t, current == key, "%v", "inline order replayed")
-	}
-	first, _ = manifest.DocMetadata(localDocs[0])
+	assert.FatalIf(t, current == key, "%v", "inline order replayed")
+	metadata2 := manifest.DocMetadata(localDocs[0])
+	first = metadata2.Name
 	assert.Equal(t, first, "second")
 }
 
@@ -340,7 +352,7 @@ func testResourceSetFingerprintSelectorInputsResolverDeliveryOrder(
 
 	reversed := []*manifest.ResourceSetInputProvider{(*testCaseInput.b), nil, (*testCaseInput.a), (*testCaseInput.a)}
 	calls := 0
-	got, key, err := renderWithAdmission(
+	renderWithAdmissionResult10, renderWithAdmissionResult10Err := renderWithAdmission(
 		(*testCaseInput.rs),
 		func(fluxopv1.InputProviderReference, manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
 			calls++
@@ -348,6 +360,7 @@ func testResourceSetFingerprintSelectorInputsResolverDeliveryOrder(
 		},
 		"",
 	)
+	got, key, err := renderWithAdmissionResult10.documents, renderWithAdmissionResult10.fingerprint, renderWithAdmissionResult10Err
 	assert.NoError(t, err)
 	assert.Equal(t, calls, 1)
 	assert.Equal(t, key, (*testCaseInput.fp))
@@ -357,7 +370,7 @@ func testResourceSetFingerprintSelectorInputsResolverDeliveryOrder(
 	overlapped.InputsFrom = slices.Clone((*testCaseInput.rs).InputsFrom)
 	overlapped.InputsFrom = append(overlapped.InputsFrom, fluxopv1.InputProviderReference{Name: "a"})
 	calls = 0
-	got, key, err = renderWithAdmission(
+	renderWithAdmissionResult11, renderWithAdmissionResult11Err := renderWithAdmission(
 		&overlapped,
 		func(fluxopv1.InputProviderReference, manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
 			calls++
@@ -365,21 +378,21 @@ func testResourceSetFingerprintSelectorInputsResolverDeliveryOrder(
 		},
 		"",
 	)
+	got, key, err = renderWithAdmissionResult11.documents, renderWithAdmissionResult11.fingerprint, renderWithAdmissionResult11Err
 	assert.NoError(t, err)
 	assert.Equal(t, calls, 2)
 	assert.Diff(t, got, (*testCaseInput.docs))
-	hit, replayKey, err := renderWithAdmission(
+	renderWithAdmissionResult12, renderWithAdmissionResult12Err := renderWithAdmission(
 		&overlapped,
 		func(fluxopv1.InputProviderReference, manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
 			return []*manifest.ResourceSetInputProvider{(*testCaseInput.a), (*testCaseInput.b), nil}, nil
 		},
 		key,
 	)
+	hit, replayKey, err := renderWithAdmissionResult12.documents, renderWithAdmissionResult12.fingerprint, renderWithAdmissionResult12Err
 	assert.NoError(t, err)
 	assert.Equal(t, replayKey, key)
-	{
-		assert.FatalIf(t, hit != nil, "equal canonical input returned documents: %v", hit)
-	}
+	assert.FatalIf(t, hit != nil, "equal canonical input returned documents: %v", hit)
 }
 
 type testResourceSetFingerprintSelectorInputsCase2Inputs struct {
@@ -403,7 +416,8 @@ func testResourceSetFingerprintSelectorInputsCase2(
 	referenced := *(*testCaseInput.rs)
 	referenced.InputsFrom = testCaseInput.tc.refs
 	resolve := resourceset.StoreResolver((*testCaseInput.s))
-	got, _, err := renderWithAdmission(&referenced, resolve, "")
+	renderWithAdmissionResult13, renderWithAdmissionResult13Err := renderWithAdmission(&referenced, resolve, "")
+	got, _, err := renderWithAdmissionResult13.documents, renderWithAdmissionResult13.fingerprint, renderWithAdmissionResult13Err
 
 	assert.NoError(t, err)
 	var want []map[string]any
@@ -439,7 +453,8 @@ func testResourceSetFingerprintSelectorInputsCase3(
 	st.AddObject((*testCaseInput.b))
 	st.AddObject(testCaseInput.tc.provider)
 	resolve := resourceset.StoreResolver(st)
-	got, key, err := renderWithAdmission((*testCaseInput.rs), resolve, "")
+	renderWithAdmissionResult14, renderWithAdmissionResult14Err := renderWithAdmission((*testCaseInput.rs), resolve, "")
+	got, key, err := renderWithAdmissionResult14.documents, renderWithAdmissionResult14.fingerprint, renderWithAdmissionResult14Err
 	assert.Equal(t, key != (*testCaseInput.fp), testCaseInput.tc.changed)
 	assert.NoError(t, err)
 	values := make(map[string]string)

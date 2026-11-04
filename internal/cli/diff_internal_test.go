@@ -137,7 +137,7 @@ spec:
 		{name: "orig failed/apps", side: "orig", namespace: "apps", orig: failed, current: orig, wantCode: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			stdout, stderr, code := runCLI(
+			cli := runCLI(
 				t,
 				"diff",
 				"all",
@@ -156,6 +156,7 @@ spec:
 				"--concurrency",
 				"2",
 			)
+			stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 			assert.Equal(t, code, tc.wantCode)
 			parent := "Kustomization flux-system/apps:"
 			if tc.namespace != "" {
@@ -244,7 +245,7 @@ data:
   greeting: {{ .Values.greeting }}
 `)
 		}
-		stdout, stderr, code := runCLI(
+		cli2 := runCLI(
 			t,
 			"diff",
 			"all",
@@ -261,6 +262,7 @@ data:
 			"--concurrency",
 			"2",
 		)
+		stdout, stderr, code := cli2.stdout, cli2.stderr, cli2.code
 		assert.ErrorIf(t, code != 0 || !strings.Contains(stdout, "-  greeting: before") ||
 			!strings.Contains(
 				stdout,
@@ -314,8 +316,9 @@ func TestRun_DiffJSON(t *testing.T) {
 		testutil.WriteFile(t, dir, "broken/kustomization.yaml", "resources: [cm.yaml]\n")
 		testutil.WriteFile(t, dir, "broken/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: withheld}\n")
 	}
-	stdout, stderr, code := runCLI(t, "diff", "all", "--path", current, "--path-orig", orig,
+	cli := runCLI(t, "diff", "all", "--path", current, "--path-orig", orig,
 		"--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "json")
+	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 	assert.Equal(t, code, 1)
 	assert.Equal(t, strings.Count(stderr, "✗ 1 failed"), 1)
 	var got struct {
@@ -359,8 +362,9 @@ func TestRun_DiffJSON_Empty(t *testing.T) {
 	path := writeFixture(t)
 	for _, verb := range []string{"ks", "hr", "all"} {
 		t.Run(verb, func(t *testing.T) {
-			stdout, stderr, code := runCLI(t, "diff", verb, "--path", path, "--path-orig", path,
+			cli := runCLI(t, "diff", verb, "--path", path, "--path-orig", path,
 				"--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "json")
+			stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 			assert.Equal(t, code, 0)
 			assert.Equal(t, strings.Contains(stderr, persistenceMessage), true)
 			assert.Equal(t, strings.Count(stderr, "--path and --path-orig resolve to the same root"), 2)
@@ -397,7 +401,7 @@ func TestRun_Diff_OmittedValues(t *testing.T) {
 	}
 }
 
-func writeCustomSourceDiffFixture(t *testing.T, sourceURL string) (string, string) {
+func writeCustomSourceDiffFixture(t *testing.T, sourceURL string) diffFixture {
 	t.Helper()
 	var current string
 	var orig string
@@ -440,7 +444,7 @@ data: {greeting: hi}
 	orig = t.TempDir()
 	testutil.CopyTree(t, current, orig)
 	writeBaselineGit(t, current, "git@github.com:example/home-ops.git")
-	return current, orig
+	return diffFixture{current: current, orig: orig}
 }
 
 //nolint:paralleltest // test changes the process environment or working directory.
@@ -455,7 +459,8 @@ func TestRun_DiffKS_PathOrigCustomSource(t *testing.T) {
 		{name: "changed", changed: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			current, orig := writeCustomSourceDiffFixture(t, "ssh://git@github.com/example/home-ops.git")
+			fixture := writeCustomSourceDiffFixture(t, "ssh://git@github.com/example/home-ops.git")
+			current, orig := fixture.current, fixture.orig
 			if tc.changed {
 				testutil.WriteFile(t, orig, "apps/cm.yaml", `apiVersion: v1
 kind: ConfigMap
@@ -463,8 +468,9 @@ metadata: {name: hello, namespace: apps}
 data: {greeting: hola}
 `)
 			}
-			stdout, stderr, code := runCLI(t, "diff", "ks", "--path", current, "--path-orig", orig,
+			cli := runCLI(t, "diff", "ks", "--path", current, "--path-orig", orig,
 				"--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "diff")
+			stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 			assert.FatalIf(t, code != 0, "diff exited %d: %s", code, stderr)
 			if tc.changed {
 				assert.Equal(t, stderr, persistenceNotice)
@@ -498,7 +504,8 @@ data: {greeting: hola}
 func TestRun_DiffKS_ExternalSourceDisclosure(t *testing.T) {
 	preservePersistenceNoticeState(t)
 	renderPersistenceDisabledReason = persistenceReason
-	current, orig := writeCustomSourceDiffFixture(t, "ssh://git@github.com/example/other-repo.git")
+	fixture := writeCustomSourceDiffFixture(t, "ssh://git@github.com/example/other-repo.git")
+	current, orig := fixture.current, fixture.orig
 	testutil.WriteFile(t, orig, "apps/cm.yaml", `apiVersion: v1
 kind: ConfigMap
 metadata: {name: hello, namespace: apps}
@@ -518,7 +525,8 @@ data: {greeting: hola}
 				"diff", "ks", "--path", current, "--path-orig", orig,
 				"--cache-dir", filepath.Join(t.TempDir(), "cache"), "-o", "diff",
 			}, tc.args...)
-			stdout, stderr, code := runCLI(t, args...)
+			cli := runCLI(t, args...)
+			stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 			assert.FatalIf(t, code != 0, "diff exited %d: %s", code, stderr)
 			assert.ErrorIf(t, stdout != "", "external source must not render local manifests:\n%s", stdout)
 			if tc.warn {
@@ -560,7 +568,8 @@ func TestRun_DiffKS_PathOrigCurrentOnlySource(t *testing.T) {
 		{name: "current-only URL", urls: []string{"https://example.invalid/upstream.git"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			current, orig := writeCustomSourceDiffFixture(t, currentURL)
+			fixture := writeCustomSourceDiffFixture(t, currentURL)
+			current, orig := fixture.current, fixture.orig
 			writeBaselineGit(t, current, currentURL)
 			writeBaselineGit(t, orig, tc.urls...)
 			testutil.WriteFile(
@@ -581,8 +590,9 @@ func TestRun_DiffKS_PathOrigCurrentOnlySource(t *testing.T) {
 				"baseline borrowed current identity: %v",
 				c.pathOrigSelfURLs,
 			)
-			stdout, stderr, code := runCLI(t, "diff", "ks", "--path", current, "--path-orig", orig,
+			cli := runCLI(t, "diff", "ks", "--path", current, "--path-orig", orig,
 				"--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "diff")
+			stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 			assert.FatalIf(t, code != 0, "diff exited %d: %s", code, stderr)
 			assert.ErrorIf(
 				t,
@@ -598,3 +608,5 @@ func TestRun_DiffKS_PathOrigCurrentOnlySource(t *testing.T) {
 		})
 	}
 }
+
+type diffFixture struct{ current, orig string }

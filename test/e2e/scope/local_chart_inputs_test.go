@@ -16,7 +16,7 @@ import (
 	"github.com/home-operations/flate/test/e2e/internal/harness"
 )
 
-func e2EChangedOnlyLocalChartInputsName(t *testing.T, invalid *bool, committed *bool, elapsed **regexp.Regexp) {
+func e2EChangedOnlyLocalChartInputsName(t *testing.T, invalid, committed *bool, elapsed **regexp.Regexp) {
 	t.Helper()
 
 	root, orig := t.TempDir(), t.TempDir()
@@ -86,7 +86,7 @@ func e2EChangedOnlyLocalChartInputsName(t *testing.T, invalid *bool, committed *
 	}
 	base := testutil.GitCommitAll(t, repo, "base", options)
 	testutil.CopyTree(t, root, orig)
-	assert.NoError(t, os.Remove(filepath.Join(root, "charts/demo/templates/extra.yaml")))
+	assert.NoError(t, os.Remove(filepath.Join(root, "charts", "demo", "templates", "extra.yaml")))
 	baseline := []string{"--path-orig", filepath.Join(orig, "flux")}
 	if *committed {
 		testutil.GitCommitAll(t, repo, "delete template", options)
@@ -131,7 +131,8 @@ func e2EChangedOnlyLocalChartInputsNameCommand(t *testing.T, command *string, ro
 		t.TempDir(),
 	)
 	args = append(args, (*capturedInputs.baseline)...)
-	out, stderr, code := harness.RunCLIBuffers(args...)
+	runCLIBuffersResult1 := harness.RunCLIBuffers(args...)
+	out, stderr, code := runCLIBuffersResult1.Stdout, runCLIBuffersResult1.Stderr, runCLIBuffersResult1.Code
 	wantCode, want := 0, "apps/demo"
 	if (*command) == "get" {
 		want = "demo\n"
@@ -172,7 +173,8 @@ func e2EChangedOnlyLocalChartInputsNameCommand(t *testing.T, command *string, ro
 			out,
 		)
 	}
-	second, _, secondCode := harness.RunCLIBuffers(args...)
+	runCLIBuffersResult2 := harness.RunCLIBuffers(args...)
+	second, _, secondCode := runCLIBuffersResult2.Stdout, runCLIBuffersResult2.Stderr, runCLIBuffersResult2.Code
 	assert.ErrorIf(t, secondCode != code ||
 		(*(*capturedInputs.elapsed)).ReplaceAllString(
 			second,

@@ -271,23 +271,23 @@ func Detect(ctx context.Context, before, after *store.SourceArtifact) (*Set, err
 	if digests[0] == nil || digests[1] == nil {
 		digests = [2]map[string]string{}
 	}
-	bef, aft, err := scanInputs(ctx, before, after, digests)
+	scanned, err := scanInputs(ctx, before, after, digests)
 	if err != nil {
 		return nil, err
 	}
-	paths, jobs, oneSided := compareScannedFiles(bef, aft, digests)
-	if err := hashJobs(ctx, before, after, jobs); err != nil {
+	comparison := compareScannedFiles(scanned.before, scanned.after, digests)
+	if err := hashJobs(ctx, before, after, comparison.jobs); err != nil {
 		return nil, err
 	}
-	for _, job := range jobs {
+	for _, job := range comparison.jobs {
 		if job.changed {
-			paths[job.name] = struct{}{}
+			comparison.paths[job.name] = struct{}{}
 		}
 	}
-	out := &Set{paths: paths, origins: [2]*store.SourceArtifact{before, after}}
-	slices.Sort(oneSided)
-	for _, name := range oneSided {
-		_, onAfter := aft[name]
+	out := &Set{paths: comparison.paths, origins: [2]*store.SourceArtifact{before, after}}
+	slices.Sort(comparison.oneSided)
+	for _, name := range comparison.oneSided {
+		_, onAfter := scanned.after[name]
 		input := before.FS
 		if onAfter {
 			input = after.FS
@@ -307,11 +307,13 @@ type hashJob struct {
 	changed bool
 }
 
+type scannedInputs struct{ before, after map[string]fileMeta }
+
 func scanInputs(
 	ctx context.Context,
 	before, after *store.SourceArtifact,
 	digests [2]map[string]string,
-) (map[string]fileMeta, map[string]fileMeta, error) {
+) (scannedInputs, error) {
 	var bef, aft map[string]fileMeta
 	eg, scanCtx := errgroup.WithContext(ctx)
 	eg.Go(func() error {
@@ -325,9 +327,9 @@ func scanInputs(
 		return err
 	})
 	if err := eg.Wait(); err != nil {
-		return nil, nil, fmt.Errorf("wait: %w", err)
+		return scannedInputs{}, fmt.Errorf("wait: %w", err)
 	}
-	return bef, aft, nil
+	return scannedInputs{before: bef, after: aft}, nil
 }
 
 func hashJobs(ctx context.Context, before, after *store.SourceArtifact, jobs []hashJob) error {
@@ -427,6 +429,7 @@ func collectInput(ctx context.Context, input fs.FS, name string) (map[manifest.N
 	return declared, ctx.Err() //nolint:wrapcheck // Preserve this final cancellation identity and diagnostic.
 }
 
+//nolint:gocritic // The reader callback writes the caller error state after this function returns.
 func checkedInputReader(ctx context.Context, f fs.File, terminal, readErr *error) inputReader {
 	return inputReader(func(p []byte) (int, error) {
 		if localErr := ctx.Err(); localErr != nil {
@@ -502,10 +505,16 @@ type readerComparison struct {
 	artifacts [2]*store.SourceArtifact
 }
 
+type fileComparison struct {
+	paths    map[string]struct{}
+	jobs     []hashJob
+	oneSided []string
+}
+
 func compareScannedFiles(
 	before, after map[string]fileMeta,
 	digests [2]map[string]string,
-) (map[string]struct{}, []hashJob, []string) {
+) fileComparison {
 	paths := make(map[string]struct{}, len(after)/changeCapacityDivisor)
 
 	var jobs []hashJob
@@ -529,7 +538,7 @@ func compareScannedFiles(
 			oneSided = append(oneSided, name)
 		}
 	}
-	return paths, jobs, oneSided
+	return fileComparison{paths: paths, jobs: jobs, oneSided: oneSided}
 }
 
 func inputDeclarations(docs []manifest.DocOccurrence) map[manifest.NamedResource]string {

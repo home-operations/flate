@@ -141,23 +141,27 @@ func (i *DiscoveryIndex) Files() iter.Seq2[NamedResource, DiscoveryRecord] {
 		if i == nil {
 			return
 		}
-		{
-			//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-			for id, r := range i.Records {
-				if r.File != "" && !yield(id, r) {
-					return
-				}
+		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+		for id, r := range i.Records {
+			if r.File != "" && !yield(id, r) {
+				return
 			}
 		}
 	}
 }
 
+// FileOwners separates deepest file claimants from their strict ancestors.
+type FileOwners struct {
+	Owners    []NamedResource
+	Ancestors []NamedResource
+}
+
 // OwnersOfFile returns deepest claimants plus render graph readers, and strict ancestors.
 // Missing resource directories retain ownership of deleted descendant files.
-func (i *DiscoveryIndex) OwnersOfFile(file string) ([]NamedResource, []NamedResource) {
+func (i *DiscoveryIndex) OwnersOfFile(file string) FileOwners {
 	var owners, ancestors []NamedResource
 	if i == nil || file == "" {
-		return nil, nil
+		return FileOwners{}
 	}
 	for end, ids := range claimpath.Groups(i.Claims, file+"/") {
 		if end == 0 && (file == ".." || strings.HasPrefix(file, "../")) {
@@ -176,7 +180,7 @@ func (i *DiscoveryIndex) OwnersOfFile(file string) ([]NamedResource, []NamedReso
 	}
 	slices.SortFunc(owners, NamedResource.Compare)
 	slices.SortFunc(ancestors, NamedResource.Compare)
-	return owners, ancestors
+	return FileOwners{Owners: owners, Ancestors: ancestors}
 }
 
 // ReadersOfFile yields source-qualified readers of a file or any missing ancestor directory.

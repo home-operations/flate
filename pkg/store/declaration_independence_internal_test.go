@@ -73,14 +73,12 @@ func testGetDeclarationIndependenceLifecycleCase(
 	}
 	if (*testCaseInput.route) == "pre_index" {
 		st.AddObject(raw)
-		{
-			assert.FatalIf(
-				t,
-				st.GetDeclaration(raw.Named()) != raw,
-				"%s",
-				"pre-index declaration lost independent support",
-			)
-		}
+		assert.FatalIf(
+			t,
+			st.GetDeclaration(raw.Named()) != raw,
+			"%s",
+			"pre-index declaration lost independent support",
+		)
 	}
 	st.SetDiscoveryIndex(index)
 	switch *testCaseInput.route {
@@ -105,9 +103,7 @@ func testGetDeclarationIndependenceLifecycleCase(
 		reads.Admit(raw, manifest.BootstrapSourceID, manifest.NamedResource{})
 	case "readmit":
 		st.AddObject(raw)
-		{
-			assert.FatalIf(t, !st.DeleteObject(raw.Named()), "%s", "fixture did not delete its first admission")
-		}
+		assert.FatalIf(t, !st.DeleteObject(raw.Named()), "%s", "fixture did not delete its first admission")
 		st.AddObject(raw)
 	case "anchor", "batch_anchor":
 		if (*testCaseInput.route) == "anchor" {
@@ -176,9 +172,7 @@ func testRecordEmittedIndependencePublicationCase(
 	sh.mu.RLock()
 	_, present := sh.cells[id]
 	sh.mu.RUnlock()
-	{
-		assert.FatalIf(t, present, "%s", "index manufactured an absent object cell")
-	}
+	assert.FatalIf(t, present, "%s", "index manufactured an absent object cell")
 	if (*testCaseInput.route) == "metadata" {
 		st.SetIncluded(id, false)
 		st.SetPreflight(id, "preflight")

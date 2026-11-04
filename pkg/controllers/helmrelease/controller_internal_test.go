@@ -65,9 +65,7 @@ func newTestControllerWithOptions(t *testing.T, opts *base.Options) (*Controller
 	hc := helm.NewClient(owner)
 	controller := base.New(st, ts)
 	c := New(controller, hc, helm.Options{}, false)
-	{
-		assert.FatalIf(t, c.Controller != controller, "%v", "constructor replaced the supplied base controller")
-	}
+	assert.FatalIf(t, c.Controller != controller, "%v", "constructor replaced the supplied base controller")
 	c.Configure(*opts)
 	c.StartLifecycle()
 	t.Cleanup(func() {
@@ -88,14 +86,10 @@ func reconcileFixture(t *testing.T, c *Controller, id manifest.NamedResource) st
 	defer stop()
 	scheduler.Seed([]schedule.NodeID{id})
 	{
-		{
-			err := scheduler.Run(t.Context())
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := scheduler.Run(t.Context())
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
-	{
-		assert.FatalIf(t, c.Tasks.Failures() != 0, "%v", "fixture task failed")
-	}
+	assert.FatalIf(t, c.Tasks.Failures() != 0, "%v", "fixture task failed")
 	info, _ := c.Store.GetStatus(id)
 	return info
 }
@@ -181,15 +175,13 @@ func TestController_ShortCircuitsToReady(t *testing.T) {
 			hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Suspend: tc.suspend}
 			st.AddObject(hr)
 			info := reconcileFixture(t, c, hr.Named())
-			{
-				assert.FatalIf(
-					t,
-					info.Status != store.StatusReady || info.Message != tc.name,
-					"status = %+v, want Ready/%s",
-					info,
-					tc.name,
-				)
-			}
+			assert.FatalIf(
+				t,
+				info.Status != store.StatusReady || info.Message != tc.name,
+				"status = %+v, want Ready/%s",
+				info,
+				tc.name,
+			)
 		})
 	}
 }
@@ -272,32 +264,22 @@ data:
 	st.AddObject(hr)
 
 	info := reconcileFixture(t, c, hr.Named())
-	{
-		assert.FatalIf(t, info.Status != store.StatusReady, "status = %+v, want StatusReady", info)
-	}
-	{
-		assert.FatalIf(
-			t,
-			info.Outcome() == store.OutcomeSkipped,
-			"generated valuesFrom refs should be omitted, not skip the HelmRelease: %+v",
-			info,
-		)
-	}
+	assert.FatalIf(t, info.Status != store.StatusReady, "status = %+v, want StatusReady", info)
+	assert.FatalIf(
+		t,
+		info.Outcome() == store.OutcomeSkipped,
+		"generated valuesFrom refs should be omitted, not skip the HelmRelease: %+v",
+		info,
+	)
 	art, ok := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
+	assert.FatalIf(t, !ok, "%v", "HelmRelease artifact was not written")
 	{
-		assert.FatalIf(t, !ok, "%v", "HelmRelease artifact was not written")
+		got := renderedConfigMapValue(testutil.DocumentMaps(art.Manifests), "kept")
+		assert.FatalIf(t, got != "kept-value", "rendered kept = %q, want kept-value", got)
 	}
 	{
-		{
-			got := renderedConfigMapValue(testutil.DocumentMaps(art.Manifests), "kept")
-			assert.FatalIf(t, got != "kept-value", "rendered kept = %q, want kept-value", got)
-		}
-	}
-	{
-		{
-			got := renderedConfigMapValue(testutil.DocumentMaps(art.Manifests), "fallback")
-			assert.FatalIf(t, got != "fallback", "rendered fallback = %q, want fallback", got)
-		}
+		got := renderedConfigMapValue(testutil.DocumentMaps(art.Manifests), "fallback")
+		assert.FatalIf(t, got != "fallback", "rendered fallback = %q, want fallback", got)
 	}
 	assert.Diff(t, st.Warnings(), []manifest.Warning{
 		{
@@ -321,14 +303,12 @@ data:
 	st.AddObject(hr)
 	assert.Equal(t, reconcileFixture(t, c, hr.Named()).Status, store.StatusReady)
 	latest, _ := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
-	{
-		assert.FatalIf(
-			t,
-			latest == nil || latest.Fingerprint != art.Fingerprint,
-			"%v",
-			"metadata-only update rendered different effective inputs",
-		)
-	}
+	assert.FatalIf(
+		t,
+		latest == nil || latest.Fingerprint != art.Fingerprint,
+		"%v",
+		"metadata-only update rendered different effective inputs",
+	)
 	assert.Diff(t, st.Warnings(), warnings)
 	hr = hr.Clone()
 	hr.ValuesFrom = append(hr.ValuesFrom, manifest.ValuesReference{Kind: manifest.KindSecret, Name: "another-values"})
@@ -362,14 +342,12 @@ data:
 	invalid.Values = map[string]any{"required": ""}
 	st.AddObject(invalid)
 	info = reconcileFixture(t, c, invalid.Named())
-	{
-		assert.FatalIf(
-			t,
-			info.Status != store.StatusFailed || !strings.Contains(info.Message, "missing required value"),
-			"permitted values omission hid required chart failure: %+v",
-			info,
-		)
-	}
+	assert.FatalIf(
+		t,
+		info.Status != store.StatusFailed || !strings.Contains(info.Message, "missing required value"),
+		"permitted values omission hid required chart failure: %+v",
+		info,
+	)
 	if !slices.ContainsFunc(st.Warnings(), func(w manifest.Warning) bool {
 		return w.Resource == invalid.Named() && w.Category == manifest.WarnOmittedValues &&
 			strings.Contains(w.Message, "Secret/default/app-values")
@@ -410,20 +388,16 @@ func TestController_ValuesOmissionPreservesRequiredChartFailure(t *testing.T) {
 	for _, level := range []manifest.DrainLevel{manifest.DrainNone, manifest.DrainCascade} {
 		err := c.newExecution(hr.Named()).reconcile(t.Context(), hr, level)
 		failed, ok := errors.AsType[*manifest.DependencyFailedError](err)
-		{
-			assert.FatalIf(t, !ok || !slices.Equal(failed.Failed, []manifest.NamedResource{chart.Named()}) ||
-				failed.Reasons[chart.Named()].Message != "chart failed", "required chart failure changed: %v", err)
-		}
+		assert.FatalIf(t, !ok || !slices.Equal(failed.Failed, []manifest.NamedResource{chart.Named()}) ||
+			failed.Reasons[chart.Named()].Message != "chart failed", "required chart failure changed: %v", err)
 	}
 
-	{
-		assert.FatalIf(
-			t,
-			len(hr.ValuesFrom) != 1 || hr.ValuesFrom[0].Name != values.Name,
-			"%v",
-			"omission mutated stored valuesFrom",
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(hr.ValuesFrom) != 1 || hr.ValuesFrom[0].Name != values.Name,
+		"%v",
+		"omission mutated stored valuesFrom",
+	)
 }
 
 type testReconcileSharedChartSourceCompletesCaseInputs struct {
@@ -589,25 +563,21 @@ func runSharedChartSchedule(t *testing.T, scope *sharedChartScheduleInputs) {
 		s.OnArrival(hr.Named(), true)
 	}
 	{
-		{
-			info, ok := (*scope.st).GetStatus((*scope.source))
-			assert.ErrorIf(
-				t,
-				ok,
-				"consumer wrote synthetic status = %+v, want no Ready condition",
-				info,
-			)
-		}
+		info, ok := (*scope.st).GetStatus((*scope.source))
+		assert.ErrorIf(
+			t,
+			ok,
+			"consumer wrote synthetic status = %+v, want no Ready condition",
+			info,
+		)
 	}
 	for range *scope.consumers {
 		<-(*scope.parked)
 	}
 	synctest.Wait()
 	{
-		{
-			_, ok := (*scope.st).GetObject((*scope.source)).(*manifest.HelmChartSource)
-			assert.FatalIf(t, !ok, "%v", "typed synthetic child unavailable while H is incomplete")
-		}
+		_, ok := (*scope.st).GetObject((*scope.source)).(*manifest.HelmChartSource)
+		assert.FatalIf(t, !ok, "%v", "typed synthetic child unavailable while H is incomplete")
 	}
 	for _, hr := range *scope.consumers {
 		_, _, partial := (*scope.st).GetEmission(hr.Named())
@@ -622,10 +592,8 @@ func runSharedChartSchedule(t *testing.T, scope *sharedChartScheduleInputs) {
 	}
 	(*scope.releaseSource)()
 	{
-		{
-			err := <-done
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := <-done
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	{
 		info, ok := (*scope.st).GetStatus(
@@ -639,10 +607,16 @@ func runSharedChartSchedule(t *testing.T, scope *sharedChartScheduleInputs) {
 
 func checkSharedChartConsumers(t *testing.T, scope *sharedChartScheduleInputs) {
 	t.Helper()
+	var closeReplays []func()
+	defer func() {
+		for _, closeReplay := range slices.Backward(closeReplays) {
+			closeReplay()
+		}
+	}()
 	for _, hr := range *scope.consumers {
 		if (*scope.inputs).tc.status == store.StatusReady {
 			replay := prepareSharedChartRerun(t, (*scope.c), (*scope.st), hr)
-			defer replay.run.Close()
+			closeReplays = append(closeReplays, replay.run.Close)
 			if replay.run.Outcome() == schedule.Blocked || !replay.valid || replay.arrivals != 0 ||
 				replay.artifacts != 0 ||
 				replay.statuses != 0 ||
@@ -657,13 +631,11 @@ func checkSharedChartConsumers(t *testing.T, scope *sharedChartScheduleInputs) {
 					replay.renders,
 				)
 			}
-			{
-				assert.FatalIf(t, !replay.after.Complete || replay.before.Fingerprint != replay.after.Fingerprint ||
-					!cmp.Equal(
-						replay.before.Manifests,
-						replay.after.Manifests,
-					), "%v", "equal H rerun changed accepted content or completeness")
-			}
+			assert.FatalIf(t, !replay.after.Complete || replay.before.Fingerprint != replay.after.Fingerprint ||
+				!cmp.Equal(
+					replay.before.Manifests,
+					replay.after.Manifests,
+				), "%v", "equal H rerun changed accepted content or completeness")
 		} else {
 			(*scope.st).UpdateFailure(
 				hr.Named(),
@@ -754,46 +726,38 @@ func (s *sharedChartScheduleInputs) checkInventory(t *testing.T, hr *manifest.He
 	if (*s.inputs).tc.status == store.StatusReady {
 		wantDocs = 2
 	}
-	{
-		assert.FatalIf(
-			t,
-			(*s.st).GetObject((*s.source)) == nil || len(retained.Manifests) != wantDocs,
-			"%v",
-			"actual H completion lost C or output",
-		)
-	}
+	assert.FatalIf(
+		t,
+		(*s.st).GetObject((*s.source)) == nil || len(retained.Manifests) != wantDocs,
+		"%v",
+		"actual H completion lost C or output",
+	)
 	authored := false
 	for _, doc := range retained.Manifests {
-		if manifest.DocKind(doc.Document) == manifest.KindHelmChart {
-			name, namespace := manifest.DocMetadata(doc.Document)
-			{
-				assert.FatalIf(t, name == s.source.Name, "%v", "synthetic C leaked to output")
-			}
-			authored = true
-			{
-				{
-					_, ok := (*s.st).GetObject(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: namespace, Name: name}).(*manifest.HelmChartSource)
-					assert.FatalIf(t, !ok, "%v", "authored C lost typed admission")
-				}
-			}
+		if manifest.DocKind(doc.Document) != manifest.KindHelmChart {
+			continue
+		}
+		metadata := manifest.DocMetadata(doc.Document)
+		name, namespace := metadata.Name, metadata.Namespace
+		assert.FatalIf(t, name == s.source.Name, "%v", "synthetic C leaked to output")
+		authored = true
+		{
+			_, ok := (*s.st).GetObject(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: namespace, Name: name}).(*manifest.HelmChartSource)
+			assert.FatalIf(t, !ok, "%v", "authored C lost typed admission")
 		}
 	}
-	{
-		assert.FatalIf(
-			t,
-			authored != ((*s.inputs).tc.status == store.StatusReady),
-			"%v",
-			"authored C document was dropped",
-		)
-	}
-	{
-		assert.FatalIf(
-			t,
-			(*s.st).GetObject((*s.source)) == nil,
-			"%v",
-			"synthetic C unavailable after H completes",
-		)
-	}
+	assert.FatalIf(
+		t,
+		authored != ((*s.inputs).tc.status == store.StatusReady),
+		"%v",
+		"authored C document was dropped",
+	)
+	assert.FatalIf(
+		t,
+		(*s.st).GetObject((*s.source)) == nil,
+		"%v",
+		"synthetic C unavailable after H completes",
+	)
 	if info, ok := (*s.st).GetStatus(hr.Named()); !ok || info.Status != (*s.inputs).tc.status {
 		t.Errorf("consumer %s status = %+v (ok=%v), want %v", hr.Named(), info, ok, (*s.inputs).tc.status)
 	}

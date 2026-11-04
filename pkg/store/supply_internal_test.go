@@ -33,7 +33,7 @@ func TestDeclaration_Authority(t *testing.T) {
 			assert.Equal(t, len(s.ListObjects("", kind)), 1)
 			assert.Equal(t, s.Policy(id).Root, false)
 			assert.Equal(t, s.ReportHidden(id), true)
-			if _, found, _ := s.ReferenceFacts(id, nil, false, manifest.NamedResource{}).Data.Value("old"); found {
+			if value, _ := s.ReferenceFacts(id, nil, false, manifest.NamedResource{}).Data.Value("old"); value.Found {
 				t.Fatal("duplicate retained old key")
 			}
 			reads := &ReadSet{}

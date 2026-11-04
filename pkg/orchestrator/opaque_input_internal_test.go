@@ -178,13 +178,11 @@ func testRenderTreesRequiredOpaqueInputCaseTail(
 	}
 	want, fullErr := delta(full, nil)
 	assert.NoError(t, fullErr)
-	{
-		assert.FatalIf(
-			t, (*(*tailCaseInput.testCaseInput)) !=
-				"generated" && !bytes.Contains(want, []byte("supplied-side-1")), "independent full delta lacks substituted output: %s",
-			want,
-		)
-	}
+	assert.FatalIf(
+		t, (*(*tailCaseInput.testCaseInput)) !=
+			"generated" && !bytes.Contains(want, []byte("supplied-side-1")), "independent full delta lacks substituted output: %s",
+		want,
+	)
 	t.Logf("independent full delta: %s", want)
 	for run := range 2 {
 		runs, err := render(fmt.Sprintf("cold_%d", run), (*tailCaseInput.trees))

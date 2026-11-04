@@ -74,8 +74,8 @@ func (c *admissionClosure) bindSource(evidence *admissionSource) *admissionSourc
 	if source == manifest.BootstrapSourceID {
 		return evidence
 	}
-	_, pinned, external := sourceView(source, c.loader.SourceRoot, input, declaration)
-	if !pinned && !external {
+	location := sourceView(source, c.loader.SourceRoot, input, declaration)
+	if !location.Pinned && !location.External {
 		delta, _, _ = c.loader.Options.Changes.ForSource(manifest.BootstrapSourceID)
 		evidence.delta = delta
 		return evidence
@@ -116,13 +116,13 @@ func (c *admissionClosure) outputChanged(
 	id manifest.NamedResource,
 	refValue *manifest.Reference,
 	obj manifest.BaseManifest,
-) (bool, bool) {
+) change.Comparison {
 	ref := *refValue
 
 	source := c.source(id)
 	_, _, paired := c.delta(source)
 	if !paired || !c.loader.sideKnown {
-		return false, false
+		return change.Comparison{}
 	}
 	record, _ := c.loader.Index.Lookup(id)
 	if prepared := record.Declaration; prepared != nil && obj != prepared && record.Builder != "" &&
@@ -143,20 +143,23 @@ func (c *admissionClosure) outputChanged(
 	if ref.Use != "" && ref.Name != "" {
 		input := c.object(ref.NamedResource)
 		if input == nil {
-			return false, false
+			return change.Comparison{}
 		}
-		if _, known := c.outputChanged(
+		if comparison := c.outputChanged(
 			ref.NamedResource,
 			new(manifest.Reference{NamedResource: ref.NamedResource}),
 			input,
-		); !known {
-			return false, false
+		); !comparison.Known {
+			return change.Comparison{}
 		}
 	}
 	return c.loader.Options.Changes.OutputChanged(c.loader.side, source, ref, obj)
 }
 
-func (c *admissionClosure) declarationChanged(id manifest.NamedResource, object manifest.BaseManifest) (bool, bool) {
+func (c *admissionClosure) declarationChanged(
+	id manifest.NamedResource,
+	object manifest.BaseManifest,
+) change.Comparison {
 	var document map[string]any
 	if c.loader.sideKnown && object != nil {
 		if c.incoming.Obj == object {
@@ -177,22 +180,27 @@ func (c *admissionClosure) affected(id manifest.NamedResource, obj manifest.Base
 		return false
 	}
 	record := c.record(id)
-	direct, fileOwned := c.affectedProductions(id, &record)
-	if !fileOwned {
+	impact := c.affectedProductions(id, &record)
+	if !impact.fileOwned {
 		delta, _, _ := c.delta(manifest.BootstrapSourceID)
-		direct = direct || delta.Contains(record.File)
+		impact.direct = impact.direct || delta.Contains(record.File)
 	}
-	if direct {
-		changed, known := c.outputChanged(id, new(manifest.Reference{NamedResource: id}), obj)
-		if !known {
-			changed, known = c.declarationChanged(id, obj)
+	if impact.direct {
+		comparison := c.outputChanged(id, new(manifest.Reference{NamedResource: id}), obj)
+		if !comparison.Known {
+			comparison = c.declarationChanged(id, obj)
 		}
-		if !known || changed {
+		if !comparison.Known || comparison.Changed {
 			return true
 		}
 	}
 	if c.inputsChanged(manifest.BootstrapSourceID, record.Inputs) {
-		if changed, known := c.outputChanged(id, new(manifest.Reference{NamedResource: id}), obj); !known || changed {
+		if comparison := c.outputChanged(
+			id,
+			new(manifest.Reference{NamedResource: id}),
+			obj,
+		); !comparison.Known ||
+			comparison.Changed {
 			return true
 		}
 	}
@@ -239,17 +247,19 @@ func (c *admissionClosure) publishComparisons() {
 	}
 }
 
+type productionImpact struct{ direct, fileOwned bool }
+
 func (c *admissionClosure) affectedProductions(
 	id manifest.NamedResource,
 	record *manifest.DiscoveryRecord,
-) (bool, bool) {
+) productionImpact {
 	direct := false
 	fileOwned := false
 	{
 		productionValues := c.productions(id)
 		for productionIndex := range productionValues {
 			production := productionValues[productionIndex]
-			_, indexed := c.coordinates(new(production))
+			indexed := c.coordinates(new(production)).indexed
 			fileOwned = fileOwned || indexed == record.File
 			if production.Declaration == (manifest.NamedResource{}) &&
 				(production.Materializer(id) != (manifest.NamedResource{}) || production.Owner == (manifest.NamedResource{}) || manifest.Resolve(production.Authored, id.Namespace, "") == id) &&
@@ -258,14 +268,19 @@ func (c *admissionClosure) affectedProductions(
 			}
 		}
 	}
-	return direct, fileOwned
+	return productionImpact{direct: direct, fileOwned: fileOwned}
+}
+
+type affectedLocation struct {
+	prefix, indexed string
+	known           bool
 }
 
 func (c *admissionClosure) affectedCoordinates(
 	root, file string,
 	input *store.SourceArtifact,
 	paired bool,
-) (string, string, bool) {
+) affectedLocation {
 	base := cmp.Or(root, ".")
 	if !paired && input != nil {
 		relative, err := filepath.Rel(
@@ -273,32 +288,32 @@ func (c *admissionClosure) affectedCoordinates(
 			input.OriginPath(filepath.Join(input.LocalPath, filepath.FromSlash(root))),
 		)
 		if err != nil {
-			return "", "", false
+			return affectedLocation{}
 		}
 		base = filepath.ToSlash(relative)
 	}
 	if base != "." && file != base && !strings.HasPrefix(file, strings.TrimSuffix(base, "/")+"/") {
-		return "", "", false
+		return affectedLocation{}
 	}
 	prefix, indexed := base, file
 	if paired && input != nil {
 		physical := input.OriginPath(filepath.Join(input.LocalPath, filepath.FromSlash(root)))
 		relative, err := filepath.Rel(c.loader.SourceRoot, physical)
 		if err != nil {
-			return "", "", false
+			return affectedLocation{}
 		}
 		prefix = filepath.ToSlash(relative)
 		physical = input.OriginPath(filepath.Join(input.LocalPath, filepath.FromSlash(file)))
 		relative, err = filepath.Rel(c.loader.SourceRoot, physical)
 		if err != nil {
-			return "", "", false
+			return affectedLocation{}
 		}
 		indexed = filepath.ToSlash(relative)
 	}
 	if prefix == "." {
 		prefix = ""
 	}
-	return prefix, indexed, true
+	return affectedLocation{prefix: prefix, indexed: indexed, known: true}
 }
 
 func (c *admissionClosure) populateContentRoots(
@@ -361,11 +376,11 @@ func (c *admissionClosure) affectedSourceRoots(
 	for _, root := range roots {
 		root = c.affectedRoot(source, root)
 		for _, file := range files {
-			prefix, indexed, known := c.affectedCoordinates(root, file, input, paired)
-			if !known {
+			location := c.affectedCoordinates(root, file, input, paired)
+			if !location.known {
 				continue
 			}
-			if c.affectedClaim(id, prefix, indexed) {
+			if c.affectedClaim(id, location.prefix, location.indexed) {
 				return true
 			}
 		}
@@ -390,7 +405,7 @@ func (c *admissionClosure) affectedClaim(id manifest.NamedResource, prefix, inde
 		claim += "/"
 	}
 	if slices.Contains(c.loader.Index.Claims[claim], id) {
-		owners, _ := c.loader.Index.OwnersOfFile(indexed)
+		owners := c.loader.Index.OwnersOfFile(indexed).Owners
 		if !slices.Contains(owners, id) {
 			return false
 		}

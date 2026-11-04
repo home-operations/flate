@@ -43,9 +43,7 @@ func testRecordEmittedPayloadPrecedenceCaseCompletion(
 		})
 	}
 	tasks.BlockTillDone()
-	{
-		assert.FatalIf(t, tasks.Failures() != 0, "%s", "publication panicked")
-	}
+	assert.FatalIf(t, tasks.Failures() != 0, "%s", "publication panicked")
 	(*scope.s).RecordEmitted(
 		(*scope.zz),
 		&Emission{
@@ -74,24 +72,18 @@ func testRecordEmittedPayloadPrecedenceCaseCompletion(
 	unsubscribe := (*scope.s).AddListener(EventArtifactUpdated, func(id manifest.NamedResource, value any) {
 		if id == (*scope.target) {
 			seen++
-			{
-				assert.ErrorIf(t, value != (*scope.last), "%s", "replay selected a different payload")
-			}
+			assert.ErrorIf(t, value != (*scope.last), "%s", "replay selected a different payload")
 		}
 	}, true)
 	unsubscribe()
-	{
-		assert.FatalIf(t, seen != 1, "generated payload replay count = %d", seen)
-	}
-	{
-		assert.FatalIf(
-			t,
-			(*scope.s).EmissionOwner((*scope.target)) != (*scope.zz) ||
-				(*scope.s).GetArtifact((*scope.target), ArtifactContent) != (*scope.last),
-			"%s",
-			"declaration winner suppressed greatest byte contributor",
-		)
-	}
+	assert.FatalIf(t, seen != 1, "generated payload replay count = %d", seen)
+	assert.FatalIf(
+		t,
+		(*scope.s).EmissionOwner((*scope.target)) != (*scope.zz) ||
+			(*scope.s).GetArtifact((*scope.target), ArtifactContent) != (*scope.last),
+		"%s",
+		"declaration winner suppressed greatest byte contributor",
+	)
 	checkDeclaration := func() {
 		t.Helper()
 		obj, doc, attempt := (*scope.s).GetEmission((*scope.target))
@@ -103,33 +95,27 @@ func testRecordEmittedPayloadPrecedenceCaseCompletion(
 	checkDeclaration()
 	(*scope.s).AddObject(scope.declaration.Obj, scope.declaration.Doc)
 	assert.Equal(t, (*scope.s).DeleteObject((*scope.target)), true)
-	{
-		assert.FatalIf(
-			t,
-			(*scope.s).GetArtifact((*scope.target), ArtifactContent) != (*scope.last),
-			"%s",
-			"static deletion discarded the surviving emitted payload",
-		)
-	}
+	assert.FatalIf(
+		t,
+		(*scope.s).GetArtifact((*scope.target), ArtifactContent) != (*scope.last),
+		"%s",
+		"static deletion discarded the surviving emitted payload",
+	)
 	checkDeclaration()
 	{
 		data, readFileErr := fs.ReadFile((*scope.first).FS, "file")
 		assert.FatalIf(t, readFileErr != nil || string(data) != "a", "losing payload = %q, %v", data, readFileErr)
 	}
 	opened, (*scope.err) = (*scope.last).FS.Open("file")
-	{
-		assert.NoError(t, (*scope.err))
-	}
+	assert.NoError(t, (*scope.err))
 	defer func() { _ = opened.Close() }()
 	(*scope.s).RecordEmitted((*scope.z), &Emission{Complete: true}, nil)
-	{
-		assert.FatalIf(
-			t,
-			(*scope.s).GetArtifact((*scope.target), ArtifactContent) != (*scope.first),
-			"%s",
-			"withdrawal did not select the whole surviving descriptor",
-		)
-	}
+	assert.FatalIf(
+		t,
+		(*scope.s).GetArtifact((*scope.target), ArtifactContent) != (*scope.first),
+		"%s",
+		"withdrawal did not select the whole surviving descriptor",
+	)
 	checkDeclaration()
 	{
 		data, err := fs.ReadFile(
@@ -140,15 +126,13 @@ func testRecordEmittedPayloadPrecedenceCaseCompletion(
 			string(data) != "a", "surviving payload = %q, %v", data, err)
 	}
 	(*scope.s).RecordEmitted((*scope.a), &Emission{Complete: true}, nil)
-	{
-		assert.FatalIf(
-			t,
-			(*scope.s).GetObject((*scope.target)) == nil ||
-				(*scope.s).GetArtifact((*scope.target), ArtifactContent) != nil,
-			"%s",
-			"declaration-only survivor retained byte authority",
-		)
-	}
+	assert.FatalIf(
+		t,
+		(*scope.s).GetObject((*scope.target)) == nil ||
+			(*scope.s).GetArtifact((*scope.target), ArtifactContent) != nil,
+		"%s",
+		"declaration-only survivor retained byte authority",
+	)
 	checkDeclaration()
 	{
 		data, err := io.ReadAll(opened)
@@ -160,14 +144,12 @@ func testRecordEmittedPayloadPrecedenceCaseCompletion(
 			err,
 		)
 	}
-	{
-		assert.FatalIf(
-			t,
-			(*scope.peer).GetArtifact((*scope.target), ArtifactContent) != (*scope.first),
-			"%s",
-			"withdrawal discarded another store's shared cache backing",
-		)
-	}
+	assert.FatalIf(
+		t,
+		(*scope.peer).GetArtifact((*scope.target), ArtifactContent) != (*scope.first),
+		"%s",
+		"withdrawal discarded another store's shared cache backing",
+	)
 	(*scope.peer).RecordEmitted((*scope.a), &Emission{Complete: true}, nil)
 	for _, payload := range []*SourceArtifact{(*scope.first), (*scope.last)} {
 		{

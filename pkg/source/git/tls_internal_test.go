@@ -86,7 +86,7 @@ func tlsGitProxy(t *testing.T, authenticated bool) (*httptest.Server, *atomic.In
 	return srv, &connects
 }
 
-func tlsGitCertificate(t *testing.T) (tls.Certificate, string) {
+func tlsGitCertificate(t *testing.T) gitCertificate {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	assert.NoError(t, err)
@@ -100,12 +100,12 @@ func tlsGitCertificate(t *testing.T) (tls.Certificate, string) {
 	der, err := x509.CreateCertificate(rand.Reader, cert, cert, &key.PublicKey, key)
 	assert.NoError(t, err)
 
-	return tls.Certificate{
+	return gitCertificate{certificate: tls.Certificate{
 		Certificate: [][]byte{der},
 		PrivateKey:  key,
-	}, string(
+	}, pem: string(
 		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
-	)
+	)}
 }
 
 func gitHTTPHandler(t *testing.T, root string) http.Handler {
@@ -264,7 +264,8 @@ func gitRepoWithSecret(name, url, secretName string) *manifest.GitRepository {
 func TestFetcher_ResolveTLS(t *testing.T) {
 	t.Parallel()
 	ca := testutil.SelfSignedCA(t)
-	crt, key := testutil.SelfSignedClientCert(t)
+	certificate := testutil.SelfSignedClientCert(t)
+
 	_, private, err := ed25519.GenerateKey(nil)
 	assert.NoError(t, err)
 	block, err := ssh.MarshalPrivateKey(private, "fixture")
@@ -299,12 +300,12 @@ func TestFetcher_ResolveTLS(t *testing.T) {
 		{
 			name:    "mtls",
 			secret:  "tls",
-			data:    map[string]any{"ca.crt": ca, "tls.crt": crt, "tls.key": key},
+			data:    map[string]any{"ca.crt": ca, "tls.crt": certificate.Cert, "tls.key": certificate.Key},
 			wantCA:  ca,
-			wantCRT: crt,
-			wantKey: key,
+			wantCRT: certificate.Cert,
+			wantKey: certificate.Key,
 		},
-		{name: "unpaired", secret: "tls", data: map[string]any{"tls.crt": crt}, wantInput: true},
+		{name: "unpaired", secret: "tls", data: map[string]any{"tls.crt": certificate.Cert}, wantInput: true},
 		{name: "invalid-ca", secret: "tls", data: map[string]any{"ca.crt": "invalid"}, wantInput: true},
 		{
 			name:      "invalid-client",
@@ -329,7 +330,7 @@ func TestFetcher_ResolveTLS(t *testing.T) {
 		{
 			name:        "valid client wiped key",
 			secret:      "tls",
-			data:        map[string]any{"tls.crt": crt, "tls.key": "..PLACEHOLDER_key.."},
+			data:        map[string]any{"tls.crt": certificate.Cert, "tls.key": "..PLACEHOLDER_key.."},
 			wantMissing: true,
 		},
 		{
@@ -594,7 +595,8 @@ func testFetcherHTTPSBasicAuthSnapshotRotationCallback(
 	testCaseInput.requests.
 		Add(1)
 	user, pass, _ := r.BasicAuth()
-	want, _, _ := testCaseInput.expected.Load().Value("password")
+	valueResult, _ := testCaseInput.expected.Load().Value("password")
+	want := valueResult.Value
 	if user != "alice" || pass != want {
 		(*testCaseInput.t).
 			Error("producer used different credential snapshot")
@@ -685,4 +687,9 @@ func testFetcherResolveTLSCase(t *testing.T, testCaseInput testFetcherResolveTLS
 	assert.Equal(t, string(opts.CABundle), testCaseInput.tc.wantCA)
 	assert.Equal(t, string(opts.ClientCert), testCaseInput.tc.wantCRT)
 	assert.Equal(t, string(opts.ClientKey), testCaseInput.tc.wantKey)
+}
+
+type gitCertificate struct {
+	certificate tls.Certificate
+	pem         string
 }

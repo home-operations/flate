@@ -110,9 +110,7 @@ func TestAutoResolve_LocalBaseMissingObjects(t *testing.T) {
 				assert.Equal(t, res.ScanPath, filepath.Join(root, "apps"))
 				assert.Equal(t, res.BaseScanPath, filepath.Join(label, "apps"))
 				assert.Diff(t, res.SelfURLs, []string{url})
-				{
-					assert.FatalIf(t, res.BaseInput.Key == "", "%v", "baseline identity is empty")
-				}
+				assert.FatalIf(t, res.BaseInput.Key == "", "%v", "baseline identity is empty")
 				if round == 0 {
 					identity = res.BaseInput.Key
 				}
@@ -165,9 +163,7 @@ func TestAutoResolve_TwoSidedInput(t *testing.T) {
 		t,
 		admissiontest.Config{Changes: res.Changes, Index: index, Inventory: nil, Root: ""},
 	)
-	{
-		assert.FatalIf(t, filter.ShouldReconcile(app), "%v", "two-sided input supplied an absent input identity")
-	}
+	assert.FatalIf(t, filter.ShouldReconcile(app), "%v", "two-sided input supplied an absent input identity")
 }
 
 func TestSelection_OneSidedInputOrder(t *testing.T) {
@@ -276,15 +272,13 @@ func TestSelection_NoOneSidedInputCancellation(t *testing.T) {
 		map[string]object.TreeEntry{"input.yaml": {}},
 	)
 	assert.Equal(t, ctx.Err(), context.Canceled)
-	{
-		assert.FatalIf(
-			t,
-			changes != nil || !errors.Is(err, context.Canceled),
-			"canceled two-sided selection published changes: changes=%v err=%v",
-			changes,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		changes != nil || !errors.Is(err, context.Canceled),
+		"canceled two-sided selection published changes: changes=%v err=%v",
+		changes,
+		err,
+	)
 }
 
 type inputCancelFS struct {
@@ -311,9 +305,7 @@ func TestSelection_AcquireBaseNoOrigin(t *testing.T) {
 	err = s.acquireBase(t.Context())
 	assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 	assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
-	{
-		assert.FatalIf(t, err == nil, "%v", "expected missing-objects error")
-	}
+	assert.FatalIf(t, err == nil, "%v", "expected missing-objects error")
 	assert.Equal(t, strings.Contains(err.Error(), hash.String()), true)
 	assert.Equal(t, strings.Contains(err.Error(), "input error"), false)
 	assert.Equal(t, strings.Contains(err.Error(), "flux error"), false)
@@ -346,9 +338,7 @@ func TestSelection_SharedIndexInitialization(t *testing.T) {
 			worktree, err := repo.Worktree()
 			assert.NoError(t, err)
 			_, statusErr := worktree.Status()
-			{
-				assert.FatalIf(t, statusErr == nil, "%v", "malformed index did not fail Worktree.Status")
-			}
+			assert.FatalIf(t, statusErr == nil, "%v", "malformed index did not fail Worktree.Status")
 			base, changes, identity, warnings, err := selectChanges(t.Context(), selection{
 				repo: repo, base: &resolution{Repo: repo, Hash: pin}, current: input.FS.(*gittree.FS),
 			})
@@ -362,30 +352,26 @@ func TestSelection_SharedIndexInitialization(t *testing.T) {
 				},
 			})
 			if errors.Is(tc.err, cause) {
-				{
-					assert.FatalIf(
-						t,
-						!errors.Is(err, cause) || base != nil || changes != nil || identity != "",
-						"shared index failure published inputs or lost its cause: base=%v changes=%v identity=%q err=%v",
-						base,
-						changes,
-						identity,
-						err,
-					)
-				}
-				return
-			}
-			assert.NoError(t, err)
-			{
 				assert.FatalIf(
 					t,
-					base == nil || changes == nil || identity == "",
-					"shared index initialization did not publish inputs: base=%v changes=%v identity=%q",
+					!errors.Is(err, cause) || base != nil || changes != nil || identity != "",
+					"shared index failure published inputs or lost its cause: base=%v changes=%v identity=%q err=%v",
 					base,
 					changes,
 					identity,
+					err,
 				)
+				return
 			}
+			assert.NoError(t, err)
+			assert.FatalIf(
+				t,
+				base == nil || changes == nil || identity == "",
+				"shared index initialization did not publish inputs: base=%v changes=%v identity=%q",
+				base,
+				changes,
+				identity,
+			)
 			assert.Diff(t, changes.Paths(), []string{"value.txt"})
 			before, err := fs.ReadFile(base, "value.txt")
 			assert.NoError(t, err)
@@ -426,20 +412,16 @@ func TestAutoResolve_StatusWarningSurvivesFailure(t *testing.T) {
 	testutil.WriteFile(t, root, ".git/index", "invalid index")
 	owner := cachetest.New(t, "", sourcecache.New)
 	result, err := AutoResolve(t.Context(), root, pin.String(), owner)
-	{
-		assert.FatalIf(
-			t,
-			!errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "missing objects"),
-			"original body failure lost: %v",
-			err,
-		)
-	}
-	{
-		assert.FatalIf(t, result == nil || result.Source == nil || result.Source.FS != nil || result.BaseInput != nil ||
-			len(result.Source.Warnings) != 1 ||
-			result.Source.Warnings[0].Category != manifest.WarnBaselineStatusUnavailable ||
-			result.Source.Warnings[0].Resource != (manifest.NamedResource{}), "warning-only baseline = %+v", result)
-	}
+	assert.FatalIf(
+		t,
+		!errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "missing objects"),
+		"original body failure lost: %v",
+		err,
+	)
+	assert.FatalIf(t, result == nil || result.Source == nil || result.Source.FS != nil || result.BaseInput != nil ||
+		len(result.Source.Warnings) != 1 ||
+		result.Source.Warnings[0].Category != manifest.WarnBaselineStatusUnavailable ||
+		result.Source.Warnings[0].Resource != (manifest.NamedResource{}), "warning-only baseline = %+v", result)
 }
 
 func TestCollectInputs_BaselineFailure(t *testing.T) {
@@ -481,25 +463,21 @@ func TestCollectInputs_BaselineFailure(t *testing.T) {
 			if canceled {
 				want = context.Canceled
 			}
-			{
-				assert.FatalIf(
-					t,
-					!errors.Is(err, want) || changes != nil || identity != "",
-					"input failure published a change set or lost its cause: changes=%v identity=%q err=%v",
-					changes,
-					identity,
-					err,
-				)
-			}
-			{
-				assert.FatalIf(
-					t,
-					base == nil || len(warnings) != 1 || warnings[0].Category != manifest.WarnBaselineStatusUnavailable,
-					"input failure lost baseline warnings: base=%v warnings=%v",
-					base,
-					warnings,
-				)
-			}
+			assert.FatalIf(
+				t,
+				!errors.Is(err, want) || changes != nil || identity != "",
+				"input failure published a change set or lost its cause: changes=%v identity=%q err=%v",
+				changes,
+				identity,
+				err,
+			)
+			assert.FatalIf(
+				t,
+				base == nil || len(warnings) != 1 || warnings[0].Category != manifest.WarnBaselineStatusUnavailable,
+				"input failure lost baseline warnings: base=%v warnings=%v",
+				base,
+				warnings,
+			)
 		})
 	}
 }
@@ -601,11 +579,9 @@ func testAutoResolveLazyBaseReadsCase(t *testing.T, testCaseInput *struct {
 	}
 	res, err := AutoResolve(t.Context(), root, pin.String(), cachetest.New(t, "", sourcecache.New))
 	if testCaseInput.name == "malformed_index" {
-		{
-			assert.FatalIf(t, res == nil || len(res.Source.Warnings) != 1 ||
-				res.Source.Warnings[0].Category != manifest.WarnBaselineStatusUnavailable ||
-				len(res.BaseInput.Warnings) != 0, "current-only status evidence = %+v", res)
-		}
+		assert.FatalIf(t, res == nil || len(res.Source.Warnings) != 1 ||
+			res.Source.Warnings[0].Category != manifest.WarnBaselineStatusUnavailable ||
+			len(res.BaseInput.Warnings) != 0, "current-only status evidence = %+v", res)
 	}
 	assert.NoError(t, err)
 	if res.BaseInput.Content != res.BaseInput.Key || res.Source.Content != "" || res.BaseInput.Key == "" ||
@@ -622,10 +598,8 @@ func testAutoResolveLazyBaseReadsCase(t *testing.T, testCaseInput *struct {
 		want = []string{"untracked.yaml"}
 	}
 	{
-		{
-			got := res.Changes.Paths()
-			assert.FatalIf(t, !slices.Equal(got, want), "selected=%v, want %v", got, want)
-		}
+		got := res.Changes.Paths()
+		assert.FatalIf(t, !slices.Equal(got, want), "selected=%v, want %v", got, want)
 	}
 	for _, file := range []struct{ name, body string }{
 		{"file", "base"}, {"unchanged.yaml", "same"}, {".sourceignore", "ignored.yaml\n"},
@@ -731,14 +705,12 @@ func testAutoResolveIgnoreMembershipFlipsCase(
 		)
 		assert.NoError(t, err)
 		assert.Equal(t, input.Content, directIdentity)
-		{
-			assert.FatalIf(
-				t,
-				(input.Content != "") != (side == 0),
-				"%v",
-				"diff sides lost committed versus mutable authority",
-			)
-		}
+		assert.FatalIf(
+			t,
+			(input.Content != "") != (side == 0),
+			"%v",
+			"diff sides lost committed versus mutable authority",
+		)
 		view, _, err := gittree.New(
 			t.Context(),
 			nil,
@@ -765,13 +737,11 @@ func testAutoResolveIgnoreMembershipFlipsCase(
 			t,
 			admissiontest.Config{Changes: changes, Index: index, Inventory: objects, Root: input.LocalPath},
 		)
-		{
-			assert.ErrorIf(
-				t,
-				!filter.ShouldReconcile(app),
-				"side %d ignore %s did not select optional input consumer",
-				side, (*testCaseInput),
-			)
-		}
+		assert.ErrorIf(
+			t,
+			!filter.ShouldReconcile(app),
+			"side %d ignore %s did not select optional input consumer",
+			side, (*testCaseInput),
+		)
 	}
 }

@@ -389,22 +389,18 @@ func TestPromote_CapturedSourceReplacement(t *testing.T) {
 	done := make(chan bool, 1)
 	go func() {
 		promoted, err := Promote(t.Context(), st, id, options)
-		{
-			assert.ErrorIf(t, err != nil, "%v", err)
-		}
+		assert.ErrorIf(t, err != nil, "%v", err)
 		done <- promoted
 	}()
 	<-barrier.opened
 	st.SetArtifact(source.Named(), &store.SourceArtifact{Key: "new", LocalPath: root, FS: makeFS("new")})
 	close(barrier.release)
-	{
-		assert.FatalIf(
-			t,
-			<-done || st.GetObject(id) != nil || first.Valid() || arrivals != 0,
-			"%s",
-			"changed source admitted stale raw bytes",
-		)
-	}
+	assert.FatalIf(
+		t,
+		<-done || st.GetObject(id) != nil || first.Valid() || arrivals != 0,
+		"%s",
+		"changed source admitted stale raw bytes",
+	)
 	first.Retire()
 	var second store.ReadSet
 	second.Init(st, testutil.KustomizationID("apps", "consumer"), nil)
@@ -417,14 +413,12 @@ func TestPromote_CapturedSourceReplacement(t *testing.T) {
 		t.Fatalf("current promotion = %+v, valid=%t", got, second.Valid())
 	}
 	st.SetArtifact(source.Named(), &store.SourceArtifact{Key: "third", LocalPath: root, FS: makeFS("third")})
-	{
-		assert.FatalIf(
-			t,
-			st.GetObject(id) != nil || second.Valid(),
-			"%s",
-			"source-bound raw admission survived changed source",
-		)
-	}
+	assert.FatalIf(
+		t,
+		st.GetObject(id) != nil || second.Valid(),
+		"%s",
+		"source-bound raw admission survived changed source",
+	)
 	var third store.ReadSet
 	third.Init(st, testutil.KustomizationID("apps", "consumer"), nil)
 	options.Reads = &third
@@ -499,22 +493,18 @@ stringData: {value: fixture}
 				got, err := Promote(t.Context(), st, id, opts)
 				assert.ErrorIf(t, err != nil || got == tc.secret, "Promote returned %v, want %v", got, !tc.secret)
 			}
-			{
-				assert.ErrorIf(
-					t,
-					st.GetObject(cm.Named()) == nil || st.GetObject(secret) != nil,
-					"%s",
-					"admission must apply separately to requested and sibling objects",
-				)
-			}
-			{
-				assert.ErrorIf(
-					t,
-					tc.existing && st.GetObject(cm.Named()) != cm,
-					"%s",
-					"existing rendered object must take precedence",
-				)
-			}
+			assert.ErrorIf(
+				t,
+				st.GetObject(cm.Named()) == nil || st.GetObject(secret) != nil,
+				"%s",
+				"admission must apply separately to requested and sibling objects",
+			)
+			assert.ErrorIf(
+				t,
+				tc.existing && st.GetObject(cm.Named()) != cm,
+				"%s",
+				"existing rendered object must take precedence",
+			)
 		})
 	}
 }
@@ -589,9 +579,7 @@ func testPromoteAuthoredDocumentProjectionCase(
 			promoted, "%s", "foreign promotion borrowed the real HelmRelease")
 	}
 	sibling := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "note"}
-	{
-		assert.ErrorIf(t, st.GetObject(sibling) == nil, "%s", "admitted sibling must retain its authored identity")
-	}
+	assert.ErrorIf(t, st.GetObject(sibling) == nil, "%s", "admitted sibling must retain its authored identity")
 	sibling.Namespace = testCaseInput.namespace
 	assert.ErrorIf(t, st.GetObject(sibling) != nil, "sibling %s acquired the requested namespace", sibling)
 }
@@ -636,7 +624,8 @@ func testPromoteSourceViewCase(t *testing.T, testCaseInput *bool,
 				Name:       source.Name,
 			},
 		}
-		root, pinned, external := SourceView(st, ks.SourceID(), repoRoot)
+		location := SourceView(st, ks.SourceID(), repoRoot)
+		root, pinned, external := location.Path, location.Pinned, location.External
 		admitted := version == "" || version == manifest.SourceDomain+"/v1"
 		wantRoot := repoRoot
 		if admitted {
@@ -680,12 +669,10 @@ func testPromoteSourceViewCase(t *testing.T, testCaseInput *bool,
 		err,
 		(*testCaseInput),
 	)
-	{
-		assert.FatalIf(
-			t,
-			(*testCaseInput) && st.GetObject(id).(*manifest.ConfigMap).Data["source"] != "committed",
-			"%s",
-			"promotion read the working file instead of the mounted view",
-		)
-	}
+	assert.FatalIf(
+		t,
+		(*testCaseInput) && st.GetObject(id).(*manifest.ConfigMap).Data["source"] != "committed",
+		"%s",
+		"promotion read the working file instead of the mounted view",
+	)
 }

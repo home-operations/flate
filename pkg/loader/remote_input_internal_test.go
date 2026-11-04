@@ -120,7 +120,7 @@ func testFinalizeIndexRemoteInputsCase(t *testing.T, testCaseInput *string,
 	l.documents = readerForTest(root)
 	admitForTest(st, root)
 	l.mountSources()
-	l.documents.read(filepath.Join(root, "apps/a"))
+	l.documents.read(filepath.Join(root, "apps", "a"))
 	if (*testCaseInput) == "remote-failure" || strings.HasSuffix((*testCaseInput), "-closed-owner") {
 		network := new(source.Network)
 		defer network.Close()
@@ -149,9 +149,7 @@ func testFinalizeIndexRemoteInputsCase(t *testing.T, testCaseInput *string,
 		wantErr = manifest.ErrInput
 	}
 	err := l.FinalizeIndex(ctx, root, true)
-	{
-		assert.FatalIf(t, !errors.Is(err, wantErr), "finalization: %v, want %v", err, wantErr)
-	}
+	assert.FatalIf(t, !errors.Is(err, wantErr), "finalization: %v, want %v", err, wantErr)
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input"}
 	if wantErr != nil {
 		assert.Equal(t, requests.Load(), int32(0))
@@ -168,9 +166,7 @@ func testFinalizeIndexRemoteInputsCase(t *testing.T, testCaseInput *string,
 		assert.Diff(t, testutil.Owners(l.Index.Records[id].Productions), []manifest.NamedResource{ks.Named()})
 	} else {
 		assert.Equal(t, requests.Load(), int32(0))
-		{
-			assert.FatalIf(t, !ok, "%s", "local generator missing")
-		}
+		assert.FatalIf(t, !ok, "%s", "local generator missing")
 		want := "local"
 		if strings.HasPrefix((*testCaseInput), "local-file-") {
 			want += "\n"
@@ -179,8 +175,6 @@ func testFinalizeIndexRemoteInputsCase(t *testing.T, testCaseInput *string,
 	}
 	id.Name = "sibling"
 	sibling, ok := lookupDataForTest[*manifest.ConfigMap](t, st, id)
-	{
-		assert.FatalIf(t, !ok, "%s", "ordinary input error stopped sibling materialization")
-	}
+	assert.FatalIf(t, !ok, "%s", "ordinary input error stopped sibling materialization")
 	assert.Diff(t, sibling.Data, map[string]any{"VALUE": "sibling"})
 }

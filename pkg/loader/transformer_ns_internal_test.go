@@ -74,7 +74,7 @@ func TestAdmit_SelfProducedTransformerIdentity(t *testing.T) {
 	l := loaderFixture(s, nil)
 	l.SourceRoot = root
 	{
-		_, err := loadForTest(t.Context(), t, l, filepath.Join(root, "apps/apps"))
+		_, err := loadForTest(t.Context(), t, l, filepath.Join(root, "apps", "apps"))
 		assert.NoError(t, err)
 	}
 	l.Admit(root)
@@ -432,9 +432,7 @@ func TestSubtreeHasNamespaceTransformer_DepthCapAndCycle(t *testing.T) {
 			got := new(
 				readerForTest(tempDirRoot),
 			).subtreeHasNamespaceTransformer(tempDirRoot, "d0", map[string]struct{}{})
-			{
-				assert.FatalIf(t, got != (depth == transformerScanMaxDepth), "proof at depth %d = %t", depth, got)
-			}
+			assert.FatalIf(t, got != (depth == transformerScanMaxDepth), "proof at depth %d = %t", depth, got)
 		})
 	}
 	testutil.WriteFile(t, root, "component/kustomization.yaml", "components: [nested]\n")
@@ -445,26 +443,22 @@ func TestSubtreeHasNamespaceTransformer_DepthCapAndCycle(t *testing.T) {
 		"apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [transformer.yaml]\n",
 	)
 	testutil.WriteFile(t, root, "component/nested/transformer.yaml", namespaceTransformer)
-	{
-		assert.FatalIf(
-			t,
-			new(readerForTest(root)).subtreeHasNamespaceTransformer(root, "component", map[string]struct{}{}),
-			"%s",
-			"Component edge supplied namespace proof",
-		)
-	}
+	assert.FatalIf(
+		t,
+		new(readerForTest(root)).subtreeHasNamespaceTransformer(root, "component", map[string]struct{}{}),
+		"%s",
+		"Component edge supplied namespace proof",
+	)
 
 	// A reference cycle a → b → a must terminate (visited set) and return false.
 	testutil.WriteFile(t, root, "cyc/a/kustomization.yaml", "resources:\n  - ../b\n")
 	testutil.WriteFile(t, root, "cyc/b/kustomization.yaml", "resources:\n  - ../a\n")
-	{
-		assert.ErrorIf(
-			t,
-			new(readerForTest(root)).subtreeHasNamespaceTransformer(root, "cyc/a", map[string]struct{}{}),
-			"%s",
-			"want false on a reference cycle (must not loop)",
-		)
-	}
+	assert.ErrorIf(
+		t,
+		new(readerForTest(root)).subtreeHasNamespaceTransformer(root, "cyc/a", map[string]struct{}{}),
+		"%s",
+		"want false on a reference cycle (must not loop)",
+	)
 }
 
 // Deepest enclosing overlay wins for the replacements pattern too.
@@ -509,16 +503,12 @@ func TestAdmit_UnloadedAncestorNamespace(t *testing.T) {
 	)
 	l := New(store.New())
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), filepath.Join(root, "apps/outside/selected"))
-	{
-		assert.NoError(t, err)
-	}
+	_, err := l.Load(t.Context(), filepath.Join(root, "apps", "outside", "selected"))
+	assert.NoError(t, err)
 	l.Admit(root)
 	owners := l.Kustomizations()
-	{
-		assert.FatalIf(t, len(owners) != 1 || owners[0].Obj.(*manifest.Kustomization).TargetNamespace != "" ||
-			owners[0].Obj.(*manifest.Kustomization).Namespace != "apps", "unloaded ancestor injected namespace: %+v", owners)
-	}
+	assert.FatalIf(t, len(owners) != 1 || owners[0].Obj.(*manifest.Kustomization).TargetNamespace != "" ||
+		owners[0].Obj.(*manifest.Kustomization).Namespace != "apps", "unloaded ancestor injected namespace: %+v", owners)
 }
 
 type testAdmitSelfProducedTransformerIdentityCaseInputs struct {
@@ -547,16 +537,14 @@ func testAdmitSelfProducedTransformerIdentityCase(
 	if ok != testCaseInput.tc.want {
 		t.Errorf("indexed identity %s present=%t, want %t", id, ok, testCaseInput.tc.want)
 	}
-	{
-		assert.ErrorIf(
-			t,
-			testCaseInput.tc.want && record.File != definition,
-			"identity %s definition=%q, want %q",
-			id,
-			record.File,
-			definition,
-		)
-	}
+	assert.ErrorIf(
+		t,
+		testCaseInput.tc.want && record.File != definition,
+		"identity %s definition=%q, want %q",
+		id,
+		record.File,
+		definition,
+	)
 }
 
 func testAdmitSelfProducedTransformerIdentityNamespacePredictionDeclinesComponentOnlyProof(t *testing.T) {
@@ -588,14 +576,12 @@ func testAdmitSelfProducedTransformerIdentityNamespacePredictionDeclinesComponen
 		assert.FatalIf(t, found, "%s", "scope namespace prediction accepted a Component-only proof")
 	}
 	record, found := l.Index.Lookup(testutil.KustomizationID("", "child"))
-	{
-		assert.FatalIf(
-			t,
-			!found || record.File != "entry/ks.yaml",
-			"%s",
-			"declined prediction lost the authored child evidence",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!found || record.File != "entry/ks.yaml",
+		"%s",
+		"declined prediction lost the authored child evidence",
+	)
 }
 
 func testStampTransformerTargetNamespacesNamespaceTransformerCase(
@@ -634,33 +620,25 @@ func testStampTransformerTargetNamespacesNamespaceTransformerCase(
 			}
 			record, indexed := l.Index.Lookup(id)
 			ks, ok := l.IndexedObject(id, record).Obj.(*manifest.Kustomization)
-			{
-				assert.FatalIf(
-					t,
-					!indexed || !ok || ks.TargetNamespace != want,
-					"%s declaration = %+v, want targetNamespace %q",
-					id,
-					ks,
-					want,
-				)
-			}
+			assert.FatalIf(
+				t,
+				!indexed || !ok || ks.TargetNamespace != want,
+				"%s declaration = %+v, want targetNamespace %q",
+				id,
+				ks,
+				want,
+			)
 			projected, err := ks.RenderDocument()
-			{
-				assert.NoError(t, err)
-			}
+			assert.NoError(t, err)
 			target, _ := projected["spec"].(map[string]any)["targetNamespace"].(string)
-			{
-				assert.FatalIf(t, target != want, "%s projected namespace = %v, %v", id, projected, err)
-			}
+			assert.FatalIf(t, target != want, "%s projected namespace = %v, %v", id, projected, err)
 			for _, staleNS := range []string{testCaseInput.authored, "red", "blue"} {
 				if staleNS == ns {
 					continue
 				}
 				stale := testutil.KustomizationID(staleNS, name)
 				_, indexed := l.Index.Lookup(stale)
-				{
-					assert.FatalIf(t, st.GetObject(stale) != nil || indexed, "retained stale %s", stale)
-				}
+				assert.FatalIf(t, st.GetObject(stale) != nil || indexed, "retained stale %s", stale)
 			}
 		}
 	}
@@ -718,7 +696,7 @@ func testStampTransformerTargetNamespacesNamespaceTransformerCaseCompletion(
 			)
 		}
 		{
-			_, err := (*scope.l).Load(t.Context(), filepath.Join((*scope.local), "apps/gpu-operator"))
+			_, err := (*scope.l).Load(t.Context(), filepath.Join((*scope.local), "apps", "gpu-operator"))
 			assert.NoError(t, err)
 		}
 		if (*scope.testCaseInput).mounted {
@@ -757,9 +735,7 @@ func testStampTransformerTargetNamespacesNamespaceTransformerCaseCompletion(
 		for _, name := range []string{"gpu-operator", "explicit"} {
 			id := testutil.KustomizationID("", name)
 			_, indexed := (*scope.l).Index.Lookup(id)
-			{
-				assert.FatalIf(t, (*scope.st).GetObject(id) != nil || indexed, "%s survived mount removal", id)
-			}
+			assert.FatalIf(t, (*scope.st).GetObject(id) != nil || indexed, "%s survived mount removal", id)
 		}
 	}
 }

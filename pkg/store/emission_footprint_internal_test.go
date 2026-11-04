@@ -74,33 +74,23 @@ func testRecordEmittedAcceptedFootprintCase(t *testing.T, testCaseInput *string,
 		source:   emitterSource,
 		artifact: &SourceArtifact{Key: "generation", Content: "generation"},
 	}
-	{
-		assert.FatalIf(t, len(next.coverage) == 0, "%s", "fixture has no withdrawal coverage")
-	}
+	assert.FatalIf(t, len(next.coverage) == 0, "%s", "fixture has no withdrawal coverage")
 	if (*testCaseInput) == "empty" {
 		next.Children = nil
 	}
-	{
-		assert.FatalIf(t, next.Footprint() != nil, "%s", "unpublished attempt exposed a footprint")
-	}
+	assert.FatalIf(t, next.Footprint() != nil, "%s", "unpublished attempt exposed a footprint")
 	st.RecordEmitted(owner.Named(), &next, nil)
 	if (*testCaseInput) == "partial_reuse" {
 		next.Complete = false
-		{
-			assert.FatalIf(t, next.Footprint() != nil, "%s", "reused partial caller exposed complete history")
-		}
+		assert.FatalIf(t, next.Footprint() != nil, "%s", "reused partial caller exposed complete history")
 		st.RecordEmitted(owner.Named(), &next, nil)
 	}
 	footprint := next.Footprint()
 	if (*testCaseInput) == "partial" || (*testCaseInput) == "partial_reuse" {
-		{
-			assert.FatalIf(t, footprint != nil, "%s", "partial output exposed accepted history")
-		}
+		assert.FatalIf(t, footprint != nil, "%s", "partial output exposed accepted history")
 		return
 	}
-	{
-		assert.FatalIf(t, footprint == nil, "%s", "complete acceptance did not expose a footprint")
-	}
+	assert.FatalIf(t, footprint == nil, "%s", "complete acceptance did not expose a footprint")
 	st.RecordEmitted(owner.Named(), &Emission{Complete: true, binding: next.binding}, nil)
 	var ids []manifest.NamedResource
 	records := map[manifest.NamedResource]manifest.DiscoveryRecord{}
@@ -120,14 +110,12 @@ func testRecordEmittedAcceptedFootprintCase(t *testing.T, testCaseInput *string,
 			)
 		}
 	}
-	{
-		assert.FatalIf(
-			t,
-			!slices.IsSortedFunc(ids, manifest.NamedResource.Compare),
-			"%s",
-			"footprint identity order is unstable",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!slices.IsSortedFunc(ids, manifest.NamedResource.Compare),
+		"%s",
+		"footprint identity order is unstable",
+	)
 	if (*testCaseInput) == "empty" {
 		assert.Equal(t, len(records), 0)
 		return
@@ -155,12 +143,10 @@ func testRecordEmittedAcceptedFootprintCase(t *testing.T, testCaseInput *string,
 		[]manifest.Production{{Owner: owner.Named(), Declaration: declaration.Named(), Source: emitterSource}},
 	)
 	assert.Equal(t, next.Render.Value().(string), "receipt")
-	{
-		assert.FatalIf(
-			t,
-			st.GetArtifact(owner.Named(), ArtifactContent).(*Emission).Footprint() != nil,
-			"%s",
-			"stored inventory manufactured caller acceptance",
-		)
-	}
+	assert.FatalIf(
+		t,
+		st.GetArtifact(owner.Named(), ArtifactContent).(*Emission).Footprint() != nil,
+		"%s",
+		"stored inventory manufactured caller acceptance",
+	)
 }

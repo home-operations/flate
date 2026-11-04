@@ -105,7 +105,8 @@ spec:
 	flags := []string{"--concurrency=2", "--no-progress", "--cache-dir", t.TempDir(), "--skip-kinds="}
 	for i, dir := range []string{before, root} {
 		args := append([]string{"build", "all", "--path", filepath.Join(dir, "entry")}, flags...)
-		stdout, _ := harness.RequireCLIOK(t, args...)
+		requireCLIOKResult1 := harness.RequireCLIOK(t, args...)
+		stdout, _ := requireCLIOKResult1.Stdout, requireCLIOKResult1.Stderr
 		value := []string{"before", "after"}[i]
 		if !strings.Contains(stdout, "value: "+value) || strings.Count(stdout, "name: generated-config") != 1 {
 			t.Fatalf("input %s did not resolve %s content:\n%s", content[i], value, stdout)
@@ -150,7 +151,8 @@ func e2EArtifactGeneratorInputSourceChangedOnlyRoute(t *testing.T, root *string,
 			if tc.command == "diff" {
 				args = append(args, "-o", "diff")
 			}
-			stdout, stderr := harness.RequireCLIOK(t, args...)
+			requireCLIOKResult2 := harness.RequireCLIOK(t, args...)
+			stdout, stderr := requireCLIOKResult2.Stdout, requireCLIOKResult2.Stderr
 			assert.FatalIf(t, !strings.Contains(stdout, "value: "+tc.newValue) ||
 				strings.Contains(
 					stdout,
@@ -164,7 +166,8 @@ func e2EArtifactGeneratorInputSourceChangedOnlyRoute(t *testing.T, root *string,
 			)
 			assert.FatalIf(t, tc.command == "diff" &&
 				(strings.Count(stdout, "-  value: "+tc.oldValue) != 1 || strings.Count(stdout, "+  value: "+tc.newValue) != 1), "diff lost one generated side:\n%s", stdout)
-			again, _ := harness.RequireCLIOK(t, args...)
+			requireCLIOKResult3 := harness.RequireCLIOK(t, args...)
+			again, _ := requireCLIOKResult3.Stdout, requireCLIOKResult3.Stderr
 			assert.FatalIf(t, stdout != again, "output changed between equal runs:\n%s\n%s", stdout, again)
 		})
 	}

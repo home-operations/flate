@@ -55,32 +55,24 @@ func TestController_OwnsExcludesForeignKind(t *testing.T) {
 	for _, group := range []string{"", "example.test"} {
 		id := flux.Named()
 		id.Group = group
-		{
-			assert.ErrorIf(t, c.Owns(id), "Owns(%s) = true for an absent lookalike", id)
-		}
+		assert.ErrorIf(t, c.Owns(id), "Owns(%s) = true for an absent lookalike", id)
 	}
-	{
-		assert.FatalIf(t, c.Owns(foreign.Named()), "%v", "same-name Flux source admitted a foreign object")
-	}
+	assert.FatalIf(t, c.Owns(foreign.Named()), "%v", "same-name Flux source admitted a foreign object")
 	// An id the store never saw stays ours — the vanished-object report is
 	// the controller's to write.
-	{
-		assert.ErrorIf(t, !c.Owns(
-			manifest.NamedResource{
-				Group:     manifest.SourceDomain,
-				Kind:      manifest.KindBucket,
-				Namespace: "ns",
-				Name:      "gone",
-			},
-		), "Owns = false for an absent id of a registered kind")
-	}
-	{
-		assert.ErrorIf(
-			t,
-			c.Owns(manifest.NamedResource{Group: "apps", Kind: "Deployment", Namespace: "ns", Name: "app"}),
-			"Owns = true for a kind with no fetcher",
-		)
-	}
+	assert.ErrorIf(t, !c.Owns(
+		manifest.NamedResource{
+			Group:     manifest.SourceDomain,
+			Kind:      manifest.KindBucket,
+			Namespace: "ns",
+			Name:      "gone",
+		},
+	), "Owns = false for an absent id of a registered kind")
+	assert.ErrorIf(
+		t,
+		c.Owns(manifest.NamedResource{Group: "apps", Kind: "Deployment", Namespace: "ns", Name: "app"}),
+		"Owns = true for a kind with no fetcher",
+	)
 }
 
 func TestController_MissingSecretWaitsForRender(t *testing.T) {
@@ -116,49 +108,39 @@ func TestController_MissingSecretWaitsForRender(t *testing.T) {
 			repo := &manifest.OCIRepository{Name: "r", Namespace: "ns"}
 			st.AddObject(repo)
 
+			assert.FatalIf(t, controllertest.Reconcile(
+				t.Context(),
+				t,
+				controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode},
+				0,
+			), "%v", "missing Secret must block while renders can still produce it")
 			{
-				assert.FatalIf(t, controllertest.Reconcile(
-					t.Context(),
-					t,
-					controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode},
-					0,
-				), "%v", "missing Secret must block while renders can still produce it")
-			}
-			{
-				{
-					info, _ := st.GetStatus(repo.Named())
-					assert.FatalIf(t, info.Status != store.StatusPending, "status = %+v, want Pending", info)
-				}
+				info, _ := st.GetStatus(repo.Named())
+				assert.FatalIf(t, info.Status != store.StatusPending, "status = %+v, want Pending", info)
 			}
 
 			st.AddObject(&manifest.Secret{Name: "ca", Namespace: "ns"})
 			f.err = nil
 			f.artifact = &store.SourceArtifact{Kind: manifest.KindOCIRepository}
+			assert.FatalIf(t, !controllertest.Reconcile(
+				t.Context(),
+				t,
+				controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode},
+				0,
+			), "%v", "source must finish after the Secret arrives")
 			{
-				assert.FatalIf(t, !controllertest.Reconcile(
-					t.Context(),
-					t,
-					controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode},
-					0,
-				), "%v", "source must finish after the Secret arrives")
-			}
-			{
-				{
-					info, _ := st.GetStatus(
-						repo.Named(),
-					)
-					assert.FatalIf(t, info.Status != store.StatusReady ||
-						info.Outcome() == store.OutcomeSkipped, "status = %+v, want Ready without a skip", info)
-				}
-			}
-			{
-				assert.FatalIf(
-					t,
-					st.GetArtifact(repo.Named(), store.ArtifactContent) == nil,
-					"%v",
-					"source artifact missing after retry",
+				info, _ := st.GetStatus(
+					repo.Named(),
 				)
+				assert.FatalIf(t, info.Status != store.StatusReady ||
+					info.Outcome() == store.OutcomeSkipped, "status = %+v, want Ready without a skip", info)
 			}
+			assert.FatalIf(
+				t,
+				st.GetArtifact(repo.Named(), store.ArtifactContent) == nil,
+				"%v",
+				"source artifact missing after retry",
+			)
 		})
 	}
 }
@@ -336,13 +318,11 @@ func TestController_AmbientContextError(t *testing.T) {
 				}, manifest.DrainCascade)
 			})
 			c.Tasks.BlockTillDone()
-			{
-				assert.FatalIf(t, !errors.Is(err, cause) || !errors.Is(err, manifest.ErrFlux) ||
-					errors.Is(
-						err,
-						manifest.ErrSourceSkipped,
-					), "default settlement error = %v; want %v and ErrFlux", err, cause)
-			}
+			assert.FatalIf(t, !errors.Is(err, cause) || !errors.Is(err, manifest.ErrFlux) ||
+				errors.Is(
+					err,
+					manifest.ErrSourceSkipped,
+				), "default settlement error = %v; want %v and ErrFlux", err, cause)
 		})
 	}
 }
@@ -360,14 +340,12 @@ func TestController_ExistenceOnly_NoTransientPendingOnReemit(t *testing.T) {
 	}
 	st.AddObject(repo)
 	{
-		{
-			info := controllertest.DispatchToFixpoint(
-				t.Context(),
-				t,
-				controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode},
-			)
-			assert.FatalIf(t, info.Status != store.StatusReady, "status = %+v, want StatusReady", info)
-		}
+		info := controllertest.DispatchToFixpoint(
+			t.Context(),
+			t,
+			controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode},
+		)
+		assert.FatalIf(t, info.Status != store.StatusReady, "status = %+v, want StatusReady", info)
 	}
 
 	var mu sync.Mutex
@@ -401,19 +379,15 @@ func TestController_ExistenceOnly_NoTransientPendingOnReemit(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
+	assert.ErrorIf(
+		t,
+		sawPending,
+		"%v",
+		"presence-only source transiently downgraded Ready to Pending on a no-op re-run (the quiescence-race window)",
+	)
 	{
-		assert.ErrorIf(
-			t,
-			sawPending,
-			"%v",
-			"presence-only source transiently downgraded Ready to Pending on a no-op re-run (the quiescence-race window)",
-		)
-	}
-	{
-		{
-			info, _ := st.GetStatus(repo.Named())
-			assert.ErrorIf(t, info.Status != store.StatusReady, "source not Ready after no-op re-run: %+v", info)
-		}
+		info, _ := st.GetStatus(repo.Named())
+		assert.ErrorIf(t, info.Status != store.StatusReady, "source not Ready after no-op re-run: %+v", info)
 	}
 }
 
@@ -503,28 +477,22 @@ func testControllerUnavailableSecretAtFixpointCase(
 			},
 		)
 	} else {
+		assert.FatalIf(t, controllertest.Reconcile(
+			t.Context(),
+			t,
+			controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode},
+			manifest.DrainNone,
+		), "%v", "must wait while renders can still supply Secret contents")
 		{
-			assert.FatalIf(t, controllertest.Reconcile(
-				t.Context(),
-				t,
-				controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode},
-				manifest.DrainNone,
-			), "%v", "must wait while renders can still supply Secret contents")
+			pending, _ := st.GetStatus(repo.Named())
+			assert.FatalIf(t, pending.Status != store.StatusPending, "status = %+v, want Pending", pending)
 		}
-		{
-			{
-				pending, _ := st.GetStatus(repo.Named())
-				assert.FatalIf(t, pending.Status != store.StatusPending, "status = %+v, want Pending", pending)
-			}
-		}
-		{
-			assert.FatalIf(t, !controllertest.Reconcile(
-				t.Context(),
-				t,
-				controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode},
-				manifest.DrainCascade,
-			), "%v", "unavailable Secret must terminalize at the fixpoint")
-		}
+		assert.FatalIf(t, !controllertest.Reconcile(
+			t.Context(),
+			t,
+			controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode},
+			manifest.DrainCascade,
+		), "%v", "unavailable Secret must terminalize at the fixpoint")
 		info, _ = st.GetStatus(repo.Named())
 		if f.calls != 2 {
 			t.Errorf("fetch calls = %d, want 2", f.calls)
@@ -544,22 +512,18 @@ func testControllerUnavailableSecretAtFixpointCase(
 			secret.Name,
 		)
 	}
-	{
-		assert.FatalIf(
-			t,
-			ambientCalls != 0,
-			"index-only producer invoked ambient continuation %d times",
-			ambientCalls,
-		)
-	}
-	{
-		assert.FatalIf(
-			t,
-			st.GetArtifact(repo.Named(), store.ArtifactContent) != nil,
-			"%v",
-			"unavailable or malformed source must not produce an artifact",
-		)
-	}
+	assert.FatalIf(
+		t,
+		ambientCalls != 0,
+		"index-only producer invoked ambient continuation %d times",
+		ambientCalls,
+	)
+	assert.FatalIf(
+		t,
+		st.GetArtifact(repo.Named(), store.ArtifactContent) != nil,
+		"%v",
+		"unavailable or malformed source must not produce an artifact",
+	)
 }
 
 func testControllerMissingSecretRegistryFallbackCase(
@@ -583,14 +547,12 @@ func testControllerMissingSecretRegistryFallbackCase(
 	}
 	st.AddObject(repo)
 
-	{
-		assert.FatalIf(t, controllertest.Reconcile(
-			t.Context(),
-			t,
-			controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode},
-			0,
-		), "%v", "missing Secret must block before any registry fallback")
-	}
+	assert.FatalIf(t, controllertest.Reconcile(
+		t.Context(),
+		t,
+		controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode},
+		0,
+	), "%v", "missing Secret must block before any registry fallback")
 	if f.fallbackCalls != 0 {
 		t.Fatalf("fallback calls = %d while renders can still produce the Secret, want 0", f.fallbackCalls)
 	}
@@ -600,29 +562,25 @@ func testControllerMissingSecretRegistryFallbackCase(
 		f.rendered = true
 	}
 	{
-		{
-			info := controllertest.DispatchToFixpoint(
-				t.Context(),
-				t,
-				controllertest.Dispatch{
-					Tasks:         c.Tasks,
-					Store:         st,
-					ID:            repo.Named(),
-					ReconcileNode: c.ReconcileNode,
-				},
-			)
-			assert.FatalIf(t, info.Status != store.StatusReady ||
-				info.Outcome() == store.OutcomeSkipped, "status = %+v, want Ready without a skip", info)
-		}
-	}
-	{
-		assert.ErrorIf(
+		info := controllertest.DispatchToFixpoint(
+			t.Context(),
 			t,
-			st.GetArtifact(repo.Named(), store.ArtifactContent) == nil,
-			"%v",
-			"fetch must store its artifact",
+			controllertest.Dispatch{
+				Tasks:         c.Tasks,
+				Store:         st,
+				ID:            repo.Named(),
+				ReconcileNode: c.ReconcileNode,
+			},
 		)
+		assert.FatalIf(t, info.Status != store.StatusReady ||
+			info.Outcome() == store.OutcomeSkipped, "status = %+v, want Ready without a skip", info)
 	}
+	assert.ErrorIf(
+		t,
+		st.GetArtifact(repo.Named(), store.ArtifactContent) == nil,
+		"%v",
+		"fetch must store its artifact",
+	)
 	policies := []sourcecache.Policy{f.retry}
 	if testCaseInput.wantFallback > 0 {
 		policies = append(policies, f.fallbackRetry)
@@ -717,40 +675,32 @@ func testControllerAmbientPolicyCase(t *testing.T, testCaseInput testControllerA
 	if failure != nil && !wantSkip {
 		wantStatus = store.StatusFailed
 	}
-	{
-		assert.FatalIf(t, calls != wantCalls || info.Status != wantStatus ||
-			(info.Outcome() == store.OutcomeSkipped) != wantSkip, "status=%+v calls=%d; want status=%v skip=%t calls=%d",
-			info,
-			calls,
-			wantStatus,
-			wantSkip,
-			wantCalls,
-		)
-	}
-	{
-		assert.FatalIf(
-			t,
-			failure != nil && !wantSkip && info.Message != "secret ns/auth not found",
-			"settlement message = %q",
-			info.Message,
-		)
-	}
-	{
-		assert.FatalIf(
-			t,
-			failure != nil && !wantSkip && !strings.Contains(info.Message, "secret ns/auth not found"),
-			"settlement lost unavailable-material context: %+v",
-			info,
-		)
-	}
-	{
-		assert.FatalIf(
-			t,
-			(st.GetArtifact((*testCaseInput.repo).Named(), store.ArtifactContent) != nil) != (!wantSkip && failure == nil),
-			"%v",
-			"ambient settlement published the wrong content outcome",
-		)
-	}
+	assert.FatalIf(t, calls != wantCalls || info.Status != wantStatus ||
+		(info.Outcome() == store.OutcomeSkipped) != wantSkip, "status=%+v calls=%d; want status=%v skip=%t calls=%d",
+		info,
+		calls,
+		wantStatus,
+		wantSkip,
+		wantCalls,
+	)
+	assert.FatalIf(
+		t,
+		failure != nil && !wantSkip && info.Message != "secret ns/auth not found",
+		"settlement message = %q",
+		info.Message,
+	)
+	assert.FatalIf(
+		t,
+		failure != nil && !wantSkip && !strings.Contains(info.Message, "secret ns/auth not found"),
+		"settlement lost unavailable-material context: %+v",
+		info,
+	)
+	assert.FatalIf(
+		t,
+		(st.GetArtifact((*testCaseInput.repo).Named(), store.ArtifactContent) != nil) != (!wantSkip && failure == nil),
+		"%v",
+		"ambient settlement published the wrong content outcome",
+	)
 	if !wantSkip && failure == nil {
 		controllertest.DispatchToFixpoint(
 			t.Context(),
@@ -762,15 +712,11 @@ func testControllerAmbientPolicyCase(t *testing.T, testCaseInput testControllerA
 				ReconcileNode: c.ReconcileNode,
 			},
 		)
-		{
-			assert.FatalIf(t, calls != wantCalls, "%v", "accepted source artifact was acquired again")
-		}
+		assert.FatalIf(t, calls != wantCalls, "%v", "accepted source artifact was acquired again")
 		assert.Equal(t, len(st.Warnings()), 0)
 	}
-	{
-		assert.FatalIf(t, wantSkip && !slices.ContainsFunc(st.Warnings(), func(w manifest.Warning) bool {
-			return w.Resource == (*testCaseInput.repo).Named() &&
-				w.Category == manifest.WarnSourceCredentialsUnavailable
-		}), "%v", "missing-material settlement lost its warning")
-	}
+	assert.FatalIf(t, wantSkip && !slices.ContainsFunc(st.Warnings(), func(w manifest.Warning) bool {
+		return w.Resource == (*testCaseInput.repo).Named() &&
+			w.Category == manifest.WarnSourceCredentialsUnavailable
+	}), "%v", "missing-material settlement lost its warning")
 }

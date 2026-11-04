@@ -174,9 +174,7 @@ func testRenderDocsParentQualifiedMatchingCase(
 	switch *testCaseInput.format {
 	case FormatJSON:
 		changes := jsonChanges(t, []Doc{(*testCaseInput.left)}, []Doc{(*testCaseInput.right)}, new(Options{}))
-		{
-			assert.FatalIf(t, len(changes) != 2, "changes = %+v", changes)
-		}
+		assert.FatalIf(t, len(changes) != 2, "changes = %+v", changes)
 		assert.Equal(t, changes[0].Parent, testCaseInput.left.Parent)
 		assert.Equal(t, changes[0].Status, StatusRemoved)
 		assert.Diff(t, changes[0].Old, testCaseInput.left.Manifest)
@@ -184,9 +182,7 @@ func testRenderDocsParentQualifiedMatchingCase(
 		assert.Equal(t, changes[1].Status, StatusAdded)
 		assert.Diff(t, changes[1].New, testCaseInput.right.Manifest)
 	case FormatBrief:
-		{
-			assert.FatalIf(t, !strings.Contains(out, "two changes detected"), "want two changes, got %q", out)
-		}
+		assert.FatalIf(t, !strings.Contains(out, "two changes detected"), "want two changes, got %q", out)
 	case FormatHTML:
 		cells := regexp.MustCompile(`(?s)<td class="diff-code diff-(del|add)">(.*?)</td>`).
 			FindAllStringSubmatch(out, -1)
@@ -199,31 +195,25 @@ func testRenderDocsParentQualifiedMatchingCase(
 		assert.Equal(t, bodies["del"], body)
 		assert.Equal(t, bodies["add"], body)
 		for _, want := range []string{"1 added", "1 removed", "status-removed", "status-added", "apiVersion", "ConfigMap", "namespace", "hello", "greeting", "same"} {
-			{
-				assert.ErrorIf(t, !strings.Contains(out, want), "missing %q in %s", want, out)
-			}
+			assert.ErrorIf(t, !strings.Contains(out, want), "missing %q in %s", want, out)
 		}
 	case FormatHuman, FormatGitHub, FormatGitLab, FormatGitea, FormatDiff, "":
 		for _, want := range []string{"apiVersion: v1", "kind: ConfigMap", "name: hello", "namespace: apps", "greeting: same"} {
-			{
-				assert.ErrorIf(
-					t,
-					strings.Count(out, want) != 2,
-					"want two whole bodies containing %q, got:\n%s",
-					want,
-					out,
-				)
-			}
+			assert.ErrorIf(
+				t,
+				strings.Count(out, want) != 2,
+				"want two whole bodies containing %q, got:\n%s",
+				want,
+				out,
+			)
 		}
 		if (*testCaseInput.format) == FormatDiff {
-			{
-				assert.ErrorIf(
-					t,
-					!strings.Contains(out, "-apiVersion: v1") || !strings.Contains(out, "+apiVersion: v1"),
-					"missing removal/addition:\n%s",
-					out,
-				)
-			}
+			assert.ErrorIf(
+				t,
+				!strings.Contains(out, "-apiVersion: v1") || !strings.Contains(out, "+apiVersion: v1"),
+				"missing removal/addition:\n%s",
+				out,
+			)
 		} else {
 			assert.ErrorIf(
 				t,
@@ -253,10 +243,8 @@ func testRenderDocsParentQualifiedMatchingSharedNativeLabel(
 		[]Doc{old, (*testCaseInput.right)},
 		[]Doc{current, (*testCaseInput.right)}, new(Options{Format: FormatGitHub}),
 	)
-	{
-		assert.FatalIf(t, strings.Count(out, "@@ data.greeting @@") != 1 || !strings.Contains(out, "- old") ||
-			!strings.Contains(out, "+ new"), "want only a's change, got:\n%s", out)
-	}
+	assert.FatalIf(t, strings.Count(out, "@@ data.greeting @@") != 1 || !strings.Contains(out, "- old") ||
+		!strings.Contains(out, "+ new"), "want only a's change, got:\n%s", out)
 }
 
 func testRenderDocsNativeCanonicalEdgesNamespacePresence(t *testing.T) {
@@ -299,9 +287,7 @@ func testRenderDocsNativeCanonicalEdgesSameGroupVersion(t *testing.T) {
 	const want = "\n@@ apiVersion @@\n! ± value change\n- example.test/v1\n+ example.test/v2\n\n"
 	assert.Equal(t, out, want)
 	changes := jsonChanges(t, []Doc{left}, []Doc{right}, new(Options{}))
-	{
-		assert.FatalIf(t, len(changes) != 1 || changes[0].Status != StatusChanged, "version change: %+v", changes)
-	}
+	assert.FatalIf(t, len(changes) != 1 || changes[0].Status != StatusChanged, "version change: %+v", changes)
 }
 
 func testRenderDocsNativeCanonicalEdgesIncompleteNormalizedIdentity(t *testing.T) {
@@ -322,30 +308,24 @@ func testRenderDocsNativeCanonicalEdgesIncompleteNormalizedIdentity(t *testing.T
 			report, err := diffprep.Prepare(prepareDocs(tc.left), prepareDocs(tc.right), prepareOptions(new(opts))).
 				Native()
 			assert.NoError(t, err)
-			{
-				assert.FatalIf(
-					t,
-					len(report.Diffs) != len(tc.wantKinds),
-					"wrong canonical operations: %+v",
-					report.Diffs,
-				)
-			}
+			assert.FatalIf(
+				t,
+				len(report.Diffs) != len(tc.wantKinds),
+				"wrong canonical operations: %+v",
+				report.Diffs,
+			)
 			for i, kind := range tc.wantKinds {
 				assert.Equal(t, report.Diffs[i].Details[0].Kind, kind)
 			}
 			out := renderDiff(t, tc.left, tc.right, new(opts))
-			{
-				assert.FatalIf(
-					t,
-					strings.Contains(out, "apiVersion") || strings.Contains(out, "@@ metadata.name @@"),
-					"positional matching or normalization lost: %s",
-					out,
-				)
-			}
+			assert.FatalIf(
+				t,
+				strings.Contains(out, "apiVersion") || strings.Contains(out, "@@ metadata.name @@"),
+				"positional matching or normalization lost: %s",
+				out,
+			)
 			changes := jsonChanges(t, tc.left, tc.right, new(opts))
-			{
-				assert.FatalIf(t, len(changes) != len(tc.wantKinds), "native and JSON differ: %+v", changes)
-			}
+			assert.FatalIf(t, len(changes) != len(tc.wantKinds), "native and JSON differ: %+v", changes)
 		})
 	}
 }
@@ -374,16 +354,14 @@ func testRenderDocsNativeCanonicalEdgesValidationBeforeEquality(t *testing.T) {
 					Suppressed: []Suppression{{Parent: helmReleaseParent(), Side: SideCurrent, Reason: "not ready"}},
 				},
 			)
-			{
-				assert.FatalIf(
-					t,
-					out != nil || err == nil || !strings.HasPrefix(err.Error(), tc.prefix),
-					"RenderDocs = %q, %v; want nil and %s",
-					out,
-					err,
-					tc.prefix,
-				)
-			}
+			assert.FatalIf(
+				t,
+				out != nil || err == nil || !strings.HasPrefix(err.Error(), tc.prefix),
+				"RenderDocs = %q, %v; want nil and %s",
+				out,
+				err,
+				tc.prefix,
+			)
 		})
 	}
 }
@@ -425,16 +403,14 @@ func testRenderDocsNativeDuplicateEdgesCase(t *testing.T, testCaseInput *testRen
 		left, right = right, left
 	}
 	out := renderDiff(t, left, right, new(opts))
-	{
-		assert.FatalIf(
-			t,
-			strings.Count(out, "@@ data.greeting @@") != 1 || strings.Contains(out, "shadowed") ||
-				!strings.Contains(out, "retained") ||
-				!strings.Contains(out, "counterpart"),
-			"wrong winning content:\n%s",
-			out,
-		)
-	}
+	assert.FatalIf(
+		t,
+		strings.Count(out, "@@ data.greeting @@") != 1 || strings.Contains(out, "shadowed") ||
+			!strings.Contains(out, "retained") ||
+			!strings.Contains(out, "counterpart"),
+		"wrong winning content:\n%s",
+		out,
+	)
 	_, warnings, err := RenderDocs(left, right, opts)
 	assert.NoError(t, err)
 	assert.Equal(t, len(warnings), 2)

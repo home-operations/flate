@@ -102,13 +102,14 @@ func testReconcileParentUpdateDuringRenderCase(
 		Name:      "binding",
 	}
 	rs, ok := st.Get[*manifest.ResourceSet](id)
-	{
-		assert.FatalIf(t, !ok, "%v", "parent did not emit input A")
-	}
-	_, wantFingerprint, err := renderWithAdmission(rs, resourceset.StoreResolver(st), "")
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, !ok, "%v", "parent did not emit input A")
+	renderWithAdmissionResult1, renderWithAdmissionResult1Err := renderWithAdmission(
+		rs,
+		resourceset.StoreResolver(st),
+		"",
+	)
+	_, wantFingerprint, err := renderWithAdmissionResult1.documents, renderWithAdmissionResult1.fingerprint, renderWithAdmissionResult1Err
+	assert.FatalIf(t, err != nil, "%v", err)
 	if (*testCaseInput) == "capture" {
 		pause := sync.OnceFunc(func() { close(started); tasks.YieldSlot(func() { <-resume }) })
 		c.Configure(
@@ -163,13 +164,11 @@ func testReconcileParentUpdateDuringRenderCase(
 		t.Fatalf("task failures = %d", tasks.Failures())
 	}
 	if (*testCaseInput) == "render" {
-		{
-			assert.FatalIf(t, runState.run.Reads.Valid() || accepted.Load() != nil ||
-				st.GetArtifact(
-					id,
-					store.ArtifactContent,
-				) != nil, "%v", "replaced input A published stale output")
-		}
+		assert.FatalIf(t, runState.run.Reads.Valid() || accepted.Load() != nil ||
+			st.GetArtifact(
+				id,
+				store.ArtifactContent,
+			) != nil, "%v", "replaced input A published stale output")
 	} else {
 		{
 			emission := accepted.Load()
@@ -182,31 +181,25 @@ func testReconcileParentUpdateDuringRenderCase(
 		}
 	}
 	current, ok := st.Get[*manifest.ResourceSet](id)
-	{
-		assert.FatalIf(
-			t,
-			!ok || string(current.Inputs[0]["name"].Raw) != `"from-b"`,
-			"current input is not B: %+v",
-			current,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!ok || string(current.Inputs[0]["name"].Raw) != `"from-b"`,
+		"current input is not B: %+v",
+		current,
+	)
 	run := c.ReconcileNode(t.Context(), id, manifest.DrainNone)
 	if run.Outcome() == schedule.Blocked {
 		t.Fatalf("replacement blocked: %v", run.Blocked)
 	}
 	emission := accepted.Load()
-	{
-		assert.FatalIf(t, emission == nil || !emission.Complete || emission.Fingerprint == wantFingerprint ||
-			!hasRenderedDoc(emission, manifest.KindConfigMap, "from-b") ||
-			hasRenderedDoc(
-				emission,
-				manifest.KindConfigMap,
-				"from-a",
-			), "replacement B did not render: %+v", emission)
-	}
-	{
-		assert.FatalIf(t, string(rs.Inputs[0]["name"].Raw) != `"from-a"`, "%v", "render mutated input A")
-	}
+	assert.FatalIf(t, emission == nil || !emission.Complete || emission.Fingerprint == wantFingerprint ||
+		!hasRenderedDoc(emission, manifest.KindConfigMap, "from-b") ||
+		hasRenderedDoc(
+			emission,
+			manifest.KindConfigMap,
+			"from-a",
+		), "replacement B did not render: %+v", emission)
+	assert.FatalIf(t, string(rs.Inputs[0]["name"].Raw) != `"from-a"`, "%v", "render mutated input A")
 }
 
 func testReconcileProviderInventorySettlementCase(
@@ -250,14 +243,12 @@ func testReconcileProviderInventorySettlementCase(
 		filter := filterLoader.Options.Filter
 		_, _, before := st.GetEmission(rs.Named())
 		for _, child := range before.Children {
-			{
-				assert.FatalIf(
-					t,
-					!filter.ShouldReconcile(child.Obj.Named()),
-					"%v",
-					"accepted child missing before replay",
-				)
-			}
+			assert.FatalIf(
+				t,
+				!filter.ShouldReconcile(child.Obj.Named()),
+				"%v",
+				"accepted child missing before replay",
+			)
 		}
 		before.Finish()
 		c := New(st, tasks, nil, false)
@@ -269,20 +260,16 @@ func testReconcileProviderInventorySettlementCase(
 			t,
 			controllertest.Dispatch{Tasks: tasks, Store: st, ID: rs.Named(), ReconcileNode: c.ReconcileNode},
 		)
-		{
-			assert.FatalIf(t, info.Status != status, "status=%+v, want %s", info, status)
-		}
+		assert.FatalIf(t, info.Status != status, "status=%+v, want %s", info, status)
 		_, _, current := st.GetEmission(rs.Named())
 		defer current.Finish()
-		{
-			assert.FatalIf(
-				t,
-				len(current.Manifests) != count || len(current.Children) != count,
-				"inventory=%+v, want %d documents and children",
-				current,
-				count,
-			)
-		}
+		assert.FatalIf(
+			t,
+			len(current.Manifests) != count || len(current.Children) != count,
+			"inventory=%+v, want %d documents and children",
+			current,
+			count,
+		)
 		if status == store.StatusReady {
 			for _, child := range current.Children {
 				if !filter.ShouldReconcile(child.Obj.Named()) {
@@ -296,29 +283,25 @@ func testReconcileProviderInventorySettlementCase(
 	publish(a)
 	initial := check(1, store.StatusReady)
 	replayed := check(1, store.StatusReady)
-	{
-		assert.FatalIf(
-			t,
-			initial.Fingerprint != replayed.Fingerprint ||
-				!hasRenderedDoc(replayed, manifest.KindConfigMap, "a"),
-			"%v",
-			"replay lost accepted inventory",
-		)
-	}
+	assert.FatalIf(
+		t,
+		initial.Fingerprint != replayed.Fingerprint ||
+			!hasRenderedDoc(replayed, manifest.KindConfigMap, "a"),
+		"%v",
+		"replay lost accepted inventory",
+	)
 	publish(b, a)
 	accepted := check(2, store.StatusReady)
 	changed := *a
 	changed.Status.ExportedInputs = []fluxopv1.ResourceSetInput{{"value": {Raw: []byte(`"current"`)}}}
 	publish(&changed, b)
 	updated := check(2, store.StatusReady)
-	{
-		assert.FatalIf(
-			t,
-			updated.Fingerprint == accepted.Fingerprint,
-			"%v",
-			"changed provider replayed stale content",
-		)
-	}
+	assert.FatalIf(
+		t,
+		updated.Fingerprint == accepted.Fingerprint,
+		"%v",
+		"changed provider replayed stale content",
+	)
 	assert.Diff(t, updated.Manifests[0].Document["data"], map[string]any{"value": "current"})
 	accepted = updated
 	broken := *a
@@ -326,23 +309,19 @@ func testReconcileProviderInventorySettlementCase(
 	publish(&broken, b)
 	check(0, store.StatusFailed)
 	{
-		{
-			failed, ok := st.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
-			assert.FatalIf(t, ok &&
-				(len(failed.Manifests) != 0 || len(failed.Children) != 0), "%v", "failed successor exposed output with changed provider inputs")
-		}
+		failed, ok := st.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
+		assert.FatalIf(t, ok &&
+			(len(failed.Manifests) != 0 || len(failed.Children) != 0), "%v", "failed successor exposed output with changed provider inputs")
 	}
 	publish(&changed, b)
 	recovered := check(2, store.StatusReady)
 	assert.Diff(t, recovered.Manifests, accepted.Manifests)
 	publish()
 	check(0, store.StatusReady)
-	{
-		assert.FatalIf(t, st.GetObject(a.Named()) != nil ||
-			st.GetObject(
-				manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "a"},
-			) != nil, "%v", "complete empty inventory retained a provider or output")
-	}
+	assert.FatalIf(t, st.GetObject(a.Named()) != nil ||
+		st.GetObject(
+			manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "a"},
+		) != nil, "%v", "complete empty inventory retained a provider or output")
 	publish(&broken)
 	check(0, store.StatusFailed)
 }
@@ -374,12 +353,13 @@ func startReplacementRender(t *testing.T, scope *replacementRenderInputs) {
 			(*scope.rs),
 			resourceset.StoreResolver(&(*scope.runState).run.Reads),
 			func(content any) (bool, error) {
-				fp, hit, err := (*scope.runState).run.FingerprintDedup(
+				fingerprintDedupResult1, fingerprintDedupResult1Err := (*scope.runState).run.FingerprintDedup(
 					t.Context(),
 					(*scope.id),
 					content,
 					&store.Emission{},
 				)
+				fp, hit, err := fingerprintDedupResult1.Fingerprint, fingerprintDedupResult1.Reused, fingerprintDedupResult1Err
 				if hit || err != nil {
 					return hit, err
 				}
@@ -402,12 +382,15 @@ func startReplacementRender(t *testing.T, scope *replacementRenderInputs) {
 				(*scope.runState).run.Reads.AddWarning(warning)
 			}
 		}
-		children, retained := testutil.ParseChildren(
-			(*scope.c),
+		parsed := (*scope.c).ParseChildren(
 			(*scope.c).Store.GetObject((*scope.id)),
-			testutil.DocumentMaps(docs),
+			testutil.DocumentOccurrences(testutil.DocumentMaps(docs)),
 			manifest.ParseDocOptions{},
 		)
+		if failure := manifest.DocumentFailure(parsed.Failures); failure != nil {
+			panic(failure)
+		}
+		children, retained := parsed.Children, testutil.DocumentMaps(parsed.Visible)
 		attempt.Children, attempt.Manifests = children, testutil.DocumentOccurrences(retained)
 		attempt.Complete = true
 		(*scope.runState).run.Emit(t.Context(), (*scope.id), &attempt, nil)

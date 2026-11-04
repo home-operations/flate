@@ -81,9 +81,7 @@ func newAcceptedHistoryCase(t *testing.T) *acceptedHistoryCase {
 	}
 	docs, receipt, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(t, receipt == nil, "%s", "successful raw render supplied no receipt")
-	}
+	assert.FatalIf(t, receipt == nil, "%s", "successful raw render supplied no receipt")
 	frame := receipt.Value().(renderFrame)
 	frame.header.Binding = manifest.Fingerprint(frame.binding)
 	frame.encoded, err = encodeFrame(&frame.header, frame.output)
@@ -141,9 +139,7 @@ func (h *acceptedHistoryCase) unaccepted(t *testing.T) {
 	cache, req, owner := h.cache, h.req, h.owner
 	key, receipt := h.key, h.receipt
 	_, _, _, err := cache.owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
-	{
-		assert.FatalIf(t, !errors.Is(err, errdef.ErrNotFound), "standalone render wrote durable output: %v", err)
-	}
+	assert.FatalIf(t, !errors.Is(err, errdef.ErrNotFound), "standalone render wrote durable output: %v", err)
 	assert.NoError(t, cache.RecordRender(t.Context(), RenderAcceptance{
 		Owner: owner, Receipt: receipt, Records: nil, Content: acceptedInput,
 	}))
@@ -222,9 +218,7 @@ func (h *acceptedHistoryCase) preparation(t *testing.T) {
 	previous, complete := previousHistory(t.Context(), reader, &input, owner)
 	assert.Equal(t, complete && previous != nil, true)
 	assert.Diff(t, maps.Collect(previous), records)
-	{
-		assert.FatalIf(t, counted.opens.Load() == 0, "%s", "enabled history did not prepare source")
-	}
+	assert.FatalIf(t, counted.opens.Load() == 0, "%s", "enabled history did not prepare source")
 	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
 	counted.opens.Store(0)
@@ -298,9 +292,7 @@ func (h *acceptedHistoryCase) mutableHistoryReads(t *testing.T) {
 	testutil.WriteFile(t, directory, "cm.yaml", cmYAML("after"))
 	after, err := isolated.prepareRender(t.Context(), &mutable)
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(t, before.key != after.key, "%s", "mutable content changed the fixed request key")
-	}
+	assert.FatalIf(t, before.key != after.key, "%s", "mutable content changed the fixed request key")
 	{
 		_, complete := previousHistory(t.Context(), isolated, &mutable, owner)
 		assert.FatalIf(t, complete, "%s", "changed mutable read supplied accepted history")

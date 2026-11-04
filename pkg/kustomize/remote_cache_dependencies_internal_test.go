@@ -54,9 +54,10 @@ func testRenderRemoteCacheDependenciesCaseOrigin(
 	var version atomic.Int64
 	var trace remoteHTTPTrace
 	const gitURL = "file:///example.invalid/o/r.git"
-	root, remoteFiles := newRemoteDependencyFixture(t, &remoteDependencyFixtureInputs{
+	newRemoteDependencyFixtureResult1 := newRemoteDependencyFixture(t, &remoteDependencyFixtureInputs{
 		origin: &origin, version: &version, trace: &trace, gitURL: gitURL,
 	})
+	root, remoteFiles := newRemoteDependencyFixtureResult1.root, newRemoteDependencyFixtureResult1.files
 	cacheDir := t.TempDir()
 
 	newCache := func(storage string) *TreeCache {
@@ -101,15 +102,13 @@ func testRenderRemoteCacheDependenciesCaseOrigin(
 		}
 	}
 
-	{
-		assert.FatalIf(
-			t,
-			err != nil || !hasRenderField(out1, "", "remote-v1"),
-			"initial render: %s, %v",
-			out1,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err != nil || !hasRenderField(out1, "", "remote-v1"),
+		"initial render: %s, %v",
+		out1,
+		err,
+	)
 	inputRec := newReadSet(root)
 	inputRec.immutable = (*(*testCaseInput).immutable)
 	view := newTreeFS(request().Source.FS, root, inputRec)
@@ -118,10 +117,8 @@ func testRenderRemoteCacheDependenciesCaseOrigin(
 		assert.NoError(t, preflightRemoteResourcesErr)
 	}
 	recorded := inputRec.snapshot()
-	{
-		assert.FatalIf(t, len(recorded.Remotes) == 0 || (*(*testCaseInput).immutable) &&
-			(len(recorded.Files) != 0 || len(recorded.Dirs) != 0 || len(recorded.Nodes) != 0), "incomplete remote recorder: %+v", recorded)
-	}
+	assert.FatalIf(t, len(recorded.Remotes) == 0 || (*(*testCaseInput).immutable) &&
+		(len(recorded.Files) != 0 || len(recorded.Dirs) != 0 || len(recorded.Nodes) != 0), "incomplete remote recorder: %+v", recorded)
 	{
 		valid, stillValidErr := recorded.stillValid(t.Context(), cache, view, (*(*testCaseInput).immutable))
 		assert.FatalIf(
@@ -141,18 +138,16 @@ func testRenderRemoteCacheDependenciesCaseOrigin(
 	renderRequestSnapshot := request()
 	key := renderKey(&renderRequestSnapshot, root, nil)
 	snap, stored, hit := readTestRenderFrame(t, cache, key)
-	{
-		assert.FatalIf(
-			t,
-			!hit || !reflect.DeepEqual(stored, out1) || len(snap.Remotes) == 0 || (*(*testCaseInput).immutable) &&
-				(len(snap.Files) != 0 || len(snap.Dirs) != 0 || len(snap.Nodes) != 0),
-			"published=%t eligible=%t snapshot=%+v output=%s",
-			hit,
-			(*(*testCaseInput).eligible),
-			snap,
-			stored,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!hit || !reflect.DeepEqual(stored, out1) || len(snap.Remotes) == 0 || (*(*testCaseInput).immutable) &&
+			(len(snap.Files) != 0 || len(snap.Dirs) != 0 || len(snap.Nodes) != 0),
+		"published=%t eligible=%t snapshot=%+v output=%s",
+		hit,
+		(*(*testCaseInput).eligible),
+		snap,
+		stored,
+	)
 	var before int
 	checkRemoteDependencyReplay(t.Context(), t, &remoteDependencyReplayInputs{
 		origin: &origin, scenario: &testCaseInput, trace: &trace,
@@ -186,15 +181,13 @@ func testRenderRemoteCacheDependenciesCaseOrigin(
 		}
 	}
 
-	{
-		assert.FatalIf(
-			t,
-			err != nil || !hasRenderField(out3, "", "remote-v2") || reflect.DeepEqual(out3, out1),
-			"changed remote render: %s, %v",
-			out3,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err != nil || !hasRenderField(out3, "", "remote-v2") || reflect.DeepEqual(out3, out1),
+		"changed remote render: %s, %v",
+		out3,
+		err,
+	)
 	if (*origin) != "git" && (*origin) != "nested-mount" {
 		got := trace.snapshot()[before:]
 		t.Logf(
@@ -202,14 +195,12 @@ func testRenderRemoteCacheDependenciesCaseOrigin(
 			got,
 			trace.connections.Load(),
 		)
-		{
-			assert.ErrorIf(
-				t,
-				len(got) != 1 || got[0].Status != http.StatusOK || got[0].Bytes == 0,
-				"changed render must acquire one response including subsequent preflight: %+v",
-				got,
-			)
-		}
+		assert.ErrorIf(
+			t,
+			len(got) != 1 || got[0].Status != http.StatusOK || got[0].Bytes == 0,
+			"changed render must acquire one response including subsequent preflight: %+v",
+			got,
+		)
 	}
 	closeTestTreeCache(t, cache)
 }
@@ -235,12 +226,10 @@ func testRenderRemoteCacheDependenciesCaseOriginLoop(t *testing.T, loopInputs st
 			)
 		}
 		t.Logf("unchanged render: requests=%+v accepted_connections=%d", got, loopInputs.trace.connections.Load())
-		{
-			assert.ErrorIf(t, len(got) != 1 || got[0].Method != http.MethodGet || got[0].ETag == "" ||
-				got[0].Modified == "" ||
-				got[0].Status != http.StatusNotModified ||
-				got[0].Bytes != 0, "unchanged render must make one conditional GET with zero body bytes: %+v", got)
-		}
+		assert.ErrorIf(t, len(got) != 1 || got[0].Method != http.MethodGet || got[0].ETag == "" ||
+			got[0].Modified == "" ||
+			got[0].Status != http.StatusNotModified ||
+			got[0].Bytes != 0, "unchanged render must make one conditional GET with zero body bytes: %+v", got)
 	}
 }
 
@@ -281,17 +270,15 @@ func checkRemoteDependencyReplay(ctx context.Context, t *testing.T, inputs *remo
 		}
 	}
 
-	{
-		assert.FatalIf(
-			t,
-			*inputs.err != nil || !reflect.DeepEqual(want, *inputs.firstOutput) ||
-				*inputs.hit && !reflect.DeepEqual(want, *inputs.stored),
-			"fresh/cached bytes differ: %s, %s, %v",
-			want,
-			*inputs.stored,
-			*inputs.err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		*inputs.err != nil || !reflect.DeepEqual(want, *inputs.firstOutput) ||
+			*inputs.hit && !reflect.DeepEqual(want, *inputs.stored),
+		"fresh/cached bytes differ: %s, %s, %v",
+		want,
+		*inputs.stored,
+		*inputs.err,
+	)
 	closeTestTreeCache(t, fresh)
 	if *(*(*inputs.scenario)).eligible {
 		publishTestFrame(
@@ -328,17 +315,15 @@ func checkRemoteDependencyReplay(ctx context.Context, t *testing.T, inputs *remo
 		}
 	}
 
-	{
-		assert.FatalIf(
-			t,
-			*inputs.err != nil || (*(*(*inputs.scenario)).eligible) && !hasRenderField(out2, "witness", "SENTINEL") ||
-				!(*(*(*inputs.scenario)).eligible) &&
-					!reflect.DeepEqual(out2, *inputs.firstOutput),
-			"unchanged fresh-owner render: %s, %v",
-			out2,
-			*inputs.err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		*inputs.err != nil || (*(*(*inputs.scenario)).eligible) && !hasRenderField(out2, "witness", "SENTINEL") ||
+			!(*(*(*inputs.scenario)).eligible) &&
+				!reflect.DeepEqual(out2, *inputs.firstOutput),
+		"unchanged fresh-owner render: %s, %v",
+		out2,
+		*inputs.err,
+	)
 	testRenderRemoteCacheDependenciesCaseOriginLoop(t, struct {
 		origin        **string
 		trace         *remoteHTTPTrace
@@ -356,7 +341,12 @@ type remoteDependencyFixtureInputs struct {
 	gitURL  string
 }
 
-func newRemoteDependencyFixture(t *testing.T, inputs *remoteDependencyFixtureInputs) (string, map[string]string) {
+type remoteDependencyFixture struct {
+	root  string
+	files map[string]string
+}
+
+func newRemoteDependencyFixture(t *testing.T, inputs *remoteDependencyFixtureInputs) remoteDependencyFixture {
 	t.Helper()
 
 	remoteBody := func() string {
@@ -405,5 +395,5 @@ func newRemoteDependencyFixture(t *testing.T, inputs *remoteDependencyFixtureInp
 	files["kustomization.yaml"] = kustomization
 	root := testutil.WriteTree(t, files)
 
-	return root, remoteFiles
+	return remoteDependencyFixture{root: root, files: remoteFiles}
 }

@@ -187,7 +187,8 @@ func TestBarWriter_CaptureTail(t *testing.T) {
 		),
 	)
 	st := store.New()
-	listener, stop := w.progress(t.Context())
+	progress := w.progress(t.Context())
+	listener, stop := progress.observe, progress.stop
 	unsub := st.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
 		listener(
 			manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},

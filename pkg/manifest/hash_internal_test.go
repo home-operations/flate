@@ -33,9 +33,7 @@ func TestSHA256Hex(t *testing.T) {
 	}
 	// Stable + deterministic across calls.
 	a, b := SHA256Hex([]byte("flate")), SHA256Hex([]byte("flate"))
-	{
-		assert.ErrorIf(t, a != b, "not deterministic: %q != %q", a, b)
-	}
+	assert.ErrorIf(t, a != b, "not deterministic: %q != %q", a, b)
 }
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
@@ -43,17 +41,13 @@ func TestSHA256Hex(t *testing.T) {
 func TestSHA256Hex_Allocations(t *testing.T) {
 	var fingerprint string
 	allocs := testing.AllocsPerRun(100, func() { fingerprint = SHA256Hex([]byte("abc")) })
-	{
-		assert.FatalIf(t, allocs != 1, "SHA256Hex allocated %v times, want 1", allocs)
-	}
-	{
-		assert.FatalIf(
-			t,
-			fingerprint != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
-			"unexpected fingerprint %q",
-			fingerprint,
-		)
-	}
+	assert.FatalIf(t, allocs != 1, "SHA256Hex allocated %v times, want 1", allocs)
+	assert.FatalIf(
+		t,
+		fingerprint != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+		"unexpected fingerprint %q",
+		fingerprint,
+	)
 }
 
 func TestFingerprint_JSONEquivalence(t *testing.T) {
@@ -89,32 +83,26 @@ func TestFingerprint_JSONEquivalence(t *testing.T) {
 			t.Parallel()
 
 			raw, err := json.Marshal(tt.payload)
-			{
-				assert.NoError(t, err)
-			}
+			assert.NoError(t, err)
 			{
 				got, want := Fingerprint(tt.payload), SHA256Hex(raw)
 				assert.FatalIf(t, got != want, "Fingerprint = %q, want %q", got, want)
 			}
 		})
 	}
-	{
-		assert.FatalIf(
-			t,
-			Fingerprint(first) != Fingerprint(second),
-			"%s",
-			"map insertion order changed the fingerprint",
-		)
-	}
+	assert.FatalIf(
+		t,
+		Fingerprint(first) != Fingerprint(second),
+		"%s",
+		"map insertion order changed the fingerprint",
+	)
 	second["z"] = 2
-	{
-		assert.FatalIf(
-			t,
-			Fingerprint(first) == Fingerprint(second),
-			"%s",
-			"content change did not change the fingerprint",
-		)
-	}
+	assert.FatalIf(
+		t,
+		Fingerprint(first) == Fingerprint(second),
+		"%s",
+		"content change did not change the fingerprint",
+	)
 }
 
 func TestFingerprint_UnsupportedContent(t *testing.T) {
@@ -152,9 +140,7 @@ func TestFingerprint_Concurrent(t *testing.T) {
 			Files [][]byte `json:"Files"`
 		}{i, [][]byte{bytes.Repeat([]byte{byte(i)}, 8<<10)}}
 		raw, err := json.Marshal(payload)
-		{
-			assert.NoError(t, err)
-		}
+		assert.NoError(t, err)
 		want := SHA256Hex(raw)
 		wg.Go(func() {
 			<-start

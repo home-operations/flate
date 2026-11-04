@@ -174,20 +174,16 @@ func TestBuilder_ForeignLower(t *testing.T) {
 			b := tree.NewBuilder(input)
 			must(t, b.AddFile("dir/file", []byte("upper"), 0o644))
 			data, err := b.ReadFile("dir/file")
-			{
-				assert.FatalIf(t, err != nil || string(data) != "upper", "upper read: %s %v", data, err)
-			}
+			assert.FatalIf(t, err != nil || string(data) != "upper", "upper read: %s %v", data, err)
 			if _, lstatErr := fs.Lstat(input, "link"); lstatErr == nil {
 				data, lstatErr = b.ReadFile("link/file")
-				{
-					assert.FatalIf(
-						t,
-						lstatErr != nil || string(data) != "upper",
-						"merged link target: %s %v",
-						data,
-						lstatErr,
-					)
-				}
+				assert.FatalIf(
+					t,
+					lstatErr != nil || string(data) != "upper",
+					"merged link target: %s %v",
+					data,
+					lstatErr,
+				)
 			}
 			must(t, b.RemoveAll("dir"))
 			must(t, b.AddFile("dir/new", []byte("new"), 0o644))
@@ -196,15 +192,13 @@ func TestBuilder_ForeignLower(t *testing.T) {
 				assert.FatalIf(t, !errors.Is(statErr2, fs.ErrNotExist), "masked descendant: %v", statErr2)
 			}
 			entries, err := b.ReadDir("dir")
-			{
-				assert.FatalIf(
-					t,
-					err != nil || len(entries) != 1 || entries[0].Name() != "new",
-					"recreated listing: %v %v",
-					entries,
-					err,
-				)
-			}
+			assert.FatalIf(
+				t,
+				err != nil || len(entries) != 1 || entries[0].Name() != "new",
+				"recreated listing: %v %v",
+				entries,
+				err,
+			)
 			tr := build(t, b)
 			var visited []string
 			must(t, tr.WalkRaw(".", func(n string, _ fs.DirEntry, err error) error {
@@ -214,9 +208,7 @@ func TestBuilder_ForeignLower(t *testing.T) {
 				}
 				return err
 			}))
-			{
-				assert.FatalIf(t, slices.Contains(visited, "dir/new"), "%s", "merged walk ignored SkipDir")
-			}
+			assert.FatalIf(t, slices.Contains(visited, "dir/new"), "%s", "merged walk ignored SkipDir")
 		})
 	}
 }
@@ -265,21 +257,17 @@ func TestBuilder_ForeignDirectoriesStayLazy(t *testing.T) {
 	next := tree.NewBuilder(tr)
 	must(t, next.AddFile("apps/one/later", []byte("later"), 0o644))
 	entries, err := next.ReadDir("apps/one")
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	names := make([]string, len(entries))
 	for i, e := range entries {
 		names[i] = e.Name()
 	}
-	{
-		assert.FatalIf(
-			t,
-			!slices.Equal(names, []string{"file", "generated", "later"}),
-			"stacked foreign listing: %v",
-			names,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!slices.Equal(names, []string{"file", "generated", "later"}),
+		"stacked foreign listing: %v",
+		names,
+	)
 }
 
 func TestBuilder_RemoveAllMasksForeignListing(t *testing.T) {
@@ -291,16 +279,12 @@ func TestBuilder_RemoveAllMasksForeignListing(t *testing.T) {
 	must(t, b.RemoveAll("d/sub"))
 	must(t, b.AddFile("d/z", []byte("z"), 0o644))
 	entries, err := b.ReadDir("d")
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	names := make([]string, 0, len(entries))
 	for _, e := range entries {
 		names = append(names, e.Name())
 	}
-	{
-		assert.FatalIf(t, !slices.Equal(names, []string{"b", "z"}), "removed lower children listed: %v", names)
-	}
+	assert.FatalIf(t, !slices.Equal(names, []string{"b", "z"}), "removed lower children listed: %v", names)
 }
 
 func TestBuilder_SealedForeignOverlayConcurrentReads(t *testing.T) {
@@ -325,15 +309,13 @@ func TestBuilder_SealedForeignOverlayConcurrentReads(t *testing.T) {
 					assert.ErrorIf(t, err != nil, "%v", err)
 				}
 				entries, err := fs.ReadDir(sealed, fmt.Sprintf("d%d", i))
-				{
-					assert.ErrorIf(
-						t,
-						err != nil || len(entries) != 1 || entries[0].Name() != "f",
-						"stacked foreign listing: %v, %v",
-						entries,
-						err,
-					)
-				}
+				assert.ErrorIf(
+					t,
+					err != nil || len(entries) != 1 || entries[0].Name() != "f",
+					"stacked foreign listing: %v, %v",
+					entries,
+					err,
+				)
 			}
 		})
 	}
@@ -394,33 +376,25 @@ func testBuilderStackedForeignRemovalsCase(t *testing.T, testCaseInput *testBuil
 			for _, entry := range entries {
 				names = append(names, entry.Name())
 			}
-			{
-				assert.FatalIf(t, !slices.Equal(names, want), "stacked listing = %v, want %v", names, want)
-			}
+			assert.FatalIf(t, !slices.Equal(names, want), "stacked listing = %v, want %v", names, want)
 			dir, err := view.Open("d")
 			must(t, err)
 			defer dir.Close()
 			reader, ok := dir.(fs.ReadDirFile)
-			{
-				assert.FatalIf(t, !ok, "%s", "directory handle does not implement fs.ReadDirFile")
-			}
+			assert.FatalIf(t, !ok, "%s", "directory handle does not implement fs.ReadDirFile")
 			entries, err = reader.ReadDir(-1)
 			must(t, err)
 			names = nil
 			for _, entry := range entries {
 				names = append(names, entry.Name())
 			}
-			{
-				assert.FatalIf(t, !slices.Equal(names, want), "directory handle = %v, want %v", names, want)
-			}
+			assert.FatalIf(t, !slices.Equal(names, want), "directory handle = %v, want %v", names, want)
 			var visited []string
 			must(t, fs.WalkDir(view, "d", func(name string, _ fs.DirEntry, err error) error {
 				visited = append(visited, name)
 				return err
 			}))
-			{
-				assert.FatalIf(t, len(visited) != len(want)+1, "walk = %v", visited)
-			}
+			assert.FatalIf(t, len(visited) != len(want)+1, "walk = %v", visited)
 		})
 	}
 }
@@ -454,17 +428,15 @@ func assertMountViewCompletion(t *testing.T, tr *tree.Tree, contract *mountContr
 				visited = append(visited, name)
 				return err
 			})
-			{
-				assert.ErrorIf(
-					t,
-					err != nil || !slices.Equal(visited, (*wantWalk)),
-					"%s = %v, %v; want %v",
-					walk.name,
-					visited,
-					err,
-					(*wantWalk),
-				)
-			}
+			assert.ErrorIf(
+				t,
+				err != nil || !slices.Equal(visited, (*wantWalk)),
+				"%s = %v, %v; want %v",
+				walk.name,
+				visited,
+				err,
+				(*wantWalk),
+			)
 		}
 	}
 }
@@ -494,33 +466,29 @@ func assertMountedDirectory(t *testing.T, tr *tree.Tree, contract mountContract,
 			t.Errorf("listed %q metadata disagrees with Stat", entry.Name())
 		}
 	}
-	{
-		assert.ErrorIf(
-			t,
-			!slices.Equal(names, wantNames),
-			"ReadDir(%q) = %v, want %v",
-			want.name,
-			names,
-			wantNames,
-		)
-	}
+	assert.ErrorIf(
+		t,
+		!slices.Equal(names, wantNames),
+		"ReadDir(%q) = %v, want %v",
+		want.name,
+		names,
+		wantNames,
+	)
 }
 
 func assertMountedFile(t *testing.T, tr *tree.Tree, want mountEntry) {
 	t.Helper()
 
 	data, err := fs.ReadFile(tr, want.name)
-	{
-		assert.ErrorIf(
-			t,
-			err != nil || string(data) != want.data,
-			"ReadFile(%q) = %q, %v; want %q",
-			want.name,
-			data,
-			err,
-			want.data,
-		)
-	}
+	assert.ErrorIf(
+		t,
+		err != nil || string(data) != want.data,
+		"ReadFile(%q) = %q, %v; want %q",
+		want.name,
+		data,
+		err,
+		want.data,
+	)
 	file, err := tr.Open(want.name)
 	if err != nil {
 		t.Errorf("Open(%q): %v", want.name, err)

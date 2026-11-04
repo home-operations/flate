@@ -548,7 +548,8 @@ func newRunner(t *testing.T) (*orchestrator.Orchestrator, *store.Store) {
 	assert.FatalIf(t, len(runs) != 1 || runs[0].Orchestrator == nil, "%v", "missing completed store")
 	o := runs[0].Orchestrator
 
-	return o, o.Store()
+	s := o.Store()
+	return o, s
 }
 
 func runSelected(t *testing.T, o *orchestrator.Orchestrator, roots ...manifest.NamedResource) output.TestReport {

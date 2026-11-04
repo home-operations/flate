@@ -47,7 +47,8 @@ func (e *Execution) dependencies(obj manifest.BaseManifest, stage manifest.GateS
 	if stage == manifest.GateParents {
 		return nil
 	}
-	capacity, _ := obj.ReferenceCapacity()
+	limits := obj.ReferenceCapacity()
+	capacity := limits.References
 	if capacity == 0 {
 		return nil
 	}
@@ -96,7 +97,7 @@ func (e *Execution) DataInputs(
 	obj manifest.BaseManifest,
 	provider dataLookup,
 ) ([]depwait.DataDependency, error) {
-	if _, inputs := obj.ReferenceCapacity(); inputs == 0 {
+	if obj.ReferenceCapacity().DataInputs == 0 {
 		return nil, nil
 	}
 	e.SetPendingUnlessReady(e.Reads.ID(), "resolving values inputs")

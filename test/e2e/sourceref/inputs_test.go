@@ -19,7 +19,8 @@ import (
 
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_PinnedDiff_EscapedPatchInput(t *testing.T) {
-	root, repo, _, _ := sourceRefFixture(t)
+	sourceRefFixtureResult1 := sourceRefFixture(t)
+	root, repo, _, _ := sourceRefFixtureResult1.root, sourceRefFixtureResult1.repository, sourceRefFixtureResult1.before, sourceRefFixtureResult1.after
 	for _, file := range []string{"apps/kustomization.yaml", "apps/cm.yaml"} {
 		assert.NoError(t, os.Remove(filepath.Join(root, file)))
 	}
@@ -72,11 +73,11 @@ func TestE2E_PinnedDiff_EscapedPatchInput(t *testing.T) {
 			Author: &object.Signature{Name: "fixture", Email: "fixture@example.test", When: time.Unix(0, 0)},
 		},
 	)
-	harness.MutateFile(t, filepath.Join(root, "flux/entry.yaml"), "tag: input-before", "tag: input-after")
-	harness.MutateFile(t, filepath.Join(root, "inputs/patch"), "value: input-after", "value: dirty")
+	harness.MutateFile(t, filepath.Join(root, "flux", "entry.yaml"), "tag: input-before", "tag: input-after")
+	harness.MutateFile(t, filepath.Join(root, "inputs", "patch"), "value: input-after", "value: dirty")
 	loader := installSourceRefTransport(t, repo.Storer)
 	for _, side := range []struct{ root, value string }{{original, "input-before"}, {root, "input-after"}} {
-		out, _ := harness.RequireCLIOK(
+		requireCLIOKResult1 := harness.RequireCLIOK(
 			t,
 			"build",
 			"all",
@@ -88,6 +89,7 @@ func TestE2E_PinnedDiff_EscapedPatchInput(t *testing.T) {
 			"--cache-dir",
 			t.TempDir(),
 		)
+		out, _ := requireCLIOKResult1.Stdout, requireCLIOKResult1.Stderr
 		assert.FatalIf(
 			t,
 			!strings.Contains(out, "value: "+side.value) || strings.Contains(out, "value: dirty"),
@@ -112,7 +114,8 @@ func TestE2E_PinnedDiff_EscapedPatchInput(t *testing.T) {
 					t.TempDir(),
 				},
 				baseline...)
-			out, _ := harness.RequireCLIOK(t, args...)
+			requireCLIOKResult2 := harness.RequireCLIOK(t, args...)
+			out, _ := requireCLIOKResult2.Stdout, requireCLIOKResult2.Stderr
 			assertSourceValueDiff(t, out, "input-before", "input-after")
 		})
 	}
@@ -159,7 +162,7 @@ func testSourceRefSuppliedGitRepository(t *testing.T) {
 			"metadata: {name: unused, namespace: apps}\nspec: {url: 'file:///absent-supplied-source'}\n")
 	var previous string
 	for range 2 {
-		out, _ := harness.RequireCLIOK(t,
+		requireCLIOKResult1 := harness.RequireCLIOK(t,
 			"build",
 			"all",
 			"--path",
@@ -169,6 +172,7 @@ func testSourceRefSuppliedGitRepository(t *testing.T) {
 				"source.yaml"),
 			"--concurrency=2",
 			"--no-progress")
+		out, _ := requireCLIOKResult1.Stdout, requireCLIOKResult1.Stderr
 		if !strings.Contains(out,
 			"name: supplied-source-output") ||
 			strings.Contains(out,

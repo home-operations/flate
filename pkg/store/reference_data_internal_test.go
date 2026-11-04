@@ -36,22 +36,19 @@ func TestReferenceFacts_ProjectsQualifiedNamespaceData(t *testing.T) {
 		defer reads.Close()
 		return reads.ReferenceFacts(target, nil, false, reads.ID())
 	}()} {
-		{
-			assert.FatalIf(t, len(facts.ReferenceData) != 1, "candidates=%+v", facts.ReferenceData)
-		}
+		assert.FatalIf(t, len(facts.ReferenceData) != 1, "candidates=%+v", facts.ReferenceData)
 		got := facts.ReferenceData[0]
 		assert.Equal(t, got.Production, proof)
 		projected := got.OfflineData.(*manifest.Secret)
 		assert.Equal(t, projected.Named(), target)
 		assert.Equal(t, data.Named(), bare)
-		{
-			assert.FatalIf(
-				t,
-				facts.Data == nil || facts.Accepted || st.GetObject(target) != nil,
-				"%s",
-				"namespace projection gained authority",
-			)
-		}
+
+		assert.FatalIf(
+			t,
+			facts.Data == nil || facts.Accepted || st.GetObject(target) != nil,
+			"%s",
+			"namespace projection gained authority",
+		)
 	}
 }
 
@@ -102,9 +99,7 @@ func TestReferenceFacts_CurrentDeclarationSupersedesIndexedSource(t *testing.T) 
 		[]manifest.ReferenceData{{Production: proof, DeclaredKeys: []string{"INDEXED"}}},
 	)
 	st.SetArtifact(source, &SourceArtifact{Content: "current"})
-	{
-		assert.FatalIf(t, before.Valid(), "%s", "source replacement retained indexed evidence")
-	}
+	assert.FatalIf(t, before.Valid(), "%s", "source replacement retained indexed evidence")
 	_, _, output := st.GetEmission(owner.Named())
 	defer output.Finish()
 	output.Children, output.Complete = []Child{{Obj: declaration}}, true
@@ -115,9 +110,8 @@ func TestReferenceFacts_CurrentDeclarationSupersedesIndexedSource(t *testing.T) 
 	want := []manifest.ReferenceData{{Production: proof, DeclaredKeys: []string{"CURRENT"}}}
 	assert.Diff(t, st.ReferenceFacts(target, nil, false, manifest.NamedResource{}).ReferenceData, want)
 	assert.Diff(t, current.ReferenceFacts(target, nil, false, current.ID()).ReferenceData, want)
-	{
-		assert.FatalIf(t, st.GetObject(target) != nil, "%s", "current keys entered canonical inventory")
-	}
+
+	assert.FatalIf(t, st.GetObject(target) != nil, "%s", "current keys entered canonical inventory")
 }
 
 func testReferenceFactsSourceContextWithdrawalCase(
@@ -149,27 +143,26 @@ func testReferenceFactsSourceContextWithdrawalCase(
 	captured.Init(st, ownerID("consumer"), nil)
 	defer captured.Retire()
 	assert.Equal(t, captured.ReferenceFacts(target, nil, false, captured.ID()).Data.HasKeys(), true)
-	{
-		assert.FatalIf(
-			t,
-			len(st.ReferenceFacts(target, nil, false, manifest.NamedResource{}).ReferenceData) != 1,
-			"%s",
-			"candidate unavailable before withdrawal",
-		)
-	}
+
+	assert.FatalIf(
+		t,
+		len(st.ReferenceFacts(target, nil, false, manifest.NamedResource{}).ReferenceData) != 1,
+		"%s",
+		"candidate unavailable before withdrawal",
+	)
+
 	if (*testCaseInput) == "owner_deleted" {
 		st.DeleteObject(owner.Named())
 	} else {
 		if (*testCaseInput) == "replaced_source" {
 			st.SetArtifact(source, &SourceArtifact{Content: "new"})
-			{
-				assert.FatalIf(
-					t,
-					len(st.ReferenceFacts(target, nil, false, manifest.NamedResource{}).ReferenceData) != 0,
-					"%s",
-					"source replacement retained stale candidate",
-				)
-			}
+
+			assert.FatalIf(
+				t,
+				len(st.ReferenceFacts(target, nil, false, manifest.NamedResource{}).ReferenceData) != 0,
+				"%s",
+				"source replacement retained stale candidate",
+			)
 		}
 		_, _, output := st.GetEmission(owner.Named())
 		defer output.Finish()
@@ -178,15 +171,15 @@ func testReferenceFactsSourceContextWithdrawalCase(
 	}
 	facts := st.ReferenceFacts(target, nil, false, manifest.NamedResource{})
 	assert.Equal(t, captured.Valid(), false)
-	{
-		assert.FatalIf(
-			t,
-			len(facts.ReferenceData) != 0 || facts.Data != supplied || st.GetObject(target) != supplied ||
-				len(st.ListObjects("", manifest.KindSecret)) != 1,
-			"withdrawal retained lookup data: %+v",
-			facts,
-		)
-	}
+
+	assert.FatalIf(
+		t,
+		len(facts.ReferenceData) != 0 || facts.Data != supplied || st.GetObject(target) != supplied ||
+			len(st.ListObjects("", manifest.KindSecret)) != 1,
+		"withdrawal retained lookup data: %+v",
+		facts,
+	)
+
 	if (*testCaseInput) == "replaced_source" {
 		declaration := &manifest.RawObject{
 			Kind:       "ExternalSecret",
@@ -203,12 +196,10 @@ func testReferenceFactsSourceContextWithdrawalCase(
 		current.Complete, current.Children = true, []Child{{Obj: declaration}}
 		st.RecordEmitted(owner.Named(), &current, nil)
 		facts = st.ReferenceFacts(target, nil, false, manifest.NamedResource{})
-		{
-			assert.FatalIf(t, len(facts.ReferenceData) != 1, "current source lost declaration keys: %+v", facts)
-		}
+
+		assert.FatalIf(t, len(facts.ReferenceData) != 1, "current source lost declaration keys: %+v", facts)
+
 		assert.Diff(t, facts.ReferenceData[0].DeclaredKeys, []string{"CURRENT"})
-		{
-			assert.FatalIf(t, facts.ReferenceData[0].OfflineData != nil, "%s", "new source revived indexed data")
-		}
+		assert.FatalIf(t, facts.ReferenceData[0].OfflineData != nil, "%s", "new source revived indexed data")
 	}
 }

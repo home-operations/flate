@@ -63,6 +63,21 @@ func (h authority) nextGeneration() authority {
 	return h
 }
 
+type shard struct {
+	spareHeads   []registrationHead
+	headCapacity int
+	pending      atomic.Pointer[registrationHead]
+	absence      registrationHead
+	derived      bool
+	mu           sync.RWMutex
+	cells        map[manifest.NamedResource]objectCell
+	conditions   map[manifest.NamedResource]conditionRecord
+	artifacts    map[manifest.NamedResource]artifactRecord
+	byName       map[kindID]objectBucket
+	members      map[manifest.NamedResource][]membership
+	slots        map[manifest.NamedResource]*producerSlot
+}
+
 func (sh *shard) requireCapacityLocked(heads ...authority) {
 	for _, h := range heads {
 		if h.current().generation == ^uint64(0) {
@@ -96,21 +111,6 @@ type objectBucket struct {
 	authority
 
 	names map[nameID]struct{}
-}
-
-type shard struct {
-	spareHeads   []registrationHead
-	headCapacity int
-	pending      atomic.Pointer[registrationHead]
-	absence      registrationHead
-	derived      bool
-	mu           sync.RWMutex
-	cells        map[manifest.NamedResource]objectCell
-	conditions   map[manifest.NamedResource]conditionRecord
-	artifacts    map[manifest.NamedResource]artifactRecord
-	byName       map[kindID]objectBucket
-	members      map[manifest.NamedResource][]membership
-	slots        map[manifest.NamedResource]*producerSlot
 }
 
 func newShard() *shard {
@@ -303,12 +303,12 @@ func (u *objectUpdate) compare() {
 		u.cell.static != nil && manifest.LabelsEqual(u.cell.static, u.obj, [2]map[string]any{}, nil)
 	u.effectiveEqual = equal
 	if u.effectiveEqual {
-		u.effectiveEqual, _ = reconcileInputEqual(u.obj, u.cell.document, u.document)
+		u.effectiveEqual = reconcileInputEqual(u.obj, u.cell.document, u.document).equal
 	}
 	if u.effective.child.Obj != u.cell.static {
 		u.effectiveEqual = manifest.Equal(u.effective.child.Obj, u.obj)
 		if u.effectiveEqual {
-			u.effectiveEqual, _ = reconcileInputEqual(u.obj, u.effective.child.Doc, u.document)
+			u.effectiveEqual = reconcileInputEqual(u.obj, u.effective.child.Doc, u.document).equal
 		}
 	}
 }
@@ -722,8 +722,8 @@ func dispatchPublications(publications []objectPublication) {
 			p := pValues[pIndex]
 			changed := p.force || p.before == nil || p.after == nil || !manifest.Equal(p.before, p.after)
 			if !changed && p.document != nil {
-				equal, _ := reconcileInputEqual(p.after, p.document, p.nextDocument)
-				changed = !equal
+				comparison := reconcileInputEqual(p.after, p.document, p.nextDocument)
+				changed = !comparison.equal
 			}
 			if changed {
 				p.event.run()
@@ -733,27 +733,34 @@ func dispatchPublications(publications []objectPublication) {
 }
 
 type documentInput interface {
-	ReconcileInput(map[string]any) (string, bool, bool)
+	ReconcileInput(map[string]any) manifest.ReconcileMetadata
 }
 
-func reconcileInputEqual(obj manifest.BaseManifest, a, b map[string]any) (bool, bool) {
+type reconcileComparison struct {
+	equal    bool
+	consumes bool
+}
+
+func reconcileInputEqual(obj manifest.BaseManifest, a, b map[string]any) reconcileComparison {
 	input, ok := obj.(documentInput)
 	sameAPI := a == nil || b == nil || manifest.DocAPIVersion(a) == manifest.DocAPIVersion(b)
 	if !ok {
-		return sameAPI, false
+		return reconcileComparison{equal: sameAPI}
 	}
-	auid, adisabled, consumes := input.ReconcileInput(a)
+	reconciliation := input.ReconcileInput(a)
+	auid, adisabled, consumes := reconciliation.UID, reconciliation.Disabled, reconciliation.Consumes
 	if !consumes {
-		return sameAPI, false
+		return reconcileComparison{equal: sameAPI}
 	}
-	buid, bdisabled, _ := input.ReconcileInput(b)
-	return sameAPI && auid == buid && adisabled == bdisabled, true
+	reconciliation2 := input.ReconcileInput(b)
+	buid, bdisabled := reconciliation2.UID, reconciliation2.Disabled
+	return reconcileComparison{equal: sameAPI && auid == buid && adisabled == bdisabled, consumes: true}
 }
 
 func reconcileEqual(a, b Child) bool {
-	equal, consumes := reconcileInputEqual(a.Obj, a.Doc, b.Doc)
-	if consumes {
-		return manifest.Equal(a.Obj, b.Obj) && equal
+	comparison := reconcileInputEqual(a.Obj, a.Doc, b.Doc)
+	if comparison.consumes {
+		return manifest.Equal(a.Obj, b.Obj) && comparison.equal
 	}
 	return semanticEqual(a, b)
 }

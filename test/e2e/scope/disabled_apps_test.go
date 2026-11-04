@@ -218,7 +218,7 @@ func TestE2E_SelectedEntrySelfOwnership(t *testing.T) {
 				pkg+"/sync.yaml",
 				testutil.KustomizationYAML("sync", "flux-system", "  path: "+target+"\n"),
 			)
-			out, stderr, code := harness.RunCLIBuffers(
+			runCLIBuffersResult1 := harness.RunCLIBuffers(
 				"build",
 				"all",
 				"--path",
@@ -227,6 +227,7 @@ func TestE2E_SelectedEntrySelfOwnership(t *testing.T) {
 				"2",
 				"--no-progress",
 			)
+			out, stderr, code := runCLIBuffersResult1.Stdout, runCLIBuffersResult1.Stderr, runCLIBuffersResult1.Code
 			assert.FatalIf(
 				t,
 				code != 0 || strings.Contains(out, "name: anchored") != tc.want,
@@ -308,7 +309,8 @@ func e2EDisabledAppAdmissionCase(t *testing.T, declaration *string) {
 			"--cache-dir",
 			t.TempDir(),
 		}
-		out, stderr, code := harness.RunCLIBuffers(args...)
+		runCLIBuffersResult2 := harness.RunCLIBuffers(args...)
+		out, stderr, code := runCLIBuffersResult2.Stdout, runCLIBuffersResult2.Stderr, runCLIBuffersResult2.Code
 		assert.FatalIf(
 			t,
 			code != 0 || strings.Contains(stderr, "dial tcp"),
@@ -321,13 +323,15 @@ func e2EDisabledAppAdmissionCase(t *testing.T, declaration *string) {
 		assert.NoError(t, err)
 		found := map[string]bool{}
 		for _, doc := range docs {
-			name, _ := manifest.DocMetadata(doc)
+			metadata := manifest.DocMetadata(doc)
+			name := metadata.Name
 			found[name] = true
 		}
 		assert.FatalIf(t, found["reachable-cm"] != enabled || found["excluded-cm"] || found["commented-cm"] ||
 			found["excluded-app"] ||
 			found["commented-app"], "nested admission enabled=%t output=%s stderr=%s", enabled, out, stderr)
-		again, diagnostic, code := harness.RunCLIBuffers(args...)
+		runCLIBuffersResult3 := harness.RunCLIBuffers(args...)
+		again, diagnostic, code := runCLIBuffersResult3.Stdout, runCLIBuffersResult3.Stderr, runCLIBuffersResult3.Code
 		assert.FatalIf(
 			t,
 			code != 0 || again != out,
@@ -337,7 +341,8 @@ func e2EDisabledAppAdmissionCase(t *testing.T, declaration *string) {
 		)
 		if enabled {
 			args[0] = "test"
-			status, diagnostic, code := harness.RunCLIBuffers(args...)
+			runCLIBuffersResult4 := harness.RunCLIBuffers(args...)
+			status, diagnostic, code := runCLIBuffersResult4.Stdout, runCLIBuffersResult4.Stderr, runCLIBuffersResult4.Code
 			assert.FatalIf(t, code != 0 || !strings.Contains(status, "flux-system/external") ||
 				!strings.Contains(status, "flux-system/external-sync") ||
 				!strings.Contains(status, "skipped") ||
@@ -355,7 +360,7 @@ func e2EDisabledAppAdmissionCase(t *testing.T, declaration *string) {
 			"payload/kustomization.yaml",
 			"resources: [cm.yaml]\nconfigMapGenerator: [{name: broken, files: [missing.txt]}]\n",
 		)
-		out, stderr, code := harness.RunCLIBuffers(
+		runCLIBuffersResult5 := harness.RunCLIBuffers(
 			"build",
 			"all",
 			"--path",
@@ -367,6 +372,7 @@ func e2EDisabledAppAdmissionCase(t *testing.T, declaration *string) {
 			"--cache-dir",
 			t.TempDir(),
 		)
+		out, stderr, code := runCLIBuffersResult5.Stdout, runCLIBuffersResult5.Stderr, runCLIBuffersResult5.Code
 		assert.FatalIf(
 			t,
 			code != 1 || !strings.Contains(stderr, "missing.txt") || strings.Contains(out, "reachable-cm"),
@@ -390,7 +396,7 @@ func e2EDisabledAppAdmissionCase2(t *testing.T, tc *struct {
 	testutil.GitInit(t, root)
 	disabledAppFixture(t, root, "single", false)
 	testutil.WriteFile(t, root, "targets/game/cm.yaml", tc.body)
-	out, stderr, code := harness.RunCLIBuffers(
+	runCLIBuffersResult6 := harness.RunCLIBuffers(
 		"build",
 		"all",
 		"--path",
@@ -399,6 +405,7 @@ func e2EDisabledAppAdmissionCase2(t *testing.T, tc *struct {
 		"2",
 		"--no-progress",
 	)
+	out, stderr, code := runCLIBuffersResult6.Stdout, runCLIBuffersResult6.Stderr, runCLIBuffersResult6.Code
 	assert.FatalIf(
 		t,
 		code != 0 || strings.Contains(out, "name: invalid"),
@@ -413,7 +420,7 @@ func e2EDisabledAppAdmissionCase2(t *testing.T, tc *struct {
 		"namespace: games\nresources: [disabled.yaml]\n",
 	)
 	{
-		_, stderr, code := harness.RunCLIBuffers(
+		runCLIBuffersResult7 := harness.RunCLIBuffers(
 			"build",
 			"all",
 			"--path",
@@ -422,6 +429,7 @@ func e2EDisabledAppAdmissionCase2(t *testing.T, tc *struct {
 			"2",
 			"--no-progress",
 		)
+		_, stderr, code := runCLIBuffersResult7.Stdout, runCLIBuffersResult7.Stderr, runCLIBuffersResult7.Code
 		assert.FatalIf(t, code != 1 ||
 			!strings.Contains(
 				stderr,
@@ -447,7 +455,7 @@ func e2EDisabledAppAdmissionSharedActiveTargetAndComponent(t *testing.T) {
 			"  path: ./targets/game\n  components: [../backup]\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
 		),
 	)
-	out, stderr, code := harness.RunCLIBuffers(
+	runCLIBuffersResult8 := harness.RunCLIBuffers(
 		"build",
 		"all",
 		"--path",
@@ -456,12 +464,14 @@ func e2EDisabledAppAdmissionSharedActiveTargetAndComponent(t *testing.T) {
 		"2",
 		"--no-progress",
 	)
+	out, stderr, code := runCLIBuffersResult8.Stdout, runCLIBuffersResult8.Stderr, runCLIBuffersResult8.Code
 	assert.FatalIf(t, code != 0, "shared active target exit=%d stderr=%s", code, stderr)
 	docs, err := testutil.SplitDocs([]byte(out))
 	assert.NoError(t, err)
 	counts := map[string]int{}
 	for _, doc := range docs {
-		name, _ := manifest.DocMetadata(doc)
+		metadata2 := manifest.DocMetadata(doc)
+		name := metadata2.Name
 		counts[name]++
 	}
 	assert.FatalIf(
@@ -480,7 +490,7 @@ func e2EDisabledAppAdmissionCrossPackageInclusion(t *testing.T) {
 	disabledAppFixture(t, root, "single", false)
 	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux, independent]\n")
 	testutil.WriteFile(t, root, "independent/kustomization.yaml", "resources: [../apps/games/disabled.yaml]\n")
-	out, stderr, code := harness.RunCLIBuffers(
+	runCLIBuffersResult9 := harness.RunCLIBuffers(
 		"build",
 		"all",
 		"--path",
@@ -489,6 +499,7 @@ func e2EDisabledAppAdmissionCrossPackageInclusion(t *testing.T) {
 		"2",
 		"--no-progress",
 	)
+	out, stderr, code := runCLIBuffersResult9.Stdout, runCLIBuffersResult9.Stderr, runCLIBuffersResult9.Code
 	assert.FatalIf(
 		t,
 		code != 0 || !strings.Contains(out, "name: game-cm") || !strings.Contains(out, "name: backup-cm"),
@@ -520,7 +531,8 @@ func e2EDisabledAppAdmissionName(t *testing.T, tc *struct {
 			"2",
 			"--no-progress",
 		}
-		first, stderr, code := harness.RunCLIBuffers(args...)
+		runCLIBuffersResult10 := harness.RunCLIBuffers(args...)
+		first, stderr, code := runCLIBuffersResult10.Stdout, runCLIBuffersResult10.Stderr, runCLIBuffersResult10.Code
 		assert.FatalIf(
 			t,
 			code != 0 || strings.Contains(stderr, "[OrphanedResource]"),
@@ -529,13 +541,15 @@ func e2EDisabledAppAdmissionName(t *testing.T, tc *struct {
 			code,
 			stderr,
 		)
-		second, _, code := harness.RunCLIBuffers(args...)
+		runCLIBuffersResult11 := harness.RunCLIBuffers(args...)
+		second, _, code := runCLIBuffersResult11.Stdout, runCLIBuffersResult11.Stderr, runCLIBuffersResult11.Code
 		assert.FatalIf(t, code != 0 || first != second, "%v", "identical inputs changed output bytes")
 		docs, err := testutil.SplitDocs([]byte(first))
 		assert.NoError(t, err)
 		found := map[string]bool{}
 		for _, doc := range docs {
-			name, _ := manifest.DocMetadata(doc)
+			metadata3 := manifest.DocMetadata(doc)
+			name := metadata3.Name
 			found[name] = true
 		}
 		for _, name := range []string{"disabled", "game-cm", "backup-cm"} {
@@ -561,7 +575,8 @@ func e2EDisabledAppAdmissionName(t *testing.T, tc *struct {
 		"--no-progress",
 	}
 	{
-		_, stderr, code := harness.RunCLIBuffers(args...)
+		runCLIBuffersResult12 := harness.RunCLIBuffers(args...)
+		_, stderr, code := runCLIBuffersResult12.Stdout, runCLIBuffersResult12.Stderr, runCLIBuffersResult12.Code
 		assert.FatalIf(t, code != 0, "disabled broken target failed: exit=%d stderr=%s", code, stderr)
 	}
 	games := "apps/games"
@@ -570,8 +585,9 @@ func e2EDisabledAppAdmissionName(t *testing.T, tc *struct {
 	}
 	testutil.WriteFile(t, root, games+"/kustomization.yaml", "namespace: games\nresources: [disabled.yaml]\n")
 	{
-		_, stderr, code := harness.RunCLIBuffers(
+		runCLIBuffersResult13 := harness.RunCLIBuffers(
 			args...)
+		_, stderr, code := runCLIBuffersResult13.Stdout, runCLIBuffersResult13.Stderr, runCLIBuffersResult13.Code
 		assert.FatalIf(t, code != 1 ||
 			!strings.Contains(
 				stderr,

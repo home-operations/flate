@@ -55,7 +55,7 @@ func testFetcherNetworkRoutesCase(t *testing.T, route *string,
 		t.Context(),
 		http.MethodGet,
 		strings.Replace(target.URL, "127.0.0.1", "example.com", 1),
-		nil,
+		http.NoBody,
 	)
 	_, err = (&http.Client{Transport: tr}).Do(req)
 	first, ok := errors.AsType[*sourcecache.TerminalError](err)

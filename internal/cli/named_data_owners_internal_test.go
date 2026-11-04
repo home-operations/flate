@@ -124,7 +124,8 @@ func runNamedScopeFailedDataOwnerName(t *testing.T, tc *struct {
 	if tc.extra != "" {
 		args = append(args, tc.extra)
 	}
-	stdout, stderr, code := runCLI(t, args...)
+	cli := runCLI(t, args...)
+	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 	selection, selectedErr, _ := orchestrator.Select([]orchestrator.Rendered{run}, runErr,
 		[]manifest.NamedResource{{Group: hr.Group, Kind: hr.Kind, Name: hr.Name}}, nil)
 	assert.FatalIf(t, len(selection) != 1, "selection failed: %v", selectedErr)
@@ -242,7 +243,7 @@ func runNamedScopeSubstituteOwnersName(t *testing.T, tc *struct {
 	requiredFailure := tc.broken && tc.required
 	assert.FatalIf(t, res == nil || (len(outputByParent(res.Manifests)[id]) == 0) != requiredFailure ||
 		(len(res.Blocked[id]) != 0) != requiredFailure, "consumer did not render independently: %+v", res)
-	out, stderr, code := runCLI(
+	cli := runCLI(
 		t,
 		"build",
 		"ks",
@@ -254,6 +255,7 @@ func runNamedScopeSubstituteOwnersName(t *testing.T, tc *struct {
 		"--concurrency",
 		"2",
 	)
+	out, stderr, code := cli.stdout, cli.stderr, cli.code
 	assert.FatalIf(
 		t,
 		(code == 1) != requiredFailure || strings.Contains(out, "name: selected") == requiredFailure,

@@ -198,9 +198,7 @@ func testLoadFSChartCaptureIdentityCase(t *testing.T, testCaseInput *testLoadFSC
 	files, err := chartFilesInFS(t.Context(), input, false)
 	assert.NoError(t, err)
 	for _, file := range files {
-		{
-			assert.FatalIf(t, file.Name == ".helmignore", "%s", "self-excluded policy admitted")
-		}
+		assert.FatalIf(t, file.Name == ".helmignore", "%s", "self-excluded policy admitted")
 	}
 	testCaseInput.tc.change(input)
 	after, err := chartFilesInFS(t.Context(), input, false)

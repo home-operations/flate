@@ -59,9 +59,7 @@ func TestSeedBootstrapSource_NoRepository(t *testing.T) {
 			assert.Equal(t, artifact.Kind, manifest.KindGitRepository)
 			assert.Equal(t, artifact.URL, "file://"+root)
 			assert.Equal(t, artifact.LocalPath, root)
-			{
-				assert.FatalIf(t, artifact.FS == nil, "%v", "bootstrap source has no admitted filesystem")
-			}
+			assert.FatalIf(t, artifact.FS == nil, "%v", "bootstrap source has no admitted filesystem")
 			content, err := fs.ReadFile(artifact.FS, "scan.yaml")
 			assert.Equal(t, err, nil)
 			assert.Equal(t, string(content), "admitted\n")
@@ -81,10 +79,8 @@ func TestNormalizeGitURL_CanonicalForms(t *testing.T) {
 	}
 	for _, in := range cases {
 		{
-			{
-				got := normalizeGitURL(in)
-				assert.ErrorIf(t, got != want, "normalizeGitURL(%q) = %q, want %q", in, got, want)
-			}
+			got := normalizeGitURL(in)
+			assert.ErrorIf(t, got != want, "normalizeGitURL(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
@@ -99,10 +95,8 @@ func TestNormalizeGitURL_RejectsNonRemoteShapes(t *testing.T) {
 	}
 	for _, in := range cases {
 		{
-			{
-				got := normalizeGitURL(in)
-				assert.ErrorIf(t, got != "", "normalizeGitURL(%q) should be rejected; got %q", in, got)
-			}
+			got := normalizeGitURL(in)
+			assert.ErrorIf(t, got != "", "normalizeGitURL(%q) should be rejected; got %q", in, got)
 		}
 	}
 }
@@ -111,9 +105,7 @@ func TestNormalizeGitURL_TrailingSlashAndDotGit(t *testing.T) {
 	t.Parallel()
 	a := normalizeGitURL("https://github.com/owner/repo.git/")
 	b := normalizeGitURL("https://github.com/owner/repo")
-	{
-		assert.ErrorIf(t, a != b, "trailing .git/slash should normalize identically: %q vs %q", a, b)
-	}
+	assert.ErrorIf(t, a != b, "trailing .git/slash should normalize identically: %q vs %q", a, b)
 }
 
 func TestNormalizeGitURL_StripsQueryAndFragment(t *testing.T) {
@@ -126,10 +118,8 @@ func TestNormalizeGitURL_StripsQueryAndFragment(t *testing.T) {
 	}
 	for _, in := range cases {
 		{
-			{
-				got := normalizeGitURL(in)
-				assert.ErrorIf(t, got != want, "normalizeGitURL(%q) = %q, want %q", in, got, want)
-			}
+			got := normalizeGitURL(in)
+			assert.ErrorIf(t, got != want, "normalizeGitURL(%q) = %q, want %q", in, got, want)
 		}
 	}
 	for _, tc := range []struct{ input, want string }{
@@ -145,9 +135,7 @@ func TestNormalizeGitURL_IPv6Host(t *testing.T) {
 	t.Parallel()
 	got := normalizeGitURL("https://[2001:db8::1]:8080/owner/repo.git")
 	want := "2001:db8::1/owner/repo"
-	{
-		assert.ErrorIf(t, got != want, "IPv6: normalizeGitURL = %q, want %q", got, want)
-	}
+	assert.ErrorIf(t, got != want, "IPv6: normalizeGitURL = %q, want %q", got, want)
 }
 
 func TestNormalizeGitURL_RejectsRelativeScpStyle(t *testing.T) {
@@ -159,10 +147,8 @@ func TestNormalizeGitURL_RejectsRelativeScpStyle(t *testing.T) {
 	}
 	for _, in := range cases {
 		{
-			{
-				got := normalizeGitURL(in)
-				assert.ErrorIf(t, got != "", "normalizeGitURL(%q) should be rejected; got %q", in, got)
-			}
+			got := normalizeGitURL(in)
+			assert.ErrorIf(t, got != "", "normalizeGitURL(%q) should be rejected; got %q", in, got)
 		}
 	}
 }
@@ -180,10 +166,8 @@ func TestNormalizeGitURL_HostOrPathMissing(t *testing.T) {
 	}
 	for _, in := range cases {
 		{
-			{
-				got := normalizeGitURL(in)
-				assert.ErrorIf(t, got != "", "normalizeGitURL(%q) should be rejected; got %q", in, got)
-			}
+			got := normalizeGitURL(in)
+			assert.ErrorIf(t, got != "", "normalizeGitURL(%q) should be rejected; got %q", in, got)
 		}
 	}
 }
@@ -236,9 +220,7 @@ func testSeedBootstrapSourceExplicitURLsOverrideGitConfigCase(
 	assert.Diff(t, d.remotes, map[string]struct{}{want: {}})
 	artifact := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	assert.Equal(t, artifact.LocalPath, wantRoot)
-	{
-		assert.FatalIf(t, artifact.FS == nil, "%v", "bootstrap source has no admitted filesystem")
-	}
+	assert.FatalIf(t, artifact.FS == nil, "%v", "bootstrap source has no admitted filesystem")
 	if (*testCaseInput) == "inferred" {
 		content, err := fs.ReadFile(artifact.FS, "value.txt")
 		assert.Equal(t, err, nil)

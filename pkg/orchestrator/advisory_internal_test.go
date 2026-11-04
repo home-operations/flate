@@ -72,9 +72,7 @@ func TestClusterAdvisories_ContributorsAndCarrier(t *testing.T) {
 		assert.Equal(t, len(runs[0].Result.ClusterWarnings)+len(runs[3].Result.ClusterWarnings), 0)
 		assert.Equal(t, runs[1].Orchestrator == nil && errors.Is(runs[1].Err, failure), true)
 		omega := runs[2].Result.ClusterWarnings
-		{
-			assert.FatalIf(t, len(omega) != 1, "base-only cluster lost advisories: %v", omega)
-		}
+		assert.FatalIf(t, len(omega) != 1, "base-only cluster lost advisories: %v", omega)
 		assert.Diff(t, omega[0].Detail, []string{settings.String() + ": OMEGA (omega.yaml)"})
 		for _, run := range runs {
 			assert.Equal(t, len(run.Result.Warnings), 0)
@@ -140,14 +138,12 @@ func TestRenderTrees_ClusterAdvisoriesWarmAcquisition(t *testing.T) {
 			assert.Equal(t, len(result.Failed), 0)
 			assert.Equal(t, fetcher.calls.Load(), int64(1))
 			docs := outputByParent(result.Manifests)[consumer]
-			{
-				assert.FatalIf(
-					t,
-					len(docs) != 1 || docs[0]["data"].(map[string]any)["value"] != "repository",
-					"cold render did not use repository values: %v",
-					docs,
-				)
-			}
+			assert.FatalIf(
+				t,
+				len(docs) != 1 || docs[0]["data"].(map[string]any)["value"] != "repository",
+				"cold render did not use repository values: %v",
+				docs,
+			)
 			runs = append(runs, Rendered{ID: tree.ID, Orchestrator: o, Result: result})
 			stores = append(stores, o.store)
 			fetchers = append(fetchers, fetcher)
@@ -181,26 +177,22 @@ func testRenderTreesClusterAdvisoriesWarmAcquisitionTail(
 						execution = o.controllers.ReconcileNode(ctx, id, manifest.DrainNone)
 					})
 					o.tasks.BlockTillDone()
-					{
-						assert.FatalIf(
-							t,
-							execution == nil || !execution.Reused || !execution.Valid(),
-							"warm %s did not reuse accepted execution: %+v",
-							id,
-							execution,
-						)
-					}
+					assert.FatalIf(
+						t,
+						execution == nil || !execution.Reused || !execution.Valid(),
+						"warm %s did not reuse accepted execution: %+v",
+						id,
+						execution,
+					)
 					execution.Close()
 					info, ok := o.store.GetStatus(id)
-					{
-						assert.FatalIf(
-							t,
-							!ok || info.Status != store.StatusReady,
-							"warm %s is not Ready: %+v",
-							id,
-							info,
-						)
-					}
+					assert.FatalIf(
+						t,
+						!ok || info.Status != store.StatusReady,
+						"warm %s is not Ready: %+v",
+						id,
+						info,
+					)
 				}
 				result, err := o.collectResult(nil)
 				assert.NoError(t, err)
@@ -257,16 +249,14 @@ func TestRenderTrees_ClusterAdvisoriesDiscoveryFailure(t *testing.T) {
 		[]Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: input}},
 		Config{Concurrency: 2},
 	)
-	{
-		assert.FatalIf(
-			t,
-			!errors.Is(err, failure) || len(runs) != 1 || !errors.Is(runs[0].Err, failure) ||
-				runs[0].Orchestrator != nil,
-			"discovery failure lost original incomplete result: %+v, %v",
-			runs,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!errors.Is(err, failure) || len(runs) != 1 || !errors.Is(runs[0].Err, failure) ||
+			runs[0].Orchestrator != nil,
+		"discovery failure lost original incomplete result: %+v, %v",
+		runs,
+		err,
+	)
 	assert.Equal(t, len(runs[0].Result.ClusterWarnings), 0)
 }
 
@@ -315,10 +305,8 @@ func TestSelect_ClusterAdvisories(t *testing.T) {
 				[]manifest.NamedResource{testutil.KustomizationID("apps", "named")},
 				nil,
 			)
-			{
-				assert.FatalIf(t, failedSide >= 0 && (!errors.Is(err, failure) || !errors.Is(diagnostic, failure)) ||
-					failedSide < 0 && err != nil, "selection changed fatal error: %v, %v", err, diagnostic)
-			}
+			assert.FatalIf(t, failedSide >= 0 && (!errors.Is(err, failure) || !errors.Is(diagnostic, failure)) ||
+				failedSide < 0 && err != nil, "selection changed fatal error: %v, %v", err, diagnostic)
 			assert.Diff(t, selected[0].Warnings, []manifest.Warning{ordinary})
 			assert.Diff(t, selected[0].ClusterWarnings, []manifest.Warning(nil))
 			assert.Diff(t, selected[1].ClusterWarnings, warnings)

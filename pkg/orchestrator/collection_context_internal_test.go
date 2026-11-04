@@ -84,14 +84,10 @@ spec:
 		cfg,
 	)
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(t, len(runs) != 2, "collection lost clusters: %+v", runs)
-	}
+	assert.FatalIf(t, len(runs) != 2, "collection lost clusters: %+v", runs)
 	charts := source.Wrap(manifest.KindHelmChart, runs[0].cfg.chartFetcher)
-	{
-		assert.FatalIf(t, runs[0].cfg.chartFetcher == nil || runs[0].src.Fetchers[manifest.KindHelmChart] != charts ||
-			runs[1].src.Fetchers[manifest.KindHelmChart] != charts, "%v", "clusters did not share the invocation's chart acquisition and decode budget")
-	}
+	assert.FatalIf(t, runs[0].cfg.chartFetcher == nil || runs[0].src.Fetchers[manifest.KindHelmChart] != charts ||
+		runs[1].src.Fetchers[manifest.KindHelmChart] != charts, "%v", "clusters did not share the invocation's chart acquisition and decode budget")
 	id := testutil.HelmReleaseID("apps", "workload")
 	warnings := make([][]manifest.Warning, 0, 2)
 	for i, entry := range []string{"alpha", "omega"} {
@@ -113,18 +109,14 @@ spec:
 			cfg,
 		)
 		assert.NoError(t, err)
+		assert.FatalIf(t, len(explicit) != 1, "entry lost completed result: %+v", explicit)
 		{
-			assert.FatalIf(t, len(explicit) != 1, "entry lost completed result: %+v", explicit)
-		}
-		{
-			{
-				delta := cmp.Diff(
-					run.Result,
-					explicit[0].Result,
-					cmpopts.IgnoreUnexported(manifest.Kustomization{}, manifest.HelmRelease{}),
-				)
-				assert.FatalIf(t, delta != "", "%v", delta)
-			}
+			delta := cmp.Diff(
+				run.Result,
+				explicit[0].Result,
+				cmpopts.IgnoreUnexported(manifest.Kustomization{}, manifest.HelmRelease{}),
+			)
+			assert.FatalIf(t, delta != "", "%v", delta)
 		}
 		for _, obj := range explicit[0].Store().ListObjects("", "") {
 			got, gotOK := run.Store().GetStatus(obj.Named())
@@ -133,15 +125,13 @@ spec:
 			assert.Equal(t, got, want)
 		}
 		docs := outputByParent(run.Result.Manifests)[id]
-		{
-			assert.FatalIf(
-				t,
-				len(docs) != 1 || docs[0]["data"].(map[string]any)["value"] != []string{"first", "second"}[i],
-				"cluster %s lost Helm values: %v",
-				entry,
-				docs,
-			)
-		}
+		assert.FatalIf(
+			t,
+			len(docs) != 1 || docs[0]["data"].(map[string]any)["value"] != []string{"first", "second"}[i],
+			"cluster %s lost Helm values: %v",
+			entry,
+			docs,
+		)
 		stale := slices.DeleteFunc(
 			slices.Clone(run.Result.Warnings),
 			func(w manifest.Warning) bool { return w.Category != manifest.WarnStaleValues },
@@ -152,19 +142,15 @@ spec:
 		warnings = append(warnings, stale)
 	}
 	assert.Diff(t, warnings[0], warnings[1])
-	{
-		assert.FatalIf(
-			t,
-			runs[0].Store() == runs[1].Store() || runs[0].tasks == runs[1].tasks,
-			"%v",
-			"clusters shared mutable execution state",
-		)
-	}
+	assert.FatalIf(
+		t,
+		runs[0].Store() == runs[1].Store() || runs[0].tasks == runs[1].tasks,
+		"%v",
+		"clusters shared mutable execution state",
+	)
 	first, firstOK := runs[0].Store().Get[*manifest.HelmRelease](id)
 	second, secondOK := runs[1].Store().Get[*manifest.HelmRelease](id)
-	{
-		assert.FatalIf(t, !firstOK || !secondOK || first == second, "%v", "clusters shared their HelmRelease object")
-	}
+	assert.FatalIf(t, !firstOK || !secondOK || first == second, "%v", "clusters shared their HelmRelease object")
 	updated := first.Clone()
 	updated.Values["value"] = "changed"
 	runs[0].Store().AddObject(updated)
@@ -229,15 +215,13 @@ func TestRenderTrees_ClusterSecretAndDependencyIsolation(t *testing.T) {
 		},
 		Config{Concurrency: 2},
 	)
-	{
-		assert.FatalIf(
-			t,
-			err == nil || len(runs) != 2 || runs[0].Orchestrator == nil || runs[1].Orchestrator == nil,
-			"collection lost isolated partial results: %+v %v",
-			runs,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err == nil || len(runs) != 2 || runs[0].Orchestrator == nil || runs[1].Orchestrator == nil,
+		"collection lost isolated partial results: %+v %v",
+		runs,
+		err,
+	)
 	assert.Equal(t, runs[0].ID.Cluster, manifest.ClusterID("alpha"))
 	assert.Equal(t, runs[1].ID.Cluster, manifest.ClusterID("omega"))
 	secret := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "credentials"}
@@ -259,33 +243,27 @@ func TestRenderTrees_ClusterSecretAndDependencyIsolation(t *testing.T) {
 			runs[0].Result.Blocked,
 		)
 	}
-	{
-		assert.FatalIf(
-			t,
-			len(outputByParent(runs[0].Result.Manifests)[waitReady]) != 0,
-			"missing dependency emitted %s",
-			waitReady,
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(outputByParent(runs[0].Result.Manifests)[waitReady]) != 0,
+		"missing dependency emitted %s",
+		waitReady,
+	)
 	if docs := outputByParent(runs[0].Result.Manifests)[readSecret]; len(docs) != 0 ||
 		!slices.Contains(runs[0].Result.Blocked[readSecret], secret) {
 		t.Fatalf("another cluster satisfied the required Secret: docs=%v blocked=%v", docs, runs[0].Result.Blocked)
 	}
 	for _, w := range runs[1].Result.Warnings {
-		{
-			assert.FatalIf(
-				t,
-				w.Category == manifest.WarnUnresolvedSubstitution,
-				"missing-secret warning crossed clusters: %+v",
-				w,
-			)
-		}
+		assert.FatalIf(
+			t,
+			w.Category == manifest.WarnUnresolvedSubstitution,
+			"missing-secret warning crossed clusters: %+v",
+			w,
+		)
 	}
 	for _, id := range []manifest.NamedResource{readSecret, waitReady} {
 		status, ok := runs[1].Store().GetStatus(id)
-		{
-			assert.FatalIf(t, !ok || status.Status != store.StatusReady, "healthy cluster lost %s: %+v", id, status)
-		}
+		assert.FatalIf(t, !ok || status.Status != store.StatusReady, "healthy cluster lost %s: %+v", id, status)
 	}
 	assert.NoError(t, runs[1].Err)
 	assert.Equal(t, len(runs[1].Result.Failed), 0)

@@ -45,22 +45,16 @@ func TestRenderDocs_NativeLabels(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			out, _, err := RenderDocs(left, right, Options{Format: tc.format})
-			{
-				assert.FatalIf(t, err != nil, "RenderDocs: %v", err)
-			}
+			assert.FatalIf(t, err != nil, "RenderDocs: %v", err)
 			s := string(out)
-			{
-				assert.ErrorIf(
-					t,
-					strings.Contains(s, "Child:") || strings.Contains(s, "HelmRelease:"),
-					"native output must not carry the flate parent header:\n%s",
-					s,
-				)
-			}
+			assert.ErrorIf(
+				t,
+				strings.Contains(s, "Child:") || strings.Contains(s, "HelmRelease:"),
+				"native output must not carry the flate parent header:\n%s",
+				s,
+			)
 			for _, want := range tc.contains {
-				{
-					assert.ErrorIf(t, !strings.Contains(s, want), "%s output missing %q:\n%s", tc.format, want, s)
-				}
+				assert.ErrorIf(t, !strings.Contains(s, want), "%s output missing %q:\n%s", tc.format, want, s)
 			}
 		})
 	}
@@ -70,27 +64,21 @@ func TestRenderDocs_NoChange(t *testing.T) {
 	t.Parallel()
 	d := ncm("hello", "k", "v")
 	out, _, err := RenderDocs([]Doc{d}, []Doc{d}, Options{Format: FormatGitHub})
-	{
-		assert.FatalIf(t, err != nil, "RenderDocs: %v", err)
-	}
-	{
-		assert.ErrorIf(t, len(out) != 0, "no-change should render empty, got:\n%s", out)
-	}
+	assert.FatalIf(t, err != nil, "RenderDocs: %v", err)
+	assert.ErrorIf(t, len(out) != 0, "no-change should render empty, got:\n%s", out)
 }
 
 func TestRenderDocs_UnsupportedFormat(t *testing.T) {
 	t.Parallel()
 	d := ncm("hello", "k", "v")
 	out, _, err := RenderDocs([]Doc{d}, nil, Options{Format: "bogus"})
-	{
-		assert.ErrorIf(
-			t,
-			err == nil || err.Error() != `unsupported diff format "bogus"` || out != nil,
-			"RenderDocs = %q, %v; want nil bytes and exact unsupported-format error",
-			out,
-			err,
-		)
-	}
+	assert.ErrorIf(
+		t,
+		err == nil || err.Error() != `unsupported diff format "bogus"` || out != nil,
+		"RenderDocs = %q, %v; want nil bytes and exact unsupported-format error",
+		out,
+		err,
+	)
 	d.Manifest["bad"] = func() {}
 	for _, tc := range []struct {
 		format Format
@@ -112,24 +100,20 @@ func TestRenderDocs_UnsupportedFormat(t *testing.T) {
 				Format:     tc.format,
 				Suppressed: []Suppression{{Parent: helmReleaseParent(), Side: SideCurrent, Reason: "chart not ready"}},
 			})
-			{
-				assert.FatalIf(t, len(warnings) != 1, "formatter error lost discovered warnings: %+v", warnings)
-			}
+			assert.FatalIf(t, len(warnings) != 1, "formatter error lost discovered warnings: %+v", warnings)
 			categories := map[string]bool{}
 			for _, warning := range warnings {
 				categories[warning.Category] = true
 			}
 			assert.Diff(t, categories, map[string]bool{manifest.WarnDuplicateDocument: true})
-			{
-				assert.FatalIf(
-					t,
-					err == nil || !strings.HasPrefix(err.Error(), tc.prefix) || out != nil,
-					"RenderDocs = %q, %v; want nil bytes and %s error",
-					out,
-					err,
-					tc.prefix,
-				)
-			}
+			assert.FatalIf(
+				t,
+				err == nil || !strings.HasPrefix(err.Error(), tc.prefix) || out != nil,
+				"RenderDocs = %q, %v; want nil bytes and %s error",
+				out,
+				err,
+				tc.prefix,
+			)
 		})
 	}
 }
@@ -160,18 +144,12 @@ func TestRenderDocs_ContainerReorder(t *testing.T) {
 	t.Parallel()
 	out, _, err := RenderDocs(ndeploy("nginx", "sidecar", "init"), ndeploy("init", "nginx", "sidecar"),
 		Options{Format: FormatGitHub})
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	s := string(out)
-	{
-		assert.ErrorIf(t, !strings.Contains(s, "order changed"), "expected 'order changed' marker; got:\n%s", s)
-	}
+	assert.ErrorIf(t, !strings.Contains(s, "order changed"), "expected 'order changed' marker; got:\n%s", s)
 	// dyff matched by container name and saw the values were identical,
 	// so no image-value churn should appear.
-	{
-		assert.ErrorIf(t, strings.Contains(s, "image:"), "reorder produced spurious image-value churn:\n%s", s)
-	}
+	assert.ErrorIf(t, strings.Contains(s, "image:"), "reorder produced spurious image-value churn:\n%s", s)
 }
 
 // TestRenderDocs_ContainerByNameImageChange complements the reorder test:
@@ -191,26 +169,20 @@ func TestRenderDocs_ContainerByNameImageChange(t *testing.T) {
 		}}}
 	}
 	out, _, err := RenderDocs(mk("nginx:1.20"), mk("nginx:1.21"), Options{Format: FormatGitHub})
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	s := string(out)
-	{
-		assert.ErrorIf(
-			t,
-			!strings.Contains(s, "containers.nginx.image"),
-			"expected by-name path (containers.nginx.image); got:\n%s",
-			s,
-		)
-	}
-	{
-		assert.ErrorIf(
-			t,
-			!strings.Contains(s, "- nginx:1.20") || !strings.Contains(s, "+ nginx:1.21"),
-			"expected image value change lines; got:\n%s",
-			s,
-		)
-	}
+	assert.ErrorIf(
+		t,
+		!strings.Contains(s, "containers.nginx.image"),
+		"expected by-name path (containers.nginx.image); got:\n%s",
+		s,
+	)
+	assert.ErrorIf(
+		t,
+		!strings.Contains(s, "- nginx:1.20") || !strings.Contains(s, "+ nginx:1.21"),
+		"expected image value change lines; got:\n%s",
+		s,
+	)
 }
 
 // TestRenderDocs_RenameNoFileLevelOrderChange locks the changeset fix: renaming
@@ -228,36 +200,28 @@ func TestRenderDocs_RenameNoFileLevelOrderChange(t *testing.T) {
 	right := []Doc{ncm("aaa", "k", "v"), ncm("plex2", "k", "v"), ncm("zzz", "k", "v")}
 	for _, style := range []Format{FormatHuman, FormatGitHub} {
 		out, _, err := RenderDocs(left, right, Options{Format: style})
-		{
-			assert.FatalIf(t, err != nil, "%s: %v", style, err)
-		}
+		assert.FatalIf(t, err != nil, "%s: %v", style, err)
 		s := string(out)
-		{
-			assert.ErrorIf(
-				t,
-				!strings.Contains(s, "plex2"),
-				"%s: the rename must surface (added plex2); got:\n%s",
-				style,
-				s,
-			)
-		}
-		{
-			assert.ErrorIf(
-				t,
-				strings.Contains(s, "order changed"),
-				"%s: a localized rename must not emit a file-level 'order changed':\n%s",
-				style,
-				s,
-			)
-		}
-		{
-			assert.ErrorIf(
-				t,
-				strings.Contains(s, "aaa") || strings.Contains(s, "zzz"),
-				"%s: untouched neighbors must not be dragged into the diff:\n%s",
-				style,
-				s,
-			)
-		}
+		assert.ErrorIf(
+			t,
+			!strings.Contains(s, "plex2"),
+			"%s: the rename must surface (added plex2); got:\n%s",
+			style,
+			s,
+		)
+		assert.ErrorIf(
+			t,
+			strings.Contains(s, "order changed"),
+			"%s: a localized rename must not emit a file-level 'order changed':\n%s",
+			style,
+			s,
+		)
+		assert.ErrorIf(
+			t,
+			strings.Contains(s, "aaa") || strings.Contains(s, "zzz"),
+			"%s: untouched neighbors must not be dragged into the diff:\n%s",
+			style,
+			s,
+		)
 	}
 }

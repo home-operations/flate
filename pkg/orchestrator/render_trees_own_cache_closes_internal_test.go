@@ -32,54 +32,46 @@ func TestRenderTrees_OwnCacheCloses(t *testing.T) {
 			writeCluster(t, baseDir, "v1", "same")
 			writeCluster(t, headDir, "v2", "same")
 			{
-				{
-					_, err := RenderTrees(
-						t.Context(),
-						[]Tree{
-							{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, RepoRoot: baseDir},
-							{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, RepoRoot: headDir},
-						},
-						Config{CacheDir: root, Concurrency: 2, HeadOnly: headOnly},
-					)
-					assert.FatalIf(t, err != nil, "%v", err)
-				}
+				_, err := RenderTrees(
+					t.Context(),
+					[]Tree{
+						{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, RepoRoot: baseDir},
+						{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, RepoRoot: headDir},
+					},
+					Config{CacheDir: root, Concurrency: 2, HeadOnly: headOnly},
+				)
+				assert.FatalIf(t, err != nil, "%v", err)
 			}
 			res, err := sourcecache.Sweep(t.Context(), root, sourcecache.SweepOpts{})
+			assert.FatalIf(
+				t,
+				err != nil || len(res.Errors) != 0,
+				"own cache retained lock: result=%+v err=%v",
+				res,
+				err,
+			)
 			{
-				assert.FatalIf(
-					t,
-					err != nil || len(res.Errors) != 0,
-					"own cache retained lock: result=%+v err=%v",
-					res,
-					err,
+				_, localErr := RenderTrees(
+					t.Context(),
+					[]Tree{
+						{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}},
+						{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}},
+					},
+					Config{CacheDir: root, Concurrency: 2, HeadOnly: headOnly},
 				)
-			}
-			{
-				{
-					_, localErr := RenderTrees(
-						t.Context(),
-						[]Tree{
-							{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}},
-							{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}},
-						},
-						Config{CacheDir: root, Concurrency: 2, HeadOnly: headOnly},
-					)
-					assert.FatalIf(t, !errors.Is(
-						localErr,
-						manifest.ErrInput,
-					), "missing input error = %v", localErr)
-				}
+				assert.FatalIf(t, !errors.Is(
+					localErr,
+					manifest.ErrInput,
+				), "missing input error = %v", localErr)
 			}
 			res, err = sourcecache.Sweep(t.Context(), root, sourcecache.SweepOpts{})
-			{
-				assert.FatalIf(
-					t,
-					err != nil || len(res.Errors) != 0,
-					"input failure retained owner: result=%+v err=%v",
-					res,
-					err,
-				)
-			}
+			assert.FatalIf(
+				t,
+				err != nil || len(res.Errors) != 0,
+				"input failure retained owner: result=%+v err=%v",
+				res,
+				err,
+			)
 		})
 	}
 }
@@ -208,9 +200,7 @@ func testRenderTreesSameDirectoryKeepsFullRenderCase(
 	assert.NoError(t, err)
 	full := testCaseInput.tc.base == testCaseInput.tc.head && (*testCaseInput.external) == "automatic"
 	for side, rendered := range []Rendered{base, head} {
-		{
-			assert.FatalIf(t, rendered.Result == nil, "side %d has no result", side)
-		}
+		assert.FatalIf(t, rendered.Result == nil, "side %d has no result", side)
 		assert.NoError(t, rendered.Err)
 		assert.Equal(t, len(rendered.Result.Failed), 0)
 		names := configMapNames(rendered.Result)
@@ -221,15 +211,13 @@ func testRenderTreesSameDirectoryKeepsFullRenderCase(
 			assert.Equal(t, len(warnings), 0)
 			continue
 		}
-		{
-			assert.FatalIf(
-				t,
-				len(warnings) != 1 || warnings[0].Category != manifest.WarnPathConfig,
-				"side %d warnings = %v",
-				side,
-				warnings,
-			)
-		}
+		assert.FatalIf(
+			t,
+			len(warnings) != 1 || warnings[0].Category != manifest.WarnPathConfig,
+			"side %d warnings = %v",
+			side,
+			warnings,
+		)
 		message := "no changes detected"
 		if full {
 			message = "resolve to the same root"
@@ -297,39 +285,31 @@ func testRenderTreesHeadOnlyCase(t *testing.T, testCaseInput *bool,
 		Path:     filepath.Join(headInput.LocalPath, "flux"),
 	}
 	runs, err := RenderTrees(t.Context(), []Tree{baseTree, headTree}, cfg)
-	{
-		assert.FatalIf(t, len(runs) != 2, "missing results: %v", err)
-	}
+	assert.FatalIf(t, len(runs) != 2, "missing results: %v", err)
 	base, head := runs[0], runs[1]
-	{
-		assert.FatalIf(t, base != (Rendered{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}}) ||
-			head.Orchestrator == nil ||
-			head.Result == nil, "head-only completion = base=%+v head=%+v err=%v", base, head, err)
-	}
+	assert.FatalIf(t, base != (Rendered{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}}) ||
+		head.Orchestrator == nil ||
+		head.Result == nil, "head-only completion = base=%+v head=%+v err=%v", base, head, err)
 	if *testCaseInput {
-		{
-			assert.FatalIf(
-				t,
-				!errors.Is(err, manifest.ErrFlux) || !strings.Contains(err.Error(), "head reconciliation failed") ||
-					len(head.Result.Failed) != 1,
-				"head failure lost partial result: %+v %v",
-				head.Result,
-				err,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!errors.Is(err, manifest.ErrFlux) || !strings.Contains(err.Error(), "head reconciliation failed") ||
+				len(head.Result.Failed) != 1,
+			"head failure lost partial result: %+v %v",
+			head.Result,
+			err,
+		)
 	} else {
 		assert.NoError(t, err)
 		assert.Diff(t, configMapNames(head.Result), map[string]bool{"surviving": true})
 		cfg.HeadOnly = false
 		_, err = RenderTrees(t.Context(), []Tree{baseTree, headTree}, cfg)
-		{
-			assert.FatalIf(
-				t,
-				err == nil || !strings.Contains(err.Error(), "baseline reconciliation ran"),
-				"baseline failure control did not reconcile: %v",
-				err,
-			)
-		}
+		assert.FatalIf(
+			t,
+			err == nil || !strings.Contains(err.Error(), "baseline reconciliation ran"),
+			"baseline failure control did not reconcile: %v",
+			err,
+		)
 	}
 }
 
@@ -407,9 +387,7 @@ func testRenderTreesSameDirectoryKeepsFullRenderScanPathsCase(
 			)
 			continue
 		}
-		{
-			assert.FatalIf(t, rendered.Result == nil, "side %d has no result", side)
-		}
+		assert.FatalIf(t, rendered.Result == nil, "side %d has no result", side)
 		assert.NoError(t, rendered.Err)
 		name, other := "a", "b"
 		if side == 1 {
@@ -417,13 +395,11 @@ func testRenderTreesSameDirectoryKeepsFullRenderScanPathsCase(
 		}
 		assert.Diff(t, configMapNames(rendered.Result), map[string]bool{"cfg-" + name: true})
 		foreign := testutil.KustomizationID("flux-system", "app-"+other)
-		{
-			assert.FatalIf(
-				t,
-				rendered.Store().GetObject(foreign) != nil,
-				"side %d admitted the other scan's Kustomization as an orphan",
-				side,
-			)
-		}
+		assert.FatalIf(
+			t,
+			rendered.Store().GetObject(foreign) != nil,
+			"side %d admitted the other scan's Kustomization as an orphan",
+			side,
+		)
 	}
 }

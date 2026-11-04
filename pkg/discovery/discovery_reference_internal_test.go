@@ -56,9 +56,7 @@ func TestAdvance_ReferencedProducerRequiresReconciliation(t *testing.T) {
 	parent := testutil.KustomizationID("apps", "parent")
 	record, _ := l.Index.Lookup(parent)
 	declaration := l.IndexedObject(parent, record)
-	{
-		assert.FatalIf(t, declaration.Obj == nil, "%v", "parent declaration missing from the index")
-	}
+	assert.FatalIf(t, declaration.Obj == nil, "%v", "parent declaration missing from the index")
 	entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "flux", manifest.NamedResource{})
 	st.RecordEmitted(entry.Named(), &store.Emission{Children: []store.Child{declaration}, Complete: true}, nil)
 	st.AddObject(declaration.Obj, declaration.Doc)
@@ -67,13 +65,11 @@ func TestAdvance_ReferencedProducerRequiresReconciliation(t *testing.T) {
 	_, err = session.Advance(t.Context(), &loader.Admission{Needed: []manifest.NamedResource{child}})
 	assert.NoError(t, err)
 	for owner := range session.prepared {
-		{
-			assert.FatalIf(
-				t,
-				owner.Named() == parent,
-				"%v",
-				"producer with unresolved substitutions supplied prepared declarations",
-			)
-		}
+		assert.FatalIf(
+			t,
+			owner.Named() == parent,
+			"%v",
+			"producer with unresolved substitutions supplied prepared declarations",
+		)
 	}
 }

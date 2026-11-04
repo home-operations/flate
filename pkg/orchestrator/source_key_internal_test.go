@@ -442,7 +442,8 @@ func testCoveredArrivalBubble(t *testing.T, testCaseInput testDAGDispatchCovered
 		close(extendPermit)
 	}
 	assert.NoError(t, <-done)
-	want, wantDispatches := expectedCoveredArrival(testCaseInput)
+	expectedCoveredArrivalResult1 := expectedCoveredArrival(testCaseInput)
+	want, wantDispatches := expectedCoveredArrivalResult1.kind, expectedCoveredArrivalResult1.dispatches
 	assert.FatalIf(t, initial != want, "initial outcome=%v want=%v", initial, want)
 	f.mu.Lock()
 	calls := f.calls[raw.Named()]
@@ -487,14 +488,19 @@ func signalCoveredArrival(
 	}
 }
 
-func expectedCoveredArrival(testCaseInput testDAGDispatchCoveredArrivalCaseInputs) (schedule.Kind, int64) {
+type coveredArrival struct {
+	kind       schedule.Kind
+	dispatches int64
+}
+
+func expectedCoveredArrival(testCaseInput testDAGDispatchCoveredArrivalCaseInputs) coveredArrival {
 	want := schedule.Blocked
 	wantDispatches := int64(2)
 	if (*testCaseInput.order) == "excluded then refire" {
 		want = schedule.Terminal
 		wantDispatches = 1
 	}
-	return want, wantDispatches
+	return coveredArrival{kind: want, dispatches: wantDispatches}
 }
 
 func (in testDAGDispatchCoveredArrivalCaseInputs) admit(s *store.Store, raw *manifest.OCIRepository, phase string) {

@@ -46,16 +46,16 @@ func (c *ConfigMap) WithNamespace(namespace string) BaseManifest {
 func (c *ConfigMap) ProjectionCompatible(BaseManifest) bool { return true }
 
 // Value reads only the requested data key; binaryData is never a Flux variable source.
-func (c *ConfigMap) Value(key string) (string, bool, error) {
+func (c *ConfigMap) Value(key string) (DataValue, error) {
 	v, ok := c.Data[key]
 	if !ok {
-		return "", false, nil
+		return DataValue{}, nil
 	}
 	s, err := scalarString(v)
 	if err != nil {
-		return "", false, NewError(ErrInput, fmt.Errorf("data[%s]: %w", key, err), "")
+		return DataValue{}, NewError(ErrInput, fmt.Errorf("data[%s]: %w", key, err), "")
 	}
-	return s, true, nil
+	return DataValue{Value: s, Found: true}, nil
 }
 
 // HasKeys reports whether the ConfigMap has substitution keys.
@@ -65,9 +65,7 @@ func (c *ConfigMap) HasKeys() bool { return len(c.Data) != 0 }
 func (c *ConfigMap) Keys() iter.Seq[string] { return maps.Keys(c.Data) }
 
 // WithSupplied fills absent or wiped logical keys without changing repository data.
-//
-//nolint:ireturn // The values contract supports multiple data implementations.
-func (c *ConfigMap) WithSupplied(supplied Data) (Data, []string) {
+func (c *ConfigMap) WithSupplied(supplied Data) SuppliedData {
 	out := *c
 	out.Data = nil
 	overridden := fillSupplied(c, supplied, func(key, value string) {
@@ -80,9 +78,9 @@ func (c *ConfigMap) WithSupplied(supplied Data) (Data, []string) {
 		out.Data[key] = value
 	})
 	if out.Data == nil {
-		return c, overridden
+		return SuppliedData{Data: c, Overridden: overridden}
 	}
-	return &out, overridden
+	return SuppliedData{Data: &out, Overridden: overridden}
 }
 
 // Snapshot returns an owned document for sanitation through ParseDoc.
@@ -95,12 +93,12 @@ func (c *ConfigMap) Snapshot() map[string]any {
 }
 
 func parseConfigMap(doc map[string]any) (*ConfigMap, error) {
-	name, ns, missing := requireMetadata(doc)
-	if missing != "" {
-		return nil, inputf("%s missing %s", KindConfigMap, missing)
+	metadata := requireMetadata(doc)
+	if metadata.missing != "" {
+		return nil, inputf("%s missing %s", KindConfigMap, metadata.missing)
 	}
 	data, _ := doc[dataKey].(map[string]any)
-	return NewConfigMap(NamedResource{Name: name, Namespace: ns}, data), nil
+	return NewConfigMap(NamedResource{Name: metadata.Name, Namespace: metadata.Namespace}, data), nil
 }
 
 // Secret is the core/v1 Secret.
@@ -138,27 +136,27 @@ func (s *Secret) ProjectionCompatible(BaseManifest) bool { return true }
 
 // Value gives stringData membership precedence, including empty values.
 // Shadowed and unrequested data keys are never decoded.
-func (s *Secret) Value(key string) (string, bool, error) {
+func (s *Secret) Value(key string) (DataValue, error) {
 	if v, ok := s.StringData[key]; ok {
 		value, err := scalarString(v)
 		if err != nil {
-			return "", false, NewError(ErrInput, fmt.Errorf("stringData[%s]: %w", key, err), "")
+			return DataValue{}, NewError(ErrInput, fmt.Errorf("stringData[%s]: %w", key, err), "")
 		}
-		return value, true, nil
+		return DataValue{Value: value, Found: true}, nil
 	}
 	v, ok := s.Data[key]
 	if !ok {
-		return "", false, nil
+		return DataValue{}, nil
 	}
 	value, err := scalarString(v)
 	if err != nil {
-		return "", false, NewError(ErrInput, fmt.Errorf("data[%s]: %w", key, err), "")
+		return DataValue{}, NewError(ErrInput, fmt.Errorf("data[%s]: %w", key, err), "")
 	}
 	decoded, err := base64.StdEncoding.DecodeString(value)
 	if err != nil {
-		return "", false, NewError(ErrInput, fmt.Errorf("decode data[%s]: %w", key, err), "")
+		return DataValue{}, NewError(ErrInput, fmt.Errorf("decode data[%s]: %w", key, err), "")
 	}
-	return string(decoded), true, nil
+	return DataValue{Value: string(decoded), Found: true}, nil
 }
 
 // HasKeys reports whether the Secret has substitution keys.
@@ -181,9 +179,7 @@ func (s *Secret) Keys() iter.Seq[string] {
 }
 
 // WithSupplied fills absent or wiped logical keys while preserving lazy decoding.
-//
-//nolint:ireturn // The values contract supports multiple data implementations.
-func (s *Secret) WithSupplied(supplied Data) (Data, []string) {
+func (s *Secret) WithSupplied(supplied Data) SuppliedData {
 	out := *s
 	out.Data = nil
 	out.StringData = nil
@@ -203,7 +199,7 @@ func (s *Secret) WithSupplied(supplied Data) (Data, []string) {
 		out.StringData[key] = value
 	})
 	if out.StringData == nil {
-		return s, overridden
+		return SuppliedData{Data: s, Overridden: overridden}
 	}
 	if out.Data == nil {
 		out.Data = s.Data
@@ -211,7 +207,7 @@ func (s *Secret) WithSupplied(supplied Data) (Data, []string) {
 	if len(out.Data) == 0 {
 		out.Data = nil
 	}
-	return &out, overridden
+	return SuppliedData{Data: &out, Overridden: overridden}
 }
 
 // HasPlaceholder reports whether the payload contains a wiped value.
@@ -239,13 +235,13 @@ func copyData(data map[string]any) map[string]any {
 }
 
 func parseSecret(doc map[string]any) (*Secret, error) {
-	name, ns, missing := requireMetadata(doc)
-	if missing != "" {
-		return nil, inputf("%s missing %s", KindSecret, missing)
+	metadata := requireMetadata(doc)
+	if metadata.missing != "" {
+		return nil, inputf("%s missing %s", KindSecret, metadata.missing)
 	}
 	data, _ := doc[dataKey].(map[string]any)
 	stringData, _ := doc[stringDataKey].(map[string]any)
-	return NewSecret(NamedResource{Name: name, Namespace: ns}, data, stringData), nil
+	return NewSecret(NamedResource{Name: metadata.Name, Namespace: metadata.Namespace}, data, stringData), nil
 }
 
 func (c *ConfigMap) kind() KindInfo { return kindTable[kindConfigMap].KindInfo }

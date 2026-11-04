@@ -54,11 +54,12 @@ func TestClusterReport_NativeAggregateIndexes(t *testing.T) {
 	assert.FatalIf(t, groups[1].Diffs[0].Path.Root == &aggregate.From, "%v", "aggregation mutated its input paths")
 }
 
-func runClusterReportNativeAggregateInputsFormat(t *testing.T, current *string, base *string, format *string) {
+func runClusterReportNativeAggregateInputsFormat(t *testing.T, current, base, format *string) {
 	t.Helper()
 
 	args := []string{"diff", "all", "--path", (*current), "--path-orig", (*base), "-o", (*format), "--concurrency", "2"}
-	out, stderr, code := runClusterInputs(t, args...)
+	cluster := runClusterInputs(t, args...)
+	out, stderr, code := cluster.stdout, cluster.stderr, cluster.code
 	assert.FatalIf(t, code != 0, "diff failed: %s", stderr)
 	assert.FatalIf(
 		t,
@@ -86,15 +87,16 @@ func runClusterReportNativeAggregateInputsFormat(t *testing.T, current *string, 
 	default:
 		assert.FatalIf(t, !strings.Contains(out, "alpha: v1/Pod/apps/shared"), "missing native label: %s", out)
 	}
-	again, _, status := runClusterInputs(t, args...)
+	cluster2 := runClusterInputs(t, args...)
+	again, status := cluster2.stdout, cluster2.code
 	assert.Equal(t, status, code)
 	assert.Equal(t, again, out)
 }
 
-func runClusterReportNativeAggregateInputsCase(t *testing.T, base *string, format *string) {
+func runClusterReportNativeAggregateInputsCase(t *testing.T, base, format *string) {
 	t.Helper()
 
-	out, stderr, code := runClusterInputs(
+	cluster := runClusterInputs(
 		t,
 		"diff",
 		"all",
@@ -107,6 +109,7 @@ func runClusterReportNativeAggregateInputsCase(t *testing.T, base *string, forma
 		"--concurrency",
 		"2",
 	)
+	out, stderr, code := cluster.stdout, cluster.stderr, cluster.code
 	assert.Equal(t, code, 0)
 	assert.Equal(t, out, "")
 	assert.FatalIf(t, strings.Contains(stderr, "Cluster:"), "empty body has a cluster heading: %s", stderr)
@@ -160,7 +163,7 @@ func runClusterReportNativeAggregateInputsNameFormat(
 ) {
 	t.Helper()
 
-	out, stderr, code := runClusterInputs(
+	cluster := runClusterInputs(
 		t,
 		"diff",
 		"ks",
@@ -176,6 +179,7 @@ func runClusterReportNativeAggregateInputsNameFormat(
 		"--concurrency",
 		"2",
 	)
+	out, stderr, code := cluster.stdout, cluster.stderr, cluster.code
 	assert.FatalIf(t, code != 0, "diff failed: %s", stderr)
 	want := "one change detected between from and to\n\n"
 	if (*capturedInputs.format) != "brief" {

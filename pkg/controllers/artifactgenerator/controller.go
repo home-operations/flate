@@ -80,7 +80,8 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 	if err != nil {
 		return err
 	}
-	uid, disabled, consumes := raw.ReconcileInput(doc)
+	reconciliation := raw.ReconcileInput(doc)
+	uid, disabled, consumes := reconciliation.UID, reconciliation.Disabled, reconciliation.Consumes
 	if !consumes {
 		return manifest.NewError(manifest.ErrInput, nil, "expected ArtifactGenerator document")
 	}
@@ -95,7 +96,8 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 	if err != nil {
 		return err
 	}
-	localEvaluation, views := c.generatorInputs(raw, &spec)
+	generatorInputsResult1 := c.generatorInputs(raw, &spec)
+	localEvaluation, views := generatorInputsResult1.evaluation, generatorInputsResult1.views
 	content := struct {
 		Generator manifest.NamedResource
 		Spec      specification
@@ -107,7 +109,13 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 	if localEvaluation.maxAge == 0 {
 		replayContent = nil
 	}
-	fingerprint, handled, err := c.run.FingerprintDedup(ctx, id, replayContent, &store.Emission{})
+	fingerprintDedupResult1, fingerprintDedupResult1Err := c.run.FingerprintDedup(
+		ctx,
+		id,
+		replayContent,
+		&store.Emission{},
+	)
+	fingerprint, handled, err := fingerprintDedupResult1.Fingerprint, fingerprintDedupResult1.Reused, fingerprintDedupResult1Err
 	if handled || err != nil {
 		return err
 	}
@@ -151,7 +159,8 @@ func validateGenerator(
 	if doc == nil {
 		return nil, manifest.NewError(manifest.ErrInput, nil, "missing authoritative document")
 	}
-	parsed, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+	parsed2, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+	parsed := parsed2.Object
 	if err != nil {
 		return nil, fmt.Errorf("parse generator: %w", err)
 	}
@@ -170,7 +179,12 @@ func validateGenerator(
 	return raw, nil
 }
 
-func (c *execution) generatorInputs(raw *manifest.RawObject, spec *specification) (evaluation, map[string]fs.FS) {
+type generatorInputSet struct {
+	evaluation evaluation
+	views      map[string]fs.FS
+}
+
+func (c *execution) generatorInputs(raw *manifest.RawObject, spec *specification) generatorInputSet {
 	localEvaluation := evaluation{
 		owner:  c.cache,
 		inputs: make(map[string]*store.SourceArtifact, len(spec.Sources)),
@@ -195,7 +209,7 @@ func (c *execution) generatorInputs(raw *manifest.RawObject, spec *specification
 			localEvaluation.maxAge = 0
 		}
 	}
-	return localEvaluation, views
+	return generatorInputSet{evaluation: localEvaluation, views: views}
 }
 
 func generatorReadSelections(spec *specification) map[string]store.ArtifactRead {

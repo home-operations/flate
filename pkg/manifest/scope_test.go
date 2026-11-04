@@ -18,14 +18,12 @@ func TestKindInfo_NonScopeFactsDoNotResolveScope(t *testing.T) {
 	go func() {
 		defer close(done)
 		facts := manifest.KindOf(&manifest.RawObject{APIVersion: "non-scope.example/v1", Kind: "NeverResolved"})
-		{
-			assert.ErrorIf(
-				t,
-				facts.Tracked || facts.Runnable || facts.Status || facts.Render || facts.Discovery,
-				"%s",
-				"raw object gained registry facts",
-			)
-		}
+		assert.ErrorIf(
+			t,
+			facts.Tracked || facts.Runnable || facts.Status || facts.Render || facts.Discovery,
+			"%s",
+			"raw object gained registry facts",
+		)
 	}()
 	select {
 	case <-done:

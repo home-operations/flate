@@ -44,8 +44,8 @@ func (f *secretChartFetcher) Fetch(
 			"not found",
 		)
 	}
-	if got, _, _ := secret.Value("ca.crt"); got != "rendered-ca" {
-		return nil, fmt.Errorf("source: CA = %q, want rendered-ca", got)
+	if got, _ := secret.Value("ca.crt"); got.Value != "rendered-ca" {
+		return nil, fmt.Errorf("source: CA = %q, want rendered-ca", got.Value)
 	}
 	const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
 	return &store.SourceArtifact{
@@ -166,38 +166,30 @@ spec:
 				Concurrency: 4,
 			},
 			)
-			{
-				assert.FatalIf(t, err != nil, "New: %v", err)
-			}
+			assert.FatalIf(t, err != nil, "New: %v", err)
 			o.src.Fetchers[manifest.KindOCIRepository] = &secretChartFetcher{chart: chart}
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
 			res, err := o.render(ctx)
-			{
-				assert.FatalIf(t, err != nil, "Render: %v", err)
-			}
+			assert.FatalIf(t, err != nil, "Render: %v", err)
 			for _, id := range []manifest.NamedResource{
 				{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "charts"},
 				testutil.HelmReleaseID("flux-system", "demo"),
 			} {
 				{
-					{
-						info, ok := o.Store().
-							GetStatus(id)
-						assert.ErrorIf(t, !ok || info.Status != store.StatusReady ||
-							info.Outcome() == store.OutcomeSkipped, "%s status = %+v (present=%t), want Ready without a skip", id, info, ok)
-					}
+					info, ok := o.Store().
+						GetStatus(id)
+					assert.ErrorIf(t, !ok || info.Status != store.StatusReady ||
+						info.Outcome() == store.OutcomeSkipped, "%s status = %+v (present=%t), want Ready without a skip", id, info, ok)
 				}
 			}
 			hrID := testutil.HelmReleaseID("flux-system", "demo")
 			{
-				{
-					docs := outputByParent(res.Manifests)[hrID]
-					assert.FatalIf(t, len(docs) != 1 ||
-						manifest.DocKind(
-							docs[0],
-						) != manifest.KindConfigMap, "HelmRelease output = %+v, want the chart's ConfigMap", docs)
-				}
+				docs := outputByParent(res.Manifests)[hrID]
+				assert.FatalIf(t, len(docs) != 1 ||
+					manifest.DocKind(
+						docs[0],
+					) != manifest.KindConfigMap, "HelmRelease output = %+v, want the chart's ConfigMap", docs)
 			}
 		})
 	}
@@ -240,23 +232,17 @@ spec:
 		AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}, Concurrency: 4,
 	},
 	)
-	{
-		assert.FatalIf(t, err != nil, "New: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "New: %v", err)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	_, err = o.render(ctx)
 	// The registry returns 404. Reaching its handler proves the OCI fetcher
 	// read the rendered CA Secret and passed TLS verification.
-	{
-		assert.FatalIf(t, requests.Load() == 0, "OCI fetch never reached the TLS server: %v", err)
-	}
-	{
-		assert.FatalIf(
-			t,
-			err == nil || !strings.Contains(err.Error(), "machine credential acquisition failed"),
-			"Render error = %v, want a masked registry failure after successful TLS",
-			err,
-		)
-	}
+	assert.FatalIf(t, requests.Load() == 0, "OCI fetch never reached the TLS server: %v", err)
+	assert.FatalIf(
+		t,
+		err == nil || !strings.Contains(err.Error(), "machine credential acquisition failed"),
+		"Render error = %v, want a masked registry failure after successful TLS",
+		err,
+	)
 }

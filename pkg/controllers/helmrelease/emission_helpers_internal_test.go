@@ -20,7 +20,8 @@ func publishDocuments(
 			&manifest.RawObject{APIVersion: id.Group + "/v1", Kind: id.Kind, Name: id.Name, Namespace: id.Namespace},
 		)
 	}
-	children, retained, failures := c.ParseChildren(c.Store.GetObject(id), docs, opts)
+	parseChildrenResult1 := c.ParseChildren(c.Store.GetObject(id), docs, opts)
+	children, retained, failures := parseChildrenResult1.Children, parseChildrenResult1.Visible, parseChildrenResult1.Failures
 	_, _, next := c.Store.GetEmission(id)
 	defer next.Finish()
 	next.Children, next.Manifests, next.Failures, next.Complete = children, retained, failures, true

@@ -40,7 +40,8 @@ func checkRenderModel(t *testing.T, fixture *renderModelCase) ([]byte, error) {
 		return nil, err
 	}
 	beforeRoot, afterRoot := t.TempDir(), t.TempDir()
-	serializedBefore, serializedAfter := materializeRenderModelSources(t, fixture)
+	materializeRenderModelSourcesResult1 := materializeRenderModelSources(t, fixture)
+	serializedBefore, serializedAfter := materializeRenderModelSourcesResult1.before, materializeRenderModelSourcesResult1.after
 	writeRenderModelWorld(t, beforeRoot, serializedBefore)
 	writeRenderModelWorld(t, afterRoot, serializedAfter)
 	owner, err := sourcecache.New(t.Context(), "")
@@ -49,10 +50,8 @@ func checkRenderModel(t *testing.T, fixture *renderModelCase) ([]byte, error) {
 	}
 	defer func() {
 		{
-			{
-				err := owner.Close()
-				assert.ErrorIf(t, err != nil, "%v", err)
-			}
+			err := owner.Close()
+			assert.ErrorIf(t, err != nil, "%v", err)
 		}
 	}()
 	cfg := treeConfig{Concurrency: 2, Cache: owner}
@@ -67,9 +66,10 @@ func checkRenderModel(t *testing.T, fixture *renderModelCase) ([]byte, error) {
 		SelfURLs: fixture.selfURLs,
 	}
 	if fixture.committed {
-		before, after, prepareErr := cfg.prepareCommittedRenderModel(
+		prepareCommittedRenderModelResult2, prepareCommittedRenderModelResult2Err := cfg.prepareCommittedRenderModel(
 			t, afterRoot, fixture.scan, [2]*modelWorld{&serializedBefore, &serializedAfter},
 		)
+		before, after, prepareErr := prepareCommittedRenderModelResult2.before, prepareCommittedRenderModelResult2.after, prepareCommittedRenderModelResult2Err
 		if prepareErr != nil {
 			return nil, prepareErr
 		}
@@ -256,19 +256,15 @@ func failRenderModel(t *testing.T, input []byte, fixture *renderModelCase, err e
 					"-count=1",
 				},
 			}, "", "  ")
-			{
-				assert.FatalIf(t, marshalErr != nil, "%v", marshalErr)
-			}
+			assert.FatalIf(t, marshalErr != nil, "%v", marshalErr)
 			for name, body := range map[string][]byte{
 				"input": input, "worlds.txt": []byte(diagnostic.String()),
 				"seed":           []byte(fmt.Sprintf("go test fuzz v1\n[]byte(%q)\n", input)),
 				"reproduce.json": reproduction,
 			} {
 				{
-					{
-						writeErr := os.WriteFile(filepath.Join(dir, name), body, 0o600)
-						assert.ErrorIf(t, writeErr != nil, "%v", writeErr)
-					}
+					writeErr := os.WriteFile(filepath.Join(dir, name), body, 0o600)
+					assert.ErrorIf(t, writeErr != nil, "%v", writeErr)
 				}
 			}
 		}
@@ -417,52 +413,38 @@ func TestIndependentModel_BaselineUnavailable(t *testing.T) {
 			selected := base.String()
 			if mode == "shallow" {
 				{
-					{
-						err := repo.Storer.SetShallow([]plumbing.Hash{base})
-						assert.FatalIf(t, err != nil, "%v", err)
-					}
+					err := repo.Storer.SetShallow([]plumbing.Hash{base})
+					assert.FatalIf(t, err != nil, "%v", err)
 				}
 				selected = ""
 			} else {
 				commit, err := repo.CommitObject(base)
-				{
-					assert.FatalIf(t, err != nil, "%v", err)
-				}
+				assert.FatalIf(t, err != nil, "%v", err)
 				oid := commit.TreeHash.String()
 				{
-					{
-						err := os.Remove(filepath.Join(root, ".git", "objects", oid[:2], oid[2:]))
-						assert.FatalIf(t, err != nil, "%v", err)
-					}
+					err := os.Remove(filepath.Join(root, ".git", "objects", oid[:2], oid[2:]))
+					assert.FatalIf(t, err != nil, "%v", err)
 				}
 			}
 			owner, err := sourcecache.New(t.Context(), "")
-			{
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
+			assert.FatalIf(t, err != nil, "%v", err)
 			t.Cleanup(func() {
 				{
-					{
-						localErr := owner.Close()
-						assert.ErrorIf(t, localErr != nil, "%v", localErr)
-					}
+					localErr := owner.Close()
+					assert.ErrorIf(t, localErr != nil, "%v", localErr)
 				}
 			})
 			result, err := baseline.AutoResolve(t.Context(), filepath.Join(root, fixture.scan), selected, owner)
-			{
-				assert.FatalIf(
-					t,
-					!errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux),
-					"unavailable %s baseline accepted: result=%+v err=%v",
-					mode,
-					result,
-					err,
-				)
-			}
-			{
-				assert.FatalIf(t, result != nil &&
-					(result.BaseInput != nil && result.BaseInput.FS != nil || result.Source != nil && result.Source.FS != nil), "unavailable %s returned usable render inputs: %+v", mode, result)
-			}
+			assert.FatalIf(
+				t,
+				!errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux),
+				"unavailable %s baseline accepted: result=%+v err=%v",
+				mode,
+				result,
+				err,
+			)
+			assert.FatalIf(t, result != nil &&
+				(result.BaseInput != nil && result.BaseInput.FS != nil || result.Source != nil && result.Source.FS != nil), "unavailable %s returned usable render inputs: %+v", mode, result)
 			t.Logf("%s: baseline admission unavailable, no changed render claimed: %v", mode, err)
 		})
 	}
@@ -629,24 +611,20 @@ func testIndependentModelObservationRejectsCase(
 	}
 	got, _, err := observeRenderModel(world, side, selected)
 	if testCaseInput.name == "ownerless-extra-document" {
-		{
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		assert.FatalIf(t, err != nil, "%v", err)
 		err = compareModelObservation(
 			modelObservation{producers: map[modelID]modelStatus{id: {terminal: true}}},
 			got,
 		)
 	}
-	{
-		assert.FatalIf(
-			t,
-			err == nil || !strings.Contains(err.Error(), testCaseInput.want),
-			"%s accepted: want=%q got=%v",
-			testCaseInput.name,
-			testCaseInput.want,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err == nil || !strings.Contains(err.Error(), testCaseInput.want),
+		"%s accepted: want=%q got=%v",
+		testCaseInput.name,
+		testCaseInput.want,
+		err,
+	)
 }
 
 func removeAbsentRenderModelFiles(root string, present, other modelWorld) error {
@@ -749,23 +727,30 @@ func compareInitialRenderModelObservation(index int, name string, reference, cha
 	return nil
 }
 
+type committedModel struct {
+	before Tree
+	after  Tree
+}
+
 func (c *treeConfig) prepareCommittedRenderModel(
 	t *testing.T,
 	root, scan string,
 	worlds [2]*modelWorld,
-) (Tree, Tree, error) {
+) (committedModel, error) {
 	t.Helper()
 	hash, commitErr := commitRenderModelSources(t, root, *worlds[0], *worlds[1])
 	if commitErr != nil {
-		return Tree{}, Tree{}, commitErr
+		return committedModel{before: Tree{}, after: Tree{}}, commitErr
 	}
 	base, resolveErr := baseline.AutoResolve(t.Context(), filepath.Join(root, scan), hash.String(), c.Cache)
 	if resolveErr != nil {
-		return Tree{}, Tree{}, resolveErr
+		return committedModel{before: Tree{}, after: Tree{}}, resolveErr
 	}
 	c.BaseInput, c.Input, c.ExternalChanges = base.BaseInput, base.Source, base.Changes
-	return Tree{RepoRoot: base.BaseInput.LocalPath, Path: base.BaseScanPath, SelfURLs: base.SelfURLs},
-		Tree{RepoRoot: base.Source.LocalPath, Path: base.ScanPath, SelfURLs: base.SelfURLs}, nil
+	return committedModel{
+		before: Tree{RepoRoot: base.BaseInput.LocalPath, Path: base.BaseScanPath, SelfURLs: base.SelfURLs},
+		after:  Tree{RepoRoot: base.Source.LocalPath, Path: base.ScanPath, SelfURLs: base.SelfURLs},
+	}, nil
 }
 
 func checkRenderModelPairError(pairErr, beforeErr, afterErr error) error {

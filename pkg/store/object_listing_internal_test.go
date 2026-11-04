@@ -66,22 +66,16 @@ func TestStore_ListObjects_DeterministicOrder(t *testing.T) {
 	first := s.ListObjects("", manifest.KindConfigMap)
 	second := s.ListObjects("", manifest.KindConfigMap)
 
-	{
-		assert.FatalIf(t, len(first) != len(second), "lengths differ: %d vs %d", len(first), len(second))
-	}
+	assert.FatalIf(t, len(first) != len(second), "lengths differ: %d vs %d", len(first), len(second))
 	for i := range first {
 		a, b := first[i].Named(), second[i].Named()
-		{
-			assert.ErrorIf(t, a != b, "position %d differs between calls: %v vs %v", i, a, b)
-		}
+		assert.ErrorIf(t, a != b, "position %d differs between calls: %v vs %v", i, a, b)
 	}
 	// Verify the order is actually sorted by (namespace, name) within
 	// the same kind.
 	for i := 1; i < len(first); i++ {
 		prev, cur := first[i-1].Named(), first[i].Named()
-		{
-			assert.ErrorIf(t, prev.Compare(cur) > 0, "unsorted at [%d]: %v > %v", i, prev, cur)
-		}
+		assert.ErrorIf(t, prev.Compare(cur) > 0, "unsorted at [%d]: %v > %v", i, prev, cur)
 	}
 }
 

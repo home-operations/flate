@@ -52,32 +52,30 @@ func TestSourceFetchers_ExistenceOnlyDisabled(t *testing.T) {
 	o.store.AddObject(repo)
 	seeds, err := o.seedNodes()
 	assert.NoError(t, err)
+
 	{
-		{
-			f, registered := o.src.Fetchers[manifest.KindHelmRepository]
-			assert.FatalIf(t, !registered || f != nil || !o.schedulable(repo) ||
-				!slices.Contains(
-					seeds,
-					repo.Named(),
-				), "%v", "default nil reservation did not enable scheduling")
-		}
+		f, registered := o.src.Fetchers[manifest.KindHelmRepository]
+		assert.FatalIf(t, !registered || f != nil || !o.schedulable(repo) ||
+			!slices.Contains(
+				seeds,
+				repo.Named(),
+			), "%v", "default nil reservation did not enable scheduling")
 	}
+
 	delete(o.src.Fetchers, manifest.KindHelmRepository)
 	seeds, err = o.seedNodes()
 	assert.NoError(t, err)
+
+	assert.FatalIf(
+		t,
+		o.schedulable(repo) || slices.Contains(seeds, repo.Named()),
+		"%v",
+		"unregistered existence-only source still scheduled",
+	)
+
 	{
-		assert.FatalIf(
-			t,
-			o.schedulable(repo) || slices.Contains(seeds, repo.Named()),
-			"%v",
-			"unregistered existence-only source still scheduled",
-		)
-	}
-	{
-		{
-			_, registered := o.src.Fetchers[manifest.KindHelmRepository]
-			assert.FatalIf(t, registered, "%v", "nil override retained map entry")
-		}
+		_, registered := o.src.Fetchers[manifest.KindHelmRepository]
+		assert.FatalIf(t, registered, "%v", "nil override retained map entry")
 	}
 }
 
@@ -97,9 +95,7 @@ func testDAGSourceWithoutFetcherIsNotSeededCase(
 		Tree{Path: dir, RepoRoot: dir},
 		Config{CacheDir: t.TempDir(), Concurrency: 2},
 	)
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	defer func() {
 		o.stop()
 	}()
@@ -160,10 +156,8 @@ func testDAGSourceWithoutFetcherIsNotSeededCase(
 	defer unsubscribe()
 	sched.Seed([]schedule.NodeID{producer, consumer})
 	{
-		{
-			err := sched.Run(t.Context())
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := sched.Run(t.Context())
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	assert.Equal(t, completed.Load(), true)
 	assert.Equal(t, dispatched.Load(), testCaseInput.dispatched)

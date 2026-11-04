@@ -58,21 +58,19 @@ func TestRenderTrees_ErrorProjectionRetainsCleanup(t *testing.T) {
 		"values.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: values, namespace: apps}\ndata: {VALUE: stable}\n",
 	)
-	assert.NoError(t, os.Remove(filepath.Join(root, "app/cm.yaml")))
+	assert.NoError(t, os.Remove(filepath.Join(root, "app", "cm.yaml")))
 	runs, err := RenderTrees(
 		t.Context(),
 		[]Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: root, RepoRoot: root}},
 		Config{Concurrency: 2},
 	)
-	{
-		assert.FatalIf(
-			t,
-			err == nil || len(runs) != 1 || runs[0].Orchestrator == nil || len(runs[0].Result.Manifests) == 0,
-			"partial output lost: runs=%v error=%v",
-			runs,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err == nil || len(runs) != 1 || runs[0].Orchestrator == nil || len(runs[0].Result.Manifests) == 0,
+		"partial output lost: runs=%v error=%v",
+		runs,
+		err,
+	)
 	cleanupErr := errors.New("backing close failed")
 	joined := errors.Join(err, cleanupErr)
 	_, selected, remainder := Select(
@@ -82,19 +80,15 @@ func TestRenderTrees_ErrorProjectionRetainsCleanup(t *testing.T) {
 		nil,
 	)
 	for _, projected := range []error{selected, remainder} {
+		assert.FatalIf(
+			t,
+			!errors.Is(projected, cleanupErr) || strings.Count(projected.Error(), cleanupErr.Error()) != 1,
+			"cleanup error must survive once: %v",
+			projected,
+		)
 		{
-			assert.FatalIf(
-				t,
-				!errors.Is(projected, cleanupErr) || strings.Count(projected.Error(), cleanupErr.Error()) != 1,
-				"cleanup error must survive once: %v",
-				projected,
-			)
-		}
-		{
-			{
-				_, ok := errors.AsType[*FailuresError](projected)
-				assert.FatalIf(t, ok, "unrelated resource failure retained: %v", projected)
-			}
+			_, ok := errors.AsType[*FailuresError](projected)
+			assert.FatalIf(t, ok, "unrelated resource failure retained: %v", projected)
 		}
 	}
 }
@@ -256,9 +250,7 @@ data: {greeting: {{ .Values.greeting | quote }}}
 				ExternalChanges: change.NewSet([]string{"config/prod.yaml"}),
 			}, Config{CacheDir: t.TempDir(), Concurrency: 2},
 			)
-			{
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
+			assert.FatalIf(t, err != nil, "%v", err)
 			t.Cleanup(func() { o.stop() })
 			assert.NoError(t, o.bootstrap(t.Context()))
 			release := testutil.HelmReleaseID("apps", "demo")
@@ -266,18 +258,14 @@ data: {greeting: {{ .Values.greeting | quote }}}
 			assert.Equal(t, o.store.GetObject(release) == nil, true)
 			assert.Equal(t, o.filter.ShouldReconcile(owner), true)
 			result, err := o.collectResult(o.run(t.Context()))
-			{
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
+			assert.FatalIf(t, err != nil, "%v", err)
 			assert.Equal(t, len(result.Failed), 0)
 			assert.Equal(t, len(result.Blocked), 0)
 			assert.Equal(t, o.store.GetArtifact(owner, store.ArtifactContent) != nil, true)
 			rendered, ok := o.store.Get[*manifest.ConfigMap](
 				manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "rendered"},
 			)
-			{
-				assert.FatalIf(t, !ok, "%v", "selected release did not render")
-			}
+			assert.FatalIf(t, !ok, "%v", "selected release did not render")
 			assert.Equal(t, rendered.Data["greeting"], "production")
 			assert.Equal(t, o.filter.ShouldReconcile(testutil.HelmReleaseID("apps", "sibling")), false)
 			assert.Equal(
@@ -322,19 +310,15 @@ func testRenderTreesNetworkRunIsolationCase(t *testing.T, testCaseInput *int,
 		},
 		cfg.Config,
 	)
-	base, head := renderedTrees4[0], renderedTrees4[1]
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
-	network := base.cfg.Network
-	{
-		assert.FatalIf(
-			t,
-			network == nil || head.cfg.Network != network,
-			"%v",
-			"diff sides did not share one Network",
-		)
-	}
+	baseRef, head := renderedTrees4[0], renderedTrees4[1]
+	assert.FatalIf(t, err != nil, "%v", err)
+	network := baseRef.cfg.Network
+	assert.FatalIf(
+		t,
+		network == nil || head.cfg.Network != network,
+		"%v",
+		"diff sides did not share one Network",
+	)
 	var hits atomic.Int32
 	srv := httptest.NewServer(
 		http.HandlerFunc(
@@ -353,28 +337,24 @@ func testRenderTreesNetworkRunIsolationCase(t *testing.T, testCaseInput *int,
 	target := strings.Replace(srv.URL, "127.0.0.1", "example.com", 1)
 	tr, err := network.HTTPTransport(source.HTTPTransportConfig{Insecure: true})
 	assert.NoError(t, err)
-	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, target, nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, target, http.NoBody)
 	_, err = (&http.Client{Transport: tr}).Do(req)
 	terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
-	{
-		assert.FatalIf(t, !ok || !terminal.Attempted, "seed: %v", err)
-	}
+	assert.FatalIf(t, !ok || !terminal.Attempted, "seed: %v", err)
 	cause := terminal.Err
 	failing.Store(false)
-	for i, side := range []Rendered{base, head} {
+	for i, side := range []Rendered{baseRef, head} {
 		{
-			{
-				_, localErr := side.inputs.Acquire(
-					t.Context(),
-					target,
-					sourcecache.RetryConfig{},
-					nil,
-				)
-				assert.FatalIf(t, !errors.Is(
-					localErr,
-					fs.ErrClosed,
-				), "returned side %d is not terminal: %v", i, localErr)
-			}
+			_, localErr := side.inputs.Acquire(
+				t.Context(),
+				target,
+				sourcecache.RetryConfig{},
+				nil,
+			)
+			assert.FatalIf(t, !errors.Is(
+				localErr,
+				fs.ErrClosed,
+			), "returned side %d is not terminal: %v", i, localErr)
 		}
 		trees := source.NewHTTPInputs(c, side.cfg.Network, task.NewBounded(2))
 		t.Cleanup(trees.Close)
@@ -385,15 +365,13 @@ func testRenderTreesNetworkRunIsolationCase(t *testing.T, testCaseInput *int,
 			nil,
 		)
 		terminal, ok := errors.AsType[*sourcecache.TerminalError](innerLocalErr)
-		{
-			assert.FatalIf(
-				t,
-				!ok || terminal.Attempted || !errors.Is(innerLocalErr, cause),
-				"side %d: %v",
-				i,
-				innerLocalErr,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!ok || terminal.Attempted || !errors.Is(innerLocalErr, cause),
+			"side %d: %v",
+			i,
+			innerLocalErr,
+		)
 	}
 	if hits.Load() != 0 {
 		t.Fatalf("suppressed requests=%d", hits.Load())
@@ -423,31 +401,25 @@ func testRenderTreesNetworkRunIsolationCase(t *testing.T, testCaseInput *int,
 		cfg.Config,
 	)
 	next, other := renderedTrees5[0], renderedTrees5[1]
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
-	{
-		assert.FatalIf(
-			t,
-			next.cfg.Network == network || other.cfg.Network != next.cfg.Network,
-			"%v",
-			"Network leaked across invocations sharing Cache",
-		)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
+	assert.FatalIf(
+		t,
+		next.cfg.Network == network || other.cfg.Network != next.cfg.Network,
+		"%v",
+		"Network leaked across invocations sharing Cache",
+	)
 	for _, side := range []Rendered{next, other} {
 		{
-			{
-				_, innerInnerLocalErr := side.inputs.Acquire(
-					t.Context(),
-					target,
-					sourcecache.RetryConfig{},
-					nil,
-				)
-				assert.FatalIf(t, !errors.Is(
-					innerInnerLocalErr,
-					fs.ErrClosed,
-				), "fresh returned side is not terminal: %v", innerInnerLocalErr)
-			}
+			_, innerInnerLocalErr := side.inputs.Acquire(
+				t.Context(),
+				target,
+				sourcecache.RetryConfig{},
+				nil,
+			)
+			assert.FatalIf(t, !errors.Is(
+				innerInnerLocalErr,
+				fs.ErrClosed,
+			), "fresh returned side is not terminal: %v", innerInnerLocalErr)
 		}
 	}
 	trees := source.NewHTTPInputs(c, next.cfg.Network, task.NewBounded(2))
@@ -511,36 +483,30 @@ func testRenderTreesNetworkRunIsolationRemoteGenerators(t *testing.T) {
 			},
 			cfg.Config,
 		)
-		base, head := renderedTrees6[0], renderedTrees6[1]
+		baseRef, head := renderedTrees6[0], renderedTrees6[1]
 		assert.NoError(t, err)
-		for _, side := range []Rendered{base, head} {
+		for _, side := range []Rendered{baseRef, head} {
 			obj, ok := side.store.Get[*manifest.ConfigMap](
 				manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "remote"},
 			)
-			{
-				assert.FatalIf(t, !ok, "%v", "snapshot lost bootstrap generator data")
-			}
+			assert.FatalIf(t, !ok, "%v", "snapshot lost bootstrap generator data")
 			assert.Diff(t, obj.Data, map[string]any{"VALUE": fmt.Sprintf("run-%d", v)})
 		}
 		{
-			{
-				fetched := requests.Load() - before
-				assert.FatalIf(
-					t,
-					fetched < 1 || fetched > 2,
-					"new invocation made %d requests, want one shared request or two independent waves",
-					fetched,
-				)
-			}
-		}
-		{
+			fetched := requests.Load() - before
 			assert.FatalIf(
 				t,
-				base.cfg.Network != head.cfg.Network || &base.inputs == &head.inputs,
-				"%v",
-				"snapshots must share transport and retain independent input owners",
+				fetched < 1 || fetched > 2,
+				"new invocation made %d requests, want one shared request or two independent waves",
+				fetched,
 			)
 		}
+		assert.FatalIf(
+			t,
+			baseRef.cfg.Network != head.cfg.Network || &baseRef.inputs == &head.inputs,
+			"%v",
+			"snapshots must share transport and retain independent input owners",
+		)
 	}
 }
 
@@ -583,43 +549,35 @@ func testOrchestratorRunJoinsRemoteWorkersCase(
 	<-entered
 	result, err := o.render(t.Context())
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(t, result == nil, "%v", "cleanup discarded successful result")
-	}
+	assert.FatalIf(t, result == nil, "%v", "cleanup discarded successful result")
 	for range *testCaseInput.workers {
 		{
-			{
-				err := <-callers
-				assert.FatalIf(
-					t,
-					!errors.Is(err, context.Canceled) && !errors.Is(err, fs.ErrClosed),
-					"remote caller after Stop: %v",
-					err,
-				)
-			}
+			err := <-callers
+			assert.FatalIf(
+				t,
+				!errors.Is(err, context.Canceled) && !errors.Is(err, fs.ErrClosed),
+				"remote caller after Stop: %v",
+				err,
+			)
 		}
 	}
 	<-completed
 	{
-		{
-			_, err := o.inputs.Acquire(
-				t.Context(),
-				srv.URL,
-				sourcecache.RetryConfig{},
-				nil,
-			)
-			assert.FatalIf(t, !errors.Is(
-				err,
-				fs.ErrClosed,
-			), "run left TreeCache live: %v", err)
-		}
+		_, err := o.inputs.Acquire(
+			t.Context(),
+			srv.URL,
+			sourcecache.RetryConfig{},
+			nil,
+		)
+		assert.FatalIf(t, !errors.Is(
+			err,
+			fs.ErrClosed,
+		), "run left TreeCache live: %v", err)
 	}
 	assert.NoError(t, o.cache.Close())
 	if root != "" {
 		res, err := sourcecache.Sweep(t.Context(), root, sourcecache.SweepOpts{})
-		{
-			assert.FatalIf(t, err != nil || len(res.Errors) != 0, "run retained backing: %+v %v", res, err)
-		}
+		assert.FatalIf(t, err != nil || len(res.Errors) != 0, "run retained backing: %+v %v", res, err)
 	}
 }
 
@@ -719,11 +677,12 @@ func testRSRawSinkDeterministicCollisionWinnerCaseSegment(
 			Name:       id.Name,
 			Namespace:  id.Namespace,
 		}
-		children, authoritative, failures := (&base.Controller{}).ParseChildren(
+		parseChildrenResult1 := (&base.Controller{}).ParseChildren(
 			parent,
 			testutil.DocumentOccurrences(input),
 			manifest.ParseDocOptions{},
 		)
+		children, authoritative, failures := parseChildrenResult1.Children, parseChildrenResult1.Visible, parseChildrenResult1.Failures
 		assert.Diff(t, testutil.DocumentMaps(authoritative), input)
 		mixedChildren := 0
 		for i, child := range children {
@@ -733,14 +692,12 @@ func testRSRawSinkDeterministicCollisionWinnerCaseSegment(
 			if children[i].Obj.Named() == (manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "foo"}) {
 				mixedChildren++
 			}
-			{
-				assert.FatalIf(
-					t,
-					child.Obj.Named().Name == "invalid",
-					"%v",
-					"malformed typed document admitted",
-				)
-			}
+			assert.FatalIf(
+				t,
+				child.Obj.Named().Name == "invalid",
+				"%v",
+				"malformed typed document admitted",
+			)
 		}
 		if id == (*testCaseInput.ownerA) {
 			assert.Equal(t, mixedChildren, 2)

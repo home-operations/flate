@@ -47,9 +47,7 @@ func TestRender_RemoteCacheReachability(t *testing.T) {
 func testRenderRemoteCacheReachabilityEmptyAndCanceled(t *testing.T) {
 	t.Helper()
 	valid, err := (readSetSnapshot{}).stillValid(t.Context(), nil, &treeFS{}, false)
-	{
-		assert.FatalIf(t, err != nil || !valid, "empty snapshot did work: %t, %v", valid, err)
-	}
+	assert.FatalIf(t, err != nil || !valid, "empty snapshot did work: %t, %v", valid, err)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	valid, err = (readSetSnapshot{Files: []localEntry{{Path: "unread", Hash: "hash"}}}).stillValid(
@@ -58,15 +56,13 @@ func testRenderRemoteCacheReachabilityEmptyAndCanceled(t *testing.T) {
 		&treeFS{},
 		false,
 	)
-	{
-		assert.FatalIf(
-			t,
-			valid || !errors.Is(err, context.Canceled),
-			"cancellation did not precede replay: %t, %v",
-			valid,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		valid || !errors.Is(err, context.Canceled),
+		"cancellation did not precede replay: %t, %v",
+		valid,
+		err,
+	)
 }
 
 func testRenderRemoteCacheReachabilityCancellationDuringLocalMismatch(t *testing.T) {
@@ -159,15 +155,13 @@ func testRenderRemoteCacheReachabilityCase(t *testing.T, testCaseInput *string,
 		}
 	}
 
-	{
-		assert.FatalIf(
-			t,
-			err != nil || !hasRenderField(out, "name", "child-v1"),
-			"initial render: %s, %v",
-			out,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err != nil || !hasRenderField(out, "name", "child-v1"),
+		"initial render: %s, %v",
+		out,
+		err,
+	)
 	rec := newReadSet(root)
 	view := newTreeFS(request().Source.FS, root, rec)
 	{
@@ -176,9 +170,7 @@ func testRenderRemoteCacheReachabilityCase(t *testing.T, testCaseInput *string,
 	}
 	snapFrame, err := decodeFrame(testRenderFrame(t, new(rec.snapshot()), testRenderEncoding(t, out)))
 	snap := snapFrame.header.Reads
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	{
 		valid, stillValidErr := snap.stillValid(
 			t.Context(),
@@ -241,35 +233,29 @@ func testRenderRemoteCacheReachabilityCase(t *testing.T, testCaseInput *string,
 
 	switch *testCaseInput {
 	case "reachable-fails":
-		{
-			assert.FatalIf(
-				t,
-				err == nil || len(out) != 0,
-				"unavailable reachable input returned %q, %v",
-				out,
-				err,
-			)
-		}
+		assert.FatalIf(
+			t,
+			err == nil || len(out) != 0,
+			"unavailable reachable input returned %q, %v",
+			out,
+			err,
+		)
 	case "cancellation":
-		{
-			assert.FatalIf(
-				t,
-				!errors.Is(err, context.Canceled) || len(out) != 0,
-				"canceled render returned %q, %v",
-				out,
-				err,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!errors.Is(err, context.Canceled) || len(out) != 0,
+			"canceled render returned %q, %v",
+			out,
+			err,
+		)
 	default:
 		want := map[string]string{"local-removes": "name: local", "nested-changes": "name: child-v2", "parent-removes": "name: parent-v2"}[(*testCaseInput)]
-		{
-			assert.FatalIf(t, err != nil ||
-				!hasRenderField(
-					out,
-					strings.SplitN(want, ": ", 2)[0],
-					strings.SplitN(want, ": ", 2)[1],
-				), "current graph: %s, %v; want %q", out, err, want)
-		}
+		assert.FatalIf(t, err != nil ||
+			!hasRenderField(
+				out,
+				strings.SplitN(want, ": ", 2)[0],
+				strings.SplitN(want, ": ", 2)[1],
+			), "current graph: %s, %v; want %q", out, err, want)
 	}
 	if ((*testCaseInput) == "local-removes" || (*testCaseInput) == "parent-removes") &&
 		hits.Load() != 0 {
@@ -368,9 +354,7 @@ func validateRemoteReachability(ctx context.Context, t *testing.T, inputs *remot
 		(*inputs.cancel)()
 		select {
 		case errResult := <-done:
-			{
-				assert.FatalIf(t, !errors.Is(errResult, context.Canceled), "cancellation error: %v", errResult)
-			}
+			assert.FatalIf(t, !errors.Is(errResult, context.Canceled), "cancellation error: %v", errResult)
 		case <-time.After(time.Second):
 			t.Fatal("validation did not promptly observe cancellation")
 		}
@@ -381,14 +365,12 @@ func validateRemoteReachability(ctx context.Context, t *testing.T, inputs *remot
 			&treeFS{lower: (*inputs.request)().Source.FS},
 			false,
 		)
-		{
-			assert.FatalIf(
-				t,
-				stillValidErr3 != nil || valid,
-				"changed/unavailable graph: valid=%t, %v",
-				valid,
-				stillValidErr3,
-			)
-		}
+		assert.FatalIf(
+			t,
+			stillValidErr3 != nil || valid,
+			"changed/unavailable graph: valid=%t, %v",
+			valid,
+			stillValidErr3,
+		)
 	}
 }

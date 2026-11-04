@@ -209,14 +209,10 @@ spec:
 		<-done
 		assert.Equal(t, localSettled, true)
 		assert.Equal(t, renderErr != nil, testCaseInput.failure)
-		{
-			assert.FatalIf(t, len(rendered) != 2, "rendered %d sides: %v", len(rendered), renderErr)
-		}
+		assert.FatalIf(t, len(rendered) != 2, "rendered %d sides: %v", len(rendered), renderErr)
 		assert.NoError(t, rendered[local].Err)
 		documents := outputByParent(rendered[local].Result.Manifests)[waiting]
-		{
-			assert.FatalIf(t, len(documents) != 1, "local output=%v, want one document", documents)
-		}
+		assert.FatalIf(t, len(documents) != 1, "local output=%v, want one document", documents)
 		assert.Diff(t, documents[0]["data"], map[string]any{"value": []string{"before", "after"}[local]})
 	})
 }

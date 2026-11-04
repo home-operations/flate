@@ -151,12 +151,10 @@ spec:
 		)
 		assert.NoError(t, err)
 		record, ok := result.Index.Lookup(generator)
-		{
-			assert.FatalIf(t, !ok || !slices.Contains(record.Refs, input) || st.GetObject(generator) == nil ||
-				st.GetObject(
-					consumer,
-				) == nil, "side %d: missing real generator/input/consumer evidence: %+v", side, record)
-		}
+		assert.FatalIf(t, !ok || !slices.Contains(record.Refs, input) || st.GetObject(generator) == nil ||
+			st.GetObject(
+				consumer,
+			) == nil, "side %d: missing real generator/input/consumer evidence: %+v", side, record)
 		assert.Diff(
 			t,
 			st.Productions(output, result.Index),
@@ -170,7 +168,8 @@ spec:
 				},
 			},
 		)
-		owners, ancestors := result.Index.OwnersOfFile("entry/source.yaml")
+		ownership := result.Index.OwnersOfFile("entry/source.yaml")
+		owners, ancestors := ownership.Owners, ownership.Ancestors
 		assert.Diff(t, result.Binding, discovery.Binding{})
 		assert.Diff(t, owners, []manifest.NamedResource(nil))
 		assert.Diff(t, ancestors, []manifest.NamedResource(nil))
@@ -179,15 +178,13 @@ spec:
 			admissiontest.Config{Changes: changes, Index: result.Index, Inventory: st, Root: ""},
 		)
 		for _, id := range []manifest.NamedResource{input, generator, consumer} {
-			{
-				assert.ErrorIf(
-					t,
-					!filter.ShouldReconcile(id),
-					"side %d: changed producer input did not select %s",
-					side,
-					id,
-				)
-			}
+			assert.ErrorIf(
+				t,
+				!filter.ShouldReconcile(id),
+				"side %d: changed producer input did not select %s",
+				side,
+				id,
+			)
 		}
 		assert.Equal(t, filter.ShouldReconcile(testutil.KustomizationID("apps", "unrelated")), false)
 	}

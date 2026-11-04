@@ -30,9 +30,10 @@ func TestBuildIdentity_Stable(t *testing.T) {
 	original := info.String()
 	want := manifest.Fingerprint(original)
 	for range 2 {
-		identity, reason := buildIdentity(info)
-		assert.Equal(t, identity, want)
-		assert.Equal(t, reason, "")
+		stamp := buildIdentity(info)
+
+		assert.Equal(t, stamp.identity, want)
+		assert.Equal(t, stamp.reason, "")
 	}
 	assert.Equal(t, info.String(), original)
 }
@@ -65,9 +66,10 @@ func TestBuildIdentity_Dirty(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			identity, reason := buildIdentity(tc.info)
-			assert.Equal(t, identity, "")
-			assert.Equal(t, reason, tc.reason)
+			stamp := buildIdentity(tc.info)
+
+			assert.Equal(t, stamp.identity, "")
+			assert.Equal(t, stamp.reason, tc.reason)
 		})
 	}
 }
@@ -80,17 +82,19 @@ func TestBlob_RenderBuildIdentity(t *testing.T) {
 		Main:     debug.Module{Path: flateModule, Version: "(devel)"},
 		Settings: []debug.BuildSetting{{Key: "vcs.revision", Value: "revision-a"}},
 	}
-	identityA, _ := buildIdentity(info)
+	stamp := buildIdentity(info)
+
 	info.Settings[0].Value = "revision-b"
-	identityB, _ := buildIdentity(info)
-	assert.Equal(t, identityA == "" || identityB == "" || identityA == identityB, false)
+	stamp2 := buildIdentity(info)
+
+	assert.Equal(t, stamp.identity == "" || stamp2.identity == "" || stamp.identity == stamp2.identity, false)
 	root := t.TempDir()
-	processIdentity = identityA
+	processIdentity = stamp.identity
 	c := cachetest.New(t, root, New)
 	assert.Equal(t, c.CanPersistRenders(), true)
 	processIdentity = ""
 	assert.Equal(t, c.CanPersistRenders(), true)
-	processIdentity = identityA
+	processIdentity = stamp.identity
 	key := BlobKey{Content: "render-input", Render: RenderAccepted}
 	_, _, _, err := c.Blob(
 		t.Context(),
@@ -100,7 +104,7 @@ func TestBlob_RenderBuildIdentity(t *testing.T) {
 	)
 	assert.NoError(t, err)
 
-	for _, identity := range []string{identityA, identityB} {
+	for _, identity := range []string{stamp.identity, stamp2.identity} {
 		{
 			closeErr := c.Close()
 			assert.NoError(t, closeErr)
@@ -129,7 +133,7 @@ func TestBlob_RenderBuildIdentity(t *testing.T) {
 
 		assert.Equal(t, id, blobID(identity, key.Content.(string), key.Render))
 	}
-	for _, identity := range []string{identityA, identityB} {
+	for _, identity := range []string{stamp.identity, stamp2.identity} {
 		{
 			closeErr2 := c.Close()
 			assert.NoError(t, closeErr2)
@@ -155,7 +159,7 @@ func TestBlob_RenderBuildIdentity(t *testing.T) {
 	key.Render = RenderPending
 	c = cachetest.New(t, root, New)
 	assert.Equal(t, c.CanPersistRenders(), false)
-	processIdentity = identityA
+	processIdentity = stamp.identity
 	assert.Equal(t, c.CanPersistRenders(), false)
 	processIdentity = ""
 	index := filepath.Join(c.root.Name(), indexPath())
@@ -219,9 +223,10 @@ func TestBuildIdentity_Dependency(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			identity, reason := buildIdentity(tc.info)
-			assert.Equal(t, identity, manifest.Fingerprint(tc.info.String()))
-			assert.Equal(t, reason, "")
+			stamp := buildIdentity(tc.info)
+
+			assert.Equal(t, stamp.identity, manifest.Fingerprint(tc.info.String()))
+			assert.Equal(t, stamp.reason, "")
 		})
 	}
 }

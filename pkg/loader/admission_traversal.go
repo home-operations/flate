@@ -239,7 +239,7 @@ func (c *admissionClosure) incomingProductionMaterialized(
 	materialized bool,
 ) bool {
 	p := *pValue
-	needed, _, _, _ := c.loader.Options.Filter.Membership(id)
+	needed := c.loader.Options.Filter.Membership(id).Needed
 	materialized = materialized ||
 		needed && p.Owner == (manifest.NamedResource{}) && p.Declaration == (manifest.NamedResource{}) &&
 			p.Path == record.Path && p.File == record.File && p.Source == c.source(id) &&
@@ -379,7 +379,7 @@ func (c *admissionClosure) selectProductionReaders(
 ) {
 	p := *pValue
 	if owner != (manifest.NamedResource{}) && filepath.IsAbs(p.Path) {
-		_, file := c.coordinates(new(p))
+		file := c.coordinates(new(p)).indexed
 		for reader := range c.loader.Index.ReadersOfFile(file) {
 			if reader.Declaration != (manifest.NamedResource{}) {
 				continue
@@ -387,8 +387,8 @@ func (c *admissionClosure) selectProductionReaders(
 			if !c.readerEmissionAllowed(id, reader.Reader) {
 				continue
 			}
-			_, pinned, external := SourceView(c.objects, p.Source, c.loader.SourceRoot)
-			if reader.Source != p.Source && (pinned || external) {
+			location := SourceView(c.objects, p.Source, c.loader.SourceRoot)
+			if reader.Source != p.Source && (location.Pinned || location.External) {
 				continue
 			}
 			c.add(reader.Reader, admissionRole{needed: true})
@@ -431,6 +431,7 @@ func (c *admissionClosure) selectProductions(
 	return materialized
 }
 
+//nolint:gocritic // The pointer replaces the caller's object with the hydrated manifest.
 func (c *admissionClosure) hydrateIndependent(
 	ctx context.Context,
 	id manifest.NamedResource,

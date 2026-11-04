@@ -137,17 +137,15 @@ func testExecutionReplacesDerivedFailureProvenanceCase(
 		wantStatus = store.StatusFailed
 	}
 	info, _ := st.GetStatus(id)
-	{
-		assert.FatalIf(
-			t,
-			ran != wantRan || info.Status != wantStatus,
-			"ran=%v status=%+v, want ran=%v status=%s",
-			ran,
-			info,
-			wantRan,
-			wantStatus,
-		)
-	}
+	assert.FatalIf(
+		t,
+		ran != wantRan || info.Status != wantStatus,
+		"ran=%v status=%+v, want ran=%v status=%s",
+		ran,
+		info,
+		wantRan,
+		wantStatus,
+	)
 	wantBlockers := []manifest.NamedResource(nil)
 	if (*testCaseInput) == "new dependency failure" {
 		wantBlockers = []manifest.NamedResource{fresh}
@@ -156,10 +154,8 @@ func testExecutionReplacesDerivedFailureProvenanceCase(
 		wantBlockers = []manifest.NamedResource{old}
 	}
 	{
-		{
-			got := info.BlockedBy()
-			assert.FatalIf(t, !slices.Equal(got, wantBlockers), "blockers=%v, want %v", got, wantBlockers)
-		}
+		got := info.BlockedBy()
+		assert.FatalIf(t, !slices.Equal(got, wantBlockers), "blockers=%v, want %v", got, wantBlockers)
 	}
 	if (*testCaseInput) == "blocked" && !slices.Equal(execution.Blocked, []manifest.NamedResource{fresh}) {
 		t.Fatalf("parked dependencies=%v", execution.Blocked)
@@ -169,19 +165,15 @@ func testExecutionReplacesDerivedFailureProvenanceCase(
 	}
 	if wantStatus == store.StatusReady {
 		{
-			{
-				failed := st.FailedResources()
-				assert.FatalIf(t, len(failed) != 0, "recovered failure still reported: %v", failed)
-			}
+			failed := st.FailedResources()
+			assert.FatalIf(t, len(failed) != 0, "recovered failure still reported: %v", failed)
 		}
 	}
-	{
-		assert.FatalIf(
-			t, (*testCaseInput) ==
-				"prior primary failure" && info.String() != "original failure", "prior primary failure was reset: %+v",
-			info,
-		)
-	}
+	assert.FatalIf(
+		t, (*testCaseInput) ==
+			"prior primary failure" && info.String() != "original failure", "prior primary failure was reset: %+v",
+		info,
+	)
 }
 
 type testDispatchNodeCanonicalReadCaseInputs struct {
@@ -247,25 +239,21 @@ func testDispatchNodeCanonicalReadCase(t *testing.T, testCaseInput testDispatchN
 		func(execution *base.Execution, _ context.Context, obj *manifest.HelmRelease, _ manifest.DrainLevel) error {
 			if (*testCaseInput.stage) == "retry" {
 				s.UpdateStatus(id, store.StatusInfo{Status: store.StatusPending})
-				{
-					assert.FatalIf(
-						t,
-						execution.Reads.Valid(),
-						"%v",
-						"replacement did not invalidate original attempt",
-					)
-				}
+				assert.FatalIf(
+					t,
+					execution.Reads.Valid(),
+					"%v",
+					"replacement did not invalidate original attempt",
+				)
 				return nil
 			}
 			called = true
-			{
-				assert.FatalIf(
-					t,
-					obj != fresh,
-					"%v",
-					"reconciliation retained the replaced canonical object",
-				)
-			}
+			assert.FatalIf(
+				t,
+				obj != fresh,
+				"%v",
+				"reconciliation retained the replaced canonical object",
+			)
 			return nil
 		},
 	)
@@ -278,29 +266,23 @@ func testDispatchNodeCanonicalReadCase(t *testing.T, testCaseInput testDispatchN
 			execution,
 			func(_ *base.Execution, _ context.Context, obj *manifest.HelmRelease, _ manifest.DrainLevel) error {
 				called = true
-				{
-					assert.FatalIf(t, obj != fresh, "%v", "fresh attempt retained replaced declaration")
-				}
+				assert.FatalIf(t, obj != fresh, "%v", "fresh attempt retained replaced declaration")
 				return nil
 			},
 		)
 	}
 	defer execution.Close()
-	{
-		assert.FatalIf(
-			t,
-			called == (*testCaseInput.replacedType),
-			"reconciled=%t, replaced type=%t",
-			called,
-			(*testCaseInput.replacedType),
-		)
-	}
+	assert.FatalIf(
+		t,
+		called == (*testCaseInput.replacedType),
+		"reconciled=%t, replaced type=%t",
+		called,
+		(*testCaseInput.replacedType),
+	)
 	info, _ := s.GetStatus(id)
-	{
-		assert.FatalIf(
-			t, (*testCaseInput.replacedType) &&
-				info.Outcome() != store.OutcomeSkipped, "missing typed snapshot status=%v",
-			info,
-		)
-	}
+	assert.FatalIf(
+		t, (*testCaseInput.replacedType) &&
+			info.Outcome() != store.OutcomeSkipped, "missing typed snapshot status=%v",
+		info,
+	)
 }

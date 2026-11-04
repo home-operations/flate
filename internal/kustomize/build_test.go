@@ -73,8 +73,7 @@ const buildSchema = `{"definitions":{"schema.example.v1.Widget":{
  }}}}
 }}}`
 
-//nolint:ireturn // The upstream interface contract requires this return type.
-func buildFixture(t *testing.T) (filesys.FileSystem, string) {
+func buildFixture(t *testing.T) buildFiles {
 	t.Helper()
 	root := t.TempDir()
 	configs := map[string]string{
@@ -102,18 +101,19 @@ func buildFixture(t *testing.T) (filesys.FileSystem, string) {
 		"plugin/transformer.yaml",
 		"apiVersion: schema.example/v1\nkind: ExternalTransformer\nmetadata: {name: external}\n",
 	)
-	return filesys.MakeFsOnDisk(), root
+	return buildFiles{fs: filesys.MakeFsOnDisk(), root: root}
 }
 
 //nolint:paralleltest // Tests mutate the process-wide OpenAPI schema and scope memo.
 func TestBuild_BuiltinRetention(t *testing.T) {
-	fs, root := buildFixture(t)
+	fixture := buildFixture(t)
+
 	kustomize.BuildMutex.Lock()
 	defer kustomize.BuildMutex.Unlock()
 	openapi.ResetOpenAPI()
 	defer openapi.ResetOpenAPI()
 
-	first, err := kustomize.Build(fs, filepath.Join(root, "plain"))
+	first, err := kustomize.Build(fixture.fs, filepath.Join(fixture.root, "plain"))
 	assert.NoError(t, err)
 	want, err := first.AsYaml()
 	assert.NoError(t, err)
@@ -121,7 +121,7 @@ func TestBuild_BuiltinRetention(t *testing.T) {
 	definition := openapi.SchemaForResourceType(meta).Schema
 	for _, dir := range []string{"plain", "ordinary-error"} {
 		t.Run(dir, func(t *testing.T) {
-			rm, buildErr := kustomize.Build(fs, filepath.Join(root, dir))
+			rm, buildErr := kustomize.Build(fixture.fs, filepath.Join(fixture.root, dir))
 			switch {
 			case dir == "plain":
 
@@ -139,7 +139,7 @@ func TestBuild_BuiltinRetention(t *testing.T) {
 	}
 
 	openapi.ResetOpenAPI()
-	custom, err := kustomize.Build(fs, filepath.Join(root, "custom"))
+	custom, err := kustomize.Build(fixture.fs, filepath.Join(fixture.root, "custom"))
 	assert.NoError(t, err)
 	got, err := custom.AsYaml()
 	assert.NoError(t, err)
@@ -156,7 +156,8 @@ func TestBuild_BuiltinRetention(t *testing.T) {
 
 //nolint:paralleltest // Tests mutate the process-wide OpenAPI schema and scope memo.
 func TestBuild_FluxParity(t *testing.T) {
-	fs, root := buildFixture(t)
+	fixture := buildFixture(t)
+
 	cases := []struct {
 		name    string
 		failure string
@@ -179,7 +180,7 @@ func TestBuild_FluxParity(t *testing.T) {
 	type result struct{ output, failure string }
 	expected := make(map[string]result, len(cases))
 	for _, tc := range cases {
-		rm, err := fluxkustomize.Build(fs, filepath.Join(root, tc.name))
+		rm, err := fluxkustomize.Build(fixture.fs, filepath.Join(fixture.root, tc.name))
 		if tc.failure != "" {
 			assert.FatalIf(
 				t,
@@ -201,7 +202,7 @@ func TestBuild_FluxParity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			openapi.ResetOpenAPI()
 			for _, dir := range []string{"plain", tc.name, "plain"} {
-				rm, err := kustomize.Build(fs, filepath.Join(root, dir))
+				rm, err := kustomize.Build(fixture.fs, filepath.Join(fixture.root, dir))
 				want := expected[dir]
 				if want.failure != "" {
 					assert.FatalIf(t, err == nil, "%s: expected error %q", dir, want.failure)
@@ -227,19 +228,20 @@ func TestBuild_FluxParity(t *testing.T) {
 
 //nolint:paralleltest // Tests mutate the process-wide OpenAPI schema and scope memo.
 func TestBuild_PanicRecovery(t *testing.T) {
-	fs, root := buildFixture(t)
-	testutil.WriteFile(t, root, "malformed/kustomization.yaml", buildConfig+"openapi:\n  path: schema.json\n")
-	testutil.WriteFile(t, root, "malformed/resources.yaml", buildResources)
-	testutil.WriteFile(t, root, "malformed/schema.json", "{invalid")
+	fixture := buildFixture(t)
+
+	testutil.WriteFile(t, fixture.root, "malformed/kustomization.yaml", buildConfig+"openapi:\n  path: schema.json\n")
+	testutil.WriteFile(t, fixture.root, "malformed/resources.yaml", buildResources)
+	testutil.WriteFile(t, fixture.root, "malformed/schema.json", "{invalid")
 	testutil.WriteFile(
 		t,
-		root,
+		fixture.root,
 		"invalid-object/kustomization.yaml",
 		"namespace: test\nnamePrefix: test\nresources: [resource.yaml]\n",
 	)
 	testutil.WriteFile(
 		t,
-		root,
+		fixture.root,
 		"invalid-object/resource.yaml",
 		"apiVersion: invalid[value,kind:synthetic]\nkind: invalid[value,kind:synthetic]\nmetadata: {name: app}\n",
 	)
@@ -249,7 +251,7 @@ func TestBuild_PanicRecovery(t *testing.T) {
 	defer openapi.ResetOpenAPI()
 	expected := make(map[string]string)
 	for _, dir := range []string{"malformed", "invalid-object"} {
-		_, err := fluxkustomize.Build(fs, filepath.Join(root, dir))
+		_, err := fluxkustomize.Build(fixture.fs, filepath.Join(fixture.root, dir))
 		assert.FatalIf(
 			t,
 			err == nil || !strings.HasPrefix(err.Error(), "recovered from kustomize build panic:"),
@@ -263,16 +265,21 @@ func TestBuild_PanicRecovery(t *testing.T) {
 		t.Run(dir, func(t *testing.T) {
 			openapi.ResetOpenAPI()
 			definitions := openapi.Schema()
-			_, err := kustomize.Build(fs, filepath.Join(root, dir))
+			_, err := kustomize.Build(fixture.fs, filepath.Join(fixture.root, dir))
 			assert.FatalIf(t, err == nil, "%v", "expected recovered panic")
 			assert.Equal(t, err.Error(), expected[dir])
 			assert.Equal(t, openapi.GetSchemaVersion(), openapi.DefaultOpenAPI)
 			assert.Equal(t, len(definitions.Definitions), 0)
-			_, err = kustomize.Build(fs, filepath.Join(root, "plain"))
+			_, err = kustomize.Build(fixture.fs, filepath.Join(fixture.root, "plain"))
 			assert.NoError(t, err)
 			namespaced, found := openapi.IsNamespaceScoped(yaml.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"})
 			assert.Equal(t, found, true)
 			assert.Equal(t, namespaced, true)
 		})
 	}
+}
+
+type buildFiles struct {
+	fs   filesys.FileSystem
+	root string
 }

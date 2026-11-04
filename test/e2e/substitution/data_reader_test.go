@@ -179,7 +179,7 @@ func TestE2E_DataReader_SuppliedSSHOnBothDiffSides(t *testing.T) {
 	)
 	input := filepath.Join(supplied, "credentials.yaml")
 	for i, root := range roots {
-		stdout, stderr, code := harness.RunCLIBuffers(
+		runCLIBuffersResult1 := harness.RunCLIBuffers(
 			"build",
 			"all",
 			"--path",
@@ -194,6 +194,7 @@ func TestE2E_DataReader_SuppliedSSHOnBothDiffSides(t *testing.T) {
 			"--skip-kinds",
 			"CustomResourceDefinition",
 		)
+		stdout, stderr, code := runCLIBuffersResult1.Stdout, runCLIBuffersResult1.Stderr, runCLIBuffersResult1.Code
 		assert.FatalIf(t, code != 0 || !strings.Contains(stdout, "..PLACEHOLDER_identity..") ||
 			strings.Contains(
 				stdout+stderr,
@@ -230,7 +231,8 @@ func TestE2E_DataReader_SuppliedSSHOnBothDiffSides(t *testing.T) {
 		"-o",
 		"diff",
 	}
-	stdout, stderr, code := harness.RunCLIBuffers(append(args, "--cache-dir", t.TempDir(), "--supply", input)...)
+	runCLIBuffersResult2 := harness.RunCLIBuffers(append(args, "--cache-dir", t.TempDir(), "--supply", input)...)
+	stdout, stderr, code := runCLIBuffersResult2.Stdout, runCLIBuffersResult2.Stderr, runCLIBuffersResult2.Code
 	if code != 0 || strings.Count(stdout, "-  value: before") != 2 || strings.Count(stdout, "+  value: after") != 2 ||
 		tr.authenticated.Load()-before < 2 {
 		t.Fatalf(
@@ -243,8 +245,9 @@ func TestE2E_DataReader_SuppliedSSHOnBothDiffSides(t *testing.T) {
 	}
 	tr.onAuth = nil
 	before = tr.authenticated.Load()
-	stdout, stderr, code = harness.RunCLIBuffers(
+	runCLIBuffersResult3 := harness.RunCLIBuffers(
 		append(args, "--cache-dir", t.TempDir(), "--allow-missing-kinds=Secret,ConfigMap")...)
+	stdout, stderr, code = runCLIBuffersResult3.Stdout, runCLIBuffersResult3.Stderr, runCLIBuffersResult3.Code
 	assert.FatalIf(t, code != 0 || !strings.Contains(stderr, "SourceCredentialsUnavailable") ||
 		!strings.Contains(stderr, "ursa-major-ssh") ||
 		strings.Contains(stderr, "ExternalSource") ||
@@ -284,7 +287,7 @@ func TestE2E_DataReader_StringDataPrecedence(t *testing.T) {
 		"apps/cm.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: result}\ndata: {value: '${VALUE}', empty: '${EMPTY:=fallback}'}\n",
 	)
-	stdout, stderr, code := harness.RunCLIBuffers(
+	runCLIBuffersResult4 := harness.RunCLIBuffers(
 		"build",
 		"ks",
 		"consumer",
@@ -296,6 +299,7 @@ func TestE2E_DataReader_StringDataPrecedence(t *testing.T) {
 		t.TempDir(),
 		"--no-progress",
 	)
+	stdout, stderr, code := runCLIBuffersResult4.Stdout, runCLIBuffersResult4.Stderr, runCLIBuffersResult4.Code
 	assert.FatalIf(
 		t,
 		code != 0 || !strings.Contains(stdout, "value: B") || !strings.Contains(stdout, "empty: fallback"),
@@ -366,7 +370,7 @@ func TestE2E_DataReader_SuppliedSourceProducesCredential(t *testing.T) {
 	testutil.WriteFileAt(t, input, secret)
 	var first string
 	for i := range 2 {
-		stdout, stderr, code := harness.RunCLIBuffers(
+		runCLIBuffersResult5 := harness.RunCLIBuffers(
 			"build",
 			"all",
 			"--path",
@@ -379,6 +383,7 @@ func TestE2E_DataReader_SuppliedSourceProducesCredential(t *testing.T) {
 			t.TempDir(),
 			"--no-progress",
 		)
+		stdout, stderr, code := runCLIBuffersResult5.Stdout, runCLIBuffersResult5.Stderr, runCLIBuffersResult5.Code
 		assert.FatalIf(t, code != 0 || !strings.Contains(stdout, "name: source-produced") ||
 			strings.Contains(stdout, "BEGIN OPENSSH PRIVATE KEY") ||
 			strings.Contains(
@@ -476,8 +481,9 @@ func TestE2E_DataReader_ClusterAdvisoriesOnBothBaseSides(t *testing.T) {
 	var previousOut, previousErr string
 	for run := range 2 {
 		before := tr.authenticated.Load()
-		stdout, stderr, code := harness.RunCLIBuffers("diff", "all", "--path", root, "--base", base, "--supply", input,
+		runCLIBuffersResult6 := harness.RunCLIBuffers("diff", "all", "--path", root, "--base", base, "--supply", input,
 			"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir(), "-o", "diff")
+		stdout, stderr, code := runCLIBuffersResult6.Stdout, runCLIBuffersResult6.Stderr, runCLIBuffersResult6.Code
 		if code != 0 || tr.authenticated.Load()-before < 2 || strings.Count(stdout, "-  value: before") != 1 ||
 			strings.Count(stdout, "+  value: after") != 1 {
 			t.Fatalf(
@@ -550,7 +556,7 @@ func e2EDataReaderGeneratorEmbeddedCiphertextKind(t *testing.T, kind *string) {
 	)
 	var first string
 	for i := range 2 {
-		stdout, stderr, code := harness.RunCLIBuffers(
+		runCLIBuffersResult7 := harness.RunCLIBuffers(
 			"build",
 			"ks",
 			"consumer",
@@ -562,6 +568,7 @@ func e2EDataReaderGeneratorEmbeddedCiphertextKind(t *testing.T, kind *string) {
 			t.TempDir(),
 			"--no-progress",
 		)
+		stdout, stderr, code := runCLIBuffersResult7.Stdout, runCLIBuffersResult7.Stderr, runCLIBuffersResult7.Code
 		assert.FatalIf(
 			t,
 			code != 0 || strings.Contains(stdout, "..PLACEHOLDER_VALUE.."),
@@ -574,7 +581,8 @@ func e2EDataReaderGeneratorEmbeddedCiphertextKind(t *testing.T, kind *string) {
 		assert.NoError(t, err)
 		found := 0
 		for _, doc := range docs {
-			name, _ := manifest.DocMetadata(doc)
+			metadata := manifest.DocMetadata(doc)
+			name := metadata.Name
 			if manifest.DocKind(doc) != "ConfigMap" || name != "result" {
 				continue
 			}

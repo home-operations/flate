@@ -112,7 +112,8 @@ func parseHelmChartSource(doc map[string]any) (*HelmChartSource, error) {
 func (h *HelmChartSource) references(yield func(Reference) bool) {
 	kind := cmp.Or(h.SourceRef.Kind, KindHelmRepository)
 	chart := helmChartFromSource(h)
-	chartPath, files := chart.sourceInputs(h.ValuesFiles)
+	inputs := chart.sourceInputs(h.ValuesFiles)
+	chartPath, files := inputs.path, inputs.files
 	var gate GateStage
 	if h.SourceRef.Name != "" {
 		gate = GateInputs

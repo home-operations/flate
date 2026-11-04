@@ -43,9 +43,7 @@ func testRenderInputOriginsCase(t *testing.T, testCaseInput *string,
 			sourcecache.RetryConfig{},
 		),
 	)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	cache := newTestTreeCache(t, t.TempDir())
 	source := &store.SourceArtifact{FS: lower, Key: "pin+rules+options+auth", LocalPath: root}
 	for _, state := range []string{"cold", "warm", "host-absent"} {
@@ -63,26 +61,22 @@ func testRenderInputOriginsCase(t *testing.T, testCaseInput *string,
 				sourcecache.RetryConfig{},
 			),
 		)
-		{
-			assert.FatalIf(
-				t,
-				err != nil || !reflect.DeepEqual(got, want),
-				"%s memory output differs: %s, %v",
-				state,
-				got,
-				err,
-			)
-		}
+		assert.FatalIf(
+			t,
+			err != nil || !reflect.DeepEqual(got, want),
+			"%s memory output differs: %s, %v",
+			state,
+			got,
+			err,
+		)
 	}
 	if (*testCaseInput) == "app" {
 		got, err := fs.ReadFile(lower, "app/kustomization.yaml")
-		{
-			assert.FatalIf(
-				t,
-				err != nil || string(got) != files["app/kustomization.yaml"],
-				"%s",
-				"generated manifest mutated source",
-			)
-		}
+		assert.FatalIf(
+			t,
+			err != nil || string(got) != files["app/kustomization.yaml"],
+			"%s",
+			"generated manifest mutated source",
+		)
 	}
 }

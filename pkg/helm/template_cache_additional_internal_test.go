@@ -60,7 +60,7 @@ func TestComputeTemplateKey_DifferingFieldsDiverge(t *testing.T) {
 	}
 	t.Run("ChartContent", func(t *testing.T) {
 		t.Parallel()
-		computeTemplateKeyDifferingFieldsDivergeChartContent(t, &values, &hr, &base)
+		computeTemplateKeyDifferingFieldsDivergeChartContent(t, values, &hr, &base)
 	})
 
 	t.Run("Values", func(t *testing.T) {
@@ -268,7 +268,7 @@ func computeTemplateKeyDifferingFieldsDivergeCase2(
 
 func computeTemplateKeyDifferingFieldsDivergeChartContent(
 	t *testing.T,
-	values *map[string]any,
+	values map[string]any,
 	hr **manifest.HelmRelease,
 	base *string,
 ) {
@@ -280,7 +280,7 @@ func computeTemplateKeyDifferingFieldsDivergeChartContent(
 		t,
 		computeTemplateKey(
 			&chartDescription{fingerprint: chartFixtureDescription(t, changed).fingerprint, chart: changed},
-			(*values),
+			values,
 			Options{},
 			(*hr),
 		) == (*base),

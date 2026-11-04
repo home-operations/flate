@@ -174,14 +174,12 @@ data: {key: initial}
 		store: s,
 		dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
 			result := d.Dispatch(ctx, id, level)
-			{
-				assert.ErrorIf(
-					t,
-					dispatches.Add(1) == 1 && result.Assessment.Valid(),
-					"%v",
-					"superseded declaration retained a valid assessment",
-				)
-			}
+			assert.ErrorIf(
+				t,
+				dispatches.Add(1) == 1 && result.Assessment.Valid(),
+				"%v",
+				"superseded declaration retained a valid assessment",
+			)
 			return result
 		},
 	}
@@ -207,10 +205,8 @@ data: {key: initial}
 		close(release)
 	})
 	{
-		{
-			err := <-done
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := <-done
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	if dispatches.Load() != 2 {
 		t.Fatalf("captured attempts=%d, want 2", dispatches.Load())
@@ -223,25 +219,21 @@ data: {key: initial}
 	settled := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
 	defer settled.Assessment.Close()
 	after := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
-	{
-		assert.FatalIf(
-			t,
-			settled.Assessment.Outcome() == schedule.Blocked || !settled.Assessment.Valid() || !reader.Valid() ||
-				before.Fingerprint != after.Fingerprint ||
-				!cmp.Equal(
-					before.Manifests,
-					after.Manifests,
-				),
-			"settled newest content did not deduplicate: %+v",
-			settled.Assessment,
-		)
-	}
+	assert.FatalIf(
+		t,
+		settled.Assessment.Outcome() == schedule.Blocked || !settled.Assessment.Valid() || !reader.Valid() ||
+			before.Fingerprint != after.Fingerprint ||
+			!cmp.Equal(
+				before.Manifests,
+				after.Manifests,
+			),
+		"settled newest content did not deduplicate: %+v",
+		settled.Assessment,
+	)
 	cm, ok := s.Get[*manifest.ConfigMap](
 		manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "output"},
 	)
-	{
-		assert.FatalIf(t, !ok || cm.Data["key"] != "newest", "latest concurrent content was lost: %+v", cm)
-	}
+	assert.FatalIf(t, !ok || cm.Data["key"] != "newest", "latest concurrent content was lost: %+v", cm)
 }
 
 type testDAGDispatchResourceSetClassificationCaseInputs struct {
@@ -282,14 +274,12 @@ data: {key: fixed}
 	d := dagDispatcher{&Orchestrator{store: s, rsc: c, controllers: base.Controllers{ResourceSet: c}}}
 	initial := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
 	defer initial.Assessment.Close()
-	{
-		assert.FatalIf(
-			t,
-			initial.Assessment.Outcome() == schedule.Blocked || !initial.Assessment.Valid(),
-			"fresh setup failed: %+v",
-			initial.Assessment,
-		)
-	}
+	assert.FatalIf(
+		t,
+		initial.Assessment.Outcome() == schedule.Blocked || !initial.Assessment.Valid(),
+		"fresh setup failed: %+v",
+		initial.Assessment,
+	)
 	before := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 
 	opts := base.Options{}
@@ -439,63 +429,53 @@ func testDAGDispatchResourceSetClassificationCaseTail(
 		)
 		scheduler.Seed([]schedule.NodeID{(*tailCaseInput.rs).Named()})
 		{
-			{
-				err := scheduler.Run(t.Context())
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
+			err := scheduler.Run(t.Context())
+			assert.FatalIf(t, err != nil, "%v", err)
 		}
 		result = scheduler.Results()[(*tailCaseInput.rs).Named()]
 	} else {
 		result = tailCaseInput.d.Dispatch(t.Context(), (*tailCaseInput.rs).Named(), manifest.DrainNone)
 		defer result.Assessment.Close()
 	}
-	{
-		assert.FatalIf(
-			t,
-			result.Assessment == nil ||
-				result.Assessment.Outcome() == schedule.Blocked != (*tailCaseInput.wantUnresolved),
-			"assessment=%+v, want unresolved=%t",
-			result.Assessment,
-			(*tailCaseInput.wantUnresolved),
-		)
-	}
+	assert.FatalIf(
+		t,
+		result.Assessment == nil ||
+			result.Assessment.Outcome() == schedule.Blocked != (*tailCaseInput.wantUnresolved),
+		"assessment=%+v, want unresolved=%t",
+		result.Assessment,
+		(*tailCaseInput.wantUnresolved),
+	)
 	if (*tailCaseInput.testCaseInput.name) == "dedup" && arrivals.Load() != 0 {
 		t.Fatalf("no-op emitted %d arrivals", arrivals.Load())
 	}
 	if (*tailCaseInput.testCaseInput.name) == "fresh fingerprint identical docs" {
 		after := (*tailCaseInput.s).GetArtifact((*tailCaseInput.rs).Named(), store.ArtifactContent).(*store.Emission)
+		assert.FatalIf(
+			t, (*tailCaseInput.before).
+				Fingerprint == after.Fingerprint, "%v",
+			"fresh fingerprint must replace artifact identity",
+		)
 		{
+			diff := cmp.Diff((*tailCaseInput.before).Manifests, after.Manifests)
 			assert.FatalIf(
-				t, (*tailCaseInput.before).
-					Fingerprint == after.Fingerprint, "%v",
-				"fresh fingerprint must replace artifact identity",
+				t,
+				diff != "",
+				"fixture documents must stay identical (-want +got): %s",
+				diff,
 			)
-		}
-		{
-			{
-				diff := cmp.Diff((*tailCaseInput.before).Manifests, after.Manifests)
-				assert.FatalIf(
-					t,
-					diff != "",
-					"fixture documents must stay identical (-want +got): %s",
-					diff,
-				)
-			}
 		}
 	}
 	if (*tailCaseInput.testCaseInput.name) == "filter skip" {
 		info, ok := (*tailCaseInput.s).GetStatus((*tailCaseInput.rs).Named())
 		_, _, retained := (*tailCaseInput.s).GetEmission((*tailCaseInput.rs).Named())
-		{
-			assert.FatalIf(
-				t,
-				!ok || info.Outcome() != store.OutcomeUnchanged || info.Message != "unchanged" ||
-					len(retained.Children) != 0 ||
-					len(retained.Manifests) != 0,
-				"filter retained invalid output: %+v",
-				info,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!ok || info.Outcome() != store.OutcomeUnchanged || info.Message != "unchanged" ||
+				len(retained.Children) != 0 ||
+				len(retained.Manifests) != 0,
+			"filter retained invalid output: %+v",
+			info,
+		)
 	}
 	if (*tailCaseInput.testCaseInput.name) == "suspended" ||
 		(*tailCaseInput.testCaseInput.name) == "refresh suspended" {
@@ -592,22 +572,18 @@ func testDAGDispatchResourceSetClassificationCase2(
 			)
 		}
 	case "ready_without_child", "failed_without_child":
-		{
-			assert.FatalIf(t, run.Outcome() != schedule.DependencyFailed ||
-				!slices.Equal(info.BlockedBy(), []manifest.NamedResource{parent.Named(), peer.Named()}) ||
-				s.GetArtifact(
-					child.Named(),
-					store.ArtifactContent,
-				) != nil, "non-supplying owners lost provenance: %+v", info)
-		}
+		assert.FatalIf(t, run.Outcome() != schedule.DependencyFailed ||
+			!slices.Equal(info.BlockedBy(), []manifest.NamedResource{parent.Named(), peer.Named()}) ||
+			s.GetArtifact(
+				child.Named(),
+				store.ArtifactContent,
+			) != nil, "non-supplying owners lost provenance: %+v", info)
 	default:
-		{
-			assert.FatalIf(t, run.Outcome() != schedule.Terminal || info.Status != store.StatusReady ||
-				s.GetArtifact(
-					child.Named(),
-					store.ArtifactContent,
-				) == nil, "effective declaration did not render: %+v", info)
-		}
+		assert.FatalIf(t, run.Outcome() != schedule.Terminal || info.Status != store.StatusReady ||
+			s.GetArtifact(
+				child.Named(),
+				store.ArtifactContent,
+			) == nil, "effective declaration did not render: %+v", info)
 	}
 }
 

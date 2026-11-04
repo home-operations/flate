@@ -181,7 +181,7 @@ func (h *HTTPInputs) httpGetURL(
 	if err != nil {
 		return cache.ProducerResult{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlStr, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlStr, http.NoBody)
 	if err != nil {
 		return cache.ProducerResult{}, fmt.Errorf("create source HTTP request: %w", err)
 	}

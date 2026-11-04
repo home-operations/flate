@@ -91,7 +91,7 @@ func TestE2E_DiffKustomizeEscapedInputs(t *testing.T) {
 			)
 			orig := t.TempDir()
 			testutil.CopyTree(t, root, orig)
-			before, stderr := harness.RequireCLIOK(
+			requireCLIOKResult1 := harness.RequireCLIOK(
 				t,
 				"build",
 				"all",
@@ -103,6 +103,7 @@ func TestE2E_DiffKustomizeEscapedInputs(t *testing.T) {
 				"--cache-dir",
 				t.TempDir(),
 			)
+			before, stderr := requireCLIOKResult1.Stdout, requireCLIOKResult1.Stderr
 			assert.FatalIf(
 				t,
 				!strings.Contains(before, "value: before"),
@@ -112,7 +113,7 @@ func TestE2E_DiffKustomizeEscapedInputs(t *testing.T) {
 			)
 			t.Logf("full build before:\n%s", before)
 			baselines := [][]string{{"--base", "HEAD"}, {"--path-orig", filepath.Join(orig, "flux")}}
-			harness.MutateFile(t, filepath.Join(root, "inputs/unrelated"), "before", "after")
+			harness.MutateFile(t, filepath.Join(root, "inputs", "unrelated"), "before", "after")
 			for _, baseline := range baselines {
 				args := append(
 					[]string{
@@ -130,7 +131,8 @@ func TestE2E_DiffKustomizeEscapedInputs(t *testing.T) {
 					},
 					baseline...)
 				{
-					out, requireCLIOKErr := harness.RequireCLIOK(t, args...)
+					requireCLIOKResult2 := harness.RequireCLIOK(t, args...)
+					out, requireCLIOKErr := requireCLIOKResult2.Stdout, requireCLIOKResult2.Stderr
 					assert.FatalIf(t, out != "", "unrelated sibling selected the owner: %q\n%s", out, requireCLIOKErr)
 				}
 			}
@@ -139,7 +141,7 @@ func TestE2E_DiffKustomizeEscapedInputs(t *testing.T) {
 				file = "inputs/patch"
 			}
 			harness.MutateFile(t, filepath.Join(root, file), "value: before", "value: after")
-			after, stderr := harness.RequireCLIOK(
+			requireCLIOKResult3 := harness.RequireCLIOK(
 				t,
 				"build",
 				"all",
@@ -151,6 +153,7 @@ func TestE2E_DiffKustomizeEscapedInputs(t *testing.T) {
 				"--cache-dir",
 				t.TempDir(),
 			)
+			after, stderr := requireCLIOKResult3.Stdout, requireCLIOKResult3.Stderr
 			assert.FatalIf(
 				t,
 				!strings.Contains(after, "value: after"),
@@ -176,7 +179,8 @@ func TestE2E_DiffKustomizeEscapedInputs(t *testing.T) {
 							t.TempDir(),
 						},
 						baseline...)
-					out, stderr := harness.RequireCLIOK(t, args...)
+					requireCLIOKResult4 := harness.RequireCLIOK(t, args...)
+					out, stderr := requireCLIOKResult4.Stdout, requireCLIOKResult4.Stderr
 					assert.FatalIf(
 						t,
 						strings.Count(out, "-  value: before") != 1 || strings.Count(out, "+  value: after") != 1,
@@ -184,7 +188,8 @@ func TestE2E_DiffKustomizeEscapedInputs(t *testing.T) {
 						out,
 						stderr,
 					)
-					second, _ := harness.RequireCLIOK(t, args...)
+					requireCLIOKResult5 := harness.RequireCLIOK(t, args...)
+					second, _ := requireCLIOKResult5.Stdout, requireCLIOKResult5.Stderr
 					assert.FatalIf(t, second != out, "diff output changed between runs: %q / %q", out, second)
 				})
 			}
@@ -220,7 +225,7 @@ func TestE2E_DiffKustomizeInputLifecycle(t *testing.T) {
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", body)
 			orig := t.TempDir()
 			testutil.CopyTree(t, root, orig)
-			before, _ := harness.RequireCLIOK(
+			requireCLIOKResult6 := harness.RequireCLIOK(
 				t,
 				"build",
 				"all",
@@ -232,13 +237,14 @@ func TestE2E_DiffKustomizeInputLifecycle(t *testing.T) {
 				"--cache-dir",
 				t.TempDir(),
 			)
+			before, _ := requireCLIOKResult6.Stdout, requireCLIOKResult6.Stderr
 			wantBefore, wantAfter := "patched", "plain"
 			if operation == "add" {
 				wantBefore, wantAfter = "plain", "patched"
 				testutil.WriteFile(t, root, "inputs/patch", patchBody)
 				testutil.WriteFile(t, root, "apps/kustomization.yaml", body+patch)
 			} else {
-				assert.NoError(t, os.Remove(filepath.Join(root, "inputs/patch")))
+				assert.NoError(t, os.Remove(filepath.Join(root, "inputs", "patch")))
 				if operation == "delete" {
 					testutil.WriteFile(t, root, "apps/kustomization.yaml", strings.TrimSuffix(body, patch))
 				}
@@ -258,7 +264,8 @@ func TestE2E_DiffKustomizeInputLifecycle(t *testing.T) {
 				"--cache-dir",
 				t.TempDir(),
 			}
-			out, stderr, code := harness.RunCLIBuffers(args...)
+			runCLIBuffersResult7 := harness.RunCLIBuffers(args...)
+			out, stderr, code := runCLIBuffersResult7.Stdout, runCLIBuffersResult7.Stderr, runCLIBuffersResult7.Code
 			if operation == "dangling" {
 				assert.FatalIf(
 					t,
@@ -270,7 +277,7 @@ func TestE2E_DiffKustomizeInputLifecycle(t *testing.T) {
 				)
 				return
 			}
-			after, _ := harness.RequireCLIOK(
+			requireCLIOKResult8 := harness.RequireCLIOK(
 				t,
 				"build",
 				"all",
@@ -282,6 +289,7 @@ func TestE2E_DiffKustomizeInputLifecycle(t *testing.T) {
 				"--cache-dir",
 				t.TempDir(),
 			)
+			after, _ := requireCLIOKResult8.Stdout, requireCLIOKResult8.Stderr
 			assert.FatalIf(t, code != 0 || !strings.Contains(before, "value: "+wantBefore) ||
 				!strings.Contains(after, "value: "+wantAfter) ||
 				!strings.Contains(out, wantBefore) ||
@@ -331,8 +339,23 @@ func TestE2E_DiffSelectedKustomizeInputs(t *testing.T) {
 			case "unrelated":
 				harness.MutateFile(t, filepath.Join(root, "unrelated.yaml"), "before", "after")
 			}
-			out, stderr := harness.RequireCLIOK(t, "diff", "all", "-o", "diff", "--path", root, "--path-orig", orig,
-				"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
+			requireCLIOKResult9 := harness.RequireCLIOK(
+				t,
+				"diff",
+				"all",
+				"-o",
+				"diff",
+				"--path",
+				root,
+				"--path-orig",
+				orig,
+				"--concurrency",
+				"2",
+				"--no-progress",
+				"--cache-dir",
+				t.TempDir(),
+			)
+			out, stderr := requireCLIOKResult9.Stdout, requireCLIOKResult9.Stderr
 			if input == "unrelated" {
 				assert.FatalIf(t, out != "", "unrelated file promoted a raw object: %s\n%s", out, stderr)
 				return
@@ -377,7 +400,7 @@ func TestE2E_DiffLocalChartInputs(t *testing.T) {
 
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_ChangedOnlyLocalChartInputs(t *testing.T) {
-	elapsed := regexp.MustCompile(` +[0-9]+\.[0-9]+s\n$`)
+	elapsed := regexp.MustCompile(` +\d+\.\d+s\n$`)
 	for _, committed := range []bool{false, true} {
 		for _, invalid := range []bool{false, true} {
 			name := "directories"
@@ -415,7 +438,7 @@ func writeChartInputArchive(t *testing.T, root, location, value string) {
 	}
 	assert.NoError(t, tarball.Close())
 	assert.NoError(t, compressed.Close())
-	testutil.WriteFile(t, root, filepath.Join(location, "charts/child-1.0.0.tgz"), data.String())
+	testutil.WriteFile(t, root, filepath.Join(location, "charts", "child-1.0.0.tgz"), data.String())
 }
 
 func e2EDiffLocalChartInputsName(t *testing.T, tc *struct {
@@ -476,10 +499,10 @@ spec:
 		"apiVersion: v2\nname: demo\nversion: 1.0.0\n",
 	)
 	testutil.WriteFile(t, root, filepath.Join(location, "values.yaml"), "value: before\n")
-	testutil.WriteFile(t, root, filepath.Join(location, "templates/cm.yaml"), template)
+	testutil.WriteFile(t, root, filepath.Join(location, "templates", "cm.yaml"), template)
 	extra := strings.Replace(template, "name: chart-input,", "name: chart-input-extra,", 1)
 	if tc.shape == "template deleted" {
-		testutil.WriteFile(t, root, filepath.Join(location, "templates/extra.yaml"), extra)
+		testutil.WriteFile(t, root, filepath.Join(location, "templates", "extra.yaml"), extra)
 	}
 	policy := ".git/\nflux/\nunrelated/\nexcluded/\n.helmignore\n"
 	if tc.shape == "admit" || tc.shape == "delete" {
@@ -488,9 +511,9 @@ spec:
 	if tc.shape != "create" {
 		testutil.WriteFile(t, root, filepath.Join(location, ".helmignore"), policy)
 	}
-	testutil.WriteFile(t, root, filepath.Join(location, "excluded/unused"), "before")
+	testutil.WriteFile(t, root, filepath.Join(location, "excluded", "unused"), "before")
 	if tc.shape == "archive" {
-		assert.NoError(t, os.Remove(filepath.Join(root, location, "templates/cm.yaml")))
+		assert.NoError(t, os.Remove(filepath.Join(root, location, "templates", "cm.yaml")))
 		writeChartInputArchive(t, root, location, "before")
 	}
 	options := &git.CommitOptions{
@@ -499,19 +522,20 @@ spec:
 	base := testutil.GitCommitAll(t, repo, "base", options)
 	testutil.CopyTree(t, root, orig)
 	flags := []string{"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir(), "--log-level", "debug"}
-	before, _ := harness.RequireCLIOK(
+	requireCLIOKResult10 := harness.RequireCLIOK(
 		t,
 		append([]string{"build", "all", "--path", filepath.Join(orig, "flux")}, flags...)...)
+	before, _ := requireCLIOKResult10.Stdout, requireCLIOKResult10.Stderr
 	switch tc.shape {
 	case "template added":
-		testutil.WriteFile(t, root, filepath.Join(location, "templates/extra.yaml"), extra)
+		testutil.WriteFile(t, root, filepath.Join(location, "templates", "extra.yaml"), extra)
 	case "template deleted":
-		assert.NoError(t, os.Remove(filepath.Join(root, location, "templates/extra.yaml")))
+		assert.NoError(t, os.Remove(filepath.Join(root, location, "templates", "extra.yaml")))
 	case "template", "root", "remote":
 		testutil.WriteFile(
 			t,
 			root,
-			filepath.Join(location, "templates/cm.yaml"),
+			filepath.Join(location, "templates", "cm.yaml"),
 			strings.Replace(template, ".Values.value | quote", "\"after\" | quote", 1),
 		)
 	case "values":
@@ -530,19 +554,21 @@ spec:
 	case "delete":
 		assert.NoError(t, os.Remove(filepath.Join(root, location, ".helmignore")))
 	case "excluded":
-		testutil.WriteFile(t, root, filepath.Join(location, "excluded/unused"), "after")
+		testutil.WriteFile(t, root, filepath.Join(location, "excluded", "unused"), "after")
 	}
 	baseline := []string{"--path-orig", filepath.Join(orig, "flux")}
 	if tc.committed {
 		testutil.GitCommitAll(t, repo, "change", options)
 		baseline = []string{"--base", base.String()}
 	}
-	after, _ := harness.RequireCLIOK(
+	requireCLIOKResult11 := harness.RequireCLIOK(
 		t,
 		append([]string{"build", "all", "--path", filepath.Join(root, "flux")}, flags...)...)
+	after, _ := requireCLIOKResult11.Stdout, requireCLIOKResult11.Stderr
 	args := append([]string{"diff", "all", "-o", "diff", "--path", filepath.Join(root, "flux")}, baseline...)
 	args = append(args, flags...)
-	out, stderr := harness.RequireCLIOK(t, args...)
+	requireCLIOKResult12 := harness.RequireCLIOK(t, args...)
+	out, stderr := requireCLIOKResult12.Stdout, requireCLIOKResult12.Stderr
 	if tc.shape == "excluded" || tc.shape == "unchanged" || tc.shape == "remote" {
 		assert.FatalIf(
 			t,
@@ -594,7 +620,8 @@ spec:
 			stderr,
 		)
 	}
-	second, _ := harness.RequireCLIOK(t, args...)
+	requireCLIOKResult13 := harness.RequireCLIOK(t, args...)
+	second, _ := requireCLIOKResult13.Stdout, requireCLIOKResult13.Stderr
 	assert.FatalIf(t, out != second, "chart diff changed between equivalent runs: %s\n%s", out, second)
 }
 

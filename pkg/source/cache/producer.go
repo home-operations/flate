@@ -222,9 +222,10 @@ func (p archiveProducer) produce(
 		return err
 	})
 	g.Go(func() error {
-		failure, err := p.readPayload(pr, index)
-		readerFailure = failure
-		return err
+		failures := p.readPayload(pr, index)
+
+		readerFailure = failures.reader
+		return failures.archive
 	})
 	err := g.Wait()
 	if !stop() {
@@ -358,7 +359,7 @@ func (p blobProducer) restore(_ context.Context, c *Cache, stored ocispec.Descri
 	return nil
 }
 
-func (p archiveProducer) readPayload(pr *io.PipeReader, index *tarFS) (error, error) {
+func (p archiveProducer) readPayload(pr *io.PipeReader, index *tarFS) payloadErrors {
 	_, err := readArchive(pr, p.key, index)
 	if err == nil && p.key.Policy == extractPolicy {
 		_, err = io.Copy(io.Discard, pr)
@@ -378,5 +379,7 @@ func (p archiveProducer) readPayload(pr *io.PipeReader, index *tarFS) (error, er
 	} else {
 		_ = pr.Close()
 	}
-	return readerFailure, err
+	return payloadErrors{reader: readerFailure, archive: err}
 }
+
+type payloadErrors struct{ reader, archive error }

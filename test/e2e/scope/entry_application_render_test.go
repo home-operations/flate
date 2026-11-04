@@ -117,7 +117,8 @@ func TestE2E_EntryApplicationRendered(t *testing.T) {
 				"debug",
 			}
 			args := append([]string{"build", "all"}, common...)
-			out, stderr := harness.RequireCLIOK(t, args...)
+			requireCLIOKResult1 := harness.RequireCLIOK(t, args...)
+			out, stderr := requireCLIOKResult1.Stdout, requireCLIOKResult1.Stderr
 			assert.FatalIf(t, !strings.Contains(out, "name: literal-layer") || strings.Contains(out, "\x00") ||
 				strings.Contains(
 					stderr,
@@ -130,21 +131,24 @@ func TestE2E_EntryApplicationRendered(t *testing.T) {
 				"cold qualification did not execute Helm once: %s",
 				stderr,
 			)
-			again, _ := harness.RequireCLIOK(t, args...)
+			requireCLIOKResult2 := harness.RequireCLIOK(t, args...)
+			again, _ := requireCLIOKResult2.Stdout, requireCLIOKResult2.Stderr
 			assert.Equal(t, again, out)
 			if strings.Contains(stderr, "[RenderPersistenceDisabled]") {
 				t.Skip("warm receipt witness requires a clean VCS-stamped build")
 			}
 			testutil.WriteFile(t, root, "workload/release.yaml", strings.ReplaceAll(workload, "before", "after"))
 			diffArgs := append([]string{"diff", "all", "--base", "HEAD", "-o", "diff"}, common...)
-			diff, debug := harness.RequireCLIOK(t, diffArgs...)
+			requireCLIOKResult3 := harness.RequireCLIOK(t, diffArgs...)
+			diff, debug := requireCLIOKResult3.Stdout, requireCLIOKResult3.Stderr
 			assert.FatalIf(t, !strings.Contains(diff, "before") || !strings.Contains(diff, "after") ||
 				strings.Contains(debug, generatorEvent) ||
 				strings.Contains(
 					debug,
 					`msg="kustomize: build" path=entry/unapplied`,
 				), "warm workload edit executed bootstrap work or lost the change: %s\n%s", diff, debug)
-			repeated, repeatedDebug := harness.RequireCLIOK(t, diffArgs...)
+			requireCLIOKResult4 := harness.RequireCLIOK(t, diffArgs...)
+			repeated, repeatedDebug := requireCLIOKResult4.Stdout, requireCLIOKResult4.Stderr
 			assert.Equal(t, repeated, diff)
 			assert.FatalIf(t, strings.Contains(repeatedDebug, generatorEvent) ||
 				strings.Contains(
@@ -165,7 +169,8 @@ func TestE2E_EntryApplicationRendered(t *testing.T) {
 				"charts/bootstrap/templates/application.yaml",
 				"{{ print "+fmt.Sprintf("%q", strings.ReplaceAll(application, "./entry", "./elsewhere"))+" }}",
 			)
-			invalidated, invalidatedDebug := harness.RequireCLIOK(t, args...)
+			requireCLIOKResult5 := harness.RequireCLIOK(t, args...)
+			invalidated, invalidatedDebug := requireCLIOKResult5.Stdout, requireCLIOKResult5.Stderr
 			assert.FatalIf(t, strings.Count(invalidatedDebug, generatorEvent) != 1 ||
 				strings.Contains(
 					invalidated,
@@ -183,7 +188,8 @@ func assertEntryApplicationIntervalDiff(t *testing.T, common []string, generator
 			if mode == "cold" {
 				intervalArgs = append(intervalArgs, "--cache-dir", t.TempDir())
 			}
-			intervalDiff, debug := harness.RequireCLIOK(t, intervalArgs...)
+			requireCLIOKResult6 := harness.RequireCLIOK(t, intervalArgs...)
+			intervalDiff, debug := requireCLIOKResult6.Stdout, requireCLIOKResult6.Stderr
 			wantRenders := 0
 			if mode == "cold" {
 				wantRenders = 1
@@ -192,7 +198,8 @@ func assertEntryApplicationIntervalDiff(t *testing.T, common []string, generator
 				t.Fatalf("%s applier renders != %d: %s", mode, wantRenders, debug)
 			}
 			assertEntryApplicationIntervalChange(t, intervalDiff)
-			again, _ := harness.RequireCLIOK(t, intervalArgs...)
+			requireCLIOKResult7 := harness.RequireCLIOK(t, intervalArgs...)
+			again, _ := requireCLIOKResult7.Stdout, requireCLIOKResult7.Stderr
 			assert.Equal(t, again, intervalDiff)
 		})
 	}

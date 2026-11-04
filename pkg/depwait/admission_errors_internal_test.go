@@ -56,19 +56,15 @@ func TestAvailable_AdmissionErrorPrecedesOptionalOmission(t *testing.T) {
 			}
 			dep := DataDependency{NamedResource: id, Input: input, Optional: true, AllowMissing: true}
 			got := w.Available(t.Context(), dep, manifest.DrainForce)
-			{
-				assert.FatalIf(
-					t,
-					!errors.Is(got.Err, cause) || got.Omit,
-					"Available = %+v, want original cause without omission",
-					got,
-				)
-			}
+			assert.FatalIf(
+				t,
+				!errors.Is(got.Err, cause) || got.Omit,
+				"Available = %+v, want original cause without omission",
+				got,
+			)
 			w.Existence = errorPromotion{}
 			got = w.Available(t.Context(), dep, manifest.DrainForce)
-			{
-				assert.FatalIf(t, got.Err != nil || !got.Omit, "genuine absence = %+v, want optional omission", got)
-			}
+			assert.FatalIf(t, got.Err != nil || !got.Omit, "genuine absence = %+v, want optional omission", got)
 		})
 	}
 }

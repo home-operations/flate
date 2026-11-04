@@ -77,9 +77,7 @@ data:
 	assert.NoError(t, err)
 	assert.Diff(t, second, first)
 	for _, docs := range [][]map[string]any{first, second} {
-		{
-			assert.FatalIf(t, len(docs) != 1, "rendered %d documents, want 1", len(docs))
-		}
+		assert.FatalIf(t, len(docs) != 1, "rendered %d documents, want 1", len(docs))
 		data := docs[0]["data"].(map[string]any)
 		assert.Equal(t, data["stamp"], any("20200101000000.000000000"))
 		assert.Equal(t, data["port"], any("50413"))
@@ -113,9 +111,7 @@ data:
 			RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)},
 		),
 	)
-	{
-		assert.ErrorIf(t, err == nil, "%s", "invalid mustToDate rendered successfully")
-	}
+	assert.ErrorIf(t, err == nil, "%s", "invalid mustToDate rendered successfully")
 	assert.Diff(t, out, []map[string]any(nil))
 }
 
@@ -142,17 +138,13 @@ func TestTemplate_EncryptAESDecryptRoundTrip(t *testing.T) {
 					RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)},
 				),
 			)
-			{
-				assert.NoError(t, err)
-			}
-			{
-				assert.FatalIf(
-					t,
-					!hasRenderField(out, "cleartext", plaintext),
-					"decryptAES round trip differs: %s",
-					out,
-				)
-			}
+			assert.NoError(t, err)
+			assert.FatalIf(
+				t,
+				!hasRenderField(out, "cleartext", plaintext),
+				"decryptAES round trip differs: %s",
+				out,
+			)
 		})
 	}
 }

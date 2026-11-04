@@ -53,9 +53,7 @@ func TestCompare_SelectedErrorsRetained(t *testing.T) {
 			_, _, _, docErr := Compare(tc.orig, tc.current, selectedErr, Options{Format: FormatJSON})
 			_, _, imageErr := CompareImages(tc.orig, tc.current, selectedErr, false)
 			for _, err := range []error{docErr, imageErr} {
-				{
-					assert.ErrorIf(t, !errors.Is(err, selectedErr), "selected error lost: %v", err)
-				}
+				assert.ErrorIf(t, !errors.Is(err, selectedErr), "selected error lost: %v", err)
 			}
 		})
 	}
@@ -65,16 +63,12 @@ func TestCompare_SelectedErrorsRetained(t *testing.T) {
 		store.StatusInfo{Status: store.StatusFailed, Message: "failed"},
 	)
 	_, warnings, suppressed, err := Compare(valid, unavailable, selectedErr, Options{Format: "invalid"})
-	{
-		assert.ErrorIf(t, !errors.Is(err, selectedErr), "format error discarded selected error: %v", err)
-	}
-	{
-		assert.ErrorIf(t, len(warnings) != 0 ||
-			!slices.Equal(
-				suppressed,
-				[]Suppression{{Parent: helmReleaseParent(), Side: SideCurrent, Count: 1, Reason: "failed"}},
-			), "format error lost structured suppression: %+v; warnings: %+v", suppressed, warnings)
-	}
+	assert.ErrorIf(t, !errors.Is(err, selectedErr), "format error discarded selected error: %v", err)
+	assert.ErrorIf(t, len(warnings) != 0 ||
+		!slices.Equal(
+			suppressed,
+			[]Suppression{{Parent: helmReleaseParent(), Side: SideCurrent, Count: 1, Reason: "failed"}},
+		), "format error lost structured suppression: %+v; warnings: %+v", suppressed, warnings)
 }
 
 func TestCompare_SuppressionSubject(t *testing.T) {
@@ -138,9 +132,7 @@ func TestCompare_OptionsAndSnapshotsRemainImmutable(t *testing.T) {
 				Format: FormatJSON, Suppressed: backing[:1],
 				Normalize: func(doc map[string]any) { normalized++; doc["kind"] = "Changed" },
 			})
-			{
-				assert.FatalIf(t, !errors.Is(err, selectedErr), "selected error lost: %v", err)
-			}
+			assert.FatalIf(t, !errors.Is(err, selectedErr), "selected error lost: %v", err)
 			var document struct {
 				Suppressed []Suppression `json:"suppressed"`
 			}
@@ -150,57 +142,47 @@ func TestCompare_OptionsAndSnapshotsRemainImmutable(t *testing.T) {
 			}
 			moved.Path = "./apps/a"
 			want := Suppression{Parent: moved, Side: side, Count: 1, Reason: "failed"}
-			{
-				assert.ErrorIf(
-					t,
-					len(document.Suppressed) != 2 || document.Suppressed[0] != backing[0] ||
-						document.Suppressed[1] != want,
-					"supplied or moved producer notes differ: %+v",
-					document.Suppressed,
-				)
-			}
-			{
-				assert.ErrorIf(
-					t,
-					!slices.Equal(suppressed, document.Suppressed) || len(warnings) != 0,
-					"structured suppressions = %+v; warnings = %+v",
-					suppressed,
-					warnings,
-				)
-			}
+			assert.ErrorIf(
+				t,
+				len(document.Suppressed) != 2 || document.Suppressed[0] != backing[0] ||
+					document.Suppressed[1] != want,
+				"supplied or moved producer notes differ: %+v",
+				document.Suppressed,
+			)
+			assert.ErrorIf(
+				t,
+				!slices.Equal(suppressed, document.Suppressed) || len(warnings) != 0,
+				"structured suppressions = %+v; warnings = %+v",
+				suppressed,
+				warnings,
+			)
 			images, notes, err := CompareImages(left, right, selectedErr, true)
-			{
-				assert.ErrorIf(
-					t,
-					!errors.Is(err, selectedErr) || len(images) != 0 || !slices.Equal(notes, []Suppression{want}),
-					"image suppression or selected error differs: %v, %+v, %v",
-					images,
-					notes,
-					err,
-				)
-			}
+			assert.ErrorIf(
+				t,
+				!errors.Is(err, selectedErr) || len(images) != 0 || !slices.Equal(notes, []Suppression{want}),
+				"image suppression or selected error differs: %v, %+v, %v",
+				images,
+				notes,
+				err,
+			)
 			_, directWarnings := Changes(nil, nil, Options{Suppressed: backing[:1]})
-			{
-				assert.ErrorIf(
-					t,
-					len(directWarnings) != 0,
-					"structured changes constructed presentation warnings: %+v",
-					directWarnings,
-				)
-			}
-			{
-				assert.ErrorIf(
-					t,
-					!slices.Equal(backing, before) || !reflect.DeepEqual(left.Manifests[0].Documents[0], originalLeft) ||
-						!reflect.DeepEqual(
-							right.Manifests[0].Documents[0],
-							originalRight,
-						) || len(left.Manifests) != 1 || len(right.Manifests) != 1 ||
-						normalized != 0,
-					"%s",
-					"comparison modified caller data or normalized withheld documents",
-				)
-			}
+			assert.ErrorIf(
+				t,
+				len(directWarnings) != 0,
+				"structured changes constructed presentation warnings: %+v",
+				directWarnings,
+			)
+			assert.ErrorIf(
+				t,
+				!slices.Equal(backing, before) || !reflect.DeepEqual(left.Manifests[0].Documents[0], originalLeft) ||
+					!reflect.DeepEqual(
+						right.Manifests[0].Documents[0],
+						originalRight,
+					) || len(left.Manifests) != 1 || len(right.Manifests) != 1 ||
+					normalized != 0,
+				"%s",
+				"comparison modified caller data or normalized withheld documents",
+			)
 		})
 	}
 }
@@ -262,25 +244,21 @@ func TestCompareImages_HealthyProducerContributionsAndCounts(t *testing.T) {
 				orig, current, side = right, left, SideOrig
 			}
 			images, notes, err := CompareImages(orig, current, selectedErr, tc.includeRemoved)
-			{
-				assert.ErrorIf(
-					t,
-					!slices.Equal(images, tc.want) || !errors.Is(err, selectedErr),
-					"images=%v err=%v; want %v and selected error",
-					images,
-					err,
-					tc.want,
-				)
-			}
+			assert.ErrorIf(
+				t,
+				!slices.Equal(images, tc.want) || !errors.Is(err, selectedErr),
+				"images=%v err=%v; want %v and selected error",
+				images,
+				err,
+				tc.want,
+			)
 			wantSuppression := Suppression{Parent: helmReleaseParent(), Side: side, Count: 2, Reason: "failed"}
-			{
-				assert.ErrorIf(
-					t,
-					!slices.Equal(notes, []Suppression{wantSuppression}),
-					"suppression must count documents: %+v",
-					notes,
-				)
-			}
+			assert.ErrorIf(
+				t,
+				!slices.Equal(notes, []Suppression{wantSuppression}),
+				"suppression must count documents: %+v",
+				notes,
+			)
 		})
 	}
 }
@@ -338,17 +316,15 @@ func TestCompareImages_DeclaredAndFullReferences(t *testing.T) {
 				orig, current = current, orig
 			}
 			images, notes, err := CompareImages(orig, current, nil, tc.includeRemoved)
-			{
-				assert.FatalIf(
-					t,
-					err != nil || !slices.Equal(images, tc.want) || len(notes) != 0,
-					"images=%v notes=%v err=%v; want %v",
-					images,
-					notes,
-					err,
-					tc.want,
-				)
-			}
+			assert.FatalIf(
+				t,
+				err != nil || !slices.Equal(images, tc.want) || len(notes) != 0,
+				"images=%v notes=%v err=%v; want %v",
+				images,
+				notes,
+				err,
+				tc.want,
+			)
 		})
 	}
 }
@@ -362,15 +338,13 @@ func TestCompare_EmptyOneSidedOutputDoesNotDisclose(t *testing.T) {
 		left := selectedSnapshot(new(helmReleaseParent()), nil, store.StatusInfo{})
 		right := selectedSnapshot(new(helmReleaseParent()), hrDocs(1), unavailable)
 		out, _, _, err := Compare(left, right, nil, Options{Format: FormatDiff})
-		{
-			assert.ErrorIf(
-				t,
-				err != nil || len(out) != 0,
-				"one unavailable side without healthy documents: out=%q err=%v",
-				out,
-				err,
-			)
-		}
+		assert.ErrorIf(
+			t,
+			err != nil || len(out) != 0,
+			"one unavailable side without healthy documents: out=%q err=%v",
+			out,
+			err,
+		)
 	}
 }
 
@@ -392,28 +366,22 @@ func TestCompare_PreservesDocumentFormattingAndNormalization(t *testing.T) {
 		Normalize: func(doc map[string]any) { doc["metadata"].(map[string]any)["namespace"] = "normalized" },
 	}
 	want, _, err := RenderDocs(left, right, opts)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	got, _, _, err := Compare(selected[0], selected[1], nil, opts)
-	{
-		assert.ErrorIf(
-			t,
-			err != nil || !bytes.Equal(got, want),
-			"selected formatting differs: got %q want %q err=%v",
-			got,
-			want,
-			err,
-		)
-	}
-	{
-		assert.ErrorIf(
-			t,
-			!reflect.DeepEqual(left[0].Manifest, before),
-			"%s",
-			"normalization mutated selected manifests",
-		)
-	}
+	assert.ErrorIf(
+		t,
+		err != nil || !bytes.Equal(got, want),
+		"selected formatting differs: got %q want %q err=%v",
+		got,
+		want,
+		err,
+	)
+	assert.ErrorIf(
+		t,
+		!reflect.DeepEqual(left[0].Manifest, before),
+		"%s",
+		"normalization mutated selected manifests",
+	)
 }
 
 type testCompareSuppressionSubjectCaseInputs struct {
@@ -445,15 +413,13 @@ func testCompareSuppressionSubjectCase(t *testing.T, testCaseInput *testCompareS
 		orig = failed
 	}
 	out, _, notes, err := Compare(orig, current, nil, Options{Format: FormatJSON})
-	{
-		assert.FatalIf(
-			t,
-			err != nil || len(notes) != 1 || notes[0].Subject != subject || notes[0].Side != (*testCaseInput.side),
-			"suppression lost captured subject: notes=%+v err=%v",
-			notes,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err != nil || len(notes) != 1 || notes[0].Subject != subject || notes[0].Side != (*testCaseInput.side),
+		"suppression lost captured subject: notes=%+v err=%v",
+		notes,
+		err,
+	)
 	wantParent, wantCount := helmReleaseParent(), 1
 	if (*testCaseInput.side) == SideBoth {
 		wantParent, wantCount = Parent{NamedResource: key}, 0
@@ -474,14 +440,12 @@ func testCompareSuppressionSubjectCase(t *testing.T, testCaseInput *testCompareS
 			rendered.Suppressed[0].Parent != (Parent{NamedResource: subject.Resource, Path: subject.Path}), "JSON lost display attribution: %s; err=%v", out, unmarshalErr)
 	}
 	images, imageNotes, err := CompareImages(orig, current, nil, true)
-	{
-		assert.FatalIf(
-			t,
-			err != nil || len(images) != 0 || !slices.Equal(imageNotes, notes),
-			"images lost suppression context: images=%v notes=%+v err=%v",
-			images,
-			imageNotes,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err != nil || len(images) != 0 || !slices.Equal(imageNotes, notes),
+		"images lost suppression context: images=%v notes=%+v err=%v",
+		images,
+		imageNotes,
+		err,
+	)
 }

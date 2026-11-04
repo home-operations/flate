@@ -140,16 +140,12 @@ func testArtifactGeneratorValidationCase(t *testing.T, testCaseInput *struct {
 	spec := map[string]any{"sources": []any{source}, "artifacts": []any{output}}
 	testCaseInput.edit(spec, source, output, op)
 	_, err := decodeSpec(spec)
-	{
-		assert.FatalIf(t, (err == nil) != testCaseInput.valid, "decodeSpec() = %v; valid=%v", err, testCaseInput.valid)
-	}
-	{
-		assert.FatalIf(t, (testCaseInput.name == "from_required" || testCaseInput.name == "to_required") &&
-			!strings.Contains(
-				err.Error(),
-				"copy operation outside API bounds",
-			), "required path diagnostic = %v", err)
-	}
+	assert.FatalIf(t, (err == nil) != testCaseInput.valid, "decodeSpec() = %v; valid=%v", err, testCaseInput.valid)
+	assert.FatalIf(t, (testCaseInput.name == "from_required" || testCaseInput.name == "to_required") &&
+		!strings.Contains(
+			err.Error(),
+			"copy operation outside API bounds",
+		), "required path diagnostic = %v", err)
 }
 
 type testArtifactGeneratorValidationCase2Inputs struct {

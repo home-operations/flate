@@ -17,11 +17,10 @@ metadata:
 data:
   DOMAIN: example.com
 `)
-	cmobj, _, _, err := ParseDoc(doc, ParseDocOptions{WipeSecrets: true, DefaultNamespace: ""})
+	parsed, err := ParseDoc(doc, ParseDocOptions{WipeSecrets: true, DefaultNamespace: ""})
+	cmobj := parsed.Object
 	cm := cmobj.(*ConfigMap)
-	{
-		assert.FatalIf(t, err != nil, "parseConfigMap: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "parseConfigMap: %v", err)
 	assert.Diff(t, cm.Data, map[string]any{"DOMAIN": "example.com"})
 }
 
@@ -47,11 +46,10 @@ data:
 `
 	t.Run("wiped", func(t *testing.T) {
 		t.Parallel()
-		cmobj, _, _, err := ParseDoc(mustYAML(t, src), ParseDocOptions{WipeSecrets: true, DefaultNamespace: ""})
+		parsed2, err := ParseDoc(mustYAML(t, src), ParseDocOptions{WipeSecrets: true, DefaultNamespace: ""})
+		cmobj := parsed2.Object
 		cm := cmobj.(*ConfigMap)
-		{
-			assert.FatalIf(t, err != nil, "parseConfigMap: %v", err)
-		}
+		assert.FatalIf(t, err != nil, "parseConfigMap: %v", err)
 		assert.Diff(t, cm.Data, map[string]any{
 			"BASE_DOMAIN": ValuePlaceholder("BASE_DOMAIN"),
 			"PLAINTEXT":   "keep-me",
@@ -59,11 +57,10 @@ data:
 	})
 	t.Run("preserved when wipeSecrets=false", func(t *testing.T) {
 		t.Parallel()
-		cmobj, _, _, err := ParseDoc(mustYAML(t, src), ParseDocOptions{WipeSecrets: false, DefaultNamespace: ""})
+		parsed3, err := ParseDoc(mustYAML(t, src), ParseDocOptions{WipeSecrets: false, DefaultNamespace: ""})
+		cmobj := parsed3.Object
 		cm := cmobj.(*ConfigMap)
-		{
-			assert.FatalIf(t, err != nil, "parseConfigMap: %v", err)
-		}
+		assert.FatalIf(t, err != nil, "parseConfigMap: %v", err)
 		assert.Diff(t, cm.Data, map[string]any{
 			"BASE_DOMAIN": ciphertext,
 			"PLAINTEXT":   "keep-me",

@@ -307,7 +307,7 @@ func emissionCurrent(e *Emission, viewValue *capture) bool {
 	view := *viewValue
 	input := view.child
 	binding := view.sourceBinding()
-	equal, _ := reconcileInputEqual(e.input, e.inputDoc, input.Doc)
+	equal := reconcileInputEqual(e.input, e.inputDoc, input.Doc).equal
 	if !equal || !e.inputHead.binding.equal(&binding) {
 		return false
 	}

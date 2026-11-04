@@ -67,9 +67,7 @@ func TestLoadChart_InvalidatesOnFileMtimeChange(t *testing.T) {
 	cliSources := localChartResolver(t, "chart-repo", "flux-system", dir)
 	hr := newHR()
 	first, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	stamp := time.Unix(100, 0)
 	for name := range files {
 		{
@@ -78,17 +76,13 @@ func TestLoadChart_InvalidatesOnFileMtimeChange(t *testing.T) {
 		}
 	}
 	touched, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
-	{
-		assert.NoError(t, err)
-	}
-	{
-		assert.FatalIf(
-			t,
-			touched.chart != first.chart || touched.fingerprint != first.fingerprint,
-			"%s",
-			"unchanged-byte touch reloaded chart",
-		)
-	}
+	assert.NoError(t, err)
+	assert.FatalIf(
+		t,
+		touched.chart != first.chart || touched.fingerprint != first.fingerprint,
+		"%s",
+		"unchanged-byte touch reloaded chart",
+	)
 	for _, tc := range []struct{ name, path, from, to string }{
 		{"metadata", "mychart/Chart.yaml", "first", "other"},
 		{"defaults", "mychart/values.yaml", "v1", "v2"},
@@ -297,9 +291,7 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 		st.SetArtifact(hr.ChartSource(), art)
 		first, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 		assert.NoError(t, err)
-		{
-			assert.FatalIf(t, first.chart == previous, "%s", "different acquisition pins shared parsed entries")
-		}
+		assert.FatalIf(t, first.chart == previous, "%s", "different acquisition pins shared parsed entries")
 		previous = first.chart
 		reads := backing.opens.Load()
 		other := hr.Clone()
@@ -440,14 +432,12 @@ func testLoadChartCoalescesConcurrentFirstLoadCase(
 	close(start)
 	wg.Wait()
 	for _, ch := range charts {
-		{
-			assert.FatalIf(
-				t,
-				ch == nil || ch != charts[0],
-				"%s",
-				"concurrent identical inputs did not share the canonical chart",
-			)
-		}
+		assert.FatalIf(
+			t,
+			ch == nil || ch != charts[0],
+			"%s",
+			"concurrent identical inputs did not share the canonical chart",
+		)
 	}
 	assert.Equal(t, len(cli.chartCache), 1)
 }
@@ -473,9 +463,7 @@ func testLoadChartInvalidatesOnFileMtimeChangeCase(
 ) {
 	t.Helper()
 	before, err := loadDecodedChart(t.Context(), (*testCaseInput.cli), (*testCaseInput.hr), (*testCaseInput.cliSources))
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	body := strings.ReplaceAll(
 		(*testCaseInput.files)[testCaseInput.tc.path],
 		testCaseInput.tc.from,
@@ -491,23 +479,19 @@ func testLoadChartInvalidatesOnFileMtimeChangeCase(
 		assert.NoError(t, chtimesErr2)
 	}
 	after, err := loadDecodedChart(t.Context(), (*testCaseInput.cli), (*testCaseInput.hr), (*testCaseInput.cliSources))
-	{
-		assert.NoError(t, err)
-	}
-	{
-		assert.FatalIf(t, after.chart == before.chart ||
-			computeTemplateKey(
-				&after,
-				nil,
-				Options{},
-				(*testCaseInput.hr),
-			) == computeTemplateKey(
-				&before,
-				nil,
-				Options{},
-				(*testCaseInput.hr),
-			), "%s", "same-size, same-mtime edit reused chart content")
-	}
+	assert.NoError(t, err)
+	assert.FatalIf(t, after.chart == before.chart ||
+		computeTemplateKey(
+			&after,
+			nil,
+			Options{},
+			(*testCaseInput.hr),
+		) == computeTemplateKey(
+			&before,
+			nil,
+			Options{},
+			(*testCaseInput.hr),
+		), "%s", "same-size, same-mtime edit reused chart content")
 }
 
 type testLoadChartAcquiredGitWarmReuseCaseInputs struct {
@@ -553,9 +537,7 @@ func testLoadChartAcquiredGitWarmReuseCase(t *testing.T, testCaseInput *testLoad
 	assert.NoError(t, newErr)
 	assert.FatalIf(t, !hasRenderField(first, "marker", "acquired"), "%v", first)
 	reads := backing.opens.Load()
-	{
-		assert.FatalIf(t, reads == 0, "%s", "first render did not read acquired backing")
-	}
+	assert.FatalIf(t, reads == 0, "%s", "first render did not read acquired backing")
 	second, _, newErr := testutil.RenderMaps(
 		renderer.Template(
 			t.Context(),
@@ -606,23 +588,19 @@ func testLoadChartAcquiredGitWarmReuseCase(t *testing.T, testCaseInput *testLoad
 	assert.NoError(t, newErr)
 	assert.Diff(t, hit, []map[string]any{witness})
 	reads = backing.opens.Load()
-	{
+	assert.FatalIf(
+		t,
+		reads <= before || len(fresh.chartValuesCache) != 1,
+		"%s",
+		"fresh persisted hit did not observe its values",
+	)
+	for _, entry := range fresh.chartValuesCache {
 		assert.FatalIf(
 			t,
-			reads <= before || len(fresh.chartValuesCache) != 1,
+			entry.merged != nil || entry.inputs == nil,
 			"%s",
-			"fresh persisted hit did not observe its values",
+			"persisted hit did not leave an observation-only entry",
 		)
-	}
-	for _, entry := range fresh.chartValuesCache {
-		{
-			assert.FatalIf(
-				t,
-				entry.merged != nil || entry.inputs == nil,
-				"%s",
-				"persisted hit did not leave an observation-only entry",
-			)
-		}
 	}
 	hit, _, newErr = testutil.RenderMaps(
 		fresh.Template(
@@ -707,20 +685,16 @@ func testLoadChartAcquiredGitWarmReuseCase2(t *testing.T, testCaseInput *struct 
 
 		assert.NoError(t, os.RemoveAll(filepath.Join(cacheRoot, "oci", "blobs")))
 		_, err = fs.ReadFile(acquired, backingName)
-		{
-			assert.FatalIf(t, err == nil, "%s", "backing poison did not prevent chart reads")
-		}
+		assert.FatalIf(t, err == nil, "%s", "backing poison did not prevent chart reads")
 		if testCaseInput.shape == "file" {
 			_, loadDecodedChartErr := loadDecodedChart(t.Context(), NewClient(owner), hr, cliSources)
-			{
-				assert.FatalIf(
-					t,
-					!errors.Is(loadDecodedChartErr, fs.ErrNotExist) ||
-						!errors.Is(loadDecodedChartErr, manifest.ErrInput),
-					"lost acquired payload failure: %v",
-					loadDecodedChartErr,
-				)
-			}
+			assert.FatalIf(
+				t,
+				!errors.Is(loadDecodedChartErr, fs.ErrNotExist) ||
+					!errors.Is(loadDecodedChartErr, manifest.ErrInput),
+				"lost acquired payload failure: %v",
+				loadDecodedChartErr,
+			)
 		}
 		warm, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 		assert.NoError(t, err)

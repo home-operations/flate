@@ -121,55 +121,46 @@ func TestFingerprintDedup_CompleteOnly(t *testing.T) {
 					s.RecordEmitted(parent.Named(), &next, nil)
 				} else {
 					s.RecordEmitted(parent.Named(), &next, nil)
-					{
-						assert.FatalIf(t, !complete &&
-							s.GetArtifact(
-								parent.Named(),
-								store.ArtifactContent,
-							).(*store.Emission).Fingerprint != "", "%v", "incomplete successor retained a successful fingerprint")
-					}
+					assert.FatalIf(t, !complete &&
+						s.GetArtifact(
+							parent.Named(),
+							store.ArtifactContent,
+						).(*store.Emission).Fingerprint != "", "%v", "incomplete successor retained a successful fingerprint")
 					changed := parent.Clone()
 					changed.Labels = map[string]string{"changed": "yes"}
 					s.AddObject(changed)
-					{
-						assert.FatalIf(
-							t,
-							s.GetArtifact(parent.Named(), store.ArtifactContent) != nil,
-							"%v",
-							"fixture did not invalidate the current emission",
-						)
-					}
-				}
-				{
 					assert.FatalIf(
 						t,
-						filter.ShouldReconcile(child.Named()),
+						s.GetArtifact(parent.Named(), store.ArtifactContent) != nil,
 						"%v",
-						"fixture child already selected before replay",
+						"fixture did not invalidate the current emission",
 					)
 				}
-				fp, handled, err := controllertest.NewExecution(c, parent.Named()).
+				assert.FatalIf(
+					t,
+					filter.ShouldReconcile(child.Named()),
+					"%v",
+					"fixture child already selected before replay",
+				)
+				fingerprintDedupResult1, fingerprintDedupResult1Err := controllertest.NewExecution(c, parent.Named()).
 					FingerprintDedup(t.Context(), parent.Named(), "same", &store.Emission{})
-				{
-					assert.FatalIf(
-						t,
-						fp != fingerprint || handled != complete || err != nil,
-						"replay key=%q handled=%t err=%v, want %q,%t,nil",
-						fp,
-						handled,
-						err,
-						fingerprint,
-						complete,
-					)
-				}
-				{
-					assert.FatalIf(
-						t,
-						filter.ShouldReconcile(child.Named()) != complete,
-						"%v",
-						"complete replay did not extend changed-only selection through Emit",
-					)
-				}
+				fp, handled, err := fingerprintDedupResult1.Fingerprint, fingerprintDedupResult1.Reused, fingerprintDedupResult1Err
+				assert.FatalIf(
+					t,
+					fp != fingerprint || handled != complete || err != nil,
+					"replay key=%q handled=%t err=%v, want %q,%t,nil",
+					fp,
+					handled,
+					err,
+					fingerprint,
+					complete,
+				)
+				assert.FatalIf(
+					t,
+					filter.ShouldReconcile(child.Named()) != complete,
+					"%v",
+					"complete replay did not extend changed-only selection through Emit",
+				)
 			})
 		}
 	}

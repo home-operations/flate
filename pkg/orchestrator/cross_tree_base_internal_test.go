@@ -136,21 +136,15 @@ metadata:
 		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		Config{WipeSecrets: true, Concurrency: 2},
 	)
-	{
-		assert.FatalIf(t, len(renderedSingleton1) != 1, "missing render: %v", err)
-	}
+	assert.FatalIf(t, len(renderedSingleton1) != 1, "missing render: %v", err)
 	o := renderedSingleton1[0].Orchestrator
 	res := renderedSingleton1[0].Result
-	{
-		assert.FatalIf(t, err != nil, "Render: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "Render: %v", err)
 
 	for _, name := range []string{"app-a", "app-b"} {
 		id := testutil.KustomizationID("flux-system", name)
 		ks, ok := o.store.GetObject(id).(*manifest.Kustomization)
-		{
-			assert.FatalIf(t, !ok, "%s missing from store", name)
-		}
+		assert.FatalIf(t, !ok, "%s missing from store", name)
 		if want := "./apps/test/" + name; ks.Path != want {
 			t.Errorf("%s spec.path = %q, want %q (${CLUSTER_ENV} should resolve to test)", name, ks.Path, want)
 		}

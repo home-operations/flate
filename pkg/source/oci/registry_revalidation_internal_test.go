@@ -25,11 +25,12 @@ func testFetcherRevalidationCase(t *testing.T, operation *string,
 
 	v1 := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v1\n"})
 	v2 := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v2\n"})
-	srv, setArtifact := newMutableFakeRegistry(t, v1, v2)
+	registry := newMutableFakeRegistry(t, v1, v2)
+
 	var heads, manifests, layers atomic.Int32
 	var failResolve atomic.Bool
-	handler := srv.Config.Handler
-	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := registry.server.Config.Handler
+	registry.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		testFetcherRevalidationCaseCallback(
 			w,
 			r,
@@ -43,13 +44,13 @@ func testFetcherRevalidationCase(t *testing.T, operation *string,
 		)
 	},
 	)
-	srv.StartTLS()
+	registry.server.StartTLS()
 	root := t.TempDir()
 	f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, root, sourcecache.New)}
 	repo := &manifest.OCIRepository{
 		Name:          "revalidate",
 		Namespace:     "test",
-		URL:           "oci://" + mustURL(t, srv.URL).Host + "/app",
+		URL:           "oci://" + mustURL(t, registry.server.URL).Host + "/app",
 		Insecure:      true,
 		Reference:     &sourcev1.OCIRepositoryRef{Tag: "latest"},
 		LayerSelector: &sourcev1.OCILayerSelector{Operation: (*operation)},
@@ -80,7 +81,7 @@ func testFetcherRevalidationCase(t *testing.T, operation *string,
 			f.Cache = cachetest.New(t, root, sourcecache.New)
 		}
 		if phase == "changed" {
-			setArtifact(1)
+			registry.setArtifact(1)
 		}
 		failResolve.Store(phase == "resolve failure")
 		beforeHeads, beforeManifests, beforeLayers := heads.Load(), manifests.Load(), layers.Load()

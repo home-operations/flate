@@ -63,29 +63,25 @@ func TestSelect_ExplicitChartVersion(t *testing.T) {
 			)
 			assert.NoError(t, err)
 			assert.NoError(t, diagnostic)
-			{
-				assert.FatalIf(
-					t,
-					len(selected) != 1 || len(selected[0].Objects) != 1 || selected[0].Objects[0] != obj,
-					"selected rows: %+v, want %s",
-					selected,
-					id,
-				)
-			}
+			assert.FatalIf(
+				t,
+				len(selected) != 1 || len(selected[0].Objects) != 1 || selected[0].Objects[0] != obj,
+				"selected rows: %+v, want %s",
+				selected,
+				id,
+			)
 			if i == 1 {
 				{
-					{
-						diff := cmp.Diff(
-							objects,
-							selected[0].Objects,
-							cmpopts.IgnoreUnexported(
-								manifest.HelmRelease{},
-								manifest.OCIRepository{},
-								manifest.HelmChartSource{},
-							),
-						)
-						assert.FatalIf(t, diff != "", "%v", diff)
-					}
+					diff := cmp.Diff(
+						objects,
+						selected[0].Objects,
+						cmpopts.IgnoreUnexported(
+							manifest.HelmRelease{},
+							manifest.OCIRepository{},
+							manifest.HelmChartSource{},
+						),
+					)
+					assert.FatalIf(t, diff != "", "%v", diff)
 				}
 				assert.Diff(t, selected[0].ChartVersions, versions)
 			}
@@ -231,14 +227,12 @@ func TestSelect_SourceWarningAttribution(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NoError(t, diagnostic)
 		for _, warning := range selected[0].Warnings {
-			{
-				assert.FatalIf(
-					t,
-					warning.Category == status.Category || warning.Category == raw.Category,
-					"current evidence escaped to orig: %+v",
-					warning,
-				)
-			}
+			assert.FatalIf(
+				t,
+				warning.Category == status.Category || warning.Category == raw.Category,
+				"current evidence escaped to orig: %+v",
+				warning,
+			)
 		}
 		statusCount, modules := 0, 0
 		for _, warning := range selected[1].Warnings {
@@ -276,18 +270,14 @@ func TestRenderTrees_InputWarningOnly(t *testing.T) {
 		},
 		Config{Concurrency: 2},
 	)
-	{
-		assert.FatalIf(t, len(runs) != 1, "missing diagnostic run: %v", err)
-	}
+	assert.FatalIf(t, len(runs) != 1, "missing diagnostic run: %v", err)
 	o, result := runs[0].Orchestrator, runs[0].Result
-	{
-		assert.FatalIf(t, o != nil || result == nil || !errors.Is(err, manifest.ErrInput) ||
-			len(
-				result.Manifests,
-			)+len(
-				result.Failed,
-			) != 0, "failed bootstrap exposed content: %v, %+v, %v", o, result, err)
-	}
+	assert.FatalIf(t, o != nil || result == nil || !errors.Is(err, manifest.ErrInput) ||
+		len(
+			result.Manifests,
+		)+len(
+			result.Failed,
+		) != 0, "failed bootstrap exposed content: %v, %+v, %v", o, result, err)
 	assert.Diff(t, result.Warnings, []manifest.Warning{warning})
 }
 
@@ -394,10 +384,8 @@ func testSelectExplicitChartVersionCase2(t *testing.T, testCaseInput testSelectE
 	run := selectedRun(&Result{})
 	run.store.AddObject((*testCaseInput.obj))
 	{
-		{
-			versions := (*testCaseInput.selectVersions)(t, run, (*testCaseInput.obj))
-			assert.FatalIf(t, versions != nil, "non-release chart versions: %+v", versions)
-		}
+		versions := (*testCaseInput.selectVersions)(t, run, (*testCaseInput.obj))
+		assert.FatalIf(t, versions != nil, "non-release chart versions: %+v", versions)
 	}
 }
 
@@ -443,39 +431,35 @@ func testSelectDiagnosticOnlyRunsCase(t *testing.T, testCaseInput testSelectDiag
 		[]manifest.NamedResource{testutil.KustomizationID("ns", "named")},
 		nil,
 	)
-	{
-		assert.FatalIf(
-			t,
-			!errors.Is(err, (*testCaseInput.failure)) || !errors.Is(err, (*testCaseInput.teardown)) || !errors.Is(diagnostic, (*testCaseInput.failure)) ||
-				!errors.Is(diagnostic, (*testCaseInput.teardown)) ||
-				len(selected) != len(runs),
-			"lost failed inputs: %+v, %v, %v",
-			selected,
-			err,
-			diagnostic,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!errors.Is(err, (*testCaseInput.failure)) || !errors.Is(err, (*testCaseInput.teardown)) || !errors.Is(diagnostic, (*testCaseInput.failure)) ||
+			!errors.Is(diagnostic, (*testCaseInput.teardown)) ||
+			len(selected) != len(runs),
+		"lost failed inputs: %+v, %v, %v",
+		selected,
+		err,
+		diagnostic,
+	)
 	for i, side := range selected {
 		want := []manifest.Warning{(*testCaseInput.warning)}
 		if runs[i].Result == complete.Result {
 			want = complete.Result.Warnings
 		}
 		assert.Diff(t, side.Warnings, want)
-		{
-			assert.FatalIf(t, len(
-				side.Objects,
-			)+len(
-				side.Counts,
-			)+len(
-				side.Statuses,
-			)+len(
-				side.Manifests,
-			)+len(
-				side.Failed,
-			)+len(
-				side.Unavailable,
-			) != 0, "partial inventory escaped: %+v", side)
-		}
+		assert.FatalIf(t, len(
+			side.Objects,
+		)+len(
+			side.Counts,
+		)+len(
+			side.Statuses,
+		)+len(
+			side.Manifests,
+		)+len(
+			side.Failed,
+		)+len(
+			side.Unavailable,
+		) != 0, "partial inventory escaped: %+v", side)
 	}
 }
 

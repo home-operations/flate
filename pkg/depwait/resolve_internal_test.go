@@ -61,7 +61,8 @@ func TestClassify_RepeatedInputFrozenPolicy(t *testing.T) {
 	)
 	provider := values.NewStoreProvider(st, false)
 	captured := provider.Data(data.Named())
-	value, _, err := captured.Value("VALUE")
+	valueResult, err := captured.Value("VALUE")
+	value := valueResult.Value
 	assert.NoError(t, err)
 	assert.Equal(t, value, "first")
 	data.Data["VALUE"] = "caller mutation"
@@ -129,7 +130,8 @@ func TestResolve_CoveredPrediction(t *testing.T) {
 	defer after.Retire()
 	data := values.NewStoreProvider(&after, true).Data(id)
 	assert.FatalIf(t, data == nil, "%v", "settled declaration lost declared keys")
-	value, found, err := data.Value("VALUE")
+	valueResult2, err := data.Value("VALUE")
+	value, found := valueResult2.Value, valueResult2.Found
 	assert.NoError(t, err)
 	assert.Equal(t, found, true)
 	assert.Equal(t, value, "..PLACEHOLDER_VALUE..")
@@ -237,7 +239,8 @@ func testResolveSelectedDataCase(t *testing.T, testCaseInput *struct {
 		assert.Equal(t, result.Kind, schedule.Terminal)
 		selected := provider.Data(data.Named())
 		assert.FatalIf(t, selected == nil, "%v", "usable accepted input was discarded")
-		got, ok, err := selected.Value("VALUE")
+		valueResult3, err := selected.Value("VALUE")
+		got, ok := valueResult3.Value, valueResult3.Found
 		assert.NoError(t, err)
 		assert.Equal(t, ok, true)
 		assert.Equal(t, got, testCaseInput.want)

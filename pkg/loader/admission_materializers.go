@@ -45,7 +45,7 @@ func (c *admissionClosure) materializerCandidates(ordering bool) [2][]Occurrence
 	}
 	c.collectIndexedMaterializers(&candidates, project)
 	c.collectObjectMaterializers(&candidates, objects, ordering, project)
-	c.publishProducerFacts(&previous, &next)
+	c.publishProducerFacts(&previous, next)
 	return candidates
 }
 
@@ -81,27 +81,25 @@ func (c *admissionClosure) materializers(
 	}
 	pending := false
 	var opaque []Occurrence
-	{
-		//nolint:gocritic // The iterator supplies immutable value snapshots.
-		for id, occurrence := range candidates {
-			facts := c.candidateMaterializerFacts(&demand, consumer, id, &occurrence)
-			if facts == nil {
-				continue
-			}
-			match := c.materializerTargetsMatch(id, facts, &demand, matches)
-			if !match {
-				if c.opaqueMaterializerPending(&demand, id, facts, target) {
-					opaque = append(opaque, occurrence)
-				}
-				continue
-			}
-			complete, include := c.materializerOutputMatches(id, matches)
-			if !include {
-				continue
-			}
-			pending = pending || !complete
-			c.add(id, admissionRole{needed: true, dirty: c.states[id].changed})
+	//nolint:gocritic // The iterator supplies immutable value snapshots.
+	for id, occurrence := range candidates {
+		facts := c.candidateMaterializerFacts(&demand, consumer, id, &occurrence)
+		if facts == nil {
+			continue
 		}
+		match := c.materializerTargetsMatch(id, facts, &demand, matches)
+		if !match {
+			if c.opaqueMaterializerPending(&demand, id, facts, target) {
+				opaque = append(opaque, occurrence)
+			}
+			continue
+		}
+		output2 := c.materializerOutputMatches(id, matches)
+		if !output2.include {
+			continue
+		}
+		pending = pending || !output2.complete
+		c.add(id, admissionRole{needed: true, dirty: c.states[id].changed})
 	}
 	if !pending {
 		pending = c.admitOpaqueMaterializers(consumer, target, opaque)
@@ -183,13 +181,13 @@ func (c *admissionClosure) producerFactCapacity(
 
 func (c *admissionClosure) publishProducerFacts(
 	previous **map[manifest.BaseManifest]producerFact,
-	next *map[manifest.BaseManifest]producerFact,
+	next map[manifest.BaseManifest]producerFact,
 ) {
-	if *next != nil {
-		for !c.loader.producerFacts.CompareAndSwap(*previous, next) {
+	if next != nil {
+		for !c.loader.producerFacts.CompareAndSwap(*previous, &next) {
 			*previous = c.loader.producerFacts.Load()
 			if *previous != nil {
-				maps.Copy(*next, **previous)
+				maps.Copy(next, **previous)
 			}
 		}
 	}
@@ -199,16 +197,14 @@ func (c *admissionClosure) collectIndexedMaterializers(
 	candidates *[2][]Occurrence,
 	project func(manifest.BaseManifest) Occurrence,
 ) {
-	{
-		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-		for _, occurrence := range c.loader.locations {
-			facts := occurrence.facts
-			if facts == nil || facts.policy == nil && len(facts.targets) == 0 && !facts.needsCandidates ||
-				facts.hasPath && facts.policy != nil && len(facts.roots) == 0 {
-				continue
-			}
-			candidates[0] = append(candidates[0], occurrence)
+	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+	for _, occurrence := range c.loader.locations {
+		facts := occurrence.facts
+		if facts == nil || facts.policy == nil && len(facts.targets) == 0 && !facts.needsCandidates ||
+			facts.hasPath && facts.policy != nil && len(facts.roots) == 0 {
+			continue
 		}
+		candidates[0] = append(candidates[0], occurrence)
 	}
 	for id, child := range c.loader.candidates {
 		if _, located := c.loader.locations[id]; located || c.loader.Index.Records[id].Builder == "" {
@@ -598,12 +594,14 @@ func (c *admissionClosure) candidateMaterializerFacts(
 	return facts
 }
 
+type materializerOutput struct{ complete, include bool }
+
 func (c *admissionClosure) materializerOutputMatches(
 	id manifest.NamedResource,
 	matches materializerMatch,
-) (bool, bool) {
+) materializerOutput {
 	if c.replace[id] && !c.acceptedMaterializerMatches(id, matches) {
-		return false, false
+		return materializerOutput{}
 	}
 	complete := false
 	if output, ok := c.objects.GetArtifact(id, store.ArtifactContent).(*store.Emission); ok && output.Complete {
@@ -614,10 +612,10 @@ func (c *admissionClosure) materializerOutputMatches(
 				output.Children,
 				func(child store.Child) bool { return matches(child.Obj.Named(), child.Obj, nil) },
 			) {
-			return complete, false
+			return materializerOutput{complete: complete, include: false}
 		}
 	}
-	return complete, true
+	return materializerOutput{complete: complete, include: true}
 }
 
 func (c *admissionClosure) materializerOwners(

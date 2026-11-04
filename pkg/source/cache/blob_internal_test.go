@@ -77,7 +77,7 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 			t.Parallel()
 			testBlobLookupAndReplacementCase2(
 				t,
-				&identities, &backing,
+				identities, &backing,
 			)
 		},
 		)
@@ -405,10 +405,11 @@ func TestRenderMetadata_CurrentGenerationWithoutPayloadOpen(t *testing.T) {
 			return nil, errors.New("unexpected payload open")
 		}
 		e.fs = input
-		descriptor, _, enabled, err := c.RenderMetadata(t.Context(), "render-metadata", id)
+		metadata, err := c.RenderMetadata(t.Context(), "render-metadata", id)
+
 		assert.NoError(t, err)
-		assert.Equal(t, enabled, true)
-		assert.Equal(t, descriptor.Annotations["generation"], "first")
+		assert.Equal(t, metadata.Enabled, true)
+		assert.Equal(t, metadata.Descriptor.Annotations["generation"], "first")
 		started, publish := make(chan struct{}), make(chan struct{})
 		finished := make(chan error, 1)
 		go func() {
@@ -426,24 +427,27 @@ func TestRenderMetadata_CurrentGenerationWithoutPayloadOpen(t *testing.T) {
 			finished <- blobErr2
 		}()
 		<-started
-		descriptor, _, enabled, err = c.RenderMetadata(t.Context(), "render-metadata", id)
+		metadata2, metadataErr := c.RenderMetadata(t.Context(), "render-metadata", id)
+		metadata.Descriptor, metadata.Enabled, err = metadata2.Descriptor, metadata2.Enabled, metadataErr
 		close(publish)
 		assert.NoError(t, err)
-		assert.Equal(t, enabled, true)
-		assert.Equal(t, descriptor.Annotations["generation"], "first")
+		assert.Equal(t, metadata.Enabled, true)
+		assert.Equal(t, metadata.Descriptor.Annotations["generation"], "first")
 		assert.NoError(t, <-finished)
 		current, _ := c.entries.Load(id)
 		head := current.(*entry)
 		assert.NoError(t, c.root.Chtimes(blobPath(head.stored.Digest), stamp, stamp))
-		descriptor, _, enabled, err = c.RenderMetadata(t.Context(), "render-metadata", id)
+		metadata3, metadataErr2 := c.RenderMetadata(t.Context(), "render-metadata", id)
+		metadata.Descriptor, metadata.Enabled, err = metadata3.Descriptor, metadata3.Enabled, metadataErr2
 		assert.NoError(t, err)
-		assert.Equal(t, enabled, true)
-		assert.Equal(t, descriptor.Annotations["generation"], "second")
+		assert.Equal(t, metadata.Enabled, true)
+		assert.Equal(t, metadata.Descriptor.Annotations["generation"], "second")
 		assert.Equal(t, e.descriptor.Annotations["generation"], "first")
 		before, err := c.root.Stat(blobPath(head.stored.Digest))
 		assert.NoError(t, err)
 		time.Sleep(2 * accessInterval)
-		_, _, _, err = c.RenderMetadata(t.Context(), "render-metadata", id)
+		_, metadataErr3 := c.RenderMetadata(t.Context(), "render-metadata", id)
+		err = metadataErr3
 		assert.NoError(t, err)
 		after, err := c.root.Stat(blobPath(head.stored.Digest))
 		assert.NoError(t, err)

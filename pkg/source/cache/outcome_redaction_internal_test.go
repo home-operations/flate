@@ -42,10 +42,12 @@ func TestOutcome_LastGoodRedaction(t *testing.T) {
 		desc, publishOutcomeErr := c.publishOutcome(t.Context(), id, o, connReset())
 		assert.NoError(t, publishOutcomeErr)
 
-		config, data, _ := o.encode()
+		blobs, _ := o.encode()
+
 		assert.FatalIf(
 			t,
-			bytes.Contains(config, []byte("fixture-secret")) || bytes.Contains(data, []byte("fixture-secret")),
+			bytes.Contains(blobs.config, []byte("fixture-secret")) ||
+				bytes.Contains(blobs.manifest, []byte("fixture-secret")),
 			"%s",
 			"last-good annotations leaked",
 		)

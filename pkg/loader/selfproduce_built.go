@@ -16,12 +16,10 @@ func (l *Loader) prepareBuiltProductions(
 	preparedOwners map[manifest.NamedResource]manifest.NamedResource,
 ) {
 	var builtDirs []string
-	{
-		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-		for dir, doc := range l.documents.cache {
-			if doc.built != nil {
-				builtDirs = append(builtDirs, dir)
-			}
+	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+	for dir, doc := range l.documents.cache {
+		if doc.built != nil {
+			builtDirs = append(builtDirs, dir)
 		}
 	}
 	slices.Sort(builtDirs)
@@ -44,7 +42,7 @@ func (l *Loader) prepareBuiltProductions(
 		}
 		slices.SortFunc(candidates, manifest.NamedResource.Compare)
 		candidates = slices.Compact(candidates)
-		_, builder := l.documents.read(dir)
+		builder := l.documents.read(dir).file
 		root.coordinate = l.fileCoordinate(cmp.Or(builder, dir))
 		sourceRoot := new(l.documents).mountedRoot(dir)
 		for name, exact := range doc.builtInput.Reads {

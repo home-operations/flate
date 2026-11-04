@@ -17,9 +17,7 @@ spec:
   type: Static
 `)
 	rsip, err := parseResourceSetInputProvider(doc)
-	{
-		assert.FatalIf(t, err != nil, "parseResourceSetInputProvider: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "parseResourceSetInputProvider: %v", err)
 	if rsip.Namespace != "" {
 		t.Errorf("namespace=%q want empty before loader inheritance/defaulting", rsip.Namespace)
 	}
@@ -41,12 +39,8 @@ spec:
     namespace: apps
 `)
 	ea, err := parseExternalArtifact(doc)
-	{
-		assert.FatalIf(t, err != nil, "parseExternalArtifact: %v", err)
-	}
-	{
-		assert.ErrorIf(t, ea.Name != "pulled-tarball" || ea.Namespace != "apps", "identity: %+v", ea)
-	}
+	assert.FatalIf(t, err != nil, "parseExternalArtifact: %v", err)
+	assert.ErrorIf(t, ea.Name != "pulled-tarball" || ea.Namespace != "apps", "identity: %+v", ea)
 	if ea.SourceRef == nil || ea.SourceRef.Kind != "ImageUpdateAutomation" {
 		t.Errorf("sourceRef: %+v", ea.SourceRef)
 	}

@@ -43,7 +43,8 @@ func TestRun_GetHRChartVersions(t *testing.T) {
 						"-o",
 						"json",
 					)
-					stdout, stderr, code := runCLI(t, args...)
+					cli := runCLI(t, args...)
+					stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 					var rows []struct {
 						Version   string `json:"version"`
 						Chart     string `json:"chart"`

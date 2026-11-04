@@ -18,7 +18,8 @@ var errRefUnavailable = errors.New("local git reference unavailable")
 
 func resolveRefHash(repo *git.Repository, ref *sourcev1.GitRepositoryRef, originFirst bool) (plumbing.Hash, error) {
 	selected := (*manifest.GitRepositoryRef)(ref)
-	kind, value := selected.Effective()
+	reference := selected.Effective()
+	kind, value := reference.Kind, reference.Value
 	switch kind {
 	case commitReference:
 		if err := selected.Validate(); err != nil {

@@ -107,9 +107,7 @@ func TestLoader_CompactSourceHydrationSurvivesAdmission(t *testing.T) {
 		assert.NoError(t, err)
 		first = child.Obj
 	}
-	{
-		assert.FatalIf(t, first == nil, "%s", "source declaration was not hydrated")
-	}
+	assert.FatalIf(t, first == nil, "%s", "source declaration was not hydrated")
 	l.Admit(root)
 	for child, err := range l.Sources(t.Context()) {
 		assert.NoError(t, err)
@@ -327,6 +325,6 @@ func TestLoader_FreezeIncludesLateProducer(t *testing.T) {
 	owner.SourceRef.Kind, owner.SourceRef.Name, owner.SourceRef.Namespace = manifest.BootstrapSourceID.Kind, manifest.BootstrapSourceID.Name, manifest.BootstrapSourceID.Namespace
 	st.AddObject(owner)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
-	owners, _ := l.Index.OwnersOfFile("cm.yaml")
+	owners := l.Index.OwnersOfFile("cm.yaml").Owners
 	assert.Diff(t, owners, []manifest.NamedResource{owner.Named()})
 }

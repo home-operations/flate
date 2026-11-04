@@ -58,9 +58,7 @@ func withFakeGitBase(t *testing.T, c *TreeCache, worktree string, calls *atomic.
 		commit,
 		gittree.ViewOptions{Mode: gittree.RemoteBase},
 	)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	c.SetGitBaseFetcher(
 		func(_ context.Context, _ GitBaseRequest, _ sourcecache.RetryConfig) (*store.SourceArtifact, error) {
 			if calls != nil {
@@ -95,9 +93,7 @@ func TestPreflightGitBase_RewritesToDirectory(t *testing.T) {
 	}
 
 	body, err := fsys.ReadFile("kustomization.yaml")
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	wantDir := remoteResourcePrefix + manifest.Fingerprint(
 		remoteInput{
 			Operation:  remoteGit,
@@ -108,27 +104,19 @@ func TestPreflightGitBase_RewritesToDirectory(t *testing.T) {
 		},
 	)
 	wantEntry := "./" + wantDir + "/overlays/prod"
-	{
-		assert.ErrorIf(
-			t,
-			!strings.Contains(string(body), wantEntry),
-			"entry not rewritten to base subdir %q:\n%s",
-			wantEntry,
-			body,
-		)
-	}
-	{
-		assert.ErrorIf(t, strings.Contains(string(body), gitURL), "git URL still present after preflight:\n%s", body)
-	}
+	assert.ErrorIf(
+		t,
+		!strings.Contains(string(body), wantEntry),
+		"entry not rewritten to base subdir %q:\n%s",
+		wantEntry,
+		body,
+	)
+	assert.ErrorIf(t, strings.Contains(string(body), gitURL), "git URL still present after preflight:\n%s", body)
 	// The whole repo is materialized as a DIRECTORY, not a single .yaml file
 	// (that was the #616 bug).
-	{
-		assert.FatalIf(t, !fsys.IsDir(wantDir), "git base must materialize as a directory, not a single file")
-	}
+	assert.FatalIf(t, !fsys.IsDir(wantDir), "git base must materialize as a directory, not a single file")
 	for _, rel := range []string{"kustomization.yaml", "cm.yaml", "overlays/prod/kustomization.yaml"} {
-		{
-			assert.ErrorIf(t, !fsys.Exists(filepath.Join(wantDir, rel)), "whole repo not copied, missing %s", rel)
-		}
+		assert.ErrorIf(t, !fsys.Exists(filepath.Join(wantDir, rel)), "whole repo not copied, missing %s", rel)
 	}
 }
 
@@ -172,9 +160,7 @@ func TestPreflightGitBase_NonResourceBody(t *testing.T) {
 			Submodules: true,
 		},
 	)
-	{
-		assert.FatalIf(t, !fsys.IsDir(wantDir), "git URL not materialized as a base directory (#616)")
-	}
+	assert.FatalIf(t, !fsys.IsDir(wantDir), "git URL not materialized as a base directory (#616)")
 }
 
 // TestPreflightGitBase_WholeRepoPreservesParentRefs renders end-to-end and
@@ -216,17 +202,13 @@ func TestPreflightGitBase_WholeRepoPreservesParentRefs(t *testing.T) {
 			sourcecache.RetryConfig{},
 		),
 	)
-	{
-		assert.FatalIf(t, err != nil, "Render: %v", err)
-	}
-	{
-		assert.FatalIf(
-			t,
-			!hasRenderField(out, "name", "from-parent-ref"),
-			"in-repo ../ reference inside the base did not resolve:\n%s",
-			out,
-		)
-	}
+	assert.FatalIf(t, err != nil, "Render: %v", err)
+	assert.FatalIf(
+		t,
+		!hasRenderField(out, "name", "from-parent-ref"),
+		"in-repo ../ reference inside the base did not resolve:\n%s",
+		out,
+	)
 }
 
 // TestPreflightGitBase_SourceTreeImmutable confirms a git base referenced from
@@ -269,12 +251,8 @@ func TestPreflightGitBase_SourceTreeImmutable(t *testing.T) {
 	}
 
 	got, err := os.ReadFile(filepath.Join(src, "kustomization.yaml"))
-	{
-		assert.NoError(t, err)
-	}
-	{
-		assert.ErrorIf(t, string(got) != original, "source kustomization mutated:\nwant %q\ngot  %q", original, got)
-	}
+	assert.NoError(t, err)
+	assert.ErrorIf(t, string(got) != original, "source kustomization mutated:\nwant %q\ngot  %q", original, got)
 	{
 		matches, _ := filepath.Glob(filepath.Join(src, remoteResourcePrefix+"*"))
 		assert.ErrorIf(t, len(matches) != 0, "git base materialized into source tree: %v", matches)
@@ -287,17 +265,13 @@ func TestPreflightGitBase_NilFetcherErrors(t *testing.T) {
 	t.Parallel()
 	fsys := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - https://github.com/o/r?ref=v1\n"})
 	err := preflightRemoteResources(context.Background(), newTestTreeCache(t, ""), fsys, ".")
-	{
-		assert.FatalIf(t, err == nil, "%s", "expected error when no git fetcher is wired")
-	}
-	{
-		assert.ErrorIf(
-			t,
-			!strings.Contains(err.Error(), "no git fetcher is wired"),
-			"error should explain the missing fetcher; got %q",
-			err,
-		)
-	}
+	assert.FatalIf(t, err == nil, "%s", "expected error when no git fetcher is wired")
+	assert.ErrorIf(
+		t,
+		!strings.Contains(err.Error(), "no git fetcher is wired"),
+		"error should explain the missing fetcher; got %q",
+		err,
+	)
 }
 
 func TestPreflightGitBase_ReusesMountWithinRender(t *testing.T) {
@@ -345,21 +319,17 @@ func TestPreflightGitBase_ReusesMountWithinRender(t *testing.T) {
 	if hits.Load() != 2 {
 		t.Fatalf("selected package URL fetches = %d, want 2", hits.Load())
 	}
-	{
-		assert.FatalIf(t, !fsys.Exists(filepath.Join("a", wantDir, "cm.yaml")), "%s", "base mount is missing")
-	}
+	assert.FatalIf(t, !fsys.Exists(filepath.Join("a", wantDir, "cm.yaml")), "%s", "base mount is missing")
 	for _, sub := range []string{"b", "c"} {
 		body, err := fsys.ReadFile(filepath.Join(sub, "kustomization.yaml"))
-		{
-			assert.FatalIf(
-				t,
-				err != nil || !strings.Contains(string(body), "../a/"+wantDir),
-				"%s did not reuse base mount: %s, %v",
-				sub,
-				body,
-				err,
-			)
-		}
+		assert.FatalIf(
+			t,
+			err != nil || !strings.Contains(string(body), "../a/"+wantDir),
+			"%s did not reuse base mount: %s, %v",
+			sub,
+			body,
+			err,
+		)
 	}
 }
 
@@ -426,26 +396,20 @@ func TestPreflightGitBase_SymlinkEscapeNotMaterialized(t *testing.T) {
 			!strings.Contains(string(data), "name: base"), "regular alias: %s, %v", data, err)
 	}
 	for _, name := range []string{".github", "node_modules", "missing.yaml", "dirlink"} {
-		{
-			assert.ErrorIf(t, fsys.Exists(filepath.Join(wantDir, name)), "hidden entry %s", name)
-		}
+		assert.ErrorIf(t, fsys.Exists(filepath.Join(wantDir, name)), "hidden entry %s", name)
 	}
-	{
-		assert.ErrorIf(
-			t,
-			!fsys.Exists(filepath.Join(wantDir, "cm.yaml")),
-			"%s",
-			"legit base resource should still be materialized",
-		)
-	}
-	{
-		assert.FatalIf(
-			t,
-			fsys.Exists(filepath.Join(wantDir, "creds.yaml")),
-			"%s",
-			"symlink escaping the base root must NOT be materialized into the render fs (#741)",
-		)
-	}
+	assert.ErrorIf(
+		t,
+		!fsys.Exists(filepath.Join(wantDir, "cm.yaml")),
+		"%s",
+		"legit base resource should still be materialized",
+	)
+	assert.FatalIf(
+		t,
+		fsys.Exists(filepath.Join(wantDir, "creds.yaml")),
+		"%s",
+		"symlink escaping the base root must NOT be materialized into the render fs (#741)",
+	)
 }
 
 func TestRender_NestedGitBasesAndIntervals(t *testing.T) {
@@ -524,14 +488,12 @@ func testRenderNestedGitBasesAndIntervalsCase(
 			if request.URL == childURL {
 				wantTimeout, wantSubmodules = 9*time.Second, true
 			}
-			{
-				assert.ErrorIf(
-					t,
-					request.Timeout != wantTimeout || request.Submodules != wantSubmodules,
-					"nested policy=%+v",
-					request,
-				)
-			}
+			assert.ErrorIf(
+				t,
+				request.Timeout != wantTimeout || request.Submodules != wantSubmodules,
+				"nested policy=%+v",
+				request,
+			)
 			requests = append(requests, request)
 			dir := parent
 			if request.URL == childURL {
@@ -579,9 +541,7 @@ func testRenderNestedGitBasesAndIntervalsCase(
 		t.Helper()
 		testutil.WriteFileAt(t, filepath.Join(child, name), body)
 		r, err := git.PlainOpen(child)
-		{
-			assert.NoError(t, err)
-		}
+		assert.NoError(t, err)
 		testutil.GitCommitAll(
 			t,
 			r,
@@ -613,9 +573,7 @@ func testRenderNestedGitBasesAndIntervalsCase(
 		if tc.maxAge == time.Nanosecond {
 			wantRequests = 4
 		}
-		{
-			assert.FatalIf(t, len(requests) != wantRequests, "nested requests: %v", requests)
-		}
+		assert.FatalIf(t, len(requests) != wantRequests, "nested requests: %v", requests)
 		for _, request := range requests {
 			assert.FatalIf(t, request.MaxAge != tc.maxAge, "nested interval = %v, want %v", request.MaxAge, tc.maxAge)
 		}

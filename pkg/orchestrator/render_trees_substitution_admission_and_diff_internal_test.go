@@ -291,7 +291,7 @@ func TestRender_SubstitutionDeferredEntry(t *testing.T) {
 	)
 	assert.NoError(t, err)
 	for _, name := range []string{"data", "ready"} {
-		obj, _, _, localErr := manifest.ParseDoc(
+		parsed, localErr := manifest.ParseDoc(
 			map[string]any{
 				"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 				"kind":       "Kustomization",
@@ -300,6 +300,7 @@ func TestRender_SubstitutionDeferredEntry(t *testing.T) {
 			},
 			manifest.ParseDocOptions{},
 		)
+		obj := parsed.Object
 		assert.NoError(t, localErr)
 		o.store.AddObject(obj)
 	}
@@ -410,7 +411,8 @@ func TestRender_RootSecretOverridesProducerPlaceholder(t *testing.T) {
 	if facts.Data == nil {
 		t.Fatal("repository data removed the invocation supplied snapshot")
 	}
-	supplied, _, err := facts.Data.Value("VALUE")
+	valueResult, err := facts.Data.Value("VALUE")
+	supplied := valueResult.Value
 	assert.NoError(t, err)
 	assert.Equal(t, supplied, "private-value")
 	assert.Equal(t, input.StringData["VALUE"], "private-value")
@@ -461,7 +463,8 @@ func TestRenderTrees_IgnoredRequiredSubstitution(t *testing.T) {
 		nil,
 	)
 	for _, run := range runs {
-		needed, output, _, _ := run.filter.Membership(consumer)
+		membershipResult1 := run.filter.Membership(consumer)
+		needed, output, _, _ := membershipResult1.Needed, membershipResult1.Selected, membershipResult1.Dirty, membershipResult1.Revision
 		status, present := run.Store().GetStatus(consumer)
 		t.Logf(
 			"side=%d needed=%t selected=%t status=%s present=%t rawFailure=%v selectedFailure=%v rawError=%v selectedError=%v",
@@ -627,11 +630,9 @@ func testRenderTreesRequiredPostBuildNotWaivedCase(
 	assert.FatalIf(t, err == nil || len(runs) != 2, "paired required input admitted: %+v %v", runs, err)
 	for _, run := range runs {
 		id := testutil.KustomizationID("apps", "consumer")
-		{
-			assert.FatalIf(t, run.Result == nil || run.Result.Failed[id].Status != store.StatusFailed ||
-				len(
-					outputByParent(run.Result.Manifests)[id],
-				) != 0, "required input admitted on side %v: %+v", run.ID, run.Result)
-		}
+		assert.FatalIf(t, run.Result == nil || run.Result.Failed[id].Status != store.StatusFailed ||
+			len(
+				outputByParent(run.Result.Manifests)[id],
+			) != 0, "required input admitted on side %v: %+v", run.ID, run.Result)
 	}
 }

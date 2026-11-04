@@ -24,13 +24,10 @@ kind: HelmRelease
 metadata: {name: dep, namespace: ns}
 spec: {chartRef: {kind: OCIRepository, name: chart}, values: {version: old}}
 `))
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
-	obj, _, _, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{})
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
+	parsed, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{})
+	obj := parsed.Object
+	assert.FatalIf(t, err != nil, "%v", err)
 	broken := obj.(*manifest.HelmRelease).Clone()
 	broken.HelmReleaseSpec.Values = &apix.JSON{Raw: []byte("{")}
 	dep := &countedDocument{HelmRelease: broken}
@@ -44,15 +41,11 @@ spec: {chartRef: {kind: OCIRepository, name: chart}, values: {version: old}}
 	w := Waiter{Store: &reads, Parent: dep.Named()}
 	for _, expr := range []string{`true`, `true || self.spec.values.version == dep.spec.values.version`} {
 		{
-			{
-				ok, err := w.evaluateReadyExpr(expr, dep.Named(), captured, info.Conditions)
-				assert.FatalIf(t, err != nil || !ok, "lazy evaluation: ok=%v err=%v", ok, err)
-			}
+			ok, err := w.evaluateReadyExpr(expr, dep.Named(), captured, info.Conditions)
+			assert.FatalIf(t, err != nil || !ok, "lazy evaluation: ok=%v err=%v", ok, err)
 		}
 	}
-	{
-		assert.FatalIf(t, dep.calls != 0, "%v", "short circuit converted an unused object")
-	}
+	assert.FatalIf(t, dep.calls != 0, "%v", "short circuit converted an unused object")
 	expr := `self.spec == dep.spec`
 	if ok, err := w.evaluateReadyExpr(
 		expr,
@@ -75,30 +68,23 @@ spec: {chartRef: {kind: OCIRepository, name: chart}, values: {version: old}}
 	}
 	ref := manifest.DependencyRef{NamedResource: dep.Named(), ReadyExpr: new(expr)}
 	{
-		{
-			ready, failMsg := w.tryReadyExpr(&ref, captured, info.Conditions)
-			assert.FatalIf(
-				t,
-				ready || failMsg != "",
-				"projection failure readiness: ready=%v failMsg=%q",
-				ready,
-				failMsg,
-			)
-		}
+		tryReadyExprResult1 := w.tryReadyExpr(&ref, captured, info.Conditions)
+		ready, failMsg := tryReadyExprResult1.ready, tryReadyExprResult1.failure
+		assert.FatalIf(
+			t,
+			ready || failMsg != "",
+			"projection failure readiness: ready=%v failMsg=%q",
+			ready,
+			failMsg,
+		)
 	}
 	{
-		{
-			got := w.Classify(t.Context(), ref, manifest.DrainNone)
-			assert.FatalIf(t, got.Kind != schedule.Blocked, "projection failure classification: %+v", got)
-		}
+		got := w.Classify(t.Context(), ref, manifest.DrainNone)
+		assert.FatalIf(t, got.Kind != schedule.Blocked, "projection failure classification: %+v", got)
 	}
-	{
-		assert.FatalIf(t, !reads.Valid(), "%v", "projection failure invalidated unchanged observations")
-	}
+	assert.FatalIf(t, !reads.Valid(), "%v", "projection failure invalidated unchanged observations")
 	s.UpdateStatus(dep.Named(), store.StatusInfo{Status: store.StatusPending})
-	{
-		assert.FatalIf(t, reads.Valid(), "%v", "projection failure lost captured condition observation")
-	}
+	assert.FatalIf(t, reads.Valid(), "%v", "projection failure lost captured condition observation")
 }
 
 func TestReadyExpr_AbsentSpec(t *testing.T) {
@@ -112,30 +98,24 @@ func TestReadyExpr_AbsentSpec(t *testing.T) {
 				s.UpdateStatus(dep, store.StatusInfo{Status: store.StatusPending})
 			}
 			{
-				{
-					ok, err := evaluateReadyExpr(
-						`!has(dep.spec) && !has(dep.metadata.labels) && dep.metadata.namespace == ''`,
-						s,
-						dep,
-						dep,
-					)
-					assert.FatalIf(t, err != nil ||
-						!ok, "absent desired fields: ok=%v err=%v", ok, err)
-				}
+				ok, err := evaluateReadyExpr(
+					`!has(dep.spec) && !has(dep.metadata.labels) && dep.metadata.namespace == ''`,
+					s,
+					dep,
+					dep,
+				)
+				assert.FatalIf(t, err != nil ||
+					!ok, "absent desired fields: ok=%v err=%v", ok, err)
 			}
 			w := Waiter{Store: s, Parent: dep}
 			ref := manifest.DependencyRef{NamedResource: dep, ReadyExpr: new(`has(dep.spec)`)}
 			{
-				{
-					got := w.Classify(t.Context(), ref, manifest.DrainNone)
-					assert.FatalIf(t, got.Kind != schedule.Blocked, "unavailable at normal evaluation: %+v", got)
-				}
+				got := w.Classify(t.Context(), ref, manifest.DrainNone)
+				assert.FatalIf(t, got.Kind != schedule.Blocked, "unavailable at normal evaluation: %+v", got)
 			}
 			{
-				{
-					got := w.Classify(t.Context(), ref, manifest.DrainCascade)
-					assert.FatalIf(t, got.Kind != schedule.DependencyFailed, "unavailable at cascade: %+v", got)
-				}
+				got := w.Classify(t.Context(), ref, manifest.DrainCascade)
+				assert.FatalIf(t, got.Kind != schedule.DependencyFailed, "unavailable at cascade: %+v", got)
 			}
 		})
 	}

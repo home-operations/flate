@@ -127,7 +127,8 @@ func TestResolveTransport_InputOrder(t *testing.T) {
 
 func TestResolveTransport_UnavailableMaterial(t *testing.T) {
 	t.Parallel()
-	crt, _ := testutil.SelfSignedClientCert(t)
+	certificate := testutil.SelfSignedClientCert(t)
+
 	for _, tc := range []struct {
 		name                      string
 		data                      map[string]any
@@ -141,7 +142,7 @@ func TestResolveTransport_UnavailableMaterial(t *testing.T) {
 		{name: "optional absent TLS", cert: true, optional: true, absent: true, success: true},
 		{name: "required absent TLS", cert: true, absent: true, missing: true, want: "not found"},
 		{name: "wiped CA", data: map[string]any{"ca.crt": "..PLACEHOLDER_ca.crt.."}, cert: true, missing: true, want: "TLS material unavailable"},
-		{name: "mixed cert pair", data: map[string]any{"tls.crt": crt, "tls.key": "..PLACEHOLDER_tls.key.."}, cert: true, missing: true, want: "TLS material unavailable"},
+		{name: "mixed cert pair", data: map[string]any{"tls.crt": certificate.Cert, "tls.key": "..PLACEHOLDER_tls.key.."}, cert: true, missing: true, want: "TLS material unavailable"},
 		{name: "empty TLS", cert: true, missing: true, want: "TLS material unavailable"},
 		{name: "real incomplete pair", data: map[string]any{"tls.crt": "real"}, cert: true, want: "must provide both tls.crt and tls.key together"},
 		{name: "real invalid CA", data: map[string]any{"ca.crt": "invalid PEM"}, cert: true, want: "ca.crt did not parse as PEM"},

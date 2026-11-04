@@ -223,9 +223,7 @@ func TestProducerTargets_ArtifactGenerator(t *testing.T) {
 				}
 				want = []ProducerTarget{{NamedResource: ea}}
 			}
-			{
-				assert.FatalIf(t, !reflect.DeepEqual(got, want), "targets = %#v, want %#v", got, want)
-			}
+			assert.FatalIf(t, !reflect.DeepEqual(got, want), "targets = %#v, want %#v", got, want)
 		})
 	}
 }
@@ -390,22 +388,16 @@ func testArtifactMatchBudgetCase(t *testing.T, testCaseInput *struct {
 
 	captures := []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"}
 	tokens, _, ok := artifactTokens(testCaseInput.template, captures, false)
-	{
-		assert.FatalIf(t, !ok, "%s", "invalid template")
-	}
+	assert.FatalIf(t, !ok, "%s", "invalid template")
 	bound := make([]string, len(captures))
 	budget := testCaseInput.budget
 	if got := artifactMatch(tokens, testCaseInput.candidate, bound, &budget); got != testCaseInput.want {
 		t.Errorf("match = %t, want %t", got, testCaseInput.want)
 	}
-	{
-		assert.ErrorIf(t, budget != 0, "remaining budget = %d, want zero", budget)
-	}
+	assert.ErrorIf(t, budget != 0, "remaining budget = %d, want zero", budget)
 	if !testCaseInput.want {
 		for _, value := range bound {
-			{
-				assert.FatalIf(t, value != "", "rejected match retained bindings: %v", bound)
-			}
+			assert.FatalIf(t, value != "", "rejected match retained bindings: %v", bound)
 		}
 	}
 }

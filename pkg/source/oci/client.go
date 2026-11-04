@@ -192,7 +192,8 @@ func (f *operation) resolveRegistryConfig(
 	if sec == nil {
 		return nil, source.MissingSecretErr(access.Owner, access.SecretRef.Name, "not found")
 	}
-	configJSON, _, err := sec.Value(dockerConfigJSONKey)
+	valueResult, err := sec.Value(dockerConfigJSONKey)
+	configJSON := valueResult.Value
 	if err != nil {
 		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("read .dockerconfigjson: %w", err), "")
 	}

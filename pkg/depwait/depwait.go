@@ -62,25 +62,23 @@ type ExistenceLookup interface {
 	Promote(context.Context, *store.ReadSet, manifest.NamedResource) (bool, error)
 }
 
-// tryReadyExpr evaluates expr once against id's projected state and reports:
-//   - ready=true            → the CEL produced a definitive true.
-//   - failMsg!=""           → a compile error that no amount of polling will
-//     fix (the dep can never satisfy); the string is the byte-exact reason.
-//   - ready=false,failMsg="" → a clean false OR a transient runtime eval error
-//     (typically a missing attribute because the dep's status isn't populated
-//     yet) — the dep is not yet satisfied but may still become so.
+type expressionReadiness struct {
+	ready   bool
+	failure string
+}
+
 func (w *Waiter) tryReadyExpr(
 	dep *manifest.DependencyRef,
 	obj manifest.BaseManifest,
 	conds []store.Condition,
-) (bool, string) {
+) expressionReadiness {
 	ok, err := w.evaluateReadyExpr(*dep.ReadyExpr, dep.NamedResource, obj, conds)
 	if err != nil {
 		if _, isCompile := errors.AsType[*celCompileError](err); isCompile {
-			return false, "readyExpr: " + err.Error()
+			return expressionReadiness{failure: "readyExpr: " + err.Error()}
 		}
 		// Eval error: transient, treat as not-yet-ready.
-		return false, ""
+		return expressionReadiness{}
 	}
-	return ok, ""
+	return expressionReadiness{ready: ok}
 }

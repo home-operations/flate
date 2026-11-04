@@ -109,16 +109,14 @@ func TestFinalizeIndex_RecordsProducers(t *testing.T) {
 			continue
 		}
 		got := declarations[0]
-		{
-			assert.ErrorIf(
-				t,
-				got.Name != prodName || got.Namespace != target.Namespace,
-				"Producer(%v).Name = %q, want %q",
-				target,
-				got.Name,
-				prodName,
-			)
-		}
+		assert.ErrorIf(
+			t,
+			got.Name != prodName || got.Namespace != target.Namespace,
+			"Producer(%v).Name = %q, want %q",
+			target,
+			got.Name,
+			prodName,
+		)
 	}
 }
 
@@ -220,23 +218,19 @@ func TestFinalizeIndex_DeclaredKeysStayUnpublished(t *testing.T) {
 		idx.Readers["implicit/deep/declared.yaml"],
 		[]manifest.FileReader{{Reader: deferred.Named(), Source: manifest.BootstrapSourceID}},
 	)
-	{
-		assert.FatalIf(
-			t,
-			s.GetObject(secretID("secure", "deferred-secret")) != nil ||
-				len(idx.Records[secretID("secure", "deferred-secret")].Productions) != 0,
-			"%v", "implicit producer was registered or synthesized before rendering",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.GetObject(secretID("secure", "deferred-secret")) != nil ||
+			len(idx.Records[secretID("secure", "deferred-secret")].Productions) != 0,
+		"%v", "implicit producer was registered or synthesized before rendering",
+	)
 
-	{
-		assert.FatalIf(
-			t,
-			s.GetObject(secretID("secure", "app-secret")) != nil ||
-				len(s.Productions(secretID("secure", "app-secret"), idx)) == 0,
-			"%v", "declared keys must retain production evidence without canonical publication",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.GetObject(secretID("secure", "app-secret")) != nil ||
+			len(s.Productions(secretID("secure", "app-secret"), idx)) == 0,
+		"%v", "declared keys must retain production evidence without canonical publication",
+	)
 	{
 		obj := s.GetObject(secretID("secure", "dyn-secret"))
 		assert.ErrorIf(t, obj != nil, "dataFrom-only ExternalSecret must NOT be synthesized; got %#v", obj)
@@ -352,17 +346,13 @@ func TestFinalizeIndex_LookupReferenceData(t *testing.T) {
 	}
 
 	got, _ := lookupDataForTest[*manifest.Secret](t, s, secretID("flux-system", "cluster-secrets"))
-	{
-		assert.FatalIf(
-			t,
-			s.GetObject(secretID("flux-system", "cluster-secrets")) != nil,
-			"%v",
-			"SOPS lookup entered canonical inventory",
-		)
-	}
-	{
-		assert.FatalIf(t, got == nil, "%v", "SOPS cluster-secrets was unavailable through lookup")
-	}
+	assert.FatalIf(
+		t,
+		s.GetObject(secretID("flux-system", "cluster-secrets")) != nil,
+		"%v",
+		"SOPS lookup entered canonical inventory",
+	)
+	assert.FatalIf(t, got == nil, "%v", "SOPS cluster-secrets was unavailable through lookup")
 	if want := manifest.ValuePlaceholder("SECRET_DOMAIN"); got.StringData["SECRET_DOMAIN"] != want {
 		t.Errorf("materialized SECRET_DOMAIN = %v, want %q", got.StringData["SECRET_DOMAIN"], want)
 	}
@@ -441,15 +431,11 @@ func TestFinalizeIndex_ProducerOwners(t *testing.T) {
 				}
 				got := declarationOwnersForTest(idx, id)
 				slices.SortFunc(got, manifest.NamedResource.Compare)
-				{
-					assert.FatalIf(t, !slices.Equal(got, want), "declaration %s owners = %v, want %v", id, got, want)
-				}
+				assert.FatalIf(t, !slices.Equal(got, want), "declaration %s owners = %v, want %v", id, got, want)
 				got[0] = manifest.NamedResource{}
 				fresh := declarationOwnersForTest(idx, id)
 				slices.SortFunc(fresh, manifest.NamedResource.Compare)
-				{
-					assert.FatalIf(t, !slices.Equal(fresh, want), "%v", "caller mutated index")
-				}
+				assert.FatalIf(t, !slices.Equal(fresh, want), "%v", "caller mutated index")
 			}
 			effective := manifest.NamedResource{
 				Group:     "external-secrets.io",
@@ -462,19 +448,17 @@ func TestFinalizeIndex_ProducerOwners(t *testing.T) {
 				assert.FatalIf(t, r.Authored.Namespace != namespace || r.Authored.Name != "producer" ||
 					r.File != "shared/producer.yaml", "producer lost authored file proof: %+v", r)
 			}
-			{
-				assert.FatalIf(t, len(
-					declarationOwnersForTest(
-						idx,
-						manifest.NamedResource{
-							Group:     "external-secrets.io",
-							Kind:      "ExternalSecret",
-							Namespace: "foreign",
-							Name:      "producer",
-						},
-					),
-				) != 0, "%v", "foreign namespace inherited declaration owners")
-			}
+			assert.FatalIf(t, len(
+				declarationOwnersForTest(
+					idx,
+					manifest.NamedResource{
+						Group:     "external-secrets.io",
+						Kind:      "ExternalSecret",
+						Namespace: "foreign",
+						Name:      "producer",
+					},
+				),
+			) != 0, "%v", "foreign namespace inherited declaration owners")
 			{
 				got := renderers(
 					idx,
@@ -565,9 +549,7 @@ func TestSelfProduceBuilder_AuthoredSecretReplacement(t *testing.T) {
 	b.recordSecret(second, id, new(secondProof))
 	b.store.SetDiscoveryIndex(index)
 	assert.Diff(t, values.NewStoreProvider(b.store, true).Data(id), second)
-	{
-		assert.FatalIf(t, b.store.GetObject(id) != nil, "%v", "lookup-only SOPS data acquired object authority")
-	}
+	assert.FatalIf(t, b.store.GetObject(id) != nil, "%v", "lookup-only SOPS data acquired object authority")
 }
 
 type emissionParentCase struct {
@@ -633,7 +615,8 @@ func runEmissionParentCase(t *testing.T, scenario *emissionParentCase, ids *emis
 	if tc.strict {
 		wantOwners = []manifest.NamedResource{other, parent}
 	}
-	owners, ancestors := l.Index.OwnersOfFile(file)
+	ownership := l.Index.OwnersOfFile(file)
+	owners, ancestors := ownership.Owners, ownership.Ancestors
 	assert.Diff(t, owners, wantOwners)
 	assert.Equal(t, len(ancestors), 0)
 	snapshot := snapshotIndexForTest(l.Index)
@@ -646,7 +629,8 @@ func runEmissionParentCase(t *testing.T, scenario *emissionParentCase, ids *emis
 		assert.ErrorIf(t, diff != "", "discovery records differ (-want +got):\n%s", diff)
 	}
 	assert.Diff(t, l.Index.Readers, snapshot.Readers)
-	owners, ancestors = l.Index.OwnersOfFile(file)
+	ownership2 := l.Index.OwnersOfFile(file)
+	owners, ancestors = ownership2.Owners, ownership2.Ancestors
 	assert.Diff(t, owners, wantOwners)
 	assert.Equal(t, len(ancestors), 0)
 	fresh := newLoader()

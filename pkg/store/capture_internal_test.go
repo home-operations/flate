@@ -54,9 +54,7 @@ func TestReadRegistration_CollectionLabelReplacement(t *testing.T) {
 	sh.mu.RLock()
 	after := sh.byName[kindID{provider.Named().Group, provider.Named().Kind}].generation
 	sh.mu.RUnlock()
-	{
-		assert.FatalIf(t, after <= before, "%s", "same-identity label publication bypassed collection replacement")
-	}
+	assert.FatalIf(t, after <= before, "%s", "same-identity label publication bypassed collection replacement")
 	assert.Equal(t, reads.Valid(), false)
 	assert.Diff(t, slices.Collect(s.Sweep()), []manifest.NamedResource{reads.ID()})
 	assert.Equal(t, reads.Valid(), false)
@@ -160,9 +158,7 @@ func TestDerivedCapture_UnselectedContributorStableCommit(t *testing.T) {
 	assert.Equal(t, headsForTest(s, child.Obj.Named()).object, before.object)
 	assert.Equal(t, s.GetObject(child.Obj.Named()), child.Obj)
 	assert.Diff(t, slices.Collect(s.Sweep()), []manifest.NamedResource{reads.id})
-	{
-		assert.FatalIf(t, reads.Valid(), "%s", "unselected contributor's old record remained valid")
-	}
+	assert.FatalIf(t, reads.Valid(), "%s", "unselected contributor's old record remained valid")
 	reads.Retire()
 	for range s.Sweep() {
 	}
@@ -240,20 +236,14 @@ func TestCapture_StableSegmentLifetime(t *testing.T) {
 	for i := range 129 {
 		reads.GetObject(ownerID(string(rune('a' + i))))
 	}
-	{
-		assert.FatalIf(t, reads.input(ownerID("a")) != first, "%s", "unreserved growth replaced the first capture")
-	}
+	assert.FatalIf(t, reads.input(ownerID("a")) != first, "%s", "unreserved growth replaced the first capture")
 	for i := 128; i >= 0; i-- {
 		id := ownerID(string(rune('a' + i)))
 		captured := reads.input(id)
 		reads.GetObject(id)
-		{
-			assert.FatalIf(t, reads.input(id) != captured, "%s", "repeated lookup replaced an unreserved capture")
-		}
+		assert.FatalIf(t, reads.input(id) != captured, "%s", "repeated lookup replaced an unreserved capture")
 	}
-	{
-		assert.FatalIf(t, !reads.Valid(), "%s", "segment growth changed original registrations")
-	}
+	assert.FatalIf(t, !reads.Valid(), "%s", "segment growth changed original registrations")
 	target := ownerID("a")
 	s.AddObject(&manifest.Kustomization{Name: target.Name, Namespace: target.Namespace})
 	assert.Diff(t, slices.Collect(s.Sweep()), []manifest.NamedResource{reads.id})
@@ -262,19 +252,15 @@ func TestCapture_StableSegmentLifetime(t *testing.T) {
 	}
 	for _, sh := range s.shards {
 		sh.mu.RLock()
-		{
-			assert.ErrorIf(
-				t,
-				sh.absence.first.Load() != nil || sh.absence.watch != nil || sh.absence.pending.Load(),
-				"%s",
-				"retired absence remains reachable from the shard",
-			)
-		}
+		assert.ErrorIf(
+			t,
+			sh.absence.first.Load() != nil || sh.absence.watch != nil || sh.absence.pending.Load(),
+			"%s",
+			"retired absence remains reachable from the shard",
+		)
 		for _, cell := range sh.cells {
-			{
-				assert.ErrorIf(t, cell.links != nil &&
-					(cell.links.first.Load() != nil || cell.links.detached.Load() || cell.links.pending.Load()), "%s", "retired segment remains reachable from an authority")
-			}
+			assert.ErrorIf(t, cell.links != nil &&
+				(cell.links.first.Load() != nil || cell.links.detached.Load() || cell.links.pending.Load()), "%s", "retired segment remains reachable from an authority")
 		}
 		sh.mu.RUnlock()
 	}
@@ -283,14 +269,12 @@ func TestCapture_StableSegmentLifetime(t *testing.T) {
 	successor.GetObject(target)
 	old := reads.input(target).object.head
 	current := successor.input(target).object.head
-	{
-		assert.FatalIf(
-			t,
-			old != &s.shardFor(target).absence || current != s.shardFor(target).cells[target].links,
-			"%s",
-			"successor did not capture the admitted authority",
-		)
-	}
+	assert.FatalIf(
+		t,
+		old != &s.shardFor(target).absence || current != s.shardFor(target).cells[target].links,
+		"%s",
+		"successor did not capture the admitted authority",
+	)
 	published := make(chan struct{})
 	go func() {
 		s.AddObject(&manifest.Kustomization{Name: target.Name, Namespace: target.Namespace, Path: "new"})
@@ -378,9 +362,7 @@ func TestReadRegistration_RepeatedFacetPreservesFirstStamp(t *testing.T) {
 			status, exists = reads.GetStatus(obj.Named())
 			assert.Equal(t, exists, true)
 			assert.Equal(t, status, first.StatusInfo)
-			{
-				assert.FatalIf(t, reads.Valid(), "%s", "readiness replacement left the captured snapshot valid")
-			}
+			assert.FatalIf(t, reads.Valid(), "%s", "readiness replacement left the captured snapshot valid")
 		})
 	}
 	s := New()
@@ -390,9 +372,7 @@ func TestReadRegistration_RepeatedFacetPreservesFirstStamp(t *testing.T) {
 	assert.Equal(t, reads.GetObject(id), manifest.BaseManifest(nil))
 	s.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
 	assert.Equal(t, reads.GetObject(id), manifest.BaseManifest(nil))
-	{
-		assert.FatalIf(t, reads.Valid(), "%s", "a later lookup replaced consumed absence")
-	}
+	assert.FatalIf(t, reads.Valid(), "%s", "a later lookup replaced consumed absence")
 	reads.Retire()
 	for range s.Sweep() {
 	}
@@ -417,9 +397,7 @@ func TestReadRegistration_ReclamationOnlyAndCutoff(t *testing.T) {
 	go func() {
 		defer close(done)
 		for invalid := range s.Sweep() {
-			{
-				assert.ErrorIf(t, invalid != previous.id, "first cutoff invalidated %s, want %s", invalid, previous.id)
-			}
+			assert.ErrorIf(t, invalid != previous.id, "first cutoff invalidated %s, want %s", invalid, previous.id)
 			close(detached)
 			<-resume
 		}
@@ -432,9 +410,7 @@ func TestReadRegistration_ReclamationOnlyAndCutoff(t *testing.T) {
 	<-done
 	assert.Diff(t, slices.Collect(s.Sweep()), []manifest.NamedResource{successor.id})
 	assert.Equal(t, len(slices.Collect(s.Sweep())), 0)
-	{
-		assert.FatalIf(t, !fresh.Valid(), "%s", "reattachment invalidated a new live registration")
-	}
+	assert.FatalIf(t, !fresh.Valid(), "%s", "reattachment invalidated a new live registration")
 	generation := headsForTest(s, id).object
 	successor.Retire()
 	fresh.Retire()
@@ -444,10 +420,8 @@ func TestReadRegistration_ReclamationOnlyAndCutoff(t *testing.T) {
 	sh.mu.RLock()
 	head := sh.cells[id].authority
 	sh.mu.RUnlock()
-	{
-		assert.FatalIf(t, head.links != nil &&
-			(head.links.first.Load() != nil || head.links.pending.Load() || head.links.detached.Load()), "%s", "reclamation left a live or pending registration")
-	}
+	assert.FatalIf(t, head.links != nil &&
+		(head.links.first.Load() != nil || head.links.pending.Load() || head.links.detached.Load()), "%s", "reclamation left a live or pending registration")
 }
 
 func TestReadRegistration_AbsenceDoesNotAdmitObjects(t *testing.T) {
@@ -474,9 +448,7 @@ func TestReadRegistration_AbsenceDoesNotAdmitObjects(t *testing.T) {
 	s.AddObject(&manifest.Kustomization{Name: "unrelated", Namespace: "apps"})
 	assert.Equal(t, len(slices.Collect(s.Sweep())), 0)
 	for i := range reads {
-		{
-			assert.FatalIf(t, !reads[i].Valid(), "%s", "unrelated admission invalidated consumed absence")
-		}
+		assert.FatalIf(t, !reads[i].Valid(), "%s", "unrelated admission invalidated consumed absence")
 	}
 	s.AddObject(&manifest.Kustomization{Name: "missing", Namespace: "apps"})
 	invalid := slices.Collect(s.Sweep())
@@ -512,9 +484,7 @@ func testCaptureProducerRecordLifetimeCase(t *testing.T, testCaseInput *bool,
 			reads.GetArtifact(child.Obj.Named(), ArtifactContent),
 			Artifact(firstPayload[child.Obj.Named()]),
 		)
-		{
-			assert.FatalIf(t, !reads.Valid(), "%s", "current payload reader was invalid before supersession")
-		}
+		assert.FatalIf(t, !reads.Valid(), "%s", "current payload reader was invalid before supersession")
 	}
 	var nextPayload map[manifest.NamedResource]*SourceArtifact
 	if *testCaseInput {
@@ -526,14 +496,12 @@ func testCaptureProducerRecordLifetimeCase(t *testing.T, testCaseInput *bool,
 		nextPayload,
 	)
 	runtime.GC()
-	{
-		assert.FatalIf(
-			t,
-			previous.Value() != nil,
-			"%s",
-			"captured child retained the superseded producer's execution history",
-		)
-	}
+	assert.FatalIf(
+		t,
+		previous.Value() != nil,
+		"%s",
+		"captured child retained the superseded producer's execution history",
+	)
 	assert.Equal(t, reads.GetObject(child.Obj.Named()), child.Obj)
 	assert.Equal(t, reads.Valid(), false)
 	runtime.KeepAlive(s)
@@ -563,14 +531,12 @@ func testReadRegistrationCrossShardLostWakeupCase(
 	if *testCaseInput.payload {
 		s.AddObject(old.Obj)
 	}
-	{
-		assert.FatalIf(
-			t,
-			kindShardIndex(producer.Named().Kind) == kindShardIndex(old.Obj.Named().Kind),
-			"%s",
-			"fixture must span distinct shards",
-		)
-	}
+	assert.FatalIf(
+		t,
+		kindShardIndex(producer.Named().Kind) == kindShardIndex(old.Obj.Named().Kind),
+		"%s",
+		"fixture must span distinct shards",
+	)
 	var reads ReadSet
 	reads.Init(s, ownerID("reader"), make([]Input, 3))
 	if (*testCaseInput.phase) == "before-link" {
@@ -589,14 +555,12 @@ func testReadRegistrationCrossShardLostWakeupCase(
 		if *testCaseInput.payload {
 			reads.GetArtifact(old.Obj.Named(), ArtifactContent)
 		}
-		{
-			assert.FatalIf(
-				t,
-				(*testCaseInput.phase) == "after-validation" && !reads.Valid(),
-				"%s",
-				"unchanged captured input was invalid",
-			)
-		}
+		assert.FatalIf(
+			t,
+			(*testCaseInput.phase) == "after-validation" && !reads.Valid(),
+			"%s",
+			"unchanged captured input was invalid",
+		)
 	}
 	published := make(chan struct{})
 	go func() {
@@ -614,14 +578,10 @@ func testReadRegistrationCrossShardLostWakeupCase(
 	<-published
 	if (*testCaseInput.phase) == "before-link" {
 		reads.activateProducers()
-		{
-			assert.FatalIf(t, reads.Valid(), "%s", "activation certified an obsolete producer record")
-		}
+		assert.FatalIf(t, reads.Valid(), "%s", "activation certified an obsolete producer record")
 	} else {
 		assert.Diff(t, slices.Collect(s.Sweep()), []manifest.NamedResource{reads.id})
-		{
-			assert.FatalIf(t, reads.Valid(), "%s", "publication was lost after activation")
-		}
+		assert.FatalIf(t, reads.Valid(), "%s", "publication was lost after activation")
 	}
 	reads.Retire()
 	for range s.Sweep() {
@@ -645,19 +605,15 @@ func testCaptureStableSegmentLifetimeNamedCollectionAndReadiness(t *testing.T) {
 	captured := reads.input(target)
 	objectCell := captured.cell(objectFacet)
 	objects := reads.ListObjects(target.Group, target.Kind)
-	{
-		assert.FatalIf(t, len(objects) != 64 || reads.GetObject(target) != first || reads.input(target) != captured ||
-			captured.cell(objectFacet) != objectCell, "%s", "collection replaced the named capture or its registration")
-	}
+	assert.FatalIf(t, len(objects) != 64 || reads.GetObject(target) != first || reads.input(target) != captured ||
+		captured.cell(objectFacet) != objectCell, "%s", "collection replaced the named capture or its registration")
 	_, observed := reads.Snapshot(target, true)
-	{
-		assert.FatalIf(
-			t,
-			observed.Status != StatusReady || len(observed.Conditions) != 1,
-			"readiness after collection: %+v",
-			observed,
-		)
-	}
+	assert.FatalIf(
+		t,
+		observed.Status != StatusReady || len(observed.Conditions) != 1,
+		"readiness after collection: %+v",
+		observed,
+	)
 	conditionCell := captured.cell(conditionFacet)
 	generation := conditionCell.generation.Load()
 	bulkID := ownerID("provider-01")
@@ -673,44 +629,34 @@ func testCaptureStableSegmentLifetimeNamedCollectionAndReadiness(t *testing.T) {
 			occurrences++
 		}
 	}
-	{
-		assert.FatalIf(
-			t,
-			occurrences != 1 || reads.input(target) != captured || captured.cell(conditionFacet) != conditionCell ||
-				!reads.Valid(),
-			"%s",
-			"growth duplicated or moved the captured identity or sparse facet",
-		)
-	}
-	{
-		assert.FatalIf(
-			t,
-			reads.input(bulkID) != bulk || bulk.cell(conditionFacet) != bulkCell,
-			"%s",
-			"growth moved the bulk capture's sparse facet",
-		)
-	}
+	assert.FatalIf(
+		t,
+		occurrences != 1 || reads.input(target) != captured || captured.cell(conditionFacet) != conditionCell ||
+			!reads.Valid(),
+		"%s",
+		"growth duplicated or moved the captured identity or sparse facet",
+	)
+	assert.FatalIf(
+		t,
+		reads.input(bulkID) != bulk || bulk.cell(conditionFacet) != bulkCell,
+		"%s",
+		"growth moved the bulk capture's sparse facet",
+	)
 	s.UpdateStatus(bulkID, StatusInfo{Status: StatusReady, Reason: "", Message: "admitted"})
-	{
-		assert.FatalIf(t, bulkCell.current(), "%s", "bulk readiness admission left its consumed absence valid")
-	}
+	assert.FatalIf(t, bulkCell.current(), "%s", "bulk readiness admission left its consumed absence valid")
 	_, bulkAgain := reads.Snapshot(bulkID, true)
 	assert.Equal(t, bulkAgain.Status, bulkBefore.Status)
 	assert.Diff(t, bulkAgain.Conditions, bulkBefore.Conditions)
 	s.UpdateStatus(target, StatusInfo{Status: StatusFailed, Reason: "", Message: "replacement"})
 	_, again := reads.Snapshot(target, true)
-	{
-		assert.FatalIf(
-			t,
-			again.Status != StatusReady || conditionCell.generation.Load() != generation,
-			"%s",
-			"repeated readiness lost its first stamp or invalidation",
-		)
-	}
+	assert.FatalIf(
+		t,
+		again.Status != StatusReady || conditionCell.generation.Load() != generation,
+		"%s",
+		"repeated readiness lost its first stamp or invalidation",
+	)
 	assert.Diff(t, slices.Collect(s.Sweep()), []manifest.NamedResource{reads.id})
-	{
-		assert.FatalIf(t, reads.Valid(), "%s", "readiness replacement did not invalidate the captured input")
-	}
+	assert.FatalIf(t, reads.Valid(), "%s", "readiness replacement did not invalidate the captured input")
 }
 
 type testReadRegistrationActivationUnderReadLockCaseInputs struct {

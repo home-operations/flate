@@ -96,7 +96,8 @@ func TestRenderTrees_EffectiveGlobalVariable(t *testing.T) {
 	want := stagePrecisionFull(t, trees)
 	cacheDir := t.TempDir()
 	for run := range 2 {
-		runs, _, builds := stagePrecisionRun(t, trees, cacheDir, run)
+		stagePrecisionRunResult1 := stagePrecisionRun(t, trees, cacheDir, run)
+		runs, _, builds := stagePrecisionRunResult1.runs, stagePrecisionRunResult1.helm, stagePrecisionRunResult1.builds
 		t.Logf(
 			"STAGE_COUNT shape=angelnu field=NFS_MUSIC run=%d effective=%d unrelated=%d",
 			run,
@@ -240,7 +241,8 @@ func TestRenderTrees_EffectiveGeneratedVariable(t *testing.T) {
 			assert.Equal(t, strings.Contains(string(want), "new"), true)
 			cacheDir := t.TempDir()
 			for run := range 2 {
-				runs, _, builds := stagePrecisionRun(t, trees, cacheDir, run)
+				stagePrecisionRunResult2 := stagePrecisionRun(t, trees, cacheDir, run)
+				runs, _, builds := stagePrecisionRunResult2.runs, stagePrecisionRunResult2.helm, stagePrecisionRunResult2.builds
 				if run == 0 {
 					assert.Equal(t, builds["./app"], 2)
 				}
@@ -286,7 +288,8 @@ func TestRenderTrees_ChangedDeclarationPreparation(t *testing.T) {
 	want := stagePrecisionFull(t, trees)
 	cacheDir := t.TempDir()
 	for run := range 2 {
-		runs, _, builds := stagePrecisionRun(t, trees, cacheDir, run)
+		stagePrecisionRunResult3 := stagePrecisionRun(t, trees, cacheDir, run)
+		runs, _, builds := stagePrecisionRunResult3.runs, stagePrecisionRunResult3.helm, stagePrecisionRunResult3.builds
 		if run == 0 {
 			assert.Equal(t, builds["./child"], 2)
 		}
@@ -294,7 +297,13 @@ func TestRenderTrees_ChangedDeclarationPreparation(t *testing.T) {
 	}
 }
 
-func stagePrecisionRun(t *testing.T, trees []Tree, cacheDir string, run int) ([]Rendered, int, map[string]int) {
+type stageWork struct {
+	runs   []Rendered
+	helm   int
+	builds map[string]int
+}
+
+func stagePrecisionRun(t *testing.T, trees []Tree, cacheDir string, run int) stageWork {
 	t.Helper()
 	var logs bytes.Buffer
 	previous := slog.Default()
@@ -333,7 +342,7 @@ func stagePrecisionRun(t *testing.T, trees []Tree, cacheDir string, run int) ([]
 	)
 }
 
-func stagePrecisionRunTail(t *testing.T, tailCaseInput *stagePrecisionRunTailInputs) ([]Rendered, int, map[string]int) {
+func stagePrecisionRunTail(t *testing.T, tailCaseInput *stagePrecisionRunTailInputs) stageWork {
 	t.Helper()
 	for side, work := range *tailCaseInput.sides {
 		t.Logf(
@@ -349,7 +358,7 @@ func stagePrecisionRunTail(t *testing.T, tailCaseInput *stagePrecisionRunTailInp
 		assert.Equal(t, len((*tailCaseInput.builds)), 0)
 		assert.Equal(t, (*tailCaseInput.helm), 0)
 	}
-	return (*tailCaseInput.runs), (*tailCaseInput.helm), (*tailCaseInput.builds)
+	return stageWork{runs: (*tailCaseInput.runs), helm: (*tailCaseInput.helm), builds: (*tailCaseInput.builds)}
 }
 
 func stagePrecisionFull(t *testing.T, trees []Tree) []byte {
@@ -442,7 +451,8 @@ func testRenderTreesStagePrecisionCase(t *testing.T, testCaseInput *string,
 	want := stagePrecisionFull(t, trees)
 	cacheDir := t.TempDir()
 	for run := range 2 {
-		runs, _, builds := stagePrecisionRun(t, trees, cacheDir, run)
+		stagePrecisionRunResult4 := stagePrecisionRun(t, trees, cacheDir, run)
+		runs, _, builds := stagePrecisionRunResult4.runs, stagePrecisionRunResult4.helm, stagePrecisionRunResult4.builds
 		assert.Equal(t, builds["./child"], 0)
 		assert.Diff(t, string(stagePrecisionDiff(t, runs)), string(want))
 	}
@@ -511,7 +521,8 @@ func testRenderTreesHelmStagePrecisionCase(t *testing.T, testCaseInput testRende
 	want := stagePrecisionFull(t, trees)
 	cacheDir := t.TempDir()
 	for run := range 2 {
-		runs, helm, builds := stagePrecisionRun(t, trees, cacheDir, run)
+		stagePrecisionRunResult5 := stagePrecisionRun(t, trees, cacheDir, run)
+		runs, helm, builds := stagePrecisionRunResult5.runs, stagePrecisionRunResult5.helm, stagePrecisionRunResult5.builds
 		t.Logf(
 			"STAGE_COUNT shape=%s field=%s run=%d parent=%d helm=%d",
 			testCaseInput.shape.name,

@@ -96,13 +96,11 @@ func TestReview_ErrorPrecedenceDiagnostics(t *testing.T) {
 			}
 		}
 
-		{
-			assert.FatalIf(t, err == nil || !strings.Contains(err.Error(), "action must wait") ||
-				!strings.Contains(
-					diagnostics.String(),
-					"Warning:",
-				), "malformed raw frame prevented ordinary rendering: %v", err)
-		}
+		assert.FatalIf(t, err == nil || !strings.Contains(err.Error(), "action must wait") ||
+			!strings.Contains(
+				diagnostics.String(),
+				"Warning:",
+			), "malformed raw frame prevented ordinary rendering: %v", err)
 	})
 }
 
@@ -131,14 +129,12 @@ func testReviewErrorPrecedenceChartBeforeCapabilityAndValues(t *testing.T) {
 		}
 	}
 
-	{
-		assert.FatalIf(
-			t,
-			!errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "load chart"),
-			"chart validation lost precedence: %v",
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "load chart"),
+		"chart validation lost precedence: %v",
+		err,
+	)
 }
 
 func testReviewErrorPrecedenceCase(t *testing.T, testCaseInput *bool,
@@ -176,14 +172,12 @@ func testReviewErrorPrecedenceCase(t *testing.T, testCaseInput *bool,
 		}
 	}
 
-	{
-		assert.FatalIf(
-			t,
-			!errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "track oci chart version"),
-			"OCI validation lost precedence: %v",
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "track oci chart version"),
+		"OCI validation lost precedence: %v",
+		err,
+	)
 }
 
 func testReviewErrorPrecedenceCase2(t *testing.T, testCaseInput *string,
@@ -292,30 +286,24 @@ func testReviewErrorPrecedenceCase2(t *testing.T, testCaseInput *string,
 		}
 	}
 
-	{
-		assert.FatalIf(t, !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) ||
-			!strings.Contains(err.Error(), want), "preparation lost precedence over persisted fault: %v", err)
-	}
+	assert.FatalIf(t, !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) ||
+		!strings.Contains(err.Error(), want), "preparation lost precedence over persisted fault: %v", err)
 	if strings.HasPrefix((*testCaseInput), "chart") {
 		{
 			_, ok := errors.AsType[chart.ValidationError](err)
 			assert.FatalIf(t, !ok, "chart validation sentinel lost: %v", err)
 		}
 	}
-	{
-		assert.FatalIf(
-			t,
-			strings.HasPrefix((*testCaseInput), "packaged") &&
-				!strings.Contains(err.Error(), hr.ChartValuesFiles[0]),
-			"values file context lost: %v",
-			err,
-		)
-	}
-	{
-		assert.FatalIf(
-			t, (*testCaseInput) ==
-				"packaged missing" && !errors.Is(err, fs.ErrNotExist), "missing values sentinel lost: %v",
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		strings.HasPrefix((*testCaseInput), "packaged") &&
+			!strings.Contains(err.Error(), hr.ChartValuesFiles[0]),
+		"values file context lost: %v",
+		err,
+	)
+	assert.FatalIf(
+		t, (*testCaseInput) ==
+			"packaged missing" && !errors.Is(err, fs.ErrNotExist), "missing values sentinel lost: %v",
+		err,
+	)
 }

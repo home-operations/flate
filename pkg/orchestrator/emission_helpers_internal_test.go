@@ -16,9 +16,10 @@ func publishDocuments(
 	id manifest.NamedResource,
 	docs []map[string]any,
 	opts manifest.ParseDocOptions,
-) ([]store.Child, []map[string]any) {
+) childMaps {
 	prior, hadStatus := c.Store.GetStatus(id)
-	children, retained := parseChildrenForTest(id, docs, opts)
+	parseChildrenForTestResult1 := parseChildrenForTest(id, docs, opts)
+	children, retained := parseChildrenForTestResult1.Children, parseChildrenForTestResult1.Documents
 	_, _, next := c.Store.GetEmission(id)
 	defer next.Finish()
 	next.Children, next.Manifests, next.Complete = children, testutil.DocumentOccurrences(retained), true
@@ -26,7 +27,7 @@ func publishDocuments(
 	if hadStatus && prior.Status == store.StatusPending {
 		c.Store.UpdateStatus(id, prior)
 	}
-	return children, retained
+	return childMaps{Children: children, Documents: retained}
 }
 
 func publishFixture(tb testing.TB, s *store.Store, id manifest.NamedResource, children []manifest.NamedResource) {

@@ -72,7 +72,8 @@ spec:
 				"--cache-dir",
 				t.TempDir(),
 			}
-			stdout, stderr, code := harness.RunCLIBuffers(args...)
+			runCLIBuffersResult1 := harness.RunCLIBuffers(args...)
+			stdout, stderr, code := runCLIBuffersResult1.Stdout, runCLIBuffersResult1.Stderr, runCLIBuffersResult1.Code
 			want := 0
 			if tc.failed {
 				want = 1
@@ -89,7 +90,8 @@ spec:
 			producer := strings.SplitN(tc.producer, "/", 2)
 			assert.FatalIf(t, tc.failed &&
 				(!strings.Contains(stderr, producer[0]) || !strings.Contains(stderr, producer[1]) || strings.Count(stderr, tc.symptom) != 1), "unstable or unowned failure:\n%s", stderr)
-			nextOut, nextErr, nextCode := harness.RunCLIBuffers(args...)
+			runCLIBuffersResult2 := harness.RunCLIBuffers(args...)
+			nextOut, nextErr, nextCode := runCLIBuffersResult2.Stdout, runCLIBuffersResult2.Stderr, runCLIBuffersResult2.Code
 			assert.Equal(t, nextCode, code)
 			assert.Equal(t, nextOut, stdout)
 			assert.Equal(t, nextErr, stderr)

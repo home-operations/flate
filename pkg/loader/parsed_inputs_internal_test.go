@@ -59,7 +59,7 @@ func TestParsedInputs_ContentAndAdmissionIsolation(t *testing.T) {
 	assert.NoError(t, planner.FinalizeIndex(t.Context(), root, false))
 	assert.Equal(t, len(planner.Index.Visibility), 0)
 	inputs := planner.ParsedInputs()
-	file := filepath.Join(root, "shared/objects.yaml")
+	file := filepath.Join(root, "shared", "objects.yaml")
 	snapshot := inputs.sources[root].documents[file]
 	ordinals := make([]int, 0, len(snapshot.objects))
 	versions := make([]string, 0, len(snapshot.objects))
@@ -130,50 +130,42 @@ func TestParsedInputs_SourceAndParsePolicy(t *testing.T) {
 	inputs := planner.ParsedInputs()
 	file := filepath.Join(root, "unreadable.yaml")
 	snapshot := inputs.sources[root].documents[file].objects
-	{
-		assert.FatalIf(
-			t,
-			len(snapshot) != 1 || !errors.Is(snapshot[0].outcome.Err, fs.ErrPermission) || snapshot[0].Obj != nil ||
-				snapshot[0].Doc != nil ||
-				snapshot[0].outcome.Document != nil,
-			"snapshot lost open failure: %+v",
-			snapshot,
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(snapshot) != 1 || !errors.Is(snapshot[0].outcome.Err, fs.ErrPermission) || snapshot[0].Obj != nil ||
+			snapshot[0].Doc != nil ||
+			snapshot[0].outcome.Document != nil,
+		"snapshot lost open failure: %+v",
+		snapshot,
+	)
 	planner.documents.cache[file].objects[0].outcome.Err = errors.New("planner mutation")
 	for _, wipe := range []bool{false, true} {
 		l := load(input, inputs, wipe)
 		obj := l.documents.cache[filepath.Join(root, "secret.yaml")].objects[0].Obj.(*manifest.Secret)
 		assert.Equal(t, obj.HasPlaceholder(), wipe)
 		failed := l.documents.cache[filepath.Join(root, "broken.yaml")].objects
-		{
-			assert.FatalIf(
-				t,
-				len(failed) != 1 || failed[0].outcome.Ordinal != 1 || !errors.Is(failed[0].outcome.Err, manifest.ErrInput) ||
-					failed[0].Obj != nil,
-				"snapshot lost failed read: %+v",
-				failed,
-			)
-		}
+		assert.FatalIf(
+			t,
+			len(failed) != 1 || failed[0].outcome.Ordinal != 1 || !errors.Is(failed[0].outcome.Err, manifest.ErrInput) ||
+				failed[0].Obj != nil,
+			"snapshot lost failed read: %+v",
+			failed,
+		)
 		openFailure := l.documents.cache[file].objects
-		{
-			assert.FatalIf(t, len(openFailure) != 1 || !errors.Is(openFailure[0].outcome.Err, fs.ErrPermission) ||
-				openFailure[0].outcome.Ordinal != 0 ||
-				openFailure[0].Obj != nil ||
-				openFailure[0].Doc != nil ||
-				!errors.Is(
-					snapshot[0].outcome.Err,
-					fs.ErrPermission,
-				), "restoration lost immutable open failure: %+v", openFailure)
-		}
-		{
-			assert.FatalIf(
-				t,
-				wipe && !errors.Is(openFailure[0].outcome.Err, snapshot[0].outcome.Err),
-				"%s",
-				"open failure was not reused from parsed inputs",
-			)
-		}
+		assert.FatalIf(t, len(openFailure) != 1 || !errors.Is(openFailure[0].outcome.Err, fs.ErrPermission) ||
+			openFailure[0].outcome.Ordinal != 0 ||
+			openFailure[0].Obj != nil ||
+			openFailure[0].Doc != nil ||
+			!errors.Is(
+				snapshot[0].outcome.Err,
+				fs.ErrPermission,
+			), "restoration lost immutable open failure: %+v", openFailure)
+		assert.FatalIf(
+			t,
+			wipe && !errors.Is(openFailure[0].outcome.Err, snapshot[0].outcome.Err),
+			"%s",
+			"open failure was not reused from parsed inputs",
+		)
 		{
 			empty := l.documents.cache[filepath.Join(root, "empty.yaml")].objects
 			assert.FatalIf(t, empty == nil || len(empty) != 0, "snapshot lost completed empty read: %+v", empty)
@@ -357,9 +349,7 @@ func TestParsedInputs_CompactPhysicalFacts(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, err = canceled.Load(ctx, filepath.Join(visibilityRoot, "left"))
-	{
-		assert.FatalIf(t, !errors.Is(err, context.Canceled), "canceled load: %v", err)
-	}
+	assert.FatalIf(t, !errors.Is(err, context.Canceled), "canceled load: %v", err)
 	assert.NoError(t, canceled.FinalizeIndex(t.Context(), visibilityRoot, false))
 	assert.Equal(t, len(canceled.Index.Visibility), 1)
 	assert.Equal(t, canceled.Index.Visibility[0].Complete, false)
@@ -444,15 +434,13 @@ func testParsedInputsContentAndAdmissionIsolationIndependentEntries(
 			doc["metadata"].(map[string]any)["name"] = side
 			assert.Equal(t, len(l.Index.Records), 1)
 			failure := l.documents.cache[(*testCaseInput.file)].objects[2]
-			{
-				assert.FatalIf(
-					t,
-					failure.outcome.Ordinal != 3 || !errors.Is(failure.outcome.Err, testCaseInput.snapshot.objects[2].outcome.Err) ||
-						failure.Obj != nil,
-					"restoration lost failed declaration: %+v",
-					failure,
-				)
-			}
+			assert.FatalIf(
+				t,
+				failure.outcome.Ordinal != 3 || !errors.Is(failure.outcome.Err, testCaseInput.snapshot.objects[2].outcome.Err) ||
+					failure.Obj != nil,
+				"restoration lost failed declaration: %+v",
+				failure,
+			)
 		})
 	}
 }

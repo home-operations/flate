@@ -27,9 +27,7 @@ func htmlDoc(t *testing.T, y string) Doc {
 func renderHTMLString(t *testing.T, left, right []Doc) string {
 	t.Helper()
 	out, _, err := RenderDocs(left, right, Options{Format: FormatHTML})
-	{
-		assert.FatalIf(t, err != nil, "RenderDocs(html): %v", err)
-	}
+	assert.FatalIf(t, err != nil, "RenderDocs(html): %v", err)
 	return string(out)
 }
 
@@ -52,12 +50,8 @@ func TestRenderHTML_Changed(t *testing.T) {
 		Format:     FormatHTML,
 		Suppressed: []Suppression{{Parent: from.Parent, Side: SideCurrent, Reason: "<suppression>"}},
 	})
-	{
-		assert.NoError(t, err)
-	}
-	{
-		assert.FatalIf(t, len(warnings) != 0, "HTML renderer constructed presentation warnings: %+v", warnings)
-	}
+	assert.NoError(t, err)
+	assert.FatalIf(t, len(warnings) != 0, "HTML renderer constructed presentation warnings: %+v", warnings)
 	out := string(raw)
 
 	for _, want := range []string{
@@ -105,14 +99,10 @@ func TestRenderHTML_Changed(t *testing.T) {
 		// Title + parent share one sticky header block.
 		`<div class="rtop">`,
 	} {
-		{
-			assert.ErrorIf(t, !strings.Contains(out, want), "changed-diff HTML missing %q", want)
-		}
+		assert.ErrorIf(t, !strings.Contains(out, want), "changed-diff HTML missing %q", want)
 	}
 	for _, unescaped := range []string{"<resource>", "<parent>", "<path>", "<yaml>", "<suppression>"} {
-		{
-			assert.ErrorIf(t, strings.Contains(out, unescaped), "unescaped input %q in HTML", unescaped)
-		}
+		assert.ErrorIf(t, strings.Contains(out, unescaped), "unescaped input %q in HTML", unescaped)
 	}
 }
 
@@ -130,9 +120,7 @@ func TestRenderHTML_AddedAndRemoved(t *testing.T) {
 		"ConfigMap apps/added", "Service apps/removed",
 		"0 changed", "1 added", "1 removed",
 	} {
-		{
-			assert.ErrorIf(t, !strings.Contains(out, want), "added/removed HTML missing %q", want)
-		}
+		assert.ErrorIf(t, !strings.Contains(out, want), "added/removed HTML missing %q", want)
 	}
 }
 
@@ -173,9 +161,7 @@ data:
 		`class="diff-code diff-del"`, // the change still renders
 		`class="diff-code diff-add"`,
 	} {
-		{
-			assert.ErrorIf(t, !strings.Contains(out, want), "folded-context HTML missing %q", want)
-		}
+		assert.ErrorIf(t, !strings.Contains(out, want), "folded-context HTML missing %q", want)
 	}
 }
 
@@ -184,9 +170,7 @@ func TestRenderHTML_Identical(t *testing.T) {
 	d := htmlDoc(t, "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: web\n  namespace: apps\ndata:\n  k: v\n")
 	out := renderHTMLString(t, []Doc{d}, []Doc{d})
 
-	{
-		assert.ErrorIf(t, len(out) != 0, "identical docs should render empty, got:\n%s", out)
-	}
+	assert.ErrorIf(t, out != "", "identical docs should render empty, got:\n%s", out)
 }
 
 func TestRenderHTML_PreparedSubjects(t *testing.T) {
@@ -230,14 +214,12 @@ func TestRenderHTML_PreparedSubjects(t *testing.T) {
 			assert.NoError(t, err)
 			for _, label := range []string{tc.shared, tc.removed} {
 				heading := `<div class="rparent">` + html.EscapeString(label) + `</div>`
-				{
-					assert.ErrorIf(
-						t,
-						!strings.Contains(string(out), heading),
-						"HTML missing parent heading %q",
-						heading,
-					)
-				}
+				assert.ErrorIf(
+					t,
+					!strings.Contains(string(out), heading),
+					"HTML missing parent heading %q",
+					heading,
+				)
 			}
 			assert.Diff(t, subjects, before)
 		})

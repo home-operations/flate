@@ -62,10 +62,8 @@ func TestClassify_MissingCRDs_NoAllocations(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		w := &Waiter{Store: s, AllowMissingCRDs: enabled}
 		{
-			{
-				got := testing.AllocsPerRun(100, func() { w.Classify(t.Context(), ref, manifest.DrainCascade) })
-				assert.FatalIf(t, got != 0, "enabled=%t allocations=%v", enabled, got)
-			}
+			got := testing.AllocsPerRun(100, func() { w.Classify(t.Context(), ref, manifest.DrainCascade) })
+			assert.FatalIf(t, got != 0, "enabled=%t allocations=%v", enabled, got)
 		}
 	}
 }
@@ -155,14 +153,12 @@ func testClassifyMissingCRDsCase(t *testing.T, testCaseInput testClassifyMissing
 	got := w.Classify(t.Context(), ref, (*testCaseInput.drain))
 	assert.Equal(t, got.Kind, want)
 	if (*testCaseInput.state) == "invalid expression" {
-		{
-			assert.FatalIf(
-				t,
-				!strings.HasPrefix(got.Message, "readyExpr:"),
-				"invalid expression must fail: %+v",
-				got,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!strings.HasPrefix(got.Message, "readyExpr:"),
+			"invalid expression must fail: %+v",
+			got,
+		)
 	} else {
 		assert.Equal(t, got.Message, msg)
 	}

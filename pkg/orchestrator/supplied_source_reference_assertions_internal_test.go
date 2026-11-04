@@ -18,7 +18,8 @@ func assertSuppliedSourceReference(t *testing.T, o *Orchestrator, result *Result
 		if _, known := o.store.GetStatus(id); known {
 			t.Fatal("explicit selector executed supplied source")
 		}
-		needed, selected, _, _ := o.filter.Membership(id)
+		membershipResult1 := o.filter.Membership(id)
+		needed, selected, _, _ := membershipResult1.Needed, membershipResult1.Selected, membershipResult1.Dirty, membershipResult1.Revision
 		if needed || selected {
 			t.Fatal("reference selected itself or unrelated consumers")
 		}
@@ -32,7 +33,8 @@ func assertSuppliedSourceReference(t *testing.T, o *Orchestrator, result *Result
 	}
 	if mode != "full" {
 		if _, included := o.filter.KeepNamespaces()["supply-only"]; included {
-			needed, selected, dirty, _ := o.filter.Membership(id)
+			membershipResult2 := o.filter.Membership(id)
+			needed, selected, dirty, _ := membershipResult2.Needed, membershipResult2.Selected, membershipResult2.Dirty, membershipResult2.Revision
 			t.Fatalf(
 				"needed source selected its namespace: needed=%t selected=%t dirty=%t filter=%v",
 				needed,
@@ -41,7 +43,8 @@ func assertSuppliedSourceReference(t *testing.T, o *Orchestrator, result *Result
 				o.filter,
 			)
 		}
-		_, selected, _, _ := o.filter.Membership(id)
+		membershipResult3 := o.filter.Membership(id)
+		_, selected, _, _ := membershipResult3.Needed, membershipResult3.Selected, membershipResult3.Dirty, membershipResult3.Revision
 		if selected {
 			t.Fatal("source selected as a consumer")
 		}

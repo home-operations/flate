@@ -142,7 +142,8 @@ func testReconcileMutableChartAndSourceValuesReplayTail(
 			t.Fatalf("documents=%d, want 2", len(output.Manifests))
 		}
 		for i, doc := range output.Manifests {
-			name, namespace := manifest.DocMetadata(doc.Document)
+			metadata := manifest.DocMetadata(doc.Document)
+			name, namespace := metadata.Name, metadata.Namespace
 			data, _ := doc.Document["data"].(map[string]any)
 			wantName := []string{"app-first", "app-second"}[i]
 			if name != wantName || namespace != (*tailCaseInput.hr).Namespace || data["value"] != value ||
@@ -165,14 +166,12 @@ func testReconcileMutableChartAndSourceValuesReplayTail(
 	(*tailCaseInput.st).
 		AddObject(stamped)
 	equal := (*tailCaseInput.reconcile)(true)
-	{
-		assert.FatalIf(
-			t,
-			equal.Fingerprint != initial.Fingerprint || !cmp.Equal(equal.Manifests, initial.Manifests),
-			"%v",
-			"metadata-only replay changed content",
-		)
-	}
+	assert.FatalIf(
+		t,
+		equal.Fingerprint != initial.Fingerprint || !cmp.Equal(equal.Manifests, initial.Manifests),
+		"%v",
+		"metadata-only replay changed content",
+	)
 	(*tailCaseInput.writeTemplate)("two")
 	(*tailCaseInput.st).
 		SetArtifact(
@@ -185,14 +184,12 @@ func testReconcileMutableChartAndSourceValuesReplayTail(
 		)
 	withChart := (*tailCaseInput.reconcile)(false)
 	assertOutput(withChart, "first", "two")
-	{
-		assert.FatalIf(
-			t,
-			withChart.Fingerprint == equal.Fingerprint,
-			"%v",
-			"same-path mutable chart change kept the old render key",
-		)
-	}
+	assert.FatalIf(
+		t,
+		withChart.Fingerprint == equal.Fingerprint,
+		"%v",
+		"same-path mutable chart change kept the old render key",
+	)
 	testutil.WriteFile(t, (*tailCaseInput.root), "values/overrides.yaml", "value: second\n")
 	(*tailCaseInput.st).
 		SetArtifact(
@@ -205,24 +202,20 @@ func testReconcileMutableChartAndSourceValuesReplayTail(
 		)
 	withValues := (*tailCaseInput.reconcile)(false)
 	assertOutput(withValues, "second", "two")
-	{
-		assert.FatalIf(
-			t,
-			withValues.Fingerprint == withChart.Fingerprint,
-			"%v",
-			"external source values change kept the old render key",
-		)
-	}
+	assert.FatalIf(
+		t,
+		withValues.Fingerprint == withChart.Fingerprint,
+		"%v",
+		"external source values change kept the old render key",
+	)
 	final := (*tailCaseInput.reconcile)(true)
 	assertOutput(final, "second", "two")
-	{
-		assert.FatalIf(
-			t,
-			final.Fingerprint != withValues.Fingerprint || !cmp.Equal(final.Manifests, withValues.Manifests),
-			"%v",
-			"unchanged mutable source replay changed output",
-		)
-	}
+	assert.FatalIf(
+		t,
+		final.Fingerprint != withValues.Fingerprint || !cmp.Equal(final.Manifests, withValues.Manifests),
+		"%v",
+		"unchanged mutable source replay changed output",
+	)
 }
 
 func TestReconcile_ListNormalizationFailure(t *testing.T) {
@@ -275,36 +268,28 @@ items:
 	)
 	st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady})
 	info := reconcileFixture(t, c, hr.Named())
+	assert.FatalIf(
+		t,
+		info.Status != store.StatusFailed || !strings.Contains(info.Message, "Object 'Kind' is missing"),
+		"invalid list did not retain its original failure: %+v",
+		info,
+	)
 	{
-		assert.FatalIf(
-			t,
-			info.Status != store.StatusFailed || !strings.Contains(info.Message, "Object 'Kind' is missing"),
-			"invalid list did not retain its original failure: %+v",
-			info,
-		)
+		art, _ := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
+		assert.FatalIf(t, art != nil && art.Complete, "%v", "failed render published completed output")
 	}
-	{
-		{
-			art, _ := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
-			assert.FatalIf(t, art != nil && art.Complete, "%v", "failed render published completed output")
-		}
-	}
-	{
-		assert.FatalIf(
-			t,
-			st.GetObject(
-				manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "invalid", Namespace: "apps"},
-			) != nil,
-			"%v",
-			"failed render published a repaired child",
-		)
-	}
-	{
-		assert.FatalIf(t, slices.ContainsFunc(
-			st.Warnings(),
-			func(w manifest.Warning) bool { return w.Category == manifest.WarnUnresolvedSubstitution },
-		), "%v", "failed render reported successful placeholder substitution")
-	}
+	assert.FatalIf(
+		t,
+		st.GetObject(
+			manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "invalid", Namespace: "apps"},
+		) != nil,
+		"%v",
+		"failed render published a repaired child",
+	)
+	assert.FatalIf(t, slices.ContainsFunc(
+		st.Warnings(),
+		func(w manifest.Warning) bool { return w.Category == manifest.WarnUnresolvedSubstitution },
+	), "%v", "failed render reported successful placeholder substitution")
 }
 
 func TestReconcile_UnreadableParentDoesNotFillRequiredValues(t *testing.T) {
@@ -379,33 +364,25 @@ func TestReconcile_UnreadableParentDoesNotFillRequiredValues(t *testing.T) {
 			)
 			st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady})
 			info := reconcileFixture(t, c, hr.Named())
-			{
-				assert.ErrorIf(
-					t,
-					info.Status != store.StatusFailed || !strings.Contains(info.Message, "missing required value"),
-					"required chart value did not retain its original failure: %+v",
-					info,
-				)
-			}
+			assert.ErrorIf(
+				t,
+				info.Status != store.StatusFailed || !strings.Contains(info.Message, "missing required value"),
+				"required chart value did not retain its original failure: %+v",
+				info,
+			)
 			stored := st.GetObject(hr.Named()).(*manifest.HelmRelease)
 			assert.Diff(t, stored.Values, original.Values)
 			{
-				{
-					emission, _ := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
-					assert.ErrorIf(t, emission != nil &&
-						(emission.Complete || emission.Render != nil || len(emission.Manifests) != 0), "%v", "failed chart published completed output or a successful receipt")
-				}
+				emission, _ := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
+				assert.ErrorIf(t, emission != nil &&
+					(emission.Complete || emission.Render != nil || len(emission.Manifests) != 0), "%v", "failed chart published completed output or a successful receipt")
 			}
-			{
-				assert.ErrorIf(t, st.GetObject(
-					manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "rescued", Namespace: "apps"},
-				) != nil, "%v", "failed chart published a fabricated ConfigMap")
-			}
-			{
-				assert.ErrorIf(t, slices.ContainsFunc(st.Warnings(), func(w manifest.Warning) bool {
-					return w.Resource == hr.Named() && w.Category == manifest.WarnUnresolvedSubstitution
-				}), "%v", "failed chart reported successful placeholder substitution")
-			}
+			assert.ErrorIf(t, st.GetObject(
+				manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "rescued", Namespace: "apps"},
+			) != nil, "%v", "failed chart published a fabricated ConfigMap")
+			assert.ErrorIf(t, slices.ContainsFunc(st.Warnings(), func(w manifest.Warning) bool {
+				return w.Resource == hr.Named() && w.Category == manifest.WarnUnresolvedSubstitution
+			}), "%v", "failed chart reported successful placeholder substitution")
 			t.Run("history", func(t *testing.T) {
 				t.Parallel()
 				if reason := sourcecache.RenderPersistenceDisabledReason(); reason != "" {
@@ -414,15 +391,13 @@ func TestReconcile_UnreadableParentDoesNotFillRequiredValues(t *testing.T) {
 				fresh := helm.NewClient(cachetest.New(t, cacheDir, sourcecache.New))
 				for _, inputs := range []map[string]any{original.Values, {"required": manifest.ValuePlaceholder("required")}} {
 					{
-						{
-							_, complete := fresh.PreviousRender(
-								t.Context(),
-								hr,
-								inputs,
-								helm.RenderOptions{Sources: helm.NewSources(st)},
-							)
-							assert.ErrorIf(t, complete, "failed chart has successful history for values %#v", inputs)
-						}
+						_, complete := fresh.PreviousRender(
+							t.Context(),
+							hr,
+							inputs,
+							helm.RenderOptions{Sources: helm.NewSources(st)},
+						)
+						assert.ErrorIf(t, complete, "failed chart has successful history for values %#v", inputs)
 					}
 				}
 			})
@@ -530,15 +505,13 @@ func testReconcileSuppliedAdvisoriesOnReplaySegment(
 		}
 		(*statementInput.previous) = next
 		t.Cleanup(next.Close)
-		{
-			assert.FatalIf(
-				t,
-				next.Outcome() == schedule.Blocked || !next.Valid() || next.Reused != (i == 1 || i == 2),
-				"phase %d: execution=%+v",
-				i,
-				next,
-			)
-		}
+		assert.FatalIf(
+			t,
+			next.Outcome() == schedule.Blocked || !next.Valid() || next.Reused != (i == 1 || i == 2),
+			"phase %d: execution=%+v",
+			i,
+			next,
+		)
 		if info, ok := (*statementInput.st).GetStatus(
 			(*statementInput.hr).Named(),
 		); !ok ||
@@ -551,15 +524,13 @@ func testReconcileSuppliedAdvisoriesOnReplaySegment(
 			)
 		}
 		current := (*statementInput.st).GetArtifact((*statementInput.hr).Named(), store.ArtifactContent).(*store.Emission)
-		{
-			assert.FatalIf(
-				t,
-				!current.Complete || len(current.Manifests) != 1,
-				"phase %d: incomplete rendered emission: %+v",
-				i,
-				current,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!current.Complete || len(current.Manifests) != 1,
+			"phase %d: incomplete rendered emission: %+v",
+			i,
+			current,
+		)
 		if i == 0 {
 			(*statementInput.first) = current
 		} else {

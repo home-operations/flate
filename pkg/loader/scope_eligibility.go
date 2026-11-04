@@ -11,12 +11,10 @@ import (
 
 func (l *Loader) resetAdmissions() {
 	clear(l.roots)
-	{
-		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-		for file, doc := range l.documents.cache {
-			doc.eligible, doc.rootKnown, doc.rootAdmitted, doc.terminal = fileUnknown, false, false, false
-			l.documents.cache[file] = doc
-		}
+	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+	for file, doc := range l.documents.cache {
+		doc.eligible, doc.rootKnown, doc.rootAdmitted, doc.terminal = fileUnknown, false, false, false
+		l.documents.cache[file] = doc
 	}
 }
 
@@ -42,11 +40,9 @@ func (l *Loader) resolveEligibility() {
 			l.controlContributionEligibility(new(c), mark)
 		}
 	}
-	{
-		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-		for file, doc := range l.documents.cache {
-			l.seedFileEligibility(file, new(doc), mark)
-		}
+	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+	for file, doc := range l.documents.cache {
+		l.seedFileEligibility(file, new(doc), mark)
 	}
 	for {
 		changed := false
@@ -65,12 +61,10 @@ func (l *Loader) resolveEligibility() {
 			break
 		}
 	}
-	{
-		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-		for file, doc := range l.documents.cache {
-			if doc.eligible == fileUnknown && len(doc.objects) != 0 {
-				mark(file, fileInactive)
-			}
+	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+	for file, doc := range l.documents.cache {
+		if doc.eligible == fileUnknown && len(doc.objects) != 0 {
+			mark(file, fileInactive)
 		}
 	}
 }
@@ -122,7 +116,7 @@ func (l *Loader) seedFileEligibility(file string, documentArg *document, mark fu
 	if doc.eligible != fileUnknown || doc.objects == nil {
 		return
 	}
-	_, builder := l.documents.read(filepath.Dir(file))
+	builder := l.documents.read(filepath.Dir(file)).file
 	if builder != "" || l.terminalInput(file) {
 		return
 	}

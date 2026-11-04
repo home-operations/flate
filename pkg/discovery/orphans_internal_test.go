@@ -137,7 +137,7 @@ spec: {sources: [{alias: repo, kind: GitRepository, name: source}]}
 	for _, id := range []manifest.NamedResource{self, child, generator} {
 		record := manifest.DiscoveryRecord{
 			Authored: id,
-			Path:     filepath.Join(dir, "apps/bundle.yaml"),
+			Path:     filepath.Join(dir, "apps", "bundle.yaml"),
 			File:     "apps/bundle.yaml",
 		}
 		if id == self {
@@ -150,15 +150,9 @@ spec: {sources: [{alias: repo, kind: GitRepository, name: source}]}
 	}
 	l.Index.Claims = map[string][]manifest.NamedResource{"apps/": {self}}
 	d.promoteOrphans(t.Context(), nil)
-	{
-		assert.ErrorIf(t, st.GetObject(self) == nil, "%v", "self-excluded orphan must be admitted")
-	}
-	{
-		assert.ErrorIf(t, st.GetObject(child) != nil, "%v", "orphan promotion must not admit a parent-owned sibling")
-	}
-	{
-		assert.ErrorIf(t, st.GetObject(generator) != nil, "%v", "orphan promotion admitted a parent-owned generator")
-	}
+	assert.ErrorIf(t, st.GetObject(self) == nil, "%v", "self-excluded orphan must be admitted")
+	assert.ErrorIf(t, st.GetObject(child) != nil, "%v", "orphan promotion must not admit a parent-owned sibling")
+	assert.ErrorIf(t, st.GetObject(generator) != nil, "%v", "orphan promotion admitted a parent-owned generator")
 }
 
 func TestPromoteOrphans_GraphOwnedSiblingsAndSelf(t *testing.T) {
@@ -178,24 +172,18 @@ func TestPromoteOrphans_GraphOwnedSiblingsAndSelf(t *testing.T) {
 		l := loader.New(st)
 		l.SourceRoot = root
 		{
-			{
-				_, err := l.Load(t.Context(), root)
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
+			_, err := l.Load(t.Context(), root)
+			assert.FatalIf(t, err != nil, "%v", err)
 		}
 		l.Admit(root)
 		{
-			{
-				err := l.FinalizeIndex(t.Context(), root, true)
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
+			err := l.FinalizeIndex(t.Context(), root, true)
+			assert.FatalIf(t, err != nil, "%v", err)
 		}
 		d := Session{cfg: Config{Store: st}, loader: l}
 		d.promoteOrphans(t.Context(), nil)
 		for _, id := range []manifest.NamedResource{testutil.KustomizationID("apps", "disabled"), testutil.HelmReleaseID("apps", "sibling")} {
-			{
-				assert.FatalIf(t, st.GetObject(id) != nil, "omitted file promoted %s", id)
-			}
+			assert.FatalIf(t, st.GetObject(id) != nil, "omitted file promoted %s", id)
 		}
 	})
 
@@ -215,13 +203,10 @@ spec: {chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: sourc
 	st := store.New()
 	admitDiscoveryForTest(st, dir)
 	docs, err := testutil.SplitDocs([]byte(body))
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
-	ks, _, _, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{DefaultNamespace: ""})
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
+	parsed, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{DefaultNamespace: ""})
+	ks := parsed.Object
+	assert.FatalIf(t, err != nil, "%v", err)
 	st.AddObject(ks)
 	source := &manifest.GitRepository{Name: "source", Namespace: ks.Named().Namespace}
 	st.AddObject(source)
@@ -232,10 +217,8 @@ spec: {chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: sourc
 	l := loader.New(st)
 	l.Options.WipeSecrets = false
 	{
-		{
-			err := l.FinalizeIndex(t.Context(), dir, true)
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := l.FinalizeIndex(t.Context(), dir, true)
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	self := ks.Named()
 	st.DeleteObject(self)
@@ -249,12 +232,8 @@ spec: {chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: sourc
 	}
 	d := &Session{cfg: Config{Store: st}, loader: l}
 	d.promoteOrphans(t.Context(), nil)
-	{
-		assert.ErrorIf(t, st.GetObject(self) == nil, "%v", "self-owned Kustomization must be admitted")
-	}
-	{
-		assert.ErrorIf(t, st.GetObject(child) != nil, "%v", "graph-owned sibling bypassed per-document admission")
-	}
+	assert.ErrorIf(t, st.GetObject(self) == nil, "%v", "self-owned Kustomization must be admitted")
+	assert.ErrorIf(t, st.GetObject(child) != nil, "%v", "graph-owned sibling bypassed per-document admission")
 }
 
 func TestPromoteOrphans_SecretPrecedence(t *testing.T) {
@@ -335,18 +314,14 @@ func testPromoteOrphansIndexedEvidenceCase(t *testing.T, testCaseInput testPromo
 			Refs: []manifest.NamedResource{source.Named()},
 		}
 		{
-			{
-				err := l.FinalizeIndex(t.Context(), root, true)
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
+			err := l.FinalizeIndex(t.Context(), root, true)
+			assert.FatalIf(t, err != nil, "%v", err)
 		}
 		readers := l.Index.Readers[path.Join(testCaseInput.tc.chartPath, "a.yaml")]
-		{
-			assert.FatalIf(t, !slices.Contains(
-				readers,
-				manifest.FileReader{Reader: release.Named(), Source: source.Named(), Exact: true},
-			), "chart did not read independent declarations: %+v", readers)
-		}
+		assert.FatalIf(t, !slices.Contains(
+			readers,
+			manifest.FileReader{Reader: release.Named(), Source: source.Named(), Exact: true},
+		), "chart did not read independent declarations: %+v", readers)
 	} else {
 		assertOrphanOccurrencesDistinct(t, l, root, testCaseInput.shared)
 	}
@@ -366,10 +341,8 @@ func testPromoteOrphansIndexedEvidenceCase(t *testing.T, testCaseInput testPromo
 	}
 	if testCaseInput.tc.name == "discovery" {
 		{
-			{
-				err := l.FinalizeIndex(t.Context(), root, true)
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
+			err := l.FinalizeIndex(t.Context(), root, true)
+			assert.FatalIf(t, err != nil, "%v", err)
 		}
 	}
 	d := &Session{cfg: Config{Store: st}, loader: l}
@@ -383,33 +356,31 @@ func testPromoteOrphansIndexedEvidenceCase(t *testing.T, testCaseInput testPromo
 				return d.loader.AdmitsRoot(obj, record.Path), nil
 			}
 			{
-				{
-					promoted, err := loader.Promote(
-						t.Context(),
-						st,
-						id,
-						loader.PromoteOptions{
-							Record: manifest.Production{
-								Authored: record.Authored,
-								Path:     record.Path,
-								File:     record.File,
-							},
-							Admit: admit,
+				promoted, err := loader.Promote(
+					t.Context(),
+					st,
+					id,
+					loader.PromoteOptions{
+						Record: manifest.Production{
+							Authored: record.Authored,
+							Path:     record.Path,
+							File:     record.File,
 						},
-					)
-					assert.FatalIf(t, err != nil ||
-						!promoted, "promotion failed for %s", id)
-				}
+						Admit: admit,
+					},
+				)
+				assert.FatalIf(t, err != nil ||
+					!promoted, "promotion failed for %s", id)
 			}
 		}
 		d.promoteOrphans(t.Context(), nil)
 	}
-	{
-		assert.FatalIf(
-			t, testCaseInput.tc.name == "discovery" && documentReads.Load() != readsBefore, "%v",
-			"orphan promotion reread indexed documents",
-		)
-	}
+
+	assert.FatalIf(
+		t, testCaseInput.tc.name == "discovery" && documentReads.Load() != readsBefore, "%v",
+		"orphan promotion reread indexed documents",
+	)
+
 	for _, child := range l.Kustomizations() {
 		if child.Obj.Named() == supplied.Named() {
 			t.Fatal("supplied evidence gained producer eligibility")
@@ -422,18 +393,14 @@ func testPromoteOrphansIndexedEvidenceCase(t *testing.T, testCaseInput testPromo
 	assert.Equal(t, st.HasInventory(supplied.Named()), false)
 	obj, doc, attempt := st.GetEmission((*testCaseInput.generator))
 	attempt.Finish()
-	{
-		assert.FatalIf(t, obj == nil || doc == nil || doc["metadata"].(map[string]any)["uid"] != "authored" ||
-			doc["metadata"].(map[string]any)["annotations"].(map[string]any)["source.extensions.fluxcd.io/reconcile"] != "disabled", "orphan generator lost authored document: %#v", doc)
-	}
+	assert.FatalIf(t, obj == nil || doc == nil || doc["metadata"].(map[string]any)["uid"] != "authored" ||
+		doc["metadata"].(map[string]any)["annotations"].(map[string]any)["source.extensions.fluxcd.io/reconcile"] != "disabled", "orphan generator lost authored document: %#v", doc)
 	for _, want := range []struct {
 		id    manifest.NamedResource
 		value string
 	}{{(*testCaseInput.x), "X"}, {(*testCaseInput.shared), "Z"}, {(*testCaseInput.sibling), "S"}} {
 		obj, ok := st.GetObject(want.id).(*manifest.ConfigMap)
-		{
-			assert.FatalIf(t, !ok, "missing ConfigMap %s", want.id)
-		}
+		assert.FatalIf(t, !ok, "missing ConfigMap %s", want.id)
 		{
 			got := obj.Data["VALUE"]
 			assert.ErrorIf(t, got != want.value, "%s VALUE=%v, want indexed %s", want.id, got, want.value)
@@ -476,7 +443,8 @@ func testPromoteOrphansNamespaceAdmissionCase(
 			batch = make([]store.Child, 0, len(docs))
 		}
 		for _, doc := range docs {
-			obj, document, _, parseErr := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+			parsed2, parseErr := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+			obj, document := parsed2.Object, parsed2.Document
 			assert.NoError(t, parseErr)
 			batch = append(batch, store.Child{Obj: obj, Doc: document})
 		}
@@ -484,20 +452,16 @@ func testPromoteOrphansNamespaceAdmissionCase(
 	}
 	l.Admit(root)
 	bare := testutil.KustomizationID("", "bare")
-	{
-		assert.ErrorIf(t, st.GetObject(bare) != nil, "%v", "early admission published the namespace-less seed")
-	}
+	assert.ErrorIf(t, st.GetObject(bare) != nil, "%v", "early admission published the namespace-less seed")
 	record, ok := l.Index.Lookup(bare)
 	assert.Equal(t, ok, true)
 	child := l.IndexedObject(bare, record)
-	{
-		assert.FatalIf(
-			t,
-			child.Obj == nil || child.Doc == nil,
-			"%v",
-			"missing indexed declaration before promotion",
-		)
-	}
+	assert.FatalIf(
+		t,
+		child.Obj == nil || child.Doc == nil,
+		"%v",
+		"missing indexed declaration before promotion",
+	)
 	target := bare
 	if testCaseInput.siblings {
 		target = manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "eligible"}
@@ -512,9 +476,7 @@ func testPromoteOrphansNamespaceAdmissionCase(
 		l.Index.Records[target] = targetRecord
 		record, _ = l.Index.Lookup(bare)
 	}
-	{
-		assert.FatalIf(t, st.GetObject(target) != nil, "%v", "promotion target already published")
-	}
+	assert.FatalIf(t, st.GetObject(target) != nil, "%v", "promotion target already published")
 	assert.Equal(t, l.PromotionDocuments(target) != nil, testCaseInput.indexed)
 	before, err := json.Marshal(record)
 	assert.NoError(t, err)
@@ -522,14 +484,12 @@ func testPromoteOrphansNamespaceAdmissionCase(
 	object := child.Obj.(*manifest.Kustomization).Clone()
 	d := Session{cfg: Config{Store: st}, loader: l}
 	d.promoteOrphans(t.Context(), nil)
-	{
-		assert.ErrorIf(
-			t,
-			st.GetObject(bare) != nil,
-			"%v",
-			"namespace-less namespaced seed became an orphan root",
-		)
-	}
+	assert.ErrorIf(
+		t,
+		st.GetObject(bare) != nil,
+		"%v",
+		"namespace-less namespaced seed became an orphan root",
+	)
 	after, ok := l.Index.Lookup(bare)
 	assert.Equal(t, ok, true)
 	encoded, err := json.Marshal(after)
@@ -540,22 +500,18 @@ func testPromoteOrphansNamespaceAdmissionCase(
 	assert.Equal(t, manifest.Equal(child.Obj, object), true)
 	if testCaseInput.siblings {
 		eligible := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "eligible"}
-		{
-			assert.ErrorIf(
-				t,
-				st.GetObject(eligible) == nil,
-				"%v",
-				"explicitly namespaced sibling was not published",
-			)
-		}
-		{
-			assert.ErrorIf(
-				t,
-				testCaseInput.indexed && st.GetObject(manifest.NamedResource{Kind: "Namespace", Name: "apps"}) == nil,
-				"%v",
-				"cluster-scoped sibling was not published",
-			)
-		}
+		assert.ErrorIf(
+			t,
+			st.GetObject(eligible) == nil,
+			"%v",
+			"explicitly namespaced sibling was not published",
+		)
+		assert.ErrorIf(
+			t,
+			testCaseInput.indexed && st.GetObject(manifest.NamedResource{Kind: "Namespace", Name: "apps"}) == nil,
+			"%v",
+			"cluster-scoped sibling was not published",
+		)
 	}
 }
 
@@ -622,13 +578,10 @@ func testPromoteOrphansSecretPrecedenceCase(t *testing.T, testCaseInput *string,
 				),
 			),
 		)
-		{
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
-		ks, _, _, err := manifest.ParseDoc(ksDoc[0], manifest.ParseDocOptions{DefaultNamespace: ""})
-		{
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		assert.FatalIf(t, err != nil, "%v", err)
+		parsed3, err := manifest.ParseDoc(ksDoc[0], manifest.ParseDocOptions{DefaultNamespace: ""})
+		ks := parsed3.Object
+		assert.FatalIf(t, err != nil, "%v", err)
 		st.AddObject(ks)
 		source := &manifest.GitRepository{Name: "source", Namespace: ks.Named().Namespace}
 		st.AddObject(source)
@@ -638,24 +591,18 @@ func testPromoteOrphansSecretPrecedenceCase(t *testing.T, testCaseInput *string,
 		)
 		l.SourceRoot = dir
 		{
-			{
-				_, err := l.Load(t.Context(), dir)
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
+			_, err := l.Load(t.Context(), dir)
+			assert.FatalIf(t, err != nil, "%v", err)
 		}
 		{
-			{
-				err := l.FinalizeIndex(t.Context(), dir, true)
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
+			err := l.FinalizeIndex(t.Context(), dir, true)
+			assert.FatalIf(t, err != nil, "%v", err)
 		}
 	}
 	if (*testCaseInput) == "failed" {
 		{
-			{
-				err := os.Remove(filepath.Join(dir, "bundle.yaml"))
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
+			err := os.Remove(filepath.Join(dir, "bundle.yaml"))
+			assert.FatalIf(t, err != nil, "%v", err)
 		}
 	}
 	candidates := ids
@@ -666,32 +613,24 @@ func testPromoteOrphansSecretPrecedenceCase(t *testing.T, testCaseInput *string,
 	for i, id := range ids {
 		got, ok := st.GetObject(id).(*manifest.Secret)
 		if (*testCaseInput) == "unknown-file" {
-			{
-				assert.ErrorIf(t, ok, "Secret without a source-file entry admitted: %+v", got)
-			}
+			assert.ErrorIf(t, ok, "Secret without a source-file entry admitted: %+v", got)
 			continue
 		}
-		{
-			assert.FatalIf(t, !ok, "Secret %s missing", id)
-		}
+		assert.FatalIf(t, !ok, "Secret %s missing", id)
 		if (*testCaseInput) == "standalone" || (*testCaseInput) == "siblings" {
-			{
-				assert.ErrorIf(
-					t,
-					got.StringData["HOST"] != "fixture-value",
-					"%s = %+v, want real file value",
-					id,
-					got,
-				)
-			}
+			assert.ErrorIf(
+				t,
+				got.StringData["HOST"] != "fixture-value",
+				"%s = %+v, want real file value",
+				id,
+				got,
+			)
 		} else {
 			assert.ErrorIf(t, got != saved[i], "%s must preserve exact immutable object", id)
 		}
 		_, doc, emission := st.GetEmission(id)
 		emission.Finish()
-		{
-			assert.FatalIf(t, doc == nil, "%v", "promoted or restored secret lost its authoritative document")
-		}
+		assert.FatalIf(t, doc == nil, "%v", "promoted or restored secret lost its authoritative document")
 		assertOrphanSecretSnapshot(t, doc, testCaseInput, saved[i])
 	}
 }
@@ -699,15 +638,11 @@ func testPromoteOrphansSecretPrecedenceCase(t *testing.T, testCaseInput *string,
 func assertOrphanOccurrencesDistinct(t *testing.T, l *loader.Loader, root string, shared *manifest.NamedResource) {
 	t.Helper()
 	{
-		{
-			_, err := l.Load(t.Context(), root)
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
-	}
-	occurrences, err := l.Occurrences(t.Context(), root, "")
-	{
+		_, err := l.Load(t.Context(), root)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
+	occurrences, err := l.Occurrences(t.Context(), root, "")
+	assert.FatalIf(t, err != nil, "%v", err)
 	var sharedDeclarations []loader.OccurrenceID
 	{
 		oValues := occurrences
@@ -719,34 +654,28 @@ func assertOrphanOccurrencesDistinct(t *testing.T, l *loader.Loader, root string
 			}
 		}
 	}
-	{
-		assert.FatalIf(
-			t,
-			len(sharedDeclarations) != 2 || sharedDeclarations[0] == sharedDeclarations[1],
-			"identity collapse erased distinct orphan occurrences: %+v",
-			sharedDeclarations,
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(sharedDeclarations) != 2 || sharedDeclarations[0] == sharedDeclarations[1],
+		"identity collapse erased distinct orphan occurrences: %+v",
+		sharedDeclarations,
+	)
 }
 
 func assertOrphanSecretSnapshot(t *testing.T, doc map[string]any, testCaseInput *string, saved *manifest.Secret) {
 	t.Helper()
 	if (*testCaseInput) == "failed" || (*testCaseInput) == "preexisting" ||
 		(*testCaseInput) == "graph-owned" {
-		{
-			assert.FatalIf(
-				t,
-				doc["metadata"].(map[string]any)["uid"] != "saved-secret",
-				"saved secret metadata lost: %v",
-				doc,
-			)
-		}
+		assert.FatalIf(
+			t,
+			doc["metadata"].(map[string]any)["uid"] != "saved-secret",
+			"saved secret metadata lost: %v",
+			doc,
+		)
 	}
 	wantSaved := "..PLACEHOLDER_HOST.."
 	if (*testCaseInput) == "preexisting" {
 		wantSaved = "preexisting-value"
 	}
-	{
-		assert.ErrorIf(t, saved.StringData["HOST"] != wantSaved, "%v", "saved immutable Secret mutated")
-	}
+	assert.ErrorIf(t, saved.StringData["HOST"] != wantSaved, "%v", "saved immutable Secret mutated")
 }

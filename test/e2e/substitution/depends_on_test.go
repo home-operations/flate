@@ -43,7 +43,7 @@ func TestE2E_DependsOnDefaults_SuppliedValues(t *testing.T) {
 			writeDependencyCluster(t, root, expression)
 			var previous string
 			for range 2 {
-				stdout, stderr, code := harness.RunCLIBuffers(
+				runCLIBuffersResult1 := harness.RunCLIBuffers(
 					"build",
 					"all",
 					"--path",
@@ -54,6 +54,7 @@ func TestE2E_DependsOnDefaults_SuppliedValues(t *testing.T) {
 					t.TempDir(),
 					"--no-progress",
 				)
+				stdout, stderr, code := runCLIBuffersResult1.Stdout, runCLIBuffersResult1.Stderr, runCLIBuffersResult1.Code
 				assert.FatalIf(
 					t,
 					code != 0 || !strings.Contains(stdout, "name: consumer-output"),
@@ -125,7 +126,8 @@ func TestE2E_DependsOnDefaults_ChangedOnly(t *testing.T) {
 			if mode == "diff" {
 				args = append(args, "-o", "diff")
 			}
-			stdout, stderr, code := harness.RunCLIBuffers(args...)
+			runCLIBuffersResult2 := harness.RunCLIBuffers(args...)
+			stdout, stderr, code := runCLIBuffersResult2.Stdout, runCLIBuffersResult2.Stderr, runCLIBuffersResult2.Code
 			assert.FatalIf(
 				t,
 				code != 0 || !strings.Contains(stdout, "value: after") || strings.Contains(stdout, "unrelated-output"),
@@ -202,7 +204,7 @@ func TestE2E_DependsOnDefaults_EmittedChild(t *testing.T) {
 				"app/cm.yaml",
 				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: emitted-output}\n",
 			)
-			stdout, stderr, code := harness.RunCLIBuffers(
+			runCLIBuffersResult3 := harness.RunCLIBuffers(
 				"build",
 				"all",
 				"--path",
@@ -213,6 +215,7 @@ func TestE2E_DependsOnDefaults_EmittedChild(t *testing.T) {
 				t.TempDir(),
 				"--no-progress",
 			)
+			stdout, stderr, code := runCLIBuffersResult3.Stdout, runCLIBuffersResult3.Stderr, runCLIBuffersResult3.Code
 			assert.FatalIf(
 				t,
 				code != 0 || !strings.Contains(stdout, "name: emitted-output"),
@@ -236,7 +239,7 @@ func TestE2E_DependsOnDefaults_EmptyNameFails(t *testing.T) {
 	)
 	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [cm.yaml]\n")
 	testutil.WriteFile(t, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: should-not-render}\n")
-	stdout, stderr, code := harness.RunCLIBuffers(
+	runCLIBuffersResult4 := harness.RunCLIBuffers(
 		"build",
 		"all",
 		"--path",
@@ -247,6 +250,7 @@ func TestE2E_DependsOnDefaults_EmptyNameFails(t *testing.T) {
 		t.TempDir(),
 		"--no-progress",
 	)
+	stdout, stderr, code := runCLIBuffersResult4.Stdout, runCLIBuffersResult4.Stderr, runCLIBuffersResult4.Code
 	assert.FatalIf(t, code != 1 || strings.Contains(stdout, "name: should-not-render") ||
 		!strings.Contains(stderr, "required by flux-system/consumer") ||
 		!strings.Contains(
@@ -308,7 +312,7 @@ func TestE2E_ReadyExpr_Kustomization(t *testing.T) {
 	)
 	var previousOut, previousErr string
 	for run := range 2 {
-		stdout, stderr := harness.RequireCLIOK(
+		requireCLIOKResult5 := harness.RequireCLIOK(
 			t,
 			"build",
 			"all",
@@ -322,6 +326,7 @@ func TestE2E_ReadyExpr_Kustomization(t *testing.T) {
 			"--log-level",
 			"warn",
 		)
+		stdout, stderr := requireCLIOKResult5.Stdout, requireCLIOKResult5.Stderr
 		assert.FatalIf(
 			t,
 			!strings.Contains(stdout, "name: consumer-output") || !strings.Contains(stdout, "version: v1") ||
@@ -346,7 +351,7 @@ func TestE2E_ReadyExpr_Kustomization(t *testing.T) {
 		"init",
 		&gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}},
 	)
-	harness.MutateFile(t, filepath.Join(root, "flux/consumer.yaml"), "releaseVersion: v1", "releaseVersion: v2")
+	harness.MutateFile(t, filepath.Join(root, "flux", "consumer.yaml"), "releaseVersion: v1", "releaseVersion: v2")
 	for _, mode := range []string{"build", "diff", "test"} {
 		t.Run(mode, func(t *testing.T) {
 			args := []string{
@@ -367,7 +372,8 @@ func TestE2E_ReadyExpr_Kustomization(t *testing.T) {
 			if mode == "diff" {
 				args = append(args, "-o", "diff")
 			}
-			stdout, stderr := harness.RequireCLIOK(t, args...)
+			requireCLIOKResult6 := harness.RequireCLIOK(t, args...)
+			stdout, stderr := requireCLIOKResult6.Stdout, requireCLIOKResult6.Stderr
 			assert.FatalIf(t, strings.Contains(stderr, "readyExpr") || strings.Contains(stdout, "unrelated-output") ||
 				strings.Contains(
 					stdout,
@@ -487,10 +493,11 @@ func TestE2E_ReadyExpr_EmittedIndexed(t *testing.T) {
 				"warn",
 			}
 			if changed {
-				harness.MutateFile(t, filepath.Join(root, "app/cm.yaml"), "revision: before", "revision: after")
+				harness.MutateFile(t, filepath.Join(root, "app", "cm.yaml"), "revision: before", "revision: after")
 				args = append(args, "--base", "HEAD")
 			}
-			stdout, stderr := harness.RequireCLIOK(t, args...)
+			requireCLIOKResult7 := harness.RequireCLIOK(t, args...)
+			stdout, stderr := requireCLIOKResult7.Stdout, requireCLIOKResult7.Stderr
 			for _, want := range []string{"name: emitted-output", "namespace: apps", "version: v1-promoted"} {
 				assert.FatalIf(
 					t,

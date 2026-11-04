@@ -33,7 +33,8 @@ func BenchmarkObjectDocument_DesiredSpec(b *testing.B) {
 				b.Fatal(err)
 			}
 			docs[0]["spec"] = specs[0]
-			obj, _, _, err := ParseDoc(docs[0], ParseDocOptions{})
+			parsed, err := ParseDoc(docs[0], ParseDocOptions{})
+			obj := parsed.Object
 			if err != nil {
 				b.Fatal(err)
 			}

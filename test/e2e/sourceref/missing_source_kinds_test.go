@@ -93,7 +93,8 @@ func e2ESourceRefMissingNonGitKindLoop(t *testing.T, loopInputs struct {
 			if mode == "diff" {
 				args[0] = "diff"
 			}
-			stdout, stderr, code := harness.RunCLIBuffers(args...)
+			runCLIBuffersResult1 := harness.RunCLIBuffers(args...)
+			stdout, stderr, code := runCLIBuffersResult1.Stdout, runCLIBuffersResult1.Stderr, runCLIBuffersResult1.Code
 			assert.FatalIf(t, code != 1 || !strings.Contains(stderr, (*(*loopInputs.kind))) ||
 				!strings.Contains(
 					stderr,

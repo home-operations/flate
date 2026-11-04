@@ -120,7 +120,8 @@ func TestRun_GetNamed_UnrelatedFailureAndLabels(t *testing.T) {
 				"-l",
 				tc.label,
 			}
-			stdout, stderr, code := runCLI(t, args...)
+			cli := runCLI(t, args...)
+			stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 			assert.FatalIf(
 				t,
 				code != 0 || (stdout != "") != tc.visible || !strings.Contains(stderr, persistenceMessage) ||
@@ -135,7 +136,8 @@ func TestRun_GetNamed_UnrelatedFailureAndLabels(t *testing.T) {
 				stderr,
 			)
 			appendScopeSpec(t, root, file, "  dependsOn: [{name: missing, namespace: other}]\n")
-			_, stderr, code = runCLI(t, args...)
+			cli2 := runCLI(t, args...)
+			stderr, code = cli2.stderr, cli2.code
 			assert.FatalIf(
 				t,
 				code != 1 || !strings.Contains(stderr, "missing"),

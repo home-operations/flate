@@ -113,11 +113,13 @@ func RenderTrees(
 		r.stopRemaining()
 		return results, err
 	}
-	if err = r.constructTrees(ctx); err != nil {
+	err = r.constructTrees(ctx)
+	if err != nil {
 		return results, err
 	}
 	r.completeDiscovery(ctx)
-	if err = r.qualifyDeclarations(ctx); err != nil {
+	err = r.qualifyDeclarations(ctx)
+	if err != nil {
 		return results, err
 	}
 	r.installAdmission(ctx)

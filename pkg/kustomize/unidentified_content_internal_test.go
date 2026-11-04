@@ -22,18 +22,14 @@ func TestRender_UnidentifiedContent(t *testing.T) {
 	}
 	first, _, err := testutil.RenderMaps(Render(t.Context(), cache, request(), sourcecache.RetryConfig{}))
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(t, !hasRenderField(first, "name", "first"), "%s", "missing first render")
-	}
+	assert.FatalIf(t, !hasRenderField(first, "name", "first"), "%s", "missing first render")
 	testutil.WriteFile(t, root, "cm.yaml", cmYAML("second"))
 	second, _, err := testutil.RenderMaps(Render(t.Context(), cache, request(), sourcecache.RetryConfig{}))
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(
-			t,
-			!hasRenderField(second, "name", "second"),
-			"%s",
-			"descriptor metadata pinned unidentified mutable bytes",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!hasRenderField(second, "name", "second"),
+		"%s",
+		"descriptor metadata pinned unidentified mutable bytes",
+	)
 }

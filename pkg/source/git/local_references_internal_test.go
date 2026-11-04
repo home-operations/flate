@@ -91,12 +91,13 @@ func testResolveLocalReferencesCase2(t *testing.T, metadata *string,
 ) {
 	t.Helper()
 
-	root, _, _, head := localFixture(t)
-	metadataRoot := filepath.Join(root, ".git")
+	fixture := localFixture(t)
+
+	metadataRoot := filepath.Join(fixture.root, ".git")
 	if (*metadata) == "gitfile" {
 		metadataRoot = filepath.Join(t.TempDir(), "repository")
-		assert.Equal(t, os.Rename(filepath.Join(root, ".git"), metadataRoot), nil)
-		testutil.WriteFile(t, root, ".git", "gitdir: "+metadataRoot+"\n")
+		assert.Equal(t, os.Rename(filepath.Join(fixture.root, ".git"), metadataRoot), nil)
+		testutil.WriteFile(t, fixture.root, ".git", "gitdir: "+metadataRoot+"\n")
 	}
 	testutil.WriteFile(
 		t,
@@ -104,8 +105,8 @@ func testResolveLocalReferencesCase2(t *testing.T, metadata *string,
 		"config",
 		"[remote \"origin\"]\nurl = https://fixture.invalid/original\n",
 	)
-	testutil.WriteFile(t, root, "nested/.git", "gitdir: absent\n")
-	location := localLocation(t, root)
+	testutil.WriteFile(t, fixture.root, "nested/.git", "gitdir: absent\n")
+	location := localLocation(t, fixture.root)
 	assert.Equal(t, os.Remove(filepath.Join(metadataRoot, "config")), nil)
 	artifacts, err := ResolveLocal(
 		t.Context(),
@@ -117,7 +118,7 @@ func testResolveLocalReferencesCase2(t *testing.T, metadata *string,
 	artifact := artifacts[localSource(&sourcev1.GitRepositoryRef{Tag: "v2.0.0"}).Named()]
 	assert.FatalIf(
 		t,
-		artifact == nil || artifact.Revision != head.String(),
+		artifact == nil || artifact.Revision != fixture.head.String(),
 		"%s",
 		"retained repository did not resolve HEAD",
 	)

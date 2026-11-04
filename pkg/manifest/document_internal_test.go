@@ -79,7 +79,8 @@ func testObjectDocumentOwnershipCase(t *testing.T, testCaseInput *struct {
 	specs, err := splitDocMaps([]byte(testCaseInput.spec))
 	assert.NoError(t, err)
 	docs[0]["spec"] = specs[0]
-	obj, _, _, err := ParseDoc(docs[0], ParseDocOptions{})
+	parsed, err := ParseDoc(docs[0], ParseDocOptions{})
+	obj := parsed.Object
 	assert.NoError(t, err)
 	if h, ok := obj.(*HelmRelease); ok {
 		h.Chart.Name = "resolved"
@@ -93,18 +94,18 @@ func testObjectDocumentOwnershipCase(t *testing.T, testCaseInput *struct {
 	id.Name, id.Namespace = "captured", ""
 	doc, err := ObjectDocument(id, obj)
 	assert.NoError(t, err)
-	meta := doc["metadata"].(map[string]any)
-	assert.Equal(t, meta["name"], "captured")
-	assert.Equal(t, meta["namespace"], "")
+	metadata := doc["metadata"].(map[string]any)
+	assert.Equal(t, metadata["name"], "captured")
+	assert.Equal(t, metadata["namespace"], "")
 	for _, field := range []string{"labels", "annotations"} {
 		{
-			_, present := meta[field]
+			_, present := metadata[field]
 			assert.FatalIf(t, present, "absent %s projected", field)
 		}
 	}
-	meta["generation"] = int64(1)
+	metadata["generation"] = int64(1)
 	doc["status"] = map[string]any{"observedGeneration": int64(1)}
-	meta["name"] = "overlay"
+	metadata["name"] = "overlay"
 	again, err := ObjectDocument(obj.Named(), obj)
 	assert.NoError(t, err)
 	{
@@ -149,14 +150,12 @@ func testObjectDocumentOwnershipCase(t *testing.T, testCaseInput *struct {
 	changedDoc, err := ObjectDocument(changed.Named(), changed)
 	assert.NoError(t, err)
 	assert.Equal(t, changedDoc["metadata"].(map[string]any)["namespace"], "effective")
-	{
-		assert.FatalIf(
-			t,
-			cmp.Equal(before["spec"], changedDoc["spec"]),
-			"%s",
-			"clone projection retained old desired spec",
-		)
-	}
+	assert.FatalIf(
+		t,
+		cmp.Equal(before["spec"], changedDoc["spec"]),
+		"%s",
+		"clone projection retained old desired spec",
+	)
 	old, err := renderer.RenderDocument()
 	assert.NoError(t, err)
 	{

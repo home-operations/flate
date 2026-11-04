@@ -145,24 +145,27 @@ func (c *Cache) acceptedCandidate(ctx context.Context, key *acquireKey,
 
 func (c *Cache) waveCandidate(ctx context.Context, key *acquireKey, observed *entry,
 	validate func(context.Context, *entry) (bool, error),
-) (*entry, *entry, error) {
+) (waveCandidates, error) {
 	if observed == nil || key.lookupOnly {
-		return nil, nil, nil
+		return waveCandidates{}, nil
 	}
 	if observed.waveErr != nil {
 		if observed.outcome != nil {
-			return nil, nil, &TerminalError{Err: observed.waveErr, Attempted: false}
+			return waveCandidates{}, &TerminalError{
+				Err:       observed.waveErr,
+				Attempted: false,
+			}
 		}
-		return nil, nil, observed.waveErr
+		return waveCandidates{}, observed.waveErr
 	}
 	if observed.waveResult == nil {
-		return nil, nil, nil
+		return waveCandidates{}, nil
 	}
 	valid, err := c.validCandidate(ctx, validate, observed.waveResult)
 	if err != nil || valid {
-		return observed.waveResult, nil, err
+		return waveCandidates{candidate: observed.waveResult}, err
 	}
-	return nil, observed.waveResult, nil
+	return waveCandidates{rejected: observed.waveResult}, nil
 }
 
 func (c *Cache) freshCandidate(ctx context.Context, key *acquireKey, e *entry,
@@ -180,3 +183,5 @@ func (c *Cache) freshCandidate(ctx context.Context, key *acquireKey, e *entry,
 	}
 	return nil, nil //nolint:nilnil // Validation rejection starts a new acquisition.
 }
+
+type waveCandidates struct{ candidate, rejected *entry }

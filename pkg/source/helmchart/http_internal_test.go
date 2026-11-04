@@ -143,8 +143,9 @@ func TestFetchIndex_InvalidResponseDoesNotPublish(t *testing.T) {
 func TestFetchHTTPChart_DigestMismatch(t *testing.T) {
 	t.Parallel()
 	chartBytes := buildChartTarGz(t, "app-template", "1.0.0")
-	srv, _ := startHelmRepo(t, chartBytes, "deadbeefdeadbeef") // index advertises a wrong digest
-	f, fInputs := newHTTPFetcher(t, httpRepo(srv.URL))
+	repository := startHelmRepo(t, chartBytes, "deadbeefdeadbeef")
+	// index advertises a wrong digest
+	f, fInputs := newHTTPFetcher(t, httpRepo(repository.server.URL))
 	{
 		_, err := f.Fetch(
 			context.Background(),
@@ -213,7 +214,7 @@ func TestFetchHTTPChart_SecretReferences(t *testing.T) {
 
 // startHelmRepo serves a single-version index.yaml + the chart tarball.
 // Returns the server and a download-hit counter.
-func startHelmRepo(t *testing.T, chartBytes []byte, indexDigest string) (*httptest.Server, *int) {
+func startHelmRepo(t *testing.T, chartBytes []byte, indexDigest string) helmRepository {
 	t.Helper()
 	hits := 0
 	mux := http.NewServeMux()
@@ -228,7 +229,7 @@ func startHelmRepo(t *testing.T, chartBytes []byte, indexDigest string) (*httpte
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	return srv, &hits
+	return helmRepository{server: srv, hits: &hits}
 }
 
 func helmRepoIndex(digest string) string {
@@ -251,7 +252,7 @@ entries:
 // and https://helm.ngc.nvidia.com/nvidia whose index entries carry RELATIVE urls.
 // A relative url must resolve against the repo's base directory, so the prefix
 // must be preserved — anything served at host root 404s.
-func startHelmRepoSubpath(t *testing.T, prefix string, chartBytes []byte, indexDigest string) (*httptest.Server, *int) {
+func startHelmRepoSubpath(t *testing.T, prefix string, chartBytes []byte, indexDigest string) helmRepository {
 	t.Helper()
 	hits := 0
 	mux := http.NewServeMux()
@@ -266,7 +267,7 @@ func startHelmRepoSubpath(t *testing.T, prefix string, chartBytes []byte, indexD
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	return srv, &hits
+	return helmRepository{server: srv, hits: &hits}
 }
 
 // TestFetchHTTPChart_SubpathRelativeURL reproduces issue #796: a HelmRepository
@@ -280,8 +281,9 @@ func TestFetchHTTPChart_SubpathRelativeURL(t *testing.T) {
 
 	t.Run("no trailing slash", func(t *testing.T) {
 		t.Parallel()
-		srv, hits := startHelmRepoSubpath(t, "/charts", chartBytes, chartDigest(chartBytes))
-		f, fInputs := newHTTPFetcher(t, httpRepo(srv.URL+"/charts"))
+		repository := startHelmRepoSubpath(t, "/charts", chartBytes, chartDigest(chartBytes))
+
+		f, fInputs := newHTTPFetcher(t, httpRepo(repository.server.URL+"/charts"))
 		art, err := f.Fetch(
 			context.Background(),
 			helmChart("repo", "app-template", "1.0.0"),
@@ -289,8 +291,8 @@ func TestFetchHTTPChart_SubpathRelativeURL(t *testing.T) {
 			sourcecache.Policy{},
 		)
 		assert.FatalIf(t, err != nil, "Fetch: %v", err)
-		if *hits != 1 {
-			t.Errorf("chart fetched %d times from subpath, want 1 (url resolved against host root?)", *hits)
+		if *repository.hits != 1 {
+			t.Errorf("chart fetched %d times from subpath, want 1 (url resolved against host root?)", *repository.hits)
 		}
 		if _, err := fs.Stat(art.FS, "chart.tgz"); err != nil {
 			t.Errorf("chart.tgz missing from artifact %s: %v", art.Key, err)
@@ -299,8 +301,9 @@ func TestFetchHTTPChart_SubpathRelativeURL(t *testing.T) {
 
 	t.Run("trailing slash", func(t *testing.T) {
 		t.Parallel()
-		srv, hits := startHelmRepoSubpath(t, "/charts", chartBytes, chartDigest(chartBytes))
-		f, fInputs := newHTTPFetcher(t, httpRepo(srv.URL+"/charts/"))
+		repository2 := startHelmRepoSubpath(t, "/charts", chartBytes, chartDigest(chartBytes))
+
+		f, fInputs := newHTTPFetcher(t, httpRepo(repository2.server.URL+"/charts/"))
 		{
 			_, err := f.Fetch(
 				context.Background(),
@@ -310,8 +313,8 @@ func TestFetchHTTPChart_SubpathRelativeURL(t *testing.T) {
 			)
 			assert.FatalIf(t, err != nil, "Fetch: %v", err)
 		}
-		if *hits != 1 {
-			t.Errorf("chart fetched %d times from subpath, want 1", *hits)
+		if *repository2.hits != 1 {
+			t.Errorf("chart fetched %d times from subpath, want 1", *repository2.hits)
 		}
 	})
 }
@@ -637,4 +640,9 @@ func TestFetchIndex_ConcurrentRefreshDuringBackoff(t *testing.T) {
 			assert.FatalIf(t, !ok || cached != updated, "%s", "concurrent refresh did not publish its response digest")
 		}
 	})
+}
+
+type helmRepository struct {
+	server *httptest.Server
+	hits   *int
 }

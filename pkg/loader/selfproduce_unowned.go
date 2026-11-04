@@ -52,8 +52,8 @@ func (l *Loader) unownedProductionDeclaration(
 	}) {
 		return producerDeclaration{}, false
 	}
-	owners, ancestors := l.Index.OwnersOfFile(r.File)
-	if slices.ContainsFunc(append(owners, ancestors...), func(owner manifest.NamedResource) bool {
+	ownership := l.Index.OwnersOfFile(r.File)
+	if slices.ContainsFunc(append(ownership.Owners, ownership.Ancestors...), func(owner manifest.NamedResource) bool {
 		return owner != id
 	}) {
 		return producerDeclaration{}, false

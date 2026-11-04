@@ -55,22 +55,6 @@ func DecodeRender(data []byte) ([]map[string]any, error) {
 	return documentMaps(docs, err)
 }
 
-// ParseChildren prepares mapping fixtures for inventory assertions.
-func ParseChildren[T any](
-	parser interface {
-		ParseChildren(manifest.BaseManifest, []manifest.DocOccurrence, manifest.ParseDocOptions) ([]T, []manifest.DocOccurrence, []manifest.DocOccurrence)
-	},
-	parent manifest.BaseManifest,
-	docs []map[string]any,
-	opts manifest.ParseDocOptions,
-) ([]T, []map[string]any) {
-	children, visible, failures := parser.ParseChildren(parent, DocumentOccurrences(docs), opts)
-	if err := manifest.DocumentFailure(failures); err != nil {
-		panic(err)
-	}
-	return children, DocumentMaps(visible)
-}
-
 // DocumentMaps projects attempted inventory for mapping assertions.
 func DocumentMaps(docs []manifest.DocOccurrence) []map[string]any {
 	if docs == nil {

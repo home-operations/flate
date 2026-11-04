@@ -20,7 +20,7 @@ func startHelmRepoCounted(
 	t *testing.T,
 	chartBytes []byte,
 	indexDigest string,
-) (*httptest.Server, *int, *int) {
+) countedHelmRepository {
 	t.Helper()
 	ih, ch := 0, 0
 	mux := http.NewServeMux()
@@ -36,7 +36,7 @@ func startHelmRepoCounted(
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	return srv, &ih, &ch
+	return countedHelmRepository{server: srv, indexHits: &ih, chartHits: &ch}
 }
 
 // fetcherWithCache builds a Fetcher over a caller-supplied cache+layout, so a
@@ -53,8 +53,9 @@ func fetcherWithCache(t *testing.T, r *manifest.HelmRepository, cache *sourcecac
 func TestResolveChart_DiskCacheSkipsIndexWarm(t *testing.T) {
 	t.Parallel()
 	chartBytes := buildChartTarGz(t, "app-template", "1.0.0")
-	srv, indexHits, chartHits := startHelmRepoCounted(t, chartBytes, chartDigest(chartBytes))
-	r := httpRepo(srv.URL)
+	repository := startHelmRepoCounted(t, chartBytes, chartDigest(chartBytes))
+
+	r := httpRepo(repository.server.URL)
 	r.Interval = metav1.Duration{Duration: time.Hour} // fresh window
 
 	root := t.TempDir()
@@ -70,8 +71,8 @@ func TestResolveChart_DiskCacheSkipsIndexWarm(t *testing.T) {
 		)
 		assert.FatalIf(t, err != nil, "cold Fetch: %v", err)
 	}
-	if *indexHits != 1 || *chartHits != 1 {
-		t.Fatalf("cold: indexHits=%d chartHits=%d, want 1/1", *indexHits, *chartHits)
+	if *repository.indexHits != 1 || *repository.chartHits != 1 {
+		t.Fatalf("cold: indexHits=%d chartHits=%d, want 1/1", *repository.indexHits, *repository.chartHits)
 	}
 
 	warm, warmInputs := fetcherWithCache(t, r, cache)
@@ -84,19 +85,23 @@ func TestResolveChart_DiskCacheSkipsIndexWarm(t *testing.T) {
 		)
 		assert.FatalIf(t, err != nil, "warm Fetch: %v", err)
 	}
-	if *indexHits != 1 {
-		t.Errorf("warm run re-fetched index.yaml: indexHits=%d, want 1 (fresh chart must skip it)", *indexHits)
+	if *repository.indexHits != 1 {
+		t.Errorf(
+			"warm run re-fetched index.yaml: indexHits=%d, want 1 (fresh chart must skip it)",
+			*repository.indexHits,
+		)
 	}
-	if *chartHits != 1 {
-		t.Errorf("warm run re-downloaded chart: chartHits=%d, want 1 (fresh chart must skip it)", *chartHits)
+	if *repository.chartHits != 1 {
+		t.Errorf("warm run re-downloaded chart: chartHits=%d, want 1 (fresh chart must skip it)", *repository.chartHits)
 	}
 }
 
 func TestResolveChart_StaleIntervalRefetches(t *testing.T) {
 	t.Parallel()
 	chartBytes := buildChartTarGz(t, "app-template", "1.0.0")
-	srv, indexHits, _ := startHelmRepoCounted(t, chartBytes, chartDigest(chartBytes))
-	r := httpRepo(srv.URL)
+	repository := startHelmRepoCounted(t, chartBytes, chartDigest(chartBytes))
+
+	r := httpRepo(repository.server.URL)
 	r.Interval = metav1.Duration{}
 
 	root := t.TempDir()
@@ -113,16 +118,17 @@ func TestResolveChart_StaleIntervalRefetches(t *testing.T) {
 			assert.FatalIf(t, err != nil, "Fetch %d: %v", i, err)
 		}
 	}
-	if *indexHits != 2 {
-		t.Errorf("zero-interval must re-fetch index each invocation: indexHits=%d, want 2", *indexHits)
+	if *repository.indexHits != 2 {
+		t.Errorf("zero-interval must re-fetch index each invocation: indexHits=%d, want 2", *repository.indexHits)
 	}
 }
 
 func TestResolveChart_DigestlessWarmSkipsIndex(t *testing.T) {
 	t.Parallel()
 	chartBytes := buildChartTarGz(t, "app-template", "1.0.0")
-	srv, indexHits, chartHits := startHelmRepoCounted(t, chartBytes, "") // digest-less index
-	r := httpRepo(srv.URL)
+	repository := startHelmRepoCounted(t, chartBytes, "")
+	// digest-less index
+	r := httpRepo(repository.server.URL)
 	r.Interval = metav1.Duration{Duration: time.Hour}
 
 	root := t.TempDir()
@@ -147,19 +153,20 @@ func TestResolveChart_DigestlessWarmSkipsIndex(t *testing.T) {
 		)
 		assert.FatalIf(t, err != nil, "warm Fetch: %v", err)
 	}
-	if *indexHits != 1 {
-		t.Errorf("digest-less warm re-fetched index: indexHits=%d, want 1", *indexHits)
+	if *repository.indexHits != 1 {
+		t.Errorf("digest-less warm re-fetched index: indexHits=%d, want 1", *repository.indexHits)
 	}
-	if *chartHits != 1 {
-		t.Errorf("digest-less chart hits=%d, want 1 (fresh requested chart)", *chartHits)
+	if *repository.chartHits != 1 {
+		t.Errorf("digest-less chart hits=%d, want 1 (fresh requested chart)", *repository.chartHits)
 	}
 }
 
 func TestResolveChart_ExactVersionForever(t *testing.T) {
 	t.Parallel()
 	data := buildChartTarGz(t, "app-template", "1.0.0")
-	srv, indexes, charts := startHelmRepoCounted(t, data, chartDigest(data))
-	repo := httpRepo(srv.URL)
+	repository := startHelmRepoCounted(t, data, chartDigest(data))
+
+	repo := httpRepo(repository.server.URL)
 	repo.Interval = metav1.Duration{}
 	c := cachetest.New(t, t.TempDir(), sourcecache.New)
 	for range 2 {
@@ -175,8 +182,8 @@ func TestResolveChart_ExactVersionForever(t *testing.T) {
 			assert.NoError(t, err)
 		}
 	}
-	if *indexes != 1 || *charts != 1 {
-		t.Fatalf("requests: index=%d chart=%d, want 1/1", *indexes, *charts)
+	if *repository.indexHits != 1 || *repository.chartHits != 1 {
+		t.Fatalf("requests: index=%d chart=%d, want 1/1", *repository.indexHits, *repository.chartHits)
 	}
 	f, fInputs := fetcherWithCache(t, repo, c)
 	f.disableChartDigestTracking = true
@@ -190,10 +197,15 @@ func TestResolveChart_ExactVersionForever(t *testing.T) {
 		assert.NoError(t, err)
 	}
 
-	if *indexes != 2 || *charts != 2 {
-		t.Fatalf("mutable sibling requests: index=%d chart=%d, want 2/2", *indexes, *charts)
+	if *repository.indexHits != 2 || *repository.chartHits != 2 {
+		t.Fatalf("mutable sibling requests: index=%d chart=%d, want 2/2", *repository.indexHits, *repository.chartHits)
 	}
 	if repo.Interval != (metav1.Duration{}) {
 		t.Fatalf("repository interval mutated: %v", repo.Interval)
 	}
+}
+
+type countedHelmRepository struct {
+	server               *httptest.Server
+	indexHits, chartHits *int
 }

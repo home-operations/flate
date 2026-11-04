@@ -15,28 +15,22 @@ func TestCryptoFuncs_ShapeAndInputs(t *testing.T) {
 	fm := Funcs(seed)
 	hash := fm["bcrypt"].(func(string) string)("password")
 	cost, err := bcryptlib.Cost([]byte(hash))
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	assert.Equal(t, cost, bcryptlib.DefaultCost)
 	assert.Equal(t, len(hash), 60)
 	assert.Equal(t, hash, Funcs(seed)["bcrypt"].(func(string) string)("password"))
-	{
-		assert.FatalIf(
-			t,
-			hash == Funcs(seed)["bcrypt"].(func(string) string)("different"),
-			"%s",
-			"bcrypt placeholder ignores password",
-		)
-	}
-	{
-		assert.FatalIf(
-			t,
-			hash == Funcs(SeedFor("other", "ns"))["bcrypt"].(func(string) string)("password"),
-			"%s",
-			"bcrypt placeholder ignores seed",
-		)
-	}
+	assert.FatalIf(
+		t,
+		hash == Funcs(seed)["bcrypt"].(func(string) string)("different"),
+		"%s",
+		"bcrypt placeholder ignores password",
+	)
+	assert.FatalIf(
+		t,
+		hash == Funcs(SeedFor("other", "ns"))["bcrypt"].(func(string) string)("password"),
+		"%s",
+		"bcrypt placeholder ignores seed",
+	)
 	htpasswd := fm["htpasswd"].(func(string, string) string)
 	assert.Equal(t, htpasswd("bad:user", "password"), "invalid username: bad:user")
 	assert.Equal(
@@ -46,8 +40,6 @@ func TestCryptoFuncs_ShapeAndInputs(t *testing.T) {
 	)
 	assert.Equal(t, Funcs(seed)["htpasswd"].(func(string, string) string)("user", "password"), "user:"+hash)
 	encrypted, err := encryptAES(newStream(seed), "key", "")
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	assert.Equal(t, encrypted, "")
 }

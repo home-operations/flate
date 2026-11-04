@@ -32,20 +32,20 @@ func TestRawObject_ReconcileInput(t *testing.T) {
 				},
 			}
 			obj := &RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator"}
-			uid, disabled, consumes := obj.ReconcileInput(doc)
-			{
-				assert.FatalIf(
-					t,
-					uid != tc.wantUID || disabled != tc.disabled || !consumes,
-					"ReconcileInput = %q/%t/%t",
-					uid,
-					disabled,
-					consumes,
-				)
-			}
+			reconciliation := obj.ReconcileInput(doc)
+			uid, disabled, consumes := reconciliation.UID, reconciliation.Disabled, reconciliation.Consumes
+			assert.FatalIf(
+				t,
+				uid != tc.wantUID || disabled != tc.disabled || !consumes,
+				"ReconcileInput = %q/%t/%t",
+				uid,
+				disabled,
+				consumes,
+			)
 			obj.Kind = "Other"
 			{
-				uid, disabled, consumes := obj.ReconcileInput(doc)
+				reconciliation2 := obj.ReconcileInput(doc)
+				uid, disabled, consumes := reconciliation2.UID, reconciliation2.Disabled, reconciliation2.Consumes
 				assert.FatalIf(
 					t,
 					uid != "" || disabled || consumes,

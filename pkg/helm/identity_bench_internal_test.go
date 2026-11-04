@@ -95,7 +95,7 @@ func BenchmarkChartValues_PinnedSource(b *testing.B) {
 	}
 }
 
-func benchmarkLoadChartModeCase(b *testing.B, disk *bool, warm *bool) {
+func benchmarkLoadChartModeCase(b *testing.B, disk, warm *bool) {
 	b.Helper()
 
 	dir := stageBenchChartDir(b)
@@ -139,7 +139,7 @@ func benchmarkLoadChartModeCase(b *testing.B, disk *bool, warm *bool) {
 	}
 }
 
-func benchmarkTemplateOCIIdentityCase(b *testing.B, disk *bool, disabled *bool) {
+func benchmarkTemplateOCIIdentityCase(b *testing.B, disk, disabled *bool) {
 	b.Helper()
 
 	st, hr, dir := ociRenderFixture(b)

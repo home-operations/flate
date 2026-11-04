@@ -16,15 +16,14 @@ func TestSecret_Value_ShadowedAndUnrequestedKeys(t *testing.T) {
 		StringData: map[string]any{"VALUE": ""},
 		Data:       map[string]any{"VALUE": "malformed!", "UNUSED": "malformed!"},
 	}
-	value, found, err := s.Value("VALUE")
-	{
-		assert.FatalIf(t, value != "" || !found || err != nil, "value=%q found=%t err=%v", value, found, err)
-	}
+	valueResult, err := s.Value("VALUE")
+	value, found := valueResult.Value, valueResult.Found
+	assert.FatalIf(t, value != "" || !found || err != nil, "value=%q found=%t err=%v", value, found, err)
 	keys := slices.Collect(s.Keys())
 	slices.Sort(keys)
 	assert.Diff(t, keys, []string{"UNUSED", "VALUE"})
 	{
-		_, _, err := s.Value("UNUSED")
+		_, err := s.Value("UNUSED")
 		assert.FatalIf(t, err == nil, "%s", "requested malformed value succeeded")
 	}
 }
@@ -99,26 +98,23 @@ func TestDataValue_FieldErrors(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			value, found, err := tc.data.Value("VALUE")
-			{
-				assert.FatalIf(
-					t,
-					value != "" || found || !errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux),
-					"value=%q found=%t err=%v",
-					value,
-					found,
-					err,
-				)
-			}
-			{
-				assert.FatalIf(
-					t,
-					!strings.HasPrefix(err.Error(), tc.field+": "),
-					"error = %v, want field %s",
-					err,
-					tc.field,
-				)
-			}
+			valueResult3, err := tc.data.Value("VALUE")
+			value, found := valueResult3.Value, valueResult3.Found
+			assert.FatalIf(
+				t,
+				value != "" || found || !errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux),
+				"value=%q found=%t err=%v",
+				value,
+				found,
+				err,
+			)
+			assert.FatalIf(
+				t,
+				!strings.HasPrefix(err.Error(), tc.field+": "),
+				"error = %v, want field %s",
+				err,
+				tc.field,
+			)
 		})
 	}
 }
@@ -196,10 +192,11 @@ func testParseDocAuthoritativeSanitationCaseCompletion(
 		(*scope.doc)["metadata"] = map[string]any{"name": "app"}
 	}
 	before := DeepCopyMap((*scope.doc))
-	obj, authoritative, changed, err := ParseDoc(
+	parsed, err := ParseDoc(
 		(*scope.doc),
 		ParseDocOptions{WipeSecrets: true, DefaultNamespace: "apps"},
 	)
+	obj, authoritative, changed := parsed.Object, parsed.Document, parsed.Changed
 	assert.Equal(t, changed, scope.testCaseInput.tc.wiped || (*scope.testCaseInput.valid))
 	if *scope.testCaseInput.valid {
 		assert.NoError(t, err)
@@ -216,15 +213,15 @@ func testParseDocAuthoritativeSanitationCaseCompletion(
 	}
 	assert.Diff(t, authoritative[scope.testCaseInput.tc.field].(map[string]any)["VALUE"], (*scope.want))
 	assert.Diff(t, authoritative[scope.testCaseInput.tc.field].(map[string]any)["CLEAR"], any((*scope.clearValue)))
-	_, disabled, _, _ := ParseDoc((*scope.doc), ParseDocOptions{DefaultNamespace: "apps"})
+	parsed2, _ := ParseDoc((*scope.doc), ParseDocOptions{DefaultNamespace: "apps"})
+	disabled := parsed2.Document
 	assert.Diff(t, disabled[scope.testCaseInput.tc.field], (*scope.doc)[scope.testCaseInput.tc.field])
-	_, replay, replayChanged, _ := ParseDoc(
+	parsed3, _ := ParseDoc(
 		authoritative,
 		ParseDocOptions{WipeSecrets: true, DefaultNamespace: "apps"},
 	)
-	{
-		assert.FatalIf(t, replayChanged, "%s", "replay reported sanitation changes")
-	}
+	replay, replayChanged := parsed3.Document, parsed3.Changed
+	assert.FatalIf(t, replayChanged, "%s", "replay reported sanitation changes")
 	assert.Diff(t, replay, authoritative)
 	assert.Diff(t, (*scope.doc), before)
 	if changed {
@@ -244,19 +241,18 @@ func testParseDocAuthoritativeSanitationCaseCompletion(
 func assertSanitizedDataValue(t *testing.T, input *testParseDocAuthoritativeSanitationCaseInputs, obj BaseManifest) {
 	t.Helper()
 	if input.tc.field != "binaryData" {
-		value, found, valueErr := obj.(Data).Value("VALUE")
+		valueResult4, valueErr := obj.(Data).Value("VALUE")
+		value, found := valueResult4.Value, valueResult4.Found
 		if input.tc.readError {
-			{
-				assert.FatalIf(
-					t,
-					value != "" || found || !errors.Is(valueErr, ErrInput) ||
-						!errors.Is(valueErr, ErrFlux),
-					"value=%q found=%t err=%v",
-					value,
-					found,
-					valueErr,
-				)
-			}
+			assert.FatalIf(
+				t,
+				value != "" || found || !errors.Is(valueErr, ErrInput) ||
+					!errors.Is(valueErr, ErrFlux),
+				"value=%q found=%t err=%v",
+				value,
+				found,
+				valueErr,
+			)
 		} else {
 			assert.NoError(t, valueErr)
 			assert.Equal(t, found, true)

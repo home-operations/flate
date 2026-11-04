@@ -180,12 +180,10 @@ func TestRenderKey_DependsOnProjection(t *testing.T) {
 			change.mutate(changed.Spec)
 			next, err := cache.prepareRender(t.Context(), &changed)
 			assert.NoError(t, err)
-			{
-				assert.FatalIf(t, manifest.ValueEqual(
-					req.Content([]manifest.DocOccurrence{{Document: map[string]any{"value": "${VALUE}"}}}),
-					changed.Content([]manifest.DocOccurrence{{Document: map[string]any{"value": "${VALUE}"}}}),
-				), "%s", "accepted render change retained identity")
-			}
+			assert.FatalIf(t, manifest.ValueEqual(
+				req.Content([]manifest.DocOccurrence{{Document: map[string]any{"value": "${VALUE}"}}}),
+				changed.Content([]manifest.DocOccurrence{{Document: map[string]any{"value": "${VALUE}"}}}),
+			), "%s", "accepted render change retained identity")
 			assert.Equal(t, next.key == before.key, change.name == "inline")
 		})
 	}
@@ -218,14 +216,12 @@ func TestRecordRender_FinalDependencyBinding(t *testing.T) {
 	_, pending, found := renderer.PreviousRender(t.Context(), req)
 	assert.Equal(t, found, true)
 	before := pending.Value().(renderFrame)
-	{
-		assert.FatalIf(
-			t,
-			before.accepted == nil || before.acceptedKey == "" || before.lookup == "" || before.raw == "",
-			"%s",
-			"warm receipt lacks publication memos",
-		)
-	}
+	assert.FatalIf(
+		t,
+		before.accepted == nil || before.acceptedKey == "" || before.lookup == "" || before.raw == "",
+		"%s",
+		"warm receipt lacks publication memos",
+	)
 	before.encoded, err = encodeFrame(&before.header, before.output)
 	assert.NoError(t, err)
 	_, _, before.lookup, err = renderer.owner.Blob(
@@ -331,14 +327,12 @@ func TestRender_AcceptedMutableInputPreparation(t *testing.T) {
 	req := RenderRequest{Source: &store.SourceArtifact{LocalPath: root, FS: input}, SubPath: ".", Spec: demoSpec}
 	docs, receipt, err := testutil.RenderMaps(Render(t.Context(), c, req, sourcecache.RetryConfig{}))
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(
-			t,
-			!hasRenderField(docs, "name", "before") || input.prepared.Load() == 0,
-			"cold input was not rendered: %v",
-			docs,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!hasRenderField(docs, "name", "before") || input.prepared.Load() == 0,
+		"cold input was not rendered: %v",
+		docs,
+	)
 	assert.NoError(t, c.RecordRender(t.Context(), acceptanceForEmission(
 		demoSpec.Named(), acceptedEmission(t, demoSpec.Named(), receipt, nil),
 	)))
@@ -353,14 +347,12 @@ func TestRender_AcceptedMutableInputPreparation(t *testing.T) {
 	testutil.WriteFile(t, root, "cm.yaml", cmYAML("after"))
 	changed, _, err := testutil.RenderMaps(Render(t.Context(), fresh, req, sourcecache.RetryConfig{}))
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(
-			t,
-			!hasRenderField(changed, "name", "after") || input.prepared.Load() == 0,
-			"changed input reused accepted output: %v",
-			changed,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!hasRenderField(changed, "name", "after") || input.prepared.Load() == 0,
+		"changed input reused accepted output: %v",
+		changed,
+	)
 }
 
 func TestRecordRender_AcceptanceRequired(t *testing.T) {

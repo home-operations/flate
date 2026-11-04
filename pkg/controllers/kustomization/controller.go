@@ -145,7 +145,8 @@ func (c *execution) render(
 	var attempt store.Emission
 	defer attempt.Finish()
 	if c.restricted {
-		_, handled, innerLocalErr := c.run.FingerprintDedup(ctx, id, nil, &attempt)
+		fingerprintDedupResult1, fingerprintDedupResult1Err := c.run.FingerprintDedup(ctx, id, nil, &attempt)
+		_, handled, innerLocalErr := fingerprintDedupResult1.Fingerprint, fingerprintDedupResult1.Reused, fingerprintDedupResult1Err
 		if handled || innerLocalErr != nil {
 			return innerLocalErr
 		}
@@ -178,7 +179,8 @@ func (c *execution) render(
 		Content:                 content,
 		DependencySubstitutions: c.DependencySubstitutions,
 	}
-	fp, handled, err := c.run.FingerprintDedup(ctx, id, content, &attempt)
+	fingerprintDedupResult2, fingerprintDedupResult2Err := c.run.FingerprintDedup(ctx, id, content, &attempt)
+	fp, handled, err := fingerprintDedupResult2.Fingerprint, fingerprintDedupResult2.Reused, fingerprintDedupResult2Err
 	if handled || err != nil {
 		if err != nil {
 			return err
@@ -190,11 +192,12 @@ func (c *execution) render(
 		return err
 	}
 
-	attempt.Children, attempt.Manifests, attempt.Failures = c.ParseChildren(
+	parseChildrenResult3 := c.ParseChildren(
 		ks,
 		docs,
 		manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets},
 	)
+	attempt.Children, attempt.Manifests, attempt.Failures = parseChildrenResult3.Children, parseChildrenResult3.Visible, parseChildrenResult3.Failures
 	attempt.Fingerprint, attempt.Complete, attempt.Render = fp, true, receipt
 	if err := c.run.Emit(ctx, id, &attempt, nil); err != nil {
 		return err

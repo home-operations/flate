@@ -152,7 +152,8 @@ func (w *inputWalk) pluginDirectory(
 	if err != nil {
 		return "", inputResult{}, err
 	}
-	selected, injected, err := w.pluginView(ctx, canonical.String(), owner, &scope)
+	pluginViewResult1, pluginViewResult1Err := w.pluginView(ctx, canonical.String(), owner, &scope)
+	selected, injected, err := pluginViewResult1.path, pluginViewResult1.reused, pluginViewResult1Err
 	if err != nil {
 		return "", inputResult{}, err
 	}
@@ -163,39 +164,44 @@ func (w *inputWalk) pluginDirectory(
 	return "./" + filepath.ToSlash(rel), result, err
 }
 
-func (w *inputWalk) pluginView(ctx context.Context, dir, owner string, scope *walkScope) (string, bool, error) {
+type pluginSelection struct {
+	path   string
+	reused bool
+}
+
+func (w *inputWalk) pluginView(ctx context.Context, dir, owner string, scope *walkScope) (pluginSelection, error) {
 	file, ok := kustomizationFileIn(w.fs, dir)
 	if !ok {
-		return dir, false, nil
+		return pluginSelection{path: dir, reused: false}, nil
 	}
 	key := w.location(&controlLocation{file: file, root: dir, pluginRoot: owner})
 	if prior, ok := w.visited[key]; ok {
 		if string(prior.out) != key.root {
-			return string(prior.out), true, nil
+			return pluginSelection{path: string(prior.out), reused: true}, nil
 		}
-		return dir, false, nil
+		return pluginSelection{path: dir, reused: false}, nil
 	}
 	snapshot, buildErr := w.fs.upper.Build()
 	if buildErr != nil {
-		return "", false, buildErr
+		return pluginSelection{path: "", reused: false}, buildErr
 	}
 	w.fs.upper = tree.NewBuilder(snapshot)
 	name := remoteResourcePrefix + manifest.Fingerprint([]string{key.file, key.root, key.pluginRoot})
 	if mountErr := w.fs.upper.Mount(name, snapshot); mountErr != nil {
-		return "", false, mountErr
+		return pluginSelection{path: "", reused: false}, mountErr
 	}
 	w.fs.origins = append(w.fs.origins, mountOrigin{path: name, source: "."})
 	mount := filepath.Join(w.fs.root, name)
 	rel, buildErr := filepath.Rel(w.fs.root, key.root)
 	if buildErr != nil {
 		//nolint:wrapcheck // Plugin path diagnostics must retain the original filepath error.
-		return "", false, buildErr
+		return pluginSelection{path: "", reused: false}, buildErr
 	}
 	selected := filepath.Join(mount, rel)
 	scope.pluginRoot = owner
 	result, buildErr := w.directory(ctx, selected, scope)
 	if buildErr != nil {
-		return "", false, buildErr
+		return pluginSelection{path: "", reused: false}, buildErr
 	}
 	if !result.injected {
 		selected = dir
@@ -203,7 +209,7 @@ func (w *inputWalk) pluginView(ctx context.Context, dir, owner string, scope *wa
 	observation := w.visited[key]
 	observation.out = []byte(selected)
 	w.visited[key] = observation
-	return selected, false, nil
+	return pluginSelection{path: selected, reused: false}, nil
 }
 
 func (w *inputWalk) location(incoming *controlLocation) controlLocation {
@@ -249,7 +255,7 @@ func (w *inputWalk) references(
 				c, err = w.pluginOperand(ctx, &next, &node)
 			}
 		case kustomizeinput.File:
-			fallthrough
+			c, err = w.fileOperand(ctx, &next, &node)
 		default:
 			c, err = w.fileOperand(ctx, &next, &node)
 		}
@@ -376,7 +382,7 @@ func (w *inputWalk) filePath(ctx context.Context, incoming *walkScope, raw strin
 	if !filepath.IsAbs(file) {
 		file = filepath.Join(loc.root, file)
 	}
-	if _, _, ok := kustomizeinput.CutHTTPScheme(raw); !ok {
+	if _, ok := kustomizeinput.CutHTTPScheme(raw); !ok {
 		return inputPath{file: file}, nil
 	}
 	descriptor := remoteInput{Operation: remoteHTTP, URL: raw}
@@ -404,7 +410,7 @@ func (w *inputWalk) resourcePath(
 	var file inputPath
 	var fileErr error
 	var body []byte
-	if _, _, http := kustomizeinput.CutHTTPScheme(raw); http && role != kustomizeinput.Component {
+	if _, http := kustomizeinput.CutHTTPScheme(raw); http && role != kustomizeinput.Component {
 		var terminalErr error
 		file, body, fileErr, terminalErr = w.httpResource(ctx, &loc, raw, git)
 		if terminalErr != nil {

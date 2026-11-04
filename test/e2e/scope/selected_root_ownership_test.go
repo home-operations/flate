@@ -80,8 +80,9 @@ spec: {url: https://must-not-run.invalid/charts}
 		),
 	)
 
-	out, stderr := harness.RequireCLIOK(t, "get", "hr", "-o", "json", "--path", filepath.Join(root, "app"),
+	requireCLIOKResult1 := harness.RequireCLIOK(t, "get", "hr", "-o", "json", "--path", filepath.Join(root, "app"),
 		"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
+	out, stderr := requireCLIOKResult1.Stdout, requireCLIOKResult1.Stderr
 	var releases []struct {
 		Name    string `json:"Name"`
 		Version string `json:"Version"`
@@ -104,13 +105,16 @@ spec: {url: https://must-not-run.invalid/charts}
 		"--cache-dir",
 		t.TempDir(),
 	}
-	build, _ := harness.RequireCLIOK(t, append([]string{"build", "all"}, flags...)...)
-	second, _ := harness.RequireCLIOK(t, append([]string{"build", "all"}, flags...)...)
+	requireCLIOKResult2 := harness.RequireCLIOK(t, append([]string{"build", "all"}, flags...)...)
+	build, _ := requireCLIOKResult2.Stdout, requireCLIOKResult2.Stderr
+	requireCLIOKResult3 := harness.RequireCLIOK(t, append([]string{"build", "all"}, flags...)...)
+	second, _ := requireCLIOKResult3.Stdout, requireCLIOKResult3.Stderr
 	assert.FatalIf(t, build != second, "%v", "direct build output changed between runs")
 	docs, err := testutil.SplitDocs([]byte(build))
 	assert.NoError(t, err)
 	for _, doc := range docs {
-		name, _ := manifest.DocMetadata(doc)
+		metadata := manifest.DocMetadata(doc)
+		name := metadata.Name
 		assert.FatalIf(
 			t,
 			name == "flate-bootstrap" || strings.HasPrefix(name, "excluded-") || name == "unlisted" || name == "child",
@@ -118,14 +122,16 @@ spec: {url: https://must-not-run.invalid/charts}
 			doc,
 		)
 	}
-	kss, _ := harness.RequireCLIOK(t, append([]string{"get", "ks", "-o", "json"}, flags...)...)
+	requireCLIOKResult4 := harness.RequireCLIOK(t, append([]string{"get", "ks", "-o", "json"}, flags...)...)
+	kss, _ := requireCLIOKResult4.Stdout, requireCLIOKResult4.Stderr
 	var owners []struct {
 		Name string `json:"Name"`
 	}
 	assert.NoError(t, json.Unmarshal([]byte(kss), &owners))
 	assert.FatalIf(t, len(owners) != 1 || owners[0].Name != "child-dev", "ordinary root/child collection = %s", kss)
-	owned, _ := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(root, "flux"),
+	requireCLIOKResult5 := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(root, "flux"),
 		"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
+	owned, _ := requireCLIOKResult5.Stdout, requireCLIOKResult5.Stderr
 	ownedDocs, err := testutil.SplitDocs([]byte(owned))
 	assert.NoError(t, err)
 	assert.FatalIf(
@@ -136,7 +142,8 @@ spec: {url: https://must-not-run.invalid/charts}
 		len(ownedDocs),
 	)
 	for _, doc := range docs {
-		name, namespace := manifest.DocMetadata(doc)
+		metadata2 := manifest.DocMetadata(doc)
+		name, namespace := metadata2.Name, metadata2.Namespace
 		assert.FatalIf(
 			t,
 			namespace != "apps" || name != "podinfo-dev" && name != "child-dev",
@@ -145,7 +152,8 @@ spec: {url: https://must-not-run.invalid/charts}
 		)
 	}
 	for _, doc := range ownedDocs {
-		name, namespace := manifest.DocMetadata(doc)
+		metadata3 := manifest.DocMetadata(doc)
+		name, namespace := metadata3.Name, metadata3.Namespace
 		if name == "owner" && namespace == "flux-system" {
 			continue
 		}
@@ -161,7 +169,8 @@ spec: {url: https://must-not-run.invalid/charts}
 			labels[manifest.FluxKustomizeDomain+"/namespace"] != "flux-system", "actual Flux owner labels missing: %v", labels)
 	}
 
-	tested, _ := harness.RequireCLIOK(t, append([]string{"test", "hr"}, flags...)...)
+	requireCLIOKResult6 := harness.RequireCLIOK(t, append([]string{"test", "hr"}, flags...)...)
+	tested, _ := requireCLIOKResult6.Stdout, requireCLIOKResult6.Stderr
 	assert.FatalIf(
 		t,
 		!strings.Contains(tested, "podinfo-dev") || strings.Contains(tested, "flate-bootstrap"),
@@ -212,15 +221,18 @@ func TestE2E_SelectedKustomizeRootNestedOwner(t *testing.T) {
 		"--cache-dir",
 		t.TempDir(),
 	}
-	out, _ := harness.RequireCLIOK(t, flags...)
-	second, _ := harness.RequireCLIOK(t, flags...)
+	requireCLIOKResult7 := harness.RequireCLIOK(t, flags...)
+	out, _ := requireCLIOKResult7.Stdout, requireCLIOKResult7.Stderr
+	requireCLIOKResult8 := harness.RequireCLIOK(t, flags...)
+	second, _ := requireCLIOKResult8.Stdout, requireCLIOKResult8.Stderr
 	assert.FatalIf(t, out != second, "%v", "selected entry output changed between runs")
 	t.Logf("full selected entry output:\n%s", out)
 	docs, err := testutil.SplitDocs([]byte(out))
 	assert.NoError(t, err)
 	identities := map[string]bool{}
 	for _, doc := range docs {
-		name, namespace := manifest.DocMetadata(doc)
+		metadata4 := manifest.DocMetadata(doc)
+		name, namespace := metadata4.Name, metadata4.Namespace
 		identities[manifest.DocKind(doc)+"/"+name] = true
 		if name == "inner" {
 			labels := doc["metadata"].(map[string]any)["labels"].(map[string]any)
@@ -249,7 +261,7 @@ func e2ESelectedKustomizeRootUnsuspendedChild(t *testing.T, root *string, flags 
 	testutil.WriteFile(t, (*root), "leaf/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: leaf-output}\n")
 	harness.MutateFile(
 		t,
-		filepath.Join((*root), "app/kustomization.yaml"),
+		filepath.Join((*root), "app", "kustomization.yaml"),
 		"resources: [release.yaml, repository.yaml, child.yaml]",
 		"resources: [release.yaml, repository.yaml, child.yaml, root.yaml]",
 	)
@@ -259,8 +271,10 @@ func e2ESelectedKustomizeRootUnsuspendedChild(t *testing.T, root *string, flags 
 		"app/root.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: root-output, namespace: apps}\ndata: {value: root-value}\n",
 	)
-	out, _ := harness.RequireCLIOK(t, append([]string{"build", "all"}, (*flags)...)...)
-	again, _ := harness.RequireCLIOK(t, append([]string{"build", "all"}, (*flags)...)...)
+	requireCLIOKResult9 := harness.RequireCLIOK(t, append([]string{"build", "all"}, (*flags)...)...)
+	out, _ := requireCLIOKResult9.Stdout, requireCLIOKResult9.Stderr
+	requireCLIOKResult10 := harness.RequireCLIOK(t, append([]string{"build", "all"}, (*flags)...)...)
+	again, _ := requireCLIOKResult10.Stdout, requireCLIOKResult10.Stderr
 	assert.Equal(t, again, out)
 	docs, err := testutil.DecodeDocs(strings.NewReader(out))
 	assert.NoError(t, err)
@@ -290,7 +304,8 @@ func e2ESelectedKustomizeRootUnsuspendedChild(t *testing.T, root *string, flags 
 		})
 	}
 	assert.Equal(t, rootMaps, 1)
-	named, _ := harness.RequireCLIOK(t, append([]string{"build", "ks", "child-dev"}, (*flags)...)...)
+	requireCLIOKResult11 := harness.RequireCLIOK(t, append([]string{"build", "ks", "child-dev"}, (*flags)...)...)
+	named, _ := requireCLIOKResult11.Stdout, requireCLIOKResult11.Stderr
 	assert.FatalIf(
 		t,
 		!strings.Contains(named, "name: leaf-output") || strings.Contains(named, "name: podinfo-dev"),
@@ -326,8 +341,10 @@ func e2ESelectedKustomizeRootExcludedEntryDependency(t *testing.T, root *string,
 		"apiVersion: v1\nkind: ServiceAccount\nmetadata: {name: visible, annotations: {value: '${VALUE}'}}\n",
 	)
 	args := append([]string{"build", "all", "--skip-kinds", "ConfigMap"}, (*flags)...)
-	out, _ := harness.RequireCLIOK(t, args...)
-	warm, _ := harness.RequireCLIOK(t, args...)
+	requireCLIOKResult12 := harness.RequireCLIOK(t, args...)
+	out, _ := requireCLIOKResult12.Stdout, requireCLIOKResult12.Stderr
+	requireCLIOKResult13 := harness.RequireCLIOK(t, args...)
+	warm, _ := requireCLIOKResult13.Stdout, requireCLIOKResult13.Stderr
 	assert.FatalIf(t, out != warm, "%v", "excluded dependency output changed on a cache hit")
 	docs, err := testutil.SplitDocs([]byte(out))
 	assert.NoError(t, err)

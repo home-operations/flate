@@ -20,7 +20,8 @@ func ValidateIdentity(doc map[string]any, definitions []map[string]any) error {
 	if id.Namespace != "" {
 		return nil
 	}
-	namespaced, known := scopes.ResolveScope(yaml.TypeMeta{APIVersion: version, Kind: id.Kind})
+	scope := scopes.ResolveScope(yaml.TypeMeta{APIVersion: version, Kind: id.Kind})
+	namespaced, known := scope.Namespaced, scope.Found
 	known = known || id.KindInfo().Tracked
 	for _, definition := range definitions {
 		if !DocIdentity(definition).IsCRD() {
@@ -53,7 +54,7 @@ func validateDataDocument(doc map[string]any, data Data) error {
 		}
 	}
 	for _, key := range slices.Sorted(data.Keys()) {
-		if _, _, err := data.Value(key); err != nil {
+		if _, err := data.Value(key); err != nil {
 			return inputf("invalid data value")
 		}
 	}

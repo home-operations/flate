@@ -87,11 +87,12 @@ func BenchmarkEmit_Children(b *testing.B) {
 					Name:       parent.Name,
 				}
 				c.Store.AddObject(owner)
-				children, visible, failures := c.ParseChildren(
+				parseChildrenResult1 := c.ParseChildren(
 					owner,
 					outcomes,
 					manifest.ParseDocOptions{DefaultNamespace: parent.Namespace},
 				)
+				children, visible, failures := parseChildrenResult1.Children, parseChildrenResult1.Visible, parseChildrenResult1.Failures
 				_, _, next := st.GetEmission(parent)
 				next.Children, next.Manifests, next.Failures, next.Complete = children, visible, failures, true
 				controllertest.Emit(b.Context(), c, parent, &next)

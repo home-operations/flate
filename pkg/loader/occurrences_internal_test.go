@@ -18,7 +18,7 @@ import (
 func TestOccurrenceClaims_CapturedSubsetAndIdentity(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	pin := filepath.Join(root, ".artifacts/pin")
+	pin := filepath.Join(root, ".artifacts", "pin")
 	st := store.New()
 	input := fstest.MapFS{}
 	source := &manifest.GitRepository{Name: "pin", Namespace: "sources"}
@@ -58,9 +58,7 @@ func TestOccurrenceClaims_CapturedSubsetAndIdentity(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, len(one), 2)
 	assert.Equal(t, len(two), 2)
-	{
-		assert.FatalIf(t, len(one) != 2 || len(two) != 2, "%s", "same-identity declarations lost occurrence evidence")
-	}
+	assert.FatalIf(t, len(one) != 2 || len(two) != 2, "%s", "same-identity declarations lost occurrence evidence")
 	repeated, err := l.Occurrences(t.Context(), filepath.Join(root, "one"), "")
 	assert.NoError(t, err)
 	assert.Equal(t, slices.Equal(repeated, one), true)
@@ -82,9 +80,7 @@ func TestOccurrenceClaims_CapturedSubsetAndIdentity(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, err = l.Occurrences(ctx, filepath.Join(root, "one"), "")
-	{
-		assert.FatalIf(t, !errors.Is(err, context.Canceled), "warm occurrence cancellation: %v", err)
-	}
+	assert.FatalIf(t, !errors.Is(err, context.Canceled), "warm occurrence cancellation: %v", err)
 	captured := append(slices.Clone(one), two[0])
 	before := slices.Clone(captured)
 	objects := st.ListObjects("", "")
@@ -149,9 +145,7 @@ func TestPackages_ScanProvenance(t *testing.T) {
 	assert.NoError(t, err)
 	packages, err := l.Packages(t.Context())
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(t, len(packages) != 2, "package evidence: %+v", packages)
-	}
+	assert.FatalIf(t, len(packages) != 2, "package evidence: %+v", packages)
 	for i, dir := range []string{"one", "two"} {
 		assert.Equal(t, packages[i].Path, filepath.ToSlash(filepath.Join(dir, "pkg")))
 		assert.Diff(t, packages[i].Scans, []string{".", dir, dir + "/pkg"})
@@ -215,14 +209,12 @@ func TestProjectIdentity_NamespaceOnly(t *testing.T) {
 				)
 				assert.NoError(t, err)
 				assert.Equal(t, got, tc.want)
-				{
-					assert.FatalIf(
-						t,
-						l.scopes.projections[0] != nil || l.scopes.projections[1] != nil,
-						"%v",
-						"cheap projection initialized the memo",
-					)
-				}
+				assert.FatalIf(
+					t,
+					l.scopes.projections[0] != nil || l.scopes.projections[1] != nil,
+					"%v",
+					"cheap projection initialized the memo",
+				)
 			}
 		})
 	}
@@ -319,16 +311,14 @@ func testOccurrenceClaimsCapturedSubsetAndIdentityRetainedFailureBeforeSuccessfu
 	l.SourceRoot = root
 	_, err := l.Load(t.Context(), root)
 	assert.NoError(t, err)
-	file := filepath.Join(root, "overlay/owners.yaml")
+	file := filepath.Join(root, "overlay", "owners.yaml")
 	children := l.documents.cache[file].objects
-	{
-		assert.FatalIf(
-			t,
-			len(children) != 2 || children[0].Obj != nil || !errors.Is(children[0].outcome.Err, manifest.ErrInput),
-			"failed document was not retained before its successful sibling: %+v",
-			children,
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(children) != 2 || children[0].Obj != nil || !errors.Is(children[0].outcome.Err, manifest.ErrInput),
+		"failed document was not retained before its successful sibling: %+v",
+		children,
+	)
 	failure := children[0].outcome.Err
 	assert.Equal(t, children[0].outcome.Ordinal, 0)
 	assert.Equal(t, children[1].outcome.Ordinal, 1)
@@ -337,9 +327,7 @@ func testOccurrenceClaimsCapturedSubsetAndIdentityRetainedFailureBeforeSuccessfu
 	for range 2 {
 		got, err := l.Occurrences(t.Context(), filepath.Join(root, "overlay"), "")
 		assert.NoError(t, err)
-		{
-			assert.FatalIf(t, len(got) != 1, "successful declaration count: got %d, want 1", len(got))
-		}
+		assert.FatalIf(t, len(got) != 1, "successful declaration count: got %d, want 1", len(got))
 		assert.Equal(t, got[0].Declaration, OccurrenceID{Source: root, File: "overlay/owners.yaml", Document: 1})
 		assert.Equal(t, got[0].Identity, want)
 		assert.Equal(t, got[0].Authored, testutil.KustomizationID("authored", "owner"))

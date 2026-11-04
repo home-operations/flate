@@ -104,10 +104,10 @@ func e2ESelectedKustomizeRootDiffName(t *testing.T, tc *struct {
 		testutil.WriteFile(t, current, "app/kustomization.yaml", tc.after)
 	}
 	if tc.patch {
-		harness.MutateFile(t, filepath.Join(current, "app/patch.yaml"), "web:1", "web:2")
+		harness.MutateFile(t, filepath.Join(current, "app", "patch.yaml"), "web:1", "web:2")
 	}
 	if tc.sibling {
-		harness.MutateFile(t, filepath.Join(current, "app/unlisted.yaml"), "value: before", "value: after")
+		harness.MutateFile(t, filepath.Join(current, "app", "unlisted.yaml"), "value: before", "value: after")
 	}
 	flags := []string{
 		"--path",
@@ -120,7 +120,8 @@ func e2ESelectedKustomizeRootDiffName(t *testing.T, tc *struct {
 		"--cache-dir",
 		t.TempDir(),
 	}
-	out, _ := harness.RequireCLIOK(t, append([]string{"diff", "all", "-o", "json"}, flags...)...)
+	requireCLIOKResult1 := harness.RequireCLIOK(t, append([]string{"diff", "all", "-o", "json"}, flags...)...)
+	out, _ := requireCLIOKResult1.Stdout, requireCLIOKResult1.Stderr
 	if tc.declaration {
 		t.Logf("paired declaration diff: %s", out)
 	}
@@ -159,7 +160,7 @@ func e2ESelectedKustomizeRootDiffName(t *testing.T, tc *struct {
 		assert.Diff(t, change.Parent, parent)
 	}
 	if tc.list {
-		reversed, _ := harness.RequireCLIOK(
+		requireCLIOKResult2 := harness.RequireCLIOK(
 			t,
 			"diff",
 			"all",
@@ -175,6 +176,7 @@ func e2ESelectedKustomizeRootDiffName(t *testing.T, tc *struct {
 			"--cache-dir",
 			t.TempDir(),
 		)
+		reversed, _ := requireCLIOKResult2.Stdout, requireCLIOKResult2.Stderr
 		forward := result.Changes[0]
 		assert.NoError(t, json.Unmarshal([]byte(reversed), &result))
 		assert.FatalIf(
@@ -197,9 +199,10 @@ func e2ESelectedKustomizeRootDiffName(t *testing.T, tc *struct {
 		)
 	}
 	if tc.patch {
-		images, _ := harness.RequireCLIOK(
+		requireCLIOKResult3 := harness.RequireCLIOK(
 			t,
 			append([]string{"diff", "images", "--include-removed", "-o", "json"}, flags...)...)
+		images, _ := requireCLIOKResult3.Stdout, requireCLIOKResult3.Stderr
 		var got []string
 		assert.NoError(t, json.Unmarshal([]byte(images), &got))
 		{
@@ -245,7 +248,7 @@ func e2ESelectedKustomizeRootDiffName2(t *testing.T, tc *struct {
 			"app/cm.yaml",
 			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: root-output, namespace: apps}\ndata: {value: "+value+"}\n",
 		)
-		out, _ := harness.RequireCLIOK(
+		requireCLIOKResult4 := harness.RequireCLIOK(
 			t,
 			"build",
 			"all",
@@ -257,11 +260,13 @@ func e2ESelectedKustomizeRootDiffName2(t *testing.T, tc *struct {
 			"--cache-dir",
 			t.TempDir(),
 		)
+		out, _ := requireCLIOKResult4.Stdout, requireCLIOKResult4.Stderr
 		docs, err := testutil.DecodeDocs(strings.NewReader(out))
 		assert.NoError(t, err)
 		outputs := 0
 		for _, doc := range docs {
-			name, _ := manifest.DocMetadata(doc)
+			metadata := manifest.DocMetadata(doc)
+			name := metadata.Name
 			if manifest.DocKind(doc) == manifest.KindConfigMap && name == "root-output" {
 				outputs++
 				assert.Equal(t, doc["data"].(map[string]any)["value"], any(value))
@@ -424,7 +429,7 @@ func e2ESelectedKustomizeRootDiffCase(t *testing.T, tc *struct {
 					"resources: ["+strings.Join(resources, ", ")+"]\n",
 				)
 			}
-			out, stderr, code := harness.RunCLIBuffers(
+			runCLIBuffersResult5 := harness.RunCLIBuffers(
 				"diff",
 				"ks",
 				"child",
@@ -440,6 +445,7 @@ func e2ESelectedKustomizeRootDiffCase(t *testing.T, tc *struct {
 				"--cache-dir",
 				t.TempDir(),
 			)
+			out, stderr, code := runCLIBuffersResult5.Stdout, runCLIBuffersResult5.Stderr, runCLIBuffersResult5.Code
 			assert.FatalIf(
 				t,
 				code != 1 || !strings.Contains(stderr, "missing.yaml"),
@@ -494,7 +500,8 @@ func e2ESelectedKustomizeRootDiffName2Name(t *testing.T, roots *[2]string, direc
 		"--cache-dir",
 		t.TempDir(),
 	}
-	out, _ := harness.RequireCLIOK(t, args...)
+	requireCLIOKResult6 := harness.RequireCLIOK(t, args...)
+	out, _ := requireCLIOKResult6.Stdout, requireCLIOKResult6.Stderr
 	var result struct {
 		Changes []struct {
 			Kind string `json:"Kind"`
@@ -536,7 +543,7 @@ func e2ESelectedKustomizeRootDiffName2Name(t *testing.T, roots *[2]string, direc
 		out,
 	)
 	failedRoot := roots[direction.cur]
-	builder := filepath.Join(failedRoot, "app/kustomization.yaml")
+	builder := filepath.Join(failedRoot, "app", "kustomization.yaml")
 	body, err := os.ReadFile(builder)
 	assert.NoError(t, err)
 	testutil.WriteFile(
@@ -546,7 +553,8 @@ func e2ESelectedKustomizeRootDiffName2Name(t *testing.T, roots *[2]string, direc
 		strings.Replace(string(body), "resources: [", "resources: [missing.yaml, ", 1),
 	)
 	defer testutil.WriteFile(t, failedRoot, "app/kustomization.yaml", string(body))
-	out, stderr, code := harness.RunCLIBuffers(args...)
+	runCLIBuffersResult7 := harness.RunCLIBuffers(args...)
+	out, stderr, code := runCLIBuffersResult7.Stdout, runCLIBuffersResult7.Stderr, runCLIBuffersResult7.Code
 	assert.FatalIf(
 		t,
 		code != 1 || !strings.Contains(stderr, "missing.yaml"),

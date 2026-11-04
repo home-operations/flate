@@ -196,7 +196,8 @@ spec:
 		var payload map[string]any
 		for _, batch := range results[0].Result.Manifests {
 			for _, doc := range batch.Documents {
-				name, _ := manifest.DocMetadata(doc)
+				metadata := manifest.DocMetadata(doc)
+				name := metadata.Name
 				if manifest.DocKind(doc) == manifest.KindConfigMap && name == "payload" {
 					payload = doc
 				}
@@ -285,7 +286,8 @@ spec:
 		var payload map[string]any
 		for _, batch := range results[0].Result.Manifests {
 			for _, doc := range batch.Documents {
-				name, _ := manifest.DocMetadata(doc)
+				metadata2 := manifest.DocMetadata(doc)
+				name := metadata2.Name
 				if manifest.DocKind(doc) == manifest.KindConfigMap && name == "payload" {
 					payload = doc
 				}
@@ -336,20 +338,14 @@ func TestRender_ChangedSubstitutedChildPath(t *testing.T) {
 	run := func(input Tree, dir string) *Result {
 		t.Helper()
 		o, err := newTestOrchestrator(t, input, Config{CacheDir: dir, Concurrency: 2})
-		{
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		assert.FatalIf(t, err != nil, "%v", err)
 		defer o.stop()
 		{
-			{
-				localErr := o.bootstrap(t.Context())
-				assert.FatalIf(t, localErr != nil, "%v", localErr)
-			}
+			localErr := o.bootstrap(t.Context())
+			assert.FatalIf(t, localErr != nil, "%v", localErr)
 		}
 		result, err := o.collectResult(o.run(t.Context()))
-		{
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		assert.FatalIf(t, err != nil, "%v", err)
 		return result
 	}
 	payload := func(result *Result) map[string]any {
@@ -365,25 +361,19 @@ func TestRender_ChangedSubstitutedChildPath(t *testing.T) {
 		return nil
 	}
 	write("before")
-	{
-		assert.FatalIf(t, payload(run(tree, cacheDir)) == nil, "%v", "warm-up omitted the child output")
-	}
+	assert.FatalIf(t, payload(run(tree, cacheDir)) == nil, "%v", "warm-up omitted the child output")
 	write("after")
 	oracle := payload(run(tree, t.TempDir()))
-	{
-		assert.FatalIf(t, oracle == nil, "%v", "full-build oracle omitted the child output")
-	}
+	assert.FatalIf(t, oracle == nil, "%v", "full-build oracle omitted the child output")
 	tree.ExternalChanges = change.NewSet([]string{"apps/red/cm.yaml"})
 	actual := payload(run(tree, cacheDir))
-	{
-		assert.FatalIf(
-			t,
-			!manifest.ValueEqual(actual, oracle),
-			"changed-only output differs from full build: got=%v want=%v",
-			actual,
-			oracle,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!manifest.ValueEqual(actual, oracle),
+		"changed-only output differs from full build: got=%v want=%v",
+		actual,
+		oracle,
+	)
 }
 
 func testBuildChangeFilterReclaimsProbesCase(
@@ -629,7 +619,7 @@ spec:
 		_, err = warm.render(t.Context())
 		assert.NoError(t, err)
 	}
-	assert.NoError(t, os.Remove(filepath.Join(roots[1], "apps/blue/cm.yaml")))
+	assert.NoError(t, os.Remove(filepath.Join(roots[1], "apps", "blue", "cm.yaml")))
 	testutil.WriteFile(t, roots[1], "apps/blue/kustomization.yaml", "resources: []\n")
 	var current [2]*Orchestrator
 	for side := range trees {
@@ -684,12 +674,10 @@ spec:
 				Release string `json:"release"`
 			}
 			assert.NoError(t, json.Unmarshal(line, &event))
-			{
-				assert.FatalIf(t, event.Message == "helm: render" &&
-					event.Release == testutil.HelmReleaseID("apps", "unrelated").
-						String(),
-					"%v", "paired removal rendered an unrelated producer")
-			}
+			assert.FatalIf(t, event.Message == "helm: render" &&
+				event.Release == testutil.HelmReleaseID("apps", "unrelated").
+					String(),
+				"%v", "paired removal rendered an unrelated producer")
 		}
 	}
 }

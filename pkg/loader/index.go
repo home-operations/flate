@@ -110,16 +110,14 @@ func (l *Loader) Retire() {
 func (l *Loader) publishFrozenRecords() {
 	l.indexRecordInputs()
 	l.inputObjects = map[manifest.NamedResource][]manifest.NamedResource{}
-	{
-		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-		for id, occurrence := range l.locations {
-			if !occurrence.facts.labeled {
-				continue
-			}
-			key := id
-			key.Name = ""
-			l.inputObjects[key] = append(l.inputObjects[key], id)
+	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+	for id, occurrence := range l.locations {
+		if !occurrence.facts.labeled {
+			continue
 		}
+		key := id
+		key.Name = ""
+		l.inputObjects[key] = append(l.inputObjects[key], id)
 	}
 	for id, child := range l.candidates {
 		if _, located := l.locations[id]; located {
@@ -153,21 +151,19 @@ func (l *Loader) prepareIndexScopes(repoRoot string, freeze bool) {
 
 func (l *Loader) resetDerivedProductions() {
 	if l.documents.compact && l.indexDerived {
-		{
-			//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-			for id, record := range l.Index.Records {
-				if record.Path == "" && record.Builder == "" && record.Origin.Policy(id, nil).Root {
-					delete(l.Index.Records, id)
-					delete(l.locations, id)
-					continue
-				}
-				record.Productions = slices.DeleteFunc(record.Productions, func(p manifest.Production) bool {
-					return record.Builder == "" || p.Owner != record.BuilderOwner ||
-						p.Declaration != (manifest.NamedResource{}) ||
-						p.Path != ""
-				})
-				l.Index.Records[id] = record
+		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+		for id, record := range l.Index.Records {
+			if record.Path == "" && record.Builder == "" && record.Origin.Policy(id, nil).Root {
+				delete(l.Index.Records, id)
+				delete(l.locations, id)
+				continue
 			}
+			record.Productions = slices.DeleteFunc(record.Productions, func(p manifest.Production) bool {
+				return record.Builder == "" || p.Owner != record.BuilderOwner ||
+					p.Declaration != (manifest.NamedResource{}) ||
+					p.Path != ""
+			})
+			l.Index.Records[id] = record
 		}
 	}
 }
@@ -196,7 +192,7 @@ func (l *Loader) refreshIndexParents(repoRoot string) {
 		}
 		if kind.Structural {
 			if ks, ok := l.Store.Get[*manifest.Kustomization](id); ok {
-				_, r.Pinned, _ = SourceView(l.Store, ks.SourceID(), repoRoot)
+				r.Pinned = SourceView(l.Store, ks.SourceID(), repoRoot).Pinned
 			}
 		}
 		l.Index.Records[id] = r
@@ -208,24 +204,22 @@ func (l *Loader) completeIndexInputs(repoRoot string) {
 	if l.documents.compact {
 		l.Index.Visibility = l.inputVisibility()
 	}
-	{
-		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-		for file, doc := range l.documents.cache {
-			incomplete := doc.decodeErr != nil ||
-				slices.ContainsFunc(doc.objects, func(object parsedObject) bool { return object.outcome.Err != nil })
-			if l.Options.Selection.Changed && incomplete {
-				root := new(l.documents).mountedRoot(file)
-				for source := range l.Index.CompleteSources {
-					input, _ := l.Store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
-					if source == manifest.BootstrapSourceID && root == repoRoot ||
-						input != nil && input.LocalPath == root {
-						delete(l.Index.CompleteSources, source)
-					}
+	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+	for file, doc := range l.documents.cache {
+		incomplete := doc.decodeErr != nil ||
+			slices.ContainsFunc(doc.objects, func(object parsedObject) bool { return object.outcome.Err != nil })
+		if l.Options.Selection.Changed && incomplete {
+			root := new(l.documents).mountedRoot(file)
+			for source := range l.Index.CompleteSources {
+				input, _ := l.Store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
+				if source == manifest.BootstrapSourceID && root == repoRoot ||
+					input != nil && input.LocalPath == root {
+					delete(l.Index.CompleteSources, source)
 				}
 			}
-			doc.terminal = l.terminalInput(file)
-			l.documents.cache[file] = doc
 		}
+		doc.terminal = l.terminalInput(file)
+		l.documents.cache[file] = doc
 	}
 	for _, ids := range l.Index.Claims {
 		slices.SortFunc(ids, manifest.NamedResource.Compare)
@@ -284,20 +278,18 @@ func (l *Loader) markCompleteSources() {
 }
 
 func (l *Loader) indexRecordInputs() {
-	{
-		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-		for id, record := range l.Index.Records {
-			refs := l.recordInputReferences(id, &record)
-			if refs == nil {
+	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+	for id, record := range l.Index.Records {
+		refs := l.recordInputReferences(id, &record)
+		if refs == nil {
+			continue
+		}
+		for ref := range refs {
+			if !ref.ContentInput() || ref.Name == "" && ref.Selector == nil {
 				continue
 			}
-			for ref := range refs {
-				if !ref.ContentInput() || ref.Name == "" && ref.Selector == nil {
-					continue
-				}
-				if !slices.Contains(l.inputReaders[ref.NamedResource], id) {
-					l.inputReaders[ref.NamedResource] = append(l.inputReaders[ref.NamedResource], id)
-				}
+			if !slices.Contains(l.inputReaders[ref.NamedResource], id) {
+				l.inputReaders[ref.NamedResource] = append(l.inputReaders[ref.NamedResource], id)
 			}
 		}
 	}

@@ -48,7 +48,7 @@ func TestRun_ProviderCredentialPolicy(t *testing.T) {
 		{name: "default", want: 1}, {name: "ConfigMap", selection: "ConfigMap", want: 1}, {name: "Secret", selection: "Secret"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			out, diagnostic, code := runCLI(
+			cli := runCLI(
 				t,
 				"build",
 				"all",
@@ -59,6 +59,7 @@ func TestRun_ProviderCredentialPolicy(t *testing.T) {
 				"--allow-missing-kinds="+tc.selection,
 				"--concurrency=2",
 			)
+			out, diagnostic, code := cli.stdout, cli.stderr, cli.code
 			assert.FatalIf(
 				t,
 				code != tc.want || !strings.Contains(out, "value: local"),

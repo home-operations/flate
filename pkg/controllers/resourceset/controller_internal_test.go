@@ -99,14 +99,12 @@ metadata: {name: << inputs.user >>, namespace: flux-system}
 	// First dispatch (no RSIP yet): the named dep is absent, so the node
 	// blocks rather than terminalizing.
 	blocked := c.ReconcileNode(context.Background(), rs.Named(), 0).Blocked
-	{
-		assert.FatalIf(
-			t,
-			len(blocked) != 1,
-			"first dispatch blocked = %v, want [rsip] (parked on the named RSIP)",
-			blocked,
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(blocked) != 1,
+		"first dispatch blocked = %v, want [rsip] (parked on the named RSIP)",
+		blocked,
+	)
 	want := manifest.NamedResource{
 		Group:     manifest.FluxOperatorDomain,
 		Kind:      manifest.KindResourceSetInputProvider,
@@ -125,21 +123,15 @@ metadata: {name: << inputs.user >>, namespace: flux-system}
 		t,
 		controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode},
 	)
-	{
-		assert.FatalIf(t, info.Status != store.StatusReady, "status = %+v, want Ready", info)
-	}
+	assert.FatalIf(t, info.Status != store.StatusReady, "status = %+v, want Ready", info)
 	art, _ := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
-	{
-		assert.FatalIf(
-			t,
-			!hasRenderedDoc(art, "Widget", "alice"),
-			"expected rendered Widget/alice; artifact = %+v",
-			art,
-		)
-	}
-	{
-		assert.ErrorIf(t, art.Fingerprint == "", "%v", "artifact missing fingerprint")
-	}
+	assert.FatalIf(
+		t,
+		!hasRenderedDoc(art, "Widget", "alice"),
+		"expected rendered Widget/alice; artifact = %+v",
+		art,
+	)
+	assert.ErrorIf(t, art.Fingerprint == "", "%v", "artifact missing fingerprint")
 }
 
 func TestReconcile_SelectorInputsFrom_LateRSIP(t *testing.T) {
@@ -153,17 +145,15 @@ func TestReconcile_SelectorInputsFrom_LateRSIP(t *testing.T) {
 	rs := selectorFixture("acl", "blue")
 	s.AddObject(rs)
 	{
-		{
-			_, err := c.newExecution(
-				rs.Named(),
-			).run.RequireRefresh(
-				t.Context(),
-				rs,
-				manifest.GateInputs,
-				manifest.DrainNone,
-			)
-			assert.FatalIf(t, err != nil, "%v", "selector-only input must not require an ID gate")
-		}
+		_, err := c.newExecution(
+			rs.Named(),
+		).run.RequireRefresh(
+			t.Context(),
+			rs,
+			manifest.GateInputs,
+			manifest.DrainNone,
+		)
+		assert.FatalIf(t, err != nil, "%v", "selector-only input must not require an ID gate")
 	}
 	provider := staticRSIP("rsip", "ns", map[string]string{"color": "blue"}, nil)
 	child := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: provider.Name}
@@ -176,19 +166,15 @@ func TestReconcile_SelectorInputsFrom_LateRSIP(t *testing.T) {
 		inventories = append(inventories, len(emission.Manifests))
 		switch len(inventories) {
 		case 1:
-			{
-				assert.ErrorIf(t, len(emission.Manifests) != 0, "%v", "empty selector query rendered an input")
-			}
+			assert.ErrorIf(t, len(emission.Manifests) != 0, "%v", "empty selector query rendered an input")
 			s.AddObject(provider)
 		case 2:
-			{
-				assert.ErrorIf(
-					t,
-					!hasRenderedDoc(emission, "ConfigMap", provider.Name) || s.GetObject(child) == nil,
-					"%v",
-					"late provider was not published as an output",
-				)
-			}
+			assert.ErrorIf(
+				t,
+				!hasRenderedDoc(emission, "ConfigMap", provider.Name) || s.GetObject(child) == nil,
+				"%v",
+				"late provider was not published as an output",
+			)
 			removed := *provider
 			removed.Labels = map[string]string{"color": "red"}
 			s.AddObject(&removed)
@@ -203,28 +189,24 @@ func TestReconcile_SelectorInputsFrom_LateRSIP(t *testing.T) {
 			return c.ReconcileNode(ctx, id, level)
 		},
 	})
-	{
-		assert.FatalIf(
-			t,
-			info.Status != store.StatusReady || dispatches != 3 || !slices.Equal(inventories, []int{0, 1, 0}),
-			"status=%+v dispatches=%d inventories=%v, want Ready, 3, [0 1 0]",
-			info,
-			dispatches,
-			inventories,
-		)
-	}
+	assert.FatalIf(
+		t,
+		info.Status != store.StatusReady || dispatches != 3 || !slices.Equal(inventories, []int{0, 1, 0}),
+		"status=%+v dispatches=%d inventories=%v, want Ready, 3, [0 1 0]",
+		info,
+		dispatches,
+		inventories,
+	)
 	artifact, _ := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 	if artifact == nil || len(artifact.Manifests) != 0 || s.GetObject(child) != nil {
 		t.Fatalf("removed selector member survived: artifact=%+v child=%v", artifact, s.GetObject(child))
 	}
-	{
-		assert.FatalIf(
-			t,
-			rs.InputsFrom[0].Selector.MatchLabels["color"] != "blue",
-			"%v",
-			"query changed the authored selector",
-		)
-	}
+	assert.FatalIf(
+		t,
+		rs.InputsFrom[0].Selector.MatchLabels["color"] != "blue",
+		"%v",
+		"query changed the authored selector",
+	)
 }
 
 func TestReconcile_SelectorInputs_InvalidSelector(t *testing.T) {
@@ -241,26 +223,21 @@ func TestReconcile_SelectorInputs_InvalidSelector(t *testing.T) {
 	s.AddObject(rs)
 	resolve := resourceset.StoreResolver(s)
 	{
-		{
-			_, fp, err := renderWithAdmission(rs, resolve, "previous")
-			assert.FatalIf(t, err == nil || fp != "", "invalid selector fingerprint=%q error=%v", fp, err)
-		}
+		renderWithAdmissionResult1, renderWithAdmissionResult1Err := renderWithAdmission(rs, resolve, "previous")
+		_, fp, err := renderWithAdmissionResult1.documents, renderWithAdmissionResult1.fingerprint, renderWithAdmissionResult1Err
+		assert.FatalIf(t, err == nil || fp != "", "invalid selector fingerprint=%q error=%v", fp, err)
 	}
 	{
-		{
-			info := controllertest.DispatchToFixpoint(
-				t.Context(),
-				t,
-				controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode},
-			)
-			assert.FatalIf(t, info.Status != store.StatusFailed, "status=%+v, want Failed", info)
-		}
+		info := controllertest.DispatchToFixpoint(
+			t.Context(),
+			t,
+			controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode},
+		)
+		assert.FatalIf(t, info.Status != store.StatusFailed, "status=%+v, want Failed", info)
 	}
 	{
-		{
-			artifact := s.GetArtifact(rs.Named(), store.ArtifactContent)
-			assert.FatalIf(t, artifact != nil, "invalid selector published artifact=%v", artifact)
-		}
+		artifact := s.GetArtifact(rs.Named(), store.ArtifactContent)
+		assert.FatalIf(t, artifact != nil, "invalid selector published artifact=%v", artifact)
 	}
 }
 
@@ -309,43 +286,36 @@ spec: {}
 		t,
 		controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode},
 	)
-	{
-		assert.FatalIf(t, info.Status != store.StatusReady, "status = %+v, want Ready", info)
-	}
+	assert.FatalIf(t, info.Status != store.StatusReady, "status = %+v, want Ready", info)
 	childID := testutil.KustomizationID("flux-system", "child")
 	child, ok := s.Get[*manifest.Kustomization](childID)
-	{
-		assert.FatalIf(
-			t,
-			!ok || child == nil,
-			"expected RS-emitted Kustomization %s in store (AddObject), got ok=%v",
-			childID,
-			ok,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!ok || child == nil,
+		"expected RS-emitted Kustomization %s in store (AddObject), got ok=%v",
+		childID,
+		ok,
+	)
 	if child.Path != "first" {
 		t.Fatalf("emitted path = %q, want first", child.Path)
 	}
 	for _, object := range manifest.ProjectProducer(rs).Objects {
-		{
-			assert.FatalIf(
-				t,
-				object.Named() == childID && object.(*manifest.Kustomization).Path != child.Path,
-				"%v",
-				"projected child differs from controller emission",
-			)
-		}
+		assert.FatalIf(
+			t,
+			object.Named() == childID && object.(*manifest.Kustomization).Path != child.Path,
+			"%v",
+			"projected child differs from controller emission",
+		)
 	}
 	art := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 	for _, child := range art.Children {
-		{
-			assert.FatalIf(t, child.Obj.Named() == rs.Named(), "%v", "effective self child published")
-		}
+		assert.FatalIf(t, child.Obj.Named() == rs.Named(), "%v", "effective self child published")
 	}
 	before := make([]map[string]any, len(art.Manifests))
 	for i, doc := range art.Manifests {
 		before[i] = manifest.DeepCopyMap(doc.Document)
-		name, ns := manifest.DocMetadata(doc.Document)
+		metadata := manifest.DocMetadata(doc.Document)
+		name, ns := metadata.Name, metadata.Namespace
 		want := rs.Namespace
 		if name == "explicit" {
 			want = "other"
@@ -356,38 +326,30 @@ spec: {}
 		if name == "explicit" {
 			authored = "other"
 		}
-		{
-			assert.FatalIf(t, ns != authored, "rendered namespace = %q, want authored absence", ns)
-		}
-		{
-			assert.FatalIf(t, s.GetObject(
-				manifest.NamedResource{
-					Group: schema.FromAPIVersionAndKind(
-						manifest.DocAPIVersion(doc.Document),
-						manifest.DocKind(doc.Document),
-					).Group,
-					Kind:      manifest.DocKind(doc.Document),
-					Namespace: want,
-					Name:      name,
-				},
-			) == nil, "missing effective child %s/%s", want, name)
-		}
+		assert.FatalIf(t, ns != authored, "rendered namespace = %q, want authored absence", ns)
+		assert.FatalIf(t, s.GetObject(
+			manifest.NamedResource{
+				Group: schema.FromAPIVersionAndKind(
+					manifest.DocAPIVersion(doc.Document),
+					manifest.DocKind(doc.Document),
+				).Group,
+				Kind:      manifest.DocKind(doc.Document),
+				Namespace: want,
+				Name:      name,
+			},
+		) == nil, "missing effective child %s/%s", want, name)
 	}
 	{
-		{
-			info := controllertest.DispatchToFixpoint(
-				t.Context(),
-				t,
-				controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode},
-			)
-			assert.FatalIf(t, info.Status != store.StatusReady, "repeat reconcile: %+v", info)
-		}
+		info := controllertest.DispatchToFixpoint(
+			t.Context(),
+			t,
+			controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode},
+		)
+		assert.FatalIf(t, info.Status != store.StatusReady, "repeat reconcile: %+v", info)
 	}
 	{
-		{
-			delta := cmp.Diff(before, testutil.DocumentMaps(art.Manifests))
-			assert.FatalIf(t, delta != "", "replay mutated output (-want +got):\n%s", delta)
-		}
+		delta := cmp.Diff(before, testutil.DocumentMaps(art.Manifests))
+		assert.FatalIf(t, delta != "", "replay mutated output (-want +got):\n%s", delta)
 	}
 }
 
@@ -440,14 +402,12 @@ kind: ConfigMap
 metadata: {name: output}`}
 	s.AddObject(rs)
 	{
-		{
-			info := controllertest.DispatchToFixpoint(
-				t.Context(),
-				t,
-				controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode},
-			)
-			assert.FatalIf(t, info.Status != store.StatusReady, "first status = %+v, want Ready", info)
-		}
+		info := controllertest.DispatchToFixpoint(
+			t.Context(),
+			t,
+			controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode},
+		)
+		assert.FatalIf(t, info.Status != store.StatusReady, "first status = %+v, want Ready", info)
 	}
 	artifact := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 	var authority store.ReadSet
@@ -455,29 +415,23 @@ metadata: {name: output}`}
 	defer authority.Retire()
 	authority.GetArtifact(rs.Named(), store.ArtifactContent)
 	unsub := s.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
-		{
-			assert.ErrorIf(
-				t,
-				id == rs.Named() && payload.(store.StatusInfo).Status == store.StatusPending,
-				"%v",
-				"already-Ready ResourceSet transiently became Pending",
-			)
-		}
+		assert.ErrorIf(
+			t,
+			id == rs.Named() && payload.(store.StatusInfo).Status == store.StatusPending,
+			"%v",
+			"already-Ready ResourceSet transiently became Pending",
+		)
 	}, false)
 	t.Cleanup(unsub)
 	c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone)
 	{
-		{
-			info, _ := s.GetStatus(rs.Named())
-			assert.ErrorIf(t, info.Status != store.StatusReady, "final status = %+v, want Ready", info)
-		}
+		info, _ := s.GetStatus(rs.Named())
+		assert.ErrorIf(t, info.Status != store.StatusReady, "final status = %+v, want Ready", info)
 	}
 	{
-		{
-			current := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
-			assert.ErrorIf(t, current.Fingerprint != artifact.Fingerprint ||
-				!authority.Valid(), "%v", "no-op reconcile replaced artifact")
-		}
+		current := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
+		assert.ErrorIf(t, current.Fingerprint != artifact.Fingerprint ||
+			!authority.Valid(), "%v", "no-op reconcile replaced artifact")
 	}
 }
 
@@ -500,29 +454,22 @@ func TestReconcile_DisabledUsesSuspensionGate(t *testing.T) {
 					"resourcesTemplate": "<< inputs.missing >>",
 				},
 			}
-			obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{DefaultNamespace: ""})
-			{
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
+			parsed, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{DefaultNamespace: ""})
+			obj := parsed.Object
+			assert.FatalIf(t, err != nil, "%v", err)
 			s.AddObject(obj)
 			blocked := c.ReconcileNode(t.Context(), obj.Named(), manifest.DrainNone).Blocked
-			{
-				assert.FatalIf(t, len(blocked) != 0, "disabled ResourceSet blocked on %v", blocked)
-			}
+			assert.FatalIf(t, len(blocked) != 0, "disabled ResourceSet blocked on %v", blocked)
 			info, _ := s.GetStatus(obj.Named())
+			assert.FatalIf(
+				t,
+				info.Outcome() != store.OutcomeSuspended || info.Message != "suspended",
+				"status = %+v, want Ready/suspended",
+				info,
+			)
 			{
-				assert.FatalIf(
-					t,
-					info.Outcome() != store.OutcomeSuspended || info.Message != "suspended",
-					"status = %+v, want Ready/suspended",
-					info,
-				)
-			}
-			{
-				{
-					art := s.GetArtifact(obj.Named(), store.ArtifactContent)
-					assert.FatalIf(t, art != nil, "disabled ResourceSet rendered: %v", art)
-				}
+				art := s.GetArtifact(obj.Named(), store.ArtifactContent)
+				assert.FatalIf(t, art != nil, "disabled ResourceSet rendered: %v", art)
 			}
 		})
 	}
@@ -553,24 +500,20 @@ func testReconcileRenderErrorMarksFailedCase(
 	}
 	s.AddObject(rs)
 	{
-		{
-			info := controllertest.DispatchToFixpoint(
-				t.Context(),
-				t,
-				controllertest.Dispatch{
-					Tasks:         c.Tasks,
-					Store:         s,
-					ID:            rs.Named(),
-					ReconcileNode: c.ReconcileNode,
-				},
-			)
-			assert.FatalIf(t, info.Status != store.StatusReady, "initial render: %+v", info)
-		}
+		info := controllertest.DispatchToFixpoint(
+			t.Context(),
+			t,
+			controllertest.Dispatch{
+				Tasks:         c.Tasks,
+				Store:         s,
+				ID:            rs.Named(),
+				ReconcileNode: c.ReconcileNode,
+			},
+		)
+		assert.FatalIf(t, info.Status != store.StatusReady, "initial render: %+v", info)
 	}
 	artifact := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
-	{
-		assert.FatalIf(t, artifact.Fingerprint == "", "%v", "successful render lacks replay candidate")
-	}
+	assert.FatalIf(t, artifact.Fingerprint == "", "%v", "successful render lacks replay candidate")
 	switch *testCaseInput {
 	case "template":
 		changed := *rs
@@ -592,46 +535,40 @@ func testReconcileRenderErrorMarksFailedCase(
 		s.AddObject(&changed)
 	}
 	{
-		{
-			info := controllertest.DispatchToFixpoint(
-				t.Context(),
-				t,
-				controllertest.Dispatch{
-					Tasks:         c.Tasks,
-					Store:         s,
-					ID:            rs.Named(),
-					ReconcileNode: c.ReconcileNode,
-				},
-			)
-			assert.FatalIf(t, info.Status != store.StatusFailed, "status = %+v, want Failed", info)
-		}
+		info := controllertest.DispatchToFixpoint(
+			t.Context(),
+			t,
+			controllertest.Dispatch{
+				Tasks:         c.Tasks,
+				Store:         s,
+				ID:            rs.Named(),
+				ReconcileNode: c.ReconcileNode,
+			},
+		)
+		assert.FatalIf(t, info.Status != store.StatusFailed, "status = %+v, want Failed", info)
 	}
 	if (*testCaseInput) == "typed child" {
 		failed := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 		_, replayed := failed.Replay(artifact.Fingerprint)
-		{
-			assert.FatalIf(
-				t,
-				failed.Complete || failed.Footprint() != nil || replayed || len(failed.Failures) != 1 ||
-					len(failed.Manifests) != 2 ||
-					!hasRenderedDoc(
-						failed,
-						"ConfigMap",
-						"output",
-					),
-				"invalid child retained successful publication: %+v",
-				failed,
-			)
-		}
-		{
-			assert.FatalIf(t, s.GetObject(
-				manifest.NamedResource{
-					Group:     manifest.HelmReleaseDomain,
-					Kind:      manifest.KindHelmRelease,
-					Namespace: rs.Namespace,
-					Name:      "invalid",
-				},
-			) != nil, "%v", "invalid generated child was admitted")
-		}
+		assert.FatalIf(
+			t,
+			failed.Complete || failed.Footprint() != nil || replayed || len(failed.Failures) != 1 ||
+				len(failed.Manifests) != 2 ||
+				!hasRenderedDoc(
+					failed,
+					"ConfigMap",
+					"output",
+				),
+			"invalid child retained successful publication: %+v",
+			failed,
+		)
+		assert.FatalIf(t, s.GetObject(
+			manifest.NamedResource{
+				Group:     manifest.HelmReleaseDomain,
+				Kind:      manifest.KindHelmRelease,
+				Namespace: rs.Namespace,
+				Name:      "invalid",
+			},
+		) != nil, "%v", "invalid generated child was admitted")
 	}
 }

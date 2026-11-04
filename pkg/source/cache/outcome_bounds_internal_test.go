@@ -46,31 +46,33 @@ func testOutcomeReadBoundsAndIntegrityCase(t *testing.T, scenario *string,
 
 	c := cachetest.New(t, t.TempDir(), New)
 	o := newOutcome(outcomeFailure(connReset()), time.Now().UTC(), 1, &ocispec.Descriptor{})
-	config, data, _ := o.encode()
+	blobs, _ := o.encode()
+
 	var m ocispec.Manifest
 	{
-		err := json.Unmarshal(data, &m)
+		err := json.Unmarshal(blobs.manifest, &m)
 		assert.NoError(t, err)
 	}
 
-	config = append(config, bytes.Repeat([]byte(" "), outcomeConfigLimit-len(config))...)
+	blobs.config = append(blobs.config, bytes.Repeat([]byte(" "), outcomeConfigLimit-len(blobs.config))...)
 	if (*scenario) == "config one over" {
-		config = append(config, ' ')
+		blobs.config = append(blobs.config, ' ')
 	}
-	m.Config = content.NewDescriptorFromBytes(outcomeConfig, config)
+	m.Config = content.NewDescriptorFromBytes(outcomeConfig, blobs.config)
 	if (*scenario) == "missing layer" {
 		m.Layers = []ocispec.Descriptor{
 			content.NewDescriptorFromBytes("application/octet-stream", []byte("absent")),
 		}
 	}
 	data, err := json.Marshal(m)
+	blobs.manifest = data
 	assert.NoError(t, err)
 
-	data = append(data, bytes.Repeat([]byte(" "), outcomeManifestLimit-len(data))...)
+	blobs.manifest = append(blobs.manifest, bytes.Repeat([]byte(" "), outcomeManifestLimit-len(blobs.manifest))...)
 	if (*scenario) == "manifest one over" {
-		data = append(data, ' ')
+		blobs.manifest = append(blobs.manifest, ' ')
 	}
-	desc := pushOutcomeFixture(t, c, config, data)
+	desc := pushOutcomeFixture(t, c, blobs.config, blobs.manifest)
 	path := blobPath(m.Config.Digest)
 	{
 		chmodErr := c.root.Chmod(path, 0o600)
@@ -88,42 +90,32 @@ func testOutcomeReadBoundsAndIntegrityCase(t *testing.T, scenario *string,
 		path = blobPath(desc.Digest)
 		fallthrough
 	case "missing config":
-		{
-			removeErr := c.root.Remove(path)
-			assert.NoError(t, removeErr)
-		}
+		removeErr := c.root.Remove(path)
+		assert.NoError(t, removeErr)
 
 	case "config digest":
-		{
-			writeFileErr := c.root.WriteFile(
-				path,
-				bytes.Repeat([]byte("x"), len(config)),
-				0o600,
-			)
-			assert.NoError(t, writeFileErr)
-		}
+		writeFileErr := c.root.WriteFile(
+			path,
+			bytes.Repeat([]byte("x"), len(blobs.config)),
+			0o600,
+		)
+		assert.NoError(t, writeFileErr)
 
 	case "manifest digest":
-		{
-			writeFileErr2 := c.root.WriteFile(
-				blobPath(desc.Digest),
-				bytes.Repeat([]byte("x"), len(data)),
-				0o600,
-			)
-			assert.NoError(t, writeFileErr2)
-		}
+		writeFileErr2 := c.root.WriteFile(
+			blobPath(desc.Digest),
+			bytes.Repeat([]byte("x"), len(blobs.manifest)),
+			0o600,
+		)
+		assert.NoError(t, writeFileErr2)
 
 	case "config short":
-		{
-			writeFileErr3 := c.root.WriteFile(path, config[:len(config)-1], 0o600)
-			assert.NoError(t, writeFileErr3)
-		}
+		writeFileErr3 := c.root.WriteFile(path, blobs.config[:len(blobs.config)-1], 0o600)
+		assert.NoError(t, writeFileErr3)
 
 	case "config trailing":
-		{
-			writeFileErr4 := c.root.WriteFile(path, append(config, 'x'), 0o600)
-			assert.NoError(t, writeFileErr4)
-		}
+		writeFileErr4 := c.root.WriteFile(path, append(blobs.config, 'x'), 0o600)
+		assert.NoError(t, writeFileErr4)
 	}
 	got, err := c.readOutcome(t.Context(), &desc)
 	switch *scenario {
@@ -132,16 +124,14 @@ func testOutcomeReadBoundsAndIntegrityCase(t *testing.T, scenario *string,
 	case "config one over", "manifest one over", "negative size":
 		assert.FatalIf(t, err != nil || got != nil, "out-of-bounds read: %+v, %v", got, err)
 	default:
-		{
-			_, ok := errors.AsType[*CacheError](err)
-			assert.FatalIf(
-				t,
-				!ok || got != nil || !errors.Is(err, manifest.ErrFlux),
-				"integrity failure lost: %+v, %v",
-				got,
-				err,
-			)
-		}
+		_, ok := errors.AsType[*CacheError](err)
+		assert.FatalIf(
+			t,
+			!ok || got != nil || !errors.Is(err, manifest.ErrFlux),
+			"integrity failure lost: %+v, %v",
+			got,
+			err,
+		)
 	}
 }
 

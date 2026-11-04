@@ -156,7 +156,8 @@ func TestRenderTrees_ParentIntervalExternalChart(t *testing.T) {
 		assert.Equal(t, len(runs), 2)
 		assert.Equal(t, string(delta(runs)), string(want))
 		for side, rendered := range runs {
-			needed, selected, dirty, _ := rendered.filter.Membership(parent)
+			membershipResult1 := rendered.filter.Membership(parent)
+			needed, selected, dirty, _ := membershipResult1.Needed, membershipResult1.Selected, membershipResult1.Dirty, membershipResult1.Revision
 			assert.Equal(t, needed, true)
 			assert.Equal(t, selected, true)
 			t.Logf(
@@ -167,7 +168,8 @@ func TestRenderTrees_ParentIntervalExternalChart(t *testing.T) {
 				selected,
 				dirty,
 			)
-			_, selected, dirty, _ = rendered.filter.Membership(child)
+			membershipResult2 := rendered.filter.Membership(child)
+			_, selected, dirty, _ = membershipResult2.Needed, membershipResult2.Selected, membershipResult2.Dirty, membershipResult2.Revision
 			assert.Equal(t, selected, true)
 			assert.Equal(t, dirty, true)
 			assert.Equal(t, rendered.Store().GetObject(child) != nil, true)
@@ -242,25 +244,21 @@ spec:
 	assert.NoError(t, err)
 	parent := testutil.KustomizationID("flux-system", "app-a")
 	for i, side := range []Rendered{base, head} {
-		{
-			assert.FatalIf(
-				t,
-				side.Result == nil || side.Err != nil,
-				"side %d incomplete: result=%v err=%v",
-				i,
-				side.Result,
-				side.Err,
-			)
-		}
+		assert.FatalIf(
+			t,
+			side.Result == nil || side.Err != nil,
+			"side %d incomplete: result=%v err=%v",
+			i,
+			side.Result,
+			side.Err,
+		)
 		if len(outputByParent(side.Result.Manifests)[testutil.KustomizationID("flux-system", "app-b")]) != 0 ||
 			configMapNames(side.Result)["cfg-b"] {
 			t.Fatalf("side %d rendered unchanged app-b: %v", i, side.Result.Manifests)
 		}
 		id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "cm-one"}
 		cm, ok := side.Store().Get[*manifest.ConfigMap](id)
-		{
-			assert.FatalIf(t, !ok, "%v", "missing shared ConfigMap")
-		}
+		assert.FatalIf(t, !ok, "%v", "missing shared ConfigMap")
 		assert.Diff(t, cm.Data, map[string]any{"key": fmt.Sprintf("v%d", i+1)})
 		winner := manifest.NamedResource{
 			Group:     manifest.FluxOperatorDomain,
@@ -275,7 +273,8 @@ spec:
 		}
 		identities := make([]string, 0, len(outputByParent(side.Result.Manifests)[parent]))
 		for _, doc := range outputByParent(side.Result.Manifests)[parent] {
-			name, namespace := manifest.DocMetadata(doc)
+			metadata := manifest.DocMetadata(doc)
+			name, namespace := metadata.Name, metadata.Namespace
 			identities = append(identities, manifest.DocKind(doc)+"/"+namespace+"/"+name)
 			switch manifest.DocKind(doc) {
 			case manifest.KindConfigMap:
@@ -321,9 +320,7 @@ spec:
 	assert.NoError(t, json.Unmarshal(body, &output))
 	generatedChanges := 0
 	for _, c := range output.Changes {
-		{
-			assert.FatalIf(t, c.Name == "cfg-b" || c.Name == "secret-one", "unchanged document in diff: %+v", c)
-		}
+		assert.FatalIf(t, c.Name == "cfg-b" || c.Name == "secret-one", "unchanged document in diff: %+v", c)
 		if c.Kind == manifest.KindConfigMap && c.Namespace == "flux-system" && c.Name == "cm-one" {
 			generatedChanges++
 			assert.Equal(t, c.Parent.Name, parent.Name)
@@ -386,18 +383,14 @@ func TestRenderTrees_RepoRootRelativeNoGit(t *testing.T) {
 		Config{WipeSecrets: true, Concurrency: 4},
 	)
 	base, head := renderedTrees4[0], renderedTrees4[1]
-	{
-		assert.FatalIf(t, err != nil, "RenderTrees: %v", err)
-	}
-	{
-		assert.FatalIf(
-			t,
-			base.Result == nil || head.Result == nil,
-			"both sides must render: base=%v head=%v",
-			base.Result,
-			head.Result,
-		)
-	}
+	assert.FatalIf(t, err != nil, "RenderTrees: %v", err)
+	assert.FatalIf(
+		t,
+		base.Result == nil || head.Result == nil,
+		"both sides must render: base=%v head=%v",
+		base.Result,
+		head.Result,
+	)
 	selected, selectedErr, _ := Select([]Rendered{base, head}, err,
 		[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
 	body, _, _, err := diff.Compare(
@@ -416,38 +409,30 @@ func TestRenderTrees_RepoRootRelativeNoGit(t *testing.T) {
 		selectedErr,
 		diff.Options{Format: diff.FormatJSON},
 	)
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	var output struct {
 		Changes []diff.Change `json:"changes"`
 	}
 	{
-		{
-			err := json.Unmarshal(body, &output)
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := json.Unmarshal(body, &output)
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	changes := output.Changes
+	assert.FatalIf(
+		t,
+		len(changes) != 1,
+		"want exactly 1 change (demo ConfigMap), got %d: %+v",
+		len(changes),
+		changes,
+	)
 	{
-		assert.FatalIf(
+		c := changes[0]
+		assert.ErrorIf(
 			t,
-			len(changes) != 1,
-			"want exactly 1 change (demo ConfigMap), got %d: %+v",
-			len(changes),
-			changes,
+			c.Name != "demo" || c.Kind != "ConfigMap" || c.Status != diff.StatusChanged,
+			"change = %+v; want ConfigMap demo changed",
+			c,
 		)
-	}
-	{
-		{
-			c := changes[0]
-			assert.ErrorIf(
-				t,
-				c.Name != "demo" || c.Kind != "ConfigMap" || c.Status != diff.StatusChanged,
-				"change = %+v; want ConfigMap demo changed",
-				c,
-			)
-		}
 	}
 }
 
@@ -509,7 +494,8 @@ func testRenderTreesMultipleValuesFromKeysCase(
 		assert.Equal(t, len(run.Result.Warnings), 0)
 		assert.Equal(t, len(run.Result.ClusterWarnings), 0)
 		assert.Equal(t, len(run.Result.Blocked), 0)
-		_, selected, dirty, _ := run.filter.Membership(app)
+		membershipResult3 := run.filter.Membership(app)
+		_, selected, dirty, _ := membershipResult3.Needed, membershipResult3.Selected, membershipResult3.Dirty, membershipResult3.Revision
 		assert.Equal(t, selected, testCaseInput.changed)
 		assert.Equal(t, dirty, testCaseInput.changed)
 		docs := outputByParent(run.Result.Manifests)[app]
@@ -594,14 +580,12 @@ spec: {url: https://example.test/cluster.git}
 		inputs, err = baseline.ResolvePaths(t.Context(), after, before)
 	}
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(
-			t,
-			repo != nil && inputs.Changes == nil,
-			"%v",
-			"committed resolver returned no change set",
-		)
-	}
+	assert.FatalIf(
+		t,
+		repo != nil && inputs.Changes == nil,
+		"%v",
+		"committed resolver returned no change set",
+	)
 	app := testutil.KustomizationID("flux-system", "app")
 	stable := testutil.KustomizationID("flux-system", "stable")
 	cluster := manifest.NamedResource{
@@ -625,9 +609,7 @@ spec: {url: https://example.test/cluster.git}
 			},
 			Config{Cache: owner, Concurrency: 2},
 		)
-		{
-			assert.FatalIf(t, len(renderedSingleton1) != 1, "missing render: %v", err)
-		}
+		assert.FatalIf(t, len(renderedSingleton1) != 1, "missing render: %v", err)
 		result := renderedSingleton1[0].Result
 		assert.NoError(t, err)
 		fullApp[side] = outputByParent(result.Manifests)[app]
@@ -704,26 +686,22 @@ func testRenderTreesOptionalInputRoutesCaseTail(
 		base, head := renderedTrees2[0], renderedTrees2[1]
 		assert.NoError(t, err)
 		for side, rendered := range []Rendered{base, head} {
-			{
-				assert.FatalIf(
-					t,
-					rendered.Result == nil || rendered.Orchestrator == nil,
-					"side %d missing render result",
-					side,
-				)
-			}
+			assert.FatalIf(
+				t,
+				rendered.Result == nil || rendered.Orchestrator == nil,
+				"side %d missing render result",
+				side,
+			)
 			for _, id := range []manifest.NamedResource{(*tailCaseInput.app), (*tailCaseInput.cluster)} {
 				info, _ := rendered.Store().GetStatus(id)
-				{
-					assert.ErrorIf(
-						t,
-						info.Outcome() != store.OutcomePassed,
-						"side %d required %s was not reconciled: %+v",
-						side,
-						id,
-						info,
-					)
-				}
+				assert.ErrorIf(
+					t,
+					info.Outcome() != store.OutcomePassed,
+					"side %d required %s was not reconciled: %+v",
+					side,
+					id,
+					info,
+				)
 			}
 			_, dispatched := rendered.Store().GetStatus((*tailCaseInput.stable))
 			assert.Equal(t, dispatched, false)

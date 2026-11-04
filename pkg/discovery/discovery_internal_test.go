@@ -87,7 +87,12 @@ func testTrees(t *testing.T) *kustomize.TreeCache {
 	return trees
 }
 
-func testReceiptTrees(t *testing.T, cacheDir string) (*kustomize.TreeCache, func()) {
+type receiptTrees struct {
+	trees *kustomize.TreeCache
+	close func()
+}
+
+func testReceiptTrees(t *testing.T, cacheDir string) receiptTrees {
 	t.Helper()
 	owner, err := cache.New(t.Context(), cacheDir)
 	assert.NoError(t, err)
@@ -101,7 +106,7 @@ func testReceiptTrees(t *testing.T, cacheDir string) (*kustomize.TreeCache, func
 	if cacheDir != "" && !owner.CanPersistRenders() {
 		t.Skipf("persistent receipt proof requires an eligible build: %s", cache.RenderPersistenceDisabledReason())
 	}
-	return trees, closeCache
+	return receiptTrees{trees: trees, close: closeCache}
 }
 
 func packageHistory(
@@ -113,11 +118,9 @@ func packageHistory(
 	t.Helper()
 	evidence := trees.PreviousEntry(t.Context(), *req)
 	records := evidence.Records
-	{
-		assert.FatalIf(t, evidence.Owner != owner || records == nil, "package %q has no complete accepted history",
-			req.SubPath,
-		)
-	}
+	assert.FatalIf(t, evidence.Owner != owner || records == nil, "package %q has no complete accepted history",
+		req.SubPath,
+	)
 	history := maps.Collect(records)
 	return history
 }
@@ -565,7 +568,8 @@ func testRunSelectedEntryAdmissionCase(t *testing.T, testCaseInput *string,
 
 func testRunSelectedEntryAdmissionCaseTail(t *testing.T, tailCaseInput *testRunSelectedEntryAdmissionCaseTailInputs) {
 	t.Helper()
-	trees, closeCache := testReceiptTrees(t, (*tailCaseInput.cacheDir))
+	testReceiptTreesResult1 := testReceiptTrees(t, (*tailCaseInput.cacheDir))
+	trees, closeCache := testReceiptTreesResult1.trees, testReceiptTreesResult1.close
 	cfg := Config{
 		Trees: trees,
 		Store: (*tailCaseInput.st),
@@ -648,7 +652,8 @@ func testRunSelectedEntryAdmissionCaseTail(t *testing.T, tailCaseInput *testRunS
 		}
 		assert.Diff(t, packageHistory(t, trees, &req, owner.Named()), want)
 		closeCache()
-		trees, closeCache = testReceiptTrees(t, (*tailCaseInput.cacheDir))
+		testReceiptTreesResult2 := testReceiptTrees(t, (*tailCaseInput.cacheDir))
+		trees, closeCache = testReceiptTreesResult2.trees, testReceiptTreesResult2.close
 		assert.Diff(t, packageHistory(t, trees, &req, owner.Named()), want)
 	}
 	closeCache()

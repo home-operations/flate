@@ -154,18 +154,14 @@ func testControllerRenderedSecretWinsOverRegistryConfigCaseTail(
 		st.AddObject(repo)
 		ts.Go(t.Context(), repo.Name, func(ctx context.Context) {
 			deps := c.ReconcileNode(ctx, repo.Named(), 0).Blocked
-			{
-				assert.ErrorIf(t, len(deps) != 1 ||
-					deps[0] != (manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "creds"}), "blocked dependencies = %v, want Secret ns/creds", deps)
-			}
+			assert.ErrorIf(t, len(deps) != 1 ||
+				deps[0] != (manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "creds"}), "blocked dependencies = %v, want Secret ns/creds", deps)
 		})
 	}
 	ts.BlockTillDone()
 	{
-		{
-			got := tailCaseInput.requests.Load()
-			assert.FatalIf(t, got != 0, "requests before Secret render = %d, want 0", got)
-		}
+		got := tailCaseInput.requests.Load()
+		assert.FatalIf(t, got != 0, "requests before Secret render = %d, want 0", got)
 	}
 	auth := base64.StdEncoding.EncodeToString([]byte(tailCaseInput.user + ":" + tailCaseInput.pass))
 	st.AddObject(&manifest.Secret{
@@ -178,15 +174,13 @@ func testControllerRenderedSecretWinsOverRegistryConfigCaseTail(
 	for _, repo := range repos {
 		ts.Go(t.Context(), repo.Name, func(ctx context.Context) {
 			{
-				{
-					deps := c.ReconcileNode(ctx, repo.Named(), 0).Blocked
-					assert.ErrorIf(
-						t,
-						len(deps) != 0,
-						"blocked dependencies after Secret render = %v, want none",
-						deps,
-					)
-				}
+				deps := c.ReconcileNode(ctx, repo.Named(), 0).Blocked
+				assert.ErrorIf(
+					t,
+					len(deps) != 0,
+					"blocked dependencies after Secret render = %v, want none",
+					deps,
+				)
 			}
 		})
 	}

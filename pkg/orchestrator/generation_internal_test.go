@@ -18,9 +18,7 @@ func TestStatusListener_RepresentativeProvenance(t *testing.T) {
 		Concurrency:    2,
 		StatusListener: func(_ manifest.TreeID, subject manifest.DiagnosticIdentity, _ store.StatusInfo) { seen[subject.ID]++ },
 	})
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	defer o.stop()
 	owner := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 	chart := &manifest.HelmChartSource{Name: "auxiliary-chart", Namespace: "apps"}
@@ -48,14 +46,10 @@ func TestStatusListener_RepresentativeProvenance(t *testing.T) {
 			t.Fatalf("ordinary representative %s missing from progress: %v", object.Named(), seen)
 		}
 	}
-	{
-		assert.FatalIf(t, len(seen) != 3, "auxiliary or bootstrap progress escaped: %v", seen)
-	}
+	assert.FatalIf(t, len(seen) != 3, "auxiliary or bootstrap progress escaped: %v", seen)
 	o.store.AddObject(chart)
 	o.store.UpdateStatus(chart.Named(), store.StatusInfo{Status: store.StatusReady})
-	{
-		assert.FatalIf(t, seen[chart.Named()] != 1, "%v", "independent chart winner retained generated visibility")
-	}
+	assert.FatalIf(t, seen[chart.Named()] != 1, "%v", "independent chart winner retained generated visibility")
 	o.store.UpdateFailure(oci.Named(), errors.New("source failed"))
 	o.store.UpdateFailure(
 		owner.Named(),
@@ -71,13 +65,11 @@ func TestStatusListener_RepresentativeProvenance(t *testing.T) {
 	run.Err = &FailuresError{Message: "source failed"}
 	selected, _, _ := Select([]Rendered{run}, run.Err, []manifest.NamedResource{owner.Named()}, nil)
 	{
-		{
-			_, visible := selected[0].Statuses[oci.Named()]
-			assert.FatalIf(t, visible ||
-				!strings.Contains(
-					selected[0].Statuses[owner.Named()].String(),
-					"source failed",
-				), "%v", "hidden generated-source failure did not remain visible through its parent diagnostic")
-		}
+		_, visible := selected[0].Statuses[oci.Named()]
+		assert.FatalIf(t, visible ||
+			!strings.Contains(
+				selected[0].Statuses[owner.Named()].String(),
+				"source failed",
+			), "%v", "hidden generated-source failure did not remain visible through its parent diagnostic")
 	}
 }

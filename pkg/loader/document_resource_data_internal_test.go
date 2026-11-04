@@ -86,14 +86,12 @@ data: {value: fixture}
 	owner := testutil.KustomizationID("flux-system", "owner")
 	child := testutil.KustomizationID("apps", "child")
 	values := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "values"}
-	{
-		assert.FatalIf(
-			t,
-			existing != nil && l.Store.GetObject(values) != existing,
-			"%s",
-			"pre-existing data object was replaced",
-		)
-	}
+	assert.FatalIf(
+		t,
+		existing != nil && l.Store.GetObject(values) != existing,
+		"%s",
+		"pre-existing data object was replaced",
+	)
 	{
 		record, _ := l.Index.Lookup(child)
 		assert.FatalIf(t, record.Parent != owner, "child parent = %s, want %s", record.Parent, owner)

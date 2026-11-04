@@ -20,14 +20,12 @@ func TestTreeID_ValidateAndOrder(t *testing.T) {
 		t.Run("invalid "+string(path), func(t *testing.T) {
 			t.Parallel()
 			err := path.Validate()
-			{
-				assert.FatalIf(
-					t,
-					!errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux),
-					"unclassified coordinate error: %v",
-					err,
-				)
-			}
+			assert.FatalIf(
+				t,
+				!errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux),
+				"unclassified coordinate error: %v",
+				err,
+			)
 		})
 	}
 	{

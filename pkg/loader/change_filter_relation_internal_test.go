@@ -188,7 +188,8 @@ func (c *countedProductions) IncomingProductions(
 
 func TestFilter_SharedInputRelationLookupBounded(t *testing.T) {
 	t.Parallel()
-	st, files := seedKSStore(100)
+	fixture := seedKSStore(100)
+	st, files := fixture.store, fixture.files
 	index := new(filterFixture{files: files, root: "/repo", objects: st}).index()
 	counted := &countedProductions{Store: st, id: manifest.BootstrapSourceID}
 	f := newAdmission(
@@ -354,9 +355,7 @@ func TestQualify_SharedNonComparableArtifact(t *testing.T) {
 	var single [2]int64
 	for side, st := range stores {
 		single[side] = readers[side].opens.Load()
-		{
-			assert.FatalIf(t, single[side] == 0, "%s", "source pair was not compared")
-		}
+		assert.FatalIf(t, single[side] == 0, "%s", "source pair was not compared")
 		readers[side].opens.Store(0)
 		st.AddObject(second)
 		st.SetArtifact(second.Named(), artifacts[side])
@@ -550,7 +549,7 @@ func testAddEmittedEffectiveSourceRootsCase(t *testing.T, testCaseInput *string,
 		source = src.Named()
 		art := &store.SourceArtifact{
 			FS:         os.DirFS(root),
-			LocalPath:  filepath.Join(root, ".inputs/source"),
+			LocalPath:  filepath.Join(root, ".inputs", "source"),
 			LocalRoot:  filepath.Join(root, "subtree"),
 			InputAlias: true,
 			Key:        "derived-alias",

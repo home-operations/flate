@@ -155,6 +155,7 @@ func (c *Controller) KeepEmitted(
 func (c *Controller) admissionProof(reads *store.ReadSet) *store.ReadSet {
 	proof := &store.ReadSet{}
 	proof.Init(c.Store, reads.ID(), nil)
+	proof.SetWork(reads.Work())
 	for id := range reads.Required() {
 		proof.RequireData(id)
 	}

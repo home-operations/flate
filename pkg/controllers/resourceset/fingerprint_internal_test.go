@@ -8,13 +8,11 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/home-operations/flate/internal/testutil"
-
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
-
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -235,7 +233,7 @@ func renderProviders(
 			input.State = resourceset.ProviderInputUnsupported
 		}
 	}
-	return resourceset.Render(rs, inputs, admit)
+	return resourceset.Render(rs, inputs, admit, nil)
 }
 
 type testResourceSetFingerprintSelectorInputsCaseInputs struct {

@@ -42,13 +42,13 @@ type Fetcher interface {
 		ctx context.Context,
 		obj manifest.BaseManifest,
 		reads *store.ReadSet,
-		policy sourcecache.Policy,
+		policy *sourcecache.Policy,
 	) (*store.SourceArtifact, error)
 }
 
 // TypedFetcher acquires artifacts of one manifest type with explicit freshness and retries.
 type TypedFetcher[T manifest.BaseManifest] interface {
-	Fetch(ctx context.Context, obj T, reads *store.ReadSet, policy sourcecache.Policy) (*store.SourceArtifact, error)
+	Fetch(ctx context.Context, obj T, reads *store.ReadSet, policy *sourcecache.Policy) (*store.SourceArtifact, error)
 }
 
 // Wrap converts a TypedFetcher into the untyped Fetcher interface
@@ -71,7 +71,7 @@ func (a typedAdapter[T]) Fetch(
 	ctx context.Context,
 	obj manifest.BaseManifest,
 	reads *store.ReadSet,
-	policy sourcecache.Policy,
+	policy *sourcecache.Policy,
 ) (*store.SourceArtifact, error) {
 	typed, ok := obj.(T)
 	if !ok {

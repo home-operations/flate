@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: metallb-system-operator
+  namespace: flux-system
+data:
+  value: unchanged

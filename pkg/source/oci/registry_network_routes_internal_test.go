@@ -104,7 +104,7 @@ func testFetcherNetworkRoutesCase(t *testing.T, route *string,
 			t.Context(),
 			repo,
 			fInputs.readSet(repo),
-			sourcecache.Policy{MaxAge: repo.SourceInterval(), Retry: retry},
+			&sourcecache.Policy{MaxAge: repo.SourceInterval(), Retry: retry},
 		)
 		missing, innerOk := errors.AsType[*source.MissingSecretError](err)
 		assert.FatalIf(t, !innerOk || missing.RetryAmbient == nil, "fallback: %v", err)
@@ -114,7 +114,7 @@ func testFetcherNetworkRoutesCase(t *testing.T, route *string,
 			t.Context(),
 			repo,
 			fInputs.readSet(repo),
-			sourcecache.Policy{MaxAge: repo.SourceInterval(), Retry: retry},
+			&sourcecache.Policy{MaxAge: repo.SourceInterval(), Retry: retry},
 		)
 	}
 	terminal, ok := errors.AsType[*sourcecache.TerminalError](err)

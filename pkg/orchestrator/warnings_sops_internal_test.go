@@ -83,7 +83,7 @@ spec:
 	repo.SecretRef = &manifest.LocalObjectReference{Name: "cloudflared-secret"}
 	var reads store.ReadSet
 	reads.Init(o.Store(), repo.Named(), nil)
-	_, err = o.src.Fetchers[manifest.KindGitRepository].Fetch(t.Context(), repo, &reads, sourcecache.Policy{})
+	_, err = o.src.Fetchers[manifest.KindGitRepository].Fetch(t.Context(), repo, &reads, &sourcecache.Policy{})
 	if missing, ok := errors.AsType[*source.MissingSecretError](
 		err,
 	); !ok || missing.Detail != "not found" || missing.Secret.Name != "cloudflared-secret" ||

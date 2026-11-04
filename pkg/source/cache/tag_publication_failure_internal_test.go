@@ -32,7 +32,7 @@ func testAcquireTagSaveFailureDoesNotBecomeHitOutcome(t *testing.T) {
 		_, _, _, err := c.Blob(
 			t.Context(),
 			BlobKey{Content: "outcome-save"},
-			Policy{MaxAge: Forever},
+			&Policy{MaxAge: Forever},
 			func(context.Context, ProducerInput) (ProducerResult, error) {
 				calls++
 				return ProducerResult{}, connReset()

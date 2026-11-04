@@ -213,7 +213,7 @@ func TestFetcher_ProviderUnavailable(t *testing.T) {
 		context.Background(),
 		repo,
 		(testInputs{}).readSet(repo),
-		sourcecache.Policy{MaxAge: repo.SourceInterval()},
+		&sourcecache.Policy{MaxAge: repo.SourceInterval()},
 	)
 	assert.FatalIf(t, err == nil, "expected error for unimplemented provider")
 	assert.ErrorIf(t, !errors.Is(err, manifest.ErrMissingSecret), "expected missing provider credentials; got %v", err)
@@ -332,7 +332,7 @@ func TestFetcher_ProviderMissingSecret(t *testing.T) {
 		context.Background(),
 		repo,
 		fInputs.readSet(repo),
-		sourcecache.Policy{MaxAge: repo.SourceInterval()},
+		&sourcecache.Policy{MaxAge: repo.SourceInterval()},
 	)
 	assert.FatalIf(t, err == nil, "expected missing-secret error")
 	assert.ErrorIf(
@@ -491,13 +491,13 @@ func testFetcherSecretReferencesCase(t *testing.T, inputs *testFetcherSecretRefe
 		repo.ProxySecretRef = &manifest.LocalObjectReference{Name: "missing"}
 		_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveTransport(
 			repo,
-			sourcecache.Policy{},
+			&sourcecache.Policy{},
 		)
 		owner.Name, secretName = "repo", "missing"
 	case inputs.tc.field == "tls.crt":
 		_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveTransport(
 			repo,
-			sourcecache.Policy{},
+			&sourcecache.Policy{},
 		)
 	default:
 

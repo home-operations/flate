@@ -54,7 +54,7 @@ func TestFetchHTTPChart_AdmissionCancellation(t *testing.T) {
 						ctx,
 						prepared,
 						helmChart(r.Name, "app-template", "1.0.0"),
-						sourcecache.Policy{},
+						&sourcecache.Policy{},
 					)
 					done <- err
 				}()
@@ -183,7 +183,7 @@ func testFetchHTTPChartAdmissionTimeoutIsolationCallbackCompletion(
 			t.Context(),
 			prepared,
 			helmChart(r.Name, "app-template", "1.0.0"),
-			sourcecache.Policy{},
+			&sourcecache.Policy{},
 		)
 		done <- err
 	}
@@ -254,7 +254,7 @@ func testFetchHTTPChartAdmissionTransferOverlapCallback(t *testing.T) {
 	})
 	fetch := func(host string, done chan<- error) {
 		r := &httpRepository{HelmRepository: httpRepo("https://" + host), client: &http.Client{Transport: tr}}
-		_, err := f.fetchHTTPChart(t.Context(), r, helmChart(r.Name, "app-template", "1.0.0"), sourcecache.Policy{})
+		_, err := f.fetchHTTPChart(t.Context(), r, helmChart(r.Name, "app-template", "1.0.0"), &sourcecache.Policy{})
 		done <- err
 	}
 	firstDone, secondDone := make(chan error, 1), make(chan error, 1)

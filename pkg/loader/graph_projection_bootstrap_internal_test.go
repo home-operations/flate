@@ -30,7 +30,7 @@ func testAdmitGraphProjectionBootstrapDocumentOwners(t *testing.T) {
 	)
 	l := New(store.New())
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	l.Admit(root)
 	for _, name := range []string{"self", "excluded"} {

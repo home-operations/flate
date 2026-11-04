@@ -99,7 +99,7 @@ func testFetcherConcurrentCustomTLSCase(t *testing.T, concurrency *int,
 				ctx,
 				repo,
 				fInputs.readSet(repo),
-				sourcecache.Policy{MaxAge: repo.SourceInterval()},
+				&sourcecache.Policy{MaxAge: repo.SourceInterval()},
 			)
 			if err == nil {
 				var content []byte
@@ -144,7 +144,7 @@ func testFetcherConcurrentCustomTLSCaseCompletion(
 		gitRepoWithSecret("anonymous", (*captures.repos)[0].URL, ""),
 		captures.fInputs.
 			readSet(gitRepoWithSecret("anonymous", (*captures.repos)[0].URL, "")),
-		sourcecache.Policy{},
+		&sourcecache.Policy{},
 	)
 	{
 		_, ok := errors.AsType[x509.UnknownAuthorityError](err)
@@ -155,7 +155,7 @@ func testFetcherConcurrentCustomTLSCaseCompletion(
 		bad.ProxySecretRef = (*captures.repos)[0].ProxySecretRef
 		{
 			_, err := (*captures.f).Fetch((*captures.ctx), bad, captures.fInputs.
-				readSet(bad), sourcecache.Policy{MaxAge: bad.SourceInterval()},
+				readSet(bad), &sourcecache.Policy{MaxAge: bad.SourceInterval()},
 			)
 			assert.FatalIf(t, err == nil, "%s fetch inherited another operation's credentials", name)
 		}
@@ -163,8 +163,8 @@ func testFetcherConcurrentCustomTLSCaseCompletion(
 	for _, ref := range []string{"", mustHead(t, (*captures.root))} {
 		_, err := (*captures.f).FetchRemoteBase(
 			(*captures.ctx),
-			RemoteBaseRequest{URL: (*captures.repos)[0].URL, Ref: ref, Timeout: 27 * time.Second, Submodules: true},
-			sourcecache.Policy{},
+			&RemoteBaseRequest{URL: (*captures.repos)[0].URL, Ref: ref, Timeout: 27 * time.Second, Submodules: true},
+			&sourcecache.Policy{},
 		)
 		{
 			_, ok := errors.AsType[x509.UnknownAuthorityError](err)

@@ -64,7 +64,7 @@ func testFetcherProviderAnonymousCase(t *testing.T, root *string,
 	reads := inputs.readSet(repo)
 	defer reads.Close()
 	f := &Fetcher{Cache: cachetest.New(t, "", cache.New)}
-	_, err := f.Fetch(t.Context(), repo, reads, cache.Policy{})
+	_, err := f.Fetch(t.Context(), repo, reads, &cache.Policy{})
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	assert.FatalIf(t, !ok || missing.RetryAmbient == nil, "missing continuation: %v", err)
 	got, err := missing.RetryAmbient(t.Context())

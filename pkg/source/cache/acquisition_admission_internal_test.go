@@ -38,7 +38,7 @@ func testAcquireAdmissionFailure(t *testing.T) {
 	_, _, id, err := c.Blob(
 		t.Context(),
 		BlobKey{Content: "admission-failure"},
-		Policy{Retry: fastRetry(3), Admit: func(context.Context) (func(), error) {
+		&Policy{Retry: fastRetry(3), Admit: func(context.Context) (func(), error) {
 			admissions++
 			return nil, cause
 		}},
@@ -83,7 +83,7 @@ func testAcquireAdmissionFailure(t *testing.T) {
 		_, _, _, err := c.Blob(
 			t.Context(),
 			BlobKey{Content: "admission-failure"},
-			Policy{},
+			&Policy{},
 			producer([]byte("complete"), &ocispec.Descriptor{}),
 		)
 		assert.FatalIf(t, err != nil, "admission failure blocked later production: %v", err)
@@ -105,7 +105,7 @@ func testAcquireAdmissionStagingFailure(t *testing.T) {
 	_, _, _, err = c.Blob(
 		t.Context(),
 		BlobKey{Content: "staging-admission"},
-		Policy{Admit: func(context.Context) (func(), error) {
+		&Policy{Admit: func(context.Context) (func(), error) {
 			{
 				closeErr5 := c.root.Close()
 				assert.NoError(t, closeErr5)
@@ -143,7 +143,7 @@ func testAcquireAdmissionPersistedReplay(t *testing.T) {
 		_, _, _, err := c.Blob(
 			t.Context(),
 			key,
-			policy,
+			&policy,
 			func(context.Context, ProducerInput) (ProducerResult, error) {
 				return ProducerResult{}, connReset()
 			},
@@ -165,7 +165,7 @@ func testAcquireAdmissionPersistedReplay(t *testing.T) {
 		_, _, _, err = c.Blob(
 			t.Context(),
 			key,
-			policy,
+			&policy,
 			func(context.Context, ProducerInput) (ProducerResult, error) {
 				t.Error("persisted outcome invoked producer")
 				return ProducerResult{}, nil
@@ -227,7 +227,7 @@ func testAcquireAdmissionCaseCallback(t *testing.T, testCaseInput testAcquireAdm
 		_, _, _, err := c.Blob(
 			ctx,
 			key,
-			policy,
+			&policy,
 			func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 				productions++
 				{
@@ -307,7 +307,7 @@ func testAcquireAdmissionCaseCallbackCompletion(
 		(*captures.timeout) = 0
 		{
 			_, _, _, blobErr := (*captures.c).Blob(
-				t.Context(), (*captures.key), (*captures.policy), producer(nil, &ocispec.Descriptor{}),
+				t.Context(), (*captures.key), new((*captures.policy)), producer(nil, &ocispec.Descriptor{}),
 			)
 			assert.FatalIf(t, blobErr != nil || (*captures.admissions) != 1 || (*captures.releases) !=
 				1, "warm hit admitted: admissions=%d releases=%d error=%v", (*captures.admissions), (*captures.releases), blobErr)

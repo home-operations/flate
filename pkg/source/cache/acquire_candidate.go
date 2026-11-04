@@ -7,6 +7,8 @@ import (
 
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/errdef"
+
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 type attemptHistory struct {
@@ -126,7 +128,7 @@ func (c *Cache) acceptedCandidate(ctx context.Context, key *acquireKey,
 	generation, descriptor, _, err := c.Blob(
 		ctx,
 		BlobKey{Content: key.accepted, Render: RenderAccepted},
-		Policy{MaxAge: Forever},
+		&Policy{MaxAge: Forever, Work: key.policy.HistoryWork},
 		nil,
 	)
 	if err != nil {
@@ -136,7 +138,7 @@ func (c *Cache) acceptedCandidate(ctx context.Context, key *acquireKey,
 		return nil, err
 	}
 	accepted := &entry{fs: generation, descriptor: descriptor}
-	valid, err := c.validCandidate(ctx, validate, accepted)
+	valid, err := c.validCandidate(ctx, key.policy.Work, validate, accepted)
 	if err != nil || valid {
 		return accepted, err
 	}
@@ -150,6 +152,7 @@ func (c *Cache) waveCandidate(ctx context.Context, key *acquireKey, observed *en
 		return waveCandidates{}, nil
 	}
 	if observed.waveErr != nil {
+		key.lookup.Add(&manifest.WorkCounts{CacheService: 1})
 		if observed.outcome != nil {
 			return waveCandidates{}, &TerminalError{
 				Err:       observed.waveErr,
@@ -161,8 +164,9 @@ func (c *Cache) waveCandidate(ctx context.Context, key *acquireKey, observed *en
 	if observed.waveResult == nil {
 		return waveCandidates{}, nil
 	}
-	valid, err := c.validCandidate(ctx, validate, observed.waveResult)
+	valid, err := c.validCandidate(ctx, key.policy.Work, validate, observed.waveResult)
 	if err != nil || valid {
+		key.lookup.Add(&manifest.WorkCounts{CacheService: 1})
 		return waveCandidates{candidate: observed.waveResult}, err
 	}
 	return waveCandidates{rejected: observed.waveResult}, nil
@@ -177,8 +181,9 @@ func (c *Cache) freshCandidate(ctx context.Context, key *acquireKey, e *entry,
 		}
 		return nil, err
 	}
-	valid, err := c.validCandidate(ctx, validate, e)
+	valid, err := c.validCandidate(ctx, key.policy.Work, validate, e)
 	if err != nil || valid {
+		key.lookup.Add(&manifest.WorkCounts{CacheService: 1})
 		return e, err
 	}
 	return nil, nil //nolint:nilnil // Validation rejection starts a new acquisition.

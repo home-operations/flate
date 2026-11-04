@@ -140,7 +140,10 @@ func TestHTTPInputs_CloseAdmissionRace(t *testing.T) {
 		defer cancel()
 		done := make(chan error, 1)
 		go func() {
-			_, err := c.Acquire(ctx, "https://example.invalid/queued", cache.RetryConfig{}, nil)
+			_, err := c.Acquire(
+				ctx,
+				&HTTPRequest{URL: "https://example.invalid/queued", Retry: cache.RetryConfig{}, HeldSlot: nil},
+			)
 			done <- err
 		}()
 		synctest.Wait()
@@ -316,7 +319,10 @@ func testHTTPInputsCloseDoesNotLeakCase(t *testing.T, check *func(t *testing.T),
 		done := make(chan error, (*concurrency))
 		for i := range *concurrency {
 			go func() {
-				_, err := c.Acquire(ctx, fmt.Sprintf("%s/%d", srv.URL, i), cache.RetryConfig{}, nil)
+				_, err := c.Acquire(
+					ctx,
+					&HTTPRequest{URL: fmt.Sprintf("%s/%d", srv.URL, i), Retry: cache.RetryConfig{}, HeldSlot: nil},
+				)
 				done <- err
 			}()
 		}
@@ -329,7 +335,10 @@ func testHTTPInputsCloseDoesNotLeakCase(t *testing.T, check *func(t *testing.T),
 				t.Error(err)
 			}
 		}
-		if _, err := c.Acquire(t.Context(), srv.URL+"/warm", cache.RetryConfig{}, nil); err != nil {
+		if _, err := c.Acquire(
+			t.Context(),
+			&HTTPRequest{URL: srv.URL + "/warm", Retry: cache.RetryConfig{}, HeldSlot: nil},
+		); err != nil {
 			t.Error(err)
 		}
 		c.Close()
@@ -399,7 +408,7 @@ func testHTTPInputsCloseCaseCallback(t *testing.T, testCaseInput testHTTPInputsC
 		workers.state.Store(remoteClosed)
 		close(workers.drain)
 		c.remoteFetches.Store(key, rf)
-		_, err := c.Acquire(t.Context(), key.url, key.retry, nil)
+		_, err := c.Acquire(t.Context(), &HTTPRequest{URL: key.url, Retry: key.retry, HeldSlot: nil})
 		if !errors.Is(err, fs.ErrClosed) || !errors.Is(err, manifest.ErrFlux) ||
 			rf.cancel.Load() != nil {
 			t.Fatalf("rejected admission: %v, cancel=%v", err, rf.cancel.Load())
@@ -512,17 +521,18 @@ func testHTTPInputsCloseCaseCallbackCompletion(
 	)
 
 	{
-		_, err := (*captures.c).Acquire(
-			t.Context(), captures.key.
-				url, captures.key.
-				retry, nil,
-		)
+		_, err := (*captures.c).Acquire(t.Context(), &HTTPRequest{URL: captures.key.
+			url, Retry: captures.key.
+			retry, HeldSlot: nil})
 		assert.FatalIf(t, !errors.Is(err, fs.ErrClosed) ||
 			!errors.Is(err, manifest.ErrFlux), "closed fetch: %v", err)
 	}
 	(*captures.cancel)()
 	{
-		_, err := (*captures.c).Acquire((*captures.ctx), captures.key.url, captures.key.retry, nil)
+		_, err := (*captures.c).Acquire(
+			(*captures.ctx),
+			&HTTPRequest{URL: captures.key.url, Retry: captures.key.retry, HeldSlot: nil},
+		)
 		assert.FatalIf(t, !errors.Is(err, context.Canceled), "already canceled waiter: %v", err)
 	}
 	(*captures.c).

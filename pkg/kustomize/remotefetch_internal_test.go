@@ -18,9 +18,9 @@ import (
 	"time"
 
 	"github.com/home-operations/flate/internal/assert"
-
 	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
@@ -60,6 +60,7 @@ func TestRemoteInput_CancelQueuedGitBase(t *testing.T) {
 				done := make(chan error, 1)
 				go func() {
 					acquired, identity, err := descriptor.acquire(ctx, c, &treeFS{})
+
 					assert.ErrorIf(
 						t,
 						acquired != nil || identity != (remoteIdentity{}),
@@ -67,6 +68,7 @@ func TestRemoteInput_CancelQueuedGitBase(t *testing.T) {
 						acquired,
 						identity,
 					)
+
 					done <- err
 				}()
 				synctest.Wait()
@@ -87,12 +89,15 @@ func TestRemoteInput_CancelQueuedGitBase(t *testing.T) {
 					assert.ErrorIf(t, !errors.Is(err, context.Canceled), "canceled reacquisition=%v", err)
 				}
 				c.tasks.BlockTillDone()
+
 				assert.FatalIf(t, calls != 0, "canceled git fetches=%d, want 0", calls)
+
 				{
 					_, _, err := descriptor.acquire(t.Context(), c, &treeFS{})
 					assert.NoError(t, err)
 				}
 				c.tasks.BlockTillDone()
+
 				assert.FatalIf(t, calls != 1, "surviving acquisition calls=%d, want 1", calls)
 			})
 		})
@@ -129,6 +134,7 @@ func TestRemoteInput_AcquisitionIdentity(t *testing.T) {
 							request,
 							gotRetry,
 						)
+
 						return &store.SourceArtifact{
 							Key:      "family",
 							Content:  strconv.Itoa(int(v)),
@@ -140,8 +146,11 @@ func TestRemoteInput_AcquisitionIdentity(t *testing.T) {
 				input := newTreeFS(fstest.MapFS{}, "/src", nil)
 				input.retry, input.maxAge = retry, time.Minute
 				acquired, identity, err := descriptor.acquire(t.Context(), c, input)
+
 				assert.NoError(t, err)
+
 				body, err := fs.ReadFile(acquired, "content")
+
 				assert.FatalIf(
 					t,
 					err != nil || string(body) != strconv.Itoa(int(v)),
@@ -149,8 +158,10 @@ func TestRemoteInput_AcquisitionIdentity(t *testing.T) {
 					body,
 					err,
 				)
+
 				assert.FatalIf(t, operation == remoteHTTP &&
 					(identity.Content == "" || identity.Content != sourcecache.AcquisitionIdentity(acquired)), "HTTP identity=%+v", identity)
+
 				assert.FatalIf(
 					t,
 					operation == remoteGit &&
@@ -158,9 +169,11 @@ func TestRemoteInput_AcquisitionIdentity(t *testing.T) {
 					"Git identity=%+v",
 					identity,
 				)
+
 				if first == (remoteIdentity{}) {
 					first = identity
 				}
+
 				assert.FatalIf(
 					t,
 					(identity == first) != (v == 1),
@@ -169,6 +182,7 @@ func TestRemoteInput_AcquisitionIdentity(t *testing.T) {
 					identity,
 					first,
 				)
+
 				c.Close()
 			}
 		})
@@ -213,6 +227,7 @@ func TestRemoteInput_UnavailableGit(t *testing.T) {
 				if wantErr == nil {
 					wantErr = manifest.ErrInput
 				}
+
 				assert.FatalIf(
 					t,
 					!errors.Is(err, wantErr) || identity != (remoteIdentity{}),
@@ -228,40 +243,42 @@ func TestRemoteInput_UnavailableGit(t *testing.T) {
 func TestRemoteInput_HTTPFailureObservation(t *testing.T) {
 	t.Parallel()
 	for _, status := range []int{http.StatusNotFound, http.StatusForbidden, http.StatusTooManyRequests, http.StatusInternalServerError} {
-		t.Run(strconv.Itoa(status), func(t *testing.T) {
-			t.Parallel()
-			var hits atomic.Int32
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				hits.Add(1)
-				w.WriteHeader(status)
-			}))
-			t.Cleanup(srv.Close)
-			c := newTestTreeCache(t, "")
-			descriptor := remoteInput{Operation: remoteHTTP, URL: srv.URL}
-			acquired, identity, err := descriptor.acquire(t.Context(), c, &treeFS{})
-			response, ok := errors.AsType[*fetcherr.ResponseError](err)
-			want := remoteIdentity{}
-			if status == http.StatusNotFound {
-				want.HTTPStatus = status
-			}
-			assert.FatalIf(t, acquired != nil || !ok || response.StatusCode != status || identity != want ||
-				!errors.Is(
-					err,
-					manifest.ErrFlux,
-				), "HTTP %d: filesystem=%v identity=%+v error=%v", status, acquired, identity, err)
-			if status == http.StatusNotFound {
-				_, original := c.remoteInputs.Acquire(t.Context(), descriptor.URL, sourcecache.RetryConfig{}, nil)
-				if !errors.Is(original, err) ||
-					hits.Load() != 1 {
-					t.Fatalf(
-						"acquisition changed error or repeated probe: original=%v error=%v requests=%d",
-						original,
-						err,
-						hits.Load(),
-					)
+		t.Run(
+			strconv.Itoa(status),
+			func(t *testing.T) {
+				t.Parallel()
+				var hits atomic.Int32
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					hits.Add(1)
+					w.WriteHeader(status)
+				}))
+				t.Cleanup(srv.Close)
+				c := newTestTreeCache(t, "")
+				descriptor := remoteInput{Operation: remoteHTTP, URL: srv.URL}
+				acquired, identity, err := descriptor.acquire(t.Context(), c, &treeFS{})
+				response, ok := errors.AsType[*fetcherr.ResponseError](err)
+				want := remoteIdentity{}
+				if status == http.StatusNotFound {
+					want.HTTPStatus = status
 				}
-			}
-		})
+				assert.FatalIf(t, acquired != nil || !ok || response.StatusCode != status || identity != want ||
+					!errors.Is(
+						err,
+						manifest.ErrFlux,
+					), "HTTP %d: filesystem=%v identity=%+v error=%v", status, acquired, identity, err)
+				if status == http.StatusNotFound {
+					_, original := c.remoteInputs.Acquire(
+						t.Context(), &source.HTTPRequest{
+							URL:      descriptor.URL,
+							Retry:    sourcecache.RetryConfig{},
+							HeldSlot: nil,
+						},
+					)
+					assert.Equal(t, original, err)
+					assert.Equal(t, hits.Load(), int32(1))
+				}
+			},
+		)
 	}
 }
 

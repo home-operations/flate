@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"testing"
@@ -112,15 +114,16 @@ func memoryWorkloadBatches(
 	return workloads
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestRender_MemorySharedOwner(t *testing.T) {
+	t.Parallel()
 	t.Run("local", func(t *testing.T) {
+		t.Parallel()
 		root, declarations := writeMemoryCluster(t, 2)
 		var calls int
 		var fingerprints [2][32]byte
 		func() {
-			owner, err := sourcecache.New(t.Context(), "")
-			assert.NoError(t, err)
+			owner, ownerErr := sourcecache.New(t.Context(), "")
+			assert.NoError(t, ownerErr)
 			defer func() { assert.NoError(t, owner.Close()) }()
 			for run := range 2 {
 				render, err := newTestOrchestrator(
@@ -142,11 +145,11 @@ func TestRender_MemorySharedOwner(t *testing.T) {
 				reader, _, _, err := owner.Blob(
 					t.Context(),
 					sourcecache.BlobKey{Content: "E8 shared-owner lifecycle"},
-					sourcecache.Policy{MaxAge: sourcecache.Forever},
+					&sourcecache.Policy{MaxAge: sourcecache.Forever},
 					func(_ context.Context, out sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 						calls++
-						_, localErr := io.WriteString(out, "shared-owner payload")
-						return sourcecache.ProducerResult{Descriptor: ocispec.Descriptor{}}, localErr
+						_, writeErr := io.WriteString(out, "shared-owner payload")
+						return sourcecache.ProducerResult{Descriptor: ocispec.Descriptor{}}, writeErr
 					},
 				)
 				assert.NoError(t, err)
@@ -167,80 +170,109 @@ func TestRender_MemorySharedOwner(t *testing.T) {
 			stats.HeapInuse,
 		)
 	})
-	t.Run("home_plex", func(t *testing.T) {
-		if os.Getenv("FLATE_E8_SLOW") != "1" {
-			t.Skip(
-				"MEM-3-WARM SDK not-run: env FLATE_E8_SLOW=1 FLATE_E8_HOME=<pinned-home-ops> go test ./pkg/orchestrator -run '^TestRender_MemorySharedOwner/home_plex$' -count=1 -v",
-			)
-		}
-		root := os.Getenv("FLATE_E8_HOME")
-		assert.FatalIf(t, root == "", "%v", "MEM-3-WARM SDK requested without FLATE_E8_HOME pinned corpus input")
-		func() {
-			owner, err := sourcecache.New(t.Context(), "")
-			assert.NoError(t, err)
-			defer func() { assert.NoError(t, owner.Close()) }()
-			var digests [2][32]byte
-			for run := range 2 {
-				o, err := newTestOrchestrator(
-					t,
-					Tree{Path: filepath.Join(root, "kubernetes", "apps"), RepoRoot: root},
-					Config{
-						Cache:       owner,
-						Concurrency: runtime.NumCPU() * 4,
-						GitDepth:    1,
-						HelmOptions: helm.Options{
-							DisableChartDigestTracking: true,
-							KubeVersion:                helm.BundledKubeVersion(),
-							SkipTests:                  true,
-							SkipCRDs:                   true,
-							SkipKinds:                  []string{manifest.KindSecret},
-						},
-						SourceRetry: sourcecache.RetryConfig{
-							Attempts: 3,
-							MinWait:  200 * time.Millisecond,
-							MaxWait:  3 * time.Second,
-							Jitter:   0.1,
-						},
-					},
-				)
-				assert.NoError(t, err)
-				result, renderErr := o.render(t.Context())
-				o.stop()
-				selected, selectedErr, _ := Select(
-					[]Rendered{{Orchestrator: o, Result: result, Err: renderErr}},
-					renderErr,
-					[]manifest.NamedResource{
-						{Group: "helm.toolkit.fluxcd.io", Kind: "HelmRelease", Namespace: "media", Name: "plex"},
-					},
-					nil,
-				)
-				assert.NoError(t, selectedErr)
-				assert.FatalIf(
-					t,
-					len(selected) != 1 || len(selected[0].Objects) != 1 || len(selected[0].Manifests) == 0,
-					"%v",
-					"pinned corpus did not supply rendered media/plex",
-				)
-				data, err := json.Marshal(selected[0].Manifests)
-				assert.NoError(t, err)
-				digests[run] = sha256.Sum256(data)
-				t.Logf(
-					"MEM-3-WARM SDK run=%d digest=%x; full SDK render then public selection; SDK startup/output encoding differ from CLI",
-					run,
-					digests[run],
+	t.Run(
+		"home_plex",
+		func(t *testing.T) {
+			t.Parallel()
+			if os.Getenv("FLATE_E8_SLOW") != "1" {
+				t.Skip(
+					"MEM-3-WARM SDK not-run: env FLATE_E8_SLOW=1 FLATE_E8_HOME=<pinned-home" +
+						"-ops> go test ./pkg/orchestrator -run '^TestRender_MemorySharedOwner/h" +
+						"ome_plex$' -count=1 -v",
 				)
 			}
-			assert.Equal(t, digests[0], digests[1])
-		}()
-		runtime.GC()
-		var stats runtime.MemStats
-		runtime.ReadMemStats(&stats)
-		t.Logf(
-			"MEM-3-WARM SDK released results/Stop/Close/GC heap_alloc=%d heap_inuse=%d; no process RSS verdict",
-			stats.HeapAlloc,
-			stats.HeapInuse,
-		)
-	})
+			root := os.Getenv("FLATE_E8_HOME")
+			assert.FatalIf(t, root == "", "%v", "MEM-3-WARM SDK requested without FLATE_E8_HOME pinned corpus input")
+			func() {
+				owner, err := sourcecache.New(t.Context(), "")
+				assert.NoError(t, err)
+				defer func() { assert.NoError(t, owner.Close()) }()
+				var digests [2][32]byte
+				for run := range 2 {
+					o, err := newTestOrchestrator(
+						t,
+						Tree{
+							Path: filepath.Join(
+								root,
+								"kubernetes", "apps",
+							),
+							RepoRoot: root,
+						},
+						Config{
+							RecordWork: true,
+
+							Cache: owner,
+
+							Concurrency: runtime.NumCPU() * 4,
+
+							GitDepth: 1,
+
+							HelmOptions: helm.Options{
+								DisableChartDigestTracking: true,
+								KubeVersion:                helm.BundledKubeVersion(),
+								SkipTests:                  true,
+								SkipCRDs:                   true,
+								SkipKinds: []string{
+									manifest.KindSecret,
+								},
+							},
+
+							SourceRetry: sourcecache.RetryConfig{
+								Attempts: 3, MinWait: 200 * time.Millisecond, MaxWait: 3 * time.Second, Jitter: 0.1,
+							},
+						},
+					)
+					assert.NoError(t, err)
+					result, renderErr := o.render(t.Context())
+					o.stop()
+					selected, selectedErr, _ := Select(
+						[]Rendered{
+							{
+								Orchestrator: o,
+								Result:       result,
+								Err:          renderErr,
+							},
+						},
+						renderErr,
+						[]manifest.NamedResource{
+							{
+								Group:     "helm.toolkit.fluxcd.io",
+								Kind:      "HelmRelease",
+								Namespace: "media",
+								Name:      "plex",
+							},
+						},
+						nil,
+					)
+					assert.NoError(t, selectedErr)
+					assert.FatalIf(
+						t,
+						len(selected) != 1 || len(selected[0].Objects) != 1 || len(selected[0].Manifests) == 0,
+						"%v",
+						"pinned corpus did not supply rendered media/plex",
+					)
+					data, err := json.Marshal(selected[0].Manifests)
+					assert.NoError(t, err)
+					digests[run] = sha256.Sum256(data)
+					t.Logf(
+						"MEM-3-WARM SDK run=%d digest=%x; full SDK render then public selection"+
+							"; SDK startup/output encoding differ from CLI",
+						run,
+						digests[run],
+					)
+				}
+				assert.Equal(t, digests[0], digests[1])
+			}()
+			runtime.GC()
+			var stats runtime.MemStats
+			runtime.ReadMemStats(&stats)
+			t.Logf(
+				"MEM-3-WARM SDK released results/Stop/Close/GC heap_alloc=%d heap_inuse=%d; no process RSS verdict",
+				stats.HeapAlloc,
+				stats.HeapInuse,
+			)
+		},
+	)
 }
 
 func TestRender_MemorySparseGit(t *testing.T) {
@@ -262,47 +294,122 @@ func TestRender_MemorySparseGit(t *testing.T) {
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestRender_MemoryContained(t *testing.T) {
-	if os.Getenv("FLATE_E8_SLOW") != "1" {
-		t.Skip(
-			"MEM-CONTAINED not-run: env FLATE_E8_SLOW=1 go test ./pkg/orchestrator -run '^TestRender_MemoryContained$' -count=1 -v",
+	previousGC := debug.SetGCPercent(100)
+	previousLimit := debug.SetMemoryLimit(math.MaxInt64)
+	defer debug.SetGCPercent(previousGC)
+	defer debug.SetMemoryLimit(previousLimit)
+	root := t.TempDir()
+	for _, name := range []string{"large-a", "large-b", "large-c", "large-d"} {
+		testutil.WriteFile(
+			t,
+			root,
+			"flux/"+name+".yaml",
+			fmt.Sprintf(
+				"apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name"+
+					": %s, namespace: apps}\nspec:\n  interval: 1h\n  releaseName: %s\n  chart"+
+					":\n    spec:\n      chart: charts/large\n      sourceRef: {kind: GitRepos"+
+					"itory, name: cluster}\n",
+				name,
+				name,
+			),
 		)
 	}
-	root, declarations := writeMemoryCluster(t, 1000)
-	o, err := newTestOrchestrator(t, Tree{Path: filepath.Join(root, "flux"), RepoRoot: root}, Config{Concurrency: 16})
-	assert.NoError(t, err)
-	result, renderErr := o.render(t.Context())
-	assert.NoError(t, renderErr)
-	parents := make(map[manifest.NamedResource]int)
-	objects := make(map[string]bool)
-	for _, batch := range memoryWorkloadBatches(t, result, o, declarations) {
-		assert.FatalIf(t, batch.Parent == nil, "%v", "ownerless workload output")
-		id := batch.Parent.Named()
-		for _, doc := range batch.Documents {
-			parents[id]++
-			metadata := doc["metadata"].(map[string]any)
-			key := fmt.Sprint(metadata["namespace"], "/", metadata["name"])
-			assert.FatalIf(t, objects[key], "duplicate workload object %s", key)
-			objects[key] = true
-			assert.Equal(t, doc["kind"], any("ConfigMap"))
-			assert.Equal(t, doc["data"].(map[string]any)["payload"], any(strings.Repeat("x", 1024)))
+	testutil.WriteFile(t, root, "charts/large/Chart.yaml", "apiVersion: v2\nname: large\nversion: 1.0.0\n")
+	cacheDir := t.TempDir()
+	writePayload := func(size int) {
+		testutil.WriteFile(
+			t,
+			root,
+			"charts/large/templates/cm.yaml",
+			fmt.Sprintf(
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: {{ .Release.Name }}}\nd"+
+					"ata:\n  payload: |-\n    {{ .Release.Name }}{{ repeat %d \"x\" }}\n",
+				size/4-len(
+					"large-a",
+				),
+			),
+		)
+	}
+	run := func(payloadSize int, templates uint64) {
+		runs, err := RenderTrees(
+			t.Context(),
+			[]Tree{
+				witnessTree(
+					root,
+					manifest.TreeHead,
+				),
+			},
+			Config{
+				RecordWork:  true,
+				Concurrency: 2,
+				CacheDir:    cacheDir,
+			},
+		)
+		assert.NoError(t, err)
+		memoryPayloadsResult := memoryPayloads(t, runs[0].Result)
+		size, payloads := memoryPayloadsResult.size, memoryPayloadsResult.payloads
+		assert.Equal(t, size, payloadSize)
+		assert.Diff(t, payloads, map[string]int{
+			"large-a": payloadSize / 4, "large-b": payloadSize / 4,
+			"large-c": payloadSize / 4, "large-d": payloadSize / 4,
+		})
+		assert.Equal(
+			t,
+			workCounts(runs[0].Result.Work, manifest.NamedResource{}, manifest.WorkHelm).Attempts,
+			templates,
+		)
+		owners := map[manifest.NamedResource]uint64{}
+		if templates != 0 {
+			owners = map[manifest.NamedResource]uint64{
+				testutil.HelmReleaseID("apps", "large-a"): 1, testutil.HelmReleaseID("apps", "large-b"): 1,
+				testutil.HelmReleaseID("apps", "large-c"): 1, testutil.HelmReleaseID("apps", "large-d"): 1,
+			}
 		}
+		assert.Diff(t, witnessWork(runs[0].Result.Work, manifest.WorkHelm), owners)
+		runtime.KeepAlive(runs)
 	}
-	assert.Equal(t, len(parents), 1000)
-	assert.Equal(t, len(objects), 10000)
-	for id, count := range parents {
-		assert.Equal(t, count, 10)
-		status, ok := o.store.GetStatus(id)
-		assert.Equal(t, ok, true)
-		assert.Equal(t, status.Status, store.StatusReady)
+	heap := func() uint64 {
+		// Two cycles discard sync.Pool victim caches before sampling.
+		runtime.GC()
+		runtime.GC()
+		var stats runtime.MemStats
+		runtime.ReadMemStats(&stats)
+		return stats.HeapAlloc
 	}
-	data, err := json.Marshal(result.Manifests)
-	assert.NoError(t, err)
-	t.Logf(
-		"MEM-CONTAINED producers=%d objects=%d payload_bytes=1024 concurrency=16 digest=%x; RSS/cgroup verdict requires external clean-child collector",
-		len(parents),
-		len(objects),
-		sha256.Sum256(data),
+	writePayload(1024)
+	run(1024, 4)
+	const payloadSize = 16 << 20
+	writePayload(payloadSize)
+	baselineTree := heap()
+	tolerance := max(uint64(1<<20), baselineTree/50)
+	assert.FatalIf(
+		t,
+		uint64(payloadSize/4) <= 2*tolerance,
+		"each payload=%d must exceed twice the retained-heap tolerance=%d",
+		payloadSize/4,
+		tolerance,
 	)
+	for _, name := range []string{"control_one", "control_two", "one_cold_operation", "two_warm_operations"} {
+		t.Run(name, func(t *testing.T) {
+			switch name {
+			case "one_cold_operation":
+				run(payloadSize, 4)
+			case "two_warm_operations":
+				run(payloadSize, 0)
+				run(payloadSize, 0)
+			}
+			after := heap()
+			assert.FatalIf(
+				t,
+				after > baselineTree+tolerance || strings.HasPrefix(name, "control") && baselineTree > after+tolerance,
+				"retained heap or invalid isolation: baseline=%d after=%d tolerance=%d",
+				baselineTree,
+				after,
+				tolerance,
+			)
+			t.Logf("baseline=%d after=%d tolerance=%d payload=%d", baselineTree, after, tolerance, payloadSize)
+		})
+	}
 }
 
 func testRenderMemorySparseGitCase(t *testing.T, testCaseInput *struct {
@@ -366,12 +473,14 @@ func testRenderMemorySparseGitCase(t *testing.T, testCaseInput *struct {
 			assert.Equal(t, ok, true)
 			assert.Equal(t, status.Status, store.StatusReady)
 			siblingStatus, _ := side.store.GetStatus(sibling)
+
 			assert.FatalIf(
 				t,
 				siblingStatus.Outcome() == store.OutcomePassed,
 				"%v",
 				"unrelated sibling reconciled",
 			)
+
 			assert.Equal(t, side.store.GetObject(sibling) == nil, true)
 			count := 0
 			for _, batch := range memoryWorkloadBatches(t, side.Result, side.Orchestrator, []manifest.NamedResource{app}) {
@@ -381,6 +490,7 @@ func testRenderMemorySparseGitCase(t *testing.T, testCaseInput *struct {
 					"unrelated output parent=%v",
 					batch.Parent,
 				)
+
 				for _, doc := range batch.Documents {
 					count++
 					want := []string{"before", "after!"}[n]
@@ -403,4 +513,29 @@ func testRenderMemorySparseGitCase(t *testing.T, testCaseInput *struct {
 		testCaseInput.bytes,
 		fixture.Large,
 	)
+}
+
+type memoryPayloadSummary struct {
+	size     int
+	payloads map[string]int
+}
+
+func memoryPayloads(t *testing.T, result *Result) memoryPayloadSummary {
+	t.Helper()
+	var size int
+	payloads := map[string]int{}
+	for _, batch := range result.Manifests {
+		for _, doc := range batch.Documents {
+			if data, ok := doc["data"].(map[string]any); ok {
+				if payload, ok := data["payload"].(string); ok {
+					size += len(payload)
+					name := manifest.DocIdentity(doc).Name
+					assert.Equal(t, strings.HasPrefix(payload, name), true)
+					payloads[name] = len(payload)
+				}
+			}
+		}
+	}
+
+	return memoryPayloadSummary{size: size, payloads: payloads}
 }

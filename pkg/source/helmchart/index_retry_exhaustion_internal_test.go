@@ -84,7 +84,7 @@ func TestFetchHTTPChart_NestedRetryDeadline(t *testing.T) {
 			t.Context(),
 			prepared,
 			helmChart(r.Name, "app-template", "1.0.0"),
-			sourcecache.Policy{Retry: sourcecache.RetryConfig{Attempts: 3, MinWait: time.Second}},
+			&sourcecache.Policy{Retry: sourcecache.RetryConfig{Attempts: 3, MinWait: time.Second}},
 		)
 		if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, manifest.ErrFlux) || calls != 2 ||
 			time.Since(start) != 5*time.Second {
@@ -145,7 +145,7 @@ func testFetchHTTPChartNestedIndexExhaustionDueWaveCaseCallback(
 		_, _, _, blobErr := c.Blob(
 			t.Context(),
 			sourcecache.BlobKey{Content: content},
-			sourcecache.Policy{},
+			&sourcecache.Policy{},
 			func(context.Context, sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 				return sourcecache.ProducerResult{}, cause
 			},
@@ -196,7 +196,7 @@ func testFetchHTTPChartNestedIndexExhaustionDueWaveCaseCallback(
 				t.Context(),
 				prepared,
 				helmChart("repo", "app-template", "1.0.0"),
-				sourcecache.Policy{
+				&sourcecache.Policy{
 					Retry: sourcecache.RetryConfig{
 						Attempts: 5,
 						MinWait:  time.Nanosecond,

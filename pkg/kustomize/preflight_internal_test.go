@@ -13,12 +13,12 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/home-operations/flate/internal/assert"
-
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
@@ -388,7 +388,7 @@ func TestPreflight_UppercaseAndMixedCaseScheme(t *testing.T) {
 			)
 			assert.FatalIf(t, err != nil || !hasRenderField(out, "name", "remote"), "render: %s, %v", out, err)
 			{
-				_, err := cache.remoteInputs.Acquire(t.Context(), url, sourcecache.RetryConfig{}, nil)
+				_, err := cache.remoteInputs.Acquire(t.Context(), &source.HTTPRequest{URL: url})
 				assert.NoError(t, err)
 			}
 			{

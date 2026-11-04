@@ -74,7 +74,7 @@ func testFetcherMachineContinuationCase1Tail(t *testing.T, inputs *testFetcherMa
 		t.Context(),
 		(*inputs.b),
 		inputs.reads,
-		cache.Policy{MaxAge: time.Hour},
+		&cache.Policy{MaxAge: time.Hour},
 	)
 	if missing, ok := errors.AsType[*source.MissingSecretError]((*inputs.err)); ok && missing.RetryAmbient != nil {
 		warm, (*inputs.err) = missing.RetryAmbient(t.Context())
@@ -93,7 +93,7 @@ func testFetcherMachineContinuationCase1Tail(t *testing.T, inputs *testFetcherMa
 		(*(*inputs.access)) = "rotated-canary"
 		t.Setenv("AWS_ACCESS_KEY_ID", (*(*inputs.access)))
 		t.Setenv("AWS_SECRET_ACCESS_KEY", "rotated-secret-canary")
-		_, err := (*inputs.f).Fetch(t.Context(), (*inputs.b), inputs.reads, cache.Policy{MaxAge: time.Hour})
+		_, err := (*inputs.f).Fetch(t.Context(), (*inputs.b), inputs.reads, &cache.Policy{MaxAge: time.Hour})
 		missing, ok := errors.AsType[*source.MissingSecretError](err)
 		assert.FatalIf(t, !ok, "%s", err)
 

@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-vars-global
+  namespace: flux-system
+data:
+  value: unchanged

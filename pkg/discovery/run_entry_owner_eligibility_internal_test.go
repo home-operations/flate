@@ -130,7 +130,7 @@ spec:
 			d := Session{cfg: Config{Path: filepath.Join(root, "app"), Store: st, Trees: trees}, loader: loader.New(st)}
 			d.loader.SourceRoot = root
 			{
-				_, err := d.loader.Load(t.Context(), d.cfg.Path)
+				_, err := d.loader.Load(t.Context(), d.cfg.Path, nil)
 				assert.FatalIf(t, err != nil, "%v", err)
 			}
 			rawError := d.loader.EntryFailure(t.Context(), root)
@@ -202,7 +202,7 @@ spec:
 			st.SetArtifact(manifest.BootstrapSourceID, source)
 			d = Session{cfg: Config{Path: filepath.Join(root, "app"), Store: st, Trees: trees}, loader: loader.New(st)}
 			d.loader.SourceRoot = root
-			_, err := d.loader.Load(t.Context(), d.cfg.Path)
+			_, err := d.loader.Load(t.Context(), d.cfg.Path, nil)
 			assert.NoError(t, err)
 			d.binding = Binding{Producer: owner.Named(), Source: manifest.BootstrapSourceID}
 			assert.NoError(t, d.prepareProducer(t.Context(), owner, source))
@@ -230,7 +230,7 @@ func TestPrepareEntry_PublicationFailure(t *testing.T) {
 	st.SetArtifact(manifest.BootstrapSourceID, source)
 	d := Session{cfg: Config{Path: filepath.Join(root, "app"), Store: st, Trees: trees}, loader: loader.New(st)}
 	d.loader.SourceRoot = root
-	_, err := d.loader.Load(t.Context(), d.cfg.Path)
+	_, err := d.loader.Load(t.Context(), d.cfg.Path, nil)
 	assert.NoError(t, err)
 	owner, err := d.bindEntry(t.Context(), root)
 	assert.NoError(t, err)
@@ -507,7 +507,7 @@ func testRunEntryOwnerEligibilityCase(t *testing.T, testCaseInput *string,
 	_, err := d.resolveEntrySources(t.Context(), false)
 	assert.NoError(t, err)
 	d.loader.SourceRoot = root
-	_, err = d.loader.Load(t.Context(), root+"/entry")
+	_, err = d.loader.Load(t.Context(), root+"/entry", nil)
 	assert.NoError(t, err)
 	d.loader.Index.Records[ready.Named()] = manifest.DiscoveryRecord{Declaration: ready}
 	if (*testCaseInput) == "cycle" {

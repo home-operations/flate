@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -16,17 +17,13 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/opencontainers/go-digest"
-
-	"github.com/home-operations/flate/internal/assert"
-
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-
 	repo "helm.sh/helm/v4/pkg/repo/v1"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
-
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
@@ -111,15 +108,15 @@ entries:
 					_, err := io.WriteString(w, tc.data)
 					return ocispec.Descriptor{Digest: digest.FromString(tc.data), Size: int64(len(tc.data))}, err
 				},
+				manifest.WorkScope{},
 			)
 			if (wantErr == nil) != (gotErr == nil) ||
 				tc.err != nil && (!errors.Is(wantErr, tc.err) || !errors.Is(gotErr, tc.err)) {
 				t.Fatalf("upstream=%v FS=%v, want %v", wantErr, gotErr, tc.err)
 			}
 			if wantErr == nil {
-				{
-					diff := cmp.Diff(want, got)
-					assert.FatalIf(t, diff != "", "index (-want +got):\n%s", diff)
+				if diff := cmp.Diff(want, got); diff != "" {
+					t.Fatalf("index (-want +got):\n%s", diff)
 				}
 			}
 		})
@@ -169,7 +166,7 @@ func testFetchIndexWithoutTemporaryStorageCase(
 	}
 	if *restored {
 		{
-			_, err := f.fetchIndex(t.Context(), r, sourcecache.Policy{})
+			_, err := f.fetchIndex(t.Context(), r, &sourcecache.Policy{})
 			assert.NoError(t, err)
 		}
 
@@ -177,7 +174,7 @@ func testFetchIndexWithoutTemporaryStorageCase(
 	}
 	testutil.WriteFile(t, root, "blocked-tmp", "not a directory")
 	t.Setenv("TMPDIR", filepath.Join(root, "blocked-tmp"))
-	idx, err := f.fetchIndex(t.Context(), r, sourcecache.Policy{})
+	idx, err := f.fetchIndex(t.Context(), r, &sourcecache.Policy{})
 	assert.NoError(t, err)
 	{
 		_, err := idx.Get("app-template", "1.0.0")
@@ -249,7 +246,7 @@ func testFetchIndexDiagnosticsCaseCase(t *testing.T, testCaseInput testFetchInde
 			_, _, _, err := owner.Blob(
 				t.Context(),
 				key,
-				sourcecache.Policy{MaxAge: sourcecache.Forever},
+				&sourcecache.Policy{MaxAge: sourcecache.Forever},
 				func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 					_, err := io.WriteString(w, (*testCaseInput.tc).data)
 					return sourcecache.ProducerResult{
@@ -266,7 +263,7 @@ func testFetchIndexDiagnosticsCaseCase(t *testing.T, testCaseInput testFetchInde
 		idx, err := New(
 			nil,
 			Config{Cache: owner, Concurrency: 512},
-		).fetchIndex(t.Context(), r, sourcecache.Policy{})
+		).fetchIndex(t.Context(), r, &sourcecache.Policy{})
 		slog.SetDefault(saved)
 		if (*testCaseInput.tc).invalid {
 			assert.FatalIf(t, !errors.Is(err, manifest.ErrFlux) ||
@@ -335,7 +332,7 @@ func testFetchIndexDecodeBudgetCaseCallback(t *testing.T, testCaseInput testFetc
 	if (*testCaseInput.tc).restored {
 		for _, r := range repositories {
 			{
-				_, err := f.fetchIndex(t.Context(), r, sourcecache.Policy{})
+				_, err := f.fetchIndex(t.Context(), r, &sourcecache.Policy{})
 				assert.NoError(t, err)
 			}
 		}
@@ -357,7 +354,7 @@ func testFetchIndexDecodeBudgetCaseCallback(t *testing.T, testCaseInput testFetc
 				ctx,
 				r,
 				helmChart(r.Name, "app-template", fmt.Sprintf("%d.0.0", i+1)),
-				sourcecache.Policy{},
+				&sourcecache.Policy{},
 			)
 			done <- err
 		}()
@@ -422,7 +419,7 @@ func testFetchIndexDecodeBudgetCaseCallbackCompletion(
 					t.Context(),
 					r,
 					helmChart(r.Name, "app-template", fmt.Sprintf("%d.0.0", i+1)),
-					sourcecache.Policy{},
+					&sourcecache.Policy{},
 				)
 				assert.NoError(t, err)
 			}
@@ -456,4 +453,83 @@ type testFetchIndexDecodeBudgetCaseCallbackCompletionInputs struct {
 	data          *map[string]string
 	f             **Fetcher
 	transfer      *chan struct{}
+}
+
+func TestFetchIndex_AuthorityAndDecodeIdentity(t *testing.T) {
+	t.Parallel()
+	var changed atomic.Bool
+	var requests [2]atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i := 0
+		if strings.HasPrefix(r.URL.Path, "/two/") {
+			i = 1
+		}
+		user, password, ok := r.BasicAuth()
+		if !ok || user != fmt.Sprintf("authority-%d", i) || password != "synthetic" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		requests[i].Add(1)
+		body := helmRepoIndex("")
+		if i == 1 && changed.Load() {
+			body = strings.ReplaceAll(body, "1.0.0", "2.0.0")
+		}
+		_, _ = io.WriteString(w, body)
+	}))
+	defer server.Close()
+	owner := cachetest.New(t, "", sourcecache.New)
+	fetcher := New(nil, Config{Cache: owner, Network: newTestNetwork(t), Concurrency: 2})
+	recorder := &manifest.WorkRecorder{
+		Key: manifest.WorkKey{Tree: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}},
+	}
+	ctx := t.Context()
+	var indexes [2]*repo.IndexFile
+	var authorities [2]*httpRepository
+	for i, path := range []string{"one", "two"} {
+		r := httpRepo(server.URL + "/" + path)
+		r.Name = path
+		r.Interval.Duration = 0
+		authorities[i] = &httpRepository{
+			HelmRepository: r,
+			username:       fmt.Sprintf("authority-%d", i),
+			password:       "synthetic",
+			material:       path,
+			client:         server.Client(),
+		}
+		var err error
+		indexes[i], err = fetcher.fetchIndex(ctx, authorities[i],
+			&sourcecache.Policy{Work: &manifest.AcquisitionWork{Scope: recorder.Scope().Source(r.Named())}})
+		assert.NoError(t, err)
+	}
+	assert.Equal(t, indexes[0] == indexes[1], true)
+	changed.Store(true)
+	next, err := fetcher.fetchIndex(ctx, authorities[1],
+		&sourcecache.Policy{Work: &manifest.AcquisitionWork{Scope: recorder.Scope().Source(authorities[1].Named())}})
+	assert.NoError(t, err)
+	assert.Equal(t, next == indexes[0], false)
+	assert.Equal(t, requests[0].Load(), int64(1))
+	assert.Equal(t, requests[1].Load(), int64(2))
+	decodes := map[string]uint64{}
+	acquisitions := map[manifest.NamedResource]uint64{}
+	{
+		records := recorder.Scope().Snapshot(0).Normalize()
+		for recordIndex := range records {
+			record := &records[recordIndex]
+			switch string(record.Key.Phase) {
+			case string(manifest.WorkIndexDecode):
+				decodes[record.Key.Input] += record.Counts.Attempts
+			case string(manifest.WorkAcquisition):
+				acquisitions[record.Key.Source] += record.Counts.RemoteTransfers
+			}
+		}
+	}
+	assert.Diff(t, decodes, map[string]uint64{
+		"sha256:" + chartDigest([]byte(helmRepoIndex(""))):                                       1,
+		"sha256:" + chartDigest([]byte(strings.ReplaceAll(helmRepoIndex(""), "1.0.0", "2.0.0"))): 1,
+	})
+	assert.Diff(
+		t,
+		acquisitions,
+		map[manifest.NamedResource]uint64{authorities[0].Named(): 1, authorities[1].Named(): 2},
+	)
 }

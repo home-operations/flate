@@ -84,7 +84,7 @@ func TestFetcher_AmbientSubmodulesShareAttempt(t *testing.T) {
 	reads := (testInputs{}).readSet(repo)
 	defer reads.Close()
 	f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
-	_, err = f.Fetch(t.Context(), repo, reads, sourcecache.Policy{})
+	_, err = f.Fetch(t.Context(), repo, reads, &sourcecache.Policy{})
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	assert.FatalIf(t, !ok || missing.RetryAmbient == nil, "prepare = %v", err)
 	artifact, err := missing.RetryAmbient(t.Context())
@@ -159,7 +159,7 @@ func testFetcherAmbientPostAuthenticationFailureCase(
 	repo := gitRepoWithSecret("failure", "ssh://git@fixture"+root, "auth")
 	reads := (testInputs{}).readSet(repo)
 	defer reads.Close()
-	_, err := f.Fetch(t.Context(), repo, reads, sourcecache.Policy{})
+	_, err := f.Fetch(t.Context(), repo, reads, &sourcecache.Policy{})
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	assert.FatalIf(t, !ok || missing.RetryAmbient == nil, "prepare = %v", err)
 	artifact, err := missing.RetryAmbient(t.Context())

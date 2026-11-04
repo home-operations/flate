@@ -79,7 +79,7 @@ func TestRender_CacheAcquisitionOverlap(t *testing.T) {
 				_, _, _, err := owner.Blob(
 					t.Context(),
 					sourcecache.BlobKey{Content: "unrelated-source"},
-					sourcecache.Policy{MaxAge: sourcecache.Forever},
+					&sourcecache.Policy{MaxAge: sourcecache.Forever},
 					func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 						_, err := io.WriteString(w, "source")
 						return sourcecache.ProducerResult{}, err

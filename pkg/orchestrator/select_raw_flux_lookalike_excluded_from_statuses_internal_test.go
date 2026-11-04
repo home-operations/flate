@@ -177,9 +177,9 @@ func TestSelect_SourceWarningAttribution(t *testing.T) {
 		)
 	}
 	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: []\n")
-	original, _, err := baseline.AdmitDirectory(t.Context(), root, root)
+	original, _, err := baseline.AdmitDirectory(t.Context(), root, root, manifest.WorkScope{})
 	assert.NoError(t, err)
-	current, _, err := baseline.AdmitDirectory(t.Context(), root, root)
+	current, _, err := baseline.AdmitDirectory(t.Context(), root, root, manifest.WorkScope{})
 	assert.NoError(t, err)
 	status := manifest.Warning{
 		Category: manifest.WarnBaselineStatusUnavailable,

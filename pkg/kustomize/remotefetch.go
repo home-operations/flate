@@ -10,6 +10,7 @@ import (
 
 	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -38,7 +39,15 @@ type remoteIdentity struct {
 func (r remoteInput) acquire(ctx context.Context, c *TreeCache, input *treeFS) (fs.FS, remoteIdentity, error) {
 	switch r.Operation {
 	case remoteHTTP:
-		acquired, err := c.remoteInputs.Acquire(ctx, r.URL, input.retry, input.slot)
+		acquired, err := c.remoteInputs.Acquire(
+
+			ctx, &source.HTTPRequest{
+				URL:      r.URL,
+				Retry:    input.retry,
+				HeldSlot: input.slot,
+				Work:     input.work,
+			},
+		)
 		if err != nil {
 			return nil, httpFailureIdentity(err), err
 		}
@@ -62,6 +71,7 @@ func (r remoteInput) acquire(ctx context.Context, c *TreeCache, input *treeFS) (
 				artifact, err = c.gitBase(
 					ctx,
 					GitBaseRequest{
+						Work:       input.work,
 						URL:        r.URL,
 						Ref:        r.Ref,
 						MaxAge:     input.maxAge,

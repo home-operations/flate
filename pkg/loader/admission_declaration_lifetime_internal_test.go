@@ -32,7 +32,7 @@ func TestAdmission_ReadonlyDeclarationsAfterConstruction(t *testing.T) {
 	l.Options.Filter = change.NewFilter()
 	l.Options.Selection = manifest.Selection{Changed: true}
 	l.Options.Changes = change.NewSet([]string{"consumer.yaml"})
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	readonly := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
@@ -104,42 +104,21 @@ func testAdmissionPreparedDeclarationUsesFullDocumentCase(
 ) {
 	t.Helper()
 
-	stores := [2]*store.Store{store.New(), store.New()}
-	inputs := [2]*store.SourceArtifact{}
-	var prepared [2]map[manifest.NamedResource]store.Child
 	id := (&manifest.Kustomization{Name: "child", Namespace: "apps"}).Named()
 	owner := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
-	for side, st := range stores {
-		inputs[side] = &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}}
-		st.SetArtifact(manifest.BootstrapSourceID, inputs[side])
-		st.SetDiscoveryIndex(
-			&manifest.DiscoveryIndex{
-				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-					id: {
-						Productions: []manifest.Production{
-							{Owner: owner.Named(), Source: manifest.BootstrapSourceID},
-						},
-					},
-				},
-			},
-		)
-		obj := &manifest.Kustomization{Name: id.Name, Namespace: id.Namespace, Path: "./payload"}
-		doc := map[string]any{
-			"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
-			"kind":       id.Kind,
-			"metadata":   map[string]any{"name": id.Name, "namespace": id.Namespace},
-			"spec":       map[string]any{"path": obj.Path, "unknown": "stable"},
-		}
-		prepared[side] = map[manifest.NamedResource]store.Child{id: {Obj: obj, Doc: doc}}
-	}
+	stores, inputs, prepared := preparedDeclarationPair(t, id, owner.Named())
 	changes, err := change.Qualify(
 		t.Context(),
-		change.NewSet([]string{"declaration.yaml"}),
-		stores[0],
-		stores[1],
+		change.NewSet([]string{"declaration.yaml"}), [2]*store.Store{
+			stores[0],
+			stores[1],
+		}, manifest.WorkScope{},
 	)
 	assert.NoError(t, err)
-	changes, err = changes.WithDeclarations(t.Context(), stores[0], stores[1], prepared)
+	changes, err = changes.WithDeclarations(
+		t.Context(),
+		change.DeclarationInputs{Stores: [2]*store.Store{stores[0], stores[1]}, Prepared: prepared},
+	)
 	assert.NoError(t, err)
 	l := New(stores[0])
 	l.SourceRoot = inputs[0].LocalPath
@@ -219,7 +198,7 @@ func testAdmissionUnmaterializedOwnerCase(t *testing.T, testCaseInput *struct {
 		changed = "child.yaml"
 	}
 	l.Options.Changes, l.Options.Filter = change.NewSet([]string{changed}), change.NewFilter()
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 	child := manifest.NamedResource{

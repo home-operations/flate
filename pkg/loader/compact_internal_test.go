@@ -40,10 +40,10 @@ func TestLoader_CompactOwnedDataAuthority(t *testing.T) {
 	l := New(st)
 	l.SourceRoot = root
 	l.Options.Selection = manifest.Selection{Changed: true}
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	l.PreferExisting = true
-	_, err = l.Load(t.Context(), filepath.Join(root, "mounted", "payload"))
+	_, err = l.Load(t.Context(), filepath.Join(root, "mounted", "payload"), nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "data"}
@@ -71,7 +71,7 @@ func TestLoader_ConstructionReplacesDerivedRecords(t *testing.T) {
 				Data: []byte("namespace: apps\nconfigMapGenerator: [{name: " + name + ", literals: ['KEY=value']}]\n"),
 			},
 		}})
-		_, err := l.Load(t.Context(), root)
+		_, err := l.Load(t.Context(), root, nil)
 		assert.NoError(t, err)
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 		_, found := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: name})
@@ -99,7 +99,7 @@ func TestLoader_CompactSourceHydrationSurvivesAdmission(t *testing.T) {
 	l := New(st)
 	l.SourceRoot = root
 	l.Options.Selection = manifest.Selection{Changed: true}
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	l.Admit(root)
 	var first manifest.BaseManifest
@@ -121,7 +121,7 @@ func TestLoader_CompactSourceHydrationSurvivesAdmission(t *testing.T) {
 			),
 		},
 	}})
-	_, err = l.Load(t.Context(), root)
+	_, err = l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	l.Admit(root)
 	for child, err := range l.Sources(t.Context()) {
@@ -169,7 +169,7 @@ items:
 	l := New(st)
 	l.SourceRoot = root
 	l.Options.Selection = manifest.Selection{Changed: true}
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	facts := l.documents.cache[file].objects
 	assert.Equal(t, len(facts), 3)
@@ -212,7 +212,7 @@ spec:
 	l := New(st)
 	l.SourceRoot = root
 	l.Options.Selection = manifest.Selection{Changed: true}
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	facts := l.documents.cache[file].objects
 	assert.Equal(t, len(facts), 1)
@@ -282,14 +282,14 @@ func TestLoader_CompactContextualNamespace(t *testing.T) {
 			l := New(st)
 			l.SourceRoot = root
 			l.Options.Selection = manifest.Selection{Changed: true}
-			_, err := l.Load(t.Context(), filepath.Join(root, "entry"))
+			_, err := l.Load(t.Context(), filepath.Join(root, "entry"), nil)
 			assert.NoError(t, err)
 			l.Admit(root)
 			owners := l.Kustomizations()
 			assert.Equal(t, len(owners), 1)
 			assert.Equal(t, owners[0].Obj.(*manifest.Kustomization).TargetNamespace, tc.namespace)
 			l.PreferExisting = true
-			_, err = l.Load(t.Context(), filepath.Join(root, "mounted", "payload"))
+			_, err = l.Load(t.Context(), filepath.Join(root, "mounted", "payload"), nil)
 			assert.NoError(t, err)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 			id := manifest.NamedResource{
@@ -317,7 +317,7 @@ func TestLoader_FreezeIncludesLateProducer(t *testing.T) {
 	l := New(st)
 	l.SourceRoot = root
 	l.Options.Selection = manifest.Selection{Changed: true}
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}

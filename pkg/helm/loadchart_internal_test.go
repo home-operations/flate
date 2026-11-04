@@ -95,13 +95,10 @@ func TestLoadChart_InvalidatesOnFileMtimeChange(t *testing.T) {
 			testLoadChartInvalidatesOnFileMtimeChangeCase(
 				t,
 				&testLoadChartInvalidatesOnFileMtimeChangeCaseInputs{
-					dir:        &dir,
-					files:      &files,
-					cli:        &cli,
-					cliSources: &cliSources,
-					hr:         &hr,
-					stamp:      &stamp,
-					tc:         &tc,
+					files: &files,
+					hr:    &hr,
+					stamp: &stamp,
+					tc:    &tc,
 				},
 			)
 		},
@@ -256,7 +253,7 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 		generation, _, err := owner.Git(
 			t.Context(),
 			cache.GitKey{Content: id},
-			cache.Policy{MaxAge: cache.Forever},
+			&cache.Policy{MaxAge: cache.Forever},
 			produce,
 		)
 		assert.NoError(t, err)
@@ -443,13 +440,10 @@ func testLoadChartCoalescesConcurrentFirstLoadCase(
 }
 
 type testLoadChartInvalidatesOnFileMtimeChangeCaseInputs struct {
-	dir        *string
-	files      *map[string]string
-	cli        **Client
-	cliSources *Sources
-	hr         **manifest.HelmRelease
-	stamp      *time.Time
-	tc         *struct {
+	files *map[string]string
+	hr    **manifest.HelmRelease
+	stamp *time.Time
+	tc    *struct {
 		name string
 		path string
 		from string
@@ -462,23 +456,30 @@ func testLoadChartInvalidatesOnFileMtimeChangeCase(
 	testCaseInput *testLoadChartInvalidatesOnFileMtimeChangeCaseInputs,
 ) {
 	t.Helper()
-	before, err := loadDecodedChart(t.Context(), (*testCaseInput.cli), (*testCaseInput.hr), (*testCaseInput.cliSources))
+	dir := testutil.WriteTree(t, *testCaseInput.files)
+	for name := range *testCaseInput.files {
+		err := os.Chtimes(filepath.Join(dir, name), *testCaseInput.stamp, *testCaseInput.stamp)
+		assert.NoError(t, err)
+	}
+	cli := NewClient(cachetest.New(t, "", cache.New))
+	cliSources := localChartResolver(t, "chart-repo", "flux-system", dir)
+	before, err := loadDecodedChart(t.Context(), cli, (*testCaseInput.hr), cliSources)
 	assert.NoError(t, err)
 	body := strings.ReplaceAll(
 		(*testCaseInput.files)[testCaseInput.tc.path],
 		testCaseInput.tc.from,
 		testCaseInput.tc.to,
 	)
-	testutil.WriteFile(t, (*testCaseInput.dir), testCaseInput.tc.path, body)
+	testutil.WriteFile(t, dir, testCaseInput.tc.path, body)
 	{
 		chtimesErr2 := os.Chtimes(
-			filepath.Join((*testCaseInput.dir), testCaseInput.tc.path),
+			filepath.Join(dir, testCaseInput.tc.path),
 			(*testCaseInput.stamp),
 			(*testCaseInput.stamp),
 		)
 		assert.NoError(t, chtimesErr2)
 	}
-	after, err := loadDecodedChart(t.Context(), (*testCaseInput.cli), (*testCaseInput.hr), (*testCaseInput.cliSources))
+	after, err := loadDecodedChart(t.Context(), cli, (*testCaseInput.hr), cliSources)
 	assert.NoError(t, err)
 	assert.FatalIf(t, after.chart == before.chart ||
 		computeTemplateKey(
@@ -566,7 +567,7 @@ func testLoadChartAcquiredGitWarmReuseCase(t *testing.T, testCaseInput *testLoad
 	_, _, _, newErr = outputOwner.Blob(
 		t.Context(),
 		key,
-		cache.Policy{},
+		&cache.Policy{},
 		func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 			writeTestRecordErr := writeTestRecord(w, key, &renderRecord{Output: output, Analysis: d.analyze()})
 			return cache.ProducerResult{}, writeTestRecordErr
@@ -659,7 +660,7 @@ func testLoadChartAcquiredGitWarmReuseCase2(t *testing.T, testCaseInput *struct 
 			r, _, _, err := owner.Blob(
 				t.Context(),
 				cache.BlobKey{Content: version},
-				cache.Policy{MaxAge: cache.Forever},
+				&cache.Policy{MaxAge: cache.Forever},
 				func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 					_, err := io.Copy(w, bytes.NewReader(data))
 					return cache.ProducerResult{}, err

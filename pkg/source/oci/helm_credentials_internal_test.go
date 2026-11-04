@@ -97,7 +97,7 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 	}
 	charts := helmchart.New(ociFetcher, helmchart.Config{Cache: cache, Network: &network})
 
-	got, err := charts.Fetch(t.Context(), chartInput, chartsInputs.readSet(chartInput), sourcecache.Policy{})
+	got, err := charts.Fetch(t.Context(), chartInput, chartsInputs.readSet(chartInput), &sourcecache.Policy{})
 	assert.NoError(t, err)
 
 	if got.Kind != manifest.KindHelmChart {
@@ -118,7 +118,12 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 		&Fetcher{Cache: cache, Network: &network},
 		helmchart.Config{Cache: cache, Network: &network},
 	)
-	helmArtifact, err := helmCharts.Fetch(t.Context(), chartInput, helmInputs.readSet(chartInput), sourcecache.Policy{})
+	helmArtifact, err := helmCharts.Fetch(
+		t.Context(),
+		chartInput,
+		helmInputs.readSet(chartInput),
+		&sourcecache.Policy{},
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, helmArtifact.Kind, manifest.KindHelmChart)
 	assert.Equal(t, mustReadFile(t, helmArtifact.FS, "Chart.yaml"), chart)
@@ -138,7 +143,7 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 		t.Context(),
 		chartInput,
 		fallbackChartsInputs.readSet(chartInput),
-		sourcecache.Policy{Retry: retry},
+		&sourcecache.Policy{Retry: retry},
 	)
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	assert.FatalIf(t, !ok || missing.RetryAmbient == nil, "missing fallback: %v", err)
@@ -183,7 +188,7 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 		t.Context(),
 		&refreshInput,
 		refreshChartsInputs.readSet(&refreshInput),
-		sourcecache.Policy{Retry: retry},
+		&sourcecache.Policy{Retry: retry},
 	)
 	missing, ok = errors.AsType[*source.MissingSecretError](err)
 	assert.FatalIf(t, !ok || missing.RetryAmbient == nil, "refresh fallback: %v", err)

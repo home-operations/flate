@@ -83,7 +83,7 @@ func TestTemplate_ArchiveValuesFiles(t *testing.T) {
 				r, _, _, err := owner.Blob(
 					t.Context(),
 					cache.BlobKey{Content: payload},
-					cache.Policy{},
+					&cache.Policy{},
 					func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 						_, writeErr := w.Write(payload)
 						return cache.ProducerResult{}, writeErr
@@ -146,7 +146,7 @@ func (f valuesFaultFile) Stat() (fs.FileInfo, error) {
 }
 func (f valuesFaultFile) Close() error { return errors.Join(f.File.Close(), f.closeErr) }
 
-func TestTemplate_ValuesFilesFailures(t *testing.T) {
+func TestTemplate_sFilesFailures(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "regular", "marker: regular\n")
@@ -163,7 +163,7 @@ func TestTemplate_ValuesFilesFailures(t *testing.T) {
 	bucket, _, _, err := owner.Acquire(
 		t.Context(),
 		cache.ArchiveKey{Content: "denied-values"},
-		cache.Policy{},
+		&cache.Policy{},
 		func(_ context.Context, out cache.ProducerInput) (cache.ProducerResult, error) {
 			_, writeErr2 := out.Write(archive.Bytes())
 			return cache.ProducerResult{}, writeErr2

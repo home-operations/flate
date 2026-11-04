@@ -36,7 +36,7 @@ func (f *sharedRepositoryFetcher) Fetch(
 	ctx context.Context,
 	obj manifest.BaseManifest,
 	reads *store.ReadSet,
-	_ sourcecache.Policy,
+	_ *sourcecache.Policy,
 ) (*store.SourceArtifact, error) {
 	f.mu.Lock()
 	f.calls[obj.Named()]++

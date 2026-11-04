@@ -32,7 +32,7 @@ func BenchmarkRender_Namespace(b *testing.B) {
 			}
 			var renders, fetches int64
 			for b.Loop() {
-				o := newOrchestrator(new(prepared.cfg.Config), new(prepared.cfg.Tree), task.NewBounded(2))
+				o := newOrchestrator(b.Context(), new(prepared.cfg.Config), new(prepared.cfg.Tree), task.NewBounded(2))
 				fetcher := &generatedOCIFetcher{root: artifact}
 				o.src.Fetchers[manifest.KindOCIRepository] = fetcher
 				var emissions atomic.Int64

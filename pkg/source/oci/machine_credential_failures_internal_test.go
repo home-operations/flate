@@ -70,7 +70,7 @@ func testFetcherMachineFailureCausesCase(t *testing.T, name *string,
 			return func() {}, nil
 		}
 	}
-	artifact, err := op.fetchSource(ctx, repo, policy)
+	artifact, err := op.fetchSource(ctx, repo, &policy)
 	assert.FatalIf(
 		t,
 		err == nil || artifact != nil || !errors.Is(err, manifest.ErrFlux),

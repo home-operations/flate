@@ -28,6 +28,8 @@ import (
 // RenderRequest carries the authoritative source and its mount label. Label is
 // metadata and need not name an existing host path.
 type RenderRequest struct {
+	// Work borrows stage counters from this render execution.
+	Work *manifest.RenderWork `json:"-"`
 	// HeldSlot is TreeCache's borrowed service when this render holds its slot.
 	// Standalone callers leave it nil.
 	HeldSlot *task.Service `json:"HeldSlot"`
@@ -83,7 +85,7 @@ func Render(
 		_, _, _, err = cache.owner.Blob(
 			ctx,
 			blobKey,
-			sourcecache.Policy{MaxAge: sourcecache.Forever},
+			&sourcecache.Policy{MaxAge: sourcecache.Forever, Work: req.Work.Pending(), HistoryWork: req.Work.History()},
 			func(ctx context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 				return prepared.produce(ctx, cache, &result, w)
 			},
@@ -111,21 +113,29 @@ type renderRequest struct {
 
 func (c *TreeCache) prepareRender(ctx context.Context, incoming *RenderRequest) (renderRequest, error) {
 	req := *incoming
+	work := req.Work.Preparation()
+	work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 	if c == nil {
-		return renderRequest{}, manifest.NewError(manifest.ErrInput, nil, "incomplete render request")
+		err := manifest.NewError(manifest.ErrInput, nil, "incomplete render request")
+		work.Finish(err)
+		return renderRequest{}, err
 	}
 	if err := ctx.Err(); err != nil {
+		work.Finish(err)
 		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return renderRequest{}, err
 	}
 	if req.Source == nil || req.Source.FS == nil {
-		return renderRequest{}, manifest.NewError(manifest.ErrInput, nil, "source artifact content unavailable")
+		err := manifest.NewError(manifest.ErrInput, nil, "source artifact content unavailable")
+		work.Finish(err)
+		return renderRequest{}, err
 	}
 	lower, root := req.Source.FS, cmp.Or(req.Label, req.Source.LocalPath, string(filepath.Separator)+"flate-source")
 	var ignore any
 	if req.ApplyIgnore {
 		input, err := c.sourceRootFor(ctx, req.Source, root)
 		if err != nil {
+			work.Finish(err)
 			return renderRequest{}, err
 		}
 		lower, ignore = input.fs, input.ignore
@@ -133,13 +143,16 @@ func (c *TreeCache) prepareRender(ctx context.Context, incoming *RenderRequest) 
 	var err error
 	root, err = filepath.Abs(root)
 	if err != nil {
+		work.Finish(err)
 		return renderRequest{}, manifest.NewError(manifest.ErrInput, fmt.Errorf("source label: %w", err), "")
 	}
 	key := renderKey(&req, root, ignore)
+	req.Work.Fingerprint(key)
 	source := manifest.BootstrapSourceID
 	if req.Spec != nil {
 		source = req.Spec.SourceID()
 	}
+	work.Finish(nil)
 	return renderRequest{
 		lower: lower, root: root, key: key,
 		binding: renderBinding{
@@ -276,7 +289,7 @@ func (r *renderRequest) validate(
 	valid, readFileErr := frame.header.Reads.stillValid(
 		ctx,
 		cache,
-		&treeFS{lower: r.lower, retry: r.retry, maxAge: r.maxAge},
+		&treeFS{lower: r.lower, retry: r.retry, maxAge: r.maxAge, work: r.request.Work.Attribution()},
 		r.request.Source.Content != "",
 	)
 	if readFileErr != nil || !valid {
@@ -306,6 +319,7 @@ func (r *renderRequest) produce(
 	rec := newReadSet(r.root)
 	rec.immutable = r.request.Source.Content != ""
 	memFS := newTreeFS(r.lower, r.root, rec)
+	memFS.work = r.request.Work.Attribution()
 	memFS.retry = r.retry
 	memFS.maxAge = r.maxAge
 	subDir := r.root + string(filepath.Separator) + strings.TrimLeft(r.request.SubPath, "/")
@@ -400,11 +414,14 @@ func (r *renderRequest) buildDocuments(
 	if slog.Default().Enabled(ctx, slog.LevelDebug) {
 		slog.Debug("kustomize: build", "path", r.request.SubPath)
 	}
+	work := r.request.Work.Engine(manifest.WorkKustomize, r.key)
+	work.Add(&manifest.WorkCounts{Attempts: 1})
 	rm, cleanedAbsErr := func() (resmap.ResMap, error) {
 		kustomizestate.BuildMutex.Lock()
 		defer kustomizestate.BuildMutex.Unlock()
 		return kustomizestate.Build(memFS, subDir)
 	}()
+	work.Finish(cleanedAbsErr)
 	if cleanedAbsErr != nil {
 		built := manifest.NewError(
 			manifest.ErrFlux,

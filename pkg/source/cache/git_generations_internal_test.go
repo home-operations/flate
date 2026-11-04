@@ -76,7 +76,7 @@ func testGitRestartAndInvalidationCase(t *testing.T, scenario *string,
 	}
 	c := cachetest.New(t, root, New)
 	key := GitKey{Content: "source-git-restart", Ref: "HEAD"}
-	first, id, err := c.Git(t.Context(), key, Policy{MaxAge: Forever}, produce)
+	first, id, err := c.Git(t.Context(), key, &Policy{MaxAge: Forever}, produce)
 	assert.NoError(t, err)
 
 	archiveKey := ArchiveKey{Content: key.Content}
@@ -85,7 +85,7 @@ func testGitRestartAndInvalidationCase(t *testing.T, scenario *string,
 	_, _, archiveID, err := c.Acquire(
 		t.Context(),
 		archiveKey,
-		Policy{MaxAge: Forever},
+		&Policy{MaxAge: Forever},
 		producer(payloadTar.Bytes(), &ocispec.Descriptor{}),
 	)
 	assert.NoError(t, err)
@@ -94,7 +94,7 @@ func testGitRestartAndInvalidationCase(t *testing.T, scenario *string,
 	_, _, blobID, err := c.Blob(
 		t.Context(),
 		blobKey,
-		Policy{MaxAge: Forever},
+		&Policy{MaxAge: Forever},
 		producer([]byte("blob"), &ocispec.Descriptor{}),
 	)
 	assert.NoError(t, err)
@@ -188,7 +188,7 @@ func testGitRestartAndInvalidationCaseCompletion(
 	input, _, restoredID, err := (*captures.c).Acquire(
 		t.Context(),
 		(*captures.archiveKey),
-		Policy{MaxAge: Forever},
+		&Policy{MaxAge: Forever},
 		unexpected,
 	)
 	assert.FatalIf(t, err != nil || restoredID != (*captures.archiveID), "restored archive: id=%q, %v", restoredID, err)
@@ -202,7 +202,7 @@ func testGitRestartAndInvalidationCaseCompletion(
 			readFileErr5,
 		)
 	}
-	r, _, restoredID, err := (*captures.c).Blob(t.Context(), (*captures.blobKey), Policy{MaxAge: Forever}, nil)
+	r, _, restoredID, err := (*captures.c).Blob(t.Context(), (*captures.blobKey), &Policy{MaxAge: Forever}, nil)
 	assert.FatalIf(t, err != nil || restoredID != (*captures.blobID), "restored blob: id=%q, %v", restoredID, err)
 	_, _ = fs.ReadFile(r, "content")
 
@@ -239,7 +239,7 @@ func testGitRestartAndInvalidationCaseCompletion(
 		}
 		return true
 	}
-	second, _, err := (*captures.c).Git(t.Context(), (*captures.key), Policy{MaxAge: Forever}, (*captures.produce))
+	second, _, err := (*captures.c).Git(t.Context(), (*captures.key), &Policy{MaxAge: Forever}, (*captures.produce))
 	if (*(*captures.scenario)) == "ref-mismatch" || (*(*captures.scenario)) == "missing-objects" {
 		assert.FatalIf(t, err == nil || (*captures.calls) != 2, "invalid restore: calls=%d, %v", (*captures.calls), err)
 		return true
@@ -276,7 +276,7 @@ func testGitRestartAndInvalidationCaseCompletion(
 		(*captures.v).(*entry).touched.Store(captures.stale.UnixNano())
 		{
 			_, _, err := (*captures.c).Git(
-				t.Context(), (*captures.key), Policy{MaxAge: Forever}, (*captures.produce),
+				t.Context(), (*captures.key), &Policy{MaxAge: Forever}, (*captures.produce),
 			)
 			assert.FatalIf(t, !errors.Is(
 				err,
@@ -289,7 +289,7 @@ func testGitRestartAndInvalidationCaseCompletion(
 		}
 
 		{
-			_, _, err := (*captures.c).Git(t.Context(), (*captures.key), Policy{MaxAge: Forever}, (*captures.produce))
+			_, _, err := (*captures.c).Git(t.Context(), (*captures.key), &Policy{MaxAge: Forever}, (*captures.produce))
 			assert.FatalIf(
 				t,
 				err == nil || (*captures.calls) != 2,
@@ -344,7 +344,7 @@ func testGitRestartAndInvalidationCase2(t *testing.T, disk *bool,
 
 		return input, pin
 	}
-	first, _, err := c.Git(t.Context(), key, Policy{MaxAge: 0}, produce)
+	first, _, err := c.Git(t.Context(), key, &Policy{MaxAge: 0}, produce)
 	assert.NoError(t, err)
 
 	held, pin := admit(first)
@@ -359,7 +359,7 @@ func testGitRestartAndInvalidationCase2(t *testing.T, disk *bool,
 				&git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e"}},
 			)
 		}
-		next, _, err := c.Git(t.Context(), key, Policy{MaxAge: 0}, produce)
+		next, _, err := c.Git(t.Context(), key, &Policy{MaxAge: 0}, produce)
 		assert.NoError(t, err)
 
 		_, nextPin := admit(next)
@@ -397,7 +397,7 @@ func testGitRestartAndInvalidationCase2(t *testing.T, disk *bool,
 		}
 
 		c = cachetest.New(t, root, New)
-		restored, _, err := c.Git(t.Context(), key, Policy{MaxAge: Forever}, nil)
+		restored, _, err := c.Git(t.Context(), key, &Policy{MaxAge: Forever}, nil)
 		assert.NoError(t, err)
 
 		input, pin := admit(restored)

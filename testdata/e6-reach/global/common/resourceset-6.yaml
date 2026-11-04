@@ -1,0 +1,7 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  name: tt-rss-db
+  namespace: tt-rss
+spec:
+  resources: []

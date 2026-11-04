@@ -47,6 +47,7 @@ func TestOptionalInput_CrossSourcePreparedStores(t *testing.T) {
 		assert.NoError(t, err)
 		indexes[side] = result.Index
 		selected[side], _ = stores[side].GetArtifact(supplier, store.ArtifactContent).(*store.SourceArtifact)
+
 		{
 			input := selected[side]
 			assert.FatalIf(
@@ -62,10 +63,11 @@ func TestOptionalInput_CrossSourcePreparedStores(t *testing.T) {
 		t.Context(),
 		stores[0].GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact),
 		stores[1].GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact),
+		manifest.WorkScope{},
 	)
 	assert.NoError(t, err)
 	assert.Equal(t, bootstrap.Len(), 0)
-	delta, err := change.Detect(t.Context(), selected[0], selected[1])
+	delta, err := change.Detect(t.Context(), selected[0], selected[1], manifest.WorkScope{})
 	assert.NoError(t, err)
 	assert.Diff(t, delta.Paths(), []string{"inputs/kustomization.yaml", "inputs/optional.yaml"})
 	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "optional", Namespace: "flux-system"}
@@ -82,10 +84,11 @@ func TestOptionalInput_CrossSourcePreparedStores(t *testing.T) {
 		}
 	}
 	delta, err = delta.WithReaders(
-		t.Context(),
-		observations[0],
-		observations[1],
-		[2]map[manifest.NamedResource]inputprojection.Projection{},
+		t.Context(), [2]*manifest.DiscoveryIndex{
+			observations[0],
+			observations[1],
+		},
+		[2]map[manifest.NamedResource]inputprojection.Projection{}, manifest.WorkScope{},
 	)
 	assert.NoError(t, err)
 	assert.Equal(
@@ -100,13 +103,14 @@ func TestOptionalInput_CrossSourcePreparedStores(t *testing.T) {
 			ShouldReconcile(input),
 		false,
 	)
-	changes, err := change.Qualify(t.Context(), bootstrap, stores[0], stores[1])
+	changes, err := change.Qualify(t.Context(), bootstrap, [2]*store.Store{stores[0], stores[1]}, manifest.WorkScope{})
 	assert.NoError(t, err)
 	changes, err = changes.WithReaders(
-		t.Context(),
-		indexes[0],
-		indexes[1],
-		[2]map[manifest.NamedResource]inputprojection.Projection{},
+		t.Context(), [2]*manifest.DiscoveryIndex{
+			indexes[0],
+			indexes[1],
+		},
+		[2]map[manifest.NamedResource]inputprojection.Projection{}, manifest.WorkScope{},
 	)
 	assert.NoError(t, err)
 	for side, st := range stores {
@@ -239,7 +243,7 @@ func TestFilter_OrderingOnlySiblingExcluded(t *testing.T) {
 	)
 	inputs, err := baseline.ResolvePaths(t.Context(), after, before)
 	assert.NoError(t, err)
-	changes, err := change.Detect(t.Context(), inputs.BaseInput, inputs.Source)
+	changes, err := change.Detect(t.Context(), inputs.BaseInput, inputs.Source, manifest.WorkScope{})
 	assert.NoError(t, err)
 	filters, _ := optionalInputFilters(t, [2]*store.SourceArtifact{inputs.BaseInput, inputs.Source}, changes)
 	f := filters[1]
@@ -286,10 +290,11 @@ func optionalInputFilters(
 	}
 	var err error
 	changes, err = changes.WithReaders(
-		t.Context(),
-		indexes[0],
-		indexes[1],
-		[2]map[manifest.NamedResource]inputprojection.Projection{},
+		t.Context(), [2]*manifest.DiscoveryIndex{
+			indexes[0],
+			indexes[1],
+		},
+		[2]map[manifest.NamedResource]inputprojection.Projection{}, manifest.WorkScope{},
 	)
 	assert.NoError(t, err)
 	for side, input := range inputs {
@@ -348,10 +353,12 @@ data: {VALUE: available}
 	}
 	changes := inputs.Changes
 	if (*testCaseInput) == "directory" {
-		changes, err = change.Detect(t.Context(), inputs.BaseInput, inputs.Source)
+		changes, err = change.Detect(t.Context(), inputs.BaseInput, inputs.Source, manifest.WorkScope{})
 		assert.NoError(t, err)
 	}
+
 	assert.FatalIf(t, changes == nil, "%v", "resolver returned no change set")
+
 	assert.Diff(t, changes.Paths(), []string{"flux/optional.yaml"})
 
 	st := store.New()
@@ -366,13 +373,16 @@ data: {VALUE: available}
 		Namespace: "flux-system", Name: "cluster",
 	}
 	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "optional"}
+
 	assert.FatalIf(
 		t,
 		st.GetObject(app) == nil || st.GetObject(cluster) == nil,
 		"%v",
 		"discovery did not admit app and cluster",
 	)
+
 	record, ok := discovered.Index.Lookup(input)
+
 	assert.FatalIf(
 		t,
 		!ok || record.File != "flux/optional.yaml",
@@ -380,30 +390,38 @@ data: {VALUE: available}
 		record,
 		ok,
 	)
-	owners := discovered.Index.OwnersOfFile(record.File).Owners
+
+	ownersOfFileResult := discovered.Index.OwnersOfFile(record.File)
+	owners := ownersOfFileResult.Owners
+
 	assert.FatalIf(
 		t,
 		slices.Contains(owners, app),
 		"%v",
 		"optional input is inside app's rendered ownership",
 	)
+
 	optional := false
 	for ref := range manifest.References(st.GetObject(app), manifest.ReferenceRelations) {
 		optional = optional || ref.NamedResource == input && ref.Use == "substituteFrom" && ref.Optional
 	}
+
 	assert.FatalIf(t, !optional, "%v", "app does not declare the optional substitution input")
-	empty, err := change.Detect(t.Context(), inputs.Source, inputs.Source)
+
+	empty, err := change.Detect(t.Context(), inputs.Source, inputs.Source, manifest.WorkScope{})
 	assert.NoError(t, err)
 	unchanged := admissiontest.Filter(
 		t,
 		admissiontest.Config{Changes: empty, Index: discovered.Index, Inventory: st, Root: ""},
 	)
+
 	assert.FatalIf(
 		t,
 		unchanged.ShouldReconcile(app) || unchanged.ShouldReconcile(cluster),
 		"%v",
 		"unchanged input selects app or cluster",
 	)
+
 	filters, _ := optionalInputFilters(t, [2]*store.SourceArtifact{inputs.BaseInput, inputs.Source}, changes)
 	for side, filter := range filters {
 		assert.ErrorIf(
@@ -412,6 +430,7 @@ data: {VALUE: available}
 			"%v",
 			"changed optional input was not selected",
 		)
+
 		for _, id := range []manifest.NamedResource{app, cluster} {
 			assert.ErrorIf(
 				t,
@@ -454,7 +473,7 @@ func testFilterOptionalInputChangesCase(t *testing.T, testCaseInput *struct {
 	}
 	inputs, err := baseline.ResolvePaths(t.Context(), after, before)
 	assert.NoError(t, err)
-	changes, err := change.Detect(t.Context(), inputs.BaseInput, inputs.Source)
+	changes, err := change.Detect(t.Context(), inputs.BaseInput, inputs.Source, manifest.WorkScope{})
 	assert.NoError(t, err)
 	filters, loaders := optionalInputFilters(
 		t,
@@ -587,7 +606,7 @@ func testOptionalInputPairedSidesCase(t *testing.T, testCaseInput *struct {
 			assert.NoError(t, localErr)
 			changes, pair = resolved.Changes, [2]*store.SourceArtifact{resolved.BaseInput, resolved.Source}
 		} else {
-			changes, err = change.Detect(t.Context(), pair[0], pair[1])
+			changes, err = change.Detect(t.Context(), pair[0], pair[1], manifest.WorkScope{})
 			assert.NoError(t, err)
 		}
 		filters, _ := optionalInputFilters(t, pair, changes)

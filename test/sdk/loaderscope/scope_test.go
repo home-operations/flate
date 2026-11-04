@@ -27,7 +27,7 @@ spec:
 	s := store.New()
 	l := loader.New(s)
 	{
-		_, err := l.Load(t.Context(), root)
+		_, err := l.Load(t.Context(), root, nil)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	l.Admit(root)

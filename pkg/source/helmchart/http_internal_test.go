@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/iotest"
@@ -21,7 +22,6 @@ import (
 	"time"
 
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/pkg/store"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -30,6 +30,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/store"
 
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
@@ -79,14 +80,9 @@ func TestFetchHTTPChart(t *testing.T) {
 	var index strings.Builder
 	index.WriteString("apiVersion: v1\nentries:\n")
 	for _, name := range []string{"app-template", "other"} {
-		fmt.Fprintf(
-			&index,
+		fmt.Fprintf(&index,
 			"  %s:\n    - name: %s\n      version: 1.0.0\n      digest: %s\n      urls: [%s-1.0.0.tgz]\n",
-			name,
-			name,
-			chartDigest(charts[name]),
-			name,
-		)
+			name, name, chartDigest(charts[name]), name)
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/index.yaml" {
@@ -105,20 +101,17 @@ func TestFetchHTTPChart(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	f, fInputs := newHTTPFetcher(t, httpRepo(srv.URL))
-	for _, wave := range []string{"cold", "warm"} {
-		t.Run(wave, func(t *testing.T) {
-			t.Parallel()
-			testFetchHTTPChartCase(
-				t,
-				testFetchHTTPChartCaseInputs{
-					charts:    &charts,
-					indexHits: &indexHits,
-					chartHits: &chartHits,
-					f:         &f,
-					fInputs:   &fInputs,
-				},
-			)
-		},
+	for _, wave := range []string{"cold", "source-warm"} {
+		testFetchHTTPChartWave(
+			t,
+			&testFetchHTTPChartWaveInputs{
+				chartHits: &chartHits,
+				charts:    &charts,
+				f:         &f,
+				fInputs:   &fInputs,
+				indexHits: &indexHits,
+				wave:      &wave,
+			},
 		)
 	}
 }
@@ -152,7 +145,7 @@ func TestFetchHTTPChart_DigestMismatch(t *testing.T) {
 			context.Background(),
 			helmChart("repo", "app-template", "1.0.0"),
 			fInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
-			sourcecache.Policy{},
+			&sourcecache.Policy{},
 		)
 		assert.FatalIf(t, err == nil, "%s", "expected digest-mismatch error, got nil")
 	}
@@ -167,7 +160,7 @@ func TestFetchHTTPChart_ChartNotFound(t *testing.T) {
 	repository := httpRepo("https://charts.example.com")
 	f, inputs := newHTTPFetcher(t, repository)
 	chart := helmChart("repo", "nginx", "1.2.3")
-	_, err := f.Fetch(t.Context(), chart, inputs.readSet(chart), sourcecache.Policy{})
+	_, err := f.Fetch(t.Context(), chart, inputs.readSet(chart), &sourcecache.Policy{})
 	assert.FatalIf(
 		t,
 		!errors.Is(err, manifest.ErrObjectNotFound) || !errors.Is(err, manifest.ErrFlux),
@@ -274,7 +267,7 @@ func testFetchHTTPChartSecretReferencesCase1(t *testing.T, tc *struct {
 			t.Context(),
 			helmChart("repo", "app-template", "1.0.0"),
 			fInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
-			sourcecache.Policy{},
+			&sourcecache.Policy{},
 		)
 	}
 	assert.FatalIf(t, err == nil || errors.Is(err, manifest.ErrMissingSecret) != tc.missing || artifact != nil,
@@ -378,7 +371,7 @@ func TestFetchHTTPChart_SubpathRelativeURL(t *testing.T) {
 			context.Background(),
 			helmChart("repo", "app-template", "1.0.0"),
 			fInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
-			sourcecache.Policy{},
+			&sourcecache.Policy{},
 		)
 		assert.FatalIf(t, err != nil, "Fetch: %v", err)
 		assert.ErrorIf(t, *repository.hits != 1,
@@ -399,7 +392,7 @@ func TestFetchHTTPChart_SubpathRelativeURL(t *testing.T) {
 				context.Background(),
 				helmChart("repo", "app-template", "1.0.0"),
 				fInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
-				sourcecache.Policy{},
+				&sourcecache.Policy{},
 			)
 			assert.FatalIf(t, err != nil, "Fetch: %v", err)
 		}
@@ -471,7 +464,7 @@ func TestFetchHTTPChart_BasicAuth(t *testing.T) {
 				t.Context(),
 				preparedHTTP(t, f, fInputs, &current),
 				helmChart("repo", "app-template", "1.0.0"),
-				sourcecache.Policy{},
+				&sourcecache.Policy{},
 			)
 			assert.NoError(t, err)
 
@@ -531,7 +524,7 @@ entries:
 					context.Background(),
 					helmChart("repo", "app-template", "1.0.0"),
 					fInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
-					sourcecache.Policy{},
+					&sourcecache.Policy{},
 				)
 				assert.FatalIf(t, err != nil, "Fetch: %v", err)
 			}
@@ -571,21 +564,21 @@ func TestFetchIndex_FreshnessAndDigest(t *testing.T) {
 	defer srv.Close()
 	r := httpRepo(srv.URL)
 	f, fInputs := newHTTPFetcher(t, r)
-	first, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, r), sourcecache.Policy{})
+	first, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, r), &sourcecache.Policy{})
 	assert.NoError(t, err)
 
-	second, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, r), sourcecache.Policy{})
+	second, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, r), &sourcecache.Policy{})
 	assert.FatalIf(t, err != nil || second != first || hits.Load() != 1,
 		"fresh memo=%p/%p, hits=%d, error=%v", first, second, hits.Load(), err)
 
 	strict := *r
 	strict.Interval.Duration = 0
-	same, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, &strict), sourcecache.Policy{})
+	same, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, &strict), &sourcecache.Policy{})
 	assert.FatalIf(t, err != nil || same != first || hits.Load() != 2,
 		"same digest=%p/%p, hits=%d, error=%v", first, same, hits.Load(), err)
 
 	version.Store(2)
-	updated, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, &strict), sourcecache.Policy{})
+	updated, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, &strict), &sourcecache.Policy{})
 	assert.NoError(t, err)
 
 	if _, getErr := updated.Get("app-template", "2.0.0"); getErr != nil || updated == first || hits.Load() != 3 {
@@ -593,7 +586,7 @@ func TestFetchIndex_FreshnessAndDigest(t *testing.T) {
 	}
 	other := *r
 	other.URL += "/other"
-	shared, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, &other), sourcecache.Policy{})
+	shared, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, &other), &sourcecache.Policy{})
 	assert.FatalIf(t, err != nil || shared != updated || hits.Load() != 4,
 		"equal response digest across URLs=%p/%p, hits=%d, error=%v", updated, shared, hits.Load(), err)
 
@@ -620,7 +613,7 @@ func TestHTTPRepositoryGet_ResponseRules(t *testing.T) {
 				})},
 			}
 			var body bytes.Buffer
-			_, err := r.get(t.Context(), "https://charts.invalid/chart.tgz", &body)
+			_, err := r.get(t.Context(), "https://charts.invalid/chart.tgz", &body, nil)
 			if status == http.StatusOK {
 				assert.FatalIf(t, err != nil || body.String() != "content",
 					"successful response: body=%q error=%v", body.String(), err)
@@ -700,13 +693,15 @@ func TestFetchIndex_ConcurrentRefreshDuringBackoff(t *testing.T) {
 			_, err := f.fetchIndex(
 				ctx,
 				prepared,
-				sourcecache.Policy{Retry: sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour, MaxWait: time.Hour}},
+				&sourcecache.Policy{
+					Retry: sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour, MaxWait: time.Hour},
+				},
 			)
 			done <- err
 		}()
 		<-failed
 		synctest.Wait()
-		updated, err := f.fetchIndex(t.Context(), prepared, sourcecache.Policy{})
+		updated, err := f.fetchIndex(t.Context(), prepared, &sourcecache.Policy{})
 		assert.NoError(t, err)
 
 		cancel()
@@ -724,7 +719,7 @@ func TestFetchIndex_ConcurrentRefreshDuringBackoff(t *testing.T) {
 			assert.NoError(t, getErr2)
 		}
 
-		memo, err := f.fetchIndex(t.Context(), prepared, sourcecache.Policy{})
+		memo, err := f.fetchIndex(t.Context(), prepared, &sourcecache.Policy{})
 		assert.FatalIf(t, err != nil || memo != updated || hits.Load() != 2,
 			"digest-bound memo=%p/%p, hits=%d, error=%v", updated, memo, hits.Load(), err)
 
@@ -739,4 +734,58 @@ func TestFetchIndex_ConcurrentRefreshDuringBackoff(t *testing.T) {
 type helmRepository struct {
 	server *httptest.Server
 	hits   *int
+}
+
+type testFetchHTTPChartWaveInputs struct {
+	chartHits *atomic.Int32
+	charts    *map[string][]byte
+	f         **Fetcher
+	fInputs   *testInputs
+	indexHits *atomic.Int32
+	wave      *string
+}
+
+func testFetchHTTPChartWave(t *testing.T, captures *testFetchHTTPChartWaveInputs) {
+	t.Helper()
+	var work [2][2]manifest.WorkRecorder
+	var artifacts [2][2]*store.SourceArtifact
+	var consumers sync.WaitGroup
+	for cluster, clusterName := range []manifest.ClusterID{"alpha", "omega"} {
+		for chart, name := range []string{"app-template", "other"} {
+			work[cluster][chart].Key = manifest.WorkKey{
+				Tree:   manifest.TreeID{Cluster: clusterName, Side: manifest.TreeHead},
+				Owner:  testutil.HelmReleaseID("flux-system", name),
+				Source: manifest.BootstrapSourceID,
+			}
+			consumers.Go(func() {
+				ctx := t.Context()
+				accounting := manifest.AcquisitionWork{Scope: work[cluster][chart].Scope()}
+				art, err := (*captures.f).Fetch(
+					ctx,
+					helmChart("repo", name, "1.0.0"),
+					captures.fInputs.readSet(
+						helmChart("repo", name, "1.0.0"),
+					),
+					&sourcecache.Policy{Work: &accounting},
+				)
+				if err != nil {
+					t.Errorf("Fetch %s: %v", name, err)
+					return
+				}
+				assertHTTPChartArtifact(t, art, name, (*captures.charts)[name])
+				artifacts[cluster][chart] = art
+			})
+		}
+	}
+	consumers.Wait()
+	assertHTTPChartWork(t, &work, &artifacts, (*captures.wave))
+	t.Logf("index requests=%d chart requests=%d", captures.indexHits.Load(), captures.chartHits.Load())
+	if captures.indexHits.Load() != 1 || captures.chartHits.Load() != int32(len((*captures.charts))) {
+		t.Errorf(
+			"requests: index=%d charts=%d, want 1/%d",
+			captures.indexHits.Load(),
+			captures.chartHits.Load(),
+			len((*captures.charts)),
+		)
+	}
 }

@@ -63,7 +63,7 @@ func testAcquireSharedWaiterCancellationCaseCallback(
 	key := BlobKey{Content: "shared-cancel"}
 	launch := func(ctx context.Context, done chan<- error) {
 		tasks.Go(ctx, "consumer", func(ctx context.Context) {
-			reader, _, _, err := c.Blob(ctx, key, Policy{MaxAge: time.Hour}, fill)
+			reader, _, _, err := c.Blob(ctx, key, &Policy{MaxAge: time.Hour}, fill)
 			if reader != nil {
 				data, readErr := fs.ReadFile(reader, "content")
 				err = errors.Join(err, readErr)
@@ -92,7 +92,7 @@ func testAcquireSharedWaiterCancellationCaseCallback(
 	assert.Equal(t, calls.Load(), int64(1))
 	assert.Equal(t, tasks.Failures(), int64(0))
 	assert.NoError(t, c.Close())
-	_, _, _, err := c.Blob(ctx, key, Policy{}, fill)
+	_, _, _, err := c.Blob(ctx, key, &Policy{}, fill)
 	if !errors.Is(err, context.Canceled) || calls.Load() != 1 {
 		t.Fatalf("canceled run reacquired after close: calls=%d error=%v", calls.Load(), err)
 	}

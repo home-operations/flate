@@ -67,7 +67,7 @@ func TestAcquire_GeneratedTreeContent(t *testing.T) {
 	_, descriptor, _, err := baseline.Acquire(
 		t.Context(),
 		ArchiveKey{Policy: "fixed", Content: "base"},
-		Policy{MaxAge: Forever},
+		&Policy{MaxAge: Forever},
 		producer(base, &ocispec.Descriptor{}),
 	)
 	assert.NoError(t, err)
@@ -228,13 +228,13 @@ func testAcquireGeneratedIdentityCase(t *testing.T, tc *struct {
 			target,
 		)
 	}
-	first, descriptor, id, err := c.Acquire(t.Context(), key, Policy{MaxAge: Forever}, fill)
+	first, descriptor, id, err := c.Acquire(t.Context(), key, &Policy{MaxAge: Forever}, fill)
 	assert.NoError(t, err)
 
 	descriptor.Annotations["upstream"] = "caller-mutated"
 	tc.
 		change(&key)
-	second, descriptor, nextID, err := c.Acquire(t.Context(), key, Policy{MaxAge: Forever}, fill)
+	second, descriptor, nextID, err := c.Acquire(t.Context(), key, &Policy{MaxAge: Forever}, fill)
 	assert.NoError(t, err)
 
 	if (id == nextID) != tc.same || id == "" || nextID == "" ||
@@ -267,7 +267,7 @@ func testAcquireGeneratedIdentityUnknownPolicy(t *testing.T) {
 	input, _, id, err := c.Acquire(
 		t.Context(),
 		ArchiveKey{Content: "invalid", Policy: "unknown"},
-		Policy{},
+		&Policy{},
 		func(context.Context, ProducerInput) (ProducerResult, error) {
 			called = true
 			return ProducerResult{}, nil
@@ -293,7 +293,7 @@ func testAcquireGeneratedIdentityMarshalFailure(t *testing.T) {
 		input, _, id, err := c.Acquire(
 			t.Context(),
 			ArchiveKey{Policy: "fixed", Content: make(chan int)},
-			Policy{MaxAge: Forever},
+			&Policy{MaxAge: Forever},
 			func(context.Context, ProducerInput) (ProducerResult, error) {
 				called = true
 				return ProducerResult{}, nil
@@ -320,7 +320,7 @@ func testAcquireGeneratedIdentitySemanticVersion(t *testing.T) {
 	_, _, seedID, err := c.Acquire(
 		t.Context(),
 		ArchiveKey{Content: "seed", Policy: "fixed"},
-		Policy{MaxAge: Forever},
+		&Policy{MaxAge: Forever},
 		producer(data, &ocispec.Descriptor{}),
 	)
 	assert.NoError(t, err)
@@ -336,7 +336,7 @@ func testAcquireGeneratedIdentitySemanticVersion(t *testing.T) {
 	input, _, id, err := c.Acquire(
 		t.Context(),
 		key,
-		Policy{MaxAge: Forever},
+		&Policy{MaxAge: Forever},
 		func(ctx context.Context, target ProducerInput) (ProducerResult, error) {
 			calls++
 			return producer(data, &ocispec.Descriptor{})(ctx, target)
@@ -384,7 +384,7 @@ func testAcquireGeneratedTreeContentCase(t *testing.T, want *string,
 		return producer(tc.data, &ocispec.Descriptor{})(ctx, target)
 	}
 	key := ArchiveKey{Policy: "fixed", Content: tc.name}
-	_, cold, id, err := c.Acquire(t.Context(), key, Policy{MaxAge: Forever}, fill)
+	_, cold, id, err := c.Acquire(t.Context(), key, &Policy{MaxAge: Forever}, fill)
 	assert.NoError(t, err)
 
 	if (cold.Annotations["flate.tree-digest"] == (*want)) != tc.same {
@@ -403,7 +403,7 @@ func testAcquireGeneratedTreeContentCase(t *testing.T, want *string,
 
 		c = cachetest.New(t, root, New)
 	}
-	input, warm, warmID, err := c.Acquire(t.Context(), key, Policy{MaxAge: Forever}, fill)
+	input, warm, warmID, err := c.Acquire(t.Context(), key, &Policy{MaxAge: Forever}, fill)
 	assert.FatalIf(
 		t,
 		err != nil || calls != 1 || warmID != id || !maps.Equal(cold.Annotations, warm.Annotations),
@@ -428,7 +428,7 @@ func testAcquireGeneratedReadFailureCase(t *testing.T, warm *bool,
 	c := cachetest.New(t, t.TempDir(), New)
 	key := ArchiveKey{Content: "generated-read", Policy: "fixed"}
 	fill := producer(orderedArchive(t, "file", "bytes"), &ocispec.Descriptor{})
-	_, _, id, err := c.Acquire(t.Context(), key, Policy{MaxAge: Forever}, fill)
+	_, _, id, err := c.Acquire(t.Context(), key, &Policy{MaxAge: Forever}, fill)
 	assert.NoError(t, err)
 
 	value, _ := c.entries.Load(id)
@@ -444,7 +444,7 @@ func testAcquireGeneratedReadFailureCase(t *testing.T, warm *bool,
 	}
 
 	for range 2 {
-		input, _, failedID, err := c.Acquire(t.Context(), key, Policy{MaxAge: Forever}, fill)
+		input, _, failedID, err := c.Acquire(t.Context(), key, &Policy{MaxAge: Forever}, fill)
 		assert.FatalIf(t, input != nil || failedID != "" || !errors.Is(err, fs.ErrNotExist) ||
 			!errors.Is(err, manifest.ErrFlux), "missing generated backing = %v, %q, %v", input, failedID, err)
 	}
@@ -467,7 +467,7 @@ func testAcquireExtractModesAndTrailingCase(t *testing.T, data *bytes.Buffer,
 		return producer(data.Bytes(), &ocispec.Descriptor{})(ctx, target)
 	}
 	for range 2 {
-		input, _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: Forever}, fill)
+		input, _, _, err := c.Acquire(t.Context(), key, &Policy{MaxAge: Forever}, fill)
 		assert.NoError(t, err)
 
 		info, err := fs.Stat(input, "file")
@@ -487,7 +487,7 @@ func testAcquireExtractModesAndTrailingCase(t *testing.T, data *bytes.Buffer,
 		input, _, id, err := c.Acquire(
 			t.Context(),
 			key,
-			Policy{MaxAge: Forever},
+			&Policy{MaxAge: Forever},
 			fill,
 		)
 		assert.FatalIf(t, err == nil || input != nil ||

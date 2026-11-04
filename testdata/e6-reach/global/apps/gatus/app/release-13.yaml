@@ -1,0 +1,13 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: gatus
+  namespace: gatus
+spec:
+  interval: 1h
+  values:
+    value: ${UNCHANGED}
+  chartRef:
+    kind: OCIRepository
+    name: reach
+    namespace: flux-system

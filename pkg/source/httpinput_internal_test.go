@@ -127,7 +127,10 @@ func testAcquireConditionalValidationCompletion(t *testing.T) {
 		before := len(trace.snapshot())
 		beforeConnections := trace.connections.Load()
 		for _, path := range []string{"/resource", "/other", "/resource", "/other"} {
-			input, err := c.Acquire(t.Context(), srv.URL+path, sourcecache.RetryConfig{}, nil)
+			input, err := c.Acquire(
+				t.Context(),
+				&HTTPRequest{URL: srv.URL + path, Retry: sourcecache.RetryConfig{}, HeldSlot: nil},
+			)
 			assert.NoError(t, err)
 
 			body, err := fs.ReadFile(input, "content")
@@ -429,12 +432,18 @@ func TestAcquire_NoWorkerDeadline(t *testing.T) {
 		defer cancel()
 		first, second := make(chan error, 1), make(chan error, 1)
 		go func() {
-			_, err := c.Acquire(ctx, "https://example.invalid/resource", sourcecache.RetryConfig{}, nil)
+			_, err := c.Acquire(
+				ctx,
+				&HTTPRequest{URL: "https://example.invalid/resource", Retry: sourcecache.RetryConfig{}, HeldSlot: nil},
+			)
 			first <- err
 		}()
 		<-entered
 		go func() {
-			input, err := c.Acquire(t.Context(), "https://example.invalid/resource", sourcecache.RetryConfig{}, nil)
+			input, err := c.Acquire(
+				t.Context(),
+				&HTTPRequest{URL: "https://example.invalid/resource", Retry: sourcecache.RetryConfig{}, HeldSlot: nil},
+			)
 			if err == nil {
 				data, readErr := fs.ReadFile(input, "content")
 				assert.ErrorIf(
@@ -482,7 +491,10 @@ func testAcquireConditionalValidationCase(t *testing.T, validator *string,
 	for run := range 2 {
 		phase.Store(int32(run))
 		c := newTestHTTPInputs(t, root)
-		input, err := c.Acquire(t.Context(), srv.URL+"/latest.yaml", sourcecache.RetryConfig{}, nil)
+		input, err := c.Acquire(
+			t.Context(),
+			&HTTPRequest{URL: srv.URL + "/latest.yaml", Retry: sourcecache.RetryConfig{}, HeldSlot: nil},
+		)
 		assert.NoError(t, err)
 
 		body, err := fs.ReadFile(input, "content")
@@ -539,7 +551,10 @@ func testAcquireConditionalValidationCase2(t *testing.T, scenario *string,
 	for run := range 2 {
 		phase.Store(int32(run))
 		c := newTestHTTPInputs(t, root)
-		input, err := c.Acquire(t.Context(), srv.URL+"/input", sourcecache.RetryConfig{}, nil)
+		input, err := c.Acquire(
+			t.Context(),
+			&HTTPRequest{URL: srv.URL + "/input", Retry: sourcecache.RetryConfig{}, HeldSlot: nil},
+		)
 		if (*scenario) == "redirect-limit" ||
 			run == 1 &&
 				((*scenario) == "redirected-304" || (*scenario) == "direct-to-redirected-304") {

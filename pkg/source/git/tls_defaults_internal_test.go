@@ -114,7 +114,7 @@ func testFetcherRecursiveTLSDefaultsCase(t *testing.T, testCaseInput testFetcher
 		t.Context(),
 		repo,
 		fInputs.readSet(repo),
-		sourcecache.Policy{MaxAge: repo.SourceInterval()},
+		&sourcecache.Policy{MaxAge: repo.SourceInterval()},
 	)
 	if (*testCaseInput.child) == "private-ca" {
 		{

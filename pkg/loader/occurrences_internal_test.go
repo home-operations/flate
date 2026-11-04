@@ -50,7 +50,7 @@ func TestOccurrenceClaims_CapturedSubsetAndIdentity(t *testing.T) {
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: input})
 	l := New(st)
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	one, err := l.Occurrences(t.Context(), filepath.Join(root, "one"), "")
 	assert.NoError(t, err)
@@ -65,7 +65,7 @@ func TestOccurrenceClaims_CapturedSubsetAndIdentity(t *testing.T) {
 	repeated[0].Identity.Name = "caller-owned"
 	assert.Equal(t, one[0].Identity.Name, "one-owner")
 	assert.Equal(t, len(l.scopes.projections[0])+len(l.scopes.projections[1]), 2)
-	_, err = l.Load(t.Context(), filepath.Join(pin, "one"))
+	_, err = l.Load(t.Context(), filepath.Join(pin, "one"), nil)
 	assert.NoError(t, err)
 	mounted, err := l.Occurrences(t.Context(), filepath.Join(pin, "one"), "")
 	assert.NoError(t, err)
@@ -141,7 +141,7 @@ func TestPackages_ScanProvenance(t *testing.T) {
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
 	l := New(st)
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	packages, err := l.Packages(t.Context())
 	assert.NoError(t, err)
@@ -284,7 +284,7 @@ func TestEntryFailure_ChangedUnownedResource(t *testing.T) {
 			l.SourceRoot = root
 			l.Options.Selection = manifest.Selection{Changed: true}
 			l.Options.Changes = change.NewSet([]string{file})
-			_, err := l.Load(t.Context(), root)
+			_, err := l.Load(t.Context(), root, nil)
 			assert.NoError(t, err)
 			err = l.EntryFailure(t.Context(), root)
 			assert.Equal(t, errors.Is(err, manifest.ErrInput), file == "input.yaml")
@@ -309,7 +309,7 @@ func testOccurrenceClaimsCapturedSubsetAndIdentityRetainedFailureBeforeSuccessfu
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
 	l := New(st)
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	file := filepath.Join(root, "overlay", "owners.yaml")
 	children := l.documents.cache[file].objects

@@ -46,7 +46,7 @@ func TestProducersForPaths_SourcePaths(t *testing.T) {
 	_, _, _, err = cache.Blob(
 		t.Context(),
 		BlobKey{Content: "history-producer", Render: RenderAccepted},
-		Policy{},
+		&Policy{},
 		func(_ context.Context, output ProducerInput) (ProducerResult, error) {
 			_, writeStringErr := io.WriteString(output, "accepted")
 			metadata[acceptedRenderAnnotation] = "accepted"
@@ -257,7 +257,7 @@ func testProducersForPathsUnavailableCase(t *testing.T, mode *string,
 	_, _, lookup, err := cache.Blob(
 		t.Context(),
 		BlobKey{Content: "history-producer", Render: RenderAccepted},
-		Policy{},
+		&Policy{},
 		func(_ context.Context, output ProducerInput) (ProducerResult, error) {
 			_, writeStringErr2 := io.WriteString(output, "accepted")
 			metadata[acceptedRenderAnnotation] = "accepted"
@@ -317,7 +317,7 @@ func testProducersForPathsAcceptanceCase(t *testing.T, mode *string,
 	_, _, _, err = cache.Blob(
 		t.Context(),
 		key,
-		Policy{},
+		&Policy{},
 		func(_ context.Context, output ProducerInput) (ProducerResult, error) {
 			_, writeStringErr3 := io.WriteString(output, "accepted")
 			return ProducerResult{Annotations: metadata}, writeStringErr3

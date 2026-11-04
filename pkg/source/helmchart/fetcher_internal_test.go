@@ -50,8 +50,10 @@ func (s *stubOCI) FetchChart(
 	_ context.Context,
 	r *manifest.OCIRepository,
 	reads *store.ReadSet,
-	policy cache.Policy,
+	policyValue *cache.Policy,
 ) (*store.SourceArtifact, error) {
+	policy := *policyValue
+
 	s.got = r
 	s.reads = reads
 	s.policy = policy
@@ -75,7 +77,7 @@ func TestFetch_OCIBranch(t *testing.T) {
 	retry := cache.RetryConfig{Attempts: 3}
 	hc := helmChart("truecharts", "kromgo", "3.0.0")
 	reads := fInputs.readSet(hc)
-	art, err := f.Fetch(t.Context(), hc, reads, cache.Policy{MaxAge: time.Minute, Retry: retry})
+	art, err := f.Fetch(t.Context(), hc, reads, &cache.Policy{MaxAge: time.Minute, Retry: retry})
 	assert.FatalIf(t, stub.reads != reads, "%s", "nested OCI fetch did not receive execution inputs")
 
 	if stub.policy.MaxAge != time.Hour || stub.policy.Retry != retry || stub.policy.Timeout != nil ||
@@ -120,7 +122,7 @@ func TestFetch_TransientOCIDiagnostic(t *testing.T) {
 	defer reads.Close()
 	network := newTestNetwork(t)
 	f := New(&oci.Fetcher{Network: network}, Config{Network: network})
-	_, err := f.Fetch(t.Context(), hc, reads, cache.Policy{})
+	_, err := f.Fetch(t.Context(), hc, reads, &cache.Policy{})
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	assert.FatalIf(
 		t,
@@ -186,7 +188,7 @@ func TestFetch_OCIAmbientContinuation(t *testing.T) {
 			f := &Fetcher{oci: &stubOCI{err: missing}}
 			reads := (testInputs{repos: func(_, _ string) *manifest.HelmRepository { return repo }}).readSet(hc)
 			defer reads.Close()
-			_, err := f.Fetch(t.Context(), hc, reads, cache.Policy{})
+			_, err := f.Fetch(t.Context(), hc, reads, &cache.Policy{})
 			wrapped, ok := errors.AsType[*source.MissingSecretError](err)
 			assert.FatalIf(t, !ok || wrapped.RetryAmbient == nil || calls != 0, "prepare = %v; calls=%d", err, calls)
 			assert.FatalIf(t, wrapped.Owner != synthetic.Named() || wrapped.Subject.Resource != release.Named() ||
@@ -208,7 +210,7 @@ func TestFetch_RepoNotFound(t *testing.T) {
 		context.Background(),
 		helmChart("missing", "kromgo", "3.0.0"),
 		fInputs.readSet(helmChart("missing", "kromgo", "3.0.0")),
-		cache.Policy{},
+		&cache.Policy{},
 	)
 	assert.FatalIf(t, !errors.Is(err, manifest.ErrObjectNotFound), "err = %v, want ErrObjectNotFound", err)
 }
@@ -224,7 +226,7 @@ func TestFetch_OCIExactVersionForever(t *testing.T) {
 			t.Context(),
 			helmChart(repo.Name, "chart", "1.0.0"),
 			fInputs.readSet(helmChart(repo.Name, "chart", "1.0.0")),
-			cache.Policy{},
+			&cache.Policy{},
 		)
 		assert.NoError(t, err)
 	}

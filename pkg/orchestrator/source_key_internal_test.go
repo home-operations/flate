@@ -109,7 +109,7 @@ func testDAGSourceEffectiveWarmCacheTail(t *testing.T, tailCaseInput *testDAGSou
 		t.Context(),
 		effective,
 		&reads,
-		sourcecache.Policy{MaxAge: effective.Interval.Duration},
+		&sourcecache.Policy{MaxAge: effective.Interval.Duration},
 	)
 	assert.NoError(t, err)
 	before, err := fs.ReadFile(artifact.FS, source.OCICopiedLayerFilename)
@@ -241,7 +241,7 @@ func testDAGSourceEffectiveWarmCacheTail(t *testing.T, tailCaseInput *testDAGSou
 	control := *effective
 	control.Interval = &metav1.Duration{}
 	owner := cachetest.New(t, root, sourcecache.New)
-	_, err = (&oci.Fetcher{Cache: owner, Network: network}).Fetch(ctx, &control, &reads, sourcecache.Policy{})
+	_, err = (&oci.Fetcher{Cache: owner, Network: network}).Fetch(ctx, &control, &reads, &sourcecache.Policy{})
 	if err == nil || attempts.Load() == 0 || tailCaseInput.requests.Load() == 0 {
 		t.Fatalf(
 			"blocked control failed to detect a request: err=%v attempts=%d requests=%d",

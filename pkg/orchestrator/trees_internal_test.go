@@ -112,9 +112,9 @@ func TestProjectEntryReaders_PreservesSideEvidence(t *testing.T) {
 			opposite := &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{empty}}
 			paired, err := changes.WithReaders(
 				t.Context(),
-				projected,
-				opposite,
+				[2]*manifest.DiscoveryIndex{projected, opposite},
 				[2]map[manifest.NamedResource]inputprojection.Projection{},
+				manifest.WorkScope{},
 			)
 			assert.NoError(t, err)
 			replaced := projectEntryReaders(
@@ -124,9 +124,9 @@ func TestProjectEntryReaders_PreservesSideEvidence(t *testing.T) {
 			)
 			current, err := paired.WithReaders(
 				t.Context(),
-				replaced,
-				opposite,
+				[2]*manifest.DiscoveryIndex{replaced, opposite},
 				[2]map[manifest.NamedResource]inputprojection.Projection{},
+				manifest.WorkScope{},
 			)
 			assert.NoError(t, err)
 			assert.Diff(

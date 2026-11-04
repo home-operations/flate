@@ -19,8 +19,8 @@ import (
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestRenderTrees_UnchangedDeclarationMove(t *testing.T) {
 	registryConfig := filepath.Join(t.TempDir(), "config.json")
-	registry := newInlineChartRegistry(t, []map[string]string{inlineChartFiles(t)}, false)
-	host := strings.TrimSuffix(strings.TrimPrefix(registry.url, "oci://"), "/demo")
+	registry := testutil.NewChartRegistry(t, []map[string]string{inlineChartFiles(t)}, false)
+	host := strings.TrimSuffix(strings.TrimPrefix(registry.URL, "oci://"), "/demo")
 	testutil.WriteFileAt(t, registryConfig, fmt.Sprintf(`{"auths":{%q:{"auth":"Zml4dHVyZTpwYXNzd29yZA=="}}}`, host))
 	trees := make([]Tree, 2)
 	for side := range trees {
@@ -51,7 +51,7 @@ func TestRenderTrees_UnchangedDeclarationMove(t *testing.T) {
 					t,
 					root,
 					owner+"/source.yaml",
-					"apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: chart, namespace: apps}\nspec: {interval: 1h, url: '"+registry.url+"', insecure: true, ref: {tag: 0.1.0}, layerSelector: {mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip, operation: copy}}\n",
+					"apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: chart, namespace: apps}\nspec: {interval: 1h, url: '"+registry.URL+"', insecure: true, ref: {tag: 0.1.0}, layerSelector: {mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip, operation: copy}}\n",
 				)
 			}
 			testutil.WriteFile(t, root, owner+"/kustomization.yaml", resources)
@@ -167,8 +167,8 @@ func testRenderTreesDeclarationMoveChangesCase(
 
 	files := inlineChartFiles(t)
 	files["demo/templates/configmap.yaml"] = "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: chart-output}\ndata: {payload: '{{ .Values.payload | default \"default\" }}'}\n"
-	registry := newInlineChartRegistry(t, []map[string]string{files}, false)
-	host := strings.TrimSuffix(strings.TrimPrefix(registry.url, "oci://"), "/demo")
+	registry := testutil.NewChartRegistry(t, []map[string]string{files}, false)
+	host := strings.TrimSuffix(strings.TrimPrefix(registry.URL, "oci://"), "/demo")
 	registryConfig := filepath.Join(t.TempDir(), "config.json")
 	testutil.WriteFileAt(
 		t,
@@ -200,7 +200,7 @@ func testRenderTreesDeclarationMoveChangesCase(
 			t,
 			root,
 			"flux/source.yaml",
-			"apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: chart, namespace: apps}\nspec: {interval: 1h, url: '"+registry.url+"', insecure: true, ref: {tag: 0.1.0}, layerSelector: {mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip, operation: copy}}\n",
+			"apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: chart, namespace: apps}\nspec: {interval: 1h, url: '"+registry.URL+"', insecure: true, ref: {tag: 0.1.0}, layerSelector: {mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip, operation: copy}}\n",
 		)
 		for i, owner := range []string{"old", "new"} {
 			resources := "resources: []\n"

@@ -1,0 +1,6 @@
+apiVersion: kopiur.home-operations.com/v1alpha1
+kind: SnapshotSchedule
+metadata: {name: schedule}
+spec:
+  schedule:
+    cron: H * * * *

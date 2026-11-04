@@ -37,7 +37,7 @@ func TestPackageRoots_EdgeFactLifetime(t *testing.T) {
 	st.SetArtifact(manifest.BootstrapSourceID, bootstrap)
 	l := New(st)
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	l.Admit(root)
 	for _, name := range []string{"target", "missing", "configuration"} {

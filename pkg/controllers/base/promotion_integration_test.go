@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/controllers/base"
+
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
 	"github.com/home-operations/flate/internal/admissiontest"
@@ -11,7 +13,6 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
-	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -107,7 +108,7 @@ spec: {url: https://example.test/excluded.git}
 		record.Productions = []manifest.Production{{Authored: record.Authored, Path: record.Path}}
 		index.Records[id] = record
 	}
-	input, _, err := baseline.AdmitDirectory(t.Context(), dir, dir)
+	input, _, err := baseline.AdmitDirectory(t.Context(), dir, dir, manifest.WorkScope{})
 	assert.NoError(t, err)
 	st.SetArtifact(manifest.BootstrapSourceID, input)
 	controller := base.New(st, nil)

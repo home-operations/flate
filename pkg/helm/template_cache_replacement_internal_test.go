@@ -24,7 +24,7 @@ func testTemplateCacheSameKeyReplacements(
 		_, _, _, blobErr := (*inputs.cli).cache.Blob(
 			t.Context(),
 			(*alternateKey),
-			cache.Policy{},
+			&cache.Policy{},
 			func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 				var errResult error
 				switch replacement {

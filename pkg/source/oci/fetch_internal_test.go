@@ -22,17 +22,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/internal/testutil/cachetest"
-	"github.com/home-operations/flate/pkg/source"
-	"github.com/home-operations/flate/pkg/store"
-
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"oras.land/oras-go/v2/registry/remote/errcode"
 
+	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 func newTestNetwork(tb testing.TB) *source.Network {
@@ -49,10 +48,9 @@ func TestFetcher_InsecureRegistry(t *testing.T) {
 		if chart {
 			name = "HelmChart"
 		}
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			testFetcherInsecureRegistryCase(t, &chart)
-		},
+		t.Run(
+			name,
+			func(t *testing.T) { t.Parallel(); testFetcherInsecureRegistryCase(t, &chart) },
 		)
 	}
 }
@@ -119,7 +117,7 @@ func TestFetcher_InsecureRegistryForeignMismatch(t *testing.T) {
 				Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"},
 			}
 			f := &Fetcher{Cache: cachetest.New(t, t.TempDir(), sourcecache.New), Network: newTestNetwork(t)}
-			got, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{})
+			got, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), &sourcecache.Policy{})
 			requestErr, ok := errors.AsType[*url.Error](err)
 			if got != nil || !errors.Is(err, http.ErrSchemeMismatch) || !ok ||
 				mustURL(t, requestErr.URL).Host != mustURL(t, foreign.URL).Host ||
@@ -180,7 +178,7 @@ func TestFetcher_InsecureRegistryCanceledMismatch(t *testing.T) {
 	f := &Fetcher{Cache: cachetest.New(t, t.TempDir(), sourcecache.New), Network: newTestNetwork(t)}
 	result := make(chan error, 1)
 	go func() {
-		got, err := f.Fetch(ctx, repo, (testInputs{}).readSet(repo), sourcecache.Policy{})
+		got, err := f.Fetch(ctx, repo, (testInputs{}).readSet(repo), &sourcecache.Policy{})
 		if got != nil {
 			t.Error("canceled acquisition returned an artifact")
 		}
@@ -241,7 +239,7 @@ func TestFetcher_InsecureRegistryAmbient(t *testing.T) {
 		Network:        newTestNetwork(t),
 		RegistryConfig: path,
 	}
-	_, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{MaxAge: time.Hour})
+	_, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), &sourcecache.Policy{MaxAge: time.Hour})
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	if !ok || missing.RetryAmbient == nil || requests.Load() != 0 {
 		t.Fatalf("ambient admission: error=%v requests=%d", err, requests.Load())
@@ -307,7 +305,7 @@ func TestFetcher_InsecureRegistryConcurrent(t *testing.T) {
 		}
 		repos[name] = repo
 		go func() {
-			got, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{MaxAge: time.Hour})
+			got, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), &sourcecache.Policy{MaxAge: time.Hour})
 			done <- insecureRegistryResult{name: name, artifact: got, err: err}
 		}()
 	}
@@ -405,7 +403,7 @@ func TestFetcher_ExtractsLayerWithoutTitleAnnotation(t *testing.T) {
 		t.Context(),
 		repo,
 		(testInputs{}).readSet(repo),
-		sourcecache.Policy{MaxAge: repo.SourceInterval()},
+		&sourcecache.Policy{MaxAge: repo.SourceInterval()},
 	)
 	assert.FatalIf(t, err != nil, "Fetch: %v", err)
 	assert.FatalIf(t, art == nil || art.FS == nil, "%s", "Fetch returned no artifact")
@@ -469,7 +467,7 @@ func TestFetcher_ExtractCollidesWithOCILayoutName(t *testing.T) {
 		t.Context(),
 		repo,
 		(testInputs{}).readSet(repo),
-		sourcecache.Policy{MaxAge: repo.SourceInterval()},
+		&sourcecache.Policy{MaxAge: repo.SourceInterval()},
 	)
 	assert.FatalIf(t, err != nil, "Fetch: %v", err)
 
@@ -556,7 +554,7 @@ func testFetcherInsecureRegistryConcurrentTail(t *testing.T, scope *testFetcherI
 		t.Context(),
 		(*scope.repos)["bad"],
 		(testInputs{}).readSet((*scope.repos)["bad"]),
-		sourcecache.Policy{MaxAge: time.Hour},
+		&sourcecache.Policy{MaxAge: time.Hour},
 	)
 	if err != nil || recovered == nil || mustReadFile(t, recovered.FS, "app.yaml") != "concurrent\n" ||
 		scope.tlsConnections.Load() != 3 {
@@ -570,7 +568,7 @@ func testFetcherInsecureRegistryConcurrentTail(t *testing.T, scope *testFetcherI
 	before := scope.requests.Load()
 	secure := *(*scope.repos)["good"]
 	secure.Insecure = false
-	got, err := (*scope.f).Fetch(t.Context(), &secure, (testInputs{}).readSet(&secure), sourcecache.Policy{})
+	got, err := (*scope.f).Fetch(t.Context(), &secure, (testInputs{}).readSet(&secure), &sourcecache.Policy{})
 	if got != nil || !errors.Is(err, http.ErrSchemeMismatch) || scope.requests.Load() != before ||
 		scope.tlsConnections.Load() != 4 {
 		t.Fatalf(

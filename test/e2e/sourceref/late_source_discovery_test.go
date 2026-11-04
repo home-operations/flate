@@ -121,7 +121,7 @@ spec:
 		l := loader.New(store.New())
 		l.SourceRoot = root
 		{
-			_, loadErr := l.Load(t.Context(), filepath.Join(root, "apps"))
+			_, loadErr := l.Load(t.Context(), filepath.Join(root, "apps"), nil)
 			assert.FatalIf(t, loadErr != nil, "%v", loadErr)
 		}
 		l.Admit(root)

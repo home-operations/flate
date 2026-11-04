@@ -25,6 +25,7 @@ const (
 )
 
 type traversal struct {
+	work        *manifest.WorkRecord
 	files       *[]fileAdmission
 	documents   documentReader
 	policy      traversalPolicy
@@ -99,6 +100,7 @@ func (r *documentReader) replayEdges() {
 }
 
 func (w *traversal) admitFile(ctx context.Context, root, file string, component bool) bool {
+	w.work.Add(&manifest.WorkCounts{FileEntries: 1})
 	if !isManifestFile(file) || w.ignoreMatches(root, file, false) {
 		return true
 	}
@@ -358,7 +360,7 @@ func (w *traversal) scanBootstrapFluxKS(ctx context.Context, root, dir, kpath st
 	}
 	seen := map[string]struct{}{kpath: {}}
 	spec := w.documents.read(dir).body
-	includeBootstrapReferences(spec, dir, seen)
+	includeBootstrapReferences(spec, dir, seen, w.work)
 	if !w.proceed(ctx) {
 		return 0
 	}
@@ -378,6 +380,7 @@ func (w *traversal) scanBootstrapFluxKS(ctx context.Context, root, dir, kpath st
 	}
 	count := 0
 	for _, e := range entries {
+		w.work.Add(&manifest.WorkCounts{FileEntries: 1})
 		if !w.proceed(ctx) {
 			return count
 		}
@@ -398,8 +401,14 @@ func (w *traversal) scanBootstrapFluxKS(ctx context.Context, root, dir, kpath st
 	return count
 }
 
-func includeBootstrapReferences(spec *types.Kustomization, dir string, seen map[string]struct{}) {
+func includeBootstrapReferences(
+	spec *types.Kustomization,
+	dir string,
+	seen map[string]struct{},
+	work *manifest.WorkRecord,
+) {
 	for ref := range kustomizeinput.Kustomization(spec) {
+		work.Add(&manifest.WorkCounts{ReaderEdges: 1})
 		if ref.Inline {
 			continue
 		}

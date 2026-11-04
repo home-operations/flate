@@ -81,7 +81,7 @@ func freezeSourceForTest(t *testing.T, st *store.Store) {
 	input, _, key, err := owner.Acquire(
 		t.Context(),
 		sourcecache.ArchiveKey{Policy: "fixed", Content: t.Name()},
-		sourcecache.Policy{MaxAge: sourcecache.Forever},
+		&sourcecache.Policy{MaxAge: sourcecache.Forever},
 		func(_ context.Context, target sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 			writer := tar.NewWriter(target)
 			if err := writer.AddFS(original.FS); err != nil {
@@ -584,18 +584,19 @@ spec:
 	s.AddObject(ks)
 	l := loader.New(s)
 	l.SourceRoot = root
-	_, err = l.Load(t.Context(), filepath.Join(root, "apps"))
+	_, err = l.Load(t.Context(), filepath.Join(root, "apps"), nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	s.SetDiscoveryIndex(l.Index)
 	childID := testutil.KustomizationID("flux-system", "child")
 	record, found := l.Index.Lookup(childID)
-	assert.FatalIf(t, !found || record.Parent != ks.Named() || s.GetObject(childID) != nil,
-
+	assert.FatalIf(
+		t,
+		!found || record.Parent != ks.Named() || s.GetObject(childID) != nil,
 		"child must start as owned discovery evidence: record=%+v object=%v",
 		record,
-		s.GetObject(childID))
-
+		s.GetObject(childID),
+	)
 	authored := manifest.DeepCopyMap(spec)
 	{
 		info := controllertest.DispatchToFixpoint(

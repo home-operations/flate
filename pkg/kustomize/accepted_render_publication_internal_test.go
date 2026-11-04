@@ -56,7 +56,7 @@ func (p *acceptedHistoryPublication) storedKey(t *testing.T) string {
 	reader, descriptor, _, err := p.renderer.owner.Blob(
 		t.Context(),
 		p.key,
-		sourcecache.Policy{MaxAge: sourcecache.Forever},
+		&sourcecache.Policy{MaxAge: sourcecache.Forever},
 		nil,
 	)
 	assert.NoError(t, err)
@@ -115,14 +115,19 @@ func (p *acceptedHistoryPublication) warm(t *testing.T) {
 		Content: acceptedInput,
 	}))
 	check()
-	reader, _, _, err := p.renderer.owner.Blob(t.Context(), p.key, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
+	reader, _, _, err := p.renderer.owner.Blob(
+		t.Context(),
+		p.key,
+		&sourcecache.Policy{MaxAge: sourcecache.Forever},
+		nil,
+	)
 	assert.NoError(t, err)
 	data, err := fs.ReadFile(reader, "content")
 	assert.NoError(t, err)
 	_, _, _, err = p.renderer.owner.Blob(
 		t.Context(),
 		p.key,
-		sourcecache.Policy{MaxAge: 0},
+		&sourcecache.Policy{MaxAge: 0},
 		func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 			_, writeErr := w.Write(data)
 			return sourcecache.ProducerResult{}, writeErr

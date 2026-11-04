@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: unifi
+  namespace: flux-system
+data:
+  value: unchanged

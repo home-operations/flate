@@ -200,7 +200,7 @@ func testSeedBootstrapSourceExplicitURLsOverrideGitConfigCase(
 		want = "github.com/owner/repo"
 	}
 	if (*testCaseInput) == "retained" {
-		input, _, err := baseline.AdmitDirectory(t.Context(), root, root)
+		input, _, err := baseline.AdmitDirectory(t.Context(), root, root, manifest.WorkScope{})
 		assert.Equal(t, err, nil)
 		d.cfg.Store.SetArtifact(manifest.BootstrapSourceID, input)
 		testutil.WriteFile(

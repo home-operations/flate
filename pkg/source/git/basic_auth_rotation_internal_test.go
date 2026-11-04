@@ -65,8 +65,13 @@ func testFetcherHTTPSBasicAuthSnapshotRotationCase(
 	f := &Fetcher{Cache: c}
 	before := testCaseInput.requests.Load()
 	art, err := f.Fetch(
-		t.Context(), (*testCaseInput.repo), fInputs.readSet((*testCaseInput.repo)),
-		sourcecache.Policy{MaxAge: (*testCaseInput.repo).SourceInterval(), Retry: sourcecache.RetryConfig{Attempts: 3}},
+		t.Context(),
+		(*testCaseInput.repo),
+		fInputs.readSet((*testCaseInput.repo)),
+		&sourcecache.Policy{
+			MaxAge: (*testCaseInput.repo).SourceInterval(),
+			Retry:  sourcecache.RetryConfig{Attempts: 3},
+		},
 	)
 	assert.NoError(t, err)
 	assert.FatalIf(
@@ -81,7 +86,7 @@ func testFetcherHTTPSBasicAuthSnapshotRotationCase(
 	{
 		_, fetchErr := f.Fetch(
 			t.Context(), (*testCaseInput.repo), fInputs.readSet((*testCaseInput.repo)),
-			sourcecache.Policy{MaxAge: (*testCaseInput.repo).SourceInterval()},
+			&sourcecache.Policy{MaxAge: (*testCaseInput.repo).SourceInterval()},
 		)
 		assert.FatalIf(t, fetchErr != nil || testCaseInput.requests.
 			Load() != before, "warm snapshot missed: %v", fetchErr)
@@ -94,7 +99,7 @@ func testFetcherHTTPSBasicAuthSnapshotRotationCase(
 		t.Context(),
 		&failed,
 		fInputs.readSet(&failed),
-		sourcecache.Policy{MaxAge: failed.SourceInterval()},
+		&sourcecache.Policy{MaxAge: failed.SourceInterval()},
 	)
 	terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
 	assert.FatalIf(t, !ok || !terminal.Attempted, "failed snapshot: %v", err)

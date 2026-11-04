@@ -296,7 +296,7 @@ func (e *evaluation) extract(ctx context.Context, builder *tree.Builder, selecti
 	extracted, _, _, err := e.owner.Acquire(
 		ctx,
 		key,
-		cache.Policy{MaxAge: e.maxAge},
+		&cache.Policy{MaxAge: e.maxAge, Work: &e.work},
 		func(_ context.Context, target cache.ProducerInput) (cache.ProducerResult, error) {
 			file, err := input.FS.Open(selection.Path)
 			if err != nil {
@@ -350,19 +350,19 @@ func (e *evaluation) produce(
 	ctx context.Context,
 	req *request,
 	target cache.ProducerInput,
-) (cache.ProducerResult, error) {
+) error {
 	builder := tree.NewBuilder(nil)
 	for _, op := range req.Output.Copy {
 		if err := e.apply(ctx, builder, op); err != nil {
-			return cache.ProducerResult{}, err
+			return err
 		}
 	}
 	writer := tar.NewWriter(target)
 	if err := writer.AddFS(builder); err != nil {
-		return cache.ProducerResult{}, fmt.Errorf("addfs: %w", err)
+		return fmt.Errorf("addfs: %w", err)
 	}
 	if err := writer.Close(); err != nil {
-		return cache.ProducerResult{}, fmt.Errorf("close: %w", err)
+		return fmt.Errorf("close: %w", err)
 	}
-	return cache.ProducerResult{}, nil
+	return nil
 }

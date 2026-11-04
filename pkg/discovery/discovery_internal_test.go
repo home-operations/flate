@@ -229,7 +229,7 @@ func testDiscardPinnedWorkingTreeFilesPreservesSourcesProjectedOwner(t *testing.
 	d := Session{cfg: Config{Store: st}, loader: loader.New(st)}
 	d.loader.SourceRoot = root
 	{
-		_, err := d.loader.Load(t.Context(), root)
+		_, err := d.loader.Load(t.Context(), root, nil)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	d.discardPinnedWorkingTreeFiles(root)
@@ -352,7 +352,7 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: other}}
 `)
 	d.loader.PreferExisting = true
 	{
-		_, err := d.loader.Load(t.Context(), artifact.LocalPath)
+		_, err := d.loader.Load(t.Context(), artifact.LocalPath, nil)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	assert.FatalIf(t, st.GetObject(repository.Named()) != repository ||
@@ -470,7 +470,7 @@ func testLoadAtIgnoreFileAndMissingDirectoryCase(
 		)
 	}
 	total := 0
-	err := d.loadAt(t.Context(), target, &total)
+	err := d.loadAt(t.Context(), target, &total, nil)
 	if (*testCaseInput.scenario) == "missing-ignore" {
 		assert.FatalIf(t, !errors.Is(err, fs.ErrNotExist), "missing explicit ignore error = %v", err)
 	} else {

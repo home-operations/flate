@@ -30,7 +30,7 @@ func TestFetcher_CacheIsolatesSources(t *testing.T) {
 			t.Context(),
 			repo,
 			(testInputs{}).readSet(repo),
-			sourcecache.Policy{MaxAge: repo.SourceInterval()},
+			&sourcecache.Policy{MaxAge: repo.SourceInterval()},
 		)
 		assert.NoError(t, err)
 
@@ -110,7 +110,7 @@ func testFetcherCacheIsolatesSourcesCase(t *testing.T, testCaseInput testFetcher
 		change(&current, fetcher)
 	got, err := (&operation{Fetcher: fetcher}).fetchLayer(
 		t.Context(),
-		&current, new((*testCaseInput.request)), sourcecache.Policy{MaxAge: current.SourceInterval()},
+		&current, new((*testCaseInput.request)), &sourcecache.Policy{MaxAge: current.SourceInterval()},
 	)
 	assert.NoError(t, err)
 

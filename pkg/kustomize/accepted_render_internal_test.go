@@ -98,8 +98,11 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 			assert.NoError(t, err)
 			_, _, _, err = renderer.owner.Blob(
 				t.Context(),
-				sourcecache.BlobKey{Content: prepared.key, Render: sourcecache.RenderAccepted},
-				sourcecache.Policy{MaxAge: 0},
+				sourcecache.BlobKey{
+					Content: prepared.key,
+					Render:  sourcecache.RenderAccepted,
+				},
+				&sourcecache.Policy{MaxAge: 0},
 				func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 					_, copyErr := io.Copy(w, io.MultiReader(bytes.NewReader(wire), bytes.NewReader(accepted)))
 					return sourcecache.ProducerResult{}, copyErr
@@ -226,8 +229,11 @@ func TestRecordRender_FinalDependencyBinding(t *testing.T) {
 	assert.NoError(t, err)
 	_, _, before.lookup, err = renderer.owner.Blob(
 		t.Context(),
-		sourcecache.BlobKey{Content: before.header.Key, Render: sourcecache.RenderAccepted},
-		sourcecache.Policy{MaxAge: sourcecache.Forever},
+		sourcecache.BlobKey{
+			Content: before.header.Key,
+			Render:  sourcecache.RenderAccepted,
+		},
+		&sourcecache.Policy{MaxAge: sourcecache.Forever},
 		nil,
 	)
 	assert.NoError(t, err)
@@ -341,9 +347,7 @@ func TestRender_AcceptedMutableInputPreparation(t *testing.T) {
 	replay, _, err := testutil.RenderMaps(Render(t.Context(), fresh, req, sourcecache.RetryConfig{}))
 	assert.NoError(t, err)
 	assert.Diff(t, replay, docs)
-	if input.prepared.Load() != 0 {
-		t.Fatalf("validated replay prepared inputs %d times", input.prepared.Load())
-	}
+	assert.FatalIf(t, input.prepared.Load() != 0, "validated replay prepared inputs %d times", input.prepared.Load())
 	testutil.WriteFile(t, root, "cm.yaml", cmYAML("after"))
 	changed, _, err := testutil.RenderMaps(Render(t.Context(), fresh, req, sourcecache.RetryConfig{}))
 	assert.NoError(t, err)

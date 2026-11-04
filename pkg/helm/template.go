@@ -8,7 +8,6 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
-	"path"
 	"slices"
 	"strings"
 	"sync"
@@ -50,7 +49,7 @@ func (c *Client) Template(
 	if err != nil {
 		return nil, nil, err
 	}
-	prepared.release, prepared.options = hr, input.Options
+	prepared.release, prepared.options, prepared.work = hr, input.Options, input.Work
 
 	if input.Admit != nil {
 		if handled, admitErr := input.Admit(prepared.key); handled || admitErr != nil {
@@ -75,7 +74,7 @@ func (c *Client) Template(
 	_, _, _, err = c.cache.Blob(
 		ctx,
 		blobKey,
-		cache.Policy{MaxAge: cache.Forever},
+		&cache.Policy{MaxAge: cache.Forever, Work: input.Work.Pending(), HistoryWork: input.Work.History()},
 		func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 			return prepared.produce(ctx, c, &result, w)
 		},
@@ -90,6 +89,7 @@ func (c *Client) Template(
 }
 
 type templateRequest struct {
+	work          *manifest.RenderWork
 	release       *manifest.HelmRelease
 	options       Options
 	loaded        chartDescription
@@ -106,13 +106,17 @@ func (c *Client) prepareTemplate(
 	hrValues map[string]any,
 	input *RenderOptions,
 ) (templateRequest, error) {
+	work := input.Work.Preparation()
+	work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 	opts := input.Options
 	if err := ctx.Err(); err != nil {
+		work.Finish(err)
 		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return templateRequest{}, err
 	}
 	loaded, err := c.describeChart(ctx, hr, input.Sources)
 	if err != nil {
+		work.Finish(err)
 		return templateRequest{}, err
 	}
 	if hr.TracksDigest() {
@@ -133,6 +137,7 @@ func (c *Client) prepareTemplate(
 		hrValues = map[string]any{}
 	}
 	key := computeTemplateKey(&loaded, hrValues, opts, hr)
+	input.Work.Fingerprint(key)
 	binding := templateBinding{
 		Policy:       hr.HistoryPolicy(),
 		Source:       hr.ChartSource(),
@@ -155,6 +160,7 @@ func (c *Client) prepareTemplate(
 			binding.Options.SkipKinds = slices.Clone(input.SkipKinds)
 		}
 	}
+	work.Finish(nil)
 	return templateRequest{
 		loaded:        loaded,
 		caps:          caps,
@@ -539,7 +545,7 @@ func (r *templateRequest) render(
 	c *Client,
 	cacheErr error,
 ) ([]manifest.DocOccurrence, *manifest.RenderReceipt, error) {
-	decodeChartErr := c.decodeChart(ctx, &r.loaded)
+	decodeChartErr := c.decodeChart(ctx, &r.loaded, &RenderOptions{Work: r.work})
 	if decodeChartErr != nil {
 		return nil, nil, decodeChartErr
 	}
@@ -626,7 +632,7 @@ func (r *templateRequest) validate(
 		record.identity = identity
 	}
 	if record.Analysis.RequiresLoader {
-		if decodeChartErr2 := c.decodeChart(ctx, &r.loaded); decodeChartErr2 != nil {
+		if decodeChartErr2 := c.decodeChart(ctx, &r.loaded, &RenderOptions{Work: r.work}); decodeChartErr2 != nil {
 			return false, decodeChartErr2
 		}
 	}
@@ -714,12 +720,18 @@ func (r *templateRequest) install(ctx context.Context, ch *chart.Chart, finalVal
 	)
 
 	inst, disableHooks := newInstallAction(cfg, r.release, r.options, r.caps)
+	if renderer, ok := inst.PostRenderer.(*kustomizePostRenderer); ok {
+		renderer.work = r.work.PostRender(r.key)
+	}
 	inst.SkipSchemaValidation = schemaValidationSkipped(r.release)
 
 	if slog.Default().Enabled(ctx, slog.LevelDebug) {
 		slog.Debug("helm: render", "release", r.release.Named().String())
 	}
+	work := r.work.Engine(manifest.WorkHelm, r.key)
+	work.Add(&manifest.WorkCounts{Attempts: 1})
 	rel, decodeChartErr := inst.RunWithContext(ctx, ch, finalValues)
+	work.Finish(decodeChartErr)
 	if decodeChartErr != nil {
 		return "", fmt.Errorf("helm template: %w", schemaError(decodeChartErr))
 	}
@@ -764,34 +776,6 @@ func (r *templateRequest) cachedRecord(_ context.Context, generation fs.FS, iden
 		}
 	}
 	return record, nil
-}
-
-type valuesFiles struct {
-	names      []string
-	normalized bool
-}
-
-func normalizeValuesFiles(names []string) (valuesFiles, error) {
-	cleaned := names
-	normalized := false
-	for i, name := range names {
-		clean := path.Clean(name)
-		if name == "" || !fs.ValidPath(clean) || clean == "." || strings.IndexByte(clean, 0) >= 0 {
-			return valuesFiles{names: nil, normalized: false}, manifest.NewError(
-				manifest.ErrInput,
-				fmt.Errorf("read values file %q: %w", name, fs.ErrInvalid),
-				"",
-			)
-		}
-		if clean != name {
-			if !normalized {
-				cleaned = slices.Clone(names)
-				normalized = true
-			}
-			cleaned[i] = clean
-		}
-	}
-	return valuesFiles{names: cleaned, normalized: normalized}, nil
 }
 
 func (e *chartValuesEntry) observe(

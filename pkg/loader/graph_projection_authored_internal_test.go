@@ -288,7 +288,7 @@ func loadProjectionScans(t *testing.T, l *Loader, root string, testCaseInput *st
 	t.Helper()
 	for _, scan := range testCaseInput.scans {
 		{
-			_, err := l.Load(t.Context(), filepath.Join(root, scan))
+			_, err := l.Load(t.Context(), filepath.Join(root, scan), nil)
 			assert.NoError(t, err)
 		}
 		if testCaseInput.name == "named_ready" && scan == "flux" {

@@ -432,6 +432,7 @@ func TestSubtreeHasNamespaceTransformer_DepthCapAndCycle(t *testing.T) {
 			got := new(
 				readerForTest(tempDirRoot),
 			).subtreeHasNamespaceTransformer(tempDirRoot, "d0", map[string]struct{}{})
+
 			assert.FatalIf(t, got != (depth == transformerScanMaxDepth), "proof at depth %d = %t", depth, got)
 		})
 	}
@@ -443,6 +444,7 @@ func TestSubtreeHasNamespaceTransformer_DepthCapAndCycle(t *testing.T) {
 		"apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [transformer.yaml]\n",
 	)
 	testutil.WriteFile(t, root, "component/nested/transformer.yaml", namespaceTransformer)
+
 	assert.FatalIf(
 		t,
 		new(readerForTest(root)).subtreeHasNamespaceTransformer(root, "component", map[string]struct{}{}),
@@ -453,6 +455,7 @@ func TestSubtreeHasNamespaceTransformer_DepthCapAndCycle(t *testing.T) {
 	// A reference cycle a → b → a must terminate (visited set) and return false.
 	testutil.WriteFile(t, root, "cyc/a/kustomization.yaml", "resources:\n  - ../b\n")
 	testutil.WriteFile(t, root, "cyc/b/kustomization.yaml", "resources:\n  - ../a\n")
+
 	assert.ErrorIf(
 		t,
 		new(readerForTest(root)).subtreeHasNamespaceTransformer(root, "cyc/a", map[string]struct{}{}),
@@ -503,10 +506,13 @@ func TestAdmit_UnloadedAncestorNamespace(t *testing.T) {
 	)
 	l := New(store.New())
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), filepath.Join(root, "apps", "outside", "selected"))
+	_, err := l.Load(t.Context(), filepath.Join(root, "apps", "outside", "selected"), nil)
+
 	assert.NoError(t, err)
+
 	l.Admit(root)
 	owners := l.Kustomizations()
+
 	assert.FatalIf(t, len(owners) != 1 || owners[0].Obj.(*manifest.Kustomization).TargetNamespace != "" ||
 		owners[0].Obj.(*manifest.Kustomization).Namespace != "apps", "unloaded ancestor injected namespace: %+v", owners)
 }
@@ -537,6 +543,7 @@ func testAdmitSelfProducedTransformerIdentityCase(
 	if ok != testCaseInput.tc.want {
 		t.Errorf("indexed identity %s present=%t, want %t", id, ok, testCaseInput.tc.want)
 	}
+
 	assert.ErrorIf(
 		t,
 		testCaseInput.tc.want && record.File != definition,
@@ -576,6 +583,7 @@ func testAdmitSelfProducedTransformerIdentityNamespacePredictionDeclinesComponen
 		assert.FatalIf(t, found, "%s", "scope namespace prediction accepted a Component-only proof")
 	}
 	record, found := l.Index.Lookup(testutil.KustomizationID("", "child"))
+
 	assert.FatalIf(
 		t,
 		!found || record.File != "entry/ks.yaml",
@@ -620,6 +628,7 @@ func testStampTransformerTargetNamespacesNamespaceTransformerCase(
 			}
 			record, indexed := l.Index.Lookup(id)
 			ks, ok := l.IndexedObject(id, record).Obj.(*manifest.Kustomization)
+
 			assert.FatalIf(
 				t,
 				!indexed || !ok || ks.TargetNamespace != want,
@@ -628,16 +637,22 @@ func testStampTransformerTargetNamespacesNamespaceTransformerCase(
 				ks,
 				want,
 			)
+
 			projected, err := ks.RenderDocument()
+
 			assert.NoError(t, err)
+
 			target, _ := projected["spec"].(map[string]any)["targetNamespace"].(string)
+
 			assert.FatalIf(t, target != want, "%s projected namespace = %v, %v", id, projected, err)
+
 			for _, staleNS := range []string{testCaseInput.authored, "red", "blue"} {
 				if staleNS == ns {
 					continue
 				}
 				stale := testutil.KustomizationID(staleNS, name)
 				_, indexed := l.Index.Lookup(stale)
+
 				assert.FatalIf(t, st.GetObject(stale) != nil || indexed, "retained stale %s", stale)
 			}
 		}
@@ -696,7 +711,7 @@ func testStampTransformerTargetNamespacesNamespaceTransformerCaseCompletion(
 			)
 		}
 		{
-			_, err := (*scope.l).Load(t.Context(), filepath.Join((*scope.local), "apps", "gpu-operator"))
+			_, err := (*scope.l).Load(t.Context(), filepath.Join((*scope.local), "apps", "gpu-operator"), nil)
 			assert.NoError(t, err)
 		}
 		if (*scope.testCaseInput).mounted {
@@ -735,6 +750,7 @@ func testStampTransformerTargetNamespacesNamespaceTransformerCaseCompletion(
 		for _, name := range []string{"gpu-operator", "explicit"} {
 			id := testutil.KustomizationID("", name)
 			_, indexed := (*scope.l).Index.Lookup(id)
+
 			assert.FatalIf(t, (*scope.st).GetObject(id) != nil || indexed, "%s survived mount removal", id)
 		}
 	}

@@ -23,9 +23,18 @@ const dockerConfigJSONKey = ".dockerconfigjson"
 func (f *operation) acquire(
 	ctx context.Context,
 	accessValue *manifest.RegistryAccess,
-	policy cache.Policy,
+	policyValue *cache.Policy,
 ) (*store.SourceArtifact, error) {
 	access := *accessValue
+
+	policy := *policyValue
+
+	f.work.Scope = f.reads.Work().Scope().Source(access.Owner.ID)
+	if policy.Work != nil {
+		f.work.Scope = policy.Work.Attribution().Source(access.Owner.ID)
+	}
+	policy.Work = &f.work
+
 	if err := ctx.Err(); err != nil {
 		return nil, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 	}
@@ -37,22 +46,36 @@ func (f *operation) acquire(
 		}
 	}
 	policy.Timeout = &access.Timeout
-	request, err := f.newRepoClient(ctx, new(access))
+	request, err := f.newRepoClient(ctx, &access)
 	machine := func(ctx context.Context) (*store.SourceArtifact, error) {
 		machineRequest := request
-		machineRequest.client = &remote.Repository{Reference: request.client.Reference}
-		return source.AcquireMachine(ctx, policy, func(ctx context.Context) error {
-			selected, registryCredentialsErr := f.Network.RegistryCredentials(
+		machinePolicy := policy
+		if f.work.Scope.Identity() == (manifest.WorkKey{}) {
+			machineRequest.client = &remote.Repository{Reference: request.client.Reference}
+		} else {
+			attempt := &struct {
+				remote.Repository
+
+				work manifest.AcquisitionWork
+			}{Reference: request.client.Reference}
+			attempt.work.Scope = f.work.Scope
+			machineRequest.client = &attempt.Repository
+			machinePolicy.Work = &attempt.work
+		}
+		return source.AcquireMachine(ctx, &machinePolicy, func(ctx context.Context) error {
+			selected, credentialsErr := f.Network.RegistryCredentials(
 				ctx,
 				f.RegistryConfig,
 				machineRequest.client.Reference.Host(),
 			)
-			if registryCredentialsErr != nil {
-				return registryCredentialsErr
+			if credentialsErr != nil {
+				return credentialsErr
 			}
-			return f.configure(new(access), &machineRequest, *selected)
-		}, func(ctx context.Context, policy cache.Policy) (*store.SourceArtifact, error) {
-			return f.acquirePrepared(ctx, &access, &machineRequest, policy)
+			return f.configure(&access, &machineRequest, *selected)
+		}, func(ctx context.Context, policyValue *cache.Policy) (*store.SourceArtifact, error) {
+			acquisitionPolicy := *policyValue
+
+			return f.acquirePrepared(ctx, &access, &machineRequest, &acquisitionPolicy)
 		})
 	}
 	if missing, ok := errors.AsType[*source.MissingSecretError](err); ok && request.client != nil {
@@ -64,7 +87,7 @@ func (f *operation) acquire(
 	if access.SecretRef == nil {
 		return machine(ctx)
 	}
-	return f.acquirePrepared(ctx, &access, &request, policy)
+	return f.acquirePrepared(ctx, &access, &request, &policy)
 }
 
 func (f *operation) newRepoClient(
@@ -140,17 +163,19 @@ func (f *operation) configure(
 
 func (f *operation) acquirePrepared(
 	ctx context.Context, accessValue *manifest.RegistryAccess, requestValue *registryAcquisition,
-	policy cache.Policy,
+	policyValue *cache.Policy,
 ) (*store.SourceArtifact, error) {
+	policy := *policyValue
+
 	access := *accessValue
 	request := *requestValue
-	artifact, err := f.produce(ctx, request, policy)
+	artifact, err := f.produce(ctx, request, &policy)
 	if access.Insecure && ctx.Err() == nil && errors.Is(err, http.ErrSchemeMismatch) {
 		if requestErr, ok := errors.AsType[*url.Error](err); ok {
 			target, parseErr := url.Parse(requestErr.URL)
 			if parseErr == nil && target.Host == request.client.Reference.Host() {
 				request.client.PlainHTTP = true
-				artifact, err = f.produce(ctx, request, policy)
+				artifact, err = f.produce(ctx, request, &policy)
 			}
 		}
 	}

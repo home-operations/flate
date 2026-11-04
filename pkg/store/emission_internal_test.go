@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -696,4 +697,75 @@ func testRecordEmittedStableSupportReplay(
 	unrelated.mu.Unlock()
 	<-done
 	assert.FatalIf(t, blocked, "%s", "stable replay waited for an unrelated shard")
+}
+
+func TestRecordEmitted_PayloadLookupConcurrentReplacement(t *testing.T) {
+	t.Parallel()
+	s := New()
+	owner := ownerID("producer")
+	s.AddObject(&manifest.Kustomization{Name: owner.Name, Namespace: owner.Namespace})
+	child := emissionChild("target", "same")
+	target := child.Obj.Named()
+	payload := &SourceArtifact{Key: "key", Content: "key", FS: fstest.MapFS{}}
+	var first, replacement ReadSet
+	first.Init(s, owner, nil)
+	replacement.Init(s, owner, nil)
+	defer first.Retire()
+	defer replacement.Retire()
+	prior := Emission{Children: []Child{child}, Complete: true}
+	first.Bind(&prior)
+	s.RecordEmitted(owner, &prior, map[manifest.NamedResource]*SourceArtifact{target: payload})
+	tasks := task.NewBounded(2)
+	barrier := &acceptanceBarrier{
+		BaseManifest: child.Obj,
+		tasks:        tasks,
+		reached:      make(chan struct{}),
+		release:      make(chan struct{}),
+	}
+	next := prior
+	next.Children = []Child{{Obj: barrier, Doc: child.Doc}}
+	tasks.Go(t.Context(), "pending", func(context.Context) { s.RecordEmitted(owner, &next, nil) })
+	tasks.Go(t.Context(), "replace", func(context.Context) {
+		tasks.YieldSlot(func() { <-barrier.reached })
+		extra := emissionChild("extra", "same")
+		current := Emission{Children: []Child{extra}, Complete: true}
+		replacement.Bind(&current)
+		s.RecordEmitted(owner, &current, nil)
+		current.Children = []Child{extra, child}
+		replacement.Bind(&current)
+		s.RecordEmitted(owner, &current, map[manifest.NamedResource]*SourceArtifact{target: payload})
+		assert.Equal(t, first.Valid(), true)
+		close(barrier.release)
+	})
+	tasks.BlockTillDone()
+	assert.Equal(t, tasks.Failures(), 0)
+	assert.Equal(t, s.GetArtifact(target, ArtifactContent) == nil, true)
+}
+
+func TestRecordEmitted_PayloadLookupProducers(t *testing.T) {
+	t.Parallel()
+	s := New()
+	owner, other := ownerID("z"), ownerID("a")
+	for _, id := range []manifest.NamedResource{owner, other} {
+		s.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
+	}
+	child := &manifest.Secret{Name: "target", Namespace: "apps"}
+	producer := &manifest.RawObject{
+		APIVersion: "external-secrets.io/v1", Kind: "ExternalSecret", Name: "declared", Namespace: "apps",
+		Spec: map[string]any{"target": map[string]any{"name": child.Name}},
+	}
+	payload, poison := &SourceArtifact{Key: "payload"}, &SourceArtifact{Key: "poison"}
+	s.RecordEmitted(other, &Emission{Children: []Child{{Obj: child}}, Complete: true},
+		map[manifest.NamedResource]*SourceArtifact{child.Named(): poison})
+	_, _, attempt := s.GetEmission(owner)
+	defer attempt.Finish()
+	attempt.Children = []Child{{Obj: producer}, {Obj: child}}
+	s.RecordEmitted(
+		owner,
+		&attempt,
+		map[manifest.NamedResource]*SourceArtifact{producer.Named(): poison, child.Named(): payload},
+	)
+	attempt.Complete = true
+	s.RecordEmitted(owner, &attempt, nil)
+	assert.Equal(t, s.GetArtifact(child.Named(), ArtifactContent) == payload, true)
 }

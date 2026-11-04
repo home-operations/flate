@@ -30,7 +30,10 @@ func testAcquireExactSuccessorCase(t *testing.T, concurrency *int,
 		key := remoteKey{url: "https://example.invalid/successor", retry: sourcecache.RetryConfig{Attempts: 1}}
 		done := make(chan error, (*concurrency))
 		for range *concurrency {
-			go func() { _, err := c.Acquire(t.Context(), key.url, key.retry, nil); done <- err }()
+			go func() {
+				_, err := c.Acquire(t.Context(), &HTTPRequest{URL: key.url, Retry: key.retry, HeldSlot: nil})
+				done <- err
+			}()
 		}
 		<-entered
 		synctest.Wait()

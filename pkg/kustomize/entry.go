@@ -187,8 +187,11 @@ func (c *TreeCache) PreviousEntry(ctx context.Context, req RenderRequest) EntryE
 	}
 	reader, _, _, err := c.owner.Blob(
 		ctx,
-		sourcecache.BlobKey{Content: prepared.key, Render: sourcecache.RenderAccepted},
-		sourcecache.Policy{MaxAge: sourcecache.Forever},
+		sourcecache.BlobKey{
+			Content: prepared.key,
+			Render:  sourcecache.RenderAccepted,
+		},
+		&sourcecache.Policy{MaxAge: sourcecache.Forever, Work: req.Work.History()},
 		nil,
 	)
 	if err != nil {

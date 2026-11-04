@@ -107,7 +107,7 @@ func testFetchHTTPChartRequestTimeoutsCaseCallback(
 	prepared.client.Transport = tr
 	hc := helmChart(r.Name, "app-template", "1.0.0")
 	start := time.Now()
-	_, err := f.fetchHTTPChart(t.Context(), prepared, hc, sourcecache.Policy{MaxAge: time.Hour})
+	_, err := f.fetchHTTPChart(t.Context(), prepared, hc, &sourcecache.Policy{MaxAge: time.Hour})
 	want := 5 * time.Second
 	if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) != want {
 		t.Fatalf("request timeout: elapsed=%v error=%v", time.Since(start), err)
@@ -129,7 +129,7 @@ func testFetchHTTPChartRequestTimeoutsCaseCallback(
 	prepared.client.Transport = tr
 	start = time.Now()
 	deadline = start.Add(10 * time.Second)
-	acquired, err := f.fetchHTTPChart(t.Context(), prepared, hc, sourcecache.Policy{MaxAge: time.Hour})
+	acquired, err := f.fetchHTTPChart(t.Context(), prepared, hc, &sourcecache.Policy{MaxAge: time.Hour})
 	assert.FatalIf(t, err != nil, "longer policy replayed timeout: %v", err)
 	want = 6 * time.Second
 	if (*testCaseInput.tc).stage == "chart" {
@@ -157,7 +157,7 @@ func testFetchHTTPChartRequestTimeoutsCaseCallback(
 	prepared = preparedHTTP(t, f, testInputs{}, &shorter)
 	prepared.client.Transport = tr
 	before := calls
-	warm, err := f.fetchHTTPChart(t.Context(), prepared, hc, sourcecache.Policy{MaxAge: time.Hour})
+	warm, err := f.fetchHTTPChart(t.Context(), prepared, hc, &sourcecache.Policy{MaxAge: time.Hour})
 	assert.FatalIf(
 		t,
 		err != nil || calls != before || warm.Key != acquired.Key,

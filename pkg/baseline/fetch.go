@@ -65,7 +65,7 @@ func fetchBase(ctx context.Context, url, rev string, owner *sourcecache.Cache) (
 	generation, _, err := owner.Git(
 		ctx,
 		key,
-		sourcecache.Policy{MaxAge: sourcecache.Forever},
+		&sourcecache.Policy{MaxAge: sourcecache.Forever},
 		func(ctx context.Context, upper storage.Storer, _ billy.Filesystem) (plumbing.Hash, error) {
 			if localErr := remote.fetch(ctx, upper, nil); localErr != nil {
 				return plumbing.ZeroHash, localErr

@@ -60,7 +60,7 @@ spec: {}
 	}
 	st := store.New()
 	idx.Store = st
-	input, _, err := baseline.AdmitDirectory(t.Context(), dir, dir)
+	input, _, err := baseline.AdmitDirectory(t.Context(), dir, dir, manifest.WorkScope{})
 	assert.NoError(t, err)
 	st.SetArtifact(manifest.BootstrapSourceID, input)
 	e := &orchestratorExistence{DiscoveryIndex: idx.Index, o: &Orchestrator{
@@ -162,7 +162,7 @@ spec: {url: https://example.test/excluded.git}
 			Inventory: st,
 		},
 	)
-	input, _, err := baseline.AdmitDirectory(t.Context(), dir, dir)
+	input, _, err := baseline.AdmitDirectory(t.Context(), dir, dir, manifest.WorkScope{})
 	assert.NoError(t, err)
 	st.SetArtifact(manifest.BootstrapSourceID, input)
 	testutil.WriteFile(t, dir, "kustomization.yaml", "namespace: apps\nresources: [bundle.yaml]\n")
@@ -170,7 +170,7 @@ spec: {url: https://example.test/excluded.git}
 	idx.SourceRoot = dir
 	idx.Options.Filter, idx.Options.Changes = filter, change.NewSet([]string{"consumer.yaml"})
 	idx.Options.Selection.Changed = true
-	_, err = idx.Load(t.Context(), dir)
+	_, err = idx.Load(t.Context(), dir, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, idx.FinalizeIndex(t.Context(), dir, true))
 	controller := base.New(st, nil)
@@ -249,7 +249,7 @@ func TestOrchestratorExistence_ExistingDataUsesNewSourceEvidence(t *testing.T) {
 	admissiontest.Commit(t, filterLoader, nil)
 	filter := filterLoader.Options.Filter
 	assert.FatalIf(t, filter.ShouldReconcile(id), "%v", "unavailable source evidence must not admit existing data")
-	input, _, err := baseline.AdmitDirectory(t.Context(), dir, dir)
+	input, _, err := baseline.AdmitDirectory(t.Context(), dir, dir, manifest.WorkScope{})
 	assert.NoError(t, err)
 	st.SetArtifact(source.Named(), input)
 	controller := base.New(st, nil)

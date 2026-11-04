@@ -236,7 +236,7 @@ func testSubstituteDocPrecheckEquivalenceCase(
 ) {
 	t.Helper()
 
-	got, gotErr := substituteDoc(testCaseInput.doc, testCaseInput.vars, testCaseInput.strict)
+	got, gotErr := substituteDoc(testCaseInput.doc, testCaseInput.vars, testCaseInput.strict, nil)
 	if testCaseInput.want != nil {
 		assert.FatalIf(t, gotErr != nil, "substituteDoc: %v", gotErr)
 		{
@@ -317,7 +317,7 @@ func testRenderRequestContentUnprovedAlwaysCase(
 			"unproved syntax omitted the conservative whole bag",
 		)
 	}
-	err := Shape(ks, docs, false)
+	err := Shape(t.Context(), ks, docs, ShapeOptions{Strict: false})
 	assert.FatalIf(
 		t,
 		errors.Is(err, manifest.ErrInvalidSubstituteReference) != testCaseInput.invalid,

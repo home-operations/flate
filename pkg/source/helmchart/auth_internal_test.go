@@ -207,7 +207,7 @@ func TestHelmRepoTransport_OwnedCleanup(t *testing.T) {
 		ctx,
 		helmChart("repo", "app", "1.0.0"),
 		fInputs.readSet(helmChart("repo", "app", "1.0.0")),
-		sourcecache.Policy{},
+		&sourcecache.Policy{},
 	)
 	assert.FatalIf(t, err == nil, "%s", "malformed index unexpectedly succeeded")
 
@@ -414,7 +414,7 @@ func testHelmRepoTransportSourceTimeoutCase(t *testing.T, tc *struct {
 			ctx,
 			prepared,
 			helmChart(r.Name, "app-template", "1.0.0"),
-			sourcecache.Policy{},
+			&sourcecache.Policy{},
 		)
 		assert.ErrorIf(t, !errors.Is(err, context.DeadlineExceeded) || time.Since(start) != want,
 

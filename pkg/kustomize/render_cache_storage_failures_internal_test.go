@@ -60,7 +60,7 @@ func testRenderCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 		reader, _, _, err := cache.owner.Blob(
 			t.Context(),
 			key,
-			sourcecache.Policy{MaxAge: sourcecache.Forever},
+			&sourcecache.Policy{MaxAge: sourcecache.Forever},
 			nil,
 		)
 		assert.NoError(t, err)

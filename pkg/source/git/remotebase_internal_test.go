@@ -78,8 +78,8 @@ func TestFetchRemoteBase_References(t *testing.T) {
 			f := newRemoteBaseFetcher(t)
 			art, err := f.FetchRemoteBase(
 				t.Context(),
-				RemoteBaseRequest{URL: tc.url, Ref: tc.ref, Timeout: 27 * time.Second, Submodules: true},
-				sourcecache.Policy{MaxAge: time.Hour},
+				&RemoteBaseRequest{URL: tc.url, Ref: tc.ref, Timeout: 27 * time.Second, Submodules: true},
+				&sourcecache.Policy{MaxAge: time.Hour},
 			)
 			assert.NoError(t, err)
 
@@ -115,8 +115,8 @@ func TestFetchRemoteBase_RequiresCache(t *testing.T) {
 	f := &Fetcher{}
 	_, err := f.FetchRemoteBase(
 		t.Context(),
-		RemoteBaseRequest{URL: "file:///nope", Ref: "v1", Timeout: 27 * time.Second, Submodules: true},
-		sourcecache.Policy{MaxAge: time.Hour},
+		&RemoteBaseRequest{URL: "file:///nope", Ref: "v1", Timeout: 27 * time.Second, Submodules: true},
+		&sourcecache.Policy{MaxAge: time.Hour},
 	)
 	assert.FatalIf(t, !errors.Is(err, manifest.ErrInput), "want ErrInput without cache, got %v", err)
 }
@@ -130,8 +130,8 @@ func TestFetchRemoteBase_RejectsBeforeAcquisition(t *testing.T) {
 			f := &Fetcher{Cache: new(sourcecache.Cache), RestrictSchemes: true}
 			_, err := f.FetchRemoteBase(
 				t.Context(),
-				RemoteBaseRequest{URL: url, Ref: "v1", Timeout: 27 * time.Second, Submodules: true},
-				sourcecache.Policy{MaxAge: time.Hour},
+				&RemoteBaseRequest{URL: url, Ref: "v1", Timeout: 27 * time.Second, Submodules: true},
+				&sourcecache.Policy{MaxAge: time.Hour},
 			)
 			assert.FatalIf(t, !errors.Is(err, manifest.ErrInput), "want ErrInput before acquisition, got %v", err)
 		})
@@ -157,8 +157,8 @@ func TestFetchRemoteBase_TransientRecovery(t *testing.T) {
 	f := newRemoteBaseFetcher(t)
 	art, err := f.FetchRemoteBase(
 		t.Context(),
-		RemoteBaseRequest{URL: srv.URL, Timeout: 27 * time.Second, Submodules: true},
-		sourcecache.Policy{
+		&RemoteBaseRequest{URL: srv.URL, Timeout: 27 * time.Second, Submodules: true},
+		&sourcecache.Policy{
 			MaxAge: time.Hour,
 			Retry:  sourcecache.RetryConfig{Attempts: 2, MinWait: time.Nanosecond, MaxWait: time.Nanosecond},
 		},
@@ -185,7 +185,7 @@ func TestFetchRemoteBase_GenerationAdmission(t *testing.T) {
 			f := &Fetcher{Cache: cachetest.New(t, root, sourcecache.New)}
 			request := RemoteBaseRequest{URL: "file://" + src, Timeout: 27 * time.Second, Submodules: false}
 			policy := sourcecache.Policy{MaxAge: time.Hour}
-			artifact, err := f.FetchRemoteBase(t.Context(), request, policy)
+			artifact, err := f.FetchRemoteBase(t.Context(), &request, &policy)
 			assert.FatalIf(t, !errors.Is(err, manifest.ErrInput) || artifact == nil || artifact.FS != nil ||
 				len(artifact.Warnings) != 1 ||
 				artifact.Warnings[0].Category != manifest.WarnSkippedSubmodule ||
@@ -196,7 +196,7 @@ func TestFetchRemoteBase_GenerationAdmission(t *testing.T) {
 			}
 
 			mustInitRepo(t, src)
-			artifact, err = f.FetchRemoteBase(t.Context(), request, policy)
+			artifact, err = f.FetchRemoteBase(t.Context(), &request, &policy)
 			assert.FatalIf(t, err != nil || artifact == nil, "repaired generation = %v, %v", artifact, err)
 			_, identity, viewErr := source.OperationView(t.Context(), artifact.FS)
 			if viewErr != nil || identity == "" || artifact.Content != identity {
@@ -211,8 +211,8 @@ func TestFetchRemoteBase_GenerationAdmission(t *testing.T) {
 					func(ctx context.Context, f *Fetcher, url string) (*store.SourceArtifact, error) {
 						return f.FetchRemoteBase(
 							ctx,
-							RemoteBaseRequest{URL: url, Timeout: 27 * time.Second, Submodules: false},
-							policy,
+							&RemoteBaseRequest{URL: url, Timeout: 27 * time.Second, Submodules: false},
+							&policy,
 						)
 					},
 					[]string{".sourceignore", "apps/drop.tmp", "apps/keep.yaml", "other/keep.yaml"},
@@ -347,8 +347,8 @@ func TestFetchRemoteBase_CommandBudgets(t *testing.T) {
 		aggregate := time.Second
 		artifact, err := f.FetchRemoteBase(
 			t.Context(),
-			RemoteBaseRequest{URL: "commands://" + src, Timeout: 5 * time.Second},
-			sourcecache.Policy{Timeout: &aggregate},
+			&RemoteBaseRequest{URL: "commands://" + src, Timeout: 5 * time.Second},
+			&sourcecache.Policy{Timeout: &aggregate},
 		)
 		if err != nil || artifact == nil || calls < 2 || time.Since(start) < 6*time.Second {
 			t.Fatalf("independent commands: calls=%d elapsed=%v error=%v", calls, time.Since(start), err)
@@ -381,14 +381,14 @@ func TestFetchRemoteBase_TimeoutPolicies(t *testing.T) {
 		request := RemoteBaseRequest{URL: "commands://" + src, Timeout: time.Second}
 		shortRequest := request
 		go func() {
-			_, err := f.FetchRemoteBase(t.Context(), shortRequest, sourcecache.Policy{MaxAge: time.Hour})
+			_, err := f.FetchRemoteBase(t.Context(), &shortRequest, &sourcecache.Policy{MaxAge: time.Hour})
 			short <- err
 		}()
 		<-started
 		request.Timeout = 5 * time.Second
 		longRequest := request
 		go func() {
-			_, err := f.FetchRemoteBase(t.Context(), longRequest, sourcecache.Policy{MaxAge: time.Hour})
+			_, err := f.FetchRemoteBase(t.Context(), &longRequest, &sourcecache.Policy{MaxAge: time.Hour})
 			long <- err
 		}()
 		{
@@ -407,7 +407,7 @@ func TestFetchRemoteBase_TimeoutPolicies(t *testing.T) {
 		f = &Fetcher{Cache: cachetest.New(t, root, sourcecache.New)}
 		before := calls.Load()
 		request.Timeout = time.Millisecond
-		artifact, err := f.FetchRemoteBase(t.Context(), request, sourcecache.Policy{MaxAge: time.Hour})
+		artifact, err := f.FetchRemoteBase(t.Context(), &request, &sourcecache.Policy{MaxAge: time.Hour})
 		if err != nil || artifact == nil || calls.Load() != before {
 			t.Fatalf("successful content was keyed by timeout: calls=%d->%d error=%v", before, calls.Load(), err)
 		}
@@ -452,7 +452,7 @@ func testFetchRemoteBaseFreshnessCase(t *testing.T, tc *struct {
 	root := t.TempDir()
 	f := &Fetcher{Cache: cachetest.New(t, root, sourcecache.New)}
 	request := RemoteBaseRequest{URL: srv.URL, Ref: ref, Timeout: 27 * time.Second, Submodules: true}
-	first, err := f.FetchRemoteBase(t.Context(), request, sourcecache.Policy{MaxAge: tc.age})
+	first, err := f.FetchRemoteBase(t.Context(), &request, &sourcecache.Policy{MaxAge: tc.age})
 	assert.NoError(t, err)
 
 	t.Logf(
@@ -487,7 +487,7 @@ func testFetchRemoteBaseFreshnessCase(t *testing.T, tc *struct {
 	}
 
 	f = &Fetcher{Cache: cachetest.New(t, root, sourcecache.New)}
-	second, err := f.FetchRemoteBase(t.Context(), request, sourcecache.Policy{MaxAge: tc.age})
+	second, err := f.FetchRemoteBase(t.Context(), &request, &sourcecache.Policy{MaxAge: tc.age})
 	assert.FatalIf(t, err != nil, "offline cache hit: %v", err)
 	assert.FatalIf(
 		t,
@@ -532,13 +532,13 @@ func testFetchRemoteBaseDefaultSubmodulesRecursionChangesContent(
 	for _, recurse := range []bool{false, true} {
 		artifact, err := f.FetchRemoteBase(
 			t.Context(),
-			RemoteBaseRequest{
+			&RemoteBaseRequest{
 				URL:        "file://" + (*parent),
 				Ref:        pin.String(),
 				Timeout:    27 * time.Second,
 				Submodules: recurse,
 			},
-			sourcecache.Policy{MaxAge: time.Hour},
+			&sourcecache.Policy{MaxAge: time.Hour},
 		)
 		assert.NoError(t, err)
 
@@ -569,13 +569,13 @@ func testFetchRemoteBaseDefaultSubmodulesCase(
 		if *remote {
 			artifact, err = f.FetchRemoteBase(
 				t.Context(),
-				RemoteBaseRequest{
+				&RemoteBaseRequest{
 					URL:        "file://" + (*parent),
 					Ref:        pin.String(),
 					Timeout:    27 * time.Second,
 					Submodules: true,
 				},
-				sourcecache.Policy{MaxAge: time.Hour},
+				&sourcecache.Policy{MaxAge: time.Hour},
 			)
 		} else {
 			r := &manifest.GitRepository{
@@ -587,7 +587,7 @@ func testFetchRemoteBaseDefaultSubmodulesCase(
 				t.Context(),
 				r,
 				(testInputs{}).readSet(r),
-				sourcecache.Policy{MaxAge: time.Hour},
+				&sourcecache.Policy{MaxAge: time.Hour},
 			)
 		}
 		assert.FatalIf(t, err != nil, "%s fetch: %v", wave, err)

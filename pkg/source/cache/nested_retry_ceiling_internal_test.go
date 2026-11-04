@@ -50,7 +50,7 @@ func testAcquireNestedTerminalDueCeilingCaseCallback(
 	_, _, outerID, err := c.Blob(
 		t.Context(),
 		BlobKey{Content: "outer"},
-		Policy{},
+		&Policy{},
 		producer(nil, &ocispec.Descriptor{}),
 	)
 	assert.NoError(t, err)
@@ -62,7 +62,7 @@ func testAcquireNestedTerminalDueCeilingCaseCallback(
 		if _, _, _, blobErr := c.Blob(
 			t.Context(),
 			BlobKey{Content: id},
-			Policy{},
+			&Policy{},
 			fail,
 		); !errors.Is(
 			blobErr,
@@ -76,7 +76,7 @@ func testAcquireNestedTerminalDueCeilingCaseCallback(
 		if _, _, _, blobErr2 := c.Blob(
 			t.Context(),
 			BlobKey{Content: "inner"},
-			Policy{},
+			&Policy{},
 			fail,
 		); !errors.Is(
 			blobErr2,
@@ -98,13 +98,13 @@ func testAcquireNestedTerminalDueCeilingCaseCallback(
 			_, _, _, blobErr3 := c.Blob(
 				t.Context(),
 				BlobKey{Content: "outer"},
-				Policy{Retry: fastRetry(5)},
+				&Policy{Retry: fastRetry(5)},
 				func(ctx context.Context, _ ProducerInput) (ProducerResult, error) {
 					outer++
 					_, _, _, blobErr4 := c.Blob(
 						ctx,
 						BlobKey{Content: "inner"},
-						Policy{Retry: fastRetry(7)},
+						&Policy{Retry: fastRetry(7)},
 						func(context.Context, ProducerInput) (ProducerResult, error) {
 							inner++
 							return ProducerResult{}, connReset()

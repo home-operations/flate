@@ -28,7 +28,7 @@ func TestAcquire_TrailingBoundary(t *testing.T) {
 				_, _, _, err := c.Acquire(
 					t.Context(),
 					ArchiveKey{Content: "source-trailing-boundary"},
-					Policy{MaxAge: 0},
+					&Policy{MaxAge: 0},
 					func(_ context.Context, w ProducerInput) (ProducerResult, error) {
 						var payloadTar bytes.Buffer
 						testutil.WriteTar(t, &payloadTar, map[string]string{"file": "x"}, 0o644)
@@ -76,7 +76,7 @@ func testAcquireTrailingFailureKeepsCacheIdentityCase(
 	_, _, _, err := c.Acquire(
 		t.Context(),
 		ArchiveKey{Content: "source-trailing-failure"},
-		Policy{MaxAge: 0},
+		&Policy{MaxAge: 0},
 		func(_ context.Context, w ProducerInput) (ProducerResult, error) {
 			if _, err := w.Write(data); err != nil {
 				return ProducerResult{}, err

@@ -179,7 +179,7 @@ func testTemplateCacheSourceRootValuesFilesPersistentReuse(t *testing.T) {
 	r, _, _, err := owner.Blob(
 		t.Context(),
 		cache.BlobKey{Content: key, Render: cache.RenderAccepted},
-		cache.Policy{MaxAge: cache.Forever},
+		&cache.Policy{MaxAge: cache.Forever},
 		nil,
 	)
 	assert.NoError(t, err)
@@ -195,7 +195,7 @@ func testTemplateCacheSourceRootValuesFilesPersistentReuse(t *testing.T) {
 	_, _, _, err = owner.Blob(
 		t.Context(),
 		cache.BlobKey{Content: key, Render: cache.RenderAccepted},
-		cache.Policy{},
+		&cache.Policy{},
 		func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 			writeTestRecordErr := writeTestRecord(
 				w,
@@ -266,7 +266,7 @@ func testTemplateCacheSourceRootValuesFilesPackagedCacheCannotMaskMissingSourceV
 	r, _, _, err := owner.Blob(
 		t.Context(),
 		cache.BlobKey{Content: key, Render: cache.RenderAccepted},
-		cache.Policy{MaxAge: cache.Forever},
+		&cache.Policy{MaxAge: cache.Forever},
 		nil,
 	)
 	assert.NoError(t, err)

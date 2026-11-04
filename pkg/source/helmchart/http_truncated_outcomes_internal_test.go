@@ -54,7 +54,7 @@ func testFetchHTTPChartTruncatedOutcomeReplayCase(
 		MinWait:  time.Nanosecond,
 		MaxWait:  time.Nanosecond,
 	}
-	_, err = f.Fetch(t.Context(), hc, fInputs.readSet(hc), sourcecache.Policy{Retry: retry})
+	_, err = f.Fetch(t.Context(), hc, fInputs.readSet(hc), &sourcecache.Policy{Retry: retry})
 	terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
 	assert.FatalIf(
 		t,
@@ -112,7 +112,7 @@ func testFetchHTTPChartTruncatedOutcomeReplayCase(
 	warmInputs := testInputs{repos: lookup}
 	warm := New(nil, Config{Network: newTestNetwork(t), Cache: warmCache})
 
-	_, err = warm.Fetch(t.Context(), hc, warmInputs.readSet(hc), sourcecache.Policy{Retry: retry})
+	_, err = warm.Fetch(t.Context(), hc, warmInputs.readSet(hc), &sourcecache.Policy{Retry: retry})
 	terminal, ok = errors.AsType[*sourcecache.TerminalError](err)
 	assert.ErrorIf(
 		t,

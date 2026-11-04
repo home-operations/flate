@@ -27,11 +27,12 @@ type Fetcher struct {
 type operation struct {
 	*Fetcher
 
+	work                 manifest.AcquisitionWork
 	reads                *store.ReadSet
 	secrets              source.SecretGetter
 	mediaTypes           []string
 	allowAnonymousDenied bool
-	produce              func(context.Context, registryAcquisition, cache.Policy) (*store.SourceArtifact, error)
+	produce              func(context.Context, registryAcquisition, *cache.Policy) (*store.SourceArtifact, error)
 }
 
 // Fetch acquires content using one execution's captured credentials and declarations.
@@ -39,14 +40,16 @@ func (f *Fetcher) Fetch(
 	ctx context.Context,
 	repo *manifest.OCIRepository,
 	reads *store.ReadSet,
-	policy cache.Policy,
+	policyValue *cache.Policy,
 ) (*store.SourceArtifact, error) {
+	policy := *policyValue
+
 	var mediaTypes []string
 	if mediaType := repo.LayerMediaType(); mediaType != "" {
 		mediaTypes = []string{mediaType}
 	}
 	innerOperation := operation{Fetcher: f, reads: reads, secrets: source.SecretLookup(reads), mediaTypes: mediaTypes}
-	return innerOperation.fetchSource(ctx, repo, policy)
+	return innerOperation.fetchSource(ctx, repo, &policy)
 }
 
 // FetchChart acquires chart layers using Helm's supported media types.
@@ -54,22 +57,28 @@ func (f *Fetcher) FetchChart(
 	ctx context.Context,
 	repo *manifest.OCIRepository,
 	reads *store.ReadSet,
-	policy cache.Policy,
+	policyValue *cache.Policy,
 ) (*store.SourceArtifact, error) {
+	policy := *policyValue
+
 	innerOperation2 := operation{
 		Fetcher: f, reads: reads, secrets: source.SecretLookup(reads),
 		mediaTypes: []string{registry.ChartLayerMediaType, registry.LegacyChartLayerMediaType},
 	}
-	return innerOperation2.fetchSource(ctx, repo, policy)
+	return innerOperation2.fetchSource(ctx, repo, &policy)
 }
 
 func (f *operation) fetchSource(
 	ctx context.Context,
 	repo *manifest.OCIRepository,
-	policy cache.Policy,
+	policyValue *cache.Policy,
 ) (*store.SourceArtifact, error) {
-	f.produce = func(ctx context.Context, request registryAcquisition, policy cache.Policy) (*store.SourceArtifact, error) {
-		return f.fetchLayer(ctx, repo, new(request), policy)
+	policy := *policyValue
+
+	f.produce = func(ctx context.Context, request registryAcquisition, policyValue *cache.Policy) (*store.SourceArtifact, error) {
+		productionPolicy := *policyValue
+
+		return f.fetchLayer(ctx, repo, &request, &productionPolicy)
 	}
-	return f.acquire(ctx, new(repo.RegistryAccess()), policy)
+	return f.acquire(ctx, new(repo.RegistryAccess()), &policy)
 }

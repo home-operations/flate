@@ -146,7 +146,12 @@ type acceptedOverlapAcquisitionInputs struct {
 }
 
 func acquireAcceptedOverlapSources(ctx context.Context, inputs *acceptedOverlapAcquisitionInputs) error {
-	_, _, _, err := (*inputs.cache).owner.Blob(ctx, (*inputs.key), sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
+	_, _, _, err := (*inputs.cache).owner.Blob(
+		ctx,
+		(*inputs.key),
+		&sourcecache.Policy{MaxAge: sourcecache.Forever},
+		nil,
+	)
 	if (*(*inputs.scenario)) && (*inputs.eligible) && err != nil {
 		return err
 	}
@@ -156,7 +161,7 @@ func acquireAcceptedOverlapSources(ctx context.Context, inputs *acceptedOverlapA
 	_, _, _, err = (*inputs.cache).owner.Blob(
 		ctx,
 		(*inputs.key),
-		sourcecache.Policy{MaxAge: 0},
+		&sourcecache.Policy{MaxAge: 0},
 		func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 			_, writeErr := w.Write((*inputs.frame))
 			return sourcecache.ProducerResult{}, writeErr
@@ -165,12 +170,16 @@ func acquireAcceptedOverlapSources(ctx context.Context, inputs *acceptedOverlapA
 	if err != nil {
 		return err
 	}
-	_, _, _, err = (*inputs.cache).owner.Blob(ctx, sourcecache.BlobKey{Content: struct {
-		Name string `json:"Name"`
-	}{"ordinary-source"}}, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
-		_, writeStringErr := io.WriteString(w, "source")
-		return sourcecache.ProducerResult{}, writeStringErr
-	})
+	_, _, _, err = (*inputs.cache).owner.Blob(
+		ctx,
+		sourcecache.BlobKey{Content: struct {
+			Name string `json:"Name"`
+		}{"ordinary-source"}},
+		&sourcecache.Policy{MaxAge: 0},
+		func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+			_, writeStringErr := io.WriteString(w, "source")
+			return sourcecache.ProducerResult{}, writeStringErr
+		})
 	if err != nil {
 		return err
 	}

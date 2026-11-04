@@ -68,7 +68,7 @@ func BenchmarkBlob_Put(b *testing.B) {
 	b.SetBytes(int64(len(payload)))
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _, _, err := c.Blob(b.Context(), key, Policy{MaxAge: 0}, producer(payload, &ocispec.Descriptor{}))
+		_, _, _, err := c.Blob(b.Context(), key, &Policy{MaxAge: 0}, producer(payload, &ocispec.Descriptor{}))
 		assert.NoError(b, err)
 	}
 }
@@ -80,13 +80,13 @@ func BenchmarkBlob_Get(b *testing.B) {
 	b.Cleanup(func() { _ = c.Close() })
 	payload := syntheticManifests(200)
 	key := BlobKey{Content: "render-benchmark"}
-	_, _, _, err = c.Blob(b.Context(), key, Policy{MaxAge: 0}, producer(payload, &ocispec.Descriptor{}))
+	_, _, _, err = c.Blob(b.Context(), key, &Policy{MaxAge: 0}, producer(payload, &ocispec.Descriptor{}))
 	assert.NoError(b, err)
 
 	b.SetBytes(int64(len(payload)))
 	b.ReportAllocs()
 	for b.Loop() {
-		r, _, _, err := c.Blob(b.Context(), key, Policy{MaxAge: Forever}, nil)
+		r, _, _, err := c.Blob(b.Context(), key, &Policy{MaxAge: Forever}, nil)
 		assert.NoError(b, err)
 
 		stream, err := r.Open("content")
@@ -126,7 +126,7 @@ func BenchmarkBlob_PutParallel(b *testing.B) {
 				_, _, _, err := c.Blob(
 					b.Context(),
 					keys[i],
-					Policy{MaxAge: 0},
+					&Policy{MaxAge: 0},
 					producer(payloads[i], &ocispec.Descriptor{}),
 				)
 				if err != nil {

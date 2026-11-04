@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vpn-sonarr
+  namespace: flux-system
+data:
+  value: unchanged

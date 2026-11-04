@@ -23,6 +23,7 @@ import (
 
 // RemoteBaseRequest carries a public base's effective repository and command policy.
 type RemoteBaseRequest struct {
+	Work       manifest.WorkScope
 	URL        string
 	Ref        string
 	Timeout    time.Duration
@@ -33,18 +34,29 @@ type RemoteBaseRequest struct {
 // An error may retain warnings without usable content.
 func (f *Fetcher) FetchRemoteBase(
 	ctx context.Context,
-	request RemoteBaseRequest,
-	policy sourcecache.Policy,
+	requestValue *RemoteBaseRequest,
+	policyValue *sourcecache.Policy,
 ) (*store.SourceArtifact, error) {
+	policy := *policyValue
+
+	request := *requestValue
+
 	if f.Cache == nil {
 		return nil, manifest.NewError(manifest.ErrInput, nil, "remote git base requires cache")
 	}
-	repo := manifest.NewGitRepository(
-		sourcev1.GitRepository{
+	attempt := struct {
+		repo manifest.GitRepository
+		work manifest.AcquisitionWork
+	}{
+		repo: *manifest.NewGitRepository(sourcev1.GitRepository{
 			Spec: sourcev1.GitRepositorySpec{URL: request.URL, RecurseSubmodules: request.Submodules},
-		},
-	)
-	if _, err := f.validateRepo(repo); err != nil {
+		}),
+		work: manifest.AcquisitionWork{Scope: request.Work},
+	}
+	repo := &attempt.repo
+	policy.Work = &attempt.work
+	endpoint, err := f.validateRepo(repo)
+	if err != nil {
 		return nil, err
 	}
 	if request.Ref != "" {
@@ -68,10 +80,10 @@ func (f *Fetcher) FetchRemoteBase(
 	generation, id, err := f.Cache.Git(
 		ctx,
 		key,
-		policy,
+		&policy,
 		func(ctx context.Context, storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
 			return f.produceRemoteGitBase(ctx, storer, worktree, &remoteBaseProducerState{
-				request: request, repo: repo, pinned: pinned,
+				request: request, repo: repo, pinned: pinned, work: policy.Work, protocol: endpoint.Protocol,
 				input: &input, identity: &identity, content: content,
 			})
 		},
@@ -109,6 +121,8 @@ func (f *Fetcher) FetchRemoteBase(
 }
 
 type remoteBaseProducerState struct {
+	work     *manifest.AcquisitionWork
+	protocol string
 	request  RemoteBaseRequest
 	repo     *manifest.GitRepository
 	pinned   bool
@@ -137,6 +151,7 @@ func (f *Fetcher) produceRemoteGitBase(
 		ctx,
 		storer,
 		worktree, &gitAcquisition{
+			work: scope.work, protocol: scope.protocol,
 			spec:    &acquisition,
 			options: git.CloneOptions{URL: scope.request.URL, NoCheckout: true},
 			timeout: scope.request.Timeout,
@@ -146,8 +161,10 @@ func (f *Fetcher) produceRemoteGitBase(
 		return plumbing.ZeroHash, err
 	}
 	if !scope.pinned {
-		fetchContextErr := (&gitAcquisition{timeout: scope.request.Timeout}).fetchRevision(
-			ctx, cloned, &git.FetchOptions{RefSpecs: []config.RefSpec{fetchAllRefs}, Tags: git.NoTags},
+		fetchContextErr := (&gitAcquisition{timeout: scope.request.Timeout, work: scope.work, protocol: scope.protocol}).fetchRevision(
+			ctx,
+			cloned,
+			&git.FetchOptions{RefSpecs: []config.RefSpec{fetchAllRefs}, Tags: git.NoTags},
 		)
 		if fetchContextErr != nil && !errors.Is(fetchContextErr, git.NoErrAlreadyUpToDate) {
 			return plumbing.ZeroHash, fmt.Errorf("fetch git revision: %w", fetchContextErr)
@@ -166,7 +183,11 @@ func (f *Fetcher) produceRemoteGitBase(
 		if scope.request.Timeout > 0 {
 			updateCtx, cancel = context.WithTimeout(ctx, scope.request.Timeout)
 		}
-		updateSubmodulesErr := f.updateSubmodules(updateCtx, cloned, nil, git.DefaultSubmoduleRecursionDepth)
+		updateSubmodulesErr := f.updateSubmodules(
+			updateCtx,
+			cloned,
+			submoduleOptions{depth: git.DefaultSubmoduleRecursionDepth, work: scope.work},
+		)
 		if cancel != nil {
 			cancel()
 		}

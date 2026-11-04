@@ -10,9 +10,12 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/validate/content"
 	apivalidation "k8s.io/apimachinery/pkg/api/validation"
+
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 type request struct {
+	work     manifest.AcquisitionWork
 	Output   output
 	Captures map[string]string
 }
@@ -86,7 +89,7 @@ func (x *requestExpansion) add(raw map[string]string) error {
 		if err := renderCopies(&artifact, raw); err != nil {
 			return err
 		}
-		x.requests = append(x.requests, request{artifact, maps.Clone(normalized)})
+		x.requests = append(x.requests, request{Output: artifact, Captures: maps.Clone(normalized)})
 	}
 	return nil
 }

@@ -105,6 +105,7 @@ func (c *admissionClosure) sourceFiles(source manifest.NamedResource) iter.Seq[s
 			evidence.paths = evidence.delta.Paths()
 		}
 		for _, file := range evidence.paths {
+			c.objects.WorkScope().Admission().Add(&manifest.WorkCounts{FileEntries: 1})
 			if evidence.paired {
 				file = c.coordinates(
 					new(manifest.Production{
@@ -265,6 +266,7 @@ func (c *admissionClosure) completeChangedClaim(scope *completeChangedClaimState
 		return false
 	}
 	for actual := range c.loader.Index.ReadersOfFile((*scope.file)) {
+		c.objects.WorkScope().Admission().Add(&manifest.WorkCounts{ReaderEdges: 1})
 		if actual.Reader == scope.reader.Reader {
 			if !(*scope.contentChanged)(actual) {
 				continue

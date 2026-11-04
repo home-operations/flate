@@ -148,6 +148,7 @@ type testFetcherTransportMaterialAbsentFromCacheMarker struct {
 	label string
 	value []byte
 }
+
 type testFetcherTransportMaterialAbsentFromCacheCaseInputs struct {
 	expected    *atomic.Pointer[testFetcherTransportMaterialAbsentFromCacheGeneration]
 	proxy       **httptest.Server
@@ -203,7 +204,7 @@ func testFetcherTransportMaterialAbsentFromCacheCase(
 			t.Context(),
 			(*testCaseInput.b),
 			fInputs.readSet((*testCaseInput.b)),
-			cache.Policy{MaxAge: (*testCaseInput.b).SourceInterval()},
+			&cache.Policy{MaxAge: (*testCaseInput.b).SourceInterval()},
 		)
 		assert.NoError(t, err)
 		assert.FatalIf(

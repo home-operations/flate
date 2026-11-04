@@ -84,10 +84,12 @@ func (e *MissingSecretError) RetryMachine(ctx context.Context, reads *store.Read
 // AcquireMachine selects credentials before acquisition and classifies machine failures.
 func AcquireMachine(
 	ctx context.Context,
-	policy cache.Policy,
+	policyValue *cache.Policy,
 	prepare func(context.Context) error,
-	acquire func(context.Context, cache.Policy) (*store.SourceArtifact, error),
+	acquire func(context.Context, *cache.Policy) (*store.SourceArtifact, error),
 ) (*store.SourceArtifact, error) {
+	policy := *policyValue
+
 	if err := ctx.Err(); err != nil {
 		return nil, manifest.NewError(manifest.ErrFlux, err, "")
 	}
@@ -106,7 +108,7 @@ func AcquireMachine(
 	cancel()
 	var artifact *store.SourceArtifact
 	if err == nil {
-		artifact, err = acquire(ctx, policy)
+		artifact, err = acquire(ctx, &policy)
 	}
 	if err != nil && !errors.Is(err, manifest.ErrMissingSecret) {
 		if _, cached := errors.AsType[*cache.CacheError](err); !cached {

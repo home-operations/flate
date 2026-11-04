@@ -16,6 +16,7 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/tree"
@@ -161,7 +162,12 @@ func TestEvaluate_ExtractIdentity(t *testing.T) {
 	identities := []inputIdentity{
 		{Alias: "repo", Input: store.ArtifactInput{Key: "family", Content: "generation", Digest: "generation"}},
 	}
+	recorder := &manifest.WorkRecorder{
+		Key: manifest.WorkKey{Owner: manifest.NamedResource{Kind: "ArtifactGenerator", Name: "generator"}},
+	}
+	scope := recorder.Scope()
 	e := evaluation{
+		work:     manifest.AcquisitionWork{Scope: scope},
 		owner:    owner,
 		maxAge:   cache.Forever,
 		identity: identities,
@@ -187,7 +193,7 @@ func TestEvaluate_ExtractIdentity(t *testing.T) {
 	input, _, id, err := owner.Acquire(
 		t.Context(),
 		key,
-		cache.Policy{MaxAge: cache.Forever},
+		&cache.Policy{MaxAge: cache.Forever},
 		func(context.Context, cache.ProducerInput) (cache.ProducerResult, error) {
 			called = true
 			return cache.ProducerResult{Descriptor: ocispec.Descriptor{}}, errors.New("unexpected extraction")
@@ -202,6 +208,23 @@ func TestEvaluate_ExtractIdentity(t *testing.T) {
 		err,
 		called,
 	)
+	var preparation, acquisition, service manifest.WorkCounts
+	for _, record := range scope.Snapshot(0) {
+		assert.Equal(t, record.Key.Owner, recorder.Key.Owner)
+		assert.Equal(t, record.Key.Input, id)
+		if record.Key.Phase == manifest.WorkPreparation {
+			preparation.Add(&record.Counts)
+		}
+		if record.Key.Phase == manifest.WorkAcquisition {
+			acquisition.Add(&record.Counts)
+		}
+		if record.Key.Phase == manifest.WorkCache {
+			service.Add(&record.Counts)
+		}
+	}
+	assert.Equal(t, preparation, manifest.WorkCounts{RawKeyPrepares: 1})
+	assert.Equal(t, acquisition, manifest.WorkCounts{Attempts: 1, Completed: 1})
+	assert.Equal(t, service, manifest.WorkCounts{Attempts: 1, Completed: 1})
 }
 
 type testEvaluateCaseInputs struct {

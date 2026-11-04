@@ -73,12 +73,14 @@ func TestAutoResolve_SubmoduleWarningAttribution(t *testing.T) {
 		t.Fatalf("baseline source evidence = %+v, current=%+v", warnings, result.Source.Warnings)
 	}
 	raw := result.BaseInput.FS.(*gittree.FS).Warnings
+
 	assert.FatalIf(
 		t,
 		len(raw) != 1 || raw[0].Resource != (manifest.NamedResource{}),
 		"borrowed filesystem evidence mutated: %+v",
 		raw,
 	)
+
 	assert.Diff(t, warnings[0].Detail, raw[0].Detail)
 }
 
@@ -103,21 +105,26 @@ func TestAutoResolve_SparseGitMemory(t *testing.T) {
 			res, err := AutoResolve(t.Context(), filepath.Join(fixture.Root, "flux"), fixture.Base.String(), owner)
 			assert.NoError(t, err)
 			assert.Diff(t, res.Changes.Paths(), []string{"app/input.yaml"})
+
 			{
 				_, ok := res.BaseInput.FS.(*gittree.FS)
 				assert.FatalIf(t, !ok, "%v", "baseline lost concrete admission")
 			}
+
 			{
 				_, ok := res.Source.FS.(*gittree.FS)
 				assert.FatalIf(t, !ok, "%v", "current lost concrete admission")
 			}
+
 			for _, side := range []struct {
 				input *store.SourceArtifact
 				value string
 			}{{res.BaseInput, "before"}, {res.Source, "after!"}} {
 				data, localErr := fs.ReadFile(side.input.FS, "app/input.yaml")
 				assert.NoError(t, localErr)
+
 				assert.FatalIf(t, !strings.Contains(string(data), side.value), "changed payload = %s", data)
+
 				info, localErr := fs.Stat(side.input.FS, "unrelated/large.txt")
 				assert.NoError(t, localErr)
 				assert.Equal(t, info.Size(), size.bytes)
@@ -195,7 +202,7 @@ func TestSelection_SparseGitBodies(t *testing.T) {
 			fixture := testutil.NewSparseGit(t, size.files, size.bytes)
 			location, err := gitrepo.Locate(t.Context(), fixture.Root, "")
 			assert.NoError(t, err)
-			input, err := admitLocation(t.Context(), location)
+			input, err := admitLocation(t.Context(), location, manifest.WorkScope{})
 			assert.NoError(t, err)
 			reads := &testutil.GitReads{LargeHash: fixture.Large}
 			observed := *fixture.Repo
@@ -212,12 +219,9 @@ func TestSelection_SparseGitBodies(t *testing.T) {
 			assert.NoError(t, err)
 			data, err := io.ReadAll(reader)
 			assert.NoError(t, errors.Join(err, reader.Close()))
-			assert.FatalIf(
-				t,
-				!strings.Contains(string(data), "before") || reads.Bodies.Load() != 1 || reads.Large.Load() != 0,
-				"%v",
-				"blob Reader calibration failed",
-			)
+			if !strings.Contains(string(data), "before") || reads.Bodies.Load() != 1 || reads.Large.Load() != 0 {
+				t.Fatal("blob Reader calibration failed")
+			}
 			reads.Reset()
 			s := selection{
 				repo:    &observed,
@@ -226,12 +230,9 @@ func TestSelection_SparseGitBodies(t *testing.T) {
 			}
 			baseTree, entries, err := s.baseEntries(t.Context())
 			assert.NoError(t, err)
-			assert.FatalIf(
-				t,
-				reads.Metadata.Load() == 0 || reads.Bodies.Load() != 0,
-				"%v",
-				"metadata traversal opened a blob Reader",
-			)
+			if reads.Metadata.Load() == 0 || reads.Bodies.Load() != 0 {
+				t.Fatal("metadata traversal opened a blob Reader")
+			}
 			t.Logf(
 				"baseEntries metadata=%d bodies=%d large=%d",
 				reads.Metadata.Load(),

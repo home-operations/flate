@@ -1,0 +1,3 @@
+resources:
+- govcon-runner.yaml
+- home-ops-runner.yaml

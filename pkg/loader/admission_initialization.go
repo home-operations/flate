@@ -428,6 +428,7 @@ func (c *admissionClosure) propagateInitialChange(id manifest.NamedResource, edg
 
 func (c *admissionClosure) seedChangedReaders(file string) {
 	for reader := range c.loader.Index.ReadersOfFile(file) {
+		c.objects.WorkScope().Admission().Add(&manifest.WorkCounts{ReaderEdges: 1})
 		if c.changedClaim(new(reader), file) {
 			if reader.Materialize {
 				if !c.replace[reader.Reader] {

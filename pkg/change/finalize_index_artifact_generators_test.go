@@ -48,7 +48,8 @@ func admitForFilter(s *store.Store, root string) {
 }
 
 func ownersForFilter(index *manifest.DiscoveryIndex, file string) []manifest.NamedResource {
-	owners := index.OwnersOfFile(file).Owners
+	ownersOfFileResult := index.OwnersOfFile(file)
+	owners := ownersOfFileResult.Owners
 	return owners
 }
 
@@ -99,6 +100,7 @@ func snapshotIndexForFilter(index *manifest.DiscoveryIndex) manifest.DiscoveryIn
 
 func assertFilterIndexForTest(t *testing.T, got, want manifest.DiscoveryIndex) {
 	t.Helper()
+
 	{
 		diff := cmp.Diff(want, got, cmp.Comparer(manifest.Equal))
 		assert.ErrorIf(t, diff != "", "discovery index differs (-want +got):\n%s", diff)
@@ -174,14 +176,16 @@ func TestFinalizeIndex_StaticArtifactGeneratorConsumer(t *testing.T) {
 	l.SourceRoot = root
 	for _, scan := range []string{filepath.Join(root, "entry"), view} {
 		{
-			_, err := l.Load(t.Context(), scan)
+			_, err := l.Load(t.Context(), scan, nil)
 			assert.FatalIf(t, err != nil, "%v", err)
 		}
 	}
+
 	{
 		err := l.FinalizeIndex(t.Context(), root, true)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
+
 	generator := manifest.NamedResource{
 		Group:     "source.extensions.fluxcd.io",
 		Kind:      "ArtifactGenerator",
@@ -315,14 +319,17 @@ func testFinalizeIndexArtifactGeneratorsCase(
 	l := loader.New(s)
 	l.SourceRoot = root
 	admitForFilter(s, root)
+
 	{
-		_, err := l.Load(t.Context(), filepath.Join(root, testCaseInput.scan))
+		_, err := l.Load(t.Context(), filepath.Join(root, testCaseInput.scan), nil)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
+
 	{
 		err := l.FinalizeIndex(t.Context(), root, true)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
+
 	idx := l.Index
 	for _, ns := range []string{"apps", "staging"} {
 		generator := manifest.NamedResource{
@@ -332,12 +339,14 @@ func testFinalizeIndexArtifactGeneratorsCase(
 			Name:      "generator",
 		}
 		record, ok := idx.Lookup(generator)
+
 		assert.FatalIf(
 			t,
 			!ok || record.File != generatorFile,
 			"generator coordinates before filtering = %+v",
 			record,
 		)
+
 		assert.Diff(t, record.Refs, []manifest.NamedResource{
 			{
 				Group:     manifest.SourceDomain,
@@ -355,8 +364,10 @@ func testFinalizeIndexArtifactGeneratorsCase(
 			Name:      "app-api",
 		}
 		r, ok := idx.Lookup(target)
+
 		assert.FatalIf(t, !ok || r.Path != "" || s.GetObject(target) != nil ||
 			s.GetArtifact(target, store.ArtifactContent) != nil, "prediction supplied content: %+v", r)
+
 		want := manifest.Production{
 			Owner:       testutil.KustomizationID("flux-system", ns),
 			Declaration: generator,
@@ -390,12 +401,14 @@ func testFinalizeIndexArtifactGeneratorsCase(
 	)
 	for _, ns := range []string{"apps", "staging"} {
 		owner := testutil.KustomizationID("flux-system", ns)
+
 		assert.FatalIf(
 			t,
 			!filter.ShouldReconcile(owner),
 			"%v",
 			"changed declaration did not select its contributing owner",
 		)
+
 		generator := manifest.NamedResource{
 			Group:     "source.extensions.fluxcd.io",
 			Kind:      "ArtifactGenerator",
@@ -404,18 +417,21 @@ func testFinalizeIndexArtifactGeneratorsCase(
 		}
 		obj := s.GetObject(generator)
 		assert.Equal(t, obj != nil, !testCaseInput.component)
+
 		assert.FatalIf(
 			t,
 			obj != nil && (!manifest.KindOf(obj).Discovery || !manifest.KindOf(obj).Runnable),
 			"generator admission = %v",
 			obj,
 		)
+
 		assert.FatalIf(
 			t,
 			!filter.ShouldReconcile(testutil.KustomizationID(ns, "consumer")),
 			"%v",
 			"changed generator declaration did not select its source consumer",
 		)
+
 		{
 			r, ok := idx.Lookup(
 				manifest.NamedResource{

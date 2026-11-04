@@ -56,7 +56,7 @@ func testBlobNonReusableGenerationCaseCallback(
 		_, _, _, err := (*testCaseInput.c).Blob(
 			t.Context(),
 			key,
-			Policy{MaxAge: Forever},
+			&Policy{MaxAge: Forever},
 			func(context.Context, ProducerInput) (ProducerResult, error) { return ProducerResult{}, connReset() },
 		)
 		assert.FatalIf(t, !errors.Is(err, syscall.ECONNRESET), "initial failure: %v", err)
@@ -78,7 +78,7 @@ func testBlobNonReusableGenerationCaseCallback(
 		generation, _, _, err := (*testCaseInput.c).Blob(
 			t.Context(),
 			request,
-			Policy{MaxAge: Forever},
+			&Policy{MaxAge: Forever},
 			func(_ context.Context, w ProducerInput) (ProducerResult, error) {
 				calls++
 				if calls > 1 {
@@ -119,7 +119,7 @@ func testBlobNonReusableGenerationCaseCallback(
 		generation, _, _, err := (*testCaseInput.c).Blob(
 			t.Context(),
 			key,
-			Policy{MaxAge: Forever},
+			&Policy{MaxAge: Forever},
 			nil,
 		)
 		assert.FatalIf(t, generation != nil ||
@@ -132,7 +132,7 @@ func testBlobNonReusableGenerationCaseCallback(
 			generation, _, _, err := (*testCaseInput.c).Blob(
 				t.Context(),
 				key,
-				Policy{MaxAge: Forever},
+				&Policy{MaxAge: Forever},
 				nil,
 			)
 			assert.FatalIf(t, generation != nil ||

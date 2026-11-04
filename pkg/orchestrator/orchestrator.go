@@ -45,6 +45,8 @@ var reconcilableKinds = func() []manifest.KindInfo {
 
 // Config contains invocation policy and shared rendering resources.
 type Config struct {
+	RecordWork bool
+
 	// Selection narrows declarations before rendering; zero selection is universal.
 	Selection manifest.Selection
 	// HelmOptions tunes templating and kind filtering through SkipKinds.
@@ -116,6 +118,9 @@ type Config struct {
 
 // Orchestrator exposes a completed execution tree's store.
 type Orchestrator struct {
+	work       manifest.WorkSummary
+	workFrozen bool
+
 	changeNamespaces []string
 	cfg              treeConfig
 	store            *store.Store
@@ -162,6 +167,8 @@ type Orchestrator struct {
 // Result contains rendered document batches, failures and discovery diagnostics.
 // All borrowed payloads MUST remain immutable.
 type Result struct {
+	Work manifest.WorkSummary
+
 	Manifests []manifest.DocumentBatch
 	Failed    map[manifest.NamedResource]store.StatusInfo
 	Orphans   map[manifest.NamedResource]string
@@ -184,7 +191,7 @@ type treeConfig struct {
 	Tree
 }
 
-func newOrchestrator(cfg *Config, treeInput *Tree, ts *task.Service) *Orchestrator {
+func newOrchestrator(ctx context.Context, cfg *Config, treeInput *Tree, ts *task.Service) *Orchestrator {
 	tree := *treeInput
 	st := store.New()
 	for _, child := range cfg.Supply {
@@ -197,6 +204,11 @@ func newOrchestrator(cfg *Config, treeInput *Tree, ts *task.Service) *Orchestrat
 		cache:  cfg.Cache,
 		tasks:  ts,
 	}
+	if o.cfg.work == nil && (cfg.RecordWork || slog.Default().Enabled(ctx, slog.LevelDebug)) {
+		o.cfg.work = new(manifest.WorkRecorder)
+		o.cfg.work.Init(&manifest.WorkKey{Tree: tree.ID, Source: manifest.BootstrapSourceID}, manifest.WorkScope{})
+	}
+	st.SetWorkTree(tree.ID, o.cfg.work.Scope())
 	o.cfg.Selection.Changed = cfg.Selection.Changed || tree.ExternalChanges != nil
 	if o.cfg.Selection.Changed || len(o.cfg.Selection.Roots) != 0 {
 		o.filter = change.NewFilter()
@@ -289,13 +301,14 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 		func(ctx context.Context, request kustomize.GitBaseRequest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
 			artifact, err := gitFetcher.FetchRemoteBase(
 				ctx,
-				git.RemoteBaseRequest{
+				&git.RemoteBaseRequest{
 					URL:        request.URL,
 					Ref:        request.Ref,
 					Timeout:    request.Timeout,
 					Submodules: request.Submodules,
+					Work:       request.Work,
 				},
-				sourcecache.Policy{MaxAge: request.MaxAge, Retry: retry},
+				&sourcecache.Policy{MaxAge: request.MaxAge, Retry: retry},
 			)
 			if artifact != nil {
 				for itemIndex := range artifact.Warnings {
@@ -311,6 +324,7 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 		o.src.Fetchers[manifest.KindGitRepository] = source.Wrap(manifest.KindGitRepository, gitFetcher)
 	}
 	config := discovery.Config{
+		Work:         o.cfg.work.Scope(),
 		Declarations: o.cfg.Supply,
 		Selection:    o.cfg.Selection, Loader: o.loader,
 		Path: o.cfg.Path, RepoRoot: o.cfg.RepoRoot, SelfURLs: o.cfg.SelfURLs, Input: o.cfg.Input,

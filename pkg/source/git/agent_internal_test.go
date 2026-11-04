@@ -283,7 +283,7 @@ func testFetcherAmbientAcquisitionCaseCompletion(
 	if (*(*captures.shape)) == "retry" {
 		policy.Retry = sourcecache.RetryConfig{Attempts: 2, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}
 	}
-	artifact, err := f.Fetch(t.Context(), (*captures.repo), reads, policy)
+	artifact, err := f.Fetch(t.Context(), (*captures.repo), reads, &policy)
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	assert.FatalIf(
 		t,
@@ -364,7 +364,7 @@ func testFetcherAmbientPreparationCase(t *testing.T, shape *string,
 	}}).readSet(repo)
 	defer reads.Close()
 	f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
-	artifact, err := f.Fetch(t.Context(), repo, reads, sourcecache.Policy{})
+	artifact, err := f.Fetch(t.Context(), repo, reads, &sourcecache.Policy{})
 	if artifact != nil || err == nil || opened.Load() != 0 {
 		t.Fatalf(
 			"preparation opened agent or acquired content: artifact=%v error=%v opened=%d",
@@ -491,7 +491,7 @@ func testFetcherStalledAgentCaseCompletion(t *testing.T, captures *testFetcherSt
 		(*captures.ctx),
 		(*captures.repo),
 		(*captures.reads),
-		sourcecache.Policy{Retry: sourcecache.RetryConfig{Attempts: 1}},
+		&sourcecache.Policy{Retry: sourcecache.RetryConfig{Attempts: 1}},
 	)
 	missing, ok := errors.AsType[*source.MissingSecretError]((*captures.err))
 	if !ok || missing.RetryAmbient == nil {
@@ -558,6 +558,7 @@ type testFetcherAmbientAcquisitionCaseCompletionInputs struct {
 	root       *string
 	keyring    *agent.Agent
 }
+
 type testFetcherStalledAgentCaseCompletionInputs struct {
 	ctx      *context.Context
 	err      *error
@@ -619,7 +620,7 @@ func testFetcherAmbientAcquisitionCaseCompletionTail(
 		)
 		if (*(*(*scope.captures).shape)) == "accepted" {
 			mustCommitFile(t, (*(*scope.captures).root), "hello.txt", "refreshed")
-			_, err := (*scope.f).Fetch(t.Context(), (*(*scope.captures).repo), (*scope.reads), sourcecache.Policy{})
+			_, err := (*scope.f).Fetch(t.Context(), (*(*scope.captures).repo), (*scope.reads), &sourcecache.Policy{})
 			refresh, ok := errors.AsType[*source.MissingSecretError](err)
 			assert.FatalIf(t, !ok || refresh.RetryAmbient == nil, "refresh preparation = %v", err)
 			fresh, err := refresh.RetryAmbient(t.Context())

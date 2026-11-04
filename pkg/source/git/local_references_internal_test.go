@@ -34,7 +34,7 @@ func testResolveLocalReferencesCase(t *testing.T, root *string,
 		t.Context(),
 		localLocation(t, (*root)),
 		[]*manifest.GitRepository{repository},
-		"",
+		LocalOptions{Revision: ""},
 	)
 	if tc.fail {
 		assert.FatalIf(t, !errors.Is(err, manifest.ErrFlux), "expected domain error, got %v", err)
@@ -112,7 +112,7 @@ func testResolveLocalReferencesCase2(t *testing.T, metadata *string,
 		t.Context(),
 		location,
 		[]*manifest.GitRepository{localSource(&sourcev1.GitRepositoryRef{Tag: "v2.0.0"})},
-		"",
+		LocalOptions{Revision: ""},
 	)
 	assert.Equal(t, err, nil)
 	artifact := artifacts[localSource(&sourcev1.GitRepositoryRef{Tag: "v2.0.0"}).Named()]

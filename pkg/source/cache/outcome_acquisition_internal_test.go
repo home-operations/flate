@@ -43,7 +43,7 @@ func TestOutcome_ClassifiedAcquisitionReplay(t *testing.T) {
 			"",
 		)
 	}
-	_, _, _, live := c.Blob(t.Context(), key, Policy{}, produce)
+	_, _, _, live := c.Blob(t.Context(), key, &Policy{}, produce)
 	assert.FatalIf(t, live == nil || live.Error() != "HTTP 503" || calls != 1, "live: %v calls=%d", live, calls)
 	{
 		err := c.Close()
@@ -51,7 +51,7 @@ func TestOutcome_ClassifiedAcquisitionReplay(t *testing.T) {
 	}
 
 	c = cachetest.New(t, root, New)
-	_, _, _, replay := c.Blob(t.Context(), key, Policy{}, produce)
+	_, _, _, replay := c.Blob(t.Context(), key, &Policy{}, produce)
 	assert.FatalIf(
 		t,
 		replay == nil || replay.Error() != live.Error() || calls != 1 || !errors.Is(replay, manifest.ErrFlux),
@@ -143,7 +143,7 @@ func testOutcomeAcquisitionValidityCaseCallback(
 	_, _, _, err = c.Blob(
 		t.Context(),
 		BlobKey{Content: "validity"},
-		Policy{MaxAge: Forever, Retry: fastRetry(2)},
+		&Policy{MaxAge: Forever, Retry: fastRetry(2)},
 		func(context.Context, ProducerInput) (ProducerResult, error) {
 			calls++
 			return ProducerResult{}, connReset()

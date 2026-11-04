@@ -142,7 +142,7 @@ func testFetcherMachineSSOTransportCaseCompletion(
 	reads := inputs.readSet(b)
 	defer reads.Close()
 	f := &Fetcher{Cache: cachetest.New(t, "", cache.New), Network: newTestNetwork(t)}
-	artifact, err := f.Fetch((*captures.ctx), b, reads, cache.Policy{})
+	artifact, err := f.Fetch((*captures.ctx), b, reads, &cache.Policy{})
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	assert.FatalIf(
 		t,

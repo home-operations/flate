@@ -91,13 +91,18 @@ func TestWithDeclarations_LocalApplicabilityAndSelectedKey(t *testing.T) {
 			Data: map[string]any{"chosen": "equal", "unrelated": []any{side}},
 		})
 	}
-	changes, err := Qualify(t.Context(), NewSet([]string{"values.yaml"}), stores[0], stores[1])
+	changes, err := Qualify(
+		t.Context(),
+		NewSet([]string{"values.yaml"}),
+		[2]*store.Store{stores[0], stores[1]},
+		manifest.WorkScope{},
+	)
 	assert.NoError(t, err)
 	frozen, err := changes.WithDeclarations(
-		t.Context(),
-		stores[0],
-		stores[1],
-		[2]map[manifest.NamedResource]store.Child{},
+		t.Context(), DeclarationInputs{Stores: [2]*store.Store{
+			stores[0],
+			stores[1],
+		}, Prepared: [2]map[manifest.NamedResource]store.Child{}},
 	)
 	assert.NoError(t, err)
 	for side, owner := range owners {
@@ -141,7 +146,13 @@ func TestWithDeclarations_LocalApplicabilityAndSelectedKey(t *testing.T) {
 			assert.Equal(t, known, false)
 		}
 	}
-	unknown, err := changes.WithDeclarations(t.Context(), stores[0], nil, [2]map[manifest.NamedResource]store.Child{})
+	unknown, err := changes.WithDeclarations(
+		t.Context(),
+		DeclarationInputs{
+			Stores:   [2]*store.Store{stores[0], nil},
+			Prepared: [2]map[manifest.NamedResource]store.Child{},
+		},
+	)
 	assert.NoError(t, err)
 	assert.Equal(
 		t,
@@ -171,13 +182,13 @@ func TestWithDeclarations_ProducerOwnedRawIsUnknown(t *testing.T) {
 		})
 		st.AddObject(child)
 	}
-	changes, err := Qualify(t.Context(), NewSet(nil), stores[0], stores[1])
+	changes, err := Qualify(t.Context(), NewSet(nil), [2]*store.Store{stores[0], stores[1]}, manifest.WorkScope{})
 	assert.NoError(t, err)
 	frozen, err := changes.WithDeclarations(
-		t.Context(),
-		stores[0],
-		stores[1],
-		[2]map[manifest.NamedResource]store.Child{},
+		t.Context(), DeclarationInputs{Stores: [2]*store.Store{
+			stores[0],
+			stores[1],
+		}, Prepared: [2]map[manifest.NamedResource]store.Child{}},
 	)
 	assert.NoError(t, err)
 	assert.Equal(
@@ -213,14 +224,14 @@ func TestWithDeclarations_DoesNotRetainSourceCaptures(t *testing.T) {
 		}
 		st.SetArtifact(manifest.BootstrapSourceID, inputs[side])
 	}
-	qualified, err := Qualify(t.Context(), NewSet(nil), stores[0], stores[1])
+	qualified, err := Qualify(t.Context(), NewSet(nil), [2]*store.Store{stores[0], stores[1]}, manifest.WorkScope{})
 	assert.NoError(t, err)
 	for _, other := range []*store.Store{stores[1], nil} {
 		frozen, err := qualified.WithDeclarations(
-			t.Context(),
-			stores[0],
-			other,
-			[2]map[manifest.NamedResource]store.Child{},
+			t.Context(), DeclarationInputs{Stores: [2]*store.Store{
+				stores[0],
+				other,
+			}, Prepared: [2]map[manifest.NamedResource]store.Child{}},
 		)
 		assert.NoError(t, err)
 		delta, descriptors, _ := frozen.ForSource(manifest.BootstrapSourceID)
@@ -321,21 +332,32 @@ func TestWithReaders_UnchangedAncestorOutput(t *testing.T) {
 					st.AddObject(&manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace}, doc)
 				}
 			}
-			changes, err := Qualify(t.Context(), NewSet([]string{"parent.yaml"}), stores[0], stores[1])
+			changes, err := Qualify(
+				t.Context(),
+				NewSet([]string{"parent.yaml"}),
+				[2]*store.Store{stores[0], stores[1]},
+				manifest.WorkScope{},
+			)
 			assert.NoError(t, err)
 			changes, err = changes.WithReaders(
-				t.Context(), indexes[0], indexes[1], [2]map[manifest.NamedResource]inputprojection.Projection{},
+				t.Context(),
+				[2]*manifest.DiscoveryIndex{indexes[0], indexes[1]},
+				[2]map[manifest.NamedResource]inputprojection.Projection{},
+				manifest.WorkScope{},
 			)
 			assert.NoError(t, err)
 			changes, err = changes.WithDeclarations(
-				t.Context(),
-				stores[0],
-				stores[1],
-				[2]map[manifest.NamedResource]store.Child{},
+				t.Context(), DeclarationInputs{Stores: [2]*store.Store{
+					stores[0],
+					stores[1],
+				}, Prepared: [2]map[manifest.NamedResource]store.Child{}},
 			)
 			assert.NoError(t, err)
 			changes, err = changes.WithReaders(
-				t.Context(), indexes[0], indexes[1], [2]map[manifest.NamedResource]inputprojection.Projection{},
+				t.Context(),
+				[2]*manifest.DiscoveryIndex{indexes[0], indexes[1]},
+				[2]map[manifest.NamedResource]inputprojection.Projection{},
+				manifest.WorkScope{},
 			)
 			assert.NoError(t, err)
 			delta, _, _ := changes.ForSource(manifest.BootstrapSourceID)
@@ -458,13 +480,13 @@ func testWithDeclarationsOneSidedInputCase(t *testing.T, testCaseInput *struct {
 	if testCaseInput.changed {
 		paths = append(paths, "input.yaml")
 	}
-	changes, err := Qualify(t.Context(), NewSet(paths), stores[0], stores[1])
+	changes, err := Qualify(t.Context(), NewSet(paths), [2]*store.Store{stores[0], stores[1]}, manifest.WorkScope{})
 	assert.NoError(t, err)
 	frozen, err := changes.WithDeclarations(
-		t.Context(),
-		stores[0],
-		stores[1],
-		[2]map[manifest.NamedResource]store.Child{},
+		t.Context(), DeclarationInputs{Stores: [2]*store.Store{
+			stores[0],
+			stores[1],
+		}, Prepared: [2]map[manifest.NamedResource]store.Child{}},
 	)
 	assert.NoError(t, err)
 	delta, _, _ := frozen.ForSource(manifest.BootstrapSourceID)
@@ -529,9 +551,12 @@ func testWithDeclarationsPreparedProductionCase(
 	if testCaseInput.missing {
 		prepared[1] = nil
 	}
-	changes, err := Qualify(t.Context(), NewSet(nil), stores[0], stores[1])
+	changes, err := Qualify(t.Context(), NewSet(nil), [2]*store.Store{stores[0], stores[1]}, manifest.WorkScope{})
 	assert.NoError(t, err)
-	frozen, err := changes.WithDeclarations(t.Context(), stores[0], stores[1], prepared)
+	frozen, err := changes.WithDeclarations(
+		t.Context(),
+		DeclarationInputs{Stores: [2]*store.Store{stores[0], stores[1]}, Prepared: prepared},
+	)
 	assert.NoError(t, err)
 	for side, child := range children {
 		comparison7 := frozen.OutputChanged(
@@ -560,18 +585,28 @@ func testWithDeclarationsEffectiveInputApplicabilityCase(
 
 	f := newDeclarationInputFixture(t, (*testCaseInput))
 	inputID := f.inputs[0].Named()
-	changes, err := Qualify(t.Context(), NewSet([]string{"settings.yaml"}), f.stores[0], f.stores[1])
+	changes, err := Qualify(
+		t.Context(),
+		NewSet([]string{"settings.yaml"}),
+		[2]*store.Store{f.stores[0], f.stores[1]},
+		manifest.WorkScope{},
+	)
 	assert.NoError(t, err)
-	changes, err = changes.WithReaders(t.Context(), f.indexes[0], f.indexes[1], f.projections)
+	changes, err = changes.WithReaders(
+		t.Context(),
+		[2]*manifest.DiscoveryIndex{f.indexes[0], f.indexes[1]},
+		f.projections,
+		manifest.WorkScope{},
+	)
 	assert.NoError(t, err)
 	var frozen *Set
 	freeze := func(ctx context.Context) {
 		var err error
 		frozen, err = changes.WithDeclarations(
-			ctx,
-			f.stores[0],
-			f.stores[1],
-			[2]map[manifest.NamedResource]store.Child{},
+			ctx, DeclarationInputs{Stores: [2]*store.Store{
+				f.stores[0],
+				f.stores[1],
+			}, Prepared: [2]map[manifest.NamedResource]store.Child{}},
 		)
 		assert.NoError(t, err)
 	}

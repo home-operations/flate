@@ -195,7 +195,7 @@ func oneSidedSuppliers(b *testing.B, count int) (*change.Set, *store.Store, *man
 			)
 		}
 	}
-	changes, err := change.Qualify(b.Context(), nil, stores[0], stores[1])
+	changes, err := change.Qualify(b.Context(), nil, [2]*store.Store{stores[0], stores[1]}, manifest.WorkScope{})
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -222,10 +222,11 @@ func oneSidedSuppliers(b *testing.B, count int) (*change.Set, *store.Store, *man
 		observations[1].Visibility = append(observations[1].Visibility, empty)
 	}
 	changes, err = changes.WithReaders(
-		b.Context(),
-		&observations[0],
-		&observations[1],
-		[2]map[manifest.NamedResource]inputprojection.Projection{},
+		b.Context(), [2]*manifest.DiscoveryIndex{
+			&observations[0],
+			&observations[1],
+		},
+		[2]map[manifest.NamedResource]inputprojection.Projection{}, manifest.WorkScope{},
 	)
 	if err != nil {
 		b.Fatal(err)
@@ -303,10 +304,11 @@ func BenchmarkCollectInputs_LargeFile(b *testing.B) {
 		Visibility: []manifest.InputVisibility{{Source: manifest.BootstrapSourceID, Root: ".", Complete: true}},
 	}
 	resolved, err := set.WithReaders(
-		b.Context(),
-		empty,
-		visible,
-		[2]map[manifest.NamedResource]inputprojection.Projection{},
+		b.Context(), [2]*manifest.DiscoveryIndex{
+			empty,
+			visible,
+		},
+		[2]map[manifest.NamedResource]inputprojection.Projection{}, manifest.WorkScope{},
 	)
 	if err != nil {
 		b.Fatal(err)
@@ -440,7 +442,7 @@ func benchmarkDetectCase(b *testing.B, name string) {
 	testutil.WriteFile(b, after, "mod.yaml", "BBB")
 	b.ReportAllocs()
 	for b.Loop() {
-		if _, err := change.Detect(b.Context(), testInput(before), testInput(after)); err != nil {
+		if _, err := change.Detect(b.Context(), testInput(before), testInput(after), manifest.WorkScope{}); err != nil {
 			b.Fatal(err)
 		}
 	}

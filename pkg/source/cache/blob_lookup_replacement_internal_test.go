@@ -36,7 +36,7 @@ func testBlobLookupAndReplacementConcurrentFirstRead(t *testing.T) {
 		Annotations: map[string]string{"revision": "v1"},
 	}
 	for _, key := range keys {
-		_, _, _, err := c.Blob(t.Context(), key, Policy{}, producer([]byte(key.Content.(string)), &upstream))
+		_, _, _, err := c.Blob(t.Context(), key, &Policy{}, producer([]byte(key.Content.(string)), &upstream))
 		assert.NoError(t, err)
 	}
 	assert.NoError(t, c.Close())
@@ -49,7 +49,7 @@ func testBlobLookupAndReplacementConcurrentFirstRead(t *testing.T) {
 		joined.Go(func() {
 			ready.Done()
 			<-start
-			r, desc, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+			r, desc, _, err := c.Blob(t.Context(), key, &Policy{MaxAge: Forever}, nil)
 			if err != nil {
 				t.Error(err)
 				return
@@ -90,7 +90,7 @@ func testBlobLookupAndReplacementMixedAlgorithmFirstRead(t *testing.T) {
 	for _, algorithm := range blobAlgorithms {
 		key := BlobKey{Content: algorithm.String()}
 		payload := []byte(algorithm.String())
-		_, _, id, err := c.Blob(t.Context(), key, Policy{}, producer(payload, &ocispec.Descriptor{}))
+		_, _, id, err := c.Blob(t.Context(), key, &Policy{}, producer(payload, &ocispec.Descriptor{}))
 		assert.NoError(t, err)
 
 		stored, err := c.store.Resolve(t.Context(), id)
@@ -117,7 +117,7 @@ func testBlobLookupAndReplacementMixedAlgorithmFirstRead(t *testing.T) {
 		joined.Go(func() {
 			ready.Done()
 			<-start
-			r, _, _, err := c.Blob(t.Context(), BlobKey{Content: algorithm.String()}, Policy{MaxAge: Forever}, nil)
+			r, _, _, err := c.Blob(t.Context(), BlobKey{Content: algorithm.String()}, &Policy{MaxAge: Forever}, nil)
 			if err != nil {
 				t.Error(err)
 				return
@@ -150,11 +150,11 @@ func testBlobLookupAndReplacementRecreatedParent(t *testing.T) {
 
 	c := cachetest.New(t, t.TempDir(), New)
 	key := BlobKey{Content: "recreated-parent"}
-	_, _, _, err := c.Blob(t.Context(), key, Policy{}, producer([]byte("first"), &ocispec.Descriptor{}))
+	_, _, _, err := c.Blob(t.Context(), key, &Policy{}, producer([]byte("first"), &ocispec.Descriptor{}))
 	assert.NoError(t, err)
 
 	assert.NoError(t, os.RemoveAll(filepath.Join(c.root.Name(), blobDir())))
-	r, _, _, err := c.Blob(t.Context(), key, Policy{}, producer([]byte("second"), &ocispec.Descriptor{}))
+	r, _, _, err := c.Blob(t.Context(), key, &Policy{}, producer([]byte("second"), &ocispec.Descriptor{}))
 	assert.NoError(t, err)
 
 	data, err := fs.ReadFile(r, "content")
@@ -184,7 +184,7 @@ func testBlobLookupAndReplacementCase(t *testing.T, algorithm *digest.Algorithm,
 		MediaType:   "upstream/type",
 		Annotations: map[string]string{"revision": "v1"},
 	}
-	_, _, id, err := c.Blob(t.Context(), key, Policy{}, producer(payload, &upstream))
+	_, _, id, err := c.Blob(t.Context(), key, &Policy{}, producer(payload, &upstream))
 	assert.NoError(t, err)
 
 	stored, err := c.store.Resolve(t.Context(), id)
@@ -201,13 +201,13 @@ func testBlobLookupAndReplacementCase(t *testing.T, algorithm *digest.Algorithm,
 	}
 	assert.NoError(t, c.store.Tag(t.Context(), stored, id))
 	warmKey := BlobKey{Content: "independent-sha256"}
-	_, _, _, err = c.Blob(t.Context(), warmKey, Policy{}, producer([]byte("warm SHA256"), &ocispec.Descriptor{}))
+	_, _, _, err = c.Blob(t.Context(), warmKey, &Policy{}, producer([]byte("warm SHA256"), &ocispec.Descriptor{}))
 	assert.NoError(t, err)
 
 	assert.NoError(t, c.Close())
 	c = cachetest.New(t, root, New)
 	for range 2 {
-		r, _, _, blobErr3 := c.Blob(t.Context(), warmKey, Policy{MaxAge: Forever}, nil)
+		r, _, _, blobErr3 := c.Blob(t.Context(), warmKey, &Policy{MaxAge: Forever}, nil)
 		assert.NoError(t, blobErr3)
 
 		data, blobErr3 := fs.ReadFile(r, "content")
@@ -217,7 +217,7 @@ func testBlobLookupAndReplacementCase(t *testing.T, algorithm *digest.Algorithm,
 	assertBlobRoots(t, c, digest.SHA256)
 	var view fs.FS
 	for range 2 {
-		r, desc, restoredID, blobErr4 := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+		r, desc, restoredID, blobErr4 := c.Blob(t.Context(), key, &Policy{MaxAge: Forever}, nil)
 		assert.NoError(t, blobErr4)
 
 		assert.Diff(t, desc, upstream)
@@ -283,7 +283,7 @@ func testBlobLookupAndReplacementCase(t *testing.T, algorithm *digest.Algorithm,
 	}
 	assert.NoError(t, c.root.Remove(parent))
 	assert.NoError(t, os.Symlink(t.TempDir(), filepath.Join(root, parent)))
-	generation, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+	generation, _, _, err := c.Blob(t.Context(), key, &Policy{MaxAge: Forever}, nil)
 	if err == nil {
 		_, err = fs.ReadFile(generation, "content")
 	}
@@ -332,7 +332,7 @@ func testBlobLookupAndReplacementOutcome(t *testing.T, maxAge time.Duration) {
 	_, _, id, err := c.Blob(
 		t.Context(),
 		key,
-		Policy{},
+		&Policy{},
 		producer([]byte("original"), &ocispec.Descriptor{}),
 	)
 	assert.NoError(t, err)
@@ -345,7 +345,7 @@ func testBlobLookupAndReplacementOutcome(t *testing.T, maxAge time.Duration) {
 	}
 
 	c = cachetest.New(t, root, New)
-	_, _, _, err = c.Blob(t.Context(), key, Policy{Retry: fastRetry(3)}, fail)
+	_, _, _, err = c.Blob(t.Context(), key, &Policy{Retry: fastRetry(3)}, fail)
 	terminal, ok := errors.AsType[*TerminalError](err)
 	assert.FatalIf(
 		t,
@@ -373,7 +373,7 @@ func testBlobLookupAndReplacementOutcome(t *testing.T, maxAge time.Duration) {
 
 		c = cachetest.New(t, root, New)
 		for _, produce := range []func(context.Context, ProducerInput) (ProducerResult, error){nil, fail} {
-			_, _, _, blobErr5 := c.Blob(t.Context(), key, policy, produce)
+			_, _, _, blobErr5 := c.Blob(t.Context(), key, &policy, produce)
 			terminal, ok := errors.AsType[*TerminalError](blobErr5)
 			assert.FatalIf(t, !ok || terminal.Attempted || !errors.Is(blobErr5, syscall.ECONNRESET) ||
 				!errors.Is(blobErr5, manifest.ErrFlux) ||
@@ -381,7 +381,7 @@ func testBlobLookupAndReplacementOutcome(t *testing.T, maxAge time.Duration) {
 		}
 	}
 	time.Sleep(750*time.Millisecond - time.Nanosecond)
-	_, _, _, err = c.Blob(t.Context(), key, policy, fail)
+	_, _, _, err = c.Blob(t.Context(), key, &policy, fail)
 	{
 		terminal, ok := errors.AsType[*TerminalError](err)
 		assert.FatalIf(
@@ -405,10 +405,10 @@ func testBlobLookupAndReplacementOutcome(t *testing.T, maxAge time.Duration) {
 	)
 	time.Sleep(time.Nanosecond)
 	{
-		_, _, _, blobErr6 := c.Blob(t.Context(), key, policy, nil)
+		_, _, _, blobErr6 := c.Blob(t.Context(), key, &policy, nil)
 		assert.FatalIf(t, !errors.Is(blobErr6, errdef.ErrNotFound), "due lookup: %v", blobErr6)
 	}
-	_, _, _, err = c.Blob(t.Context(), key, policy, fail)
+	_, _, _, err = c.Blob(t.Context(), key, &policy, fail)
 	{
 		terminal, ok := errors.AsType[*TerminalError](err)
 		assert.FatalIf(
@@ -431,7 +431,7 @@ func testBlobLookupAndReplacementOutcome(t *testing.T, maxAge time.Duration) {
 		err,
 	)
 	time.Sleep(1500 * time.Millisecond)
-	_, _, _, err = c.Blob(t.Context(), key, policy, producer([]byte("recovered"), &ocispec.Descriptor{}))
+	_, _, _, err = c.Blob(t.Context(), key, &policy, producer([]byte("recovered"), &ocispec.Descriptor{}))
 	assert.NoError(t, err)
 
 	good, err := c.store.Resolve(t.Context(), id)
@@ -442,7 +442,7 @@ func testBlobLookupAndReplacementOutcome(t *testing.T, maxAge time.Duration) {
 		good,
 		err,
 	)
-	_, _, _, err = c.Blob(t.Context(), key, Policy{}, fail)
+	_, _, _, err = c.Blob(t.Context(), key, &Policy{}, fail)
 	assert.FatalIf(
 		t,
 		!errors.Is(err, syscall.ECONNRESET) || calls != 5,
@@ -475,7 +475,7 @@ func testBlobLookupAndReplacementCase2(t *testing.T, identities map[string]strin
 	c := cachetest.New(t, root, New)
 	key := BlobKey{Content: "blob-completed"}
 	for range 2 {
-		r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+		r, _, _, err := c.Blob(t.Context(), key, &Policy{MaxAge: Forever}, nil)
 		assert.FatalIf(
 			t,
 			r != nil || !errors.Is(err, errdef.ErrNotFound) || !errors.Is(err, manifest.ErrFlux),
@@ -507,7 +507,7 @@ func testBlobLookupAndReplacementCase2Completion(
 	var heldPin, heldPayload string
 	for _, payload := range []string{"first", ""} {
 		r, _, id, err := (*captures.c).Blob(
-			t.Context(), (*captures.key), Policy{MaxAge: 0},
+			t.Context(), (*captures.key), &Policy{MaxAge: 0},
 			producer([]byte(payload), &ocispec.Descriptor{}),
 		)
 		assert.NoError(t, err)
@@ -542,7 +542,7 @@ func testBlobLookupAndReplacementCase2Completion(
 		assert.Equal(t, AcquisitionIdentity(r), readerPin)
 		{
 			r, _, _, blobErr7 := (*captures.c).Blob(
-				t.Context(), (*captures.key), Policy{MaxAge: 0},
+				t.Context(), (*captures.key), &Policy{MaxAge: 0},
 				nil,
 			)
 			assert.FatalIf(t, !errors.Is(blobErr7, errdef.ErrNotFound) ||
@@ -567,14 +567,14 @@ func testBlobLookupAndReplacementCase2Completion(
 			(*captures.c) = cachetest.New(t, (*captures.root), New)
 			{
 				r, _, _, blobErr := (*captures.c).Blob(
-					t.Context(), (*captures.key), Policy{},
+					t.Context(), (*captures.key), &Policy{},
 					nil,
 				)
 				assert.FatalIf(t, r != nil ||
 					!errors.Is(blobErr, errdef.ErrNotFound), "cold zero-age lookup: reader=%v, error=%v", r, blobErr)
 			}
 		}
-		first, _, _, err := (*captures.c).Blob(t.Context(), (*captures.key), Policy{MaxAge: Forever}, nil)
+		first, _, _, err := (*captures.c).Blob(t.Context(), (*captures.key), &Policy{MaxAge: Forever}, nil)
 		assert.NoError(t, err)
 
 		restored := NameBlob("chart.tgz", first)
@@ -594,7 +594,7 @@ func testBlobLookupAndReplacementCase2Completion(
 		)
 		var wg sync.WaitGroup
 		wg.Go(func() {
-			other, _, _, blobErr8 := (*captures.c).Blob(t.Context(), (*captures.key), Policy{MaxAge: Forever}, nil)
+			other, _, _, blobErr8 := (*captures.c).Blob(t.Context(), (*captures.key), &Policy{MaxAge: Forever}, nil)
 			if blobErr8 != nil {
 				t.Error(blobErr8)
 				return

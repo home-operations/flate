@@ -20,15 +20,13 @@ import (
 
 func TestRefineHistory_ContributorReplacement(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"empty", "unknown", "positive", "peer", "static", "primary", "exposed_primary", "parent_inventory", "parent_unknown"} {
+	for _, mode := range []string{
+		"empty", "unknown", "positive", "peer", "static", "primary", "exposed_primary", "parent_inventory", "parent_unknown",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
-			testRefineHistoryContributorReplacementCase(
-				t,
-				&mode,
-			)
-		},
-		)
+			testContributorReplacement(t, mode)
+		})
 	}
 }
 
@@ -81,10 +79,101 @@ func TestRefineHistory_RestoredSourceQualification(t *testing.T) {
 
 func TestRefineHistory_SourceQualifiedRoots(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"mutable", "alias", "pinned", "paired_pinned", "external", "unavailable", "component", "symlink", "unresolved", "remote", "escaped", "source_root", "symlink_escape"} {
+	for _, mode := range []string{
+		"mutable",
+		"alias",
+		"pinned",
+		"paired_pinned",
+		"external",
+		"unavailable",
+		"component",
+		"symlink",
+		"unresolved",
+		"remote",
+		"escaped",
+		"source_root",
+		"symlink_escape",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
-			testRefineHistorySourceQualifiedRootsCase(t, &mode)
+			root := t.TempDir()
+			st := store.New()
+			owner := testutil.KustomizationID("apps", "emitter")
+			child := testutil.KustomizationID("apps", "child")
+			target := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "old"}
+			consumer := &manifest.Kustomization{
+				Name:      "consumer",
+				Namespace: "apps",
+				PostBuild: &kustomizev1.PostBuild{
+					SubstituteFrom: []manifest.SubstituteReference{{Kind: target.Kind, Name: target.Name}},
+				},
+			}
+			source := &manifest.GitRepository{Name: "content", Namespace: "apps"}
+			st.AddObjects([]manifest.BaseManifest{source, consumer})
+			historySourceInputResult := historySourceInput(t, mode, root)
+			art, changed, roots := historySourceInputResult.artifact, historySourceInputResult.changed, historySourceInputResult.roots
+			st.SetArtifact(source.Named(), art)
+			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				owner: {
+					File: "owner.yaml",
+				}, consumer.Named(): {
+					File: "consumer.yaml",
+				}, target: {
+					Productions: []manifest.Production{{Owner: owner}},
+				},
+			}}
+			changes := change.NewSet([]string{changed, "consumer.yaml"})
+			if mode == "paired_pinned" {
+				previous := *art
+				previous.Revision = "before"
+				previous.FS = fstest.MapFS{"apps/red/config.yaml": {Data: []byte("before")}}
+				art.Revision = "after"
+				peer := store.New()
+				peer.AddObject(source)
+				peer.SetArtifact(source.Named(), &previous)
+				var err error
+				changes, err = change.Qualify(
+					t.Context(),
+					change.NewSet([]string{"consumer.yaml"}), [2]*store.Store{peer, st},
+					manifest.WorkScope{},
+				)
+				assert.NoError(t, err)
+			}
+			f := newAdmission(t, admissionConfig{changes: changes, index: index, inventory: st, root: root})
+			record := manifest.DiscoveryRecord{
+				Refs:         []manifest.NamedResource{source.Named()},
+				ContentRoots: map[manifest.NamedResource][]string{source.Named(): roots},
+				Productions:  []manifest.Production{{Owner: owner, Source: manifest.BootstrapSourceID}},
+			}
+			f.RefineHistory(
+				map[manifest.NamedResource]iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]{
+					owner: func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
+						yield(child, record)
+					},
+				},
+				map[manifest.NamedResource]bool{owner: true},
+			)
+			selected := mode == "mutable" || mode == "paired_pinned" || mode == "alias" || mode == "component" ||
+				mode == "symlink" ||
+				mode == "source_root" ||
+				mode == "unresolved" ||
+				mode == "escaped"
+			assert.Equal(t, f.ShouldReconcile(child), selected)
+			assert.Equal(t, f.ShouldReconcile(source.Named()), selected)
+			assert.Equal(t, st.GetObject(child) == nil, true)
+			assert.Equal(t, len(index.Records), 3)
+			remaining := f.last.productions(target)
+			assert.Equal(
+				t,
+				slices.ContainsFunc(
+					remaining,
+					func(p manifest.Production) bool {
+						return p.Owner == owner
+					},
+				),
+				mode == "unavailable" || mode == "unresolved" || mode == "remote" || mode == "escaped" ||
+					mode == "symlink_escape",
+			)
 		},
 		)
 	}
@@ -92,8 +181,49 @@ func TestRefineHistory_SourceQualifiedRoots(t *testing.T) {
 
 func TestRefineHistory_PeerContentSources(t *testing.T) {
 	t.Parallel()
-	t.Run("peers", func(t *testing.T) { t.Parallel(); testRefineHistoryPeerContentSourcesPeers(t) })
-	t.Run("reader_sources", func(t *testing.T) { t.Parallel(); testRefineHistoryPeerContentSourcesReaderSources(t) })
+	t.Run("peers", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		st := store.New()
+		child := testutil.KustomizationID("apps", "child")
+		owners := []manifest.NamedResource{testutil.KustomizationID("apps", "a"), testutil.KustomizationID("apps", "z")}
+		sources := []*manifest.GitRepository{{Name: "a", Namespace: "apps"}, {Name: "z", Namespace: "apps"}}
+		history := map[manifest.NamedResource]iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]{}
+		for i, source := range sources {
+			st.AddObject(source)
+			st.SetArtifact(
+				source.Named(),
+				&store.SourceArtifact{
+					FS:         fstest.MapFS{"apps/red/file": {Data: []byte("value")}},
+					LocalPath:  "/mounted/" + source.Name,
+					LocalRoot:  filepath.Join(root, source.Name),
+					InputAlias: true,
+				},
+			)
+			history[owners[i]] = func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
+				yield(
+					child,
+					manifest.DiscoveryRecord{
+						Refs:         []manifest.NamedResource{source.Named()},
+						ContentRoots: map[manifest.NamedResource][]string{source.Named(): {"apps/red"}},
+						Productions:  []manifest.Production{{Owner: owners[i], Source: manifest.BootstrapSourceID}},
+					},
+				)
+			}
+		}
+		f := newAdmission(
+			t,
+			admissionConfig{changes: change.NewSet([]string{"z/apps/red/file"}), index: nil, inventory: st, root: root},
+		)
+		f.RefineHistory(history, map[manifest.NamedResource]bool{owners[0]: true, owners[1]: true})
+		assert.Equal(t, f.ShouldReconcile(child), true)
+		for _, owner := range owners {
+			assert.Equal(t, f.ShouldReconcile(owner), true)
+		}
+		for _, source := range sources {
+			assert.Equal(t, f.ShouldReconcile(source.Named()), true)
+		}
+	})
 }
 
 func TestRefineHistory_PreservesDeclarationEvidence(t *testing.T) {
@@ -292,12 +422,78 @@ func TestAddEmitted_ReplacesHistoricalOrdering(t *testing.T) {
 	assert.Equal(t, reads.Valid(), true)
 }
 
-func testRefineHistoryContributorReplacementCase(
-	t *testing.T,
-	testCaseInput *string,
-) {
-	t.Helper()
+type historyInput struct {
+	artifact *store.SourceArtifact
+	changed  string
+	roots    []string
+}
 
+func historySourceInput(t *testing.T, mode, root string) historyInput {
+	t.Helper()
+	art := &store.SourceArtifact{
+		FS: fstest.MapFS{
+			"apps/red/config.yaml": {Data: []byte("changed")},
+			"parts/shared/file":    {Data: []byte("component")},
+		},
+		LocalPath: root,
+	}
+	changed := "apps/red/config.yaml"
+	roots := []string{"apps/red"}
+	if mode == "alias" {
+		art.LocalPath, art.LocalRoot, art.InputAlias = "/mounted/content", filepath.Join(root, "subtree"), true
+		changed = "subtree/" + changed
+	}
+	if mode == "pinned" || mode == "paired_pinned" {
+		art.LocalPath, art.LocalRoot, art.Key, art.Content = "/mounted/content", root, "commit", "commit"
+		changed = "../mounted/content/apps/red/config.yaml"
+	}
+	if mode == "external" {
+		art.LocalPath, art.LocalRoot = "/external", "/external"
+	}
+	if mode == "unavailable" {
+		art.FS = nil
+	}
+	if mode == "component" {
+		roots, changed = []string{"apps/red", "apps/red/../../parts/shared"}, "parts/shared/file"
+	}
+	if mode == "symlink" {
+		testutil.WriteFile(t, root, "apps/red/file", "same")
+		testutil.WriteFile(t, root, "parts/deep/placeholder", "same")
+		testutil.WriteFile(t, root, "parts/shared/file", "changed")
+		assert.NoError(t, os.Symlink("../../parts/deep", filepath.Join(root, "apps", "red", "link")))
+		art.FS = os.DirFS(root)
+		roots, changed = []string{"apps/red/link/../shared"}, "parts/shared/file"
+	}
+	if mode == "symlink_escape" {
+		assert.NoError(t, os.Symlink("..", filepath.Join(root, "escape")))
+		art.FS = os.DirFS(root)
+		roots = []string{"escape"}
+	}
+	if mode == "unresolved" {
+		roots = []string{"absent/../apps/red"}
+	}
+	if mode == "remote" {
+		roots = []string{"https://example.invalid/component"}
+	}
+	if mode == "escaped" {
+		roots = []string{"../../outside"}
+	}
+	if mode == "source_root" {
+		roots = []string{"."}
+	}
+	return historyInput{artifact: art, changed: changed, roots: roots}
+}
+
+func TestRefineHistory_PeerReaderContentSources(t *testing.T) {
+	t.Parallel()
+	t.Run("reader_sources", func(t *testing.T) {
+		t.Parallel()
+		testPeerReaderContentSources(t)
+	})
+}
+
+func testContributorReplacement(t *testing.T, mode string) {
+	t.Helper()
 	st := store.New()
 	owner := testutil.KustomizationID("apps", "owner")
 	peer := testutil.KustomizationID("apps", "peer")
@@ -311,10 +507,10 @@ func testRefineHistoryContributorReplacementCase(
 	}
 	st.AddObject(consumer)
 	proofs := []manifest.Production{{Owner: owner}}
-	if (*testCaseInput) == "peer" {
+	if mode == "peer" {
 		proofs = append(proofs, manifest.Production{Owner: peer})
 	}
-	if (*testCaseInput) == "static" {
+	if mode == "static" {
 		proofs = append(proofs, manifest.Production{Source: manifest.BootstrapSourceID, File: "static.yaml"})
 	}
 	extra := testutil.KustomizationID("apps", "extra")
@@ -323,32 +519,26 @@ func testRefineHistoryContributorReplacementCase(
 		extra: {Productions: []manifest.Production{{Owner: owner}}},
 	}}
 	consumerFile := "consumer.yaml"
-	if (*testCaseInput) == "parent_inventory" || (*testCaseInput) == "parent_unknown" {
+	if mode == "parent_inventory" || mode == "parent_unknown" {
 		consumerFile = "apps/consumer.yaml"
 		st.SetArtifact(
 			manifest.BootstrapSourceID,
-			&store.SourceArtifact{
-				LocalPath: "/repo",
-				FS:        fstest.MapFS{consumerFile: {Data: []byte("changed")}},
-			},
+			&store.SourceArtifact{LocalPath: "/repo", FS: fstest.MapFS{consumerFile: {Data: []byte("changed")}}},
 		)
 		record := index.Records[consumer.Named()]
 		record.File = consumerFile
 		index.Records[consumer.Named()] = record
 	}
 	changes := []string{consumerFile}
-	if (*testCaseInput) == "primary" {
+	if mode == "primary" {
 		changes = append(changes, "owner.yaml")
 	}
-	f := newAdmission(
-		t,
-		admissionConfig{changes: change.NewSet(changes), index: index, inventory: st, root: "/repo"},
-	)
+	f := newAdmission(t, admissionConfig{changes: change.NewSet(changes), index: index, inventory: st, root: "/repo"})
 	assert.Equal(t, f.ShouldReconcile(owner), true)
 	calls := 0
 	records := func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
 		calls++
-		if (*testCaseInput) == "exposed_primary" {
+		if mode == "exposed_primary" {
 			yield(
 				owner,
 				manifest.DiscoveryRecord{
@@ -358,14 +548,12 @@ func testRefineHistoryContributorReplacementCase(
 			)
 		}
 	}
-	history := map[manifest.NamedResource]iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]{
-		owner: records,
-	}
-	if (*testCaseInput) == "unknown" || (*testCaseInput) == "parent_unknown" {
+	history := map[manifest.NamedResource]iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]{owner: records}
+	if mode == "unknown" || mode == "parent_unknown" {
 		history[owner] = nil
 	}
-	precise := map[manifest.NamedResource]bool{owner: (*testCaseInput) != "positive"}
-	if (*testCaseInput) == "parent_inventory" || (*testCaseInput) == "parent_unknown" {
+	precise := map[manifest.NamedResource]bool{owner: mode != "positive"}
+	if mode == "parent_inventory" || mode == "parent_unknown" {
 		parent := testutil.KustomizationID("apps", "parent")
 		history[parent] = func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
 			yield(
@@ -382,208 +570,31 @@ func testRefineHistoryContributorReplacementCase(
 	f.RefineHistory(history, precise)
 	assert.Equal(
 		t,
-		f.ShouldReconcile(owner), (*testCaseInput) ==
-			"unknown" || (*testCaseInput) == "positive" || (*testCaseInput) == "primary" || (*testCaseInput) == "exposed_primary" || (*testCaseInput) ==
-			"parent_unknown",
+		f.ShouldReconcile(owner),
+		mode == "unknown" || mode == "positive" || mode == "primary" || mode == "exposed_primary" ||
+			mode == "parent_unknown",
 	)
-	assert.Equal(t, f.ShouldReconcile(peer), (*testCaseInput) == "peer")
+	assert.Equal(t, f.ShouldReconcile(peer), mode == "peer")
 	assert.Equal(
 		t,
-		f.ShouldReconcile(extra), (*testCaseInput) ==
-			"primary" || (*testCaseInput) == "exposed_primary" || (*testCaseInput) == "parent_unknown",
+		f.ShouldReconcile(extra),
+		mode == "primary" || mode == "exposed_primary" || mode == "parent_unknown",
 	)
 	assert.Equal(t, f.ShouldReconcile(consumer.Named()), true)
 	assert.Equal(t, f.ShouldReconcile(target), true)
 	assert.Equal(t, len(index.Records[target].Productions), len(proofs))
-	if (*testCaseInput) == "static" {
+	if mode == "static" {
 		assert.Equal(t, len(f.last.productions(target)), 1)
 	}
-	if (*testCaseInput) == "unknown" || (*testCaseInput) == "parent_unknown" {
+	if mode == "unknown" || mode == "parent_unknown" {
 		assert.Equal(t, calls, 0)
 	} else {
 		assert.Equal(t, calls, 1)
 	}
 }
 
-func testRefineHistorySourceQualifiedRootsCase(
-	t *testing.T,
-	testCaseInput *string,
-) {
+func testPeerReaderContentSources(t *testing.T) {
 	t.Helper()
-
-	root := t.TempDir()
-	st := store.New()
-	owner := testutil.KustomizationID("apps", "emitter")
-	child := testutil.KustomizationID("apps", "child")
-	target := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "old"}
-	consumer := &manifest.Kustomization{
-		Name:      "consumer",
-		Namespace: "apps",
-		PostBuild: &kustomizev1.PostBuild{
-			SubstituteFrom: []manifest.SubstituteReference{{Kind: target.Kind, Name: target.Name}},
-		},
-	}
-	source := &manifest.GitRepository{Name: "content", Namespace: "apps"}
-	st.AddObjects([]manifest.BaseManifest{source, consumer})
-	art := &store.SourceArtifact{
-		FS: fstest.MapFS{
-			"apps/red/config.yaml": {Data: []byte("changed")},
-			"parts/shared/file":    {Data: []byte("component")},
-		},
-		LocalPath: root,
-	}
-	changed := "apps/red/config.yaml"
-	roots := []string{"apps/red"}
-	if (*testCaseInput) == "alias" {
-		art.LocalPath, art.LocalRoot, art.InputAlias = "/mounted/content", filepath.Join(root, "subtree"), true
-		changed = "subtree/" + changed
-	}
-	if (*testCaseInput) == "pinned" || (*testCaseInput) == "paired_pinned" {
-		art.LocalPath, art.LocalRoot, art.Key, art.Content = "/mounted/content", root, "commit", "commit"
-		changed = "../mounted/content/apps/red/config.yaml"
-	}
-	if (*testCaseInput) == "external" {
-		art.LocalPath, art.LocalRoot = "/external", "/external"
-	}
-	if (*testCaseInput) == "unavailable" {
-		art.FS = nil
-	}
-	if (*testCaseInput) == "component" {
-		roots, changed = []string{"apps/red", "apps/red/../../parts/shared"}, "parts/shared/file"
-	}
-	if (*testCaseInput) == "symlink" {
-		testutil.WriteFile(t, root, "apps/red/file", "same")
-		testutil.WriteFile(t, root, "parts/deep/placeholder", "same")
-		testutil.WriteFile(t, root, "parts/shared/file", "changed")
-		assert.NoError(t, os.Symlink("../../parts/deep", filepath.Join(root, "apps", "red", "link")))
-		art.FS = os.DirFS(root)
-		roots, changed = []string{"apps/red/link/../shared"}, "parts/shared/file"
-	}
-	if (*testCaseInput) == "symlink_escape" {
-		assert.NoError(t, os.Symlink("..", filepath.Join(root, "escape")))
-		art.FS = os.DirFS(root)
-		roots = []string{"escape"}
-	}
-	if (*testCaseInput) == "unresolved" {
-		roots = []string{"absent/../apps/red"}
-	}
-	if (*testCaseInput) == "remote" {
-		roots = []string{"https://example.invalid/component"}
-	}
-	if (*testCaseInput) == "escaped" {
-		roots = []string{"../../outside"}
-	}
-	if (*testCaseInput) == "source_root" {
-		roots = []string{"."}
-	}
-	st.SetArtifact(source.Named(), art)
-	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-		owner: {
-			File: "owner.yaml",
-		},
-		consumer.Named(): {File: "consumer.yaml"},
-		target:           {Productions: []manifest.Production{{Owner: owner}}},
-	}}
-	changes := change.NewSet([]string{changed, "consumer.yaml"})
-	if (*testCaseInput) == "paired_pinned" {
-		previous := *art
-		previous.Revision = "before"
-		previous.FS = fstest.MapFS{"apps/red/config.yaml": {Data: []byte("before")}}
-		art.Revision = "after"
-		peer := store.New()
-		peer.AddObject(source)
-		peer.SetArtifact(source.Named(), &previous)
-		var err error
-		changes, err = change.Qualify(t.Context(), change.NewSet([]string{"consumer.yaml"}), peer, st)
-		assert.NoError(t, err)
-	}
-	f := newAdmission(t, admissionConfig{changes: changes, index: index, inventory: st, root: root})
-	record := manifest.DiscoveryRecord{
-		Refs:         []manifest.NamedResource{source.Named()},
-		ContentRoots: map[manifest.NamedResource][]string{source.Named(): roots},
-		Productions:  []manifest.Production{{Owner: owner, Source: manifest.BootstrapSourceID}},
-	}
-	f.RefineHistory(
-		map[manifest.NamedResource]iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]{
-			owner: func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) { yield(child, record) },
-		},
-		map[manifest.NamedResource]bool{owner: true},
-	)
-	selected := (*testCaseInput) == "mutable" || (*testCaseInput) == "paired_pinned" || (*testCaseInput) == "alias" ||
-		(*testCaseInput) == "component" ||
-		(*testCaseInput) ==
-			"symlink" ||
-		(*testCaseInput) ==
-			"source_root" ||
-		(*testCaseInput) ==
-			"unresolved" ||
-		(*testCaseInput) ==
-			"escaped"
-	assert.Equal(t, f.ShouldReconcile(child), selected)
-	assert.Equal(t, f.ShouldReconcile(source.Named()), selected)
-	assert.Equal(t, st.GetObject(child) == nil, true)
-	assert.Equal(t, len(index.Records), 3)
-	remaining := f.last.productions(target)
-	assert.Equal(
-		t,
-		slices.ContainsFunc(
-			remaining,
-			func(p manifest.Production) bool { return p.Owner == owner },
-		),
-		(*testCaseInput) ==
-			"unavailable" || (*testCaseInput) == "unresolved" || (*testCaseInput) == "remote" || (*testCaseInput) == "escaped" || (*testCaseInput) ==
-			"symlink_escape",
-	)
-}
-
-func testRefineHistoryPeerContentSourcesPeers(t *testing.T) {
-	t.Helper()
-
-	root := t.TempDir()
-	st := store.New()
-	child := testutil.KustomizationID("apps", "child")
-	owners := []manifest.NamedResource{testutil.KustomizationID("apps", "a"), testutil.KustomizationID("apps", "z")}
-	sources := []*manifest.GitRepository{{Name: "a", Namespace: "apps"}, {Name: "z", Namespace: "apps"}}
-	history := map[manifest.NamedResource]iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]{}
-	for i, source := range sources {
-		st.AddObject(source)
-		st.SetArtifact(
-			source.Named(),
-			&store.SourceArtifact{
-				FS:         fstest.MapFS{"apps/red/file": {Data: []byte("value")}},
-				LocalPath:  "/mounted/" + source.Name,
-				LocalRoot:  filepath.Join(root, source.Name),
-				InputAlias: true,
-			},
-		)
-		history[owners[i]] = func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
-			yield(
-				child,
-				manifest.DiscoveryRecord{
-					Refs:         []manifest.NamedResource{source.Named()},
-					ContentRoots: map[manifest.NamedResource][]string{source.Named(): {"apps/red"}},
-					Productions:  []manifest.Production{{Owner: owners[i], Source: manifest.BootstrapSourceID}},
-				},
-			)
-		}
-	}
-	f := newAdmission(
-		t,
-		admissionConfig{changes: change.NewSet([]string{"z/apps/red/file"}), index: nil, inventory: st, root: root},
-	)
-	f.RefineHistory(history, map[manifest.NamedResource]bool{owners[0]: true, owners[1]: true})
-	assert.Equal(t, f.ShouldReconcile(child), true)
-	for _, owner := range owners {
-		assert.Equal(t, f.ShouldReconcile(owner), true)
-	}
-	for _, source := range sources {
-		assert.Equal(t, f.ShouldReconcile(source.Named()), true)
-	}
-}
-
-func testRefineHistoryPeerContentSourcesReaderSources(t *testing.T) {
-	t.Helper()
-
 	var stores [2]*store.Store
 	var roots [2]string
 	sources := []*manifest.GitRepository{
@@ -631,7 +642,7 @@ func testRefineHistoryPeerContentSourcesReaderSources(t *testing.T) {
 			)
 		}
 	}
-	changes, err := change.Qualify(t.Context(), nil, stores[0], stores[1])
+	changes, err := change.Qualify(t.Context(), nil, [2]*store.Store{stores[0], stores[1]}, manifest.WorkScope{})
 	assert.NoError(t, err)
 	assert.Diff(t, sourceChanges(changes, sources[0].Named()).Paths(), []string{"apps/red/removed.yaml"})
 	assert.Equal(t, sourceChanges(changes, sources[1].Named()).Len(), 0)
@@ -673,7 +684,6 @@ func testRefineHistoryPeerContentSourcesReaderSources(t *testing.T) {
 			map[manifest.NamedResource]bool{owner: true},
 		)
 		indexes[side] = index
-
 		for i, source := range sources {
 			assert.Diff(t, filter.last.record(projected[i]).ContentRoots[source.Named()], []string{"apps/red"})
 			assert.Equal(t, filter.ShouldReconcile(retained[i]), i == 0)

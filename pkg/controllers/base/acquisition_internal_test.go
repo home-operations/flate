@@ -80,6 +80,7 @@ func TestAcquire_SettlementContinuation(t *testing.T) {
 		},
 		Complete: func(_ context.Context, acquired *store.SourceArtifact, unavailable error, level manifest.DrainLevel) error {
 			completions++
+
 			assert.ErrorIf(
 				t,
 				acquired != artifact || unavailable != nil || level != manifest.DrainCascade,
@@ -88,6 +89,7 @@ func TestAcquire_SettlementContinuation(t *testing.T) {
 				unavailable,
 				level,
 			)
+
 			return nil
 		},
 	}
@@ -126,6 +128,7 @@ func TestAcquire_SettlementContinuation(t *testing.T) {
 			completions,
 		)
 	}
+
 	assert.FatalIf(t, st.GetArtifact(provider.Named(), store.ArtifactContent) != nil ||
 		st.GetArtifact(owner.Named(), store.ArtifactContent) != nil ||
 		len(
@@ -154,21 +157,26 @@ func TestAcquire_CanceledMaterialDoesNotPark(t *testing.T) {
 			}
 			var got error
 			tasks.Go(t.Context(), "acquire", func(ctx context.Context) {
-				got = run.Acquire(ctx, provider, Acquisition{
-					AllowMissingSecrets: true,
-					Fetch: func(context.Context) (*store.SourceArtifact, error) {
-						return nil, missing
+				got = run.Acquire(
+					ctx,
+					provider,
+					Acquisition{
+						AllowMissingSecrets: true,
+						Fetch: func(context.Context) (*store.SourceArtifact, error) {
+							return nil, missing
+						},
+						Complete: func(context.Context, *store.SourceArtifact, error, manifest.DrainLevel) error {
+							t.Error("canceled acquisition completed")
+							return nil
+						},
 					},
-					Complete: func(context.Context, *store.SourceArtifact, error, manifest.DrainLevel) error {
-						t.Error("canceled acquisition completed")
-						return nil
-					},
-				}, manifest.DrainNone)
+					manifest.DrainNone)
 			})
 			tasks.BlockTillDone()
 			if !errors.Is(got, cause) || len(st.Warnings()) != 0 {
 				t.Fatalf("canceled acquisition error=%v warnings=%+v", got, st.Warnings())
 			}
+
 			{
 				pending, ok := got.(interface {
 					Settle(context.Context, manifest.DrainLevel) error
@@ -245,36 +253,43 @@ func testAcquireOutcomesCase(t *testing.T, testCaseInput *struct {
 			func(t *testing.T, ctx context.Context, _ *manifest.ResourceSet, level manifest.DrainLevel) error {
 				t.Helper()
 				run.Reads.GetObject(provider.Named())
-				got = run.Acquire(ctx, provider, Acquisition{
-					AllowMissingSecrets:  testCaseInput.allow,
-					AllowAnonymousDenied: testCaseInput.policy,
-					Fetch: func(context.Context) (*store.SourceArtifact, error) {
-						if testCaseInput.missing {
-							source.SecretLookup(&run.Reads)(provider.Namespace, missing.Secret.Name)
-						}
-						if failure != nil {
-							return nil, failure
-						}
-						return artifact, nil
+				got = run.Acquire(
+					ctx,
+					provider,
+					Acquisition{
+						AllowMissingSecrets:  testCaseInput.allow,
+						AllowAnonymousDenied: testCaseInput.policy,
+						Fetch: func(context.Context) (*store.SourceArtifact, error) {
+							if testCaseInput.missing {
+								source.SecretLookup(&run.Reads)(provider.Namespace, missing.Secret.Name)
+							}
+							if failure != nil {
+								return nil, failure
+							}
+							return artifact, nil
+						},
+						Complete: func(_ context.Context, acquired *store.SourceArtifact, unavailable error, completedLevel manifest.DrainLevel) error {
+							completed++
+
+							assert.ErrorIf(
+								t,
+								(unavailable != nil) != testCaseInput.unavailable || completedLevel != level,
+								"completion unavailable=%v level=%d",
+								unavailable,
+								completedLevel,
+							)
+
+							assert.ErrorIf(
+								t,
+								!testCaseInput.unavailable && acquired != artifact,
+								"%v",
+								"completion lost acquired content",
+							)
+
+							return nil
+						},
 					},
-					Complete: func(_ context.Context, acquired *store.SourceArtifact, unavailable error, completedLevel manifest.DrainLevel) error {
-						completed++
-						assert.ErrorIf(
-							t,
-							(unavailable != nil) != testCaseInput.unavailable || completedLevel != level,
-							"completion unavailable=%v level=%d",
-							unavailable,
-							completedLevel,
-						)
-						assert.ErrorIf(
-							t,
-							!testCaseInput.unavailable && acquired != artifact,
-							"%v",
-							"completion lost acquired content",
-						)
-						return nil
-					},
-				}, level)
+					level)
 				return got
 			},
 		)
@@ -302,6 +317,7 @@ func testAcquireOutcomesCaseTail(t *testing.T, tailCaseInput *testAcquireOutcome
 	t.Helper()
 	(*tailCaseInput.tasks).
 		BlockTillDone()
+
 	assert.FatalIf(
 		t,
 		((*tailCaseInput.got) != nil) != (*tailCaseInput.testCaseInput).hard || (*tailCaseInput.completed) !=
@@ -311,23 +327,28 @@ func testAcquireOutcomesCaseTail(t *testing.T, tailCaseInput *testAcquireOutcome
 		(*tailCaseInput.completed),
 		(*tailCaseInput.testCaseInput).hard,
 	)
+
 	assert.FatalIf(
 		t,
 		(*tailCaseInput.testCaseInput).hard && !errors.Is((*tailCaseInput.got), (*tailCaseInput.failure)),
 		"hard failure lost its cause: %v",
 		(*tailCaseInput.got),
 	)
+
 	warnings := (*tailCaseInput.st).Warnings()
 	if !(*tailCaseInput.testCaseInput).unavailable {
 		assert.FatalIf(t, len(warnings) != 0, "unexpected warnings: %+v", warnings)
+
 		return true
 	}
+
 	assert.FatalIf(t, len(warnings) != 1 || warnings[0].Resource != (*tailCaseInput.provider).Named() ||
 		warnings[0].Subject != manifest.DiagnosticFor(
 			(*tailCaseInput.provider).Named(),
 			(*tailCaseInput.provider),
 		) ||
 		warnings[0].Category != manifest.WarnSourceCredentialsUnavailable, "provider diagnostic=%+v", warnings)
+
 	var related []manifest.NamedResource
 	if (*tailCaseInput.testCaseInput).missing {
 		related = []manifest.NamedResource{(*tailCaseInput.missing).Secret}
@@ -335,6 +356,7 @@ func testAcquireOutcomesCaseTail(t *testing.T, tailCaseInput *testAcquireOutcome
 	if !slices.Equal(warnings[0].Related, related) {
 		t.Fatalf("related=%v, want %v", warnings[0].Related, related)
 	}
+
 	{
 		info, _ := (*tailCaseInput.st).GetStatus((*tailCaseInput.owner).
 			Named(),
@@ -342,6 +364,7 @@ func testAcquireOutcomesCaseTail(t *testing.T, tailCaseInput *testAcquireOutcome
 		assert.FatalIf(t, info.Status != store.StatusReady ||
 			info.Outcome() == store.OutcomeSkipped, "provider unavailability suppressed the consumer: %+v", info)
 	}
+
 	return false
 }
 

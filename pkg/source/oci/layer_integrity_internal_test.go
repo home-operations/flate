@@ -121,7 +121,7 @@ func testFetcherLayerDigestMismatchPublishesNothingCase(
 			t.Context(),
 			repo,
 			(testInputs{}).readSet(repo),
-			sourcecache.Policy{MaxAge: repo.SourceInterval()},
+			&sourcecache.Policy{MaxAge: repo.SourceInterval()},
 		)
 		terminal, _ := errors.AsType[*sourcecache.TerminalError](fetchErr)
 		if fetchErr == nil || terminal != nil && !terminal.Attempted || layers.Load() != int32(attempt+1) {
@@ -143,7 +143,7 @@ func testFetcherLayerDigestMismatchPublishesNothingCase(
 		t.Context(),
 		repo,
 		(testInputs{}).readSet(repo),
-		sourcecache.Policy{MaxAge: repo.SourceInterval()},
+		&sourcecache.Policy{MaxAge: repo.SourceInterval()},
 	)
 	assert.NoError(t, err)
 

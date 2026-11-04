@@ -113,14 +113,14 @@ func (e *orchestratorExistence) promoteAdmission(
 	if e.o.admission == nil || reads == nil || reads.GetDeclaration(reads.ID()) == nil {
 		return false, nil
 	}
-	object, artifact, err := e.o.admission.Resolve(ctx, id, nil)
-	if err == nil && object != nil && artifact != nil && reads.Valid() {
-		accepted, admissionErr := e.admit(ctx, store.Child{Obj: object}, reads)
+	child, artifact, err := e.o.admission.Resolve(ctx, id, nil, reads.Work().Scope())
+	if err == nil && child.Obj != nil && artifact != nil && reads.Valid() {
+		accepted, admissionErr := e.admit(ctx, child, reads)
 		if admissionErr != nil {
 			return false, admissionErr
 		}
 		if accepted {
-			e.o.store.AddObject(object)
+			e.o.store.AddObject(child.Obj)
 			e.o.store.SetArtifact(id, artifact)
 			e.o.store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Message: "local entry source"})
 			return true, nil
@@ -139,6 +139,7 @@ func (e *orchestratorExistence) admit(ctx context.Context, child store.Child, re
 }
 
 func (o *Orchestrator) run(ctx context.Context) error {
+	o.cfg.work.Scope().Reserve(len(o.index.Records))
 	if o.loader == nil {
 		o.configureControllers()
 	}
@@ -184,6 +185,7 @@ func (o *Orchestrator) configureControllers() {
 
 func (o *Orchestrator) collectResult(runErr error) (*Result, error) {
 	res := &Result{
+		Work:    o.freezeWork(),
 		Failed:  map[manifest.NamedResource]store.StatusInfo{},
 		Orphans: map[manifest.NamedResource]string{},
 		Blocked: map[manifest.NamedResource][]manifest.NamedResource{},

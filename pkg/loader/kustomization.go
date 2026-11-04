@@ -230,6 +230,7 @@ func (l *Loader) refreshSources() {
 				}
 			}
 		}
+		*previous = scopeConstruction{}
 	}
 }
 

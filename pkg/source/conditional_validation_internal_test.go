@@ -37,7 +37,10 @@ func testAcquireConditionalValidationOwnerUserinfo(t *testing.T) {
 	var firstIdentity string
 	for run := range 2 {
 		c := newTestHTTPInputs(t, root)
-		input, err := c.Acquire(t.Context(), endpoint.String(), sourcecache.RetryConfig{}, nil)
+		input, err := c.Acquire(
+			t.Context(),
+			&HTTPRequest{URL: endpoint.String(), Retry: sourcecache.RetryConfig{}, HeldSlot: nil},
+		)
 		assert.NoError(t, err)
 
 		body, err := fs.ReadFile(input, "content")
@@ -89,7 +92,7 @@ func testAcquireConditionalValidationOwnerMissing(t *testing.T) {
 	reader, _, _, err := c.owner.Blob(
 		t.Context(),
 		sourcecache.BlobKey{Content: struct{ URL string }{inputURL}},
-		sourcecache.Policy{},
+		&sourcecache.Policy{},
 		func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 			annotations := map[string]string{
 				httpETagAnnotation:         `"` + manifest.Fingerprint("changed") + `"`,
@@ -105,7 +108,7 @@ func testAcquireConditionalValidationOwnerMissing(t *testing.T) {
 
 	closeTestHTTPInputs(t, c)
 	c = newTestHTTPInputs(t, root)
-	input, err := c.Acquire(t.Context(), inputURL, sourcecache.RetryConfig{}, nil)
+	input, err := c.Acquire(t.Context(), &HTTPRequest{URL: inputURL, Retry: sourcecache.RetryConfig{}, HeldSlot: nil})
 	assert.NoError(t, err)
 
 	body, err := fs.ReadFile(input, "content")
@@ -148,7 +151,10 @@ func testAcquireConditionalValidationCase3(t *testing.T, scenario *string,
 			)
 		},
 		)
-		input, err := c.Acquire(t.Context(), inputURL, sourcecache.RetryConfig{}, nil)
+		input, err := c.Acquire(
+			t.Context(),
+			&HTTPRequest{URL: inputURL, Retry: sourcecache.RetryConfig{}, HeldSlot: nil},
+		)
 		assert.FatalIf(t, requests != 1, "phase=%d requests=%d, want 1", phase, requests)
 		if (*scenario) == "unsolicited-304" ||
 			phase == 1 &&

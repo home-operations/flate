@@ -209,7 +209,7 @@ func TestFetcher_RestrictEgress(t *testing.T) {
 			t.Context(),
 			gitRepoWithSecret("restricted", srv.URL, "tls"),
 			fInputs.readSet(gitRepoWithSecret("restricted", srv.URL, "tls")),
-			sourcecache.Policy{},
+			&sourcecache.Policy{},
 		)
 		{
 			op, ok := errors.AsType[*net.OpError](err)
@@ -425,7 +425,7 @@ func TestFetcher_ResolveTransport_EndpointValidation(t *testing.T) {
 			repo := gitRepoWithSecret("g", "http://[::1", tc.secret)
 			request, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveTransport(
 				repo,
-				sourcecache.Policy{},
+				&sourcecache.Policy{},
 			)
 			if tc.wantInput {
 				assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
@@ -510,7 +510,7 @@ func testFetcherResolveTransportSecretMaterialCase1(t *testing.T, tc *struct {
 	reads.Init(s, repo.Named(), nil)
 	request, err := (&operation{Fetcher: f, reads: &reads, secrets: source.SecretLookup(&reads)}).resolveTransport(
 		repo,
-		sourcecache.Policy{},
+		&sourcecache.Policy{},
 	)
 	s.AddObject(
 		&manifest.Secret{
@@ -613,7 +613,7 @@ func TestFetcher_ResolveTransport_MalformedProxy(t *testing.T) {
 		Provider:  sourcev1.GitProviderGitHub,
 	}
 	repo.ProxySecretRef = &manifest.LocalObjectReference{Name: "proxy"}
-	_, err := f.Fetch(t.Context(), repo, fInputs.readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
+	_, err := f.Fetch(t.Context(), repo, fInputs.readSet(repo), &sourcecache.Policy{MaxAge: repo.SourceInterval()})
 	assert.FatalIf(t, !errors.Is(err, manifest.ErrInput), "proxy validation before cache admission: %v", err)
 	assert.FatalIf(
 		t,
@@ -801,7 +801,7 @@ func testFetcherResolveTLSCase(t *testing.T, inputs *testFetcherResolveTLSCaseIn
 	repo := gitRepoWithSecret("g", url, inputs.tc.secret)
 	request, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveTransport(
 		repo,
-		sourcecache.Policy{},
+		&sourcecache.Policy{},
 	)
 	opts := request.options
 	if inputs.tc.wantInput || inputs.tc.wantMissing {

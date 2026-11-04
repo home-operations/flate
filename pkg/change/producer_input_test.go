@@ -110,7 +110,7 @@ spec:
 	assert.NoError(t, err)
 	changes := inputs.Changes
 	if (*testCaseInput) == "directory" {
-		changes, err = change.Detect(t.Context(), inputs.BaseInput, inputs.Source)
+		changes, err = change.Detect(t.Context(), inputs.BaseInput, inputs.Source, manifest.WorkScope{})
 		assert.NoError(t, err)
 	}
 	assert.Diff(t, changes.Paths(), []string{"entry/source.yaml"})

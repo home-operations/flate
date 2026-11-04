@@ -54,6 +54,8 @@ type Fetcher struct {
 type operation struct {
 	*Fetcher
 
+	work manifest.AcquisitionWork
+
 	reads   *store.ReadSet
 	secrets source.SecretGetter
 }
@@ -63,28 +65,48 @@ func (f *Fetcher) Fetch(
 	ctx context.Context,
 	repo *manifest.GitRepository,
 	reads *store.ReadSet,
-	policy sourcecache.Policy,
+	policyValue *sourcecache.Policy,
 ) (*store.SourceArtifact, error) {
+	policy := *policyValue
+
 	innerOperation := operation{Fetcher: f, reads: reads, secrets: source.SecretLookup(reads)}
-	return innerOperation.fetchSource(ctx, repo, policy)
+	return innerOperation.fetchSource(ctx, repo, &policy)
 }
 
 func (f *operation) fetchSource(
 	ctx context.Context,
 	repo *manifest.GitRepository,
-	policy sourcecache.Policy,
+	policyValue *sourcecache.Policy,
 ) (*store.SourceArtifact, error) {
+	policy := *policyValue
+
 	if err := ctx.Err(); err != nil {
 		return nil, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 	}
-	request, err := f.resolveTransport(repo, policy)
+	f.work.Scope = f.reads.Work().Scope()
+	if policy.Work != nil {
+		f.work.Scope = policy.Work.Attribution()
+	}
+	if repo != nil {
+		f.work.Scope = f.work.Scope.Source(repo.Named())
+	}
+	policy.Work = &f.work
+	work := f.work.Scope.Record(manifest.WorkValidation, "")
+	work.Add(&manifest.WorkCounts{Attempts: 1})
+	request, err := f.resolveTransport(repo, &policy)
+	work.Finish(err)
 	if err != nil {
 		return nil, err
 	}
-	return f.fetch(ctx, &request, policy)
+	return f.fetch(ctx, &request, &policy)
 }
 
-func (f *operation) resolveTransport(repo *manifest.GitRepository, policy sourcecache.Policy) (gitAcquisition, error) {
+func (f *operation) resolveTransport(
+	repo *manifest.GitRepository,
+	policyValue *sourcecache.Policy,
+) (gitAcquisition, error) {
+	policy := *policyValue
+
 	endpoint, err := f.validateRepo(repo)
 	if err != nil {
 		return gitAcquisition{}, err
@@ -148,7 +170,7 @@ func (f *operation) resolveTransport(repo *manifest.GitRepository, policy source
 			"provider authentication unavailable offline",
 		)
 	}
-	request := gitAcquisition{spec: repo, options: opts, material: material}
+	request := gitAcquisition{work: &f.work, protocol: endpoint.Protocol, spec: repo, options: opts, material: material}
 	if authErr == nil || repo.Provider == sourcev1.GitProviderGitHub {
 		return request, authErr
 	}
@@ -157,15 +179,17 @@ func (f *operation) resolveTransport(repo *manifest.GitRepository, policy source
 		timeout := repo.OperationTimeout()
 		policy.Timeout = &timeout
 		missing.RetryAmbient = func(ctx context.Context) (*store.SourceArtifact, error) {
-			return f.retrySSH(ctx, &request, policy, endpoint)
+			return f.retrySSH(ctx, &request, &policy, endpoint)
 		}
 		return request, authErr
 	}
 	missing.RetryAmbient = func(ctx context.Context) (*store.SourceArtifact, error) {
-		return source.AcquireMachine(ctx, policy,
+		return source.AcquireMachine(ctx, &policy,
 			func(context.Context) error { return nil },
-			func(ctx context.Context, policy sourcecache.Policy) (*store.SourceArtifact, error) {
-				return f.fetch(ctx, &request, policy)
+			func(ctx context.Context, policyValue *sourcecache.Policy) (*store.SourceArtifact, error) {
+				policy := *policyValue
+
+				return f.fetch(ctx, &request, &policy)
 			},
 		)
 	}
@@ -198,16 +222,14 @@ func gitProxyOptions(repoURL string, resolved *source.TransportMaterial) (transp
 
 func (f *Fetcher) fetch(
 	ctx context.Context, requestValue *gitAcquisition,
-	policy sourcecache.Policy,
+	policyValue *sourcecache.Policy,
 ) (*store.SourceArtifact, error) {
-	request := *requestValue
+	request, policy := *requestValue, *policyValue
 	repo := request.spec
 	ref := (*manifest.GitRepositoryRef)(repo.Reference)
 	refLabel := cmp.Or(ref.Label(), "HEAD")
-	content := struct {
-		Source, Transport any
-		Depth             int
-	}{repo.Content(ref.Normalized()), request.material, f.Depth}
+	content := &gitContent{Source: repo.Content(ref.Normalized()), Transport: request.material, Depth: f.Depth}
+	content.work.Scope, request.work, policy.Work = request.work.Attribution(), &content.work, &content.work
 	key := sourcecache.GitKey{Content: content, Ref: refLabel, RecurseSubmodules: repo.RecurseSubmodules}
 	if ref.Pinned() {
 		policy.MaxAge = sourcecache.Forever
@@ -217,14 +239,13 @@ func (f *Fetcher) fetch(
 		ignore = *repo.Ignore
 	}
 	viewOptions := gittree.ViewOptions{Content: content, Sparse: repo.SparseCheckout, Ignore: ignore}
-	timeout := repo.OperationTimeout()
-	policy.Timeout = &timeout
+	policy.Timeout = new(repo.OperationTimeout())
 	var input *gittree.FS
 	var identity string
 	generation, id, err := f.Cache.Git(
 		ctx,
 		key,
-		policy,
+		&policy,
 		func(ctx context.Context, storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
 			input = nil
 			cloned, err := f.acquire(ctx, storer, worktree, &request)
@@ -242,8 +263,11 @@ func (f *Fetcher) fetch(
 				if updateSubmodulesErr := f.updateSubmodules(
 					ctx,
 					cloned,
-					request.options.Auth,
-					git.DefaultSubmoduleRecursionDepth,
+					submoduleOptions{
+						auth:  request.options.Auth,
+						depth: git.DefaultSubmoduleRecursionDepth,
+						work:  request.work,
+					},
 				); updateSubmodulesErr != nil {
 					return plumbing.ZeroHash, errors.Join(ctx.Err(), updateSubmodulesErr)
 				}
@@ -331,6 +355,8 @@ func gitWarnings(input *gittree.FS, id manifest.NamedResource, repository, ref s
 }
 
 type gitAcquisition struct {
+	work     *manifest.AcquisitionWork
+	protocol string
 	timeout  time.Duration
 	spec     *manifest.GitRepository
 	options  git.CloneOptions
@@ -416,6 +442,7 @@ func (r *gitAcquisition) clone(
 		cloneCtx, cancel = context.WithTimeout(ctx, r.timeout)
 	}
 	repo, err := git.CloneContext(cloneCtx, storer, worktree, options)
+	recordTransfer(r.work, r.protocol, err)
 	if cancel != nil {
 		cancel()
 	}
@@ -466,8 +493,10 @@ func (f *Fetcher) validateRepo(repo *manifest.GitRepository) (*transport.Endpoin
 }
 
 func (f *operation) retrySSH(
-	ctx context.Context, request *gitAcquisition, policy sourcecache.Policy, endpoint *transport.Endpoint,
+	ctx context.Context, request *gitAcquisition, policyValue *sourcecache.Policy, endpoint *transport.Endpoint,
 ) (*store.SourceArtifact, error) {
+	policy := *policyValue
+
 	repo := request.spec
 	user := cmp.Or(endpoint.User, "git")
 	prepared := *request
@@ -477,7 +506,7 @@ func (f *operation) retrySSH(
 			_ = conn.Close()
 		}
 	}()
-	return source.AcquireMachine(ctx, policy, func(ctx context.Context) error {
+	return source.AcquireMachine(ctx, &policy, func(ctx context.Context) error {
 		auth, opened, keys, err := machineSSHAuthentication(ctx, repo, user)
 		conn = opened
 		if err != nil {
@@ -486,10 +515,12 @@ func (f *operation) retrySSH(
 		prepared.options.Auth = auth
 		prepared.material = [3]any{request.material, user, keys}
 		return nil
-	}, func(ctx context.Context, policy sourcecache.Policy) (*store.SourceArtifact, error) {
+	}, func(ctx context.Context, policyValue *sourcecache.Policy) (*store.SourceArtifact, error) {
+		policy := *policyValue
+
 		stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 		defer stop()
-		return f.fetch(ctx, &prepared, policy)
+		return f.fetch(ctx, &prepared, &policy)
 	})
 }
 
@@ -557,10 +588,9 @@ func (r *gitAcquisition) fetchRevision(ctx context.Context, repo *git.Repository
 		fetchCtx, cancel = context.WithTimeout(ctx, r.timeout)
 		defer cancel()
 	}
-	return repo.FetchContext( //nolint:wrapcheck // Preserve go-git protocol error identity and messages.
-		fetchCtx,
-		fetch,
-	)
+	err := repo.FetchContext(fetchCtx, fetch)
+	recordTransfer(r.work, r.protocol, err)
+	return err //nolint:wrapcheck // Preserve go-git protocol error identity and messages.
 }
 
 func (r *gitAcquisition) fetchPin(
@@ -585,4 +615,10 @@ func (r *gitAcquisition) fetchPin(
 		}
 	}
 	return nil
+}
+
+type gitContent struct {
+	Source, Transport any
+	Depth             int
+	work              manifest.AcquisitionWork
 }

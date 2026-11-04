@@ -77,7 +77,10 @@ func testAcquirePolicyIsolationCaseCallback(t *testing.T, testCaseInput testAcqu
 					retry.Jitter = math.Inf(1)
 				}
 			}
-			_, err := c.Acquire(t.Context(), "https://example.invalid/resource", retry, nil)
+			_, err := c.Acquire(
+				t.Context(),
+				&HTTPRequest{URL: "https://example.invalid/resource", Retry: retry, HeldSlot: nil},
+			)
 			done <- err
 		}()
 	}

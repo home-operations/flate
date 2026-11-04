@@ -195,9 +195,29 @@ func (c *Client) rememberDescription(description *chartDescription, fresh *rende
 	return d
 }
 
-func (c *Client) decodeChart(ctx context.Context, d *chartDescription) error {
+func (c *Client) decodeChart(ctx context.Context, d *chartDescription, input *RenderOptions) error {
 	if d.chart != nil {
 		return nil
+	}
+	if input.PreparationTasks != nil {
+		decoded := *d
+		accounting := input.Work
+		decode := input.PreparationTasks.Fork()
+		var decodeErr error
+		var entered bool
+		decode.Go(ctx, "helm history chart decode", func(ctx context.Context) {
+			entered = true
+			decodeErr = c.decodeChart(ctx, &decoded, &RenderOptions{Work: accounting})
+		})
+		decode.BlockTillDone()
+		if decode.Failures() != 0 {
+			panic("helm chart decoder panicked")
+		}
+		if !entered {
+			return fmt.Errorf("%w: chart decode: %w", manifest.ErrFlux, ctx.Err())
+		}
+		*d = decoded
+		return decodeErr
 	}
 	release, err := c.chartLoadLocks.Acquire(ctx, d.key)
 	if err != nil {
@@ -212,7 +232,12 @@ func (c *Client) decodeChart(ctx context.Context, d *chartDescription) error {
 		d.captured = capturedChart{}
 		return nil
 	}
+	work := input.Work.Decode(d.key)
+	scope := input.Work.Attribution()
+	work.Add(&manifest.WorkCounts{Attempts: 1, PeakConcurrent: scope.StartConcurrent()})
 	d.chart, err = d.captured.load()
+	scope.FinishConcurrent()
+	work.Finish(err)
 	if err != nil {
 		if _, ok := errors.AsType[chart.ValidationError](err); ok {
 			err = manifest.NewError(manifest.ErrInput, err, "")

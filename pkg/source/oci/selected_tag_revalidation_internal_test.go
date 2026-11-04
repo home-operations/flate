@@ -78,7 +78,7 @@ func testFetcherRevalidationSelectedTagMetadataCase(
 		t.Context(),
 		repo,
 		(testInputs{}).readSet(repo),
-		sourcecache.Policy{MaxAge: repo.SourceInterval()},
+		&sourcecache.Policy{MaxAge: repo.SourceInterval()},
 	)
 	assert.NoError(t, err)
 	firstMetadata := map[string]string{
@@ -98,7 +98,7 @@ func testFetcherRevalidationSelectedTagMetadataCase(
 			t.Context(),
 			repo,
 			(testInputs{}).readSet(repo),
-			sourcecache.Policy{MaxAge: repo.SourceInterval()},
+			&sourcecache.Policy{MaxAge: repo.SourceInterval()},
 		)
 		assert.NoError(t, err)
 		if tags.Load()-beforeTags != 1 || heads.Load()-beforeHeads != 1 ||

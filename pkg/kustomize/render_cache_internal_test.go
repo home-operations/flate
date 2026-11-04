@@ -67,7 +67,7 @@ func readTestRenderFrame(tb testing.TB, cache *TreeCache, key string) (readSetSn
 		r, _, _, err = cache.owner.Blob(
 			tb.Context(),
 			sourcecache.BlobKey{Content: key, Render: phase},
-			sourcecache.Policy{MaxAge: sourcecache.Forever},
+			&sourcecache.Policy{MaxAge: sourcecache.Forever},
 			nil,
 		)
 		if !errors.Is(err, errdef.ErrNotFound) {
@@ -103,7 +103,9 @@ func publishTestFrame(tb testing.TB, owner *sourcecache.Cache, key sourcecache.B
 		key.Render = sourcecache.RenderAccepted
 	}
 	if frame, err := decodeFrame(raw); err == nil {
-		frame.header.Key, _ = key.Content.(string)
+		if render, ok := key.Content.(string); ok {
+			frame.header.Key = render
+		}
 		raw, err = encodeFrame(&frame.header, frame.output)
 		if err != nil {
 			tb.Fatal(err)
@@ -112,7 +114,7 @@ func publishTestFrame(tb testing.TB, owner *sourcecache.Cache, key sourcecache.B
 	_, _, _, err := owner.Blob(
 		tb.Context(),
 		key,
-		sourcecache.Policy{MaxAge: 0},
+		&sourcecache.Policy{MaxAge: 0},
 		func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 			_, err := w.Write(raw)
 			return sourcecache.ProducerResult{}, err

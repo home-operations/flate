@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: longhorn-system
+  namespace: flux-system
+data:
+  value: unchanged

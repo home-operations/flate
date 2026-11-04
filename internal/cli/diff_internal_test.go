@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"maps"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
+	"unsafe"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/diffprep"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/diff"
@@ -137,7 +140,7 @@ spec:
 		{name: "orig failed/apps", side: "orig", namespace: "apps", orig: failed, current: orig, wantCode: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cli := runCLI(
+			runCLIResult := runCLI(
 				t,
 				"diff",
 				"all",
@@ -156,7 +159,7 @@ spec:
 				"--concurrency",
 				"2",
 			)
-			stdout, stderr, code := cli.stdout, cli.stderr, cli.code
+			stdout, stderr, code := runCLIResult.stdout, runCLIResult.stderr, runCLIResult.code
 			assert.Equal(t, code, tc.wantCode)
 			parent := "Kustomization flux-system/apps:"
 			if tc.namespace != "" {
@@ -245,7 +248,7 @@ data:
   greeting: {{ .Values.greeting }}
 `)
 		}
-		cli2 := runCLI(
+		runCLIResult2 := runCLI(
 			t,
 			"diff",
 			"all",
@@ -262,7 +265,7 @@ data:
 			"--concurrency",
 			"2",
 		)
-		stdout, stderr, code := cli2.stdout, cli2.stderr, cli2.code
+		stdout, stderr, code := runCLIResult2.stdout, runCLIResult2.stderr, runCLIResult2.code
 		assert.ErrorIf(t, code != 0 || !strings.Contains(stdout, "-  greeting: before") ||
 			!strings.Contains(
 				stdout,
@@ -274,6 +277,7 @@ data:
 
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestRun_DiffJSON(t *testing.T) {
+	t.Run("borrows_payload", testDocumentsBorrowsPayload)
 	orig, current := writeFixture(t), writeFixture(t)
 	for _, root := range []string{orig, current} {
 		testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux/cluster.yaml, flux/broken.yaml]\n")
@@ -316,9 +320,9 @@ func TestRun_DiffJSON(t *testing.T) {
 		testutil.WriteFile(t, dir, "broken/kustomization.yaml", "resources: [cm.yaml]\n")
 		testutil.WriteFile(t, dir, "broken/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: withheld}\n")
 	}
-	cli := runCLI(t, "diff", "all", "--path", current, "--path-orig", orig,
+	runCLIResult3 := runCLI(t, "diff", "all", "--path", current, "--path-orig", orig,
 		"--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "json")
-	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
+	stdout, stderr, code := runCLIResult3.stdout, runCLIResult3.stderr, runCLIResult3.code
 	assert.Equal(t, code, 1)
 	assert.Equal(t, strings.Count(stderr, "✗ 1 failed"), 1)
 	var got struct {
@@ -362,9 +366,9 @@ func TestRun_DiffJSON_Empty(t *testing.T) {
 	path := writeFixture(t)
 	for _, verb := range []string{"ks", "hr", "all"} {
 		t.Run(verb, func(t *testing.T) {
-			cli := runCLI(t, "diff", verb, "--path", path, "--path-orig", path,
+			runCLIResult4 := runCLI(t, "diff", verb, "--path", path, "--path-orig", path,
 				"--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "json")
-			stdout, stderr, code := cli.stdout, cli.stderr, cli.code
+			stdout, stderr, code := runCLIResult4.stdout, runCLIResult4.stderr, runCLIResult4.code
 			assert.Equal(t, code, 0)
 			assert.Equal(t, strings.Contains(stderr, persistenceMessage), true)
 			assert.Equal(t, strings.Count(stderr, "--path and --path-orig resolve to the same root"), 2)
@@ -459,8 +463,11 @@ func TestRun_DiffKS_PathOrigCustomSource(t *testing.T) {
 		{name: "changed", changed: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			fixture := writeCustomSourceDiffFixture(t, "ssh://git@github.com/example/home-ops.git")
-			current, orig := fixture.current, fixture.orig
+			writeCustomSourceDiffFixtureResult := writeCustomSourceDiffFixture(
+				t,
+				"ssh://git@github.com/example/home-ops.git",
+			)
+			current, orig := writeCustomSourceDiffFixtureResult.current, writeCustomSourceDiffFixtureResult.orig
 			if tc.changed {
 				testutil.WriteFile(t, orig, "apps/cm.yaml", `apiVersion: v1
 kind: ConfigMap
@@ -468,9 +475,9 @@ metadata: {name: hello, namespace: apps}
 data: {greeting: hola}
 `)
 			}
-			cli := runCLI(t, "diff", "ks", "--path", current, "--path-orig", orig,
+			runCLIResult5 := runCLI(t, "diff", "ks", "--path", current, "--path-orig", orig,
 				"--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "diff")
-			stdout, stderr, code := cli.stdout, cli.stderr, cli.code
+			stdout, stderr, code := runCLIResult5.stdout, runCLIResult5.stderr, runCLIResult5.code
 			assert.FatalIf(t, code != 0, "diff exited %d: %s", code, stderr)
 			if tc.changed {
 				assert.Equal(t, stderr, persistenceNotice)
@@ -504,8 +511,11 @@ data: {greeting: hola}
 func TestRun_DiffKS_ExternalSourceDisclosure(t *testing.T) {
 	preservePersistenceNoticeState(t)
 	renderPersistenceDisabledReason = persistenceReason
-	fixture := writeCustomSourceDiffFixture(t, "ssh://git@github.com/example/other-repo.git")
-	current, orig := fixture.current, fixture.orig
+	writeCustomSourceDiffFixtureResult2 := writeCustomSourceDiffFixture(
+		t,
+		"ssh://git@github.com/example/other-repo.git",
+	)
+	current, orig := writeCustomSourceDiffFixtureResult2.current, writeCustomSourceDiffFixtureResult2.orig
 	testutil.WriteFile(t, orig, "apps/cm.yaml", `apiVersion: v1
 kind: ConfigMap
 metadata: {name: hello, namespace: apps}
@@ -525,8 +535,8 @@ data: {greeting: hola}
 				"diff", "ks", "--path", current, "--path-orig", orig,
 				"--cache-dir", filepath.Join(t.TempDir(), "cache"), "-o", "diff",
 			}, tc.args...)
-			cli := runCLI(t, args...)
-			stdout, stderr, code := cli.stdout, cli.stderr, cli.code
+			runCLIResult6 := runCLI(t, args...)
+			stdout, stderr, code := runCLIResult6.stdout, runCLIResult6.stderr, runCLIResult6.code
 			assert.FatalIf(t, code != 0, "diff exited %d: %s", code, stderr)
 			assert.ErrorIf(t, stdout != "", "external source must not render local manifests:\n%s", stdout)
 			if tc.warn {
@@ -568,8 +578,8 @@ func TestRun_DiffKS_PathOrigCurrentOnlySource(t *testing.T) {
 		{name: "current-only URL", urls: []string{"https://example.invalid/upstream.git"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			fixture := writeCustomSourceDiffFixture(t, currentURL)
-			current, orig := fixture.current, fixture.orig
+			writeCustomSourceDiffFixtureResult3 := writeCustomSourceDiffFixture(t, currentURL)
+			current, orig := writeCustomSourceDiffFixtureResult3.current, writeCustomSourceDiffFixtureResult3.orig
 			writeBaselineGit(t, current, currentURL)
 			writeBaselineGit(t, orig, tc.urls...)
 			testutil.WriteFile(
@@ -590,9 +600,9 @@ func TestRun_DiffKS_PathOrigCurrentOnlySource(t *testing.T) {
 				"baseline borrowed current identity: %v",
 				c.pathOrigSelfURLs,
 			)
-			cli := runCLI(t, "diff", "ks", "--path", current, "--path-orig", orig,
+			runCLIResult7 := runCLI(t, "diff", "ks", "--path", current, "--path-orig", orig,
 				"--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "diff")
-			stdout, stderr, code := cli.stdout, cli.stderr, cli.code
+			stdout, stderr, code := runCLIResult7.stdout, runCLIResult7.stderr, runCLIResult7.code
 			assert.FatalIf(t, code != 0, "diff exited %d: %s", code, stderr)
 			assert.ErrorIf(
 				t,
@@ -606,6 +616,32 @@ func TestRun_DiffKS_PathOrigCurrentOnlySource(t *testing.T) {
 					"current snapshot",
 				), "want only baseline external-source disclosure: %s", stderr)
 		})
+	}
+}
+
+func testDocumentsBorrowsPayload(t *testing.T) {
+	t.Helper()
+	payload := strings.Repeat("immutable payload", 1<<20)
+	doc := map[string]any{
+		"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "large"},
+		"data": map[string]any{"payload": payload},
+	}
+	batches := []manifest.DocumentBatch{{Documents: []map[string]any{doc}}}
+	projected := diffprep.Documents(batches)
+	if reflect.ValueOf(projected[0].Manifest).Pointer() != reflect.ValueOf(doc).Pointer() {
+		t.Fatal("projection copied the completed document")
+	}
+	borrowed := projected[0].Manifest["data"].(map[string]any)["payload"].(string)
+	if unsafe.StringData(borrowed) != unsafe.StringData(payload) {
+		t.Fatal("projection copied the immutable payload")
+	}
+	allocs := testing.AllocsPerRun(2, func() {
+		if got := diffprep.Documents(batches); len(got) != 1 {
+			t.Fatal("projection lost the document")
+		}
+	})
+	if allocs != 1 {
+		t.Fatalf("projection allocations = %v, want one document slice and zero payload copies or decodes", allocs)
 	}
 }
 

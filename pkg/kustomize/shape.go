@@ -1,13 +1,13 @@
 package kustomize
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	yaml "go.yaml.in/yaml/v3"
 	sigsyaml "sigs.k8s.io/yaml"
-
-	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -15,7 +15,7 @@ import (
 )
 
 // Shape applies producer metadata and effective substitutions to private decoded documents.
-func Shape(ks *manifest.Kustomization, docs []manifest.DocOccurrence, strict bool) error {
+func Shape(_ context.Context, ks *manifest.Kustomization, docs []manifest.DocOccurrence, options ShapeOptions) error {
 	ks.EmissionPolicy().Stamp(docs)
 	for i := range docs {
 		docs[i], _ = manifest.SanitizeDocument(docs[i])
@@ -25,6 +25,7 @@ func Shape(ks *manifest.Kustomization, docs []manifest.DocOccurrence, strict boo
 		return nil
 	}
 	var vars map[string]string
+	work := options.Work
 	if ks.PostBuild != nil {
 		vars = manifest.VarsMap(ks.PostBuild.Substitute)
 	}
@@ -33,7 +34,7 @@ func Shape(ks *manifest.Kustomization, docs []manifest.DocOccurrence, strict boo
 		if occurrence.Err != nil || manifest.HasSubstituteDisabled(doc) {
 			continue
 		}
-		substituted, err := substituteDoc(doc, vars, strict)
+		substituted, err := substituteDoc(doc, vars, options.Strict, work)
 		if err != nil {
 			return manifest.NewError(manifest.ErrInvalidSubstituteReference, err, "")
 		}
@@ -44,27 +45,38 @@ func Shape(ks *manifest.Kustomization, docs []manifest.DocOccurrence, strict boo
 
 // Only expansion/escape text and scalars changed by JSON decoding need a
 // round trip. Both map keys and values must be inspected.
-func substituteDoc(doc map[string]any, vars map[string]string, strict bool) (map[string]any, error) {
+func substituteDoc(
+	doc map[string]any,
+	vars map[string]string,
+	strict bool,
+	work *manifest.WorkRecord,
+) (map[string]any, error) {
 	if !values.NeedsSubstitution(doc) {
 		return doc, nil
 	}
+	work.Add(&manifest.WorkCounts{Attempts: 1})
 	raw, err := yaml.Marshal(doc)
 	if err != nil {
+		work.Finish(err)
 		return nil, fmt.Errorf("substitute: marshal doc: %w", err)
 	}
 	out, err := Substitute(raw, vars, strict)
 	if err != nil {
+		work.Finish(err)
 		return nil, err
 	}
 	// Flux kustomize.SubstituteVariables uses varSubstitution to preserve YAML-to-JSON scalar semantics.
 	data, err := sigsyaml.YAMLToJSON(out)
 	if err != nil {
+		work.Finish(err)
 		return nil, fmt.Errorf("substitute: convert doc to JSON: %w", err)
 	}
 	var next map[string]any
 	if err := json.Unmarshal(data, &next); err != nil {
+		work.Finish(err)
 		return nil, fmt.Errorf("substitute: unmarshal doc: %w", err)
 	}
+	work.Finish(nil)
 	return next, nil
 }
 
@@ -99,4 +111,10 @@ func (r RenderRequest) Content(docs []manifest.DocOccurrence) any {
 		r.StrictSubstitutions, r.SkipKinds,
 	}
 	return renderContent{ks.Content(source, names, active), r.DependencySubstitutions}
+}
+
+// ShapeOptions supplies substitution policy and its physical work counter.
+type ShapeOptions struct {
+	Strict bool
+	Work   *manifest.WorkRecord
 }

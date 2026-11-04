@@ -1,0 +1,17 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: routeboard
+  namespace: flux-system
+spec:
+  interval: 1h
+  path: ./apps/routeboard/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+  postBuild:
+    substituteFrom:
+    - kind: ConfigMap
+      name: cluster-settings

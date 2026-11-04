@@ -51,9 +51,15 @@ func testRenderTreesSuppliedViewsCase(t *testing.T, testCaseInput testRenderTree
 		assert.NoError(t, err)
 		testutil.WriteFile(t, root, "flux/"+name, string(data))
 	}
-	input, _, err := baseline.AdmitDirectory(t.Context(), root, root)
+	input, _, err := baseline.AdmitDirectory(t.Context(), root, root, manifest.WorkScope{})
 	assert.NoError(t, err)
-	cfg := treeConfig{CacheDir: t.TempDir(), Concurrency: 2, HeadOnly: (*testCaseInput.headOnly), Tree: Tree{}}
+	cfg := treeConfig{
+		RecordWork:  true,
+		CacheDir:    t.TempDir(),
+		Concurrency: 2,
+		HeadOnly:    (*testCaseInput.headOnly),
+		Tree:        Tree{},
+	}
 	testRenderTreesSuppliedViewsCaseSegment(
 		t,
 		&testRenderTreesSuppliedViewsCaseSegmentInputs{
@@ -134,13 +140,14 @@ func testRenderTreesSuppliedViewsSameInputOverrideCase(
 
 	root := t.TempDir()
 	writeCluster(t, root, "same", "same")
-	input, _, err := baseline.AdmitDirectory(t.Context(), root, root)
+	input, _, err := baseline.AdmitDirectory(t.Context(), root, root, manifest.WorkScope{})
 	assert.NoError(t, err)
 	paths := []string{"apps/app-a/cm.yaml"}
 	if *testCaseInput.empty {
 		paths = nil
 	}
 	cfg := treeConfig{
+		RecordWork:      true,
 		CacheDir:        t.TempDir(),
 		Concurrency:     2,
 		Input:           input,
@@ -211,11 +218,7 @@ func testRenderTreesSuppliedViewsCaseTailSegment(
 	t.Helper()
 	for side, rendered := range []Rendered{(*base), (*head)} {
 		if (*tailCaseInput.testCaseInput.headOnly) && side == 0 {
-			assert.Equal(
-				t,
-				rendered == (Rendered{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}}),
-				true,
-			)
+			assertHeadOnlyWork(t, rendered)
 			continue
 		}
 		assert.FatalIf(t, rendered.Result == nil, "side %d has no result", side)

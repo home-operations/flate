@@ -223,7 +223,7 @@ func TestFetcher_CorruptDockerConfig(t *testing.T) {
 		s.Reference = &sourcev1.OCIRepositoryRef{Tag: "v1"}
 	})
 	f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New), Network: newTestNetwork(t)}
-	got, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{})
+	got, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), &sourcecache.Policy{})
 	assert.FatalIf(
 		t,
 		got != nil || err == nil || !errors.Is(err, manifest.ErrFlux) || strings.Contains(err.Error(), "auths"),
@@ -405,7 +405,7 @@ func testFetcherSecretCredentialsAcquisitionPolicyCase1(t *testing.T, tt *struct
 		ctx,
 		repo,
 		fInputs.readSet(repo),
-		sourcecache.Policy{MaxAge: repo.SourceInterval()},
+		&sourcecache.Policy{MaxAge: repo.SourceInterval()},
 	); err == nil || errors.Is(err, manifest.ErrMissingSecret) != tt.wantMissing ||
 		errors.Is(err, context.Canceled) != tt.canceled {
 		t.Fatalf("Fetch error = %v, want missing=%t canceled=%t", err, tt.wantMissing, tt.canceled)
@@ -427,7 +427,7 @@ func TestFetcher_ProviderMissingSecret(t *testing.T) {
 		s.Provider = sourcev1.AmazonOCIProvider
 		s.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
 	})
-	_, err := f.Fetch(t.Context(), repo, fInputs.readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
+	_, err := f.Fetch(t.Context(), repo, fInputs.readSet(repo), &sourcecache.Policy{MaxAge: repo.SourceInterval()})
 	assert.FatalIf(t, err == nil, "expected missing-secret error")
 	assert.ErrorIf(
 		t,
@@ -503,7 +503,7 @@ func TestFetcher_ResolveConfig_RegistryFallback(t *testing.T) {
 			_, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).fetchSource(
 				t.Context(),
 				repo,
-				sourcecache.Policy{},
+				&sourcecache.Policy{},
 			)
 			missing, ok := errors.AsType[*source.MissingSecretError](err)
 			assert.FatalIf(t, !ok || missing.RetryAmbient == nil || missing.Secret.Name != "creds",
@@ -569,7 +569,7 @@ func testFetcherSharedMachineFailureCallback(
 	}
 	repo := ociRepo("shared", func(s *sourcev1.OCIRepositorySpec) { s.URL = "oci://registry.invalid/app" })
 	for range 2 {
-		_, err := op.fetchSource(t.Context(), repo, sourcecache.Policy{})
+		_, err := op.fetchSource(t.Context(), repo, &sourcecache.Policy{})
 		response, ok := errors.AsType[*fetcherr.ResponseError](err)
 		assert.FatalIf(t, !ok || response.StatusCode != http.StatusServiceUnavailable ||
 			strings.Contains(err.Error(), "credential helper") ||
@@ -579,13 +579,13 @@ func testFetcherSharedMachineFailureCallback(
 	time.Sleep(time.Second)
 	done := make(chan error, 2)
 	go func() {
-		_, err := op.fetchSource(t.Context(), repo, sourcecache.Policy{})
+		_, err := op.fetchSource(t.Context(), repo, &sourcecache.Policy{})
 		done <- err
 	}()
 	<-entered
 	testutil.WriteFileAt(t, path, `{}`)
 	go func() {
-		_, err := op.fetchSource(t.Context(), repo, sourcecache.Policy{})
+		_, err := op.fetchSource(t.Context(), repo, &sourcecache.Policy{})
 		done <- err
 	}()
 	synctest.Wait()

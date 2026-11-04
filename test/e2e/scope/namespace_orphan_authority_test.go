@@ -179,7 +179,7 @@ func e2ENamespaceOrphansTerminalReplay(t *testing.T) {
 			_, _, _, err = c.Blob(
 				t.Context(),
 				key,
-				sourcecache.Policy{},
+				&sourcecache.Policy{},
 				func(context.Context, sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 					return sourcecache.ProducerResult{}, &sourcecache.TerminalError{
 						Err:       syscall.ECONNRESET,
@@ -215,7 +215,7 @@ func e2ENamespaceOrphansTerminalReplay(t *testing.T) {
 	_, _, _, err = c.Blob(
 		t.Context(),
 		key,
-		sourcecache.Policy{},
+		&sourcecache.Policy{},
 		func(context.Context, sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 			t.Fatal("fresh replay invoked producer")
 			return sourcecache.ProducerResult{}, nil

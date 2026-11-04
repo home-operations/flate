@@ -263,7 +263,7 @@ func assertDescriptionIneligible(t *testing.T, st *store.Store, hr *manifest.Hel
 				Content: computeTemplateKey(&d, map[string]any{}, Options{}, hr),
 				Render:  cache.RenderAccepted,
 			},
-			cache.Policy{MaxAge: cache.Forever},
+			&cache.Policy{MaxAge: cache.Forever},
 			nil,
 		)
 		assert.FatalIf(t, err == nil, "%s", "invalid UTF-8 was published")
@@ -384,7 +384,12 @@ func testDescriptionHitHydrationCase(t *testing.T, testCaseInput *bool,
 		}
 		assert.Diff(
 			t,
-			cli.StaleValuePaths(t.Context(), hr, map[string]any{"marker": 1, "unused": 1}, cliSources),
+			cli.StaleValuePaths(
+				t.Context(),
+				hr,
+				map[string]any{"marker": 1, "unused": 1},
+				&RenderOptions{Sources: cliSources},
+			),
 			[]string{"unused"},
 		)
 		{
@@ -468,7 +473,7 @@ func testDescriptionHydrationKeepsDecodedCase(
 	var wg sync.WaitGroup
 	decoded := d
 	var decodeErr error
-	wg.Go(func() { <-start; decodeErr = cli.decodeChart(t.Context(), &decoded) })
+	wg.Go(func() { <-start; decodeErr = cli.decodeChart(t.Context(), &decoded, &RenderOptions{}) })
 	wg.Go(func() { <-start; cli.rememberDescription(&d, fresh) })
 	close(start)
 	wg.Wait()
@@ -506,7 +511,7 @@ func testDescriptionHydrationKeepsDecodedCase(
 		"stale publication restored captured input after decode",
 	)
 	reused := d
-	err = cli.decodeChart(t.Context(), &reused)
+	err = cli.decodeChart(t.Context(), &reused, &RenderOptions{})
 	assert.NoError(t, err)
 	assert.FatalIf(
 		t,

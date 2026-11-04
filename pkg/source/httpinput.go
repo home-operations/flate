@@ -86,11 +86,13 @@ func (h *HTTPInputs) Close() {
 
 // remoteFetch owns one complete acquisition independently of waiter cancellation.
 type remoteFetch struct {
-	start  sync.Once
-	cancel atomic.Pointer[context.CancelFunc]
-	done   chan struct{}
-	input  fs.FS
-	err    error
+	accounting  manifest.AcquisitionWork
+	acquisition string
+	start       sync.Once
+	cancel      atomic.Pointer[context.CancelFunc]
+	done        chan struct{}
+	input       fs.FS
+	err         error
 }
 
 type remoteKey struct {
@@ -104,12 +106,11 @@ type remoteKey struct {
 // Shared work outlives individual waiters. Only
 // Close guarantees worker cleanup; an Acquire return does not join the owner.
 // heldSlot is the borrowed service when the caller holds its slot, or nil.
-func (h *HTTPInputs) Acquire(
-	ctx context.Context,
-	urlStr string,
-	retry cache.RetryConfig,
-	heldSlot *task.Service,
-) (fs.FS, error) {
+func (h *HTTPInputs) Acquire(ctx context.Context, requestValue *HTTPRequest) (fs.FS, error) {
+	request := *requestValue
+
+	urlStr, retry, heldSlot := request.URL, request.Retry, request.HeldSlot
+
 	if err := ctx.Err(); err != nil {
 		return nil, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 	}
@@ -119,25 +120,23 @@ func (h *HTTPInputs) Acquire(
 	}
 	key := remoteKey{url: urlStr, retry: retry}
 	key.normalize()
-	loaded, _ := h.remoteFetches.LoadOrStore(key, &remoteFetch{done: make(chan struct{})})
+	candidate := &remoteFetch{done: make(chan struct{})}
+	loaded, _ := h.remoteFetches.LoadOrStore(key, candidate)
 	rf := loaded.(*remoteFetch) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+	winner := false
 	rf.start.Do(func() {
+		winner = true
+		rf.accounting.Scope = request.Work
 		// Shared acquisition MUST outlive any one waiter's cancellation.
 		workerCtx, cancel := context.WithCancel(context.Background())
 		rf.cancel.Store(&cancel)
-		for {
-			state := workers.state.Load()
-			if state&remoteClosed != 0 {
-				cancel()
-				rf.err = manifest.NewError(manifest.ErrFlux, fmt.Errorf("remote fetch: %w", fs.ErrClosed), "")
-				h.remoteFetches.CompareAndDelete(key, rf)
-				rf.cancel.Store(nil)
-				close(rf.done)
-				return
-			}
-			if workers.state.CompareAndSwap(state, state+1) {
-				break
-			}
+		if !workers.admit() {
+			cancel()
+			rf.err = manifest.NewError(manifest.ErrFlux, fmt.Errorf("remote fetch: %w", fs.ErrClosed), "")
+			h.remoteFetches.CompareAndDelete(key, rf)
+			rf.cancel.Store(nil)
+			close(rf.done)
+			return
 		}
 		h.tasks.Go(context.WithoutCancel(workerCtx), "source/http-input", func(context.Context) {
 			defer func() {
@@ -150,15 +149,17 @@ func (h *HTTPInputs) Acquire(
 				rf.cancel.Store(nil)
 				close(rf.done)
 			}()
-			rf.acquire(workerCtx, h, &key, retry)
+			rf.acquire(workerCtx, h, key, retry)
 		})
 	})
 	var input fs.FS
 	var err error
+	served := false
 	wait := func() {
 		select {
 		case <-rf.done:
 			input, err = rf.input, rf.err
+			served = true
 		case <-ctx.Done():
 			err = ctx.Err()
 		}
@@ -167,6 +168,11 @@ func (h *HTTPInputs) Acquire(
 		wait()
 	} else {
 		heldSlot.YieldSlot(wait)
+	}
+	if !winner && served && rf.acquisition != "" {
+		work := request.Work.Record(manifest.WorkCache, rf.acquisition)
+		work.Add(&manifest.WorkCounts{Attempts: 1, CacheService: 1})
+		work.Finish(err)
 	}
 	return input, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 }
@@ -193,6 +199,11 @@ func (h *HTTPInputs) httpGetURL(
 			req.Header.Set("If-Modified-Since", modified)
 		}
 	}
+	if req.Header.Get("If-None-Match") != "" || req.Header.Get("If-Modified-Since") != "" {
+		work := w.Work().Validate()
+		work.Add(&manifest.WorkCounts{Attempts: 1})
+		defer func() { work.Finish(resultErr) }()
+	}
 	resp, err := h.httpClient.Do(req)
 	if err != nil {
 		return cache.ProducerResult{}, err //nolint:wrapcheck // The HTTP client already returns a URL error identifying method and target, including net.Error behavior.
@@ -205,6 +216,7 @@ func (h *HTTPInputs) httpGetURL(
 	if result.Unchanged {
 		return result, nil
 	}
+	w.Work().Physical().Add(&manifest.WorkCounts{RemoteTransfers: 1})
 	size, err := io.Copy(w, resp.Body)
 	if err != nil {
 		return cache.ProducerResult{}, fmt.Errorf("copy source content: %w", err)
@@ -224,26 +236,30 @@ func (h *HTTPInputs) remoteWorkers() *remoteWorkers {
 	return workers
 }
 
-func (rf *remoteFetch) acquire(ctx context.Context, h *HTTPInputs, key *remoteKey, retry cache.RetryConfig) {
+func (rf *remoteFetch) acquire(ctx context.Context, h *HTTPInputs, key remoteKey, retry cache.RetryConfig) {
 	if err := ctx.Err(); err != nil {
 		rf.err = manifest.NewError(manifest.ErrFlux, fmt.Errorf("remote fetch: %w", err), "")
-		h.remoteFetches.CompareAndDelete(*key, rf)
+		h.remoteFetches.CompareAndDelete(key, rf)
 		return
 	}
-	generation, _, _, err := h.owner.Blob(
+	generation, _, acquisition, err := h.owner.Blob(
 		ctx,
 		cache.BlobKey{Content: struct{ URL string }{key.url}},
-		cache.Policy{Retry: retry},
+		&cache.Policy{Retry: retry, Work: &rf.accounting},
 		func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 			return h.httpGetURL(ctx, key.url, w)
 		},
 	)
 	if err == nil {
 		rf.input = cache.NameBlob("content", generation)
+		rf.acquisition = acquisition
 	}
 	rf.err = err
+	if physical := rf.accounting.Physical(); physical != nil {
+		rf.acquisition = physical.Key.Input
+	}
 	if err != nil && fetcherr.Classes(err)&fetcherr.Client == 0 {
-		h.remoteFetches.CompareAndDelete(*key, rf)
+		h.remoteFetches.CompareAndDelete(key, rf)
 	}
 }
 
@@ -287,4 +303,24 @@ func httpResponseMetadata(
 		}
 	}
 	return result, nil
+}
+
+// HTTPRequest carries one remote input and its caller's execution facts.
+type HTTPRequest struct {
+	URL      string
+	Retry    cache.RetryConfig
+	HeldSlot *task.Service
+	Work     manifest.WorkScope
+}
+
+func (w *remoteWorkers) admit() bool {
+	for {
+		state := w.state.Load()
+		if state&remoteClosed != 0 {
+			return false
+		}
+		if w.state.CompareAndSwap(state, state+1) {
+			return true
+		}
+	}
 }

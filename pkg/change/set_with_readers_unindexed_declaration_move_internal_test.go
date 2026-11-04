@@ -80,10 +80,11 @@ func TestSet_WithReadersPreservesDeclarationOwners(t *testing.T) {
 				set.oneSided[1], set.oneSided[0] = set.oneSided[0], nil
 			}
 			resolved, err := set.WithReaders(
-				t.Context(),
-				indexes[0],
-				indexes[1],
-				[2]map[manifest.NamedResource]inputprojection.Projection{},
+				t.Context(), [2]*manifest.DiscoveryIndex{
+					indexes[0],
+					indexes[1],
+				},
+				[2]map[manifest.NamedResource]inputprojection.Projection{}, manifest.WorkScope{},
 			)
 			assert.NoError(t, err)
 			want := InputChange{
@@ -111,10 +112,11 @@ func TestSet_WithReadersPreservesDeclarationOwners(t *testing.T) {
 			assert.Equal(t, admitted, false)
 			assert.Equal(t, len(set.inputs), 0)
 			repeated, err := set.WithReaders(
-				t.Context(),
-				indexes[0],
-				indexes[1],
-				[2]map[manifest.NamedResource]inputprojection.Projection{},
+				t.Context(), [2]*manifest.DiscoveryIndex{
+					indexes[0],
+					indexes[1],
+				},
+				[2]map[manifest.NamedResource]inputprojection.Projection{}, manifest.WorkScope{},
 			)
 			assert.NoError(t, err)
 			assert.Diff(t, repeated.inputs, resolved.inputs)
@@ -135,8 +137,8 @@ func TestSet_WithReadersPreservesDeclarationOwners(t *testing.T) {
 				"metadata":   map[string]any{"name": "settings", "namespace": "apps"},
 				"data":       map[string]any{"value": "same"},
 			}
-			parsed, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
-			object := parsed.Object
+			parseDocResult, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+			object := parseDocResult.Object
 			assert.NoError(t, err)
 			artifacts[side] = &store.SourceArtifact{
 				FS: fstest.MapFS{
@@ -166,26 +168,31 @@ func TestSet_WithReadersPreservesDeclarationOwners(t *testing.T) {
 			stores[side].SetDiscoveryIndex(indexes[side])
 			prepared[side] = map[manifest.NamedResource]store.Child{id: {Obj: object, Doc: doc}}
 		}
-		set, err := Detect(t.Context(), artifacts[0], artifacts[1])
+		set, err := Detect(t.Context(), artifacts[0], artifacts[1], manifest.WorkScope{})
 		assert.NoError(t, err)
 		set, err = set.WithReaders(
-			t.Context(),
-			indexes[0],
-			indexes[1],
-			[2]map[manifest.NamedResource]inputprojection.Projection{},
+			t.Context(), [2]*manifest.DiscoveryIndex{
+				indexes[0],
+				indexes[1],
+			},
+			[2]map[manifest.NamedResource]inputprojection.Projection{}, manifest.WorkScope{},
 		)
 		assert.NoError(t, err)
 		_, direct := set.inputs[root]
 		_, named := set.inputs[reader]
 		assert.Equal(t, direct, true)
 		assert.Equal(t, named, false)
-		set, err = set.WithDeclarations(t.Context(), stores[0], stores[1], prepared)
+		set, err = set.WithDeclarations(
+			t.Context(),
+			DeclarationInputs{Stores: [2]*store.Store{stores[0], stores[1]}, Prepared: prepared},
+		)
 		assert.NoError(t, err)
 		set, err = set.WithReaders(
-			t.Context(),
-			indexes[0],
-			indexes[1],
-			[2]map[manifest.NamedResource]inputprojection.Projection{},
+			t.Context(), [2]*manifest.DiscoveryIndex{
+				indexes[0],
+				indexes[1],
+			},
+			[2]map[manifest.NamedResource]inputprojection.Projection{}, manifest.WorkScope{},
 		)
 		assert.NoError(t, err)
 		_, direct = set.inputs[root]
@@ -222,10 +229,17 @@ func TestDetect_OneSidedInputReadFailure(t *testing.T) {
 				operation: operation,
 				cause:     cause,
 			}
-			set, err := Detect(t.Context(), &store.SourceArtifact{FS: input}, &store.SourceArtifact{FS: fstest.MapFS{}})
+			set, err := Detect(
+				t.Context(),
+				&store.SourceArtifact{FS: input},
+				&store.SourceArtifact{FS: fstest.MapFS{}},
+				manifest.WorkScope{},
+			)
+
 			assert.FatalIf(t, set != nil || !errors.Is(err, cause) || !errors.Is(err, manifest.ErrInput) ||
 				!errors.Is(err, manifest.ErrFlux) ||
 				!strings.Contains(err.Error(), "input.yaml"), "read failure set=%v err=%v", set, err)
+
 			if operation == "read" {
 				assert.Equal(t, input.closed.Load(), int32(1))
 			}
@@ -282,8 +296,15 @@ func TestDetect_OneSidedInputCancellation(t *testing.T) {
 		cancelled: func() bool { return ctx.Err() != nil },
 		dataEOF:   true,
 	}
-	set, err := Detect(ctx, &store.SourceArtifact{FS: input}, &store.SourceArtifact{FS: fstest.MapFS{}})
+	set, err := Detect(
+		ctx,
+		&store.SourceArtifact{FS: input},
+		&store.SourceArtifact{FS: fstest.MapFS{}},
+		manifest.WorkScope{},
+	)
+
 	assert.FatalIf(t, set != nil || !errors.Is(err, context.Canceled), "cancellation set=%v err=%v", set, err)
+
 	assert.Equal(t, input.opened.Load(), int32(1))
 	assert.Equal(t, input.closed.Load(), input.opened.Load())
 	assert.Equal(t, input.postCancel.Load(), int32(0))
@@ -294,7 +315,12 @@ func TestDetect_ExistingInputHasNoOneSidedEvidence(t *testing.T) {
 	body := "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: optional, namespace: apps}\n"
 	before := fstest.MapFS{"input.yaml": {Data: []byte(body)}}
 	after := fstest.MapFS{"input.yaml": {Data: []byte(body + "data: {VALUE: after}\n")}}
-	set, err := Detect(t.Context(), &store.SourceArtifact{FS: before}, &store.SourceArtifact{FS: after})
+	set, err := Detect(
+		t.Context(),
+		&store.SourceArtifact{FS: before},
+		&store.SourceArtifact{FS: after},
+		manifest.WorkScope{},
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, set.Contains("input.yaml"), true)
 	assert.Diff(t, set.inputs, map[manifest.NamedResource]InputChange(nil))
@@ -307,7 +333,9 @@ func TestCollectInputs_CancelBeforeOpen(t *testing.T) {
 	input := &evidenceFailureFS{FS: fstest.MapFS{"input.yaml": {}}}
 	var set Set
 	err := set.CollectInputs(ctx, input, "input.yaml", false)
+
 	assert.FatalIf(t, !errors.Is(err, context.Canceled), "cancellation error=%v", err)
+
 	assert.Equal(t, input.opened.Load(), int32(0))
 }
 
@@ -339,7 +367,9 @@ func TestCollectInputs_CancelAfterOpen(t *testing.T) {
 	})
 	var set Set
 	err := set.CollectInputs(checked, input, "input.yaml", false)
+
 	assert.FatalIf(t, !errors.Is(err, context.Canceled), "cancellation error=%v", err)
+
 	assert.Equal(t, reads, 0)
 	assert.Equal(t, input.opened.Load(), int32(1))
 	assert.Equal(t, input.closed.Load(), int32(1))
@@ -394,6 +424,7 @@ func TestCollectInputs_ParseFailureDrain(t *testing.T) {
 	assert.NoError(t, err)
 	_, err = testutil.DecodeDocs(f)
 	assert.NoError(t, f.Close())
+
 	assert.FatalIf(
 		t,
 		err == nil || probeReads != 1,
@@ -401,6 +432,7 @@ func TestCollectInputs_ParseFailureDrain(t *testing.T) {
 		probeReads,
 		err,
 	)
+
 	t.Logf("pinned decoder rejects malformed prefix after %d read; later read remains pending", probeReads)
 	for _, tc := range []struct {
 		name    string
@@ -458,7 +490,12 @@ func TestDetect_SparseDirectoryBodies(t *testing.T) {
 	before["app/input.yaml"] = &fstest.MapFile{Data: []byte("before")}
 	after["app/input.yaml"] = &fstest.MapFile{Data: []byte("after!")}
 	left, right := &directoryBodyFS{FS: before}, &directoryBodyFS{FS: after}
-	changes, err := Detect(t.Context(), &store.SourceArtifact{FS: left}, &store.SourceArtifact{FS: right})
+	changes, err := Detect(
+		t.Context(),
+		&store.SourceArtifact{FS: left},
+		&store.SourceArtifact{FS: right},
+		manifest.WorkScope{},
+	)
 	assert.NoError(t, err)
 	assert.Diff(t, changes.Paths(), []string{"app/input.yaml"})
 	assert.Equal(t, left.opens.Load(), int64(25))
@@ -535,21 +572,24 @@ func testSetWithReadersUnindexedDeclarationMoveCase(
 			},
 		},
 	}
-	changes, err := Detect(t.Context(), inputs[0], inputs[1])
+	changes, err := Detect(t.Context(), inputs[0], inputs[1], manifest.WorkScope{})
 	assert.NoError(t, err)
 	for _, reverse := range []bool{false, true} {
 		before, after := indexes[0], indexes[1]
 		if reverse {
 			before, after = after, before
-			changes, err = Detect(t.Context(), inputs[1], inputs[0])
+			changes, err = Detect(t.Context(), inputs[1], inputs[0], manifest.WorkScope{})
 			assert.NoError(t, err)
 		}
 		qualified, err := changes.WithReaders(
-			t.Context(), before, after, [2]map[manifest.NamedResource]inputprojection.Projection{},
+			t.Context(),
+			[2]*manifest.DiscoveryIndex{before, after},
+			[2]map[manifest.NamedResource]inputprojection.Projection{},
+			manifest.WorkScope{},
 		)
 		assert.NoError(t, err)
-		comparison := qualified.DeclarationChanged(manifest.TreeHead, manifest.BootstrapSourceID, id, nil)
-		changed, known := comparison.Changed, comparison.Known
+		declarationChangedResult := qualified.DeclarationChanged(manifest.TreeHead, manifest.BootstrapSourceID, id, nil)
+		changed, known := declarationChangedResult.Changed, declarationChangedResult.Known
 		assert.Equal(t, known, (*testCaseInput) != "partial")
 		if known {
 			assert.Equal(t, changed, (*testCaseInput) != "equal")
@@ -560,8 +600,8 @@ func testSetWithReadersUnindexedDeclarationMoveCase(
 		if reverse {
 			side = manifest.TreeBase
 		}
-		comparison2 := qualified.DeclarationChanged(side, manifest.BootstrapSourceID, id, prepared)
-		changed, known = comparison2.Changed, comparison2.Known
+		declarationChangedResult2 := qualified.DeclarationChanged(side, manifest.BootstrapSourceID, id, prepared)
+		changed, known = declarationChangedResult2.Changed, declarationChangedResult2.Known
 		if known {
 			assert.Equal(t, changed, (*testCaseInput) != "equal")
 		}
@@ -585,7 +625,12 @@ func testDetectOneSidedInputIgnorePoliciesCase(
 	if (*testCaseInput) != "before" {
 		after[".sourceignore"] = &fstest.MapFile{Data: []byte("input.yaml\n")}
 	}
-	set, err := Detect(t.Context(), &store.SourceArtifact{FS: before}, &store.SourceArtifact{FS: after})
+	set, err := Detect(
+		t.Context(),
+		&store.SourceArtifact{FS: before},
+		&store.SourceArtifact{FS: after},
+		manifest.WorkScope{},
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, set.Contains("input.yaml"), (*testCaseInput) != "both")
 	if (*testCaseInput) != "both" {
@@ -655,6 +700,7 @@ func testCollectInputsReadResultsCase(t *testing.T, testCaseInput testCollectInp
 			set.inputs,
 			err,
 		)
+
 		assert.FatalIf(t, !testCaseInput.tc.cancel &&
 			(!errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || !strings.Contains(err.Error(), "input.yaml")), "read failure classification=%v", err)
 	}

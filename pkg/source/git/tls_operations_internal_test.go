@@ -125,7 +125,7 @@ func testFetcherTLSOperationsCaseCase(t *testing.T, testCaseInput testFetcherTLS
 		t.Context(),
 		repo,
 		fInputs.readSet(repo),
-		sourcecache.Policy{MaxAge: repo.SourceInterval()},
+		&sourcecache.Policy{MaxAge: repo.SourceInterval()},
 	)
 	if err != nil {
 		_, fallback := f.fallback.Load(srv.URL)
@@ -186,7 +186,7 @@ func testFetcherTLSOperationsCaseCaseCompletion(
 	)
 	_, (*captures.err) = (*captures.f).Fetch(
 		t.Context(), (*captures.repo), captures.fInputs.
-			readSet((*captures.repo)), sourcecache.Policy{MaxAge: (*captures.repo).SourceInterval()},
+			readSet((*captures.repo)), &sourcecache.Policy{MaxAge: (*captures.repo).SourceInterval()},
 	)
 	assert.NoError(t, (*captures.err))
 

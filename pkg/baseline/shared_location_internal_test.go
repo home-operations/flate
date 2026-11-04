@@ -4,8 +4,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/home-operations/flate/pkg/source/gittree"
-
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/go-git/go-git/v5"
 
@@ -14,6 +12,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	sourcegit "github.com/home-operations/flate/pkg/source/git"
+	"github.com/home-operations/flate/pkg/source/gittree"
 )
 
 func TestReview_SharedLocationAfterResolve(t *testing.T) {
@@ -36,8 +35,15 @@ func TestReview_SharedLocationAfterResolve(t *testing.T) {
 		readers.Go(func() {
 			ready.Done()
 			<-start
-			_, err := sourcegit.ResolveLocal(t.Context(), location, []*manifest.GitRepository{repository}, "")
-			assert.ErrorIf(t, err != nil, "%v", err)
+			_, err := sourcegit.ResolveLocal(
+				t.Context(),
+				location,
+				[]*manifest.GitRepository{repository},
+				sourcegit.LocalOptions{},
+			)
+			if err != nil {
+				t.Error(err)
+			}
 		})
 	}
 	ready.Wait()

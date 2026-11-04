@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: reflector
+  namespace: flux-system
+data:
+  value: unchanged

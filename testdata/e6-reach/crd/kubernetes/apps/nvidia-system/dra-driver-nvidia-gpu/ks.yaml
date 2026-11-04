@@ -1,0 +1,13 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: dra-driver-nvidia-gpu
+  namespace: nvidia-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/nvidia-system/dra-driver-nvidia-gpu/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system

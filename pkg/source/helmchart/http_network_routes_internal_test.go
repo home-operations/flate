@@ -125,7 +125,7 @@ func testFetchHTTPChartNetworkRoutesCase(t *testing.T, route *string,
 		t.Context(),
 		helmChart("repo", "chart", "1.0.0"),
 		fInputs.readSet(helmChart("repo", "chart", "1.0.0")),
-		sourcecache.Policy{Retry: sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour}},
+		&sourcecache.Policy{Retry: sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour}},
 	)
 	terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
 	wantIndex := int32(0)

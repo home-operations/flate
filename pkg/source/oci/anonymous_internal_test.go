@@ -67,7 +67,7 @@ func testFetcherProviderAnonymousCase(t *testing.T, private *bool,
 		t.Context(),
 		repo,
 		(testInputs{}).readSet(repo),
-		cache.Policy{Retry: cache.RetryConfig{Attempts: 3}},
+		&cache.Policy{Retry: cache.RetryConfig{Attempts: 3}},
 	)
 	if challenges.Load() != 1 || tokens.Load() != 1 {
 		t.Fatalf("challenge sequences=%d token exchanges=%d: %v", challenges.Load(), tokens.Load(), err)

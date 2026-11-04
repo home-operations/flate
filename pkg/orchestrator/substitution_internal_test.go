@@ -272,7 +272,7 @@ func TestRenderTrees_SubstitutionValidation(t *testing.T) {
 				_, _, _, localErr := cfg.Cache.Blob(
 					t.Context(),
 					sourcecache.BlobKey{Content: "after-constructor-failure"},
-					sourcecache.Policy{MaxAge: sourcecache.Forever},
+					&sourcecache.Policy{MaxAge: sourcecache.Forever},
 					func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 						_, localErr := io.WriteString(w, "caller-owned")
 						return sourcecache.ProducerResult{}, localErr

@@ -399,7 +399,7 @@ func (e *Emission) bindSource(s *Store, obj manifest.BaseManifest, reads *ReadSe
 		getArtifact = reads.GetArtifact
 	}
 	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
-		if ref.Use == "source" {
+		if ref.Use == sourceReferenceUse {
 			e.binding.source = ref.NamedResource
 			if a, ok := getArtifact(ref.NamedResource, ArtifactContent).(*SourceArtifact); ok {
 				e.binding.artifact = a

@@ -1,0 +1,13 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cluster-vars
+  namespace: flux-system
+spec:
+  interval: 1h
+  path: ./clusters/test/vars
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system

@@ -389,15 +389,16 @@ spec:
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestDAG_SeedAdmissionPreservesSourceReaders(t *testing.T) {
+	t.Parallel()
 	for _, supplied := range []bool{false, true} {
 		t.Run(fmt.Sprintf("supplied_%t", supplied), func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			o, err := newTestOrchestrator(
 				t,
 				Tree{Path: root, RepoRoot: root},
-				Config{CacheDir: t.TempDir(), Concurrency: 2},
+				Config{RecordWork: true, CacheDir: t.TempDir(), Concurrency: 2},
 			)
 			assert.FatalIf(t, err != nil, "%s", err)
 

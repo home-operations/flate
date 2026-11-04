@@ -32,7 +32,7 @@ import (
 func timeoutAcquisition(
 	t *testing.T,
 	kind string,
-) func(context.Context, *Cache, Policy, func(context.Context, ProducerInput) (ProducerResult, error)) (string, error) {
+) func(context.Context, *Cache, *Policy, func(context.Context, ProducerInput) (ProducerResult, error)) (string, error) {
 	t.Helper()
 	if kind == "git" {
 		src := t.TempDir()
@@ -46,11 +46,13 @@ func timeoutAcquisition(
 			"seed",
 			&git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example.invalid"}},
 		)
-		return func(ctx context.Context, c *Cache, policy Policy, produce func(context.Context, ProducerInput) (ProducerResult, error)) (string, error) {
+		return func(ctx context.Context, c *Cache, policyValue *Policy, produce func(context.Context, ProducerInput) (ProducerResult, error)) (string, error) {
+			policy := *policyValue
+
 			_, id, err := c.Git(
 				ctx,
 				GitKey{Content: "timed"},
-				policy,
+				&policy,
 				func(ctx context.Context, storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
 					repo, err := git.CloneContext(
 						ctx,
@@ -72,12 +74,14 @@ func timeoutAcquisition(
 			return id, err
 		}
 	}
-	return func(ctx context.Context, c *Cache, policy Policy, produce func(context.Context, ProducerInput) (ProducerResult, error)) (string, error) {
+	return func(ctx context.Context, c *Cache, policyValue *Policy, produce func(context.Context, ProducerInput) (ProducerResult, error)) (string, error) {
+		policy := *policyValue
+
 		if kind == "archive" {
-			_, _, id, err := c.Acquire(ctx, ArchiveKey{Content: "timed"}, policy, produce)
+			_, _, id, err := c.Acquire(ctx, ArchiveKey{Content: "timed"}, &policy, produce)
 			return id, err
 		}
-		_, _, id, err := c.Blob(ctx, BlobKey{Content: "timed"}, policy, produce)
+		_, _, id, err := c.Blob(ctx, BlobKey{Content: "timed"}, &policy, produce)
 		return id, err
 	}
 }
@@ -151,7 +155,7 @@ func TestAcquire_OperationTimeoutPublication(t *testing.T) {
 						synctest.Wait()
 						return true, nil
 					}},
-					Policy{Timeout: &timeout, Admit: func(context.Context) (func(), error) {
+					&Policy{Timeout: &timeout, Admit: func(context.Context) (func(), error) {
 						return func() { releases++ }, nil
 					}},
 					producer([]byte("complete"), &ocispec.Descriptor{}),
@@ -171,7 +175,7 @@ func TestAcquire_OperationTimeoutReaderFailure(t *testing.T) {
 		_, _, _, err := c.Acquire(
 			t.Context(),
 			ArchiveKey{Content: "invalid"},
-			Policy{Timeout: &timeout, Retry: fastRetry(3)},
+			&Policy{Timeout: &timeout, Retry: fastRetry(3)},
 			func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 				_, _ = w.Write(bytes.Repeat([]byte("x"), 512))
 				<-ctx.Done()
@@ -247,7 +251,7 @@ func testAcquireOperationTimeoutAfterSuccessCase(
 		}
 		c := cachetest.New(t, root, New)
 		data := orderedArchive(t, "file", "complete")
-		id, err := acquire(t.Context(), c, Policy{}, producer(data, &ocispec.Descriptor{}))
+		id, err := acquire(t.Context(), c, &Policy{}, producer(data, &ocispec.Descriptor{}))
 		assert.NoError(t, err)
 
 		value, _ := c.entries.Load(id)
@@ -256,7 +260,7 @@ func testAcquireOperationTimeoutAfterSuccessCase(
 		failedID, err := acquire(
 			t.Context(),
 			c,
-			Policy{Timeout: &timeout},
+			&Policy{Timeout: &timeout},
 			func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 				var output ProducerResult
 				if (*result) == "unchanged" {
@@ -318,7 +322,7 @@ func testAcquireOperationTimeoutWaitAndRetryWaiters(t *testing.T) {
 			_, _, _, err := c.Blob(
 				t.Context(),
 				key,
-				Policy{MaxAge: Forever, Admit: admit},
+				&Policy{MaxAge: Forever, Admit: admit},
 				func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 					close(entered)
 					<-release
@@ -333,7 +337,7 @@ func testAcquireOperationTimeoutWaitAndRetryWaiters(t *testing.T) {
 			_, _, _, err := c.Blob(
 				t.Context(),
 				key,
-				Policy{Timeout: &timeout, MaxAge: Forever, Admit: admit},
+				&Policy{Timeout: &timeout, MaxAge: Forever, Admit: admit},
 				func(context.Context, ProducerInput) (ProducerResult, error) {
 					t.Error("waiter did not reuse the completed generation")
 					return ProducerResult{}, nil
@@ -371,7 +375,7 @@ func testAcquireOperationTimeoutWaitAndRetryRetry(t *testing.T) {
 		_, _, _, err := c.Blob(
 			t.Context(),
 			BlobKey{Content: "retry"},
-			Policy{
+			&Policy{
 				Timeout: &timeout,
 				Retry:   RetryConfig{Attempts: 2, MinWait: time.Second},
 				Admit: func(context.Context) (func(), error) {
@@ -428,7 +432,7 @@ func testAcquireOperationTimeoutCleanupFailureCase(
 		_, err = acquire(
 			t.Context(),
 			c,
-			Policy{Timeout: &timeout, Admit: func(context.Context) (func(), error) {
+			&Policy{Timeout: &timeout, Admit: func(context.Context) (func(), error) {
 				return func() { releases++ }, nil
 			}},
 			func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
@@ -497,7 +501,7 @@ func testAcquireOperationTimeoutCaseCallback(
 	id, err := acquire(
 		ctx,
 		c,
-		Policy{Timeout: &timeout},
+		&Policy{Timeout: &timeout},
 		func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 			called = true
 			deadline, ok := ctx.Deadline()
@@ -544,7 +548,7 @@ func testAcquireOperationTimeoutCaseCallback(
 	id, err = acquire(
 		t.Context(),
 		c,
-		Policy{Timeout: &timeout, MaxAge: Forever},
+		&Policy{Timeout: &timeout, MaxAge: Forever},
 		producer(data, &ocispec.Descriptor{}),
 	)
 	assert.FatalIf(t, err != nil || id == "", "timeout recovery: id=%q error=%v", id, err)
@@ -560,7 +564,7 @@ func testAcquireOperationTimeoutCaseCallback(
 	warm, err := acquire(
 		t.Context(),
 		c,
-		Policy{Timeout: &timeout, MaxAge: Forever},
+		&Policy{Timeout: &timeout, MaxAge: Forever},
 		func(context.Context, ProducerInput) (ProducerResult, error) {
 			t.Error("warm generation invoked production with a zero timeout")
 			return ProducerResult{}, errors.New("unexpected production")

@@ -56,7 +56,7 @@ func (p *machineProvider) IsExpired() bool { return false }
 func (f *operation) fetchMachine(
 	ctx context.Context, requestValue *bucketAcquisition,
 	providers []credentials.Provider,
-	policy cache.Policy,
+	policy *cache.Policy,
 ) (*store.SourceArtifact, error) {
 	request := *requestValue
 	timeout := request.bucket.OperationTimeout()
@@ -65,7 +65,7 @@ func (f *operation) fetchMachine(
 		ctx,
 		policy,
 		func(ctx context.Context) error { return request.machineCredentials(ctx, providers) },
-		func(ctx context.Context, policy cache.Policy) (*store.SourceArtifact, error) {
+		func(ctx context.Context, policy *cache.Policy) (*store.SourceArtifact, error) {
 			return f.fetch(ctx, &request, policy)
 		},
 	)
@@ -162,7 +162,7 @@ func testFetcherMachineContinuationEligibilityCase1(t *testing.T, tc *struct {
 		return tc.cert
 	}}
 	f := &Fetcher{Network: newTestNetwork(t)}
-	artifact, err := f.Fetch(t.Context(), b, inputs.readSet(b), cache.Policy{})
+	artifact, err := f.Fetch(t.Context(), b, inputs.readSet(b), &cache.Policy{})
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	assert.FatalIf(t, err == nil || artifact != nil || (ok && missing.RetryAmbient != nil) != tc.wantAmbient ||
 		errors.Is(err, manifest.ErrInput) != tc.wantInput ||
@@ -284,7 +284,7 @@ func TestFetcher_MachineIAMFailures(t *testing.T) {
 			request.options.Transport = bucketTransport(func(r *http.Request) (*http.Response, error) {
 				return bucketReply(r, http.StatusForbidden, `<Error><Code>AccessDenied</Code></Error>`), nil
 			})
-			artifact, err := f.fetchMachine(t.Context(), &request, providers, cache.Policy{})
+			artifact, err := f.fetchMachine(t.Context(), &request, providers, &cache.Policy{})
 			assert.FatalIf(
 				t,
 				artifact != nil || err == nil || errors.Is(err, manifest.ErrMissingSecret) != tc.missing ||
@@ -431,7 +431,7 @@ func testFetcherMachineContinuationCase1(
 	}
 	f := &Fetcher{Cache: cachetest.New(t, root, cache.New), Network: newTestNetwork(t)}
 	initialRequests := inputs.requests.Load()
-	artifact, err := f.Fetch(t.Context(), b, &reads, cache.Policy{MaxAge: time.Hour})
+	artifact, err := f.Fetch(t.Context(), b, &reads, &cache.Policy{MaxAge: time.Hour})
 	if (*inputs.tier) == "rejected" {
 		assert.FatalIf(
 			t,
@@ -681,7 +681,7 @@ func testFetcherMachineProvidersCase(t *testing.T, failure **fs.PathError,
 			`<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated></ListBucketResult>`,
 		), nil
 	})
-	artifact, err := f.fetchMachine(t.Context(), &request, providers, cache.Policy{MaxAge: time.Hour})
+	artifact, err := f.fetchMachine(t.Context(), &request, providers, &cache.Policy{MaxAge: time.Hour})
 	assert.FatalIf(t, (err == nil) != tc.wantComplete || (artifact != nil) != tc.wantComplete ||
 		first.calls.Load() != 1 ||
 		next.calls.Load() != tc.wantNext,
@@ -755,7 +755,7 @@ func testFetcherMachineAcquisitionFailuresCase(
 			`<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated><Contents><Key>file.yaml</Key><Size>4</Size><ETag>"etag"</ETag></Contents></ListBucketResult>`,
 		), nil
 	})
-	artifact, err := f.fetchMachine(t.Context(), &request, providers, cache.Policy{})
+	artifact, err := f.fetchMachine(t.Context(), &request, providers, &cache.Policy{})
 	assert.FatalIf(
 		t,
 		err == nil || artifact != nil || strings.Contains(err.Error(), "canary"),

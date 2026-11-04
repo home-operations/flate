@@ -57,20 +57,24 @@ func TestFinalizeIndex_ImplicitAndTerminalInputs(t *testing.T) {
 			l := loader.New(s)
 			l.SourceRoot = root
 			admitForFilter(s, root)
+
 			{
-				_, err := l.Load(t.Context(), filepath.Join(root, "entry"))
+				_, err := l.Load(t.Context(), filepath.Join(root, "entry"), nil)
 				assert.FatalIf(t, err != nil, "%v", err)
 			}
+
 			{
 				err := l.FinalizeIndex(t.Context(), root, true)
 				assert.FatalIf(t, err != nil, "%v", err)
 			}
+
 			if overlay != "entry" {
 				assert.Diff(
 					t,
 					l.Index.Readers["entry/sibling.json"],
 					[]manifest.FileReader{{Reader: owner.Named(), Source: manifest.BootstrapSourceID}},
 				)
+
 				assert.FatalIf(
 					t,
 					len(l.Index.Readers["entry/README.md"]) != 0,
@@ -84,12 +88,14 @@ func TestFinalizeIndex_ImplicitAndTerminalInputs(t *testing.T) {
 					l.Index.Readers[file],
 					[]manifest.FileReader{{Reader: owner.Named(), Source: manifest.BootstrapSourceID}},
 				)
+
 				assert.ErrorIf(
 					t,
 					!slices.Contains(ownersForFilter(l.Index, file), owner.Named()),
 					"owner missing for %s",
 					file,
 				)
+
 				filter := admissiontest.Filter(
 					t,
 					admissiontest.Config{
@@ -99,8 +105,10 @@ func TestFinalizeIndex_ImplicitAndTerminalInputs(t *testing.T) {
 						Root:      "",
 					},
 				)
+
 				assert.ErrorIf(t, !filter.ShouldReconcile(owner.Named()), "changed %s did not select owner", file)
 			}
+
 			{
 				id := testutil.KustomizationID(
 					"apps",
@@ -109,6 +117,7 @@ func TestFinalizeIndex_ImplicitAndTerminalInputs(t *testing.T) {
 				assert.FatalIf(t, s.GetObject(id) != nil ||
 					len(l.Index.Records[id].Productions) != 0, "%v", "terminal input became an object or producer")
 			}
+
 			assert.FatalIf(
 				t,
 				admissiontest.Filter(t, admissiontest.Config{Changes: change.NewSet([]string{"inputs/unrelated"}), Index: l.Index, Inventory: s, Root: ""}).
@@ -146,18 +155,21 @@ func TestFilter_DuplicateDocumentKeys(t *testing.T) {
 	l := loader.New(s)
 	l.SourceRoot = root
 	admitForFilter(s, root)
-	_, err := l.Load(t.Context(), filepath.Join(root, "entry"))
+	_, err := l.Load(t.Context(), filepath.Join(root, "entry"), nil)
 	assert.NoError(t, err)
+
 	{
 		err := l.FinalizeIndex(t.Context(), root, true)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
+
 	for _, file := range []string{"shared/kustomization.yaml", "shared/cm.yaml", "inputs/patch"} {
 		assert.Diff(
 			t,
 			l.Index.Readers[file],
 			[]manifest.FileReader{{Reader: owner.Named(), Source: manifest.BootstrapSourceID}},
 		)
+
 		assert.ErrorIf(
 			t,
 			!slices.Contains(ownersForFilter(l.Index, file), owner.Named()),
@@ -165,6 +177,7 @@ func TestFilter_DuplicateDocumentKeys(t *testing.T) {
 			file,
 		)
 	}
+
 	assert.ErrorIf(
 		t,
 		!admissiontest.Filter(t, admissiontest.Config{Changes: change.NewSet([]string{"inputs/patch"}), Index: l.Index, Inventory: s, Root: ""}).
@@ -255,24 +268,28 @@ func testFinalizeIndexInputSourceViewsCase(t *testing.T, testCaseInput *string,
 	l := loader.New(s)
 	l.SourceRoot = root
 	admitForFilter(s, root)
-	_, err := l.Load(t.Context(), filepath.Join(local, "entry"))
+	_, err := l.Load(t.Context(), filepath.Join(local, "entry"), nil)
 	assert.NoError(t, err)
+
 	{
 		err := l.FinalizeIndex(t.Context(), root, true)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
+
 	prefix := ".artifacts/" + (*testCaseInput) + "/"
 	assert.Diff(
 		t,
 		l.Index.Readers[prefix+"inputs/patch"],
 		[]manifest.FileReader{{Reader: owner.Named(), Source: source.Named()}},
 	)
+
 	assert.FatalIf(
 		t,
 		len(l.Index.Readers[prefix+"inputs/host-only"]) != 0,
 		"%v",
 		"discovery read host files outside the mounted view",
 	)
+
 	file := "inputs/patch"
 	if (*testCaseInput) == "alias" {
 		file = "subtree/inputs/patch"
@@ -395,15 +412,17 @@ spec:
 			input.FS = os.DirFS(root)
 			st.SetArtifact(manifest.BootstrapSourceID, art)
 		}
-		_, err := l.Load(t.Context(), filepath.Join(root, "manifests"))
+		_, err := l.Load(t.Context(), filepath.Join(root, "manifests"), nil)
 		assert.NoError(t, err)
 		return l, input, want
 	}
 	l, input, want := newLoader()
+
 	{
 		err := l.FinalizeIndex(t.Context(), root, true)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
+
 	id := testutil.HelmReleaseID("apps", "demo")
 	record, _ := l.Index.Lookup(id)
 	slices.Sort(want)
@@ -438,17 +457,21 @@ spec:
 	)
 	assert.Equal(t, filter.ShouldReconcile(id), (*testCaseInput) == "working")
 	snapshot := snapshotIndexForFilter(l.Index)
+
 	{
 		err := l.FinalizeIndex(t.Context(), root, true)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
+
 	assertFilterIndexForTest(t, *l.Index, snapshot)
 	assert.Equal(t, input.opens, 0)
 	fresh, freshInput, _ := newLoader()
+
 	{
 		err := fresh.FinalizeIndex(t.Context(), root, true)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
+
 	assertFilterIndexForTest(t, *fresh.Index, snapshot)
 	assert.Equal(t, freshInput.opens, 0)
 }
@@ -492,7 +515,7 @@ func testFinalizeIndexSourceValuesReadersChartRef(t *testing.T) {
 	)
 	l := loader.New(st)
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	chartID := manifest.NamedResource{
 		Group:     manifest.SourceDomain,

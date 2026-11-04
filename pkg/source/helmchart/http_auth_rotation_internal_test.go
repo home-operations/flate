@@ -199,7 +199,7 @@ func testFetchHTTPChartBasicAuthSnapshotRotationCase(
 		t.Context(),
 		helmChart("repo", "app-template", "1.0.0"),
 		fInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
-		sourcecache.Policy{Retry: sourcecache.RetryConfig{Attempts: 3}},
+		&sourcecache.Policy{Retry: sourcecache.RetryConfig{Attempts: 3}},
 	)
 	assert.NoError(t, err)
 
@@ -213,7 +213,7 @@ func testFetchHTTPChartBasicAuthSnapshotRotationCase(
 			t.Context(),
 			helmChart("repo", "app-template", "1.0.0"),
 			fInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
-			sourcecache.Policy{},
+			&sourcecache.Policy{},
 		)
 		assert.FatalIf(t, fetchErr != nil || testCaseInput.hits.
 			Load() != before, "warm chart missed: %v", fetchErr)
@@ -226,7 +226,7 @@ func testFetchHTTPChartBasicAuthSnapshotRotationCase(
 		t.Context(),
 		preparedHTTP(t, f, fInputs, &failed),
 		helmChart("repo", "app-template", "1.0.0"),
-		sourcecache.Policy{},
+		&sourcecache.Policy{},
 	)
 	terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
 	assert.FatalIf(t, !ok || !terminal.Attempted, "failed snapshot: %v", err)

@@ -103,7 +103,7 @@ func testTemplateCachePersistedIntegration(t *testing.T, inputs *templateCacheIn
 	r, _, _, renderMapsErr := (*inputs.cli).cache.Blob(
 		t.Context(),
 		alternateKey,
-		cache.Policy{},
+		&cache.Policy{},
 		func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 			writeTestRecordErr2 := writeTestRecord(w, alternateKey, initial.record)
 			return cache.ProducerResult{}, writeTestRecordErr2

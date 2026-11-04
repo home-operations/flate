@@ -100,7 +100,7 @@ func TestLoader_InputRolesDualResourceOutside(t *testing.T) {
 	l := New(st)
 	l.SourceRoot = root
 	{
-		_, err := l.Load(t.Context(), root)
+		_, err := l.Load(t.Context(), root, nil)
 		assert.NoError(t, err)
 	}
 	l.Admit(root)
@@ -273,7 +273,7 @@ func TestOccurrences_InputSourceViews(t *testing.T) {
 			l := New(s)
 			l.SourceRoot = root
 			admitForTest(s, root)
-			_, err := l.Load(t.Context(), filepath.Join(local, "entry"))
+			_, err := l.Load(t.Context(), filepath.Join(local, "entry"), nil)
 			assert.NoError(t, err)
 			occurrences, err := l.Occurrences(t.Context(), filepath.Join(local, "entry"), "projected")
 			assert.NoError(t, err)

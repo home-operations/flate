@@ -75,7 +75,7 @@ func testFetcherFreshnessCase(t *testing.T, tc *struct {
 		t.Context(),
 		repo,
 		(testInputs{}).readSet(repo),
-		sourcecache.Policy{MaxAge: repo.SourceInterval()},
+		&sourcecache.Policy{MaxAge: repo.SourceInterval()},
 	)
 	assert.NoError(t, err)
 	assert.Equal(t, first.Revision, initial)
@@ -142,7 +142,7 @@ func testFetcherFreshnessCaseCompletion(t *testing.T, captures *testFetcherFresh
 		t.Context(),
 		&cached,
 		(testInputs{}).readSet(&cached),
-		sourcecache.Policy{MaxAge: cached.SourceInterval()},
+		&sourcecache.Policy{MaxAge: cached.SourceInterval()},
 	)
 	assert.NoError(t, (*captures.err))
 	assert.Equal(t, hit.Revision, want)
@@ -177,7 +177,7 @@ func testFetcherFreshnessCaseCompletion(t *testing.T, captures *testFetcherFresh
 		t.Context(),
 		&cached,
 		(testInputs{}).readSet(&cached),
-		sourcecache.Policy{MaxAge: cached.SourceInterval()},
+		&sourcecache.Policy{MaxAge: cached.SourceInterval()},
 	)
 	assert.NoError(t, (*captures.err))
 	assert.Equal(t, reopened.Revision, want)
@@ -254,7 +254,7 @@ func testFetcherFreshnessCaseTail(t *testing.T, scope *testFetcherFreshnessCaseT
 		{
 			_, fetchErr := (*scope.f).Fetch(
 				t.Context(), (*scope.repo), (testInputs{}).readSet((*scope.repo)),
-				sourcecache.Policy{MaxAge: (*scope.repo).SourceInterval()},
+				&sourcecache.Policy{MaxAge: (*scope.repo).SourceInterval()},
 			)
 			assert.FatalIf(t, fetchErr == nil, "%s", "expected refresh to fail after upstream shutdown")
 		}
@@ -274,7 +274,7 @@ func testFetcherFreshnessCaseTail(t *testing.T, scope *testFetcherFreshnessCaseT
 		assert.NoError(t, os.RemoveAll((*scope.src)))
 		committed, fetchErr2 := (*scope.f).Fetch(
 			t.Context(), (*scope.repo), (testInputs{}).readSet((*scope.repo)),
-			sourcecache.Policy{MaxAge: (*scope.tc).interval},
+			&sourcecache.Policy{MaxAge: (*scope.tc).interval},
 		)
 		if (*scope.tc).mixed {
 			assert.FatalIf(t, fetchErr2 == nil || committed != nil, "%s", "mixed commit unexpectedly retained forever")
@@ -291,7 +291,7 @@ func testFetcherFreshnessCaseTail(t *testing.T, scope *testFetcherFreshnessCaseT
 
 	second, (*scope.err) = (*scope.f).Fetch(
 		t.Context(), (*scope.repo), (testInputs{}).readSet((*scope.repo)),
-		sourcecache.Policy{MaxAge: (*scope.repo).SourceInterval()},
+		&sourcecache.Policy{MaxAge: (*scope.repo).SourceInterval()},
 	)
 	assert.NoError(t, (*scope.err))
 	t.Logf(

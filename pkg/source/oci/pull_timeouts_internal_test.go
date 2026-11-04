@@ -159,7 +159,7 @@ func testFetcherPullTimeoutCaseCallbackCompletion(
 ) {
 	t.Helper()
 	_, (*captures.err) = (&operation{Fetcher: (*captures.f)}).fetchLayer(
-		t.Context(), (*captures.r), new((*captures.request)), sourcecache.Policy{MaxAge: time.Hour},
+		t.Context(), (*captures.r), new((*captures.request)), &sourcecache.Policy{MaxAge: time.Hour},
 	)
 	if !errors.Is((*captures.err), context.DeadlineExceeded) || time.Since((*captures.start)) != 5*time.Second {
 		t.Fatalf(
@@ -188,7 +188,7 @@ func testFetcherPullTimeoutCaseCallbackCompletion(
 
 	acquired, (*captures.err) = (&operation{Fetcher: (*captures.f)}).fetchLayer(
 		t.Context(),
-		&longer, new((*captures.request)), sourcecache.Policy{MaxAge: time.Hour},
+		&longer, new((*captures.request)), &sourcecache.Policy{MaxAge: time.Hour},
 	)
 	if (*captures.err) != nil || time.Since((*captures.start)) != 6*time.Second {
 		t.Fatalf("longer pull: elapsed=%v error=%v", time.Since((*captures.start)), (*captures.err))
@@ -215,7 +215,7 @@ func testFetcherPullTimeoutCaseCallbackCompletion(
 
 	warm, (*captures.err) = (&operation{Fetcher: (*captures.f)}).fetchLayer(
 		t.Context(),
-		&shorter, new((*captures.request)), sourcecache.Policy{MaxAge: time.Hour},
+		&shorter, new((*captures.request)), &sourcecache.Policy{MaxAge: time.Hour},
 	)
 	assert.FatalIf(
 		t, (*captures.err) !=

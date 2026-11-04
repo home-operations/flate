@@ -41,7 +41,7 @@ func TestFetcher_ChartMediaSelector(t *testing.T) {
 				Reference: &sourcev1.OCIRepositoryRef{Tag: "1.0.0"},
 			}
 			f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, t.TempDir(), sourcecache.New)}
-			got, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{})
+			got, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), &sourcecache.Policy{})
 			assert.FatalIf(t, err != nil || got == nil, "default request: artifact=%v error=%v", got, err)
 			{
 				_, readFileErr := fs.ReadFile(got.FS, "Chart.yaml")
@@ -50,7 +50,7 @@ func TestFetcher_ChartMediaSelector(t *testing.T) {
 
 			explicit := *repo
 			explicit.LayerSelector = &sourcev1.OCILayerSelector{MediaType: registry.ChartLayerMediaType}
-			got, err = f.Fetch(t.Context(), &explicit, (testInputs{}).readSet(&explicit), sourcecache.Policy{})
+			got, err = f.Fetch(t.Context(), &explicit, (testInputs{}).readSet(&explicit), &sourcecache.Policy{})
 			if media == registry.ChartLayerMediaType {
 				assert.FatalIf(t, err != nil || got == nil, "explicit chart selector: artifact=%v error=%v", got, err)
 			} else {
@@ -94,10 +94,10 @@ func TestFetcher_ChartMediaCacheIsolation(t *testing.T) {
 		Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"},
 	}
 	f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, t.TempDir(), sourcecache.New)}
-	gotGeneric, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{})
+	gotGeneric, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), &sourcecache.Policy{})
 	assert.NoError(t, err)
 
-	gotChart, err := f.FetchChart(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{})
+	gotChart, err := f.FetchChart(t.Context(), repo, (testInputs{}).readSet(repo), &sourcecache.Policy{})
 	assert.NoError(t, err)
 
 	assert.Equal(t, mustReadFile(t, gotGeneric.FS, "file.yaml"), "generic")
@@ -151,7 +151,7 @@ func testFetcherChartMediaAfterProvenanceCase(
 	cache := cachetest.New(t, t.TempDir(), sourcecache.New)
 	network := newTestNetwork(t)
 	f := &Fetcher{Network: network, Cache: cache}
-	got, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{})
+	got, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), &sourcecache.Policy{})
 	assert.ErrorIf(
 		t,
 		got != nil || !errors.Is(err, manifest.ErrFlux),
@@ -161,7 +161,7 @@ func testFetcherChartMediaAfterProvenanceCase(
 	)
 	copyRepo := *repo
 	copyRepo.LayerSelector = &sourcev1.OCILayerSelector{Operation: sourcev1.OCILayerCopy}
-	got, err = f.Fetch(t.Context(), &copyRepo, (testInputs{}).readSet(&copyRepo), sourcecache.Policy{})
+	got, err = f.Fetch(t.Context(), &copyRepo, (testInputs{}).readSet(&copyRepo), &sourcecache.Policy{})
 	assert.NoError(t, err)
 
 	data, err = fs.ReadFile(got.FS, source.OCICopiedLayerFilename)
@@ -195,7 +195,7 @@ func testFetcherChartMediaAfterProvenanceCase(
 	)
 	reads := (testInputs{repos: func(string, string) *manifest.HelmRepository { return r }}).readSet(hc)
 	charts := helmchart.New(f, helmchart.Config{Cache: cache, Network: network})
-	chart, err := charts.Fetch(t.Context(), hc, reads, sourcecache.Policy{})
+	chart, err := charts.Fetch(t.Context(), hc, reads, &sourcecache.Policy{})
 	assert.FatalIf(
 		t,
 		err != nil || chart == nil,

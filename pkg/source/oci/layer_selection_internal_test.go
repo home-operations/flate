@@ -111,7 +111,7 @@ func testFetcherLayerSelectionAndIgnoreFlavorCase(
 			t.Context(),
 			repo,
 			(testInputs{}).readSet(repo),
-			sourcecache.Policy{MaxAge: repo.SourceInterval()},
+			&sourcecache.Policy{MaxAge: repo.SourceInterval()},
 		)
 		if testCaseInput.tc.wantErr {
 			assert.FatalIf(
@@ -177,7 +177,7 @@ func testFetcherLayerSelectionAndIgnoreFlavorCase(
 		t.Context(),
 		&copyRepo,
 		(testInputs{}).readSet(&copyRepo),
-		sourcecache.Policy{MaxAge: copyRepo.SourceInterval()},
+		&sourcecache.Policy{MaxAge: copyRepo.SourceInterval()},
 	)
 	assert.NoError(t, err)
 
@@ -203,7 +203,7 @@ func testFetcherLayerSelectionAndIgnoreFlavorCase(
 			t.Context(),
 			&copyRepo,
 			(testInputs{}).readSet(&copyRepo),
-			sourcecache.Policy{MaxAge: copyRepo.SourceInterval()},
+			&sourcecache.Policy{MaxAge: copyRepo.SourceInterval()},
 		)
 		assert.NoError(t, err)
 

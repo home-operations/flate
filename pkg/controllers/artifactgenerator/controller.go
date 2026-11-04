@@ -62,7 +62,9 @@ type inputIdentity struct {
 	Source manifest.NamedResource
 	Input  store.ArtifactInput
 }
+
 type evaluation struct {
+	work     manifest.AcquisitionWork
 	owner    *cache.Cache
 	inputs   map[string]*store.SourceArtifact
 	identity []inputIdentity
@@ -132,11 +134,13 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 		evaluation: &localEvaluation,
 		attempt:    &attempt,
 	}
-	for _, req := range requests {
+	for i := range requests {
+		req := &requests[i]
+		req.work.Scope = c.run.Reads.Work().Scope()
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("context: %w", err)
 		}
-		if err := publication.publish(ctx, &req); err != nil {
+		if err := publication.publish(ctx, req); err != nil {
 			return err
 		}
 	}
@@ -186,6 +190,7 @@ type generatorInputSet struct {
 
 func (c *execution) generatorInputs(raw *manifest.RawObject, spec *specification) generatorInputSet {
 	localEvaluation := evaluation{
+		work:   manifest.AcquisitionWork{Scope: c.run.Reads.Work().Scope()},
 		owner:  c.cache,
 		inputs: make(map[string]*store.SourceArtifact, len(spec.Sources)),
 		maxAge: cache.Forever,
@@ -248,9 +253,18 @@ func (p *generatorPublication) generatedSource(ctx context.Context, req *request
 	input, descriptor, keyID, err := p.execution.cache.Acquire(
 		ctx,
 		key,
-		cache.Policy{MaxAge: p.evaluation.maxAge},
+		&cache.Policy{MaxAge: p.evaluation.maxAge, Work: &req.work},
 		func(ctx context.Context, target cache.ProducerInput) (cache.ProducerResult, error) {
-			return localEvaluation.produce(ctx, req, target)
+			var identity string
+			if acquisition := target.Work().Physical(); acquisition != nil {
+				identity = acquisition.Key.Input
+				acquisition.Add(&manifest.WorkCounts{LocalAcquisitions: 1})
+			}
+			work := req.work.Scope.Record(manifest.WorkEvaluation, identity)
+			work.Add(&manifest.WorkCounts{Attempts: 1})
+			err := localEvaluation.produce(ctx, req, target)
+			work.Finish(err)
+			return cache.ProducerResult{}, err
 		},
 	)
 	if err != nil {

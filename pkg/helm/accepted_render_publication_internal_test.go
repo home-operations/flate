@@ -39,7 +39,9 @@ func testTemplateAcceptedHistoryDurablePublication(
 	storedKey := func() string {
 		t.Helper()
 		reader, descriptor, _, blobErr2 := renderer.cache.Blob(
-			t.Context(), (*(*testCaseInput).key), cache.Policy{MaxAge: cache.Forever},
+			t.Context(),
+			(*(*testCaseInput).key),
+			&cache.Policy{MaxAge: cache.Forever},
 			nil,
 		)
 		assert.NoError(t, blobErr2)
@@ -129,14 +131,16 @@ func testTemplateAcceptedHistoryDurablePublication(
 	reader, _, _, err := renderer.cache.Blob(
 		t.Context(),
 		(*(*testCaseInput).key),
-		cache.Policy{MaxAge: cache.Forever},
+		&cache.Policy{MaxAge: cache.Forever},
 		nil,
 	)
 	assert.NoError(t, err)
 	data, err := fs.ReadFile(reader, "content")
 	assert.NoError(t, err)
 	_, _, _, err = renderer.cache.Blob(
-		t.Context(), (*(*testCaseInput).key), cache.Policy{MaxAge: 0},
+		t.Context(),
+		(*(*testCaseInput).key),
+		&cache.Policy{MaxAge: 0},
 		func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 			_, writeErr2 := w.Write(data)
 			return cache.ProducerResult{}, writeErr2

@@ -22,7 +22,7 @@ import (
 
 func testDirectoryInput(tb testing.TB, path string) *store.SourceArtifact {
 	tb.Helper()
-	input, _, err := baseline.AdmitDirectory(tb.Context(), path, path)
+	input, _, err := baseline.AdmitDirectory(tb.Context(), path, path, manifest.WorkScope{})
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -40,7 +40,12 @@ func newTestOrchestrator(tb testing.TB, tree Tree, cfg Config) (*Orchestrator, e
 	}
 	if tree.Input == nil {
 		var err error
-		tree.Input, tree.Path, err = baseline.AdmitDirectory(tb.Context(), tree.Path, tree.RepoRoot)
+		tree.Input, tree.Path, err = baseline.AdmitDirectory(
+			tb.Context(),
+			tree.Path,
+			tree.RepoRoot,
+			manifest.WorkScope{},
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -50,7 +55,7 @@ func newTestOrchestrator(tb testing.TB, tree Tree, cfg Config) (*Orchestrator, e
 	}
 	if tree.BaseInput != nil && tree.BaseInput != tree.Input && tree.ExternalChanges == nil {
 		var err error
-		tree.ExternalChanges, err = change.Detect(tb.Context(), tree.BaseInput, tree.Input)
+		tree.ExternalChanges, err = change.Detect(tb.Context(), tree.BaseInput, tree.Input, manifest.WorkScope{})
 		if err != nil {
 			return nil, err
 		}
@@ -95,7 +100,7 @@ func newTestOrchestratorTail(tailCaseInput *newTestOrchestratorTailInputs) (*Orc
 			DisableChartDigestTracking: tailCaseInput.cfg.HelmOptions.DisableChartDigestTracking,
 		},
 	)
-	o := newOrchestrator(
+	o := newOrchestrator((*tailCaseInput.tb).Context(),
 		new(*tailCaseInput.cfg),
 		new(*tailCaseInput.tree),
 		task.NewBounded(tailCaseInput.cfg.Concurrency),

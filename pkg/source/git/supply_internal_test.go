@@ -46,7 +46,7 @@ func TestFetcher_SuppliedHTTPSMaterial(t *testing.T) {
 	defer reads.Close()
 	prepared, err := (&operation{Fetcher: &Fetcher{}, secrets: source.SecretLookup(&reads)}).resolveTransport(
 		repo,
-		sourcecache.Policy{},
+		&sourcecache.Policy{},
 	)
 	assert.NoError(t, err)
 	auth, ok := prepared.options.Auth.(*githttp.BasicAuth)

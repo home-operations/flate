@@ -413,6 +413,7 @@ func (p renderPublication) WriteTo(w io.Writer) (int64, error) {
 
 // RenderAcceptance binds an accepted inventory to its source paths.
 type RenderAcceptance struct {
+	Work    *manifest.RenderWork
 	Owner   manifest.NamedResource                                      `json:"Owner"`
 	Receipt *manifest.RenderReceipt                                     `json:"Receipt"`
 	Records iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord] `json:"Records"`
@@ -472,17 +473,28 @@ func (c *Client) RecordRender(ctx context.Context, acceptance RenderAcceptance) 
 			Key:        frame.header.Key,
 			Lookup:     frame.lookup,
 			Acceptance: content,
+			Work:       acceptance.Work.History(),
 			History:    cache.RenderHistory{Owner: owner, Sources: acceptance.Sources},
 			Content:    renderPublication{frame: frame, accepted: accepted},
 		},
 	)
 }
 
-func (c *Client) lookupRender(ctx context.Context, loaded *chartDescription, key string) (*renderRecord, error) {
+func (c *Client) lookupRender(
+	ctx context.Context,
+	loaded *chartDescription,
+	key string,
+	input *RenderOptions,
+) (*renderRecord, error) {
 	record := loaded.record
 	if record != nil && record.key == key {
-		renderMetadataResult1, renderMetadataResult1Err := c.cache.RenderMetadata(ctx, key, record.frame.lookup)
-		_, identity, enabled, err := renderMetadataResult1.Descriptor, renderMetadataResult1.Identity, renderMetadataResult1.Enabled, renderMetadataResult1Err
+		renderMetadataResult1, renderMetadataResult1Err := c.cache.RenderMetadata(
+			ctx,
+			key,
+			record.frame.lookup,
+			input.Work.History(),
+		)
+		identity, enabled, err := renderMetadataResult1.Identity, renderMetadataResult1.Enabled, renderMetadataResult1Err
 		if errors.Is(err, errdef.ErrNotFound) {
 			//nolint:nilnil // An unavailable receipt is a cache miss, not a render failure.
 			return nil, nil
@@ -498,14 +510,14 @@ func (c *Client) lookupRender(ctx context.Context, loaded *chartDescription, key
 	}
 	if record == nil {
 		var err error
-		record, err = c.readRender(ctx, key)
+		record, err = c.readRender(ctx, key, input)
 		if err != nil || record == nil {
 			return nil, err
 		}
 	}
 	var chartErr error
 	if record.Analysis.RequiresLoader {
-		chartErr = c.decodeChart(ctx, loaded)
+		chartErr = c.decodeChart(ctx, loaded, input)
 	}
 	if chartErr != nil {
 		return nil, chartErr
@@ -534,7 +546,7 @@ func (c *Client) PreviousRender(
 	if err != nil || prepared.key == "" || prepared.loaded.valuesErr != nil || prepared.capabilityErr != nil {
 		return nil, false
 	}
-	record, err := c.lookupRender(ctx, &prepared.loaded, prepared.key)
+	record, err := c.lookupRender(ctx, &prepared.loaded, prepared.key, &input)
 	if err != nil || record == nil || record.frame.header.Binding != manifest.Fingerprint(prepared.binding) {
 		return nil, false
 	}
@@ -569,11 +581,14 @@ func (a *acceptedRender) ordered() bool {
 	return true
 }
 
-func (c *Client) readRender(ctx context.Context, key string) (*renderRecord, error) {
+func (c *Client) readRender(ctx context.Context, key string, input *RenderOptions) (*renderRecord, error) {
 	reader, _, lookup, err := c.cache.Blob(
 		ctx,
-		cache.BlobKey{Content: key, Render: cache.RenderAccepted},
-		cache.Policy{MaxAge: cache.Forever},
+		cache.BlobKey{
+			Content: key,
+			Render:  cache.RenderAccepted,
+		},
+		&cache.Policy{MaxAge: cache.Forever, Work: input.Work.History()},
 		nil,
 	)
 	if errors.Is(err, errdef.ErrNotFound) {

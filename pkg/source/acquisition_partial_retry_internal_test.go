@@ -53,7 +53,7 @@ func testAcquirePartialBodyRetryCaseCase(t *testing.T, testCaseInput testAcquire
 	bodies := make(chan []byte, (*(*testCaseInput.concurrency)))
 	for range *(*testCaseInput.concurrency) {
 		go func() {
-			input, err := c.Acquire(t.Context(), srv.URL, retry, nil)
+			input, err := c.Acquire(t.Context(), &HTTPRequest{URL: srv.URL, Retry: retry, HeldSlot: nil})
 			var body []byte
 			if err == nil {
 				body, err = fs.ReadFile(input, "content")
@@ -70,7 +70,7 @@ func testAcquirePartialBodyRetryCaseCase(t *testing.T, testCaseInput testAcquire
 		t.Fatalf("requests=%d, want 2", hits.Load())
 	}
 	body[0] = 'X'
-	input, err := c.Acquire(t.Context(), srv.URL, sourcecache.RetryConfig{}, nil)
+	input, err := c.Acquire(t.Context(), &HTTPRequest{URL: srv.URL, Retry: sourcecache.RetryConfig{}, HeldSlot: nil})
 	if err == nil {
 		body, err = fs.ReadFile(input, "content")
 	}
@@ -81,7 +81,7 @@ func testAcquirePartialBodyRetryCaseCase(t *testing.T, testCaseInput testAcquire
 		body,
 		err,
 	)
-	input, err = c.Acquire(t.Context(), srv.URL, retry, nil)
+	input, err = c.Acquire(t.Context(), &HTTPRequest{URL: srv.URL, Retry: retry, HeldSlot: nil})
 	if err == nil {
 		body, err = fs.ReadFile(input, "content")
 	}

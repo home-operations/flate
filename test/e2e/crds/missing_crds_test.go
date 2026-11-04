@@ -2,13 +2,13 @@ package crds_test
 
 import (
 	"cmp"
+	"encoding/json"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
-
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/test/e2e/internal/harness"
@@ -153,6 +153,7 @@ func suspendedIssueResourceSet() string {
 
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_MissingCRDs_Policy(t *testing.T) {
+	t.Run("selection", testMissingCRDsSelection)
 	for _, tc := range []struct {
 		name, kind, supplied, namespace string
 		enabled, success, reference     bool
@@ -489,5 +490,149 @@ func e2EMissingCRDsPolicyNameLoop(t *testing.T, loopInputs struct {
 				built,
 			)
 		}
+	}
+}
+
+type missingCRDSelectionCase struct {
+	name                      string
+	allowed, present, foreign bool
+	success                   bool
+}
+
+func missingCRDSelectionFlags(t *testing.T, tc missingCRDSelectionCase) []string {
+	t.Helper()
+	selected := suspendedIssueResourceSet()
+	if tc.foreign {
+		selected = strings.Replace(selected, "apiVersion: apiextensions.k8s.io/v1", "apiVersion: fixture.example/v1", 1)
+	}
+	unrelated := strings.NewReplacer(
+		"flux-operator", "unrelated",
+		"namespace: flux-system", "namespace: other",
+		"apiVersion: apiextensions.k8s.io/v1", "apiVersion: fixture.example/v1",
+		"kind: CustomResourceDefinition", "kind: Widget",
+		"helmreleases.helm.toolkit.fluxcd.io", "missing-widget",
+	).Replace(suspendedIssueResourceSet())
+	dir := missingCRDRepo(t, selected+"---\n"+unrelated)
+	if tc.present {
+		testutil.WriteFile(t, dir, "apps/dependency.yaml", helmReleaseCRD)
+		testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: [rs.yaml, dependency.yaml]\n")
+	}
+	flags := []string{
+		"--path", dir, "--cache-dir", t.TempDir(), "--concurrency", "2", "--no-progress", "--allow-missing-kinds=",
+	}
+	if tc.allowed {
+		flags = append(flags, "--allow-missing-kinds=CustomResourceDefinition")
+	}
+	return flags
+}
+
+func (tc missingCRDSelectionCase) assertOutput(t *testing.T, out, warnings string, code int) {
+	t.Helper()
+	assert.Equal(t, code, 0)
+	if strings.Contains(out+warnings, "unrelated") || strings.Contains(out+warnings, "missing-widget") {
+		t.Fatalf("unrelated dependency escaped selection: stdout=%s stderr=%s", out, warnings)
+	}
+	var documents []map[string]any
+	assert.NoError(t, json.Unmarshal([]byte(out), &documents))
+	if tc.success {
+		assert.Diff(
+			t,
+			documents,
+			[]map[string]any{
+				{
+					"kind":      "HelmRelease",
+					"name":      "flux-operator",
+					"namespace": "flux-system",
+					"chart":     "flux-system-flux-operator/",
+					"version":   "*",
+					"source":    "flux-operator",
+					"sourceRef": map[string]any{
+						"kind": "OCIRepository", "name": "flux-operator", "namespace": "flux-system",
+					},
+					"releaseName": "flux-operator",
+					"suspend":     true,
+				},
+			},
+		)
+	} else {
+		assert.Equal(t, len(documents), 0)
+		if !strings.Contains(
+			warnings,
+			"helmreleases.helm.toolkit.fluxcd.io",
+		) || !strings.Contains(
+			warnings,
+			"not found",
+		) {
+			t.Fatalf("selected CRD dependency failure hidden: %s", warnings)
+		}
+	}
+	count := 0
+	if tc.allowed && !tc.present {
+		count = 1
+	}
+	assert.Equal(t, strings.Count(warnings, "[MissingCRD]"), count)
+	if count != 0 && !strings.Contains(
+		warnings,
+		"CRD CustomResourceDefinition.apiextensions.k8s.io/helmreleases.helm.toolk"+
+			"it.fluxcd.io absent from offline inputs; accepted for ResourceSet.fluxcd."+
+			"controlplane.io/flux-system/flux-operator",
+	) {
+		t.Fatalf("missing selected CRD advisory: %s", warnings)
+	}
+}
+
+func runMissingCRDSelection(t *testing.T, tc missingCRDSelectionCase, args []string) {
+	t.Helper()
+	var priorOutput, priorWarnings string
+	for run := range 2 {
+		runCLIBuffersResult := harness.RunCLIBuffers(args...)
+		out, warnings, code := runCLIBuffersResult.Stdout, runCLIBuffersResult.Stderr, runCLIBuffersResult.Code
+		tc.assertOutput(t, out, warnings, code)
+		if run != 0 {
+			assert.Equal(t, out, priorOutput)
+			assert.Equal(t, warnings, priorWarnings)
+		}
+		priorOutput, priorWarnings = out, warnings
+	}
+}
+
+func testMissingCRDsSelection(t *testing.T) {
+	t.Helper()
+	for _, tc := range []missingCRDSelectionCase{
+		{name: "strict absent"},
+		{name: "allowed absent", allowed: true, success: true},
+		{name: "present", present: true, success: true},
+		{name: "foreign group", allowed: true, present: true, foreign: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			flags := missingCRDSelectionFlags(t, tc)
+			scopes := []struct {
+				name string
+				args []string
+			}{
+				{name: "namespace", args: []string{"-n", "flux-system"}},
+				{name: "named", args: []string{"flux-operator"}},
+			}
+			if !tc.success {
+				scopes = scopes[:1]
+			}
+			for _, scope := range scopes {
+				t.Run(scope.name, func(t *testing.T) {
+					args := append([]string{"get", "hr", "-o", "json"}, scope.args...)
+					args = append(args, flags...)
+					runMissingCRDSelection(t, tc, args)
+				})
+			}
+			if tc.success {
+				args := append([]string{"build", "all", "--only-kinds", "HelmRelease"}, flags...)
+				runCLIBuffersResult5 := harness.RunCLIBuffers(args...)
+				out, warnings, code := runCLIBuffersResult5.Stdout, runCLIBuffersResult5.Stderr, runCLIBuffersResult5.Code
+				assert.Equal(t, code, 1)
+				assert.Equal(t, out, "")
+				if !strings.Contains(warnings, "other/missing-widget") || !strings.Contains(warnings, "not found") {
+					t.Fatalf("CRD permission hid unrelated non-CRD failure: %s", warnings)
+				}
+			}
+		})
 	}
 }

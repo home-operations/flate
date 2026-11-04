@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: reloader
+  namespace: flux-system
+data:
+  value: unchanged

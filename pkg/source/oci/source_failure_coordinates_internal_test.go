@@ -158,7 +158,7 @@ func testFetcherFailureSourceAndOperationCase(
 	retry := sourcecache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}
 	_, err = (&operation{Fetcher: f}).fetchLayer(
 		ctx,
-		repo, new(request), sourcecache.Policy{MaxAge: repo.SourceInterval(), Retry: retry},
+		repo, new(request), &sourcecache.Policy{MaxAge: repo.SourceInterval(), Retry: retry},
 	)
 	assert.FatalIf(t, failures.Load() != tc.attempts,
 		"producer failures: got %d, want %d: %v", failures.Load(), tc.attempts, err)
@@ -263,7 +263,7 @@ func testFetcherFailureSourceAndOperationCaseCompletion(
 		(*captures.ctx),
 		(*captures.repo),
 		new((*captures.request)),
-		sourcecache.Policy{MaxAge: (*captures.repo).SourceInterval(), Retry: (*captures.retry)},
+		&sourcecache.Policy{MaxAge: (*captures.repo).SourceInterval(), Retry: (*captures.retry)},
 	)
 	assert.FatalIf(t, captures.requests.Load() != before || captures.failures.Load() != (*captures.tc).attempts,
 

@@ -43,7 +43,7 @@ func TestAcquire_TrailingRecordPadding(t *testing.T) {
 				_, _, _, err := c.Acquire(
 					t.Context(),
 					ArchiveKey{Content: "source-padding"},
-					Policy{MaxAge: time.Hour},
+					&Policy{MaxAge: time.Hour},
 					producer(data, &ocispec.Descriptor{}),
 				)
 				assert.FatalIf(t, err != nil, "root=%q: %v", root, err)
@@ -207,7 +207,7 @@ func testAcquireArchiveNamesCaseCase(t *testing.T, testCaseInput testAcquireArch
 	input, _, _, err := (*testCaseInput.c).Acquire(
 		t.Context(),
 		ArchiveKey{Content: testCaseInput.tc.name},
-		Policy{MaxAge: 0},
+		&Policy{MaxAge: 0},
 		producer(data.Bytes(), &ocispec.Descriptor{}),
 	)
 	if !errors.Is(err, testCaseInput.tc.wantErr) {
@@ -264,7 +264,7 @@ func testAcquireArchiveEntryConflictsCaseCase(
 	input, _, _, err := (*testCaseInput.c).Acquire(
 		t.Context(),
 		ArchiveKey{Content: testCaseInput.tc.name},
-		Policy{},
+		&Policy{},
 		producer(data.Bytes(), &ocispec.Descriptor{}),
 	)
 	if !errors.Is(err, testCaseInput.tc.want) {

@@ -158,7 +158,7 @@ func TestAcquire_ConcurrentKeysAndCancellation(t *testing.T) {
 						key.Content = map[string]string{"URL": content.URL}
 						key.Required = []string{"revision"}
 					}
-					_, _, id, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, fill)
+					_, _, id, err := c.Acquire(t.Context(), key, &Policy{MaxAge: time.Hour}, fill)
 					assert.ErrorIf(t, err != nil, "%v", err)
 					ids <- id
 				})
@@ -170,7 +170,7 @@ func TestAcquire_ConcurrentKeysAndCancellation(t *testing.T) {
 				_, _, id, err := c.Acquire(
 					ctx,
 					ArchiveKey{Content: content},
-					Policy{MaxAge: time.Hour},
+					&Policy{MaxAge: time.Hour},
 					fill,
 				)
 				assert.ErrorIf(t, id != "" ||
@@ -217,7 +217,7 @@ func TestNew_SharedOwnershipAndCanceledLock(t *testing.T) {
 	reader, _, _, err := c.Blob(
 		t.Context(),
 		BlobKey{Content: "blob-held"},
-		Policy{MaxAge: Forever},
+		&Policy{MaxAge: Forever},
 		producer([]byte("held"), &ocispec.Descriptor{}),
 	)
 	assert.NoError(t, err)
@@ -264,7 +264,7 @@ func TestNew_SharedOwnershipAndCanceledLock(t *testing.T) {
 		_, _, _, err := shared.Blob(
 			t.Context(),
 			BlobKey{Content: "blob-shared"},
-			Policy{MaxAge: time.Hour},
+			&Policy{MaxAge: time.Hour},
 			producer([]byte("data"), &ocispec.Descriptor{}),
 		)
 		assert.NoError(t, err)
@@ -328,7 +328,7 @@ func TestAcquire_TagSaveFailureDoesNotBecomeHit(t *testing.T) {
 			_, _, _, err := c.Acquire(
 				t.Context(),
 				ArchiveKey{Content: "source-test-persist"},
-				Policy{MaxAge: time.Hour},
+				&Policy{MaxAge: time.Hour},
 				fill,
 			)
 			assert.FatalIf(t, err == nil, "%s", "tag save failure accepted")
@@ -353,7 +353,7 @@ func TestAcquire_SparseReplayMatchesMemory(t *testing.T) {
 		input, _, _, err := c.Acquire(
 			t.Context(),
 			ArchiveKey{Content: "source-test-sparse"},
-			Policy{MaxAge: time.Hour},
+			&Policy{MaxAge: time.Hour},
 			producer(data, &ocispec.Descriptor{}),
 		)
 		assert.NoError(t, err)
@@ -408,7 +408,7 @@ func TestBlob_SourcePrefixIsOpaque(t *testing.T) {
 			reader, _, _, err := c.Blob(
 				t.Context(),
 				key,
-				Policy{MaxAge: Forever},
+				&Policy{MaxAge: Forever},
 				producer([]byte("blob bytes"), &ocispec.Descriptor{}),
 			)
 			assert.NoError(t, err)
@@ -439,7 +439,7 @@ func TestAcquire_TrailingDataIsBounded(t *testing.T) {
 			_, _, _, err := c.Acquire(
 				t.Context(),
 				ArchiveKey{Content: "source-trailing"},
-				Policy{MaxAge: 0},
+				&Policy{MaxAge: 0},
 				func(_ context.Context, w ProducerInput) (ProducerResult, error) {
 					var payloadTar bytes.Buffer
 					testutil.WriteTar(t, &payloadTar, map[string]string{"file": "x"}, 0o644)
@@ -522,7 +522,7 @@ func TestAcquire_UnchangedRefreshRenews(t *testing.T) {
 		_, _, id, err := c.Acquire(
 			t.Context(),
 			key,
-			Policy{},
+			&Policy{},
 			func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 				previous, err := w.Previous(ctx)
 				if err != nil {
@@ -623,7 +623,7 @@ func testAcquireSharedContentAfterCancellation(
 	r, _, blobID, err := (*scope.c).Blob(
 		crossCtx,
 		BlobKey{Content: (*scope.content)},
-		Policy{MaxAge: time.Hour},
+		&Policy{MaxAge: time.Hour},
 		producer([]byte("blob"), &ocispec.Descriptor{}),
 	)
 	if err != nil {
@@ -636,7 +636,7 @@ func testAcquireSharedContentAfterCancellation(
 	g, gitID, err := (*scope.c).Git(
 		crossCtx,
 		GitKey{Content: (*scope.content)},
-		Policy{MaxAge: time.Hour},
+		&Policy{MaxAge: time.Hour},
 		func(context.Context, storage.Storer, billy.Filesystem) (plumbing.Hash, error) {
 			return plumbing.ZeroHash, nil
 		},

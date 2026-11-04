@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: home-assistant-db
+  namespace: flux-system
+data:
+  value: unchanged

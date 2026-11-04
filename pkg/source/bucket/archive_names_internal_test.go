@@ -62,7 +62,7 @@ func testWalkBucketArchiveNamesCase(t *testing.T, tc *struct {
 		t.Context(),
 		client,
 		&manifest.Bucket{BucketName: "data", Prefix: tc.prefix},
-		&data,
+		bucketOutput{Writer: &data},
 	)
 	if tc.invalid {
 		if !errors.Is(err, fs.ErrInvalid) || gets.Load() != 0 || data.Len() != 0 {

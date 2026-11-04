@@ -8,6 +8,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/baseline"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -16,8 +17,10 @@ func TestBuildChangeFilter_FluxExcludedWarning(t *testing.T) {
 	before, after := t.TempDir(), t.TempDir()
 	testutil.WriteFile(t, before, ".sops.yaml", "old")
 	testutil.WriteFile(t, after, ".sops.yaml", "new")
-	input, _, err := baseline.AdmitDirectory(t.Context(), after, after)
-	assert.FatalIf(t, err != nil, "%v", err)
+	input, _, err := baseline.AdmitDirectory(t.Context(), after, after, manifest.WorkScope{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	o, err := newTestOrchestrator(
 		t,
 		Tree{RepoRoot: after, Path: after, BaseInput: testDirectoryInput(t, before), Input: input},
@@ -27,7 +30,9 @@ func TestBuildChangeFilter_FluxExcludedWarning(t *testing.T) {
 	assert.NoError(t, o.bootstrap(t.Context()))
 	assert.Equal(t, o.filter.Enabled(), true)
 	warnings := o.store.Warnings()
-	assert.FatalIf(t, len(warnings) != 1, "warnings = %v, want one", warnings)
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %v, want one", warnings)
+	}
 	assert.Equal(t, warnings[0].Category, manifest.WarnPathConfig)
 	assert.ErrorIf(t, !strings.Contains(warnings[0].Message, "Flux-excluded files are not counted"),
 		"warning does not explain Flux exclusions: %q", warnings[0].Message)
@@ -107,26 +112,84 @@ data:
 		RepoRoot: currRoot, BaseInput: testDirectoryInput(t, origRoot),
 	}, Config{},
 	)
+
 	assert.FatalIf(t, err != nil, "%v", err)
+
 	defer func() {
 		o.stop()
 	}()
+
 	{
 		err := o.bootstrap(t.Context())
 		assert.FatalIf(t, err != nil, "Bootstrap: %v", err)
 	}
 
 	f := o.filter
+
 	assert.FatalIf(
 		t,
 		f == nil,
 		"%v",
 		"expected change.Filter to be wired (PathOrig was set), got nil — buildChangeFilter dropped the filter",
 	)
+
 	clusterApps := testutil.KustomizationID("flux-system", "cluster-apps")
+
 	assert.ErrorIf(
 		t,
 		!f.ShouldReconcile(clusterApps),
 		"cluster-apps owns the changed file (apps/foo/cm.yaml) but was filtered out of the keep set; diff did not widen to repo root",
 	)
+}
+
+func TestBuildChangeFilter_HistoryWorkOwners(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	for _, name := range []string{"a", "b"} {
+		testutil.WriteFile(t, root, "flux/"+name+".yaml", testutil.KustomizationYAML(name, "apps",
+			"  path: ./producers/"+name+"\n  postBuild: {substitute: {ROOT: apps/"+name+"}}\n"))
+		testutil.WriteFile(t, root, "producers/"+name+"/kustomization.yaml", "resources: [child.yaml]\n")
+		testutil.WriteFile(t, root, "producers/"+name+"/child.yaml", testutil.KustomizationYAML("child-"+name, "apps",
+			"  path: ./${ROOT}\n"))
+		testutil.WriteFile(t, root, "apps/"+name+"/kustomization.yaml", "resources: [cm.yaml]\n")
+		testutil.WriteFile(t, root, "apps/"+name+"/cm.yaml",
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+name+", namespace: apps}\ndata: {value: before}\n")
+	}
+	tree := Tree{
+		ID:       manifest.TreeID{Cluster: "history", Side: manifest.TreeHead},
+		Path:     filepath.Join(root, "flux"),
+		RepoRoot: root,
+	}
+	cfg := Config{CacheDir: t.TempDir(), Concurrency: 2, RecordWork: true}
+	warm, err := newTestOrchestrator(t, tree, cfg)
+	assert.NoError(t, err)
+	assert.NoError(t, warm.bootstrap(t.Context()))
+	assert.NoError(t, warm.run(t.Context()))
+	warm.stop()
+	for _, name := range []string{"a", "b"} {
+		testutil.WriteFile(t, root, "apps/"+name+"/cm.yaml",
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+name+", namespace: apps}\ndata: {value: after}\n")
+	}
+	tree.ExternalChanges = change.NewSet([]string{"apps/a/cm.yaml", "apps/b/cm.yaml"})
+	fresh, err := newTestOrchestrator(t, tree, cfg)
+	assert.NoError(t, err)
+	t.Cleanup(fresh.stop)
+	assert.NoError(t, fresh.prepareBootstrap(t.Context()))
+	fresh.cfg.Input = warm.cfg.Input
+	fresh.completeBootstrap()
+	assert.NoError(t, fresh.buildChangeFilter(t.Context()))
+	work := fresh.freezeWork()
+	for _, name := range []string{"a", "b"} {
+		owner := testutil.KustomizationID("apps", name)
+		assert.Equal(t, fresh.history[owner].Complete, true)
+		assert.Equal(t, workCounts(work, owner, manifest.WorkCache),
+			manifest.WorkCounts{Attempts: 4, Completed: 4, CacheService: 3})
+		assert.Equal(t, workCounts(work, owner, manifest.WorkPreparation).OwnerPrepares, uint64(2))
+		for _, record := range work {
+			if record.Key.Owner == owner {
+				assert.Equal(t, record.Key.Tree, tree.ID)
+				assert.Equal(t, record.Key.Source, manifest.BootstrapSourceID)
+			}
+		}
+	}
 }

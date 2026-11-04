@@ -101,7 +101,7 @@ spec:
 	l.SourceRoot = root
 	for _, dir := range []string{entry, filepath.Join(entry, "independent")} {
 		{
-			_, err := l.Load(t.Context(), dir)
+			_, err := l.Load(t.Context(), dir, nil)
 			assert.NoError(t, err)
 		}
 	}
@@ -189,7 +189,7 @@ spec:
 		},
 	}})
 	{
-		_, err := l.Load(t.Context(), view)
+		_, err := l.Load(t.Context(), view, nil)
 		assert.NoError(t, err)
 	}
 	assert.FatalIf(
@@ -210,7 +210,7 @@ spec:
 	admitForTest(st, root)
 	for _, dir := range []string{entry, filepath.Join(entry, "independent")} {
 		{
-			_, err := l.Load(t.Context(), dir)
+			_, err := l.Load(t.Context(), dir, nil)
 			assert.NoError(t, err)
 		}
 	}
@@ -266,7 +266,7 @@ spec:
 		l := New(st)
 		l.SourceRoot = root
 		{
-			_, err := l.Load(t.Context(), root)
+			_, err := l.Load(t.Context(), root, nil)
 			assert.NoError(t, err)
 		}
 		docs := builtObjectsForTest(
@@ -327,7 +327,7 @@ spec:
 			l := New(st)
 			l.SourceRoot = root
 			{
-				_, err := l.Load(t.Context(), root)
+				_, err := l.Load(t.Context(), root, nil)
 				assert.NoError(t, err)
 			}
 			docs := builtObjectsForTest(
@@ -363,7 +363,7 @@ func TestRegisterBuilt_RemoteGenerator(t *testing.T) {
 	l := New(st)
 	l.SourceRoot = root
 	{
-		_, err := l.Load(t.Context(), root)
+		_, err := l.Load(t.Context(), root, nil)
 		assert.NoError(t, err)
 	}
 	docs := []store.Child{
@@ -413,7 +413,7 @@ spec:
 	admitForTest(st, root)
 	l := New(st)
 	{
-		_, err := l.Load(t.Context(), root)
+		_, err := l.Load(t.Context(), root, nil)
 		assert.NoError(t, err)
 	}
 	selectedFile := filepath.ToSlash(filepath.Join(root, "selected.yaml"))
@@ -500,12 +500,12 @@ func TestRegisterBuilt_StandaloneRoots(t *testing.T) {
 	l.SourceRoot = root
 	entry := filepath.Join(root, "entry")
 	{
-		_, err := l.Load(t.Context(), entry)
+		_, err := l.Load(t.Context(), entry, nil)
 		assert.NoError(t, err)
 	}
 	for _, dir := range []string{"entry/independent", "component", "configuration"} {
 		{
-			_, err := l.Load(t.Context(), filepath.Join(root, dir))
+			_, err := l.Load(t.Context(), filepath.Join(root, dir), nil)
 			assert.NoError(t, err)
 		}
 	}

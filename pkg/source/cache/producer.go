@@ -41,6 +41,7 @@ type payload struct {
 	discard   func() error
 	key       acquireKey
 	previous  *entry
+	attempted bool
 	verified  bool
 	unchanged bool
 	written   int64
@@ -52,6 +53,7 @@ type ProducerInput struct {
 
 	cache   *Cache
 	payload *payload
+	work    *manifest.AcquisitionWork
 }
 
 // Previous returns independent upstream metadata, or nil when no usable payload exists.
@@ -210,7 +212,10 @@ func (p archiveProducer) produce(
 		if err := gctx.Err(); err != nil {
 			return err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 		}
-		produced, err := write(gctx, ProducerInput{Writer: io.MultiWriter(staged, pw), cache: c, payload: staged})
+		produced, err := write(
+			gctx,
+			ProducerInput{Writer: io.MultiWriter(staged, pw), cache: c, payload: staged, work: staged.key.policy.Work},
+		)
 		result = produced
 		if re, ok := errors.AsType[*readerError](err); ok {
 			err = re.error
@@ -300,7 +305,7 @@ func (p blobProducer) produce(
 	staged *payload,
 	write func(context.Context, ProducerInput) (ProducerResult, error),
 ) (*entry, error) {
-	result, err := write(ctx, ProducerInput{Writer: staged, cache: c, payload: staged})
+	result, err := write(ctx, ProducerInput{Writer: staged, cache: c, payload: staged, work: staged.key.policy.Work})
 	if err != nil {
 		return nil, newProducerError(err)
 	}
@@ -383,3 +388,6 @@ func (p archiveProducer) readPayload(pr *io.PipeReader, index *tarFS) payloadErr
 }
 
 type payloadErrors struct{ reader, archive error }
+
+// Work returns the physical acquisition counters borrowed from the caller.
+func (p ProducerInput) Work() *manifest.AcquisitionWork { return p.work }

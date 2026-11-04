@@ -83,8 +83,6 @@ func TestTemplate_ConcurrentUncacheableRender(t *testing.T) {
 				)
 			}
 		}
-		if calls.Load() != 2 {
-			t.Errorf("uncacheable render calls=%d, want 2", calls.Load())
-		}
+		assert.ErrorIf(t, calls.Load() != 2, "uncacheable render calls=%d, want 2", calls.Load())
 	})
 }

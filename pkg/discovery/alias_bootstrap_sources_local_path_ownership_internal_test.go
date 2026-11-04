@@ -77,21 +77,26 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 	repository.Reference = &sourcev1.GitRepositoryRef{Commit: "invalid"}
 	st.AddObject(repository)
 	d := Session{cfg: Config{Path: root, RepoRoot: root, Store: st, SelfURLs: []string{repository.URL}}}
+
 	{
 		_, err := d.resolveEntrySources(t.Context(), false)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
+
 	{
 		_, err := d.resolveEntrySources(t.Context(), false)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
+
 	artifact := st.GetArtifact(repository.Named(), store.ArtifactContent).(*store.SourceArtifact)
+
 	assert.FatalIf(
 		t,
 		artifact.LocalPath != root || st.GetObject(repository.Named()) != repository,
 		"canonical bootstrap or authored object changed: %+v",
 		artifact,
 	)
+
 	t.Run("mutable alias refresh", func(t *testing.T) {
 		t.Parallel()
 		testAliasBootstrapSourcesPreservesCanonicalSourceMutableAliasRefresh(
@@ -123,6 +128,7 @@ func discoveryRefFixture(t *testing.T) string {
 			value,
 			&git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}},
 		)
+
 		{
 			err := repo.Storer.SetReference(
 				plumbing.NewHashReference(plumbing.NewTagReferenceName([]string{"v1.0.0", "v2.0.0"}[i]), hash),
@@ -152,18 +158,24 @@ func TestAliasBootstrapSources_NilCacheIsLazy(t *testing.T) {
 		st := store.New()
 		st.AddObject(repository)
 		d := Session{cfg: Config{Path: root, RepoRoot: root, Store: st, SelfURLs: []string{repository.URL}}}
+
 		{
 			_, err := d.resolveEntrySources(t.Context(), false)
 			assert.FatalIf(t, err != nil, "%v", err)
 		}
+
 		{
 			_, err := d.resolveEntrySources(t.Context(), false)
 			assert.FatalIf(t, err != nil, "%v", err)
 		}
+
 		_, err := os.Stat(defaultRoot)
+
 		assert.FatalIf(t, !os.IsNotExist(err), "default cache created for %q: %v", tag, err)
+
 		if tag == "v1.0.0" {
 			artifact := st.GetArtifact(repository.Named(), store.ArtifactContent).(*store.SourceArtifact)
+
 			assert.FatalIf(t, artifact.FS == nil || artifact.Key == "", "committed source = %+v", artifact)
 		}
 	}
@@ -239,11 +251,14 @@ func testAliasBootstrapSourcesLocalPathOwnershipCase(
 			_, err := d.resolveEntrySources(t.Context(), false)
 			assert.FatalIf(t, err != nil, "%v", err)
 		}
+
 		st.DeleteObject(id)
+
 		{
 			_, err := d.resolveEntrySources(t.Context(), true)
 			assert.FatalIf(t, err != nil, "%v", err)
 		}
+
 		{
 			got := st.GetArtifact(
 				id,
@@ -279,21 +294,27 @@ func testAliasBootstrapSourcesLocalPathOwnershipCase(
 		)
 		l := loader.New(st)
 		l.SourceRoot, l.PreferExisting = root, true
+
 		{
-			_, err := l.Load(t.Context(), filepath.Join(root, "authored"))
+			_, err := l.Load(t.Context(), filepath.Join(root, "authored"), nil)
 			assert.FatalIf(t, err != nil, "%v", err)
 		}
+
 		l.Admit(root)
 	}
+
 	{
 		_, err := d.resolveEntrySources(t.Context(), false)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
+
 	{
 		_, err := d.resolveEntrySources(t.Context(), false)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
+
 	authored := st.GetObject(id)
+
 	{
 		aliases, err := d.resolveEntrySources(
 			t.Context(),
@@ -302,30 +323,35 @@ func testAliasBootstrapSourcesLocalPathOwnershipCase(
 		assert.FatalIf(t, err != nil || aliases != 0 ||
 			st.GetObject(id) != authored, "authored source replaced: %v, %v", aliases, err)
 	}
+
 	assert.FatalIf(
 		t,
 		!testCaseInput.local && st.GetArtifact(id, store.ArtifactContent) != nil,
 		"%v",
 		"external source acquired by aliasing",
 	)
+
 	if testCaseInput.local {
 		artifact := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 		_, identity, viewErr := source.OperationView(t.Context(), artifact.FS)
 		if viewErr != nil || identity == "" || artifact.Content != identity {
 			t.Fatalf("pinned view identity = %q, want %q: %v", artifact.Content, identity, viewErr)
 		}
+
 		assert.FatalIf(t, artifact.LocalPath == root, "%v", "pinned source must render its committed tree")
 	} else {
 		st.SetArtifact(id, &store.SourceArtifact{Kind: id.Kind, URL: testCaseInput.url, LocalPath: t.TempDir()})
 	}
 	l := loader.New(st)
+
 	{
 		err := l.FinalizeIndex(t.Context(), root, true)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
+
 	child := testutil.HelmReleaseID("apps", "release")
-	ownership := l.Index.OwnersOfFile("apps/release.yaml")
-	owners := ownership.Owners
+	ownersOfFileResult := l.Index.OwnersOfFile("apps/release.yaml")
+	owners := ownersOfFileResult.Owners
 	parent := manifest.NamedResource{}
 	for _, owner := range owners {
 		if owner != child {
@@ -334,6 +360,7 @@ func testAliasBootstrapSourcesLocalPathOwnershipCase(
 		}
 	}
 	owned := parent != (manifest.NamedResource{})
+
 	assert.FatalIf(
 		t,
 		owned != testCaseInput.local || owned && parent != ks.Named(),
@@ -386,6 +413,7 @@ func testAliasBootstrapSourcesPreservesCanonicalSourceCase(
 				SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: id.Kind, Name: id.Name},
 			},
 		)
+
 		{
 			count, err := d.resolveEntrySources(t.Context(), true)
 			assert.FatalIf(t, err != nil || count != 1, "publish alias = %d, %v", count, err)
@@ -393,6 +421,7 @@ func testAliasBootstrapSourcesPreservesCanonicalSourceCase(
 	}
 	first := st.GetArtifact(ids[0], store.ArtifactContent).(*store.SourceArtifact)
 	second := st.GetArtifact(ids[1], store.ArtifactContent).(*store.SourceArtifact)
+
 	assert.FatalIf(
 		t,
 		first.Key != "" || second.Key != "" || first.LocalPath == second.LocalPath || first.LocalRoot != root ||
@@ -403,6 +432,7 @@ func testAliasBootstrapSourcesPreservesCanonicalSourceCase(
 		first,
 		second,
 	)
+
 	generations := []struct{ revision, digest string }{{"two", "aaa"}, {"two", "bbb"}}
 	if !(*testCaseInput) {
 		generations = append(generations, generations[1])
@@ -415,14 +445,19 @@ func testAliasBootstrapSourcesPreservesCanonicalSourceCase(
 		}
 		next.FS = fstest.MapFS{"file": {Data: []byte("other" + first.Revision + first.Digest)}}
 		st.SetArtifact(manifest.BootstrapSourceID, &next)
+
 		{
 			_, err := d.resolveEntrySources(t.Context(), true)
 			assert.FatalIf(t, err != nil, "%v", err)
 		}
+
 		got := st.GetArtifact(ids[0], store.ArtifactContent).(*store.SourceArtifact)
+
 		assert.FatalIf(t, got.FS == first.FS || got.Key != "" || got.Revision != generation.revision ||
 			got.Digest != generation.digest, "generation reused alias identity: %+v", got)
+
 		data, err := fs.ReadFile(got.FS, "file")
+
 		assert.FatalIf(
 			t,
 			err != nil || string(data) != "other"+first.Revision+first.Digest,
@@ -430,6 +465,7 @@ func testAliasBootstrapSourcesPreservesCanonicalSourceCase(
 			data,
 			err,
 		)
+
 		first, bootstrap = got, &next
 	}
 }
@@ -457,8 +493,11 @@ func testAliasBootstrapSourcesPreservesCanonicalSourceMutableAliasRefresh(
 	alias.Ignore = new("excluded/\n")
 	(*testCaseInput.st).AddObject(alias)
 	count, err := testCaseInput.d.resolveEntrySources(t.Context(), true)
+
 	assert.FatalIf(t, err != nil || count != 1, "alias: %d, %v", count, err)
+
 	art := (*testCaseInput.st).GetArtifact(alias.Named(), store.ArtifactContent).(*store.SourceArtifact)
+
 	assert.FatalIf(
 		t,
 		art.Key != "" || !art.InputAlias || art.LocalRoot != (*testCaseInput.root) ||
@@ -466,6 +505,7 @@ func testAliasBootstrapSourcesPreservesCanonicalSourceMutableAliasRefresh(
 		"alias coordinates: %+v",
 		art,
 	)
+
 	owner := cachetest.New(t, "", sourcecache.New)
 	cli := helm.NewClient(owner)
 
@@ -502,30 +542,38 @@ func testAliasBootstrapSourcesPreservesCanonicalSourceMutableAliasRefresh(
 				helm.RenderOptions{Options: helm.Options{}, Sources: helm.NewSources((*testCaseInput.st))},
 			),
 		)
+
 		assert.FatalIf(t, err != nil, "%v", err)
+
 		assert.FatalIf(t, slices.ContainsFunc(
 			out,
 			func(doc map[string]any) bool {
-				metadata := manifest.DocMetadata(doc)
-				name := metadata.Name
+				docMetadataResult := manifest.DocMetadata(doc)
+				name := docMetadataResult.Name
 				return name == "arrived"
 			},
 		) != exists, "alias membership stale: %s", out)
+
 		assert.FatalIf(
 			t, (*testCaseInput.st).GetArtifact(alias.Named(), store.ArtifactContent) != art, "%v",
 			"Template republished alias",
 		)
+
 		view, pin, err := source.OperationView(t.Context(), art.FS)
+
 		assert.FatalIf(t, err != nil || pin != "", "alias admission: %q, %v", pin, err)
+
 		{
 			_, err := fs.Stat(view, "excluded/file")
 			assert.FatalIf(t, !errors.Is(err, fs.ErrNotExist), "alias lost shaping: %v", err)
 		}
 	}
+
 	{
 		_, err := testCaseInput.d.resolveEntrySources(t.Context(), true)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
+
 	assert.FatalIf(
 		t,
 		len(testCaseInput.d.aliasViews) != 1 || (*testCaseInput.st).GetObject(alias.Named()) != alias,
@@ -566,6 +614,7 @@ func testEntrySourceViewWarningEvidenceCase(t *testing.T, testCaseInput *bool,
 			t.Context(),
 			&entryResolution{object: obj, input: bootstrap, git: obj},
 		)
+
 		assert.FatalIf(
 			t, (*testCaseInput) &&
 				!errors.Is(
@@ -574,16 +623,20 @@ func testEntrySourceViewWarningEvidenceCase(t *testing.T, testCaseInput *bool,
 				) || !(*testCaseInput) && err != nil, "source view error=%v, failed=%t",
 			err, (*testCaseInput),
 		)
+
 		if *testCaseInput {
 			assert.FatalIf(t, artifact != nil, "failed source view = %+v", artifact)
+
 			continue
 		}
+
 		assert.FatalIf(
 			t,
 			artifact == nil || len(artifact.Warnings) != 0,
 			"alias warning evidence = %+v",
 			artifact,
 		)
+
 		if input := artifact.FS.(*gittree.FS); len(input.Warnings) != 0 {
 			t.Fatalf("derived filesystem warnings = %+v", input.Warnings)
 		}

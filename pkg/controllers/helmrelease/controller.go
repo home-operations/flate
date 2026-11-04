@@ -109,6 +109,7 @@ func (c *execution) render(
 	defer attempt.Finish()
 	handled := false
 	input := helm.RenderOptions{
+		Work:                    c.run.Reads.Work().Scope().RenderWork(),
 		Options:                 c.Options,
 		DependencySubstitutions: c.DependencySubstitutions,
 		Sources:                 helm.NewSources(&c.run.Reads),
@@ -132,7 +133,7 @@ func (c *execution) render(
 	if err != nil {
 		return err
 	}
-	if stale := c.Helm.StaleValuePaths(ctx, hr, hr.Values, input.Sources); len(stale) > 0 {
+	if stale := c.Helm.StaleValuePaths(ctx, hr, hr.Values, &input); len(stale) > 0 {
 		c.run.Reads.AddWarning(manifest.Warning{
 			Resource: id,
 			Category: manifest.WarnStaleValues,
@@ -148,6 +149,7 @@ func (c *execution) render(
 				Receipt: attempt.Render,
 				Records: attempt.Footprint(),
 				Sources: attempt.SourcePaths(),
+				Work:    c.run.Reads.Work().Scope().RenderWork(),
 			},
 		)
 	}
@@ -170,6 +172,7 @@ func (c *execution) render(
 			Receipt: attempt.Render,
 			Records: attempt.Footprint(),
 			Sources: attempt.SourcePaths(),
+			Work:    c.run.Reads.Work().Scope().RenderWork(),
 		},
 	)
 }
@@ -218,9 +221,11 @@ func (c *Controller) PreviousRender(
 		hr,
 		hr.Values,
 		helm.RenderOptions{
+			Work:                    reads.Work().Scope().RenderWork(),
 			Options:                 c.Options,
 			DependencySubstitutions: c.DependencySubstitutions,
 			Sources:                 helm.NewSources(reads),
+			PreparationTasks:        c.Tasks,
 		},
 	)
 	if !found {

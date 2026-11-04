@@ -43,7 +43,7 @@ func testNewSharedOwnershipAndCanceledLockPartialInitialization(t *testing.T) {
 	payload := []byte("payload")
 	var id string
 	for _, key := range []BlobKey{sha256Key, key} {
-		_, _, storedID, err := newC.Blob(t.Context(), key, Policy{}, producer(payload, &ocispec.Descriptor{}))
+		_, _, storedID, err := newC.Blob(t.Context(), key, &Policy{}, producer(payload, &ocispec.Descriptor{}))
 		assert.NoError(t, err)
 
 		id = storedID
@@ -56,7 +56,7 @@ func testNewSharedOwnershipAndCanceledLockPartialInitialization(t *testing.T) {
 	assert.NoError(t, newC.store.Tag(t.Context(), stored, id))
 	assert.NoError(t, newC.Close())
 	newC = cachetest.New(t, root, New)
-	_, _, _, err = newC.Blob(t.Context(), sha256Key, Policy{MaxAge: Forever}, nil)
+	_, _, _, err = newC.Blob(t.Context(), sha256Key, &Policy{MaxAge: Forever}, nil)
 	assert.NoError(t, err)
 
 	parent := newC.blobRoots[0].Root
@@ -65,7 +65,7 @@ func testNewSharedOwnershipAndCanceledLockPartialInitialization(t *testing.T) {
 	collision := filepath.Join(blobDir(), digest.SHA384.String())
 	assert.NoError(t, newC.root.Rename(collision, collision+"-held"))
 	testutil.WriteFile(t, root, collision, "not a directory")
-	r, _, _, firstErr := newC.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+	r, _, _, firstErr := newC.Blob(t.Context(), key, &Policy{MaxAge: Forever}, nil)
 	assert.FatalIf(t, r != nil || !errors.Is(firstErr, manifest.ErrFlux) || newC.blobRoots[1].err == nil ||
 		!errors.Is(firstErr, newC.blobRoots[1].err), "partial initialization: reader=%v, error=%v", r, firstErr)
 	assert.NoError(t, newC.root.Remove(collision))
@@ -74,7 +74,7 @@ func testNewSharedOwnershipAndCanceledLockPartialInitialization(t *testing.T) {
 		blobR, _, _, blobErr := newC.Blob(
 			t.Context(),
 			key,
-			Policy{MaxAge: Forever},
+			&Policy{MaxAge: Forever},
 			nil,
 		)
 		assert.FatalIf(t, blobR != nil || !errors.Is(blobErr, manifest.ErrFlux) ||
@@ -83,7 +83,7 @@ func testNewSharedOwnershipAndCanceledLockPartialInitialization(t *testing.T) {
 				newC.blobRoots[1].err,
 			), "repaired filesystem changed initialization result: reader=%v, error=%v", blobR, blobErr)
 	}
-	r, _, _, err = newC.Blob(t.Context(), sha256Key, Policy{MaxAge: Forever}, nil)
+	r, _, _, err = newC.Blob(t.Context(), sha256Key, &Policy{MaxAge: Forever}, nil)
 	assert.NoError(t, err)
 
 	data, err := fs.ReadFile(r, "content")
@@ -107,7 +107,7 @@ func testNewSharedOwnershipAndCanceledLockPartialInitialization(t *testing.T) {
 		err,
 	)
 	newC = cachetest.New(t, root, New)
-	r, _, _, err = newC.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+	r, _, _, err = newC.Blob(t.Context(), key, &Policy{MaxAge: Forever}, nil)
 	assert.NoError(t, err)
 
 	data, err = fs.ReadFile(r, "content")

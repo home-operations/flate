@@ -45,7 +45,7 @@ spec: {path: ./sibling, targetNamespace: sibling, components: [../shared]}
 	l.Options.Filter = change.NewFilter()
 	l.Options.Changes = change.NewSet([]string{"selected/payload.yaml"})
 	l.Options.Selection = manifest.Selection{Changed: true}
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
@@ -110,7 +110,7 @@ func TestAdmission_DeclaredChartSourceNamespace(t *testing.T) {
 	l.Options.Selection = manifest.Selection{Changed: true}
 	l.Options.Filter = change.NewFilter()
 	l.Options.Changes = change.NewSet([]string{"app/release.yaml"})
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 	id := manifest.NamedResource{

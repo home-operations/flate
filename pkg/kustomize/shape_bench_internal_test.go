@@ -1,6 +1,8 @@
 package kustomize
 
-import "testing"
+import (
+	"testing"
+)
 
 func BenchmarkSubstituteDoc(b *testing.B) {
 	for _, tc := range []struct {
@@ -24,7 +26,7 @@ func BenchmarkSubstituteDoc(b *testing.B) {
 			vars := map[string]string{"VAR": "example"}
 			b.ReportAllocs()
 			for b.Loop() {
-				if _, err := substituteDoc(doc, vars, false); err != nil {
+				if _, err := substituteDoc(doc, vars, false, nil); err != nil {
 					b.Fatal(err)
 				}
 			}

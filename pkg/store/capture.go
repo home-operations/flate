@@ -11,6 +11,7 @@ import (
 // ReadSet retains the immutable inputs consumed by one execution.
 // Its storage MUST remain owned by that execution until retirement is swept.
 type ReadSet struct {
+	work         *manifest.WorkRecorder
 	warnings     []manifest.Warning
 	advisories   AdvisoryEvidence
 	produced     []admission
@@ -81,6 +82,7 @@ type Gate struct {
 // Init starts an execution using caller-owned dependency storage.
 // Reused storage MUST have no live or detached registration or output borrower.
 func (r *ReadSet) Init(s *Store, id manifest.NamedResource, inputs []Input) {
+	r.work = nil
 	r.invalid.Store(false)
 	r.accepted.Store(false)
 	r.retired.Store(false)

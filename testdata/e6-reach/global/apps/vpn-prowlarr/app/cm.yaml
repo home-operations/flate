@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vpn-prowlarr
+  namespace: flux-system
+data:
+  value: unchanged

@@ -13,14 +13,13 @@ import (
 
 	"github.com/go-git/go-billy/v5/osfs"
 	"github.com/go-git/go-git/v5/plumbing"
-
-	"github.com/home-operations/flate/pkg/source/gittree"
-	"github.com/home-operations/flate/pkg/store"
-
 	"golang.org/x/sync/errgroup"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/gittree"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
@@ -203,14 +202,17 @@ func TestDetect_GitlinkFile(t *testing.T) {
 	}
 	testutil.WriteFile(t, before, "links/keep.yaml", "same")
 	testutil.WriteFile(t, after, "links/keep.yaml", "same")
+
 	{
 		err := os.Symlink("old", filepath.Join(before, "links", ".git"))
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
+
 	{
 		err := os.Symlink("new", filepath.Join(after, "links", ".git"))
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
+
 	for _, roots := range [][2]string{{before, after}, {after, before}} {
 		for _, wrapped := range []bool{false, true} {
 			inputs := []*store.SourceArtifact{testInput(roots[0]), testInput(roots[1])}
@@ -226,8 +228,10 @@ func TestDetect_GitlinkFile(t *testing.T) {
 					input.FS = view
 				}
 			}
-			got, err := Detect(t.Context(), inputs[0], inputs[1])
+			got, err := Detect(t.Context(), inputs[0], inputs[1], manifest.WorkScope{})
+
 			assert.FatalIf(t, err != nil, "%v", err)
+
 			assert.Equal(t, got.Len(), 0)
 		}
 	}
@@ -242,8 +246,10 @@ func TestDetect_NestedOppositeRoot(t *testing.T) {
 	testutil.WriteFile(t, outer, "mod.yaml", "old")
 	testutil.WriteFile(t, inner, "mod.yaml", "new")
 	for _, roots := range [][2]string{{outer, inner}, {inner, outer}} {
-		got, err := Detect(t.Context(), testInput(roots[0]), testInput(roots[1]))
+		got, err := Detect(t.Context(), testInput(roots[0]), testInput(roots[1]), manifest.WorkScope{})
+
 		assert.FatalIf(t, err != nil, "%v", err)
+
 		assert.Diff(t, got.Paths(), []string{"mod.yaml"})
 	}
 }
@@ -285,7 +291,7 @@ func TestDetect_CapturedSidePolicies(t *testing.T) {
 	var g errgroup.Group
 	for range 2 {
 		g.Go(func() error {
-			got, err := Detect(t.Context(), inputs[0], inputs[1])
+			got, err := Detect(t.Context(), inputs[0], inputs[1], manifest.WorkScope{})
 			if err != nil {
 				return err
 			}
@@ -370,8 +376,10 @@ func testDetectFluxIgnoreRulesCase(t *testing.T, testCaseInput *struct {
 					input.FS = view
 				}
 			}
-			got, err := Detect(t.Context(), inputs[0], inputs[1])
+			got, err := Detect(t.Context(), inputs[0], inputs[1], manifest.WorkScope{})
+
 			assert.FatalIf(t, err != nil, "%v", err)
+
 			assert.Diff(t, got.Paths(), testCaseInput.want)
 		}
 	}
@@ -392,7 +400,7 @@ func testDetectConcurrentCase(t *testing.T, testCaseInput *int,
 	var g errgroup.Group
 	for range *testCaseInput {
 		g.Go(func() error {
-			got, err := Detect(t.Context(), testInput(before), testInput(after))
+			got, err := Detect(t.Context(), testInput(before), testInput(after), manifest.WorkScope{})
 			if err != nil {
 				return err
 			}
@@ -402,6 +410,7 @@ func testDetectConcurrentCase(t *testing.T, testCaseInput *int,
 			return nil
 		})
 	}
+
 	{
 		err := g.Wait()
 		assert.FatalIf(t, err != nil, "%v", err)

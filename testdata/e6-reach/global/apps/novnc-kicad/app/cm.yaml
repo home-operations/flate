@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: novnc-kicad
+  namespace: flux-system
+data:
+  value: unchanged

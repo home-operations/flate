@@ -69,7 +69,7 @@ func TestReview_ErrorPrecedenceDiagnostics(t *testing.T) {
 				Content: computeTemplateKey(&d, map[string]any{}, Options{}, hr),
 				Render:  cache.RenderAccepted,
 			},
-			cache.Policy{},
+			&cache.Policy{},
 			func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 				_, writeStringErr2 := io.WriteString(w, "{")
 				return cache.ProducerResult{}, writeStringErr2
@@ -241,7 +241,7 @@ func testReviewErrorPrecedenceCase2(t *testing.T, testCaseInput *string,
 	_, _, _, err = owner.Blob(
 		t.Context(),
 		key,
-		cache.Policy{},
+		&cache.Policy{},
 		func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 			_, writeStringErr := io.WriteString(w, "{")
 			return cache.ProducerResult{}, writeStringErr
@@ -252,7 +252,7 @@ func testReviewErrorPrecedenceCase2(t *testing.T, testCaseInput *string,
 	if (*testCaseInput) == "chart lookup" {
 		assert.NoError(t, os.RemoveAll(root))
 	}
-	r, _, _, err := owner.Blob(t.Context(), key, cache.Policy{MaxAge: cache.Forever}, nil)
+	r, _, _, err := owner.Blob(t.Context(), key, &cache.Policy{MaxAge: cache.Forever}, nil)
 	if (*testCaseInput) == "chart lookup" {
 		{
 			_, ok := errors.AsType[*cache.CacheError](

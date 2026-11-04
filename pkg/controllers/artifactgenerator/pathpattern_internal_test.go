@@ -8,9 +8,10 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/home-operations/flate/internal/assert"
-
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+
+	"github.com/home-operations/flate/internal/assert"
 )
 
 func TestExpand_CapturesAndIdentity(t *testing.T) {
@@ -21,7 +22,19 @@ func TestExpand_CapturesAndIdentity(t *testing.T) {
 		want                  []request
 		invalid               bool
 	}{
-		{"raw_paths_normalized_names_labels", "@repo/apps/{App}", "{App}", fstest.MapFS{"apps/Prod/file": {Data: []byte("x")}}, []request{{Output: output{Name: "prod", Copy: []operation{{From: "@repo/apps/Prod", To: "@artifact/Prod"}}}, Captures: map[string]string{"App": "prod"}}}, false},
+		{
+			"raw_paths_normalized_names_labels",
+			"@repo/apps/{App}",
+			"{App}",
+			fstest.MapFS{"apps/Prod/file": {Data: []byte("x")}},
+			[]request{
+				{
+					Output:   output{Name: "prod", Copy: []operation{{From: "@repo/apps/Prod", To: "@artifact/Prod"}}},
+					Captures: map[string]string{"App": "prod"},
+				},
+			},
+			false,
+		},
 		{"zero_matches", "@repo/absent/{App}", "{App}", fstest.MapFS{"apps/Prod/file": {}}, nil, false},
 		{"files_not_directories", "@repo/{App}", "{App}", fstest.MapFS{"file": {}}, nil, false},
 		{"root_excluded", "@repo/", "fixed", fstest.MapFS{"file": {}}, nil, false},
@@ -35,28 +48,38 @@ func TestExpand_CapturesAndIdentity(t *testing.T) {
 		{"invalid_expanded_name", "@repo/apps/{App}", "bad_{App}", fstest.MapFS{"apps/Prod/file": {}}, nil, true},
 		{"unknown_pattern_alias", "@other/{App}", "fixed", nil, nil, true},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			spec := specification{
-				PathPattern: tc.pattern,
-				Artifacts: []output{
-					{Name: tc.output, Copy: []operation{{From: "@repo/apps/{App}", To: "@artifact/{App}"}}},
-				},
-			}
-			got, err := expand(t.Context(), &spec, map[string]fs.FS{"repo": tc.input})
-			assert.FatalIf(t, (err != nil) != tc.invalid, "expand() = %v; invalid=%v", err, tc.invalid)
-			assert.FatalIf(t, tc.name == "invalid_capture" &&
-				!strings.Contains(
-					err.Error(),
-					"invalid or repeated pathPattern capture",
-				), "capture diagnostic = %v", err)
-			if !tc.invalid {
-				{
-					diff := cmp.Diff(tc.want, got, cmp.AllowUnexported(request{}, output{}, operation{}))
-					assert.FatalIf(t, diff != "", "%v", diff)
+		t.Run(
+
+			tc.name,
+
+			func(t *testing.T) {
+				t.Parallel()
+				spec := specification{
+					PathPattern: tc.pattern,
+					Artifacts: []output{
+						{Name: tc.output, Copy: []operation{{From: "@repo/apps/{App}", To: "@artifact/{App}"}}},
+					},
 				}
-			}
-		})
+				got, err := expand(t.Context(), &spec, map[string]fs.FS{"repo": tc.input})
+				assert.FatalIf(t, (err != nil) != tc.invalid, "expand() = %v; invalid=%v", err, tc.invalid)
+				assert.FatalIf(t, tc.name == "invalid_capture" &&
+					!strings.Contains(
+						err.Error(),
+						"invalid or repeated pathPattern capture",
+					), "capture diagnostic = %v", err)
+				if !tc.invalid {
+					{
+						diff := cmp.Diff(
+							tc.want,
+							got,
+							cmp.AllowUnexported(request{}, output{}, operation{}),
+							cmpopts.IgnoreFields(request{}, "work"),
+						)
+						assert.FatalIf(t, diff != "", "%v", diff)
+					}
+				}
+			},
+		)
 	}
 }
 
@@ -70,9 +93,6 @@ func TestExpand_Canceled(t *testing.T) {
 			&specification{PathPattern: "@repo/{App}"},
 			map[string]fs.FS{"repo": fstest.MapFS{"app/file": {}}},
 		)
-		assert.FatalIf(t, !errors.Is(
-			err,
-			context.Canceled,
-		), "expand() = %v", err)
+		assert.FatalIf(t, !errors.Is(err, context.Canceled), "expand() = %v", err)
 	}
 }

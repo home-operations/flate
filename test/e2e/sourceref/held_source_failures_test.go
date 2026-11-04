@@ -130,7 +130,7 @@ spec: {url: 'git://fixture.invalid/cluster', interval: 10m}
 	}
 	inputStore := store.New()
 	if tt.unreadable {
-		input, _, err := baseline.AdmitDirectory(t.Context(), root, root)
+		input, _, err := baseline.AdmitDirectory(t.Context(), root, root, manifest.WorkScope{})
 		assert.NoError(t, err)
 		obj := &manifest.GitRepository{Name: tt.sourceName, Namespace: "flux-system"}
 		inputStore.AddObject(obj)
@@ -138,7 +138,7 @@ spec: {url: 'git://fixture.invalid/cluster', interval: 10m}
 	}
 	secondLoader := loader.New(inputStore)
 	secondLoader.SourceRoot = root
-	_, secondError := secondLoader.Load(t.Context(), filepath.Join(root, secondPath))
+	_, secondError := secondLoader.Load(t.Context(), filepath.Join(root, secondPath), nil)
 	if !tt.unreadable {
 		assert.NoError(t, secondError)
 		secondError = secondLoader.EntryFailure(t.Context(), root)
@@ -163,7 +163,7 @@ spec: {url: 'git://fixture.invalid/cluster', interval: 10m}
 		heldLoader := loader.New(store.New())
 		heldLoader.SourceRoot = root
 		{
-			_, err := heldLoader.Load(t.Context(), filepath.Join(root, heldPath))
+			_, err := heldLoader.Load(t.Context(), filepath.Join(root, heldPath), nil)
 			assert.FatalIf(t, err != nil, "%v", err)
 		}
 		heldLoader.Admit(root)
@@ -330,7 +330,7 @@ spec:
 	l := loader.New(store.New())
 	l.SourceRoot = root
 	{
-		_, loadErr := l.Load(t.Context(), filepath.Join(root, "broken"))
+		_, loadErr := l.Load(t.Context(), filepath.Join(root, "broken"), nil)
 		assert.FatalIf(t, loadErr != nil, "%v", loadErr)
 	}
 	l.Admit(root)
@@ -552,7 +552,7 @@ spec:
 	l := loader.New(store.New())
 	l.SourceRoot = root
 	{
-		_, err := l.Load(t.Context(), filepath.Join(root, "held"))
+		_, err := l.Load(t.Context(), filepath.Join(root, "held"), nil)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	l.Admit(root)

@@ -164,7 +164,7 @@ func effectiveProviderHistoryLoader(t *testing.T) (*Loader, manifest.NamedResour
 	l.Options.Selection = manifest.Selection{
 		Roots: []manifest.NamedResource{testutil.KustomizationID("apps", "consumer")},
 	}
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	owner := testutil.HelmReleaseID("apps", "producer")

@@ -135,7 +135,7 @@ func TestIntegration_ResourceEscapeSelection(t *testing.T) {
 	st.AddObject(owner)
 	l := New(st)
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root)
+	_, err := l.Load(t.Context(), root, nil)
 	assert.NoError(t, err)
 	l.FinalizeIndex(t.Context(), root, true)
 	f := newAdmission(
@@ -352,7 +352,12 @@ func TestQualify_SharedNonComparableArtifact(t *testing.T) {
 		st.AddObject(first)
 		st.SetArtifact(first.Named(), artifacts[side])
 	}
-	_, err := change.Qualify(t.Context(), change.NewSet(nil), stores[0], stores[1])
+	_, err := change.Qualify(
+		t.Context(),
+		change.NewSet(nil),
+		[2]*store.Store{stores[0], stores[1]},
+		manifest.WorkScope{},
+	)
 	assert.NoError(t, err)
 	var single [2]int64
 	for side, st := range stores {
@@ -362,7 +367,12 @@ func TestQualify_SharedNonComparableArtifact(t *testing.T) {
 		st.AddObject(second)
 		st.SetArtifact(second.Named(), artifacts[side])
 	}
-	changes, err := change.Qualify(t.Context(), change.NewSet(nil), stores[0], stores[1])
+	changes, err := change.Qualify(
+		t.Context(),
+		change.NewSet(nil),
+		[2]*store.Store{stores[0], stores[1]},
+		manifest.WorkScope{},
+	)
 	assert.NoError(t, err)
 	for side := range stores {
 		assert.Equal(t, readers[side].opens.Load(), single[side])
@@ -603,7 +613,7 @@ func testAddEmittedEffectiveSourceRootsCase(t *testing.T, testCaseInput *string,
 		peer.AddObject(st.GetObject(source))
 		peer.SetArtifact(source, &before)
 		var err error
-		changes, err = change.Qualify(t.Context(), change.NewSet(nil), peer, st)
+		changes, err = change.Qualify(t.Context(), change.NewSet(nil), [2]*store.Store{peer, st}, manifest.WorkScope{})
 		assert.NoError(t, err)
 	}
 	f := newAdmission(t, admissionConfig{changes: changes, index: nil, inventory: st, root: root})

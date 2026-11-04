@@ -94,6 +94,7 @@ func (o *Orchestrator) runDAG(ctx context.Context) error {
 	}
 	sched.Seed(seeds)
 	err = sched.Run(ctx)
+	o.freezeWork()
 
 	return errors.Join(err, o.entryFailure, o.finalize())
 }

@@ -40,6 +40,7 @@ func TestLoadChart_ValidationAcrossSources(t *testing.T) {
 			cliSources := NewSources(st)
 			_, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 			_, typed := errors.AsType[chart.ValidationError](err)
+
 			assert.FatalIf(
 				t,
 				!typed || !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux),
@@ -50,7 +51,7 @@ func TestLoadChart_ValidationAcrossSources(t *testing.T) {
 	}
 }
 
-func TestLoadChart_ValuesContentWithMemoryOwner(t *testing.T) {
+func TestLoadChart_sContentWithMemoryOwner(t *testing.T) {
 	t.Parallel()
 	st, hr, first := ociRenderFixture(t)
 	hr = hr.Clone()
@@ -77,14 +78,19 @@ func TestLoadChart_ValuesContentWithMemoryOwner(t *testing.T) {
 			},
 		)
 		loaded, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
+
 		assert.NoError(t, err)
+
 		assert.FatalIf(t, chartValuesCacheKey(&loaded, hr.ChartValuesFiles, false, "") == "" ||
 			chartValuesCacheKey(&loaded, hr.ChartValuesFiles,
 				false,
 				"",
 			) == previous, "%s", "different chart content shared a fingerprint")
+
 		merged, err := cli.mergeChartValuesFiles(t.Context(), &loaded, hr.ChartValuesFiles, false)
+
 		assert.NoError(t, err)
+
 		assert.Equal(t, merged["marker"], any([]string{"original", "second"}[i]))
 		previous = chartValuesCacheKey(&loaded, hr.ChartValuesFiles, false, "")
 	}
@@ -114,7 +120,7 @@ func loadDecodedChart(
 	if err != nil {
 		return chartDescription{}, err
 	}
-	if err := c.decodeChart(ctx, &d); err != nil {
+	if err := c.decodeChart(ctx, &d, &RenderOptions{}); err != nil {
 		return chartDescription{}, err
 	}
 	return d, nil
@@ -147,6 +153,87 @@ func chartFixtureDescription(t *testing.T, ch *chart.Chart) chartDescription {
 
 func TestSourceResolver_SharedClientDeclarations(t *testing.T) {
 	t.Parallel()
+	t.Run(
+		"work_invocations",
+		func(t *testing.T) {
+			t.Parallel()
+			owner := cachetest.New(t, "", sourcecache.New)
+			client := NewClient(owner)
+			var work [2]manifest.WorkRecorder
+			var docs [2][]manifest.DocOccurrence
+			var errs [2]error
+			var sources [2]Sources
+			var releases [2]*manifest.HelmRelease
+			for side := range work {
+				st, hr, dir := ociRenderFixture(t)
+				hr = hr.Clone()
+				hr.Name = []string{"first", "second"}[side]
+				src := &manifest.OCIRepository{Name: hr.Name, Namespace: "apps", URL: "oci://example.test/podinfo"}
+				hr.Chart.Source, hr.ChartRef.Name = src.Named(), src.Name
+				st.AddObject(src)
+				st.AddObject(hr)
+				st.SetArtifact(
+					hr.Chart.Source,
+					&store.SourceArtifact{
+						Kind: manifest.KindOCIRepository,
+						FS: chartFixtureFS(
+							hr,
+							os.DirFS(
+								dir,
+							),
+						),
+						LocalPath: dir,
+						Digest:    "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8",
+						Revision:  "6.15.0@sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8",
+					},
+				)
+				sources[side], releases[side] = NewSources(st), hr
+				work[side].Key = manifest.WorkKey{
+					Tree: manifest.TreeID{
+						Cluster: manifest.ClusterID(
+							hr.Name,
+						),
+						Side: manifest.TreeHead,
+					},
+					Owner:  hr.Named(),
+					Source: hr.Chart.Source,
+				}
+			}
+			var wg sync.WaitGroup
+			for side := range work {
+				wg.Go(
+					func() {
+						docs[side], _, errs[side] = client.Template(
+							t.Context(),
+							releases[side],
+							map[string]any{
+								"marker": releases[side].Name,
+							},
+							RenderOptions{
+								Sources: sources[side],
+								Work:    work[side].Scope().RenderWork(),
+							},
+						)
+					},
+				)
+			}
+			wg.Wait()
+			for side := range work {
+				assert.NoError(t, errs[side])
+				assert.Equal(t, hasRenderField(testutil.DocumentMaps(docs[side]), "marker", releases[side].Name), true)
+				var engines manifest.WorkCounts
+				for _, record := range work[side].Scope().Snapshot(0).Normalize() {
+					assert.Equal(t, record.Key.Tree, work[side].Key.Tree)
+					assert.Equal(t, record.Key.Owner, releases[side].Named())
+					assert.Equal(t, record.Key.Source, releases[side].Chart.Source)
+					if record.Key.Phase == manifest.WorkHelm {
+						engines.Add(&record.Counts)
+					}
+				}
+				assert.Equal(t, engines, manifest.WorkCounts{Attempts: 1, Completed: 1})
+			}
+		},
+	)
 	st := store.New()
 	parent := &manifest.Kustomization{Name: "materializer", Namespace: "apps"}
 	raw := &manifest.HelmRepository{Name: "covered", Namespace: "apps", URL: "https://raw.example"}
@@ -155,11 +242,11 @@ func TestSourceResolver_SharedClientDeclarations(t *testing.T) {
 		raw.Named(): {Productions: []manifest.Production{{Owner: parent.Named(), Source: manifest.BootstrapSourceID}}},
 	}})
 	resolver := NewSources(st)
-	assert.FatalIf(t, resolver.Declaration(raw.Named()) != nil, "%s", "provisional source reached shared resolver")
+	assert.FatalIf(t, resolver.Declaration(raw.Named()) != nil, "%v", "provisional source reached shared resolver")
 	accepted := *raw
 	accepted.URL = "https://accepted.example"
 	_, _, next := st.GetEmission(parent.Named())
-	defer next.Finish()
+	t.Cleanup(next.Finish)
 	next.Children = []store.Child{{Obj: &accepted}}
 	st.RecordEmitted(parent.Named(), &next, nil)
 	st.UpdateStatus(
@@ -169,7 +256,7 @@ func TestSourceResolver_SharedClientDeclarations(t *testing.T) {
 	assert.FatalIf(
 		t,
 		resolver.Declaration(raw.Named()) != &accepted,
-		"%s",
+		"%v",
 		"shared resolver lost effective accepted source",
 	)
 }
@@ -204,7 +291,9 @@ func testLoadChartSharedChartRetainsValuesFingerprintCase(
 	withoutFiles := hr.Clone()
 	withoutFiles.ChartValuesFiles = nil
 	loaded, err := loadDecodedChart(t.Context(), cli, withoutFiles, cliSources)
+
 	assert.NoError(t, err)
+
 	assert.Equal(t, loaded.fingerprint == "", false)
 	var results [2]chartDescription
 	var failures [2]error
@@ -217,7 +306,9 @@ func testLoadChartSharedChartRetainsValuesFingerprintCase(
 	wg.Wait()
 	for i := range results {
 		result := results[i]
+
 		assert.NoError(t, failures[i])
+
 		assert.Equal(
 			t,
 			chartValuesCacheKey(&result, hr.ChartValuesFiles, false, ""),
@@ -226,6 +317,8 @@ func testLoadChartSharedChartRetainsValuesFingerprintCase(
 	}
 	loaded = results[0]
 	merged, err := cli.mergeChartValuesFiles(t.Context(), &loaded, hr.ChartValuesFiles, false)
+
 	assert.NoError(t, err)
+
 	assert.Equal(t, merged["marker"], any("original"))
 }

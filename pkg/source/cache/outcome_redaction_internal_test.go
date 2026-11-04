@@ -21,7 +21,7 @@ func TestOutcome_LastGoodRedaction(t *testing.T) {
 	r, _, id, err := c.Blob(
 		t.Context(),
 		BlobKey{Content: "last-good"},
-		Policy{},
+		&Policy{},
 		producer(
 			[]byte("held"), &ocispec.Descriptor{
 				Annotations: map[string]string{

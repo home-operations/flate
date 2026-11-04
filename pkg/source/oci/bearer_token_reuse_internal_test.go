@@ -95,7 +95,7 @@ func testFetcherBearerTokenReuseCase(t *testing.T, authenticated *bool,
 	fetch := func(request *manifest.OCIRepository, n *source.Network) {
 		t.Helper()
 		f := &Fetcher{Network: n, Cache: owner}
-		got, err := f.Fetch(t.Context(), request, inputs.readSet(request), sourcecache.Policy{})
+		got, err := f.Fetch(t.Context(), request, inputs.readSet(request), &sourcecache.Policy{})
 		assert.NoError(t, err)
 		assert.Equal(t, mustReadFile(t, got.FS, "app.yaml"), "version: v1\n")
 	}
@@ -112,7 +112,7 @@ func testFetcherBearerTokenReuseCase(t *testing.T, authenticated *bool,
 		f := &Fetcher{Network: network, Cache: cachetest.New(t, "", sourcecache.New)}
 		wg.Go(func() {
 			<-start
-			got, err := f.Fetch(t.Context(), repo, inputs.readSet(repo), sourcecache.Policy{})
+			got, err := f.Fetch(t.Context(), repo, inputs.readSet(repo), &sourcecache.Policy{})
 			if err != nil {
 				t.Errorf("concurrent acquisition: %v", err)
 				return
@@ -166,7 +166,7 @@ func testFetcherBearerTokenReuseCase(t *testing.T, authenticated *bool,
 		t.Context(),
 		repo,
 		inputs.readSet(repo),
-		sourcecache.Policy{},
+		&sourcecache.Policy{},
 	)
 	assert.FatalIf(
 		t,

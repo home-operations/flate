@@ -20,6 +20,9 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+
 	"github.com/home-operations/flate/internal/assert"
 
 	"github.com/minio/minio-go/v7"
@@ -77,7 +80,7 @@ func TestWalkBucket_BoundedParallelOrder(t *testing.T) {
 	client, peak := delayedBucket(t)
 	var data bytes.Buffer
 	{
-		_, err := walkBucket(t.Context(), client, &manifest.Bucket{BucketName: "data"}, &data)
+		_, err := walkBucket(t.Context(), client, &manifest.Bucket{BucketName: "data"}, bucketOutput{Writer: &data})
 		assert.NoError(t, err)
 	}
 
@@ -87,7 +90,7 @@ func TestWalkBucket_BoundedParallelOrder(t *testing.T) {
 	}
 	var repeated bytes.Buffer
 	{
-		_, err := walkBucket(t.Context(), client, &manifest.Bucket{BucketName: "data"}, &repeated)
+		_, err := walkBucket(t.Context(), client, &manifest.Bucket{BucketName: "data"}, bucketOutput{Writer: &repeated})
 		assert.NoError(t, err)
 	}
 	assert.FatalIf(t, !bytes.Equal(data.Bytes(), repeated.Bytes()), "%s", "bucket archive differs between two runs")
@@ -141,7 +144,12 @@ func TestWalkBucket_ChunkBound(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := walkBucket(ctx, client, &manifest.Bucket{BucketName: "data"}, blockedArchiveWriter{release})
+		_, err := walkBucket(
+			ctx,
+			client,
+			&manifest.Bucket{BucketName: "data"},
+			bucketOutput{Writer: blockedArchiveWriter{release}},
+		)
 		done <- err
 	}()
 	for range 8 {
@@ -250,8 +258,9 @@ func TestWalkBucket_RejectsNegativeListedSize(t *testing.T) {
 		t.Context(),
 		client,
 		&manifest.Bucket{BucketName: "data"},
-		io.Discard,
-	); err == nil || err.Error() != `bucket object "big" has negative size` ||
+		bucketOutput{Writer: io.Discard},
+	); err == nil ||
+		err.Error() != `bucket object "big" has negative size` ||
 		gets.Load() != 0 {
 		t.Fatalf("err=%v gets=%d, want a listing-time error and no download", err, gets.Load())
 	}
@@ -416,7 +425,7 @@ func TestWalkBucket_SourceTimeout(t *testing.T) {
 					defer cancel()
 				}
 				start := time.Now()
-				artifact, err := f.Fetch(ctx, b, (testInputs{}).readSet(b), cache.Policy{})
+				artifact, err := f.Fetch(ctx, b, (testInputs{}).readSet(b), &cache.Policy{})
 				if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, manifest.ErrFlux) || artifact != nil ||
 					calls != 1 ||
 					time.Since(start) != tc.want {
@@ -473,15 +482,37 @@ func testWalkBucketFaultsCase(t *testing.T, route *string,
 	},
 	))
 	defer srv.Close()
-	client, err := minio.New(
-		strings.TrimPrefix(srv.URL, "http://"),
-		&minio.Options{Region: "us-east-1", BucketLookup: minio.BucketLookupPath, MaxRetries: 1},
-	)
+	var transfers atomic.Uint64
+	transport := bucketRoundTrip(func(req *http.Request) (*http.Response, error) {
+		response, err := srv.Client().Transport.RoundTrip(req)
+		if err == nil && req.URL.Query().Get("list-type") == "" && response.StatusCode == http.StatusOK {
+			transfers.Add(1)
+		}
+		return response, err
+	})
+	client, err := minio.New(strings.TrimPrefix(srv.URL, "http://"), &minio.Options{
+		Region: "us-east-1", BucketLookup: minio.BucketLookupPath, MaxRetries: 1, Transport: transport,
+	})
 	assert.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
-	_, err = walkBucket(ctx, client, &manifest.Bucket{BucketName: "data"}, io.Discard)
+	b := &manifest.Bucket{Name: "source", Namespace: "apps", BucketName: "data"}
+	key := manifest.WorkKey{
+		Tree:  manifest.TreeID{Cluster: "cluster", Side: manifest.TreeHead},
+		Owner: b.Named(), Source: b.Named(), Phase: manifest.WorkAcquisition, Input: "archive",
+	}
+	work := manifest.WorkRecorder{Key: key}
+	physical := work.Scope().Record(manifest.WorkAcquisition, key.Input)
+	_, err = walkBucket(ctx, client, b, bucketOutput{Writer: io.Discard, work: physical})
+	wantWork := manifest.WorkSummary{}
+	if count := transfers.Load(); count != 0 {
+		wantWork = append(wantWork, manifest.WorkRecord{Key: key, Counts: manifest.WorkCounts{RemoteTransfers: count}})
+	}
+	if diff := cmp.Diff(wantWork, work.Scope().Snapshot(0).Normalize(), cmpopts.EquateEmpty()); diff != "" {
+		t.Fatalf("successful object transfers (-want +got):\n%s", diff)
+	}
+
 	assert.FatalIf(t, err == nil, "%s", "fault accepted")
 
 	assert.FatalIf(

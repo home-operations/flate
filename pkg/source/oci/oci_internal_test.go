@@ -298,7 +298,7 @@ func testResolveRefSemverPrecedenceCase(t *testing.T, tc *struct {
 	assert.NoError(t, err)
 
 	request.client.PlainHTTP = true
-	got, err := resolveRef(t.Context(), request.client, repo, tc.ref)
+	got, err := (&operation{}).resolveRef(t.Context(), request.client, repo, tc.ref)
 	assert.NoError(t, err)
 
 	if got != tc.want || listed.Load() != tc.list {

@@ -99,7 +99,7 @@ func TestBlob_RenderBuildIdentity(t *testing.T) {
 	_, _, _, err := c.Blob(
 		t.Context(),
 		BlobKey{Content: key.Content},
-		Policy{MaxAge: 0},
+		&Policy{MaxAge: 0},
 		producer([]byte("ordinary"), &ocispec.Descriptor{}),
 	)
 	assert.NoError(t, err)
@@ -111,13 +111,14 @@ func TestBlob_RenderBuildIdentity(t *testing.T) {
 		}
 
 		processIdentity = identity
+		key.Content = "render-input"
 		c = cachetest.New(t, root, New)
 		assert.Equal(t, c.CanPersistRenders(), true)
 		{
 			r, _, _, blobErr := c.Blob(
 				t.Context(),
 				key,
-				Policy{MaxAge: Forever},
+				&Policy{MaxAge: Forever},
 				nil,
 			)
 			assert.FatalIf(t, r != nil ||
@@ -126,7 +127,7 @@ func TestBlob_RenderBuildIdentity(t *testing.T) {
 		_, _, id, blobErr2 := c.Blob(
 			t.Context(),
 			key,
-			Policy{MaxAge: 0},
+			&Policy{MaxAge: 0},
 			producer([]byte(identity), &ocispec.Descriptor{}),
 		)
 		assert.NoError(t, blobErr2)
@@ -140,9 +141,10 @@ func TestBlob_RenderBuildIdentity(t *testing.T) {
 		}
 
 		processIdentity = identity
+		key.Content = "render-input"
 		c = cachetest.New(t, root, New)
 		assert.Equal(t, c.CanPersistRenders(), true)
-		r, _, _, blobErr3 := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+		r, _, _, blobErr3 := c.Blob(t.Context(), key, &Policy{MaxAge: Forever}, nil)
 		assert.NoError(t, blobErr3)
 
 		data, blobErr3 := fs.ReadFile(r, "content")
@@ -166,10 +168,10 @@ func TestBlob_RenderBuildIdentity(t *testing.T) {
 	before, err := os.ReadFile(index)
 	assert.NoError(t, err)
 
-	r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+	r, _, _, err := c.Blob(t.Context(), key, &Policy{MaxAge: Forever}, nil)
 	assert.FatalIf(t, r != nil || !errors.Is(err, errdef.ErrNotFound), "unidentified cold lookup: %v", err)
 	for _, produce := range []func(context.Context, ProducerInput) (ProducerResult, error){producer([]byte("DIRTY"), &ocispec.Descriptor{}), nil} {
-		blobR, _, _, blobErr4 := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, produce)
+		blobR, _, _, blobErr4 := c.Blob(t.Context(), key, &Policy{MaxAge: Forever}, produce)
 		assert.NoError(t, blobErr4)
 		data, _ := fs.ReadFile(blobR, "content")
 
@@ -186,14 +188,14 @@ func TestBlob_RenderBuildIdentity(t *testing.T) {
 		blobR2, _, _, blobErr5 := c.Blob(
 			t.Context(),
 			key,
-			Policy{MaxAge: Forever},
+			&Policy{MaxAge: Forever},
 			nil,
 		)
 		assert.FatalIf(t, blobR2 != nil ||
 			!errors.Is(blobErr5, errdef.ErrNotFound), "unidentified render survived reopen: %v", blobErr5)
 	}
 
-	r, _, _, err = c.Blob(t.Context(), BlobKey{Content: key.Content}, Policy{MaxAge: Forever}, nil)
+	r, _, _, err = c.Blob(t.Context(), BlobKey{Content: key.Content}, &Policy{MaxAge: Forever}, nil)
 	assert.NoError(t, err)
 
 	data, _ := fs.ReadFile(r, "content")

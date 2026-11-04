@@ -44,7 +44,7 @@ func testAcquireConcurrentKeysAndCancellationCaseCallback(
 		_, _, _, err := c.Blob(
 			t.Context(),
 			key,
-			Policy{},
+			&Policy{},
 			func(context.Context, ProducerInput) (ProducerResult, error) {
 				return ProducerResult{}, connReset()
 			},
@@ -75,7 +75,7 @@ func testAcquireConcurrentKeysAndCancellationCaseCallback(
 	done := make(chan testtestAcquireConcurrentKeysAndCancellationCaseCallbackResult, (*(*testCaseInput.callers)))
 	launch := func(ctx context.Context, fill func(context.Context, ProducerInput) (ProducerResult, error)) {
 		go func() {
-			r, _, _, err := c.Blob(ctx, key, Policy{Retry: fastRetry(5)}, fill)
+			r, _, _, err := c.Blob(ctx, key, &Policy{Retry: fastRetry(5)}, fill)
 			var data string
 			if r != nil {
 				b, readErr := fs.ReadFile(r, "content")

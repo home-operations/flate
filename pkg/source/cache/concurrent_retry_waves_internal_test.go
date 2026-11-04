@@ -72,7 +72,7 @@ func testAcquireConcurrentKeysAndCancellationDueCaseCallback(
 	held, _, id, err := c.Blob(
 		t.Context(),
 		key,
-		Policy{},
+		&Policy{},
 		producer([]byte("held"), &ocispec.Descriptor{}),
 	)
 	assert.NoError(t, err)
@@ -83,7 +83,7 @@ func testAcquireConcurrentKeysAndCancellationDueCaseCallback(
 	_, _, _, err = c.Blob(
 		t.Context(),
 		key,
-		Policy{},
+		&Policy{},
 		func(context.Context, ProducerInput) (ProducerResult, error) {
 			return ProducerResult{}, connReset()
 		},
@@ -142,7 +142,7 @@ func testAcquireConcurrentKeysAndCancellationDueCaseCallback(
 	}
 	launch := func(ctx context.Context, results chan error) {
 		go func() {
-			r, _, _, blobErr2 := c.Blob(ctx, key, Policy{Retry: fastRetry(5)}, fill)
+			r, _, _, blobErr2 := c.Blob(ctx, key, &Policy{Retry: fastRetry(5)}, fill)
 			if r != nil {
 				data, readErr := fs.ReadFile(r, "content")
 				blobErr2 = errors.Join(blobErr2, readErr)
@@ -285,7 +285,7 @@ func testAcquireConcurrentKeysAndCancellationDueCaseCallbackCompletionTail(
 			}
 		}
 		r, _, _, err := (*(*captures).c).Blob(
-			t.Context(), (*(*captures).key), Policy{},
+			t.Context(), (*(*captures).key), &Policy{},
 			producer([]byte("independent"), &ocispec.Descriptor{}),
 		)
 		assert.NoError(t, err)

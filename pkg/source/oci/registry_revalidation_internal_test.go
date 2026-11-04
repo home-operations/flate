@@ -89,7 +89,7 @@ func testFetcherRevalidationCase(t *testing.T, operation *string,
 			t.Context(),
 			repo,
 			(testInputs{}).readSet(repo),
-			sourcecache.Policy{MaxAge: repo.SourceInterval()},
+			&sourcecache.Policy{MaxAge: repo.SourceInterval()},
 		)
 		if phase == "resolve failure" {
 			assert.FatalIf(

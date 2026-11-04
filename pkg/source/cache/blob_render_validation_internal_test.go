@@ -56,7 +56,7 @@ func testBlobRenderValidationCaseCallback(t *testing.T, testCaseInput testBlobRe
 		_, _, _, err := (*testCaseInput.c).Blob(
 			t.Context(),
 			BlobKey{Content: "shared-render", Render: (*testCaseInput.mode)},
-			Policy{MaxAge: Forever},
+			&Policy{MaxAge: Forever},
 			func(context.Context, ProducerInput) (ProducerResult, error) { return ProducerResult{}, connReset() },
 		)
 		assert.FatalIf(t, !errors.Is(err, syscall.ECONNRESET), "initial failure: %v", err)
@@ -79,7 +79,7 @@ func testBlobRenderValidationCaseCallback(t *testing.T, testCaseInput testBlobRe
 		r, _, _, err := (*testCaseInput.c).Blob(
 			t.Context(),
 			key,
-			Policy{MaxAge: Forever},
+			&Policy{MaxAge: Forever},
 			func(_ context.Context, w ProducerInput) (ProducerResult, error) {
 				calls.Add(1)
 				if pause {
@@ -115,9 +115,9 @@ func testBlobRenderValidationCaseCallback(t *testing.T, testCaseInput testBlobRe
 		Render:   (*testCaseInput.mode),
 		Validate: func(context.Context, fs.FS) (bool, error) { return false, failure },
 	}
-	r, _, _, err := (*testCaseInput.c).Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+	r, _, _, err := (*testCaseInput.c).Blob(t.Context(), key, &Policy{MaxAge: Forever}, nil)
 	assert.FatalIf(t, r != nil || !errors.Is(err, failure), "validator failure: %v", err)
 	key.Validate = func(context.Context, fs.FS) (bool, error) { return false, nil }
-	r, _, _, err = (*testCaseInput.c).Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+	r, _, _, err = (*testCaseInput.c).Blob(t.Context(), key, &Policy{MaxAge: Forever}, nil)
 	assert.FatalIf(t, r != nil || !errors.Is(err, errdef.ErrNotFound), "invalid lookup: %v", err)
 }

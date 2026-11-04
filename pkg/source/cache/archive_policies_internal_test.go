@@ -88,7 +88,7 @@ func testAcquireArchivePolicyCase(t *testing.T, disk *bool,
 	input, _, _, err := c.Acquire(
 		t.Context(),
 		ArchiveKey{Content: "source-test-policy", Policy: map[bool]string{true: "source"}[(*defaults)]},
-		Policy{MaxAge: time.Hour},
+		&Policy{MaxAge: time.Hour},
 		producer(data, &ocispec.Descriptor{}),
 	)
 	assert.NoError(t, err)
@@ -107,7 +107,7 @@ func testAcquireArchivePolicyCase(t *testing.T, disk *bool,
 		other, _, _, err := c.Acquire(
 			t.Context(),
 			policy,
-			Policy{MaxAge: 0},
+			&Policy{MaxAge: 0},
 			producer(data, &ocispec.Descriptor{}),
 		)
 		assert.NoError(t, err)
@@ -148,7 +148,7 @@ func testAcquireArchiveFailuresAndLinksCase(t *testing.T, disk *bool,
 			_, _, _, err := c.Acquire(
 				t.Context(),
 				ArchiveKey{Content: "source-test-invalid"},
-				Policy{MaxAge: 0},
+				&Policy{MaxAge: 0},
 				producer(data, &ocispec.Descriptor{}),
 			)
 			assert.FatalIf(t, err == nil, "%s", "accepted invalid archive")
@@ -229,7 +229,7 @@ func testAcquireGeneratedPolicyCaseCompletion(t *testing.T, captures *testAcquir
 	}
 	var identity string
 	for run := range 2 {
-		input, descriptor, id, err := (*captures.c).Acquire(t.Context(), key, Policy{MaxAge: Forever}, produce)
+		input, descriptor, id, err := (*captures.c).Acquire(t.Context(), key, &Policy{MaxAge: Forever}, produce)
 		assert.NoError(t, err)
 
 		assert.FatalIf(
@@ -306,7 +306,7 @@ func testAcquireExtractPolicyCase(t *testing.T, tc *struct {
 	input, _, id, err := c.Acquire(
 		t.Context(),
 		ArchiveKey{Content: tc.name, Policy: "extract"},
-		Policy{MaxAge: Forever},
+		&Policy{MaxAge: Forever},
 		producer(archive.Bytes(), &ocispec.Descriptor{}),
 	)
 	assert.FatalIf(
@@ -319,7 +319,7 @@ func testAcquireExtractPolicyCase(t *testing.T, tc *struct {
 	input, _, id, err = c.Acquire(
 		t.Context(),
 		ArchiveKey{Content: tc.name, Policy: "extract"},
-		Policy{MaxAge: Forever},
+		&Policy{MaxAge: Forever},
 		producer(orderedArchive(t, "file", "retry"), &ocispec.Descriptor{}),
 	)
 	assert.FatalIf(t, err != nil || input == nil || id == "", "retry invalid extraction = %q, %v", id, err)
@@ -362,7 +362,7 @@ func testAcquireArchiveFailuresAndLinksCaseCase(
 	input, _, _, err := (*testCaseInput.c).Acquire(
 		t.Context(),
 		key,
-		Policy{MaxAge: Forever},
+		&Policy{MaxAge: Forever},
 		producer(data.Bytes(), &ocispec.Descriptor{}),
 	)
 	assert.NoError(t, err)
@@ -372,7 +372,7 @@ func testAcquireArchiveFailuresAndLinksCaseCase(
 		replayed, _, _, err := fresh.Acquire(
 			t.Context(),
 			key,
-			Policy{MaxAge: Forever},
+			&Policy{MaxAge: Forever},
 			func(context.Context, ProducerInput) (ProducerResult, error) {
 				t.Error("fresh owner refetched cached archive")
 				return ProducerResult{}, errors.New("unexpected fetch")

@@ -35,7 +35,7 @@ func TestShape_SanitizesBeforeSubstitution(t *testing.T) {
 				}
 			}
 			docs := []manifest.DocOccurrence{{Document: doc}}
-			if err := Shape(ks, docs, false); err != nil {
+			if err := Shape(t.Context(), ks, docs, ShapeOptions{}); err != nil {
 				t.Fatal(err)
 			}
 			if diff := cmp.Diff(map[string]any{"PLAIN": "plain"}, docs[0].Document["stringData"]); diff != "" {

@@ -31,7 +31,7 @@ func (f *secretChartFetcher) Fetch(
 	_ context.Context,
 	obj manifest.BaseManifest,
 	reads *store.ReadSet,
-	_ sourcecache.Policy,
+	_ *sourcecache.Policy,
 ) (*store.SourceArtifact, error) {
 	repo := obj.(*manifest.OCIRepository)
 	secret, ok := reads.Get[*manifest.Secret](

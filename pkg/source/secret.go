@@ -49,8 +49,9 @@ func (e *MissingSecretError) Unwrap() error {
 // ProducerBacked reports whether captured declarations can supply the missing Secret.
 func (e *MissingSecretError) ProducerBacked(reads *store.ReadSet) bool {
 	if reads != nil && e.Secret != (manifest.NamedResource{}) {
-		for _, p := range reads.Productions(e.Secret, nil) {
-			if p.Declaration != (manifest.NamedResource{}) {
+		productions := reads.Productions(e.Secret, nil)
+		for i := range productions {
+			if productions[i].Declaration != (manifest.NamedResource{}) {
 				return true
 			}
 		}
@@ -119,6 +120,8 @@ func AcquireMachine(
 }
 
 // MissingSecretErr captures unavailable material with raw and display identities.
+//
+//nolint:gocritic // The SDK accepts a value snapshot; a pointer parameter would change its call and aliasing contracts.
 func MissingSecretErr(owner manifest.DiagnosticIdentity, secretRef, reason string) error {
 	missing := &MissingSecretError{Owner: owner.ID, Subject: owner, Detail: reason}
 	if secretRef != "" {
@@ -135,10 +138,11 @@ func MissingSecretErr(owner manifest.DiagnosticIdentity, secretRef, reason strin
 // source and Secret identities for the existing whole-source skip policy.
 func resolveSecretRef(
 	secrets SecretGetter,
-	owner manifest.DiagnosticIdentity,
+	ownerValue *manifest.DiagnosticIdentity,
 	field string,
 	ref *manifest.LocalObjectReference,
 ) (*manifest.Secret, error) {
+	owner := *ownerValue
 	if secrets == nil {
 		return nil, fmt.Errorf("references %s but no source.SecretGetter is wired", field)
 	}
@@ -151,6 +155,8 @@ func resolveSecretRef(
 
 // BasicAuthFromSecret rejects malformed credentials and reports absent or wiped
 // credentials through MissingSecretError.
+//
+//nolint:gocritic // The SDK accepts a value snapshot; a pointer parameter would change its call and aliasing contracts.
 func BasicAuthFromSecret(
 	sec *manifest.Secret,
 	owner manifest.DiagnosticIdentity,

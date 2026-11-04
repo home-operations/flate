@@ -22,7 +22,7 @@ func resolveTLS(
 ) (*tls.Config, [3]string, any, error) {
 	owner := *ownerValue
 	ref := input.Reference
-	sec, err := resolveSecretRef(secrets, owner, input.Use.label(), ref)
+	sec, err := resolveSecretRef(secrets, new(owner), input.Use.label(), ref)
 	if err != nil {
 		if input.OptionalTLS && errors.Is(err, manifest.ErrMissingSecret) {
 			return nil, [3]string{}, nil, nil

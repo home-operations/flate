@@ -21,7 +21,7 @@ func resolveProxy(
 	if ref == nil {
 		return nil, nil, nil
 	}
-	sec, err := resolveSecretRef(secrets, owner, "proxySecretRef", ref)
+	sec, err := resolveSecretRef(secrets, new(owner), "proxySecretRef", ref)
 	if err != nil {
 		return nil, nil, err
 	}

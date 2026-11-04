@@ -616,7 +616,7 @@ func testAcceptedRenderExactValueCase(t *testing.T, testCaseInput *testAcceptedR
 	{
 		assert.FatalIf(
 			t,
-			testCaseInput.original.equal(&changed) || changed.equal(&(*testCaseInput.original)),
+			testCaseInput.original.equal(&changed) || changed.equal(testCaseInput.original),
 			"%s",
 			"changed accepted value compared equal",
 		)
@@ -640,11 +640,11 @@ func testAcceptedRenderExactValueCase2(t *testing.T, testCaseInput *testAccepted
 	t.Helper()
 
 	changed := (*testCaseInput.copyValue)(t, (*testCaseInput.original))
-	testCaseInput.component.mutate((*testCaseInput.location).selectID(&changed))
+	testCaseInput.component.mutate(testCaseInput.location.selectID(&changed))
 	{
 		assert.FatalIf(
 			t,
-			testCaseInput.original.equal(&changed) || changed.equal(&(*testCaseInput.original)),
+			testCaseInput.original.equal(&changed) || changed.equal(testCaseInput.original),
 			"%s",
 			"changed full identity compared equal",
 		)

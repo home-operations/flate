@@ -640,7 +640,7 @@ func generateManifestByteEquivalentToFluxName(t *testing.T, tc *struct {
 ) {
 	t.Helper()
 
-	testGenerateManifestByteEquivalentToFluxCase(t, &(*tc))
+	testGenerateManifestByteEquivalentToFluxCase(t, tc)
 }
 
 func generateManifestByteEquivalentToFluxLoop(loopInputs struct {

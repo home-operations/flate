@@ -415,12 +415,15 @@ func TestPreflight_UppercaseAndMixedCaseScheme(t *testing.T) {
 				srv = httptest.NewServer(handler)
 			}
 			t.Cleanup(srv.Close)
+			//nolint:gocritic // The replacement scheme must retain the URL colon.
 			url := scheme + srv.URL[strings.Index(srv.URL, ":"):] + "/cm.yaml"
 			root := testutil.WriteTree(t, map[string]string{"kustomization.yaml": existingKustomization(url)})
 			cache := newTestTreeCache(t, "")
 			original := http.DefaultTransport
-			http.DefaultTransport = srv.Client().Transport
-			t.Cleanup(func() { http.DefaultTransport = original })
+			http.DefaultTransport = srv.Client().Transport //nolint:reassign // The serial fixture must trust its TLS server.
+			t.Cleanup(func() {
+				http.DefaultTransport = original //nolint:reassign // Restore the process transport after the fixture.
+			})
 			out, _, err := testutil.RenderMaps(
 				Render(
 					t.Context(),

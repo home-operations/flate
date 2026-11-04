@@ -81,8 +81,11 @@ func stubHTTPTransport(tb testing.TB, transport http.RoundTripper) {
 		}()
 		return client, nil
 	}
-	http.DefaultTransport = tr
-	tb.Cleanup(func() { http.DefaultTransport = original; tr.CloseIdleConnections() })
+	http.DefaultTransport = tr //nolint:reassign // Serial remote fixtures must install their dependency transport.
+	tb.Cleanup(func() {
+		http.DefaultTransport = original //nolint:reassign // Restore the process transport after the fixture.
+		tr.CloseIdleConnections()
+	})
 }
 
 type remoteRoundTrip func(*http.Request) (*http.Response, error)

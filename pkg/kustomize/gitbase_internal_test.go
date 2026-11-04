@@ -450,8 +450,6 @@ func TestPreflightGitBase_SymlinkEscapeNotMaterialized(t *testing.T) {
 
 func TestRender_NestedGitBasesAndIntervals(t *testing.T) {
 	t.Parallel()
-	const parentURL = "file:///example.invalid/o/parent.git"
-	const childURL = "file:///example.invalid/o/child.git"
 	for _, fixture := range []struct {
 		name, kustomization, resource, marker string
 	}{

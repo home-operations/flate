@@ -42,6 +42,7 @@ func (sh *shard) objectLocked(id manifest.NamedResource) manifest.BaseManifest {
 	return sh.captureLocked(id, new(sh.cells[id]), nil)
 }
 
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (sh *shard) captureLocked(id manifest.NamedResource, cellValue *objectCell, view *capture) manifest.BaseManifest {
 	cell := *cellValue
 	if view != nil {
@@ -152,29 +153,7 @@ func (r objectRegion) add(id manifest.NamedResource, direct, independent bool) o
 }
 
 func (s *Store) affectedLocked(region objectRegion, producer manifest.NamedResource) objectRegion {
-	capacity := len(region.states)
-	{
-		stateValues2 := region.states
-		for stateIndex2 := range stateValues2 {
-			state := stateValues2[stateIndex2]
-			id := state.id
-			if slot := s.shardFor(id).slots[id]; slot != nil {
-				if e := slot.current.Load(); e != nil {
-					capacity += len(e.entries)
-					{
-						aValues8 := e.entries
-						for aIndex5 := range aValues8 {
-							a := aValues8[aIndex5]
-							capacity += len(a.targets)
-						}
-					}
-				}
-			}
-			if c := s.coverage[id]; c != nil {
-				capacity += len(c.records)
-			}
-		}
-	}
+	capacity := s.regionCapacityLocked(&region)
 	region.reserve = capacity
 	if region.positions != nil && capacity > cap(region.states) {
 		positions := make(map[manifest.NamedResource]int, capacity)
@@ -184,88 +163,8 @@ func (s *Store) affectedLocked(region objectRegion, producer manifest.NamedResou
 		region.positions = positions
 		region.states = slices.Grow(region.states, capacity-len(region.states))
 	}
-	//nolint:intrange // add MUST extend the worklist during traversal.
-	for i := 0; i < len(region.states); i++ {
-		id := region.states[i].id
-		if slot := s.shardFor(id).slots[id]; slot != nil {
-			if e := slot.current.Load(); e != nil {
-				{
-					aValues9 := e.entries
-					for aIndex6 := range aValues9 {
-						a := aValues9[aIndex6]
-						region = region.add(a.child.Obj.Named(), false, false)
-						for _, t := range a.targets {
-							region = region.add(t.NamedResource, false, false)
-						}
-					}
-				}
-			}
-		}
-		if c := s.coverage[id]; c != nil {
-			{
-				fValues3 := c.records
-				for fIndex3 := range fValues3 {
-					f := fValues3[fIndex3]
-					region = region.add(f.id, false, f.independent)
-				}
-			}
-		}
-	}
-	var admissions [shardCount]uint64
-	if producer != (manifest.NamedResource{}) {
-		admissions[kindShardIndex(producer.Kind)] = 2
-	}
-	for i := range region.states {
-		state := &region.states[i]
-		id := state.id
-		sh := s.shardFor(id)
-		state.cell = sh.cells[id]
-		// Metadata-only cells may predate preparation; frozen facts cannot disagree.
-		state.independent = state.independent || state.cell.independent
-		state.cell.authority = state.cell.current()
-		if state.cell.generation == 0 {
-			admissions[kindShardIndex(id.Kind)]++
-		}
-		artifact := sh.artifacts[id]
-		for _, head := range []authority{artifact.authority, artifact.revisionHead, artifact.originHead} {
-			if head.generation == 0 {
-				admissions[kindShardIndex(id.Kind)]++
-			}
-		}
-		if sh.byName[kindID{id.Group, id.Kind}].links == nil {
-			admissions[kindShardIndex(id.Kind)]++
-		}
-		state.bucketGeneration = sh.byName[kindID{id.Group, id.Kind}].generation
-		if slot := sh.slots[id]; slot != nil {
-			state.producerGeneration = slot.generation
-			if slot.generation == ^uint64(0) {
-				s.unlockAll()
-				panic("store: authority generation exhausted")
-			}
-		}
-		var view capture
-		sh.captureLocked(id, new(state.cell), &view)
-		before := view.child
-		state.before, state.document, state.payload = before.Obj, before.Doc, view.payload
-		state.owner, state.source = view.owner, view.source
-		state.visible = !state.cell.hidden && (state.cell.static != nil || len(sh.members[id]) > 0)
-		if state.cell.publication == ^uint64(0) || artifact.publication == ^uint64(0) ||
-			state.cell.generation == ^uint64(0) ||
-			sh.conditions[id].stamp().generation == ^uint64(0) ||
-			artifact.generation == ^uint64(0) ||
-			artifact.revisionHead.generation == ^uint64(0) ||
-			artifact.originHead.generation == ^uint64(0) ||
-			state.bucketGeneration == ^uint64(0) {
-			s.unlockAll()
-			panic("store: authority generation exhausted")
-		}
-	}
-	for i, count := range admissions {
-		if !s.shards[i].canAdmit(count) {
-			s.unlockAll()
-			panic("store: authority generation exhausted")
-		}
-	}
+	region = s.expandRegionLocked(region)
+	s.captureRegionLocked(&region, producer)
 	return region
 }
 
@@ -531,4 +430,124 @@ func (s *Store) staticProductionLocked(
 		}
 	}
 	return len(r.Productions) == 0
+}
+
+func (s *Store) regionCapacityLocked(region *objectRegion) int {
+	capacity := len(region.states)
+	{
+		stateValues2 := region.states
+		for stateIndex2 := range stateValues2 {
+			state := stateValues2[stateIndex2]
+			id := state.id
+			if slot := s.shardFor(id).slots[id]; slot != nil {
+				if e := slot.current.Load(); e != nil {
+					capacity += len(e.entries)
+					{
+						aValues8 := e.entries
+						for aIndex5 := range aValues8 {
+							a := aValues8[aIndex5]
+							capacity += len(a.targets)
+						}
+					}
+				}
+			}
+			if c := s.coverage[id]; c != nil {
+				capacity += len(c.records)
+			}
+		}
+	}
+	return capacity
+}
+
+func (s *Store) expandRegionLocked(region objectRegion) objectRegion {
+	//nolint:intrange // add MUST extend the worklist during traversal.
+	for i := 0; i < len(region.states); i++ {
+		id := region.states[i].id
+		if slot := s.shardFor(id).slots[id]; slot != nil {
+			if e := slot.current.Load(); e != nil {
+				{
+					aValues9 := e.entries
+					for aIndex6 := range aValues9 {
+						a := aValues9[aIndex6]
+						region = region.add(a.child.Obj.Named(), false, false)
+						for _, t := range a.targets {
+							region = region.add(t.NamedResource, false, false)
+						}
+					}
+				}
+			}
+		}
+		if c := s.coverage[id]; c != nil {
+			{
+				fValues3 := c.records
+				for fIndex3 := range fValues3 {
+					f := fValues3[fIndex3]
+					region = region.add(f.id, false, f.independent)
+				}
+			}
+		}
+	}
+	return region
+}
+
+func (s *Store) captureRegionLocked(region *objectRegion, producer manifest.NamedResource) {
+	var admissions [shardCount]uint64
+	if producer != (manifest.NamedResource{}) {
+		admissions[kindShardIndex(producer.Kind)] = 2
+	}
+	for i := range region.states {
+		state := &region.states[i]
+		s.captureRegionStateLocked(state, &admissions)
+	}
+	for i, count := range admissions {
+		if !s.shards[i].canAdmit(count) {
+			s.unlockAll()
+			panic("store: authority generation exhausted")
+		}
+	}
+}
+
+func (s *Store) captureRegionStateLocked(state *regionState, admissions *[shardCount]uint64) {
+	id := state.id
+	sh := s.shardFor(id)
+	state.cell = sh.cells[id]
+	// Metadata-only cells may predate preparation; frozen facts cannot disagree.
+	state.independent = state.independent || state.cell.independent
+	state.cell.authority = state.cell.current()
+	if state.cell.generation == 0 {
+		admissions[kindShardIndex(id.Kind)]++
+	}
+	artifact := sh.artifacts[id]
+	for _, head := range []authority{artifact.authority, artifact.revisionHead, artifact.originHead} {
+		if head.generation == 0 {
+			admissions[kindShardIndex(id.Kind)]++
+		}
+	}
+	if sh.byName[kindID{id.Group, id.Kind}].links == nil {
+		admissions[kindShardIndex(id.Kind)]++
+	}
+	state.bucketGeneration = sh.byName[kindID{id.Group, id.Kind}].generation
+	if slot := sh.slots[id]; slot != nil {
+		state.producerGeneration = slot.generation
+		if slot.generation == ^uint64(0) {
+			s.unlockAll()
+			panic("store: authority generation exhausted")
+		}
+	}
+	var view capture
+	sh.captureLocked(id, new(state.cell), &view)
+	before := view.child
+	state.before, state.document, state.payload = before.Obj, before.Doc, view.payload
+	state.owner, state.source = view.owner, view.source
+	state.visible = !state.cell.hidden && (state.cell.static != nil || len(sh.members[id]) > 0)
+	if state.cell.publication == ^uint64(0) || artifact.publication == ^uint64(0) ||
+		state.cell.generation == ^uint64(0) ||
+		sh.conditions[id].stamp().generation == ^uint64(0) ||
+		artifact.generation == ^uint64(0) ||
+		artifact.revisionHead.generation == ^uint64(0) ||
+		artifact.originHead.generation == ^uint64(0) ||
+		state.bucketGeneration == ^uint64(0) {
+		s.unlockAll()
+		panic("store: authority generation exhausted")
+	}
 }

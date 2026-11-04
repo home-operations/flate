@@ -103,108 +103,15 @@ func (s *Store) commitReplacement(
 		slot.visible.Store(ps.objectLocked(id) != nil)
 		slot.hidden.Store(ps.cells[id].hidden)
 	}
-	{
-		stateValues := region.states
-		for stateIndex := range stateValues {
-			state := stateValues[stateIndex]
-			target := state.id
-			sh := s.shardFor(target)
-			sh.members[target] = slices.DeleteFunc(
-				sh.members[target],
-				func(m membership) bool { return m.slot == slot },
-			)
-		}
-	}
-	// A publication MUST retain the bootstrap authority supporting its own declaration.
-	for ancestor, inside := region.position(id); inside; {
-		state := &region.states[ancestor]
-		if state.before == nil || state.supportsProducer {
-			break
-		}
-		state.supportsProducer = true
-		if state.owner == nil {
-			break
-		}
-		ancestor, inside = region.position(state.owner.id)
-	}
-	{
-		entryValues4 := proposal.entries
-		for entryIndex3 := range entryValues4 {
-			entry := entryValues4[entryIndex3]
-			target := entry.child.Obj.Named()
-			r, _ := s.index.Load().Lookup(target)
-			sh := s.shardFor(target)
-			cell := sh.cells[target]
-			if bootstrapSeed(r.Productions) && cell.static != nil && !cell.rooted && !cell.retired {
-				position, _ := region.position(target)
-				if region.states[position].supportsProducer {
-					continue
-				}
-				cell.retired = true
-				sh.cells[target] = cell
-				region.states[position].seed = true
-			}
-		}
-	}
+	s.retireMembersLocked(id, slot, proposal, &region)
 
-	for i := range proposal.entries {
-		entry := &proposal.entries[i]
-		// An admitted object's head MUST remain stable for the store's lifetime.
-		if entry.objectHead != nil {
-			continue
-		}
-		target := s.shardFor(entry.child.Obj.Named())
-		cell := target.cells[entry.child.Obj.Named()]
-		if cell.links == nil {
-			cell.links = target.newHeadLocked(cell.generation)
-			target.cells[entry.child.Obj.Named()] = cell
-		}
-		entry.objectHead = cell.links
-	}
+	s.admitEntryHeadsLocked(proposal)
 	slot.authority = ps.advanceLocked(slot.authority)
 	slot.current.Store(proposal)
-	if !slot.visible.Load() {
-		cell := ps.cells[id]
-		if !cell.hidden {
-			ps.derived = true
-			if cell.generation == 0 {
-				ps.admitAbsenceLocked(id, objectFacet)
-			}
-			cell.authority = ps.advanceLocked(cell.current())
-			cell.hidden, cell.independent = true, independent
-			ps.cells[id] = cell
-		}
-		slot.hidden.Store(true)
-	}
-	{
-		aValues4 := proposal.entries
-		for position := range aValues4 {
-			a := aValues4[position]
-			target := a.child.Obj.Named()
-			sh := s.shardFor(target)
-			sh.members[target] = append(sh.members[target], membership{slot: slot, position: position})
-			for _, t := range a.targets {
-				sh := s.shardFor(t.NamedResource)
-				sh.members[t.NamedResource] = append(
-					sh.members[t.NamedResource],
-					membership{slot: slot, position: position, declaration: true},
-				)
-			}
-		}
-	}
+	s.hideProducerLocked(ps, id, slot, independent)
+	s.publishMembersLocked(slot, proposal)
 	publications := s.reachabilityLocked(region)
-	if slot.visible.Load() {
-		record := ps.artifacts[id]
-		record.inventoryVisible = true
-		var view capture
-		ps.captureLocked(id, new(ps.cells[id]), &view)
-		visible := ps.projectArtifactLocked(id, &view, new(record))
-		ps.publishArtifactLocked(id, &record, visible)
-		ps.artifacts[id] = record
-		event := fireUnderLock(s, EventArtifactUpdated, id)
-		event.payload = visible
-		publications = append(publications, objectPublication{event: event, force: true})
-	}
+	publications = s.appendReplacementArtifactLocked(id, ps, slot, publications)
 	s.unlockAll()
 	dispatchPublications(publications)
 	return publicationAccepted
@@ -333,4 +240,128 @@ func checkStableCapacityLocked(ps *shard, slot *producerSlot, proposal *Emission
 			}
 		}
 	}
+}
+
+func (s *Store) retireMembersLocked(
+	id manifest.NamedResource,
+	slot *producerSlot,
+	proposal *Emission,
+	region *objectRegion,
+) {
+	{
+		stateValues := region.states
+		for stateIndex := range stateValues {
+			state := stateValues[stateIndex]
+			target := state.id
+			sh := s.shardFor(target)
+			sh.members[target] = slices.DeleteFunc(
+				sh.members[target],
+				func(m membership) bool { return m.slot == slot },
+			)
+		}
+	}
+	// A publication MUST retain the bootstrap authority supporting its own declaration.
+	for ancestor, inside := region.position(id); inside; {
+		state := &region.states[ancestor]
+		if state.before == nil || state.supportsProducer {
+			break
+		}
+		state.supportsProducer = true
+		if state.owner == nil {
+			break
+		}
+		ancestor, inside = region.position(state.owner.id)
+	}
+	{
+		entryValues4 := proposal.entries
+		for entryIndex3 := range entryValues4 {
+			entry := entryValues4[entryIndex3]
+			target := entry.child.Obj.Named()
+			r, _ := s.index.Load().Lookup(target)
+			sh := s.shardFor(target)
+			cell := sh.cells[target]
+			if bootstrapSeed(r.Productions) && cell.static != nil && !cell.rooted && !cell.retired {
+				position, _ := region.position(target)
+				if region.states[position].supportsProducer {
+					continue
+				}
+				cell.retired = true
+				sh.cells[target] = cell
+				region.states[position].seed = true
+			}
+		}
+	}
+}
+
+func (s *Store) admitEntryHeadsLocked(proposal *Emission) {
+	for i := range proposal.entries {
+		entry := &proposal.entries[i]
+		// An admitted object's head MUST remain stable for the store's lifetime.
+		if entry.objectHead != nil {
+			continue
+		}
+		target := s.shardFor(entry.child.Obj.Named())
+		cell := target.cells[entry.child.Obj.Named()]
+		if cell.links == nil {
+			cell.links = target.newHeadLocked(cell.generation)
+			target.cells[entry.child.Obj.Named()] = cell
+		}
+		entry.objectHead = cell.links
+	}
+}
+
+func (s *Store) hideProducerLocked(ps *shard, id manifest.NamedResource, slot *producerSlot, independent bool) {
+	if !slot.visible.Load() {
+		cell := ps.cells[id]
+		if !cell.hidden {
+			ps.derived = true
+			if cell.generation == 0 {
+				ps.admitAbsenceLocked(id, objectFacet)
+			}
+			cell.authority = ps.advanceLocked(cell.current())
+			cell.hidden, cell.independent = true, independent
+			ps.cells[id] = cell
+		}
+		slot.hidden.Store(true)
+	}
+}
+
+func (s *Store) publishMembersLocked(slot *producerSlot, proposal *Emission) {
+	{
+		aValues4 := proposal.entries
+		for position := range aValues4 {
+			a := aValues4[position]
+			target := a.child.Obj.Named()
+			sh := s.shardFor(target)
+			sh.members[target] = append(sh.members[target], membership{slot: slot, position: position})
+			for _, t := range a.targets {
+				sh := s.shardFor(t.NamedResource)
+				sh.members[t.NamedResource] = append(
+					sh.members[t.NamedResource],
+					membership{slot: slot, position: position, declaration: true},
+				)
+			}
+		}
+	}
+}
+
+func (s *Store) appendReplacementArtifactLocked(
+	id manifest.NamedResource,
+	ps *shard,
+	slot *producerSlot,
+	publications []objectPublication,
+) []objectPublication {
+	if slot.visible.Load() {
+		record := ps.artifacts[id]
+		record.inventoryVisible = true
+		var view capture
+		ps.captureLocked(id, new(ps.cells[id]), &view)
+		visible := ps.projectArtifactLocked(id, &view, new(record))
+		ps.publishArtifactLocked(id, &record, visible)
+		ps.artifacts[id] = record
+		event := fireUnderLock(s, EventArtifactUpdated, id)
+		event.payload = visible
+		publications = append(publications, objectPublication{event: event, force: true})
+	}
+	return publications
 }

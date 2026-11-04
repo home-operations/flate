@@ -61,8 +61,8 @@ func declarationIndependent(index *manifest.DiscoveryIndex, id manifest.NamedRes
 	})
 }
 
-func (cValue *capture) declaration() manifest.BaseManifest {
-	c := *cValue
+func (cv *capture) declaration() manifest.BaseManifest {
+	c := *cv
 	if c.independent || c.accepted || c.owner != nil {
 		return c.child.Obj
 	}
@@ -80,6 +80,7 @@ func (s *Store) GetEmission(id manifest.NamedResource) (manifest.BaseManifest, m
 	return s.getEmission(nil, id)
 }
 
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (s *Store) getEmission(
 	reads *ReadSet,
 	id manifest.NamedResource,
@@ -133,31 +134,7 @@ func (s *Store) getEmission(
 	if c := s.coverage[id]; c != nil {
 		e.coverage = c.records
 	}
-	getArtifact := s.GetArtifact
-	if reads != nil {
-		getArtifact = reads.GetArtifact
-	}
-	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
-		if ref.Use == "source" {
-			e.binding.source = ref.NamedResource
-			if a, ok := getArtifact(ref.NamedResource, ArtifactContent).(*SourceArtifact); ok {
-				e.binding.artifact = a
-				if a.Content == "" {
-					e.binding.mutable = a.mutableMaterial()
-				}
-			}
-			break
-		}
-	}
-	if e.binding.source.Name == "" && s.contributionBinding(id).source == manifest.BootstrapSourceID {
-		e.binding.source = manifest.BootstrapSourceID
-		if a, ok := getArtifact(manifest.BootstrapSourceID, ArtifactContent).(*SourceArtifact); ok {
-			e.binding.artifact = a
-			if a.Content == "" {
-				e.binding.mutable = a.mutableMaterial()
-			}
-		}
-	}
+	e.bindSource(s, obj, reads, id)
 	return obj, view.child.Doc, e
 }
 
@@ -632,4 +609,32 @@ func bootstrapSeed(productions []manifest.Production) bool {
 		return p.Owner != (manifest.NamedResource{}) || p.Declaration != (manifest.NamedResource{}) ||
 			p.Source != manifest.BootstrapSourceID
 	})
+}
+
+func (e *Emission) bindSource(s *Store, obj manifest.BaseManifest, reads *ReadSet, id manifest.NamedResource) {
+	getArtifact := s.GetArtifact
+	if reads != nil {
+		getArtifact = reads.GetArtifact
+	}
+	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
+		if ref.Use == "source" {
+			e.binding.source = ref.NamedResource
+			if a, ok := getArtifact(ref.NamedResource, ArtifactContent).(*SourceArtifact); ok {
+				e.binding.artifact = a
+				if a.Content == "" {
+					e.binding.mutable = a.mutableMaterial()
+				}
+			}
+			break
+		}
+	}
+	if e.binding.source.Name == "" && s.contributionBinding(id).source == manifest.BootstrapSourceID {
+		e.binding.source = manifest.BootstrapSourceID
+		if a, ok := getArtifact(manifest.BootstrapSourceID, ArtifactContent).(*SourceArtifact); ok {
+			e.binding.artifact = a
+			if a.Content == "" {
+				e.binding.mutable = a.mutableMaterial()
+			}
+		}
+	}
 }

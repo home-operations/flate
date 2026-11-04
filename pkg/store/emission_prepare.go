@@ -248,27 +248,7 @@ func childEqual(a, b Child) bool {
 
 func semanticEqual(a, b Child) bool {
 	if a.Doc == nil || b.Doc == nil {
-		if manifest.Equal(a.Obj, b.Obj) {
-			return true
-		}
-		type metadata interface {
-			GetLabels() map[string]string
-			GetAnnotations() map[string]string
-		}
-		am, aok := a.Obj.(metadata)
-		bm, bok := b.Obj.(metadata)
-		if !aok || !bok {
-			return false
-		}
-		if !maps.Equal(am.GetAnnotations(), bm.GetAnnotations()) {
-			return false
-		}
-		if !manifest.MapEqualExcept(am.GetLabels(), bm.GetLabels(), ownershipLabel) {
-			return false
-		}
-		ad, aerr := json.Marshal(a.Obj)
-		bd, berr := json.Marshal(b.Obj)
-		return aerr == nil && berr == nil && bytes.Equal(ad, bd)
+		return semanticObjectsEqual(a, b)
 	}
 	if len(a.Doc) != len(b.Doc) {
 		return false
@@ -312,4 +292,28 @@ func ownershipLabel(key string) bool {
 		return true
 	}
 	return false
+}
+
+func semanticObjectsEqual(a, b Child) bool {
+	if manifest.Equal(a.Obj, b.Obj) {
+		return true
+	}
+	type metadata interface {
+		GetLabels() map[string]string
+		GetAnnotations() map[string]string
+	}
+	am, aok := a.Obj.(metadata)
+	bm, bok := b.Obj.(metadata)
+	if !aok || !bok {
+		return false
+	}
+	if !maps.Equal(am.GetAnnotations(), bm.GetAnnotations()) {
+		return false
+	}
+	if !manifest.MapEqualExcept(am.GetLabels(), bm.GetLabels(), ownershipLabel) {
+		return false
+	}
+	ad, aerr := json.Marshal(a.Obj)
+	bd, berr := json.Marshal(b.Obj)
+	return aerr == nil && berr == nil && bytes.Equal(ad, bd)
 }

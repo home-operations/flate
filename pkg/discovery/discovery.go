@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"log/slog"
 	"maps"
 	"path/filepath"
@@ -19,7 +18,6 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/values"
 )
@@ -354,36 +352,15 @@ func (d *Session) loadManifests(ctx context.Context, repoRoot string, build bool
 	l := d.loader
 	l.SourceRoot = repoRoot
 
-	input := d.cfg.Input
-	if input == nil {
-		input, _ = d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
-		d.cfg.Input = input
-	}
-	name, err := filepath.Rel(input.LocalPath, d.cfg.Path)
-	if err != nil {
-		return fmt.Errorf("rel: %w", err)
-	}
-	if info, err := fs.Stat(input.FS, filepath.ToSlash(name)); err != nil {
-		return fmt.Errorf("--path %q: %w", d.cfg.Path, err)
-	} else if !info.IsDir() {
-		return fmt.Errorf("--path %q is not a directory", d.cfg.Path)
-	}
 	total := 0
-	l.IgnoreFile = d.cfg.KRMIgnoreFile
-	if err := d.loadAt(ctx, d.cfg.Path, &total); err != nil {
+	if err := d.loadEntryInput(ctx, l, &total); err != nil {
 		return err
 	}
-	l.IgnoreFile = ""
 	// Projection may introduce a new effective source reference. Resolve it
 	// before Load admits its spec.path edge to scope construction.
 	l.PreferExisting = true
-	type expansion struct {
-		ks     *manifest.Kustomization
-		source *store.SourceArtifact
-		object manifest.BaseManifest
-	}
-	ksExpanded := map[expansion]struct{}{}
-	var pending []expansion
+	ksExpanded := map[sourceExpansion]struct{}{}
+	var pending []sourceExpansion
 	rounds := 0
 	for {
 		rounds++
@@ -396,40 +373,10 @@ func (d *Session) loadManifests(ctx context.Context, repoRoot string, build bool
 			d.discardPinnedWorkingTreeFiles(repoRoot)
 		}
 		kustomizations := d.loader.Kustomizations()
-		for _, child := range kustomizations {
-			ks := child.Obj.(*manifest.Kustomization) //nolint:errcheck // This branch handles an admitted Kustomization.
-			art, _ := d.cfg.Store.GetArtifact(ks.SourceID(), store.ArtifactContent).(*store.SourceArtifact)
-			key := expansion{ks: ks, source: art, object: d.cfg.Store.GetObject(ks.SourceID())}
-			if _, seen := ksExpanded[key]; seen {
-				continue
-			}
-			ksExpanded[key] = struct{}{}
-			pending = append(pending, key)
-		}
-		added := 0
-		next := pending[:0]
-		for _, key := range pending {
-			ks := key.ks
-			if ks.IsFragment() {
-				continue
-			}
-			sourceRoot, _, external := loader.SourceView(d.cfg.Store, ks.SourceID(), repoRoot)
-			if external && d.cfg.Store.GetObject(ks.SourceID()) == nil {
-				next = append(next, key)
-				continue
-			}
-			target := filepath.Join(sourceRoot, manifest.NormalizeClaimBase(ks.Path))
-			if !safepath.Contains(sourceRoot, target) {
-				continue
-			}
-			loaded, loadErr := d.loadSourcePath(ctx, target, key.source, &total)
-			if loadErr != nil {
-				return loadErr
-			}
-			if !loaded {
-				continue
-			}
-			added++
+		pending = d.enqueueExpansions(kustomizations, ksExpanded, pending)
+		next, added, loadErr := d.loadExpansions(ctx, repoRoot, pending, &total)
+		if loadErr != nil {
+			return loadErr
 		}
 		pending = next
 		if added != 0 {

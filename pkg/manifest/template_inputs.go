@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"text/template"
 
-	yamlv3 "go.yaml.in/yaml/v3"
+	yamlv4 "go.yaml.in/yaml/v4"
 	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/kustomize/api/resource"
 	kyaml "sigs.k8s.io/kustomize/kyaml/yaml"
@@ -213,7 +213,7 @@ func projectTemplateDocument(document []byte, namespace string, projected bool, 
 		Spec map[string]any `yaml:"spec"`
 	}
 	if projected {
-		if unmarshalErr := yamlv3.Unmarshal(document, &fields); unmarshalErr != nil {
+		if unmarshalErr := yamlv4.Unmarshal(document, &fields); unmarshalErr != nil {
 			return
 		}
 		if !strings.HasSuffix(fields.Kind, "List") {

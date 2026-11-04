@@ -251,26 +251,28 @@ type pausedRenderFS struct {
 }
 
 func (p *pausedRenderFS) ReadFile(name string) ([]byte, error) {
-	if name == "cm.yaml" {
-		if p.entered != nil {
-			p.once.Do(func() { close(p.entered); <-p.release })
+	if name != "cm.yaml" {
+		return fs.ReadFile(p.FS, name)
+	}
+	if p.entered != nil {
+		p.once.Do(func() { close(p.entered); <-p.release })
+	}
+	var pcs [64]uintptr
+	n := runtime.Callers(2, pcs[:])
+	frames := runtime.CallersFrames(pcs[:n])
+	for {
+		frame, more := frames.Next()
+		if frame.Function == "github.com/home-operations/flate/internal/kustomize.Build" {
+			if p.builds != nil {
+				p.builds.Add(1)
+			}
+			break
 		}
-		var pcs [64]uintptr
-		n := runtime.Callers(2, pcs[:])
-		frames := runtime.CallersFrames(pcs[:n])
-		for {
-			frame, more := frames.Next()
-			if frame.Function == "github.com/home-operations/flate/internal/kustomize.Build" {
-				if p.builds != nil {
-					p.builds.Add(1)
-				}
-				break
-			}
-			if !more {
-				break
-			}
+		if !more {
+			break
 		}
 	}
+
 	return fs.ReadFile(p.FS, name)
 }
 

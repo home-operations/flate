@@ -311,11 +311,13 @@ func testPreflightGitBaseErrorPrecedenceCase(
 	{
 		assert.FatalIf(t, err == nil, "%s", "invalid input rendered")
 	}
-	if testCaseInput.status != http.StatusOK {
+	switch {
+	case testCaseInput.status != http.StatusOK:
 		if calls.Load() != 0 || !strings.Contains(err.Error(), "HTTP 404") {
 			t.Fatalf("HTTP error precedence: calls=%d error=%v", calls.Load(), err)
 		}
-	} else if testCaseInput.timeout {
+
+	case testCaseInput.timeout:
 		{
 			assert.FatalIf(
 				t,
@@ -325,7 +327,8 @@ func testPreflightGitBaseErrorPrecedenceCase(
 				err,
 			)
 		}
-	} else if calls.Load() != 1 || strings.Contains(err.Error(), "directory failed") || !strings.Contains(err.Error(), "yaml") {
+
+	case calls.Load() != 1 || strings.Contains(err.Error(), "directory failed") || !strings.Contains(err.Error(), "yaml"):
 		t.Fatalf("malformed resource precedence: calls=%d error=%v", calls.Load(), err)
 	}
 }

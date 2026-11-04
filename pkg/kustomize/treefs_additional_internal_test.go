@@ -87,14 +87,17 @@ func TestTreeFS_LocalConstraints(t *testing.T) {
 			assert.NoError(t, err)
 			adapter := newTreeFS(lower, root, nil)
 			data, err := adapter.ReadFile(tc.path)
-			if tc.constraint {
+			switch {
+			case tc.constraint:
 				{
 					_, ok := errors.AsType[*fluxfilesys.ConstraintError](err)
 					assert.FatalIf(t, !ok, "lexical escape error = %v; want ConstraintError", err)
 				}
-			} else if tc.name == "ordinary read" {
+
+			case tc.name == "ordinary read":
 				assert.FatalIf(t, err != nil || string(data) != "inside", "ordinary read = %q, %v", data, err)
-			} else if !errors.Is(err, fs.ErrPermission) {
+
+			case !errors.Is(err, fs.ErrPermission):
 				t.Fatalf("denied link read = %q, %v", data, err)
 			}
 		})

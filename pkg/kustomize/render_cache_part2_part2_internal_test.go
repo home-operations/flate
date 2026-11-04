@@ -36,11 +36,14 @@ func testRenderCacheFramesCase(t *testing.T, testCaseInput *testRenderCacheFrame
 	}
 	key := renderKey(&req, root, nil)
 	frame := testRenderFrame(t, new(testCaseInput.tc.snapshot), testRenderPayload(t, "STALE"))
-	if (*testCaseInput.tc).malformed {
+	switch {
+	case testCaseInput.tc.malformed:
 		frame = []byte{0, 0, 0, 1, 'x'}
-	} else if testCaseInput.tc.corrupt || testCaseInput.tc.name == "mismatched" {
+
+	case testCaseInput.tc.corrupt || testCaseInput.tc.name == "mismatched":
 		frame = testRenderFrame(t, new(testCaseInput.tc.snapshot), []byte("corrupt"))
-	} else if testCaseInput.tc.empty {
+
+	case testCaseInput.tc.empty:
 		frame = testRenderFrame(t, new(testCaseInput.tc.snapshot), testRenderEncoding(t, nil))
 	}
 	publishTestFrame(
@@ -93,7 +96,8 @@ func testRenderCacheFramesCase(t *testing.T, testCaseInput *testRenderCacheFrame
 		assert.NoError(t, err)
 		assert.Diff(t, again, fresh)
 	}
-	if testCaseInput.tc.immutable {
+	switch {
+	case testCaseInput.tc.immutable:
 		{
 			assert.FatalIf(
 				t,
@@ -102,11 +106,13 @@ func testRenderCacheFramesCase(t *testing.T, testCaseInput *testRenderCacheFrame
 				out,
 			)
 		}
-	} else if testCaseInput.tc.empty {
+
+	case testCaseInput.tc.empty:
 		{
 			assert.FatalIf(t, len(out) != 0, "complete empty frame missed: %s", out)
 		}
-	} else {
+
+	default:
 		assert.FatalIf(t, !hasRenderField(out, "name", "fresh"), "candidate prevented a fresh render: %s", out)
 	}
 	cache.Close()

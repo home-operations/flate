@@ -522,7 +522,7 @@ func testRenderRemoteCacheLocalAttributionSourceLinkToInjectedFile(t *testing.T)
 			{
 				assert.FatalIf(
 					t,
-					validReadSet(t, readSetSnapshot{Files: snap.Files}, lower),
+					validReadSet(t, &readSetSnapshot{Files: snap.Files}, lower),
 					"%s",
 					"lower source cannot certify bytes obtained through an injected target",
 				)
@@ -543,7 +543,7 @@ func testRenderRemoteCacheLocalAttributionSourceLinkToInjectedFile(t *testing.T)
 			{
 				assert.FatalIf(
 					t,
-					validReadSet(t, readSetSnapshot{Files: snap.Files}, current),
+					validReadSet(t, &readSetSnapshot{Files: snap.Files}, current),
 					"%s",
 					"retargeted source link replayed injected bytes",
 				)
@@ -706,7 +706,7 @@ func testRenderRemoteCacheLocalAttributionNestedSnapshotObservations(t *testing.
 			{
 				assert.FatalIf(
 					t,
-					validReadSet(t, readSetSnapshot{Dirs: snap.Dirs[index : index+1]}, lower),
+					validReadSet(t, &readSetSnapshot{Dirs: snap.Dirs[index : index+1]}, lower),
 					"%s",
 					"aliased directory membership change was missed",
 				)
@@ -721,7 +721,7 @@ func testRenderRemoteCacheLocalAttributionNestedSnapshotObservations(t *testing.
 	{
 		assert.FatalIf(
 			t,
-			validReadSet(t, readSetSnapshot{Nodes: snap.Nodes}, lower),
+			validReadSet(t, &readSetSnapshot{Nodes: snap.Nodes}, lower),
 			"%s",
 			"aliased node transition was missed",
 		)

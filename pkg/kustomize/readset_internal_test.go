@@ -282,8 +282,9 @@ func TestReadSet_HitAndInvalidation(t *testing.T) {
 
 func TestReadSet_RemoteObservations(t *testing.T) {
 	t.Parallel()
-	entries := []remoteEntry{
-		{
+	entries := make([]remoteEntry, 0, 6)
+	entries = append(entries,
+		remoteEntry{
 			Input: remoteInput{
 				Operation:  remoteGit,
 				URL:        "file:///example.invalid/b.git",
@@ -293,11 +294,11 @@ func TestReadSet_RemoteObservations(t *testing.T) {
 			},
 			Identity: remoteIdentity{ArtifactInput: store.ArtifactInput{Key: "family", Content: "1"}},
 		},
-		{
+		remoteEntry{
 			Input:    remoteInput{Operation: remoteHTTP, URL: "https://example.invalid/b.git//file"},
 			Identity: remoteIdentity{ArtifactInput: store.ArtifactInput{Content: "http-b"}},
 		},
-		{
+		remoteEntry{
 			Input: remoteInput{
 				Operation:  remoteGit,
 				URL:        "file:///example.invalid/b.git",
@@ -307,11 +308,11 @@ func TestReadSet_RemoteObservations(t *testing.T) {
 			},
 			Identity: remoteIdentity{ArtifactInput: store.ArtifactInput{Key: "family", Content: "2"}},
 		},
-		{
+		remoteEntry{
 			Input:    remoteInput{Operation: remoteHTTP, URL: "https://example.invalid/a"},
 			Identity: remoteIdentity{HTTPStatus: http.StatusNotFound},
 		},
-	}
+	)
 	policy := entries[0]
 	policy.Input.Timeout = time.Minute
 	entries = append(entries, policy)
@@ -359,8 +360,9 @@ func TestReadSet_RemoteValidation(t *testing.T) {
 	}
 }
 
-func validReadSet(t *testing.T, snap readSetSnapshot, lower fs.FS) bool {
+func validReadSet(t *testing.T, incoming *readSetSnapshot, lower fs.FS) bool {
 	t.Helper()
+	snap := *incoming
 	valid, err := snap.stillValid(t.Context(), nil, &treeFS{lower: lower}, false)
 	{
 		assert.NoError(t, err)
@@ -474,7 +476,7 @@ func testReadSetHitAndInvalidationUnchangedTreeIsAHit(
 	{
 		assert.ErrorIf(
 			t,
-			!validReadSet(t, (*testCaseInput.snap), (*testCaseInput.base)()),
+			!validReadSet(t, testCaseInput.snap, (*testCaseInput.base)()),
 			"%s",
 			"identical tree must validate (cache hit)",
 		)
@@ -497,7 +499,7 @@ func testReadSetHitAndInvalidationEditingARecordedFileMisses(
 	{
 		assert.ErrorIf(
 			t,
-			validReadSet(t, (*testCaseInput.snap), d),
+			validReadSet(t, testCaseInput.snap, d),
 			"%s",
 			"an edit to a recorded input must invalidate (cache miss)",
 		)
@@ -520,7 +522,7 @@ func testReadSetHitAndInvalidationEditingAnUNREADFileStaysAHitGranularity(
 	{
 		assert.ErrorIf(
 			t,
-			!validReadSet(t, (*testCaseInput.snap), d),
+			!validReadSet(t, testCaseInput.snap, d),
 			"%s",
 			"b.yaml was never read by this build; editing it must NOT invalidate",
 		)
@@ -543,7 +545,7 @@ func testReadSetHitAndInvalidationAddingAFileToTheListedDirMisses(
 	{
 		assert.ErrorIf(
 			t,
-			validReadSet(t, (*testCaseInput.snap), d),
+			validReadSet(t, testCaseInput.snap, d),
 			"%s",
 			"a new file in the auto-scanned dir must invalidate",
 		)
@@ -564,7 +566,7 @@ func testReadSetHitAndInvalidationDeletingARecordedFileMisses(
 	d := (*testCaseInput.base)()
 	delete(d, "a.yaml")
 	{
-		assert.ErrorIf(t, validReadSet(t, (*testCaseInput.snap), d), "%s", "deleting a recorded input must invalidate")
+		assert.ErrorIf(t, validReadSet(t, testCaseInput.snap, d), "%s", "deleting a recorded input must invalidate")
 	}
 }
 
@@ -584,7 +586,7 @@ func testReadSetHitAndInvalidationAProbedAbsentComponentAppearingMisses(
 	{
 		assert.ErrorIf(
 			t,
-			validReadSet(t, (*testCaseInput.snap), d),
+			validReadSet(t, testCaseInput.snap, d),
 			"%s",
 			"an optional component that materialized must invalidate",
 		)
@@ -604,7 +606,7 @@ func testReadSetHitAndInvalidationCase(t *testing.T, testCaseInput *struct {
 	{
 		assert.FatalIf(
 			t,
-			!validReadSet(t, snap, testCaseInput.before) || validReadSet(t, snap, (*testCaseInput).after),
+			!validReadSet(t, &snap, testCaseInput.before) || validReadSet(t, &snap, testCaseInput.after),
 			"%s",
 			"probed node transition did not invalidate",
 		)

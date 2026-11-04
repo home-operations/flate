@@ -559,7 +559,7 @@ func (l *Loader) desiredAuthored(
 			authored := l.authoredObject(path, id)
 			forced := ""
 			if ks, ok := authored.Obj.(*manifest.Kustomization); ok {
-				authored.Obj, forced = l.predictNamespaces(ks, repoRoot, r, prediction)
+				authored.Obj, forced = l.predictNamespaces(ks, repoRoot, new(r), prediction)
 			}
 			if l.documents.compact {
 				if fact, ok := l.authoredOccurrence(path, id); ok {

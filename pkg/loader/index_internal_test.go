@@ -61,7 +61,7 @@ func stampForTest(s *store.Store, files map[manifest.NamedResource]string, root 
 			}
 		}
 		if ks, ok := s.Get[*manifest.Kustomization](id); ok {
-			predicted, _ := l.predictNamespaces(ks, root, manifest.DiscoveryRecord{File: file}, cache)
+			predicted, _ := l.predictNamespaces(ks, root, new(manifest.DiscoveryRecord{File: file}), cache)
 			s.AddObject(predicted)
 		}
 	}

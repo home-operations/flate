@@ -65,6 +65,8 @@ const (
 )
 
 // documentReader caches positive and negative results by absolute source-view directory.
+//
+//nolint:recvcheck // SecureJoin consumes Lstat and Readlink from values alongside pointer-only cache updates.
 type documentReader struct {
 	projections *manifest.ProducerProjections
 	cache       map[string]document

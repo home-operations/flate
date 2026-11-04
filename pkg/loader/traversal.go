@@ -256,7 +256,7 @@ func (w *traversal) walk(ctx context.Context, v graphVisit, yield func(graphVisi
 		v.namePrefix += d.NamePrefix
 		v.nameSuffix = d.NameSuffix + v.nameSuffix
 		if v.namespace == "" {
-			v.namespace = w.documents.transformerInjectedNamespace(v.root, v.dir).ns
+			v.namespace = new(w.documents).transformerInjectedNamespace(v.root, v.dir).ns
 		}
 		v.file, v.document, v.readable = file, d, true
 		v.coordinate = path.Join(v.prefix, v.dir, filepath.Base(file))
@@ -422,7 +422,7 @@ func (w *traversal) reference(
 		if !ok {
 			return true
 		}
-		if w.documents.fileHasNamespaceTransformer(v.root, target) {
+		if new(w.documents).fileHasNamespaceTransformer(v.root, target) {
 			return false
 		}
 		child.dir = target

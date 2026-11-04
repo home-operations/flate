@@ -60,7 +60,7 @@ func TestLoadIgnore_Patterns(t *testing.T) {
 			if tc.text != "" {
 				testutil.WriteFile(t, root, ".krmignore", tc.text)
 			}
-			ig, err := readerForTest(root).loadIgnore(root)
+			ig, err := new(readerForTest(root)).loadIgnore(root)
 			assert.FatalIf(t, err != nil, "loadIgnore: %v", err)
 			for _, check := range tc.checks {
 				t.Run(check.rel+"/"+strconv.FormatBool(check.isDir), func(t *testing.T) {
@@ -68,7 +68,15 @@ func TestLoadIgnore_Patterns(t *testing.T) {
 					abs := filepath.Join(root, filepath.FromSlash(check.rel))
 					{
 						got := ig.matches(abs, root, check.isDir)
-						assert.ErrorIf(t, got != check.want, "matches(%q, isDir=%t) = %t, want %t", check.rel, check.isDir, got, check.want)
+						assert.ErrorIf(
+							t,
+							got != check.want,
+							"matches(%q, isDir=%t) = %t, want %t",
+							check.rel,
+							check.isDir,
+							got,
+							check.want,
+						)
 					}
 				})
 			}
@@ -308,7 +316,7 @@ func testWalkerIgnoreMatchesMemoMatchesUncachedCase(
 	if testCaseInput.patterns != "" {
 		testutil.WriteFile(t, root, ".krmignore", testCaseInput.patterns)
 	}
-	ig, err := readerForTest(root).loadIgnore(root)
+	ig, err := new(readerForTest(root)).loadIgnore(root)
 	assert.FatalIf(t, err != nil, "loadIgnore: %v", err)
 	w := traversal{ignore: ig, directories: map[string]struct{}{}, ignoreCache: map[ignoreKey]bool{}}
 	for _, check := range []struct {
@@ -328,7 +336,15 @@ func testWalkerIgnoreMatchesMemoMatchesUncachedCase(
 			for range 2 {
 				{
 					got := w.ignoreMatches(root, abs, check.isDir)
-					assert.ErrorIf(t, got != want, "ignoreMatches(%q, isDir=%t) = %t, want %t", check.rel, check.isDir, got, want)
+					assert.ErrorIf(
+						t,
+						got != want,
+						"ignoreMatches(%q, isDir=%t) = %t, want %t",
+						check.rel,
+						check.isDir,
+						got,
+						want,
+					)
 				}
 				{
 					assert.ErrorIf(

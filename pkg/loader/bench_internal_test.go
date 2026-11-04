@@ -223,7 +223,7 @@ func BenchmarkIgnoreMatches(b *testing.B) {
 		fmt.Fprintf(&patterns, "ignored-%d/**\n", i)
 	}
 	testutil.WriteFile(b, root, ".krmignore", patterns.String())
-	ig, err := readerForTest(root).loadIgnore(root)
+	ig, err := new(readerForTest(root)).loadIgnore(root)
 	if err != nil {
 		b.Fatalf("loadIgnore: %v", err)
 	}

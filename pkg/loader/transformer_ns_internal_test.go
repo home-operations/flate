@@ -422,9 +422,16 @@ func TestSubtreeHasNamespaceTransformer_DepthCapAndCycle(t *testing.T) {
 					fmt.Sprintf("resources: [../d%d]\n", i+1),
 				)
 			}
-			testutil.WriteFile(t, tempDirRoot, fmt.Sprintf("d%d/kustomization.yaml", depth), "resources: [transformer.yaml]\n")
+			testutil.WriteFile(
+				t,
+				tempDirRoot,
+				fmt.Sprintf("d%d/kustomization.yaml", depth),
+				"resources: [transformer.yaml]\n",
+			)
 			testutil.WriteFile(t, tempDirRoot, fmt.Sprintf("d%d/transformer.yaml", depth), namespaceTransformer)
-			got := readerForTest(tempDirRoot).subtreeHasNamespaceTransformer(tempDirRoot, "d0", map[string]struct{}{})
+			got := new(
+				readerForTest(tempDirRoot),
+			).subtreeHasNamespaceTransformer(tempDirRoot, "d0", map[string]struct{}{})
 			{
 				assert.FatalIf(t, got != (depth == transformerScanMaxDepth), "proof at depth %d = %t", depth, got)
 			}
@@ -441,7 +448,7 @@ func TestSubtreeHasNamespaceTransformer_DepthCapAndCycle(t *testing.T) {
 	{
 		assert.FatalIf(
 			t,
-			readerForTest(root).subtreeHasNamespaceTransformer(root, "component", map[string]struct{}{}),
+			new(readerForTest(root)).subtreeHasNamespaceTransformer(root, "component", map[string]struct{}{}),
 			"%s",
 			"Component edge supplied namespace proof",
 		)
@@ -453,7 +460,7 @@ func TestSubtreeHasNamespaceTransformer_DepthCapAndCycle(t *testing.T) {
 	{
 		assert.ErrorIf(
 			t,
-			readerForTest(root).subtreeHasNamespaceTransformer(root, "cyc/a", map[string]struct{}{}),
+			new(readerForTest(root)).subtreeHasNamespaceTransformer(root, "cyc/a", map[string]struct{}{}),
 			"%s",
 			"want false on a reference cycle (must not loop)",
 		)
@@ -541,7 +548,14 @@ func testAdmitSelfProducedTransformerIdentityCase(
 		t.Errorf("indexed identity %s present=%t, want %t", id, ok, testCaseInput.tc.want)
 	}
 	{
-		assert.ErrorIf(t, testCaseInput.tc.want && record.File != definition, "identity %s definition=%q, want %q", id, record.File, definition)
+		assert.ErrorIf(
+			t,
+			testCaseInput.tc.want && record.File != definition,
+			"identity %s definition=%q, want %q",
+			id,
+			record.File,
+			definition,
+		)
 	}
 }
 
@@ -650,7 +664,19 @@ func testStampTransformerTargetNamespacesNamespaceTransformerCase(
 			}
 		}
 	}
-	testStampTransformerTargetNamespacesNamespaceTransformerCaseCompletion(t, &testStampTransformerTargetNamespacesNamespaceTransformerCaseCompletionState{testCaseInput: &testCaseInput, root: &root, local: &local, st: &st, source: &source, l: &l, doc: &doc, check: &check})
+	testStampTransformerTargetNamespacesNamespaceTransformerCaseCompletion(
+		t,
+		&testStampTransformerTargetNamespacesNamespaceTransformerCaseCompletionState{
+			testCaseInput: &testCaseInput,
+			root:          &root,
+			local:         &local,
+			st:            &st,
+			source:        &source,
+			l:             &l,
+			doc:           &doc,
+			check:         &check,
+		},
+	)
 }
 
 type testStampTransformerTargetNamespacesNamespaceTransformerCaseCompletionState struct {
@@ -670,7 +696,10 @@ type testStampTransformerTargetNamespacesNamespaceTransformerCaseCompletionState
 	check  *func(ns string)
 }
 
-func testStampTransformerTargetNamespacesNamespaceTransformerCaseCompletion(t *testing.T, scope *testStampTransformerTargetNamespacesNamespaceTransformerCaseCompletionState) {
+func testStampTransformerTargetNamespacesNamespaceTransformerCaseCompletion(
+	t *testing.T,
+	scope *testStampTransformerTargetNamespacesNamespaceTransformerCaseCompletionState,
+) {
 	t.Helper()
 	for version, ns := range (*scope.testCaseInput).namespaces {
 		if (*scope.testCaseInput).mounted {
@@ -714,7 +743,11 @@ func testStampTransformerTargetNamespacesNamespaceTransformerCaseCompletion(t *t
 			testutil.WriteFile(t, (*scope.root), "apps/gpu-operator/gpu-operator/ks.yaml", (*scope.doc))
 			(*scope.st).SetArtifact(
 				(*scope.source).Named(),
-				&store.SourceArtifact{LocalRoot: (*scope.root), LocalPath: (*scope.local), FS: os.DirFS((*scope.local))},
+				&store.SourceArtifact{
+					LocalRoot: (*scope.root),
+					LocalPath: (*scope.local),
+					FS:        os.DirFS((*scope.local)),
+				},
 			)
 		}
 		{
@@ -749,7 +782,10 @@ func testStampTransformerTargetNamespacesNamespaceTransformerCaseCompletion(t *t
 	}
 	(*scope.check)((*scope.testCaseInput).namespaces[len((*scope.testCaseInput).namespaces)-1])
 	if (*scope.testCaseInput).mounted {
-		(*scope.st).SetArtifact((*scope.source).Named(), &store.SourceArtifact{Key: "removed", LocalRoot: (*scope.root), LocalPath: (*scope.local)})
+		(*scope.st).SetArtifact(
+			(*scope.source).Named(),
+			&store.SourceArtifact{Key: "removed", LocalRoot: (*scope.root), LocalPath: (*scope.local)},
+		)
 		(*scope.l).Admit((*scope.root))
 		for _, name := range []string{"gpu-operator", "explicit"} {
 			id := testutil.KustomizationID("", name)

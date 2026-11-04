@@ -441,9 +441,9 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 		if statErr != nil {
 			return 0, statErr
 		}
-		ignore, err = l.documents.loadIgnoreFile(ctx, l.IgnoreFile, abs)
+		ignore, err = new(l.documents).loadIgnoreFile(ctx, l.IgnoreFile, abs)
 	} else {
-		ignore, err = l.documents.loadIgnore(abs)
+		ignore, err = new(l.documents).loadIgnore(abs)
 	}
 	if err != nil {
 		return 0, err
@@ -696,7 +696,8 @@ func discoveryReferences(refs []manifest.NamedResource, obj manifest.BaseManifes
 func discoveryReference(ref manifest.Reference) bool {
 	return ref.Use == "valuesFrom" ||
 		ref.Use == "substituteFrom" && ref.Group == "" && ref.Kind == manifest.KindConfigMap ||
-		(ref.Use == sourceReferenceUse || ref.Use == "chart" || ref.Use == "artifact") && ref.Kind != "" && ref.Name != ""
+		(ref.Use == sourceReferenceUse || ref.Use == "chart" || ref.Use == "artifact") && ref.Kind != "" &&
+			ref.Name != ""
 }
 
 func (l *Loader) fileCoordinate(absPath string) string {

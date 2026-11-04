@@ -454,7 +454,7 @@ func testRenderSourceignoreCacheReplaysFilteredViewCase(
 	{
 		assert.NoError(t, err)
 	}
-	key := renderKey(req, root, input.ignore)
+	key := renderKey(&req, root, input.ignore)
 	snap, _, ok := readTestRenderFrame(t, cache, key)
 	{
 		assert.FatalIf(t, !ok, "%s", "owner did not retain filtered render")

@@ -316,7 +316,7 @@ func testRenderAcceptedCacheAcquisitionOverlapCase(
 	cache := newTestTreeCache(t, t.TempDir())
 	key := sourcecache.BlobKey{
 		Content: renderKey(
-			RenderRequest{Source: &store.SourceArtifact{}, Spec: demoSpec, SubPath: "."},
+			&RenderRequest{Source: &store.SourceArtifact{}, Spec: demoSpec, SubPath: "."},
 			root,
 			nil,
 		),

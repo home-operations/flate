@@ -33,7 +33,8 @@ type EntryInput struct {
 	Data     manifest.Data          `json:"-"`
 }
 
-func resolvedEntryInput(ctx context.Context, input EntryInput) (EntryInput, bool, error) {
+func resolvedEntryInput(ctx context.Context, observed *EntryInput) (EntryInput, bool, error) {
+	input := *observed
 	resolved := EntryInput{Resource: input.Resource}
 	if input.Data != nil {
 		resolved.Content = manifest.Fingerprint(input.Data.Snapshot())
@@ -60,6 +61,7 @@ func resolvedEntryInput(ctx context.Context, input EntryInput) (EntryInput, bool
 	return resolved, resolved.Content != "", ctx.Err()
 }
 
+//nolint:gocritic // Slice comparison callbacks require these value inputs and their snapshots.
 func equalEntryInput(a, b EntryInput) bool {
 	return a.Resource == b.Resource && a.Content == b.Content && a.Binding == b.Binding
 }
@@ -84,7 +86,7 @@ func (*TreeCache) ApplicationReceipt(
 		inputValues := evidence.Inputs
 		for inputIndex := range inputValues {
 			input := inputValues[inputIndex]
-			resolved, complete, err := resolvedEntryInput(ctx, input)
+			resolved, complete, err := resolvedEntryInput(ctx, &input)
 			if err != nil || !complete {
 				return nil, err
 			}
@@ -150,7 +152,7 @@ func (*TreeCache) EntryValid(ctx context.Context, evidence EntryEvidence, st *st
 			} else {
 				input.Data = st.ReferenceFacts(expected.Resource, nil).Supplied
 			}
-			actual, complete, err := resolvedEntryInput(ctx, input)
+			actual, complete, err := resolvedEntryInput(ctx, &input)
 			if err != nil || !complete || !equalEntryInput(actual, expected) {
 				slog.Debug(
 					"kustomize: entry application input changed",
@@ -173,11 +175,13 @@ func (*TreeCache) EntryValid(ctx context.Context, evidence EntryEvidence, st *st
 }
 
 // PreviousEntry returns provisional evidence requiring EntryValid after freshness acquisition.
+//
+//nolint:gocritic // Preserve the public value API and its render-request snapshot.
 func (c *TreeCache) PreviousEntry(ctx context.Context, req RenderRequest) EntryEvidence {
 	if c == nil || ctx.Err() != nil || !c.owner.CanPersistRenders() {
 		return EntryEvidence{}
 	}
-	prepared, err := c.prepareRender(ctx, req)
+	prepared, err := c.prepareRender(ctx, &req)
 	if err != nil {
 		return EntryEvidence{}
 	}

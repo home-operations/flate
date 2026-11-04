@@ -83,7 +83,7 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 			source, spec := *req.Source, *req.Spec
 			changed.Source, changed.Spec = &source, &spec
 			tc.mutate(&changed)
-			prepared, err := renderer.prepareRender(t.Context(), changed)
+			prepared, err := renderer.prepareRender(t.Context(), &changed)
 			assert.NoError(t, err)
 			frame := receipt.Value().(renderFrame)
 			binding := frame.binding
@@ -155,9 +155,9 @@ func TestRenderKey_DependsOnProjection(t *testing.T) {
 	projected := req
 	projected.Spec = manifest.MapDependsOn(spec, snapshot.Resolve, snapshot.Resolve).(*manifest.Kustomization)
 	cache := newTestTreeCache(t, t.TempDir())
-	before, err := cache.prepareRender(t.Context(), req)
+	before, err := cache.prepareRender(t.Context(), &req)
 	assert.NoError(t, err)
-	after, err := cache.prepareRender(t.Context(), projected)
+	after, err := cache.prepareRender(t.Context(), &projected)
 	assert.NoError(t, err)
 	assert.Equal(t, before.key, after.key)
 	assert.Equal(t, spec.DependsOn[0].Name, "${PREFIX:-dev-}ready")
@@ -178,7 +178,7 @@ func TestRenderKey_DependsOnProjection(t *testing.T) {
 			changed := req
 			changed.Spec = spec.Clone()
 			change.mutate(changed.Spec)
-			next, err := cache.prepareRender(t.Context(), changed)
+			next, err := cache.prepareRender(t.Context(), &changed)
 			assert.NoError(t, err)
 			{
 				assert.FatalIf(t, manifest.ValueEqual(

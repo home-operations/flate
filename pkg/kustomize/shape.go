@@ -72,7 +72,7 @@ type renderContent struct {
 
 // Content projects validated raw documents and effective variables into immutable final inputs.
 //
-
+//nolint:gocritic // Preserve the public value receiver and its render-input snapshot.
 func (r RenderRequest) Content(docs []manifest.DocOccurrence) any {
 	ks := r.Spec
 	ks.EmissionPolicy().Stamp(docs)

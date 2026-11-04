@@ -63,7 +63,7 @@ func Render(
 	req RenderRequest,
 	retry sourcecache.RetryConfig,
 ) ([]manifest.DocOccurrence, *manifest.RenderReceipt, error) {
-	prepared, err := cache.prepareRender(ctx, req)
+	prepared, err := cache.prepareRender(ctx, &req)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -110,7 +110,8 @@ type renderRequest struct {
 	binding   renderBinding
 }
 
-func (c *TreeCache) prepareRender(ctx context.Context, req RenderRequest) (renderRequest, error) {
+func (c *TreeCache) prepareRender(ctx context.Context, incoming *RenderRequest) (renderRequest, error) {
+	req := *incoming
 	if c == nil {
 		return renderRequest{}, manifest.NewError(manifest.ErrInput, nil, "incomplete render request")
 	}
@@ -135,7 +136,7 @@ func (c *TreeCache) prepareRender(ctx context.Context, req RenderRequest) (rende
 	if err != nil {
 		return renderRequest{}, manifest.NewError(manifest.ErrInput, fmt.Errorf("source label: %w", err), "")
 	}
-	key := renderKey(req, root, ignore)
+	key := renderKey(&req, root, ignore)
 	source := manifest.BootstrapSourceID
 	if req.Spec != nil {
 		source = req.Spec.SourceID()
@@ -163,7 +164,8 @@ func (c *TreeCache) prepareRender(ctx context.Context, req RenderRequest) (rende
 
 // Mutable files are validated by the read set; immutable generations are part
 // of the render content. Filesystem handles and retry/storage policy are never encoded.
-func renderKey(req RenderRequest, root string, ignore any) string {
+func renderKey(incoming *RenderRequest, root string, ignore any) string {
+	req := *incoming
 	var immutable any
 	if req.Source.Content != "" {
 		immutable = req.Source.Input(store.ArtifactContent)

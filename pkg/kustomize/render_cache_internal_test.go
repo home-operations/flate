@@ -210,7 +210,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Diff(t, out1, want)
 
-	key := renderKey(RenderRequest{Source: &store.SourceArtifact{}, Spec: demoSpec, SubPath: "selected"}, root, nil)
+	key := renderKey(&RenderRequest{Source: &store.SourceArtifact{}, Spec: demoSpec, SubPath: "selected"}, root, nil)
 	snap, _, ok := readTestRenderFrame(t, cache, key)
 	eligible := renderPersistenceEligible(t)
 	{
@@ -498,7 +498,7 @@ func TestRender_SourceignoreContentInvalidates(t *testing.T) {
 	{
 		assert.NoError(t, err)
 	}
-	key := renderKey(req, root, input.ignore)
+	key := renderKey(&req, root, input.ignore)
 
 	out1, receipt11, err := testutil.RenderMaps(Render(ctx, cache, req, sourcecache.RetryConfig{}))
 	if err == nil {
@@ -534,7 +534,7 @@ func TestRender_SourceignoreContentInvalidates(t *testing.T) {
 	{
 		assert.NoError(t, err)
 	}
-	changedKey := renderKey(req, root, input.ignore)
+	changedKey := renderKey(&req, root, input.ignore)
 	{
 		assert.FatalIf(t, changedKey == key, "%s", "re-admitted ignore bytes reused the render key")
 	}
@@ -577,7 +577,7 @@ func TestRender_SourceignoreContentInvalidates(t *testing.T) {
 	{
 		assert.FatalIf(
 			t,
-			renderKey(req, root, input.ignore) == changedKey,
+			renderKey(&req, root, input.ignore) == changedKey,
 			"%s",
 			"moved ignore file reused the render key",
 		)
@@ -733,7 +733,7 @@ func testRenderCacheHitMissInvalidateEmptyStream(t *testing.T) {
 
 		assert.NoError(t, err)
 		assert.Equal(t, len(docs), 0)
-		_, stored, hit := readTestRenderFrame(t, c, renderKey(req, root, nil))
+		_, stored, hit := readTestRenderFrame(t, c, renderKey(&req, root, nil))
 		assert.Equal(t, hit, true)
 		assert.Equal(t, len(stored), 0)
 	}

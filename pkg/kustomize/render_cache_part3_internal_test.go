@@ -176,7 +176,7 @@ func testRenderCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 		}
 	}
 	if (*testCaseInput) == "read" {
-		key := sourcecache.BlobKey{Content: renderKey(req, root, nil), Render: sourcecache.RenderAccepted}
+		key := sourcecache.BlobKey{Content: renderKey(&req, root, nil), Render: sourcecache.RenderAccepted}
 		reader, _, _, err := cache.owner.Blob(
 			t.Context(),
 			key,
@@ -402,7 +402,8 @@ func testRenderRemoteCacheReachabilityCase(t *testing.T, testCaseInput *string,
 		assert.FatalIf(t, stillValidErr != nil ||
 			!valid, "unchanged recorded graph: valid=%t, %v", valid, stillValidErr)
 	}
-	key := renderKey(request(), root, nil)
+	renderRequestSnapshot := request()
+	key := renderKey(&renderRequestSnapshot, root, nil)
 	if persisted, _, hit := readTestRenderFrame(t, c, key); hit {
 		snap = persisted
 		publishTestFrame(

@@ -147,7 +147,7 @@ func TestRender_RemoteCacheIsolation(t *testing.T) {
 			got.err,
 		)
 		snap := got.snap
-		if persisted, _, hit := readTestRenderFrame(t, c, renderKey(got.request, got.request.Label, nil)); hit {
+		if persisted, _, hit := readTestRenderFrame(t, c, renderKey(&got.request, got.request.Label, nil)); hit {
 			snap = persisted
 		}
 		{
@@ -394,7 +394,8 @@ func testRenderRemoteCacheLocalAttributionCase(
 	{
 		assert.FatalIf(t, err != nil, "first render: %s, %v", out, err)
 	}
-	key := renderKey(request(), root, nil)
+	renderRequestSnapshot := request()
+	key := renderKey(&renderRequestSnapshot, root, nil)
 	if persisted, _, hit := readTestRenderFrame(t, c, key); hit {
 		publishTestFrame(
 			t,

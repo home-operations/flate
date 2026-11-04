@@ -319,7 +319,7 @@ func (c *TreeCache) PreviousRender(
 	if c == nil || ctx.Err() != nil || !c.owner.CanPersistRenders() {
 		return nil, nil, false
 	}
-	prepared, err := c.prepareRender(ctx, req)
+	prepared, err := c.prepareRender(ctx, &req)
 	if err != nil {
 		return nil, nil, false
 	}

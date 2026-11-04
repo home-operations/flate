@@ -55,7 +55,7 @@ func TestRenderKey_ContentInputs(t *testing.T) {
 		SubPath: ".",
 		Spec:    demoSpec,
 	}
-	key := renderKey(req, "/source", nil)
+	key := renderKey(&req, "/source", nil)
 	for _, tc := range []struct {
 		name   string
 		change func(*RenderRequest)
@@ -124,11 +124,11 @@ func TestRenderKey_ContentInputs(t *testing.T) {
 	stamped.Spec.Labels = map[string]string{"owner": "parent"}
 	stamped.Spec.Annotations = map[string]string{"stamp": "changed"}
 	{
-		got := renderKey(stamped, "/source", nil)
+		got := renderKey(&stamped, "/source", nil)
 		assert.FatalIf(t, got != key, "%s", "emission metadata changed the render key")
 	}
 	{
-		got := renderKey(req, "/source", nil)
+		got := renderKey(&req, "/source", nil)
 		assert.FatalIf(t, got != key, "%s", "unchanged render input changed the key")
 	}
 }
@@ -141,7 +141,7 @@ func TestRender_CacheIdentityIsolated(t *testing.T) {
 	})
 	cache := newTestTreeCache(t, t.TempDir())
 	req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoSpec}
-	key := renderKey(RenderRequest{Source: &store.SourceArtifact{}, Spec: demoSpec, SubPath: "."}, root, nil)
+	key := renderKey(&RenderRequest{Source: &store.SourceArtifact{}, Spec: demoSpec, SubPath: "."}, root, nil)
 	publishTestFrame(
 		t,
 		cache.owner,
@@ -179,7 +179,7 @@ func TestRender_CacheIdentityIsolated(t *testing.T) {
 	{
 		assert.FatalIf(
 			t,
-			renderKey(bare, root, nil) == renderKey(req, root, nil),
+			renderKey(&bare, root, nil) == renderKey(&req, root, nil),
 			"%s",
 			"bare and owned cache identities collide",
 		)
@@ -319,7 +319,7 @@ func testRenderKeyContentInputsCase(t *testing.T, testCaseInput *testRenderKeyCo
 	if testCaseInput.tc.root != "" {
 		root = testCaseInput.tc.root
 	}
-	got := renderKey(changed, root, testCaseInput.tc.ignore)
+	got := renderKey(&changed, root, testCaseInput.tc.ignore)
 	if got == "" || (got == (*testCaseInput.key)) != testCaseInput.tc.same {
 		t.Fatalf("render key equality = %t, want %t", got == (*testCaseInput.key), testCaseInput.tc.same)
 	}
@@ -331,7 +331,7 @@ func testRenderKeyContentInputsCase(t *testing.T, testCaseInput *testRenderKeyCo
 		{
 			assert.FatalIf(
 				t,
-				got != renderKey(typed, root, testCaseInput.tc.ignore),
+				got != renderKey(&typed, root, testCaseInput.tc.ignore),
 				"%s",
 				"null input differs from its typed zero value",
 			)
@@ -365,7 +365,7 @@ func testRenderKeyContentInputsCase2(t *testing.T, testCaseInput *testRenderKeyC
 	{
 		assert.FatalIf(
 			t,
-			renderKey(changed, "/source", nil) != renderKey(plain, "/source", nil),
+			renderKey(&changed, "/source", nil) != renderKey(&plain, "/source", nil),
 			"%s",
 			"authored null changed typed content",
 		)
@@ -519,7 +519,8 @@ func testRenderRemoteCacheDependenciesCaseOrigin(
 			trace.snapshot()[initial:],
 		)
 	}
-	key := renderKey(request(), root, nil)
+	renderRequestSnapshot := request()
+	key := renderKey(&renderRequestSnapshot, root, nil)
 	snap, stored, hit := readTestRenderFrame(t, cache, key)
 	{
 		assert.FatalIf(

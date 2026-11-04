@@ -34,7 +34,7 @@ func testRenderCacheFramesCase(t *testing.T, testCaseInput *testRenderCacheFrame
 			Render(t.Context(), newTestTreeCache(t, ""), req, sourcecache.RetryConfig{}),
 		)
 	}
-	key := renderKey(req, root, nil)
+	key := renderKey(&req, root, nil)
 	frame := testRenderFrame(t, testCaseInput.tc.snapshot, testRenderPayload(t, "STALE"))
 	if (*testCaseInput.tc).malformed {
 		frame = []byte{0, 0, 0, 1, 'x'}

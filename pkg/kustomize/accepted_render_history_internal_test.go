@@ -287,10 +287,10 @@ func (h *acceptedHistoryCase) mutableHistoryReads(t *testing.T) {
 		_, complete := previousHistory(t.Context(), isolated, mutable, owner)
 		assert.FatalIf(t, !complete, "%s", "unchanged mutable history missed")
 	}
-	before, err := isolated.prepareRender(t.Context(), mutable)
+	before, err := isolated.prepareRender(t.Context(), &mutable)
 	assert.NoError(t, err)
 	testutil.WriteFile(t, directory, "cm.yaml", cmYAML("after"))
-	after, err := isolated.prepareRender(t.Context(), mutable)
+	after, err := isolated.prepareRender(t.Context(), &mutable)
 	assert.NoError(t, err)
 	{
 		assert.FatalIf(t, before.key != after.key, "%s", "mutable content changed the fixed request key")

@@ -205,29 +205,7 @@ func (sh *shard) publishArtifactLocked(id manifest.NamedResource, record *artifa
 	if origin != input.Origin || originPresent != input.OriginPresent {
 		changed |= ArtifactOrigin
 	}
-	heads := [3]*authority{&record.authority, &record.revisionHead, &record.originHead}
-	var admissions uint64
-	for i, head := range heads {
-		if changed&(1<<i) != 0 {
-			sh.requireCapacityLocked(*head)
-			if head.generation == 0 {
-				admissions++
-			}
-		}
-	}
-	if record.publication == ^uint64(0) || !sh.canAdmit(admissions) {
-		sh.mu.Unlock()
-		panic("store: authority generation exhausted")
-	}
-	record.publication++
-	for i, head := range heads {
-		if changed&(1<<i) != 0 {
-			if head.generation == 0 {
-				sh.admitAbsenceLocked(id, contentFacet+facet(i))
-			}
-			*head = sh.advanceLocked(*head)
-		}
-	}
+	sh.advanceArtifactLocked(id, record, changed)
 	record.effective = value
 	return changed != 0
 }
@@ -401,4 +379,30 @@ func (a *SourceArtifact) HistoryIdentity(source manifest.NamedResource) manifest
 		identity.Root = a.OriginPath(a.LocalPath)
 	}
 	return identity
+}
+
+func (sh *shard) advanceArtifactLocked(id manifest.NamedResource, record *artifactRecord, changed ArtifactRead) {
+	heads := [3]*authority{&record.authority, &record.revisionHead, &record.originHead}
+	var admissions uint64
+	for i, head := range heads {
+		if changed&(1<<i) != 0 {
+			sh.requireCapacityLocked(*head)
+			if head.generation == 0 {
+				admissions++
+			}
+		}
+	}
+	if record.publication == ^uint64(0) || !sh.canAdmit(admissions) {
+		sh.mu.Unlock()
+		panic("store: authority generation exhausted")
+	}
+	record.publication++
+	for i, head := range heads {
+		if changed&(1<<i) != 0 {
+			if head.generation == 0 {
+				sh.admitAbsenceLocked(id, contentFacet+facet(i))
+			}
+			*head = sh.advanceLocked(*head)
+		}
+	}
 }

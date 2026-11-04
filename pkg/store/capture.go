@@ -121,35 +121,7 @@ func (r *ReadSet) input(id manifest.NamedResource) *Input {
 			}
 		}
 	}
-	var input *Input
-	if r.local.derived == 0 {
-		input = &r.local
-	} else {
-		if r.spare == nil {
-			r.capacity = max(1, allocationGrowthFactor*r.capacity)
-			block := make([]inputBlock, r.capacity)
-			for i := range block {
-				block[i].input.details.Store(&block[i].details)
-				block[i].input.next, r.spare = r.spare, &block[i].input
-			}
-			if r.byID == nil && r.capacity >= 64 {
-				r.indexInputs(r.capacity)
-				index, _ = slices.BinarySearchFunc(
-					*r.byID,
-					id,
-					func(input *Input, id manifest.NamedResource) int { return input.Ref.Compare(id) },
-				)
-			}
-		}
-		input, r.spare = r.spare, r.spare.next
-	}
-	input.Ref.NamedResource, input.next, input.derived = id, r.inputs, initializedInput
-	r.inputs = input
-	if r.byID != nil {
-		*r.byID = slices.Insert(*r.byID, index, input)
-	}
-	r.last = input
-	return input
+	return r.allocateInput(id, index)
 }
 
 func (r *ReadSet) details(input *Input) *inputDetails {
@@ -270,26 +242,10 @@ func (r *ReadSet) GetDeclaration(id manifest.NamedResource) manifest.BaseManifes
 }
 
 // Capture records a caller-owned named input without reconstructing its identity index.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
 func (r *ReadSet) Capture(input *Input) manifest.BaseManifest {
-	if input.derived&initializedInput == 0 {
-		if r.last != nil && r.last.Ref.NamedResource == input.Ref.NamedResource {
-			r.last = input
-		}
-		input.next, r.inputs = r.inputs, input
-		input.derived |= initializedInput
-		if r.byID != nil {
-			index, found := slices.BinarySearchFunc(
-				*r.byID,
-				input.Ref.NamedResource,
-				func(captured *Input, id manifest.NamedResource) int { return captured.Ref.Compare(id) },
-			)
-			if found {
-				(*r.byID)[index] = input
-			} else {
-				*r.byID = slices.Insert(*r.byID, index, input)
-			}
-		}
-	}
+	r.attachInput(input)
 	id := input.Ref.NamedResource
 	if input.derived&capturedObject == 0 {
 		{
@@ -330,20 +286,7 @@ func (r *ReadSet) Capture(input *Input) manifest.BaseManifest {
 		r.activate(input, objectFacet, view.generation)
 	}
 	input.view, input.derived = view, input.derived|capturedObject
-	if view.binding != nil {
-		r.GetObject(view.binding.Ref.NamedResource)
-		r.GetArtifact(view.binding.Ref.NamedResource, ArtifactContent)
-		if view.bound && !view.binding.current() {
-			r.invalid.Store(true)
-		}
-	}
-	if view.support != nil {
-		r.GetObject(view.support.Ref.NamedResource)
-		r.GetArtifact(view.support.Ref.NamedResource, ArtifactContent)
-		if view.bound && !view.support.productionCurrent() {
-			r.invalid.Store(true)
-		}
-	}
+	r.captureSourceAuthorities(&view)
 	input.view.record = nil
 	input.view.payloadInput = nil
 	return input.view.child.Obj
@@ -871,3 +814,75 @@ const (
 	allocationGrowthFactor = 2
 	maxLinearInputBlocks   = 2
 )
+
+func (r *ReadSet) allocateInput(id manifest.NamedResource, index int) *Input {
+	var input *Input
+	if r.local.derived == 0 {
+		input = &r.local
+	} else {
+		if r.spare == nil {
+			r.capacity = max(1, allocationGrowthFactor*r.capacity)
+			block := make([]inputBlock, r.capacity)
+			for i := range block {
+				block[i].input.details.Store(&block[i].details)
+				block[i].input.next, r.spare = r.spare, &block[i].input
+			}
+			if r.byID == nil && r.capacity >= 64 {
+				r.indexInputs(r.capacity)
+				index, _ = slices.BinarySearchFunc(
+					*r.byID,
+					id,
+					func(input *Input, id manifest.NamedResource) int { return input.Ref.Compare(id) },
+				)
+			}
+		}
+		input, r.spare = r.spare, r.spare.next
+	}
+	input.Ref.NamedResource, input.next, input.derived = id, r.inputs, initializedInput
+	r.inputs = input
+	if r.byID != nil {
+		*r.byID = slices.Insert(*r.byID, index, input)
+	}
+	r.last = input
+	return input
+}
+
+func (r *ReadSet) attachInput(input *Input) {
+	if input.derived&initializedInput != 0 {
+		return
+	}
+	if r.last != nil && r.last.Ref.NamedResource == input.Ref.NamedResource {
+		r.last = input
+	}
+	input.next, r.inputs = r.inputs, input
+	input.derived |= initializedInput
+	if r.byID != nil {
+		index, found := slices.BinarySearchFunc(
+			*r.byID,
+			input.Ref.NamedResource,
+			func(captured *Input, id manifest.NamedResource) int { return captured.Ref.Compare(id) },
+		)
+		if found {
+			(*r.byID)[index] = input
+		} else {
+			*r.byID = slices.Insert(*r.byID, index, input)
+		}
+	}
+}
+
+func (r *ReadSet) captureSourceAuthorities(view *capture) {
+	if view.binding != nil {
+		r.GetObject(view.binding.Ref.NamedResource)
+		r.GetArtifact(view.binding.Ref.NamedResource, ArtifactContent)
+		if view.bound && !view.binding.current() {
+			r.invalid.Store(true)
+		}
+	}
+	if view.support != nil {
+		r.GetObject(view.support.Ref.NamedResource)
+		r.GetArtifact(view.support.Ref.NamedResource, ArtifactContent)
+		if view.bound && !view.support.productionCurrent() {
+			r.invalid.Store(true)
+		}
+	}
+}

@@ -157,18 +157,7 @@ type testRenderRemoteRetryPoliciesCaseInputs struct {
 func testRenderRemoteRetryPoliciesCase(t *testing.T, testCaseInput *testRenderRemoteRetryPoliciesCaseInputs) {
 	t.Helper()
 	var httpCalls [4]atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		attempts := 1
-		if strings.HasSuffix(r.URL.Path, "/3") {
-			attempts = 3
-		}
-		n := httpCalls[attempts].Add(1)
-		if attempts == 1 || n == 1 {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			return
-		}
-		_, _ = io.WriteString(w, "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: retried}\n")
-	}))
+	srv := httptest.NewServer(retryPolicyHandler(&httpCalls))
 	defer srv.Close()
 	c := newTestTreeCache(t, "")
 	entered := make(chan int, (*testCaseInput.concurrency))
@@ -343,5 +332,20 @@ func testRenderRemoteRetryPoliciesCaseLoop(loopInputs struct {
 		if i != (*loopInputs.first) {
 			(*loopInputs.launch)(i)
 		}
+	}
+}
+
+func retryPolicyHandler(httpCalls *[4]atomic.Int32) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		attempts := 1
+		if strings.HasSuffix(r.URL.Path, "/3") {
+			attempts = 3
+		}
+		n := httpCalls[attempts].Add(1)
+		if attempts == 1 || n == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = io.WriteString(w, "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: retried}\n")
 	}
 }

@@ -359,10 +359,10 @@ func TestGenerateManifest_ByteEquivalentToFlux(t *testing.T) {
 				continue
 			}
 			var value any
-			if shape == "invalid field" {
+			switch shape {
+			case "invalid field":
 				value = "not-a-list"
-			}
-			if shape == "null elements" {
+			case "null elements":
 				value = []any{nil, nil}
 			}
 			generateManifestByteEquivalentToFluxLoop(struct {

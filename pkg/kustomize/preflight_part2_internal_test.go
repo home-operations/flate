@@ -567,19 +567,23 @@ func testPreflightRemoteResourcesReachableInputsCase(
 			out,
 		)
 	}
-	if marked.Load() != int32(len(testCaseInput.replies)) {
-		t.Fatalf("requests=%d want=%d", marked.Load(), len(testCaseInput.replies))
-	}
+	assert.FatalIf(
+		t,
+		marked.Load() != int32(len(testCaseInput.replies)),
+		"requests=%d want=%d",
+		marked.Load(),
+		len(testCaseInput.replies),
+	)
 	for path := range testCaseInput.replies {
 		_, _ = cache.remoteInputs.Acquire(t.Context(), url+path, sourcecache.RetryConfig{}, nil)
 	}
-	if marked.Load() != int32(len(testCaseInput.replies)) {
-		t.Fatalf(
-			"preflight bypassed shared acquisition: requests=%d want=%d",
-			marked.Load(),
-			len(testCaseInput.replies),
-		)
-	}
+	assert.FatalIf(
+		t,
+		marked.Load() != int32(len(testCaseInput.replies)),
+		"preflight bypassed shared acquisition: requests=%d want=%d",
+		marked.Load(),
+		len(testCaseInput.replies),
+	)
 	if testCaseInput.name == "git-looking-file" {
 		rec := newReadSet(root)
 		view := newTreeFS(localSource(t, root).FS, root, rec)
@@ -609,9 +613,7 @@ func testPreflightRemoteResourcesReachableInputsCase(
 			valid, err := snap.stillValid(t.Context(), replay, view, false)
 			assert.FatalIf(t, err != nil || !valid, "file frame replay: %t, %v", valid, err)
 		}
-		if marked.Load() != 2 {
-			t.Fatalf("HTTP initial/replay: requests=%d", marked.Load())
-		}
+		assert.FatalIf(t, marked.Load() != 2, "HTTP initial/replay: requests=%d", marked.Load())
 	}
 	{
 		assert.FatalIf(t, manifest.Fingerprint(spec) != before, "%s", "stored Flux specification mutated")

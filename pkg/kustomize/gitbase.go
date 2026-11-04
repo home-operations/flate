@@ -30,6 +30,7 @@ func (w *inputWalk) fetchGitBase(
 			w.recordRemote(descriptor, &identity, &scope)
 		}
 		rel, err := filepath.Rel(scope.root, filepath.Join(dest, spec.SubPath))
+		//nolint:wrapcheck // Git-base path resolution must preserve the original filepath diagnostic.
 		return "./" + filepath.ToSlash(rel), err
 	}
 	acquired, err := w.acquire(ctx, descriptor, &scope)

@@ -19,6 +19,8 @@ import (
 	"github.com/home-operations/flate/pkg/tree"
 )
 
+const overlayFileMode = 0o644
+
 // treeFS adapts the common resolver to kyaml's OS mount names. Mutable state
 // belongs to one render; only the sealed lower tree is shared.
 type treeFS struct {
@@ -255,6 +257,7 @@ func (f readOnlyFile) Stat() (fs.FileInfo, error) {
 	if err == nil && info.Name() != f.name {
 		return namedInfo{FileInfo: info, name: f.name}, nil
 	}
+	//nolint:wrapcheck // The file adapter must preserve the underlying Stat error and FileInfo result.
 	return info, err
 }
 
@@ -345,7 +348,7 @@ func (t *treeFS) WriteFile(name string, data []byte) error {
 	if err != nil {
 		return err
 	}
-	if err := t.upper.AddFile(rel, data, 0o644); err != nil {
+	if err := t.upper.AddFile(rel, data, overlayFileMode); err != nil {
 		return treeError("write", name, err)
 	}
 	t.mark(path.Clean(rel))

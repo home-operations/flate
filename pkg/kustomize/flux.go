@@ -359,6 +359,7 @@ func (r *renderRequest) produce(
 	if cleanedAbsErr == nil {
 		_, cleanedAbsErr = w.Write(data)
 	}
+	//nolint:wrapcheck // Cache production must preserve the writer's original error value.
 	return sourcecache.ProducerResult{}, cleanedAbsErr
 }
 

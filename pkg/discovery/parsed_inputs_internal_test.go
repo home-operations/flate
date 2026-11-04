@@ -160,7 +160,7 @@ func testPlanParsedInputHandoffDifferentContent(
 	changed := *(*testCaseInput.input)
 	changed.Content = "next-generation"
 	d := newDiscoverer(
-		Config{
+		&Config{
 			Input:       &changed,
 			Entry:       &(*testCaseInput.entries)[0],
 			Path:        (*testCaseInput.entries)[0].Path,
@@ -188,7 +188,7 @@ func testPlanParsedInputHandoffNativeAdmissions(
 			t.Parallel()
 			st := store.New()
 			d := newDiscoverer(
-				Config{Input: (*testCaseInput.input), Entry: &entry, Path: entry.Path, Store: st, WipeSecrets: true},
+				&Config{Input: (*testCaseInput.input), Entry: &entry, Path: entry.Path, Store: st, WipeSecrets: true},
 			)
 			{
 				assert.FatalIf(

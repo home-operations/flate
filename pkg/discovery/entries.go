@@ -31,7 +31,7 @@ func Plan(ctx context.Context, cfg Config) ([]Entry, error) {
 		cfg.Input, _ = cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	}
 	cfg.Store = store.New()
-	d := newDiscoverer(cfg)
+	d := newDiscoverer(&cfg)
 	l := d.loader
 	if _, err := d.resolveEntrySources(ctx, false); err != nil {
 		return nil, err

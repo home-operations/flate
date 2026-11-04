@@ -103,7 +103,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	}
 	d := cfg.session
 	if d == nil {
-		d = newDiscoverer(cfg)
+		d = newDiscoverer(&cfg)
 	}
 	l := d.loader
 	if cfg.session == nil {
@@ -312,7 +312,8 @@ type declarationPreparation struct {
 	registered bool
 }
 
-func newDiscoverer(cfg Config) *Session {
+func newDiscoverer(config *Config) *Session {
+	cfg := *config
 	l := cfg.Loader
 	if l == nil {
 		l = loader.New(cfg.Store)

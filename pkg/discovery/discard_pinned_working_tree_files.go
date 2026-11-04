@@ -134,7 +134,7 @@ func Begin(ctx context.Context, cfg Config) (*Session, error) {
 	if cfg.Store == nil {
 		return nil, errors.New("discovery: Store is required")
 	}
-	d := newDiscoverer(cfg)
+	d := newDiscoverer(&cfg)
 	if _, err := d.resolveEntrySources(ctx, false); err != nil {
 		return nil, err
 	}

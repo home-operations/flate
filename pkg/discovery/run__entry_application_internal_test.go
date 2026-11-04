@@ -174,7 +174,7 @@ func TestBindEntry_PackageReadFailure(t *testing.T) {
 		manifest.BootstrapSourceID,
 		&store.SourceArtifact{LocalPath: root, FS: unreadableEntryFS{fstest.MapFS{}}},
 	)
-	d := newDiscoverer(Config{Path: root, Store: st})
+	d := newDiscoverer(&Config{Path: root, Store: st})
 	_, err := d.bindEntry(t.Context(), root)
 	assert.FatalIf(
 		t,
@@ -421,7 +421,7 @@ func testRunEntryApplicationCase(t *testing.T, testCaseInput *struct {
 		st.SetArtifact(source, artifact)
 	}
 	d := newDiscoverer(
-		Config{
+		&Config{
 			Input:    &store.SourceArtifact{LocalPath: root, FS: input},
 			Path:     root,
 			Store:    st,

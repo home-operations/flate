@@ -448,7 +448,7 @@ func testRunIndexedRootPreparedProjectionNative(
 
 	st := store.New()
 	d := newDiscoverer(
-		Config{
+		&Config{
 			Input: (*testCaseInput.entries)[0].Input,
 			Entry: &(*testCaseInput.entries)[0],
 			Path:  (*testCaseInput.entries)[0].Path,
@@ -502,7 +502,7 @@ func testRunIndexedRootPreparedProjectionCase(
 		{
 			assert.FatalIf(
 				t,
-				newDiscoverer(cfg).loader.Options.ParsedInputs == nil,
+				newDiscoverer(&cfg).loader.Options.ParsedInputs == nil,
 				"%v",
 				"matching prepared input was not reused",
 			)

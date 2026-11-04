@@ -76,7 +76,7 @@ func testRunBuiltPackagesCase(t *testing.T, testCaseInput *string,
 		source := &store.SourceArtifact{LocalPath: root, FS: input}
 		st.SetArtifact(manifest.BootstrapSourceID, source)
 		d := newDiscoverer(
-			Config{
+			&Config{
 				Input:    source,
 				Path:     filepath.Join(root, (*testCaseInput)),
 				Store:    st,

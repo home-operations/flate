@@ -491,7 +491,7 @@ func testRunEntryOwnerEligibilityCase(t *testing.T, testCaseInput *string,
 		st.AddObject(ready)
 	}
 	d := newDiscoverer(
-		Config{
+		&Config{
 			Store: st,
 			Trees: testTrees(t),
 			Input: &store.SourceArtifact{LocalPath: root, FS: input},
